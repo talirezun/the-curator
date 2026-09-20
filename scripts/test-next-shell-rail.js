@@ -5,6 +5,16 @@
  *
  * ── WHY THIS EXISTS ──────────────────────────────────────────────────────
  *
+ * ── WHAT v3.64.0 CHANGED ABOUT IT ───────────────────────────────────────
+ * The rail became THREE entries — chat, domains, memory — read as *ask ·
+ * knowledge · context*, and the divider went with them. `ingest` and
+ * `shared` are now HOSTED VIEWS: still registered, still navigable, still
+ * restorable from the stored last view, and reached from a section of the
+ * domain page instead of a rail button. §3b is the new section and it is
+ * the point of the release: every way that change could have gone wrong is
+ * a SILENT failure, so each is asserted positively rather than left to the
+ * absence of an error.
+ *
  * v3.49.0 answered a power user's report on v3.48.1, in his own words:
  *
  *   1. He could not tell the people icon (Shared Brain) from the memory
@@ -32,10 +42,18 @@
  *   §1  Extraction sanity — the anchors are real and the sandbox is live.
  *   §2  Every nav button carries the caption VIEW_META declares, and both
  *       footer buttons do too. Captions are one word.
- *   §3  Rail order, read off the rendered markup: chat, ingest, domains,
- *       shared, memory.
- *   §4  The divider is rendered exactly once, between domains and shared,
- *       and is hidden from assistive technology.
+ *   §3  Rail order, read off the rendered markup: chat, domains, memory —
+ *       ask, knowledge, context (v3.64.0; it was five entries).
+ *   §3b HOSTED VIEWS — `ingest` and `shared` left the RAIL in v3.64.0 and
+ *       did not leave the APP. Per name: no rail button, a surviving
+ *       VIEW_META entry, a restored stored last view, and a registry entry
+ *       proved by RUNNING the real registerView()/navigate() pair. All
+ *       three failure modes are silent, which is why they are here.
+ *   §4  NO divider is rendered (v3.64.0 removed the advanced group), with
+ *       a POSITIVE CONTROL in a second sandbox that re-points
+ *       RAIL_DIVIDER_AFTER at a real view and proves the mechanism can
+ *       still draw one — otherwise "zero dividers" would also be green for
+ *       a renderRail() that had lost the code path.
  *   §5  The logo is a <button> with an accessible name, carrying
  *       data-view="domains"; its recorded click handler calls navigate
  *       with 'domains'; and the <img> inside it contributes no second name.
@@ -68,7 +86,7 @@
  *     calls pickStartView with the stored value is a one-line call site.
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -123,11 +141,23 @@ function extractFunction(src, name) {
   return out.replace(/^export\s+/, '');
 }
 function extractConst(src, name) {
-  const marker = new RegExp(`(?:^|\\n)const ${name} = (\\{|\\[|'|")`);
+  // The opener decides how the end is found. A BARE literal (null, a number,
+  // true) has no bracket to match, so it is terminated by the first `;` —
+  // and it is not a hypothetical shape: RAIL_DIVIDER_AFTER became `null` in
+  // v3.64.0, and without this branch the marker simply did not match, this
+  // function THREW, and §1 exited 1 with "could not build the sandbox"
+  // instead of testing the rail. An extractor that can only read the shapes
+  // it was written against is a suite that dies the day the source changes.
+  const marker = new RegExp(`(?:^|\\n)const ${name} = (\\{|\\[|'|"|[^;\\n]+;)`);
   const m = marker.exec(src);
   if (!m) throw new Error(`extractConst: "${name}" not found in next/app.js`);
   const start = m.index + (m[0].startsWith('\n') ? 1 : 0);
   const open = m[1];
+  if (open.endsWith(';')) {
+    // A bare literal: the marker already consumed it up to and including
+    // the terminator.
+    return src.slice(start, m.index + m[0].length);
+  }
   if (open === "'" || open === '"') {
     const end = src.indexOf(';', start);
     if (end === -1) throw new Error(`extractConst: "${name}" has no terminator`);
@@ -195,36 +225,64 @@ function makeRail() {
 }
 
 // ── Build the sandbox out of the REAL source ─────────────────────────────
-const NEEDED_CONSTS = ['NAV_VIEWS', 'FOOTER_VIEWS', 'VIEW_META', 'RAIL_DIVIDER_AFTER', 'HOME_VIEW'];
+// HOSTED_VIEWS joined NEEDED_CONSTS in v3.64.0 and ALL_VIEWS stopped being
+// RETYPED here. Both matter. The old line read
+// `const ALL_VIEWS = [...NAV_VIEWS, ...FOOTER_VIEWS];` — a COPY of app.js's
+// definition living in the suite, which means the day app.js widened its own
+// ALL_VIEWS (exactly what D-B does) this file would have gone on measuring
+// the OLD program while reporting green: §6's restore cases and the set-
+// equality check against VIEW_META would both have been run against a set
+// that no longer existed in the app. Extracted, not retyped.
+const NEEDED_CONSTS = ['NAV_VIEWS', 'HOSTED_VIEWS', 'FOOTER_VIEWS', 'ALL_VIEWS',
+                       'VIEW_META', 'RAIL_DIVIDER_AFTER', 'HOME_VIEW'];
 const NEEDED_FNS = ['renderRail', 'pickStartView', 'escapeHtml'];
 
-let sandbox;
-try {
-  sandbox = new Function('__env', `
+/**
+ * Build one sandbox around the real renderRail()/pickStartView().
+ *
+ * `dividerAfter` overrides RAIL_DIVIDER_AFTER with a literal INSTEAD of the
+ * extracted line — which is what §4's positive control needs: with the
+ * shipped value at `null` the only thing "no divider rendered" can prove on
+ * its own is that renderRail() rendered no divider, which is also true of a
+ * renderRail() that has lost the code path entirely. Re-pointing the
+ * constant in a second sandbox and watching one divider appear, after the
+ * named view, is what keeps §4 a measurement of a DATA-DRIVEN boundary.
+ */
+function buildSandbox({ dividerAfter } = {}) {
+  const dividerLine = (dividerAfter === undefined)
+    ? extractConst(appJs, 'RAIL_DIVIDER_AFTER')
+    : `const RAIL_DIVIDER_AFTER = ${JSON.stringify(dividerAfter)};`;
+  return new Function('__env', `
     const { document, icon, syncBadgeTitle, syncBadgeMarkup, renderThemeToggleIcon,
             renderRailActive, applySyncBadge, toggleTheme, navigate, state } = __env;
     let _syncPendingCount = __env.syncPending;
     ${extractConst(appJs, 'NAV_VIEWS')}
+    ${extractConst(appJs, 'HOSTED_VIEWS')}
     ${extractConst(appJs, 'FOOTER_VIEWS')}
-    const ALL_VIEWS = [...NAV_VIEWS, ...FOOTER_VIEWS];
-    ${extractConst(appJs, 'RAIL_DIVIDER_AFTER')}
+    ${extractConst(appJs, 'ALL_VIEWS')}
+    ${dividerLine}
     ${extractConst(appJs, 'HOME_VIEW')}
     ${extractConst(appJs, 'VIEW_META')}
     ${NEEDED_FNS.map((n) => extractFunction(appJs, n)).join('\n\n')}
-    return { renderRail, pickStartView, NAV_VIEWS, FOOTER_VIEWS, ALL_VIEWS,
+    return { renderRail, pickStartView, NAV_VIEWS, HOSTED_VIEWS, FOOTER_VIEWS, ALL_VIEWS,
              VIEW_META, RAIL_DIVIDER_AFTER, HOME_VIEW };
   `);
+}
+
+let sandbox;
+try {
+  sandbox = buildSandbox();
 } catch (err) {
   console.log(`  ✗ FATAL: could not build the sandbox from next/app.js — ${err.message}`);
   process.exit(1);
 }
 
 /** Run the real renderRail() and hand back the markup plus the click wiring. */
-function render({ theme = 'dark', syncPending = 0 } = {}) {
+function render({ theme = 'dark', syncPending = 0, box = sandbox } = {}) {
   const { rail, clicks } = makeRail();
   const navigated = [];
   const themeToggle = { addEventListener() {} };
-  const api = sandbox({
+  const api = box({
     state: { theme, view: 'domains' },
     syncPending,
     document: {
@@ -251,7 +309,15 @@ section('§1  Extraction + sandbox sanity (everything below is vacuous without t
 const R = render();
 ok(R.html.length > 200, `renderRail() produced markup (${R.html.length} chars)`);
 ok(R.tags.length >= 12, `the tag scanner resolved ${R.tags.length} elements — a desynced scanner would resolve ~0`);
-ok(R.clicks.length >= 8, `renderRail() bound ${R.clicks.length} [data-view] click handlers`);
+// 1 home + NAV_VIEWS + the two hardcoded footer buttons. Written as the
+// ARITHMETIC rather than as a number, so the next change to the rail has to
+// re-derive the floor instead of bumping a literal until it passes. It was
+// `>= 8` for the five-entry rail; at three entries the true count is 6.
+{
+  const floor = 1 + R.api.NAV_VIEWS.length + R.api.FOOTER_VIEWS.length;
+  ok(R.clicks.length >= floor,
+    `renderRail() bound ${R.clicks.length} [data-view] click handlers (floor ${floor} = 1 home + ${R.api.NAV_VIEWS.length} nav + ${R.api.FOOTER_VIEWS.length} footer)`);
+}
 // CONTROL: the scanner must be able to see an attribute that is NOT there,
 // otherwise every negative assertion below passes for free.
 {
@@ -321,7 +387,7 @@ for (const v of ALL) {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-section('§3  Rail order — Ingest is second');
+section('§3  Rail order — three places: ask, knowledge, context');
 // ════════════════════════════════════════════════════════════════════════
 
 const renderedNav = buttons
@@ -336,32 +402,219 @@ const renderedNav = buttons
 // working session. Shared Brain is opt-in and entered rarely. Both stay in the
 // advanced group and the divider is unchanged, because it follows `domains` by
 // NAME rather than by index.
-ok(JSON.stringify(renderedNav) === JSON.stringify(['chat', 'ingest', 'domains', 'memory', 'shared']),
-  `the rendered nav order is chat, ingest, domains, memory, shared (got ${renderedNav.join(', ')})`);
-eq(renderedNav[1], 'ingest', 'Ingest is SECOND — it was fifth, behind two surfaces a new user has not set up');
+ok(JSON.stringify(renderedNav) === JSON.stringify(['chat', 'domains', 'memory']),
+  `the rendered nav order is chat, domains, memory — ask, knowledge, context (got ${renderedNav.join(', ')})`);
+eq(renderedNav[1], 'domains',
+  'Domains is SECOND — the rail is three PLACES now, not five tabs; Ingest was second and is a section of the domain page');
 ok(JSON.stringify(renderedNav) === JSON.stringify(R.api.NAV_VIEWS),
   'the rendered order is NAV_VIEWS in NAV_VIEWS order — renderRail adds no ordering of its own');
 
 // ════════════════════════════════════════════════════════════════════════
-section('§4  The advanced-group divider');
+section('§3b  HOSTED VIEWS — off the rail, and still reachable');
 // ════════════════════════════════════════════════════════════════════════
+//
+// THE POINT OF THE RELEASE, AND THE RISK OF IT. v3.64.0 took `ingest` and
+// `shared` off the rail because their everyday home is now a section of the
+// domain page. Taking a name out of NAV_VIEWS and nothing else would have
+// left three separate silent failures, none of which produces an error:
+//
+//   • navigate('ingest') — the gate is the registry, and an unknown name
+//     used to return with nothing rendered and nothing logged, so the
+//     onboarding door and the tray's rail-button clicks would have done
+//     NOTHING, visibly identical to a frozen app;
+//   • pickStartView('ingest') — ALL_VIEWS is the restore set, so a user who
+//     quit on Ingest would have been sent to Domains on the next launch and
+//     never told why;
+//   • VIEW_META — the mount-error card and an MCP refusal string read those
+//     labels, and §6's set equality is what stops the two collections
+//     drifting apart.
+//
+// Each of the four properties below is asserted per HOSTED_VIEWS NAME, off
+// the array, so a third hosted view inherits the guard for free.
+
+const HOSTED = R.api.HOSTED_VIEWS;
+ok(Array.isArray(HOSTED) && HOSTED.length > 0,
+  `HOSTED_VIEWS exists and is not empty (${JSON.stringify(HOSTED)})`);
+ok(JSON.stringify([...HOSTED].sort()) === JSON.stringify(['ingest', 'shared']),
+  'HOSTED_VIEWS is exactly ingest and shared — the two panels that gained a second host on the domain page');
+
+for (const v of HOSTED) {
+  // (a) NO RAIL BUTTON. The positive statement of what left — asserted
+  //     against the rendered markup, not against the array it came from.
+  ok(!buttons.some((b) => b.attrs['data-view'] === v),
+    `${v} renders NO rail button — it is reached from the domain page, not the rail`);
+  ok(!R.clicks.some((c) => c.view === v),
+    `…and no click handler is bound for it either (a button-less data-view would still wire)`);
+  // (b) VIEW_META KEEPS ITS ENTRY. Deleting it would red §6's set equality
+  //     and, for `shared`, a model-read MCP refusal string.
+  ok(Object.prototype.hasOwnProperty.call(R.api.VIEW_META, v),
+    `VIEW_META still has ${v} — its caption/title/icon are read by the mount-error card`);
+  // `|| {}` is not defensiveness, it is what makes the line below a RED
+  // rather than a CRASH: a mutation that deletes the entry threw here on
+  // `undefined.title`, and a suite that dies mid-section proves nothing
+  // about the assertions it never reached (the v3.60.0 lesson, twice).
+  const hostedMeta = R.api.VIEW_META[v] || {};
+  ok(typeof hostedMeta.title === 'string' && hostedMeta.title.length > 0,
+    `…with a real title (${JSON.stringify(hostedMeta.title)})`);
+  // (c) A STORED LAST VIEW IS RESTORED, NOT SENT HOME.
+  eq(R.api.pickStartView(v), v,
+    `a user who quit on ${v} is returned to it — HOSTED_VIEWS is in ALL_VIEWS, which is the restore set`);
+}
+// CONTROL: the same three probes report a name that is genuinely gone as
+// gone, so the loop above is a measurement rather than three tautologies.
+ok(!Object.prototype.hasOwnProperty.call(R.api.VIEW_META, 'wiki')
+   && R.api.pickStartView('wiki') === R.api.HOME_VIEW,
+  'CONTROL: a view this build really does not have has no VIEW_META entry and is NOT restored');
+
+// (d) THE REGISTRY STILL HAS THEM — the gate navigate() actually consults.
+//
+// EXECUTED, not scanned. The real registerView() is run against a stub
+// registry, fed the names the views/*.js files really register (read off
+// their own `registerView('<name>'` call sites, so a view that stopped
+// registering itself is visible here), and then the real navigate() is run
+// against that registry with stubbed collaborators. Risk 4 in one block.
+{
+  const viewsDir = path.join(ROOT, 'src/public/next/views');
+  const registered = [];
+  for (const f of readdirSync(viewsDir)) {
+    if (!f.endsWith('.js')) continue;
+    const src = readFileSync(path.join(viewsDir, f), 'utf8');
+    const re = /(?:^|\n)registerView\(\s*'([^']+)'/g;
+    let m;
+    while ((m = re.exec(src)) !== null) registered.push(m[1]);
+  }
+  // Against the DISTINCT names, so a duplicate inside ALL_VIEWS (which §6
+  // catches on its own line) does not also red this one with a message
+  // about the views directory, which would be a true statement about the
+  // wrong thing.
+  const distinctViews = new Set(R.api.ALL_VIEWS).size;
+  ok(registered.length >= distinctViews,
+    `the views/ directory contains ${registered.length} top-level registerView() calls, for ${distinctViews} distinct views`);
+
+  const warns = [];
+  const navigated = [];
+  let box = null;
+  try {
+    box = new Function('__env', `
+      const { state, closeReader, renderRailActive, resolvedMotionMs,
+              applyViewExit, mountView, console } = __env;
+      const VIEW_EXIT_TOKEN = '--dur-instant';
+      let registry = null;
+      let _mountedView = null;
+      let _pendingNav = null;
+      ${extractFunction(appJs, 'registerView')}
+      ${extractFunction(appJs, 'navigate')}
+      return { registerView, navigate, has: (n) => !!(registry && registry.has(n)) };
+    `)({
+      state: { view: null },
+      closeReader() {}, renderRailActive() {}, applyViewExit() {},
+      resolvedMotionMs: () => 0,
+      mountView: (n) => navigated.push(n),
+      console: { warn: (msg) => warns.push(String(msg)) },
+    });
+  } catch (err) {
+    ok(false, `FATAL: could not build the registry sandbox — ${err.message}`);
+  }
+
+  if (box) {
+    for (const name of registered) box.registerView(name, {});
+    for (const v of R.api.ALL_VIEWS) {
+      ok(box.has(v),
+        `${v} is in the registry — some views/*.js file calls registerView('${v}'), so navigate() can reach it`);
+    }
+    // The two that left the rail are the ones this is really about.
+    for (const v of HOSTED) {
+      const before = navigated.length;
+      box.navigate(v);
+      ok(navigated.length === before + 1 && navigated[navigated.length - 1] === v,
+        `navigate('${v}') really mounts it — off the rail is not off the app`);
+    }
+    // THE SILENT NO-OP, NOW AUDIBLE. navigate() must still refuse an
+    // unknown name without throwing (it is called from a click handler),
+    // but the refusal that used to be invisible now says so — the cheapest
+    // possible cure for a failure whose entire cost was that nobody could
+    // see it.
+    const before = navigated.length;
+    const warnsBefore = warns.length;
+    let threw = null;
+    try { box.navigate('a-view-that-does-not-exist'); } catch (err) { threw = err; }
+    ok(threw === null, 'navigate() with an unknown name does NOT throw — it is wired straight to a click handler');
+    eq(navigated.length, before, '…and mounts nothing');
+    ok(warns.length === warnsBefore + 1,
+      '…and SAYS SO exactly once, which it did not before v3.64.0 (silent no-op, Risk 4)');
+    ok(/a-view-that-does-not-exist/.test(warns[warns.length - 1] || ''),
+      `…naming the view it refused (got ${JSON.stringify(warns[warns.length - 1])})`);
+    // CONTROL: a legitimate navigation is silent, so the line above is not
+    // measuring a warning that fires on every call.
+    const quietBefore = warns.length;
+    box.navigate(R.api.HOME_VIEW);
+    eq(warns.length, quietBefore, 'CONTROL: a navigation that WORKS logs nothing');
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§4  The group divider — removed, and still data-driven');
+// ════════════════════════════════════════════════════════════════════════
+//
+// v3.49.0 drew one line after `domains` and called what followed it
+// "advanced". v3.64.0 removes it (D-C): three items need no grouping rule,
+// and the group it opened contained exactly the surface the app's second
+// audience lives on — marking Project context as the advanced one is not
+// redundant, it is wrong.
+//
+// The MECHANISM is deliberately NOT deleted, and this section is why. "Zero
+// dividers rendered" is equally true of a renderRail() that has lost the
+// ability to draw one, so the shipped-value assertion is paired with a
+// POSITIVE CONTROL in a second sandbox that re-points the constant at a real
+// view and watches a divider appear after it. Without that pair, the
+// data-driven property the original §4 existed to prove would be gone and
+// this section would be decoration.
 
 const dividers = R.tags.filter((t) => (t.attrs.class || '').includes('rail-divider'));
-eq(dividers.length, 1, 'exactly one divider is rendered');
-if (dividers.length === 1) {
-  const d = dividers[0];
-  const before = buttons.filter((b) => b.index < d.index).sort((a, b) => b.index - a.index)[0];
-  const after = buttons.filter((b) => b.index > d.index).sort((a, b) => a.index - b.index)[0];
-  eq(before.attrs['data-view'], R.api.RAIL_DIVIDER_AFTER, 'the divider follows RAIL_DIVIDER_AFTER');
-  eq(before.attrs['data-view'], 'domains', 'the everyday group ends at Domains');
-  eq(after.attrs['data-view'], 'memory', 'the advanced group starts at Project context (v3.61.0: it moved above Shared Brain, which is opt-in and entered rarely; v3.62.0 renamed it and moved nothing)');
-  eq(d.attrs['aria-hidden'], 'true', 'the divider is hidden from assistive technology');
-  eq(d.attrs.role, 'presentation', 'the divider carries role="presentation" — grouping, not a landmark');
+eq(dividers.length, 0, 'NO divider is rendered — the advanced group is gone (v3.64.0, D-C)');
+eq(R.api.RAIL_DIVIDER_AFTER, null, 'RAIL_DIVIDER_AFTER is null, which is what asks for no divider');
+// Either null, or a name the rail really has. A name that is NEITHER renders
+// nothing, silently — the same failure shape as Risk 4 one layer down.
+ok(R.api.RAIL_DIVIDER_AFTER === null || R.api.NAV_VIEWS.includes(R.api.RAIL_DIVIDER_AFTER),
+  `RAIL_DIVIDER_AFTER (${JSON.stringify(R.api.RAIL_DIVIDER_AFTER)}) is null or names a view that is actually in the rail — anything else renders no divider at all, silently`);
+
+// ── POSITIVE CONTROL: the boundary is still DATA ─────────────────────────
+// Everything the old §4 asserted about a rendered divider lives here now,
+// run against a sandbox whose RAIL_DIVIDER_AFTER is 'chat' — a view that is
+// in the rail and is NOT where the old divider sat, so a boundary hardcoded
+// to an index in renderRail() would put the line in the wrong place and this
+// block would catch it.
+{
+  let ctrl = null;
+  try { ctrl = render({ box: buildSandbox({ dividerAfter: 'chat' }) }); }
+  catch (err) { ok(false, `CONTROL sandbox failed to build — ${err.message}`); }
+  if (ctrl) {
+    const cButtons = ctrl.tags.filter((t) => t.tag === 'button' && 'data-view' in t.attrs && (t.attrs.class || '').includes('rail-btn'));
+    const cDividers = ctrl.tags.filter((t) => (t.attrs.class || '').includes('rail-divider'));
+    eq(cDividers.length, 1, 'CONTROL: re-pointing RAIL_DIVIDER_AFTER at a real view renders exactly one divider — the mechanism is alive, the shipped value is what says "none"');
+    if (cDividers.length === 1) {
+      const d = cDividers[0];
+      const before = cButtons.filter((b) => b.index < d.index).sort((a, b) => b.index - a.index)[0];
+      const after = cButtons.filter((b) => b.index > d.index).sort((a, b) => a.index - b.index)[0];
+      eq(before.attrs['data-view'], 'chat', 'CONTROL: the divider follows the NAMED view, not a hardcoded index');
+      eq(after.attrs['data-view'], 'domains', 'CONTROL: and the next button follows it');
+      eq(d.attrs['aria-hidden'], 'true', 'CONTROL: the divider is hidden from assistive technology');
+      eq(d.attrs.role, 'presentation', 'CONTROL: it carries role="presentation" — grouping, not a landmark');
+    }
+  }
 }
-// The divider is DATA. Prove that by moving it: a boundary hardcoded to an
-// index in renderRail() would ignore this and stay where it was.
-ok(R.api.NAV_VIEWS.includes(R.api.RAIL_DIVIDER_AFTER),
-  `RAIL_DIVIDER_AFTER (${JSON.stringify(R.api.RAIL_DIVIDER_AFTER)}) names a view that is actually in the rail — a name that is not renders no divider at all, silently`);
+// And a name the rail does NOT have draws nothing rather than throwing —
+// the documented behaviour of the constant, now that null is the shipped
+// value and a typo is the realistic way a bad one arrives.
+{
+  let ghost = null;
+  try { ghost = render({ box: buildSandbox({ dividerAfter: 'not-a-view' }) }); }
+  catch (err) { ok(false, `CONTROL sandbox (ghost) failed to build — ${err.message}`); }
+  if (ghost) {
+    ok(ghost.tags.filter((t) => (t.attrs.class || '').includes('rail-divider')).length === 0,
+      'CONTROL: a RAIL_DIVIDER_AFTER naming no real view renders no divider and does not throw');
+  }
+}
 
 // ════════════════════════════════════════════════════════════════════════
 section('§5  The logo is a Home button — "the logo is not clickable"');
@@ -426,6 +679,26 @@ eq(pickStartView('constructor'), HOME_VIEW, 'nor is "constructor"');
 eq(pickStartView('0'), HOME_VIEW, 'nor is an index-shaped string');
 ok(ALL_VIEWS.includes('settings') && ALL_VIEWS.includes('sync'),
   'the restore set is ALL_VIEWS — a footer view is a legitimate place to have quit from');
+// ── THE TWO NAMED RESTORE CASES (v3.64.0) ───────────────────────────────
+// The loop above covers these because they ARE in ALL_VIEWS, which is the
+// whole point — but a loop over a set cannot fail when a name is removed
+// from that set, it just iterates one fewer time. These two lines can.
+eq(pickStartView('ingest'), 'ingest',
+  'a user who quit on Ingest lands on Ingest — leaving the rail did not make it unreachable');
+eq(pickStartView('shared'), 'shared',
+  'a user who quit on Shared Brain lands on Shared Brain, for the same reason');
+// ALL_VIEWS IS A SET, NOT A BAG. It is built by spreading three arrays now
+// rather than two, and a name in two of them would be silently harmless
+// here while making VIEW_META's set equality below pass for the wrong
+// reason (the sorted comparison would see a duplicate and fail — so this
+// line is what tells the two failures apart in the output).
+{
+  const dupes = ALL_VIEWS.filter((v, i) => ALL_VIEWS.indexOf(v) !== i);
+  ok(dupes.length === 0,
+    `ALL_VIEWS holds no name twice — NAV_VIEWS + HOSTED_VIEWS + FOOTER_VIEWS are disjoint (dupes: ${JSON.stringify(dupes)})`);
+}
+ok(ALL_VIEWS.length === R.api.NAV_VIEWS.length + R.api.HOSTED_VIEWS.length + R.api.FOOTER_VIEWS.length,
+  `ALL_VIEWS is exactly the three arrays concatenated (${R.api.NAV_VIEWS.length} + ${R.api.HOSTED_VIEWS.length} + ${R.api.FOOTER_VIEWS.length} = ${ALL_VIEWS.length})`);
 
 // ── WHY THE RESTORE SET AND THE META TABLE MUST BE THE SAME SET ──────────
 // A mutation swapping `ALL_VIEWS.includes(stored)` for
@@ -630,6 +903,79 @@ section('§9  THE DOMAIN REQUEST (P1-9) — recorded once, spent once, never sto
       '…alongside consumeDomainRequest, the half that spends the request');
     ok(!/['"]new-project['"]/.test(domainsJs),
       '…and does not carry the literal itself anywhere');
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§9b  THE DOMAIN-FOLD REQUEST (v3.64.0) — the third member of the family');
+// ════════════════════════════════════════════════════════════════════════
+//
+// Ingest left the rail, so the onboarding panel's third step now sends
+// somebody to the ADD SOURCES section of the domain page rather than to the
+// full-page Ingest view. That handoff is a REQUEST, not a click, and the
+// reason is specific: clicking a <summary> TOGGLES, and this fold is
+// remembered per domain — so the click pattern the panel uses for a button
+// (goToDomainsCreate) would SHUT the fold for exactly the users who had
+// already opened it. "Open it" is idempotent; "click it" is not.
+//
+// Same three properties as §9, executed the same way, because the failure
+// modes are the same three: a request that outlives its consume re-opens a
+// section on every later Domains mount; a blank one is indistinguishable
+// from nobody asking; and a literal typed on both sides can be typed
+// differently on one.
+{
+  let foldBox = null;
+  try {
+    foldBox = new Function(`
+      ${extractFunction(appJs, 'requestDomainFold')}
+      ${extractFunction(appJs, 'consumeDomainFoldRequest')}
+      let _pendingDomainFoldRequest = null;
+      return { requestDomainFold, consumeDomainFoldRequest,
+               __peek: () => _pendingDomainFoldRequest };
+    `)();
+  } catch (err) {
+    ok(false, `FATAL: could not build the fold-request sandbox — ${err.message}`);
+  }
+
+  if (foldBox) {
+    const { requestDomainFold, consumeDomainFoldRequest } = foldBox;
+    ok(consumeDomainFoldRequest() === null, 'with nothing pending, consumeDomainFoldRequest() is null');
+    requestDomainFold('add-sources');
+    eq(consumeDomainFoldRequest(), 'add-sources', 'a recorded fold id comes back on the first consume');
+    ok(consumeDomainFoldRequest() === null,
+      'the SECOND consume in a row is null — spending it is what reading it does');
+    requestDomainFold('add-sources');
+    consumeDomainFoldRequest();
+    ok(foldBox.__peek() === null, '…and the module variable itself is cleared, not merely reported as spent');
+    requestDomainFold('add-sources');
+    requestDomainFold('');
+    ok(consumeDomainFoldRequest() === null, 'an empty id CLEARS a pending request rather than recording a blank one');
+    requestDomainFold('add-sources');
+    requestDomainFold(null);
+    ok(consumeDomainFoldRequest() === null, '…and so does null');
+    requestDomainFold('add-sources');
+    requestDomainFold(42);
+    ok(consumeDomainFoldRequest() === null, '…and so does a non-string, which a caller can reach through a typo');
+    requestDomainFold('   ');
+    ok(consumeDomainFoldRequest() === null, '…and so does whitespace, which would pass a truthiness check');
+    eq((requestDomainFold('  add-sources  '), consumeDomainFoldRequest()), 'add-sources',
+      'a padded id is trimmed at the single writer, so the consumer never has to');
+    requestDomainFold('a');
+    requestDomainFold('b');
+    eq(consumeDomainFoldRequest(), 'b', 'a second request replaces the first — there is no queue to drain');
+  }
+
+  // THE LITERAL IS EXPORTED, for the NEW_PROJECT_REASON reason: the producer
+  // (views/onboarding.js) and the consumer (views/domains.js) are different
+  // packages, and the failure a twice-typed string produces is a step that
+  // navigates correctly and then silently does nothing else.
+  const foldLiteral = (/export const ADD_SOURCES_FOLD = '([^']+)';/.exec(appJs) || [])[1] || null;
+  eq(foldLiteral, 'add-sources', 'ADD_SOURCES_FOLD is exported from app.js, and is the id both sides use');
+  {
+    const obSrc = readFileSync(path.join(ROOT, 'src/public/next/views/onboarding.js'), 'utf8');
+    const importBlock = (/import \{([\s\S]*?)\} from '\.\.\/app\.js';/.exec(obSrc) || [])[1] || '';
+    ok(/\bADD_SOURCES_FOLD\b/.test(importBlock) && /\brequestDomainFold\b/.test(importBlock),
+      'views/onboarding.js imports the constant and the writer from the shell rather than typing either');
   }
 }
 
