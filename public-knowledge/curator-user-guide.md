@@ -219,11 +219,11 @@ Four things are not rail destinations. **Reading a wiki page** is an overlay tha
 
 At the top: the folder path in monospace, the display name with an information mark beside it, and **Rename**, **Delete** and **Ask this domain**, the last of which jumps to Chat already scoped to it.
 
-Then six sections, in the order the work runs in: **OVERVIEW** (the counts, and when the domain was last written to), **INGEST** (drop a file here), **PAGES** (everything readable, behind a Wiki / Context / All lens), **PROJECTS IN THIS DOMAIN**, **SHARED BRAIN** (the connections this domain contributes to) and **WIKI HEALTH**.
+Then an unnumbered **OVERVIEW** (the counts, and when the domain was last written to) followed by five numbered sections, in the order the work runs in: ① **INGEST** (drop a file here), ② **PAGES** (everything readable, behind a Wiki / Context / All lens), ③ **PROJECTS IN THIS DOMAIN**, ④ **SHARED BRAIN** (the connections this domain contributes to) and ⑤ **WIKI HEALTH**. The numerals arrived in v3.64.1.
 
 **OVERVIEW** is five figures in one card — PAGES, ENTITIES, CONCEPTS, SUMMARIES and PROJECTS, plus OTHER when pages sit outside the three canonical folders. A figure reads an em dash rather than 0 while it is still loading, because "not known yet" and "none" are different answers. Beside them sit jump buttons — SOURCES, carrying the last ingest, and SHARED when this domain contributes to a Shared Brain — each of which opens the section it names.
 
-INGEST and SHARED BRAIN are closed folds that remember whether you opened them, per domain. Two exceptions: on a domain with nothing ingested yet, INGEST opens by itself; and on a read-only Shared Brain mirror there is no INGEST section at all, because an ingest into a mirror has never been possible.
+INGEST and SHARED BRAIN are closed folds that remember whether you opened them — since v3.64.1 as one preference for the whole install, not per domain, so closing one on a domain closes it everywhere. Two exceptions: on a domain with nothing ingested yet, INGEST opens by itself; and on a read-only Shared Brain mirror there is no INGEST section at all, because an ingest into a mirror has never been possible.
 
 The **PAGES** lens is new in version 3.64.0. **Wiki** shows entities, concepts and summaries; **Context** shows standing briefs, handoffs and a project's canonical documents; **All** shows both. Every one of them opens in the same right-side reader. Under the lens row are a **Filter by name…** box and the older type facets — **All**, **Entities**, **Concepts**, **Summaries** and **Memory** — which narrow the wiki reading. The two controls cannot contradict each other: pressing **Memory** puts the list into the **Context** lens and the lens row says so. The type facet **All** means wiki pages only, the same number the PAGES figure reports, so the two can never disagree.
 
@@ -384,12 +384,12 @@ Every page is a plain markdown file on your disk, so you can equally open it in 
 ## How do I chat with my wiki?
 
 1. Click **Chat** in the rail.
-2. Pick a domain from the **SCOPE** pills above the thread. Chat talks to exactly one domain at a time.
+2. Pick a domain from the **DOMAINS** pills above the thread (renamed from SCOPE in v3.64.1). Chat talks to exactly one domain at a time.
 3. Click **New chat**, or just start typing — a new conversation is created automatically.
 4. Type your question and press **Send**, or Command-Enter on a Mac, Control-Enter on Windows.
 5. The answer streams in as the model writes it. On some models you see the model thinking first.
 
-The SCOPE bar carries the readout of how much is in scope, for example "3,421 pages in scope", beside the pills it describes. Switching a pill switches which conversations the sidebar lists and starts you on a fresh empty thread rather than dropping you into an old one.
+The DOMAINS bar carries the readout of how much is in scope, for example "3,421 pages in scope", beside the pills it describes. Since v3.64.1 the bar wraps rather than scrolling, so the **Compile to Wiki** button at its right can never be clipped off the edge. Switching a pill switches which conversations the sidebar lists and starts you on a fresh empty thread rather than dropping you into an old one. A turn still in flight when you switch away keeps running, and its answer is still there when you come back.
 
 The AI answers only from your wiki. If you have not ingested anything on a topic it says so rather than inventing an answer. Answers render with real formatting — headings, bold, lists, code — and citations appear as chips under the answer, each named for the page, for example **Dr Tali Rezun**, beside a coloured dot saying whether it is an entity, a concept or a summary. Click a chip to open the page in the reader. The `[source: …]` marks inside the answer text still show the file path.
 
@@ -428,7 +428,7 @@ To delete: hover a conversation and click the trash button, or tick several and 
 
 A chat is a good place to think out loud, but the conversation is not part of your wiki. **Compile to Wiki** turns a conversation into permanent wiki pages. Use it after a focused brainstorm, a research thread, a meeting note or a decision you talked through.
 
-The button sits on the right of the SCOPE bar as soon as you have asked one question, with its own caption: *"Saves this conversation (4 messages) as wiki pages"*, counting the messages in the thread. That caption names the input, never the output, and says nothing about cost.
+The button sits on the right of the DOMAINS bar as soon as you have asked one question, with its own caption: *"Saves this conversation (4 messages) as wiki pages"*, counting the messages in the thread. That caption names the input, never the output, and says nothing about cost.
 
 1. Click **Compile to Wiki**. The button reads **Checking cost…** for a moment.
 2. A dialog opens naming the estimated cost and where the pages will land. Nothing has been spent yet. The estimate itself is free: it makes no AI call and no network request, and only reads the conversation, the domain schema and the list of pages you already have.

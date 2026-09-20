@@ -3714,6 +3714,8 @@ session would be enforcement, and capture is deliberately advisory.
   ],
   "sessionsShown": 6,
   "sessionsTruncated": false,
+  "newestSaveAt": "2026-09-20T13:05:00.000Z",
+  "noSessionsButSaves": false,
   "note": null
 }
 ```
@@ -3733,6 +3735,8 @@ learns the list was cut without comparing lengths itself.
 | `sessionsReadNotSaved` | the reading that matters: the agent had the context and did not write one back |
 | `legacyLines` | lines with no `sid` — every line written before v3.63.0. Counted **before** the project filter, deliberately, because such a line carries no project and never could: the number is about the **log**, not about this project, and it is what lets a caller tell *"no sessions"* from *"this log predates the meter"* |
 | `selfTestLines` | lines from the app's own *Test all 24 tools* run, excluded from every session figure |
+| `newestSaveAt` *(v3.64.1)* | The newest save's **file** clock, independent of `sessions` and of the session-based totals above it — kept as its own reading precisely so it can disagree with them, which is the signal `noSessionsButSaves` below is built from |
+| `noSessionsButSaves` *(v3.64.1)* | `true` when the window holds at least one save (by file clock) and zero sessions. The shape a bridge left running across an app update leaves: it keeps writing saves but, predating the session line added in v3.63.0/moved in v3.64.0, logs no session for them |
 
 **`client` is `null`, not `"other"`, when no session line survives for that id** — rotated away, or
 the append was in flight when the bridge child exited. *"A name we did not recognise"* and *"no
@@ -3741,6 +3745,14 @@ session line at all"* are different facts and stay different.
 **An absent log is not an error.** `logPresent: false` with zeroed totals, an empty `sessions` array
 and a `note` saying the meter starts counting with the first bridge session on v3.63.0. Silence in a
 never-written log is not evidence that no agent ever worked here.
+
+**`note` carries a second message, added in v3.64.1, when `noSessionsButSaves` is `true`:**
+*"Saves in this window arrived through a bridge that logged no sessions — restart the app that
+launched it (usually Claude Desktop)."* It answers the contradiction a plain reading of `totals`
+cannot: a project can show `sessions: 0` in the same window `newestSaveAt` names a save from
+minutes ago, because the bridge that wrote those saves predates the session line this meter counts
+on. The note is present only under that condition and absent otherwise, so a genuinely quiet
+project's `note` stays `null`.
 
 **The log's on-disk path is deliberately not in this envelope.** The MCP bridge page's own privacy
 panel is where a user reads it, and repeating it here would be a second place for that sentence to

@@ -854,6 +854,23 @@ all (as opposed to a static diagram) is still genuinely open — see **Q22**.
 
 ---
 
+### v3.64.1 — hotfix *(built — 2026-09-20)*
+
+**Not part of this plan.** The maintainer's first production hour on v3.64.0 turned up five defects
+minutes after updating, each with a screenshot, and two builders fixed them same-day: a chat turn in
+flight used to lose its live render (not the underlying request) when you left the view and came
+back — fixed by re-adopting the mount rather than discarding it; the domain page's new folds and
+PAGES lens were remembered per domain and are now one preference for the whole install, so closing
+INGEST once closes it everywhere; a domain switch used to replace more of the page than it needed to
+(measured 7 → 2 DOM children on a cold switch, 3–4 → 0 cached); the five domain-page sections gained
+numerals; the Foundations documents fold on Project context reopened itself after an edit; and the
+capture meter could read *"no session in the last 30 days"* beside a save from 47 minutes earlier,
+because the bridge that wrote the save predated the session line — the route now carries a separate
+file-clock reading and a note naming the pattern. Full detail is this release's own `CLAUDE.md` row.
+A read-only design pass ran alongside it and its output is folded into v3.65.0 below, not built here.
+
+---
+
 ### v3.65.0 — closing the loops
 
 **Retitled 2026-09-19.** This section carried the title *"v3.64.0 — awareness and promotion"* through
@@ -875,6 +892,21 @@ idiom. Three smaller carries joined them: the `memory.knowledge` docs-links key,
 deliberately not reconciling) the two machine ids one computer mints, and re-deriving v3.57.0's
 one-child-replaced baseline for a cached domain switch, which this release's harness measured at
 3–4 on `main` as well as on its own branch.
+
+**What v3.64.1 handed it, 2026-09-20.** A read-only design pass, run alongside that hotfix rather
+than blocking it, measured the same three views (Chat, Domains, Context) and counted **12 distinct
+section-heading treatments and 21 distinct "reading/report" treatments** across them — Domains alone
+names its own sections five different ways. Its proposal, carried into this release rather than
+built by it: **one vocabulary of five shared components and no sixth** — an overview strip, a
+numbered section heading, a fold, a sub-section card, and a readout — with Domains adopting
+Context's numbered-step pattern rather than the reverse, a **Home** view that is the logo's
+destination and nothing else on the rail, Chat's bar becoming selection-only (the project picker
+absorbs the saved-age and "read" readouts, the ⓘ stays a mark rather than a popover, and Compile
+moves to the composer's own action row), and the GitHub-mirror setup form redrawn from its current
+two disconnected fields. It also found a store gap while reading `initFoundations`: it requires an
+**absolute local path**, so a machine with no checkout of a mirrored repository cannot **start** a
+remote mirror, although the refresh arm already reads over the network once one exists — unfixed,
+carried below.
 
 **Goal.** Make the store useful when **more than one** session works a project, and give the owner
 a gesture for moving something from volatile to canonical.

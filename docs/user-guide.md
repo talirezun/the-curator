@@ -1408,7 +1408,7 @@ If you used The Curator before this release, this is the whole map:
 
 | The old tab | Where it is now |
 |---|---|
-| **Chat** | **Chat** in the rail, first. Picking a domain is now the **SCOPE** pill row above the thread, not a dropdown. It is no longer the screen the app opens on — see [Which screen you land on](#which-screen-you-land-on). |
+| **Chat** | **Chat** in the rail, first. Picking a domain is now the **DOMAINS** pill row above the thread (eyebrow SCOPE → DOMAINS, v3.64.1), not a dropdown. It is no longer the screen the app opens on — see [Which screen you land on](#which-screen-you-land-on). |
 | **Ingest** | Gone as a rail destination since v3.64.0. It is the **INGEST** section of each domain's page in **Domains** — the same panel, on the page that names where the file will land. The full-page view is still there, one press from the section. |
 | **Wiki** | Gone as a destination. Open pages from the **PAGES** list, the third section on any domain's page in **Domains** (under OVERVIEW), or by clicking a citation in chat. |
 | **Health** | Gone as a destination. It's the **Wiki health** panel inside each domain in **Domains**. |
@@ -1445,8 +1445,10 @@ it can look things up in.
 
 *The screen on a mirrored project with three documents. Each step carries one of the three verbs —
 foundations are **replaced whole**, working state **supersedes**, knowledge **accumulates** — and
-the ⓘ on each step is where that verb is explained, in place. Note the card between steps ① and ②:
-warnings and readings that qualify a step sit **above its heading** and never fold.*
+the ⓘ on each step is where that verb is explained, in place. Warnings and readings that qualify a
+step sit **at that step**, unfolded, rather than in a separate block — the **Last saved** card among
+them: it sat between steps ① and ② through v3.64.0, and since v3.64.1 is the first row inside step
+②, directly above the CAPTURE reading (below).*
 
 The wireframe below is the same shape with the labels called out.
 
@@ -1808,9 +1810,12 @@ hidden from screen readers, and the words are what a screen reader announces.
 
 *"Is this saved, and is it any good?"* is answered in one line on a healthy day. Since v3.62.0 it
 is answered in two places rather than one block: the **three-cell strip** across the top of the
-page — FOUNDATIONS · WORKING STATE · KNOWLEDGE, each a freshness dot and a word — and, between
-step ① and step ②, a card carrying the **Last saved** reading with the tool and model that wrote
-it.
+page — FOUNDATIONS · WORKING STATE · KNOWLEDGE, each a freshness dot and a word — and a card
+carrying the **Last saved** reading with the tool and model that wrote it. Through v3.64.0 that
+card sat between step ① and step ②, on its own; **since v3.64.1 it is the first row inside step ②
+Working state**, directly above the CAPTURE reading described
+[below](#the-meter-did-the-session-read-and-did-it-save), because both readings answer the same
+question — *did an agent read and save?* — and belonged together rather than split across a gap.
 
 ```
 □ Last saved   4 min ago
@@ -1941,20 +1946,25 @@ answer to a question already answered. The full view keeps its own.
 
 ### The domain page, top to bottom
 
-Open **Domains** and pick a domain. Its page is six sections, in the order the work runs in:
+Open **Domains** and pick a domain. Its page is an unnumbered **OVERVIEW** followed by five
+numbered sections, in the order the work runs in *(numbering added in v3.64.1 — one section-title
+rule at 16 px / 600 with a 20 px numeral, replacing six earlier heading treatments)*:
 
 | | Section | What it is |
 |---|---|---|
-| ① | **OVERVIEW** | Counts what the domain holds, and jumps to the rest of the page. Alongside the four page counts and PROJECTS, two tiles jump rather than filter: **SOURCES**, carrying the last ingest, opens INGEST; **SHARED**, present only when this domain has a connection, opens SHARED BRAIN. |
-| ② | **INGEST** | Where sources go in. Drop a PDF, Markdown or text file. Same panel as the full Ingest view. |
-| ③ | **PAGES** | Every document in the domain, behind three lenses (below). |
-| ④ | **PROJECTS** | Unchanged: create, rename, delete, edit a standing brief, copy the marker line and the agent-instructions block. |
-| ⑤ | **SHARED BRAIN** | This domain's cohorts, with their Push, Pull and Synthesize controls. |
-| ⑥ | **WIKI HEALTH** | Broken links, orphans, duplicates — a scan of this wiki, and the fixes for it. |
+| | **OVERVIEW** | Counts what the domain holds, and jumps to the rest of the page. Alongside the four page counts and PROJECTS, two tiles jump rather than filter: **SOURCES**, carrying the last ingest, opens INGEST; **SHARED**, present only when this domain has a connection, opens SHARED BRAIN. |
+| ① | **INGEST** | Where sources go in. Drop a PDF, Markdown or text file. Same panel as the full Ingest view. |
+| ② | **PAGES** | Every document in the domain, behind three lenses (below). |
+| ③ | **PROJECTS IN THIS DOMAIN** | Unchanged: create, rename, delete, edit a standing brief, copy the marker line and the agent-instructions block. |
+| ④ | **SHARED BRAIN** | This domain's cohorts, with their Push, Pull and Synthesize controls. |
+| ⑤ | **WIKI HEALTH** | Broken links, orphans, duplicates — a scan of this wiki, and the fixes for it. |
 
 **INGEST opens by itself on a domain you have never ingested into**, and stays closed once you
-have. **SHARED BRAIN is closed unless you open it.** Each remembers which you chose, per domain,
-on this computer.
+close it. **SHARED BRAIN is closed unless you open it.** Through v3.64.0 each fold's open/closed
+state was remembered per domain; **since v3.64.1 it is one preference for the whole install** —
+close INGEST on one domain and it stays closed on every domain you open next, on this computer. A
+domain you have never ingested into still opens INGEST for itself and writes nothing until you
+act, so the one preference never hides the one section a brand-new domain needs.
 
 Two things about a `shared-*` mirror: there is **no INGEST section at all** — absent, not disabled,
 because a mirror is a read-only copy of a cohort's wiki and an ingest into it has never been
@@ -1980,9 +1990,10 @@ has three chips above it:
 | **Context** | What the domain holds *about the work*: each project's standing brief, each work-stream's handoff, and its canonical foundations |
 | **All** | Both |
 
-The lens is remembered per domain, like the folds. **Every page still opens in the right-side
-reader**, whichever lens found it and whichever kind it is — a wiki page, a brief, a handoff or a
-foundation. That rule has not moved since v3.49.0 and is not going to.
+The lens is remembered for the whole install, like the folds — since v3.64.1; through v3.64.0 it
+was remembered per domain. **Every page still opens in the right-side reader**, whichever lens
+found it and whichever kind it is — a wiki page, a brief, a handoff or a foundation. That rule has
+not moved since v3.49.0 and is not going to.
 
 The reason for the split is the same one the rail change came from: a wiki page and a handoff are
 different *kinds* of thing — one accumulates, one supersedes — and a single undifferentiated list
@@ -2555,23 +2566,23 @@ The chat adapts its answer shape to your question: a **decision** question ("whi
 Chat is the first item in the rail. (It is no longer the screen a fresh install opens on — that is **Domains**; after your first visit the app returns you to whichever view you left. See [Which screen you land on](#which-screen-you-land-on).) It has three parts:
 
 - **The panel beside the rail** — a **New chat** button, a **Filter conversations** box that reads the *contents* of your conversations rather than only their titles, a **Select all** tick, and this domain's history grouped into **TODAY** and **EARLIER**. Click any conversation to reopen it. Hover one for a **trash** button, or tick several and delete them together.
-- **A SCOPE bar across the top of the thread** — one pill per domain. **Chat talks to exactly one domain at a time**; click a pill to switch. The readout of how much is in scope, e.g. *"3,421 pages in scope"*, sits with those pills, because that is what it describes. Over on the right, once a conversation has a question in it, sits the **Compile to Wiki** button with its own caption: *"Saves this conversation — 2 questions and 2 answers — as wiki pages"*. The caption counts the bubbles in front of you and updates with every turn, so it and the *"N messages"* on the sidebar row are always two readings of the same thread.
+- **A DOMAINS bar across the top of the thread** *(eyebrow SCOPE → DOMAINS in v3.64.1; a scope is a work-stream, not a domain)* — one pill per domain. **Chat talks to exactly one domain at a time**; click a pill to switch. The readout of how much is in scope, e.g. *"3,421 pages in scope"*, sits with those pills, because that is what it describes. Over on the right, once a conversation has a question in it, sits the **Compile to Wiki** button with its own caption: *"Saves this conversation — 2 questions and 2 answers — as wiki pages"*. The caption counts the bubbles in front of you and updates with every turn, so it and the *"N messages"* on the sidebar row are always two readings of the same thread. **Since v3.64.1 the bar wraps instead of scrolling**, so Compile can never be clipped off the edge — it used to be, on a normal-width window, hidden 26 px past the bar's visible edge behind a scrollbar nothing on screen showed — and the ⓘ mark beside a pinned project (below) opens **in flow**, as a second row under the bar, rather than floating over an unrelated part of the screen.
 - **The thread and the composer** below it.
 
 An empty thread opens with *"Ask &lt;domain&gt; anything"*, that domain's page count, and a reminder that answers cite the specific pages they draw from — click a citation chip (named for the page, since v3.46.0) to open it.
 
 ![The Chat view. A left panel headed "Chat" holds a "New chat" button, a "Filter conversations" box with a magnifier inside it, a "Select all" checkbox, and a list of past conversations under the heading EARLIER, each with a checkbox and a message count. Across the top of the main column runs a SCOPE row of coloured domain pills — Articles selected, then Business, Lectures, Posts, Projects, Research — followed by the readout "3,421 pages in scope" and then a "Compile to Wiki" button. Below it a user question sits in a bubble on the right, asking for a table of the last ten articles with a row describing their similarities. The answer beneath it is labelled "THE CURATOR · MiniMax M3 (free) · free" and opens "Here's a synthesis of your recent work based on what's loaded in your wiki." It then renders a Markdown table headed "Your Last 10 Articles (synthesized)" with columns #, Article, Date, Summary and Domain Interest; each Article cell names a title and its source page in monospace, such as "summaries/from-writing-code-to-directing-intelligence.md". At the bottom the composer reads "Ask Articles…" with a model dropdown showing "MiniMax M3 (free)", a length dropdown reading "Balanced", the note "cost varies with response length", and a send button.](images/curator-chat.png)
 
-*The readout and the button in their v3.49.0 positions: **"3,421 pages in scope"** sits with the SCOPE pills, and **Compile to Wiki** stands apart from it. The shot predates v3.64.0's **PROJECT** group, which now sits in the same bar — see [Pin a project](#9-chat-with-your-brain).*
+*The readout and the button in their v3.49.0 positions: **"3,421 pages in scope"** sits with the domain pills, and **Compile to Wiki** stands apart from it. The shot predates v3.64.0's **PROJECT** group, which now sits in the same bar, and v3.64.1's rename of the bar's eyebrow from SCOPE to DOMAINS — see [Pin a project](#9-chat-with-your-brain).*
 
-> **Why they are arranged that way.** The page count used to sit immediately *after* the **Compile to Wiki** button, and read together, *"Compile to Wiki · 3,416 pages in scope"* looked like a warning that compiling would touch 3,416 pages — which put at least one experienced user off pressing the button altogether. The number was always the *scope's* — how much wiki the conversation can see — and never the compile's, so the readout now sits with the SCOPE pills it belongs to and the button carries its own caption saying what it actually does: it saves *this conversation*, whose questions and answers the caption counts, as wiki pages. (In the shot above the window edge clips that caption.) The caption used to say *"N messages"* and, worse, was painted once and never repainted — so after a few turns it could read *"(2 messages)"* beside a sidebar row saying *"6 messages"* for the same thread. Both numbers had always meant the same thing; only one of them was keeping up. What it will **cost** is still the confirmation dialog's job, not the toolbar's.
+> **Why they are arranged that way.** The page count used to sit immediately *after* the **Compile to Wiki** button, and read together, *"Compile to Wiki · 3,416 pages in scope"* looked like a warning that compiling would touch 3,416 pages — which put at least one experienced user off pressing the button altogether. The number was always the *scope's* — how much wiki the conversation can see — and never the compile's, so the readout now sits with the DOMAINS pills it belongs to and the button carries its own caption saying what it actually does: it saves *this conversation*, whose questions and answers the caption counts, as wiki pages. (In the shot above the window edge clips that caption.) The caption used to say *"N messages"* and, worse, was painted once and never repainted — so after a few turns it could read *"(2 messages)"* beside a sidebar row saying *"6 messages"* for the same thread. Both numbers had always meant the same thing; only one of them was keeping up. What it will **cost** is still the confirmation dialog's job, not the toolbar's.
 
-> Conversations belong to a domain. Switching the SCOPE pill switches which set of conversations the sidebar lists — and **starts you on a fresh, empty thread** rather than dropping you into that domain's most recent conversation. Switching scope is something you do because you want to ask something new; landing mid-conversation in an old thread read as though the switch hadn't worked.
+> Conversations belong to a domain. Switching the DOMAINS pill switches which set of conversations the sidebar lists — and **starts you on a fresh, empty thread** rather than dropping you into that domain's most recent conversation. Switching scope is something you do because you want to ask something new; landing mid-conversation in an old thread read as though the switch hadn't worked.
 
 ### Starting a conversation
 
 1. Click **Chat** in the rail
-2. Pick a domain from the **SCOPE** pills above the thread
+2. Pick a domain from the **DOMAINS** pills above the thread
 3. Click **New chat** (or just start typing — a new conversation is created automatically)
 4. Type your question in the box at the bottom
 5. Press **Send** or use `Cmd + Enter` (Mac) / `Ctrl + Enter` (Windows)
@@ -2694,6 +2705,7 @@ On Anthropic and Gemini you still get a streaming **answer** — the wait before
 
 #### Other things that stayed true, and one that changed
 
+- **Leaving the view no longer loses a turn in flight (v3.64.1).** The request itself was never cancelled by switching away — what used to vanish was the live render: return to the conversation (or reopen it from the sidebar) and the answer is there with everything that arrived while you were away, the clock showing real elapsed time rather than restarting at zero, and **Stop** still available if it is still running.
 - **Stop still works throughout.** The **Send** button becomes **Stop** for the whole turn, including while text is streaming. Pressing it stops the wait and stops the spending at the next call boundary, hands your draft question back to the composer, and leaves nothing behind in the thread.
 - **If a streaming turn fails partway through, nothing is saved.** A half-written answer is not an answer, so the app will not persist one and will not seed your next question with it. You will see the error, and the conversation is exactly as it was before you asked.
 - **There is still no progress bar and no percentage.** There is no honest one to draw: a token count is not progress, because there is no total to divide it by. The ring stays in its "running, amount unknown" mode and the clock reports real elapsed time.
@@ -2768,7 +2780,7 @@ A chat is a great place to think out loud, but the conversation itself is not pa
 
 **How it works**
 
-1. Have a conversation in **Chat**. The **Compile to Wiki** button appears on the right of the **SCOPE** bar above the thread as soon as you've asked one question — so even a single sharp question worth keeping can be compiled (v3.0.1-beta.15; previously it needed two messages). Beside it, from v3.49.0, is the sentence that says what it will act on: *"Saves this conversation (4 messages) as wiki pages"*, counting the messages actually in the thread. That caption names the **input**, never the output, and it says nothing about cost — how many wiki pages the AI decides to write cannot be known before the call, and what the compile will cost is the confirmation dialog's sentence, one click later.
+1. Have a conversation in **Chat**. The **Compile to Wiki** button appears on the right of the **DOMAINS** bar above the thread as soon as you've asked one question — so even a single sharp question worth keeping can be compiled (v3.0.1-beta.15; previously it needed two messages). Beside it, from v3.49.0, is the sentence that says what it will act on: *"Saves this conversation (4 messages) as wiki pages"*, counting the messages actually in the thread. That caption names the **input**, never the output, and it says nothing about cost — how many wiki pages the AI decides to write cannot be known before the call, and what the compile will cost is the confirmation dialog's sentence, one click later.
 2. Click **Compile to Wiki**. The button reads **Checking cost…** for a moment, then a dialog opens telling you what this compile is estimated to cost and where the pages will land. **Nothing has been spent yet.** See *"What it costs, before it costs it"* below.
 3. Click **Compile** in the dialog. *Now* the paid work starts, and a progress bar shows what's happening — loading the conversation, asking the AI to extract durable knowledge, writing pages, syncing entity backlinks, updating the index.
 4. After 15–45 seconds a **result card appears inline in the conversation**, right below the last message: how many pages were **created** (✨) and how many were **updated** (✏️), with byte sizes and per-section bullet deltas. Unchanged pages are hidden by default — click *"Show unchanged"* if you want to see them. The card is part of the thread, so it scrolls with the conversation and you can keep chatting underneath it at full size (before v3.0.14 the result opened in a fixed panel above the input box that permanently squeezed the chat area — that's fixed). The card scrolls into view at its top, so the title and the ✨/✏️ counts are always what you see first. Compile again and you get a second card; the cards clear when you switch conversations or start a new chat. If you switch conversations *while* a compile is running, the pages are still written — you just won't see the card, since it belongs to the other conversation.
@@ -2895,18 +2907,19 @@ Above the list are **New domain** and **Use existing folder** — the second poi
 - Its display name, with an **ⓘ** mark beside it — click that for the one-line explanation of what a domain *is*; **Esc** closes it. (This used to be a generated sentence printed under the title — *"A compounding wiki of 3,336 pages — 600 entities…"* — and it was removed in v3.50.0 because every figure in it is one of the OVERVIEW figures below, said twice. What was left was an explanation, and explanations go behind the mark.) If the domain is a mirror, a **read-only mirror** pill sits here too — that one stays in the open, because it is a data-loss notice rather than an explanation.
 - **Rename** · **Delete** · **Ask this domain** — the last of which jumps to Chat, already scoped here
 
-Then **six sections** (four through v3.63.0), each in its own card under its own heading, in this
-order — the order the work runs in. [§7b](#7b-the-three-places--ask-knowledge-context) has the
-shape of the whole page; this is what each section holds:
+Then an unnumbered **OVERVIEW** followed by **five numbered sections** (four, unnumbered, through
+v3.63.0; numbered since v3.64.1), each in its own card under its own heading, in this order — the
+order the work runs in. [§7b](#7b-the-three-places--ask-knowledge-context) has the shape of the
+whole page; this is what each section holds:
 
 | Section | What it is |
 |---|---|
 | **OVERVIEW** | Counts what the domain holds, and jumps to the rest of the page. Five figures in one card: PAGES · ENTITIES · CONCEPTS · SUMMARIES · **PROJECTS** (plus OTHER when any page sits outside the three canonical folders). *Since v3.58.0* the first four are **shortcuts** — press ENTITIES and the page list below selects its Entities tab and scrolls into view; the figure then shows the same selected state the tab does, because they are two controls over one filter. PROJECTS scrolls to the Projects section instead, having no tab of its own. *New in v3.64.0:* two tiles that **jump rather than filter** — **SOURCES** carries the last ingest and opens INGEST, and **SHARED** appears only when this domain has a connection and opens SHARED BRAIN |
-| **INGEST** *(v3.64.0)* | Where sources go in, on the page that names where the file will land. It **opens by itself on a domain you have never ingested into** and stays closed once you have, remembering which you chose, per domain. **Absent** on a `shared-*` mirror. See [§8](#8-ingest-a-source) |
-| **PAGES** | Every document in the domain — the list itself, **open**, with its filter box, its All / Entities / Concepts / Summaries tabs and, new in v3.64.0, a **Wiki · Context · All** lens above them. See [§11](#11-read-a-wiki-page) |
-| **PROJECTS IN THIS DOMAIN** | Unchanged. See just below |
-| **SHARED BRAIN** *(v3.64.0)* | This domain's cohorts, with their Push, Pull and Synthesize controls — or, on a mirror, one read-only strip naming the cohort that produced it. **Closed unless you open it**, remembered per domain. The switch that turns Shared Brain on for the whole install stays on the Shared Brain page, where it has always been; joining a cohort and setting one up happen there too, one press away. See [§15b](#15b-shared-brain) |
-| **WIKI HEALTH** | See [§17](#17-wiki-health). It keeps its name because it scans the **wiki** and nothing else — not your briefs, handoffs or canonical documents |
+| ① **INGEST** *(v3.64.0)* | Where sources go in, on the page that names where the file will land. It **opens by itself on a domain you have never ingested into** and stays closed once you have. Through v3.64.0 that was remembered per domain; **since v3.64.1 it is one preference for the whole install**. **Absent** on a `shared-*` mirror. See [§8](#8-ingest-a-source) |
+| ② **PAGES** | Every document in the domain — the list itself, **open**, with its filter box, its All / Entities / Concepts / Summaries tabs and, new in v3.64.0, a **Wiki · Context · All** lens above them, remembered for the whole install since v3.64.1. See [§11](#11-read-a-wiki-page) |
+| ③ **PROJECTS IN THIS DOMAIN** | Unchanged. See just below |
+| ④ **SHARED BRAIN** *(v3.64.0)* | This domain's cohorts, with their Push, Pull and Synthesize controls — or, on a mirror, one read-only strip naming the cohort that produced it. **Closed unless you open it**; since v3.64.1 that too is one preference for the whole install rather than per domain. The switch that turns Shared Brain on for the whole install stays on the Shared Brain page, where it has always been; joining a cohort and setting one up happen there too, one press away. See [§15b](#15b-shared-brain) |
+| ⑤ **WIKI HEALTH** | See [§17](#17-wiki-health). It keeps its name because it scans the **wiki** and nothing else — not your briefs, handoffs or canonical documents |
 
 ![The Domains view with the "projects" domain open. A left panel headed "Domains" holds a "New domain" button, a "Use existing folder" button, and a KNOWLEDGE list of two domains, each with a coloured identity dot, its name and its page count — Articles 3,445 pages (with a small amber dot on the right marking open health issues) and Projects 767 pages and selected. The main column opens with the path eyebrow "DOMAINS/PROJECTS/" over the title "Projects" with an ⓘ mark, then Rename and Delete, and an "Ask this domain" button on the right. Under an OVERVIEW eyebrow, one card holds five figures: PAGES 767 · ENTITIES 161 · CONCEPTS 553 · SUMMARIES 53 · PROJECTS 4 — the PAGES tile sits inside its own violet-bordered box, because it is also the button for the "All" filter and that filter is the one currently selected. Under "PAGES · THE WIKI" comes the page list itself, open, with a "Filter by name…" box and facet tabs reading All 767, Entities 161, Concepts 553, Summaries 53 and Memory 46; the rows are concept pages — Access Control List, Access Control Models, Agent Harness, Agent Memory Compounding and so on — each with its path in monospace on the right, such as "concepts/agent-harness.md". Below the list, "Showing 150 of 767" and a "Show 150 more" row. Last in view, under "PROJECTS IN THIS DOMAIN" with its own ⓘ and no loose sentence beneath the heading, four project rows: "field-notes", "projects" (labelled "the domain's own project — it cannot be renamed or deleted"), "lumina" and "curator", each with a "Standing brief" pill, a "last save … · newest work-stream …" line, and the buttons "Copy marker line" and "Copy agent instructions" — each of the two now carrying its own ⓘ mark beside it.](images/curator-domains.png)
 
@@ -3031,7 +3044,7 @@ button. You get:
 
 - a **Wiki · Context · All** lens above the list (new in v3.64.0) — **Wiki** is entities, concepts
   and summaries; **Context** is standing briefs, handoffs and a project's canonical documents;
-  **All** is both. The choice is remembered per domain
+  **All** is both. The choice is remembered for the whole install (v3.64.1; was per domain)
 - a **Filter by name…** box that narrows the list as you type
 - tabs — **All · Entities · Concepts · Summaries · Memory** — each with its own count (**Memory** lists standing briefs and handoffs and is not included in **All**, see [§10](#memory-pages-in-the-list))
 - one row per page, colour-dotted by type, with its full path in monospace
@@ -4153,6 +4166,17 @@ outright — pressing a button on a Settings screen must never report a session 
 
 **Nothing here stops a session.** The meter reports; it never refuses, delays or blocks anything.
 
+**A fifth state, added in v3.64.1: saves with no sessions to show for them.** A bridge process can
+log saves without ever writing a session line — the exact shape of a Claude Desktop bridge kept
+alive across an app update, still serving old code, which is what a bridge running since 2026-09-18
+did to a maintainer's own reading on 2026-09-20: the strip read *"no session in the last 30 days"*
+beside a save from 47 minutes earlier, which looked like a contradiction rather than what it was.
+The route now carries `newestSaveAt` — the newest save's **file** clock, kept apart from the
+session reading's own clock — and, when the window holds saves but zero sessions, a `note` under
+the readout: *"Saves in this window arrived through a bridge that logged no sessions — restart the
+app that launched it (usually Claude Desktop)."* The note is dropped whenever `noSessionsButSaves`
+is false, so a genuinely quiet project still reads as quiet.
+
 > The same reading is available from the terminal (`my-curator doctor`) and as a per-harness matrix
 > row (`node scripts/measure-harness.js --harness claude-code --since <date>`), from the same
 > aggregation — so the three can never disagree about one session.
@@ -4201,7 +4225,7 @@ Here is the recommended way to use The Curator day-to-day:
 ### When you want to recall something
 
 1. Open The Curator
-2. Open **Chat**, pick the domain from the **SCOPE** pills, and ask your question (or continue an old conversation)
+2. Open **Chat**, pick the domain from the **DOMAINS** pills, and ask your question (or continue an old conversation)
 3. Get a cited answer pointing to specific wiki pages
 4. Click a citation to read that page in the overlay, or open it in Obsidian for the full graph context
 

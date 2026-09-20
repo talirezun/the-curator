@@ -42,11 +42,13 @@ Nothing needs to create the folder by hand — the first save makes `state/` and
 
 The easiest way to create, rename, or delete a domain is from within the app — no Finder or terminal needed. Open The Curator (a browser install serves it at `http://localhost:3333`; the packaged Mac app opens in its own window on a port it picks fresh each launch) and go to **Domains**.
 
-Opening a domain shows six sections, in the order the work runs in — **OVERVIEW** (its numbers),
-**INGEST** (a fold, where sources go in), **PAGES** (everything readable, behind a Wiki / Context /
-All lens), **PROJECTS IN THIS DOMAIN**, **SHARED BRAIN** (a fold) and **WIKI HEALTH**. The two folds
-and the lens arrived in v3.64.0, when Ingest and Shared Brain left the rail; the screenshot below
-predates them and still shows the older `PAGES · THE WIKI` eyebrow:
+Opening a domain shows an unnumbered **OVERVIEW** (its numbers) followed by five numbered
+sections, in the order the work runs in — ① **INGEST** (a fold, where sources go in), ② **PAGES**
+(everything readable, behind a Wiki / Context / All lens), ③ **PROJECTS IN THIS DOMAIN**, ④
+**SHARED BRAIN** (a fold) and ⑤ **WIKI HEALTH**. The two folds and the lens arrived in v3.64.0, when
+Ingest and Shared Brain left the rail; the numerals, and whether each fold is open plus which lens
+PAGES shows being one preference for the whole install rather than per domain, arrived in v3.64.1.
+The screenshot below predates all of it and still shows the older `PAGES · THE WIKI` eyebrow:
 
 ![The Curator's Domains view with the "projects" domain open. The sidebar has New domain and Use existing folder above a KNOWLEDGE list of two domains with page counts — Articles (3,445 pages, an amber dot marking open health issues) and Projects (767 pages, selected). The main pane is headed DOMAINS/PROJECTS/ and "Projects", with Rename, Delete and "Ask this domain" beside the title. An OVERVIEW group holds five tiles: Pages 767, Entities 161, Concepts 553, Summaries 53, Projects 4 — new in v3.58.0, the first four are buttons that filter the page list below, and Pages sits inside a violet-bordered box because "All" is the filter currently selected. Below it, PAGES · THE WIKI holds a "Filter by name…" box and the facets All 767, Entities 161, Concepts 553, Summaries 53, Memory 46, over an alphabetical list of page titles with their file paths on the right; a footer reads "Showing 150 of 767" above a "Show 150 more" link. Underneath, PROJECTS IN THIS DOMAIN — headed with its own ⓘ mark and no loose sentence under it — lists four project rows (field-notes, projects, lumina, curator), each carrying a "Standing brief" pill, its last save and newest work-stream, and the actions Copy marker line and Copy agent instructions, each now with its own ⓘ mark beside it.](images/curator-domains.png)
 

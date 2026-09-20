@@ -384,11 +384,13 @@ Three states are told apart rather than blurred: no usage log on this computer y
 
 What it cannot see is stated on the screen. It counts what went through the bridge, so a save made with `my-curator save`, or by an agent that never connected, leaves no line and is in neither the numerator nor the denominator. The harness label is self-reported by the client and nothing in The Curator branches on it. Calls made before version 3.63.0 carry no session id and are counted separately rather than invented into sessions. The app's own tool self-test is excluded outright. And nothing here stops a session: the meter reports, it never refuses or delays anything.
 
+A fifth state, added in version 3.64.1, catches the specific pattern of a bridge left running across an app update: it can go on logging saves while never writing a session line for them, because the session line is newer than the code that bridge is still running. When that happens the reading would otherwise look like a contradiction — "no session in the last 30 days" beside a save from minutes ago. The screen now carries the newest save's own timestamp separately from the session count, and a note explaining the pattern: restart the app that launched the bridge, usually Claude Desktop.
+
 The same reading is available from the terminal with `my-curator doctor`.
 
 ## Can I ask Chat about a project, instead of an agent?
 
-Yes, since version 3.64.0. Chat's scope bar carries a project pill beside the domain: pin a project and the answer draws on that project's standing brief, its latest handoff, a slice of its journal and the canonical documents you marked "read first" — on top of the domain's wiki, never instead of it.
+Yes, since version 3.64.0. Chat's DOMAINS bar (renamed from SCOPE in version 3.64.1) carries a project pill beside the domain: pin a project and the answer draws on that project's standing brief, its latest handoff, a slice of its journal and the canonical documents you marked "read first" — on top of the domain's wiki, never instead of it.
 
 Three things are worth knowing. It is a reading and never a save: chat writes nothing to a project. The project's text reaches the model as recorded data to verify, never as instructions, under the same defence the MCP bridge uses, from the same source. And the two budgets are separate, so pinning a project never quietly costs you wiki pages; when something does not fit, the answer says what was left out.
 
@@ -526,7 +528,7 @@ The **Context** item on the rail — one of three, since version 3.64.0 — open
 - **The header carries Copy agent instructions**, beside a breadcrumb naming the domain and project.
 - **A three-cell strip** answers the question people actually arrive with: where does this project stand? One reading per layer — the canonical documents, the working state, the knowledge — each with a freshness dot and the word beside it, because colour never carries a reading on its own. An unknown age is drawn as a dashed ring and the words, never as age zero.
 - **Step 1, Foundations** holds the canonical documents, or — before ownership is chosen — the question that chooses it.
-- **Step 2, Working state** holds three collapsed folds in ownership order: the standing brief (yours, with a pencil), the work-streams (your agents'; press a row to read that handoff in the reader), and the session journal. Everything that qualifies them — content that had to be trimmed, a handoff that arrived by sync, another machine that saved after this one, two tools sharing one handoff file — sits above them and never folds.
+- **Step 2, Working state** opens with the **Last saved** reading and the CAPTURE line described [below](#how-do-i-know-whether-my-agents-are-actually-saving) — moved here, to the top of this step, in version 3.64.1 — then holds three collapsed folds in ownership order: the standing brief (yours, with a pencil), the work-streams (your agents'; press a row to read that handoff in the reader), and the session journal. Everything that qualifies them — content that had to be trimmed, a handoff that arrived by sync, another machine that saved after this one, two tools sharing one handoff file — sits above them and never folds.
 - **Step 3, Knowledge** holds five wiki figures and two doors: Open in Domains, and Ask this domain.
 - **Every fold starts closed and remembers whether you left it open.** Each summary line carries the figure that decides whether to open it.
 
