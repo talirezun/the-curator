@@ -133,6 +133,34 @@ const toolLines = (file = LOG) => readLines(file).filter((l) => JSON.parse(l).ev
 const sessionLines = (file = LOG) => readLines(file).filter((l) => JSON.parse(l).ev === 'session');
 /** The append is fire-and-forget; give the microtask + fs write a moment. */
 const settle = (ms = 60) => new Promise(r => setTimeout(r, ms));
+/**
+ * §7 spawns a real child process and appends to CHILD_LOG fire-and-forget
+ * from inside it (`server.oninitialized`, and the dispatch handler after
+ * every call). A fixed `settle()` before reading that file is a race, not a
+ * wait: its true duration is runner load, not wall-clock time, so a sleep
+ * long enough on a maintainer's Mac can still lose on a slower CI box (seen
+ * live on GitHub Actions run 35503086338 — 447 passed / 1 failed at exactly
+ * this read). Poll instead: re-read the file every `everyMs` until
+ * `predicate` holds or `timeoutMs` passes, then return whatever was last
+ * read — a timeout still hands back real (short) state for the existing
+ * assertions to name, rather than throwing a generic timeout error.
+ *
+ * Only valid for a POSITIVE claim ("a line exists" / "N lines exist"). A
+ * claim that NOTHING MORE was written cannot be polled — there is no
+ * predicate that distinguishes "settled" from "about to grow" — so that kind
+ * of read keeps its fixed settle (see the one after the child is killed,
+ * below, with a comment explaining why it stays).
+ */
+const waitForLog = async (file, predicate, { timeoutMs = 5000, everyMs = 25 } = {}) => {
+  const read = () => (existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()) : []);
+  const deadline = Date.now() + timeoutMs;
+  let lines = read();
+  while (!predicate(lines) && Date.now() < deadline) {
+    await settle(everyMs);
+    lines = read();
+  }
+  return lines;
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§1  THE LINE — six keys, no content, whatever the caller sends');
@@ -576,7 +604,13 @@ eq((listed?.result?.tools || []).length, registry.length, `the wire still carrie
 // would be a false reading. Asserted on the tool lines, which is the claim
 // this line has always been about.
 {
-  const early = existsSync(CHILD_LOG) ? readFileSync(CHILD_LOG, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l)) : [];
+  // RACE FIX: the session line is appended fire-and-forget from
+  // `server.oninitialized`, so an immediate read here can land before the
+  // append does on a slow/loaded runner (GitHub Actions run 35503086338).
+  // Poll for at least one line instead of reading once; both assertions are
+  // unchanged.
+  const earlyRaw = await waitForLog(CHILD_LOG, (lines) => lines.length > 0);
+  const early = earlyRaw.map((l) => JSON.parse(l));
   ok(early.every((r) => r.ev === 'session'), 'listing tools is not a tool CALL and writes no tool line');
   ok(early.length > 0, '…while the startup session line IS there (v3.64.0 — a bridge that is opened has begun)');
 }
@@ -585,9 +619,13 @@ const wireOk = await rpc('tools/call', { name: 'list_domains', arguments: {} });
 ok(/zz-usage/.test(wireOk?.result?.content?.[0]?.text || ''), 'list_domains answers over the wire');
 const wireRefused = await rpc('tools/call', { name: 'get_raw_source', arguments: { domain: DOM, slug: 'x'.repeat(4096) } });
 ok(/"ok": false/.test(wireRefused?.result?.content?.[0]?.text || ''), 'the oversized slug is refused over the wire');
-await settle(500);
 
-const childAll = existsSync(CHILD_LOG) ? readFileSync(CHILD_LOG, 'utf8').split('\n').filter(l => l.trim()) : [];
+// RACE FIX: same as above — the RPC reply for each `tools/call` arrives on
+// stdout before that call's log append lands on disk, because the append is
+// fire-and-forget. Poll for the three lines the assertions below expect
+// (the startup session line + these two tool calls) instead of a fixed
+// sleep before a single read; the assertions themselves are unchanged.
+const childAll = await waitForLog(CHILD_LOG, (lines) => lines.length >= 3);
 // STILL THREE, and still ONE session line — but v3.64.0 moved WHEN it is
 // written (from the first tool call to `notifications/initialized`), so its
 // POSITION moved: it is now the first line in the file rather than the first
@@ -621,6 +659,13 @@ ok(!existsSync(path.join(DOMAINS, '.mcp-usage.jsonl'))
 
 child.stdin.end();
 child.kill();
+// NOT a candidate for waitForLog: the claims below are negative ("stderr
+// stayed empty", "nothing non-JSON showed up on stdout"). There is no
+// predicate that distinguishes "settled" from "about to grow" for an absence
+// — polling would just stop at the first successful check and could still
+// race a straggling write. This settle only needs to be long enough to let
+// any already-in-flight data event from the just-killed child drain; it is
+// not waiting on the usage-log append the rest of this section polls for.
 await settle(200);
 const poison = rawStdoutLines.filter(l => { try { JSON.parse(l); return false; } catch { return true; } });
 ok(rawStdoutLines.length > 0, `the child spoke on stdout (${rawStdoutLines.length} lines)`);
