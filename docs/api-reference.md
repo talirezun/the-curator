@@ -1245,14 +1245,9 @@ Entries are sorted by `path` and drawn only from the three canonical folders (`e
 
 Capped at 20,000 entries (`truncated: true` beyond that; `count` is the number actually returned). `total` always reports the real, uncapped count — it costs nothing extra, since every filename is enumerated before the cap is applied.
 
-### `?include=memory` — the domain's memory pages (v3.50.0)
+### `?include=memory` — the domain's memory pages (v3.50.0; foundations since v3.64.0)
 
-A domain's `state/` tree is markdown too: each project's **standing brief**, each work-stream's **handoff** (`current.md`) and — since v3.64.0 — each project's **canonical documents** under `foundations/`. With `?include=memory` the response gains four additive fields:
-
-<!-- D-PENDING --> *Package D owns this route's v3.64.0 widening. Take the exact field names, the
-foundation entries' shape and the note about how a foundation opens (through
-`GET /api/memory/:domain/:project/foundations/:slug`, not through the wiki page route) from D's
-report before merge; the sentence above states only the fact the contract fixes.*
+A domain's `state/` tree is markdown too: each project's **standing brief** and each work-stream's **handoff** (`current.md`). With `?include=memory` the response gains four additive fields:
 
 ```json
 {
@@ -1266,7 +1261,12 @@ report before merge; the sentence above states only the fact the contract fixes.
       "title": "ai-tech · Standing brief", "savedAt": "2026-09-08T11:02:00.000Z", "bytes": 4180 },
     { "kind": "handoff", "project": "lumina", "isDefaultProject": false, "scope": "design",
       "machine": "studio-9f2a1c",           "path": "state/lumina/design/studio-9f2a1c/current.md",
-      "title": "lumina · design · studio-9f2a1c", "savedAt": "2026-09-09T18:41:00.000Z", "bytes": 9022 }
+      "title": "lumina · design · studio-9f2a1c", "savedAt": "2026-09-09T18:41:00.000Z", "bytes": 9022 },
+    { "kind": "foundation", "project": "lumina", "isDefaultProject": false, "scope": null,
+      "machine": null,   "slug": "architecture.md", "role": "architecture",
+      "path": "state/lumina/foundations/architecture.md",
+      "title": "lumina · Architecture", "savedAt": "2026-09-19T08:12:00.000Z", "bytes": 14203,
+      "freshness": "fresh", "skeleton": false }
   ],
   "memoryCount": 2,
   "memoryTotal": 2,
@@ -1275,6 +1275,20 @@ report before merge; the sentence above states only the fact the contract fixes.
 ```
 
 **It is a separate array, never folded into `entries`, and `count`/`total` keep meaning wiki pages.** The Domains view renders a fifth **Memory** facet from it beside Entities / Concepts / Summaries, and the "All" facet keeps counting wiki pages only — a facet that disagreed with the PAGES figure directly above it would be a self-contradicting readout.
+
+**Since v3.64.0 the same array also carries each project's FOUNDATIONS** — its canonical documents
+— beside its standing brief and its work-stream handoffs. A foundation row carries
+the nine fields a brief or a handoff carries plus four of its own — `kind: "foundation"`, its
+`slug`, its `role`, and the `freshness` and `skeleton` readings the store computed. **The wire
+shape is an allow-list, not a spread**: the store's tier-0 rows also carry `sha256`, `authoredBy`,
+`commit` and `source`, and none of it belongs in a page listing. `memoryCount` / `memoryTotal` count them; the wiki `count` and `total` are **unchanged**,
+so the figure above the page list cannot contradict it — the same rule the `memory` array has
+followed since v3.50.0.
+
+**A foundation's `path` is not openable through `GET /:domain/page`.** It is read through
+`GET /api/memory/:domain/:project/foundations/:slug`, addressed **by slug**, not by path. That is
+the one row in this array whose `path` is a location rather than a handle, and a caller that treats
+every row alike will 404 on it.
 
 **One row per `(scope, machine)` pair.** The `<machine>` segment is load-bearing in the working-state store (two machines saving under one work-stream are two files, and Personal Sync keeps them apart precisely so no hunk ever conflicts), so collapsing them would hide a file that is on disk.
 

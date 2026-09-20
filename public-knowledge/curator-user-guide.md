@@ -221,7 +221,7 @@ Click **Domains** in the rail. The panel beside the rail lists every domain unde
 | Action | What happens |
 |---|---|
 | **New domain** | Give it a **Name**, an optional **Description**, and pick a **Template**: **Generic** (a balanced starting schema, the good default), **Tech**, **Business** or **Personal**. The template writes the domain's starting schema, which tells the AI how to categorise what you ingest; you can edit it later. Nothing is written until you click **Create domain**. |
-| **Rename** | Changes the display name immediately. Wiki pages, conversations and Obsidian links are preserved. A read-only Shared Brain mirror cannot be renamed. |
+| **Rename** | Changes the display name immediately. Wiki pages, conversations and Obsidian links are preserved. A read-only Shared Brain mirror cannot be renamed — its name comes from the Shared Brain it mirrors, and there is no rename control on the Shared Brain page either. |
 | **Delete** | The confirmation names the folder and the exact page count, and the button reads **Delete permanently**. It removes the domain folder, its pages, its raw sources and its saved conversations, and cannot be undone from inside The Curator. |
 
 If one of these is refused because something else is writing to that domain — an ingest, a sync, an MCP write — you get a clearly marked "Not done — the server refused this." message rather than a silent failure. Wait and try again. Changes appear in the app and in Obsidian instantly, with no restart. If sync is configured, run **Sync now** soon after a rename or delete.

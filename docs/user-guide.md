@@ -1933,25 +1933,29 @@ Open **Domains** and pick a domain. Its page is six sections, in the order the w
 
 | | Section | What it is |
 |---|---|---|
-| ① | **OVERVIEW** | The counts — pages, entities, concepts, summaries, projects — and when this domain was last written to. The counts double as jump tiles into the page list. <!-- D-PENDING --> *(Package D adds two further tiles here: SOURCES, carrying the last ingest, and SHARED, shown only when this domain has a connection. Confirm both names and what each jumps to against D's report.)* |
-| ② | **INGEST** | Drop a PDF, Markdown or text file here. Same panel as the full Ingest view. |
-| ③ | **PAGES** | Everything this domain holds that you can read, behind a three-way lens (below). |
-| ④ | **PROJECTS** | The projects in this domain: create, rename, delete, edit a standing brief, copy the marker line and the agent-instructions block. |
-| ⑤ | **SHARED BRAIN** | The cohort connections *this* domain contributes to, with their Push, Pull and Synthesize controls. |
+| ① | **OVERVIEW** | Counts what the domain holds, and jumps to the rest of the page. Alongside the four page counts and PROJECTS, two tiles jump rather than filter: **SOURCES**, carrying the last ingest, opens INGEST; **SHARED**, present only when this domain has a connection, opens SHARED BRAIN. |
+| ② | **INGEST** | Where sources go in. Drop a PDF, Markdown or text file. Same panel as the full Ingest view. |
+| ③ | **PAGES** | Every document in the domain, behind three lenses (below). |
+| ④ | **PROJECTS** | Unchanged: create, rename, delete, edit a standing brief, copy the marker line and the agent-instructions block. |
+| ⑤ | **SHARED BRAIN** | This domain's cohorts, with their Push, Pull and Synthesize controls. |
 | ⑥ | **WIKI HEALTH** | Broken links, orphans, duplicates — a scan of this wiki, and the fixes for it. |
 
-**INGEST and SHARED BRAIN are folds, closed by default**, and each remembers whether you had it
-open — per domain, on this computer. Two exceptions worth knowing:
+**INGEST opens by itself on a domain you have never ingested into**, and stays closed once you
+have. **SHARED BRAIN is closed unless you open it.** Each remembers which you chose, per domain,
+on this computer.
 
-- **On a domain with nothing ingested yet, INGEST opens by itself.** A brand-new domain's only
-  useful next action is putting something in it, and a closed fold is a worse answer to that than
-  an open one.
-- **On a `shared-*` mirror there is no INGEST section at all.** It is *absent*, not disabled — a
-  mirror is a read-only copy of a cohort's wiki, and an ingest into it has never been possible.
-  The SHARED BRAIN section on a mirror is one read-only strip naming the cohort that produced it.
+Two things about a `shared-*` mirror: there is **no INGEST section at all** — absent, not disabled,
+because a mirror is a read-only copy of a cohort's wiki and an ingest into it has never been
+possible — and its SHARED BRAIN section is one read-only strip naming the cohort that produced it.
+
+**The switch that turns Shared Brain on for the whole install stays on the Shared Brain page**,
+where it has always been. It is a fact about your install, not about one domain, so it is not on a
+domain's page and never will be.
 
 **WIKI HEALTH keeps its name**, because it scans the wiki and nothing else. It does not look at
 your briefs, your handoffs or your canonical documents.
+
+**Every page still opens in the reader on the right**, whichever section found it.
 
 ### The PAGES lens — Wiki · Context · All
 
@@ -1960,8 +1964,8 @@ has three chips above it:
 
 | Chip | Shows |
 |---|---|
-| **Wiki** | Entities, concepts and summaries — the compounding wiki |
-| **Context** | Standing briefs, handoffs and a project's canonical documents |
+| **Wiki** | What the model compounded from your sources — entities, concepts and summaries |
+| **Context** | What the domain holds *about the work*: each project's standing brief, each work-stream's handoff, and its canonical foundations |
 | **All** | Both |
 
 The lens is remembered per domain, like the folds. **Every page still opens in the right-side
@@ -2039,13 +2043,11 @@ flowchart TD
 5. Wait. A progress bar names the current step ("AI is analyzing the document…") with a percentage and a running timer beside it. This usually takes **15–60 seconds** depending on the document length. Do not close the browser or refresh the page. See *Understanding the progress bar* below if it looks like it's stuck.
 6. When it finishes you get a specific result, not a "Done!" — e.g. *"Wrote 7 new pages · updated 4 existing · +6.1 KB"* — followed by the full list of pages created or updated
 
-> **Where a drop counts (v3.64.0).** A file dropped **anywhere else on the page** is still refused
-> rather than opened — dropping a file on a web page normally navigates away from the app, losing
-> whatever you had in progress. Only a file dropped **inside the INGEST section** (or on the
-> full-page view's own zone) is added to the ingest.
-> <!-- D-PENDING --> *(If package D's page-level drop forward shipped, this paragraph gains: "A
-> drop anywhere on the domain page is forwarded into the section." If it was deferred, this stands
-> as written.)*
+> **Where a drop counts (v3.64.0).** Only a file dropped **inside the INGEST section** — or on the
+> full-page view's own zone — is added to the ingest. A file dropped elsewhere on the page is
+> **refused rather than opened**, because dropping a file on a web page normally navigates away
+> from the app and takes whatever you had in progress with it. A page-level drop that forwards
+> into the section is designed and deferred to v3.65.0.
 
 > **While something is being dragged, or an ingest or batch is running, the domain page stops
 > refreshing itself underneath the panel** and updates in place instead. That is not a nicety: a
@@ -2887,11 +2889,11 @@ shape of the whole page; this is what each section holds:
 
 | Section | What it is |
 |---|---|
-| **OVERVIEW** | Five figures in one card: PAGES · ENTITIES · CONCEPTS · SUMMARIES · **PROJECTS** (plus OTHER when any page sits outside the three canonical folders). *New in v3.58.0:* the first four are **shortcuts** — press ENTITIES and the page list below selects its Entities tab and scrolls into view; the figure then shows the same selected state the tab does, because they are two controls over one filter. PROJECTS scrolls to the Projects section instead, having no tab of its own. The tabs are unchanged |
-| **INGEST** *(v3.64.0)* | The ingest panel, on the page that names where the file will land. A **closed fold**, remembered per domain — except on a domain with nothing ingested yet, where it opens by itself. **Absent** on a `shared-*` mirror. See [§8](#8-ingest-a-source) |
-| **PAGES** | The page list itself, **open**, with its filter box, its All / Entities / Concepts / Summaries tabs and — new in v3.64.0 — a **Wiki · Context · All** lens above them. See [§11](#11-read-a-wiki-page) |
-| **PROJECTS IN THIS DOMAIN** | See just below |
-| **SHARED BRAIN** *(v3.64.0)* | The cohort connections *this* domain contributes to, with their Push, Pull and Synthesize controls — or, on a mirror, one read-only strip naming the cohort that produced it. A **closed fold**, remembered per domain. Turning the feature on, joining a cohort and setting one up all still happen in the full Shared Brain view, one press away. See [§15b](#15b-shared-brain) |
+| **OVERVIEW** | Counts what the domain holds, and jumps to the rest of the page. Five figures in one card: PAGES · ENTITIES · CONCEPTS · SUMMARIES · **PROJECTS** (plus OTHER when any page sits outside the three canonical folders). *Since v3.58.0* the first four are **shortcuts** — press ENTITIES and the page list below selects its Entities tab and scrolls into view; the figure then shows the same selected state the tab does, because they are two controls over one filter. PROJECTS scrolls to the Projects section instead, having no tab of its own. *New in v3.64.0:* two tiles that **jump rather than filter** — **SOURCES** carries the last ingest and opens INGEST, and **SHARED** appears only when this domain has a connection and opens SHARED BRAIN |
+| **INGEST** *(v3.64.0)* | Where sources go in, on the page that names where the file will land. It **opens by itself on a domain you have never ingested into** and stays closed once you have, remembering which you chose, per domain. **Absent** on a `shared-*` mirror. See [§8](#8-ingest-a-source) |
+| **PAGES** | Every document in the domain — the list itself, **open**, with its filter box, its All / Entities / Concepts / Summaries tabs and, new in v3.64.0, a **Wiki · Context · All** lens above them. See [§11](#11-read-a-wiki-page) |
+| **PROJECTS IN THIS DOMAIN** | Unchanged. See just below |
+| **SHARED BRAIN** *(v3.64.0)* | This domain's cohorts, with their Push, Pull and Synthesize controls — or, on a mirror, one read-only strip naming the cohort that produced it. **Closed unless you open it**, remembered per domain. The switch that turns Shared Brain on for the whole install stays on the Shared Brain page, where it has always been; joining a cohort and setting one up happen there too, one press away. See [§15b](#15b-shared-brain) |
 | **WIKI HEALTH** | See [§17](#17-wiki-health). It keeps its name because it scans the **wiki** and nothing else — not your briefs, handoffs or canonical documents |
 
 ![The Domains view with the "projects" domain open. A left panel headed "Domains" holds a "New domain" button, a "Use existing folder" button, and a KNOWLEDGE list of two domains, each with a coloured identity dot, its name and its page count — Articles 3,445 pages (with a small amber dot on the right marking open health issues) and Projects 767 pages and selected. The main column opens with the path eyebrow "DOMAINS/PROJECTS/" over the title "Projects" with an ⓘ mark, then Rename and Delete, and an "Ask this domain" button on the right. Under an OVERVIEW eyebrow, one card holds five figures: PAGES 767 · ENTITIES 161 · CONCEPTS 553 · SUMMARIES 53 · PROJECTS 4 — the PAGES tile sits inside its own violet-bordered box, because it is also the button for the "All" filter and that filter is the one currently selected. Under "PAGES · THE WIKI" comes the page list itself, open, with a "Filter by name…" box and facet tabs reading All 767, Entities 161, Concepts 553, Summaries 53 and Memory 46; the rows are concept pages — Access Control List, Access Control Models, Agent Harness, Agent Memory Compounding and so on — each with its path in monospace on the right, such as "concepts/agent-harness.md". Below the list, "Showing 150 of 767" and a "Show 150 more" row. Last in view, under "PROJECTS IN THIS DOMAIN" with its own ⓘ and no loose sentence beneath the heading, four project rows: "field-notes", "projects" (labelled "the domain's own project — it cannot be renamed or deleted"), "lumina" and "curator", each with a "Standing brief" pill, a "last save … · newest work-stream …" line, and the buttons "Copy marker line" and "Copy agent instructions" — each of the two now carrying its own ⓘ mark beside it.](images/curator-domains.png)
@@ -2994,7 +2996,7 @@ old files keep working on any other computer of yours that has not been updated 
 ### Creating, renaming, deleting
 
 - **New domain** — give it a **Name**, an optional **Description**, and pick a **Template**: **Generic** (a balanced starting schema, the good default) · **Tech** · **Business** · **Personal**. The template writes the domain's starting schema, which tells the AI how to categorise what you ingest — you can edit it later. Nothing is written until you click **Create domain**.
-- **Rename** — changes the display name immediately. The folder name is chosen by the server and only changes if your new name produces a different one; wiki pages, conversations, and Obsidian links are preserved either way. A **read-only Shared Brain mirror cannot be renamed** — its folder name is what marks it as a mirror — and the app says so instead of letting you try.
+- **Rename** — changes the display name immediately. The folder name is chosen by the server and only changes if your new name produces a different one; wiki pages, conversations, and Obsidian links are preserved either way. A **read-only Shared Brain mirror cannot be renamed** — its name is not yours to set, it comes from the Shared Brain it mirrors, and its folder name is also what marks it as a mirror — and the app says so instead of letting you try. There is no rename control on the Shared Brain page either; the name changes when the cohort's does.
 - **Delete** — the confirmation names the folder and the exact page count: *"This permanently removes `domains/articles/` and all 3,336 pages in it, including its raw sources and saved conversations. It cannot be undone from inside The Curator."* The button is **Delete permanently**.
 
 If one of these is refused because something else is writing to that domain right now (an ingest, a sync, an MCP write), you get a clearly-marked **"Not done — the server refused this."** message in the same card — not a silent failure. Wait for the other operation to finish and try again.

@@ -380,6 +380,15 @@ differently — those are named here, not silently rewritten.
 | **(f)** | The docs spine — a regrouped table of contents, a routing table in chapter 1, and a new chapter for the three places | **Exactly one** `## ` heading added to `docs/user-guide.md` (`7b`); zero removed, zero renumbered |
 | **(i)** | **The measurement campaign ran.** Claude Code, 2026-09-20, three arms, N = 4 | Below |
 
+**Measured in the browser, on the domain page.** Page height at 1370 px: **1,821 px** with both
+new folds closed, **2,288 px** open. Horizontal overflow at 568 px: **0**. A drag held over the
+INGEST zone through a health revalidation: **149 events, the same drop-target node throughout** —
+which is D-J's acceptance, taken rather than argued. Contrast on the new surfaces, lowest **5.60**
+light / **6.16** dark against a 4.5 floor. One figure did **not** reproduce: v3.57.0's *one*
+`#view-root` child replaced on a cached domain switch measured **3–4** here, and measured 3–4 on
+`main` as well — so it is this harness disagreeing with that one, not a regression this release
+introduced. Recorded rather than smoothed over; re-deriving the v3.57.0 baseline is v3.65.0's.
+
 **(i), as run.** Claude Code CLI 2.1.275, headless `-p`, `claude-haiku-4-5-20251001`, API-key auth,
 one neutral task per run that never mentioned saving or The Curator, on a throwaway fixture project
 in the real store. Verdict words, from the instrument's own output:
@@ -426,7 +435,11 @@ the adapter table still reads `null`.
 dashboard**, Chat's **Save as foundation**, the **cross-scope digest**, **promote-to-foundation**,
 a **25th MCP tool** for the skeletons, the **ingest auto-split at headings**, and the
 **ingest-finished badge** — which now belongs on the Domains rail entry, there being no Ingest
-entry left to badge.
+entry left to badge. One item joined them during the build: the **page-level drop
+forward** — a file dropped anywhere on the domain page being handed to the INGEST section — which
+needs one more export from `views/ingest.js` and was not worth widening that seam for in the
+release that created it. Today a drop outside the section is **refused rather than opened**, which
+is the safe half and was never in doubt.
 
 **Still open for the maintainer.** The npm package name (`the-curator` vs `my-curator`); the
 licence on `github-read-client.js`; `COPY_SUCCESS_BANNER` naming harnesses this build cannot
@@ -846,15 +859,18 @@ deliberately does NOT do" table), took **one** of this section's six original ro
 project's context"* (B21) — out of it and into v3.64.0, where it now ships as (d) above. The other
 five rows, and the goal they serve, are otherwise unchanged from this file's prior revision.
 
-**What v3.64.0 handed it, 2026-09-20.** Seven items, all named in that release's own deferral
-table and all still `planned`: the **Home dashboard** (which is also the only real answer to the
+**What v3.64.0 handed it, 2026-09-20.** Eight items, seven named in that release's own deferral
+table and one added during the build — the **page-level drop forward** on the domain page, which
+needs one more export from `views/ingest.js`. All still `planned`: the **Home dashboard** (which is also the only real answer to the
 logo/Domains redundancy, and to a domain page that is long even folded); Chat's **Save as
 foundation**; the **cross-scope digest**; **promote-to-foundation** from a handoff decision; a
 **25th MCP tool** for the skeletons; the **ingest auto-split at headings**, still undesigned; and
 the **ingest-finished badge**, which changed shape rather than moving — there is no Ingest rail
 button left to badge, so it belongs on the **Domains** entry via the Sync badge's own render/patch
-idiom. Two smaller carries joined them: the `memory.knowledge` docs-links key, and reconciling (or
-deliberately not reconciling) the two machine ids one computer mints.
+idiom. Three smaller carries joined them: the `memory.knowledge` docs-links key, reconciling (or
+deliberately not reconciling) the two machine ids one computer mints, and re-deriving v3.57.0's
+one-child-replaced baseline for a cached domain switch, which this release's harness measured at
+3–4 on `main` as well as on its own branch.
 
 **Goal.** Make the store useful when **more than one** session works a project, and give the owner
 a gesture for moving something from volatile to canonical.
