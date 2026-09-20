@@ -611,15 +611,42 @@
   border: 1px solid var(--border);
   background: var(--surface);
 }
+/* ── THE READING IS A ROW'S META NOW (v3.64.2) ────────────────────────────
+   It was a highlighted card with a readout in it, sitting above a bare CAPTURE
+   readout in a third design, above three fold rows — "the worst UX", on the
+   maintainer's screenshot of step ②. It is the meta slot of a `.mem-fold` row
+   now, so it inherits that row's type and colour and carries only its own
+   arrangement: the pip, the age, the pair and tool that wrote it, and the
+   completeness badge, on one line that wraps as a whole.
+
+   `min-width: 0` for the same reason `.mem-ctl` needs it — the provenance
+   carries a machine id, which is long and hex-suffixed. */
 .mem-save-main {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px 12px;
-  /* min-width: 0 for the same reason .mem-ctl needs it — the readout's
-     provenance carries a machine id, which is long and hex-suffixed. */
+  gap: 6px 8px;
   min-width: 0;
 }
+/* The age is the figure a one-second glance is looking for, so it is the one
+   thing in the row at full ink. */
+.mem-save-age { color: var(--text); font-weight: var(--weight-medium); }
+/* And the pair and the tool that wrote it stay at the row's own --text-2,
+   which `.mem-fold-summary` already sets — declared so the rule is nameable
+   and the two halves cannot be recoloured together by accident. */
+.mem-save-prov { color: var(--text-2); }
+/* The FLAT case: a reading with nothing to explain is the same row without a
+   chevron, rather than a fold that opens on nothing. Same padding as every
+   other flat body; the title and the meta arrange exactly as a summary's do. */
+.mem-save-flat {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+.mem-save-flat .mem-fold-meta { margin-left: auto; }
 
 /* THE PIP — five discrete steps, and NOT a bar.
 

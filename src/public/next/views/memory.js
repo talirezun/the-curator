@@ -1245,7 +1245,11 @@ const FOLDS_KEY = 'curator-memory-folds-v1';
 // 3,241 → 1,278px once the brief and the journal folded) is the reason.
 // `capture` joined in v3.63.0 with the honesty meter's session list. The
 // READING above it never folds (v3.16.1) — only the per-session detail does.
-const FOLD_KEYS = ['brief', 'journal', 'foundations', 'streams', 'capture'];
+// `saved` joined in v3.64.2, when "Last saved" stopped being a highlighted card
+// of its own and became the step's first ROW, in the same chrome as the four
+// below it. Its WARNINGS stay unfolded beside the row — the same v3.16.1 split
+// `capture` makes one line above.
+const FOLD_KEYS = ['brief', 'journal', 'foundations', 'streams', 'capture', 'saved', 'knowledge'];
 
 export function readRememberedFolds() {
   try {
@@ -2559,7 +2563,39 @@ function patchOpenPair(token) {
   // tbody, the same way the "Show more" append scopes its own binding.
   bindWorkStreamRows(tbody, token);
 
-  if (stack) stack.innerHTML = statusHtml;
+  if (stack) {
+    stack.innerHTML = statusHtml;
+    // ── THE "Last saved" ROW IS A FOLD NOW, AND THIS WRITE REPLACES IT ────
+    // `wire` binds `toggle` on every `[data-mem-fold]` once per render, and
+    // this patch deliberately does not render — so the row that just replaced
+    // the old one has no listener and would stop remembering itself. The
+    // journal fold solves the same problem by keeping its ELEMENT and writing
+    // its innards; that is not available here, because the reading and the
+    // warnings beside it are one expression the two call sites compare
+    // byte-for-byte (scripts/test-next-memory-switch.js §8). So the listener
+    // is re-attached instead, and `open` needs no copying: `renderSaveStatus`
+    // derives it from `state.openFolds`, which is the same source the toggle
+    // writes to.
+    //
+    // INLINE, and the duplication of the key literal is the same one `wire`
+    // documents: neither function may name a module-level helper, because
+    // both are lifted by brace-matching and executed against fixed stub
+    // lists. scripts/test-next-memory-view.js pins the copies against
+    // `FOLDS_KEY`.
+    const savedFold = stack.querySelector('[data-mem-fold="saved"]');
+    if (savedFold) {
+      savedFold.__memFoldWas = !!savedFold.open;
+      savedFold.addEventListener('toggle', () => {
+        if (!state.openFolds) state.openFolds = {};
+        if (!!savedFold.open === savedFold.__memFoldWas) return;
+        savedFold.__memFoldWas = !!savedFold.open;
+        state.openFolds.saved = !!savedFold.open;
+        try {
+          localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
+        } catch { /* storage refused: forget, never break */ }
+      });
+    }
+  }
 
   const count = document.getElementById('mem-ws-count');
   if (count) count.outerHTML = workStreamCounts(pr, scopes.length, shown);
@@ -3711,7 +3747,34 @@ function renderKnowledge() {
         : undefined,
     },
   ]);
-  return '<div class="mem-k-wrap">' + figures + '</div>' + doors;
+  // ── STEP ③ IS ONE ROW (v3.64.2) ─────────────────────────────────
+  //
+  // THE STEP-BODY RULE: inside a numbered step every part is the SAME row —
+  // a title on the left, a one-line summary on the right, a chevron, and the
+  // detail behind it. Step ③ was five readouts and two buttons loose in the
+  // block body, which was a third design on a screen that already had two.
+  //
+  // The SUMMARY is the reading somebody came for — "767 pages · 1 week ago ·
+  // <domain>", the same three facts the OVERVIEW card's KNOWLEDGE figure
+  // carries, from the same payload — and the other four figures and both
+  // doors are what opens. The DOMAIN IS NAMED because this is the one layer
+  // the project READS rather than owns: every project in the domain draws on
+  // the same wiki, and a page count with no owner beside it reads as this
+  // project's own.
+  const pagesText = num(d.pageCount) + ' page' + (d.pageCount === 1 ? '' : 's');
+  const meta = [pagesText, day || 'nothing ingested yet', state.activeDomain || null]
+    .filter(Boolean).join(' · ');
+  const open = (state.openFolds && state.openFolds.knowledge) ? ' open' : '';
+  return '<details class="mem-fold" data-mem-fold="knowledge"' + open + '>'
+    + '<summary class="mem-fold-summary" id="mem-fold-knowledge">' + icon('chevronRight', 14)
+      + '<span>Pages</span>'
+      + '<span class="mem-fold-meta">' + freshnessDotHtml(d.lastIngestDate)
+        + escapeHtml(meta) + '</span>'
+    + '</summary>'
+    + '<div class="mem-fold-body">'
+      + '<div class="mem-k-wrap">' + figures + '</div>' + doors
+    + '</div>'
+  + '</details>';
 }
 
 /**
@@ -4596,7 +4659,13 @@ function renderSaveStatus(read, d) {
     : null;
   const cur = doc || row;
 
+  // TWO LISTS, because v3.16.1 splits them. `lines` are the WARNINGS — loud,
+  // unfolded, below the row. `detail` is the EXPLANATION — which clock the
+  // figure came from, that the file arrived later than it was written, what
+  // "summary shortened" means — and it expands, because a paragraph beside a
+  // reading is the thing the maintainer's screenshot was pointing at.
   const lines = [];
+  const detail = [];
   let primary = '';
 
   // ── "WORKING ON" LEFT THIS FUNCTION (v3.62.0) ───────────────────────────
@@ -4631,15 +4700,36 @@ function renderSaveStatus(read, d) {
       // which is the whole argument for driving the rendered output rather
       // than reading the source. `primary` is written once now; the operator
       // stays so that re-introducing a leading reading cannot reopen it.
+      // ── IT IS A ROW NOW, NOT A CARD (v3.64.2) ─────────────────────────
+      //
+      // THE REPORT, on a screenshot of step ②: "the worst UX" — a highlighted
+      // "Last saved" card, then a bare CAPTURE readout in a different design
+      // outside any card, then three fold rows. Three designs, stacked, for
+      // one step's contents. The rule now: inside a numbered step EVERY part
+      // is the same row — title on the left, a one-line summary on the right,
+      // a chevron where there is something to open.
+      //
+      // So the reading moves into a `.mem-fold-summary`: "Last saved" on the
+      // left, and the age, the pair that wrote it and the tool that wrote it
+      // on the right, in the meta slot every other row on this page uses. The
+      // pip goes with it — the mark belongs beside the age it qualifies.
+      //
+      // WHAT IS IN THE BODY, AND WHAT MAY NEVER BE. The explanations — which
+      // clock the figure came from, that the file arrived later than it was
+      // written, what "summary shortened" means — expand. The WARNINGS do
+      // not: v3.16.1's rule is that a warning, a cost or an outcome may not
+      // sit behind a chevron, so every `loud` line stays unfolded BELOW the
+      // row, where it is today. That is the one place this row deliberately
+      // does not follow "everything is a row".
       primary +=
         '<div class="mem-save-main">' +
           '<span class="mem-save-pip' + (step === null ? ' mem-save-pip-unknown' : ' mem-save-pip-s' + step) +
             '" aria-hidden="true"></span>' +
-          renderReadout({
-            label: 'Last saved',
-            value: age,
-            provenance: [prov, clock].filter(Boolean).join(' · ') || undefined,
-          }) +
+          '<span class="mem-save-age">' + escapeHtml(age) + '</span>' +
+          ((prov || clock)
+            ? '<span class="mem-save-prov">'
+              + escapeHtml([prov, clock].filter(Boolean).join(' · ')) + '</span>'
+            : '') +
           // The badge is on the READING, not in a note underneath it. A
           // completeness caveat that lives below the figure is a caveat the
           // one-second glance never reaches.
@@ -4669,7 +4759,7 @@ function renderSaveStatus(read, d) {
       // false alarm this verdict replaces. See the real case recorded on
       // `classifySaveNotes`: a 244-char headline clipped to 200 chars, body
       // untouched, badged and worded as if content had been lost.
-      lines.push(saveLine('', '',
+      detail.push(saveLine('', '',
         'The handoff itself was written in full. What got shortened is a label attached to the save '
         + '— most often its one-line summary — not the handoff’s content. That label matters because '
         + 'it is the only thing a future session sees before deciding whether to open this state. '
@@ -4681,7 +4771,7 @@ function renderSaveStatus(read, d) {
     }
 
     if (eff.source === 'filesystem') {
-      lines.push(saveLine('alertTriangle', '',
+      detail.push(saveLine('alertTriangle', '',
         'No journal entry carried a save time for this handoff, so the reading above is the file’s own '
         + 'timestamp. On a computer that syncs, that is when the file arrived here, not when it was written.'));
     } else {
@@ -4691,7 +4781,7 @@ function renderSaveStatus(read, d) {
       // the agent wrote it, which is what a pull looks like.
       const arrived = effectiveSave({ savedAt: cur.arrivedAt || cur.savedAt || cur.lastWriteAt });
       if (arrived.seconds !== null && eff.seconds !== null && eff.seconds - arrived.seconds > 120) {
-        lines.push(saveLine('', '',
+        detail.push(saveLine('', '',
           'This file arrived on this computer ' + (formatAge(arrived.seconds) || 'recently')
           + ' — the reading above is the agent’s own clock, not the file’s.'));
       }
@@ -4744,7 +4834,7 @@ function renderSaveStatus(read, d) {
   // tooltip on a non-focusable span, so the one sentence explaining why the
   // steps below may not apply reached neither keyboard nor touch users.
   if (d && d.machineIsThisMachine === false) {
-    lines.push(saveLine('', '',
+    detail.push(saveLine('', '',
       'Written on <span class="mem-name">' + escapeHtml(d.machine || 'another machine')
       + '</span> and synced here — local paths and processes may differ from what the handoff describes.',
       true));
@@ -4780,13 +4870,39 @@ function renderSaveStatus(read, d) {
   //
   // `brief` is still read above for nothing else, so it goes with the line.
 
-  if (!primary && !lines.length) return '';
-  // NO `.mem-section` ANY MORE. This is the body of block ① now, not a
+  if (!primary && !lines.length && !detail.length) return '';
+  // ── THE ROW, AND THE ONE CASE THAT IS NOT A FOLD ──────────────────────
+  // An empty chevron invites a click that does nothing, which is the call
+  // `renderCaptureMeter` already makes for its own idle state — so with no
+  // explanation to open, the reading is a FLAT row in the identical chrome
+  // (`.mem-fold-flat`, the shape `renderWorkStreamsFold` uses for an empty
+  // project) rather than a fold that opens on nothing.
+  //
+  // `open` is derived from `state.openFolds`, the same way every other fold
+  // on this page derives it — so the row survives `patchOpenPair` replacing
+  // the stack it lives in, which re-binds the toggle rather than preserving
+  // the element.
+  const open = (state.openFolds && state.openFolds.saved) ? ' open' : '';
+  const savedRow = primary
+    ? (detail.length
+      ? '<details class="mem-fold" data-mem-fold="saved"' + open + '>'
+        + '<summary class="mem-fold-summary" id="mem-fold-saved">' + icon('chevronRight', 14)
+          + '<span>Last saved</span>'
+          + '<span class="mem-fold-meta">' + primary + '</span>'
+        + '</summary>'
+        + '<div class="mem-fold-body">' + detail.join('') + '</div>'
+      + '</details>'
+      : '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-save-flat">'
+        + '<span>Last saved</span>'
+        + '<span class="mem-fold-meta">' + primary + '</span>'
+      + '</div></div>')
+    : detail.join('');
+  // NO `.mem-section` ANY MORE. This is the body of step ② now, not a
   // top-level sibling, so the page's adjacency rule must not put 24px between
   // it and the two notices beside it — `.mem-status-stack` in memory.css owns
   // the spacing INSIDE a block, and `.settings-job-block` owns the spacing
   // between blocks. One gap, one owner, at each level.
-  return '<section class="mem-save" aria-label="Save status">' + primary + lines.join('') + '</section>';
+  return '<section class="mem-save" aria-label="Save status">' + savedRow + lines.join('') + '</section>';
 }
 
 /** The newest (scope, machine) in a project by the AGENT'S clock where it exists. */

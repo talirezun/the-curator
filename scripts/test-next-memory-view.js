@@ -8067,6 +8067,10 @@ const fndRead = (payload) => ({
         entries: [{ at: new Date().toISOString(), headline: 'h', harness: 'cc', rejections: [] }] } },
   });
   const shut = makeRenderers(stFor({})).renderProject();
+  // `saved` is NOT in this list, and that is the correct answer rather than an
+  // omission: with nothing to explain it is a FLAT row and emits no fold at
+  // all (§21f6 drives both arms). A key listed here that the fixture cannot
+  // produce would be a vacuous pin.
   const FOLDS = ['foundations', 'streams', 'brief', 'journal'];
   for (const key of FOLDS) {
     ok('the `' + key + '` fold is really emitted (the scan is not vacuous)',
@@ -8890,6 +8894,119 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
   pendingDocsKeys.size === 0,
   'unresolved: ' + JSON.stringify([...pendingDocsKeys]) +
   ' — add the key to src/public/next/shared/docs-links.js (owned by the docs work package)');
+
+// ═════════════════════════════════════════════════════════════════════════
+// §21f6 — THE STEP-BODY RULE (v3.64.2)
+// ═════════════════════════════════════════════════════════════════════════
+//
+// THE REPORT, on a screenshot of step ②: "the worst UX" — a highlighted
+// "Last saved" card, then a bare CAPTURE readout in a different design
+// outside any card, then three fold rows. Three designs stacked inside one
+// step. The rule now: inside a numbered step every part is the SAME row —
+// a title on the left, a one-line summary on the right, a chevron where
+// there is something to open.
+//
+// AND THE ONE PLACE THE RULE STOPS, which is why this section exists rather
+// than a source scan: v3.16.1 says a WARNING, a COST or an OUTCOME may not
+// sit behind a chevron. So the explanations fold and the loud lines do not,
+// and a future tidy-up that swept them into the row would be removing a
+// warning from the screen while making the screen more uniform.
+{
+  const baseSt = (over) => ({
+    activeDomain: 'acme', activeProject: 'lumina', scope: 'main', machine: 'boxa',
+    detailLoading: false, staleWrite: false, journalLimit: 10, openFolds: {}, projects: [],
+    wsWindow: WS_WINDOW_SRC, ...over,
+  });
+
+  // ── "Last saved" WITH NOTHING TO EXPLAIN IS A FLAT ROW ────────────────
+  const healthy = makeRenderers(baseSt()).renderSaveStatus(
+    { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }] },
+    { scope: 'main', machine: 'boxa', harness: 'claude-code',
+      current: { present: true, writtenAgeSeconds: 120 } });
+  ok('the healthy reading is a ROW in the same chrome as the folds under it',
+    /class="mem-fold mem-fold-flat"/.test(healthy), healthy.slice(0, 400));
+  ok('...titled on the left, like every other row on this page',
+    /<span>Last saved<\/span>/.test(healthy), healthy.slice(0, 400));
+  ok('...with the age in the meta slot every other row uses',
+    /class="mem-fold-meta">[\s\S]*?mem-save-age">2 min ago</.test(healthy), healthy.slice(0, 500));
+  ok('...and NO chevron, because an empty chevron invites a click that does '
+    + 'nothing — the call renderCaptureMeter already makes for its idle state',
+  !/data-mem-fold="saved"/.test(healthy), healthy.slice(0, 400));
+
+  // ── WITH SOMETHING TO EXPLAIN IT IS A FOLD, AND IT SHIPS CLOSED ───────
+  const fsOnlyRow = makeRenderers(baseSt()).renderSaveStatus(
+    { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }] },
+    { scope: 'main', machine: 'boxa', harness: 'claude-code',
+      // NO `writtenAgeSeconds`, so `effectiveSave` falls back to the FILE's
+      // own timestamp — which is the state the explanation exists for.
+      current: { present: true, savedAt: new Date(Date.now() - 120000).toISOString() } });
+  const isFold = /data-mem-fold="saved"/.test(fsOnlyRow);
+  ok('an explanation makes it a FOLD with this view\'s own hook', isFold, fsOnlyRow.slice(0, 400));
+  if (isFold) {
+    ok('...shipping CLOSED, like every other fold on the page',
+      !/data-mem-fold="saved"\s+open/.test(fsOnlyRow), fsOnlyRow.slice(0, 400));
+    ok('...with the explanation INSIDE it, not printed under the reading',
+      fsOnlyRow.indexOf('own’s') === -1
+      && fsOnlyRow.indexOf('timestamp') > fsOnlyRow.indexOf('mem-fold-body'),
+      fsOnlyRow.slice(0, 900));
+    ok('...and the clock named in the summary too, so the closed row does not '
+      + 'hide WHICH clock the figure came from',
+    /mem-save-prov">[^<]*file time/.test(fsOnlyRow), fsOnlyRow.slice(0, 700));
+  }
+
+  // ── A WARNING NEVER FOLDS (v3.16.1) ──────────────────────────────────
+  const trimmedRow = makeRenderers(baseSt()).renderSaveStatus(
+    { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }] },
+    { scope: 'main', machine: 'boxa', harness: 'claude-code',
+      // BOTH AT ONCE, and that is the whole point of the fixture: a trimmed
+      // save (loud) whose time came from the FILE (an explanation). With only
+      // the loud line the row is flat, there is no fold to be outside of, and
+      // a guard written against that fixture passes whatever the code does —
+      // which is exactly what the first version of this assertion did, and
+      // what the mutation that swept `lines` into the fold body proved.
+      current: { present: true, lastSaveKind: 'trimmed', lastSaveNotes: ['budget'],
+        savedAt: new Date(Date.now() - 120000).toISOString() } });
+  const loudAt = trimmedRow.indexOf('mem-save-line-loud');
+  ok('CONTROL -- a trimmed save really does produce a loud line', loudAt !== -1,
+    trimmedRow.slice(0, 400));
+  const foldEnd = trimmedRow.lastIndexOf('</details>');
+  ok('CONTROL -- this fixture really does produce a fold to be outside of',
+    foldEnd !== -1, trimmedRow.slice(0, 500));
+  ok('a loud warning is OUTSIDE the fold — an outcome may not sit behind a '
+    + 'chevron (v3.16.1), which is the one place the step-body rule stops',
+  loudAt !== -1 && foldEnd !== -1 && loudAt > foldEnd, loudAt + ' vs ' + foldEnd);
+  ok('...and it still carries the badge on the READING, where a one-second '
+    + 'glance reaches it',
+  /mem-badge-attn">incomplete</.test(trimmedRow), trimmedRow.slice(0, 700));
+
+  // ── STEP ③ IS ONE ROW ────────────────────────────────────────────────
+  const kn = makeRenderers(baseSt({ knowledge: { domain: 'acme', error: null, data: {
+    pageCount: 767, pageCounts: { entities: 400, concepts: 300, summaries: 67 },
+    lastIngestDate: '2026-09-13', lastIngestKind: 'ingest' } } })).renderKnowledge();
+  ok('step ③ is one row with this view\'s own hook',
+    /<details class="mem-fold" data-mem-fold="knowledge"/.test(kn), kn.slice(0, 300));
+  ok('...shipping CLOSED', !/data-mem-fold="knowledge"\s+open/.test(kn), kn.slice(0, 300));
+  ok('...titled Pages', /<span>Pages<\/span>/.test(kn), kn.slice(0, 400));
+  ok('...and its summary carries the page count, the age and the DOMAIN the '
+    + 'wiki belongs to — the one layer this project reads rather than owns',
+  /mem-fold-meta">[\s\S]*?767 pages · [^<]*· acme</.test(kn), kn.slice(0, 600));
+  ok('...with the other four figures and both doors behind the chevron',
+    kn.indexOf('mem-k-doors') > kn.indexOf('mem-fold-body')
+    && kn.indexOf('ENTITIES') > kn.indexOf('mem-fold-body'), kn.slice(0, 900));
+  // A READING THAT HAS NOT ARRIVED, AND ONE THAT FAILED, ARE NOT ROWS.
+  const knLoading = makeRenderers(baseSt({ knowledge: { domain: 'acme', error: null, data: null } }))
+    .renderKnowledge();
+  ok('a reading still in flight is NOT a row — a chevron over a ghost opens a ghost',
+    !/data-mem-fold="knowledge"/.test(knLoading) && /aria-busy="true"/.test(knLoading),
+    knLoading.slice(0, 300));
+  const knFailed = makeRenderers(baseSt({ knowledge: { domain: 'acme', error: 'boom', data: null } }))
+    .renderKnowledge();
+  ok('...and a FAILURE is not one either (v3.16.1)',
+    !/data-mem-fold="knowledge"/.test(knFailed) && /tx-status/.test(knFailed), knFailed.slice(0, 300));
+  ok('...but both still offer the two doors, because a domain\'s wiki does not '
+    + 'stop existing because a stats read did',
+  /mem-k-doors/.test(knLoading) && /mem-k-doors/.test(knFailed));
+}
 
 // ── Done ─────────────────────────────────────────────────────────────────
 
