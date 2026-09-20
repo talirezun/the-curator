@@ -1,0 +1,220 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   shared/overview.css — THE OVERVIEW CARD
+
+   Every rule here MOVED from views/domains.css, UNCHANGED IN VALUE. The
+   Domains page's OVERVIEW is the reference design: the maintainer's brief was
+   that the Project-context view's three-cell strip and this grid "must be the
+   same", and the direction of the adoption is the grid's. So nothing below is
+   new geometry — it is the same padding, the same radius, the same 22px
+   figure, the same transparent tile inside a bordered group, and the same
+   hover / focus / selected / press vocabulary the domain page has shipped
+   since v3.50.0, now addressed by the kit's own names.
+
+   WHAT STAYED IN views/domains.css: the three ink classes
+   (`.dm-stat-entity` / `-concept` / `-summary`). They read `--dm-ink-*`,
+   which is THAT VIEW's ramp — a shared stylesheet reaching into a view's
+   token set would be the dependency this file exists to remove. A host that
+   wants a coloured figure hands `toneClass` a class its own stylesheet owns.
+
+   WHY IT IS A FILE AND NOT A BLOCK IN shell.css: index.html links the view
+   stylesheets LAST, so a rule a second view depends on has to sit at a
+   knowable point in the cascade — the same argument shared/block.js records
+   for moving `.settings-job-block` out of views/settings.css. It is linked
+   from index.html BEFORE the view sheets, so a view may still override.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* The eyebrow and its ⓘ share one row. The mark's own class belongs to
+   shared/text.css and is not named here; the alignment lives on the wrapper,
+   exactly as views/domains.css's `.dm-section-head-row` did. --space-2 is the
+   gap renderViewHeader's own row uses between a title and its mark. */
+.cur-ov-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* The eyebrow's bottom margin belongs to the HEAD when it is in one — the ⓘ
+   panel comes next, and a gap here would open between the eyebrow and the
+   card it names. */
+.cur-ov-head .cur-ov-eyebrow { margin: 0 0 0 var(--space-6); }
+
+/* ── THE FIGURES ARE ONE CARD, NOT FIVE ──────────────────────────────────
+   Reported against v3.49.0: "the top number cards float without a card". They
+   did — bordered tiles on the view background with no group around them and
+   no eyebrow saying what they were. The group is the kit's own `.cur-group`
+   and the tiles inside it drop their individual border, surface and
+   elevation: a card inside a card is two objects where the design has one,
+   and a border repeated five times inside a bordered container is the "gap
+   between bordered cards is a web form" shape shell.css records against. */
+.cur-ov-group { padding: var(--space-2); }
+
+.cur-ov-grid {
+  display: grid;
+  /* auto-fit rather than a fixed track count: the Domains page renders four,
+     five or six figures depending on whether a domain has stray pages, and
+     the Context view renders three. This container is comfortably wider than
+     4 * 110px, so a four-figure row is identical to the fixed repeat(4, 1fr)
+     this replaced. */
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.cur-ov-card {
+  padding: var(--space-8);
+  border-radius: var(--radius-lg);
+}
+.cur-ov-group .cur-ov-card {
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+
+/* ── THE FIGURE AS A CONTROL ─────────────────────────────────────────────
+   The GEOMETRY must not move when a tile changes tag: a `<button>` brings a
+   UA border, background, centred text, its own font and `box-sizing:
+   border-box` — the padding and radius above already apply to it by class, so
+   only the chrome is removed here. `cursor: default` is this app's chrome
+   pointer. */
+.cur-ov-group button.cur-ov-card {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background var(--t-state), box-shadow var(--t-state), transform var(--t-press);
+}
+.cur-ov-group button.cur-ov-card:hover { background: var(--surface-hover); }
+.cur-ov-group button.cur-ov-card:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+/* SELECTED — the same vocabulary the filter chip uses (`--accent-tint` fill,
+   `--accent-border` edge), so two controls over one filter state read as the
+   same state. The edge is an INSET box-shadow rather than a border because a
+   real border on a tile inside an equal-width grid would reflow every tile by
+   2px the moment one became selected.
+
+   DECLARED AFTER `:hover`, which it TIES with at (0,3,1) — so hovering a
+   selected figure keeps the selected fill instead of flashing back to the
+   neutral one. The chip behaves the same way, and two controls over one state
+   should not disagree about what hovering means. */
+.cur-ov-group button.cur-ov-card[aria-pressed="true"] {
+  background: var(--accent-tint);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+/* THE PRESS IS LAST, AND IT CARRIES BOTH SELECTORS FOR A MEASURED REASON.
+   A bare `:active` ties with the selected rule above at (0,3,1) and loses on
+   order, so pressing an ALREADY-SELECTED figure would change nothing but the
+   1px nudge. `[aria-pressed]` — attribute PRESENT, true or false — scores
+   (0,3,2) and outranks it; the bare `:active` stays in the list because a
+   jump tile carries no aria-pressed at all. One rule, so the press cannot
+   come to mean two things. `[aria-pressed="true"]:hover` was the first cut
+   and was correctly refused by scripts/test-next-press-motion.js §6: that
+   rule outranks a bare `:active`, which is the shape where a press silently
+   never paints. */
+.cur-ov-group button.cur-ov-card:active,
+.cur-ov-group button.cur-ov-card[aria-pressed]:active {
+  background: var(--surface-active);
+  transform: translateY(var(--press-shift));
+}
+
+/* THE FIGURE. `--text-2xl` is the type standard's ONE deliberate exception
+   (docs/design-system-source.md §11) and it is kept: it is the reason this
+   card reads as an instrument rather than as a paragraph. Tabular figures so
+   `3,416` and `2,717` occupy the same width and the numbers line up down the
+   row instead of drifting with their digits. */
+.cur-ov-value {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+  margin-top: 4px;
+  font-variant-numeric: var(--numeric-tabular);
+  /* A freshness dot rides INSIDE the value, the way `renderReadout` places
+     `markHtml`, so the mark sits beside the reading it qualifies rather than
+     floating in a corner. */
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  /* A phrase, not only a number: "saved 12 min ago" must wrap inside its
+     track rather than widen it. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* ── THE SECOND LINE ──────────────────────────────────────────────────────
+   The Context view's cards answer with a phrase AND a qualifier — "24
+   documents" / "4 stale", "saved 12 min ago" / the work-stream it belongs to.
+   The Domains page passes none, so its tiles are byte-identical to the ones
+   it rendered before this file existed. --text-2 measures 7.26 light / 8.34
+   dark against the card's own surface, well over the 4.5 floor. */
+.cur-ov-sub {
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  font-variant-numeric: var(--numeric-tabular);
+}
+
+/* ── THE JUMP ROW ─────────────────────────────────────────────────────────
+   A second row inside the same group, and a class of its own. These are not
+   figures: they carry a date or a state and they open something further down
+   the page. The chrome is deliberately the SAME as a figure-control's
+   (transparent until hover, the kit's focus ring, the press nudge) so the row
+   reads as part of the group rather than as a toolbar bolted under it. */
+.cur-ov-jumps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 0 var(--space-8) var(--space-6);
+}
+/* `[hidden]` LOSES TO AN AUTHOR `display` AT ANY SPECIFICITY, which is how
+   v3.62.0 shipped an empty warning chip that painted anyway. A jump tile is
+   rendered on every paint and revealed without a repaint, so this
+   counter-rule is what makes the hidden state real. A swept class rather than
+   a named list: the next tile to be conditionally hidden gets it for free. */
+.cur-ov-jump[hidden] { display: none; }
+.cur-ov-jump {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-4) var(--space-6);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background var(--t-state), box-shadow var(--t-state), transform var(--t-press);
+}
+.cur-ov-jump:hover { background: var(--surface-hover); }
+.cur-ov-jump:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.cur-ov-jump:active {
+  background: var(--surface-active);
+  transform: translateY(var(--press-shift));
+}
+/* A WORD OR A DATE, NOT A COUNT — so it takes the body size rather than
+   `.cur-ov-value`'s --text-2xl, which would make "3 days ago" the largest
+   thing in the group. */
+.cur-ov-jump-value {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+/* ── Reduced motion ───────────────────────────────────────────────────────
+   Press transforms off; every background step above stays, because a colour
+   change is not motion and it is what actually acknowledges the click. Last
+   in the file because a media query adds no specificity and would otherwise
+   lose to the later of two tied `.class:pseudo` rules — the same placement
+   rule views/domains.css records, and these three selectors are the ones that
+   came with the card when it moved out of that file. */
+@media (prefers-reduced-motion: reduce) {
+  .cur-ov-group button.cur-ov-card:active,
+  .cur-ov-group button.cur-ov-card[aria-pressed]:active,
+  .cur-ov-jump:active { transform: none; }
+}

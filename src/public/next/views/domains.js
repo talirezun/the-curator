@@ -99,6 +99,19 @@ import {
 // unnoticed. It is a tree walk now, and mutation-proven.)
 import { goToChatScoped } from '../shared/chat-scope.js';
 import { docsLinkHtml } from '../shared/docs-links.js';
+// ── THE OVERVIEW CARD (v3.64.2) ────────────────────────────────────────────
+// This page's OVERVIEW is the app's reference design for "the readings ABOUT
+// a screen", and the Project-context view now renders the SAME component —
+// so the markup moved to shared/overview.js and this view calls it. Nothing
+// it emits moved: every `dm-` token this file's listeners, its column patch
+// and four suites address by name is still on the same element, as an alias.
+//
+// IT IS A NEW FREE IDENTIFIER INSIDE `renderStatCards`, which four offline
+// suites lift by brace-matching and execute inside `new Function` against a
+// fixed stub list — so those four sandboxes inject it, and they inject the
+// REAL function rather than a stub, which is what makes their assertions
+// about this card assertions about the shipped component.
+import { renderOverview } from '../shared/overview.js';
 import { renderMarkdown } from '../shared/markdown.js';
 import { formatUsdHonest } from '../shared/format-usd.js';
 
@@ -4387,131 +4400,98 @@ function projectCount() {
  * NO `title=`. The tile's accessible name carries the count and what pressing
  * it does, on a real focusable control — views/domains.js's `title=` ceiling
  * in scripts/test-next-title-affordances.js is 0 and stays 0.
+ *
+ * ── AND SINCE v3.64.2 IT BUILDS DESCRIPTIONS, NOT MARKUP ──────────────────
+ * Every decision above is still taken here — which figures exist, which are
+ * controls, what each one's accessible name says, when PROJECTS is an em dash
+ * rather than a zero, whether the jump row exists at all. What left is the
+ * HTML: `renderOverview` emits it, and the Project-context view's three
+ * readings go through the same function, so the two screens can no longer
+ * drift into two designs for one idea. The maintainer's question was exactly
+ * that: "how are these the same?"
  */
 function renderStatCards(counts, pages, projects, jumps) {
-  const overviewInfo = infoMark('dm-overview-info', 'About these figures',
-    threeLayersInfoHtml(), { html: true });
   const otherCount = counts.other || 0;
   const b = activeBrowse();
   const live = !!(b && !b.loading && !b.error);
-
-  const body = (label, value, cls) =>
-    '<div class="cur-eyebrow">' + label + '</div>' +
-    '<div class="dm-stat-value' + (cls ? ' ' + cls : '') + '">' + value + '</div>';
-
-  // A figure with no chip behind it (OTHER) and every figure rendered before
-  // the list has landed.
-  const card = (label, value, cls) =>
-    '<div class="dm-stat-card">' + body(label, value, cls) + '</div>';
-
-  // A figure that SELECTS a chip. `aria-pressed` is read straight off the
-  // filter state, never off a local flag.
-  const facetCard = (label, value, cls, facet, name) => {
-    if (!live) return card(label, value, cls);
-    return '<button type="button" class="dm-stat-card"' +
-      ' data-stat-facet="' + escapeHtml(facet) + '"' +
-      ' aria-pressed="' + (b.folder === facet ? 'true' : 'false') + '"' +
-      ' aria-label="' + escapeHtml(name) + '">' + body(label, value, cls) + '</button>';
-  };
-
-  // A figure that JUMPS. Not a toggle, so it carries no `aria-pressed` —
-  // aria-pressed on a control that does not stay pressed is a lie told to a
-  // screen reader only.
-  const jumpCard = (label, value, cls, name) =>
-    '<button type="button" class="dm-stat-card"' +
-      ' data-stat-jump="projects"' +
-      ' aria-label="' + escapeHtml(name) + '">' + body(label, value, cls) + '</button>';
 
   const pagesText = pages.toLocaleString();
   const entText = (counts.entities || 0).toLocaleString();
   const conText = (counts.concepts || 0).toLocaleString();
   const sumText = (counts.summaries || 0).toLocaleString();
-  const projText = projects === null || projects === undefined ? '—' : projects.toLocaleString();
+  const projText = projects === null || projects === undefined ? '\u2014' : projects.toLocaleString();
 
-  return (
-    '<section class="dm-section dm-overview">' +
-      // THE SAME HEAD ROW THE PROJECTS SECTION USES. `.dm-section-head-row`
-      // already exists for exactly this shape — eyebrow left, mark right, the
-      // eyebrow's own bottom margin zeroed — so this adds no rule to
-      // views/domains.css. The eyebrow STAYS: a group that does not name
-      // itself is worse than one with a sentence too many.
-      '<div class="dm-section-head-row">' +
-        '<div class="cur-group-title dm-section-eyebrow">OVERVIEW</div>' +
-        overviewInfo.btn +
-      '</div>' +
-      overviewInfo.panel +
-      '<div class="cur-group dm-stats-group">' +
-        '<div class="dm-stats-grid">' +
-          // PAGES is the RESET, not a narrowing, so its name says so rather
-          // than reading "Pages, 3,445 pages — filter the list".
-          facetCard('PAGES', pagesText, '', 'all',
-            'Pages, ' + pagesText + ' — show every page in the list') +
-          facetCard('ENTITIES', entText, 'dm-stat-entity', 'entities',
-            'Entities, ' + entText + ' pages — filter the list') +
-          facetCard('CONCEPTS', conText, 'dm-stat-concept', 'concepts',
-            'Concepts, ' + conText + ' pages — filter the list') +
-          facetCard('SUMMARIES', sumText, 'dm-stat-summary', 'summaries',
-            'Summaries, ' + sumText + ' pages — filter the list') +
-          // An em dash, not a zero. See projectCount().
-          jumpCard('PROJECTS', projText, 'dm-stat-project',
-            'Projects, ' + projText + ' — go to the projects list') +
-          // MEDIUM-2 fix: shown only when non-zero, so the common case (every
-          // page fits entities/concepts/summaries) renders identically to
-          // before — but when `other` IS non-zero it is never just dropped
-          // (see the caller's comment): a sixth stat card, same shape as the
-          // other five, not a footnote.
-          //
-          // It is NOT a control: there is no "Other" chip, and `all`
-          // deliberately does not equal it either (see BROWSE_FOLDERS).
-          (otherCount > 0 ? card('OTHER', otherCount.toLocaleString(), 'dm-stat-other') : '') +
-        '</div>' +
-        // ── THE TWO JUMPS (v3.64.0) ────────────────────────────────────
-        //
-        // A SEPARATE ROW, AND A SEPARATE CLASS, for a reason that is about
-        // meaning before it is about suites: these are not figures. PAGES
-        // and its three types are COUNTS that also select; PROJECTS is a
-        // count that jumps; these two carry a date and a state and exist to
-        // open a fold further down a page that folds. Putting them in
-        // `.dm-stats-grid` as a sixth and seventh `.dm-stat-card` would say
-        // they are more of the same number, which is exactly the
-        // self-contradicting-figures defect this card has been fixed for
-        // twice (the `other` count, and the Memory facet that `All` does
-        // not include).
-        //
-        // SHARED IS RENDERED ALWAYS AND HIDDEN UNTIL IT IS WARRANTED. The
-        // answer arrives from the Shared Brain panel AFTER this paint, and a
-        // re-render to reveal it would remount the panel, which would report
-        // again — a loop. One markup source, one attribute write, no
-        // repaint. `[hidden]` is beaten by author `display:` at any
-        // specificity, so views/domains.css carries the counter-rule
-        // (v3.62.0's finding, on this exact shape).
-        //
-        // BOTH READINGS ARE HANDED IN, ALREADY DERIVED. This function is
-        // lifted into two suite sandboxes with fixed stub lists, so it may
-        // gain no collaborator of its own — and the Shared reading has to be
-        // derived in ONE place anyway, because the reveal below happens
-        // without a repaint and would otherwise be a second copy of the
-        // rule free to disagree with this one. See sharedJumpReading().
-        (jumps && jumps.sources
-          ? '<div class="dm-jump-row">' +
-              '<button type="button" class="dm-jump-card" data-stat-jump="sources"' +
-                ' aria-label="Sources — open the Ingest section">' +
-                '<div class="cur-eyebrow">SOURCES</div>' +
-                '<div class="dm-jump-value">' + escapeHtml(
-                  jumps.lastIngest ? relTime(jumps.lastIngest) : 'nothing yet') + '</div>' +
-              '</button>' +
-              '<button type="button" class="dm-jump-card" data-stat-jump="shared"' +
-                ' aria-label="Shared Brain — open the Shared Brain section"' +
-                (jumps.shared && jumps.shared.show ? '' : ' hidden') + '>' +
-                '<div class="cur-eyebrow">SHARED</div>' +
-                '<div class="dm-jump-value">' +
-                  escapeHtml((jumps.shared && jumps.shared.value) || '—') + '</div>' +
-              '</button>' +
-            '</div>'
-          : '') +
-      '</div>' +
-    '</section>'
-  );
+  // A figure that SELECTS a chip — but ONLY while there is a list for it to
+  // act on. `aria-pressed` is read straight off the filter state, never off a
+  // local flag. With the list still loading, or failed, the tile is the plain
+  // reading it has always been in that state; the kit renders the identical
+  // geometry either way, so nothing moves when the list lands.
+  const facet = (label, value, toneClass, key, name) => (live
+    ? { label, value, toneClass, facet: key, active: b.folder === key, name }
+    : { label, value, toneClass });
+
+  const cards = [
+    // PAGES is the RESET, not a narrowing, so its name says so rather than
+    // reading "Pages, 3,445 pages — filter the list".
+    facet('PAGES', pagesText, '', 'all',
+      'Pages, ' + pagesText + ' \u2014 show every page in the list'),
+    facet('ENTITIES', entText, 'dm-stat-entity', 'entities',
+      'Entities, ' + entText + ' pages \u2014 filter the list'),
+    facet('CONCEPTS', conText, 'dm-stat-concept', 'concepts',
+      'Concepts, ' + conText + ' pages \u2014 filter the list'),
+    facet('SUMMARIES', sumText, 'dm-stat-summary', 'summaries',
+      'Summaries, ' + sumText + ' pages \u2014 filter the list'),
+    // An em dash, not a zero. See projectCount(). PROJECTS is always a
+    // control — it only scrolls, and the section it scrolls to renders in
+    // every state.
+    { label: 'PROJECTS', value: projText, toneClass: 'dm-stat-project', jump: 'projects',
+      name: 'Projects, ' + projText + ' \u2014 go to the projects list' },
+  ];
+  // MEDIUM-2 fix: shown only when non-zero, so the common case (every page
+  // fits entities/concepts/summaries) renders identically to before — but
+  // when `other` IS non-zero it is never just dropped: a sixth figure, same
+  // shape as the other five, not a footnote. It is NOT a control: there is no
+  // "Other" chip, and `all` deliberately does not equal it either.
+  if (otherCount > 0) {
+    cards.push({ label: 'OTHER', value: otherCount.toLocaleString(), toneClass: 'dm-stat-other' });
+  }
+
+  return renderOverview({
+    id: 'dm-overview-info',
+    eyebrow: 'OVERVIEW',
+    // THE SECTION CLASSES STAY THIS VIEW'S. `.dm-overview` is a top-level
+    // child of the column and is what `bindStatCardListeners` scopes itself
+    // to and what `patchMainAroundHosts` replaces whole or not at all.
+    sectionClass: 'dm-section dm-overview',
+    infoLabel: 'About these figures',
+    infoText: threeLayersInfoHtml(),
+    infoHtml: true,
+    // Every historical `dm-` token, on the same elements. See the kit's own
+    // header for why they are aliases rather than names.
+    alias: 'dm',
+    cards,
+    // BOTH READINGS ARE HANDED IN, ALREADY DERIVED, and SHARED is rendered
+    // always and hidden until it is warranted: the answer arrives from the
+    // Shared Brain panel AFTER this paint, and a re-render to reveal it would
+    // remount the panel, which would report again — a loop. One markup
+    // source, one attribute write, no repaint. See sharedJumpReading().
+    //
+    // A `shared-*` mirror gets no jump row at all (the caller passes
+    // `sources: false`), because a mirror gets no Ingest section and a tile
+    // that scrolls to nothing is the control-with-no-outcome this card
+    // already refuses to draw for a facet with no list.
+    jumps: (jumps && jumps.sources)
+      ? [
+        { key: 'sources', label: 'SOURCES',
+          value: jumps.lastIngest ? relTime(jumps.lastIngest) : 'nothing yet',
+          name: 'Sources \u2014 open the Ingest section' },
+        { key: 'shared', label: 'SHARED',
+          value: (jumps.shared && jumps.shared.value) || '\u2014',
+          hidden: !(jumps.shared && jumps.shared.show),
+          name: 'Shared Brain \u2014 open the Shared Brain section' },
+      ]
+      : [],
+  });
 }
 
 // ── Wiki browse panel ──────────────────────────────────────────────────────

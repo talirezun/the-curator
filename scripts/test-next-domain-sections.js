@@ -60,6 +60,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const SRC = readFileSync(join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
 const CSS = readFileSync(join(ROOT, 'src/public/next/views/domains.css'), 'utf8');
+// v3.64.2 — the OVERVIEW card's own rules moved to the shared component's
+// stylesheet when the Project-context view adopted the same card.
+const OV_CSS = readFileSync(join(ROOT, 'src/public/next/shared/overview.css'), 'utf8');
 
 let passed = 0;
 let failed = 0;
@@ -153,6 +156,7 @@ function docOrder(root) {
 // HOSTED sections are rendered for real, because they are what moved.
 // ═════════════════════════════════════════════════════════════════════════
 const { docsLinkHtml } = await import('../src/public/next/shared/docs-links.js');
+const { renderOverview } = await import('../src/public/next/shared/overview.js');
 
 const PREAMBLE = `
 let state = {};
@@ -196,7 +200,7 @@ const document = { getElementById: () => null, querySelector: () => null, queryS
 
 let box;
 try {
-  box = new Function('docsLinkHtml',
+  box = new Function('docsLinkHtml', 'renderOverview',
     PREAMBLE +
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
@@ -224,7 +228,7 @@ try {
        __setState: (s) => { state = s; }, __state: () => state, __calls: () => calls,
        __setRender: (fn) => { render = fn; },
        __reset: () => { calls.setMain.length = 0; calls.jumps.length = 0; } };`
-  )(docsLinkHtml);
+  )(docsLinkHtml, renderOverview);
 } catch (err) {
   console.log('FATAL: could not build the renderMain sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -1624,9 +1628,9 @@ section('S7 -- THE TWO JUMP TILES');
   // `[hidden]` LOSES TO AN AUTHOR `display:` AT ANY SPECIFICITY -- v3.62.0
   // shipped an empty warning chip that painted anyway on exactly this shape.
   ok('views/domains.css carries the counter-rule that makes `hidden` real',
-    /\.dm-jump-card\[hidden\]\s*\{\s*display:\s*none;?\s*\}/.test(CSS));
+    /\.cur-ov-jump\[hidden\]\s*\{\s*display:\s*none;?\s*\}/.test(OV_CSS));
   ok('CONTROL -- the tile really does declare a display of its own',
-    /\.dm-jump-card\s*\{[^}]*display:\s*flex/.test(CSS));
+    /\.cur-ov-jump\s*\{[^}]*display:\s*flex/.test(OV_CSS));
 }
 
 // ═════════════════════════════════════════════════════════════════════════

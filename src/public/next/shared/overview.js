@@ -137,11 +137,20 @@ export function renderOverview(o) {
   // the answer lands. `data-ov-*` is the kit's own hook and is always
   // emitted; `data-stat-*` is the Domains page's, which its listeners and
   // its `aria-pressed` arithmetic already address by name.
+  //
+  // THE CLASS LIST IS WRITTEN AS A LITERAL PREFIX, not assembled into a
+  // variable first, and that is a REQUIREMENT rather than a style:
+  // scripts/test-next-button-chrome.js scans every `<button … class="…">` in
+  // /next and fails any whose class list resolves no author border, because
+  // a bare `<button>` falls through to Chromium's 2px outset UA bevel. It
+  // reads the SOURCE, so `class="' + klass + '"` is a button with no
+  // readable class at all — which is exactly what it reported the first time
+  // this file was written that way.
   const card = (c) => {
-    const klass = cls('cur-ov-card', dm ? 'dm-stat-card' : '');
+    const alias2 = dm ? ' dm-stat-card' : '';
     const name = typeof c.name === 'string' && c.name ? c.name : c.label;
     if (typeof c.facet === 'string' && c.facet) {
-      return '<button type="button" class="' + klass + '"' +
+      return '<button type="button" class="cur-ov-card' + alias2 + '"' +
         ' data-ov-facet="' + escapeHtml(c.facet) + '"' +
         (dm ? ' data-stat-facet="' + escapeHtml(c.facet) + '"' : '') +
         ' aria-pressed="' + (c.active === true ? 'true' : 'false') + '"' +
@@ -150,12 +159,12 @@ export function renderOverview(o) {
     if (typeof c.jump === 'string' && c.jump) {
       // NOT A TOGGLE, so no `aria-pressed` — aria-pressed on a control that
       // does not stay pressed is a lie told to a screen reader only.
-      return '<button type="button" class="' + klass + '"' +
+      return '<button type="button" class="cur-ov-card' + alias2 + '"' +
         ' data-ov-jump="' + escapeHtml(c.jump) + '"' +
         (dm ? ' data-stat-jump="' + escapeHtml(c.jump) + '"' : '') +
         ' aria-label="' + escapeHtml(name) + '">' + body(c) + '</button>';
     }
-    return '<div class="' + klass + '">' + body(c) + '</div>';
+    return '<div class="cur-ov-card' + alias2 + '">' + body(c) + '</div>';
   };
 
   // ── THE JUMP ROW — A SECOND ROW INSIDE THE SAME GROUP ──────────────────
@@ -172,8 +181,8 @@ export function renderOverview(o) {
     (j) => j && typeof j === 'object' && typeof j.key === 'string' && j.key) : [];
   const jumpRow = jumps.length
     ? '<div class="' + cls('cur-ov-jumps', dm ? 'dm-jump-row' : '') + '">' +
-      jumps.map((j) => '<button type="button" class="'
-        + cls('cur-ov-jump', dm ? 'dm-jump-card' : '') + '"' +
+      jumps.map((j) => '<button type="button" class="cur-ov-jump'
+        + (dm ? ' dm-jump-card' : '') + '"' +
         ' data-ov-jump="' + escapeHtml(j.key) + '"' +
         (dm ? ' data-stat-jump="' + escapeHtml(j.key) + '"' : '') +
         ' aria-label="' + escapeHtml(j.name || j.label || j.key) + '"' +

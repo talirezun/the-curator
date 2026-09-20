@@ -325,12 +325,18 @@ section('3. The domain stat counts clear AA in the light theme');
   // quietly being computed against a plane that is no longer there.
   const groupBg = declFor(read('shell.css'), '.cur-group', 'background');
   ok(groupBg === 'var(--surface)', `the OVERVIEW group is on --surface (got ${groupBg})`);
-  const tileBg = declFor(dom, '.dm-stats-group .dm-stat-card', 'background');
+  // v3.64.2 — the tile and its group are the SHARED overview component's now
+  // (the Project-context view renders the same card), so the rule is read
+  // from that stylesheet and the markup from that module. Only the three ink
+  // classes below stayed in views/domains.css, because they read this view's
+  // own `--dm-ink-*` ramp.
+  const ov = read('shared/overview.css');
+  const tileBg = declFor(ov, '.cur-ov-group .cur-ov-card', 'background');
   ok(tileBg === 'none',
-     `.dm-stat-card is transparent inside the group, so the group's plane is the backdrop (got ${tileBg})`);
-  ok(/class="cur-group dm-stats-group"/.test(read('views/domains.js')),
-     '…and the group the view renders really is the kit\'s `.cur-group` — otherwise the two reads above ' +
-     'describe a plane nothing paints');
+     `the overview tile is transparent inside the group, so the group's plane is the backdrop (got ${tileBg})`);
+  ok(read('shared/overview.js').includes(`class="cur-group ' + cls('cur-ov-group'`),
+     '…and the group the component renders really is the kit\'s `.cur-group` — otherwise the two reads ' +
+     'above describe a plane nothing paints');
   for (const [ty, tok] of [['entity', '--dm-ink-entity'], ['concept', '--dm-ink-concept'], ['summary', '--dm-ink-summary']]) {
     const decl = declFor(dom, `.dm-stat-${ty}`, 'color');
     ok(decl === `var(${tok})`, `.dm-stat-${ty} takes ${tok} (got ${decl})`);
@@ -347,8 +353,8 @@ section('3. The domain stat counts clear AA in the light theme');
       `…and the --type-${ty} it used to use reads ${was}:1 on light — under the floor, which is the defect`);
   }
   // The counts are also FIGURES in a row of equal-width cards.
-  ok(/font-variant-numeric:\s*var\(--numeric-tabular\)/.test(declForBody(dom, '.dm-stat-value')),
-    '.dm-stat-value carries tabular figures, so four counts in a row line up');
+  ok(/font-variant-numeric:\s*var\(--numeric-tabular\)/.test(declForBody(ov, '.cur-ov-value')),
+    '.cur-ov-value carries tabular figures, so four counts in a row line up');
 }
 
 /** The UNION of every top-level rule matching `selector`.
@@ -489,7 +495,9 @@ section('6. Digits that align or tick carry tabular figures');
   const WANT = [
     ['views/chat.css', '.chat-num'], ['views/chat.css', '.chat-scope-count'],
     ['views/chat.css', '.chat-conv-meta'], ['views/chat.css', '.chat-compile-change-detail'],
-    ['views/domains.css', '.dm-stat-value'],
+    // v3.64.2: `.dm-stat-value` moved to the shared overview component as
+    // `.cur-ov-value` when the Project-context view adopted the same card.
+    ['shared/overview.css', '.cur-ov-value'],
     // `.ing-queue-estimate-row strong` WAS HERE. The rule it named is deleted:
     // v3.20.0 replaced those rows with renderReadoutGroup and the row rules sat
     // dead for four releases, this WANT entry certifying a selector nothing

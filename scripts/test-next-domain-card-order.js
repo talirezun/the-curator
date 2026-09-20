@@ -59,6 +59,7 @@ import { fileURLToPath } from 'node:url';
 // mistyped key a FATAL here instead of a blank panel in the browser.
 const { docsLinkHtml } =
   await import('../src/public/next/shared/docs-links.js');
+const { renderOverview } = await import('../src/public/next/shared/overview.js');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -209,7 +210,7 @@ const document = { getElementById: () => null, querySelectorAll: () => [] };
 let main;
 try {
   main = new Function(
-    'docsLinkHtml',
+    'docsLinkHtml', 'renderOverview',
     // v3.62.0 (P1-14). `renderStatCards` now builds the OVERVIEW block's ⓘ,
     // so the legend text and the shared docs table are collaborators of it.
     // Both are lifted rather than stubbed: `docsUrl()` THROWS on a key that is
@@ -239,7 +240,7 @@ try {
        memoryRowHtml, browseRowHtml, browseMoreHtml, browseNoteHtml, projectCount,
        __setState: (s) => { state = s; }, __calls: () => calls,
        __reset: () => { calls.setMain.length = 0; } };`
-  )(docsLinkHtml);
+  )(docsLinkHtml, renderOverview);
 } catch (err) {
   console.log('FATAL: could not build the renderMain sandbox from domains.js -- ' + err.message);
   process.exit(1);

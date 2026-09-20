@@ -57,6 +57,11 @@ const ROOT = join(__dirname, '..');
 const NEXT = join(ROOT, 'src/public/next');
 const SRC = readFileSync(join(NEXT, 'views/domains.js'), 'utf8');
 const CSS = readFileSync(join(NEXT, 'views/domains.css'), 'utf8');
+// v3.64.2. The OVERVIEW card's geometry and its four states moved to the
+// shared component's own stylesheet when the Project-context view adopted
+// the same card; only the three ink classes stayed in views/domains.css.
+// The assertions below follow the rule rather than re-describing it.
+const OV_CSS = readFileSync(join(NEXT, 'shared/overview.css'), 'utf8');
 const SHELL_CSS = readFileSync(join(NEXT, 'shell.css'), 'utf8');
 const TEXT_JS = readFileSync(join(NEXT, 'shared/text.js'), 'utf8');
 
@@ -315,6 +320,7 @@ const { COPY_SUCCESS_BANNER, TEMPLATE } =
 // mistyped key a FATAL here instead of a blank panel in the browser.
 const { docsLinkHtml } =
   await import('../src/public/next/shared/docs-links.js');
+const { renderOverview } = await import('../src/public/next/shared/overview.js');
 
 const FNS = [
   'activeBrowse', 'activeProjects', 'projectCount', 'infoMark', 'projInfoId',
@@ -338,7 +344,7 @@ const FNS = [
 let box;
 try {
   box = new Function(
-    'COPY_SUCCESS_BANNER', 'docsLinkHtml',
+    'COPY_SUCCESS_BANNER', 'docsLinkHtml', 'renderOverview',
     PREAMBLE +
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
@@ -355,7 +361,7 @@ try {
          calls.reader.length = 0; calls.asyncFailures = 0; },
        __setDocument: (d) => { documentImpl = d; },
        __setFetch: (fn) => { fetchResponder = fn; } };`
-  )(COPY_SUCCESS_BANNER, docsLinkHtml);
+  )(COPY_SUCCESS_BANNER, docsLinkHtml, renderOverview);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -405,7 +411,10 @@ section('S1 -- FOUR SECTIONS, ONE RHYTHM, ONE CHROME');
     const sections = descendants(root).filter((n) => n.tagName === 'SECTION' && hasClass(n, 'dm-section'));
     // The health panel is stubbed here; §1b drives the REAL one for its wrapper.
     eq('three of the four sections render as .dm-section (health is stubbed here; see S1b)', sections.length, 3);
-    const keys = sections.map((s) => s.classList.filter((c) => c !== 'dm-section').join(''));
+    // `cur-ov` is the shared component's own class on the OVERVIEW section
+    // (v3.64.2); this line has always been asking which dm- section each one is.
+    const keys = sections.map((s) => s.classList.filter(
+      (c) => c !== 'dm-section' && c !== 'cur-ov').join(''));
     eq('...in the reported order: overview, pages, projects', keys.join(' > '), 'dm-overview > dm-pages > dm-projects');
 
     for (const s of sections) {
@@ -451,7 +460,7 @@ section('S1 -- FOUR SECTIONS, ONE RHYTHM, ONE CHROME');
   ok('.dm-projects no longer carries a margin-top of its own', own && /margin-top:\s*0/.test(own[1]), own && own[1]);
   const eyebrowRule = /\.dm-recent-eyebrow\s*\{([^}]*)\}/.exec(bare);
   ok('...nor does the Pages eyebrow', eyebrowRule && /margin-top:\s*0/.test(eyebrowRule[1]), eyebrowRule && eyebrowRule[1]);
-  const grid = /\.dm-stats-grid\s*\{([^}]*)\}/.exec(bare);
+  const grid = /\.cur-ov-grid\s*\{([^}]*)\}/.exec(stripComments(OV_CSS));
   ok('...and the stat grid no longer owns the gap BELOW it either',
     grid && !/margin-bottom/.test(grid[1]), grid && grid[1]);
   const healthCard = /\n\.dm-health-card\s*\{([^}]*)\}/.exec(bare);
@@ -502,7 +511,7 @@ section('S2 -- THE OVERVIEW CARD, AND THE FIGURE THAT WAS MISSING');
   eq('five figures, not four', cards.length, 5);
   eq('...and the fifth is PROJECTS', cards[4] && cards[4].children[0].textContent, 'PROJECTS');
   ok('the section is labelled OVERVIEW',
-    /class="cur-group-title dm-section-eyebrow">OVERVIEW</.test(html));
+    /class="cur-ov-eyebrow cur-group-title dm-section-eyebrow">OVERVIEW</.test(html));
 }
 {
   // THE COUNT IS THE PROJECTS LIST'S OWN. Driven through the real
@@ -747,9 +756,9 @@ section('S2c -- THE SELECTED FIGURE STILL READS, ON THE TINT IT GAINS');
   // the state is ALSO carried by `aria-pressed` and by an --accent-border
   // ring, and why the chip of the same name stays on screen saying the same
   // thing. Recorded rather than measured away.
-  const bare = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
-  const sel = /\.dm-stats-group button\.dm-stat-card\[aria-pressed="true"\]\s*\{([^}]*)\}/.exec(bare);
-  ok('CONTROL -- domains.css declares a selected state for the figure', !!sel, 'no rule');
+  const bare = OV_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  const sel = /\.cur-ov-group button\.cur-ov-card\[aria-pressed="true"\]\s*\{([^}]*)\}/.exec(bare);
+  ok('CONTROL -- the overview kit declares a selected state for the figure', !!sel, 'no rule');
   ok('...which paints the accent TINT, the same fill the chip uses',
     sel && /background:\s*var\(--accent-tint\)/.test(sel[1]), sel && sel[1]);
   ok('...AND an --accent-border edge, because the fill alone is 1.13:1 against the plain tile',
@@ -757,7 +766,7 @@ section('S2c -- THE SELECTED FIGURE STILL READS, ON THE TINT IT GAINS');
   ok('...as an INSET shadow, so selecting a figure cannot reflow the five-track grid by 2px',
     sel && !/[^-]border:/.test(sel[1]), sel && sel[1]);
   ok('the selected figure carries aria-pressed as well as a fill',
-    /\[aria-pressed="true"\]/.test(CSS) && /aria-pressed="/.test(SRC));
+    /\[aria-pressed="true"\]/.test(OV_CSS) && /aria-pressed="/.test(SRC));
 
   // THE PRESS REACHES A SELECTED FIGURE TOO. `[aria-pressed="true"]` scores
   // (0,3,1) and a bare `:active` ties with it, losing on order -- so pressing
@@ -765,7 +774,7 @@ section('S2c -- THE SELECTED FIGURE STILL READS, ON THE TINT IT GAINS');
   // press rule therefore carries BOTH arms: the bare one for the PROJECTS
   // figure, which jumps and has no aria-pressed at all, and the
   // attribute-present one to outrank the selected fill.
-  const press = /\.dm-stats-group button\.dm-stat-card:active,\s*\.dm-stats-group button\.dm-stat-card\[aria-pressed\]:active\s*\{([^}]*)\}/.exec(bare);
+  const press = /\.cur-ov-group button\.cur-ov-card:active,\s*\.cur-ov-group button\.cur-ov-card\[aria-pressed\]:active\s*\{([^}]*)\}/.exec(bare);
   ok('the press rule carries both the bare and the [aria-pressed] arm', !!press,
     'the two-arm press selector is gone');
   ok('...declared AFTER the selected fill it has to outrank',

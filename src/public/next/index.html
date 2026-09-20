@@ -175,6 +175,25 @@
      this file's <link> tags. -->
 <link rel="stylesheet" href="/next/shared/foundations-init.css">
 
+<!-- shared/overview.css — the ONE overview card in /next: the readings ABOUT a
+     screen, in one group, under one eyebrow with one ⓘ. TWO hosts render it —
+     the domain page's OVERVIEW in views/domains.js and the Project-context
+     page's three readings in views/memory.js — so its rules can live in
+     neither of their stylesheets without one view depending on the other's.
+     Every rule in it MOVED from views/domains.css unchanged in value; it owns
+     the whole `cur-ov-` prefix.
+
+     Linked ABOVE the views on purpose, so a host may still add PLACEMENT at
+     equal specificity after this point — the same layering the components
+     above document, and the reason the domain page's three ink classes stay
+     in views/domains.css.
+
+     Load-bearing twice over, as those <link>s record: without it the card is
+     unstyled on both screens, AND the file is invisible to
+     scripts/test-css-tokens.js §5, which discovers /next stylesheets only from
+     this file's <link> tags. -->
+<link rel="stylesheet" href="/next/shared/overview.css">
+
 <!-- One CSS file per view (views/README.md) — linked here so the views/
      directory never has to touch this file to add view-specific styling.
      All seven exist even where a view currently has no rules of its own,
