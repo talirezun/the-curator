@@ -78,6 +78,10 @@ import { progressRingHtml } from '../shared/progress-ring.js';
 // adopter; see that module's header for why a sixth hand-rolled `reader.read()`
 // loop was not written here.
 import { readSseFrames } from '../shared/sse.js';
+// The app-wide freshness scale, dot AND word, so the project pill's mark
+// means the same thing here as it does in Context and Domains. One ladder,
+// one stylesheet (shared/freshness.css owns the `fresh-` prefix outright).
+import { formatAge, freshnessTier } from '../shared/age.js';
 
 // ── Markdown rendering ──────────────────────────────────────────────────
 // The renderer now lives in next/shared/markdown.js so the wiki-browse
@@ -248,6 +252,27 @@ const LS_MODEL = 'curator-next-chat-model';
 // depend on localStorage being intact.
 const LS_MODEL_RECENTS = 'curator-next-chat-model-recents';
 const LS_MODEL_STARRED = 'curator-next-chat-model-starred';
+// ── THE PINNED PROJECT, PER DEVICE AND PER DOMAIN (v3.64.0) ──────────────
+//
+// PER DEVICE, NOT PER CONVERSATION, and that is the decision rather than the
+// easy option. A conversation's JSON is TRACKED by the knowledge repo
+// (CLAUDE.md: `conversations/*.json` is on none of the gitignore lists, which
+// is why sending one chat message ticks the Sync badge), so a per-conversation
+// pin would be a schema field that TRAVELS — to a machine where that project
+// may not exist, on a thread the user opened to re-read an answer. Per device
+// is the reversible choice.
+//
+// KEYED BY DOMAIN, as one JSON map `{ "<domain>": "<project>" }`. Switching
+// domains therefore shows no pin (the new domain has none) and switching back
+// restores the one you had, which is the behaviour a one-value key cannot
+// give. Any failure — absent key, private-mode throw, hand-edited value,
+// wrong shape — degrades to NO PIN, never to an exception and never to a pin
+// for a project this domain does not have: the pill is a retrieval widening,
+// so its fail-safe direction is "wiki only".
+const LS_PROJECT = 'curator-chat-project-v1';
+// A ceiling on the map, so a user who cycles through many domains does not
+// grow an unbounded localStorage entry. Oldest-written entries are dropped.
+const MAX_PINNED_PROJECTS = 40;
 
 /**
  * ── THE GATE IS OPEN: THE BACKEND LANDED IN v3.13.0 ────────────────────────
@@ -350,6 +375,39 @@ const state = {
   // not exist on disk and would reappear on every repaint until navigation. The
   // sidebar's `bulkNotice` above is the precedent this follows.
   cancelNotice: null,
+  // ── THE PINNED PROJECT (v3.64.0) ────────────────────────────────────────
+  //
+  // `projectRows` is this domain's projects as `GET /api/memory/:domain/
+  // projects` returned them, `projectsFor` is the domain they belong to, and
+  // `projectsState` is 'idle' | 'loading' | 'ready' | 'error'. Kept as three
+  // fields rather than one nullable object because "not asked yet", "asked
+  // and none exist" and "asked and it failed" are three different pills, and
+  // this view has already paid once for collapsing exactly that distinction
+  // (see `booted` above).
+  projectRows: [],
+  projectsFor: null,
+  projectsState: 'idle',
+  // The pinned project's slug for the ACTIVE domain, or null. Restored from
+  // localStorage on mount and RECONCILED against `projectRows` the moment
+  // they arrive — a project that has been deleted must not keep being sent.
+  activeProject: null,
+  // The WORK-STREAM within that project, or null for "whichever is newest".
+  //
+  // IN MEMORY ONLY, deliberately, and it is the one field here that is not
+  // persisted. The PROJECT pin is a per-device preference (Q3); a scope is a
+  // pointer at one work-stream, handed over by the Context view when the user
+  // pressed "Ask this project" while looking at it. Persisting it would mean
+  // a pin made on Monday keeps opening a work-stream that has since been
+  // superseded, which is precisely what `latest` exists to avoid. Null is
+  // sent as no `scope` field at all, and the STORE decides what `latest`
+  // means — this app has already deleted one duplicate of that resolution.
+  activeProjectScope: null,
+  // What the last answered turn's project context actually contributed:
+  // `{chars, documents, …}` straight off the server's own measurement, or
+  // null. NEVER computed here — the server is the only thing that knows what
+  // went into the prompt, and a client-side estimate beside a real one is the
+  // dead-data shape this file already refuses for `usage`.
+  projectLastUsed: null,
   responseStyle: 'balanced',
   modelProvider: null,    // null -> global active provider
   availableProviders: [], // config-scoped subset of PROVIDER_KEY_FLAGS' ids
@@ -769,6 +827,46 @@ async function boot(token, scopeReq) {
   }
 
   await loadDomainConversations(state.activeDomain, token, { autoSelectMostRecent: true });
+
+  // ── A PROJECT HANDED OVER WITH THE SCOPE (v3.64.0) ──────────────────────
+  //
+  // `consumeChatScopeRequest()` has returned `{slug, firstRun}` since P1-10.
+  // The shell widens it, additively, to carry the project the Context view's
+  // "Ask this project" door was open on. READ DEFENSIVELY — `project` is
+  // absent on every existing producer and on any shell that has not shipped
+  // the widening yet, and an absent field must mean "no project", never an
+  // exception. Nothing here imports the producer; this is the SAME object
+  // `resolveBootDomain` above already reads `slug` off.
+  //
+  // ONLY WHEN THE SCOPE ITSELF APPLIED. A project belongs to a domain, so a
+  // handoff whose domain did NOT take (it named a domain this machine does
+  // not have) must not pin its project onto whatever domain we fell back to
+  // — that would pin a name from one domain into another, where the route
+  // would refuse it on the next question.
+  //
+  // It is written to the SAME per-device store the pill writes, so the
+  // handoff seeds the pin and the pin behaves exactly as a hand-picked one
+  // from then on: no second lifetime, no second source of truth. It is still
+  // RECONCILED inside loadProjectsForDomain — a project that does not exist
+  // clears itself rather than being sent.
+  const handedProject = (scopeReq && typeof scopeReq.project === 'string' && scopeReq.project.trim())
+    ? scopeReq.project.trim() : null;
+  if (handedProject && decision.appliedScopeSlug) {
+    writePinnedProject(state.activeDomain, handedProject);
+    // `scope` rides only when `project` does, and it is NOT persisted — see
+    // `state.activeProjectScope`. Absent, empty or the wrong type all mean
+    // "whichever work-stream is newest", which is what the store answers for
+    // a missing scope anyway, so the degraded case needs no special arm.
+    state.activeProjectScope = (typeof scopeReq.scope === 'string' && scopeReq.scope.trim())
+      ? scopeReq.scope.trim() : null;
+  }
+
+  // NOT awaited, and not part of the boot gate: the pill is a retrieval
+  // WIDENING, so the thread must never wait on it. `patchProjectGroup`
+  // repaints the group alone when the answer lands, and every failure —
+  // including this promise rejecting — leaves the pill in a stated state
+  // rather than the view in a broken one.
+  loadProjectsForDomain(state.activeDomain, token).catch(() => {});
 }
 
 // The `has<Provider>Key` flags this view reads, in the order providers should
@@ -1044,6 +1142,18 @@ function switchDomain(slug) {
   // user has not asked for anything, and restoring the most recent thread is
   // the useful default rather than an override of an explicit action.
   loadDomainConversations(slug, myMountToken, { autoSelectMostRecent: false }).catch(reportAsyncActionFailure);
+  // Projects belong to a DOMAIN, so the old domain's rows, its pin and its
+  // last measured reading are all about something the user has just left.
+  // Cleared here and reloaded for the new domain; the pin for the new domain
+  // is restored inside loadProjectsForDomain from the per-domain map, so
+  // coming back to a domain brings its own pin back rather than nothing.
+  state.projectRows = [];
+  state.projectsFor = null;
+  state.projectsState = 'idle';
+  state.activeProject = null;
+  state.activeProjectScope = null;
+  state.projectLastUsed = null;
+  loadProjectsForDomain(slug, myMountToken).catch(() => {});
   renderShell(myMountToken); // immediate feedback while the fetch is in flight
 }
 
@@ -1258,6 +1368,13 @@ async function sendCurrentMessage() {
   // may already be something else. This is the ONLY record of what THIS turn
   // asked for, and it is half of the divergence comparison.
   const requestedModelAtSend = state.chatModel;
+  // Captured for the same reason as the three above, and for one more: the
+  // pill can be changed while the turn is in flight, and the reading this
+  // turn reports back ("12 KB read") belongs to the project that was pinned
+  // when it was SENT. Applying it to whatever is pinned when it lands would
+  // be a measurement about the wrong project.
+  const projectAtSend = state.activeProject;
+  const scopeAtSend = state.activeProjectScope;
 
   // A new turn supersedes the last Stop — the notice described the turn the
   // user has just replaced, and leaving it under a live thinking bubble would
@@ -1314,6 +1431,18 @@ async function sendCurrentMessage() {
         // answers with JSON exactly as before, which is what makes the branch
         // below a real fallback rather than a version check.
         stream: true,
+        // THE PINNED PROJECT, spread rather than sent as a null. With no pin
+        // the body is byte-identical to v3.63.0's, which is what keeps the
+        // wiki-only turn on exactly the path it was on before — the same
+        // discipline `model` two lines up already follows. `scope` rides only
+        // when a project does: a work-stream with no project to belong to is
+        // a field the route would have to decide what to do with.
+        ...(projectAtSend ? { project: projectAtSend } : {}),
+        // Only ever beside a project, and only when one was named: a
+        // work-stream with no project to belong to is a field the route
+        // would have to decide what to do with, and an absent scope already
+        // means "the newest" at the store.
+        ...(projectAtSend && scopeAtSend ? { scope: scopeAtSend } : {}),
       }),
     });
 
@@ -1351,6 +1480,24 @@ async function sendCurrentMessage() {
 
     const wasNew = !!data.isNew && !!data.conversationId;
     if (data.conversationId) state.activeConversationId = data.conversationId;
+    // What the project context actually contributed to THIS turn, straight
+    // off the server's own measurement. Recorded only when the pill still
+    // shows the project the turn was SENT with, so a figure can never be
+    // attached to a project it is not about. `null` on every other path,
+    // including a turn sent with no project — a stale reading beside a fresh
+    // pill is worse than no reading at all.
+    state.projectLastUsed =
+      (projectAtSend && state.activeProject === projectAtSend
+        && data.projectContext && typeof data.projectContext === 'object')
+        ? data.projectContext : null;
+    // PATCHED, never re-rendered. The ordinary-turn branch below deliberately
+    // does NOT repaint the main view (it patches the sidebar's one integer
+    // and the thread), and repainting the scope bar here to move one figure
+    // would rebuild the project picker — and close a menu the user may have
+    // open — for a number. `projectFigureText` is the same producer the
+    // renderer uses, so the two cannot print it differently.
+    const figureEl = document.getElementById('chat-project-figure');
+    if (figureEl) figureEl.textContent = projectFigureText(state.projectLastUsed);
     state.thread.push({
       role: 'assistant',
       // ══ REPLACE. NEVER APPEND. ═════════════════════════════════════════
@@ -2726,6 +2873,262 @@ function renderSidebarConversationsOnly(token) {
   wireConversationPane(paneEl);
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// THE PROJECT PILL (v3.64.0)
+//
+// A SECOND GROUP in the left half of the scope bar, never a second domain
+// selector: the domain group stays first, the spacer still separates the two
+// halves, and the compile control still sits alone on the right. With a
+// project pinned, the server ALSO reads that project's standing brief, its
+// latest handoff and its read-first canonical documents — as recorded data,
+// framed by the memory layer's own injection defence. Nothing here writes.
+// ═════════════════════════════════════════════════════════════════════════
+
+/** The `{domain: project}` map, or `{}` on any failure. Never throws. */
+function readPinnedProjects() {
+  let raw = null;
+  try { raw = localStorage.getItem(LS_PROJECT); } catch { /* ignore */ }
+  if (typeof raw !== 'string' || !raw) return {};
+  let parsed = null;
+  try { parsed = JSON.parse(raw); } catch { return {}; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(parsed)) {
+    if (typeof k === 'string' && k && typeof v === 'string' && v) out[k] = v;
+  }
+  return out;
+}
+
+/** Pin (or, with a null project, UNPIN) for one domain. Never throws. */
+function writePinnedProject(domain, project) {
+  const map = readPinnedProjects();
+  if (project) map[domain] = project; else delete map[domain];
+  const keys = Object.keys(map);
+  // Insertion order is JS object order for string keys, so dropping from the
+  // FRONT drops the least recently written — a re-pin deletes and re-adds.
+  for (const k of keys.slice(0, Math.max(0, keys.length - MAX_PINNED_PROJECTS))) delete map[k];
+  try { localStorage.setItem(LS_PROJECT, JSON.stringify(map)); } catch { /* ignore */ }
+}
+
+/** The row for the pinned project, or null. */
+function activeProjectRow() {
+  if (!state.activeProject) return null;
+  return state.projectRows.find(r => r.project === state.activeProject) || null;
+}
+
+/**
+ * Load this domain's projects, then RECONCILE the pin against them.
+ *
+ * The reconciliation is the load-bearing half. A pinned project that has been
+ * deleted, renamed, or that belongs to a domain this device no longer has
+ * must stop being sent — the route would refuse it with a 400 and the user
+ * would meet a refusal on a question that had nothing to do with projects.
+ * Clearing it here means the worst case is a wiki-only answer, which is the
+ * fail-safe direction for a retrieval widening.
+ */
+async function loadProjectsForDomain(domain, token) {
+  if (!domain) return;
+  state.projectsFor = domain;
+  state.projectsState = 'loading';
+  state.projectRows = [];
+  // Restored BEFORE the fetch so a repaint in between shows the pill the user
+  // left rather than flashing "no project" and back.
+  state.activeProject = readPinnedProjects()[domain] || null;
+  patchProjectGroup(token);
+  let rows = [];
+  let okState = 'ready';
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/projects');
+    const data = await res.json();
+    if (!res.ok || data.ok === false) throw new Error(data.error || 'Could not read this domain\'s projects.');
+    rows = Array.isArray(data.projects) ? data.projects : [];
+  } catch {
+    okState = 'error';
+  }
+  // A domain switch (or a view teardown) during the fetch: this answer is
+  // about a domain nobody is looking at any more.
+  if (!isCurrentMount(token) || state.activeDomain !== domain) return;
+  state.projectRows = rows;
+  state.projectsState = okState;
+  if (state.activeProject && !rows.some(r => r.project === state.activeProject)) {
+    state.activeProject = null;
+    state.activeProjectScope = null;
+    writePinnedProject(domain, null);
+    state.projectLastUsed = null;
+  }
+  patchProjectGroup(token);
+}
+
+/** Commit a pick. `''` means "no project". */
+function selectChatProject(value) {
+  const next = typeof value === 'string' && value ? value : null;
+  if (next === state.activeProject) return;
+  state.activeProject = next;
+  // A scope names a work-stream INSIDE a project, so it means nothing once
+  // the project changes — and a figure measured for the PREVIOUS project
+  // would be a wrong reading about the new one. A stale number beside a fresh
+  // pill is worse than none.
+  state.activeProjectScope = null;
+  state.projectLastUsed = null;
+  writePinnedProject(state.activeDomain, next);
+  patchProjectGroup(myMountToken);
+}
+
+function projectListboxCfg() {
+  const options = [
+    { value: '', label: 'No project' },
+    ...state.projectRows.map(r => ({
+      value: r.project,
+      label: r.project,
+      detail: r.ageSeconds === null || r.ageSeconds === undefined ? 'no saves' : formatAge(r.ageSeconds),
+    })),
+  ];
+  return {
+    id: 'chat-project-lb',
+    options,
+    value: state.activeProject || '',
+    placeholder: 'No project',
+    ariaLabel: 'Project context for this chat',
+    triggerClass: 'lb-sm chat-lb',
+    rootClass: 'chat-project-lb-root',
+    onChange: selectChatProject,
+  };
+}
+
+/**
+ * The " · 12 KB read" fragment, or '' when nothing was measured.
+ *
+ * ONE producer, called from the renderer AND from the targeted patch in
+ * `sendCurrentMessage`, so the figure painted on a repaint and the figure
+ * patched after a turn cannot disagree — two hand-written copies of one
+ * format string is this repo's most reliably repeated defect.
+ *
+ * The SERVER's own measurement of what went into the prompt. Never computed
+ * here: the client cannot know what the store returned, and an estimate
+ * beside a real number is the dead-data shape this file already refuses for
+ * `usage`.
+ */
+function projectFigureText(used) {
+  if (!used || !Number.isFinite(used.chars)) return '';
+  return ' · ' + Math.round(used.chars / 1024) + ' KB read';
+}
+
+/**
+ * The group's markup. Three states, told apart rather than merged:
+ * not-asked-yet, asked-and-this-domain-has-none, and a real list.
+ *
+ * The ⓘ uses `data-tx-info`, shared/text.js's ONE delegated listener — the
+ * same mechanism every other disclosure in this shell uses, so Escape,
+ * outside-click and focus return come from one place and not from a second
+ * hand-written handler.
+ */
+function projectGroupHtml() {
+  const loading = state.projectsState === 'idle' || state.projectsState === 'loading';
+  const none = state.projectsState === 'ready' && state.projectRows.length === 0;
+
+  let control;
+  if (loading) {
+    control = '<span class="chat-project-note">Reading projects…</span>';
+  } else if (none) {
+    control = '<span class="chat-project-note">No projects in this domain yet.</span>';
+  } else if (state.projectsState === 'error') {
+    control = '<span class="chat-project-note">Projects could not be read.</span>';
+  } else {
+    const cfg = projectListboxCfg();
+    pendingListboxes.push(cfg);
+    control = renderListboxHtml(cfg);
+  }
+
+  // The freshness mark: the SHARED scale, dot AND word, never colour alone.
+  // Only for a pinned project — a dot beside "No project" would be a fact
+  // about nothing.
+  let readout = '';
+  const row = activeProjectRow();
+  if (row) {
+    const age = Number.isFinite(row.ageSeconds) ? row.ageSeconds : null;
+    readout =
+      '<span class="chat-project-readout">' +
+        '<span class="fresh-dot fresh-' + freshnessTier(age) + '" aria-hidden="true"></span>' +
+        escapeHtml(age === null ? 'no saves yet' : 'saved ' + formatAge(age)) +
+        // THE LAST TURN'S MEASURED READING, in its own addressable node.
+        // `sendCurrentMessage` patches this ONE element's text when an answer
+        // lands, rather than repainting the group: an ordinary turn changes
+        // one figure, and a group repaint would tear down and rebuild the
+        // picker — including any menu the user has open — for it. Same
+        // discipline as `bumpMessageCountForTurn` two screens over.
+        // EMPTY until a turn measures something: a zero here would be a
+        // reading nobody took.
+        '<span class="chat-project-figure" id="chat-project-figure">' +
+          escapeHtml(projectFigureText(state.projectLastUsed)) +
+        '</span>' +
+      '</span>';
+  }
+
+  return (
+    '<span class="chat-scope-eyebrow mono">PROJECT</span>' +
+    control +
+    readout +
+    // 46 words. It says what is read, that it is recorded data, and — the
+    // sentence a user actually needs — that nothing is written back.
+    '<button type="button" class="chat-project-info" id="chat-project-info-btn"' +
+      ' data-tx-info="chat-project-info" aria-expanded="false"' +
+      ' aria-controls="chat-project-info" aria-label="What a pinned project adds">ⓘ</button>'
+  );
+}
+
+/**
+ * The ⓘ's panel — rendered OUTSIDE the scope bar, and that is a measured fix
+ * rather than a preference.
+ *
+ * MEASURED in the browser at 1370 px: with the panel inside the group it was
+ * reported open (`hidden: false`, `aria-expanded: true`) and at a sane
+ * rectangle, and NOTHING WAS DRAWN. `.chat-scopebar` is `overflow-x: auto`,
+ * and a box whose overflow-x is not `visible` computes overflow-y to `auto`
+ * too — so the bar is a scroll container and CLIPPED an absolutely-positioned
+ * descendant that hung below it. A disclosure that silently draws nothing is
+ * the dead-control shape this repo keeps recording, and it is invisible to
+ * every offline assertion here, all of which passed.
+ *
+ * So the panel is a SIBLING of the bar, in flow: it cannot be clipped by
+ * anything, it needs no z-index and no positioning, and it pushes the thread
+ * down while it is open exactly as `.tx-vh-panel` does under a view header.
+ * The BUTTON stays in the group, where its label belongs; `data-tx-info`
+ * matches by id anywhere in the document, so the two need not be siblings.
+ * It is also why `patchProjectGroup` can repaint the group without touching
+ * this panel — the text is static and has nothing to repaint.
+ */
+function projectInfoPanelHtml() {
+  return (
+    '<div class="chat-project-panel" id="chat-project-info" role="group"' +
+      ' aria-label="What a pinned project adds" hidden>' +
+      'With a project pinned, the answer also draws on its standing brief, its latest handoff ' +
+      'and the canonical documents marked read-first — on top of this domain\'s wiki. ' +
+      'All of it is treated as recorded data to verify, never as instructions. ' +
+      'Chat never writes to your project.' +
+    '</div>'
+  );
+}
+
+/**
+ * Repaint the project group ALONE.
+ *
+ * Never `renderMain()`: a repaint of the whole view destroys the thread, the
+ * composer's draft and the scroll position, and this group changes on a
+ * background fetch the user did not ask for. The same discipline
+ * `renderSidebarConversationsOnly` uses one screen over.
+ */
+function patchProjectGroup(token) {
+  if (!isCurrentMount(token)) return;
+  const host = document.getElementById('chat-project-group');
+  if (!host) return;
+  // Any open menu belongs to a trigger about to leave the document.
+  closeAllListboxes();
+  pendingListboxes.length = 0;
+  host.innerHTML = projectGroupHtml();
+  for (const cfg of pendingListboxes) mountListbox(cfg);
+  pendingListboxes.length = 0;
+}
+
 function renderMain(token) {
   if (!isCurrentMount(token)) return;
 
@@ -2836,9 +3239,23 @@ function renderMain(token) {
           '<div class="chat-scope-pills">' + scopePills + '</div>' +
           '<span class="chat-scope-count">' + pageCount.toLocaleString() + ' page' + (pageCount === 1 ? '' : 's') + ' in scope</span>' +
         '</div>' +
+        // ── THE PROJECT GROUP: SECOND, AND STILL IN THE LEFT HALF ────────
+        // A second GROUP, not a second domain selector. It sits after the
+        // domain group and BEFORE the spacer, so the bar still reads as two
+        // halves — what this conversation can see on the left, what it can
+        // write on the right — and the readout can never become the Compile
+        // button's neighbour, which is the defect the spacer exists for.
+        // Its body is painted by patchProjectGroup, which is also what a
+        // background project fetch repaints, so there is ONE producer.
+        '<div class="chat-scope-group chat-project-group" id="chat-project-group">' +
+          projectGroupHtml() +
+        '</div>' +
         '<div class="chat-scope-spacer"></div>' +
         compileControlHtml() +
       '</div>' +
+      // OUTSIDE the bar — see projectInfoPanelHtml for the measurement that
+      // put it here rather than inside the group with its button.
+      projectInfoPanelHtml() +
       '<div class="chat-thread" id="chat-thread"></div>' +
       renderComposerHtml(active) +
     '</div>',
@@ -2848,6 +3265,13 @@ function renderMain(token) {
   document.querySelectorAll('[data-scope-domain]').forEach(btn => {
     btn.addEventListener('click', () => switchDomain(btn.dataset.scopeDomain));
   });
+  // MOUNTED HERE, NOT LEFT FOR renderComposerPickers. That function clears
+  // `pendingListboxes` before building its own two, so a cfg queued by
+  // projectGroupHtml() above and mounted later would be thrown away — the
+  // pill would render and never open. Cleared afterwards for the same
+  // reason, so the composer's pass starts from an empty queue.
+  for (const cfg of pendingListboxes) mountListbox(cfg);
+  pendingListboxes.length = 0;
   // startCompile, NOT runCompile: the estimate-then-confirm gate is the entry
   // point and runCompile is unreachable from the UI without passing it.
   document.getElementById('chat-compile-btn')?.addEventListener('click', () => startCompile().catch(reportAsyncActionFailure));
