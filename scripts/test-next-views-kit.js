@@ -529,7 +529,7 @@ section('7. The monospace face is spent on LITERALS, not on facts');
      copies. Each is listed with its reason so the next person adding a `mono`
      has to argue against a specific list rather than against a vibe. */
   const KEPT = {
-    'views/chat.js': 7,       // four message eyebrows, the conversation group label,
+    'views/chat.js': 8,       // four message eyebrows, the SCOPE and PROJECT eyebrows (v3.64.0), the conversation group label,
                               // the SCOPE eyebrow, and the model id in the picker.
                               // An eyebrow is a mono IDIOM in this system —
                               // tokens/typography.css defines --type-eyebrow as a
@@ -609,6 +609,7 @@ section('7. The monospace face is spent on LITERALS, not on facts');
     ok(JSON.stringify(kept) === JSON.stringify([
       'chat-conv-group-label', 'chat-dd-opt-desc', 'chat-msg-eyebrow',
       'chat-msg-eyebrow', 'chat-msg-eyebrow', 'chat-msg-eyebrow', 'chat-scope-eyebrow',
+      'chat-scope-eyebrow', // SCOPE and PROJECT (v3.64.0)
     ]), `views/chat.js keeps mono ONLY on its eyebrows and the model id (got ${kept.join(', ')})`);
   }
   // The stylesheets, from the other side: the chip and the wikilink no longer

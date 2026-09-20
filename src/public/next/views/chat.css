@@ -529,6 +529,105 @@
   font-variant-numeric: var(--numeric-tabular);
 }
 
+/* ── THE PROJECT GROUP (v3.64.0) ──────────────────────────────────────────
+   A SECOND group in the left half, built from `.chat-scope-group` so it
+   inherits that group's spacing and `flex: none` rather than declaring its
+   own — the two halves must stay the two halves, and a group with different
+   metrics would read as a third region. Everything below is what this group
+   adds on top.
+
+   The left rule is the only ornament: it says "this belongs beside the
+   scope, not to it" at a glance, at the same weight as the bar's own bottom
+   border. --border-subtle, not --border: it is a grouping hint, not a
+   boundary a user acts on, and the 3:1 non-text floor applies to marks that
+   carry information. This one carries none that the eyebrow does not. */
+.chat-project-group {
+  padding-left: 12px;
+  border-left: 1px solid var(--border-subtle);
+}
+/* The trigger keeps its own width rather than shrink-wrapping to a project
+   name, so switching between "No project" and a long slug does not move the
+   compile control on the far side of the spacer. `min-width`, not `width`:
+   a name longer than this still gets its space (the bar scrolls). */
+.chat-project-lb-root .lb-btn { min-width: 9.5rem; }
+/* The two non-control states — "reading projects…" and "no projects in this
+   domain yet" — take the readout's own rung, because they are statements
+   about what exists, not controls. They must never look pressable. */
+.chat-project-note {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+/* The freshness mark and its words. The DOT's rules come from
+   shared/freshness.css, which owns the `fresh-` prefix outright; nothing
+   here re-declares a tier colour, which is the duplication that scale was
+   built to end. */
+.chat-project-readout {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  font-variant-numeric: var(--numeric-tabular);
+  white-space: nowrap;
+}
+/* The ⓘ. Same behaviour, same look and the same reasoning as
+   `.chat-msg-cost` further down this file — it is the other `data-tx-info`
+   disclosure in this view, driven by shared/text.js's ONE delegated
+   listener. It is a glyph rather than a word because the eyebrow beside it
+   is already the label, and it carries a real `aria-label` for the name a
+   screen reader needs. Focus is NOT suppressed anywhere here. */
+.chat-project-info {
+  flex: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: var(--type-body-sm);
+  line-height: 1;
+  color: var(--text-3);
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: color var(--dur-fast, 80ms) var(--ease-out, ease);
+}
+.chat-project-info:hover,
+.chat-project-info[aria-expanded="true"] { color: var(--text); }
+/* `[hidden]` FIRST and on its own selector, for the reason `.chat-cost-panel`
+   records below: a later rule setting `display` on this class would beat the
+   UA's `[hidden] { display: none }` and leave the panel permanently open.
+
+   ── IN FLOW, AND NOT INSIDE THE BAR. MEASURED. ─────────────────────────────
+   The first cut put this panel inside `.chat-project-group` and positioned it
+   `absolute; top: calc(100% + 6px); z-index: 4`. In the browser at 1370 px it
+   reported itself OPEN — `hidden: false`, `aria-expanded: true`, a 278x169
+   rectangle at a sensible place — and drew NOTHING. `.chat-scopebar` above is
+   `overflow-x: auto`, and per CSS a box whose overflow-x is not `visible`
+   resolves overflow-y to `auto` as well: the bar is a scroll container, and it
+   clipped a descendant hanging below it. No z-index could reach out of that,
+   and no assertion in this repo's offline suites could see it.
+
+   So the panel is a SIBLING of the bar (views/chat.js renders it right after
+   `.chat-scopebar`) and takes no positioning at all. It cannot be clipped, it
+   needs no stacking context, and it pushes the thread down while open —
+   exactly what `.tx-vh-panel` does under a view header. The bar's own metrics
+   never move, which was the reason the absolute version was tried. */
+.chat-project-panel[hidden] { display: none; }
+.chat-project-panel {
+  margin: 8px 0 0;
+  max-width: 52ch;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  font: var(--type-body-sm);
+  letter-spacing: var(--track-body);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
 /* ── Thread ───────────────────────────────────────────────────────────── */
 
 .chat-thread {

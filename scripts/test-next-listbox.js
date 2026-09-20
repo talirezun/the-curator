@@ -432,7 +432,7 @@ ok(selectOffenders.length === 0,
 // The count is pinned rather than left open because an UNPINNED count is how a
 // hand-rolled menu gets added back beside the shared one without anything
 // noticing — which is the state chat.js was in when this file was written.
-const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 2 };
+const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 3 };
 let total = 0;
 for (const f of ADOPTERS) {
   const src = readFileSync(path.join(VIEWS, f), 'utf8');
@@ -449,7 +449,7 @@ for (const f of ADOPTERS) {
   ok((code.match(/closeAllListboxes\(\)/g) || []).length >= 1,
     `${f} closes any open menu on teardown/repaint (in CODE, not in a comment)`);
 }
-ok(total === 9, `NINE adoptions across three views (found ${total})`);
+ok(total === 10, `TEN adoptions across three views (found ${total})`);
 
 // ── §5b — memory.js is free of the component, in BOTH directions ──────────
 // Dropping a file from ADOPTERS removes every assertion about it, so without
@@ -496,10 +496,10 @@ for (const f of ['settings.js', 'chat.js']) {
   ok(/function modelListboxCfg\(/.test(src) && /function lengthListboxCfg\(/.test(src),
     'chat.js has ONE cfg builder per composer picker');
   const lbCalls = src.match(/renderListboxHtml\([^)]*/g) || [];
-  ok(lbCalls.length === 2
+  ok(lbCalls.length === 3
     && lbCalls.some(c => c.includes('cfg'))
     && lbCalls.every(c => !/\{/.test(c)),
-    'BOTH renderListboxHtml calls pass a builder\'s output (a `cfg` binding), never an inline literal ' +
+    'ALL THREE renderListboxHtml calls (model, length, and the v3.64.0 project picker) pass a builder\'s output (a `cfg` binding), never an inline literal ' +
     '(found: ' + lbCalls.length + ' calls)');
   ok(/mountListbox\(cfg\)/.test(src),
     'and the wiring pass mounts from the SAME cfg objects the markup came from');

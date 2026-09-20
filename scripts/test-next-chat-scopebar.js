@@ -173,6 +173,14 @@ function render(over = {}) {
     thread: [{ role: 'user', content: 'q' }, { role: 'assistant', content: 'a' }],
     compileBusy: false,
     compilePct: 0,
+    // v3.64.0 — the project group. Defaults to a ready list with nothing
+    // pinned, which is the state every existing user is in the first time
+    // they open Chat after updating.
+    projectRows: [{ project: 'curator', ageSeconds: 3600 }, { project: 'lumina', ageSeconds: null }],
+    projectsFor: 'articles',
+    projectsState: 'ready',
+    activeProject: null,
+    projectLastUsed: null,
   }, over);
 
   const captured = { html: null, token: null };
@@ -184,14 +192,26 @@ function render(over = {}) {
     extractFunction(chatSrc, 'compileTurnCounts') + '\n' +
     extractFunction(chatSrc, 'compileCaptionText') + '\n' +
     extractFunction(chatSrc, 'compileControlHtml') + '\n' +
+    /* v3.64.0 — the project group is built from the REAL functions too, so
+       §6's assertions are about the markup the browser would build rather
+       than about a fixture that happens to look like it. `pendingListboxes`
+       is the module-level queue the real code pushes a cfg onto; it is
+       declared here because the sandbox has no module scope. */
+    'const pendingListboxes = [];\n' +
+    extractFunction(chatSrc, 'activeProjectRow') + '\n' +
+    extractFunction(chatSrc, 'projectFigureText') + '\n' +
+    extractFunction(chatSrc, 'projectListboxCfg') + '\n' +
+    extractFunction(chatSrc, 'projectGroupHtml') + '\n' +
+    extractFunction(chatSrc, 'projectInfoPanelHtml') + '\n' +
     extractFunction(chatSrc, 'renderMain') + '\n' +
-    'return { renderMain, compileControlHtml, compileCaptionText, compileMessageCount, compileTurnCounts };';
+    'return { renderMain, compileControlHtml, compileCaptionText, compileMessageCount, compileTurnCounts, projectGroupHtml, pendingListboxes };';
 
   const api = new Function(
     'document', 'state', 'isCurrentMount', 'setMain', 'escapeHtml', 'icon',
     'renderViewHeader', 'gatedLoader', 'bootGate', 'emptyCard', 'navigate',
     'renderComposerHtml', 'wireComposer', 'renderThreadOnly', 'renderComposerPickers',
     'startCompile', 'switchDomain', 'reportAsyncActionFailure',
+    'renderListboxHtml', 'formatAge', 'freshnessTier', 'selectChatProject', 'mountListbox',
     src
   )(
     {
@@ -215,6 +235,20 @@ function render(over = {}) {
     () => '<div class="composer-stub"></div>',
     () => {}, () => {}, () => {},
     () => {}, () => {}, () => {},
+    /* The listbox's own markup is shared/listbox.js's and has its own suite
+       (test-next-listbox.js). What matters HERE is that the trigger is a
+       child of the project group and nothing else, so the stub emits the one
+       class name the structural assertions name. */
+    (cfg) => '<span class="lb" data-lb-root="' + cfg.id + '"><button class="lb-btn" id="' + cfg.id + '"></button></span>',
+    (sec) => (sec === null ? 'unknown' : Math.round(sec / 60) + ' min ago'),
+    (sec) => (sec === null ? 'unknown' : sec < 3600 ? 'recent' : 'today'),
+    /* The commit handler is behaviour, exercised by the browser pass and by
+       the real listbox's own suite; this file is about structure. */
+    () => {},
+    /* Mounting is shared/listbox.js's job and needs a real document. That the
+       QUEUE is drained at all is what this file cares about — §6 asserts it
+       is emptied, so the composer's own pass cannot inherit a stale cfg. */
+    () => {},
   );
 
   api.renderMain(1);
@@ -255,10 +289,18 @@ section('§1 — The bar is two groups with the spacer between them');
   const { tree } = render();
   const bar = findByClass(tree, 'chat-scopebar');
   const kids = bar.children.map((c) => c.classes.join('.'));
-  ok(kids.length === 3, `the bar has exactly three children, not five loose ones (got ${kids.length}: ${kids.join(' | ')})`);
-  eq(kids[0], 'chat-scope-group', 'first child: the scope group');
-  eq(kids[1], 'chat-scope-spacer', 'second child: the spacer that holds the two apart');
-  eq(kids[2], 'chat-compile-group', 'third child: the compile group');
+  /* FOUR since v3.64.0, not five loose ones. The project group is a SECOND
+     GROUP in the left half — it joins the structure rather than dissolving
+     it — so what this assertion has always guarded still holds: the groups
+     are groups, the spacer is between them, and the compile control is
+     alone on the far side. The number is stated as a literal rather than
+     `>= 3` so that a fifth loose child, which is the defect this suite
+     exists for, still reds. */
+  ok(kids.length === 4, `the bar has exactly four children, not five loose ones (got ${kids.length}: ${kids.join(' | ')})`);
+  eq(kids[0], 'chat-scope-group', 'first child: the domain scope group');
+  eq(kids[1], 'chat-scope-group.chat-project-group', 'second child: the project group, in the SAME left half and built from the same group class');
+  eq(kids[2], 'chat-scope-spacer', 'third child: the spacer that holds the two halves apart');
+  eq(kids[3], 'chat-compile-group', 'fourth child: the compile group, alone on the right');
 
   const scopeGroup = findByClass(tree, 'chat-scope-group');
   const inScope = scopeGroup.children.map((c) => c.classes.join('.'));
@@ -597,6 +639,154 @@ section('§6 — SOURCE GUARD: the caption is SECONDARY text, on the kit’s run
   ok(/`?\.chat-compile-btn`? IS GONE/.test(chatCss) && /btn-ai/.test(chatCss),
     '…and the note records that .chat-compile-btn was RETIRED and names the variant that replaced it, ' +
     'so the class disappearing from this file is an answer rather than a gap');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§7 — THE PROJECT GROUP (v3.64.0): a second group, not a second domain selector');
+// ════════════════════════════════════════════════════════════════════════
+{
+  const { tree, html } = render();
+  const group = findByClass(tree, 'chat-project-group');
+  ok(!!group, 'the project group is rendered');
+  const inGroup = group.children.map((c) => c.classes.join('.'));
+  ok(inGroup.includes('chat-scope-eyebrow.mono'), 'it carries its own PROJECT eyebrow');
+  ok(/PROJECT/.test(html), '…and that eyebrow says PROJECT');
+
+  /* THE ONE THING THIS GROUP MUST NOT BE. A second set of `data-scope-domain`
+     pills here would be a second domain selector — two controls answering the
+     same question, one of which does not work. */
+  ok(!group.children.some((c) => c.classes.includes('chat-scope-pills')),
+    'it holds NO domain pills — it is not a second domain selector');
+  const domainButtons = (html.match(/data-scope-domain=/g) || []).length;
+  eq(domainButtons, 1, 'there is exactly one domain pill in the whole bar (one domain in the fixture), so the project group added none');
+
+  /* THE PICKER IS INSIDE THIS GROUP AND NOWHERE ELSE, stated as a PATH. */
+  const trigger = findByClass(tree, 'lb-btn');
+  ok(!!trigger && ancestorClasses(trigger).includes('chat-project-group'),
+    'the project picker is INSIDE the project group');
+  ok(!ancestorClasses(trigger).includes('chat-compile-group'),
+    '…and inside no part of the compile control');
+  ok(nearestCommonAncestor(trigger, findByClass(tree, 'chat-scope-count')).classes.includes('chat-scopebar'),
+    'the nearest container holding the picker and the page-count readout is the bar itself');
+
+  /* READING ORDER: domain, then project, then the spacer, then compile. */
+  ok(html.indexOf('chat-scope-count') < html.indexOf('chat-project-group'),
+    'the domain group is rendered before the project group');
+  ok(html.indexOf('chat-project-group') < html.indexOf('chat-scope-spacer'),
+    '…and the project group before the spacer, so both sit in the LEFT half');
+
+  /* THE ⓘ IS A REAL DISCLOSURE, not a title attribute: it names the panel it
+     controls, says whether it is open, and carries an accessible name of its
+     own (the visible glyph is not one). */
+  const info = findByClass(tree, 'chat-project-info');
+  ok(!!info, 'the group carries an ⓘ');
+  eq(info.attrs['data-tx-info'], 'chat-project-info',
+    '…wired to shared/text.js\'s ONE delegated listener, not to a second hand-written handler');
+  eq(info.attrs['aria-expanded'], 'false', '…reporting its collapsed state');
+  eq(info.attrs['aria-controls'], 'chat-project-info', '…and naming the panel it controls');
+  ok(typeof info.attrs['aria-label'] === 'string' && info.attrs['aria-label'].length > 0,
+    '…with an accessible name, because "ⓘ" is not one');
+  const panel = findByClass(tree, 'chat-project-panel');
+  ok(!!panel, 'the panel it controls is rendered');
+  /* ── NOT INSIDE THE BAR, AND THAT IS A MEASUREMENT ───────────────────────
+     The first cut put the panel inside the project group, positioned
+     absolutely. In the browser it reported itself OPEN at a sane rectangle
+     and drew NOTHING: `.chat-scopebar` is `overflow-x: auto`, so per CSS its
+     overflow-y resolves to `auto` too, and it clipped a descendant hanging
+     below it. No z-index reaches out of a scroll container. The panel is now
+     a SIBLING of the bar, in flow; `data-tx-info` matches by id anywhere in
+     the document, so the button and its panel need not be siblings. */
+  ok(!ancestorClasses(panel).includes('chat-scopebar'),
+    '…OUTSIDE the scope bar, which is a scroll container and would clip it');
+  ok(!ancestorClasses(panel).includes('chat-project-group'),
+    '…and outside the group whose button opens it');
+  ok(html.indexOf('chat-scopebar') < html.indexOf('chat-project-panel'),
+    '…rendered immediately after the bar, so it reads as belonging to it');
+  /* Asserted on the MARKUP, not on the parsed attrs: this file's tree parser
+     only captures `name="value"` pairs, and `hidden` is a bare boolean
+     attribute — so a parsed-attrs check would be vacuously false here and
+     vacuously TRUE if someone wrote `hidden="false"`, which is still hidden
+     in HTML. The regex pins the real thing: this element, closing with a
+     bare `hidden`. */
+  ok(/class="chat-project-panel"[^>]*\shidden>/.test(html),
+    '…and it is rendered HIDDEN, so a browser with no JS never shows a permanently-open panel');
+  /* ≤ 60 words is the brief's ceiling, and the sentence that has to be in
+     there is the one a user cannot infer: nothing is written back. */
+  const words = panel.text.trim().split(/\s+/).filter(Boolean).length;
+  ok(words > 0 && words <= 60, `the ⓘ text is ${words} words, at or under the 60-word ceiling`);
+  ok(/never writes/i.test(panel.text), '…and it says Chat never writes to the project');
+  ok(/recorded data/i.test(panel.text), '…and that what it reads is recorded data');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§8 — THE PROJECT GROUP\'S THREE STATES, told apart rather than merged');
+// ════════════════════════════════════════════════════════════════════════
+{
+  const loading = render({ projectsState: 'loading', projectRows: [] });
+  ok(!findByClass(loading.tree, 'lb-btn'), 'WHILE LOADING: no picker is offered');
+  ok(/Reading projects/.test(loading.html), '…and the group says it is reading');
+
+  const none = render({ projectsState: 'ready', projectRows: [] });
+  ok(!findByClass(none.tree, 'lb-btn'), 'WITH NO PROJECTS: no picker is offered');
+  ok(/No projects in this domain yet/.test(none.html),
+    '…and the group says so — "asked, and there are none" is not the same fact as "not asked yet"');
+  ok(!/Reading projects/.test(none.html), 'CONTROL: the two states do not render the same words');
+
+  const failed_ = render({ projectsState: 'error', projectRows: [] });
+  ok(/could not be read/i.test(failed_.html),
+    'ON A FAILED READ: the group says so rather than showing an empty picker that silently sends nothing');
+
+  /* THE FRESHNESS MARK exists only for a PINNED project — a dot beside
+     "No project" would be a fact about nothing — and it is the SHARED scale:
+     a `fresh-<tier>` class from shared/freshness.css, with the age in WORDS
+     beside it so colour is never the only carrier. */
+  const unpinned = render();
+  ok(!findByClass(unpinned.tree, 'chat-project-readout'),
+    'UNPINNED: no freshness readout, because there is nothing for it to be about');
+
+  const pinned = render({ activeProject: 'curator' });
+  const readout = findByClass(pinned.tree, 'chat-project-readout');
+  ok(!!readout, 'PINNED: the readout appears');
+  const dot = readout.children.find((c) => c.classes.includes('fresh-dot'));
+  ok(!!dot, '…with the shared freshness dot');
+  ok(dot.classes.some((c) => /^fresh-(live|recent|today|week|dormant|unknown)$/.test(c)),
+    '…carrying a tier from the app-wide scale and not a private one');
+  eq(dot.attrs['aria-hidden'], 'true', '…marked aria-hidden, because the words beside it say the same thing');
+  ok(/saved/.test(readout.text), '…and the age is in WORDS, so colour is never the only carrier');
+
+  /* A PROJECT THAT HAS NEVER BEEN SAVED TO is a third fact, and it must not
+     be painted as "just now". */
+  const neverSaved = render({ activeProject: 'lumina' });
+  ok(/no saves yet/.test(findByClass(neverSaved.tree, 'chat-project-readout').text),
+    'A NEVER-SAVED project reads "no saves yet", never an age it does not have');
+
+  /* THE MEASURED READING of the last turn rides the readout, in its OWN
+     addressable node — `sendCurrentMessage` patches that one element's text
+     when an answer lands rather than repainting the group, so the id is part
+     of the contract and not an incidental hook. */
+  const withReading = render({ activeProject: 'curator', projectLastUsed: { chars: 12288 } });
+  const fig = findByClass(withReading.tree, 'chat-project-figure');
+  ok(!!fig, 'the measured reading has its own node');
+  eq(fig.attrs.id, 'chat-project-figure',
+    '…with the id the post-turn patch addresses, so the patch has a target that cannot move silently');
+  ok(ancestorClasses(fig).includes('chat-project-readout'), '…inside the readout it belongs to');
+  ok(/12 KB read/.test(fig.text),
+    'after a turn it states what the project context actually contributed');
+  const emptyFig = findByClass(pinned.tree, 'chat-project-figure');
+  ok(!!emptyFig && emptyFig.text.trim() === '',
+    'CONTROL: before any turn the node is present but EMPTY — no figure at all rather than a zero');
+  ok(!/KB read/.test(findByClass(pinned.tree, 'chat-project-readout').text + (emptyFig.text || '')),
+    'CONTROL: and nothing anywhere in the readout claims a reading');
+
+  /* ONE PRODUCER for the figure. The renderer and the post-turn patch must
+     not print it two ways, which is what a second format string here would
+     mean — the duplication shape this repo records most often. */
+  ok((chatSrc.match(/projectFigureText\(/g) || []).length >= 3,
+    'the figure comes from ONE producer, called by both the renderer and the post-turn patch');
+  ok(/figureEl\.textContent = projectFigureText\(/.test(chatSrc),
+    '…and the post-turn update is a TARGETED patch, not a repaint of the group');
+  ok(!/patchProjectGroup\(mountToken\)/.test(chatSrc),
+    'CONTROL: a turn does NOT repaint the project group — that would rebuild the picker, and close an open menu, to move one figure');
 }
 
 console.log(`\n${'─'.repeat(60)}`);

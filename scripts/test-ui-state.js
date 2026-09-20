@@ -191,6 +191,8 @@ const MOVED = new Set(Object.keys(client.UI_STATE_KEYS));
 // that is in NEITHER list fails this section, so a key added later cannot
 // quietly inherit "per-device" by default.
 const STAYS = {
+  'curator-chat-project-v1':
+    'per-device convenience, and the alternative was actively worse: a conversation\'s JSON is TRACKED by the knowledge repo, so a per-conversation pin would be a schema field that travels to a machine where that project may not resolve. chat.js reconciles it against the live project list on every mount and clears it when the project is gone.',
   'curator-next-theme':
     'cosmetic, visible on the first frame, one click in the rail to restore. It is also the highest-FREQUENCY write in the shell, and the argument for keeping the credential file quiet applies to it more than to anything else.',
   'curator-next-view':

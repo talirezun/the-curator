@@ -12,8 +12,25 @@ import { assertKnownDomain, isDomainReadonly } from '../brain/files.js';
 // classifier is the shape that produced the v3.2.0 CRITICAL.
 import { isAbortError } from '../brain/llm.js';
 import { scrubPaths } from '../brain/scrub-paths.js';
+// THE STORE'S OWN VALIDATOR AND THE STORE'S OWN LISTING, imported rather
+// than restated. `isSafeSegment` is the predicate the memory store uses to
+// decide what it will address, so a project name this route accepts and the
+// store then refuses cannot happen — the same rule routes/memory.js follows
+// (`validProjectName`). A second copy of a validation rule is a second thing
+// that can drift, and it is this repo's most reliably repeated defect.
+import { isSafeSegment, listProjects } from '../brain/working-state.js';
 
 const router = Router();
+
+// Reserved one-segment names in the memory layer's own route table. Kept in
+// step with routes/memory.js's RESERVED_PROJECT_NAMES — not imported, because
+// that module's copy is a ROUTE concern there (`repo-scan` is reserved at the
+// route only) and importing a router's constant into another router is a
+// coupling neither file wants. Both lists are pinned against each other by
+// scripts/test-chat-project-context.js §5.
+const RESERVED_PROJECT_NAMES = new Set([
+  'projects', 'repo-scan', 'project.md', 'journal.jsonl', 'foundations',
+]);
 
 // Conversation IDs are server-generated UUIDs. Reject non-conforming IDs
 // before they reach the filesystem layer — defense in depth against
@@ -244,6 +261,12 @@ router.post('/:domain', async (req, res) => {
     // that proves a line EXISTS proves nothing about what it renders (v3.0.17),
     // and this is what that coupling costs the next person to widen this body.
     const wantsStream = req.body.stream === true;
+    // v3.64.0 — the pinned project and its work-stream, read on their OWN
+    // lines for exactly the reason `stream` above is. Two fields, not one
+    // object: the composer sends flat values and a nested body would be a
+    // second shape for the same two facts.
+    const wantsProject = typeof req.body.project === 'string' ? req.body.project.trim() : '';
+    const wantsScope = typeof req.body.scope === 'string' ? req.body.scope.trim() : '';
 
     if (!message) return res.status(400).json({ error: 'message is required' });
 
@@ -286,6 +309,54 @@ router.post('/:domain', async (req, res) => {
     // the client as a real status code rather than mid-stream.
     const persist = !(await isDomainReadonly(domain));
 
+    // ── THE PINNED PROJECT IS RESOLVED HERE, ABOVE flushHeaders (v3.64.0) ──
+    //
+    // CHAT NEVER WRITES TO STATE. This block reads a NAME and checks that it
+    // exists; every read of the project's actual content happens in
+    // src/brain/chat.js, in-process, and nothing on this path opens a write
+    // path into `state/`. The app is read-only over tiers 2 and 3 by
+    // invariant and this route does not become the exception.
+    //
+    // A PROJECT THAT DOES NOT EXIST IS A 400, NOT A WIKI-ONLY ANSWER. The
+    // alternative — quietly dropping the pin and answering from the wiki — is
+    // the worst outcome available here: the answer still looks authoritative
+    // and nothing tells the user their project was not consulted. So the
+    // refusal happens while a real status code can still reach the client.
+    //
+    // SCOPE IS DELIBERATELY NOT VALIDATED. routes/memory.js passes `scope`
+    // through verbatim for the reason recorded at its own pass-through: that
+    // route used to resolve `latest` itself, and the duplicate resolution was
+    // DELETED rather than fixed twice. The store refuses an invalid or
+    // reserved scope, and it is the only thing that knows what `latest` means.
+    if (wantsProject) {
+      if (!isSafeSegment(wantsProject)) {
+        return res.status(400).json({
+          ok: false, reason: 'invalid_project',
+          error: `"${wantsProject.slice(0, 40)}" is not a usable project name. Use lowercase letters, digits, `
+            + '"." "_" or "-", up to 64 characters.',
+        });
+      }
+      if (RESERVED_PROJECT_NAMES.has(wantsProject)) {
+        return res.status(400).json({
+          ok: false, reason: 'reserved_project',
+          error: `"${wantsProject}" is reserved and cannot be a project name.`,
+        });
+      }
+      // `namesOnly` because existence is the whole question — the per-project
+      // summary this listing can also build costs a read per project and
+      // nothing here looks at it.
+      const listed = await listProjects(domain, { namesOnly: true });
+      const known = listed && listed.ok !== false
+        && (listed.projects || []).some(p => p.project === wantsProject);
+      if (!known) {
+        return res.status(400).json({
+          ok: false, reason: 'project_not_found',
+          error: `"${domain}" has no project called "${wantsProject}". `
+            + 'Pick another project in Chat, or create it in Context.',
+        });
+      }
+    }
+
     // ── EVERY REFUSAL HAPPENS ABOVE THIS LINE ─────────────────────────────
     //
     // flushHeaders() commits us to `200 text/event-stream` irrevocably: after
@@ -312,6 +383,12 @@ router.post('/:domain', async (req, res) => {
 
     const result = await sendMessage(domain, conversationId || null, message, {
       responseStyle, provider, model, signal: controller.signal, persist,
+      // EMPTY STRING → undefined, so a body with no project takes a
+      // byte-identical path to before: sendMessage branches on a non-empty
+      // string, and `project: ''` would be falsy there anyway — passing
+      // undefined says so at the boundary rather than relying on it.
+      project: wantsProject || undefined,
+      projectScope: wantsScope || undefined,
       // undefined on the JSON path, which generateText normalises to null — so
       // a non-streaming request takes a byte-identical path to before.
       //
