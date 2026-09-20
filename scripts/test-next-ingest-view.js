@@ -26,6 +26,14 @@
  *      element that says "button" and then ignores Enter/Space puts a
  *      keyboard user in a stop with no exit. §4 pins the keys.
  *
+ *   4. v3.64.0 gave this view a SECOND host: the domain page's ADD SOURCES
+ *      section. §18 pins the property that made the seam safe to write —
+ *      nothing in this file moved or was renamed, the export surface is
+ *      exactly the three entry points the domain page calls, and both hosts
+ *      run ONE startIngest/stopIngest pair rather than two copies that could
+ *      drift. The section host's BEHAVIOUR needs a DOM and is executed in
+ *      scripts/test-next-ingest-dropzone.js §13.
+ *
  * ── Method ──────────────────────────────────────────────────────────────
  * Same two patterns the rest of this repo's frontend suites use (see
  * scripts/test-ingest-queue-frontend.js's own header): pure functions are
@@ -448,7 +456,17 @@ ok(/relatedTarget/.test(wire || '') && /dropZone\.contains\(/.test(wire || ''),
     ok(/classList\.toggle\('ing-drop-zone-active'/.test(sda),
       '§4 setDragActive toggles the class on the LIVE zone — the one thing a ' +
       'drag is allowed to change on screen');
-    ok(!/\brender\(/.test(sda),
+    // COMMENTS STRIPPED FIRST, and that is a strengthening rather than a
+    // loosening. The raw text of this function legitimately TALKS about
+    // rendering — it exists because a drag must not render, and v3.64.0's
+    // host seam added a paragraph saying so — and a guard that a true
+    // sentence can red is a guard that gets edited until it is quiet. The
+    // control below proves the strip did not simply empty the body.
+    const sdaCode = (sda || '').split('\n')
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+    ok(/classList\.toggle\(/.test(sdaCode),
+      '§4 CONTROL — stripping comments left real code behind');
+    ok(!/\brender\(/.test(sdaCode),
       '§4 …and never renders');
     ok(/state\.dragActive === on/.test(sda),
       '§4 …guarded on an actual change, because dragover fires dozens of ' +
@@ -1317,10 +1335,14 @@ console.log('\n§14  A running ingest is reachable whatever domain is selected')
     console.log('\n❌ §14 cannot check anything without its targets — failing loudly ' +
       'rather than reporting a green run over zero comparisons.');
   } else {
-    function makeSandbox14(initialState) {
+    function makeSandbox14(initialState, initialHostCtx) {
       const src =
         'return (() => {' +
         "const ACTIVITY_ACK_KEY = 'k'; const ACTIVITY_ACK_MAX = 20;" +
+        // v3.64.0: adoptDestination asks which HOST it is running under.
+        // Parameterised rather than pinned to null so §14b2 can drive the
+        // section-mode arm through the very same real function body.
+        'let hostCtx = ' + (initialHostCtx ? JSON.stringify(initialHostCtx) : 'null') + ';' +
         'let state = ' + JSON.stringify(initialState) + ';' +
         bBodies.loadAckedActivityIds + bBodies.isActivityAcked +
         bBodies.pickAdoptableDestination + bBodies.adoptDestination +
@@ -1425,6 +1447,29 @@ console.log('\n§14  A running ingest is reachable whatever domain is selected')
     ok(/state\.destinationAdoptionPending\s*=\s*false/.test(code14(bBodies.selectDomain)),
       '§14b and selectDomain is what makes that true: a real click forfeits the adoption, so a user who picks a destination before the first fetch lands does not have it moved out from under them');
 
+    // ── 14b2  SECTION MODE adopts nothing, and spends the flag anyway ──
+    // v3.64.0. The domain page HAS made the choice — by being the page it is
+    // — so the reconciliation that exists for a mount with no choice made has
+    // nothing to reconcile. Adopting here would move the panel's destination
+    // to whichever domain a second tab happens to be ingesting into, on a
+    // page whose every other section is about a different one: the v3.23.1
+    // harm, with the added confusion of the panel naming a domain the page
+    // around it is not about.
+    {
+      const host = { el: null, domain: 'articles', token: 1, onBusyChange: null, lastBusy: false };
+      const sb = makeSandbox14({ ...baseState }, host);
+      ok(sb.adoptDestination([run('posts', 1000)]) === false && sb.state.domain === 'articles',
+        '§14b2 SECTION MODE adopts nothing, even in the exact fixture §14b proves the full-page host DOES adopt');
+      ok(sb.state.destinationAdoptionPending === false,
+        '§14b2 …and the flag is still SPENT, so a later poll cannot come back and adopt after all');
+      // The positive control is §14b itself, driven from the same function
+      // body with hostCtx null — without it "adopts nothing" would pass just
+      // as well for a function that had stopped adopting anywhere.
+      const sbView = makeSandbox14({ ...baseState }, null);
+      ok(sbView.adoptDestination([run('posts', 1000)]) === true && sbView.state.domain === 'posts',
+        '§14b2 CONTROL — the SAME body with hostCtx null still adopts, so the refusal is the host gate and not a dead function');
+    }
+
     // ── 14c  Every running domain, not just the selected one ───────────
     {
       const sb = makeSandbox14(baseState);
@@ -1515,6 +1560,10 @@ console.log('\n§14  A running ingest is reachable whatever domain is selected')
         const src =
           'return (async () => {' +
           'let state = ' + JSON.stringify(initial) + ';' +
+          // v3.64.0: adoptDestination reads the host seam. VIEW mode here —
+          // this section is about the full-page host's own reconciliation,
+          // and §14b2 drives the section-mode arm separately.
+          'let hostCtx = null;' +
           'let activityInFlight = false;' +
           'let renderedActivitySignature = null;' +
           'let renders = 0;' +
@@ -1991,10 +2040,19 @@ console.log('\n§15  A finished ingest is findable from any domain');
       const mainSrc = code15(extractFunction(js, 'renderMain'));
       ok(/renderSettledElsewhere\(\)/.test(mainSrc),
         '§15m renderMain renders the line');
-      const setMainIdx = mainSrc.indexOf('setMain(');
+      // v3.64.0 ROUTED THE PAINT THROUGH THE HOST SEAM, and the name changed
+      // with it: `hostSetMain`. The assertion follows the paint rather than
+      // the old spelling, and gains the thing that spelling never said — that
+      // renderMain must not reach app.js's setMain DIRECTLY. In section mode
+      // that call replaces #view-root's innerHTML, which is the WHOLE domain
+      // page this panel is one section of.
+      const setMainIdx = mainSrc.indexOf('hostSetMain(');
       const bodyAssign = mainSrc.lastIndexOf('body =');
       ok(setMainIdx > bodyAssign,
-        '§15m precondition — the call sits in the setMain composition, after every body branch has been chosen');
+        '§15m precondition — the call sits in the hostSetMain composition, after every body branch has been chosen');
+      ok(!/(?:^|[^a-zA-Z])setMain\(/.test(mainSrc),
+        '§15m renderMain never calls app.js\'s setMain directly — in section mode that ' +
+        'replaces the whole domain page, of which this panel is one section');
       ok(/renderSettledElsewhere\(\)\s*\+\s*\n?\s*body/.test(mainSrc),
         '§15m …and OUTSIDE the branch that produced `body`, so it shows over the form, the queue, the loader and the empty state alike');
       const formSrc = code15(extractFunction(js, 'renderIngestForm'));
@@ -2530,6 +2588,121 @@ console.log('\n§ 17  Confirm gate — one column measure, two columns');
     const notWs = new Function(b17c.renderConfirmGrid + '\nreturn renderConfirmGrid("L", "  x  ");')();
     ok(!/ing-confirm-grid-single/.test(notWs) && /ing-confirm-col-decide/.test(notWs),
       '§17c control: one non-space character on the right still buys the second cell');
+  }
+}
+
+// ── §18 — THE HOST SEAM IS ADDITIVE, AND THAT IS A CHECKABLE CLAIM ──────
+console.log('\n§ 18  The v3.64.0 host seam — additive by rule, not by intention');
+//
+// This view is hosted twice now: as the full-page `ingest` view and as the
+// domain page's ADD SOURCES section. The section host's BEHAVIOUR is executed
+// in scripts/test-next-ingest-dropzone.js §13 (it needs a DOM). What is
+// checked HERE is the property that made the seam safe to write at all:
+// nothing in this 4,300-line file moved or was renamed.
+//
+// That is not style. SIX offline suites cut named functions out of this
+// file's own source by brace-matching it, and a rename does not fail softly —
+// extractFunction throws, or, worse, a suite that was measuring the right
+// thing starts measuring a stub. Two of the six are owned by NOBODY in
+// v3.64.0 (test-next-cost-honesty.js, test-next-memory-ingest-text.js),
+// deliberately, as the tripwire. This section is the same claim stated where
+// a reader of THIS file will see it.
+{
+  const decls = new Set(
+    [...js.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)\s*\(/gm)].map((m) => m[1])
+  );
+  // Every name any suite in this repo lifts out of views/ingest.js by name.
+  // Collected from their source, not guessed: test-next-ingest-view.js (this
+  // file's §0 NEEDED list plus the ad-hoc extractions below it),
+  // test-next-ingest-dropzone.js, test-next-cost-honesty.js,
+  // test-next-memory-ingest-text.js, test-ingest-prompt-slimming.js and
+  // test-next-sharedbrain-ui-parity.js.
+  const LIFTED = [
+    'freshState', 'formatDestinationMeta', 'destinationFigureText', 'destinationAgeText',
+    'formatDestinationEvent', 'destinationsSignature', 'isFilePickerAvailable', 'selectDomain',
+    'renderSidebar', 'renderMain', 'renderDropZoneHtml', 'renderIngestForm', 'renderSelectedFileHtml',
+    'verbatimPointerHtml', 'clearSelectedFile', 'loadDomains', 'domainListboxCfg', 'fetchDomainStats',
+    'refreshDomainStats', 'wireListeners', 'setDragActive', 'dragCarriesFiles',
+    'installDocumentDragGuards', 'handleSelectedFiles', 'render', 'runIngest',
+    'applyQueueJobSnapshot', 'checkActiveQueueJob', 'adoptDestination', 'pickAdoptableDestination',
+    'refreshActivity', 'activitySignature', 'runningActivityDomains', 'settledActivityRecords',
+    'unackedSettledRecords', 'loadAckedActivityIds', 'isActivityAcked', 'renderResult',
+    'renderResultBodyHtml', 'renderChangeRecordsHtml', 'classifyIngestEntry', 'renderConfirmGrid',
+    'renderQueueEstimate', 'renderQueuePausedBanner', 'renderQueueDoneSummary', 'isQueueTerminal',
+  ];
+  const missing = LIFTED.filter((n) => !decls.has(n));
+  ok(missing.length === 0,
+    '§18 every function another suite lifts out of this file by name is still ' +
+    'a top-level declaration IN it' + (missing.length ? ' — MISSING: ' + missing.join(', ') : ''));
+  ok(decls.has('thisFunctionDoesNotExistAnywhere') === false,
+    '§18 CONTROL — the declaration scan is not answering true for everything');
+
+  // The export surface is EXACTLY the three entry points the domain page
+  // calls. A fourth is not a tidy-up: every export is a name another file may
+  // start depending on, and the contract D imports is these three.
+  const exported = [...js.matchAll(/^export\s+(?:async\s+)?function\s+([A-Za-z0-9_$]+)/gm)].map((m) => m[1]);
+  ok(exported.length === 3 &&
+     exported.includes('mountIngestSection') &&
+     exported.includes('unmountIngestSection') &&
+     exported.includes('ingestSectionBusy'),
+    '§18 exactly THREE exports, and they are the section host\'s (found: ' + exported.join(', ') + ')');
+  ok(!/^export\s+(?:const|let|var|class)\b/m.test(js),
+    '§18 …and nothing else is exported — no state, no constant, no second surface');
+
+  // ONE host context, one place it is decided.
+  ok((js.match(/^let hostCtx\b/gm) || []).length === 1,
+    '§18 hostCtx is declared exactly once, at module level');
+  // THE SKIP IS AT THE CALL SITE, not inside renderSidebar, and that is
+  // load-bearing rather than arbitrary: three suites outside this file lift
+  // renderSidebar out by name and execute it with their own hand-written
+  // preamble (scripts/test-sidebar-status-rows.js §7 is the current one), so
+  // a new free variable in ITS body is a ReferenceError in someone else's
+  // suite. render() is lifted by nobody.
+  const renderFn = extractFunction(js, 'render');
+  ok(/if \(!hostCtx\) renderSidebar\(token\);/.test(renderFn || ''),
+    '§18 render() SKIPS the sidebar in section mode — the domain page owns ' +
+    'that column (BEHAVIOUR in dropzone §13a)');
+  const sidebar = extractFunction(js, 'renderSidebar');
+  ok(!/hostCtx/.test(sidebar || ''),
+    '§18 …and renderSidebar itself never mentions hostCtx, so it stays ' +
+    'liftable by the suites that execute it in isolation');
+
+  // THE WRAPPER CLASS IS A PAIR, and a pair is what drifts. views/ingest.js
+  // writes it; views/ingest.css keys the section-mode spacing off it. A
+  // rename in one file and not the other is silent — no error, no warning,
+  // and nothing else in the tree can see it (the same shape as app.js's
+  // VIEW_ENTER_CLASS, which carries the same comment for the same reason).
+  ok(/el\.innerHTML = '<div class="ing-section-inner">'/.test(js),
+    '§18 the section host paints through the `ing-section-inner` wrapper');
+  ok(/^\.ing-section-inner\b/m.test(css),
+    '§18 …and views/ingest.css declares rules for THAT class, not a different spelling');
+
+  // The full-page host's own entry and teardown are now shared, so they can
+  // only run one way. If registerView grew a second body, the two hosts could
+  // drift — which is the duplicated-call-site shape v3.7.0 deleted.
+  const reg = /registerView\('ingest', \{[\s\S]*?\n\}\);/.exec(js);
+  ok(!!reg, '§18 CONTROL — registerView(\'ingest\') block located');
+  ok(/startIngest\(mountToken, null\)/.test(reg ? reg[0] : '') &&
+     /stopIngest\(\)/.test(reg ? reg[0] : ''),
+    '§18 the full-page host runs the SAME startIngest/stopIngest the section ' +
+    'host runs — one lifecycle, two callers, so they cannot drift');
+  // A LINE COUNT IS NOT A GUARD — M16 (pasting four lines of a second mount
+  // body back into onEnter) came back GREEN against a `< 12 lines` check.
+  // What the claim is really about is which FUNCTIONS this block calls, so
+  // that is what is measured: three, and no more. A fourth call here is a
+  // second lifecycle, and two lifecycles are how the full-page host and the
+  // section host come to behave differently on the same file.
+  {
+    const regCode = (reg ? reg[0] : '').split('\n')
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+    const KEYWORDS = new Set(['return', 'if', 'for', 'while', 'switch', 'catch', 'function']);
+    const called = [...new Set(
+      [...regCode.matchAll(/([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g)]
+        .map((m) => m[1]).filter((n) => !KEYWORDS.has(n))
+    )].sort();
+    ok(called.join(',') === 'onEnter,registerView,startIngest,stopIngest',
+      '§18 …and it calls NOTHING else — three functions and the method that ' +
+      'holds them (found: ' + called.join(', ') + ')');
   }
 }
 

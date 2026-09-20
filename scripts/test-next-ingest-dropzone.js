@@ -61,6 +61,20 @@
  *      directly on the zone (guards: false, so §8's document filter cannot
  *      cover for it) leaves it idle, with a same-mount file-drag positive
  *      control proving the handlers still fire at all.
+ * §13  THE SECTION HOST (v3.64.0). The rail lost its Ingest entry and this
+ *      panel gained a SECOND host — the domain page's ADD SOURCES section —
+ *      through three exports (mountIngestSection / unmountIngestSection /
+ *      ingestSectionBusy). All three are EXECUTED against a domain-page-shaped
+ *      DOM: it paints into the host element and never into #view-root, it
+ *      renders NO sidebar and no view header (with the full-page host as the
+ *      positive control for both), the host page's domain is the destination,
+ *      the busy predicate answers true for a live drag / a running or paused
+ *      batch / an in-flight single-file ingest / an attached SSE stream and
+ *      FALSE the instant the section unmounts, the mount installs exactly
+ *      seven document/window listeners and unmount takes all seven back off
+ *      (counted, with a remount proving they do not stack), and the
+ *      document-level drop guard keeps its REFUSAL half page-wide while its
+ *      "treat this as a drop on the zone" half is scoped to the section.
  * §12  THE SINGLE-FILE REMOVE CONTROL (v3.47). Reported: after a pick or a
  *      drop, the single-file state had a file name and an Ingest button but
  *      no way to back out short of picking a different file over it — the
@@ -374,14 +388,27 @@ const age = await import('../src/public/next/shared/age.js');
 
 let strippedControlDone = false;
 function loadView(dom) {
-  const stripped = viewSrc.replace(/^import\s[\s\S]*?;$/gm, '');
+  // `export` goes the same way `import` does, and for the same reason: this
+  // file is evaluated with new Function, which is not a module, so either
+  // keyword is a SyntaxError there. v3.64.0 gave this view three exports (the
+  // section host the domain page mounts) and the strip has to keep up — the
+  // control below proves all three survived the strip as ordinary functions,
+  // so a strip that ate a declaration cannot pass as a clean load.
+  const stripped = viewSrc
+    .replace(/^import\s[\s\S]*?;$/gm, '')
+    .replace(/^export\s+(?=function\s)/gm, '');
   // Asserted ONCE — loadView runs per mount, and a control repeated a dozen
   // times inflates the pass count without proving anything a dozen times.
   if (!strippedControlDone) {
     strippedControlDone = true;
     ok(!/^import\s/m.test(stripped), '§1 CONTROL — every import statement was stripped before evaluation');
+    ok(!/^export\s/m.test(stripped), '§1 CONTROL — …and every export keyword, which new Function also refuses');
     ok(/function wireListeners\(/.test(stripped) && /function setDragActive\(/.test(stripped),
       '§1 CONTROL — …and the functions under test survived the strip');
+    ok(/^function mountIngestSection\(/m.test(stripped) &&
+       /^function unmountIngestSection\(/m.test(stripped) &&
+       /^function ingestSectionBusy\(/m.test(stripped),
+      '§1 CONTROL — …and all three section-host entry points survived it too');
   }
 
   const registered = {};
@@ -423,7 +450,13 @@ function loadView(dom) {
     // Nothing in this suite exercises a network path; a fetch that resolves
     // to a never-ok response keeps the estimate call from throwing at all,
     // and its state lands in an error branch this suite does not read.
-    fetch: () => Promise.resolve({ ok: false, status: 0, json: () => Promise.resolve({}) }),
+    // Per-DOM override, so §13 can drive the REAL loadDomains with a real
+    // domain list and watch the host's chosen destination win. Every other
+    // section leaves it unset and gets the never-ok response below, which is
+    // what those sections have always had.
+    fetch: (...a) => (dom.fetchImpl
+      ? dom.fetchImpl(...a)
+      : Promise.resolve({ ok: false, status: 0, json: () => Promise.resolve({}) })),
     FormData: class { append() {} },
     AbortController: class { constructor() { this.signal = {}; } abort() {} },
   };
@@ -432,6 +465,12 @@ function loadView(dom) {
   const factory = new Function(...names, stripped +
     '\nreturn { registerViewCfg: null, wireListeners, handleSelectedFiles, setDragActive, ' +
     'installDocumentDragGuards, dragCarriesFiles, render, renderDropZoneHtml, ' +
+    'mountIngestSection, unmountIngestSection, ingestSectionBusy, ' +
+    'renderSidebar, startIngest, stopIngest, ' +
+    // The SSE handle is module-level and has no other way in from here. It is
+    // one of the four things ingestSectionBusy() answers about, so it gets a
+    // test-only writer rather than being left as the one untested arm.
+    'setQueueStream: (v) => { queueStreamAbort = v; }, ' +
     'getState: () => state, setState: (patch) => { Object.assign(state, patch); } };');
   const api = factory(...names.map((n) => provided[n]));
   api.registered = registered;
@@ -912,6 +951,307 @@ section('§12b  The remove control is withheld while an ingest is running');
   view.render('t');
   ok(!!dom.document.getElementById('ing-file-remove-btn'),
     '§12b …and it comes back once submitting clears');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§13  THE SECTION HOST — one panel, two hosts (v3.64.0)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// The rail lost its Ingest entry and this panel gained a SECOND host: the
+// domain page's ADD SOURCES section. The three exports below are the whole
+// contract between the two files, so they are EXECUTED here rather than
+// asserted from source — a source scan would happily certify an export that
+// paints nothing, leaves its listeners behind, or answers `false` while a
+// drag is in progress, which is the one answer that re-opens v3.46.0.
+//
+// Everything above this section still runs the FULL-PAGE host, unchanged.
+// That is the proof the seam is additive: §1-§12 were not rewritten for it.
+
+/** A domain-page-shaped DOM: a `.main-inner` with a sibling section the host
+ *  owns. `#dm-other` stands in for PROJECTS / WIKI HEALTH — the parts of the
+ *  page that must survive everything this panel does, and that a file dropped
+ *  over must NOT be treated as a drop on the zone. */
+function mountSection(opts) {
+  const dom = makeDom();
+  const view = loadView(dom);
+  dom.fetchImpl = () => Promise.resolve({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({
+      domains: [
+        { slug: 'articles', displayName: 'Articles', pageCount: 12, lastIngestDate: null },
+        { slug: 'business', displayName: 'Business', pageCount: 3, lastIngestDate: null },
+      ],
+      readonlyDomains: [],
+    }),
+  });
+  dom.root.innerHTML = '<div class="main-inner">' +
+    '<div id="dm-other">the rest of the domain page</div>' +
+    '<section class="dm-section dm-sources" id="dm-sources-host"></section>' +
+    '</div>';
+  const host = dom.document.getElementById('dm-sources-host');
+  view.mountIngestSection(host, Object.assign({ domain: 'business', token: 't' }, opts || {}));
+  return { dom, view, host, zone: () => dom.document.getElementById('ing-drop-zone') };
+}
+
+/** Let loadDomains' promise chain and the loading gate settle. */
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+// ── 13a  It paints into the host element, and NOWHERE else ───────────────
+{
+  const { dom, view, host } = mountSection();
+  await settle();
+  await settle();
+
+  ok(host.innerHTML.length > 0, '§13a the host element was painted into');
+  ok(/ing-section-inner/.test(host.innerHTML),
+    '§13a …through the section wrapper, not the shell\'s .main-inner');
+  ok(!!dom.document.getElementById('dm-other'),
+    '§13a the REST OF THE PAGE survived — the panel never reached #view-root, ' +
+    'which in section mode is the whole domain page');
+  ok(!!dom.document.getElementById('ing-drop-zone'),
+    '§13a and the real drop zone is on screen inside the section');
+
+  // THE SIDEBAR. D-E's rule, executed: the domain page owns that column.
+  eq(dom.sidebar.innerHTML, '', '§13a the sidebar was NOT written to at all');
+  ok(!dom.document.getElementById('ing-sidebar-pick-btn'),
+    '§13a …so the sidebar\'s "Choose files" button does not exist to be pressed');
+  ok(dom.document.querySelectorAll('.ing-dest-row').length === 0,
+    '§13a …nor its destination rows, which would be a second domain picker ' +
+    'on a page that already has one subject');
+
+  // THE VIEW HEADER belongs to the full-page host.
+  ok(!/the way material gets in/.test(host.innerHTML),
+    '§13a the view header is withheld — the host section names this block, ' +
+    'and the screen keeps one <h1>');
+
+  view.unmountIngestSection();
+}
+
+// ── 13b  …and the full-page host still paints the header and the sidebar ─
+// THE POSITIVE CONTROL for 13a. Without it, "no sidebar" and "no header"
+// would pass just as well for a panel that had stopped rendering them
+// anywhere, which is a regression and not a feature.
+{
+  const dom = makeDom();
+  const view = loadView(dom);
+  dom.fetchImpl = () => Promise.resolve({
+    ok: true, status: 200,
+    json: () => Promise.resolve({ domains: [{ slug: 'articles', displayName: 'Articles' }], readonlyDomains: [] }),
+  });
+  view.startIngest('t', null);
+  await settle();
+  await settle();
+  ok(dom.sidebar.innerHTML.length > 0, '§13b CONTROL — the full-page host DOES paint a sidebar');
+  ok(!!dom.document.getElementById('ing-sidebar-pick-btn'),
+    '§13b CONTROL — …including the "Choose files" button');
+  ok(/the way material gets in/.test(dom.root.innerHTML),
+    '§13b CONTROL — …and its own view header');
+  view.stopIngest();
+}
+
+// ── 13c  The host page's domain is the destination ───────────────────────
+{
+  const { view } = mountSection({ domain: 'business' });
+  await settle();
+  await settle();
+  eq(view.getState().domain, 'business',
+    '§13c the destination is the domain the HOST PAGE is about — not list[0], ' +
+    'which would offer to write the user\'s file into a domain the page in ' +
+    'front of them is not about');
+  view.unmountIngestSection();
+}
+{
+  // A host domain the loader did not return (a readonly mirror, or one
+  // deleted since the page painted) falls through to the ordinary rule
+  // rather than leaving the panel pointed at nothing.
+  const { view } = mountSection({ domain: 'shared-cohort' });
+  await settle();
+  await settle();
+  eq(view.getState().domain, 'articles',
+    '§13c an unknown host domain falls back to the ordinary rule');
+  view.unmountIngestSection();
+}
+
+// ── 13d  BUSY: the drag ──────────────────────────────────────────────────
+// The assertion the whole quiesce rule rests on. If this answers false, the
+// domain page is free to re-render mid-drag, which is v3.46.0 exactly.
+{
+  const busySeen = [];
+  const { dom, view, zone } = mountSection({ onBusyChange: (b) => busySeen.push(b) });
+  await settle();
+  await settle();
+
+  eq(view.ingestSectionBusy(), false, '§13d idle: the section is not busy');
+  const z0 = zone();
+  ok(!!z0, '§13d CONTROL — a zone is on screen to drag over');
+
+  dom.dispatch(z0, 'dragenter', { dataTransfer: fakeTransfer([fakeFile('a.pdf', 10)]) });
+  eq(view.ingestSectionBusy(), true, '§13d a drag in progress makes the section BUSY');
+  dom.dispatch(z0, 'dragover', { dataTransfer: fakeTransfer([fakeFile('a.pdf', 10)]) });
+  dom.dispatch(z0, 'dragover', { dataTransfer: fakeTransfer([fakeFile('a.pdf', 10)]) });
+  eq(view.ingestSectionBusy(), true, '§13d …and stays busy across the dozens of dragovers a drag fires');
+  ok(zone() === z0,
+    '§13d …with the drop target still the SAME NODE OBJECT — the v3.46.0 ' +
+    'property, now asserted on the section host as well as the view host');
+
+  eq(busySeen.filter((b) => b === true).length, 1,
+    '§13d onBusyChange is EDGE-triggered — one `true`, not one per dragover');
+
+  // THE EDGE GUARD'S REAL EXERCISE, and it is not the dragover loop: that
+  // loop is already quiet because setDragActive early-returns when the flag
+  // has not moved. What the guard actually stops is every ORDINARY render
+  // waking the host to tell it nothing changed — and a host that re-renders
+  // when it is told is then a host that re-renders on a poll, which is the
+  // re-render source D-J exists to keep away from a live drag. Found by a
+  // mutation (M10: deleting the guard) coming back GREEN against the
+  // dragover-count assertion above.
+  const beforeIdleRenders = busySeen.length;
+  view.render('t');
+  view.render('t');
+  view.render('t');
+  eq(busySeen.length, beforeIdleRenders,
+    '§13d three ordinary renders with nothing changed wake the host ZERO times');
+  // POSITIVE CONTROL — the channel is not simply dead by this point.
+  view.setState({ submitting: true });
+  view.render('t');
+  eq(busySeen[busySeen.length - 1], true,
+    '§13d CONTROL — a render where the answer DID move still reaches the host');
+  view.setState({ submitting: false });
+  view.render('t');
+
+  dom.dispatch(z0, 'dragleave', { dataTransfer: fakeTransfer([], ['Files']) });
+  eq(view.ingestSectionBusy(), false, '§13d the drag ending clears it');
+  eq(busySeen[busySeen.length - 1], false, '§13d …and the host was told');
+
+  view.unmountIngestSection();
+}
+
+// ── 13e  BUSY: a running batch, and an attached stream ───────────────────
+{
+  const { view } = mountSection();
+  await settle();
+  await settle();
+  eq(view.ingestSectionBusy(), false, '§13e CONTROL — idle before the batch');
+
+  view.setState({ queueJob: { jobId: 'j1', status: 'running', items: [] } });
+  eq(view.ingestSectionBusy(), true, '§13e a RUNNING batch makes the section busy');
+
+  view.setState({ queueJob: { jobId: 'j1', status: 'paused', items: [] } });
+  eq(view.ingestSectionBusy(), true, '§13e …so does a PAUSED one — it is resumable, not over');
+
+  view.setState({ queueJob: { jobId: 'j1', status: 'done', items: [] } });
+  eq(view.ingestSectionBusy(), false, '§13e a TERMINAL batch is not busy — the panel is a report by then');
+
+  view.setState({ queueJob: null, submitting: true });
+  eq(view.ingestSectionBusy(), true, '§13e a single-file ingest in flight makes it busy');
+
+  view.setState({ submitting: false });
+  eq(view.ingestSectionBusy(), false, '§13e …and settles when it finishes');
+
+  view.setQueueStream({ abort() {} });
+  eq(view.ingestSectionBusy(), true,
+    '§13e an ATTACHED SSE stream makes it busy on its own — the window ' +
+    'between checkActiveQueueJob attaching and the first snapshot landing ' +
+    'has no job on state yet');
+  view.setQueueStream(null);
+
+  view.unmountIngestSection();
+}
+
+// ── 13f  UNMOUNT: busy goes false even mid-everything ────────────────────
+// `state` is module-level and survives a teardown, so without the hostCtx
+// gate a drag that was live when the panel came down would keep the host
+// quiesced for the life of the page.
+{
+  const { dom, view, zone } = mountSection();
+  await settle();
+  await settle();
+  dom.dispatch(zone(), 'dragenter', { dataTransfer: fakeTransfer([fakeFile('a.pdf', 10)]) });
+  view.setState({ queueJob: { jobId: 'j1', status: 'running', items: [] }, submitting: true });
+  eq(view.ingestSectionBusy(), true, '§13f CONTROL — busy on three counts at once');
+
+  view.unmountIngestSection();
+  eq(view.ingestSectionBusy(), false,
+    '§13f unmount makes it FALSE immediately, even with dragActive, a running ' +
+    'job and submitting all still set on the surviving state object');
+  eq(view.getState().dragActive, true,
+    '§13f CONTROL — …and those state fields really did survive, so the false ' +
+    'above is the host gate answering and not the state having been cleared');
+}
+
+// ── 13g  UNMOUNT removes every listener it installed (counted) ───────────
+{
+  const dom = makeDom();
+  const view = loadView(dom);
+  const counts = () => ({
+    dragenter: dom.docListenerCount('dragenter'),
+    dragover: dom.docListenerCount('dragover'),
+    drop: dom.docListenerCount('drop'),
+    dragend: dom.docListenerCount('dragend'),
+    visibilitychange: dom.docListenerCount('visibilitychange'),
+    blur: dom.winListenerCount('blur'),
+    focus: dom.winListenerCount('focus'),
+  });
+  const sum = (c) => Object.values(c).reduce((a, b) => a + b, 0);
+  const before = counts();
+  eq(sum(before), 0, '§13g CONTROL — nothing is listening before the mount');
+
+  dom.root.innerHTML = '<div class="main-inner"><section id="dm-sources-host"></section></div>';
+  const host = dom.document.getElementById('dm-sources-host');
+  view.mountIngestSection(host, { domain: 'articles', token: 't' });
+  await settle();
+  const during = counts();
+  eq(sum(during), 7,
+    '§13g the mount installs exactly SEVEN document/window listeners ' +
+    '(dragenter, dragover, drop, dragend, blur — the drag guards — plus ' +
+    'focus and visibilitychange, the activity revalidate-on-wake pair)');
+  for (const k of Object.keys(during)) eq(during[k], 1, '§13g …one ' + k + ' listener, not a stack of them');
+
+  // REMOUNTING IS THE EXPECTED CASE — the domain page re-renders on a domain
+  // switch and hands over a NEW element each time. A mount that stacked a
+  // second set of guards would swallow every drop twice.
+  const host2 = dom.document.getElementById('dm-sources-host');
+  view.mountIngestSection(host2, { domain: 'articles', token: 't' });
+  await settle();
+  eq(sum(counts()), 7, '§13g a REMOUNT without an unmount does not stack a second set');
+
+  view.unmountIngestSection();
+  eq(sum(counts()), 0, '§13g unmount takes every one of them back off');
+  for (const k of Object.keys(counts())) eq(counts()[k], 0, '§13g …' + k + ' is back to zero');
+
+  view.unmountIngestSection();
+  eq(sum(counts()), 0, '§13g …and a second unmount is a no-op, not a throw');
+}
+
+// ── 13h  The drop guard is scoped to the host, in BOTH its halves ────────
+// The refusal half stays document-wide (Electron must never navigate to a
+// dropped file); the convenience half belongs to ADD SOURCES alone.
+{
+  const { dom, view, host } = mountSection();
+  await settle();
+  await settle();
+  const other = dom.document.getElementById('dm-other');
+  ok(!!other, '§13h CONTROL — the rest of the page is there to drop on');
+
+  const outside = dom.dispatch(other, 'drop', { dataTransfer: fakeTransfer([fakeFile('elsewhere.pdf', 10)]) });
+  ok(outside.defaultPrevented,
+    '§13h a file dropped OUTSIDE the section is still REFUSED — the ' +
+    'navigate-to-the-file default is a hazard on every part of the page');
+  eq(view.getState().file, null,
+    '§13h …and is NOT ingested: on a six-section page, a file released over ' +
+    'PROJECTS was not aimed at the drop zone');
+  eq(view.getState().selectedFiles.length, 0, '§13h …nor added to a batch selection');
+
+  // Inside the section but outside the zone: the convenience half applies.
+  const inner = host.querySelector('.ing-section-inner') || host;
+  const insideNotZone = dom.dispatch(inner, 'drop', { dataTransfer: fakeTransfer([fakeFile('aimed.pdf', 10)]) });
+  ok(insideNotZone.defaultPrevented, '§13h a drop inside the section is refused too');
+  ok(view.getState().file && view.getState().file.name === 'aimed.pdf',
+    '§13h …and IS routed to the zone — aiming at a 168px target is precision ' +
+    'a desktop app should not ask for, and the section is the boundary');
+
+  view.unmountIngestSection();
 }
 
 console.log('\n────────────────────────────────────────────────────────────');

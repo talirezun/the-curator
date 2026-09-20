@@ -1330,3 +1330,21 @@
   .ing-dest-row:active:not([disabled]),
   .ing-queue-file-remove:active { transform: none; }
 }
+
+/* ── SECTION MODE (v3.64.0) ───────────────────────────────────────────────
+   The wrapper views/ingest.js writes when this panel is hosted inside
+   another view's page (the domain page's ADD SOURCES section) instead of
+   inside the shell's `.main-inner`. It is the SECTION-mode counterpart of
+   that class and it has exactly one job: stop the panel's own outer spacing
+   from stacking with the spacing the host section already applies.
+
+   NOT A SECOND COPY OF THE VIEW'S LAYOUT. Every `.ing-*` rule above applies
+   unchanged in both hosts, including the measure — the drop zone, the
+   confirm gate and the queue panel are the same widths on the domain page as
+   on the full-page view, because they are the same panel and a user who
+   learns one has learned the other. What is NOT the same is the frame around
+   it: the full-page host supplies a view header and the shell's column
+   padding, and in section mode the host supplies a fold summary instead, so
+   the first child must not open with a margin the header used to justify. */
+.ing-section-inner > :first-child { margin-top: 0; }
+.ing-section-inner > :last-child { margin-bottom: 0; }

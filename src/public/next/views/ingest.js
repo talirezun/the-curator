@@ -345,145 +345,304 @@ let _queueLastStatus = null;    // last status queueBusyTransition was told abou
 // longer lifetime (survives many snapshot updates within one job's run).
 let _queueBusyRelease = null;
 
+// ── THE HOST SEAM (v3.64.0) ══════════════════════════════════════════════
+//
+// ONE panel, TWO hosts. This view is still `registerView('ingest', …)` — the
+// full-page host, reachable by navigate() and by a stored last view — and it
+// is ALSO a SECTION of the domain page (ADD SOURCES), mounted by
+// views/domains.js through the three exports at the bottom of this file.
+//
+// THE SEAM IS ADDITIVE, AND THAT IS A RULE RATHER THAN A STYLE. Six offline
+// suites cut named functions out of THIS FILE by brace-matching its own
+// source text (test-next-ingest-view.js, test-next-ingest-dropzone.js,
+// test-next-cost-honesty.js, test-next-memory-ingest-text.js,
+// test-next-sharedbrain-ui-parity.js, test-ingest-prompt-slimming.js). A
+// refactor that relocates or renames one of them does not fail softly —
+// extractFunction throws, or worse, a suite that was measuring the right
+// thing starts measuring a stub. So NOTHING here moved file and NOTHING was
+// renamed; two helpers were factored IN PLACE out of onEnter's own body
+// (startIngest/stopIngest), and everything else is new.
+//
+// `hostCtx` is the ONE thing that tells the two modes apart:
+//   null      — VIEW mode. setMain/setSidebar go to the shell, exactly as
+//               they did before this seam existed. Byte-identical behaviour.
+//   an object — SECTION mode: {el, domain, token, onBusyChange, lastBusy}.
+//               The panel paints into `el` and renders NO SIDEBAR AT ALL,
+//               because the domain page owns the sidebar.
+//
+// It is module-level, not on `state`: startIngest replaces `state` wholesale
+// per mount, and "which host am I painting into" is a fact about the MOUNT,
+// not about the state object it produced — the same reason
+// removeDocumentDragGuards and activityWakeHandler live out here.
+let hostCtx = null;
+
+/**
+ * setMain, routed through the host.
+ *
+ * In VIEW mode this is app.js's setMain, unchanged — including its stale-mount
+ * guard. In SECTION mode it writes the host element's innerHTML instead, and
+ * the staleness check is made HERE with the same isCurrentMount(token) test
+ * setMain makes internally, so a paint from an abandoned mount cannot land in
+ * a live domain page. Never `setMain` in section mode: that replaces
+ * #view-root's innerHTML, i.e. the WHOLE domain page, of which this panel is
+ * one section.
+ */
+function hostSetMain(html, token) {
+  if (!hostCtx) { setMain(html, token); return; }
+  if (!isCurrentMount(token)) return;
+  const el = hostCtx.el;
+  if (!el) return;
+  el.innerHTML = '<div class="ing-section-inner">' + html + '</div>';
+}
+
+/**
+ * Is anything in this panel in a state where the HOST re-rendering underneath
+ * it would break something the user is doing?
+ *
+ * THIS PREDICATE IS THE WHOLE SAFETY ARGUMENT FOR HOSTING THE DROP ZONE
+ * INSIDE A PAGE THAT RE-RENDERS ITSELF. v3.46.0's defect was that `dragover`
+ * fired continuously, the first one re-rendered, setMain replaced
+ * #view-root's innerHTML, and the drop target was destroyed mid-drag — so
+ * drag-and-drop simply did not work in the Mac app. The rule that fixed it
+ * lives inside this file ("while a drag is in progress this view MUTATES, it
+ * never re-renders" — see wireListeners' drag block). views/domains.js has
+ * three independent stale-while-revalidate layers ABOVE this panel, i.e. a
+ * second, unrelated re-render source above that rule, so the rule has to
+ * become something the host can ASK rather than a comment in a file the host
+ * does not read.
+ *
+ * Four true things, and each one is a real case:
+ *   dragActive          — a drag is over the zone RIGHT NOW. The v3.46.0 case.
+ *   submitting          — a single-file ingest this mount started is in flight.
+ *   a live batch        — a queue job exists and has not reached a terminal
+ *                         status. A repaint would throw away the panel the
+ *                         user is watching.
+ *   an attached stream  — the SSE fetch is open. Held separately from the job
+ *                         because the stream can be live in the window before
+ *                         the first snapshot lands (checkActiveQueueJob →
+ *                         attachQueueStream) and after a terminal snapshot but
+ *                         before the reader closes.
+ *
+ * FALSE WHENEVER THE SECTION IS NOT MOUNTED, and that is load-bearing rather
+ * than tidy: `state` is module-level and survives a teardown, so a drag that
+ * was in progress when the panel came down would otherwise keep the host
+ * quiesced for the life of the page.
+ */
+function ingestSectionBusyNow() {
+  if (!hostCtx) return false;
+  if (state.dragActive) return true;
+  if (state.submitting) return true;
+  if (queueStreamAbort) return true;
+  if (state.queueJob && !isQueueTerminal(state.queueJob.status)) return true;
+  return false;
+}
+
+/**
+ * Tell the host when the answer to ingestSectionBusy() CHANGES.
+ *
+ * Optional — views/domains.js consults the predicate itself before it
+ * re-renders, and that is the authoritative reading. This callback exists so a
+ * host can drop a quiesced repaint the moment the panel goes idle rather than
+ * waiting for its next revalidation, and it is edge-triggered (lastBusy) so a
+ * host cannot be woken dozens of times a second by `dragover`.
+ */
+function notifyHostBusy() {
+  if (!hostCtx || typeof hostCtx.onBusyChange !== 'function') return;
+  const busy = ingestSectionBusyNow();
+  if (busy === hostCtx.lastBusy) return;
+  hostCtx.lastBusy = busy;
+  try { hostCtx.onBusyChange(busy); } catch { /* a host's callback must never break this panel */ }
+}
+
+/** Did this event land inside the element the host handed us? Used ONLY in
+ *  section mode — see installDocumentDragGuards for why the two halves of the
+ *  document-level guard are scoped differently. */
+function dropLandedInHost(target) {
+  if (!hostCtx || !hostCtx.el || !target) return false;
+  if (typeof hostCtx.el.contains !== 'function') return false;
+  return hostCtx.el.contains(target);
+}
+
 registerView('ingest', {
   onEnter(mountToken) {
-    state = freshState();
-    myMountToken = mountToken;
-    loadGate = createLoadingGate({
-      onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
-    });
-    loadGate.begin();
-    render(mountToken);
-    loadDomains(mountToken)
-      .then(() => {
-        // See the chaining note below: the activity record is keyed by domain,
-        // so this must run AFTER a destination exists.
-        if (isCurrentMount(mountToken)) refreshActivity(mountToken).catch(() => {});
-      })
-      .catch((err) => reportAsyncMountFailure(mountToken, err));
-
-    // Re-render whenever ANY domain's write-gate state changes — e.g.
-    // another mount's abandoned ingest on the currently-selected domain
-    // finishes, or a Sync/Shared-Brain write starts/ends on it. This view
-    // only READS the gate to decide its own button/notice state; it never
-    // begins a write on another view's behalf.
-    unsubscribeWriteGate = onWriteGateChange(() => {
-      if (isCurrentMount(mountToken)) render(mountToken);
-    });
-
-    // Batch resume-on-return (Phase 2): unlike single-file, the backend
-    // genuinely supports reattachment (GET /active + /:jobId/stream), so
-    // every mount checks for a live batch and reattaches to it — ported
-    // from src/public/app.js's checkActiveQueueJob(), called the same way
-    // (on every Ingest-view entry).
-    checkActiveQueueJob(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
-
-    // SINGLE-FILE resume-on-return (v3.24.0). The comment at the top of this
-    // file used to say there was "no server-side 'get status' endpoint" for
-    // the single-file path and therefore "nothing to reattach to". There is
-    // now: GET /api/ingest/activity. So this mount asks what the server knows
-    // the moment it opens, exactly as checkActiveQueueJob does for a batch.
-    //
-    // Errors are swallowed rather than routed through reportAsyncMountFailure:
-    // refreshActivity already treats a failure as "keep what is on screen and
-    // try again next tick", and a view whose whole job is telling you what
-    // happened must not itself fail to open because one poll did.
-    // CHAINED ONTO loadDomains, NOT fired beside it. `state.domain` is null
-    // until loadDomains resolves and picks a destination, and the record is
-    // looked up BY DOMAIN — so an immediate call finds nothing and the view
-    // then shows an empty form over a live ingest until the next IDLE poll,
-    // up to 15 s later. Measured in a real browser: the server reported
-    // `running, pct 12, "Phase 1: planning wiki structure…"` while the view
-    // rendered a plain drop zone. Chaining costs nothing (loadDomains is
-    // already awaited by the mount) and removes the window entirely.
-    renderedActivitySignature = activitySignature();
-
-    // REVALIDATE ON WAKE, for the reason views/memory.js gives for its own:
-    // `focus` covers alt-tabbing back, `visibilitychange` covers a background
-    // tab being brought forward (which fires no focus event). Both are free
-    // while the user is elsewhere — which is exactly when an ingest they
-    // started is still running.
-    //
-    // The mount token is CAPTURED rather than read from `myMountToken`: a
-    // later mount overwrites that module-level variable, and a listener that
-    // outlived its teardown would then hand isCurrentMount the wrong view's
-    // token and be waved through.
-    activityWakeHandler = () => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      if (!isCurrentMount(mountToken)) return;
-      refreshActivity(mountToken).catch(() => {});
-    };
-    if (typeof window !== 'undefined') window.addEventListener('focus', activityWakeHandler);
-    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', activityWakeHandler);
-    scheduleActivityPoll(mountToken);
-
-    // Drop anywhere in the view, and refuse the browser's navigate-to-the-file
-    // default everywhere else. Installed HERE and not in wireListeners for the
-    // reason the variable's own comment gives: wireListeners runs on every
-    // render, and document listeners added there would accumulate.
-    if (removeDocumentDragGuards) { removeDocumentDragGuards(); removeDocumentDragGuards = null; }
-    removeDocumentDragGuards = installDocumentDragGuards(mountToken);
-
-    return () => {
-      // Deliberately does NOT abort an in-flight SINGLE-FILE fetch. A
-      // single-file ingest has no cancel semantics anywhere in this app
-      // (that is a batch-queue-only feature — v3.4.0 in the shipping app,
-      // and even there it only cancels BETWEEN LLM calls, never mid-call)
-      // — the server has already started (or will finish) writing pages
-      // regardless of whether this tab is still watching. Aborting our own
-      // client-side fetch() would just make the write gate lie (report
-      // "not busy" while the server is still writing), which is worse than
-      // leaving it running: isDomainWriteBusy() stays accurate for every
-      // OTHER view exactly because runIngest's own finally block — not
-      // this teardown — is what releases the write handle, once the
-      // request genuinely completes. See runIngest for that release.
-      //
-      // The BATCH queue is the opposite, on purpose (see this file's
-      // header comment): detach the live SSE stream on the way out. Its
-      // own `finally` (in attachQueueStream) releases the write-gate
-      // handle exactly once, mirroring the shipping app's
-      // "disconnect the live SSE stream when leaving the Ingest tab (this
-      // also releases the busy gate)" comment. checkActiveQueueJob() above
-      // is what resurrects a REAL (not fake) progress view on return,
-      // because — unlike single-file — the backend can actually hand one
-      // back.
-      detachQueueStream();
-
-      // Timer hygiene (load-bearing): an armed delay timer that survives
-      // this teardown would paint a loader into whatever view comes next.
-      if (loadGate) { loadGate.cancel(); loadGate = null; }
-
-      // Activity poll + clock hygiene. An armed poll timer surviving this
-      // teardown is worse than a stray delay timer: it would keep FETCHING for
-      // a view nobody is looking at, for the life of the page. Verified at 0
-      // requests after leaving the view.
-      stopActivityPoll();
-      stopRemoteElapsedTimer();
-      if (activityWakeHandler) {
-        if (typeof window !== 'undefined') window.removeEventListener('focus', activityWakeHandler);
-        if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', activityWakeHandler);
-        activityWakeHandler = null;
-      }
-      // Document-level drag guards go with the view. Left behind, they would
-      // keep swallowing file drops — and keep answering isCurrentMount with a
-      // dead token — for the life of the page.
-      if (removeDocumentDragGuards) { removeDocumentDragGuards(); removeDocumentDragGuards = null; }
-      renderedActivitySignature = null;
-
-      // Write-gate subscription cleanup — a torn-down mount must stop
-      // reacting to gate changes.
-      if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
-
-      // The domain picker's menu is a <body> child, so a rail navigation
-      // does not remove it with the view. navigate() closes the reader but
-      // explicitly does NOT reach into view-owned popovers (see its
-      // comment), so closing it is this view's job. The component also
-      // self-closes when its trigger leaves the document; this is the
-      // deliberate second layer.
-      closeAllListboxes();
-    };
+    startIngest(mountToken, null);
+    return () => { stopIngest(); };
   },
 });
+
+/**
+ * Everything the mount does, for BOTH hosts.
+ *
+ * Factored in place out of registerView('ingest')'s own onEnter body — not
+ * moved, not renamed, not split by behaviour. `ctx` is null for the full-page
+ * host and the section descriptor for the domain page; nothing else differs.
+ */
+function startIngest(mountToken, ctx) {
+  // A MOUNT THAT FINDS A SECTION STILL STANDING TEARS IT DOWN FIRST. The
+  // shell guarantees one view at a time and always runs a teardown before the
+  // next onEnter, so the full-page host has never needed this; a SECTION does,
+  // because its host re-renders on its own schedule and hands over a new
+  // element each time. Without it a remount stacks a second set of
+  // document-level drag guards (every drop handled twice), a second activity
+  // poll and a second write-gate subscription — the exact accumulation
+  // removeDocumentDragGuards' own comment says must not happen. It lives HERE
+  // rather than in mountIngestSection so there is one place that decides it,
+  // and so a host that forgets to unmount cannot leak a poll into the next
+  // view either.
+  if (hostCtx) stopIngest();
+  hostCtx = ctx || null;
+  state = freshState();
+  myMountToken = mountToken;
+  loadGate = createLoadingGate({
+    onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
+  });
+  loadGate.begin();
+  render(mountToken);
+  loadDomains(mountToken)
+    .then(() => {
+      // See the chaining note below: the activity record is keyed by domain,
+      // so this must run AFTER a destination exists.
+      if (isCurrentMount(mountToken)) refreshActivity(mountToken).catch(() => {});
+    })
+    .catch((err) => reportAsyncMountFailure(mountToken, err));
+
+  // Re-render whenever ANY domain's write-gate state changes — e.g.
+  // another mount's abandoned ingest on the currently-selected domain
+  // finishes, or a Sync/Shared-Brain write starts/ends on it. This view
+  // only READS the gate to decide its own button/notice state; it never
+  // begins a write on another view's behalf.
+  unsubscribeWriteGate = onWriteGateChange(() => {
+    if (isCurrentMount(mountToken)) render(mountToken);
+  });
+
+  // Batch resume-on-return (Phase 2): unlike single-file, the backend
+  // genuinely supports reattachment (GET /active + /:jobId/stream), so
+  // every mount checks for a live batch and reattaches to it — ported
+  // from src/public/app.js's checkActiveQueueJob(), called the same way
+  // (on every Ingest-view entry).
+  checkActiveQueueJob(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
+
+  // SINGLE-FILE resume-on-return (v3.24.0). The comment at the top of this
+  // file used to say there was "no server-side 'get status' endpoint" for
+  // the single-file path and therefore "nothing to reattach to". There is
+  // now: GET /api/ingest/activity. So this mount asks what the server knows
+  // the moment it opens, exactly as checkActiveQueueJob does for a batch.
+  //
+  // Errors are swallowed rather than routed through reportAsyncMountFailure:
+  // refreshActivity already treats a failure as "keep what is on screen and
+  // try again next tick", and a view whose whole job is telling you what
+  // happened must not itself fail to open because one poll did.
+  // CHAINED ONTO loadDomains, NOT fired beside it. `state.domain` is null
+  // until loadDomains resolves and picks a destination, and the record is
+  // looked up BY DOMAIN — so an immediate call finds nothing and the view
+  // then shows an empty form over a live ingest until the next IDLE poll,
+  // up to 15 s later. Measured in a real browser: the server reported
+  // `running, pct 12, "Phase 1: planning wiki structure…"` while the view
+  // rendered a plain drop zone. Chaining costs nothing (loadDomains is
+  // already awaited by the mount) and removes the window entirely.
+  renderedActivitySignature = activitySignature();
+
+  // REVALIDATE ON WAKE, for the reason views/memory.js gives for its own:
+  // `focus` covers alt-tabbing back, `visibilitychange` covers a background
+  // tab being brought forward (which fires no focus event). Both are free
+  // while the user is elsewhere — which is exactly when an ingest they
+  // started is still running.
+  //
+  // The mount token is CAPTURED rather than read from `myMountToken`: a
+  // later mount overwrites that module-level variable, and a listener that
+  // outlived its teardown would then hand isCurrentMount the wrong view's
+  // token and be waved through.
+  activityWakeHandler = () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (!isCurrentMount(mountToken)) return;
+    refreshActivity(mountToken).catch(() => {});
+  };
+  if (typeof window !== 'undefined') window.addEventListener('focus', activityWakeHandler);
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', activityWakeHandler);
+  scheduleActivityPoll(mountToken);
+
+  // Drop anywhere in the view, and refuse the browser's navigate-to-the-file
+  // default everywhere else. Installed HERE and not in wireListeners for the
+  // reason the variable's own comment gives: wireListeners runs on every
+  // render, and document listeners added there would accumulate.
+  if (removeDocumentDragGuards) { removeDocumentDragGuards(); removeDocumentDragGuards = null; }
+  removeDocumentDragGuards = installDocumentDragGuards(mountToken);
+}
+
+/**
+ * Everything the teardown does, for BOTH hosts — in the same order, with the
+ * same handles. Factored in place out of registerView('ingest')'s own
+ * teardown closure; nothing here is new except the last line.
+ *
+ * The full-page host reaches this through navigate()'s teardown call; the
+ * domain page reaches it through unmountIngestSection(). An armed poll timer,
+ * a live SSE fetch, a document-level drag guard or a write-gate subscription
+ * left behind by EITHER host would keep working — fetching, swallowing drops,
+ * answering isCurrentMount with a dead token — for the life of the page.
+ */
+function stopIngest() {
+  // Deliberately does NOT abort an in-flight SINGLE-FILE fetch. A
+  // single-file ingest has no cancel semantics anywhere in this app
+  // (that is a batch-queue-only feature — v3.4.0 in the shipping app,
+  // and even there it only cancels BETWEEN LLM calls, never mid-call)
+  // — the server has already started (or will finish) writing pages
+  // regardless of whether this tab is still watching. Aborting our own
+  // client-side fetch() would just make the write gate lie (report
+  // "not busy" while the server is still writing), which is worse than
+  // leaving it running: isDomainWriteBusy() stays accurate for every
+  // OTHER view exactly because runIngest's own finally block — not
+  // this teardown — is what releases the write handle, once the
+  // request genuinely completes. See runIngest for that release.
+  //
+  // The BATCH queue is the opposite, on purpose (see this file's
+  // header comment): detach the live SSE stream on the way out. Its
+  // own `finally` (in attachQueueStream) releases the write-gate
+  // handle exactly once, mirroring the shipping app's
+  // "disconnect the live SSE stream when leaving the Ingest tab (this
+  // also releases the busy gate)" comment. checkActiveQueueJob() above
+  // is what resurrects a REAL (not fake) progress view on return,
+  // because — unlike single-file — the backend can actually hand one
+  // back.
+  detachQueueStream();
+
+  // Timer hygiene (load-bearing): an armed delay timer that survives
+  // this teardown would paint a loader into whatever view comes next.
+  if (loadGate) { loadGate.cancel(); loadGate = null; }
+
+  // Activity poll + clock hygiene. An armed poll timer surviving this
+  // teardown is worse than a stray delay timer: it would keep FETCHING for
+  // a view nobody is looking at, for the life of the page. Verified at 0
+  // requests after leaving the view.
+  stopActivityPoll();
+  stopRemoteElapsedTimer();
+  if (activityWakeHandler) {
+    if (typeof window !== 'undefined') window.removeEventListener('focus', activityWakeHandler);
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', activityWakeHandler);
+    activityWakeHandler = null;
+  }
+  // Document-level drag guards go with the view. Left behind, they would
+  // keep swallowing file drops — and keep answering isCurrentMount with a
+  // dead token — for the life of the page.
+  if (removeDocumentDragGuards) { removeDocumentDragGuards(); removeDocumentDragGuards = null; }
+  renderedActivitySignature = null;
+
+  // Write-gate subscription cleanup — a torn-down mount must stop
+  // reacting to gate changes.
+  if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
+
+  // The domain picker's menu is a <body> child, so a rail navigation
+  // does not remove it with the view. navigate() closes the reader but
+  // explicitly does NOT reach into view-owned popovers (see its
+  // comment), so closing it is this view's job. The component also
+  // self-closes when its trigger leaves the document; this is the
+  // deliberate second layer.
+  closeAllListboxes();
+
+  // Back to VIEW mode. Last, deliberately: every line above is allowed to ask
+  // which host it is tearing down from, and ingestSectionBusy() must answer
+  // false from the instant this returns.
+  hostCtx = null;
+}
 
 // ── Server-backed activity ═══════════════════════════════════════════════
 //
@@ -848,6 +1007,14 @@ function pickAdoptableDestination(activity, domains, currentDomain) {
 function adoptDestination(activity) {
   if (!state.destinationAdoptionPending) return false;
   state.destinationAdoptionPending = false;
+  // SECTION MODE spends the adoption and adopts NOTHING. Adoption exists to
+  // reconcile a mount that had no choice made for it; the domain page has
+  // made one, by being the page it is. Moving the destination to whichever
+  // domain a second tab happens to be ingesting into would be the v3.23.1
+  // harm — a deliberate choice taken away — with the added confusion of the
+  // panel then naming a domain the page around it is not about. The sidebar's
+  // live markers are how that case is served, and the domain page has its own.
+  if (hostCtx) return false;
   const adopt = pickAdoptableDestination(activity, state.domains, state.domain);
   if (!adopt) return false;
   state.domain = adopt;
@@ -1209,7 +1376,18 @@ async function loadDomains(token) {
     if (got.error) throw new Error(got.error);
     const list = got.list;
     state.domains = list;
-    state.domain = list.length ? list[0].slug : null;
+    // SECTION MODE: the page the panel is mounted on IS the destination
+    // choice, so snapping to list[0] would offer to write a user's file into
+    // whichever domain happens to sort first — on a page whose whole subject
+    // is another one. The write stays HERE rather than moving to the mount:
+    // scripts/test-next-ingest-view.js §2 attributes every `state.domain =`
+    // to its enclosing function and allow-lists the set, and a second writer
+    // in startIngest would widen that set to buy nothing. Falls through to
+    // the ordinary rule when the host names a domain this loader did not
+    // return (a readonly mirror, or one deleted since the page painted).
+    const hosted = hostCtx && hostCtx.domain &&
+      list.some((d) => d && d.slug === hostCtx.domain) ? hostCtx.domain : null;
+    state.domain = hosted || (list.length ? list[0].slug : null);
     state.domainsError = null;
   } catch (err) {
     if (!isCurrentMount(token)) return;
@@ -1231,9 +1409,22 @@ async function loadDomains(token) {
 // ── Render ───────────────────────────────────────────────────────────────
 
 function render(token) {
-  renderSidebar(token);
+  // SECTION MODE RENDERS NO SIDEBAR AT ALL — not an empty one, not a hidden
+  // one. The domain page owns that column and is already painting its own
+  // content into it, so a second writer would be the last one to run rather
+  // than a designed outcome. Skipping the CALL, rather than guarding inside
+  // renderSidebar, is also what keeps that function exactly what three other
+  // suites lift out of this file by name and execute with their own
+  // preamble — see §18 of scripts/test-next-ingest-view.js for why a rename
+  // or a new free variable in one of those bodies is not a soft failure.
+  if (!hostCtx) renderSidebar(token);
   renderMain(token);
   wireListeners(token);
+  // Every render is a chance for the busy answer to have moved — a batch
+  // reached a terminal status, an ingest settled, a stream closed. The DRAG
+  // case is the one this cannot see, because a drag deliberately does not
+  // render (see setDragActive); that call site notifies for itself.
+  notifyHostBusy();
 }
 
 // The ONE place `state.domain` changes in response to a USER action. Both
@@ -1627,8 +1818,15 @@ function renderMain(token) {
   // mode, which is precisely a moment they are likely to be mid-workflow and
   // away from where the last file landed. It self-suppresses when there is
   // nothing to say, so the loading and error frames are unaffected.
-  setMain(
-    renderViewHeader({ eyebrow: 'the way material gets in', title: 'Ingest' }) +
+  // The view header belongs to the FULL-PAGE host. In section mode the domain
+  // page has already named this block (ADD SOURCES) and carries the screen's
+  // one <h1>; a second title inside the section would be the same fact stated
+  // twice, and an <h1> inside another view's page is a heading-order defect
+  // rather than a cosmetic one. The notice above `body` stays in both modes —
+  // "a run you started finished somewhere else" is equally true on either
+  // host, and it self-suppresses when there is nothing to say.
+  hostSetMain(
+    (hostCtx ? '' : renderViewHeader({ eyebrow: 'the way material gets in', title: 'Ingest' })) +
     renderSettledElsewhere() +
     body,
     token
@@ -2596,6 +2794,12 @@ function setDragActive(next) {
   state.dragActive = on;
   const zone = document.getElementById('ing-drop-zone');
   if (zone) zone.classList.toggle('ing-drop-zone-active', on);
+  // THE ONE BUSY TRANSITION NO RENDER CAN CARRY. This function exists
+  // precisely so a drag mutates one class instead of re-rendering, so the
+  // host would never hear about the state that matters most to it — the one
+  // where a repaint destroys the node under the cursor — if the notify were
+  // left to render().
+  notifyHostBusy();
 }
 
 /**
@@ -2657,6 +2861,22 @@ function installDocumentDragGuards(mountToken) {
     if (!dragCarriesFiles(e)) return;
     e.preventDefault();
     setDragActive(false);
+    // ── THE TWO HALVES OF THIS GUARD ARE SCOPED DIFFERENTLY IN SECTION MODE ──
+    //
+    // The REFUSAL half is everything above this line, and it stays
+    // document-wide in BOTH modes. That is the v3.46.0 Mac-app fix (paired
+    // with desktop/main.js's will-navigate guard): the browser's default for a
+    // file dropped on a page is to NAVIGATE to it, which in Electron takes the
+    // window off the app with no error and no way back. A file dropped over
+    // WIKI HEALTH must still be refused.
+    //
+    // The CONVENIENCE half is everything below, and on the domain page it
+    // belongs to the ADD SOURCES section alone. "A drop anywhere in the view
+    // counts as a drop on the zone" was written when the view WAS the page;
+    // inside a six-section page it would mean a file released over PROJECTS
+    // silently entered a batch, and "you dropped outside the zone" would fire
+    // for a drop the user aimed at something else entirely.
+    if (hostCtx && !dropLandedInHost(e.target)) return;
     // Inside the zone the zone's own listener has already handled it — this
     // handler sees the same event on the way up. Doing the work twice would
     // add every dropped file to the batch twice.
@@ -4369,4 +4589,70 @@ function wireQueueListeners() {
   }
   const dismissBtn = document.getElementById('ing-queue-dismiss-btn');
   if (dismissBtn) dismissBtn.addEventListener('click', () => dismissQueuePanel(myMountToken));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// THE SECTION HOST — the three exports views/domains.js calls (v3.64.0)
+// ═════════════════════════════════════════════════════════════════════════
+//
+// These are the ONLY exports this file has, and they are the whole of the
+// contract. Everything above is unchanged and unmoved (see the hostCtx
+// docblock near registerView for why that is a rule and not a preference).
+//
+//   mountIngestSection(el, opts) -> void
+//     el   : the container the host owns and will not write into again.
+//     opts : { domain: string, token: number, onBusyChange?: (busy) => void }
+//            `token` is the HOST's mount token — this panel is part of that
+//            mount, not a mount of its own, so every stale-paint guard in
+//            this file keeps answering about the screen the user is looking
+//            at. `domain` is the destination; see loadDomains for how it is
+//            honoured and when it is not.
+//   unmountIngestSection() -> void
+//     Idempotent. Runs the FULL teardown — the same stopIngest() the
+//     full-page host runs, in the same order.
+//   ingestSectionBusy() -> boolean
+//     drag active | a single-file ingest in flight | a live batch | an
+//     attached SSE stream. False whenever the section is not mounted. The
+//     host must consult this BEFORE it re-renders; see the predicate's own
+//     docblock for the v3.46.0 defect that makes it necessary.
+
+/**
+ * Mount this panel as a section of another view's page.
+ *
+ * REMOUNTING IS SAFE AND IS THE EXPECTED CASE — the domain page re-renders
+ * when the user switches domain, and each render hands over a NEW element
+ * (the old one went with the innerHTML write). startIngest is what makes that
+ * safe: it tears any standing mount down first, so a remount cannot stack a
+ * second set of document-level drag guards, a second activity poll and a
+ * second write-gate subscription on top of the first.
+ */
+export function mountIngestSection(el, opts) {
+  if (!el) return;
+  const o = opts || {};
+  startIngest(o.token, {
+    el,
+    domain: typeof o.domain === 'string' && o.domain ? o.domain : null,
+    token: o.token,
+    onBusyChange: typeof o.onBusyChange === 'function' ? o.onBusyChange : null,
+    // Seeded to the answer a host would get if it asked right now, so the
+    // first edge it is told about is a real change rather than the panel
+    // announcing its own idleness one tick after mounting.
+    lastBusy: false,
+  });
+}
+
+/** Tear the section down. A no-op when nothing is mounted — a host's own
+ *  teardown runs on every exit and cannot know whether this section was ever
+ *  reached (a `shared-*` mirror never renders one at all). */
+export function unmountIngestSection() {
+  if (!hostCtx) return;
+  stopIngest();
+}
+
+/** THE QUIESCE PREDICATE. See ingestSectionBusyNow's docblock — this is the
+ *  exported name and that is the reasoning; they are one function split in
+ *  two only because every other caller in this file is above the export
+ *  block and this file keeps its exports together at the bottom. */
+export function ingestSectionBusy() {
+  return ingestSectionBusyNow();
 }
