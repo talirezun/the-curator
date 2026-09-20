@@ -484,20 +484,26 @@
   text-transform: none;
   color: var(--text);
 }
-/* THE TWO FOLD SUMMARIES CARRY THE SAME HEAD WITHOUT A WRAPPER. A `<summary>`
-   is already the flex row `.dm-section-hd` would be, and nesting one inside
-   it would put the chevron and the numeral on different rows at 568px. So the
-   numeral sits in the summary beside the chevron and the title takes the same
-   face by its own selector. */
-.dm-fold-summary .dm-section-num { transform: none; }
-.dm-fold-summary .dm-fold-title {
-  font-family: var(--font-sans);
-  font-size: var(--text-lg);
-  font-weight: var(--weight-semibold);
-  letter-spacing: -0.01em;
-  text-transform: none;
-  color: var(--text);
-}
+/* ── THE FOLD'S HEAD LEFT THE SUMMARY (v3.64.2) ───────────────────────────
+   v3.64.1 put the numeral and the title INSIDE each fold's `<summary>`,
+   beside the chevron and inside the summary's own 14px padding — so the two
+   folded sections' numerals sat a few pixels to the RIGHT of the three
+   unfolded ones, which is exactly what the maintainer reported next. The head
+   is now a SIBLING above the card, identical for all five sections, and the
+   summary is the card's first ROW: a chevron and the one reading that decides
+   whether to open it.
+
+   THE HEAD IS NOT A WRAPPER around the `<details>`, and that is a correctness
+   rule rather than a layout choice — views/domains.js's renderMain says why
+   (`patchMainAroundHosts` finds a hosted fold by id among the column's
+   TOP-LEVEL children). So the head carries `.dm-section` for the column
+   rhythm and the rule below removes the gap between it and its own card. */
+.dm-section-hd + .dm-section,
+.dm-section-hd + .dm-fold { margin-top: 0; }
+/* And the card hands the gap back to the section AFTER it, which used to come
+   from `.dm-section + .dm-section` and cannot any more: a `<details>` that is
+   no longer a `.dm-section` is not the adjacent sibling that rule matches. */
+.dm-fold + .dm-section { margin-top: var(--space-12); }
 
 /* An eyebrow with an ⓘ mark beside it. The mark's own class belongs to
    shared/text.css and this file may not name it — that prefix is owned

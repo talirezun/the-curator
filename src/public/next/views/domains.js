@@ -3353,14 +3353,44 @@ function renderMain(token) {
     // by opening or closing this fold, what they want to see on a domain
     // page, that answer travels with them — v3.64.0 asked them again on every
     // domain, which is the thing the maintainer reported on the first day.
+    // ── ONE HEADING RULE FOR ALL FIVE SECTIONS (v3.64.2) ─────────────────
+    //
+    // THE REPORTED DEFECT, from the maintainer's screenshot of v3.64.1: the
+    // numerals sat at TWO x positions. ② PAGES, ③ PROJECTS and ⑤ WIKI HEALTH
+    // put the numeral and the title ABOVE their card, at the column's own x;
+    // ① INGEST and ④ SHARED BRAIN put them INSIDE the fold's `<summary>`,
+    // after a chevron and inside the summary's 14px padding — "one number on
+    // the left, another a few pixels to the right". And all five titles were
+    // ALL CAPS while the Context view's steps beside them read "① Foundations"
+    // in Title case.
+    //
+    // The rule is now the Context view's, for all five: the numeral badge and
+    // a Title-case title sit ABOVE the card, never inside a `<summary>`. The
+    // fold keeps its `<details>` — the summary becomes the card's first ROW,
+    // carrying the chevron and the one reading that decides whether to open
+    // it — so the collapsed card still opens from that row.
+    //
+    // THE HEAD IS A SIBLING, NOT A WRAPPER, AND THAT IS A CORRECTNESS RULE.
+    // `patchMainAroundHosts` identifies a hosted fold by `before.id` over the
+    // TOP-LEVEL children of `.main-inner`. Wrapping the `<details>` in a
+    // `<section>` would hide that id one level down, so the fold would be
+    // compared by `outerHTML` and REPLACED on every paint — remounting the
+    // hosted panel on every paint, and destroying the drop target under a
+    // held drag, which is the v3.46.0 shape D-J exists to prevent.
+    //
+    // THE SUMMARY CARRIES `aria-label`, because a disclosure control whose
+    // only content is a chevron and a date has no accessible name. The name
+    // is the section's, so a screen reader hears what it opens.
     (readonly ? '' :
-      '<details class="dm-section dm-fold dm-sources" id="dm-sources-fold" data-dm-fold="sources"' +
+      '<div class="dm-section dm-section-hd">' +
+        '<span class="dm-section-num" aria-hidden="true">1</span>' +
+        '<div class="cur-group-title dm-section-eyebrow">Ingest</div>' +
+      '</div>' +
+      '<details class="dm-fold dm-sources" id="dm-sources-fold" data-dm-fold="sources"' +
         ((state.sectionPrefs && typeof state.sectionPrefs.sources === 'boolean')
           ? (state.sectionPrefs.sources ? ' open' : '')
           : ((domain.lastIngestDate || (counts.summaries || 0) > 0) ? '' : ' open')) + '>' +
-        '<summary class="dm-fold-summary">' + icon('chevronRight', 14) +
-          '<span class="dm-section-num" aria-hidden="true">1</span>' +
-          '<span class="cur-group-title dm-fold-title">INGEST</span>' +
+        '<summary class="dm-fold-summary" aria-label="Ingest">' + icon('chevronRight', 14) +
           '<span class="dm-fold-meta">' +
             (domain.lastIngestDate ? 'last ingest ' + escapeHtml(relTime(domain.lastIngestDate))
                                    : 'nothing ingested yet') +
@@ -3407,13 +3437,22 @@ function renderMain(token) {
     // rule), so the full view's "your team's brain" positioning line does
     // NOT follow the panel down here — that sentence is taught once, in the
     // OVERVIEW ⓘ's three-layer legend directly above.
-    '<details class="dm-section dm-fold dm-shared" id="dm-shared-fold" data-dm-fold="shared"' +
+    '<div class="dm-section dm-section-hd">' +
+      '<span class="dm-section-num" aria-hidden="true">4</span>' +
+      '<div class="cur-group-title dm-section-eyebrow">Shared Brain</div>' +
+    '</div>' +
+    '<details class="dm-fold dm-shared" id="dm-shared-fold" data-dm-fold="shared"' +
       ((state.sectionPrefs && state.sectionPrefs.shared === true) ? ' open' : '') + '>' +
-      '<summary class="dm-fold-summary">' + icon('chevronRight', 14) +
-        '<span class="dm-section-num" aria-hidden="true">4</span>' +
-        '<span class="cur-group-title dm-fold-title">SHARED BRAIN</span>' +
+      '<summary class="dm-fold-summary" aria-label="Shared Brain">' + icon('chevronRight', 14) +
+        // THE ROW STILL READS. With the title lifted out, a summary with no
+        // connection would be a bare chevron, so the ABSENCE of a connection
+        // becomes the reading — but only once the panel has reported one.
+        // `state.sharedJump` is null until then, and "not connected" while
+        // the answer is in flight is a claim this page cannot make.
         '<span class="dm-fold-meta">' +
-          (state.sharedJump && state.sharedJump.show ? escapeHtml(state.sharedJump.value) : '') +
+          (state.sharedJump
+            ? (state.sharedJump.show ? escapeHtml(state.sharedJump.value) : 'not connected')
+            : '') +
         '</span>' +
       '</summary>' +
       '<div class="dm-fold-body"><div class="dm-host" id="dm-shared-host"></div></div>' +
@@ -3868,7 +3907,7 @@ function renderProjectsPanel(readonly) {
         '<div class="dm-section-head-row">' +
           '<div class="dm-section-hd">' +
             '<span class="dm-section-num" aria-hidden="true">3</span>' +
-            '<div class="cur-group-title dm-section-eyebrow">PROJECTS IN THIS DOMAIN</div>' +
+            '<div class="cur-group-title dm-section-eyebrow">Projects in this domain</div>' +
           '</div>' +
           info.btn +
         '</div>' +
@@ -4836,7 +4875,7 @@ async function loadBrowse(slug, token) {
 // `aria-hidden`, because a numeral is an ordering cue and not a name — a
 // screen reader reads "INGEST", not "1 INGEST", which is the same call
 // shared/block.js makes about its own.
-const BROWSE_EYEBROW = '<div class="dm-section-hd"><span class="dm-section-num" aria-hidden="true">2</span><div class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">PAGES</div></div>';
+const BROWSE_EYEBROW = '<div class="dm-section-hd"><span class="dm-section-num" aria-hidden="true">2</span><div class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">Pages</div></div>';
 
 function renderBrowsePanel() {
   const b = activeBrowse();
@@ -6329,7 +6368,7 @@ function healthSection(inner) {
     '<section class="dm-section dm-health">' +
       '<div class="dm-section-hd">' +
         '<span class="dm-section-num" aria-hidden="true">5</span>' +
-        '<div class="cur-group-title dm-section-eyebrow">WIKI HEALTH</div>' +
+        '<div class="cur-group-title dm-section-eyebrow">Wiki health</div>' +
       '</div>' +
       inner +
     '</section>'
@@ -6371,7 +6410,12 @@ function renderHealthPanel(domain, readonly) {
     return healthSection(
       '<div class="dm-health-card" aria-busy="true"' +
         (reserve ? ' style="min-height:' + reserve + 'px"' : '') + '>' +
-        '<div class="dm-health-top"><div class="dm-health-head">' + icon('activity', 17) + '<span class="dm-health-title">Wiki health</span></div></div>' +
+        // ── THE CARD NO LONGER TITLES ITSELF (v3.64.2) ──────────────────
+        // "⑤ Wiki health" is written directly above this card by
+        // `healthSection`, at the same x and in the same face as the other
+        // four section headings. A second "Wiki health" inside the card was
+        // the same words twice, eight pixels apart. This branch has no
+        // control in its head row either, so the row goes with the title.
         '<div class="dm-health-body">Scanning…</div>' +
       '</div>'
     );
@@ -6380,7 +6424,8 @@ function renderHealthPanel(domain, readonly) {
     return healthSection(
       '<div class="dm-health-card">' +
         '<div class="dm-health-top">' +
-          '<div class="dm-health-head">' + icon('activity', 17) + '<span class="dm-health-title">Wiki health</span></div>' +
+          // The title is the SECTION's (see the loading branch); this row
+          // exists for its one control.
           // `usable` is the same predicate the readout branch uses: it is
           // true only when a report for THIS domain is in hand. A first
           // scan that failed leaves none, and this is the branch where the
@@ -6454,7 +6499,8 @@ function renderHealthPanel(domain, readonly) {
   return healthSection(
     '<div class="dm-health-card' + healthRevealCls + '">' +
       '<div class="dm-health-top">' +
-        '<div class="dm-health-head">' + icon('activity', 17) + '<span class="dm-health-title">Wiki health</span></div>' +
+        // The title is the SECTION's (see the loading branch); this row
+        // exists for its one control.
         '<button class="btn btn-secondary" id="dm-rescan-btn"' + ((busy || revalidating) ? ' disabled' : '') + '>' +
           ((busy === 'rescan' || revalidating) ? buttonRingHtml() + ' Scanning…' : healthScanLabel(!!report)) +
         '</button>' +

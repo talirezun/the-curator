@@ -2175,8 +2175,8 @@ section('S11 -- THE THREE-LAYER LEGEND ON THE OVERVIEW BLOCK (v3.62.0, P1-14)');
     /<div class="[^"]*\bdm-section-head-row\b[^"]*">/.test(card), card.slice(0, 900));
   ok('CONTROL: the projects panel uses that same class, so the line above is '
     + 'about REUSE rather than about a string',
-  /dm-section-head-row/.test(SRC.slice(SRC.indexOf('PROJECTS IN THIS DOMAIN') - 400,
-    SRC.indexOf('PROJECTS IN THIS DOMAIN'))), 'renderProjectsPanel head');
+  /dm-section-head-row/.test(SRC.slice(SRC.indexOf('Projects in this domain') - 400,
+    SRC.indexOf('Projects in this domain'))), 'renderProjectsPanel head');
   // NO `title=`. This view's ceiling in test-next-title-affordances.js is 0
   // and the mark's accessible name is on the button.
   ok('the mark carries an aria-label',

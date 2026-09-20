@@ -436,8 +436,10 @@ section('S1 -- FOUR SECTIONS, ONE RHYTHM, ONE CHROME');
   const s = root.children[0];
   ok('the real healthSection wraps the card in a .dm-section', s && s.tagName === 'SECTION' && hasClass(s, 'dm-section'));
   ok('...classed dm-health, so the four sections are addressable', s && hasClass(s, 'dm-health'));
-  ok('...with its own eyebrow, reading WIKI HEALTH',
-    /class="cur-group-title dm-section-eyebrow">WIKI HEALTH</.test(wrapped));
+  // v3.64.2: Title case, like the Context view's steps — the second half of
+  // the maintainer's "one rule for all five headings" report.
+  ok('...with its own eyebrow, reading Wiki health',
+    /class="cur-group-title dm-section-eyebrow">Wiki health</.test(wrapped));
   // AN EMPTY BODY RENDERS NOTHING AT ALL. renderHealthPanel returns '' when
   // there is no report, and a heading over nothing looks like a failure.
   eq('an empty body renders no section and no eyebrow', healthSection(''), '');
@@ -825,7 +827,7 @@ section('S3 -- THE PROJECTS PARAGRAPH IS BEHIND AN ⓘ, LIKE THE HEADER’S');
   ok('...and the header holds the eyebrow and the mark and nothing else',
     head && head.children.length === 2, head && String(head.children.length));
   ok('...with the eyebrow still naming the group -- the mark is the dive-in, not the label',
-    head && /PROJECTS IN THIS DOMAIN/.test(head.textContent));
+    head && /Projects in this domain/.test(head.textContent));
   ok('CONTROL -- domains.css no longer places a caption either',
     !/\.dm-proj-caption/.test(CSS.replace(/\/\*[\s\S]*?\*\//g, '')));
   // NOTHING A READER NEEDED WAS DELETED, only moved: the definition is the
