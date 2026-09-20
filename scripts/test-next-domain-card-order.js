@@ -199,6 +199,10 @@ function bindBrowseListeners() {}
 // renderMain wires one more listener set. Stubbed like its five siblings --
 // this suite measures CARD ORDER, not behaviour.
 function bindStatCardListeners() {}
+// v3.64.0: the SOURCES jump reads the domain's last-ingest date, and the two
+// fold summaries read it too. Stubbed to a constant so the ORDER assertions
+// below do not depend on a clock.
+function relTime() { return 'just now'; }
 const document = { getElementById: () => null, querySelectorAll: () => [] };
 `;
 
@@ -269,9 +273,11 @@ section('S1 -- THE WIKI IS NOT BURIED: card order, by DOM position');
     const root = parseHtmlToChildren(html);
     const at = docOrder(root);
     const iStats = at((n) => hasClass(n, 'dm-stats-grid'));
+    const iSources = at((n) => n.attrs.id === 'dm-sources-fold');
     const iEyebrow = at((n) => hasClass(n, 'dm-recent-eyebrow'));
     const iBrowse = at((n) => hasClass(n, 'dm-browse-card'));
     const iProjects = at((n) => hasClass(n, 'STUB-projects'));
+    const iShared = at((n) => n.attrs.id === 'dm-shared-fold');
     const iHealth = at((n) => hasClass(n, 'STUB-health'));
 
     // CONTROLS FIRST. Every assertion below compares indices, and -1 < 0
@@ -281,8 +287,21 @@ section('S1 -- THE WIKI IS NOT BURIED: card order, by DOM position');
     ok('CONTROL -- the Pages group is in the parsed tree', iEyebrow >= 0 && iBrowse >= 0, iEyebrow + '/' + iBrowse);
     ok('CONTROL -- both panels below it are in the parsed tree', iProjects >= 0 && iHealth >= 0, iProjects + '/' + iHealth);
 
+    ok('CONTROL -- the two v3.64.0 hosted sections are in the parsed tree',
+      iSources >= 0 && iShared >= 0, iSources + '/' + iShared);
+
     ok('the Pages group comes AFTER the stat cards -- the count, then the index it counts',
       iStats < iEyebrow, iStats + ' < ' + iEyebrow);
+    // v3.64.0. The act of adding comes before the index of what was added --
+    // the same argument v3.49.0 used to put the wiki above the housekeeping,
+    // applied one step earlier, and the reason INGEST could give up rail slot
+    // 2 without becoming unfindable.
+    ok('INGEST sits between the figures and the wiki index',
+      iStats < iSources && iSources < iEyebrow, iStats + ' < ' + iSources + ' < ' + iEyebrow);
+    // A fact ABOUT the domain, like Projects, and above the maintenance
+    // report for the same reason Projects is.
+    ok('SHARED BRAIN sits between Projects and Wiki health',
+      iProjects < iShared && iShared < iHealth, iProjects + ' < ' + iShared + ' < ' + iHealth);
     ok('the Pages group comes BEFORE Projects -- the reported defect',
       iEyebrow < iProjects && iBrowse < iProjects, iBrowse + ' < ' + iProjects);
     ok('...and before Wiki health, so the wiki is never under its own maintenance report',
@@ -294,17 +313,25 @@ section('S1 -- THE WIKI IS NOT BURIED: card order, by DOM position');
   }
 }
 {
-  // THE EYEBROW NAMES THE THING THE USER WAS LOOKING FOR. The stat cards
-  // directly above carry their OWN "PAGES" eyebrow over a count, so a bare
-  // "PAGES" here read as a second heading for the same number.
+  // THE EYEBROW IS `PAGES` AGAIN (v3.64.0), and the distinguishing work has
+  // moved. v3.49.0 added "· THE WIKI" because the stat cards directly above
+  // carry their OWN "PAGES" eyebrow over a count, so a bare "PAGES" here read
+  // as a second heading for the same number. The list now holds this domain's
+  // CONTEXT documents too, so an eyebrow promising the wiki would name one of
+  // three lenses -- and the LENS ROW under the eyebrow is what now says, in
+  // three words, which inventory is on screen.
   const html = renderCard();
-  ok('the Pages group is labelled "PAGES · THE WIKI"', html.includes('PAGES · THE WIKI'));
+  ok('the Pages group is labelled "PAGES", with no second noun welded to it',
+    /dm-recent-eyebrow[^>]*>PAGES</.test(html) && !html.includes('PAGES · THE WIKI'), html.slice(0, 200));
   const root = parseHtmlToChildren(html);
   const eyebrows = flatten(root).filter((n) => hasClass(n, 'cur-eyebrow'));
   ok('CONTROL -- the stat cards really do carry their own eyebrows too (' + eyebrows.length + ')',
     eyebrows.length >= 5);
-  ok('...so the two are distinguishable: exactly one eyebrow names the wiki',
-    html.split('PAGES · THE WIKI').length - 1 === 1);
+  const lensChips = flatten(root).filter((n) => hasClass(n, 'dm-lens-chip'));
+  ok('...and the three lens chips are what distinguish the index from the count',
+    lensChips.length === 3
+    && lensChips.map((c) => c.attrs['data-browse-lens']).join(',') === 'wiki,context,all',
+    lensChips.map((c) => c.attrs['data-browse-lens']).join(','));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -333,7 +360,7 @@ section('S2 -- THE BROWSER IS OPEN, WITH ITS FILTER AND ITS FACETS');
   ok('with nothing loaded yet the panel shows a LOADER, not a button',
     html.includes('Loading pages…') && !html.includes('dm-browse-load-btn'));
   ok('...under the same eyebrow, so the group does not appear from nowhere',
-    html.includes('PAGES · THE WIKI'));
+    /dm-recent-eyebrow[^>]*>PAGES</.test(html));
 }
 {
   // THE RENDER CAP SURVIVED. It is what keeps a 3,300-page domain from
@@ -368,7 +395,7 @@ section('S2 -- THE BROWSER IS OPEN, WITH ITS FILTER AND ITS FACETS');
   ok('another domain\'s page list is not painted under this domain',
     !html.includes('data-browse-path'), 'stale rows rendered');
   ok('...and the panel still renders SOMETHING rather than vanishing',
-    html.includes('PAGES · THE WIKI'));
+    /dm-recent-eyebrow[^>]*>PAGES</.test(html));
 }
 
 // ═════════════════════════════════════════════════════════════════════════

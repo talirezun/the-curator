@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { execFile } from 'child_process';
 import { readWikiPages, listDomains, isDomainReadonly } from '../brain/files.js';
 import { getWikiPage, listWikiInventory } from '../brain/wiki-read.js';
-import { listProjects, listWorkingScopes } from '../brain/working-state.js';
+import { listProjects, listWorkingScopes, listFoundations } from '../brain/working-state.js';
 import { sourceForSummary, hashRawSource } from '../brain/raw-store.js';
 
 const router = Router();
@@ -48,14 +48,25 @@ router.get('/:domain', async (req, res) => {
  * writes.
  *
  * `?include=memory` (v3.50.0) adds `{memory: [...], memoryCount, memoryTotal,
- * memoryTruncated}` — the domain's MEMORY pages, which are markdown too: each
- * project's standing brief and each work-stream's `current.md`. They are a
- * SEPARATE array, never folded into `entries`, so `count`/`total` keep meaning
- * "wiki pages" exactly as before. See memoryInventory below for the wire shape
- * and why it is opt-in. A memory `path` is NOT openable through
- * `GET /:domain/page` — that route resolves inside `wiki/` by design and
- * `state/` is its sibling; memory content is read through
- * `GET /api/memory/:domain/:project`.
+ * memoryTruncated}` — the domain's CONTEXT pages, which are markdown too: each
+ * project's standing brief, each work-stream's `current.md`, and — since
+ * v3.64.0 — each project's tier-0 FOUNDATIONS. They are a SEPARATE array,
+ * never folded into `entries`, so `count`/`total` keep meaning "wiki pages"
+ * exactly as before. See memoryInventory below for the wire shape and why it
+ * is opt-in. None of these paths is openable through `GET /:domain/page` —
+ * that route resolves inside `wiki/` by design and `state/` is its sibling;
+ * a brief or a handoff is read through `GET /api/memory/:domain/:project` and
+ * a foundation through
+ * `GET /api/memory/:domain/:project/foundations/:slug`.
+ *
+ * ── WHY FOUNDATIONS JOIN THE SAME ARRAY RATHER THAN A THIRD ONE (v3.64.0) ─
+ * The domain page's PAGES list gained a LENS — Wiki · Context · All — and
+ * "Context" is one reading kind, not three: a brief, a handoff and a
+ * canonical document are all documents this domain holds ABOUT the work
+ * rather than pages the wiki compounded. A third array would have made the
+ * client join two lists to paint one facet and would have made
+ * `memoryCount` mean less than it says. Each row still carries its own
+ * `kind`, which is what the click dispatches on.
  */
 // ─────────────────────────────────────────────────────────────────────────
 // MEMORY PAGES — the second kind of markdown a domain holds (v3.50.0)
@@ -87,8 +98,10 @@ router.get('/:domain', async (req, res) => {
 //
 // ── THE WIRE SHAPE IS AN ALLOW-LIST ──────────────────────────────────────
 // The store's rows carry journal-derived facts (headlines an agent wrote,
-// harness names, model ids). None of that belongs in a page listing, and a
-// spread would have shipped all of it. Nine named fields, and nothing else.
+// harness names, model ids) and, on tier 0, per-document provenance
+// (`sha256`, `authoredBy`, `commit`, `source`). None of that belongs in a
+// page listing, and a spread would have shipped all of it. Nine named fields
+// for a brief or a handoff, twelve for a foundation, and nothing else.
 // ─────────────────────────────────────────────────────────────────────────
 
 const MAX_MEMORY_ENTRIES = 2000;
@@ -99,6 +112,71 @@ function briefPathFor(isDefault, project) {
 function handoffPathFor(isDefault, project, scope, machine) {
   const prefix = isDefault ? 'state/' : `state/${project}/`;
   return `${prefix}${scope}/${machine}/current.md`;
+}
+function foundationPathFor(isDefault, project, slug) {
+  const prefix = isDefault ? 'state/' : `state/${project}/`;
+  return `${prefix}foundations/${slug}`;
+}
+
+/**
+ * One project's tier-0 documents, as listing rows (v3.64.0).
+ *
+ * ── IT READS THE INDEX, NEVER A BODY ─────────────────────────────────────
+ * `listFoundations` is the store's own index read: a manifest parse plus a
+ * readdir plus a per-document freshness compare that is LOCAL only
+ * (`remoteChecked` is always false off this call, by that function's own
+ * decision — a listing must not spend GitHub rate limit). No document is
+ * opened here, exactly as the wiki half opens none.
+ *
+ * ── THE WIRE SHAPE IS AN ALLOW-LIST, FOR THE SAME REASON THE HANDOFF ROWS
+ *    ARE ─────────────────────────────────────────────────────────────────
+ * An index entry carries `sha256`, `authoredBy` (kind, harness, model),
+ * `commit` and `source` — provenance the store computes and a page LISTING
+ * has no use for. Twelve named fields and nothing else; a spread would have
+ * shipped the lot.
+ *
+ * ── A REFUSAL IS AN EMPTY LIST, NOT AN ERROR ─────────────────────────────
+ * A project with no `foundations/` folder, an unreadable manifest, or a name
+ * the store refuses all mean the same thing to a page list: this project
+ * contributes no rows. The manifest error is already disclosed where it can
+ * be acted on (the Project context view); making a wiki listing fail because
+ * one project's manifest is malformed would take the whole page down for a
+ * fact about a folder the reader did not ask about.
+ */
+async function foundationRows(domain, project, isDefault) {
+  let listed = null;
+  try {
+    listed = await listFoundations(domain, isDefault ? undefined : project);
+  } catch {
+    return [];
+  }
+  if (!listed || listed.ok !== true || !Array.isArray(listed.documents)) return [];
+  const out = [];
+  for (const d of listed.documents) {
+    const slug = String(d && d.slug == null ? '' : d.slug);
+    if (!slug) continue;
+    out.push({
+      kind: 'foundation',
+      project,
+      isDefaultProject: isDefault,
+      scope: null,
+      machine: null,
+      slug,
+      role: typeof d.role === 'string' ? d.role : null,
+      path: foundationPathFor(isDefault, project, slug),
+      title: `${project} · ${d.title || slug.replace(/\.md$/, '')}`,
+      // The store's own clock for this document. A fact and its absence stay
+      // distinguishable: null means "no usable clock", never "now".
+      savedAt: typeof d.updatedAt === 'string' ? d.updatedAt : null,
+      bytes: typeof d.bytes === 'number' ? d.bytes : null,
+      // Two honesty fields the list can SHOW rather than silently drop —
+      // this module's recorded dominant defect class is a consumer losing a
+      // field the store computed.
+      freshness: typeof d.freshness === 'string' ? d.freshness : null,
+      skeleton: d.skeleton === true,
+    });
+  }
+  return out;
 }
 
 async function memoryInventory(domain) {
@@ -162,6 +240,11 @@ async function memoryInventory(domain) {
         bytes: typeof pair.bytes === 'number' ? pair.bytes : null,
       });
     }
+
+    // TIER 0, LAST IN THE PROJECT'S OWN BLOCK and then sorted with the rest
+    // by path — so a project's brief, its handoffs and its canonical
+    // documents land together in the list a reader scans.
+    for (const row of await foundationRows(domain, project, isDefault)) entries.push(row);
   }
 
   entries.sort((a, b) => a.path.localeCompare(b.path));

@@ -26,7 +26,7 @@
 // quick-maintenance action.
 
 import {
-  registerView, setSidebar, setMain, eyebrow, emptyCard, icon, escapeHtml, navigate, isCurrentMount,
+  registerView, setSidebar, setMain as shellSetMain, eyebrow, emptyCard, icon, escapeHtml, navigate, isCurrentMount,
   reportAsyncMountFailure, reportAsyncActionFailure, isCurrentReader, openReader,
   beginDomainWrite, consumeDomainRequest, NEW_PROJECT_REASON,
 } from '../app.js';
@@ -70,6 +70,23 @@ import { composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BA
 // is hoisted and available whichever of the two views evaluates first — and it
 // is called from a click handler, long after both have finished evaluating.
 import { requestProject } from './memory.js';
+
+// ── THE TWO PANELS THIS PAGE HOSTS (v3.64.0) ─────────────────────────────
+//
+// ONE PANEL, TWO HOSTS. `views/ingest.js` and `views/shared.js` are still
+// registered views reachable by navigate() and by a stored last view; they
+// are ALSO sections of this page, mounted through the fixed exports below.
+// Nothing in either file moved or was renamed for this — six offline suites
+// brace-match named functions out of those two files, so the seam is
+// additive by rule (see each file's own host-seam header).
+//
+// The BUSY PREDICATES are the whole safety argument for hosting a drop zone
+// inside a page with three independent stale-while-revalidate layers; see
+// hostedSectionsBusy() and setMain() below.
+import { mountIngestSection, unmountIngestSection, ingestSectionBusy } from './ingest.js';
+import {
+  mountSharedSection, unmountSharedSection, sharedSectionBusy,
+} from './shared.js';
 
 // The ONE /next Markdown renderer (next/shared/markdown.js). This view and
 // views/chat.js are both callers of the same copy — see that module's header
@@ -492,7 +509,32 @@ const state = {
   // does not fade again — a block that re-animates on every repaint is the
   // flicker this release is removing, wearing a nicer coat.
   reveal: null,
+
+  // ── THE TWO HOSTED SECTIONS' PER-DOMAIN PREFERENCES (v3.64.0) ─────────
+  // `{ '<slug>': { sources: bool, shared: bool, lens: 'wiki'|'context'|'all' } }`
+  // — which folds this domain's page opens with, and which lens its page
+  // list is showing. Read once at module load (below) and written on every
+  // toggle; an ABSENT entry is the designed default, never a fallback:
+  // INGEST opens on a domain that has never been ingested into and is closed
+  // once it has, and the lens starts on the wiki.
+  sectionPrefs: null,
+
+  // The last lens reading views/shared.js reported for the domain on screen
+  // — `{enabled, kind, contributingCount, mirrorCount}` or null before the
+  // panel has loaded. It decides ONE thing: whether OVERVIEW's SHARED jump
+  // is warranted. Never a connection object; the panel owns those.
+  sharedLens: null,
+
+  // That reading, derived once by sharedJumpReading() — `{show, value}`. The
+  // markup and the no-repaint reveal both read THIS, so the tile the paint
+  // draws and the tile the panel reveals cannot disagree.
+  sharedJump: null,
 };
+
+// READ ONCE, AT MODULE LOAD. Every access to localStorage in this file is
+// wrapped because it THROWS rather than returning null in a private window,
+// and a blocked store must leave every section painted and toggling.
+state.sectionPrefs = readSectionPrefs();
 
 // `state` above is DELIBERATELY module-scoped and NOT reset on every
 // onEnter (so leaving Domains and coming back preserves which domain was
@@ -585,6 +627,392 @@ const inFlightWriteSlugs = new Set();
 // There is no discrepancy and nothing to decide; the prior text sent
 // whoever read it to re-open a hole that was already closed. See
 // fixAllOfType's own comment below, corrected alongside this one.
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE HOSTED SECTIONS — INGEST and SHARED BRAIN, inside this page (v3.64.0)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ── WHY EVERY NEW IDENTIFIER IS REACHED FROM HERE AND NOT FROM renderMain ─
+// THREE offline suites lift this file's `renderMain` (and one lifts `render`)
+// by brace-matching the source and EXECUTING it inside `new Function` against
+// a hand-written list of stubs — scripts/test-next-domain-card-order.js,
+// scripts/test-next-domain-pages.js and scripts/test-next-domains-swr.js. A
+// new free identifier inside either function is a ReferenceError in those
+// sandboxes, i.e. a suite that CRASHES instead of asserting. Two of those
+// three are not this package's to edit.
+//
+// So the seam is placed where every sandbox already stubs it: `setMain`. The
+// shell's own setMain is imported under its real name (`shellSetMain`) and
+// the name `setMain` is this module's own wrapper — so `renderMain` still
+// calls `setMain(html, token)`, exactly as it did, its identifier set is
+// byte-for-byte unchanged, and every existing sandbox keeps intercepting the
+// paint at the same place. The fold shells themselves are written INLINE in
+// renderMain for the same reason, and say so there.
+//
+// ── THE SAFETY RULE (D-J) ────────────────────────────────────────────────
+// v3.46.0's defect: `dragover` fires continuously, the first one re-rendered,
+// setMain replaced #view-root's innerHTML, and THE DROP TARGET WAS DESTROYED
+// MID-DRAG — drag-and-drop simply did not work in the Mac app. The rule that
+// fixed it lives inside views/ingest.js ("while a drag is in progress this
+// view MUTATES, it never re-renders"). This page puts that zone under a
+// SECOND, unrelated re-render source, so the rule has to become something
+// this host obeys rather than a comment in a file it does not read.
+//
+// EVERY PATH THAT CAN REACH renderMain WHILE A HOSTED PANEL IS LIVE, enumerated
+// (the record surveyed them; this is the list):
+//   1. loadDomainsList's commit + its gate settle        (:868, :933)
+//   2. loadKnowledgeBase / onChooseKnowledgeFolder / applySwitchedFolder /
+//      onUndoKnowledgeFolder                             (:1145-:1243)
+//   3. loadHealth — entry, revalidation and its settle    (:1374, :1405)
+//   4. loadEstimates                                      (:1429, :1439)
+//   5. loadProjects — entry and revalidation              (:2460, :2503)
+//   6. loadBrowse — entry, revalidation and its settle    (:3884, :3964-5)
+//   7. selectDomain (a domain switch)                     (:2345)
+//   8. the domain/project lifecycle forms and their runs  (:1629-:1764, :4503-:4775)
+//   9. the page-list filter box, facet chips and OVERVIEW tiles (:4925, :4974)
+//  10. every health action, AI plan, SSE progress frame and semantic-scan
+//      step                                              (:5910-:7012)
+//  11. the loading gate's own onChange, on every mount    (:7184)
+//  12. app.js's cross-view write gate is NOT one: this view does not
+//      subscribe to it (views/ingest.js does).
+// All twelve go through render() -> renderMain() -> setMain(), which is why
+// ONE wrapper covers all of them.
+//
+// While either panel is busy this page PATCHES: it replaces the main column's
+// changed children one by one and NEVER TOUCHES the two host sections, so the
+// drop target keeps its node identity. It never SKIPS a paint — a quiesce
+// that skipped would leave the loading gate's placeholder on screen over a
+// card that has already loaded (SCENARIOS' "Domains 3"), which is why the
+// fallback when a patch cannot map is a full repaint rather than nothing.
+
+/** The one localStorage key this view owns. Per DOMAIN: which of the two
+ *  folds are open, and which lens the page list is showing. Validated on
+ *  read; a blocked or hostile store degrades to the designed defaults.
+ *
+ *  THE WRITE IS DUPLICATED AS A LITERAL in selectBrowseFacet, and that is
+ *  deliberate, for the reason views/memory.js records for its own fold key:
+ *  that function is LIFTED by brace-matching into a suite sandbox, so a call
+ *  to a module-level helper there would be a ReferenceError — a crash rather
+ *  than a failing assertion. The literal is pinned against this constant by
+ *  scripts/test-next-domain-sections.js. */
+const SECTION_PREFS_KEY = 'curator-domain-sections-v1';
+const SECTION_LENSES = ['wiki', 'context', 'all'];
+/** The ids the fold shells carry. The HOST elements are what the panels own;
+ *  the FOLD elements are what the patch refuses to touch. */
+const SOURCES_FOLD_ID = 'dm-sources-fold';
+const SOURCES_HOST_ID = 'dm-sources-host';
+const SHARED_FOLD_ID = 'dm-shared-fold';
+const SHARED_HOST_ID = 'dm-shared-host';
+
+function readSectionPrefs() {
+  try {
+    const raw = localStorage.getItem(SECTION_PREFS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out = {};
+    for (const slug of Object.keys(parsed)) {
+      const v = parsed[slug];
+      if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+      const row = {};
+      if (v.sources === true || v.sources === false) row.sources = v.sources;
+      if (v.shared === true || v.shared === false) row.shared = v.shared;
+      if (SECTION_LENSES.includes(v.lens)) row.lens = v.lens;
+      if (Object.keys(row).length) out[slug] = row;
+    }
+    return out;
+  } catch {
+    // localStorage THROWS rather than returning null in a private window.
+    return {};
+  }
+}
+
+function writeSectionPrefs() {
+  try {
+    localStorage.setItem(SECTION_PREFS_KEY, JSON.stringify(state.sectionPrefs || {}));
+  } catch { /* private window, blocked site data, quota — the app forgets */ }
+}
+
+/** The per-domain row, created on demand. Never returns null, so every caller
+ *  can write into it without re-checking. */
+function sectionPrefsFor(slug) {
+  if (!slug) return {};
+  if (!state.sectionPrefs || typeof state.sectionPrefs !== 'object') state.sectionPrefs = {};
+  if (!state.sectionPrefs[slug]) state.sectionPrefs[slug] = {};
+  return state.sectionPrefs[slug];
+}
+
+// Which element each panel is mounted into, and for which domain. Module
+// level, not `state`: this is a fact about the live DOM, and `state`
+// deliberately survives a teardown while the DOM does not.
+let mountedSourcesEl = null;
+let mountedSourcesDomain = null;
+let mountedSharedEl = null;
+let mountedSharedDomain = null;
+// True once a paint has been patched around a busy panel, so the page can
+// rebuild itself once, cleanly, the moment the panel goes idle.
+let quiescedWhileBusy = false;
+
+/**
+ * Would replacing the main column destroy something a hosted panel is in the
+ * middle of? (D-J.)
+ *
+ * The two predicates are the AUTHORITATIVE reading — each panel answers about
+ * its own state and each returns false whenever it is not mounted here, so a
+ * drag that was in progress when a panel came down cannot quiesce this page
+ * for the life of the mount. `onBusyChange` is an edge notification, never
+ * the answer.
+ */
+function hostedSectionsBusy() {
+  try {
+    return ingestSectionBusy() || sharedSectionBusy();
+  } catch {
+    // A panel that throws from its own predicate must not take this page
+    // down; the fail-safe direction is "not busy", which repaints — the
+    // behaviour this page had before the panels existed.
+    return false;
+  }
+}
+
+/**
+ * Replace the main column's CHANGED children, leaving the two host sections
+ * exactly where they are — same nodes, same listeners, same drop target.
+ *
+ * Returns true when the paint has been delivered this way, false when the
+ * column's SHAPE moved (a different branch of renderMain, a knowledge notice
+ * appearing, a domain that vanished) and a positional patch would therefore
+ * put a section in the wrong place. A false answer is a full repaint, never a
+ * dropped one.
+ */
+function patchMainAroundHosts(html, token) {
+  if (typeof document === 'undefined' || !document.getElementById || !document.createElement) return false;
+  // A paint from an abandoned mount is dropped here exactly as setMain drops
+  // it — reporting it as "patched" is correct: nothing should reach the DOM.
+  if (!isCurrentMount(token)) return true;
+  const root = document.getElementById('view-root');
+  const live = root && root.firstElementChild;
+  if (!live || !live.classList || !live.classList.contains('main-inner')) return false;
+  const next = document.createElement('div');
+  next.innerHTML = html;
+  if (next.children.length !== live.children.length) return false;
+  let sawHost = false;
+  for (let i = 0; i < live.children.length; i++) {
+    const before = live.children[i];
+    const after = next.children[i];
+    const hosted = before.id === SOURCES_FOLD_ID || before.id === SHARED_FOLD_ID
+      || after.id === SOURCES_FOLD_ID || after.id === SHARED_FOLD_ID;
+    if (hosted) {
+      // The one rule. If the two trees disagree about WHICH host sits here,
+      // the shape moved and this patch would be a lie.
+      if (before.id !== after.id) return false;
+      sawHost = true;
+      continue;
+    }
+    if (before.outerHTML === after.outerHTML) continue;
+    live.replaceChild(after, before);
+  }
+  // Nothing hosted on this screen means nothing to protect, so the ordinary
+  // paint is both correct and cheaper.
+  return sawHost;
+}
+
+/**
+ * THIS MODULE'S setMain. Every branch of renderMain still calls it by that
+ * name (see the header above for why the seam is here).
+ *
+ * View-mode behaviour is unchanged: the shell's setMain, with its own mount
+ * token guard. The two additions are the busy-quiesce and the mount pass,
+ * which has to run AFTER the column exists and therefore cannot live in
+ * renderMain's own body ahead of the paint.
+ */
+function setMain(html, token) {
+  if (hostedSectionsBusy() && patchMainAroundHosts(html, token)) {
+    quiescedWhileBusy = true;
+  } else {
+    shellSetMain(html, token);
+  }
+  mountHostedSections(token);
+}
+
+/** A panel's busy edge. The page consults the predicate itself before every
+ *  paint, so the only thing this buys is the ONE clean rebuild once the panel
+ *  is idle again — a column that was patched around a drop zone catches up
+ *  the moment the drag ends. */
+function onHostedBusyChange(busy) {
+  if (busy || !quiescedWhileBusy) return;
+  quiescedWhileBusy = false;
+  if (isCurrentMount(myMountToken)) render(myMountToken);
+}
+
+/**
+ * The OVERVIEW's SHARED reading, derived in ONE place.
+ *
+ * A jump is warranted only when this domain is actually part of a Shared
+ * Brain — contributing to one, or being the mirror of one. "Enabled on this
+ * install" is not enough: a tile whose only possible outcome is "This domain
+ * is not part of any Shared Brain" is worse than no tile, which is the same
+ * rule renderStatCards already applies to a facet tile with no list under it.
+ *
+ * `show` and `value` are computed together because they are read in two
+ * places that must agree — the markup, on a full paint, and the reveal
+ * below, which happens with no repaint at all.
+ */
+function sharedJumpReading(summary) {
+  if (!summary || summary.enabled !== true) return { show: false, value: '—' };
+  const mirrors = summary.mirrorCount || 0;
+  const contributing = summary.contributingCount || 0;
+  if (summary.kind === 'mirror' && mirrors > 0) return { show: true, value: 'mirror' };
+  if (contributing > 0) {
+    return { show: true, value: contributing === 1 ? '1 cohort' : contributing + ' cohorts' };
+  }
+  return { show: false, value: '—' };
+}
+
+/**
+ * What the Shared Brain panel knows about THIS domain, recorded so the
+ * OVERVIEW can show or hide its SHARED jump.
+ *
+ * IT DOES NOT RE-RENDER, and that is not an optimisation. A render replaces
+ * the column, which remounts the panel, which reloads and reports again — a
+ * loop. So the tile is present in the markup from the first paint and merely
+ * REVEALED here, which is one attribute write and no repaint at all.
+ */
+function onSharedLensChange(summary) {
+  state.sharedLens = summary && typeof summary === 'object' ? summary : null;
+  state.sharedJump = sharedJumpReading(state.sharedLens);
+  if (typeof document === 'undefined' || !document.querySelector) return;
+  const tile = document.querySelector('.dm-jump-card[data-stat-jump="shared"]');
+  if (!tile) return;
+  tile.hidden = !state.sharedJump.show;
+  const value = tile.querySelector('.dm-jump-value');
+  if (value) value.textContent = state.sharedJump.value;
+}
+
+/** The fold's `<details>` element, or null when this branch of the page does
+ *  not render it (the loading branch, a `shared-*` mirror for INGEST). */
+function sectionFoldEl(key) {
+  if (typeof document === 'undefined' || !document.getElementById) return null;
+  return document.getElementById(key === 'sources' ? SOURCES_FOLD_ID : SHARED_FOLD_ID);
+}
+
+/** Open one fold, remember it, and bring it to the top of the column — what
+ *  an OVERVIEW jump tile does, and what the onboarding deep link asks for. */
+function openSectionFold(key, opts) {
+  const el = sectionFoldEl(key);
+  if (!el) return;
+  if (!el.open) {
+    el.open = true;
+    sectionPrefsFor(state.activeSlug)[key] = true;
+    writeSectionPrefs();
+    mountHostedSections(myMountToken);
+  }
+  if (!opts || opts.scroll !== false) {
+    scrollSectionIntoView(key === 'sources' ? '.dm-sources' : '.dm-shared');
+  }
+}
+
+/**
+ * Mount, re-point or take down the two panels, and bind the folds.
+ *
+ * Called from setMain (after the column exists) and from the fold toggle.
+ * Idempotent: it does the minimum each panel's own contract asks for.
+ *
+ *   · A NEW ELEMENT is a real remount — the old one went with the innerHTML.
+ *   · A DOMAIN SWITCH on the SAME element re-points the Shared Brain panel
+ *     without tearing it down (its mount is idempotent on one element, so a
+ *     push in flight and a shown-once admin token both survive), and remounts
+ *     Ingest, whose destination is what changed.
+ *   · A CLOSED fold takes its panel down — the same contract as leaving the
+ *     view: a live batch is server-backed and is re-adopted, paused, when the
+ *     fold is opened again. It is NOT taken down while the panel is busy,
+ *     because a fold can only be closed by a click and a busy panel is one
+ *     holding something a click should not destroy; the rebuild in
+ *     onHostedBusyChange collects it the moment it is idle.
+ *   · A `shared-*` MIRROR renders no INGEST section at all (views/ingest.js
+ *     refuses a mirror as a destination), so there is nothing to mount and
+ *     anything standing is taken down.
+ */
+function mountHostedSections(token) {
+  if (typeof document === 'undefined' || !document.getElementById) return;
+  const slug = state.activeSlug;
+  const srcFold = document.getElementById(SOURCES_FOLD_ID);
+  const srcHost = document.getElementById(SOURCES_HOST_ID);
+  const shFold = document.getElementById(SHARED_FOLD_ID);
+  const shHost = document.getElementById(SHARED_HOST_ID);
+
+  bindSectionFolds();
+
+  // ── THE ONBOARDING DEEP LINK (package A's requestDomainFold) ───────────
+  // Read through the namespace import, never as a named one: a static named
+  // import of an export that does not exist is a HARD module-load error in
+  // ESM and takes the whole shell to a blank page, and this consumer and its
+  // producer land in different packages. The shell's own degradation
+  // contract covers the miss — "it can fail to help; it cannot break
+  // anything": an unread request leaves the user on Domains with the section
+  // in front of them, which is where the request was trying to put them.
+  if (srcFold && typeof shell.consumeDomainFoldRequest === 'function') {
+    const asked = shell.consumeDomainFoldRequest();
+    if (asked && asked === (shell.ADD_SOURCES_FOLD || 'add-sources') && !srcFold.open) {
+      srcFold.open = true;
+      sectionPrefsFor(slug).sources = true;
+      writeSectionPrefs();
+    }
+  }
+
+  // ── INGEST ────────────────────────────────────────────────────────────
+  const srcWanted = !!(srcFold && srcFold.open && srcHost);
+  if (!srcWanted) {
+    if (mountedSourcesEl && !(mountedSourcesEl === srcHost && ingestSectionBusy())) {
+      unmountIngestSection();
+      mountedSourcesEl = null;
+      mountedSourcesDomain = null;
+    }
+  } else if (srcHost !== mountedSourcesEl || mountedSourcesDomain !== slug) {
+    mountIngestSection(srcHost, { domain: slug, token, onBusyChange: onHostedBusyChange });
+    mountedSourcesEl = srcHost;
+    mountedSourcesDomain = slug;
+  }
+
+  // ── SHARED BRAIN ──────────────────────────────────────────────────────
+  const shWanted = !!(shFold && shFold.open && shHost);
+  if (!shWanted) {
+    if (mountedSharedEl && !(mountedSharedEl === shHost && sharedSectionBusy())) {
+      unmountSharedSection();
+      mountedSharedEl = null;
+      mountedSharedDomain = null;
+    }
+  } else if (shHost !== mountedSharedEl || mountedSharedDomain !== slug) {
+    mountSharedSection(shHost, {
+      domain: slug, token,
+      onBusyChange: onHostedBusyChange,
+      onLensChange: onSharedLensChange,
+    });
+    mountedSharedEl = shHost;
+    mountedSharedDomain = slug;
+  }
+}
+
+/** The fold toggles. Bound per element and marked, because this runs on every
+ *  paint AND from the toggle it installs — a second listener on one
+ *  `<details>` would mount the panel twice. */
+function bindSectionFolds() {
+  if (typeof document === 'undefined' || !document.querySelectorAll) return;
+  document.querySelectorAll('[data-dm-fold]').forEach((el) => {
+    if (el.dataset && el.dataset.dmFoldBound === '1') return;
+    if (el.dataset) el.dataset.dmFoldBound = '1';
+    el.addEventListener('toggle', () => {
+      const key = el.dataset ? el.dataset.dmFold : null;
+      if (!key) return;
+      sectionPrefsFor(state.activeSlug)[key] = !!el.open;
+      writeSectionPrefs();
+      // No render(): the fold is already in the state the user asked for,
+      // and repainting the column here would replace the very element the
+      // press landed on. Only the panels move.
+      mountHostedSections(myMountToken);
+    });
+  });
+}
 
 // ── Fetch helpers ──────────────────────────────────────────────────────────
 
@@ -2326,6 +2754,13 @@ function selectDomain(slug) {
       // user was doing on the LAST visit, not about the domain. They reset,
       // so a switch lands on the whole list the way it always has.
       filter: '', folder: 'all', window: cached.browse.window,
+      // THE LENS DOES NOT RESET WITH THEM, and the difference is real: it is
+      // a preference the user set FOR THIS DOMAIN and that survives a
+      // restart on disk, not a position inside one visit's list. Resetting
+      // it here would make a cached switch disagree with the cold one
+      // loadBrowse seeds from the same record.
+      lens: (state.sectionPrefs && state.sectionPrefs[slug]
+        && state.sectionPrefs[slug].lens) || 'wiki',
     };
   }
   if (cached && cached.projects) {
@@ -2641,7 +3076,55 @@ function renderMain(token) {
     // the domain on screen, so it renders in the body and not behind the mark.
     (readonly ? renderStatus({ state: 'attention', title: 'Edits here are not kept', detail: MIRROR_WARNING }) : '') +
     renderLifecycleCard() +
-    renderStatCards(counts, pages, projectCount()) +
+    renderStatCards(counts, pages, projectCount(), {
+      // A `shared-*` mirror gets NO Ingest section (views/ingest.js refuses a
+      // mirror as a destination), so it gets no jump row either — a tile that
+      // scrolls to nothing is the control-with-no-outcome this card already
+      // refuses to draw for a facet with no list.
+      sources: !readonly,
+      lastIngest: domain.lastIngestDate || null,
+      shared: state.sharedJump,
+    }) +
+    // ── INGEST, ABOVE THE INDEX OF WHAT IT ADDED (v3.64.0) ───────────────
+    //
+    // WHY THE SHELL IS WRITTEN OUT HERE INSTEAD OF BEING A FUNCTION. Three
+    // offline suites lift THIS function by brace-matching and execute it
+    // inside `new Function` against a fixed list of stubs; a call to a new
+    // helper here is a ReferenceError in each of them — a suite that CRASHES
+    // rather than asserts — and two of the three belong to other packages.
+    // So this function's free identifiers are byte-for-byte the ones it had,
+    // and everything new is reached through `setMain`, which every one of
+    // those sandboxes already stubs. See the host-seam header above.
+    //
+    // IT SITS ABOVE THE WIKI for the reason the v3.49.0 order states: the act
+    // of adding comes before the index of what was added, and it is the one
+    // section a first-time user must find — which is why Ingest was moved to
+    // rail slot 2 in v3.49.0 and why losing that slot had to be paid for
+    // here.
+    //
+    // OPEN ON A DOMAIN THAT HAS NEVER BEEN INGESTED INTO, closed once it has,
+    // and remembered per domain from then on. An absent preference is the
+    // DESIGNED DEFAULT, not a fallback: a domain with no summaries and no
+    // last-ingest date has nothing below this section worth reading yet.
+    (readonly ? '' :
+      '<details class="dm-section dm-fold dm-sources" id="dm-sources-fold" data-dm-fold="sources"' +
+        ((state.sectionPrefs && state.sectionPrefs[domain.slug]
+          && typeof state.sectionPrefs[domain.slug].sources === 'boolean')
+          ? (state.sectionPrefs[domain.slug].sources ? ' open' : '')
+          : ((domain.lastIngestDate || (counts.summaries || 0) > 0) ? '' : ' open')) + '>' +
+        '<summary class="dm-fold-summary">' + icon('chevronRight', 14) +
+          '<span class="cur-group-title dm-fold-title">INGEST</span>' +
+          '<span class="dm-fold-meta">' +
+            (domain.lastIngestDate ? 'last ingest ' + escapeHtml(relTime(domain.lastIngestDate))
+                                   : 'nothing ingested yet') +
+          '</span>' +
+        '</summary>' +
+        '<div class="dm-fold-body">' +
+          renderDescription('Drop a PDF, markdown or text file. The model turns it into entities, ' +
+            'concepts and a summary, and compounds them into the pages you already have.') +
+          '<div class="dm-host" id="dm-sources-host"></div>' +
+        '</div>' +
+      '</details>') +
     // ── THE WIKI COMES FIRST (v3.49.0) ───────────────────────────────────
     // Reported by a power user who could not find "the wiki" at all: the
     // page browser was the LAST thing on this card, behind a "Browse pages"
@@ -2666,6 +3149,28 @@ function renderMain(token) {
     // domain's own contents.
     renderBrowsePanel() +
     renderProjectsPanel(readonly) +
+    // ── SHARED BRAIN, BETWEEN THE PROJECTS AND THE HOUSEKEEPING ──────────
+    //
+    // A fact ABOUT the domain, like Projects, and above the maintenance
+    // report for the same reason Projects is. CLOSED by default on every
+    // domain: most installs have no Shared Brain at all, and the panel's own
+    // off-state is one line and a door.
+    //
+    // The eyebrow names the block and carries no prose (the design system's
+    // rule), so the full view's "your team's brain" positioning line does
+    // NOT follow the panel down here — that sentence is taught once, in the
+    // OVERVIEW ⓘ's three-layer legend directly above.
+    '<details class="dm-section dm-fold dm-shared" id="dm-shared-fold" data-dm-fold="shared"' +
+      ((state.sectionPrefs && state.sectionPrefs[domain.slug]
+        && state.sectionPrefs[domain.slug].shared === true) ? ' open' : '') + '>' +
+      '<summary class="dm-fold-summary">' + icon('chevronRight', 14) +
+        '<span class="cur-group-title dm-fold-title">SHARED BRAIN</span>' +
+        '<span class="dm-fold-meta">' +
+          (state.sharedJump && state.sharedJump.show ? escapeHtml(state.sharedJump.value) : '') +
+        '</span>' +
+      '</summary>' +
+      '<div class="dm-fold-body"><div class="dm-host" id="dm-shared-host"></div></div>' +
+    '</details>' +
     renderHealthPanel(domain, readonly);
 
   setMain(html, token);
@@ -3625,7 +4130,7 @@ function projectCount() {
  * it does, on a real focusable control — views/domains.js's `title=` ceiling
  * in scripts/test-next-title-affordances.js is 0 and stays 0.
  */
-function renderStatCards(counts, pages, projects) {
+function renderStatCards(counts, pages, projects, jumps) {
   const overviewInfo = infoMark('dm-overview-info', 'About these figures',
     threeLayersInfoHtml(), { html: true });
   const otherCount = counts.other || 0;
@@ -3702,6 +4207,50 @@ function renderStatCards(counts, pages, projects) {
           // deliberately does not equal it either (see BROWSE_FOLDERS).
           (otherCount > 0 ? card('OTHER', otherCount.toLocaleString(), 'dm-stat-other') : '') +
         '</div>' +
+        // ── THE TWO JUMPS (v3.64.0) ────────────────────────────────────
+        //
+        // A SEPARATE ROW, AND A SEPARATE CLASS, for a reason that is about
+        // meaning before it is about suites: these are not figures. PAGES
+        // and its three types are COUNTS that also select; PROJECTS is a
+        // count that jumps; these two carry a date and a state and exist to
+        // open a fold further down a page that folds. Putting them in
+        // `.dm-stats-grid` as a sixth and seventh `.dm-stat-card` would say
+        // they are more of the same number, which is exactly the
+        // self-contradicting-figures defect this card has been fixed for
+        // twice (the `other` count, and the Memory facet that `All` does
+        // not include).
+        //
+        // SHARED IS RENDERED ALWAYS AND HIDDEN UNTIL IT IS WARRANTED. The
+        // answer arrives from the Shared Brain panel AFTER this paint, and a
+        // re-render to reveal it would remount the panel, which would report
+        // again — a loop. One markup source, one attribute write, no
+        // repaint. `[hidden]` is beaten by author `display:` at any
+        // specificity, so views/domains.css carries the counter-rule
+        // (v3.62.0's finding, on this exact shape).
+        //
+        // BOTH READINGS ARE HANDED IN, ALREADY DERIVED. This function is
+        // lifted into two suite sandboxes with fixed stub lists, so it may
+        // gain no collaborator of its own — and the Shared reading has to be
+        // derived in ONE place anyway, because the reveal below happens
+        // without a repaint and would otherwise be a second copy of the
+        // rule free to disagree with this one. See sharedJumpReading().
+        (jumps && jumps.sources
+          ? '<div class="dm-jump-row">' +
+              '<button type="button" class="dm-jump-card" data-stat-jump="sources"' +
+                ' aria-label="Sources — open the Ingest section">' +
+                '<div class="cur-eyebrow">SOURCES</div>' +
+                '<div class="dm-jump-value">' + escapeHtml(
+                  jumps.lastIngest ? relTime(jumps.lastIngest) : 'nothing yet') + '</div>' +
+              '</button>' +
+              '<button type="button" class="dm-jump-card" data-stat-jump="shared"' +
+                ' aria-label="Shared Brain — open the Shared Brain section"' +
+                (jumps.shared && jumps.shared.show ? '' : ' hidden') + '>' +
+                '<div class="cur-eyebrow">SHARED</div>' +
+                '<div class="dm-jump-value">' +
+                  escapeHtml((jumps.shared && jumps.shared.value) || '—') + '</div>' +
+              '</button>' +
+            '</div>'
+          : '') +
       '</div>' +
     '</section>'
   );
@@ -3806,10 +4355,32 @@ function filterMemoryEntries(entries, filter) {
  * one of them was edited.
  */
 function browseMatches(b) {
-  if (b.folder === 'memory') {
-    return { kind: 'memory', items: filterMemoryEntries(b.memory || [], b.filter) };
+  // ── THE LENS (v3.64.0) ─────────────────────────────────────────────────
+  // `lens` is the OUTER reading — which KIND of document this list is
+  // showing — and `folder` stays the inner one, the wiki type facet. The
+  // effective lens is DERIVED rather than merely read, so the two controls
+  // over one list cannot contradict each other: pressing the Memory chip
+  // (which predates the lens and is still the fine control) puts the list
+  // into the context reading, and the lens row above shows Context active
+  // for it. That is the same "two affordances, one field" rule the OVERVIEW
+  // tiles and the chip row have followed since v3.58.0.
+  const lens = (b.lens === 'context' || b.lens === 'all')
+    ? b.lens
+    : (b.folder === 'memory' ? 'context' : 'wiki');
+  if (lens === 'context') {
+    return { lens, kind: 'memory', items: filterMemoryEntries(b.memory || [], b.filter) };
   }
-  return { kind: 'wiki', items: filterBrowseEntries(b.entries, b.filter, b.folder) };
+  if (lens === 'all') {
+    // The wiki half keeps whatever type facet is selected; `memory` is not a
+    // type, so under the All lens it means "no type narrowing".
+    return {
+      lens,
+      kind: 'mixed',
+      items: filterBrowseEntries(b.entries, b.filter, b.folder === 'memory' ? 'all' : b.folder)
+        .concat(filterMemoryEntries(b.memory || [], b.filter)),
+    };
+  }
+  return { lens, kind: 'wiki', items: filterBrowseEntries(b.entries, b.filter, b.folder) };
 }
 
 /** How many rows are painted right now. Never below one step, never a NaN. */
@@ -3879,6 +4450,12 @@ async function loadBrowse(slug, token) {
     state.browse = {
       slug, loading: true, error: null, entries: [], memory: [], memoryTruncated: false,
       truncated: false, total: 0, filter: '', folder: 'all', window: BROWSE_RENDER_CAP,
+      // THE LENS IS REMEMBERED PER DOMAIN (v3.64.0). Read inline rather than
+      // through a helper, for the reason this file's host-seam header gives:
+      // this function is lifted into two suite sandboxes with fixed stub
+      // lists. An absent or unrecognised value is the designed default.
+      lens: (state.sectionPrefs && state.sectionPrefs[slug]
+        && state.sectionPrefs[slug].lens) || 'wiki',
     };
     if (gate) gate.begin();
     render(token);
@@ -3968,13 +4545,17 @@ async function loadBrowse(slug, token) {
 
 // The eyebrow every branch of this panel renders.
 //
-// IT NAMES THE THING TWICE ON PURPOSE. The stat cards directly above carry
-// their own `PAGES` eyebrow over a COUNT, so a bare `PAGES` here read as a
-// second heading for the same number rather than as the list itself — and
-// the word the reporting user was looking for, and could not find anywhere
-// on this screen, was "wiki". Naming both is what makes the count and the
-// index distinguishable at a glance.
-const BROWSE_EYEBROW = '<div class="cur-eyebrow dm-recent-eyebrow dm-section-eyebrow">PAGES · THE WIKI</div>';
+// IT WAS `PAGES · THE WIKI` UNTIL v3.64.0, and the second half is gone
+// because it stopped being true. v3.49.0 added "· THE WIKI" for a good
+// reason — the stat cards directly above carry their own `PAGES` eyebrow
+// over a COUNT, so a bare `PAGES` read as a second heading for the same
+// number, and "wiki" was the word the reporting user could not find
+// anywhere on the screen. This list now holds the domain's CONTEXT
+// documents as well (briefs, handoffs and, this release, foundations), so
+// an eyebrow promising the wiki would name one of its three lenses. What
+// distinguishes the count from the index is now the LENS ROW directly under
+// this eyebrow, which says in three words what the list can show.
+const BROWSE_EYEBROW = '<div class="cur-eyebrow dm-recent-eyebrow dm-section-eyebrow">PAGES</div>';
 
 function renderBrowsePanel() {
   const b = activeBrowse();
@@ -4053,7 +4634,7 @@ function renderBrowsePanel() {
     );
   }
 
-  const { kind, items } = browseMatches(b);
+  const { kind, items, lens } = browseMatches(b);
   const win = browseWindow(b);
   const shown = items.slice(0, win);
   const tabs = BROWSE_FOLDERS.map((f) => {
@@ -4064,7 +4645,12 @@ function renderBrowsePanel() {
       escapeHtml(f.label) + ' <span class="dm-browse-tab-count">' + n + '</span></button>';
   }).join('');
 
-  const rows = shown.map((e) => (kind === 'memory' ? memoryRowHtml(e) : browseRowHtml(e))).join('') ||
+  // ONE ROW, ONE PAINTER, DECIDED PER ROW rather than per list — the All
+  // lens interleaves both kinds, and a wiki entry is exactly the entry that
+  // carries no `kind` (the wiki inventory has `folder`; the context
+  // inventory has `kind`). Same expression in showMoreBrowseRows, which
+  // APPENDS rather than re-rendering.
+  const rows = shown.map((e) => (e && e.kind ? memoryRowHtml(e) : browseRowHtml(e))).join('') ||
     renderDescription(kind === 'memory'
       ? 'No memory pages match that filter.'
       : 'No pages match that filter.');
@@ -4096,6 +4682,30 @@ function renderBrowsePanel() {
     '<section class="dm-section dm-pages">' +
       BROWSE_EYEBROW +
       '<div class="dm-browse-card' + revealCls + '">' +
+        // ── THE LENS ROW (v3.64.0) ────────────────────────────────────
+        //
+        // Three chips, above the list, above the type facets: WIKI is what
+        // the model compounded (entities, concepts, summaries); CONTEXT is
+        // what this domain holds ABOUT the work — each project's standing
+        // brief, each work-stream's handoff, and its canonical foundations;
+        // ALL is both, interleaved.
+        //
+        // It is a SEPARATE class from `.dm-browse-tab` and not a sixth chip
+        // in that row, because it answers a different question: the facets
+        // narrow WITHIN the wiki, the lens chooses which inventory is being
+        // narrowed. The active chip is read off the EFFECTIVE lens
+        // browseMatches computed, never off the stored field, so the row
+        // cannot claim Wiki while the list shows briefs.
+        '<div class="dm-lens-row" role="group" aria-label="Which documents to list">' +
+          [['wiki', 'Wiki', b.entries.length],
+           ['context', 'Context', (b.memory || []).length],
+           ['all', 'All', b.entries.length + (b.memory || []).length]]
+            .map(([key, label, n]) =>
+              '<button type="button" class="dm-lens-chip' + (lens === key ? ' active' : '') + '"' +
+                ' data-browse-lens="' + key + '" aria-pressed="' + (lens === key ? 'true' : 'false') + '">' +
+                escapeHtml(label) + ' <span class="dm-lens-count">' + n + '</span>' +
+              '</button>').join('') +
+        '</div>' +
         '<div class="dm-browse-controls">' +
           '<input class="dm-browse-filter" id="dm-browse-filter" type="text" placeholder="Filter by name…" value="' + escapeHtml(b.filter) + '" />' +
           '<div class="dm-browse-tabs">' + tabs + '</div>' +
@@ -4159,10 +4769,20 @@ function memoryRowHtml(e) {
       ' data-mem-project="' + escapeHtml(e.project || '') + '"' +
       ' data-mem-scope="' + escapeHtml(e.scope || '') + '"' +
       ' data-mem-machine="' + escapeHtml(e.machine || '') + '"' +
+      // TIER 0 IS ADDRESSED BY SLUG (v3.64.0) — a foundation is not a
+      // (scope, machine) pair and its route is a different one. Empty for
+      // the other two kinds, exactly as scope and machine are empty here.
+      ' data-mem-slug="' + escapeHtml(e.slug || '') + '"' +
       ' data-mem-title="' + escapeHtml(title) + '"' +
       ' data-mem-path="' + escapeHtml(e.path || '') + '">' +
       '<span class="dm-browse-dot dm-browse-dot-memory"></span>' +
       '<span class="dm-browse-title">' + escapeHtml(title) + '</span>' +
+      // The store's own readings, SHOWN rather than dropped — this module's
+      // recorded dominant defect class is a consumer losing a field the
+      // store computed. A skeleton is a document waiting to be filled; a
+      // stale mirror is one its repository has moved past.
+      (e.skeleton ? '<span class="dm-browse-mark">to fill</span>' : '') +
+      (e.freshness === 'stale' ? '<span class="dm-browse-mark">stale</span>' : '') +
       '<span class="mono dm-browse-path">' + escapeHtml(e.path || '') + '</span>' +
     '</button>'
   );
@@ -4298,13 +4918,60 @@ async function openMemoryPageFromBrowse(row) {
   const title = row.title || row.path;
   const epoch = openReader({ slug: row.path, title, loading: true }, mount);
   try {
+    // ── THREE KINDS, TWO ROUTES (v3.64.0) ──────────────────────────────
+    // A brief and a handoff are two halves of ONE project read; a foundation
+    // is its own document with its own route. The row carries which it is,
+    // so nothing here parses a path back apart — the same reason this
+    // function was given project/scope/machine rather than the path in
+    // v3.50.0.
     let url = '/api/memory/' + encodeURIComponent(slug) + '/' + encodeURIComponent(row.project);
-    if (row.kind === 'handoff') {
+    if (row.kind === 'foundation') {
+      url += '/foundations/' + encodeURIComponent(row.slug || '');
+    } else if (row.kind === 'handoff') {
       url += '?scope=' + encodeURIComponent(row.scope) + '&machine=' + encodeURIComponent(row.machine);
     }
     const data = await fetchJSON(url);
     if (!isCurrentMount(mount)) return;
     if (!isCurrentReader(epoch)) return; // Esc / scrim / ✕ closed it while we fetched
+
+    if (row.kind === 'foundation') {
+      // ── A DELIBERATELY SMALLER COMPOSITION THAN views/memory.js's ──────
+      // That view's `foundationReaderContent` is not exported and is not
+      // lifted here: it carries an age readout, a commit provenance line and
+      // five notes built for the surface that OWNS tier 0, where a reader
+      // arrives having chosen a project. This is a page LIST, and what a
+      // reader needs from it is the document, what kind it is, and the two
+      // readings that change how the text should be read — a skeleton's
+      // body is a set of QUESTIONS, and a stale mirror's is behind its
+      // source. Both come from the payload's own flags, never from matching
+      // the text. The fuller panel stays one click away in Project context.
+      const body = typeof data.text === 'string' ? data.text : '';
+      const notes = [];
+      if (data.skeleton) notes.push('A skeleton — the prompts below are questions, not facts.');
+      if (data.freshness === 'stale') {
+        notes.push('This copy no longer matches the file it was copied from.');
+      }
+      if (data.freshness === 'unreachable') {
+        notes.push('The folder this was copied from is not on this computer, so the copy '
+          + 'could not be compared against it.');
+      }
+      openReader({
+        slug: row.path, title, type: 'memory', typeLabel: 'foundation',
+        tags: [
+          data.role ? 'role: ' + data.role : null,
+          data.source && data.source.kind === 'repo' && data.source.path
+            ? 'source: ' + data.source.path : 'written for this project',
+          data.readFirst ? 'read first' : null,
+          data.truncated ? 'truncated at the read cap' : null,
+          data.sanitisedOnRead ? 'sanitised on read' : null,
+        ].filter(Boolean),
+        readonly: true,
+        bodyHtml: (notes.length ? notes.map((n) => renderDescription(n)).join('') : '')
+          + renderMarkdown(body),
+        backlinks: [],
+      }, mount);
+      return;
+    }
 
     const part = row.kind === 'handoff' ? (data && data.current) : (data && data.brief);
     const present = !!(part && part.present);
@@ -4403,7 +5070,15 @@ function renderLifecycleCard() {
           '<div class="dm-lc-title">Read-only mirrors cannot be renamed</div>' +
           '<div class="dm-lc-body">' + escapeHtml(f.displayName || f.slug) + ' is a Shared Brain mirror. Its folder name ' +
             '(<span class="mono">' + escapeHtml(f.slug) + '</span>) is what marks it as a mirror — renaming it would make the ' +
-            'next Pull create a second copy alongside it. Rename the brain from the Shared Brain view instead.</div>' +
+            // ── THE OLD SENTENCE POINTED AT A CONTROL THAT DOES NOT EXIST
+            // (corrected v3.64.0). It read "Rename the brain from the Shared
+            // Brain view instead." There is no rename there, and there never
+            // was: nothing in views/shared.js matches /rename/i, and the
+            // only PATCH the server makes to a connection is the one an
+            // operation writes for itself. The name comes from the cohort
+            // that created the Shared Brain, so that is what this says now.
+            'next Pull create a second copy alongside it. The name comes from the Shared Brain ' +
+            'this mirrors — it is not yours to change from here.</div>' +
           '<div class="dm-lc-actions"><button class="btn btn-ghost" id="dm-lc-cancel">Close</button></div>' +
         '</div>'
       );
@@ -4944,6 +5619,27 @@ function bindBrowseListeners() {
     });
   });
 
+  // THE LENS CHIPS (v3.64.0). Same shape as the facet chips directly below
+  // them, same single write path, and the same refocus-after-repaint — a
+  // press must not drop focus on <body>, which is the v3.17.1 defect this
+  // row's neighbour carried until v3.58.0.
+  document.querySelectorAll('.dm-lens-chip[data-browse-lens]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const lens = btn.dataset.browseLens;
+      // The lens also moves the TYPE facet, because the two are one
+      // selection: Context is the memory facet, and Wiki/All release it.
+      const b = activeBrowse();
+      const facet = lens === 'context'
+        ? 'memory'
+        : ((b && b.folder && b.folder !== 'memory') ? b.folder : 'all');
+      selectBrowseFacet(facet, {
+        lens,
+        scroll: false,
+        refocus: '.dm-lens-chip[data-browse-lens="' + lens + '"]',
+      });
+    });
+  });
+
   bindBrowseRowClicks(document);
 
   document.getElementById('dm-browse-more')?.addEventListener('click', showMoreBrowseRows);
@@ -4967,12 +5663,36 @@ function bindBrowseListeners() {
 function selectBrowseFacet(key, opts) {
   const b = activeBrowse();
   if (!b || !key) return;
+  const o = opts || {};
   b.folder = key;
+  // ── THE LENS RIDES THE SAME WRITE PATH (v3.64.0) ──────────────────────
+  // A lens chip is a facet press that ALSO moves the outer reading, so it
+  // goes through this function rather than beside it: one place writes the
+  // list's selection, which is what stops the chips, the tiles and the lens
+  // from ever disagreeing about what is on screen.
+  if (o.lens === 'wiki' || o.lens === 'context' || o.lens === 'all') {
+    b.lens = o.lens;
+    // ── THE KEY IS A LITERAL HERE, ON PURPOSE ───────────────────────────
+    // This function is LIFTED by brace-matching into two suite sandboxes
+    // and executed there, so naming a module-level helper (or the
+    // SECTION_PREFS_KEY constant) would be a ReferenceError — a crash
+    // instead of a failing assertion, which is the shape views/memory.js
+    // records for its own duplicated fold key. The literal is pinned equal
+    // to SECTION_PREFS_KEY by scripts/test-next-domain-sections.js.
+    // `localStorage` is undefined in those sandboxes and THROWS in a private
+    // window; both land in the same catch, and a store that cannot be
+    // written simply forgets.
+    try {
+      if (!state.sectionPrefs || typeof state.sectionPrefs !== 'object') state.sectionPrefs = {};
+      if (!state.sectionPrefs[b.slug]) state.sectionPrefs[b.slug] = {};
+      state.sectionPrefs[b.slug].lens = o.lens;
+      localStorage.setItem('curator-domain-sections-v1', JSON.stringify(state.sectionPrefs));
+    } catch { /* private window, blocked site data, quota — the app forgets */ }
+  }
   // A facet change is a different match set, so the window resets with it —
   // the same rule and the same reason as the filter box above.
   b.window = BROWSE_RENDER_CAP;
   render(myMountToken);
-  const o = opts || {};
   if (o.refocus) {
     const again = document.querySelector(o.refocus);
     if (again && typeof again.focus === 'function') {
@@ -5016,10 +5736,22 @@ function bindStatCardListeners() {
       });
     });
   });
-  // PROJECTS only scrolls, so it neither writes state nor re-renders — which
-  // is why it keeps its own focus for free.
-  document.querySelector('.dm-stat-card[data-stat-jump]')
-    ?.addEventListener('click', () => scrollSectionIntoView('.dm-projects'));
+  // ── THE JUMPS. PROJECTS only scrolls, so it neither writes state nor
+  // re-renders — which is why it keeps its own focus for free. The two
+  // v3.64.0 tiles OPEN a fold as well as scrolling to it, because a jump to
+  // a closed section would land the reader on a summary line and leave them
+  // to find the disclosure triangle.
+  //
+  // `querySelectorAll` over the attribute, not `querySelector` on one class:
+  // until this release there was exactly one jump and the selector said so,
+  // which would have silently bound the first of three.
+  document.querySelectorAll('[data-stat-jump]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const where = btn.dataset.statJump;
+      if (where === 'projects') { scrollSectionIntoView('.dm-projects'); return; }
+      if (where === 'sources' || where === 'shared') openSectionFold(where);
+    });
+  });
 }
 
 /**
@@ -5046,6 +5778,7 @@ function bindBrowseRowClicks(root) {
           project: btn.dataset.memProject,
           scope: btn.dataset.memScope,
           machine: btn.dataset.memMachine,
+          slug: btn.dataset.memSlug,
           title: btn.dataset.memTitle,
           path: btn.dataset.memPath,
         }))
@@ -5081,13 +5814,13 @@ function showMoreBrowseRows() {
   const moreBtn = document.getElementById('dm-browse-more');
   if (!list || !moreBtn) return;
 
-  const { kind, items } = browseMatches(b);
+  const { items } = browseMatches(b);
   const from = browseWindow(b);
   const to = Math.min(items.length, from + BROWSE_RENDER_CAP);
   if (to <= from) { moreBtn.remove(); return; }
 
   const html = items.slice(from, to)
-    .map((e) => (kind === 'memory' ? memoryRowHtml(e) : browseRowHtml(e))).join('');
+    .map((e) => (e && e.kind ? memoryRowHtml(e) : browseRowHtml(e))).join('');
   const before = list.children.length;
   list.insertAdjacentHTML('beforeend', html);
   b.window = to;
@@ -7226,6 +7959,22 @@ registerView('domains', {
     // (expandedGroups, dismissedRecords, the health report itself) is left
     // exactly as it was, matching this file's persist-across-mounts design.
     return () => {
+      // ── THE TWO HOSTED PANELS COME DOWN WITH THE PAGE (v3.64.0) ──────
+      // Both unmounts are idempotent and both run the panel's FULL
+      // teardown, in its own order. For Shared Brain it is load-bearing
+      // rather than tidy: its teardown closes the wizard, which is what
+      // stops a PAT-holding overlay outliving its mount. For Ingest it stops
+      // an activity poll, an attached SSE stream and a set of document-level
+      // drag guards from leaking into whatever view comes next.
+      unmountIngestSection();
+      unmountSharedSection();
+      mountedSourcesEl = null;
+      mountedSourcesDomain = null;
+      mountedSharedEl = null;
+      mountedSharedDomain = null;
+      // A paint that was patched around a busy panel is not owed a rebuild
+      // once the page itself is gone.
+      quiescedWhileBusy = false;
       state.confirm = null;
       state.pendingPlan = null;
       // NOT `state.semanticScan = null` any more. That discarded an LLM-
