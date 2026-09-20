@@ -167,8 +167,12 @@ import {
   // token is displayed, the next render scrolls it off screen, and it can
   // never be displayed again.
   preserveMainScroll,
+  // The door out of the domain page's SHARED BRAIN section and back to this
+  // view (v3.64.0). Section mode renders no enable control and no wizard CTA
+  // — both are install-level, and this is the one press that reaches them.
+  navigate,
 } from '../app.js';
-import { openSharedBrainWizard, closeSharedBrainWizardIfOpen } from './shared-brain-wizard.js';
+import { openSharedBrainWizard, closeSharedBrainWizardIfOpen, isSharedBrainWizardOpen } from './shared-brain-wizard.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 // The ONE text system in /next (shared/text.js). The view header owns the
 // eyebrow, the title and the info mark; it has NO parameter that renders a
@@ -205,6 +209,284 @@ let myMountToken = 0;
 // onEnter, cancelled in the teardown. See shared/loading-gate.js.
 let loadGate = null;
 let unsubscribeWriteGate = null;
+
+// ═══════════════════════════════════════════════════════════════════════
+// THE HOST SEAM (v3.64.0) — ONE PANEL, TWO HOSTS
+// ═══════════════════════════════════════════════════════════════════════
+//
+// v3.64.0 takes Shared Brain off the rail. The full-page view below stays
+// registered and reachable (VIEW_META keeps its entry, navigate('shared')
+// still works, the onboarding door still lands there); what is new is a
+// SECOND host — the domain page's SHARED BRAIN section — which mounts this
+// same panel into an element it owns.
+//
+// THE SEAM IS ADDITIVE, AND THAT IS A RULE RATHER THAN A STYLE. Four suites
+// cut named functions out of this file BY BRACE-MATCH on its own source
+// (test-next-sharedbrain-ui-parity.js, -admin.js, -wizard.js,
+// test-next-invite-and-inert.js) and three of them EXECUTE what they cut in
+// a `new Function` sandbox with an explicit list of injected identifiers.
+// So: no function in this file moves, none is renamed, and no lifted
+// function's body gains a free identifier the sandbox would not define —
+// a refactor here does not fail softly, extractFunction throws.
+//
+// WHAT CHANGES INSIDE. One module-level `hostCtx` and one guarded write
+// chokepoint (hostSetMain). In VIEW mode hostCtx is the shell and every
+// render is byte-identical to v3.63.0's. In SECTION mode the panel writes
+// `el.innerHTML` instead of calling setMain(), renders NO SIDEBAR at all
+// (the domain page owns the sidebar), and renders the LENS rather than the
+// install-wide view — see sharedLensFor() below.
+//
+// WHY `viewMounted` EXISTS, AND IT IS NOT DEFENSIVE. An SSE action started
+// in section mode keeps running after the section unmounts, and its
+// `finally` calls render(token) with a token that is STILL the current
+// mount (the shell never changed view — only the section came down). With
+// hostCtx back at the shell that render would have called setMain() and
+// painted the Shared Brain view over the domain page. The flag says what
+// isCurrentMount() cannot: whether the shell is actually showing THIS view.
+const SHELL_HOST = Object.freeze({
+  mode: 'view', el: null, domain: null, onBusyChange: null, onLensChange: null,
+});
+let hostCtx = SHELL_HOST;
+// True only between registerView('shared')'s onEnter and its teardown.
+let viewMounted = false;
+// Last values handed to the host's callbacks, so an unchanged reading is not
+// re-reported on every SSE frame (this view re-renders on every frame).
+let lastReportedBusy = false;
+let lastReportedLens = '';
+
+function inSection() {
+  return hostCtx.mode === 'section';
+}
+
+/**
+ * The ONE place this view's main body reaches the DOM.
+ *
+ * View mode delegates to the shell's setMain() unchanged — including its
+ * mount-token guard. Section mode writes the host's own element, after the
+ * same token check, because the token the host handed us is the DOMAIN
+ * page's mount token: when it stops being current the domain page is gone
+ * and so is our element.
+ */
+function hostSetMain(html, token) {
+  if (!inSection()) {
+    setMain(html, token);
+    return;
+  }
+  if (!hostCtx.el || !isCurrentMount(token)) return;
+  hostCtx.el.innerHTML = html;
+}
+
+/** Everything the section's own renderers need out of the host. */
+function sectionDomain() {
+  return inSection() && typeof hostCtx.domain === 'string' ? hostCtx.domain : '';
+}
+
+/**
+ * THE LENS — which connections belong to ONE domain page. (D-H.)
+ *
+ * A connection is NOT one-to-one with a domain, in either direction: it
+ * carries `local_domains`, an ARRAY of contributing domains, and separately
+ * a mirror domain DERIVED (never stored) as `shared-<shared_brain_slug>`.
+ * One connection can span several contributing domains; one domain can
+ * contribute to several connections. The full-page view is install-wide —
+ * its onEnter takes no domain and GET /api/sharedbrain/list takes none
+ * either — so a per-domain section needs this lens, which the code did not
+ * have before v3.64.0.
+ *
+ * Pure, exported, and total: no DOM, no module state, no fetch, so the
+ * suite executes it directly rather than asserting a source shape. The two
+ * buckets are DISJOINT — a connection that both contributes to this domain
+ * and mirrors into it (pathological, but nothing in the store forbids it)
+ * is counted once, as contributing, so `kind` is deterministic.
+ *
+ * @param {Array} connections  GET /api/sharedbrain/list's `connections`
+ * @param {string} domainSlug  the domain page's slug
+ * @returns {{kind: 'contributing'|'mirror'|'none', contributing: Array, mirrors: Array}}
+ */
+export function sharedLensFor(connections, domainSlug) {
+  const slug = typeof domainSlug === 'string' ? domainSlug : '';
+  const list = Array.isArray(connections) ? connections : [];
+  const contributing = [];
+  const mirrors = [];
+  if (slug) {
+    for (const c of list) {
+      if (!c || typeof c !== 'object') continue;
+      const locals = Array.isArray(c.local_domains) ? c.local_domains : [];
+      if (locals.includes(slug)) contributing.push(c);
+      else if (mirrorDomainFor(c) === slug) mirrors.push(c);
+    }
+  }
+  const kind = contributing.length ? 'contributing' : (mirrors.length ? 'mirror' : 'none');
+  return { kind, contributing, mirrors };
+}
+
+/** The summary the host is told about — counts, never connection objects. */
+function lensSummary() {
+  const lens = sharedLensFor(state.connections, sectionDomain());
+  return {
+    enabled: !!state.enabled,
+    kind: lens.kind,
+    contributingCount: lens.contributing.length,
+    mirrorCount: lens.mirrors.length,
+  };
+}
+
+/**
+ * Tell the host what changed, at most once per real change.
+ *
+ * `onBusyChange` is what D-J's busy-quiesce rule runs on: while it reads
+ * true the domain page PATCHES instead of replacing, because replacing
+ * takes this section's DOM with it. `onLensChange` is what lets the page
+ * decide whether its OVERVIEW deserves a SHARED jump tile without fetching
+ * the connection list a second time.
+ */
+function notifyHost() {
+  if (!inSection()) return;
+  const busy = sharedSectionBusy();
+  if (busy !== lastReportedBusy) {
+    lastReportedBusy = busy;
+    if (typeof hostCtx.onBusyChange === 'function') {
+      try { hostCtx.onBusyChange(busy); } catch { /* a host callback must never break a render */ }
+    }
+  }
+  const summary = lensSummary();
+  const key = JSON.stringify(summary);
+  if (key !== lastReportedLens) {
+    lastReportedLens = key;
+    if (typeof hostCtx.onLensChange === 'function') {
+      try { hostCtx.onLensChange(summary); } catch { /* same */ }
+    }
+  }
+}
+
+/**
+ * Is there anything in this section a host re-render would DESTROY? (D-J.)
+ *
+ * Not "is something happening" — "would replacing this DOM lose something
+ * the user cannot get back". Four states qualify, and each is a real cost:
+ *   · an operation in flight (card.acting) — an attached SSE stream whose
+ *     progress lines and final result are rendered into this element;
+ *   · a shown-once admin token (card.shownAdminToken) — the v3.0.5 rule is
+ *     that it is displayed ONCE and never again, so losing the box loses
+ *     the credential;
+ *   · a displayed invite token — re-derivable, but not mid-copy;
+ *   · a revoke gate with something typed — the confirmation and the
+ *     "a token is present" boolean live in card state, but the ADMIN TOKEN
+ *     itself lives only in the DOM input, by design.
+ * Plus an open wizard, which holds a PAT and is closed by this section's
+ * own teardown.
+ *
+ * Returns false whenever this module is not the domain page's section —
+ * the flag is about the hosted panel, and the full-page view is not one.
+ */
+export function sharedSectionBusy() {
+  if (!inSection()) return false;
+  if (isSharedBrainWizardOpen()) return true;
+  for (const id of Object.keys(state.cards)) {
+    const c = state.cards[id];
+    if (!c) continue;
+    if (c.acting) return true;
+    if (c.shownAdminToken) return true;
+    if (c.inviteOpen && c.inviteToken) return true;
+    if (c.revokeOpen && (c.revokeTyped || c.revokeTokenPresent)) return true;
+  }
+  return false;
+}
+
+/**
+ * Mount this panel into an element the domain page owns.
+ *
+ * @param {HTMLElement} el   the container; the panel owns it from now on
+ * @param {{domain: string, token: number,
+ *          onBusyChange?: (busy: boolean) => void,
+ *          onLensChange?: (summary: object) => void}} opts
+ *
+ * IDEMPOTENT ON THE SAME ELEMENT, and that is the answer to the one
+ * conflict D-J creates: while the section is busy the host must not replace
+ * its DOM, but the user can still switch domain underneath it. Calling this
+ * again with the SAME element re-points the lens and re-renders — no
+ * teardown, no reload, no state wipe, so an SSE stream and a shown-once
+ * token both survive a domain switch. A DIFFERENT element is a real remount
+ * (the shell replaced #view-root, so the old element is detached anyway).
+ *
+ * The connection list itself is install-wide, so nothing about it is stale
+ * after a domain switch — only the lens applied to it at render time is.
+ */
+export function mountSharedSection(el, opts) {
+  if (!el) return;
+  const o = opts || {};
+  const next = {
+    mode: 'section',
+    el,
+    domain: typeof o.domain === 'string' ? o.domain : null,
+    onBusyChange: typeof o.onBusyChange === 'function' ? o.onBusyChange : null,
+    onLensChange: typeof o.onLensChange === 'function' ? o.onLensChange : null,
+  };
+  const sameElement = inSection() && hostCtx.el === el;
+  if (sameElement) {
+    hostCtx = next;
+    // Re-report from scratch: the host may be a different caller with
+    // different callbacks, and a cached "unchanged" would leave it blind.
+    lastReportedBusy = false;
+    lastReportedLens = '';
+    render(o.token);
+    return;
+  }
+  if (inSection()) stopShared();
+  hostCtx = next;
+  lastReportedBusy = false;
+  lastReportedLens = '';
+  startShared(o.token);
+}
+
+/**
+ * Take the panel down. Runs the SAME teardown the full-page view runs —
+ * including closeSharedBrainWizardIfOpen(), which is the load-bearing half:
+ * it is what stops a PAT-holding overlay outliving its mount.
+ */
+export function unmountSharedSection() {
+  if (!inSection()) return;
+  const el = hostCtx.el;
+  stopShared();
+  hostCtx = SHELL_HOST;
+  lastReportedBusy = false;
+  lastReportedLens = '';
+  // The host is about to reuse or discard this node; leaving a dead panel
+  // painted in it would outlive every listener that made it work.
+  if (el) el.innerHTML = '';
+}
+
+// ── Lifecycle, shared by both hosts ──────────────────────────────────────
+// Factored IN PLACE out of registerView('shared')'s onEnter and its
+// teardown — same statements, same order, no behaviour moved.
+
+function startShared(token) {
+  state = freshState();
+  myMountToken = token;
+  loadGate = createLoadingGate({
+    onChange: () => { if (isCurrentMount(token)) render(token); },
+  });
+  loadGate.begin();
+  render(token);
+  loadAll(token).catch((err) => reportAsyncMountFailure(token, err));
+
+  // Re-render on any cross-view write-gate change — this is what keeps a
+  // Pull button's "busy" note live (e.g. an abandoned prior mount's pull
+  // is still finishing server-side; see the file-header comment).
+  unsubscribeWriteGate = onWriteGateChange(() => {
+    if (isCurrentMount(token)) render(token);
+  });
+}
+
+function stopShared() {
+  // Timer hygiene (load-bearing): an armed delay timer that survives
+  // this teardown would paint a loader into whatever view comes next.
+  if (loadGate) { loadGate.cancel(); loadGate = null; }
+  if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
+  // Never leave a credential-holding overlay mounted behind the next
+  // view — see the file-header comment above.
+  closeSharedBrainWizardIfOpen();
+}
 
 function ensureCard(id) {
   if (!state.cards[id]) {
@@ -302,30 +584,18 @@ function domainsForAction(conn, action) {
 
 registerView('shared', {
   onEnter(mountToken) {
-    state = freshState();
-    myMountToken = mountToken;
-    loadGate = createLoadingGate({
-      onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
-    });
-    loadGate.begin();
-    render(mountToken);
-    loadAll(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
-
-    // Re-render on any cross-view write-gate change — this is what keeps a
-    // Pull button's "busy" note live (e.g. an abandoned prior mount's pull
-    // is still finishing server-side; see the file-header comment).
-    unsubscribeWriteGate = onWriteGateChange(() => {
-      if (isCurrentMount(mountToken)) render(mountToken);
-    });
+    // The full-page host. Off the rail since v3.64.0, still registered and
+    // still reachable — navigate('shared'), the onboarding door, and the
+    // "Open Shared Brain" door on the domain page's section all land here,
+    // and this is the ONLY place the install-level enable toggle and the
+    // setup wizard's CTAs exist.
+    hostCtx = SHELL_HOST;
+    viewMounted = true;
+    startShared(mountToken);
 
     return () => {
-      // Timer hygiene (load-bearing): an armed delay timer that survives
-      // this teardown would paint a loader into whatever view comes next.
-      if (loadGate) { loadGate.cancel(); loadGate = null; }
-      if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
-      // Never leave a credential-holding overlay mounted behind the next
-      // view — see the file-header comment above.
-      closeSharedBrainWizardIfOpen();
+      viewMounted = false;
+      stopShared();
     };
   },
 });
@@ -400,15 +670,25 @@ async function refreshConnections(token) {
 // ── Render ───────────────────────────────────────────────────────────────
 
 function render(token) {
+  // Nothing to paint into: the shell is showing another view and this
+  // module is not the domain page's section either. An in-flight SSE
+  // action's `finally` reaches here in exactly that state — see the
+  // `viewMounted` comment on the host seam above.
+  if (!inSection() && !viewMounted) return;
   // ONE chokepoint, exactly as settings.js does it: ~30 call sites reach
   // this function and none of them should have to remember. wireListeners
   // is inside the wrapper because it runs against the markup this render
   // just wrote — moving it out would rebind against the previous DOM.
   preserveMainScroll(() => {
-    renderSidebar(token);
+    // Section mode renders NO sidebar: the domain page owns it, and this
+    // panel is one section inside that page's main column.
+    if (!inSection()) renderSidebar(token);
     renderMain(token);
     wireListeners(token);
   });
+  // Outside the wrapper on purpose: a host callback is not part of this
+  // view's paint and must not be held inside its scroll/focus restore.
+  notifyHost();
 }
 
 function renderSidebar(token) {
@@ -455,6 +735,14 @@ function renderSidebar(token) {
 }
 
 function renderMain(token) {
+  // SECTION MODE: no view header (the domain page's own SHARED BRAIN
+  // eyebrow names the block, and a block eyebrow carries no prose), no
+  // install-wide CTAs, and the connection list LENSED to this one domain.
+  if (inSection()) {
+    hostSetMain(renderSection(), token);
+    return;
+  }
+
   let body;
   if (state.loading) {
     body = gatedLoader(loadGate, 'Loading Shared Brain status…');
@@ -470,7 +758,7 @@ function renderMain(token) {
   // explained, and "Nothing else on your machine moves" is a privacy claim a
   // first-time reader needs once. It is not a warning and carries no cost or
   // irreversibility, so the fold is the right home for it.
-  setMain(
+  hostSetMain(
     renderViewHeader({
       eyebrow: 'your team’s brain',
       title: 'Shared Brain',
@@ -566,6 +854,106 @@ function renderEnabled() {
     '<div class="sb-add-more">' +
       '<button type="button" class="btn btn-secondary" id="btn-sb-join-2">+ Join another</button>' +
       '<button type="button" class="btn btn-secondary" id="btn-sb-create-2">+ Set up another</button>' +
+    '</div>'
+  );
+}
+
+/**
+ * ── THE SECTION BODY (v3.64.0) ───────────────────────────────────────────
+ *
+ * What the domain page's SHARED BRAIN section shows, for ONE domain.
+ *
+ * THE OFF-STATE IS A DOOR, NEVER A SECOND TOGGLE (D-G). renderDisabled()
+ * above is the only place #btn-sb-enable exists, and that is the invariant
+ * stated precisely: one control, one place. "Shared Brain is off" is a fact
+ * about this INSTALL, not about this domain — the flag comes from
+ * GET /api/sharedbrain/feature-flag and the button POSTs
+ * /api/sharedbrain/enable-flag, neither of which knows a domain exists.
+ * Rendering that off-state on N domain pages would put the one toggle in N
+ * places, which is the literal negation of "and nowhere else". So the
+ * section says the one sentence and offers the door.
+ *
+ * EVERY STATE ENDS IN THE SAME DOOR, for the same reason: joining a cohort,
+ * setting one up, and enabling the feature are all install-level, and the
+ * section deliberately hosts none of them.
+ */
+function renderSection() {
+  // The door is rendered in EVERY state, loading included: it is a route,
+  // not an outcome, and making a reader wait on a fetch before they can
+  // reach the install-wide view would be a gate with nothing behind it.
+  if (state.loading) {
+    return '<div class="sb-sec">' + gatedLoader(loadGate, 'Loading Shared Brain status…') +
+      renderSectionDoor() + '</div>';
+  }
+  if (state.flagError) {
+    return '<div class="sb-sec">' +
+      '<div class="settings-inline-error">Could not reach the Shared Brain feature flag: ' + escapeHtml(state.flagError) + '</div>' +
+      renderSectionDoor() +
+    '</div>';
+  }
+  if (!state.enabled) {
+    return '<div class="sb-sec">' +
+      '<p class="sb-sec-line">Shared Brain is off on this install.</p>' +
+      renderSectionDoor() +
+    '</div>';
+  }
+  if (state.listError) {
+    return '<div class="sb-sec">' +
+      '<div class="settings-inline-error">Could not load your Shared Brain connections: ' + escapeHtml(state.listError) + '</div>' +
+      '<button type="button" class="btn btn-secondary btn-xs" id="btn-sb-retry-list">Try again</button>' +
+      renderSectionDoor() +
+    '</div>';
+  }
+  const lens = sharedLensFor(state.connections, sectionDomain());
+  if (lens.kind === 'none') {
+    return '<div class="sb-sec">' +
+      '<p class="sb-sec-line">This domain is not part of any Shared Brain.</p>' +
+      renderSectionDoor() +
+    '</div>';
+  }
+  return '<div class="sb-sec">' +
+    (lens.contributing.length
+      ? '<div class="sb-cards">' + lens.contributing.map(renderCard).join('') + '</div>'
+      : '') +
+    lens.mirrors.map(renderMirrorStrip).join('') +
+    renderSectionDoor() +
+  '</div>';
+}
+
+/** The one door out of the section and into the install-wide view. */
+function renderSectionDoor() {
+  return '<div class="sb-sec-door">' +
+    '<button type="button" class="btn btn-secondary btn-xs" id="btn-sb-open-view">Open Shared Brain</button>' +
+  '</div>';
+}
+
+/**
+ * A `shared-*` mirror domain's read-only strip (D-H).
+ *
+ * This page IS the mirror: the local copy Pull writes, named after the
+ * connection's own slug. It carries no Push, no Pull and no Synthesize —
+ * those belong to the connection, which the CONTRIBUTING domain's section
+ * (and the full view) already offers, and offering them twice would give
+ * one operation two homes. What the reader needs here is which cohort
+ * produced this domain and how current it is.
+ */
+function renderMirrorStrip(conn) {
+  return (
+    '<div class="sb-sec-mirror" data-sb-mirror="' + escapeHtml(conn.id) + '">' +
+      '<div class="sb-sec-mirror-head">' +
+        '<span class="sb-name">' + escapeHtml(conn.label || '(unnamed)') + '</span>' +
+        '<span class="sb-pill-readonly">' + icon('lock', 11) + ' read-only mirror</span>' +
+      '</div>' +
+      '<p class="sb-sec-line">This domain is the local mirror of that Shared Brain. Pull writes it; ' +
+      'edits made here are not kept.</p>' +
+      '<div class="sb-card-stats">' +
+        '<span><span class="sb-card-stat-label">Last synthesis</span><span class="sb-num">' +
+          escapeHtml(formatRelativeTime(conn.last_synthesis_at, 'never — ask your admin to run synthesis')) +
+        '</span></span>' +
+        '<span><span class="sb-card-stat-label">Last pulled</span><span class="sb-num">' +
+          escapeHtml(formatRelativeTime(conn.last_pull_at, 'never')) +
+        '</span></span>' +
+      '</div>' +
     '</div>'
   );
 }
@@ -2240,6 +2628,9 @@ async function runRevoke(token, connId) {
 
 function wireListeners(token) {
   document.getElementById('btn-sb-enable')?.addEventListener('click', () => onEnableFlag(token));
+  // Section mode only — the door to the full view. It NAVIGATES; it does not
+  // enable anything, and it posts nowhere (D-G).
+  document.getElementById('btn-sb-open-view')?.addEventListener('click', () => navigate('shared'));
   document.getElementById('btn-sb-retry-list')?.addEventListener('click', () => { refreshConnections(token); });
 
   // Wizard entry points — both the empty-state CTAs and the "+ Join
