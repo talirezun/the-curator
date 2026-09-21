@@ -2825,8 +2825,12 @@ router.get('/:domain/:project/capture', async (req, res) => {
     // honest zero — nobody worked on this project this month — is exactly the
     // reading this meter exists to report, and explaining it away would be
     // the app apologising for a true answer. The clause fires only when the
-    // store can point at a save the log cannot account for.
-    const noSessionsButSaves = summary.totals.sessions === 0
+    // store can point at a save the log cannot account for — which requires
+    // a log to exist at all (`present`): with no log on this machine, zero
+    // sessions is the `!present` arm's own honest limit, not a bridge that
+    // logged nothing, and firing this note there would blame a bridge that
+    // was never asked.
+    const noSessionsButSaves = present === true && summary.totals.sessions === 0
       && newestSaveMs !== null && newestSaveMs >= sinceMs;
 
     // ONE note, naming whichever honest limit applies — never both, because
