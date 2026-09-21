@@ -598,7 +598,15 @@ ok(cold?.ok === true && cold.brief?.present === false && cold.scopeCount === 0,
 // unreachable/orphan/manifestError) — facts about what exists, not a warning
 // about absent text. The two assertions after this one are what pin the
 // caveat's collapse; this one only bounds the envelope.
-ok(Buffer.byteLength(coldRaw, 'utf8') < 1000,
+//
+// v3.65.0 raises it 1000 → 1100, measured at 1068 B: `knowledgeDomains` and
+// `knowledgeDomainsDefaulted` (~70 B pretty-printed) join it, and they are
+// the same KIND of addition the v3.59.0 note describes — a fact about where
+// this project's knowledge lives, which an agent otherwise has to assume.
+// The ceiling is raised deliberately rather than removed: its whole job is
+// to stop a cold start growing back into a page of warnings about text that
+// does not exist.
+ok(Buffer.byteLength(coldRaw, 'utf8') < 1100,
   `the cold-start response is ${Buffer.byteLength(coldRaw, 'utf8')} B (was 835 B, 63% of it a warning about absent text)`);
 ok(cold?.foundations && cold.foundations.present === false && cold.foundations.count === 0,
   '…and the tier-0 summary is on a cold read too: present false, count 0 — a measurement, not an absence');

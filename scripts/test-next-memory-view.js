@@ -473,6 +473,15 @@ const EXPECTED_ROUTES = [
   ['post', '/:domain/projects'],
   ['patch', '/:domain/projects/:project'],
   ['delete', '/:domain/projects/:project'],
+  // v3.65.0 — WHICH WIKIS a project's knowledge lives in. Curator METADATA
+  // about the project (`state/[<project>/]project.json`), so the app is its
+  // one writer and tiers 2 and 3 stay agent-only. FOUR segments, and here
+  // the count is CORRECTNESS: the `patch` row directly above matches any
+  // three-segment PATCH whose second segment is literally `projects`, and a
+  // domain's own project is named after the domain — so a three-segment
+  // `…/:project/knowledge` on a domain called `projects` would have been
+  // answered by the RENAME handler, about a project called `knowledge`.
+  ['patch', '/:domain/:project/knowledge/domains'],
   // TIER 0 (v3.59.0, extended v3.61.0). Four segments, so none can shadow — or
   // be shadowed by — the two-segment reads below; the ordering WITHIN this
   // group is readability, not correctness, and the comment at the route says
