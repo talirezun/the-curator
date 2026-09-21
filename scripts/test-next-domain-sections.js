@@ -1708,11 +1708,24 @@ section('S7 -- THE TWO JUMPS ARE TILES IN THE GRID (v3.65.0)');
   ok('...and no `.dm-jump-row` / `.dm-jump-card` survives anywhere in the card',
     !flatten(parseHtmlToChildren(html)).some(
       (n) => hasClass(n, 'dm-jump-row') || hasClass(n, 'dm-jump-card')));
-  ok('...and the grid is told to keep its tracks wide enough for a PHRASE rather '
-    + 'than the tiles being dropped a type rung: seven 127px tracks wrap "14 days '
-    + 'ago" and make every tile 110.8px tall, a floor of 150 yields 5+2 at the '
-    + 'shipped 181.797 x 78.898',
-    /style="--cur-ov-min:150px"/.test(html), html.slice(0, 400));
+  // THE FLOOR IS DERIVED FROM THE WIDEST VALUE, not from a track count. The
+  // value box is the track minus the tile's 16px padding a side, and the
+  // widest string this card can hold is a relative time -- measured at the
+  // shipped 22px rung: `5 minutes ago` 140.5px, `365 days ago` 135.7,
+  // `11 hours ago` 131.2. So the floor must be at least 141 + 32 = 173, and
+  // 175 is the value with the arithmetic behind it. Pinned as a RANGE rather
+  // than a literal, because the reason is the arithmetic: anything below 173
+  // wraps a realistic value at the knife-edge width where the track equals
+  // the floor, and anything much above it starts dropping the five-tile row
+  // to four at ordinary widths.
+  {
+    const m = /style="--cur-ov-min:(\d+)px"/.exec(html);
+    ok('the grid is told to keep its tracks wide enough for a PHRASE, rather than the '
+      + 'tiles being dropped a type rung', !!m, html.slice(0, 400));
+    ok('...and the floor clears the widest value (140.5px) plus the tile\'s 32px of '
+      + 'padding, so the narrowest track the floor can produce still fits it on one line',
+      !!m && Number(m[1]) >= 173 && Number(m[1]) <= 200, m ? m[1] + 'px' : '(none)');
+  }
   ok('neither carries aria-pressed -- a jump is not a toggle, and saying so to a '
     + 'screen reader only would be a lie told to one audience',
     tiles.every((t) => t.attrs['aria-pressed'] === undefined));

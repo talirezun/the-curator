@@ -4627,17 +4627,36 @@ function renderStatCards(counts, pages, projects, jumps) {
     // header for why they are aliases rather than names.
     alias: 'dm',
     cards,
-    // ── THE TRACK FLOOR, AND WHY IT IS 150 AND NOT THE DEFAULT ──────────
-    // MEASURED in the real 949px grid at a 1370px window with the onboarding
-    // guide dismissed. At the stylesheet's own 110px floor, seven equal
-    // tracks are 127px wide and the two PHRASE values — `14 days ago` and
-    // `2 cohorts` — wrap to two lines, which makes EVERY tile 110.8px tall:
-    // visibly worse than what shipped. At a floor of 150 (anything in
-    // 137-189 yields five tracks) the first row is PIXEL-IDENTICAL to the
-    // five tiles that shipped in v3.64.2 — 181.797 x 78.898, same x
-    // positions — and SOURCES / SHARED form a second row of the SAME tile.
-    // That is "at tile geometry", met exactly, rather than approximately.
-    minTrack: 150,
+    // ── THE TRACK FLOOR, DERIVED FROM THE WIDEST VALUE ─────────────────
+    // The problem the floor solves: at the stylesheet's own 110px default,
+    // seven equal tracks are 127px and the two PHRASE values wrap to two
+    // lines, which makes EVERY tile 110.797px tall instead of 78.898 —
+    // visibly worse than what shipped.
+    //
+    // 175 IS DERIVED, NOT PICKED. Measured in a browser at the shipped 22px
+    // rung, the widest value this card can hold is a relative time:
+    // `5 minutes ago` 140.5px, `365 days ago` 135.7, `11 hours ago` 131.2,
+    // `71 days ago` 121.9, `nothing yet` 111.8, `12 cohorts` 109.0,
+    // `1,234,567` 108.5. The tile's padding is 16px a side, so the VALUE box
+    // is the track minus 32 and the floor has to be at least 141 + 32 = 173.
+    //
+    // WHY A FLOOR IS SELF-CORRECTING, which is what makes 175 safe rather
+    // than lucky: raising it REDUCES the track count, which WIDENS the
+    // track. At a 10px gap, `n` tracks fit when 185n - 10 <= W, so 175 gives
+    // 5 tracks at both 949px (track 181.8 — pixel-identical to the five
+    // tiles v3.64.2 shipped) and 960px (184.0), 6 at 1144 (182.3), 3 with
+    // the onboarding guide docked at 647 (209.0) and 1 at 568. The narrowest
+    // track the floor can ever produce is the floor itself, 175, whose value
+    // box is 143 — still 2.5px clear of the widest string.
+    //
+    // THIS CORRECTS THE KIT PACKAGE'S OWN INSTRUCTION, which was to pass 150.
+    // That figure was derived against a 949px grid, where 6*150 + 5*10 = 950
+    // is one pixel too wide to fit and five tracks survive. This install's
+    // grid measures 960px at the same 1370px window — `.main-inner` is 1026
+    // here, not 959 — so 950 DOES fit, auto-fit takes six tracks of 151.664,
+    // and `71 days ago` (121.9) overflows its 119.7px box. A one-pixel
+    // margin is not a floor; the widest value is.
+    minTrack: 175,
   });
 }
 
