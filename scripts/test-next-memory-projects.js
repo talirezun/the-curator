@@ -534,6 +534,11 @@ const EXPECTED = [
   ['delete', '/:domain/:project/foundations/:slug'],
   ['post', '/:domain/:project/foundations/init'],
   ['post', '/:domain/:project/foundations/refresh'],
+  // v3.65.1 — "Mirror from GitHub instead". A POST, not a PATCH: it fetches
+  // blobs and rewrites files. Four segments like the rest of tier 0, and
+  // DECLARED HERE because this table's own comment is the rule — a new route
+  // of any kind is declared before it can ship.
+  ['post', '/:domain/:project/foundations/source'],
   // v3.63.0. THE HONESTY METER (package U) — read-only, never blocks. A
   // three-segment suffix route, so it cannot shadow, or be shadowed by,
   // either two-segment read below; its position here is readability.
@@ -2466,11 +2471,12 @@ const REPO = join(TMP, 'repo');
   // pattern can match a four-segment path, so the collision cannot reach here.
   {
     const four = ROUTES.filter((r) => r.path.split('/').filter(Boolean).length === 4).map((r) => r.path);
-    // SIX tier-0 rows, plus v3.65.0's knowledge-domains PATCH, which is four
-    // segments for the same reason and is counted separately so the tier-0
-    // claim keeps its own number rather than absorbing every later addition.
+    // SEVEN tier-0 rows (v3.65.1 added the source switch), plus v3.65.0's
+    // knowledge-domains PATCH, which is four segments for the same reason and
+    // is counted separately so the tier-0 claim keeps its own number rather
+    // than absorbing every later addition.
     const fourFoundations = four.filter((p) => p.includes('/foundations'));
-    ok('every foundations route is four segments deep', fourFoundations.length === 6, JSON.stringify(four));
+    ok('every foundations route is four segments deep', fourFoundations.length === 7, JSON.stringify(four));
     ok('...and the knowledge-domains write is four segments deep for the same reason',
       four.includes('/:domain/:project/knowledge/domains'), JSON.stringify(four));
     const twoGet = ROUTES.filter((r) => r.method === 'get'

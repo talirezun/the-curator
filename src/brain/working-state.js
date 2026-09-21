@@ -6242,7 +6242,16 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
   if (work.size > MAX_FOUNDATIONS_PER_PROJECT) {
     return { ok: false, reason: 'too-many-documents', message: `${work.size} documents would exceed the ${MAX_FOUNDATIONS_PER_PROJECT}-document cap.` };
   }
-  if (!work.size) {
+  // NOTHING TO COPY. A refresh says so and writes nothing — there is no
+  // decision in it. A SOURCE SWITCH (`opts.switchSource`, v3.65.1) is the
+  // exception and must NOT return here: the decision it records — this
+  // mirror now reads GitHub, not a folder — is worth writing even when the
+  // project holds no document yet, which is the ordinary state of a mirror
+  // born from the chooser's "repo" choice with no files ticked. It falls
+  // through instead, so the ref and the tree are still READ (the remote is
+  // verified before it is recorded) and the manifest below is written with
+  // an empty `fetched` set.
+  if (!work.size && !opts.switchSource) {
     return {
       ok: true, domain, project: target.project, repoRoot: null, noop: true, commit: null,
       source: 'remote', remoteChecked: false, remoteCommit: null, remoteError: null,
@@ -6336,10 +6345,20 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
   const nextManifest = {
     ...manifest,
     ownership: 'repo',
-    // `root` is KEPT: it records the machine that has a checkout, which is
-    // still true and is what the local arm will use there. A remote refresh
-    // does not make that machine's path wrong.
-    repo: { root: manifest.repo?.root ?? null, remote, lastRefreshAt: now, lastRefreshCommit: head.sha },
+    // `root` is KEPT on a REFRESH: it records the machine that has a
+    // checkout, which is still true and is what the local arm will use
+    // there. A remote refresh does not make that machine's path wrong.
+    //
+    // A SOURCE SWITCH CLEARS IT (v3.65.1), in THIS write and not a second
+    // one: the owner said "mirror from GitHub instead", and a manifest that
+    // kept both would go on taking the local arm on `auto` from the machine
+    // that has the checkout — the switch would hold on every machine but the
+    // one it was made on. A second write would be a second failure point,
+    // able to leave a mirror with a stale root and a fresh remote.
+    repo: {
+      root: opts.switchSource ? null : (manifest.repo?.root ?? null),
+      remote, lastRefreshAt: now, lastRefreshCommit: head.sha,
+    },
     documents,
   };
   const totalBytes = totalBytesOf(nextManifest);
@@ -6681,6 +6700,164 @@ export async function initFoundations(domain, project, opts = {}) {
     tokenSource: done.remote ? tokenSource : null,
     notes: finaliseNotes(notes),
   };
+}
+
+/**
+ * "MIRROR FROM GITHUB INSTEAD" — change WHERE a repo-owned project's
+ * documents are copied from, keeping everything else (v3.65.1).
+ *
+ * ── THE GAP THIS CLOSES ─────────────────────────────────────────────────
+ * `refreshRemoteCore` has SET `repo.remote` since v3.63.0 and has always
+ * PRESERVED `repo.root`, which is right for a refresh: the checkout on the
+ * machine that made the mirror is still there, and `auto` should go on
+ * preferring it. The consequence is that a project born from a folder takes
+ * the local arm on that machine for ever, and "this project now lives in a
+ * GitHub repository" was inexpressible — the maintainer's own case, with a
+ * mirror of a checkout he no longer wanted to be the source.
+ *
+ * ── WHAT IT IS AND IS NOT ───────────────────────────────────────────────
+ * It is ONE SOURCE PER PROJECT, re-chosen. `ownership` is NOT touched: it
+ * stays `repo`, one ownership per project is untouched, and this is still a
+ * byte copy with the repository as the author. What moves is the ROUTE the
+ * bytes travel: `repo.remote` is set to the named repository and `repo.root`
+ * is CLEARED, in the same `writeManifest` the copy performs.
+ *
+ * It is refused unless the manifest already says `repo`:
+ *   · no manifest at all      → `no-manifest` (nothing has been chosen yet —
+ *                               that is `initFoundations`'s decision, and
+ *                               making it here would set an ownership
+ *                               sideways through a function named "switch")
+ *   · `ownership: 'curator'`  → `ownership-mismatch`, the wording
+ *                               `refreshRemoteCore` already uses
+ *   · a `shared-*` mirror     → `readonly`, via `checkProjectTarget`
+ *
+ * ── THE TOKEN, AND WHAT IS NEVER WRITTEN ────────────────────────────────
+ * `tokenSource` names WHICH FILE the credential is read from and is REFUSED
+ * when it is neither `config` nor `sync` — not normalised. The refresh
+ * normalises because it is called repeatedly and a wrong word there costs one
+ * retry; this call RECORDS A DECISION, and silently reading a different file
+ * than the one named is not a decision the owner made (the same line
+ * `initFoundations` draws). A `token` in `opts` is not read: not forwarded,
+ * not defaulted from, not logged.
+ *
+ * NOTHING IS WRITTEN UNTIL EVERY BLOB IS IN HAND, and a truncated tree throws
+ * before the first blob — both inherited by going THROUGH `refreshRemoteCore`
+ * rather than around it. So does `readFirst`: it is preserved BY SLUG across
+ * the re-copy (`readFirst: w.entry ? w.entry.readFirst === true : false`),
+ * because the repository owns the bytes and the owner owns the routing.
+ *
+ * `files` is accepted and defaults to the manifest's own documents, which is
+ * the right default for a switch — same documents, new source. A listed file
+ * may ADD a document; re-pointing an EXISTING slug at a different path is
+ * refused by `buildMirrorWorkList` and named in `refused[]`, exactly as on a
+ * refresh.
+ *
+ * Returns `refreshRemoteCore`'s envelope plus `{rootCleared, previousRoot}`.
+ */
+export async function setFoundationsSource(domain, project, opts = {}) {
+  const inp = opts && typeof opts === 'object' ? opts : {};
+  const target = await checkProjectTarget(domain, project);
+  if (!target.ok) return target;
+  const paths = foundationsPaths(domain, target.prefix);
+  if (!paths) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
+
+  // WHICH FILE the token comes from, never the token. Refused, not
+  // normalised — see the docblock.
+  const tokenSource = inp.tokenSource === undefined || inp.tokenSource === null ? 'config' : inp.tokenSource;
+  if (tokenSource !== 'config' && tokenSource !== 'sync') {
+    return {
+      ok: false, reason: 'invalid-token-source',
+      message: `"${String(inp.tokenSource).slice(0, 40)}" is not a token source. Pass "config" for the read-only `
+        + 'GitHub token in Settings, or "sync" for Personal Sync’s own token. Nothing was changed.',
+    };
+  }
+
+  // THE REMOTE, through the SAME validator the refresh and the init use. A
+  // MISSING one is refused here rather than falling back to the manifest's:
+  // this call names a new source, and "switch to the source you already
+  // have" is not a switch.
+  const loaded = await loadGitHubReader();
+  if (!loaded.ok) return loaded;
+  const hasRemote = (typeof inp.remote === 'string' && inp.remote.trim() !== '')
+    || (!!inp.remote && typeof inp.remote === 'object' && !Array.isArray(inp.remote));
+  if (!hasRemote) {
+    return {
+      ok: false, reason: 'invalid-remote',
+      message: 'Name the GitHub repository to mirror from — owner/repo, or the https:// or git@ URL git '
+        + 'prints for the remote. Nothing was changed.',
+    };
+  }
+  const asked = resolveRemoteArg(loaded.gh, inp.remote);
+  if (!asked.ok) return asked;
+  const remote = asked.remote;
+  const files = Array.isArray(inp.files) ? inp.files : [];
+
+  return withFoundationsLock(domain, 'set-foundations-source', async () => {
+    // OWNERSHIP IS READ UNDER THE LOCK, so the manifest this refuses on is
+    // the manifest the copy would rewrite.
+    const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'malformed') {
+      return {
+        ok: false, reason: 'manifest-unreadable', manifestError: mf.error,
+        message: `The foundations manifest could not be read (${mf.error}). The source was not changed.`,
+      };
+    }
+    if (mf.status !== 'ok') {
+      return {
+        ok: false, reason: 'no-manifest',
+        message: `Project "${target.project}" has not chosen where its canonical documents live yet, so there is `
+          + 'no source to change. Choose "mirror a repository" first; this switch re-points an existing mirror.',
+      };
+    }
+    // `null` IS A VALID OWNERSHIP ON DISK (`validateManifest`), so the two
+    // cases are told apart rather than sharing one sentence: a manifest that
+    // has chosen `curator` is a refusal about documents that exist, and one
+    // that has chosen nothing is a refusal about a decision not yet made.
+    if (mf.manifest.ownership !== 'repo') {
+      return {
+        ok: false, reason: 'ownership-mismatch', ownership: mf.manifest.ownership || null,
+        message: mf.manifest.ownership === 'curator'
+          ? `Project "${target.project}" holds curator-authored foundations. Mirroring a repository would `
+            + 'overwrite them — a project holds documents of ONE ownership. Nothing was changed.'
+          : `Project "${target.project}" has not chosen where its canonical documents live, so there is no `
+            + 'mirror to re-point. Choose "mirror a repository" first. Nothing was changed.',
+      };
+    }
+    const previousRoot = (mf.manifest.repo && typeof mf.manifest.repo.root === 'string') ? mf.manifest.repo.root : null;
+
+    const out = await refreshRemoteCore(domain, target, paths, files, {
+      source: 'remote',
+      remote,
+      tokenSource,
+      // THE ONE LINE THAT MAKES THIS A SWITCH: the manifest's `repo.root` is
+      // written as null in the copy's OWN `writeManifest`, and an empty work
+      // list still verifies the remote and records it.
+      switchSource: true,
+      // TEST SEAMS ONLY, forwarded exactly as `refreshFoundationsFromRepo`
+      // forwards them. `token` is NOT among them, here or there.
+      fetchImpl: inp.fetchImpl,
+      sleepImpl: inp.sleepImpl,
+      onWarn: inp.onWarn,
+    });
+    // NOTHING WAS WRITTEN — the manifest still names the old source, every
+    // document is untouched, and the owner can correct the repository, the
+    // branch, the folder or the token and ask again.
+    if (!out || out.ok === false) {
+      return {
+        ...(out || {}), ok: false,
+        reason: (out && out.reason) || 'io',
+        rootCleared: false, previousRoot,
+        message: `${(out && out.message) || 'The repository could not be read.'} `
+          + 'The source was NOT changed: this project still mirrors what it mirrored before.',
+      };
+    }
+    const notes = Array.isArray(out.notes) ? out.notes.slice() : [];
+    notes.push(previousRoot
+      ? `source: this mirror now reads ${remote.owner}/${remote.repo} over GitHub; the folder path it used to `
+        + 'copy from is cleared, so every machine reads the same source'
+      : `source: this mirror now reads ${remote.owner}/${remote.repo} over GitHub`);
+    return { ...out, rootCleared: true, previousRoot, notes };
+  });
 }
 
 /** Candidate cap for one repository scan. Bounds the response and the picker. */

@@ -118,6 +118,16 @@
  *                                                checkout is not on this
  *                                                machine; 409 only when BOTH
  *                                                arms are impossible
+ *   POST   /:domain/:project/foundations/source
+ *                                            "Mirror from GitHub instead"
+ *                                            (v3.65.1) — re-point an existing
+ *                                            repo-owned mirror at a GitHub
+ *                                            repository {remote, tokenSource?,
+ *                                            files?}: the bytes are re-copied,
+ *                                            `repo.remote` is set and
+ *                                            `repo.root` cleared in ONE write,
+ *                                            ownership stays `repo`, and
+ *                                            `readFirst` survives by slug
  *   GET    /:domain/:project/capture         the honesty meter — sessions,
  *                                            read/saved, off the local usage
  *                                            log (v3.63.0; `?since=`, `?limit=`;
@@ -2547,6 +2557,139 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
     });
   } catch (err) {
     console.error('Memory foundations refresh error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// POST /api/memory/:domain/:project/foundations/source — "Mirror from GitHub
+// instead" (v3.65.1)
+//
+// ONE SOURCE PER PROJECT, RE-CHOSEN. `…/init` makes the ownership decision
+// once and refuses to re-make it; this route does not touch ownership at all
+// — it stays `repo` — and changes only WHERE the bytes are copied from. The
+// gap it closes is measured in the store: `refreshRemoteCore` has always
+// PRESERVED `repo.root`, so a mirror born from a folder went on taking the
+// local arm on that machine for ever and "this project now lives in GitHub"
+// could not be said.
+//
+// A POST, NOT A PATCH: it fetches blobs and rewrites files. It joins this
+// repository's mutating-route census (`test-route-write-guards.js`) for that
+// reason, beside `…/init` and `…/refresh`.
+//
+// NO TOKEN CROSSES THIS ROUTE, and a `token` key is refused BY NAME rather
+// than ignored — ignoring it says nothing and invites a second attempt.
+// `tokenSource` names WHICH FILE on this computer the credential is read
+// from, exactly as on `…/init` and `…/refresh`.
+// ═════════════════════════════════════════════════════════════════════════
+/**
+ * THE BODY THIS ROUTE ACCEPTS, and nothing else.
+ *
+ * `files` is here because the switch takes the same work list a refresh does:
+ * absent means "the documents this mirror already lists", which is the right
+ * default for changing a source, and a named list may add one. Exported so
+ * the refusal can PRINT it, exactly as `INIT_BODY_FIELDS` is.
+ */
+export const SOURCE_BODY_FIELDS = new Set(['remote', 'tokenSource', 'files']);
+
+router.post('/:domain/:project/foundations/source', async (req, res) => {
+  try {
+    const { domain, project } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    if (await refuseMirror(res, domain)) return;
+    if (!validProjectName(ws(), project)) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
+      });
+    }
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    const extra = Object.keys(body).filter((k) => !SOURCE_BODY_FIELDS.has(k));
+    if (extra.length) {
+      return res.status(400).json({
+        ok: false, reason: 'unexpected_fields', fields: extra.slice(0, 10),
+        error: `This route accepts ${[...SOURCE_BODY_FIELDS].join(', ')}. It was also sent: ${extra.slice(0, 10).join(', ')}.`
+          + (extra.includes('token')
+            ? ' A GitHub token is NEVER sent here: `tokenSource` names which file on this computer to read it from '
+              + '(`config` = the read-only token in Settings, `sync` = Personal Sync’s own).'
+            : ''),
+      });
+    }
+    // The STORE validates the remote's grammar and the token source, with the
+    // same validators `…/refresh` uses — a second copy here would be a second
+    // thing to keep in step, and it would decide refusals the store then
+    // decides again.
+    const namedRemote = typeof body.remote === 'string' && body.remote.trim()
+      ? body.remote.trim().slice(0, 300)
+      : (body.remote && typeof body.remote === 'object' && !Array.isArray(body.remote) ? body.remote : null);
+    const out = await fstore().setFoundationsSource(domain, project, {
+      ...(namedRemote ? { remote: namedRemote } : {}),
+      ...(typeof body.tokenSource === 'string' ? { tokenSource: body.tokenSource } : {}),
+      ...(Array.isArray(body.files) ? { files: body.files } : {}),
+    });
+    if (!out || out.ok === false) {
+      const reason = (out && out.reason) || 'io';
+      // ── ONE REFUSAL THIS ROUTE ANSWERS ITSELF ────────────────────────
+      // The shared table maps the store's `ownership-mismatch` to
+      // `repo_owned`, 400 — the right word on `PUT …/foundations/:slug`,
+      // where the refusal IS "this project is repo-owned", and the wrong one
+      // here, where the project is curator-owned or has chosen nothing. 409
+      // rather than 400 for the reason `statusForStoreRefusal` already gives
+      // it to `repo_unreachable` and `locked`: nothing is malformed, the
+      // server's own state is simply not one this request can act on.
+      // `ownership` rides along so a client can tell the two apart without
+      // parsing prose.
+      if (reason === 'ownership-mismatch') {
+        return res.status(409).json(withErrorProse({
+          ...(out || {}), ok: false, domain, project,
+          reason: 'ownership_mismatch', ownership: out.ownership ?? null,
+        }));
+      }
+      // Every refusal the GitHub READ can name keeps the status it has
+      // through the other two doors — a rate limit is a 429 whichever one it
+      // came through.
+      const remoteStatus = REFRESH_REMOTE_STATUS.get(reason);
+      if (remoteStatus !== undefined) {
+        return res.status(remoteStatus).json(withErrorProse({
+          ...(out || {}), ok: false, domain, project, reason: tier0Reason(reason),
+        }));
+      }
+      return tier0Refusal(res, out || { reason: 'io' }, { domain, project });
+    }
+    res.json({
+      ok: true, domain, project,
+      // WHERE IT READS FROM NOW, and WHICH FILE the token came from — never
+      // the token. Taken from the store rather than echoed from the request,
+      // so a response can never name a source that was not used.
+      remote: out.remote && typeof out.remote === 'object' ? {
+        owner: out.remote.owner ?? null,
+        repo: out.remote.repo ?? null,
+        ref: out.remote.ref ?? null,
+        path: out.remote.path ?? null,
+      } : null,
+      tokenSource: out.tokenSource ?? null,
+      // THE SWITCH ITSELF. `previousRoot` is the folder this mirror used to
+      // copy from — already on the wire through `foundations.repo.root`, and
+      // named here so the view can say what changed rather than what is.
+      rootCleared: out.rootCleared === true,
+      previousRoot: typeof out.previousRoot === 'string' ? out.previousRoot : null,
+      refreshed: Array.isArray(out.refreshed) ? out.refreshed : [],
+      unchanged: Array.isArray(out.unchanged) ? out.unchanged : [],
+      added: Array.isArray(out.added) ? out.added : [],
+      // NEVER DELETED, ONLY REPORTED — the same rule the refresh keeps.
+      missing: Array.isArray(out.missing) ? out.missing : [],
+      refused: (Array.isArray(out.refused) ? out.refused : []).slice(0, 50).map((r) => ({
+        path: r && typeof r.path === 'string' ? r.path.slice(0, 200) : null,
+        reason: r && typeof r.reason === 'string' ? r.reason.slice(0, 200) : null,
+      })),
+      totalBytes: Number.isInteger(out.totalBytes) ? out.totalBytes : 0,
+      budgetBytes: Number.isInteger(out.budgetBytes) ? out.budgetBytes : 0,
+      budgetExceeded: out.budgetExceeded === true,
+      documentCount: Number.isInteger(out.documentCount) ? out.documentCount : 0,
+      commit: out.commit ?? null,
+      notes: Array.isArray(out.notes) ? out.notes : [],
+    });
+  } catch (err) {
+    console.error('Memory foundations source error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
