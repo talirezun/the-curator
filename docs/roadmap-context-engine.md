@@ -923,14 +923,27 @@ what they saw before. → [user-guide.md](user-guide.md#the-word-on-screen-and-t
 carries the full mapping.
 
 **D2–D4 — step ② Memory, rebuilt.** The **"Last saved"** row is removed; its fact moved into the
-overview's MEMORY tile and into the **Handoffs** row's own summary line — a screen whose whole
-subject this release is stopped saying one thing twice. **Journal** becomes one row with the same
+overview's MEMORY tile and into the **Handoffs** row's own summary line (one right-aligned line,
+handoff count · newest age, with nothing under the title while closed — the newest headline itself
+moved into the body table's own WORKING ON column, first row) — a screen whose whole subject this
+release is stopped saying one thing twice. **Two facts moved out of the unfolded "About the last
+save" monitor (renamed "Warnings about the last save") entirely**, because they were provenance and
+an explanation rather than warnings: which clock an age came from is now the overview's own ⓘ, and
+which machine wrote the open handoff is now the Handoffs table's own MACHINE column per row plus a
+chip in the reader — only genuinely loud outcomes (a trimmed or clipped save, a deliberate replace,
+two harnesses on one scope, newer state elsewhere) stay unfolded, and only when they fire; a healthy
+save renders nothing above the four rows at all. **Journal** becomes one row with the same
 inline **"Show N more"** the Handoffs row already used, replacing a separate footer card and a
 floating button that reset the reader's scroll position on every press. **Capture**'s body drops
 its per-session table entirely: the six facts the table carried (sessions, started with the
-context, saved before stopping, read and did not save, the newest session's age with its harness,
-and the calls made across the window) become six lines in the shared monitor, and the ⓘ that used
-to float alone above the table moved into the step's own ⓘ.
+context, saved before stopping, read and did not save, the tool calls made across the window, and
+the newest session's age with its harness) become up to six lines, in that order, in the shared
+monitor, and the ⓘ that used to float alone above the table moved into the step's own ⓘ. The
+route's "bridge logged no sessions" note is now also withheld when no usage log exists at all —
+previously a false alarm about a bridge that had never run. **Knowledge's picker moves to a head
+row and gains a per-row `default` badge** (D5), shown only while nothing has been explicitly chosen
+and gone the moment you add a domain — the sentence explaining the default moved from under the
+picker into the step's own ⓘ.
 
 **D5 — step ③ Knowledge, corrected rather than redesigned.** The route already wrote
 `knowledgeDomains` as an ADD, not a replace, from the very first domain chosen — the *code* was

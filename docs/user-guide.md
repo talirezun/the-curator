@@ -1729,11 +1729,17 @@ journal is last because it is **history, not the present**: any entry in it may 
 superseded — a blocker named in an old headline may have been fixed three saves ago — and the
 current handoff is what is true now.
 
-**Everything that qualifies this step is above the folds and never folds itself**: content that had
-to be trimmed, a handoff that arrived by sync from another machine, newer state in a different
-scope, another machine that saved *after* this one, two tools sharing one handoff file, a
-save that landed since you opened the page (with a **Reload**), and state on disk this read could
-not list.
+**Everything that qualifies this step is above the folds and never folds itself** — v3.16.1's rule,
+unmoved by the "Last saved" row's removal: content that had to be trimmed, a label that was
+shortened while the handoff itself saved in full, a save that deliberately replaced a larger one,
+two tools sharing one handoff file, newer state in a different scope, another machine that saved
+*after* this one, a save that landed since you opened the page (with a **Reload**), and state on
+disk this read could not list. **What is *not* here any more, as of v3.65.1:** which clock an age
+came from, and that the open handoff was written on another machine and synced here — both were
+genuine facts, not warnings, and a step's body is rows with an ⓘ, never a block of provenance
+sitting above them. Which clock is explained once in the overview's own ⓘ; which machine is now the
+Handoffs table's own **MACHINE** column, per row, and the same fact rides as a chip
+(`synced from another machine`) when you open that handoff in the reader.
 
 ##### ③ Knowledge — which domains a project draws on
 
@@ -1750,6 +1756,13 @@ one from the shared picker — the same component every single-select list in th
 time, never a menu of checkboxes — over every domain on this install; **Remove** now lives *inside*
 each expanded row, beside its two doors, the same place the documents table's own Remove sits.
 Removing the last added domain puts the project back on just its own. **At most twelve.**
+
+**The step's body is the head row and the rows, nothing else.** The forty-word paragraph explaining
+*why* a project reads the domain it lives in used to sit under the picker as its own sentence; it
+now lives only in the step's ⓘ. The one thing that stays on the row itself is a small **default**
+badge — the same quiet badge style the Documents table uses for "shared mirror" — shown only while
+nothing has been explicitly chosen yet; the moment you add a domain, the badge disappears from
+every row, because at that point the set is a choice rather than a default.
 
 Each row's summary line names the domain, its page count, and how long ago it was last written to —
 *"projects · 391 pages · 3 days ago"*, with the domain's own [identity dot](design-system-source.md#18-identity--one-palette-one-mapping-one-glyph-v3651)
@@ -1851,7 +1864,7 @@ still looking at.
 |---|---|
 | **The path line** | `state/<project>/<scope>/<machine>/current.md` — the real file, so you can find it in Obsidian or in your synced repository |
 | **The title** | The handoff's own first line. A handoff with no headline is titled after its scope |
-| **The chips** | A `handoff` type badge, then a chip naming the scope (`work-stream: <slug>` as of v3.65.0's build — the store field is `scope`; [the vocabulary table](#the-word-on-screen-and-the-word-on-disk) above), `machine: <name>`, and — only on positive evidence — **this machine** or **synced from another machine**. A handoff that hit the read cap, or that had protocol-shaped text neutralised on read, says so in a chip too |
+| **The chips** | A `handoff` type badge, then `handoff: <slug>` (v3.65.1 — was `work-stream: <slug>`; the store field itself is `scope`, [the vocabulary table](#the-word-on-screen-and-the-word-on-disk) above), `machine: <name>`, and — only on positive evidence — **this machine** or **synced from another machine**. A handoff that hit the read cap, or that had protocol-shaped text neutralised on read, says so in a chip too |
 | **The reading** | *"Saved 5 hr ago · Claude Code · claude-fable-5-1 · updates live"* — the **same** figure the overview's **MEMORY** tile shows, from the same clock, so the two can never name different times for one save. An **`incomplete`** or **`summary shortened`** badge sits on that line when the save carried one, not under it |
 | **The notes** | The truncation and sanitisation warnings, in full and never folded |
 | **The body** | The handoff, rendered as Markdown |
@@ -1973,24 +1986,43 @@ MEMORY
 saved 4 min ago
 ```
 
-The pip is the pre-attentive half and the word is the exact half. The **qualifying lines** below —
-one save's own warnings, never a fact about the project as a whole — were once folded into a
-*Status* block; from v3.64.1 they sat under the "Last saved" row; **as of v3.65.1, with that row
-gone, they render as their own monitor above the four folds**, unfolded, because a warning is never
-folded away regardless of which row it used to sit under. They still appear **only when each has
-something to say**:
+The pip is the pre-attentive half and the word is the exact half. Below it, step ② can carry up to
+three separate unfolded blocks, each rendered only when it has something to say and never inside a
+chevron — the reader for **v3.16.1**'s rule: *a warning, a cost or an outcome is never one click
+further away than the row it qualifies*.
+
+**"Warnings about the last save"** (renamed from *"About the last save"* in v3.65.1) is the first,
+and the only one this table is about. It carries **outcomes about one specific save** — not the two
+clocks, not which machine wrote it, both of which moved elsewhere in this same release (below). On
+an ordinary save, on the agent's own clock, complete, with one harness, it renders **nothing at
+all** — no empty card, no monitor with zero lines — and step ② opens directly on its four rows.
+That is the acceptance picture, reached by having nothing to say rather than by hiding something.
 
 | Line | When it appears | What to do |
 |---|---|---|
-| **`incomplete`** badge, plus *"part of this handoff did not survive the save"* | Handoff CONTENT was cut — a section, or items past a list's 40-item cap. The app knows because the store recorded it | Ask the agent to save that content again. The handoff you are reading really is **missing** what the note names |
-| **`summary shortened`** badge, plus *"the handoff itself was written in full"* | Only a LABEL was clipped — most often the one-line headline, which caps at 200 characters. The handoff body is complete | Nothing urgent. The headline is the one thing a future session sees before deciding whether to open this state, so a clipped one is a weaker index entry — worth a shorter re-save, not a rescue |
-| *"deliberately replaced a larger handoff"* | The agent overrode the guard that normally refuses a small save over a much larger one | Nothing was lost from what it sent — but the longer document it overwrote is not recoverable |
-| *"the reading above is the file's own timestamp"* | No journal entry carried a save time, so the age is the file's, not the agent's | On a computer that syncs, that is when the file **arrived**, not when it was written |
-| *"This file arrived on this computer N ago"* | Both clocks are known and disagree by more than two minutes | Nothing — it is telling you the handoff was written elsewhere and pulled in later |
-| *"Written on `<machine>` and synced here"* | The open handoff was written on another installation | Read the next steps with that in mind — local paths, running processes and checkouts may not match what it describes |
-| *"Newer state in this project: `<scope>`"* | Some **other** scope in this project holds something more recent than the one on screen | Check it — the [Handoffs table](#the-handoffs-table) above is where. An agent told to *"reuse an existing scope"* can be saving beside you into one you are not watching |
-| *"`<machine>` saved after this computer"* | Another **machine** has saved more recently than this one — the same reading the menu bar gives | **Pull before you continue**, or that work will be waiting on the other machine. This is a different question from the line above it |
-| *"Two tools are writing `<scope>`"* | Two agent tools have both saved into the same handoff file and are overwriting each other | Give each tool its own scope name — the same collision, and the same remedy, as [§6b Scenario 1](#scenario-1--two-agent-tools-on-one-computer) |
+| *"Part of this handoff did not survive the save — content named in the note below was dropped or cut short…"* | Handoff CONTENT was cut — a section, or items past a list's cap. The app knows because the store recorded it | Ask the agent to save that content again. The handoff you are reading really is **missing** what the note names |
+| *"That save wrote the handoff in full. What got shortened is a label attached to it…"* | Only a LABEL was clipped — most often the one-line headline, which caps at 200 characters. The handoff body is complete | Nothing urgent. The headline is the one thing a future session sees before deciding whether to open this state, so a clipped one is a weaker index entry — worth a shorter re-save, not a rescue |
+| *"That save deliberately replaced a larger handoff…"* | The agent overrode the guard that normally refuses a small save over a much larger one | Nothing was lost from what it sent — but the longer document it overwrote is not recoverable |
+| *"Two tools are writing `<scope>`…"*, with **"Give each tool its own handoff"** | Two agent tools have both saved into the same handoff file and are overwriting each other | Give each tool its own scope — the same collision, and the same remedy, as [§6b Scenario 1](#scenario-1--two-agent-tools-on-one-computer). The journal keeps both trails regardless |
+| *"Newer state in this project: `<scope>`…"* | Some **other** scope in this project holds something more recent than the one on screen | Check it — the [Handoffs table](#the-handoffs-table) above is where. An agent told to *"reuse an existing scope"* can be saving beside you into one you are not watching |
+| *"`<machine>` saved after this computer…"*, with **"Pull before you continue, or that work will be waiting there"** | Another **machine** has saved more recently than this one — the same reading the menu bar gives | **Pull before you continue.** This is a different question from the line above it — that one is about a scope on THIS machine you are not watching, this one is about the same work continuing on another machine |
+
+**Two facts that used to be unfolded lines here are gone from this monitor as of v3.65.1 — not
+dropped, moved:** which clock an age came from (the agent's own, or the file's, when no journal
+entry carried a save time) is explained once in the overview card's own ⓘ, since it qualifies every
+age on the page rather than one save; and that the open handoff was written on another machine and
+synced here is now the Handoffs table's own **MACHINE** column, per row — more precise than one
+sentence about whichever pair happened to be open — and rides as a **synced from another machine**
+chip when you open that handoff in the [reader](#reading-a-handoff). Both were genuine facts, never
+warnings, and the step-body rule is that an explanation lives in the ⓘ or in a row, never in a block
+sitting above the rows.
+
+**Two more things can appear here, separately from the save-warnings monitor above:** a **Reload**
+notice, when an agent has saved to this project since you opened the page — pressing it re-reads
+rather than assuming the newer save should simply replace what is on screen; and a note when some
+part of this project's state exists on disk but could not be read by name (an unreadable directory,
+an unreadable machine folder), which says so rather than silently showing fewer rows than there
+really are.
 
 > **The tile says "saved", never "you are saved".** It knows when the last save happened; it cannot
 > know whether anything has changed since. That inference is left where it belongs — with you.
@@ -4344,12 +4376,13 @@ title and an ⓘ beside it — no sentence under the heading). Four closed rows 
 "Handoffs" · "The brief" · "Journal". Capture's own row reads, at its right
 edge, "6 sessions in the last 30 days · 4 started with the context · 4 saved before stopping · 2
 read and did not save", with a green dot. Opening it reveals a recessed, monospace panel — the
-same instrument every live reading in the app now uses — six lines, no table: sessions in the last
-30 days, started with the context, saved before stopping, read and did not save (in the warning
-tone once it is non-zero), the newest session's age with the harness that wrote it as a sub-line,
-and the calls made across the window. Two lines sit below the row, never behind its chevron: "412
-lines predate session ids and are not counted", and a quieter "25 self-test calls excluded". The
-word "Sessions" appears nowhere on the page outside the ⓘ.](images/curator-capture-meter.png)
+same instrument every live reading in the app now uses — up to six lines, no table, in this order:
+sessions in the last 30 days, started with the context, saved before stopping, read and did not
+save (in the warning tone once it is non-zero), the tool calls made across the window, and the
+newest session's age with the harness that wrote it as a sub-line. Two lines sit below the row,
+never behind its chevron: "412 lines predate session ids and are not counted", and a quieter "25
+self-test calls excluded". The word "Sessions" appears nowhere on the page outside the
+ⓘ.](images/curator-capture-meter.png)
 
 *As of v3.65.0, Capture became one row among the other four, not a card sitting above a separate
 "Sessions" fold. **As of v3.65.1 its body dropped the per-session table entirely** — the maintainer's
@@ -4412,6 +4445,16 @@ session reading's own clock — and, when the window holds saves but zero sessio
 the readout: *"Saves in this window arrived through a bridge that logged no sessions — restart the
 app that launched it (usually Claude Desktop)."* The note is dropped whenever `noSessionsButSaves`
 is false, so a genuinely quiet project still reads as quiet.
+
+**v3.65.1 gates the same note a second way, on the usage log's own presence.** The route's
+"stale bridge" note is computed from the project's OWN save history, independent of whether a usage
+log exists at all — so on a computer with no usage log but a recent save on disk, the route named a
+bridge that had logged no sessions and told you to restart it, a remedy for a bridge that had never
+run, sitting beside a summary already saying the log does not exist. The view now withholds that one
+note when there is no log at all: with no log, the row's own summary (*"no usage log on this
+computer yet"*) is the whole answer. The note's other cases — the log exists but predates this
+project's usage entirely, or carries calls too old to have a session id — are unaffected by this
+gate and still render exactly as the route sends them.
 
 > The same reading is available from the terminal (`my-curator doctor`) and as a per-harness matrix
 > row (`node scripts/measure-harness.js --harness claude-code --since <date>`), from the same
