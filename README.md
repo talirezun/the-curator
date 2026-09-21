@@ -48,8 +48,8 @@ anyone else's server.
 | Kind | What it holds | How it changes | Example |
 |---|---|---|---|
 | **Compounded knowledge** — the wiki | Entities, concepts and summaries, cross-linked into a graph | **Accumulates** — a new source updates existing pages instead of duplicating them | A page per person, tool and idea across everything you have read |
-| **Volatile state** — the standing brief, the handoff, the journal | Where a piece of work stands, per project | **Supersedes** — each save replaces the last, because a resolved blocker must not come back | Where you stopped, what you decided, what to do next |
-| **Canonical documents** — foundations, new in v3.59.0 | Architecture, decisions, conventions, roadmap — verbatim | **Replaced whole** — mirrored byte-for-byte from a repository, written by an agent you asked, or (v3.61.0) written or edited by you directly, in the app | The document an agent should not start work without |
+| **Volatile state** — the standing brief, the handoff, the journal (on screen since v3.65.1: **Memory**) | Where a piece of work stands, per project | **Supersedes** — each save replaces the last, because a resolved blocker must not come back | Where you stopped, what you decided, what to do next |
+| **Canonical documents** — foundations, new in v3.59.0 (on screen since v3.65.1: **Documents**) | Architecture, decisions, conventions, roadmap — verbatim | **Replaced whole** — mirrored byte-for-byte from a repository, written by an agent you asked, or (v3.61.0) written or edited by you directly, in the app, or (v3.65.1) re-pointed at a repository with **"Mirror from GitHub instead"** | The document an agent should not start work without |
 
 Since v3.62.0 you also choose **which** foundations an agent is handed automatically: mark a
 document **read first** and its text reaches every session, and everything else arrives as an index
@@ -98,7 +98,7 @@ owner — you.
 |---|---|---|
 | **1. Your brain** — a personal wiki per domain | What you have read and understood: entities, concepts, summaries, all cross-linked | Knowledge **accumulates** — every source adds to existing pages instead of duplicating them |
 | **2. Your team's brain** — [Shared Brain](docs/shared-brain-user-guide.md) *(opt-in)* | The same, built collectively by a cohort, team or research group; your other domains never leave your machine | Knowledge **accumulates**, collectively |
-| **3. Your agents' brain** — [working state](docs/working-state.md) | Where the work stands, per **project** — what is settled, what to do next, what was already tried and ruled out — plus that project's **foundations**, its canonical documents held verbatim. A domain holds as many projects as you build in it | State **supersedes** — each save replaces the previous handoff, because a resolved blocker must not come back. A foundation is **replaced whole** |
+| **3. Your agents' brain** — [working state](docs/working-state.md), called **Memory** on screen since v3.65.1 | Where the work stands, per **project** — what is settled, what to do next, what was already tried and ruled out — plus that project's **foundations** (on screen: **Documents**), its canonical documents held verbatim. A domain holds as many projects as you build in it | State **supersedes** — each save replaces the previous handoff, because a resolved blocker must not come back. A foundation is **replaced whole** |
 
 Layers 1 and 2 are built by *ingesting* sources — that is the means, not the point. Layer 3 is
 written by your agent at the end of a session and read at the start of the next one, so
