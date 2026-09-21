@@ -1610,6 +1610,118 @@ router.delete('/:domain/projects/:project', async (req, res) => {
   }
 });
 
+/** The store's refusals, in this router's underscored spelling. Explicit,
+ *  and a reason this table does not name crosses the wire in the store's own
+ *  spelling — the same rule `TIER0_WIRE_REASON` states. */
+const KNOWLEDGE_WIRE_REASON = new Map([
+  ['not-a-list', 'invalid_knowledge_domains'],
+  ['empty-list', 'invalid_knowledge_domains'],
+  ['invalid-domain', 'invalid_domain'],
+  ['unknown-domain', 'unknown_domain'],
+  ['too-many-domains', 'too_many_domains'],
+  ['unknown-state-project', 'project_not_found'],
+  ['invalid-state-project', 'invalid_project'],
+  ['unsafe-path', 'unsafe_path'],
+]);
+/** A refusal's status, where the shared table would answer 400 for a fact
+ *  that is not about the request's shape. */
+const KNOWLEDGE_STATUS = new Map([
+  // The project is not there. 404 for the same reason `handleDetail` answers
+  // 404 for a project that does not exist.
+  ['unknown-state-project', 404],
+  // A domain that is not on this computer is a fact about the SERVER's state
+  // as much as the request's, but the caller named it and can fix it: 400,
+  // with the names that were not found in `domains`.
+  ['unknown-domain', 400],
+  ['locked', 409],
+]);
+
+// ═════════════════════════════════════════════════════════════════════════
+// PATCH /api/memory/:domain/:project/knowledge/domains — which wikis (v3.65.0)
+//
+// A HUMAN WRITE, AND LEGITIMATE. The router's tier boundary above stands
+// unchanged: tiers 2 and 3 are agent-only, tier 1 is the human's. This writes
+// NEITHER. `knowledgeDomains` is CURATOR METADATA ABOUT the project — which
+// wikis its knowledge lives in — held in `state/[<project>/]project.json`,
+// which has exactly one writer (the owner, here) and stamps nothing with an
+// agent's provenance. It is the same reading that made v3.62.0's
+// `readFirst` PATCH legitimate on either ownership: metadata about a thing is
+// not the thing. `save_working_state` and `my-curator save` do NOT write it —
+// an agent does not choose a project's knowledge.
+//
+// FOUR SEGMENTS, DELIBERATELY. `PATCH /:domain/projects/:project` is
+// registered above and matches any three-segment PATCH whose SECOND segment
+// is literally `projects` — and a domain's own project is named after the
+// domain, so the maintainer's own `projects/projects` would have had its
+// knowledge write swallowed by the rename handler (v3.62.0's `?as=project`
+// collision, in the one shape a query parameter cannot fix: a PATCH body
+// cannot disambiguate a path that already matched something else). Four
+// segments cannot collide with it at all, and `…/foundations/:slug` is the
+// precedent for a project sub-resource at that depth.
+//
+// A STRICT ONE-FIELD BODY, the template being v3.62.0's `readFirst` PATCH:
+// an unknown key is a 400 rather than a silent ignore, because this route
+// records a decision and a decision half-applied is worse than refused.
+// `null` CLEARS the choice — the project goes back to reading as its own
+// domain — and is not the same as `[]`, which is refused: a project that
+// searches nothing has no knowledge, and nobody means that.
+// ═════════════════════════════════════════════════════════════════════════
+router.patch('/:domain/:project/knowledge/domains', async (req, res) => {
+  try {
+    const { domain, project } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    if (await refuseMirror(res, domain)) return;
+    if (!validProjectName(ws(), project)) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
+      });
+    }
+
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    if (!Object.prototype.hasOwnProperty.call(body, 'knowledgeDomains')) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_knowledge_domains',
+        error: 'Send `{ knowledgeDomains: ["research", "business"] }`, or `{ knowledgeDomains: null }` '
+          + 'to go back to this project’s own domain.',
+      });
+    }
+    const extra = Object.keys(body).filter((k) => k !== 'knowledgeDomains');
+    if (extra.length) {
+      return res.status(400).json({
+        ok: false, reason: 'unexpected_fields', fields: extra.slice(0, 10),
+        error: `This route accepts only \`knowledgeDomains\`. It was also sent: ${extra.slice(0, 10).join(', ')}.`,
+      });
+    }
+    const wanted = body.knowledgeDomains;
+    if (wanted !== null && !Array.isArray(wanted)) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_knowledge_domains',
+        error: '`knowledgeDomains` must be a list of domain names, or null to clear the choice.',
+      });
+    }
+
+    const out = await ws().setKnowledgeDomains(domain, project, wanted);
+    if (!out || out.ok === false) {
+      const reason = (out && out.reason) || 'io';
+      return res.status(KNOWLEDGE_STATUS.get(reason) ?? statusForStoreRefusal({ reason }))
+        .json(withErrorProse({ ...(out || {}), ok: false, domain, project, reason: KNOWLEDGE_WIRE_REASON.get(reason) || reason }));
+    }
+    res.json({
+      ok: true, domain, project,
+      knowledgeDomains: Array.isArray(out.knowledgeDomains) ? out.knowledgeDomains : [],
+      // WAS IT CHOSEN, OR IS IT THE DEFAULT. The same pair the read carries,
+      // so a view can repaint from this reply without a second request — and
+      // so `cleared: true` is never mistaken for "now empty".
+      knowledgeDomainsDefaulted: out.knowledgeDomainsDefaulted === true,
+      cleared: out.cleared === true,
+      cap: Number.isInteger(out.cap) ? out.cap : null,
+    });
+  } catch (err) {
+    console.error('Memory knowledge-domains error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ═════════════════════════════════════════════════════════════════════════
 // GET /api/memory/:domain/:project/foundations/:slug — ONE document, verbatim
 //

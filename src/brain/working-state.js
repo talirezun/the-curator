@@ -205,6 +205,18 @@ export const STATE_DIRNAME = 'state';
 export const BRIEF_FILENAME = 'project.md';
 export const CURRENT_FILENAME = 'current.md';
 export const JOURNAL_FILENAME = 'journal.jsonl';
+// ── Project metadata (v3.65.0) — see the KNOWLEDGE DOMAINS block below ────
+/** The project's own small metadata file, BESIDE project.md and never inside
+ *  it: project.md is the human's hand-authored standing brief, and a machine
+ *  that rewrites it is a second writer of a file that has one. */
+export const PROJECT_META_FILENAME = 'project.json';
+export const PROJECT_META_VERSION = 1;
+/** Read cap for project.json. It holds a handful of slugs; a larger file is
+ *  not one this store wrote, and it is refused rather than parsed. */
+export const MAX_PROJECT_META_BYTES = 64 * 1024;
+/** How many knowledge domains one project may point at — a bound on the
+ *  picker, on the envelope and on what a retrieval across them can cost. */
+export const MAX_KNOWLEDGE_DOMAINS = 12;
 // ── Tier 0, the foundations (v3.59.0) — see the FOUNDATIONS block below ────
 export const FOUNDATIONS_DIRNAME = 'foundations';
 export const FOUNDATIONS_MANIFEST_FILENAME = 'manifest.json';
@@ -1485,7 +1497,14 @@ export const LATEST_SCOPE = 'latest';
 // both a project root and the default project's document folder. Refused here
 // (`projectPrefix` returns null), which is what refuses it on every read and
 // write path at once; the routes refuse it at create with the same shape.
-const RESERVED_PROJECT_NAMES = new Set([BRIEF_FILENAME, JOURNAL_FILENAME, CURRENT_FILENAME, FOUNDATIONS_DIRNAME]);
+// `project.json` (v3.65.0) joins them for exactly the reason `project.md` is
+// on the list: the domain's own project keeps its metadata at `state/
+// project.json`, so a project of that name would have to be a DIRECTORY where
+// that file is. Refused here, which refuses it on every read and write path at
+// once.
+const RESERVED_PROJECT_NAMES = new Set([
+  BRIEF_FILENAME, JOURNAL_FILENAME, CURRENT_FILENAME, FOUNDATIONS_DIRNAME, PROJECT_META_FILENAME,
+]);
 /** A scope of this name would put `<machine>/current.md` INSIDE the
  *  foundations folder. Refused at save; a pre-existing directory of that name
  *  stays readable, because refusing a read would hide state that is on disk. */
@@ -4066,6 +4085,18 @@ export async function readWorkingState(project, opts = {}) {
   // manifest this store cannot read" are different facts.
   out.foundations = await summariseFoundations(project, inner);
 
+  // WHICH WIKIS THIS PROJECT'S KNOWLEDGE LIVES IN (v3.65.0). One small read,
+  // on EVERY read of this envelope including the scope-less one, because an
+  // agent that is told where the state is and not where the knowledge is has
+  // to guess — and its guess has always been "the containing domain", which
+  // is now a value it can read rather than an assumption it makes.
+  // `knowledgeDomainsDefaulted` is the second half of that fact: a list and
+  // the absence of a choice must never collapse into one value.
+  const meta = await readProjectMeta(project, inner);
+  out.knowledgeDomains = meta.knowledgeDomains;
+  out.knowledgeDomainsDefaulted = meta.knowledgeDomainsDefaulted;
+  if (meta.metaError) out.knowledgeDomainsError = meta.metaError;
+
   const scopeResolution = await resolveScope(project, inner, opts && typeof opts === 'object' ? opts.scope : undefined);
   if (!scopeResolution.ok) return { ok: false, reason: scopeResolution.error, message: scopeResolution.message };
   const wantScope = scopeResolution.scope;
@@ -4303,6 +4334,265 @@ export async function readWorkingState(project, opts = {}) {
   }
 
   return out;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// KNOWLEDGE DOMAINS — WHICH WIKIS THIS PROJECT'S KNOWLEDGE LIVES IN (v3.65.0)
+// ═════════════════════════════════════════════════════════════════════════
+//
+// WHAT IT ANSWERS. Until this release a project's knowledge WAS the wiki of
+// the domain it happens to live in, by construction: nothing named that
+// domain, nothing could point at a second one, and an agent handed the
+// bootstrap had no field telling it where to search. `knowledgeDomains` is
+// that field — a list of domain slugs, in the owner's own order.
+//
+// IT IS CURATOR METADATA ABOUT THE PROJECT, NOT STATE. That is the whole
+// reason it may be written from the app: the single-writer rule is "one
+// writer per FILE, with provenance that matches" (v3.61.0's restatement), and
+// this file has exactly one writer — the owner, through the app. Tiers 2 and
+// 3 stay agent-only over MCP; an agent does NOT choose a project's knowledge,
+// so neither `save_working_state` nor `my-curator save` writes here.
+//
+// WHERE IT LIVES, AND THE THREE PLACES IT DELIBERATELY DOES NOT.
+//   ·  `state/[<project>/]project.json` — a small JSON file beside the brief.
+//   ✗  NOT `project.md`: that is the human's hand-authored brief, and a
+//      machine rewriting it to store a list is a second writer of a file
+//      with one (and would have to parse prose to find its own field).
+//   ✗  NOT `foundations/manifest.json`: that manifest is per-DOCUMENT and is
+//      rewritten whole by the mirror. A project with no foundations at all
+//      has no manifest, and it may still choose its knowledge.
+//   ✗  NOT a handoff: a handoff SUPERSEDES and is per (scope, machine), so
+//      the same choice would read differently on two machines and would be
+//      re-decided by whichever agent saved last.
+//
+// SYNC. `state/` syncs and this file carries NO machine segment, exactly like
+// `project.md` — the same carve-out, for the same reason: it is one decision
+// per project, not one per computer. Two machines editing it produce the
+// conflicting hunk `docs/sync.md` already documents for the brief.
+//
+// THE DEFAULT IS A FACT, NOT A GUESS. Absent (or unreadable) reads as
+// `[<containing domain>]` with `knowledgeDomainsDefaulted: true` beside it,
+// so every project that existed before this release reads exactly as it
+// behaved — and no consumer has to decide whether an empty list means "none"
+// or "never chosen". The containing domain is NOT forced into a chosen list:
+// a project may point ONLY at other domains, which is the case that makes
+// the field worth having.
+// ═════════════════════════════════════════════════════════════════════════
+
+/** `state/[<project>/]project.json`, or null when the project is unusable. */
+function projectMetaPath(domain, project) {
+  const prefix = projectPrefix(domain, project);
+  if (prefix === null) return null;
+  return resolveInsideState(domain, `${prefix}${PROJECT_META_FILENAME}`);
+}
+
+/**
+ * Normalise a knowledge-domain list WITHOUT touching the disk.
+ *
+ * Returns `{domains, dropped}` — `dropped` naming every entry that did not
+ * survive and why, because a list silently shortened is a list nobody can
+ * debug. Order is the caller's, duplicates collapse to their FIRST position,
+ * and the cap is applied last so a 13th entry is reported rather than the
+ * first twelve being re-ordered around it.
+ */
+export function normaliseKnowledgeDomains(raw) {
+  const dropped = [];
+  if (raw === undefined || raw === null) return { domains: [], dropped };
+  if (!Array.isArray(raw)) return { domains: [], dropped: [{ domain: null, reason: 'not-a-list' }] };
+  const domains = [];
+  const seen = new Set();
+  for (const entry of raw) {
+    const label = typeof entry === 'string' ? entry.trim() : String(entry ?? '').slice(0, 64);
+    if (typeof entry !== 'string' || !label || !isSafeSegment(label)) {
+      dropped.push({ domain: label.slice(0, 64) || null, reason: 'invalid-domain' });
+      continue;
+    }
+    if (seen.has(label)) { dropped.push({ domain: label, reason: 'duplicate' }); continue; }
+    if (domains.length >= MAX_KNOWLEDGE_DOMAINS) { dropped.push({ domain: label, reason: 'over-cap' }); continue; }
+    seen.add(label);
+    domains.push(label);
+  }
+  return { domains, dropped };
+}
+
+/**
+ * Read `project.json`. NEVER throws, never refuses a read: an unreadable or
+ * malformed file yields the DEFAULT with `metaError` naming the defect, so a
+ * hand-broken metadata file can never take a project's bootstrap down with
+ * it. That is the same direction `manifestError` takes one tier up.
+ *
+ * NO DISK PROBE OF THE NAMED DOMAINS. Existence is checked where the choice
+ * is MADE (`setKnowledgeDomains`), not on every read: the bootstrap, the tray
+ * and every project row would otherwise pay a domains-folder listing to
+ * render a list of names. A domain deleted afterwards therefore still reads
+ * here — and the surfaces that resolve it say so in their own words.
+ */
+export async function readProjectMeta(domain, project) {
+  const inner = project !== undefined && project !== null && project !== '' ? String(project) : domain;
+  // The default is ALWAYS the containing domain, whichever project this is.
+  const fallback = {
+    ok: true, project: inner, domain,
+    knowledgeDomains: isSafeSegment(domain) ? [domain] : [],
+    knowledgeDomainsDefaulted: true,
+    metaError: null,
+  };
+  const abs = projectMetaPath(domain, inner);
+  if (!abs) return fallback;
+  const r = await readCapped(abs, MAX_PROJECT_META_BYTES);
+  if (!r) return fallback;
+  if (r.truncated) {
+    return { ...fallback, metaError: `${PROJECT_META_FILENAME} is ${r.bytes} bytes, over the ${MAX_PROJECT_META_BYTES}-byte read cap` };
+  }
+  let parsed;
+  try { parsed = JSON.parse(r.text); } catch (err) {
+    return { ...fallback, metaError: `${PROJECT_META_FILENAME} is not valid JSON: ${String(err?.message ?? err).slice(0, 120)}` };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ...fallback, metaError: `${PROJECT_META_FILENAME} is not a JSON object` };
+  }
+  if (parsed.knowledgeDomains === undefined || parsed.knowledgeDomains === null) return fallback;
+  const { domains, dropped } = normaliseKnowledgeDomains(parsed.knowledgeDomains);
+  if (!domains.length) {
+    // An EMPTY chosen list is not a choice this store can act on — a project
+    // that searches nothing has no knowledge at all — so it reads as the
+    // default WITH the defect named, rather than as a silent nothing.
+    return {
+      ...fallback,
+      metaError: `${PROJECT_META_FILENAME} lists no usable knowledge domain`
+        + (dropped.length ? ` (${dropped.slice(0, 5).map((d) => `${d.domain ?? '?'}: ${d.reason}`).join(', ')})` : ''),
+    };
+  }
+  return {
+    ok: true, project: inner, domain,
+    knowledgeDomains: domains,
+    knowledgeDomainsDefaulted: false,
+    metaError: dropped.length
+      ? `${dropped.length} entr${dropped.length === 1 ? 'y' : 'ies'} in ${PROJECT_META_FILENAME} were dropped `
+        + `(${dropped.slice(0, 5).map((d) => `${d.domain ?? '?'}: ${d.reason}`).join(', ')})`
+      : null,
+  };
+}
+
+/**
+ * Set a project's knowledge domains. THE HUMAN'S WRITE, through the app.
+ *
+ * Refusals, each naming what it refused: `invalid-state-project` /
+ * `unknown-state-project` (via `checkProjectTarget`, which also refuses a
+ * read-only Shared Brain mirror), `not-a-list`, `empty-list` (a project that
+ * searches nothing is not a state this can record — clear the choice by
+ * passing null, which restores the default), `invalid-domain`,
+ * `unknown-domain` (not on disk — the ONE place existence is checked),
+ * `too-many-domains`, `unsafe-path`, `locked`, `io`.
+ *
+ * A `shared-*` mirror IS allowed as a knowledge domain: reading a mirror's
+ * wiki is exactly what a mirror is for. `isDomainReadonly` governs WRITING to
+ * a domain, and nothing here writes to the domains named — it writes one file
+ * in THIS project.
+ *
+ * `null` clears the choice: the file's field is removed (and the file with
+ * it when nothing else is in it), and the project reads as defaulted again.
+ */
+export async function setKnowledgeDomains(domain, project, list, opts = {}) {
+  const target = await checkProjectTarget(domain, project);
+  if (!target.ok) return target;
+  const abs = projectMetaPath(domain, target.project);
+  if (!abs) return { ok: false, reason: 'unsafe-path', message: 'That project resolves outside the state folder.' };
+
+  const clearing = list === null;
+  let domains = [];
+  if (!clearing) {
+    if (!Array.isArray(list)) {
+      return {
+        ok: false, reason: 'not-a-list',
+        message: 'Knowledge domains must be a list of domain names, for example ["research", "business"]. Nothing was changed.',
+      };
+    }
+    const norm = normaliseKnowledgeDomains(list);
+    const bad = norm.dropped.find((d) => d.reason === 'invalid-domain');
+    if (bad) {
+      return {
+        ok: false, reason: 'invalid-domain', domain: bad.domain,
+        message: `"${String(bad.domain ?? '').slice(0, 40)}" is not a usable domain name. Nothing was changed.`,
+      };
+    }
+    const over = norm.dropped.find((d) => d.reason === 'over-cap');
+    if (over) {
+      return {
+        ok: false, reason: 'too-many-domains', cap: MAX_KNOWLEDGE_DOMAINS,
+        message: `A project may point at ${MAX_KNOWLEDGE_DOMAINS} knowledge domains at most. Nothing was changed.`,
+      };
+    }
+    if (!norm.domains.length) {
+      return {
+        ok: false, reason: 'empty-list',
+        message: 'A project with no knowledge domain would have nothing to search. Send at least one, '
+          + 'or send null to go back to this project’s own domain. Nothing was changed.',
+      };
+    }
+    // THE ONE EXISTENCE CHECK. `listDomains()` is the app's single authority
+    // on what a domain IS (a directory carrying a CLAUDE.md schema), so
+    // membership in it refuses a ghost folder, a typo and a traversal alike —
+    // the same allow-list `requireDomain` leans on at the route.
+    const known = new Set(
+      typeof opts.listDomains === 'function' ? await opts.listDomains() : await listDomains(),
+    );
+    const missing = norm.domains.filter((d) => !known.has(d));
+    if (missing.length) {
+      return {
+        ok: false, reason: 'unknown-domain', domains: missing.slice(0, MAX_KNOWLEDGE_DOMAINS),
+        message: `${missing.slice(0, 5).map((d) => `"${d}"`).join(', ')} ${missing.length === 1 ? 'is not a domain' : 'are not domains'} `
+          + 'on this computer. Nothing was changed.',
+      };
+    }
+    domains = norm.domains;
+  }
+
+  // The domain-wide write lock, taken for the same reason every tier-0 write
+  // takes it: this file has no machine segment, so the app and the MCP child
+  // could target it at once. (The helper is named for the tier that first
+  // needed it; the lock it takes is the domain's.)
+  return withFoundationsLock(domain, 'set-knowledge-domains', async () => {
+    // READ–MODIFY–WRITE, so a field this release does not know about is not
+    // deleted by a release that only wanted to change one of them.
+    let existing = {};
+    const r = await readCapped(abs, MAX_PROJECT_META_BYTES);
+    if (r && !r.truncated) {
+      try {
+        const parsed = JSON.parse(r.text);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed;
+      } catch { /* a malformed file is REPLACED, not merged into */ }
+    }
+    const next = { ...existing, version: PROJECT_META_VERSION };
+    if (clearing) delete next.knowledgeDomains;
+    else next.knowledgeDomains = domains;
+    // Nothing left but the version → remove the file rather than leave a
+    // stub that says nothing, so "defaulted" is a shape on disk too.
+    const empty = Object.keys(next).every((k) => k === 'version');
+    try {
+      if (empty) { await rm(abs, { force: true }); }
+      else {
+        const dirAbs = prefixDirOf(domain, target.prefix);
+        if (dirAbs) { try { await mkdir(dirAbs, { recursive: true }); } catch { /* it is there, or the write below says why */ } }
+        await writeFileAtomic(abs, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+      }
+    } catch (err) {
+      return { ok: false, reason: 'io', message: `Could not write ${PROJECT_META_FILENAME}: ${scrubPaths(String(err?.message ?? err))}` };
+    }
+    const after = await readProjectMeta(domain, target.project);
+    return {
+      ok: true, domain, project: target.project,
+      knowledgeDomains: after.knowledgeDomains,
+      knowledgeDomainsDefaulted: after.knowledgeDomainsDefaulted,
+      cleared: clearing,
+      cap: MAX_KNOWLEDGE_DOMAINS,
+    };
+  });
+}
+
+/** The directory a project's own files live in — the state root for the
+ *  domain's own project, the project folder otherwise. */
+function prefixDirOf(domain, prefix) {
+  return prefix ? resolveInsideState(domain, prefix.replace(/\/$/, '')) : stateRoot(domain);
 }
 
 // ═════════════════════════════════════════════════════════════════════════

@@ -864,6 +864,21 @@ export async function getWorkingStateHandler(args, storage) {
   // Dropping this object is exactly the class test-working-state-disclosure.js
   // §7 guards, and it went red here before this line existed.
   if (state.foundations) out.foundations = state.foundations;
+  // v3.65.0 — WHICH WIKIS this project's knowledge lives in, and whether that
+  // list was CHOSEN or defaulted to the containing domain. Forwarded here for
+  // the same reason `foundations` is: this handler builds its payload field
+  // by field, so a store disclosure that is not named here does not exist to
+  // an MCP caller — the drop class test-working-state-disclosure.js guards.
+  // The store's OWN SPELLING, like every other disclosure this handler
+  // forwards (`machineIsThisHost`, `requestedMachine`, `installIdAvailable`)
+  // and like `get_project_context`, which forwards unhandled store keys
+  // verbatim — two spellings of one fact across two tools of one server is
+  // the drift this file does not create.
+  if (state.knowledgeDomains !== undefined) {
+    out.knowledgeDomains = state.knowledgeDomains;
+    out.knowledgeDomainsDefaulted = state.knowledgeDomainsDefaulted === true;
+    if (state.knowledgeDomainsError) out.knowledgeDomainsError = state.knowledgeDomainsError;
+  }
   if (state.current) out.current = state.current;
 
   if (state.journal) {
@@ -1588,7 +1603,19 @@ function contextReport(out, project) {
       : ` ${f.changedCount} changed since ${f.seenSource === 'handoff' ? 'the last handoff read them' : 'the hashes you passed'}.`;
     fClause += ' Record `seen` as `foundations_read` on your next save_working_state.';
   }
-  return `Project context for '${project}' in '${out.domain}'.${scopeClause}${briefClause}${fClause}`;
+  // v3.65.0 — WHERE THE KNOWLEDGE IS. Every field above tells an agent where
+  // the project's STATE lives; until this clause it was left to assume which
+  // wiki to search, and its assumption was always "the containing domain".
+  // That assumption is now a value, and `knowledgeDomainsDefaulted` is what
+  // tells the two apart: a list the owner CHOSE is named as their choice, and
+  // the fallback is named as the fallback rather than dressed up as one.
+  const kd = Array.isArray(out.knowledgeDomains) ? out.knowledgeDomains : [];
+  const kClause = kd.length
+    ? ` Knowledge for this project lives in the ${kd.length === 1 ? 'wiki' : 'wikis'} of ${kd.map((d) => `'${d}'`).join(', ')}`
+      + `${out.knowledgeDomainsDefaulted ? ' (not chosen — this project’s own domain, the default)' : ' (the owner’s choice)'}`
+      + ' — search there with search_wiki / search_cross_domain.'
+    : '';
+  return `Project context for '${project}' in '${out.domain}'.${scopeClause}${briefClause}${fClause}${kClause}`;
 }
 
 export async function getProjectContextHandler(args, storage) {
