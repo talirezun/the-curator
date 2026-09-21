@@ -51,6 +51,13 @@ My Curator exposes **twenty-four tools** to whichever client you connect — fou
 | `get_working_state` | Resume a previous session's handoff — brief, decisions, next steps, journal — possibly left by a different tool, model, or machine. Takes a project name, and `scope: "latest"` for its most recent work-stream |
 | `get_project_context` | The session-start bootstrap (v3.59.0) — the brief, the latest handoff, AND the project's foundations, in one call. Prefer this over `get_working_state` at the start of a session. Since v3.62.0 it returns the **index of every document, always**, and the **text** of the ones you marked *read first*; everything else is an index row Claude opens **by name** with `slugs`. Some of what it returns may be a **skeleton** — a document seeded with prompts rather than facts, e.g. from the [start-a-project flow](user-guide.md#start-a-project) — and the tool says so per document, so Claude reads those as questions you want answered rather than as settled fact |
 
+**Both tools also report `knowledgeDomains` and `knowledgeDomainsDefaulted` (v3.65.0)** — which
+wikis this project's *knowledge* lives in, and whether that list is your own choice or the fallback
+to the project's own containing domain. It's how Claude knows where to `search_wiki` /
+`search_cross_domain` for a project whose knowledge lives somewhere other than its own domain.
+**Neither tool writes it** — choosing a project's knowledge domains is your decision, made in the
+app only.
+
 ### Write tools (v2.5.2+)
 
 | Tool | Purpose |
@@ -117,9 +124,30 @@ A frontier model can always get the full picture — it just has to ask in piece
 
     > *Use `list_domains` to show my available knowledge domains, then use `get_graph_overview` on the most interesting one to see how everything is connected.*
 
-This is the screen you set the bridge up from. The install photographed here needs re-connecting — its knowledge folder moved since the config was written, so the pill is amber and the primary button reads **Re-connect**. On a healthy install the pill is a green **Connected**, and pressing **Run self-test** adds a ticked *"Bridge responds"* line reporting how many tools the bridge exposes and how many domains it can see:
+This is the screen you set the bridge up from. **The connection reads as a monitor (v3.65.0)**, not
+a status card: a recessed, terminal-like panel carrying one fact per line — the client, the server
+name, and the knowledge folder the bridge is pointed at — with the connection's state as a word and
+a coloured dot sitting above them. The install photographed here needs re-connecting — its
+knowledge folder moved since the config was written, so the state word reads amber **Needs
+re-connect** and the primary button reads **Re-connect**. On a healthy install the state word is a
+green **Connected**, and pressing **Run self-test** paints a *second* monitor underneath, headed
+**Bridge self-test**, reporting whether the bridge responded, how many tools it exposes and how
+many domains it can see:
 
-![The Curator's Settings screen, MCP bridge section, as two numbered blocks. Block ① "Connect a client" opens with one sentence — "Works with any MCP client running local servers: Claude Desktop, Claude Code, Cursor." — with a small ⓘ help mark right beside it and no separate visible guide link (the "Read the MCP guide" link moved inside the ⓘ in v3.58.0). A status card holds an amber "Needs re-connect" pill beside the monospace chain "Claude Desktop → my-curator → /private/tmp/Curator-domains". Four actions sit under it: a filled "Re-connect", outlined "Run self-test" and "View config", and a plain "Copy snippet". Below a hairline, block ② "Default domain for MCP writes" carries the single line "Used when a client says 'my wiki' without naming a domain.", its own ⓘ, and a dropdown reading "— none (require an explicit domain) —".](images/curator-mcp-bridge.png)
+![The Curator's Settings screen, MCP bridge section, as two numbered blocks. Block ① "Connect a client" opens with one sentence — "Works with any MCP client running local servers: Claude Desktop, Claude Code, Cursor." — with a small ⓘ help mark right beside it and no separate visible guide link (the "Read the MCP guide" link moved inside the ⓘ in v3.58.0). A recessed, terminal-like MONITOR panel holds an amber "Needs re-connect" state word and dot above three lines — client, server, and the knowledge folder "/private/tmp/Curator-domains". Four actions sit under it: a filled "Re-connect", outlined "Run self-test" and "View config", and a plain "Copy snippet". Below a hairline, block ② "Default domain for MCP writes" carries the single line "Used when a client says 'my wiki' without naming a domain.", its own ⓘ, and a dropdown reading "— none (require an explicit domain) —".](images/curator-mcp-bridge.png)
+
+**The same monitor is where a stale bridge is reported.** When a client still has a bridge process
+open from before your last update, a warning line appears *inside* the connection monitor, in its
+own colour, naming how many bridges, how old the oldest one is, and what to do about it — that
+remedy sentence comes from the app itself, never authored here, so it cannot drift from what the
+route actually says. The self-test's own monitor carries the same warning when it applies, because
+a fresh self-test spawns a *new* bridge and says nothing about the one your client already has open
+— see below.
+
+**A third monitor sits above [the tool map](user-guide.md#the-tool-map--what-your-agents-used)**,
+headed **Bridge sessions**: its two lines are the headline readings the whole memory tier exists to
+answer — *when did a session last start*, and *when did one last save* — and it re-counts each age
+in place, once a second, with no page reload and no re-fetch, for as long as the block is on screen.
 
 **If your `claude_desktop_config.json` already exists but contains a JSON syntax error**, the wizard
 will **not** show you an "After" preview and the copy button on that pane disappears. That is
