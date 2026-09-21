@@ -231,7 +231,7 @@ function render(over = {}) {
     extractFunction(chatSrc, 'projectGroupHtml') + '\n' +
     extractFunction(chatSrc, 'projectInfoPanelHtml') + '\n' +
     extractFunction(chatSrc, 'renderMain') + '\n' +
-    'return { renderMain, compileControlHtml, compileCaptionText, compileMessageCount, compileTurnCounts, projectGroupHtml, projectFootHtml, pendingListboxes };';
+    'return { renderMain, compileControlHtml, compileCaptionText, compileMessageCount, compileTurnCounts, projectGroupHtml, projectFootHtml, pendingListboxes, peekProjectLbCfg: () => projectLbCfg };';
 
   const api = new Function(
     'document', 'state', 'isCurrentMount', 'setMain', 'escapeHtml', 'icon',
@@ -1024,6 +1024,29 @@ section('§11 — THE READING MOVED INTO THE PICKER\'S FOOTER, AND STILL UPDATES
   ok(rows.some((o) => o.detail === 'no saves'),
     '…including "no saves" for a project that has never been saved to');
 
+  // ── §11e — THE HANDLE IS DROPPED WHEN THERE IS NO PICKER ────────────
+  // Three of the group's four states render no picker at all. The cfg handle
+  // must go with the trigger that is leaving the document, or a turn landing
+  // afterwards would republish onto a dead object — and, worse, read as
+  // though a picker were mounted when none is.
+  /* DRIVEN AS A TRANSITION, NOT AS A FRESH RENDER, and mutation M11 is why:
+     a new sandbox starts with the handle already null, so rendering a
+     no-picker state into a FRESH one passes whether the drop exists or not.
+     The defect is a picker that WAS mounted and then was not, so the sequence
+     has to be exactly that — one sandbox, one state object, two renders. */
+  for (const [label, over] of [
+    ['WHILE LOADING', { projectsState: 'loading', projectRows: [] }],
+    ['WITH NO PROJECTS', { projectsState: 'ready', projectRows: [] }],
+    ['ON A FAILED READ', { projectsState: 'error', projectRows: [] }],
+  ]) {
+    const r = render({ activeProject: 'curator' });
+    ok(!!r.api.peekProjectLbCfg(), `${label} — CONTROL: a picker was mounted first, so there IS a handle to drop`);
+    Object.assign(r.state, over);
+    r.api.renderMain(1);
+    eq(r.api.peekProjectLbCfg(), null,
+      `${label}: the cfg handle is dropped, so nothing republishes onto a trigger that has left`);
+  }
+
   // ── §11d — THE GUARD, DRIVEN ───────────────────────────────
   // The real `patchProjectFooter`, against a document that models the ONE
   // thing that matters: whether a menu is in it. Both arms are executed — the
@@ -1055,8 +1078,16 @@ section('§11 — THE READING MOVED INTO THE PICKER\'S FOOTER, AND STILL UPDATES
        throw here, on a domain whose projects failed to read. */
     let touched = 0;
     const blindDoc = { getElementById: () => { touched++; return null; } };
-    make(blindDoc, null).patchProjectFooter();
-    eq(touched, 0, 'NO PICKER MOUNTED: the update returns before it looks for anything');
+    /* CAUGHT, not allowed to propagate. Without the guard this THROWS on
+       `null.footHtml` — which is the production behaviour too, on a domain
+       whose project read failed — and an uncaught throw here would abort the
+       whole run instead of reporting one failed assertion. Mutation M6
+       (the guard deleted) is what made this distinction worth writing down. */
+    let threw = null;
+    try { make(blindDoc, null).patchProjectFooter(); } catch (e) { threw = e; }
+    ok(threw === null,
+      'NO PICKER MOUNTED: the update returns instead of throwing' + (threw ? ` (threw ${threw.message})` : ''));
+    eq(touched, 0, '…and before it looks for anything');
 
     /* THE COMMON ARM: the menu is SHUT, so there is no `.lb-foot` in the
        document. The cfg must still be brought up to date, because that string
