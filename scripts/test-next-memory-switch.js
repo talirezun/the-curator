@@ -1112,6 +1112,16 @@ section('§10 — The two "Show more" call sites do the same thing');
   eq('...and they do the same thing, ignoring comments and whitespace', a, b);
   ok('CONTROL: the extracted body is a real handler, not an empty string',
     a && a.includes('loadScope(state.scope'), a);
+  // ── AND BOTH CARRY `keepDetail` (v3.65.0) ────────────────────────────
+  // Equality above stops the two drifting APART; it says nothing about what
+  // they do. This names the one option that makes "Show more" keep the reader
+  // where they are — without it `loadScope` nulls `state.detail` and renders
+  // before the fetch, the journal fold vanishes for the round trip, the
+  // column shrinks and the scroll container clamps. Asserted on BOTH, so a
+  // revert of either is red rather than half-red.
+  ok('both call sites pass `keepDetail`, which is what stops the column '
+    + 'shrinking under the reader', /keepDetail: true/.test(a) && /keepDetail: true/.test(b),
+  JSON.stringify([a, b]));
 }
 
 // ═════════════════════════════════════════════════════════════════════════

@@ -3933,6 +3933,86 @@ function makeReloader(stateObj, responder) {
   return { ...api, calls, unmount: () => { mounted = false; } };
 }
 
+// ── "SHOW MORE" DOES NOT EMPTY THE PANE IT IS ABOUT TO REFILL (v3.65.0) ──
+//
+// THE REPORTED DEFECT, verbatim: *"you can Show more, and if I click Show
+// more I'm dropped at the top of the recent saves, which is not good UX."*
+//
+// THE MECHANISM, read from code and then measured in a browser: `loadScope`'s
+// uncached branch nulls `state.detail` and renders BEFORE the fetch;
+// `renderJournal` opens with `if (!d || !d.journal) return ''`, so the fold
+// the user is reading disappears for the whole round trip, the column shrinks,
+// and the scroll container clamps `scrollTop` to the new maximum.
+//
+// DRIVEN HERE AS STATE RATHER THAN AS PIXELS, because the blank frame is the
+// whole mechanism and it is observable without a browser: with `keepDetail`,
+// `state.detail` is never null and no render happens before the answer. The
+// browser measurement (scrollTop unchanged, scrollHeight never dipping) is
+// this claim's other half and is taken in the browser pass.
+{
+  const before = { scope: 'main', machine: 'boxa', machines: [],
+    current: { present: true, text: 'x' },
+    journal: { returned: 10, total: 40, totalUnknown: false, entries: [] } };
+  const mkCase = async (opts) => {
+    const seen = [];
+    const st2 = liveState({ scope: 'main', machine: 'boxa', detail: before, journalLimit: 50 });
+    await makeReloaderProbe(st2, seen).loadScope('main', 'boxa', 1, opts);
+    return { seen, st2 };
+  };
+  // A tiny variant of `makeReloader` that records `state.detail` on every
+  // paint. Declared here rather than beside it because only this case needs
+  // to see the INTERMEDIATE frames.
+  function makeReloaderProbe(stateObj, probe) {
+    let mounted = true;
+    const body =
+      extractFunction(viewSrc, 'fetchState', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'workStreamOrder', 'memory.js') + '\n' +
+      'const readCache = new Map();\n' +
+      'const MAX_CACHE = ' + JSON.stringify(liftConst('MAX_CACHE')) + ';\n' +
+      extractFunction(viewSrc, 'cacheKeyProject', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'cacheKeyScope', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'cacheGet', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'cachePut', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'forgetProject', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'payloadSignature', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'keyOf', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'activeKey', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'loadScope', 'memory.js') + '\n' +
+      'return { loadScope };';
+    return new Function('state', 'render', 'isCurrentMount', 'fetch', 'URLSearchParams',
+      'encodeURIComponent', 'JOURNAL_PAGE', 'patchOpenPair', body)(
+      stateObj, () => { probe.push(stateObj.detail === null ? 'BLANK' : 'kept'); },
+      () => mounted,
+      async () => ({ ok: true, json: async () => ({ ok: true, scope: 'main', machine: 'boxa',
+        machines: [], current: { present: true, text: 'x' },
+        journal: { returned: 40, total: 40, totalUnknown: false, entries: [] } }) }),
+      URLSearchParams, encodeURIComponent, 10, () => {});
+  }
+
+  const withFlag = await mkCase({ keepDetail: true });
+  ok('with `keepDetail` no frame is painted with an EMPTY detail — the fold the '
+    + 'reader is inside never leaves the page, so the column cannot shrink',
+  !withFlag.seen.includes('BLANK'), JSON.stringify(withFlag.seen));
+  ok('...and the larger journal did arrive', withFlag.st2.detail.journal.returned === 40);
+
+  // THE CONTROL, and it is the reproduction: without the flag the blank frame
+  // is painted, which is the defect exactly.
+  const without = await mkCase({});
+  ok('CONTROL: WITHOUT the flag a BLANK frame is painted first — this is the '
+    + 'reported defect, reproduced',
+  without.seen.includes('BLANK'), JSON.stringify(without.seen));
+  ok('...and it is the FIRST paint, before the answer, which is what makes the '
+    + 'column shrink under the reader', without.seen[0] === 'BLANK',
+  JSON.stringify(without.seen));
+
+  // AND A SCOPE SWITCH STILL DROPS IT. The rule `keepDetail` opts out of is
+  // real and protects a different case: showing the OLD machine list and the
+  // OLD handoff under the NEW scope's label for the length of a fetch.
+  ok('a scope switch (no flag) still blanks first, so this is an opt-in for '
+    + 'the ONE case that is not a switch', without.seen[0] === 'BLANK');
+}
+
 {
   // Three scopes; the user is on the MIDDLE one, having DELIBERATELY picked a
   // machine from the picker. `state.machine` non-null is what "deliberately"

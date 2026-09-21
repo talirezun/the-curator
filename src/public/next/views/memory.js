@@ -2436,7 +2436,7 @@ async function loadScope(scope, machine, token, opts = {}) {
     // paint must not claim to have just read the file.
     state.detailFetchedAt = hit.at;
     if (opts.reader) patchOpenPair(token); else render(token);
-  } else if (!opts.reader) {
+  } else if (!opts.reader && !opts.keepDetail) {
     // Drop the previous scope's read before painting: keeping it would render
     // the OLD machine list and the OLD handoff under the NEW scope's label for
     // the duration of the fetch, which is a wrong answer stated confidently.
@@ -2444,6 +2444,35 @@ async function loadScope(scope, machine, token, opts = {}) {
     state.detailLoading = true;
     render(token);
   }
+  // ── `keepDetail`: THE SAME PAIR, MORE OF IT (v3.65.0) ─────────────────
+  //
+  // THE DEFECT, and it is the maintainer's: *"below Recent saves there is
+  // another report card, '24 recorded', and you can Show more, and if I click
+  // Show more I'm dropped at the top of the recent saves, which is not good
+  // UX."* The mechanism, read from code and then measured in a browser: this
+  // function's uncached branch nulls `state.detail` and renders BEFORE the
+  // fetch; `renderJournal` opens with `if (!d || !d.journal) return ''`, so
+  // the fold the user is reading DISAPPEARS for the whole round trip, the
+  // column shrinks, `main.main` clamps its `scrollTop` to the new maximum,
+  // and the taller content comes back under a reader who is now above where
+  // they were. `restoreFocus` then focuses `#mem-fold-journal` with
+  // `preventScroll: true`, so nothing brings the viewport back either.
+  //
+  // TWO CONTROLS WERE MEASURED so the next reader does not chase the wrong
+  // thing: a full `render()` alone does NOT reset scroll, and a work-stream
+  // row press goes through `patchOpenPair` and moves neither height nor
+  // scroll. The SHRINK is the whole mechanism.
+  //
+  // So the fix is one word: do not empty the pane you are about to refill.
+  // "Show more" is not a scope change — it is the SAME (scope, machine) with
+  // a larger `journalLimit` — so the drop-before-paint rule that protects a
+  // scope SWITCH from showing the old handoff under the new label has nothing
+  // to protect here. The precedent is `showMoreWorkStreams`, which appends in
+  // place and renders nothing at all; this keeps the render (the journal's
+  // rows, its foot and its summary all move) and only stops the blank frame.
+  //
+  // A FAILED read still clears the fold, exactly as before: `state.detail` is
+  // assigned the answer below whatever this flag said.
 
   const startedAt = Date.now();
   const read = await fetchState(domain, project, q, token);
@@ -2659,7 +2688,11 @@ function patchOpenPair(token) {
       jm.addEventListener('click', () => {
         state.journalLimit = JOURNAL_MORE;
         const m = state.detail ? state.detail.machine : state.machine;
-        loadScope(state.scope, m, token).catch((err) => reportAsyncMountFailure(token, err));
+        // `keepDetail` — see loadScope. Without it the fold the user is
+        // reading is removed for the length of the fetch and the column
+        // shrinks under them.
+        loadScope(state.scope, m, token, { keepDetail: true })
+          .catch((err) => reportAsyncMountFailure(token, err));
       });
     }
   }
@@ -9735,7 +9768,13 @@ function wire(token) {
       // otherwise expanding the journal could silently swap which machine's
       // history is on screen if another machine wrote in the meantime.
       const m = state.detail ? state.detail.machine : state.machine;
-      loadScope(state.scope, m, token).catch((err) => reportAsyncMountFailure(token, err));
+      // `keepDetail` — see loadScope for the measured mechanism. This is the
+      // FIRST of the two "Show more" call sites; the second is in
+      // `patchOpenPair`, each names the other, and
+      // scripts/test-next-memory-switch.js drives both and requires them to
+      // do the same thing — so a flag added to one and not the other is red.
+      loadScope(state.scope, m, token, { keepDetail: true })
+        .catch((err) => reportAsyncMountFailure(token, err));
     });
   }
 }
