@@ -134,13 +134,6 @@ function makeMeter(stateObj) {
     'const CAPTURE_SESSION_LIMIT = ' + SESSION_LIMIT + ';\n' +
     extractFunction(viewSrc, 'formatAge') + '\n' +
     extractFunction(viewSrc, 'effectiveSave') + '\n' +
-    // ── THE CAPTURE PROSE, LIFTED FROM LIVE SOURCE (v3.65.1, D4) ──────
-    // `CAPTURE_INFO_HTML` is a module-level const that step ②'s ⓘ composes
-    // and `renderCaptureMeter` no longer opens with a mark of its own. It is
-    // sliced out of the shipped file rather than stubbed, so the panel scan
-    // below reads the REAL words — a stub would let this suite agree with
-    // itself about text nobody ships.
-    (/const CAPTURE_INFO_HTML =[\s\S]*?;\n/.exec(viewSrc) || [''])[0] + '\n' +
     extractFunction(viewSrc, 'captureFacts') + '\n' +
     extractFunction(viewSrc, 'renderCaptureMeter') + '\n' +
     'return { captureFacts, renderCaptureMeter, formatAge, effectiveSave };';

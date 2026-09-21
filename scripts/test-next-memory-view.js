@@ -1350,13 +1350,6 @@ function makeRenderers(stateObj) {
     // window the shipped view asks the route for.
     'const CAPTURE_WINDOW_DAYS = ' + CAPTURE_WINDOW_DAYS_SRC + ';\n' +
     'const CAPTURE_SESSION_LIMIT = ' + CAPTURE_SESSION_LIMIT_SRC + ';\n' +
-    // ── THE CAPTURE PROSE, LIFTED FROM LIVE SOURCE (v3.65.1, D4) ──────
-    // `CAPTURE_INFO_HTML` is a module-level const that step ②'s ⓘ composes
-    // and `renderCaptureMeter` no longer opens with a mark of its own. It is
-    // sliced out of the shipped file rather than stubbed, so the panel scan
-    // below reads the REAL words — a stub would let this suite agree with
-    // itself about text nobody ships.
-    (/const CAPTURE_INFO_HTML =[\s\S]*?;\n/.exec(viewSrc) || [''])[0] + '\n' +
     extractFunction(viewSrc, 'captureFacts', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderCaptureMeter', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderStaleNotice', 'memory.js') + '\n' +
@@ -2841,18 +2834,29 @@ function ruleFor(css, selector) {
     || /slot >= 0/.test(viewSrc));
   ok('this view declares NO row-mark geometry — the kit owns the row',
     !ruleFor(viewCss, '.mem-row-mark') && !ruleFor(viewCss, '.mem-row'));
-  const slots = [...viewCss.matchAll(/\.cur-sb-dot-(\d)\s*\{\s*background:\s*([^;]+);/g)];
-  eq('all six identity slots are painted here, and the light theme too',
-    slots.length, 12);
-  ok('...and every one of them is a token reference, never a colour literal — '
-    + 'widening the design kit\'s two-file literal baseline to ship a kit is backwards',
-    slots.every((m) => /^var\(--[a-z0-9-]+\)$/.test(m[2].trim())),
-    slots.map((m) => m[2]).join(' | '));
-  // The kit's own dot is ROUND, which is what the six colours are painted on.
+  // ── AND THE SIX COLOURS LEFT THIS FILE TOO (v3.65.1, D7) ────────────
+  // Twelve rules were declared here AND, byte-identical, in views/domains.css.
+  // CSS has no per-view scope, so each file painted both rails. The block's own
+  // note predicted it — *"if both files end up declaring them, one copy should
+  // go"* — and both went: the palette is shared/sidebar.css's now, beside
+  // `.cur-sb-dot`'s shape and `identityDotClass`'s mapping, which is what makes
+  // one domain one colour in the Domains rail, in this one, in the breadcrumb,
+  // on every Knowledge row and on Chat's chips.
+  const slots = [...viewCss.matchAll(/\.cur-sb-dot-(\d)\s*\{/g)];
+  eq('this view declares NO identity colour at all any more', slots.length, 0);
+  ok('...and names none of the three deprecated --dm-ink-* aliases either, so '
+    + 'nothing here depends on names the kit is about to remove',
+  !/--dm-ink-/.test(viewCss.replace(/\/\*[\s\S]*?\*\//g, '')), 'a --dm-ink- reference survives');
+  // THE KIT HAS THEM, and its dot is ROUND — which is what the six colours are
+  // painted on. Asserted here as well as in the kit's own suite because this
+  // view's breadcrumb and Knowledge rows are two of the surfaces that break if
+  // either half moves.
   const kitCss = readFileSync(join(NEXT, 'shared/sidebar.css'), 'utf8');
+  const kitSlots = [...kitCss.matchAll(/\.cur-sb-dot-(\d)\s*\{\s*background:\s*([^;]+);/g)];
+  eq('the KIT paints all six slots, and the light theme too', kitSlots.length, 12);
   const dot = ruleFor(kitCss, '.cur-sb-dot');
-  ok('the kit\'s identity dot is ROUND, and this file paints only its colour',
-    !!dot && /border-radius:\s*50%/.test(dot) && !/background/.test(dot));
+  ok('the kit\'s identity dot is ROUND, and it owns the colour as well as the shape',
+    !!dot && /border-radius:\s*50%/.test(dot));
 }
 // Comments stripped first: this file's own header explains the rule by
 // quoting a literal `0.16s ease` as the thing NOT to write, and a scan over

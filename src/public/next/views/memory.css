@@ -247,39 +247,21 @@
      not have states, and the quiet row class already says it in the ink.
 
    WHAT THIS FILE STILL OWNS about the rail is below: the quiet row's ink, and
-   the six identity COLOURS, which cannot live in the kit — three of the
-   light-theme values are derived literals and
-   scripts/test-next-design-kit.js §10 permits colour literals in exactly TWO
-   /next stylesheets, asserting the baseline holds exactly two files. Widening
-   an anti-drift ratchet in order to ship a kit is backwards.              */
+   nothing else.                                                           */
 
-/* ── THE SIX IDENTITY COLOURS, ON THE KIT'S CLASS NAMES ─────────────────
-   NOT ONE COLOUR LITERAL: every value here is a `var()` reference, six to the
-   type triad and the three neutral rungs, six more to `--dm-ink-*` — the
-   three names views/domains.css declares for exactly this, precisely so two
-   rules needing one colour do not become two copies of a literal.
+/* ── THE SIX IDENTITY COLOURS LEFT THIS FILE (v3.65.1, D7) ──────────────
+   Twelve rules used to be declared here, byte-identical to views/domains.css's
+   own copy — and CSS has no per-view scope, so each file was painting both
+   rails. The note this block carried predicted exactly that: *"if both files
+   end up declaring them, one copy should go."* Both went. The palette is
+   `shared/sidebar.css`'s now, under `--id-ink-*`, beside `.cur-sb-dot`'s own
+   shape — one file for the mapping, the glyph and the colours, which is what
+   makes a domain the same colour in the Domains rail, in this one, in this
+   page's breadcrumb, on every Knowledge row and on Chat's chips.
 
-   ONE DECLARATION FOR BOTH RAILS. CSS has no per-view scope: these rules
-   paint `cur-sb-dot-N` wherever it appears, so the Domains rail is painted by
-   them too the moment it adopts `identityDotClass()`. They are written here
-   rather than in views/domains.css only because this is the view that adopts
-   first; if both files end up declaring them, one copy should go.
-
-   The `[data-theme="light"]` arm is the measured one: in DARK the type
-   triad's own -500 rungs already clear the 3:1 non-text floor with room, so
-   the names alias the tokens there and no dark value moves by a byte.     */
-.cur-sb-dot-1 { background: var(--entity-500); }
-.cur-sb-dot-2 { background: var(--concept-500); }
-.cur-sb-dot-3 { background: var(--summary-500); }
-.cur-sb-dot-4 { background: var(--teal-500); }
-.cur-sb-dot-5 { background: var(--red-400); }
-.cur-sb-dot-6 { background: var(--ink-200); }
-[data-theme="light"] .cur-sb-dot-1 { background: var(--dm-ink-entity); }
-[data-theme="light"] .cur-sb-dot-2 { background: var(--dm-ink-concept); }
-[data-theme="light"] .cur-sb-dot-3 { background: var(--dm-ink-summary); }
-[data-theme="light"] .cur-sb-dot-4 { background: var(--teal-600); }
-[data-theme="light"] .cur-sb-dot-5 { background: var(--red-600); }
-[data-theme="light"] .cur-sb-dot-6 { background: var(--ink-400); }
+   NOTHING IN THIS FILE OR IN views/memory.js MAY NAME `--dm-ink-*` any more:
+   those three survive in the kit only as deprecated aliases while the last
+   callers are moved, and they are removed after this merge.              */
 
 /* A project row with nothing saved yet. It was --text-3, which this file's own
    note on the meta line argued against in principle: "Sub-threshold contrast
@@ -1452,7 +1434,24 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-3);
+  /* ── AND ITS LABELS WRAP RATHER THAN OVERFLOW (v3.65.1) ──────────────
+     The row holds THREE controls since this release, and the widest —
+     "Mirror from GitHub instead" — is 160px at `btn-xs`. MEASURED at 568,
+     where the rail (72) plus this view's sidebar (272) leave `.main-inner`
+     at 224px and this row a 136px content box: `flex-wrap` cannot help,
+     because the button itself is wider than the line it would wrap onto, so
+     the row reported scrollWidth 160 against clientWidth 136 and joined the
+     list of elements that overflow their own box at that width.
+
+     Two lines beat a clipped word. This declares a property of THIS ROW's
+     content, not of the button's chrome — `.btn`'s padding, height, ink and
+     press all stay shell.css's — and it is scoped to the row so no other
+     `btn-xs` in the app can wrap by accident. The alternative,
+     `overflow-x: auto`, was refused: a control row that scrolls hides the
+     control somebody came for, which is v3.61.1's own finding one block up. */
+  min-width: 0;
 }
+.mem-fnd-head-controls > .btn { white-space: normal; text-align: left; }
 .mem-fnd-head-controls:empty { display: none; }
 /* The Domains pointer, on a project with no documents chosen. Its own row
    under the notes rather than beside the chooser: it leaves this view, and a
@@ -2027,7 +2026,13 @@
   /* The table's footer presses like its rows, so its opt-out sits beside
      theirs — in the SAME file as the transform, which is what
      scripts/test-next-press-motion.js requires. */
-  .mem-ws-more:active { transform: none; }
+  .mem-ws-more:active,
+  /* AND THE JOURNAL'S, which is the SAME control since v3.65.1 (D3) — one set
+     of declarations on both selectors up the file, so one opt-out on both
+     here. A press transform whose reduced-motion rule is in another file is
+     what scripts/test-next-press-motion.js exists to catch, and it caught this
+     one on the first run after `.mem-j-more` joined the family. */
+  .mem-j-more:active { transform: none; }
   /* Tier 0's rows press exactly as the work-stream rows above them do, so
      their opt-out sits beside theirs — in the SAME file as the transform,
      which is what scripts/test-next-press-motion.js requires. The Refresh

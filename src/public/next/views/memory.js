@@ -4594,38 +4594,6 @@ function captureFacts(payload) {
  * session, no stamp) is the dashed unknown ring with the words beside it —
  * never age zero.
  */
-// ── WHAT A SESSION IS — ONE COPY, READ BY STEP ②'s ⓘ (v3.65.1, D4) ───────
-// Through v3.65.0 this text sat behind a mark of its own, alone on the first
-// line of the CAPTURE row's body, above the instrument and the table — three
-// treatments in one row. The maintainer's word for that body: *"two different
-// designs."* The words are unchanged, byte for byte; what moved is the mark
-// that opens them, into step ②'s own ⓘ, where the rest of the step's
-// explanation is. A step has ONE explanatory mark on this page and a reading
-// inside it is not a step.
-const CAPTURE_INFO_HTML =
-  '<p>A <b>session</b> is one bridge process — one run of the MCP server, from the moment an '
-  + 'agent connects to the moment its window closes. It is identified by a random id the bridge '
-  + 'mints for itself, so two sessions are never merged and one session is never split in two.</p>'
-  + '<p>A session <b>started with the context</b> when it asked for this project’s brief, '
-  + 'handoff or documents before it saved anything — at any point before that first save, not '
-  + 'necessarily as its first call. It <b>saved before stopping</b> when a save succeeded; a '
-  + 'refused save is not a save.</p>'
-  + '<p><b>What this cannot see.</b> Only calls that came through the bridge are here. A save '
-  + 'written by the command line, by a hook, or by hand in a text editor is a real save and does '
-  + 'not appear in this count unless it went through the bridge. A session that never opened the '
-  + 'bridge at all is not in the denominator either — so this reading is about agent sessions '
-  + 'that used The Curator, and never a claim about your whole week.</p>'
-  + '<p>The <b>harness name</b> beside each session is <b>self-reported</b>: the client chooses '
-  + 'the name it sends, it is matched against a list of harnesses that have actually been '
-  + 'measured, and anything else is shown as unknown. Nothing in the app behaves differently '
-  + 'because of it — it is a label on a row and nothing more.</p>'
-  + '<p>It comes from a local file beside your settings, never inside your knowledge folder, so '
-  + 'nothing here is ever synced. A line carries the tool’s name, the domain and project it '
-  + 'touched, whether it succeeded and how long it took — never an argument, never a result, '
-  + 'never a file path. Calls made by the bridge’s own self-test are excluded.</p>'
-  + '<p><b>Nothing here stops a session.</b> This reading reports; it never refuses, delays or '
-  + 'warns an agent, and no number on it can.</p>';
-
 function renderCaptureMeter() {
   const c = state.capture && state.capture.domain === state.activeDomain
     && state.capture.project === state.activeProject ? state.capture : null;
@@ -5143,10 +5111,43 @@ function renderProject() {
       + 'survives what a handoff cannot: two agent tools writing one thread overwrite each '
       + 'other’s handoff, and both trails are still here.</p>'
       // ── AND WHAT CAPTURE IS READING (v3.65.1, D4) ───────────────────
-      // One copy, defined beside the meter it describes; the mark that used
-      // to open it inside the CAPTURE row's body is gone, because a step has
-      // one explanatory mark and a reading inside it is not a step.
-      + CAPTURE_INFO_HTML
+      // Through v3.65.0 these paragraphs sat behind a mark of THEIR OWN, alone
+      // on the first line of the CAPTURE row's body, above the instrument and
+      // the table — three treatments in one row, which is what the maintainer
+      // called *"two different designs"* with a third floating over them. The
+      // words are unchanged, byte for byte; the mark that opens them is step
+      // ②'s, because a step has ONE explanatory mark and a reading inside it
+      // is not a step.
+      //
+      // INLINE, NOT A MODULE-LEVEL CONSTANT, and the reason is mechanical:
+      // this function is lifted by brace-matching and EXECUTED by several
+      // suites against fixed stub lists, and a module-level binding is not
+      // visible inside a lifted body — a free identifier here is a
+      // ReferenceError there, not a failing assertion (BUILDER-RULES rule 10,
+      // and the same wall `renderJournal`'s own count line records one
+      // function up). There is exactly one copy of these words either way.
+      + '<p>A <b>session</b> is one bridge process — one run of the MCP server, from the moment an '
+      + 'agent connects to the moment its window closes. It is identified by a random id the bridge '
+      + 'mints for itself, so two sessions are never merged and one session is never split in two.</p>'
+      + '<p>A session <b>started with the context</b> when it asked for this project’s brief, '
+      + 'handoff or documents before it saved anything — at any point before that first save, not '
+      + 'necessarily as its first call. It <b>saved before stopping</b> when a save succeeded; a '
+      + 'refused save is not a save.</p>'
+      + '<p><b>What this cannot see.</b> Only calls that came through the bridge are here. A save '
+      + 'written by the command line, by a hook, or by hand in a text editor is a real save and does '
+      + 'not appear in this count unless it went through the bridge. A session that never opened the '
+      + 'bridge at all is not in the denominator either — so this reading is about agent sessions '
+      + 'that used The Curator, and never a claim about your whole week.</p>'
+      + '<p>The <b>harness name</b> beside each session is <b>self-reported</b>: the client chooses '
+      + 'the name it sends, it is matched against a list of harnesses that have actually been '
+      + 'measured, and anything else is shown as unknown. Nothing in the app behaves differently '
+      + 'because of it — it is a label on a row and nothing more.</p>'
+      + '<p>It comes from a local file beside your settings, never inside your knowledge folder, so '
+      + 'nothing here is ever synced. A line carries the tool’s name, the domain and project it '
+      + 'touched, whether it succeeded and how long it took — never an argument, never a result, '
+      + 'never a file path. Calls made by the bridge’s own self-test are excluded.</p>'
+      + '<p><b>Nothing here stops a session.</b> This reading reports; it never refuses, delays or '
+      + 'warns an agent, and no number on it can.</p>'
       + '<p>' + docsLinkHtml('memory.standing-brief', 'The standing brief') + ' · '
       + docsLinkHtml('memory.handoff', 'Handoffs') + ' · '
       + docsLinkHtml('memory.session-journal', 'The journal') + '</p>',
