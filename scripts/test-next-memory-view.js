@@ -498,6 +498,11 @@ const EXPECTED_ROUTES = [
   ['delete', '/:domain/:project/foundations/:slug'],
   ['post', '/:domain/:project/foundations/init'],
   ['post', '/:domain/:project/foundations/refresh'],
+  // v3.65.1 — "Mirror from GitHub instead". A POST, not a PATCH: it fetches
+  // blobs and rewrites files. Four segments like the rest of tier 0, and
+  // DECLARED HERE because this table's own comment is the rule — a new route
+  // of any kind is declared before it can ship.
+  ['post', '/:domain/:project/foundations/source'],
   // v3.63.0 — the honesty meter (package U). READ-ONLY, and registered here
   // rather than after the two-segment reads below for no correctness reason:
   // a three-segment suffix route cannot shadow, or be shadowed by, either of
