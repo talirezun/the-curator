@@ -6768,7 +6768,7 @@ export async function setFoundationsSource(domain, project, opts = {}) {
     return {
       ok: false, reason: 'invalid-token-source',
       message: `"${String(inp.tokenSource).slice(0, 40)}" is not a token source. Pass "config" for the read-only `
-        + 'GitHub token in Settings, or "sync" for Personal Sync\u2019s own token. Nothing was changed.',
+        + 'GitHub token in Settings, or "sync" for Personal Sync’s own token. Nothing was changed.',
     };
   }
 

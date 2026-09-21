@@ -1323,6 +1323,28 @@ section('16. "MIRROR FROM GITHUB INSTEAD" — the source switch (v3.65.1)');
     eq(out.reason, 'no-manifest', '...because choosing an ownership is init’s decision, not this one’s');
     assert(!existsSync(manifestPath(PJ)), '...and no manifest was created sideways');
     eq(gh.calls.length, 0, '...with ZERO HTTP requests');
+
+    // AND THE CASE THE CORE CANNOT CATCH. `validateManifest` accepts
+    // `ownership: null`, and `refreshRemoteCore` refuses only `curator` — so
+    // a manifest that exists and has chosen NOTHING would be mirrored into,
+    // setting an ownership sideways through a function named "switch". Found
+    // by mutation: deleting this store's own ownership check stayed GREEN
+    // against the curator case alone, because the core refuses that one too.
+    mkdirSync(fdir(PJ), { recursive: true });
+    writeFileSync(manifestPath(PJ), JSON.stringify({
+      version: 1, ownership: null, repo: null, budgetBytes: 200 * 1024,
+      order: ['architecture', 'decisions', 'conventions', 'roadmap', 'api', 'guide', 'other'],
+      documents: [],
+    }, null, 2) + '\n');
+    const beforeUnchosen = fileSha(manifestPath(PJ));
+    const gh2 = makeGitHub(REPO_FILES);
+    const unchosen = await setFoundationsSource(D, PJ, { remote: 'acme/thing', fetchImpl: gh2.fetchImpl, sleepImpl: fakeSleep });
+    eq(unchosen.ok, false, 'a manifest that exists but has chosen NO ownership is refused');
+    eq(unchosen.reason, 'ownership-mismatch', '...as an ownership mismatch');
+    eq(unchosen.ownership, null, '...naming the absent ownership rather than guessing one');
+    eq(manifestOf(PJ).ownership, null, 'THE HOLE THIS CLOSES: no ownership was set sideways');
+    eq(fileSha(manifestPath(PJ)), beforeUnchosen, '...and the manifest is byte-identical');
+    eq(gh2.calls.length, 0, '...with ZERO HTTP requests');
   }
 
   // ── 16d. A 404 FROM GITHUB LEAVES ROOT, REMOTE AND EVERY DOCUMENT ─────
@@ -1424,6 +1446,20 @@ section('16. "MIRROR FROM GITHUB INSTEAD" — the source switch (v3.65.1)');
     eq(badToken.ok, false, 'an unrecognised tokenSource is REFUSED, not normalised');
     eq(badToken.reason, 'invalid-token-source', '...because this call records a decision');
     eq(fileSha(manifestPath(PJ)), before, '...and no argument refusal wrote anything');
+
+    // THE LOCK IS REAL, driven by HOLDING it. A switch rewrites documents and
+    // the manifest; interleaving it with another tier-0 write on the same
+    // domain is the shape the lock exists for.
+    const { acquireFileLock } = await import('../src/brain/write-registry.js');
+    const { domainPath } = await import('../src/brain/files.js');
+    const release = await acquireFileLock(domainPath(D), { op: 'test-holds-it' });
+    assert(typeof release === 'function', '(fixture) the suite really holds the domain lock');
+    const ghLocked = makeGitHub(REPO_FILES);
+    const locked = await setFoundationsSource(D, PJ, { remote: 'acme/thing', fetchImpl: ghLocked.fetchImpl, sleepImpl: fakeSleep });
+    eq(locked.ok, false, 'a switch while another write holds the domain lock is refused');
+    eq(locked.reason, 'locked', '...as `locked`, the status a held lock has everywhere in this store');
+    eq(fileSha(manifestPath(PJ)), before, '...having written nothing');
+    await release();
   }
 
   // ── 16i. THE ROUTE ────────────────────────────────────────────────────
@@ -1500,6 +1536,82 @@ section('16. "MIRROR FROM GITHUB INSTEAD" — the source switch (v3.65.1)');
       const ro = await post(`/api/memory/${RO}/anything/foundations/source`, { remote: 'acme/thing' });
       eq(ro.status, 403, 'a read-only Shared Brain mirror is a 403');
       eq(ro.body.reason, 'readonly', '...as everywhere else in this router');
+
+      // ── 16j. THE ANSWER THE VIEW CODES AGAINST, AND WHO REFUSES ──────
+      //
+      // Both halves needed the store SEAM, and both were found by mutation:
+      // with the network blocked, no assertion above ever reached the 200
+      // body (so a route projecting `rootCleared: false` stayed green), and
+      // the store's own `checkProjectTarget` answers 403 for a mirror too
+      // (so deleting `refuseMirror` from this handler stayed green as well —
+      // the status cannot say which layer refused).
+      const calls = [];
+      const spy = {
+        isSafeSegment: WS.isSafeSegment,
+        async setFoundationsSource(d, pj, o) {
+          calls.push({ domain: d, project: pj, opts: o });
+          return {
+            ok: true, domain: d, project: pj,
+            // DELIBERATELY DIFFERENT from what the request names below, so
+            // an answer echoing the REQUEST cannot pass.
+            remote: { owner: 'resolved', repo: 'byThestore', ref: 'trunk', path: 'docs' },
+            tokenSource: 'sync',
+            rootCleared: true, previousRoot: '/old/checkout',
+            refreshed: ['architecture.md'], unchanged: [], added: ['decisions.md'], missing: ['gone.md'],
+            refused: [{ path: 'x.md', reason: 'nope' }],
+            totalBytes: 1234, budgetBytes: 204800, budgetExceeded: false, documentCount: 2,
+            commit: 'c'.repeat(40), notes: ['source: switched'],
+          };
+        },
+      };
+      routerMod.__setWorkingStateStoreForTest(spy);
+      try {
+        const okRes = await post(URL_, { remote: 'asked/forThis', tokenSource: 'config', files: [{ path: 'docs/x.md' }] });
+        eq(okRes.status, 200, 'a successful switch answers 200');
+        eq(okRes.body.ok, true, '...ok');
+        eq(okRes.body.rootCleared, true, '...rootCleared, the fact the view repaints on');
+        eq(okRes.body.previousRoot, '/old/checkout', '...and the folder it used to copy from');
+        eq(okRes.body.remote.owner, 'resolved', 'THE REMOTE COMES FROM THE STORE, not echoed from the request');
+        eq(okRes.body.remote.ref, 'trunk', '...with the ref the read RESOLVED');
+        eq(okRes.body.remote.path, 'docs', '...and the path');
+        eq(okRes.body.tokenSource, 'sync', 'tokenSource comes from the store too — which FILE, never the token');
+        eq(JSON.stringify(okRes.body.refreshed), '["architecture.md"]', '...refreshed');
+        eq(JSON.stringify(okRes.body.added), '["decisions.md"]', '...added');
+        eq(JSON.stringify(okRes.body.missing), '["gone.md"]', 'NEVER DELETED, ONLY REPORTED: missing rides along');
+        eq(okRes.body.refused.length, 1, '...and every refused path, unfolded beside the outcome');
+        eq(okRes.body.documentCount, 2, '...documentCount');
+        eq(okRes.body.budgetBytes, 204800, '...budgetBytes');
+        eq(okRes.body.totalBytes, 1234, '...totalBytes');
+        eq(okRes.body.budgetExceeded, false, '...budgetExceeded');
+        eq(JSON.stringify(okRes.body.notes), '["source: switched"]', '...and the store\u2019s notes');
+        eq(calls.length, 1, 'the store was called exactly once');
+        eq(calls[0].opts.remote, 'asked/forThis', '...with the remote the body named');
+        eq(calls[0].opts.tokenSource, 'config', '...and the token SOURCE');
+        assert(!('token' in calls[0].opts), 'NO `token` KEY REACHES THE STORE', JSON.stringify(Object.keys(calls[0].opts)));
+        eq(calls[0].opts.files.length, 1, '...and `files` is forwarded');
+
+        // THE ROUTE NORMALISES RATHER THAN SPREADING THE BODY. Found by
+        // mutation: `{...body}` stayed green because the allow-list above
+        // already bars a `token` key — so the property that needs its own
+        // measurement is the SHAPE the store is handed.
+        calls.length = 0;
+        const messy = await post(URL_, { remote: '   acme/thing   ', files: 'not-an-array', tokenSource: 77 });
+        eq(messy.status, 200, '(control) a messy-but-allowed body still reaches the store');
+        eq(calls[0].opts.remote, 'acme/thing', 'a padded remote is TRIMMED before the store sees it');
+        assert(!('files' in calls[0].opts), 'a non-array `files` reaches the store as ABSENT, not as a string',
+          JSON.stringify(Object.keys(calls[0].opts)));
+        assert(!('tokenSource' in calls[0].opts), 'a non-string `tokenSource` reaches the store as ABSENT, so the store applies its own default',
+          JSON.stringify(Object.keys(calls[0].opts)));
+        calls.length = 1;   // the mirror half below counts from one call
+
+        // WHO REFUSES A MIRROR. With the store stubbed to a spy that would
+        // happily succeed, a 403 can only have come from this handler.
+        const roGuarded = await post(`/api/memory/${RO}/anything/foundations/source`, { remote: 'acme/thing' });
+        eq(roGuarded.status, 403, 'a read-only mirror is refused by the ROUTE');
+        eq(calls.length, 1, '...and never reached setFoundationsSource');
+      } finally {
+        routerMod.__setWorkingStateStoreForTest(null);
+      }
     } finally {
       server.close();
     }
