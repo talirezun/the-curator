@@ -413,7 +413,17 @@ export function renderSidebarRow(o) {
       '</span>'
     : '';
 
-  return '<button type="button" class="' + cls('cur-sb-row', a && a.row) +
+  // THE CLASS LIST OPENS WITH A LITERAL, not with `cls(...)`, and that is a
+  // REQUIREMENT rather than a style: scripts/test-next-button-chrome.js reads
+  // the SOURCE of every `<button … class="…">` in /next and resolves its
+  // tokens against every /next stylesheet, because a <button> whose class
+  // list receives no author `border` falls through to Chromium's 2px OUTSET
+  // UA bevel — the "button with some sort of shadow" report. A class
+  // attribute assembled entirely from a call yields that scanner NO tokens at
+  // all, and it SKIPS the occurrence rather than failing it, so the check
+  // silently stops covering this button.
+  return '<button type="button" class="cur-sb-row' +
+      (a && a.row ? ' ' + a.row : '') +
       (opts.active === true ? ' active' : '') + (stateClass ? ' ' + stateClass : '') + '"' +
       data.join('') +
       (opts.ariaCurrent === true ? ' aria-current="true"' : '') +
