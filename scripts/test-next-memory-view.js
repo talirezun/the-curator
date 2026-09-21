@@ -198,6 +198,8 @@ import {
 // DRAFTING request's confirmation is NOT this sentence, and a copy here would
 // let the two drift into agreement.
 import { COPY_SUCCESS_BANNER } from '../src/public/next/shared/agent-instructions.js';
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
+  identityDotClass } from '../src/public/next/shared/sidebar.js';
 // ── THE OWNERSHIP CHOOSER, THE REAL ONE (v3.61.0) ─────────────────────────
 // shared/foundations-init.js imports only from the DOM-free kit (shared/age.js,
 // since v3.61.1 — the contract shared/text.js carries, stated as what it always
@@ -1399,6 +1401,15 @@ function makeRenderers(stateObj) {
     // the same function the domain page's OVERVIEW goes through. Injected
     // real rather than stubbed, so every assertion below about the three
     // readings is an assertion about the component the app ships.
+    // ── THE REAL SIDEBAR KIT (v3.65.0) ────────────────────────────────
+    // `renderProjectGroups` composes the rail's rows through
+    // shared/sidebar.js now, and a module-level IMPORT is not visible inside
+    // a body this harness lifts — it would be a ReferenceError, i.e. a suite
+    // that CRASHES rather than asserts. Injected REAL rather than stubbed,
+    // because every assertion below about the rail's anatomy, its clock
+    // glyph and its identity dot is an assertion about the component the app
+    // ships, not about a stand-in written here.
+    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow', 'identityDotClass',
     'renderOverview', body)(
     stateObj, escapeHtml, () => '<svg></svg>', renderMarkdown, () => '<div class="loader"></div>', null, 10, 50,
     // The REAL shared block, imported rather than stubbed: renderProject
@@ -1415,6 +1426,7 @@ function makeRenderers(stateObj) {
     COPY_SUCCESS_BANNER,
     docsLinkHtml,
     realFormatDayAge, realDayFreshnessTier, realFreshnessDotHtml,
+    renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass,
     realRenderOverview);
 }
 
@@ -2593,12 +2605,22 @@ ok('CONTROL: the SCOPED read is deliberately NOT marked — it carries a `scope`
 /fetchState\(domain, project, query, token\)/.test(viewNoComments)
   || !/as: 'project'[\s\S]{0,40}scope:/.test(viewNoComments));
 
-ok('the view fetches only /api/memory endpoints and the ONE domain-stats read', (() => {
+// THE THIRD DOMAIN READ IS `GET /api/domains` (v3.65.0), and it is the CHEAP
+// one deliberately: a readdir plus one readonly probe per domain, no stats
+// walk, no wiki read. It has two readers — the rail's identity colour needs
+// the domain's place in the install's list, and step ③'s picker needs the set
+// a project may draw on — and the alternative, `/api/domains/stats`, walks
+// every wiki folder to count pages this view does not use.
+ok('the view fetches only /api/memory endpoints, the ONE domain-stats read and the cheap domain LIST', (() => {
   const urls = [...viewNoComments.matchAll(/fetch\(\s*'([^']+)'/g)].map((m) => m[1]);
   const built = viewNoComments.includes("fetch('/api/memory/' + encodeURIComponent(domain)");
   const stats = viewNoComments.includes("fetch('/api/domains/' + encodeURIComponent(domain) + '/stats')");
-  return urls.every((u) => u.startsWith('/api/memory') || u === '/api/domains/') && built && stats;
+  const list = viewNoComments.includes("fetch('/api/domains')");
+  return urls.every((u) => u.startsWith('/api/memory') || u === '/api/domains/' || u === '/api/domains')
+    && built && stats && list;
 })());
+ok('...and the domain LIST is the cheap route, never the stats walk the Domains page pays for',
+  !/fetch\(\s*'\/api\/domains\/stats'/.test(viewNoComments));
 ok('...and it reaches for NO other read surface — the four §2.6 ruled out by cost', (() => {
   for (const banned of ['/api/wiki', '/api/health', 'ai-suggest', 'semantic-dupes', 'broken-links', 'orphans']) {
     if (viewNoComments.includes(banned)) return false;
@@ -2675,17 +2697,39 @@ function ruleFor(css, selector) {
   return css.slice(i, css.indexOf('}', i));
 }
 {
-  const row = ruleFor(viewCss, '.mem-row-mark');
+  // ── THE SQUARE ROW MARKER IS GONE, AND THAT IS THE UNIFICATION ───────
+  //
+  // It was an accent-coloured SQUARE, chosen so a project row and a domain
+  // row could be told apart when the rail put the two one above the other.
+  // The rail does not do that any more: one component paints all three
+  // sidebars, and the mark on a project row is the DOMAIN'S OWN IDENTITY DOT
+  // — the same round mark, in the same six colours, at the same index the
+  // Domains page paints it. That is worth more than the distinction it
+  // replaces: one domain now reads the same on both screens, which is the
+  // entire value of an identity mark.
+  //
+  // So what is asserted is that this view declares NO row-mark geometry of
+  // its own any more, that the six COLOURS are here (they cannot be in the
+  // kit — see memory.css), and that every one of them is a `var()` rather
+  // than a literal. The BREADCRUMB's square is untouched: it marks the
+  // project itself, not a row in a list, and nothing about it was reported.
   const head = ruleFor(viewCss, '.mem-project-mark');
-  ok('.mem-row-mark exists', !!row);
   ok('.mem-project-mark exists', !!head);
-  ok('.mem-row-mark is SQUARE, not a circle', !!row && /border-radius:\s*2px/.test(row) && !/50%/.test(row));
   ok('.mem-project-mark is SQUARE, not a circle', !!head && /border-radius:\s*2px/.test(head) && !/50%/.test(head));
-  // The distinction is only meaningful if the domain dot is still round.
-  const domainsCss = readFileSync(join(NEXT, 'views/domains.css'), 'utf8');
-  const dot = ruleFor(domainsCss, '.dm-row-dot');
-  ok('the knowledge-domain dot is still ROUND, so the shapes actually differ',
-    !!dot && /border-radius:\s*50%/.test(dot));
+  ok('this view declares NO row-mark geometry — the kit owns the row',
+    !ruleFor(viewCss, '.mem-row-mark') && !ruleFor(viewCss, '.mem-row'));
+  const slots = [...viewCss.matchAll(/\.cur-sb-dot-(\d)\s*\{\s*background:\s*([^;]+);/g)];
+  eq('all six identity slots are painted here, and the light theme too',
+    slots.length, 12);
+  ok('...and every one of them is a token reference, never a colour literal — '
+    + 'widening the design kit\'s two-file literal baseline to ship a kit is backwards',
+    slots.every((m) => /^var\(--[a-z0-9-]+\)$/.test(m[2].trim())),
+    slots.map((m) => m[2]).join(' | '));
+  // The kit's own dot is ROUND, which is what the six colours are painted on.
+  const kitCss = readFileSync(join(NEXT, 'shared/sidebar.css'), 'utf8');
+  const dot = ruleFor(kitCss, '.cur-sb-dot');
+  ok('the kit\'s identity dot is ROUND, and this file paints only its colour',
+    !!dot && /border-radius:\s*50%/.test(dot) && !/background/.test(dot));
 }
 // Comments stripped first: this file's own header explains the rule by
 // quoting a literal `0.16s ease` as the thing NOT to write, and a scan over
@@ -2711,7 +2755,22 @@ ok('the MACHINE column is one ellipsised line, never a four-line stack',
   })());
 ok('wide content scrolls inside its own box (pre gets overflow-x)',
   /\.mem-doc pre \{[\s\S]*?overflow-x: auto/.test(viewCss));
-ok('focus is visible on the project rows', viewCss.includes('.mem-row:focus-visible'));
+// THE ROW'S FOCUS RING IS THE GLOBAL ONE NOW, and that is the Domains
+// behaviour rather than a loss. `.mem-row:focus-visible` was a local copy of
+// `tokens/base.css`'s `:focus-visible { box-shadow: var(--ring-focus) }`,
+// which reaches every focusable element including this one — and
+// views/domains.css, the reference sidebar, has never declared a row focus
+// rule for exactly that reason. Asserted at the token rather than pretended
+// to be here, the same call this file already makes for the shared listbox's
+// ring two assertions below, and in both directions so "adopted" cannot be
+// satisfied by nobody declaring one anywhere.
+ok('focus is visible on the project rows — through the global ring, as on Domains', (() => {
+  const base = readFileSync(join(NEXT, 'tokens/base.css'), 'utf8');
+  const domainsCss = readFileSync(join(NEXT, 'views/domains.css'), 'utf8');
+  return /:focus-visible\s*\{[^}]*box-shadow:\s*var\(--ring-focus\)/.test(base)
+    && !viewCss.includes('.mem-row:focus-visible')
+    && !domainsCss.includes('.dm-row:focus-visible');
+})());
 ok('focus is visible on the disclosures', viewCss.includes('.mem-fold-summary:focus-visible'));
 // The pickers are the shared listbox now, so their focus ring lives in
 // shared/listbox.css — asserted THERE rather than pretended to be here. What
@@ -4235,28 +4294,119 @@ section('§16 — Projects inside a domain (v3.48.0)');
     { domain: 'alpha', project: 'two', scopeCount: 0, hasBrief: false, lastWriteAt: null },
     { domain: 'beta', project: 'one', scopeCount: 1, hasBrief: false, lastWriteAt: null },
   ];
-  const html = g(rows, 'beta', 'one');
-  eq('one group per domain, not one per row', (html.match(/mem-group-head/g) || []).length, 2);
+  // THE INSTALL'S DOMAIN LIST is the fourth argument (v3.65.0): the identity
+  // colour is the domain's place in THAT list, not in this screen's, so a
+  // domain with no project context at all cannot slide every colour below it.
+  const html = g(rows, 'beta', 'one', ['zeta', 'alpha', 'beta']);
+  eq('one group per domain, not one per row', (html.match(/cur-sb-group-head/g) || []).length, 2);
   eq('every project still renders a row', (html.match(/data-mem-project=/g) || []).length, 3);
   ok('each row carries its DOMAIN as well as its project — the click handler needs both',
     (html.match(/data-mem-domain=/g) || []).length === 3);
   // THE ACTIVE ROW IS RESOLVED ON THE PAIR. Both domains hold a project
   // called `one`, so a renderer comparing the name alone marks BOTH.
   eq('exactly ONE row is active, even though two projects share a name',
-    (html.match(/class="mem-row active"/g) || []).length, 1);
+    (html.match(/class="cur-sb-row mem-row active"/g) || []).length, 1);
   ok('...and it is the one in the active DOMAIN, not the first of that name',
-    html.indexOf('mem-row active') > html.indexOf('mem-group-head">beta'));
-  ok('a project with nothing saved renders quiet, not hidden',
-    html.includes('mem-row-quiet') && html.includes('mem-row-mark-off'));
+    html.indexOf('mem-row active') > html.indexOf('cur-sb-group-head cur-eyebrow">beta'));
+  // ── THE IDENTITY COLOUR IS THE INSTALL'S INDEX, NOT THIS LIST'S ──────
+  // `alpha` is second and `beta` third in the install; a renderer taking the
+  // local position would paint them slots 1 and 2. This is the whole reason
+  // the list is fetched at all, so it is asserted on the slot NUMBERS rather
+  // than on "a dot exists".
+  ok('the identity dot is the domain\'s slot in the INSTALL\'s list',
+    html.includes('cur-sb-dot-2') && html.includes('cur-sb-dot-3')
+    && !html.includes('cur-sb-dot-1'), html.slice(0, 400));
+  ok('CONTROL: with no list in hand it falls back to the local order rather '
+    + 'than painting no identity at all',
+    g(rows, 'beta', 'one', null).includes('cur-sb-dot-1'));
+  ok('a project with nothing saved renders quiet, and carries NO identity dot — '
+    + 'identity does not have states',
+    html.includes('mem-row-quiet')
+    && (html.match(/class="cur-sb-dot mem-row-mark/g) || []).length === 2);
   ok('a domain with ONE project still gets its heading — the rail must not change shape',
-    (g([rows[2]], null, null).match(/mem-group-head/g) || []).length === 1);
+    (g([rows[2]], null, null).match(/cur-sb-group-head/g) || []).length === 1);
   eq('no projects renders nothing at all', g([], null, null), '');
+  // ── THE CLOCK, WHICH IS WHAT THE REPORT WAS ABOUT ────────────────────
+  // *"it has clocks showing when it was changed; in Context we don't have
+  // that, we have some sort of colours but no clocks."* The kit emits the
+  // glyph itself, between the mark and the age, so a host cannot forget it.
+  const aged = g([{ domain: 'alpha', project: 'one', scopeCount: 2, hasBrief: true,
+    writtenAgeSeconds: 7200, headline: 'A thing' }], null, null, ['alpha']);
+  ok('the row carries a clock glyph beside its age',
+    /<svg[^>]*>[\s\S]{0,200}<\/svg><span class="cur-sb-age mem-row-age">2 hr ago<\/span>/.test(aged)
+    || /<\/svg><span class="cur-sb-age">2 hr ago<\/span>/.test(aged), aged);
+  ok('...and the figure and the age are two SLOTS with the mark between them, '
+    + 'which is what a formatted sentence could not express',
+    /class="cur-sb-figure">2 scopes<\/span><span class="cur-sb-sep"[^>]*>·<\/span><span class="fresh-dot/
+      .test(aged), aged);
+  ok('a project with NO save says so rather than borrowing another screen\'s words',
+    g([{ domain: 'alpha', project: 'fresh', scopeCount: 0, hasBrief: false }], null, null, ['alpha'])
+      .includes('no save yet'));
 
   // Escaping, through the shipped renderer.
   const hostile = g([{ domain: XSS, project: ATTR, scopeCount: 0, hasBrief: false }], null, null);
   ok('a hostile domain name is escaped', !hostile.includes('<img src=x'));
   ok('a hostile project name cannot break out of its attribute',
     !/data-mem-project="[^"]*"\s+onmouseover/.test(hostile));
+}
+
+// ── 16d2. The install's domain list, DRIVEN (v3.65.0) ────────────────────
+//
+// One cheap read per mount, with two readers: the rail's identity colour
+// (the domain's place in THIS list) and step ③'s picker (the set a project
+// may draw on). What is asserted is the four things that make it safe to
+// call on every mount — it asks the CHEAP route, it asks ONCE, an answer for
+// a mount that has ended is dropped, and a refusal leaves the field null
+// rather than empty (empty would mean "this install has no domains", which
+// the picker would then render as a truthful-looking lie).
+{
+  const mk = (stateObj, fetchImpl, mounted = true) => new Function(
+    'state', 'fetch', 'isCurrentMount', 'render', 'domainListInFlight',
+    'let __flight = domainListInFlight;\n'
+    + extractFunction(viewSrc, 'loadDomainList', 'memory.js')
+      // The module-level in-flight mark is a free identifier inside the body;
+      // it is rebound to a local so the harness can read it back.
+      .replace(/domainListInFlight/g, '__flight') + '\n'
+    + 'return { loadDomainList, flight: () => __flight };')(
+    stateObj, fetchImpl, () => mounted, () => { stateObj.__renders = (stateObj.__renders || 0) + 1; }, false);
+
+  const calls = [];
+  const okFetch = (url) => { calls.push(url); return Promise.resolve({
+    ok: true, json: () => Promise.resolve({ domains: ['alpha', 'beta', 7], readonlyDomains: ['shared-x'] }) }); };
+
+  (async () => {
+    const st = { domainList: null, domainListReadonly: [] };
+    const api = mk(st, okFetch);
+    await api.loadDomainList(1);
+    eq('it asks the CHEAP domain route, not the stats walk', calls.join(','), '/api/domains');
+    eq('the list is the server\'s order, with non-strings dropped',
+      (st.domainList || []).join(','), 'alpha,beta');
+    eq('...and the read-only mirrors ride beside it, because a `shared-*` '
+      + 'mirror is a legitimate knowledge domain and a refused ingest target',
+      (st.domainListReadonly || []).join(','), 'shared-x');
+    ok('...and its arrival repaints, so the rail\'s colours land', st.__renders >= 1);
+
+    // ASKED ONCE. A second call with the list in hand issues no request.
+    calls.length = 0;
+    await api.loadDomainList(1);
+    eq('a second call with the list already in hand issues no request', calls.length, 0);
+
+    // A DEAD MOUNT WRITES NOTHING.
+    const st2 = { domainList: null, domainListReadonly: [] };
+    await mk(st2, okFetch, false).loadDomainList(2);
+    eq('an answer for a mount that has ended is dropped', st2.domainList, null);
+
+    // A REFUSAL LEAVES IT NULL, NOT EMPTY.
+    const st3 = { domainList: null, domainListReadonly: [] };
+    await mk(st3, () => Promise.reject(new Error('offline'))).loadDomainList(3);
+    eq('a refusal leaves the list NULL — "not read" and "no domains" are two '
+      + 'different facts and the picker says different things about them',
+      st3.domainList, null);
+    const st4 = { domainList: null, domainListReadonly: [] };
+    await mk(st4, () => Promise.resolve({ ok: false, json: () => Promise.resolve({ error: 'nope' }) }))
+      .loadDomainList(4);
+    eq('...and so does a non-2xx answer', st4.domainList, null);
+  })().catch((err) => { ok('the domain-list harness ran', false, err.stack); });
 }
 
 // ── 16e. The standing brief, and its editor ──────────────────────────────
@@ -6252,12 +6402,19 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     [{ domain: 'acme', project: 'lumina', scopeCount: 2, hasBrief: true,
       headline: 'Rewriting the memory view', writtenAgeSeconds: 120, writtenAt: at(120) },
     { domain: 'acme', project: 'quiet', scopeCount: 0, hasBrief: false }], 'acme', 'lumina');
-  ok('the rail row carries the headline too',
-    /class="mem-row-head">Rewriting the memory view</.test(rail), rail.slice(0, 600));
+  // THE HEADLINE MOVED TO LINE THREE (v3.65.0). It sat on line TWO, above the
+  // figure — the one place the two rails' anatomy really differed — and it is
+  // a LAST EVENT, which is the slot Domains' "Ingested · <title>" occupies.
+  // `mem-row-head` is the kit's `event` slot under its alias, so the name is
+  // unchanged and the POSITION is what this now asserts.
+  ok('the rail row carries the headline too, on the LAST-EVENT line',
+    /class="cur-sb-event mem-row-head">Rewriting the memory view</.test(rail), rail.slice(0, 600));
+  ok('...and it comes AFTER the figure and the age, not before them',
+    rail.indexOf('cur-sb-event') > rail.indexOf('cur-sb-meta'), rail.slice(0, 900));
   eq('...and a project with none gets no empty line',
-    (rail.match(/class="mem-row-head"/g) || []).length, 1);
+    (rail.match(/class="cur-sb-event mem-row-head"/g) || []).length, 1);
   ok('the rail row wears the freshness dot, on the shared scale',
-    /class="mem-row-meta">[\s\S]{0,80}class="fresh-dot fresh-recent"/.test(rail), rail.slice(0, 900));
+    /class="cur-sb-meta mem-row-meta">[\s\S]{0,120}class="fresh-dot fresh-recent"/.test(rail), rail.slice(0, 900));
   ok('...and a row with no age at all takes the `unknown` tier, not `dormant`',
     /class="fresh-dot fresh-unknown"/.test(rail));
 
@@ -8767,6 +8924,10 @@ const EXECUTED = new Set([
   'renderJournal', 'renderBrief', 'aboutInfoHtml',
   'renderEmptyProject', 'renderStaleNotice', 'renderUnlistedNote', 'renderBriefOnlyNotice',
   'unlistedCount', 'renderCopyOutcome', 'renderProject',
+  // v3.65.0 — the install's domain list. One cheap read per mount, with two
+  // readers: the rail's identity colour and step ③'s picker. Driven in §16d
+  // (the list as an argument, and the fallback when it has not arrived).
+  'loadDomainList',
   // v3.65.0 — the step head. `memStep` replaced shared/block.js's renderBlock
   // for this page's three numbered steps (it emits the ⓘ inside the head row,
   // which renderBlock cannot), and it is LIFTED rather than stubbed: every

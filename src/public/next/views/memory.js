@@ -182,6 +182,16 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // question was the whole brief: "how are these the same?" They are one
 // component now, and the domain page's card is the design that won.
 import { renderOverview } from '../shared/overview.js';
+// ── THE SIDEBAR IS THE KIT'S NOW (v3.65.0, R2) ──────────────────────────────
+// The maintainer, with both rails in front of him: *"We have two middle menus,
+// Domains and Context, in totally different designs ... I suggest we go with
+// the Domains design, which is more polished: it has clocks showing when it
+// was changed; in Context we don't have that."* `shared/sidebar.js` IS that
+// design, extracted; this view passes content and nothing else. `mem-` rides
+// as an ALIAS on the same elements, so the four suites that address this
+// rail's rows by name keep addressing them.
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
+  identityDotClass } from '../shared/sidebar.js';
 
 // THE FRESHNESS SCALE, imported rather than declared. `freshnessStep` used to
 // live in this file, beside the first screen that needed it; it is now one
@@ -421,6 +431,17 @@ function freshState() {
     loading: true,
     projects: [],          // GET /api/memory -> projects[]
     indexError: null,
+    // ── THE INSTALL'S DOMAINS, IN listDomains() ORDER (v3.65.0) ──────────
+    // `null` until `GET /api/domains` answers, and `null` forever if it
+    // refuses. TWO readers, which is why it is fetched at all rather than
+    // derived: the rail's identity colours need the domain's place in THIS
+    // list (the same list the Domains page paints from, so one domain is one
+    // colour everywhere), and step ③'s picker needs the set of domains a
+    // project may draw on. `readonly` is kept beside it because a `shared-*`
+    // mirror is an allowed knowledge domain and a refused ingest target, and
+    // conflating the two is how a picker comes to hide a legitimate choice.
+    domainList: null,
+    domainListReadonly: [],
     // HOW MANY DOMAINS THE SERVER LOOKED AT. `null` until the first answer,
     // and `null` from a server too old to say — which is why the empty state
     // reads it as three values and not as a number. An empty `projects` means
@@ -902,6 +923,14 @@ const captureCache = new Map();
 // The (domain, project) a capture read is in flight for, so two rapid switches
 // back and forth do not issue two requests. Cleared when that read settles.
 let captureInFlight = null;
+
+// ── THE INSTALL'S DOMAIN LIST (v3.65.0) ────────────────────────────────
+// Read ONCE per mount and held in `state.domainList`, so the in-flight mark
+// is a bare boolean rather than a key: there is one list and it does not
+// change while a mount lives (a domain created in another view arrives with
+// the next mount, which is the same staleness every other list on this
+// screen accepts).
+let domainListInFlight = false;
 
 const MAX_CACHE = 24;
 
@@ -2014,6 +2043,13 @@ function takePendingProject() {
 
 async function loadIndex(token) {
   const gate = loadGate;                 // capture: the next mount replaces it
+  // ── THE DOMAIN LIST, IN PARALLEL AND UNAWAITED (v3.65.0) ─────────────
+  // It is needed by the rail (the identity colour is the domain's place in
+  // THIS list) and by step ③'s picker, and it is independent of the index —
+  // so it goes out beside it rather than behind it, and a slow answer never
+  // delays the first paint. Its own arrival renders; until then the rail
+  // falls back to its local order.
+  loadDomainList(token).catch((err) => reportAsyncMountFailure(token, err));
   const got = await fetchIndex(token);
   if (!isCurrentMount(token)) return;
   if (got) {
@@ -2921,7 +2957,7 @@ function restoreFocus() {
  * Pure and exported through __testing: this is the function the grouping
  * assertions drive.
  */
-export function renderProjectGroups(projects, activeDomain, activeProject) {
+export function renderProjectGroups(projects, activeDomain, activeProject, domainOrder) {
   const rows = Array.isArray(projects) ? projects.filter(Boolean) : [];
   const order = [];
   const byDomain = new Map();
@@ -2930,77 +2966,119 @@ export function renderProjectGroups(projects, activeDomain, activeProject) {
     if (!byDomain.has(d)) { byDomain.set(d, []); order.push(d); }
     byDomain.get(d).push(p);
   }
+  // ── THE IDENTITY COLOUR IS THE DOMAIN'S OWN, NOT THIS LIST'S POSITION ──
+  //
+  // `identityDotClass(i)` is the SAME mapping views/domains.js paints its
+  // KNOWLEDGE rows with, so a domain has one colour across the whole app —
+  // which is the entire value of an identity mark and is the reason it is a
+  // kit function rather than a second copy. The index has to be the domain's
+  // place in the INSTALL's list, not in this screen's: a domain with no
+  // project context at all is absent here and present there, and taking the
+  // local position would slide every colour below it by one.
+  //
+  // `domainOrder` is that list, from `GET /api/domains` (the same
+  // `listDomains()` order `GET /api/domains/stats` hands the Domains page).
+  // It is a PARAMETER rather than a read of module state because this
+  // function is lifted and executed by four suites; when it has not arrived
+  // yet the local order stands in, which is right far more often than not and
+  // is never wrong about which SET of colours is in use.
+  const slots = Array.isArray(domainOrder) && domainOrder.length ? domainOrder : order;
   return order.map((domain) => {
-    const inner = byDomain.get(domain).map((p) => {
+    const slot = slots.indexOf(domain);
+    const rowsHtml = byDomain.get(domain).map((p) => {
       const active = p.domain === activeDomain && p.project === activeProject;
       const has = p.scopeCount > 0 || p.hasBrief;
       // THE FRESHNESS DOT, on the app-wide scale. The rail said "3 scopes ·
       // 2 hr ago" and made you READ it to rank two projects; the dot answers
       // the same question pre-attentively, from `freshnessTier` — the same
-      // function the work-stream table's dots and (under its other name,
-      // `freshnessStep`) the save strip's pip are cut on, so a project row and
-      // its own newest work-stream can never disagree about how fresh it is.
-      // It is aria-hidden: the words beside it say the same thing.
-      const tier = freshnessTier(effectiveSave(p).seconds);
-      return (
-        '<button class="mem-row' + (active ? ' active' : '') + (has ? '' : ' mem-row-quiet') + '"' +
-          ' data-mem-domain="' + escapeHtml(domain) + '"' +
-          ' data-mem-project="' + escapeHtml(p.project) + '"' +
-          (active ? ' aria-current="true"' : '') + '>' +
-          // SQUARE, not round — see this file's header comment.
-          '<span class="mem-row-mark' + (has ? '' : ' mem-row-mark-off') + '"></span>' +
-          '<span class="mem-row-main">' +
-            '<span class="mem-row-name">' + escapeHtml(p.project) + '</span>' +
-            // "WORKING ON:" IN THE RAIL. `headline` rides on every index row
-            // and nothing had ever rendered it; the menubar widget leads with
-            // it. One line, ellipsised, and OMITTED rather than filled with a
-            // placeholder when there is none — an em dash under every project
-            // with no saves would be noise on the one list you scan.
-            (p.headline
-              ? '<span class="mem-row-head">' + escapeHtml(p.headline) + '</span>'
-              : '') +
-            '<span class="mem-row-meta">' +
-              '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' +
-              '<span>' + escapeHtml(projectMetaLine(p)) + '</span>' +
-            '</span>' +
-          '</span>' +
-        '</button>'
-      );
+      // function the work-stream table's dots and the save row's own mark are
+      // cut on, so a project row and its own newest work-stream can never
+      // disagree about how fresh it is. It is aria-hidden: the words beside
+      // it say the same thing.
+      const eff = effectiveSave(p);
+      const tier = freshnessTier(eff.seconds);
+      // THE FIGURE AND THE AGE ARE TWO SLOTS, NOT ONE SENTENCE — and that is
+      // the whole of what the maintainer was pointing at. `projectMetaLine`
+      // composes "18 scopes · 15 hr ago" as a STRING, so there was nowhere
+      // for a clock glyph to go: *"it has clocks showing when it was changed;
+      // in Context we don't have that, we have some sort of colours but no
+      // clocks."* The kit puts the mark and the glyph BETWEEN the figure and
+      // the age, which cannot be done by splitting a formatted line, and it
+      // emits the glyph itself so a host cannot forget it.
+      const n = Number.isInteger(p.scopeCount) ? p.scopeCount : null;
+      const figure = n === null ? '' : n + ' scope' + (n === 1 ? '' : 's');
+      return renderSidebarRow({
+        alias: 'mem',
+        name: p.project,
+        // NO DOT AT ALL on a project with neither a brief nor a save: the
+        // hollow ring `.mem-row-mark-off` painted was a SECOND state on the
+        // identity mark, and identity does not have states. The quiet row
+        // class already says it, in the name's own ink.
+        dotClass: has && slot >= 0 ? identityDotClass(slot) : '',
+        figure,
+        markHtml: '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>',
+        age: formatAge(eff.seconds),
+        // A PROJECT WITH NO SAVE HAS NO AGE, and says so rather than
+        // borrowing "nothing written yet" from a domain that has no pages.
+        ageFallback: 'no save yet',
+        // "WORKING ON:" IN THE RAIL, on line THREE. `headline` rides on every
+        // index row and nothing had ever rendered it; the menubar widget
+        // leads with it. It sat on line TWO, ABOVE the figure — the one place
+        // the two rails' anatomy really differed — and it is a LAST EVENT,
+        // which is the slot Domains' "Ingested · <title>" already occupies.
+        // OMITTED rather than filled with a placeholder when there is none.
+        event: p.headline || '',
+        active,
+        stateClass: has ? '' : 'mem-row-quiet',
+        ariaCurrent: active,
+        data: { 'mem-domain': domain, 'mem-project': p.project },
+      });
     }).join('');
-    return (
-      '<div class="mem-group">' +
-        '<div class="mem-group-head cur-eyebrow">' + escapeHtml(domain) + '</div>' +
-        '<div class="mem-row-list">' + inner + '</div>' +
-      '</div>'
-    );
+    // THE GROUP HEAD IS THE DOMAIN, and `.cur-eyebrow` upper-cases it — so
+    // the maintainer's own domain, which is literally named `projects`, reads
+    // PROJECTS. That is correct and is not the duplicate-word defect it was
+    // reported as: the OTHER PROJECTS on that screen was the actions eyebrow,
+    // which this release retires with the row of ghost buttons it captioned.
+    return renderSidebarGroup({ eyebrow: domain, alias: 'mem', rowsHtml });
   }).join('');
 }
 
 function renderSidebar(token) {
-  // NO PARAGRAPH UNDER THE TITLE. v3.20.0 moved this sentence from
-  // `.sidebar-hint` into renderDescription, which changed its CLASS and left it
-  // in the same position — still prose floating under a title. renderViewHeader
-  // has no field that can put it back there.
+  // ── THE KIT'S HEAD: A TITLE, A PRIMARY, A SECONDARY (v3.65.0, R2/R7) ────
   //
-  // The clause that was cut is `read here, written by them`: it is back, in
-  // ONE place, as the second sentence of this panel.
+  // NO ⓘ. The maintainer: *"we have an information icon in the Project
+  // context sidebar which should not be here, because we have another one on
+  // the right side beside Copy agent instructions — we definitely don't need
+  // it in this small section."* `renderSidebarHead` takes no `info` option at
+  // all, so this is enforced by the component rather than remembered by a
+  // caller; the sentence the rail's panel carried is the second paragraph of
+  // the MAIN header's own ⓘ (`aboutInfoHtml`), which is where it was already
+  // half-said.
   //
-  // WHY IT MOVED. It had been a floating card at the foot of the rail — a lock
-  // glyph and a sentence, under the project list, belonging to nothing. The
-  // maintainer flagged it as undesigned, and he is right about the mechanism as
-  // well as the look: it is the same KIND of content as the sentence already
-  // behind this mark (what this screen is and who writes it), rendered in a
-  // second place with a second treatment. One mark, one panel, one voice.
+  // THE TWO SLOTS MEAN SOMETHING, and that is why the pair swapped rungs. The
+  // primary slot is "create the kind of thing this list holds" — `New domain`
+  // on Domains, `+ New project` here — and the secondary is the one
+  // alternative route. Both used to be `btn-ghost btn-xs` inside a
+  // `.mem-projects-head` row under an eyebrow, which is the *"Refresh without
+  // a button — it is a button but not visible as one"* the report names.
   //
-  // The Refresh button's tooltip is folded in here rather than deleted. It was
-  // the only place that said the screen re-checks by itself, and a `title=` is
-  // invisible to keyboard and to touch — the class v3.20.0 counted 11 of.
-  const head = renderViewHeader({
-    variant: 'sidebar',
+  // `+ New project` NAVIGATES TO DOMAINS, by design: Domains stays the one
+  // place a project is created, one form and one set of refusals. A primary
+  // face is honest about intent and its accessible name keeps "in Domains",
+  // so the destination is announced before the press rather than discovered
+  // after it.
+  const head = renderSidebarHead({
     title: 'Project context',
-    info: 'The working brief your agents leave for each other. This screen re-checks by itself '
-      + 'when you come back to it, so Refresh is rarely needed. '
-      + 'Agents save handoffs here over MCP; you write the standing brief.',
+    primary: {
+      label: '+ New project',
+      id: 'mem-new-project',
+      className: 'mem-new-project',
+    },
+    secondary: {
+      label: 'Refresh',
+      id: 'mem-refresh',
+      className: 'mem-refresh',
+    },
   });
 
   if (state.loading) {
@@ -3022,60 +3100,24 @@ function renderSidebar(token) {
     return;
   }
   if (!state.projects.length) {
-    setSidebar(head + '<div class="cur-eyebrow" style="margin-top:10px">PROJECTS</div>' +
+    setSidebar(head +
       renderDescription('No domains yet. Project context is kept per domain — create one in Domains first.'),
       token);
     return;
   }
 
-  const rows = renderProjectGroups(state.projects, state.activeDomain, state.activeProject);
-
-  // A VISIBLE, KEYBOARD-REACHABLE way to re-ask. The automatic triggers
-  // (select, wake, poll) cover the cases we can predict; this covers the one
-  // we cannot, which is a user who simply does not believe the screen.
-  //
-  // Plain text rather than a glyph: there is no refresh icon in ICON_BODY,
-  // and icon() renders a loud placeholder for a name it does not know rather
-  // than guessing (v3.9.0), so inventing one would ship a broken icon. A
-  // word also needs no aria-label to be announced correctly.
-  //
   // Hoisted into a local rather than inlined into the setSidebar() call
   // below: test-next-memory-view §9 reads the token argument within a
   // 12-line window of the call, and it is right to — a call whose arguments
   // no longer fit on a screen is a call whose token is easy to drop.
-  const projectsHead =
-    '<div class="mem-projects-head">' +
-      '<span class="cur-eyebrow">PROJECTS</span>' +
-      // No `title=`. The sentence it carried is in the header's info panel,
-      // where a keyboard or touch user can actually reach it; the word
-      // "Refresh" is its own accessible name.
-      //
-      // THE KIT'S QUIET TIER, NAMED. shell.css's taxonomy calls this rung
-      // `.btn-ghost` — a control that must be reachable and must not compete —
-      // and this button is its definition: the fallback for an automatic
-      // revalidation, where prominence would imply the screen does not update
-      // on its own. It used to be a bespoke `.mem-refresh` rule painting the
-      // same intent by hand, which is the one-copy-per-view shape the design
-      // foundation removed for `.btn-xs`. `.mem-refresh` survives for the hit
-      // target and the flex behaviour only.
-      '<button type="button" class="btn btn-ghost btn-xs mem-refresh" id="mem-refresh">Refresh</button>' +
-      // ── A POINTER, NOT A SECOND CREATE PATH (D-J, P1-11) ─────────────
-      // Domains stays the ONE place a project is created: one form, one
-      // POST, one set of refusals to keep in step. What this screen owed the
-      // user is the pointer — the rail groups by domain and this list is
-      // where somebody notices a project is missing — so the control carries
-      // the domain it was pressed in, through the shell's `requestDomain`,
-      // and Domains lands on that domain rather than on whichever one it
-      // last had. `btn-ghost btn-xs`, beside Refresh: it does not act here.
-      '<button type="button" class="btn btn-ghost btn-xs mem-new-project" id="mem-new-project">'
-        + '+ New project</button>' +
-    '</div>';
+  const rows = renderProjectGroups(
+    state.projects, state.activeDomain, state.activeProject, state.domainList);
 
-  // NO FOOT CARD. The lock glyph and its sentence are the header's info panel
-  // now (see `head` above). What sat here was a floating, undesigned block
-  // under the list — and, once the same fact was behind the mark, a second
-  // copy of it on the same screen.
-  setSidebar(head + projectsHead + rows, token);
+  // NO FOOT CARD, and no `.mem-projects-head` either. The first was a lock
+  // glyph and a sentence under the list, belonging to nothing; the second was
+  // an eyebrow captioning two ghost buttons. Both are gone, and what is left
+  // is the shape all three sidebars share: a title, two actions, and groups.
+  setSidebar(head + rows, token);
 }
 
 function renderMain(token) {
@@ -3893,6 +3935,42 @@ function renderKnowledge() {
  * NEVER THROWS, and a failure is a DISCLOSURE rather than a blank: the step
  * says it could not read, and both doors stay offered.
  */
+/**
+ * THE INSTALL'S DOMAIN LIST — one cheap read, once per mount (v3.65.0).
+ *
+ * `GET /api/domains` is a `readdir` plus one readonly probe per domain. No
+ * stats, no wiki read, no LLM. `GET /api/domains/stats` (what the Domains
+ * page calls) walks every wiki folder to count pages, and this view needs
+ * only the NAMES and their ORDER, so it asks for the cheaper of the two.
+ *
+ * WHY THE ORDER MATTERS AND IS NOT INCIDENTAL: both routes answer out of
+ * `listDomains()`, so position N here is position N on the Domains page, and
+ * `identityDotClass(N)` therefore paints one domain the same colour on both
+ * screens. Deriving the index from THIS view's own grouping instead would
+ * slide every colour below a domain that has no project context yet.
+ *
+ * NEVER THROWS, and a failure leaves `domainList` null rather than empty: the
+ * rail then falls back to its local order (right far more often than not) and
+ * step ③'s picker says it could not read the list instead of offering none.
+ */
+async function loadDomainList(token) {
+  if (state.domainList || domainListInFlight) return;
+  domainListInFlight = true;
+  try {
+    const res = await fetch('/api/domains');
+    const data = await res.json();
+    if (!isCurrentMount(token)) return;
+    if (res.ok && Array.isArray(data.domains)) {
+      state.domainList = data.domains.filter((d) => typeof d === 'string');
+      state.domainListReadonly = Array.isArray(data.readonlyDomains)
+        ? data.readonlyDomains.filter((d) => typeof d === 'string') : [];
+      render(token);
+    }
+  } catch { /* the rail keeps its local order; the picker says so */ } finally {
+    domainListInFlight = false;
+  }
+}
+
 async function loadKnowledge(domain, token) {
   if (!domain) return;
   const hit = knowledgeCache.get(domain);
@@ -8905,6 +8983,18 @@ function aboutInfoHtml() {
     '<p>A <b>domain</b> is where your knowledge lives — one compounding wiki. A <b>project</b> is a ' +
     'thing you build inside it, and a domain can hold several. Project context is kept per project, in ' +
     '<span class="mono">state/</span> beside that domain’s wiki, and synced with it.</p>' +
+    // ── THE RAIL'S OWN SENTENCE, MOVED HERE (v3.65.0, R2) ─────────────
+    // The sidebar had a second ⓘ carrying this line, and the maintainer
+    // asked for it to go: *"we have an information icon in the Project
+    // context sidebar which should not be here, because we have another one
+    // on the right side beside Copy agent instructions — we definitely
+    // don't need it in this small section."* The MARK went; the SENTENCE
+    // did not, and this is the panel it belongs in — the paragraph below
+    // already says the same thing about the same two writers at length, so
+    // this is the one-line form of it, kept verbatim because it is the form
+    // a reader who opens the panel and reads nothing else gets.
+    '<p>Agents save handoffs here over MCP; you write the standing brief. ' +
+    'This screen re-checks by itself when you come back to it, so Refresh is rarely needed.</p>' +
     '<ul class="mem-about-list">' +
       '<li><b>Standing brief</b> — the part that rarely changes: the goal, the firm decisions, the working ' +
       'model. One per project, returned on every agent read. <b>You write this one</b>, here or in a text ' +

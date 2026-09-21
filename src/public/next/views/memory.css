@@ -215,180 +215,91 @@
 
 /* ── Sidebar: project list ───────────────────────────────────────────── */
 
-/* The PROJECTS eyebrow and its Refresh control share a row. Baseline
-   alignment, not centre: the eyebrow is uppercase --text-2xs and the button
-   is sentence case, so centring them makes the cap-height of one sit above
-   the x-height of the other. */
-.mem-projects-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 10px;
-}
+/* ══ THE RAIL IS shared/sidebar.css's NOW (v3.65.0, R2) ══════════════════
+   The maintainer, with both rails side by side: *"We have two middle menus,
+   Domains and Context, in totally different designs — I also think different
+   fonts ... I suggest we go with the Domains design, which is more polished:
+   it has clocks showing when it was changed; in Context we don't have that."*
 
-/* THE KIT PAINTS THIS BUTTON NOW. The markup is `btn btn-ghost btn-xs
-   mem-refresh`: shell.css's taxonomy calls the quiet rung `.btn-ghost` — a
-   control that must be reachable and must not compete — and this button is
-   its definition. It is the fallback for an automatic revalidation, and a
-   prominent one would imply the screen does not update on its own.
+   WHAT WAS DELETED, AND WHY IT COULD BE. `.mem-row-list`, `.mem-row` and its
+   four state rules, `.mem-row-mark`, `.mem-row-mark-off`, `.mem-row-main`,
+   `.mem-row-name`, `.mem-row-meta` and its last-child ellipsis rule,
+   `.mem-row-head` and the two `.active` colour overrides — about sixty
+   declarations, every one of them this view's own answer to a question
+   `shared/sidebar.css` now answers once for all three rails. The kit's own
+   `cur-sb-*` classes and these `mem-*` tokens ride the SAME elements (the
+   component's `alias: 'mem'`), so the four suites that address this rail's
+   rows by name still address them; what is gone is the second set of VALUES.
 
-   WHAT WAS DELETED, AND WHY IT COULD BE. Fourteen declarations painting
-   background, border, radius, colour, type, cursor, hover, active and focus BY
-   HAND, plus a bespoke press transform — every one of them a local answer to a
-   question shell.css answers once. That is the same one-copy-per-view shape
-   the design foundation removed for `.btn-xs` itself, which had five copies in
-   five view stylesheets and was in fact being rendered by whichever one the
-   document happened to link last.
+   TWO THINGS CHANGED VISIBLY, and both are the unification rather than a
+   side effect:
 
-   WHAT SURVIVES IS GEOMETRY, and only what the kit cannot know: this button is
-   a flex item in a baseline-aligned row and must not stretch, and it must
-   clear the 28pt hit floor. `.btn-xs` is --control-sm, which IS 28px, so the
-   min-height is belt and braces against a future size change rather than a
-   correction — it is kept because the kit suite asserts it here.            */
-.mem-refresh {
-  flex: none;
-  min-height: var(--hit-min);
-}
+   · THE ACTIVE ROW. It was `background: var(--accent-tint)` — the one row
+     family in the app whose selection was accent-tinted — and it is the
+     `--mat-row-active` alpha overlay every other rail uses. The exception was
+     argued and the argument has expired: it existed because a selected row
+     also carried a press split (`.mem-row.active:active` deepened its own
+     tint so pressing the row you are reading would not look like leaving it),
+     and the kit's single `:active` rule lands on the same token `.active`
+     does, which answers the same worry without a second colour.
+   · THE MARK. It was a SQUARE in the accent colour, with a hollow variant for
+     a project with nothing saved. It is the domain's IDENTITY dot now, the
+     same round mark and the same six colours the Domains rail paints, so one
+     domain reads the same on both screens — which is the whole value of an
+     identity mark and the reason the mapping is a kit function. A project
+     with nothing saved carries NO dot rather than a hollow one: identity does
+     not have states, and the quiet row class already says it in the ink.
 
-.mem-row-list { display: flex; flex-direction: column; gap: 2px; }
+   WHAT THIS FILE STILL OWNS about the rail is below: the quiet row's ink, and
+   the six identity COLOURS, which cannot live in the kit — three of the
+   light-theme values are derived literals and
+   scripts/test-next-design-kit.js §10 permits colour literals in exactly TWO
+   /next stylesheets, asserting the baseline holds exactly two files. Widening
+   an anti-drift ratchet in order to ship a kit is backwards.              */
 
-.mem-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  padding: 8px 10px;
-  border: none;
-  border-radius: 7px;
-  background: transparent;
-  color: inherit;
-  font-family: inherit;
-  text-align: left;
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: background var(--t-state), transform var(--t-press);
-}
-/* Rows on the sidebar MATERIAL take the alpha overlay, never an opaque
-   surface — an opaque fill stops the blur for the width of the row. Same
-   change as views/chat.css and views/domains.css.
+/* ── THE SIX IDENTITY COLOURS, ON THE KIT'S CLASS NAMES ─────────────────
+   NOT ONE COLOUR LITERAL: every value here is a `var()` reference, six to the
+   type triad and the three neutral rungs, six more to `--dm-ink-*` — the
+   three names views/domains.css declares for exactly this, precisely so two
+   rules needing one colour do not become two copies of a literal.
 
-   `.mem-row.active` below is NOT touched: it is accent-tinted, which is
-   STATE rather than the plane, and the whole point of that exception is that
-   it does not read as a lit row. */
-.mem-row:hover { background: var(--mat-row-hover); }
-.mem-row.active { background: var(--accent-tint); }
-/* Press, SPLIT on `.active` — and this row is why the split exists at all.
-   Unlike every other row family in the tree, a selected `.mem-row` is
-   ACCENT-tinted rather than neutral, so an unqualified `.mem-row:active
-   { background: var(--surface-active) }` — which ties with `.mem-row.active`
-   and, being later, wins — would repaint the currently-open scope in the
-   neutral grey for as long as the pointer is held. Pressing the row you are
-   already reading would read as leaving it. Selected therefore deepens its
-   OWN tint instead. */
-.mem-row:not(.active):active { background: var(--mat-row-active); }
-.mem-row.active:active { background: var(--accent-tint-strong); }
-.mem-row:active { transform: translateX(var(--press-shift)); }
-.mem-row:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+   ONE DECLARATION FOR BOTH RAILS. CSS has no per-view scope: these rules
+   paint `cur-sb-dot-N` wherever it appears, so the Domains rail is painted by
+   them too the moment it adopts `identityDotClass()`. They are written here
+   rather than in views/domains.css only because this is the view that adopts
+   first; if both files end up declaring them, one copy should go.
 
-/* THE SQUARE MARKER. Domains use a round dot (.dm-row-dot, border-radius
-   50%); agent memory is a different KIND of thing and the rail puts the two
-   one above the other, so the shape carries the distinction. 2px of radius
-   keeps it from reading as a rendering artefact — it is still unmistakably
-   a square next to a circle. */
-.mem-row-mark {
-  width: 8px;
-  height: 8px;
-  flex: none;
-  border-radius: 2px;
-  background: var(--accent);
-}
-/* A project with no state at all: outlined, not filled. "Nothing here yet"
-   should look different from "something here", without being invisible. */
-.mem-row-mark-off { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-faint); }
+   The `[data-theme="light"]` arm is the measured one: in DARK the type
+   triad's own -500 rungs already clear the 3:1 non-text floor with room, so
+   the names alias the tokens there and no dark value moves by a byte.     */
+.cur-sb-dot-1 { background: var(--entity-500); }
+.cur-sb-dot-2 { background: var(--concept-500); }
+.cur-sb-dot-3 { background: var(--summary-500); }
+.cur-sb-dot-4 { background: var(--teal-500); }
+.cur-sb-dot-5 { background: var(--red-400); }
+.cur-sb-dot-6 { background: var(--ink-200); }
+[data-theme="light"] .cur-sb-dot-1 { background: var(--dm-ink-entity); }
+[data-theme="light"] .cur-sb-dot-2 { background: var(--dm-ink-concept); }
+[data-theme="light"] .cur-sb-dot-3 { background: var(--dm-ink-summary); }
+[data-theme="light"] .cur-sb-dot-4 { background: var(--teal-600); }
+[data-theme="light"] .cur-sb-dot-5 { background: var(--red-600); }
+[data-theme="light"] .cur-sb-dot-6 { background: var(--ink-400); }
 
-.mem-row-main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
-/* --text-md, the SIDEBAR ROW NAME rung. Every sidebar list in the app renders
-   the same thing here — the name of the item the row selects — and the four
-   that carry it had drifted to two sizes: measured in a browser at 1400px,
-   dark, `.dm-row-name` (Domains) and `.ing-dest-name` (Ingest) came back
-   13px, while `.mem-row-name`, `.sync-domain-name` and `.sb-conn-name` came
-   back 12px. All five are 13 now; the weight step to --weight-medium on the
-   ACTIVE row is unchanged and is still what marks the selection. */
-.mem-row-name {
-  font-size: var(--text-md);
-  color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.mem-row.active .mem-row-name { color: var(--text); }
-/* --text-2, not --text-faint. MEASURED in both themes, composited against
-   the real surface behind it (.sidebar is --surface).
-
-   RE-MEASURED after v3.25.0 re-based the text ramp. The figures this comment
-   carried — --text-faint 2.26/2.34, --text-3 4.27/4.14, --text-2 8.34/7.26,
-   and "--text-3 does NOT reach the floor anywhere in this file" — were TRUE
-   WHEN WRITTEN and are now false, and they were phrased in the PRESENT
-   TENSE, so they were left asserting something the tokens no longer do.
-   Current, on --surface:
-
-     --text-faint  3.47 dark / 3.61 light   — still under the 4.5 AA floor
-     --text-3      6.16 dark / 5.60 light   — now CLEARS it
-     --text-2     10.54 dark / 9.33 light   — clears it
-
-   So the ORIGINAL REASON for this choice has expired: --text-3 is now a
-   legitimate option here. --text-2 is kept anyway, and on its own merits —
-   this is the only line of context under a row's name, and v3.25.0's ramp
-   work made exactly this distinction, keeping the second rung for the one
-   sentence a reader has and reserving the third for LABELS. Hierarchy is
-   still carried by SIZE: this stays at --text-2xs under a --text-sm name. */
-/* Ages and entry counts, one per sidebar row. Tabular digits so `11 min
-   ago` and `20 hr ago` occupy the same width down the column. */
-.mem-row-meta {
-  /* A FLEX ROW NOW, because the freshness dot rides in it. `min-width: 0` on
-     the text child is what lets the ellipsis happen inside a flex line; the
-     dot is `flex: none` from shared/freshness.css and needs nothing here. */
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-  font-variant-numeric: var(--numeric-tabular);
-}
-.mem-row-meta > span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* "WORKING ON:" IN THE RAIL — one line, and only when there is one.
-   `headline` has ridden on every index row since v3.48.0 and nothing rendered
-   it; the menubar widget leads with it. It sits between the project NAME and
-   its meta line because that is the reading order of the question: which
-   project, what is it doing, how fresh is that.
-
-   --text-2 like the meta line, and a step SMALLER than the name above it:
-   hierarchy by size, which is this file's standing rule (see .mem-row-meta's
-   note on why --text-3 is not used for prose here). */
-.mem-row-head {
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.mem-row.active .mem-row-head { color: var(--text); }
 /* A project row with nothing saved yet. It was --text-3, which this file's own
-   note on .mem-row-meta six lines above already argues against in principle:
-   "Sub-threshold contrast is not a hierarchy device." --text-3 measures
-   3.87-4.38 across every surface in this file, under the 4.5 text floor, and
-   this is a project NAME — the thing a user scans the list for. The quiet step
-   survives as --text-2 under .mem-row-name's --text. */
-.mem-row-quiet .mem-row-name { color: var(--text-2); }
+   note on the meta line argued against in principle: "Sub-threshold contrast
+   is not a hierarchy device." --text-3 measures 3.87-4.38 across every surface
+   in this file, under the 4.5 text floor, and this is a project NAME — the
+   thing a user scans the list for. The quiet step survives as --text-2 under
+   the kit's own name ink. */
+.mem-row-quiet .cur-sb-name { color: var(--text-2); }
+
+/* `.mem-projects-head` and `.mem-refresh` are GONE with the row they
+   captioned. The eyebrow labelled two `btn-ghost btn-xs` controls — *"Refresh
+   without a button — it is a button but not visible as one"* — and both now
+   sit in the kit head's PRIMARY and SECONDARY slots, which are full-width
+   real buttons `shared/sidebar.css` paints and shell.css sizes. The classes
+   are still passed as `className` so a rule can find them again if one is
+   ever needed; nothing declares one today.                                */
 
 .mem-sidebar-foot {
   display: flex;

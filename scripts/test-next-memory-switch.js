@@ -1217,9 +1217,18 @@ section('§10 — THE HANDOFF FROM DOMAINS: one project, once (v3.61.0, P1-10)')
   const rig = (rows) => {
     const picked = [];
     // eslint-disable-next-line no-new-func
+    const domainReads = [];
+    // eslint-disable-next-line no-new-func
     const api = new Function(
       'state', 'fetchIndex', 'isCurrentMount', 'render', 'settleGate', 'selectProject',
       'readRememberedProjects', 'loadGate',
+      // ── THE DOMAIN LIST GOES OUT BESIDE THE INDEX (v3.65.0) ──────────
+      // It is a free identifier inside `loadIndex`'s body, so a spy is
+      // required or this harness is a ReferenceError. It is also the claim
+      // worth making here: the list read must be UNAWAITED and must not sit
+      // behind the index, or a slow answer delays the first paint of a
+      // screen that already has everything it needs to draw.
+      'loadDomainList', 'reportAsyncMountFailure',
       'let pendingProject = null;\n'
       + lift('requestProject') + '\n'
       + lift('takePendingProject') + '\n'
@@ -1233,8 +1242,12 @@ section('§10 — THE HANDOFF FROM DOMAINS: one project, once (v3.61.0, P1-10)')
       (_g, fn) => fn(),
       async (d, p) => { picked.push(d + '/' + p); },
       () => null,
-      null);
-    return { api, picked };
+      null,
+      // NEVER RESOLVES, deliberately: if `loadIndex` awaited it, nothing
+      // below would ever run and the suite would hang rather than pass.
+      () => { domainReads.push(1); return new Promise(() => {}); },
+      () => {});
+    return { api, picked, domainReads };
   };
   const ROWS = [
     // A brand-new project: NO saves at all, so recency cannot reach it.
@@ -1244,10 +1257,16 @@ section('§10 — THE HANDOFF FROM DOMAINS: one project, once (v3.61.0, P1-10)')
   ];
 
   {
-    const { api, picked } = rig(ROWS);
+    const { api, picked, domainReads } = rig(ROWS);
     await api.loadIndex(1);
     eq('CONTROL: with no request, the ordinary arrival opens the freshest save '
       + '— which is NOT the new project', picked.join(), 'other/busy');
+    // ── THE DOMAIN LIST WENT OUT, AND IT WAS NOT AWAITED (v3.65.0) ─────
+    // The spy returns a promise that NEVER settles, so an awaited call would
+    // hang this harness rather than pass it — which is what makes the second
+    // half a measurement instead of a hope.
+    eq('the install\'s domain list is asked for once, beside the index', domainReads.length, 1);
+    eq('...and the index still resolved, so the read is not awaited', picked.length, 1);
   }
   {
     const { api, picked } = rig(ROWS);

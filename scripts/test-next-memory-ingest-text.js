@@ -655,7 +655,21 @@ for (const [name, rawCss] of [['memory.css', memCss], ['ingest.css', ingCss]]) {
   // deliberate edit here too.
   const tokenCss = ['base', 'color', 'space', 'shape', 'typography', 'motion', 'material']
     .map((n) => read('tokens/' + n + '.css')).join('\n');
-  const shell = read('shell.css');
+  // ── AND views/domains.css, FOR THREE NAMES AND A STATED REASON ────────
+  // v3.65.0: views/memory.css paints the six IDENTITY DOT colours on the
+  // sidebar kit's own class names, and three of them (`--dm-ink-entity` /
+  // `-concept` / `-summary`) are declared in views/domains.css. That is not
+  // an oversight and cannot be fixed by copying: those three names exist
+  // precisely so two rules needing one colour do not become two copies of a
+  // LITERAL, and scripts/test-next-design-kit.js §10 permits colour literals
+  // in exactly two /next stylesheets while asserting the baseline holds
+  // exactly two files — so re-declaring the values here would widen an
+  // anti-drift ratchet in order to ship a kit.
+  //
+  // WHAT IS STILL GUARDED: every OTHER var() in both files must resolve, and
+  // a typo in one of these three still reds, because they are read out of the
+  // real views/domains.css rather than allow-listed by name.
+  const shell = read('shell.css') + '\n' + read('views/domains.css');
   for (const [name, css] of [['memory.css', memCss], ['ingest.css', ingCss]]) {
     const defined = new Set([...(tokenCss + shell + css).matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
     const used = [...css.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]);
@@ -977,10 +991,21 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
 // this screen is — one mark, one panel, one voice. What is still pinned is that
 // the sentence exists, that it is the rail header's `info` and not a floating
 // block, and that the block has not come back.
+// RE-POINTED AGAIN (v3.65.0, R2), and again the property is narrowed
+// honestly rather than quietly. The RAIL'S OWN ⓘ is gone — the maintainer:
+// *"we have an information icon in the Project context sidebar which should
+// not be here, because we have another one on the right side beside Copy
+// agent instructions — we definitely don't need it in this small section"* —
+// and `renderSidebarHead` takes no `info` option at all, so the affordance
+// cannot come back by a caller forgetting. The SENTENCE did not go with it:
+// it is a paragraph of `aboutInfoHtml`, the MAIN header's panel, which is the
+// one panel on this screen that describes what it is and who writes it.
 ok('the sidebar states the split in the rail header\u2019s own \u24d8, in one sentence',
   /Agents save handoffs here over MCP; you write the standing brief\./.test(memCode));
-ok('...as part of that header\u2019s info field, not as a paragraph beside it',
-  new RegExp("variant: 'sidebar',[\\s\\S]{0,600}Agents save handoffs here over MCP").test(memCode));
+ok('...as part of the MAIN header\u2019s info panel, not as a paragraph beside it',
+  new RegExp("function aboutInfoHtml[\\s\\S]{0,3000}Agents save handoffs here over MCP").test(memCode));
+ok('...and the rail offers NO \u24d8 of its own any more — the component has no such option',
+  !/variant: 'sidebar'/.test(memCode) && /renderSidebarHead\(\{/.test(memCode));
 ok('...and the floating foot card it replaces has not come back',
   !/mem-sidebar-foot/.test(memCode));
 
@@ -1112,8 +1137,21 @@ ok('CONTROL: the "no <details> on the estimate" detector fires when one is plant
   // wording, so an assertion pinning that arrangement now pins the defect.
   // Deleting it would lose the mutation's lesson; inverting keeps it pointed at
   // the same site, in the same file, one step further on.
-  ok('the Project-context sidebar is the header COMPONENT, not a title plus a paragraph',
-    /renderViewHeader\(\{\s*variant: 'sidebar',\s*title: 'Project context',/.test(stripComments(memSrc)));
+  // RE-POINTED ONE STEP FURTHER ON (v3.65.0, R2), for the reason the comment
+  // above gives about the previous re-pointing: the SHAPE under test moved
+  // again, from a title plus a paragraph, to the header component, to the
+  // SIDEBAR component — which is the one that carries the two action slots
+  // and offers no ⓘ at all. Pinning the header component here now would pin
+  // the shape this release removes, exactly as pinning renderDescription
+  // would have in v3.20.0. Both halves are asserted so "adopted" cannot be
+  // satisfied by having dropped the old call without making the new one.
+  ok('the Project-context sidebar is the SIDEBAR component, not the view header',
+    /renderSidebarHead\(\{\s*title: 'Project context',/.test(stripComments(memSrc))
+    && !/variant: 'sidebar'/.test(stripComments(memSrc)));
+  ok('...and it passes a PRIMARY and a SECONDARY, which is what made the two '
+    + 'ghost buttons buttons again',
+    /primary: \{\s*label: '\+ New project'/.test(stripComments(memSrc))
+    && /secondary: \{\s*label: 'Refresh'/.test(stripComments(memSrc)));
   ok('and the sentence has NOT returned as a paragraph under that title, in EITHER shape',
     !/class="sidebar-hint">The working brief/.test(stripComments(memSrc))
     && !/renderDescription\(\s*'The working brief your agents leave/.test(stripComments(memSrc)));
