@@ -256,10 +256,16 @@ section('§7b  project.json: the file, the cap, and the default EXECUTED');
   ok(spec.includes(`\`${ws.PROJECT_META_FILENAME}\``), `the spec names the file \`${ws.PROJECT_META_FILENAME}\``);
   ok(spec.includes(`"version": ${ws.PROJECT_META_VERSION}`),
     `the spec shows version ${ws.PROJECT_META_VERSION} in the example`);
-  ok(new RegExp(`at most \`?${ws.MAX_KNOWLEDGE_DOMAINS}\`?`).test(spec),
+  // `(?![0-9])` IS LOAD-BEARING, and it was found by mutation: without it,
+  // moving the live cap to 20 stayed GREEN because the manifest table one
+  // section down says "at most `200` entries", which "at most `?20`?"
+  // happily matches. An anchor that matches something else reports a cap
+  // the spec does not state.
+  ok(new RegExp(`at most \`?${ws.MAX_KNOWLEDGE_DOMAINS}\`?(?![0-9])`).test(body || ''),
     `the spec states the ${ws.MAX_KNOWLEDGE_DOMAINS}-domain cap — the live MAX_KNOWLEDGE_DOMAINS`);
-  ok(/reserved/i.test(spec) && new RegExp(`\`${ws.PROJECT_META_FILENAME}\`[^\n]*reserved|reserved[^\n]*\`${ws.PROJECT_META_FILENAME}\``, 'i').test(spec.replace(/\n/g, '\n')),
-    'the spec lists it among the reserved project names');
+  const reservedLine = (spec.split('\n').find((l) => /A project may not be called/.test(l)) || '');
+  ok(reservedLine.includes(`\`${ws.PROJECT_META_FILENAME}\``),
+    'the spec lists it among the reserved project names', reservedLine.slice(0, 120));
   // EXECUTED, because the claim a table cannot make is the DEFAULT's shape:
   // "absent is a value, and it is not an empty list."
   const metaDefault = await ws.readProjectMeta(DOMAIN, DOMAIN);
