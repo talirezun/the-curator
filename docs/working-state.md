@@ -696,9 +696,9 @@ project's first ones; there was no MCP refresh tool either; and a curator-owned 
 writer, before this release, was `save_foundation` — an agent, commissioned, and nothing else. A
 user with existing architecture docs, decision logs or a checkout full of them had exactly one way
 in: ask an agent to paste them, one document at a time. `initFoundations(domain, project,
-{ownership, repoRoot?, files?, seed?})` is the setter this release adds, reached from project
-creation (`POST /api/memory/:domain/projects` gains an optional `foundations` body) and from an
-existing, ownerless project's Foundations block:
+{ownership, repoRoot?, files?, seed?, remote?, tokenSource?})` is the setter this release adds,
+reached from project creation (`POST /api/memory/:domain/projects` gains an optional
+`foundations` body) and from an existing, ownerless project's Foundations block:
 
 - **`ownership: 'curator'`** writes the manifest and, unless `seed === false`, four skeleton
   documents in one atomic step — `architecture.md`, `decisions.md`, `conventions.md`,
@@ -1073,6 +1073,16 @@ no `docs/` export (the instruction block asks the *agent* to do that on its firs
 stays the agent's). No polling and no background refresh: a refresh is an action with a button, as it
 always was. And no new ownership value: `ownership` is still `repo` or `curator`.
 
+**A mirror can be born remote (v3.65.0).** Until this release a repo-owned project could only be
+created from a checkout on the machine doing the creating — the refresh could read GitHub, but
+nothing could *start* a mirror without a folder to point at. `POST …/foundations/init` now takes a
+`remote` (`owner/repo`, or the https:// or git@ URL git prints) and a `tokenSource` naming which
+file the read-only token is read from. With documents named, the read happens FIRST and nothing is
+written unless every one of them is in hand — so a wrong owner, repository, branch, folder or
+token leaves the project free to choose again, which matters because ownership is chosen once.
+With no documents named, the mirror is recorded with no network call at all and the first
+**Refresh from repo** copies the files.
+
 ### What this tier cannot do, yet
 
 - **Nothing selects what belongs in a project automatically.** You, or an agent you have asked,
@@ -1175,6 +1185,20 @@ untouched, and the picker's confirm strip says so — *"Stop mirroring **decisio
 your folder is untouched, and you can mirror it again from the same picker."* — deliberately not
 "cannot be undone", which would be false for that case.
 
+**Which wikis a project draws on is curator metadata, and the app writes it (v3.65.0).**
+`PATCH /api/memory/:domain/:project/knowledge/domains` writes
+`state/[<project>/]project.json` and nothing else — not the standing brief,
+not a handoff, not a journal line, not a foundation's bytes. It is the same
+shape as `readFirst`: an instruction ABOUT which knowledge a project draws on,
+never part of anything an agent wrote. The single-writer rule is unchanged and
+is exactly what this illustrates: one writer per FILE, with provenance that
+matches. Tiers 2 and 3 stay agent-only over MCP.
+
+**The Context screen reads tiers 0–3 and writes only tiers 0 (curator-owned)
+and 1, plus this one metadata file.** A `shared-*` mirror is refused with 403
+at the route, so the same screen that lists a mirror's wikis cannot change
+them.
+
 ### The MCP surfaces
 
 Two new tools join [the tools below](#3-the-six-mcp-tools), and two existing surfaces gain fields:
@@ -1222,10 +1246,10 @@ Claude Code, Claude Desktop, Cursor, or anything else that speaks MCP over stdio
 | Tool | What it does |
 |---|---|
 | `list_projects` | Every project that has state — in one domain, or across all of them. Each row carries its domain, its newest work-stream and how long ago that was written, which harness wrote it, and whether it has a standing brief. Newest first, capped, and the cap is disclosed |
-| `get_working_state` | Returns the project brief always; with a scope, also that scope's handoff and recent journal entries; without one, an index of the scopes that have state, capped at 60. **New in v3.59.0:** also a `foundations` summary — `{present, count, totalBytes, staleCount}` |
+| `get_working_state` | Returns the project brief always; with a scope, also that scope's handoff and recent journal entries; without one, an index of the scopes that have state, capped at 60. **New in v3.59.0:** also a `foundations` summary — `{present, count, totalBytes, staleCount}`. **New in v3.65.0:** also `knowledgeDomains` (which wikis this project's knowledge lives in) and `knowledgeDomainsDefaulted` (whether the owner chose the list or it defaulted to the domain the project lives in) |
 | `save_working_state` | Overwrites the handoff for one (project, scope, machine) and appends one journal line. **New in v3.59.0:** accepts `foundations_read` (the sha256 of every foundation this session read) and `repo_root` (advisory; triggers a mirror refresh when the checkout is reachable) |
 | `save_project_brief` | Replaces one project's standing brief and records who wrote it. **For use on your explicit instruction only** — see [§4](#the-brief-can-be-commissioned-and-it-says-so) |
-| `get_project_context` | The one-call session start (v3.59.0): the brief, the latest handoff (or the `scope` named) and the project's **foundations** — an index of every canonical document with its role, size, source, content hash and freshness, plus the document text in reading order within `max_bytes` (default 120 KB). On a first session every document is included; afterwards only those whose hash differs from `seen_hashes`, which defaults to what the latest handoff recorded. Returns `seen`, the map to record as `foundations_read` on the next save. Never writes. Arguments: `project`, `domain`, `scope`, `include` (`index` / `changed` / `all`), `max_bytes`, `seen_hashes`, `journal_limit` |
+| `get_project_context` | The one-call session start (v3.59.0): the brief, the latest handoff (or the `scope` named) and the project's **foundations** — an index of every canonical document with its role, size, source, content hash and freshness, plus the document text in reading order within `max_bytes` (default 120 KB). On a first session every document is included; afterwards only those whose hash differs from `seen_hashes`, which defaults to what the latest handoff recorded. Returns `seen`, the map to record as `foundations_read` on the next save. **New in v3.65.0:** also returns `knowledgeDomains` (which wikis this project's knowledge lives in) and `knowledgeDomainsDefaulted` (whether the owner chose the list or it defaulted to the domain the project lives in). Never writes. Arguments: `project`, `domain`, `scope`, `include` (`index` / `changed` / `all`), `max_bytes`, `seen_hashes`, `journal_limit` |
 | `save_foundation` | Writes or replaces ONE canonical document (tier 0), whole, verbatim, up to 512 KB, and records that an agent wrote it on the owner's instruction. **Refused without `commissioned_by_owner: true`**, refused for a project whose foundations are mirrored from a repository, and refused when it would shrink a stored document under 10 % without `replace: true`. Arguments: `project`, `domain`, `slug`, `role` (`architecture` / `decisions` / `conventions` / `roadmap` / `api` / `guide` / `other`), `title`, `text`, `commissioned_by_owner`, `replace`, `harness`, `model` |
 
 `save_working_state` gained two arguments in v3.59.0: `foundations_read` (the `seen` map from
@@ -1727,11 +1751,13 @@ The view was called **Agent memory** through v3.61.1 and the rail item **Memory*
 *presentation* was renamed in v3.62.0: the view id `memory`, the `/api/memory` routes, every
 `mem-*` class and every filename are unchanged, so nothing that pointed at it has broken.
 
-![The Project context view with the "context-view" project open, dark theme. Down the left, the icon rail — Chat, Ingest, Domains, Context (highlighted and tinted) and Shared, then a sun, Sync and Settings at the foot, every icon captioned. Beside it a sidebar headed "Project context" with an ⓘ mark, a row reading PROJECTS · Refresh · + New project, then the heading ACME over two project rows: "second-project / A second project, for the switch measure… / 1 scope · 14 min ago", and "context-view / Measuring at 1370 and 568 / 3 scopes · 14 min ago", the second selected and tinted, each with a green freshness dot. The main column opens with the eyebrow "YOUR AGENTS’ BRAIN" over the title "Project context", an ⓘ beside it and a "Copy agent instructions" button to its right, then a breadcrumb reading "acme / context-view". Under a hairline sits a three-cell strip, each cell a small label over a value with a freshness dot: FOUNDATIONS "3 documents · fresh" (green), WORKING STATE "saved 14 min ago" (green), KNOWLEDGE "391 pages · 3 days ago" (grey), with one ⓘ at the right end of the row. Below it the page is THREE NUMBERED STEPS, separated by hairlines, each opening with a small round numeral beside its heading. Step 1, "Foundations", over the lede "Add the documents an agent must not act without." with an ⓘ; a single closed fold whose row reads "The documents" on the left and "3 documents · 110 bytes · mirrored · 2 read first · 1 on request · fresh" at the right edge; under it two buttons, "Refresh from repo" and "Add from folder"; and under those an unfolded note with an ⓘ glyph: "An agent’s save here is refused — this project is mirrored from a folder." Between step 1 and step 2, above the next heading, a bordered card holds a green square pip beside the small label "Last saved", the large monospace reading "14 min ago", and "browser-pass · opencode" beneath. Step 2, "Working state", over the lede "You write the brief; agents write handoffs and the journal." with an ⓘ, holds THREE CLOSED FOLDS in this order: "Work-streams", with "Measuring at 1370 and 568 · 3 work-streams · 3 saved copies" at the right edge; "The brief", with "updated 14 min ago · 126 words" and an icon-only pencil button; and "Recent saves", with "1 save · latest 14 min ago". Step 3, "Knowledge", over the lede "The wiki this project draws on. Open it in Domains." with an ⓘ, shows five readouts in a row — PAGES 391, ENTITIES 120, CONCEPTS 240, SUMMARIES 31, and LAST INGEST with a grey dot beside "3 days ago" over "Ingested · The Energy and Water Footprint of Generative AI" — and two outlined buttons, "Open in Domains" and "Ask this domain". No fold is open, no handoff document and no brief text is printed on the page, and the word "Edit" appears nowhere.](images/curator-agent-memory.png)
+![The Project context view with the "context-view" project open, dark theme. Down the left, the icon rail — Chat, Domains, Context (highlighted and tinted), then a sun, Sync and Settings at the foot, every icon captioned; Ingest and Shared are no longer rail buttons. Beside it a sidebar built exactly like the Domains sidebar: a title "Project context" with no ⓘ, two buttons on top — a filled "+ New project" and an outlined "Refresh" — then the heading ACME over two project rows, each an identity dot, the project name, a scope count, a freshness dot with a clock glyph and an age, and the headline on a third line beneath: "second-project · 1 scope · ⏱ 14 min ago / A second project, for the switch measure…" and "context-view · 3 scopes · ⏱ 14 min ago / Measuring at 1370 and 568", the second selected and its row filled. The main column opens with a breadcrumb "acme / context-view" above the eyebrow "YOUR AGENTS’ BRAIN", the title "Project context" with an ⓘ beside it, and one filled "Copy agent instructions" button at the top right. Under a hairline, an overview card reads exactly like Domains’ own — the same tile size, the same 22px figures, no separate smaller row: FOUNDATIONS "3 documents · fresh", WORKING STATE "saved 14 min ago", KNOWLEDGE "391 pages · 3 days ago", and a fourth tile, CAPTURE, "1 session in the last 30 days" — with one ⓘ beside the eyebrow. Below it the page is THREE NUMBERED STEPS, separated by hairlines, each heading carrying only a numeral, a Title-case title and an ⓘ beside it — no sentence under any of them. Step 1, "Foundations": a head row holding "Refresh from repo" and "Add from folder", then one closed row, "The documents", reading "3 documents · 110 bytes · mirrored · 2 read first · 1 on request · fresh" at its right edge with a small "mirrored" chip beside the title; the sentence about an agent’s save being refused here now lives behind the step’s own ⓘ, not printed on the page. Step 2, "Working state": five closed rows in this order — "Last saved", opening to a recessed, monospace panel reading "last saved · 14 min ago", "machine · browser-pass", "wrote · in full"; "Capture", its own summary reading "1 session in the last 30 days · 0 started with the context · 1 saved before stopping · 0 read and did not save"; "Work-streams", reading "3 work-streams · 3 saved copies" at its right edge; "The brief", reading "updated 14 min ago · 126 words" with an icon-only pencil button; and "Recent saves" — the journal — reading "1 save · latest 14 min ago". Step 3, "Knowledge": a head row holding a "+ Add a wiki" picker, then one row per chosen wiki — here one, "projects", reading "391 pages · 3 days ago" at its right edge — opening to a monospace panel with entities, concepts, summaries and the last-ingested title, and two buttons beneath it, "Open in Domains" and "Ask this domain". No row is open, no handoff document and no brief text is printed on the page, and the words "Sessions" and "Edit" appear nowhere.](images/curator-agent-memory.png)
 
 *Photographed before v3.64.0 cut the rail down the left from five places to three: **Ingest**
-and **Shared** are no longer rail buttons, and each is now a section of a domain's page. Nothing
-inside the Project context view itself changed with them.*
+and **Shared** are no longer rail buttons, and each is now a section of a domain's page. The alt
+text above has been updated to describe the v3.65.0 shape — the sidebar, the overview card and
+every live reading now built from the same components Domains uses — but the photograph itself
+still shows the earlier screen and is due a re-shoot.*
 
 **What the view puts in front of you (rebuilt in v3.55.0, finished in v3.56.0, renumbered in
 v3.62.0).** It was three collapsible panels under a row of dropdowns; then a dashboard of unnumbered
