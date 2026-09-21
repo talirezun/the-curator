@@ -92,6 +92,9 @@ import { fileURLToPath } from 'node:url';
 import {
   renderReadout, renderReadoutGroup, renderDescription, renderStatus, renderBadge, renderExplainer,
 } from '../src/public/next/shared/text.js';
+import {
+  renderSidebarHead, renderSidebarGroup, renderSidebarRow,
+} from '../src/public/next/shared/sidebar.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NEXT = join(ROOT, 'src/public/next');
@@ -597,7 +600,18 @@ section('§6  THE OTHER THREE SITES — mirror note, sidebar error, browse error
       // the next comment gives: these deps are POSITIONAL, so a name that has
       // moved on in domains.js is a ReferenceError in every case below.
       gatedLoader: () => '<GATED/>', loadGate: {}, bindSidebarButtons: () => {},
-      knowledgeFolderBtn: () => '<KBBTN/>',
+      // A DESCRIPTOR since v3.65.0, not markup: `renderSidebarHead` renders
+      // the secondary action, and a stub returning a `<button>` string would
+      // make the head silently drop it (no `label`, no button) — which is the
+      // kind of stub that lets a suite go green over an empty slot.
+      knowledgeFolderBtn: () => ({ label: 'Use existing folder', id: 'dm-kb-choose-btn' }),
+      // ── THE REAL SIDEBAR KIT, injected rather than stubbed ─────────────
+      // `renderSidebar` builds its head, its group and its rows through
+      // shared/sidebar.js, and a module-level import is NOT visible inside a
+      // lifted body — a call to one there is a ReferenceError, i.e. a case
+      // that THROWS rather than asserting. These three are the REAL
+      // functions, so what the assertions below read is the shipped markup.
+      renderSidebarHead, renderSidebarGroup, renderSidebarRow,
       // `domainDotClass` replaced `domainDotColor` when the identity dots
       // stopped being inline hex (see scripts/test-next-domain-dots.js). The
       // name in this list must track the real one: renderSidebar's deps are

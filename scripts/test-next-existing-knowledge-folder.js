@@ -59,6 +59,15 @@ import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 // A stub would let the row's wording drift from the module that owns it, and
 // this suite executes renderSidebar for real precisely to avoid that class.
 import { formatDayAge, freshnessDotHtml, clockGlyph } from '../src/public/next/shared/age.js';
+// ── THE REAL SIDEBAR KIT (v3.65.0) ────────────────────────────────────────
+// `renderSidebar` is LIFTED and EXECUTED below, and since it builds its head,
+// its group and its rows through shared/sidebar.js those three names are free
+// identifiers inside the lifted body. A module-level import is NOT visible
+// there, so a call to one would be a ReferenceError — a suite that crashes
+// rather than asserts. They are injected through the sandbox's constructor,
+// and they are the REAL functions, so every assertion below stays an
+// assertion about the shipped component.
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../src/public/next/shared/sidebar.js';
 import { tmpdir } from 'os';
 import path from 'path';
 
@@ -299,6 +308,7 @@ let sandbox;
 try {
   sandbox = new Function(
     'formatDayAge', 'freshnessDotHtml', 'clockGlyph',
+    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow',
     PREAMBLE +
     FNS.map((n) => extractFunction(src, n)).join('\n\n') + '\n' +
     `return { ${FNS.join(', ')},
@@ -316,7 +326,8 @@ try {
       __setReload: (domains, err) => { domainsAfterReload = domains; loadErrorAfterReload = err || null; },
       __node: makeNode,
       __nodes: () => domNodes };`
-  )(formatDayAge, freshnessDotHtml, clockGlyph);
+  )(formatDayAge, freshnessDotHtml, clockGlyph,
+    renderSidebarHead, renderSidebarGroup, renderSidebarRow);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js — ' + err.message);
   process.exit(1);
@@ -680,14 +691,34 @@ section('§7  Rendering: escaped, honest, and never silent');
   ok(renderLookedInLine() === '',
      'and it renders NOTHING when the config read failed — an invented path is worse than none');
 
+  // ── THE SECONDARY ACTION IS A DESCRIPTOR NOW (v3.65.0) ────────────────
+  // It returned a `<button>` string through v3.64.2 and returns the SPEC the
+  // sidebar kit's head renders. Both halves are asserted, in one breath: the
+  // decision this function still owns (disabled, and what it says while it
+  // waits), and the MARKUP the real `renderSidebarHead` makes of it — because
+  // a descriptor nobody renders proves nothing, and this suite is the one
+  // place that can check the two ends against each other.
+  const headOf = (spec) => renderSidebarHead({ title: 'Domains', secondary: spec });
   __setState(baseState({ kbBusy: true }));
-  ok(knowledgeFolderBtn().includes('disabled') && /picker/i.test(knowledgeFolderBtn()),
-     'while the picker is open the button is disabled AND says what it is waiting for');
+  const busySpec = knowledgeFolderBtn();
+  ok(busySpec && typeof busySpec === 'object' && !Array.isArray(busySpec),
+     'CONTROL — knowledgeFolderBtn returns the action DESCRIPTOR, not markup');
+  ok(busySpec.disabled === true && /picker/i.test(busySpec.label),
+     'while the picker is open the action is disabled AND says what it is waiting for');
+  ok(headOf(busySpec).includes(' disabled'),
+     '…and the REAL kit head renders that as a disabled button, so the decision reaches the DOM');
   __setState(baseState({ kbBusy: false }));
-  ok(!knowledgeFolderBtn().includes('disabled'), 'and enabled otherwise');
-  ok(/class="btn btn-secondary/.test(knowledgeFolderBtn()),
+  const idleSpec = knowledgeFolderBtn();
+  ok(idleSpec.disabled === false && !headOf(idleSpec).includes(' disabled'), 'and enabled otherwise');
+  ok(idleSpec.id === 'dm-kb-choose-btn' && headOf(idleSpec).includes('id="dm-kb-choose-btn"'),
+     'the id the click binder reaches for is the id the head writes — the two ends of a '
+     + 'cross-module contract, checked against each other rather than each against a literal');
+  ok(/class="btn btn-secondary/.test(headOf(idleSpec)),
      'it is a plain .btn, so it inherits shell.css’s press, disabled and reduced-motion rules ' +
      'rather than introducing a new interaction vocabulary');
+  ok(/class="btn btn-secondary[^"]*\bdm-kb-btn\b/.test(headOf(idleSpec)),
+     '…and it still carries this view’s own `dm-kb-btn` token, so nothing that addresses it '
+     + 'by name lost its handle when the button moved into the kit');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

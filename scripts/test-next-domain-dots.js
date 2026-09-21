@@ -89,6 +89,15 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DOMAINS_JS = path.join(ROOT, 'src/public/next/views/domains.js');
 const DOMAINS_CSS = path.join(ROOT, 'src/public/next/views/domains.css');
 const SHELL_CSS = path.join(ROOT, 'src/public/next/shell.css');
+/* ── shared/sidebar.css JOINS THE READ LIST (v3.65.0) ─────────────────────
+   The row itself — `.dm-row`, its hover / active / press states and the dot's
+   SHAPE — moved OUT of views/domains.css into the kit when all three sidebars
+   became one component. What stayed behind is the one thing that could not
+   move: the six identity COLOURS, three of whose light values are derived
+   literals, against a colour-literal baseline that holds exactly two files.
+   So §5's backdrop model reads its three row rules from the kit and its six
+   colours from the view, which is where each of them now lives. */
+const SIDEBAR_CSS = path.join(ROOT, 'src/public/next/shared/sidebar.css');
 const COLOR_CSS = path.join(ROOT, 'src/public/next/tokens/color.css');
 /* tokens/material.css is read TOO, and it is not optional. The `.sidebar` /
    `.rail` planes moved off `--surface` onto `--mat-sidebar`, which is declared
@@ -105,6 +114,7 @@ const jsRaw = readFileSync(DOMAINS_JS, 'utf8');
 const js = stripComments(jsRaw);
 const domainsCss = readFileSync(DOMAINS_CSS, 'utf8');
 const shellCss = readFileSync(SHELL_CSS, 'utf8');
+const sidebarCss = readFileSync(SIDEBAR_CSS, 'utf8');
 const colorCss = readFileSync(COLOR_CSS, 'utf8');
 const materialCss = readFileSync(MATERIAL_CSS, 'utf8');
 /* views/domains.css JOINS THE TOKEN TABLE, and that is a real widening of
@@ -388,8 +398,20 @@ function inlineColorStyles(source) {
   eq(offenders.length, 0, `zero inline-colour style attributes${offenders.length ? `: ${offenders.join(' | ')}` : ''}`);
   // Anti-vacuity: the scanner must actually be finding style attributes to
   // look at, or "zero offenders" means only that the regex stopped matching.
+  // ANTI-VACUITY, RE-AIMED (v3.65.0). It used to require this FILE to contain
+  // at least one `style=` attribute, and the one it was really counting was
+  // the KNOWLEDGE eyebrow's `style="margin-top:10px"` — which moved into
+  // shared/sidebar.css when the sidebar became a component, taking the
+  // scanner's only sample with it. "Zero offenders" then meant "the regex
+  // found nothing to look at", which is the exact silence this assertion
+  // exists to prevent. So the scanner is proved on a PLANTED sample instead:
+  // it is a fact about the detector, not about how many inline styles this
+  // view happens to have left.
   const anyStyleAttrs = (js.match(/style\s*=\s*(["'])[^"']*\1/g) || []).length;
-  ok(anyStyleAttrs > 0, `the scanner does see ${anyStyleAttrs} style= attribute(s) in this file (so 0 offenders is a reading, not a silence)`);
+  ok(inlineColorStyles('<i style="background:#3FBFD8">').length === 1
+     && inlineColorStyles('<i style="margin-top:10px">').length === 0,
+    `the scanner CAN see an inline colour and does not fire on an inline layout value `
+    + `(this file has ${anyStyleAttrs} style= attribute(s) left) — so 0 offenders is a reading, not a silence`);
   ok(!/DOMAIN_DOT_PALETTE/.test(js), 'the old DOMAIN_DOT_PALETTE hex array is gone from the source');
 }
 
@@ -420,12 +442,23 @@ if (domainDotClass && slotCount) {
 {
   // The call site itself — a function with no callers proves nothing (this
   // repo's root cause 3).
+  // THE CALL SITE MOVED INTO A DESCRIPTOR (v3.65.0). The dot's class used to
+  // be concatenated into a `<span class="dm-row-dot ...">` written here; the
+  // row is shared/sidebar.js's now and the view hands it the class NAME
+  // through `dotClass`, which the component FILTERS to [A-Za-z0-9_-] rather
+  // than escaping — an attribute value that can carry a quote is how a class
+  // slot becomes an attribute injection. Both halves are asserted: that the
+  // picker is still called from the row builder, and that what is passed is a
+  // name and not a style.
   const rowFn = functionSource(js, 'renderSidebar') || js;
   ok(/domainDotClass\(/.test(js), 'domainDotClass has a call site');
-  ok(/class="dm-row-dot '?\s*\+\s*domainDotClass\(/.test(js) || /dm-row-dot[^"]*"\s*\+\s*domainDotClass\(/.test(js),
-    'the dot span composes its class from domainDotClass, with no style= attribute');
+  ok(/dotClass:\s*domainDotClass\(/.test(rowFn),
+    'the row hands the kit a class NAME from domainDotClass — inside renderSidebar, so the '
+    + 'picker still has a real caller and not merely a definition');
   ok(!/dm-row-dot[^>]*style\s*=/.test(js), 'the dot span carries no style attribute at all');
-  void rowFn;
+  ok(/dotClass\?:/.test(readFileSync(SIDEBAR_CSS.replace(/\.css$/, '.js'), 'utf8')),
+    'CONTROL — and the component really does take a `dotClass`, so the field name above is '
+    + 'the one it reads rather than a string this suite invented');
 }
 
 // ── §5 contrast, both themes, every backdrop a row can have ────────────────
@@ -455,14 +488,21 @@ section('§5 Every dot clears the 3:1 non-text floor, both themes, every row sta
  */
 const BACKDROP_TOKENS = [];
 {
-  const rowBg = declFor(domainsCss, '.dm-row', 'background');
-  eq(rowBg, 'transparent', '.dm-row paints `transparent` (so the sidebar is the real backdrop)');
+  // THE THREE ROW RULES ARE THE KIT'S SINCE v3.65.0. Read from
+  // shared/sidebar.css, and asserted ABSENT from views/domains.css — because
+  // a view copy left behind would be a second declaration free to drift from
+  // the one the browser actually applies, and this whole section is an
+  // arithmetic check over the values the browser applies.
+  const rowBg = declFor(sidebarCss, '.cur-sb-row', 'background');
+  eq(rowBg, 'transparent', '.cur-sb-row paints `transparent` (so the sidebar is the real backdrop)');
+  ok(declFor(domainsCss, '.dm-row', 'background') === null,
+    '...and views/domains.css no longer declares the row at all — the rules MOVED, they were not copied');
   const sidebarBg = declFor(shellCss, '.sidebar', 'background');
   ok(sidebarBg !== null, `.sidebar background read from shell.css (${sidebarBg})`);
-  const hoverBg = declFor(domainsCss, '.dm-row:hover', 'background');
-  const activeBg = declFor(domainsCss, '.dm-row.active', 'background');
-  ok(hoverBg !== null, `.dm-row:hover background read from disk (${hoverBg})`);
-  ok(activeBg !== null, `.dm-row.active background read from disk (${activeBg})`);
+  const hoverBg = declFor(sidebarCss, '.cur-sb-row:hover', 'background');
+  const activeBg = declFor(sidebarCss, '.cur-sb-row.active', 'background');
+  ok(hoverBg !== null, `.cur-sb-row:hover background read from disk (${hoverBg})`);
+  ok(activeBg !== null, `.cur-sb-row.active background read from disk (${activeBg})`);
   // The third element is the BOTTOM to composite onto: null means `--canvas`
   // (correct for the plane itself), `sidebarBg` means "onto the plane".
   BACKDROP_TOKENS.push(

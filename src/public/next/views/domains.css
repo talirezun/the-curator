@@ -107,54 +107,33 @@
   flex-wrap: wrap;
 }
 
-.dm-row-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
+/* ── THE SIDEBAR ROW MOVED TO shared/sidebar.css (v3.65.0) ────────────
+   `.dm-row-list`, `.dm-row`, its hover / active / press states and
+   `.dm-row-dot`'s SHAPE are gone from this file. Every one of them is now
+   declared ONCE, under the kit's own `cur-sb-*` names, in shared/sidebar.css
+   — value for value: same 2px list gap, same 7px/8px row padding, same 9px
+   column gap, same `--mat-row-*` alpha overlays, same 1px translateX nudge,
+   same 8px dot.
 
-.dm-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  padding: 7px 8px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-2);
-  text-align: left;
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  font: inherit;
-  transition: background var(--t-state), color var(--t-state), transform var(--t-press);
-}
-/* Rows on the sidebar MATERIAL take the alpha overlay, never an absolute
-   surface colour — an opaque fill stops the blur for the width of the row and
-   reads as a hole punched in the plane. Same change as views/chat.css's
-   conversation rows and shell.css's `.settings-nav-row`. */
-.dm-row:hover { background: var(--mat-row-hover); }
-.dm-row.active { background: var(--mat-row-active); color: var(--text); }
-.dm-row.active .dm-row-name { font-weight: var(--weight-medium); }
-/* Press. A row in a vertical stack nudges along the axis it does NOT scroll
-   in — a 1px vertical shift inside a 2px-gap list reads as the list breathing
-   rather than as this row being pressed.
+   THE CARD MOVED; IT WAS NOT COPIED. While both sets of rules existed they
+   painted identical values and nothing would have moved — which is exactly
+   what lets a duplication survive, so this file's copy is deleted rather than
+   kept "for the transition". scripts/test-next-views-kit.js §8 and
+   scripts/test-next-domain-dots.js §5 read those declarations and now read
+   them from shared/sidebar.css.
 
-   The background step lands on the SAME token the selected state uses, and
-   that is deliberate rather than sloppy: pressing an unselected row is the
-   gesture that is about to select it, so previewing the selected surface for
-   the length of the hold is honest, and pressing an ALREADY-selected row then
-   changes nothing at all — the transform carries it — instead of appearing to
-   deselect. Declared after `.active` because the two tie on specificity. */
-.dm-row:active { background: var(--mat-row-active); transform: translateX(var(--press-shift)); }
-
-.dm-row-dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
+   WHAT STAYS HERE, and why each one cannot move:
+     · the six IDENTITY COLOURS below. Three of the light values are DERIVED
+       literals (#16768C / #438126 / #925E13 — there is no --entity-700) and
+       scripts/test-next-design-kit.js §10 permits a colour literal in exactly
+       TWO /next stylesheets while asserting the baseline holds exactly two
+       files. Widening an anti-drift ratchet in order to ship a kit is
+       backwards; the kit exports the MAPPING (identityDotClass) instead, and
+       the selector lists below name BOTH so a view that colours a dot through
+       the kit is painted by the same measured values.
+     · `.dm-row-mirror` and `.dm-row-attn`. They are this view's own BADGES,
+       handed to the component as `badgesHtml`; the kit reserves the slot and
+       says nothing about what goes in it.                                  */
 
 /* ── The six domain identity colours ──────────────────────────────────────
    These were SIX RAW HEX VALUES in an inline `style="background:#3FBFD8"`
@@ -199,12 +178,18 @@
    the six is 16.14 before (dark, unchanged) and 14.58 after (light) —
    both an order of magnitude over the ~2.3 just-noticeable difference, and
    the hues are untouched, so the set separates exactly as it did.        */
-.dm-row-dot-1 { background: var(--entity-500); }
-.dm-row-dot-2 { background: var(--concept-500); }
-.dm-row-dot-3 { background: var(--summary-500); }
-.dm-row-dot-4 { background: var(--teal-500); }
-.dm-row-dot-5 { background: var(--red-400); }
-.dm-row-dot-6 { background: var(--ink-200); }
+.dm-row-dot-1,
+.cur-sb-dot-1 { background: var(--entity-500); }
+.dm-row-dot-2,
+.cur-sb-dot-2 { background: var(--concept-500); }
+.dm-row-dot-3,
+.cur-sb-dot-3 { background: var(--summary-500); }
+.dm-row-dot-4,
+.cur-sb-dot-4 { background: var(--teal-500); }
+.dm-row-dot-5,
+.cur-sb-dot-5 { background: var(--red-400); }
+.dm-row-dot-6,
+.cur-sb-dot-6 { background: var(--ink-200); }
 
 /* ── THE THREE DERIVED RUNGS ARE NOW NAMED, BECAUSE TWO THINGS NEED THEM ──
    These literals were written for the ROW DOTS. `.dm-stat-value` needs the
@@ -227,96 +212,40 @@
   --dm-ink-concept: #438126;  /* concept-600 -> one ramp step */
   --dm-ink-summary: #925E13;  /* summary-600 -> one ramp step */
 }
-[data-theme="light"] .dm-row-dot-1 { background: var(--dm-ink-entity); }
-[data-theme="light"] .dm-row-dot-2 { background: var(--dm-ink-concept); }
-[data-theme="light"] .dm-row-dot-3 { background: var(--dm-ink-summary); }
-[data-theme="light"] .dm-row-dot-4 { background: var(--teal-600); }
-[data-theme="light"] .dm-row-dot-5 { background: var(--red-600); }
-[data-theme="light"] .dm-row-dot-6 { background: var(--ink-400); }
+[data-theme="light"] .dm-row-dot-1,
+[data-theme="light"] .cur-sb-dot-1 { background: var(--dm-ink-entity); }
+[data-theme="light"] .dm-row-dot-2,
+[data-theme="light"] .cur-sb-dot-2 { background: var(--dm-ink-concept); }
+[data-theme="light"] .dm-row-dot-3,
+[data-theme="light"] .cur-sb-dot-3 { background: var(--dm-ink-summary); }
+[data-theme="light"] .dm-row-dot-4,
+[data-theme="light"] .cur-sb-dot-4 { background: var(--teal-600); }
+[data-theme="light"] .dm-row-dot-5,
+[data-theme="light"] .cur-sb-dot-5 { background: var(--red-600); }
+[data-theme="light"] .dm-row-dot-6,
+[data-theme="light"] .cur-sb-dot-6 { background: var(--ink-400); }
 
-.dm-row-main {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  flex: 1;
-}
-.dm-row-name {
-  font-size: var(--text-md);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* ── THE STATUS-ROW ANATOMY ───────────────────────────────────────────
-   name · key figure · freshness mark + relative age · last event.
-   The same anatomy views/ingest.css carries for its DESTINATION rows; the
-   two are declared once each, with identical values, because shell.css
-   belongs to another change in this release. The freshness ladder below is
-   asserted byte-identical to `.ing-fresh-*` modulo the prefix, so the two
-   cannot drift while they wait to be promoted.
+/* `.dm-row-main`, `.dm-row-name`, `.dm-row-meta`, `.dm-row-figure`,
+   `.dm-row-sep`, `.dm-row-age`, `.dm-row-meta svg` and `.dm-row-event` moved
+   to shared/sidebar.css with the rest of the row — see the note above the
+   identity palette. The freshness mark was never declared here at all:
+   shared/freshness.css owns the `.fresh-` prefix outright
+   (scripts/test-freshness-scale.js §4), and the kit does not declare one
+   either — the mark arrives as the caller's `markHtml`.
 
-   The meta line is a FLEX ROW, not a sentence: the dot and the clock glyph
-   sit between the figure and the age, so they cannot be produced by
-   splitting a formatted string. `align-items: center` keeps an 8px dot and
-   a 12px glyph on the same optical baseline as 11px text. */
-.dm-row-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-  min-width: 0;
-}
-/* The figure ticks as pages are written, so it takes tabular figures — the
-   same property the shared numerics rule below already gives `.dm-row-meta`,
-   restated on the figure itself so the two views' rules read alike. */
-.dm-row-figure { flex: none; font-variant-numeric: var(--numeric-tabular); }
-.dm-row-sep { flex: none; color: var(--text-2); }
-/* The age is the one part of the line allowed to give way: a long phrase
-   ("12 months ago") must never push the dot or the figure out of the row. */
-.dm-row-age { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The clock glyph, styled by ELEMENT: shared/age.js emits it without a class
-   because `tx-` belongs to shared/text.css and nothing else may define one
-   (scripts/test-next-text-system.js).
-
-   --text-2, not the --text-3 a graphic would be allowed: ingest.css keeps
-   EXACTLY ONE --text-3 exemption (`.ing-queue-file-remove`, asserted present
-   AND alone by scripts/test-next-memory-ingest-text.js), and a second one
-   here would have widened a floor rule to buy nothing — the glyph reads the
-   same at --text-2 and the two views then declare the identical value. */
-.dm-row-meta svg { flex: none; color: var(--text-2); }
-
-/* Line two — WHAT the last write was. ONE line, always: a source title is
-   arbitrary length and a row that grew to four lines would push the rest of
-   the list off the fold. --text-2, NOT the --text-3 a third-rank fact would
-   suggest: --text-3 is retired as a TEXT colour in this file (a SCOPE rule —
-   no adopted text role reads it, so words in it mean a hand-rolled role). The
-   hierarchy is carried by POSITION instead: this line sits under the one with
-   the figure and the mark. */
-.dm-row-event {
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* ── The freshness mark is NOT declared here any more ─────────────────
-   The `.dm-fresh-*` ladder that used to sit at this point was a
-   byte-identical copy of views/ingest.css's `.ing-fresh-*`, guarded by a
-   suite asserting the two stayed identical — a guard against a duplication
-   rather than a reason for one, and recorded as KNOWN AND UNFIXED in
-   v3.54.0. Both copies are deleted. The knowledge row now wears
-   `.fresh-dot fresh-<tier>` from shared/freshness.css.
-
-   THE ONE THING THAT MOVED WITH IT, and it matters here more than in
-   ingest.css: the mark is still deliberately NOT the same shape or ink as
-   `.dm-row-dot` at the row's head. That one is the domain's IDENTITY colour
-   and carries no state; two marks that looked alike would read as one scale.
-   `.fresh-dot` is 8px round like the identity dot but never violet, which is
-   a sharper separation than the old ladder had — the old `.dm-fresh-s3`
-   painted `var(--accent)`, the same family the identity dots are drawn
-   from. */
+   THE RECORD THAT TRAVELS WITH IT, because it is still the reason the mark is
+   not the kit's to declare: a `.dm-fresh-*` ladder used to sit at this point
+   and was a BYTE-IDENTICAL copy of views/ingest.css's `.ing-fresh-*`, guarded
+   by a suite asserting the two stayed identical — a guard against a
+   duplication rather than a reason for one, recorded as KNOWN AND UNFIXED in
+   v3.54.0. Both copies are deleted and `.fresh-dot fresh-<tier>` comes from
+   shared/freshness.css. What moved with them matters here more than in
+   ingest.css: the mark is still deliberately NOT the same shape or ink as the
+   identity dot at the row's head. That one is the domain's IDENTITY and
+   carries no state; two marks that looked alike would read as one scale.
+   `.fresh-dot` is 8px round like the identity dot but never violet, a sharper
+   separation than the old ladder had — `.dm-fresh-s3` painted `var(--accent)`,
+   the same family the identity dots are drawn from.                        */
 
 .dm-row-mirror {
   flex: none;
@@ -597,7 +526,9 @@
    almost entirely counts and slugs that is what made the whole view read as
    terminal output. The counts keep the property that mattered. */
 .dm-num,
-.dm-row-meta,
+/* `.dm-row-meta` left this list with the row itself (v3.65.0): `.cur-sb-meta`
+   in shared/sidebar.css declares the same property, on the same element, and
+   restating it here would be the duplication the move removes. */
 .dm-chip-count,
 .dm-browse-tab-count,
 .dm-quick-cost,
@@ -1989,7 +1920,9 @@
    which keeps running as a slow breath). A press always has a second,
    instant channel. */
 @media (prefers-reduced-motion: reduce) {
-  .dm-row:active,
+  /* `.dm-row:active` left this list with the row (v3.65.0): shared/sidebar.css
+     carries its own reduced-motion block, beside the press it cancels, so the
+     escape travels with the control rather than being restated per view. */
   /* `.dm-quick-btn:active:not(:disabled)` was here and is GONE with the
      press it cancelled: the quick bar's buttons are `.btn` variants now, and
      shell.css's own reduced-motion block lists `.btn:active` — so the escape

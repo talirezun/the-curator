@@ -62,6 +62,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -127,6 +128,18 @@ const ageMod = await import(ageUrl);
 const { __readLogLatest: readLogLatest } = brain;
 const { formatAge, formatDayAge, dayFreshnessStep, dayFreshnessTier, freshnessDotHtml,
   clockGlyph } = ageMod;
+// ── THE REAL KIT, NOT A STUB (v3.65.0) ────────────────────────────────────
+// §8 lifts `renderSidebar` out of views/domains.js and EXECUTES it. Since
+// that function builds its head, its group and its rows through
+// shared/sidebar.js, those three names are FREE IDENTIFIERS inside the lifted
+// body — and a module-level import is NOT visible there, so a call to one is
+// a ReferenceError: a suite that CRASHES rather than asserts. They are
+// injected through the sandbox's constructor, and they are the REAL functions
+// rather than stubs, which is what keeps every assertion below an assertion
+// about the SHIPPED component.
+const sidebarKit = await import(
+  pathToFileURL(path.join(ROOT, 'src/public/next/shared/sidebar.js')).href);
+const { renderSidebarHead, renderSidebarGroup, renderSidebarRow } = sidebarKit;
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§0  Positive control — everything this suite needs really loaded');
@@ -646,7 +659,11 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
 section('§8  The Domains KNOWLEDGE row, rendered');
 {
   const src = read('src/public/next/views/domains.js');
-  const NEED = ['renderSidebar', 'domainLastEventText', 'domainDotClass'];
+  // `knowledgeFolderBtn` is LIFTED rather than stubbed since v3.65.0: it
+  // returns the secondary action's DESCRIPTOR now, not a `<button>`, and a
+  // stub returning markup would silently prove the head renders a string this
+  // view no longer produces.
+  const NEED = ['renderSidebar', 'domainLastEventText', 'domainDotClass', 'knowledgeFolderBtn'];
   const bodies = {};
   let fatal = false;
   for (const n of NEED) {
@@ -676,7 +693,6 @@ function openLifecycle() {}
 function selectDomain() {}
 function onChooseKnowledgeFolder() { return Promise.resolve(); }
 function reportAsyncActionFailure() {}
-function knowledgeFolderBtn() { return '<button id="dm-kb-choose-btn">Folder</button>'; }
 // The real constant, not a stand-in: scripts/test-next-domain-dots.js already
 // enumerates the slots from it, and a different number here would silently
 // change which identity dot a row is asserted to carry.
@@ -689,9 +705,11 @@ const myMountToken = 1;
 const document = { getElementById() { return null; }, querySelectorAll() { return []; } };
 `;
   const make = new Function('formatDayAge', 'freshnessDotHtml', 'clockGlyph',
+    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow',
     PREAMBLE + NEED.map((n) => bodies[n]).join('\n\n') +
     '\nreturn { run: (s) => { state = s; renderSidebar(2); return captured; } };');
-  const api = make(formatDayAge, freshnessDotHtml, clockGlyph);
+  const api = make(formatDayAge, freshnessDotHtml, clockGlyph,
+    renderSidebarHead, renderSidebarGroup, renderSidebarRow);
 
   const today = (() => {
     const d = new Date();
@@ -758,6 +776,383 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
     'and so does the ATTENTION dot — open health issues is a different question from freshness');
   ok(rowOf('articles').includes('4 open health issue'),
     '…with its count still in the row\'s accessible name');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§8b  THE ADOPTION IS INERT — byte-identical modulo three normalisations');
+// ════════════════════════════════════════════════════════════════════════
+//
+// THE ACCEPTANCE TEST FOR v3.65.0's SIDEBAR PACKAGE IS THAT THIS SIDEBAR DOES
+// NOT MOVE. It is the reference design — the maintainer's own words against
+// the Context one, *"I suggest we go with the Domains design, which is more
+// polished"* — so Context and Settings adopt it and this page gains nothing
+// visible at all.
+//
+// A component whose OWN classes carry the rules has to emit those classes, so
+// literal byte-identity is not achievable and was never the right ask (the
+// v3.64.2 overview precedent settled this the same way). What IS asserted is
+// byte-identity after exactly THREE normalisations, each of which is then
+// proved INERT rather than assumed:
+//
+//   1. the `cur-sb-*` tokens added beside each host token — proved by: every
+//      class the reference wrote is still written, IN THE SAME ORDER, and
+//      every added token is on the kit's own prefix;
+//   2. `type="button"` — proved by: no attribute other than `type` differs on
+//      any element, and `type` lands on <button>s only, always with the value
+//      `button`. (A <button> outside a form defaults to `type="submit"`;
+//      there is no form. The overview card's tiles already write it.)
+//   3. the KNOWLEDGE eyebrow's inline `style="margin-top:10px"` becoming
+//      `.cur-sb-group-head` — the one declaration in this sidebar no
+//      stylesheet and no [data-theme] block could ever reach. Same value,
+//      10px, now in shared/sidebar.css.
+//
+// The REFERENCE is not transcribed: it is the pre-adoption `renderSidebar`,
+// lifted out of git and executed against the same fixture, so this comparison
+// cannot quietly become a comparison of the new output with itself.
+{
+  // ── THE REFERENCE, FROZEN ─────────────────────────────────────────────
+  // v3.64.2's `knowledgeFolderBtn` + `renderSidebar`, VERBATIM apart from
+  // their comments, which were stripped because the corpus is here to be
+  // EXECUTED and not read. It was produced by lifting the two functions out of
+  // git and printing them, never transcribed by hand.
+  //
+  // WHY IT IS FROZEN HERE RATHER THAN READ FROM A GIT REF. `git show HEAD~1`
+  // was the first cut and is a trap: the moment a second commit lands on this
+  // branch, HEAD~1 is the ADOPTED file and every assertion below compares the
+  // new output with itself — green, vacuous, and impossible to notice. A
+  // frozen copy cannot silently become the thing it is checking.
+  //
+  // IT IS ALSO THE RECORD of what this sidebar looked like the day it became
+  // a component, which is the thing a future "let us simplify the kit" pass
+  // has to be measured against.
+  const REF_V3642 = `
+function knowledgeFolderBtn() {
+  return (
+    '<button class="btn btn-secondary dm-kb-btn" id="dm-kb-choose-btn"' +
+      (state.kbBusy ? ' disabled' : '') + '>' +
+      icon('folder', 13) + ' ' + (state.kbBusy ? 'Waiting for the folder picker…' : 'Use existing folder') +
+    '</button>'
+  );
+}
+
+function renderSidebar(token) {
+  if (!isCurrentMount(token)) return;
+  const newBtn =
+    '<button class="btn btn-primary dm-new-btn" id="dm-new-domain-btn">' + icon('grid', 13) + ' New domain</button>' +
+    knowledgeFolderBtn();
+  if (!state.loaded) {
+    setSidebar('<div class="sidebar-title">Domains</div>' + newBtn + gatedLoader(loadGate, 'Loading…', 'sidebar-hint'), token);
+    bindSidebarButtons();
+    return;
+  }
+  if (state.loadError) {
+    setSidebar(
+      '<div class="sidebar-title">Domains</div>' + newBtn +
+      '<div class="dm-sidebar-status">' +
+        renderStatus({ state: 'danger', title: 'Could not load domains', detail: state.loadError }) +
+      '</div>',
+      token
+    );
+    bindSidebarButtons();
+    return;
+  }
+  if (state.domains.length === 0) {
+    setSidebar(
+      '<div class="sidebar-title">Domains</div>' + newBtn +
+      '<div class="cur-eyebrow" style="margin-top:10px">KNOWLEDGE</div>' +
+      '<div class="sidebar-note">No domains yet. A domain is one compounding wiki — create your first one above.</div>',
+      token
+    );
+    bindSidebarButtons();
+    return;
+  }
+  const now = Date.now();
+  const rows = state.domains.map((d, i) => {
+    const readonly = state.readonlySet.has(d.slug);
+    const active = d.slug === state.activeSlug;
+    const issueCount = state.healthSummary[d.slug];
+    const attention = typeof issueCount === 'number' && issueCount > 0;
+    const pagesText = typeof d.pageCount === 'number'
+      ? d.pageCount.toLocaleString() + ' page' + (d.pageCount === 1 ? '' : 's')
+      : '— pages';
+    const age = formatDayAge(d.lastIngestDate, now);
+    const lastEvent = domainLastEventText(d);
+    return (
+      '<button class="dm-row' + (active ? ' active' : '') + '" data-domain-slug="' + escapeHtml(d.slug) + '">' +
+        '<span class="dm-row-dot ' + domainDotClass(i) + '"></span>' +
+        '<span class="dm-row-main">' +
+          '<span class="dm-row-name">' + escapeHtml(d.displayName || d.slug) + '</span>' +
+          '<span class="dm-row-meta">' +
+            '<span class="dm-row-figure">' + pagesText + '</span>' +
+            '<span class="dm-row-sep" aria-hidden="true">·</span>' +
+            freshnessDotHtml(d.lastIngestDate, now) +
+            clockGlyph(12) +
+            '<span class="dm-row-age">' + escapeHtml(age || 'nothing written yet') + '</span>' +
+            (d.lastIngestDate
+              ? '<span class="visually-hidden"> (' + escapeHtml(d.lastIngestDate) + ')</span>'
+              : '') +
+          '</span>' +
+          (lastEvent ? '<span class="dm-row-event">' + escapeHtml(lastEvent) + '</span>' : '') +
+        '</span>' +
+        (readonly
+          ? '<span class="dm-row-mirror">RO</span>' +
+            '<span class="visually-hidden">Read-only Shared Brain mirror</span>'
+          : '') +
+        (attention
+          ? '<span class="dm-row-attn"></span>' +
+            '<span class="visually-hidden">' + issueCount + ' open health issue' +
+              (issueCount === 1 ? '' : 's') + '</span>'
+          : '') +
+      '</button>'
+    );
+  }).join('');
+  setSidebar(
+    '<div class="sidebar-title">Domains</div>' + newBtn +
+    '<div class="cur-eyebrow" style="margin-top:10px">KNOWLEDGE</div>' +
+    '<div class="dm-row-list">' + rows + '</div>',
+    token
+  );
+  bindSidebarButtons();
+  document.querySelectorAll('.dm-row[data-domain-slug]').forEach((btn) => {
+    btn.addEventListener('click', () => selectDomain(btn.dataset.domainSlug));
+  });
+}
+`;
+  {
+    const NOW = read('src/public/next/views/domains.js');
+    const REF = REF_V3642;
+    const PRE2 = `
+let captured = '';
+let state = null;
+function setSidebar(html) { captured = html; }
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function icon(n, sz) { return '<svg data-icon="' + n + '" width="' + sz + '"></svg>'; }
+function gatedLoader() { return '<loader/>'; }
+function renderStatus(o) { return '<div>' + escapeHtml(o && o.title || '') + '</div>'; }
+function bindSidebarButtons() {}
+function selectDomain() {}
+const DOMAIN_DOT_SLOTS = 6;
+function isCurrentMount() { return true; }
+let loadGate = {};
+const myMountToken = 1;
+const document = { getElementById() { return null; }, querySelectorAll() { return []; } };
+`;
+    // The REFERENCE carries its own `renderSidebar` and `knowledgeFolderBtn`;
+    // the two pure helpers they share are lifted from the LIVE file in both
+    // arms, because neither changed in this adoption and a second frozen copy
+    // of `domainLastEventText` would be a second thing to keep in step.
+    const LIFT = ['renderSidebar', 'knowledgeFolderBtn'];
+    const SHARED_FNS = ['domainLastEventText', 'domainDotClass'];
+    const build = (src, kit) => {
+      const body = PRE2 + SHARED_FNS.map((n) => extractFunction(NOW, n)).join('\n\n') + '\n\n'
+        + LIFT.map((n) => extractFunction(src, n)).join('\n\n') +
+        '\nreturn { run: (s) => { state = s; renderSidebar(2); return captured; } };';
+      return kit
+        ? new Function('formatDayAge', 'freshnessDotHtml', 'clockGlyph',
+            'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow', body)(
+            formatDayAge, freshnessDotHtml, clockGlyph,
+            renderSidebarHead, renderSidebarGroup, renderSidebarRow)
+        : new Function('formatDayAge', 'freshnessDotHtml', 'clockGlyph', body)(
+            formatDayAge, freshnessDotHtml, clockGlyph);
+    };
+    const refApi = build(REF, false);
+    const nowApi = build(NOW, true);
+    const today = (() => { const d = new Date();
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+        '-' + String(d.getDate()).padStart(2, '0'); })();
+    const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n);
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+        '-' + String(d.getDate()).padStart(2, '0'); };
+    const st = (over) => ({
+      loaded: true, loadError: null, activeSlug: 'articles', kbBusy: false,
+      readonlySet: new Set(['mirror']), healthSummary: { articles: 4, business: 0 },
+      domains: [
+        { slug: 'articles', displayName: 'Articles', pageCount: 3421, lastIngestDate: today,
+          lastIngestKind: 'ingest', lastIngestTitle: 'A <b>fresh</b> source' },
+        { slug: 'business', displayName: 'Business', pageCount: 96, lastIngestDate: daysAgo(42),
+          lastIngestKind: 'compile', lastIngestTitle: 'Pricing thread' },
+        { slug: 'mirror', displayName: 'Shared Mirror', pageCount: 1, lastIngestDate: daysAgo(3),
+          lastIngestKind: null, lastIngestTitle: null },
+        { slug: 'fresh', displayName: 'Brand New', pageCount: 0, lastIngestDate: null,
+          lastIngestKind: null, lastIngestTitle: null },
+      ],
+      ...over,
+    });
+    // ALL FOUR BRANCHES, because the head is emitted by every one of them and
+    // a comparison of the row branch alone would say nothing about the other
+    // three — which is where a loader, an error and an empty-state sentence
+    // live.
+    const BRANCHES = [
+      ['rows', st()],
+      ['empty', st({ domains: [], activeSlug: null })],
+      ['loading', st({ loaded: false, kbBusy: true, domains: [] })],
+      ['load error', st({ loadError: 'nope', domains: [] })],
+    ];
+    const normalise = (h) => h
+      .replace(/cur-sb-[a-z0-9-]+ ?/g, '')
+      .replace(/ type="button"/g, '')
+      .replace(/<div class="cur-eyebrow" style="margin-top:10px">/g, '<div class="cur-eyebrow">');
+    const sha = (x) => createHash('sha256').update(x).digest('hex').slice(0, 16);
+    for (const [name, s0] of BRANCHES) {
+      const a = normalise(refApi.run(s0));
+      const b = normalise(nowApi.run(s0));
+      ok(a === b,
+        `the ${name} branch is BYTE-IDENTICAL to the pre-adoption sidebar after the three ` +
+        `normalisations (${sha(a)})`,
+        a === b ? '' : (() => {
+          let i = 0; while (i < a.length && a[i] === b[i]) i++;
+          return 'first difference at ' + i + '\n  was: ' + JSON.stringify(a.slice(i - 60, i + 120)) +
+                 '\n  now: ' + JSON.stringify(b.slice(i - 60, i + 120));
+        })());
+    }
+    // ANTI-VACUITY: the normaliser must not be able to make ANY two strings
+    // equal. If it could, all four assertions above would pass on a sidebar
+    // that had been rewritten from scratch.
+    ok(normalise('<button class="cur-sb-row dm-row">x</button>')
+       !== normalise('<button class="cur-sb-row dm-row">y</button>'),
+      'CONTROL — the normaliser strips only the three named things: two rows differing in '
+      + 'their TEXT are still different after it');
+    ok(normalise('<span class="cur-sb-age dm-row-age">a</span>')
+       === '<span class="dm-row-age">a</span>',
+      'CONTROL — …and it really does strip a kit token, so the four assertions are not passing '
+      + 'because it strips nothing');
+
+    // ── NORMALISATION 1 IS INERT: the host's tokens survive, in order ────
+    const nowRows = nowApi.run(st());
+    const refRows = refApi.run(st());
+    const classesOf = (h) => [...h.matchAll(/class="([^"]*)"/g)].map((m) => m[1]);
+    const refCls = classesOf(refRows);
+    const nowCls = classesOf(nowRows);
+    eq(nowCls.length, refCls.length, 'the same number of class attributes is written');
+    const orderOk = [];
+    const addedOk = [];
+    for (let i = 0; i < Math.min(refCls.length, nowCls.length); i++) {
+      const was = refCls[i].split(/\s+/).filter(Boolean);
+      const has = nowCls[i].split(/\s+/).filter(Boolean);
+      // every reference token is still there, in the same relative order
+      let k = -1; let inOrder = true;
+      for (const t of was) { const at = has.indexOf(t, k + 1); if (at < 0) { inOrder = false; break; } k = at; }
+      orderOk.push(inOrder ? null : `#${i}: "${refCls[i]}" -> "${nowCls[i]}"`);
+      const added = has.filter((t) => !was.includes(t));
+      const bad = added.filter((t) => !/^cur-sb-/.test(t));
+      addedOk.push(bad.length ? `#${i}: ${bad.join(' ')}` : null);
+    }
+    ok(orderOk.every((x) => x === null),
+      'every class the reference wrote is still written, IN THE SAME ORDER',
+      orderOk.filter(Boolean).join(' | '));
+    ok(addedOk.every((x) => x === null),
+      '…and every token the adoption ADDED is on the kit\'s own `cur-sb-` prefix, so no '
+      + 'foreign name reached this sidebar',
+      addedOk.filter(Boolean).join(' | '));
+
+    // ── NORMALISATION 2 IS INERT: `type` lands on buttons only ─────────
+    const types = [...nowRows.matchAll(/<(\w+)([^>]*?)\stype="([^"]*)"/g)];
+    ok(types.length > 0, 'CONTROL — the adoption really does write `type=` somewhere');
+    ok(types.every((m) => m[1] === 'button' && m[3] === 'button'),
+      '…and it lands on <button> only, always with the value `button` — a <button> outside a '
+      + 'form defaults to type="submit", and there is no form on this screen',
+      types.map((m) => m[1] + '/' + m[3]).join(', '));
+    const attrsOf = (h) => [...h.matchAll(/\s([a-z-]+)=/g)].map((m) => m[1]);
+    const refAttrs = new Set(attrsOf(refRows));
+    const newAttrs = [...new Set(attrsOf(nowRows))].filter((a) => !refAttrs.has(a));
+    ok(newAttrs.length === 0 || (newAttrs.length === 1 && newAttrs[0] === 'type'),
+      '…and `type` is the ONLY attribute name the adoption introduced',
+      newAttrs.join(', '));
+
+    // ── NORMALISATION 3 IS INERT: the inline margin became a rule, same value
+    // EVERY BRANCH, not just the rows one. A first cut read only `nowRows`,
+    // and was GREEN when the inline style came back on the EMPTY branch's
+    // head — which is a different code path (the kit refuses to render a
+    // group head over no rows, correctly, so that branch writes its own) and
+    // the one a user with no domains yet actually sees. The normaliser
+    // rewrites the inline form, so the byte-identity assertions above cannot
+    // see it either: that is exactly what a normalisation is allowed to hide
+    // and why each one is proved inert on its own.
+    const inlineLeft = BRANCHES
+      .filter(([, s0]) => /style="margin-top:10px"/.test(nowApi.run(s0)))
+      .map(([n]) => n);
+    ok(inlineLeft.length === 0,
+      'the KNOWLEDGE eyebrow\'s inline margin is gone from EVERY branch\'s markup',
+      inlineLeft.join(', '));
+    ok(BRANCHES.some(([, s0]) => /style="margin-top:10px"/.test(refApi.run(s0))),
+      'CONTROL — the reference really did write it, so the assertion above is a change and not '
+      + 'a property the sidebar always had');
+    const sbCss = read('src/public/next/shared/sidebar.css');
+    ok(/\.cur-sb-group-head\s*\{[^}]*margin-top:\s*10px/.test(sbCss),
+      '…and shared/sidebar.css declares it at the SAME value — an inline style is the one '
+      + 'declaration no stylesheet and no [data-theme] block can reach');
+    ok(/class="cur-sb-group-head cur-eyebrow"/.test(nowRows),
+      '…on the element that carried it');
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§8c  THE ROW RULES MOVED — they were not copied');
+// ════════════════════════════════════════════════════════════════════════
+//
+// While both files declared the row, both painted the same values and nothing
+// on screen could move — which is exactly what lets a duplication survive a
+// review. So the view's copy is DELETED, and this section is what makes that
+// checkable rather than remembered.
+{
+  const dm = stripComments(read('src/public/next/views/domains.css'));
+  const sb = stripComments(read('src/public/next/shared/sidebar.css'));
+  const MOVED = ['.dm-row-list', '.dm-row', '.dm-row-main', '.dm-row-name', '.dm-row-meta',
+    '.dm-row-figure', '.dm-row-sep', '.dm-row-age', '.dm-row-event'];
+  const still = MOVED.filter((sel) => new RegExp(
+    sel.replace('.', '\\.') + '(?![a-z0-9-])[^{}]*\\{', 'i').test(dm));
+  ok(still.length === 0,
+    'views/domains.css declares NONE of the nine row rules any more — the card moved, it was '
+    + 'not copied', still.join(', '));
+  const kitHas = ['.cur-sb-list', '.cur-sb-row', '.cur-sb-main', '.cur-sb-name', '.cur-sb-meta',
+    '.cur-sb-figure', '.cur-sb-sep', '.cur-sb-age', '.cur-sb-event']
+    .filter((sel) => new RegExp(sel.replace('.', '\\.') + '(?![a-z0-9-])[^{}]*\\{').test(sb));
+  eq(kitHas.length, 9, 'CONTROL — and the kit declares all nine under its own names');
+  // THE TWO THINGS THAT COULD NOT MOVE, asserted so a later tidy-up has to
+  // read the reason rather than discover it.
+  // ── ALL SIX SLOTS, IN BOTH THEMES, PAIRED ─────────────────────────────
+  // A first cut asserted `/\.cur-sb-dot-1/` against the whole file and was
+  // GREEN when slot 1's DARK rule lost the kit's name, because the light-theme
+  // rule below still carried it. Six colours x two themes is twelve places to
+  // drop a selector, and a Context project row coloured through
+  // identityDotClass() would then paint nothing at all in one theme only.
+  // So each of the twelve is read as a RULE and its two selectors are checked
+  // against each other.
+  const dotRules = [...dm.matchAll(/([^{}]*?\.(?:dm-row-dot|cur-sb-dot)-(\d)[^{}]*)\{([^}]*)\}/g)];
+  const missing = [];
+  for (let n = 1; n <= 6; n++) {
+    for (const [theme, want] of [['dark', false], ['light', true]]) {
+      const rule = dotRules.find((m) => Number(m[2]) === n
+        && /\[data-theme="light"\]/.test(m[1]) === want);
+      if (!rule) { missing.push(`slot ${n} ${theme}: no rule`); continue; }
+      const sels = rule[1].split(',').map((x) => x.trim());
+      const hostSel = sels.find((x) => x.endsWith('.dm-row-dot-' + n));
+      const kitSel = sels.find((x) => x.endsWith('.cur-sb-dot-' + n));
+      if (!hostSel) missing.push(`slot ${n} ${theme}: host class absent`);
+      if (!kitSel) missing.push(`slot ${n} ${theme}: kit class absent`);
+      if (want && hostSel && kitSel
+          && !(/\[data-theme="light"\]/.test(hostSel) && /\[data-theme="light"\]/.test(kitSel))) {
+        missing.push(`slot ${n} light: one of the two is unscoped`);
+      }
+      if (!/background\s*:/.test(rule[3])) missing.push(`slot ${n} ${theme}: declares no background`);
+    }
+  }
+  ok(missing.length === 0,
+    'all six identity COLOURS stay in views/domains.css and EVERY one of the twelve rules '
+    + '(six slots x two themes) names the kit\'s class beside the host\'s — three of the light '
+    + 'values are derived literals and the colour-literal baseline holds exactly two files, so '
+    + 'the palette could not move into the kit; the selector list is what lets a second view '
+    + 'colour a dot through identityDotClass() without importing from a view',
+    missing.join(' | '));
+  ok(dotRules.length >= 12,
+    `CONTROL — the scan really found the twelve rules (${dotRules.length}), so "nothing missing" `
+    + 'is a reading rather than a regex that stopped matching');
+  ok(/\.dm-row-mirror\s*\{/.test(dm) && /\.dm-row-attn\s*\{/.test(dm),
+    '…and so do the two BADGES, which are this view\'s own markup in the kit\'s trusted slot');
+  ok(!/\.cur-sb-dot-1\s*\{[^}]*background/.test(sb) && !/\.fresh-/.test(sb),
+    'CONTROL — the kit declares neither an identity COLOUR nor any `.fresh-` rule; it owns the '
+    + 'dot\'s shape and nothing about which colour or which state it carries');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

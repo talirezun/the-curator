@@ -642,8 +642,14 @@ section('8. Rows on a material take the alpha overlay, not an opaque fill');
   const ROWS = [
     ['views/chat.css', '.chat-conv-row:hover', '--mat-row-hover'],
     ['views/chat.css', '.chat-conv-row.active', '--mat-row-active'],
-    ['views/domains.css', '.dm-row:hover', '--mat-row-hover'],
-    ['views/domains.css', '.dm-row.active', '--mat-row-active'],
+    // THE DOMAINS ROW IS THE KIT'S SINCE v3.65.0. `.dm-row` still rides the
+    // same element as an ALIAS, but the RULES moved to shared/sidebar.css
+    // when all three sidebars became one component — so the declaration this
+    // section is really about is read where the browser reads it. The
+    // `.mem-row` entry below stays pointed at views/memory.css until the
+    // Context view adopts the same component.
+    ['shared/sidebar.css', '.cur-sb-row:hover', '--mat-row-hover'],
+    ['shared/sidebar.css', '.cur-sb-row.active', '--mat-row-active'],
     ['views/ingest.css', '.ing-dest-row:hover:not([disabled])', '--mat-row-hover'],
     ['views/ingest.css', '.ing-dest-row.active', '--mat-row-active'],
     ['views/memory.css', '.mem-row:hover', '--mat-row-hover'],
@@ -656,6 +662,13 @@ section('8. Rows on a material take the alpha overlay, not an opaque fill');
   ok(wrong.length === 0, wrong.length === 0
     ? `all ${ROWS.length} sidebar row states take a --mat-row-* overlay`
     : 'row states still on an opaque surface: ' + wrong.join(', '));
+  // ...AND THE VIEW KEPT NO COPY. While views/domains.css also declared the
+  // row, both files painted the same values and nothing could move — which is
+  // exactly what lets a duplication survive a review. The move is asserted
+  // from this side too, because this is the section that names the rule.
+  ok(!/\.dm-row(?![a-z-])[^{}]*\{/.test(stripComments(read('views/domains.css'))),
+    'views/domains.css declares no `.dm-row` rule of its own — the row MOVED into the kit, '
+    + 'it was not copied into it');
 
   // …and the overlay really is the larger step off the plane, measured. If it
   // were not, this would be a rename rather than a fix.

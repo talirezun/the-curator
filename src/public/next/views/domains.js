@@ -112,6 +112,25 @@ import { docsLinkHtml } from '../shared/docs-links.js';
 // REAL function rather than a stub, which is what makes their assertions
 // about this card assertions about the shipped component.
 import { renderOverview } from '../shared/overview.js';
+// ── THE SIDEBAR (v3.65.0) ──────────────────────────────────────────────────
+// THIS view's sidebar is the reference design — the maintainer's own words,
+// against the Context one: *"I suggest we go with the Domains design, which is
+// more polished"* — so what moved into the kit is what this file already
+// shipped, unchanged in value, and Context and Settings adopt it from there.
+// What THIS file gains is nothing visible at all, which is the acceptance
+// test: the rendered sidebar is byte-identical to v3.64.2's modulo exactly two
+// normalisations — the `cur-sb-*` tokens added beside each `dm-` one, and
+// `type="button"` — plus the KNOWLEDGE eyebrow's inline `style="margin-top:
+// 10px"`, the one thing in this sidebar no stylesheet could reach, becoming
+// `.cur-sb-group-head`. All three are asserted INERT by
+// scripts/test-sidebar-status-rows.js §8b rather than claimed.
+//
+// THEY ARE NEW FREE IDENTIFIERS INSIDE `renderSidebar`, which five offline
+// suites lift by brace-matching and execute inside `new Function` against a
+// fixed stub list — so those five sandboxes inject them, and they inject the
+// REAL kit functions rather than stubs, which is what makes their assertions
+// about this sidebar assertions about the shipped component.
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../shared/sidebar.js';
 import { renderMarkdown } from '../shared/markdown.js';
 import { formatUsdHonest } from '../shared/format-usd.js';
 
@@ -2702,12 +2721,20 @@ function toWirePair(p) {
  * read" is exactly the condition repointing fixes.
  */
 function knowledgeFolderBtn() {
-  return (
-    '<button class="btn btn-secondary dm-kb-btn" id="dm-kb-choose-btn"' +
-      (state.kbBusy ? ' disabled' : '') + '>' +
-      icon('folder', 13) + ' ' + (state.kbBusy ? 'Waiting for the folder picker…' : 'Use existing folder') +
-    '</button>'
-  );
+  // ── A DESCRIPTOR SINCE v3.65.0, RENDERED BY THE KIT ────────────────────
+  // The values are unchanged: same id, same `dm-kb-btn` class, same two
+  // labels, same disabled rule, same 13px folder icon. What changed is WHO
+  // writes the `<button>` — shared/sidebar.js's head, so this slot means the
+  // same thing on all three sidebars ("the one alternative route": Use
+  // existing folder here, Refresh on Context, Updates on Settings) rather
+  // than being three hand-written buttons that happen to look alike.
+  return {
+    label: state.kbBusy ? 'Waiting for the folder picker…' : 'Use existing folder',
+    id: 'dm-kb-choose-btn',
+    className: 'dm-kb-btn',
+    disabled: state.kbBusy,
+    iconHtml: icon('folder', 13),
+  };
 }
 
 /**
@@ -2778,12 +2805,31 @@ function bindKnowledgeListeners() {
 
 function renderSidebar(token) {
   if (!isCurrentMount(token)) return;
-  const newBtn =
-    '<button class="btn btn-primary dm-new-btn" id="dm-new-domain-btn">' + icon('grid', 13) + ' New domain</button>' +
-    knowledgeFolderBtn();
+  // THE TITLE AND THE TWO ACTIONS, THROUGH THE KIT. The primary slot is
+  // "create the kind of thing this list holds" and the secondary is the one
+  // alternative route; see shared/sidebar.js's head for why those two slots
+  // are the whole vocabulary and why there is no ⓘ option on a sidebar title.
+  const newBtn = renderSidebarHead({
+    title: 'Domains',
+    primary: {
+      label: 'New domain', id: 'dm-new-domain-btn',
+      className: 'dm-new-btn', iconHtml: icon('grid', 13),
+    },
+    secondary: knowledgeFolderBtn(),
+  });
+
+  // THE GROUP HEAD WITH NO GROUP UNDER IT. renderSidebarGroup refuses to
+  // render an eyebrow over no rows — "a caption for an empty box reads as a
+  // failure" — and it is right, but these three branches are not that case:
+  // the eyebrow names the list that IS about to exist, above a loader, an
+  // error or the sentence that says why it is empty. So the head is written
+  // here, with the kit's own class rather than the inline
+  // `style="margin-top:10px"` it carried through v3.64.2 (an inline style is
+  // the one declaration no stylesheet and no [data-theme] block can reach).
+  const groupHead = '<div class="cur-sb-group-head cur-eyebrow">KNOWLEDGE</div>';
 
   if (!state.loaded) {
-    setSidebar('<div class="sidebar-title">Domains</div>' + newBtn + gatedLoader(loadGate, 'Loading…', 'sidebar-hint'), token);
+    setSidebar(newBtn + gatedLoader(loadGate, 'Loading…', 'sidebar-hint'), token);
     bindSidebarButtons();
     return;
   }
@@ -2809,8 +2855,8 @@ function renderSidebar(token) {
       // written at that rule. The semantic point above is unchanged; only the
       // colour claim was corrected, because it had stopped being true.)
       // Wrapped only to carry this view's spacing: text.css owns the type,
-      // domains.css owns where it sits. The wrapper sets no type of its own.
-      '<div class="sidebar-title">Domains</div>' + newBtn +
+      // domains.css owns where it sits.
+      newBtn +
       '<div class="dm-sidebar-status">' +
         renderStatus({ state: 'danger', title: 'Could not load domains', detail: state.loadError }) +
       '</div>',
@@ -2821,8 +2867,7 @@ function renderSidebar(token) {
   }
   if (state.domains.length === 0) {
     setSidebar(
-      '<div class="sidebar-title">Domains</div>' + newBtn +
-      '<div class="cur-eyebrow" style="margin-top:10px">KNOWLEDGE</div>' +
+      newBtn + groupHead +
       '<div class="sidebar-note">No domains yet. A domain is one compounding wiki — create your first one above.</div>',
       token
     );
@@ -2845,61 +2890,62 @@ function renderSidebar(token) {
     const pagesText = typeof d.pageCount === 'number'
       ? d.pageCount.toLocaleString() + ' page' + (d.pageCount === 1 ? '' : 's')
       : '— pages';
-    // ── THE STATUS-ROW ANATOMY ───────────────────────────────────────
-    // name · key figure · freshness mark + relative age · last event, the
-    // same shape the Ingest sidebar's DESTINATION rows carry. Before this,
-    // a KNOWLEDGE row said "Articles · 3,421 pages" and nothing about when
-    // that number last moved — the one reading a mission-control surface
-    // owes you, and the one the menubar widget already gives Mac users.
+    // ── THE STATUS-ROW ANATOMY, NOW THE KIT'S ────────────────────────────
+    // name · key figure · freshness mark + clock glyph + relative age · last
+    // event. Every slot is optional and the ORDER is fixed by the component,
+    // which is the point: the Context rail had the same facts in a different
+    // order with no clock at all, and a component that emits the glyph is one
+    // a host cannot forget to pass (*"it has clocks showing when it was
+    // changed; in Context we don't have that"*).
     //
-    // The IDENTITY dot (`.dm-row-dot`, six palette colours) and the
-    // ATTENTION dot (`.dm-row-attn`, open health issues) are untouched:
-    // three marks, three separate facts, and folding any of them into the
-    // others would make one dot answer questions it cannot.
-    const age = formatDayAge(d.lastIngestDate, now);
-    const lastEvent = domainLastEventText(d);
-    return (
-      '<button class="dm-row' + (active ? ' active' : '') + '" data-domain-slug="' + escapeHtml(d.slug) + '">' +
-        '<span class="dm-row-dot ' + domainDotClass(i) + '"></span>' +
-        '<span class="dm-row-main">' +
-          '<span class="dm-row-name">' + escapeHtml(d.displayName || d.slug) + '</span>' +
-          '<span class="dm-row-meta">' +
-            '<span class="dm-row-figure">' + pagesText + '</span>' +
-            '<span class="dm-row-sep" aria-hidden="true">·</span>' +
-            freshnessDotHtml(d.lastIngestDate, now) +
-            clockGlyph(12) +
-            '<span class="dm-row-age">' + escapeHtml(age || 'nothing written yet') + '</span>' +
-            // The absolute date, kept and REACHABLE — visually hidden rather
-            // than a `title=`, which is hover-only and therefore invisible to
-            // keyboard and touch. This file's hover-only ceiling in
-            // scripts/test-next-title-affordances.js is ONE (the Flip button),
-            // and this must not raise it.
-            (d.lastIngestDate
-              ? '<span class="visually-hidden"> (' + escapeHtml(d.lastIngestDate) + ')</span>'
-              : '') +
-          '</span>' +
-          (lastEvent ? '<span class="dm-row-event">' + escapeHtml(lastEvent) + '</span>' : '') +
-        '</span>' +
-        // ── TWO BADGES WHOSE MEANING WAS HOVER-ONLY ───────────────────
-        // `RO` was a <span title="Read-only Shared Brain mirror">, and the
-        // attention badge was an EMPTY <span> whose entire content was its
-        // tooltip — the purest form of the defect: a keyboard user reached
-        // nothing, and on touch, where there is no hover, the issue count did
-        // not exist.
-        //
-        // WHY NOT THE INFO-MARK BUTTON USED IN settings.js: both spans are
-        // INSIDE `<button class="dm-row">`, and a <button> inside a <button>
-        // is invalid HTML — the browser closes the outer one and the row
-        // stops being a single control. So the meaning goes into the row
-        // button's own ACCESSIBLE NAME instead, which is reachable precisely
-        // because that row IS focusable. `.visually-hidden` is shell.css's
-        // existing clip-rect utility; no stylesheet change.
-        //
-        // STATED RATHER THAN IMPLIED AWAY: this fixes keyboard and screen
-        // reader, not sighted-touch, which still sees a glyph. For a sighted
-        // user both facts are one tap away on the domain's own detail view —
-        // the read-only mirror status box and the `Open issues N` readout —
-        // so neither is information that exists nowhere else for them.
+    // The IDENTITY dot (`.dm-row-dot`, six palette colours) and the ATTENTION
+    // dot (`.dm-row-attn`, open health issues) are untouched: three marks,
+    // three separate facts, and folding any of them into the others would
+    // make one dot answer questions it cannot. The identity COLOUR stays this
+    // view's — see domainDotClass and the `.dm-row-dot-N` block in
+    // domains.css for why it cannot live in a shared stylesheet.
+    return renderSidebarRow({
+      alias: 'dm',
+      name: d.displayName || d.slug,
+      dotClass: domainDotClass(i),
+      figure: pagesText,
+      markHtml: freshnessDotHtml(d.lastIngestDate, now),
+      age: formatDayAge(d.lastIngestDate, now),
+      ageFallback: 'nothing written yet',
+      // The absolute date, kept and REACHABLE — visually hidden rather than a
+      // `title=`, which is hover-only and therefore invisible to keyboard and
+      // touch. This file's hover-only ceiling in
+      // scripts/test-next-title-affordances.js is ONE (the Flip button), and
+      // this must not raise it.
+      ageExact: d.lastIngestDate || '',
+      event: domainLastEventText(d) || '',
+      active,
+      data: { 'domain-slug': d.slug },
+      // ── TWO BADGES WHOSE MEANING WAS HOVER-ONLY ───────────────────
+      // `RO` was a <span title="Read-only Shared Brain mirror">, and the
+      // attention badge was an EMPTY <span> whose entire content was its
+      // tooltip — the purest form of the defect: a keyboard user reached
+      // nothing, and on touch, where there is no hover, the issue count did
+      // not exist.
+      //
+      // WHY NOT THE INFO-MARK BUTTON USED IN settings.js: both spans are
+      // INSIDE the row's own `<button>`, and a <button> inside a <button> is
+      // invalid HTML — the browser closes the outer one and the row stops
+      // being a single control. So the meaning goes into the row button's own
+      // ACCESSIBLE NAME instead, which is reachable precisely because that row
+      // IS focusable. `.visually-hidden` is shell.css's existing clip-rect
+      // utility; no stylesheet change.
+      //
+      // STATED RATHER THAN IMPLIED AWAY: this fixes keyboard and screen
+      // reader, not sighted-touch, which still sees a glyph. For a sighted
+      // user both facts are one tap away on the domain's own detail view —
+      // the read-only mirror status box and the `Open issues N` readout —
+      // so neither is information that exists nowhere else for them.
+      //
+      // THEY RIDE `badgesHtml`, which the kit names as TRUSTED: this is host
+      // markup by construction, composed here from an escaped slug-free
+      // literal and an integer.
+      badgesHtml:
         (readonly
           ? '<span class="dm-row-mirror">RO</span>' +
             '<span class="visually-hidden">Read-only Shared Brain mirror</span>'
@@ -2908,15 +2954,12 @@ function renderSidebar(token) {
           ? '<span class="dm-row-attn"></span>' +
             '<span class="visually-hidden">' + issueCount + ' open health issue' +
               (issueCount === 1 ? '' : 's') + '</span>'
-          : '') +
-      '</button>'
-    );
+          : ''),
+    });
   }).join('');
 
   setSidebar(
-    '<div class="sidebar-title">Domains</div>' + newBtn +
-    '<div class="cur-eyebrow" style="margin-top:10px">KNOWLEDGE</div>' +
-    '<div class="dm-row-list">' + rows + '</div>',
+    newBtn + renderSidebarGroup({ eyebrow: 'KNOWLEDGE', alias: 'dm', rowsHtml: rows }),
     token
   );
 
