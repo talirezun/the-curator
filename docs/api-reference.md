@@ -2487,16 +2487,17 @@ collision (see below the table).
 | Method | Path | What it does |
 |---|---|---|
 | `GET` | `/api/memory` | Every project in every domain, newest first |
-| `GET` | `/api/memory/repo-scan?root=<abs>` | **New in v3.61.0**, candidates gain `modifiedAt` **in v3.61.1**. Read-only candidate scan of a checkout — `scanRepoForFoundations` over HTTP; see below |
+| `GET` | `/api/memory/repo-scan?root=<abs>` | **New in v3.61.0**, candidates gain `modifiedAt` **in v3.61.1**. Read-only candidate scan of a checkout — `scanRepoForFoundations` over HTTP; see below. **`?source=remote` (v3.65.0)** scans a GitHub repository instead, with no checkout on this machine |
 | `GET` | `/api/memory/:domain/projects` | One domain's projects — **unless `?as=project`** (v3.62.0), which makes this handler decline so the detail route below can answer about a project literally called `projects` |
 | `POST` | `/api/memory/:domain/projects` | Create a project — `{project, brief?}` |
 | `PATCH` | `/api/memory/:domain/projects/:project` | Rename and/or replace the brief — `{rename?, brief?}` |
 | `DELETE` | `/api/memory/:domain/projects/:project` | Delete a project — `{confirm}` |
+| `PATCH` | `/api/memory/:domain/:project/knowledge/domains` | **New in v3.65.0.** Which wikis this project's knowledge lives in — `{knowledgeDomains}`, a list or `null` |
 | `GET` | `/api/memory/:domain/:project/foundations/:slug` | One canonical document, verbatim (v3.59.0; gains `?raw=1` in v3.61.0) |
 | `PUT` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0.** Create or replace one curator-owned document, whole — still refused on a mirror. Gains an optional, **tri-state** `readFirst` in v3.62.0 |
 | `PATCH` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.62.0.** The reading plan and nothing else — `{readFirst}` — on **either** ownership |
 | `DELETE` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0**, works on **either** ownership **since v3.61.1**. Remove one document, behind a name confirmation — on a mirror this stops mirroring it, the source file untouched |
-| `POST` | `/api/memory/:domain/:project/foundations/init` | **New in v3.61.0.** Set a project's foundations ownership for the first time, optionally seeding or mirroring in the same call |
+| `POST` | `/api/memory/:domain/:project/foundations/init` | **New in v3.61.0.** Set a project's foundations ownership for the first time, optionally seeding or mirroring in the same call. **v3.65.0** adds a `remote`/`tokenSource` arm — a mirror born from GitHub with no checkout on this machine — and makes the body strict |
 | `POST` | `/api/memory/:domain/:project/foundations/refresh` | Re-mirror from a checkout (v3.59.0; gains a `files` body in v3.61.0) — **or, in v3.63.0, from the GitHub repository itself** when the checkout is not on this machine |
 | `GET` | `/api/memory/:domain/:project/capture` | **New in v3.63.0.** The honesty meter — how many bridge sessions ran for this project, how many read, how many saved |
 | `GET` | `/api/memory/:domain/:project` | One project's brief plus its state |
@@ -2929,6 +2930,74 @@ list — the sort stays role rank then path.
 | `400` | `invalid_root` — `root` is missing, empty, not a string, contains a NUL byte, or is not an absolute path |
 | `409` | `repo_unreachable` — the path does not exist, or is not readable, from this machine |
 
+#### `?source=remote` — the same picker for a machine with no checkout
+
+```
+GET /api/memory/repo-scan?source=remote&remote=owner/repo[&ref=][&path=][&tokenSource=]
+```
+
+**New in v3.65.0.** The sibling arm of the same route — `scanRemoteForFoundations` over HTTP —
+lists what a **GitHub repository** has that could become a foundation, for the machine that has no
+checkout to point `?root=` at. It stays a `GET` because it writes nothing, and it costs exactly
+**two requests to GitHub whatever the repository's size** (the ref, then one recursive tree) —
+**no blob is fetched**, which is the whole reason this is offered at all rather than a form that
+asks the owner to type paths by hand. It is still an action with a button, never a poll: it touches
+a rate limit and a credential file, the same rule [`…/foundations/refresh`](#post-apimemorydomainprojectfoundationsrefresh)
+states.
+
+**Query parameters**
+
+| Parameter | Description |
+|-----------|-------------|
+| `remote` | The repository, as `owner/repo`, or the `https://` or `git@` URL git prints for the remote |
+| `ref` | Optional branch, tag or commit. Sent **beside** `remote`, never inside it — git prints neither a branch nor a folder in a remote URL, so a caller holding the repository as a string has nowhere else to put it |
+| `path` | Optional folder inside the repository to scan, same reasoning as `ref` |
+| `tokenSource` | `'config'` (default) or `'sync'` — **which file on this computer** to read the GitHub read token from. Never a token itself: no token crosses this route, exactly as on the init and refresh routes below |
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "root": null,
+  "source": "remote",
+  "remote": { "owner": "you", "repo": "your-project", "ref": "main", "path": null },
+  "commit": "9623343f…",
+  "tokenSource": "config",
+  "candidates": [
+    { "path": "docs/architecture.md", "bytes": 8120, "suggestedRole": "architecture",
+      "suggestedSlug": "architecture.md", "tooLarge": false, "matchedBy": "docs-folder",
+      "firstHeading": null, "modifiedAt": null }
+  ],
+  "truncated": false,
+  "cap": 200,
+  "maxDepth": 4,
+  "maxDocumentBytes": 524288,
+  "requests": 2
+}
+```
+
+`root` is always `null` on this arm — no folder on this computer was read. The same three rules
+admit a candidate as the local scan (a `docs`/`doc` folder, a role-matching basename, an
+`adr`/`adrs`/`decisions`/`architecture`/`rfcs` folder), applied to the path **below** `remote.path`,
+so naming `docs/` as the folder does not make every file in the repository match the `docs-folder`
+rule. `path` is repository-relative, exactly the shape the picker will send back in `files` to
+[`…/foundations/init`](#post-apimemorydomainprojectfoundationsinit) or
+[`…/foundations/refresh`](#post-apimemorydomainprojectfoundationsrefresh).
+
+**`firstHeading` and `modifiedAt` are always `null` on this arm — deliberately, and this is "not
+read", not "missing".** A git tree entry carries neither a heading preview nor a timestamp the way
+a local file read does; reading either would cost a blob fetch per candidate, which is exactly the
+per-file network cost this route exists to avoid. The local form (`?root=`) is **unchanged** and
+still reports both.
+
+**Error responses** — the same table [`…/foundations/refresh`](#post-apimemorydomainprojectfoundationsrefresh)
+uses for its own remote arm, because one client reads both doors through one vocabulary: `403`
+`unauthorised`, `404` `remote-not-found`, `409` `no-token`, `429` `rate-limited`, `502`
+`remote-tree-truncated` / `remote-http` / `remote-unreachable` / `remote-too-large`, `500`
+`remote-unavailable`, `400` `invalid-remote` — a `remote` that is not a usable owner/repo, URL, or
+branch/folder pair.
+
 ### POST /api/memory/:domain/:project/foundations/init
 
 **New in v3.61.0.** Sets a project's foundations **ownership**, once — `initFoundations` over HTTP.
@@ -2945,12 +3014,38 @@ Foundations block.
 { "ownership": "repo", "repoRoot": "/Users/you/code/your-project", "files": [{ "path": "docs/architecture.md", "role": "architecture" }] }
 ```
 
+**A mirror born remote — new in v3.65.0**, no checkout on this machine at all:
+
+```json
+{ "ownership": "repo", "remote": "owner/your-project", "files": [{ "path": "docs/architecture.md", "role": "architecture" }] }
+```
+
 | Field | Meaning |
 |---|---|
 | `ownership` | `'repo'` or `'curator'` — no third value, and no default: an omitted or unrecognised value is refused rather than guessed |
-| `repoRoot` | **`repo` only.** The checkout (or plain folder) to mirror from. Refused on the `curator` arm — `root_not_allowed` — because a curator-owned project has no checkout to name |
+| `repoRoot` | **`repo` only**, and mutually exclusive with `remote`. The checkout (or plain folder) to mirror from. Refused on the `curator` arm — `root_not_allowed` — because a curator-owned project has no checkout to name |
 | `files` | **`repo` only.** Candidates to mirror in the same call, typically the ticked rows from a `repo-scan` response — `[{ path, role? }]`. May be empty; the manifest is still written (see below) |
 | `seed` | **`curator` only**, default `true`. `false` sets ownership without writing the four skeleton documents — an empty curator-owned project, ready for **Add document** or **Choose a file…** instead |
+| `remote` | **New in v3.65.0. `repo` only**, and mutually exclusive with `repoRoot` — a mirror has one source, and choosing it is the decision this call records. Names a **GitHub repository with no checkout on this machine**: `{owner, repo, ref?, path?}`, or a string — `owner/repo`, an `https://` URL, or a `git@` URL. Refused on the `curator` arm (`remote_not_allowed`), and refused together with `repoRoot` (`root_and_remote`) |
+| `tokenSource` | **New in v3.65.0.** `'config'` (default) or `'sync'` — **which file on this computer** to read the GitHub read token from, never the token itself: `'config'` is the read-only `githubReadToken` in Settings, `'sync'` is Personal Sync's own PAT, offered because a classic sync token can read every repository the user owns and was granted for something else. Anything else is `400 invalid_token_source` |
+
+**The body is strict, as of v3.65.0** — exactly `ownership, repoRoot, files, seed, remote,
+tokenSource` and nothing else; any other field is `400 unexpected_fields`, naming what was sent.
+**A `token` field is refused by name, specifically**, rather than falling into the generic
+`unexpected_fields` list unremarked: no token ever crosses this route, so a `token` key in the body
+must never look accepted, and the refusal spells out that `tokenSource` names which file on this
+computer to read it from instead.
+
+**On the remote arm, with `files` named, the repository is read *before* anything is written.**
+The ref and the full tree are fetched first; if that read fails outright — the wrong owner, repo or
+branch, no usable token, a rate limit, a truncated tree — nothing is written at all, the project's
+ownership is still unchosen, and you can correct the mistake and call again. Once the tree is in
+hand, each named file is fetched and written **independently**: a file that doesn't resolve inside
+the repository, isn't `.md`/`.txt`, or is over the size cap is skipped and reported in the mirror
+step's own `refused[]` while every other named file is still written and the ownership is still
+recorded. **With no `files` at all, the ownership is recorded with zero network calls** — the
+manifest carries the remote and nothing else, and the first "Refresh from repo" then copies the
+documents.
 
 **Success response** `201 Created`
 
@@ -2959,6 +3054,8 @@ Foundations block.
   "ok": true, "domain": "acme", "project": "lumina",
   "ownership": "curator",
   "foundations": { "…": "…the wire shape…" },
+  "remote": null,
+  "tokenSource": null,
   "seeded": ["architecture.md", "decisions.md", "conventions.md", "roadmap.md"],
   "refresh": null,
   "notes": []
@@ -2970,22 +3067,41 @@ caller needs to confirm without re-reading the index. `notes` is the store's own
 (for example, a budget already exceeded by the seeded skeletons) and is always an array, never
 omitted.
 
+**`remote` and `tokenSource` are new in v3.65.0.** `remote` is `{owner, repo, ref, path}` when this
+project was born as a remote mirror, `null` on every other arm — **where it mirrors from**, never
+a checkout path, since there may be none. `tokenSource` names **which file** the read token came
+from, `null` when no token was needed. Neither ever carries a token.
+
 `seeded` lists the skeleton slugs actually written (empty on the `repo` arm, or on `curator` with
 `seed: false`). `refresh` carries the mirror step's own result (`{ refreshed, added, missing,
-refused }`, the same shape `…/foundations/refresh` returns below) when `files` was non-empty on the
-`repo` arm, `null` otherwise. **A `repo`-ownership call always writes the manifest, even with an
-empty `files` list** — naming a project repo-owned with nothing to mirror yet still records the
-choice; the pre-v3.61.0 refresh route's "empty work list is a no-op" behaviour is right for a
-*refresh* and would be wrong here, so `init` does not inherit it.
+refused }`, the same shape `…/foundations/refresh` returns below) when `files` was non-empty on
+either `repo` arm — local or remote — `null` otherwise. **A `repo`-ownership call always writes the
+manifest, even with an empty `files` list** — naming a project repo-owned with nothing to mirror
+yet still records the choice; the pre-v3.61.0 refresh route's "empty work list is a no-op"
+behaviour is right for a *refresh* and would be wrong here, so `init` does not inherit it. **The one
+exception is the remote arm with `files` empty**, where the manifest is written directly rather than
+through the refresh step (there is nothing to fetch), and `refresh` stays `null`.
 
 **Error responses**
 
 | Status | Condition |
 |--------|-----------|
-| `400` | `invalid_ownership` (missing or unrecognised value), `ownership_set` (a manifest already exists for this project — **even one with zero documents in it** — ownership is decided once), `root_not_allowed` (`repoRoot` supplied on the `curator` arm), `manifest_unreadable` (a manifest exists but this store cannot parse it — fix or remove `foundations/manifest.json` first) |
-| `403` | `readonly` — a Shared Brain mirror |
-| `404` | Unknown domain or project |
-| `409` | `repo_unreachable` — neither `repoRoot` nor a reachable checkout can be read from this machine |
+| `400` | `invalid_ownership` (missing or unrecognised value), `ownership_set` (a manifest already exists for this project — **even one with zero documents in it** — ownership is decided once), `root_not_allowed` (`repoRoot` supplied on the `curator` arm), `manifest_unreadable` (a manifest exists but this store cannot parse it — fix or remove `foundations/manifest.json` first), `remote_not_allowed` (`remote` supplied on the `curator` arm), `root_and_remote` (both `repoRoot` and `remote` named — one source, chosen once), `invalid_token_source`, `unexpected_fields` (a field outside `ownership, repoRoot, files, seed, remote, tokenSource` was sent), and, from the remote arm's own read, `invalid-remote` (a repository/ref/path that is not a usable form) |
+| `403` | `readonly` — a Shared Brain mirror; or, from the remote arm's own read, `unauthorised` — the stored credential cannot read that repository |
+| `404` | Unknown domain or project, or — from the remote arm's own read, in the store's own hyphenated spelling, exactly as `…/foundations/refresh` reports it below — `remote-not-found` |
+| `409` | `repo_unreachable` — neither `repoRoot` nor a reachable checkout can be read from this machine (the local arm); `no-token` — no token in the named file (the remote arm) |
+| `429` | `rate-limited` — GitHub's own limit, not this app's |
+| `502` | `remote-tree-truncated`, `remote-http`, `remote-unreachable`, `remote-too-large` — upstream conditions; nothing here is malformed and nothing is broken locally |
+| `500` | `remote-unavailable` |
+
+**The remote arm's own read refusals — `unauthorised`, `rate-limited`, `remote-tree-truncated`,
+`remote-http`, `remote-unreachable`, `remote-too-large`, `remote-not-found`, `invalid-remote`,
+`no-token`, `remote-unavailable` — cross the wire in the *store's own hyphenated spelling*, not this
+route's underscored one**, and share the exact same status table
+[`…/foundations/refresh`](#post-apimemorydomainprojectfoundationsrefresh) uses for its own remote
+arm below — deliberately, so one client branch reads a refusal from either door alike. Only this
+route's own three refusals (`remote_not_allowed`, `root_and_remote`, `invalid_token_source`) are
+translated to underscored form, the same as every other tier-0 refusal this file documents.
 
 ### PUT /api/memory/:domain/:project/foundations/:slug
 
@@ -3233,6 +3349,71 @@ only in a view is a confirmation every other client skips.
 | `404` | Unknown domain, or the project does not exist |
 | `409` | A write is in flight on that domain |
 
+### PATCH /api/memory/:domain/:project/knowledge/domains
+
+**New in v3.65.0.** Sets which wikis a project's **knowledge** lives in — as opposed to its
+**state**, tiers 1–3, which this route never touches — `setKnowledgeDomains` over HTTP.
+
+**A human write, and legitimate, for the same reason the read-first flag is** (see
+[`PATCH …/foundations/:slug`](#patch-apimemorydomainprojectfoundationsslug) above): `knowledgeDomains`
+is curator **metadata about** the project — which wikis its knowledge lives in — held in
+`state/[<project>/]project.json`, not part of tiers 2 or 3, so it has exactly one writer, the owner,
+and stamps nothing with an agent's provenance. `save_working_state` and `my-curator save` do not
+write it — an agent does not choose a project's knowledge domains.
+
+**Four path segments, not three, and deliberately.** `PATCH /:domain/projects/:project` is already
+registered on this router and matches any *three*-segment PATCH whose second segment is literally
+`projects` — and a domain's own project is named **after the domain**, so a naive three-segment
+route here would collide: the maintainer's own `projects/projects` would have had this write
+swallowed by the rename handler, the same v3.62.0 collision `?as=project` exists to resolve on the
+read side, in the one shape a query parameter cannot fix — a PATCH body cannot disambiguate a path
+that already matched something else. Four segments cannot collide with it at all;
+`…/foundations/:slug` is the precedent for a project sub-resource at that depth.
+
+**Body**
+
+```json
+{ "knowledgeDomains": ["research", "business"] }
+```
+```json
+{ "knowledgeDomains": null }
+```
+
+The body is **strict**: exactly the one field, `knowledgeDomains`; anything else sent alongside it
+is `400 unexpected_fields`, naming what was sent. `null` **clears** the choice — the project goes
+back to reading as its own containing domain — and is **not** the same as `[]`, which is refused: a
+project that searches nothing has no knowledge, and nobody means that.
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true, "domain": "acme", "project": "lumina",
+  "knowledgeDomains": ["research", "business"],
+  "knowledgeDomainsDefaulted": false,
+  "cleared": false,
+  "cap": 12
+}
+```
+
+`knowledgeDomains` and `knowledgeDomainsDefaulted` are the same two fields the matching read,
+[`GET /api/memory/:domain/:project`](#get-apimemorydomainproject), carries — so a client can
+repaint from this reply without a second request. **`cleared` exists only on this write's own
+response** — the read has no need of it, since `knowledgeDomainsDefaulted: true` already says the
+project is back on the default; here it says so as a fact about *the write just made*, so
+`cleared: true` is never mistaken for "sent an empty list" (which is refused, not accepted). `cap`
+is `MAX_KNOWLEDGE_DOMAINS` (12), named rather than left for a client to hard-code.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `invalid_knowledge_domains` — `knowledgeDomains` is missing from the body, is not a list, or (after normalising) is an empty list; `invalid_domain` — an entry is not a usable domain name; `too_many_domains` — more than 12 named, the refusal carries `cap`; `unexpected_fields` — a field other than `knowledgeDomains` was sent; `invalid_project` |
+| `400` | `unknown_domain` — one or more named domains are not on this computer; the refusal names them in `domains` |
+| `403` | `readonly` — a Shared Brain mirror |
+| `404` | `project_not_found` |
+| `409` | `locked` — another write to this project's foundations is in flight (the same cross-process `.write-lock` [`PUT …/foundations/:slug`](#put-apimemorydomainprojectfoundationsslug) takes; this route reads and rewrites `project.json` under it because it has no machine segment, exactly as `state/project.md` does not) |
+
 ### GET /api/memory/:domain/:project
 
 One project's working state. The response is the store's `readWorkingState` result verbatim, plus
@@ -3282,9 +3463,18 @@ then the app and the agent would describe the same file differently.
   "scopesTruncated": false,
   "unlistedEntries": 0,
   "unlistedReason": null,
+  "knowledgeDomains": ["second-brain"],
+  "knowledgeDomainsDefaulted": true,
   "readonly": false
 }
 ```
+
+**`knowledgeDomains` and `knowledgeDomainsDefaulted` are new in v3.65.0** — which wikis this
+project's knowledge lives in, and whether that list was the owner's own choice or the fallback to
+the project's containing domain. Forwarded straight from `readWorkingState` like every other field
+on this route (this route is deliberately 1:1 with the store rather than reshaped, per the note
+above), so no separate call is needed to read them; set them with
+[`PATCH …/knowledge/domains`](#patch-apimemorydomainprojectknowledgedomains) above.
 
 **On this route `scopeCount` is the `(scope, machine)` pair count** — the opposite of what the
 same name means on `GET /api/memory`, because this route spreads the store's shape verbatim.

@@ -515,7 +515,7 @@ backdrop filter.
 | Role | Use for | Rule |
 |---|---|---|
 | **The lede** | the one fact the reader needs *before* acting | **optional; ≤ 13 visible words**, capped at `66ch` |
-| **`.tx-vh-panel`** (the ⓘ fold) | the argument behind it | explanations only — the BOX takes the column, the prose inside it wraps at `92ch`; ships closed |
+| **`.tx-vh-panel`** (the ⓘ fold) | the argument behind it | explanations only — the BOX takes the column, and since v3.65.0 so does the prose inside it (was capped at `92ch` on its own grid track); ships closed |
 | **`.tx-note`** | the single line that qualifies the control directly above it | **one line by contract** (`align-items: center`); a note that wraps is a `.tx-desc` that has not admitted it yet |
 
 **Thirteen is measured, not chosen** (v3.58.0). v3.53.0 drew the line at twenty
@@ -605,7 +605,7 @@ keeps a sentence readable.** Paragraph roles carry their own `ch` measure.
 | Run | Cap | Where |
 |---|---|---|
 | A Settings block lede | `66ch` | `.settings-job-lede` — uncapped it ran ~163 columns at 1200px |
-| An ⓘ panel’s prose | `92ch`, on the panel’s own one-column grid track — the BOX is uncapped | `.tx-vh-panel` |
+| An ⓘ panel’s prose | uncapped since v3.65.0 — the panel's own one-column grid track moved `92ch` → `1fr`; the BOX was already uncapped | `.tx-vh-panel` |
 | A `.tx-note` | `--prose-max` (`68ch`) | `shared/text.css` |
 | A kit group-row sentence | `--prose-max` | `.cur-group-label > span` — measured **1118px, ~159 columns** at a 2000px viewport before the cap |
 
@@ -816,11 +816,21 @@ column** at 1370 and in a 1144px column at 2000 — which made the cap wrong in
 general rather than wrong for one page: §4's house rule is *cap the prose, never
 the cards*, and a panel with a border, a leading rule, a wash and its own
 padding is a card. So `.tx-vh-panel` is `max-width: none` for everyone, and the
-measure moved INSIDE it: the panel is a one-column grid on `minmax(0, 92ch)`, so
-every child — and every bare text node, which CSS wraps in an anonymous grid
-item — keeps a readable line while the card takes the column. A grid rather than
+measure moved INSIDE it: the panel was a one-column grid on `minmax(0, 92ch)`,
+so every child — and every bare text node, which CSS wraps in an anonymous grid
+item — kept a readable line while the card took the column. A grid rather than
 a capped wrapper because `renderInfoMark` emits its escaped prose as a bare text
-node whose exact bytes are pinned in several places. `.tx-vh-panel-wide` survives
+node whose exact bytes are pinned in several places.
+
+**The `92ch` track was itself the last cap, and v3.65.0 removed it.** Measured
+at a typical window width, `92ch` came out to about 67.7% of the panel's own
+width and did not grow with the window — the panel's *box* was already
+uncapped, but its *measure* (the actual text-wrapping width) was not, so the
+panel's height never shrank either. The track is now `minmax(0, 1fr)`: the
+prose takes the card, and the card takes the column. The grid layout itself is
+kept, not removed — it is still what lays out `renderInfoMark`'s bare text node
+without a wrapper element — and the zero minimum stays, because a long path,
+slug or URL would otherwise force the card wide. `.tx-vh-panel-wide` survives
 as a no-op, still declared **after** `.tx-vh-panel`, because memory.js still
 passes the option and `scripts/test-next-memory-view.js` §18h asserts both; the
 `=== true` test stays with it. `display: grid` is only safe here because
@@ -1066,12 +1076,15 @@ title of the block containing it.**
 #### The one deliberate exception: the Domains OVERVIEW tiles
 
 `.dm-stat-value` (an alias of `.cur-ov-stat-value` since v3.64.2 — see
-[§12, the overview card](#12-the-overview-card-v3642), below) stays at
+[§12, the overview card](#12-the-overview-card-v3642v3650), below) stays at
 **`--text-2xl` (22 / 600, sans)** rather than joining the readout rung. Through
 v3.64.1 it was the only size in the table not shared with another view; since
-v3.64.2 the same rung is shared by the Project-context page's three readings,
-one rung down (`--text-lg`, via the component's `figure: 'phrase'` option) when
-a value reads as a sentence rather than a count. Those tiles are a **display**
+v3.64.2 the same rung is shared by the Project-context page's three readings —
+through v3.64.2 one rung down (`--text-lg`) when a value read as a sentence
+rather than a count, via the component's `figure: 'phrase'` option; v3.65.0
+retired that option and put every host's figure back on `--text-2xl`, with a
+per-host track-floor option (`minTrack`) absorbing what the smaller rung used
+to (§12). Those tiles are a **display**
 readout: the figure *is* the content of its own group, it sits alone under a
 one-word eyebrow with nothing to compete with, and the group's whole job is to
 answer "how big is this domain" (or "am I saved") at a glance. Its sans face is
@@ -1104,19 +1117,26 @@ screen. `tokens/typography.css`'s own header reserves mono for "everything the
 machine owns" and names *eyebrow labels* in that list, so the sans was the
 deviation. Nothing else about the caption moved.
 
-### 12. The overview card (v3.64.2)
+### 12. The overview card (v3.64.2–v3.65.0)
 
 **One component, two hosts.** `renderOverview()` in `shared/overview.js`, rules
 in `shared/overview.css` (`cur-ov-` prefix), is the readings *about* a screen —
 a grid of equal-width tiles, each a small mono caption over a figure, with an
-optional second line and an optional freshness mark, plus a row of jump tiles
-below the grid — under one `.cur-group` eyebrow with one info mark. A tile is a
-`<button>` only when it has somewhere to go: a filter facet (which carries
-`aria-pressed` read straight off the filter state) or a jump, and the geometry
-is identical either way, so nothing moves when an answer lands. It is never
-numbered — the numbered sections below it are the sequence, and the card is the
-instrument above them, on both hosts: the domain page's **OVERVIEW** and the
-Project-context page's three layers.
+optional second line and an optional freshness mark — under one `.cur-group`
+eyebrow with one info mark. A tile is a `<button>` only when it has somewhere to
+go: a filter facet (which carries `aria-pressed` read straight off the filter
+state) or a jump, and the geometry is identical either way, so nothing moves
+when an answer lands. It is never numbered — the numbered sections below it are
+the sequence, and the card is the instrument above them, on both hosts: the
+domain page's **OVERVIEW** and the Project-context page's three layers.
+
+**A jump tile is an ordinary tile now (v3.65.0).** A tile that opens something
+further down the page ("a jump tile", e.g. SOURCES or CAPTURE) is an ORDINARY
+card in the same grid, distinguished only by a `jump:` key that changes its
+click target — never its size. The old smaller, separately-positioned jump row
+(measured roughly 92.8 × 46.4px beside a full tile's 181.8 × 78.9px) is gone; a
+jump tile is now pixel-identical to every other tile in the grid, just a second
+grid row when there are more tiles than fit on one row.
 
 The two hosts may differ in exactly **three** ways, enumerated by
 `test-next-overview-kit.js` rather than left open-ended:
@@ -1131,13 +1151,23 @@ The two hosts may differ in exactly **three** ways, enumerated by
 - **A second line under a card's figure** — the domain page's tiles are a bare
   figure over a label; the Project-context cards add a qualifier ("saved 12 min
   ago" needs to say *which* work-stream and *which* tool).
-- **`figure: 'phrase'`** — drops the display figure one rung, `--text-2xl` →
-  `--text-lg` (22 px → 17 px). Measured cause: at `--text-2xl` in a three-track
-  grid at 1370 px, "saved 57 min ago" broke after "min" and "24 documents"
-  broke after "24" — a value that reads as a **phrase** rather than a bare
-  **count** needs the smaller rung to stay on one line. `--text-2xl` is still
-  the type standard's one deliberate exception (§11, above); `figure` is the
-  only option key beyond content and host classes.
+- **`minTrack`** — a per-host grid-track floor (a `minTrack` option /
+  `--cur-ov-min` custom property, default 110px), e.g. Domains passes ~175px
+  (derived from its widest realistic value plus tile padding) and Context
+  passes ~253px (same method, its own widest value).
+
+**The overview card has ONE tile and ONE figure rung now (v3.65.0).** A host
+whose values tend to be long phrases (e.g. "saved 41 min ago") raises the
+grid's per-host track floor instead of shrinking the type — two views at two
+type sizes were two different designs; two views at two track floors, with the
+same 22px type, are one design with different content. This retires the
+`figure: 'phrase'` option §12 carried through v3.64.2 (`--text-2xl` →
+`--text-lg`, 22 px → 17 px, for a value that read as a phrase rather than a
+bare count): measured at the real rendered column width, the wrap that
+originally justified a smaller "phrase" rung essentially doesn't happen except
+in a narrow window, so raising the floor was the more honest fix than carrying
+a second type size. `--text-2xl` is the type standard's one deliberate
+exception (§11, above), and it is now the overview card's only figure rung.
 
 **Two trusted fields, both named, everything else escaped or class-filtered.**
 `markHtml` (a freshness mark) and `infoText` with `infoHtml: true` are the only
@@ -1173,22 +1203,151 @@ Pages · Projects in this domain · Shared Brain · Wiki health). A fold's
 word as its `aria-label` — a `<summary>` whose only visible content is a
 chevron and a date has no accessible name on its own.
 
-### 14. The step-body rule (v3.64.2, partial)
+### 14. The step-body rule (v3.64.2–v3.65.0)
 
 **A step's body is uniform fold rows; the explanation lives in the ⓘ, never
-in the row.** Two readings moved onto this rule this release: "Last saved" (a
+in the row.** Two readings moved onto this rule in v3.64.2: "Last saved" (a
 card, previously) is now a row like the three folds beside it on the
 Project-context page's step ②, flat with no chevron when there is nothing to
 explain; and step ③'s five figures and two doors collapsed into one summary
 row that opens to the rest. **The rule has one standing exception, stated in
 v3.16.1 and unmoved**: a warning, a cost or an outcome may never sit behind a
 chevron — every "loud" line (a trimmed handoff, two harnesses overwriting one
-file, a budget warning) stays unfolded below its row. Not yet applied this
-release: the CAPTURE reading (blocked on a placement pin in
-`test-next-capture-meter.js` — see CLAUDE.md's v3.64.2 row), step ①
-Foundations' own budget warning and head controls, the `.mem-save-pip` →
-`.fresh-dot` unification, and the domain page's own section bodies (Wiki
-health's Scan row, Quick maintenance, Projects' head-row "New project").
+file, a budget warning) stays unfolded below its row.
+
+**Shipped in v3.65.0, all three of what v3.64.2 left open:** the CAPTURE
+reading is now a row (the `test-next-capture-meter.js` placement pin moved from
+"before the first `<details>`" to "visible while closed", the same rule in a
+shape the suite could hold); `.mem-save-pip` is retired — the save-status
+reading is now the same shared `.fresh-dot` used everywhere else in the app,
+not a second freshness mark with its own styling; and Wiki health's rows (Scan,
+Broken links, Orphan pages, Dismissed) are fold rows under this rule, the same
+anatomy as every other step body on the page.
+
+**Two items were looked at and explicitly refused, not merely left undone.**
+Step ① Foundations' own budget warning and its two head controls (Refresh from
+repo, Add from folder) stay OUTSIDE the documents row: that block also hosts
+the foundations editor and its own transient open/force-open state, and moving
+the controls into the row risked destabilising it for a cosmetic gain — a
+refusal, not an oversight. "Quick maintenance" (the Domains page's AI-cost
+action bar) stays un-folded on the same grounds as the standing exception
+above: every button there shows its cost or consequence up front, and folding
+it behind a chevron would not be undone work catching up — it would violate
+v3.16.1's rule directly, since a cost may never sit behind a chevron. Projects'
+"New project" control also stays where it was, in the list's own last row
+rather than a separate head-row button, because that row is where the
+create-project FORM opens; a head-row trigger whose form opens somewhere else
+would separate a control from what it does.
+
+### 15. The sidebar (v3.65.0)
+
+Every sidebar in the app is one component: a title with **no ⓘ**, at most two
+actions stacked under it (a `btn-primary` that creates the kind of thing the
+list holds, a `btn-secondary` for the one alternative route), an eyebrow group
+head, and rows of **identity dot · name · key figure · freshness mark · clock
+glyph + age · last-event line**, every slot optional but always in that order.
+**Active is the filled row** — a `--mat-row-*` alpha overlay on the sidebar
+plane, never an opaque fill and never a left line; the violet `::before` bar
+that marked selection on Settings is gone, and the component offers no way
+back to it. The Domains sidebar is the reference design and moved into the kit
+unchanged in value; a host that still needs its historical class names asks
+for them with `alias: 'dm' | 'mem' | 'settings'`, a three-entry table that may
+only shrink. The six identity colours stay in `views/domains.css` (three of
+the light values are derived literals and the colour-literal baseline holds
+exactly two files); the kit exports the **mapping**, `identityDotClass(i)`, so
+a second view can colour a dot without importing from a view.
+
+**The Domains sidebar's own adoption proved byte-identical after exactly
+THREE normalisations, not two.** An earlier internal draft assumed two; the
+verified count is three: the `cur-sb-*` tokens added beside each host token
+(in the same order the reference wrote them), an explicit `type="button"`
+attribute on every `<button>` (a `<button>` outside a form defaults to
+`type="submit"`, and there is no form here), and the KNOWLEDGE eyebrow's inline
+`style="margin-top:10px"` becoming a `.cur-sb-group-head` rule at the same
+10px value. Each of the three is proved inert by a test suite
+(`scripts/test-next-sidebar-kit.js` / `scripts/test-sidebar-status-rows.js`)
+that freezes the PRE-adoption renderer inside itself and executes it, rather
+than trusting a transcription — so the comparison cannot quietly become a
+comparison of the new output with itself. **Row height follows CONTENT, not
+the component**: the Domains row renders three slots (dot, name+meta, event)
+and measures 63.84px tall; the Settings row renders only two slots (name,
+hint) and measures 48.34px with the exact same padding; a sidebar that renders
+fewer slots is shorter, by design, not by an incomplete adoption.
+
+### 16. The monitor (v3.65.0)
+
+A monitor is a **live-state reading you go and read**: a recessed,
+terminal-like block — `--surface-inset` behind a 1px border with the design
+system's own inset well shadow, the whole block in the mono face — carrying
+one fact per line, the key left in `--text-2` and the value right in `--text`
+with tabular figures, plus an optional qualifying clause under the value.
+Every time-based reading takes the app's `.fresh-dot` with **the age in words
+beside it**, never a dot alone. **Colour marks state, and it marks it on a dot
+or a rule, never on a word**: a state word's dot, a line's severity gutter and
+a loud line's gutter carry the tone, because `--attention-text` measures
+3.35:1 as text on that surface in the light theme and clears the 3:1 floor
+only as a mark. **v3.16.1 is unmoved inside it**: a warning, a cost or an
+outcome is a `loud` entry, always rendered, outside the line list, and there
+is no field on a line that can make one — the component emits no `<details>`
+at all. A monitor is never numbered and never carries a section title; it is
+the instrument inside the thing that names it, which is the line between a
+monitor and a sidebar ROW (a row is a navigation target whose reading is
+incidental).
+
+**Five real surfaces adopted this component in v3.65.0**: the MCP bridge's
+connection strip, its stale-bridge warning (as a `loud` entry inside the
+bridge monitor, not a second component), its self-test result, its two
+session readings, and the Sync view's status card — previously two
+near-byte-identical hand-built treatments of the same idea. Two rules the
+adoption established for every later host: a **warning is a `loud` entry,
+never a line** (the component itself has no way to make a line loud — it's a
+structurally separate array rendered into a separate container), and **a state
+word's tone rides on its dot, never on the word** (e.g. the MCP bridge's "Not
+connected" state is `quiet` tone, not `warn` — a bridge nobody has set up yet
+is not a fault, and an amber mark on a fresh install would be the app
+reporting a problem it invented).
+
+**A deliberate scope limit, found during implementation: the monitor does not
+call the pre-existing `renderReadout`/`renderReadoutGroup`.** `.tx-readout` is
+a COLUMN layout (label above value) while the monitor's own anatomy is
+key-left/value-right, and a shared-kit guard
+(`scripts/test-next-text-system.js`) forbids any stylesheet other than
+`shared/text.css` from re-laying-out a `.tx-` prefixed class. So
+`renderReadout` keeps its own separate markup and call sites (it's still used
+in a handful of places, e.g. a handoff's provenance clause) — the monitor is a
+**parallel** component, not a wrapper around it, and a later release may
+retire one for the other in one reviewable diff. `renderReadout`'s own markup
+did NOT change in v3.65.0.
+
+### 17. One selector paradigm (v3.65.0)
+
+**One selector paradigm per row of chrome.** Where two controls sit side by
+side and select different things, they wear the same face. Chat's top bar is
+the worked example: the domain chips are the always-visible selector, and the
+project picker adopts their box, radius, border, ground and ink — only the
+chevron says it opens a list.
+
+**Adopt a face, never a press.** A listbox trigger may take another family's
+resting appearance but must never take its `:active` transform. The open menu
+is positioned by a loop watching the trigger's own rectangle, and a transform
+is in that rectangle — the menu twitches, and re-lays-out its whole list, for
+the length of a hold. `scripts/test-next-press-motion.js` holds the two
+families on opposite sides of that line.
+
+**A reading that lives in a popover needs two writers.** `shared/listbox.js`
+reads `cfg.footHtml` when it BUILDS the menu, and the menu exists only while
+it is open. Anything that updates that reading must write the cfg FIRST —
+that is what the next build renders — and touch the DOM only if a footer
+happens to be live. A patch-only update silently stops updating the moment
+the control is closed, which is almost always.
+
+**Selection is the filled row, never a left edge.** `--mat-row-active` plus a
+title that steps both weight and ink. The fill is about 1.3:1 against the
+plane by design; the TEXT is what carries the state at a legible contrast,
+which is why both halves are required and neither is optional. The violet
+left-edge `::before` bar (previously on Settings' nav rows and Chat's
+conversation rows) is gone from both, with no way back to it in the shared
+component.
 
 
 ## Things the app deliberately does not take from the bundle

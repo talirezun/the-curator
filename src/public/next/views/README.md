@@ -8,7 +8,14 @@ plus one entry in the rail registry over in `../app.js`.
 1. **Import what you need from the shell API** — `import { registerView,
    setSidebar, setMain, ... } from '../app.js';`. The full exported API and
    its contract (`onEnter`/`onExit`) is documented in the docblock at the
-   top of `app.js`. Import only what your view actually calls.
+   top of `app.js`. Import only what your view actually calls. Before
+   building your own version of a common UI piece, check `../shared/` for
+   an existing component — e.g. `shared/sidebar.js` (the one sidebar: a
+   title, up to two actions, rows of identity-dot/name/figure/freshness/
+   age/event) or `shared/monitor.js` (the one live-state reading: a
+   recessed, monospace, terminal-like panel of key→value lines plus
+   always-visible "loud" warning lines). Each module's own header comment
+   carries its contract.
 2. **Call `registerView(name, { onEnter, onExit })` at your file's own top
    level** — see any existing view file for the shape. `onEnter` may
    return a teardown function; `navigate()` calls it right before the next

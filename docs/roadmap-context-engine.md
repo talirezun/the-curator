@@ -194,7 +194,8 @@ spend (`scripts/test-next-cost-honesty.js`); the app staying **read-only over ti
 (`scripts/test-working-state.js`, `scripts/test-working-state-disclosure.js`); the memory view's
 "No agent memory yet" branch, which exists so a four-domain user is not told to create a fifth
 (`scripts/test-next-memory-view.js`); every block lede ≤ 13 visible words
-(`scripts/test-next-settings-sections.js` §G3).
+(`scripts/test-next-settings-sections.js` §G3) — except the three Context steps and five Domains
+sections, whose ledes were removed in v3.65.0 in favour of the ⓘ sitting beside the numbered title.
 
 **Open questions carried out of it.** A second `repo.root` for a project whose conventions live in a
 different checkout (§F D9). What a deleted **skeleton** means — an ordinary delete ships, fixed slots
@@ -867,11 +868,43 @@ numerals; the Foundations documents fold on Project context reopened itself afte
 capture meter could read *"no session in the last 30 days"* beside a save from 47 minutes earlier,
 because the bridge that wrote the save predated the session line — the route now carries a separate
 file-clock reading and a note naming the pattern. Full detail is this release's own `CLAUDE.md` row.
-A read-only design pass ran alongside it and its output is folded into v3.65.0 below, not built here.
+A read-only design pass ran alongside it and its output is folded into the sections below, not
+built here — the shared-vocabulary half of it shipped as v3.65.0; the rest is carried to v3.66.0.
 
 ---
 
-### v3.65.0 — closing the loops
+### v3.65.0 — one vocabulary *(shipped — 2026-09-21)*
+
+**What actually shipped, against what this section forecast when it still carried the v3.65.0
+number.** The v3.64.1 design pass below proposed one vocabulary of shared components and a set of
+store gaps to close; v3.65.0 built a real subset of that list, not the whole of it, and the
+renumbered section that follows — now **v3.66.0 (planned)** — is what did not make it in. What
+shipped: the **monitor** component, one shared piece for every live-state reading, replacing the
+per-view readout treatments the v3.64.1 pass counted; the **sidebar** component, shared rather than
+built twice; the **overview card unified** between Domains and Context, one render function for
+both rather than two builds of the same idea; the **ⓘ panel taking the full column width**, closing
+a cramped reading the previous width left; **ledes removed from the numbered step and section
+titles** on both Context and Domains, the ⓘ moved to sit beside the numbered title instead of a
+sentence under it; **Capture becoming one row** in Context step ②, its own summary line carrying
+the headline and its three clauses with the session table behind it; a **knowledge-domains picker**,
+letting a project choose which wikis its knowledge lives in, up to 12, stored as curator metadata
+rather than mixed into any tier an agent writes; and the **GitHub-mirror-born-remote** feature — a
+project's foundations can now be mirrored straight from a repository with no local checkout at all,
+closing the store gap the v3.64.1 pass found while reading `initFoundations`.
+
+**What was expected in this slot and did not land, and moved to v3.66.0 instead:** the **Home**
+dashboard, and any loading-discipline work — neither was built this release.
+
+**Chat gained a chip-faced project picker that discloses, and does not yet select, knowledge
+domains.** The picker marks a pinned project's knowledge-domain chips with a dashed outline, so a
+person can see at a glance which wikis that project draws on — but Chat does not let you pick or
+pre-select them as a retrieval scope, because Chat remains strictly single-domain by product
+decision. Chip pre-selection is a precondition of multi-domain chat retrieval, which does not exist
+and was not built this release.
+
+---
+
+### v3.66.0 (planned) — closing the loops
 
 **Retitled 2026-09-19.** This section carried the title *"v3.64.0 — awareness and promotion"* through
 this file's prior revision. The shell design pass that produced the section above moved this
@@ -903,10 +936,14 @@ Context's numbered-step pattern rather than the reverse, a **Home** view that is
 destination and nothing else on the rail, Chat's bar becoming selection-only (the project picker
 absorbs the saved-age and "read" readouts, the ⓘ stays a mark rather than a popover, and Compile
 moves to the composer's own action row), and the GitHub-mirror setup form redrawn from its current
-two disconnected fields. It also found a store gap while reading `initFoundations`: it requires an
-**absolute local path**, so a machine with no checkout of a mirrored repository cannot **start** a
-remote mirror, although the refresh arm already reads over the network once one exists — unfixed,
-carried below.
+two disconnected fields. **Corrected against what v3.65.0 actually shipped:** the project picker
+did absorb the saved-age and "read" readouts, as proposed; the ⓘ did **not** simplify to a mark —
+it stays the same panel opening in flow that v3.64.1 already had; and Compile did **not** move to
+the composer's own action row — it still lives in the scope bar, unchanged. It also found a store
+gap while reading `initFoundations`: it requires an **absolute local path**, so a machine with no
+checkout of a mirrored repository cannot **start** a remote mirror, although the refresh arm
+already reads over the network once one exists — **closed in v3.65.0**, `initFoundations` now
+takes a `remote` argument and needs no local checkout at all.
 
 **What v3.64.2 handed it, 2026-09-20.** That vocabulary shipped in part, not in whole (full row in
 CLAUDE.md): **one overview card**, shared by the domain page and the Context page rather than two
@@ -917,11 +954,21 @@ uniform fold rows, with the explanation only in the ⓘ, never inline — applie
 scope alongside the GitHub-mirror setup form and the per-project knowledge-domains work above: the
 **CAPTURE reading as a row** (blocked on a placement pin in `test-next-capture-meter.js` that needs
 moving from "before the first `<details>`" to "visible while the row is closed" — same rule, new
-shape); **step ① Foundations' own budget warning and head controls**, still outside its row because
-that block also hosts the editor and the ownership chooser; the **`.mem-save-pip` → `.fresh-dot`
-unification** (two freshness-mark geometries, two ladders, one fact — pinned by name in two suites
-that must move with it); and **the domain page's own section bodies** (Wiki health's Scan row,
-Quick maintenance as a row, Projects' head-row "New project"), not started.
+shape) — **shipped in v3.65.0**: Capture is now one fold row in Context step ②, its own summary
+line carrying the headline plus the three clauses, the session table behind it; **step ① Foundations'
+own budget warning and head controls**, still outside its row because that block also hosts the
+editor and the ownership chooser — **still open, unchanged in v3.65.0**: it is already a head row
+on its own, and the block also hosts the foundations editor, so folding it in further risked the
+editor; the **`.mem-save-pip` → `.fresh-dot` unification** (two freshness-mark geometries, two
+ladders, one fact — pinned by name in two suites that must move with it) — **shipped in v3.65.0**:
+Context's save-status mark is the app-wide `.fresh-dot` now, and `views/memory.css` declares no
+`.fresh-` rule of its own at all; and **the domain page's own section bodies** (Wiki health's Scan
+row, Quick maintenance as a row, Projects' head-row "New project"), not started — **Wiki health's
+Scan row and its sibling rows (Broken links, Orphan pages, Dismissed) shipped in v3.65.0**, each now
+a row under a head row carrying only "Rescan"; Quick maintenance and Projects' head-row "New
+project" remain not started, each refused on purpose (Quick maintenance's every button shows its
+cost up front, and v3.16.1 forbids a cost behind a chevron; the "New project" control stays in the
+projects list's own last row because that is where the create-project form opens).
 
 **Goal.** Make the store useful when **more than one** session works a project, and give the owner
 a gesture for moving something from volatile to canonical.
@@ -1301,7 +1348,11 @@ and a missed save still yields the previous state.
 8. Confirm the caveat-body / injection-defence string moved byte-identical into the new shared
    module, with the negative control (a wrongly-ordered prompt must red) exercised before merge.
 
-**v3.65.0 — closing the loops**
+**v3.65.0 — one vocabulary** *(shipped — see [the section above](#v3650--one-vocabulary-shipped--2026-09-21));
+no checklist, nothing here was a pre-implementation risk this file called in advance.*
+
+**v3.66.0 (planned) — closing the loops** *(renumbered from v3.65.0; see
+[the section above](#v3660-planned--closing-the-loops))*
 
 1. Settle the digest's budget against the bootstrap's existing one (120 KB default, truncation
    disclosed) before adding a field; two budgets competing silently is the defect to avoid.
