@@ -26,7 +26,7 @@ domains/<slug>/
     └── summaries/       ← one page per ingested source / compiled conversation
 ```
 
-Three built-in domains ship with the app — **AI / Tech**, **Business / Finance**, **Personal Growth** — but you can create as many as you like.
+No domains ship with the app — a fresh install starts empty ("No domains yet") and you create as many as you like, each from one of the templates below.
 
 ### `state/` — working state, not wiki content
 
@@ -43,14 +43,21 @@ Nothing needs to create the folder by hand — the first save makes `state/` and
 The easiest way to create, rename, or delete a domain is from within the app — no Finder or terminal needed. Open The Curator (a browser install serves it at `http://localhost:3333`; the packaged Mac app opens in its own window on a port it picks fresh each launch) and go to **Domains**.
 
 Opening a domain shows an unnumbered **OVERVIEW** (its numbers) followed by five numbered
-sections, in the order the work runs in — ① **INGEST** (a fold, where sources go in), ② **PAGES**
-(everything readable, behind a Wiki / Context / All lens), ③ **PROJECTS IN THIS DOMAIN**, ④
-**SHARED BRAIN** (a fold) and ⑤ **WIKI HEALTH**. The two folds and the lens arrived in v3.64.0, when
+sections, in the order the work runs in — **1 Ingest** (a fold, where sources go in), **2 Pages**
+(everything readable, behind a Wiki / Context / All lens), **3 Projects in this domain**,
+**4 Shared Brain** (a fold) and **5 Wiki health**. They are Title case, not capitals: v3.64.1 put a
+plain numeral at one x position and a Title-case title above each card. The two folds and the lens arrived in v3.64.0, when
 Ingest and Shared Brain left the rail; the numerals, and whether each fold is open plus which lens
 PAGES shows being one preference for the whole install rather than per domain, arrived in v3.64.1.
 The screenshot below predates all of it and still shows the older `PAGES · THE WIKI` eyebrow:
 
 ![The Curator's Domains view with the "projects" domain open. The sidebar has New domain and Use existing folder above a KNOWLEDGE list of two domains with page counts — Articles (3,445 pages, an amber dot marking open health issues) and Projects (767 pages, selected). The main pane is headed DOMAINS/PROJECTS/ and "Projects", with Rename, Delete and "Ask this domain" beside the title. An OVERVIEW group holds five tiles: Pages 767, Entities 161, Concepts 553, Summaries 53, Projects 4 — new in v3.58.0, the first four are buttons that filter the page list below, and Pages sits inside a violet-bordered box because "All" is the filter currently selected. Below it, PAGES · THE WIKI holds a "Filter by name…" box and the facets All 767, Entities 161, Concepts 553, Summaries 53, Memory 46, over an alphabetical list of page titles with their file paths on the right; a footer reads "Showing 150 of 767" above a "Show 150 more" link. Underneath, PROJECTS IN THIS DOMAIN — headed with its own ⓘ mark and no loose sentence under it — lists four project rows (field-notes, projects, lumina, curator), each carrying a "Standing brief" pill, its last save and newest work-stream, and the actions Copy marker line and Copy agent instructions, each now with its own ⓘ mark beside it.](images/curator-domains.png)
+
+*Photographed before v3.64.0, which put **Ingest** and **Shared Brain** on this page as folds and
+shortened the `PAGES · THE WIKI` eyebrow to **Pages** with a Wiki / Context / All lens above the
+list; before v3.64.1 numbered the five sections and set their titles in Title case; and before
+v3.65.0 folded the old jump row into the OVERVIEW card, so **SOURCES** and **SHARED** are now
+ordinary tiles in the same grid at the same size as the five counts.*
 
 > **Already have a knowledge folder?** Don't create a domain — **point the app at the folder you already have.** The Domains sidebar carries **Use existing folder** in every state of the view, and the empty-state card carries it too. **Pick the folder that CONTAINS your domains, not one of the domains** — the difference, and why an empty list cannot tell you which mistake you made, is in [user-guide.md § Knowledge base folder](user-guide.md#pick-the-folder-that-contains-your-domains).
 
@@ -70,7 +77,7 @@ The screenshot below predates all of it and still shows the older `PAGES · THE 
 
 5. Click **Create domain**.
 
-The domain appears immediately in the Domains list, in the INGEST section's destination and in Chat's scope pills — and in Obsidian's file explorer. No restart needed.
+The domain appears immediately in the Domains list, in the Ingest section's destination and in Chat's scope pills — and in Obsidian's file explorer. No restart needed.
 
 ### Renaming a domain
 
@@ -366,7 +373,7 @@ When you join a Shared Brain (see [`docs/shared-brain.md`](shared-brain.md)), th
 
 - The CLAUDE.md frontmatter declares `readonly: true`.
 - The seven mutating MCP tools (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state`, `save_project_brief`, `save_foundation`) refuse with a clear steer to use your personal opted-in domain instead.
-- The Curator's app UI renders no **INGEST** section at all on a mirror's domain page — a control that cannot act is not drawn — and keeps Compile disabled for these domains, and the mutating Wiki Health endpoints refuse them. (Two exceptions: **dismissing** and **un-dismissing** a Health issue still work in-app on a mirror. That is a local-only note-to-self — it is not wiki content, it does not propagate to other contributors, and it is not pruned by a Pull.)
+- The Curator's app UI renders no **Ingest** section at all on a mirror's domain page — a control that cannot act is not drawn — and keeps Compile disabled for these domains, and the mutating Wiki Health endpoints refuse them. (Two exceptions: **dismissing** and **un-dismissing** a Health issue still work in-app on a mirror. That is a local-only note-to-self — it is not wiki content, it does not propagate to other contributors, and it is not pruned by a Pull.)
 
 **Do not hand-edit a mirror.** Since v3.0.3 a Pull *replaces* each page rather than merging into it, and prunes local pages the collective no longer has — which is what makes deletions and GDPR erasure propagate. Any local edit to a `shared-<slug>` page is therefore overwritten on the next Pull.
 

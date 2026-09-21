@@ -169,11 +169,20 @@ unattended job, because the person who would have read the refusal is not there.
 --porcelain` empty **and** `rev-list --count origin/main..HEAD` == 0 means the
 pull is a pure fast-forward with no merge and no `-X theirs`.
 
-### 3.4 Every `pull()` `rm -rf`s stray top-level folders — MEASURED, and this was a surprise
+### 3.4 Every `pull()` used to `rm -rf` stray top-level folders — MEASURED, and **fixed in v3.34.0 because of this measurement**
 
-`pruneGhostDomainDirs()` runs at the end of **every** `pull()`, unconditionally.
-It walks the top level of the domains folder and recursively deletes any
-non-dot-prefixed directory that does not contain a `CLAUDE.md`.
+`pruneGhostDomainDirs()` ran at the end of **every** `pull()`, unconditionally.
+It walked the top level of the domains folder and recursively deleted any
+non-dot-prefixed directory that did not contain a `CLAUDE.md`.
+
+> **CLOSED.** It is now `pruneGhostDomainDirs(preMergeHead)`
+> ([`src/brain/sync.js:2154`](../src/brain/sync.js)), and it removes a directory
+> only when **all four** hold: this pull's own merge deleted tracked files under
+> it, it has no `CLAUDE.md`, git tracks nothing under it, and nothing
+> untracked-and-unignored remains. A pull with nothing incoming prunes nothing,
+> and a folder git has never tracked is unreachable by that code. The paragraphs
+> below are the measurement that produced the fix; its own docblock
+> (`sync.js:2084-2122`) names this document as the reason.
 
 Fixture: one real domain, plus `Attachments/` holding a file, plus `newdomain/`
 containing a draft but no schema yet.
@@ -357,8 +366,8 @@ it never changes anything on this computer.*
    `scripts/test-working-state-sync.js` §2b.
 3. **It auto-commits your tree first**, which is what turns git's own refusal
    (§3.3, row 2) into a silent overwrite.
-4. **It `rm -rf`s stray top-level folders** (§3.4), unconditionally, whether or
-   not anything was incoming.
+4. ~~It `rm -rf`s stray top-level folders~~ — **closed in v3.34.0** (§3.4); a
+   folder the merge did not itself empty can no longer be nominated.
 
 ### 5.2 Obsidian
 
@@ -372,8 +381,8 @@ The vault root is the wiki folder, or a parent of it. Three things follow:
   `state/project.md`, which has **no machine segment** and is hand-authored, it is
   the documented exposure, and an automatic pull increases how often the window
   is open.
-- **A folder created at the vault root is destroyed** by the next pull (§3.4).
-  This is the concrete, user-visible harm.
+- **A folder created at the vault root WAS destroyed** by the next pull; since
+  v3.34.0 it is not (§3.4), so this harm is closed.
 - `.obsidian/workspace.json` is already excluded so Obsidian's pane churn does
   not make the tree dirty. The *rest* of `.obsidian/` does sync, so auto-push
   will occasionally produce a commit the user did not consciously cause. Harmless,
@@ -390,9 +399,9 @@ narrowing rather than a hedge:
   unrepresentable.
 - **Never auto-commit to reach that state.** A dirty tree means *skip this tick*,
   which reproduces git's own refusal instead of disarming it.
-- **Do not prune.** `pruneGhostDomainDirs()` must not run in an unattended pull —
-  or must be narrowed to directories the merge itself just emptied. As written it
-  deletes folders the sync had nothing to do with.
+- **The prune is already narrowed.** Since v3.34.0 `pruneGhostDomainDirs()` only
+  touches directories this pull's own merge emptied — which is the narrowing this
+  section asked for — so nothing further is needed for an unattended pull.
 - **Not while the app window is focused**, and not within N seconds of an
   observed mtime change under the vault, as a weak proxy for "someone is editing
   right now". Weak, and should be described as weak.
@@ -511,8 +520,9 @@ these.
 4. **Auto-committing the user's tree so that a pull can proceed.** This is
    `pull()`'s existing first step, it is right for a click, and it is the
    mechanism that converts git's own refusal into a silent overwrite.
-5. **`pruneGhostDomainDirs()`'s `rm -rf`** of any directory the sync did not
-   itself empty (§3.4).
+5. ~~`pruneGhostDomainDirs()`'s `rm -rf` of any directory the sync did not
+   itself empty~~ — enforced in code since v3.34.0 (§3.4), kept here as a rule
+   that must not be relaxed.
 6. **Disconnect, credential rotation, or any write to `.sync-config.json`'s
    `repoUrl` / `token` / `gitDir`.**
 7. **Any sync while a write is in flight in any process** — and today the check
@@ -562,11 +572,12 @@ MODIFIED:
    Quit is more interesting — `desktop/`'s busy-quit branches have never run
    against a real write, and adding a push to shutdown makes an untested path
    load-bearing.
-2. **Is `pruneGhostDomainDirs()` right even for the attended pull?** Deleting a
-   folder a user made in Obsidian is surprising with or without a timer. Options:
-   narrow it to directories git just emptied; ask; or leave it and document it.
-   This is a decision about shipped behaviour, so it does not belong in this
-   roadmap — but this research is where it was found.
+2. ~~**Is `pruneGhostDomainDirs()` right even for the attended pull?**~~
+   **Answered in v3.34.0**: it was narrowed to directories this pull's merge
+   emptied, which was the first of the three options below. The original
+   question: deleting a folder a user made in Obsidian is surprising with or
+   without a timer. Options: narrow it to directories git just emptied; ask; or
+   leave it and document it.
 3. **Should the "N files waiting" number be fetched more often once auto-push
    exists?** The two facts become asymmetric: your outbound changes leave
    automatically, so the only number that still matters is inbound. Arguably the
@@ -606,12 +617,11 @@ on your computer while you are not looking, and three things about it are worse
 than they sound. When two computers changed the same page, it silently keeps
 GitHub's version and drops yours — and in the worst case it stitches the two
 together into a document neither computer ever wrote, which looks perfectly
-normal and which nothing flags. It also deletes any folder sitting in your
-knowledge folder that is not a proper domain — I measured this: a folder called
+normal and which nothing flags. It used to delete any folder sitting in your
+knowledge folder that was not a proper domain — I measured this: a folder called
 `Attachments` with a file in it was erased by a pull that had nothing to do,
-without warning. Today that only happens when you deliberately click Sync. On a
-five-minute timer it would happen five minutes after you made the folder, with no
-click to blame it on.
+without warning. **That was fixed in v3.34.0**, so it is no longer an argument
+against an automatic pull; the `-X theirs` splice above is.
 
 **What you lose, and how the widget covers it.** You lose one click. When you sit
 down at your other machine, you would still have to pull. So the widget should

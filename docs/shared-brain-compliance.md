@@ -205,7 +205,8 @@ Shared Brain supports two `data_handling_terms` modes, set by the admin at brain
 > - Only pages from the domains you selected will be pushed to the Shared Brain.
 > - **You retain copyright in your original content.** The cohort owns the synthesised collective output.
 > - You can disconnect anytime — your local wiki is unaffected.
-> - Your access token is stored locally on this computer only.
+> - Your access token is stored locally on this computer only. We never transmit it except to
+>   GitHub on your behalf.
 
 **What this means in practice:**
 
@@ -223,7 +224,8 @@ Shared Brain supports two `data_handling_terms` modes, set by the admin at brain
 > - Only pages from the domains you selected will be pushed to the Shared Brain.
 > - **By contributing, you assign copyright in contributed pages to the organisation per your employment agreement.**
 > - You can disconnect anytime — your local wiki is unaffected.
-> - Your access token is stored locally on this computer only.
+> - Your access token is stored locally on this computer only. We never transmit it except to
+>   GitHub on your behalf.
 
 **What this means in practice:**
 

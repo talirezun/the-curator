@@ -10,6 +10,12 @@ The user opens a new session with no other context.
 
 > **User:** *"Continue where we left off."*
 
+> **This example predates the one-call bootstrap and is kept for the case it still
+> teaches — reading the INDEX when you do not know the scope names.** At an ordinary
+> session start, SKILL.md §2 step 2 is one call,
+> `get_project_context({ project, scope: "latest" })`, which returns everything the two
+> reads below return plus the project's foundations.
+
 **Step 1 — read with no scope.** You do not know the project's scope names, so you do not guess one.
 
 ```
@@ -389,7 +395,7 @@ a **baseline** that re-deriving destroys. That is precisely why it belongs here 
 prose.
 
 **Always supply `recheck`.** It is what turns a claim that will rot into a claim the next
-session can verify in one command, and SKILL.md §2 step 4 depends on it existing. A bare
+session can verify in one command, and SKILL.md §2 step 3 depends on it existing. A bare
 string is accepted — the save time is recorded as the observation time and a note tells you
 so — but you lose both the real observation moment and the re-check, so pass the object.
 
@@ -443,8 +449,10 @@ GOOD  unknown: whether the upstream rate limit is per-key or per-IP; the docs
 
 ```
 Session is opening, or the user says continue / resume / where were we
-  → get_working_state with NO scope        (brief + index; never guess a scope)
-  → get_working_state WITH the scope
+  → get_project_context({ project, scope: "latest" })
+                                           ONE call: brief + handoff + foundations
+  → unsure which scope?  drop `scope` → read the index → ask
+                                           (never guess a scope)
   → run every `recheck` before trusting anything
   → report state + any divergence from ground truth, then ask what to start
 

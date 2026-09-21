@@ -14,7 +14,7 @@ single source of context on The Curator: every capability, what each one is *for
 scenarios it was built to serve, the honest history, and an explicit account of what it does
 **not** do. It describes capability, not implementation — there is no code in it.
 
-*Current as of **v3.64.0**. Where a number moves between releases — model prices, model
+*Current as of **v3.65.0**. Where a number moves between releases — model prices, model
 catalogues, tool counts — it is marked as a reading taken at a moment rather than a constant.*
 
 ---
@@ -324,7 +324,7 @@ thinking animation it cannot substantiate.
 
 ![The Curator's Chat view. A scope bar across the top carries one pill per domain — Articles (selected), Business, Lectures, Posts, Projects, Research — with the readout "3,421 pages in scope" and a "Compile to Wiki" button beside it. The sidebar has New chat, a "Filter conversations" box and a list of saved threads with their message counts. In the thread, a question asks for a table of the last ten articles with a shared-similarities row; the answer below is labelled "THE CURATOR · MiniMax M3 (free) · free" and renders as a Markdown table with columns for number, article and its source page, date, summary and domain interest. The composer at the bottom reads "Ask Articles…" and carries a model dropdown set to "MiniMax M3 (free)", a length dropdown set to "Balanced", and the note "cost varies with response length".](images/curator-chat.png)
 
-*Photographed before v3.64.0 added the PROJECT group to the scope bar, which pins one project’s context alongside the domain’s wiki.*
+*Photographed before v3.64.0 added the PROJECT group to the scope bar, which pins one project’s context alongside the domain’s wiki, and before v3.64.1 renamed the bar’s eyebrow from SCOPE to DOMAINS.*
 
 ### 4.4 Compiling a conversation into the wiki
 
@@ -652,14 +652,14 @@ the pinned model disappears, the next one is used and the app tells you which on
 client that can spawn a local program — Claude Code, Claude Desktop, Cursor and others. It
 reads your markdown directly and **does not need the web app to be running**.
 
-**Twenty-two tools ship** (a reading taken at v3.48.0; the authoritative list is the server's own
-tool registration). Thirteen read; nine sit in the write block, of which **six actually change
-anything on disk**. By capability rather than grouping, that is sixteen that read and six that
+**Twenty-four tools ship** (a reading taken at v3.59.0; the authoritative list is the server's own
+tool registration). Fourteen read; ten sit in the write block, of which **seven actually change
+anything on disk**. By capability rather than grouping, that is seventeen that read and seven that
 write:
 
 | Reading | Writing |
 |---|---|
-| List domains · fetch the index · graph topology overview · tag inventory · search one domain · search across domains · fetch a page · traverse connected pages · backlinks · fetch a summary · fetch the original source document behind a summary · list projects · read working state | Compile pages into the wiki · apply a Health fix · dismiss and un-dismiss a Health issue · save working state · write a project's standing brief, on the user's explicit instruction |
+| List domains · fetch the index · graph topology overview · tag inventory · search one domain · search across domains · fetch a page · traverse connected pages · backlinks · fetch a summary · fetch the original source document behind a summary · list projects · read working state · read a project's whole context — brief, latest handoff and foundations in one call | Compile pages into the wiki · apply a Health fix · dismiss and un-dismiss a Health issue · save working state · write a project's standing brief, on the user's explicit instruction · write one canonical document, on the user's explicit instruction |
 | | *(three more in that block only inspect: scan Health, scan for semantic duplicates, list dismissals)* |
 
 **What it is for.** Graph-native access. This is the difference between another way to read
@@ -672,7 +672,7 @@ box cannot:
 > *"Compile everything we just figured out and save it as a research summary in my business
 > domain."*
 
-**Sixteen of the twenty-two never change anything on disk.**
+**Seventeen of the twenty-four never change anything on disk.**
 
 **Guarantees around it.** Every response is size-capped (a few hundred kilobytes, roughly a
 hundred thousand tokens) so one tool call cannot saturate a model's context window — the
@@ -788,10 +788,12 @@ that had memory before the change reads as that project, and so does one you sta
 Nothing is moved, and an older copy of The Curator on another computer goes on reading and writing
 the same files.
 
-Three tiers, inside each project:
+Four tiers, inside each project — the canonical documents added in `v3.59.0`, then the three the
+memory layer started with:
 
 | Tier | What it is | Who writes it | How it behaves |
 |---|---|---|---|
+| **0. The foundations** | The documents the project is governed by — its architecture, its firm decisions, its conventions, its roadmap — held **verbatim** | A repository, mirrored byte-for-byte; or you, in the app; or an agent on your explicit instruction | **Replaced whole**, never merged, and read word for word |
 | **1. The standing brief** | What this project is, the firm decisions that hold across every session, the working model, and where the depth lives | **You** — in an editor, in the app, or by asking an agent to write it. Never a by-product of a session, and the file records which | Changes rarely and deliberately. Returned on **every** read |
 | **2. The handoff** | Where things stand right now, what to do next, what is settled, what was observed and when, what to avoid, what is still open | An agent, near the end of a session | **Overwritten in full** on every save |
 | **3. The journal** | One line per save: when, which work-stream, which machine, which tool, which model, and the agent's own one-line headline | An agent, automatically | **Append-only.** The history of headlines survives even though the handoff does not |
@@ -843,7 +845,9 @@ and save often.
 carrying only what changed would silently drop the firm decisions recorded in the first.
 
 **4. Capture is advisory, and a missed save fails safe.** Nothing forces an agent to save.
-There are no hooks; the discipline is carried by an installable skill. The consequence is
+A hook can ask but never write: since `v3.63.0` `my-curator install-hooks` wires three of the
+fourteen harnesses in the adapter table, and the model is still what calls the save tool. The
+discipline itself is carried by an installable skill and the block you paste. The consequence is
 stated rather than hidden: **a session that ends without saving means the next read returns the
 previous state — stale, never corrupted**, and nothing already saved is lost. That is the
 fail-safe direction, which is why no enforcement was added.
@@ -1311,6 +1315,7 @@ durable reference.
 | **The bridge became observable** | `v3.60.0`–`v3.62.0` | A content-free local log of which tools were called, a map of all 24 of them, a **capture meter** that answers *did this session read, and did it save* in words rather than a percentage, and a rename: the screen is **Project context**, in three numbered steps, with a per-document *read first* flag that decides what an agent is handed without asking. |
 | **A command, hooks, a spec — and an instrument** | `v3.63.0` | `my-curator`, the same store from a shell with the app closed; per-harness lifecycle hooks where a usable one exists, each labelled `verified`, `unverified`, `present-useless` or `none`; a **public on-disk spec** a third party can write against; and the instrument that would measure whether any of it reaches a real harness — shipped with every row reading *not measured*, because it had not been run. |
 | **Three places, and the first measurement** | `v3.64.0` | The shell became **Chat · Domains · Context** — *ask · knowledge · context* — with Ingest and Shared Brain re-hosted as sections of the domain page they act on; Chat learned to read one project's context beside the wiki; and the instrument was **run**, once, against Claude Code. |
+| **One design vocabulary** | `v3.65.0` | One sidebar component across Domains, Context and Settings; one “monitor” for every live-state reading in the app; one overview card at one figure size; and a project that can name the wikis it draws on, plus a GitHub mirror that can be started with no checkout on this machine. |
 
 Two things are worth saying about *how* it got here, because they explain the product's
 character. First, **most of the recent work came from the maintainer using it for real and
@@ -1408,8 +1413,9 @@ No timer, no background push, no background pull. Every sync is a click. If you 
 other machine has yesterday's state.
 
 **It does not force your agent to save.**
-Capture is advisory. There are no hooks. A session that ends without saving leaves the previous
-state — stale, never corrupted. This is the fail-safe direction and it is why no enforcement
+Capture is advisory. A hook can ask for a save; it can never write one, and thirteen of the
+fourteen harness rows still read *not measured*. A session that ends without saving leaves the
+previous state — stale, never corrupted. This is the fail-safe direction and it is why no enforcement
 was added, but it does mean **the memory layer is inert until the continuity discipline is
 installed** in whatever agent you use.
 

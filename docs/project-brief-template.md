@@ -1,10 +1,14 @@
 # Project brief template (`state/project.md`)
 
-Copy this file to `domains/<your-project>/state/project.md` and edit it. It is
-**hand-authored**: there is deliberately no tool that writes it, which is exactly
-why an agent reading it is told to treat its standing directives as *your own
-instructions given in advance* rather than as an earlier session's notes. See
-[working-state.md §4](working-state.md#tier-1-is-not-tier-2-the-brief-is-hand-authored-by-the-owner)
+Copy this file to `domains/<your-domain>/state/project.md` (the domain's own
+project) or `domains/<your-domain>/state/<project>/project.md` (a named project),
+and edit it. It is **yours**: you write it by hand, or edit it in the app under
+**Domains → Projects in this domain**. An agent writes it only on your explicit
+instruction, through `save_project_brief`, which stamps the file as agent-authored
+— which is exactly why an agent reading it is told to treat its standing
+directives as *your own instructions given in advance* rather than as an earlier
+session's notes. See
+[working-state.md §4](working-state.md#tier-1-is-not-tier-2-the-brief-is-the-owners)
 for why that distinction exists and what it does and does not license.
 
 You do not need every section. A brief with nothing but `## Operating directives`

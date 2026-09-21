@@ -25,7 +25,7 @@ A Shared Brain needs two things for each contributor to be able to push: (1) the
 Steps:
 
 1. **Add them as a GitHub collaborator.** On the private repo: *Settings → Collaborators → Add people*, and have them accept the email invitation. Without this, their PAT — however valid — will get a `403`/`repository not found` on the first push.
-2. **Send them the invite token.** Paste it to them over any channel; it's safe to share because it contains no token. They open the **SHARED BRAIN** section of any domain's page, press through to the full **Shared Brain** view, and take *📨 I have an invite token* → **Join**. (Shared Brain was a rail entry of its own through v3.63.0, and before that — through v3.40.0, in the pre-redesign shell at `/old` — the block was in the Sync tab. That shell was deleted in v3.41.0.)
+2. **Send them the invite token.** Paste it to them over any channel; it's safe to share because it contains no token. They open the **SHARED BRAIN** section of any domain's page, press through to the full **Shared Brain** view, and take *I have an invite token* → **Join**. (Shared Brain was a rail entry of its own through v3.63.0, and before that — through v3.40.0, in the pre-redesign shell at `/old` — the block was in the Sync tab. That shell was deleted in v3.41.0.)
 3. **They create their own PAT** during the wizard (fine-grained, *Contents: Read and write* on the repo — or a classic token with `repo` scope). The wizard validates it live.
 
 The full step-by-step from the contributor's side is in [User Guide §2 — Contributor setup](shared-brain-user-guide.md#2--contributor-setup-join-an-existing-shared-brain). For your own initial brain creation, see [User Guide §3 — Admin setup](shared-brain-user-guide.md#3--admin-setup-start-a-new-shared-brain).
@@ -373,8 +373,8 @@ After synthesis, the collective wiki may grow `CONFLICTING SOURCES` markers wher
 
 4. ⚠️ **The Wiki Health scanner does NOT detect conflict markers.** There is no conflict handling in
    `src/brain/health.js`; a Health scan on a mirror full of unresolved contradictions reports
-   nothing about them. It was designed to and never shipped. Use step 2 or step 3 — not the Health
-   tab — to find conflicts.
+   nothing about them. It was designed to and never shipped. Use step 2 or step 3 — not the domain page's
+   **Wiki health** section — to find conflicts.
 5. Decide which is correct (sometimes neither — sometimes both). Discuss with the cohort. Resolve manually by editing the **personal** opted-in domain of the contributor whose fact is correct, then **Push contributions** and **Run synthesis** again.
 
 The collective wiki is read-only for direct edits — that's by design. You resolve conflicts upstream (in someone's personal domain), not downstream.
@@ -525,7 +525,7 @@ The `admin_token` is the one privileged credential in your Shared Brain. It gate
 
 | Action | Where |
 |---|---|
-| Initial setup | **Shared Brain** → **⚙ I'm starting a new Shared Brain** → Set up |
+| Initial setup | Domains → a domain → **Shared Brain** → Open Shared Brain → **I'm starting a new Shared Brain** → Set up |
 | Add a contributor mid-cohort | GitHub repo → Settings → Collaborators → Add people |
 | Run synthesis | **Shared Brain** → connection card → **"Run synthesis (admin)"** in the main action row, beside Push and Pull (confirm dialog) |
 | See who has contributed | Card → **Admin controls — admin token & contributor revocation** → Revoke panel, or `GET /api/sharedbrain/:id/members` (v3.0.5+). For counts only, without opening the revoke panel: Card → **"Cohort & sharing details"** |

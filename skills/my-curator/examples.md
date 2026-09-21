@@ -212,7 +212,7 @@ The user replies. For broken links without targets, you can also try:
 ai-suggest path  // (existing in-app feature; equivalent here is offering to call list_domains/search to find a likely target manually)
 ```
 
-For orphans, the *batch* AI rescue is an in-app feature, not exposed over MCP. Tell the user honestly: *"For bulk orphan rescue, the app has a ✨ Rescue orphans action in a domain's Wiki health panel — it plans all 47 in one batch and previews the plan before writing. From here I can link them one at a time if you tell me where each belongs, dismiss the ones you want skipped, or note them for later."*
+For orphans, the *batch* AI rescue is an in-app feature, not exposed over MCP. Tell the user honestly: *"For bulk orphan rescue, the app has a Rescue N orphans action, marked with a sparkles icon, in a domain's Wiki health panel — it plans all 47 in one batch and previews the plan before writing. From here I can link them one at a time if you tell me where each belongs, dismiss the ones you want skipped, or note them for later."*
 
 Linking one orphan by hand goes through `fix_wiki_issue` with **`type="orphanLink"`** — not `"orphans"`, which is a scan category and a dismissal type but not a fixable type. It is the one case where you compose the issue instead of forwarding the scan object, because the scanner emits `{path, type, slug}` and the fixer needs a target it cannot know:
 
@@ -303,7 +303,7 @@ The response's `links` field shows `broken_count: 0` — all links grounded. ✓
 
 > **You:** *"Saved to your `work-ai` domain: one summary + one new concept page (`concepts/context-engineering.md`). To make this appear in the cohort's shared brain:*
 >
-> *1. Open the Curator app → **Shared Brain** view in the left rail*
+> *1. Open the Curator app → Domains → your domain → the **Shared Brain** section (it is no longer a rail item; press through for the full Shared Brain view)*
 > *2. On your cohort's connection card, click **Push contributions***
 > *3. The admin will run synthesis (usually weekly) — your contribution will then show up in everyone's `shared-cohort` mirror on their next Pull*
 >

@@ -3,7 +3,7 @@
 **For**: anyone joining or running a Shared Brain — contributors and admins. Step-by-step setup, daily workflow, and troubleshooting.
 **Companions**: [`docs/shared-brain.md`](shared-brain.md) (concept & architecture) · [`docs/shared-brain-admin.md`](shared-brain-admin.md) (advanced admin operations) · [`docs/shared-brain-compliance.md`](shared-brain-compliance.md) (GDPR / IP / residency) · [`docs/user-guide.md`](user-guide.md#15b-shared-brain) (main app user guide)
 
-> 📚 **New to The Curator?** Read the [main user guide](user-guide.md) first — install, ingest, chat, personal sync. Shared Brain is an opt-in feature on top of the basic app, still in beta as of v3.17.2. You won't need it if you're a solo user.
+> 📚 **New to The Curator?** Read the [main user guide](user-guide.md) first — install, ingest, chat, personal sync. Shared Brain is an opt-in feature on top of the basic app, still in beta as of v3.65.0. You won't need it if you're a solo user.
 
 ---
 
@@ -27,7 +27,7 @@ Before any of these, you need a working Curator install on your computer (Mac/Wi
 Shared Brain is an **opt-in beta feature** (introduced in v3.0.0-beta.1). New installs don't see it until you enable it.
 
 1. Open The Curator — a browser install serves it at `http://localhost:3333`; the packaged Mac app opens in its own window.
-2. Click **Shared Brain** in the left rail.
+2. Open **Domains**, pick a domain, and in its **Shared Brain** section press **Open Shared Brain**.
 3. Click **"Enable Shared Brain (beta)"**.
 
 > **Where this lives has moved twice — this guide describes the current interface.**
@@ -286,7 +286,7 @@ Both Push and Pull are SSE-streamed: you'll see live progress as the operation r
 
 **Card at-a-glance state (v3.0.4+):**
 
-- **⏳ N pages ready to push** — pages changed since your last push (plus any queued retries). The same count feeds the navbar **Sync badge**, so from any tab you can see you have un-pushed Shared Brain contributions.
+- **⏳ N pages ready to push** — pages changed since your last push (plus any queued retries). The rail's Sync badge counts local git changes only — it does **not** include Shared Brain pending pages, so this count is visible on the connection card alone.
 - **Last synthesis: …** — when the collective was last synthesised (learned from your own synthesis run, or from the repo on every Pull). *"never — ask your admin to run synthesis"* explains the classic "Pull pulled 0 pages" confusion.
 - **⚠ N pages skipped after repeated failures** — expandable list of pages in `permanent_skip`, with a **Retry these pages on next push** button that re-queues them with a fresh strike counter (no page editing needed).
 

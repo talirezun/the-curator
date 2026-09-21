@@ -10,16 +10,18 @@ A `shared-*` domain is a **local read-only mirror** of a collective wiki the use
 contributes to as part of a cohort, team or research group (the user-facing model is in
 `docs/shared-brain-user-guide.md`).
 
-**Reading a mirror is unrestricted.** All twelve read tools work normally on `shared-*`
+**Reading a mirror is unrestricted.** All fourteen read tools work normally on `shared-*`
 domains — `get_node`, `get_index`, `search_wiki`, `search_cross_domain`,
 `get_graph_overview`, `get_connected_nodes`, `get_backlinks`, `get_tags`, `get_summary`,
-`get_raw_source`, `get_working_state`, `list_domains`. This is where the cohort use cases
+`get_raw_source`, `get_working_state`, `list_domains`, `list_projects`,
+`get_project_context`. This is where the cohort use cases
 get powerful: you can be asked *"across our shared brain, which papers contradict each
 other on X?"* and you answer by traversing the collective wiki.
 
-**Writing to a mirror is refused.** All five *mutating* tools — `compile_to_wiki`,
+**Writing to a mirror is refused.** All seven *mutating* tools — `compile_to_wiki`,
 `fix_wiki_issue` (which is also where the `scan_semantic_duplicates` merge is applied, as
-`type=semanticDupe`), `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state` —
+`type=semanticDupe`), `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state`,
+`save_project_brief`, `save_foundation` —
 check the target domain's `CLAUDE.md` frontmatter for `readonly: true`. If true, they
 refuse with this error, quoted verbatim from the code:
 

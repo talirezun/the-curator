@@ -68,7 +68,7 @@ says so in the section itself.
 The Curator's memory layer is written by **agents, over MCP, while the user is
 doing something else entirely** — and increasingly by **more than one agent, in
 more than one harness, on more than one machine**. Today the only way to see any
-of that happening is to open the app and navigate to the Agent memory view. A menubar presence turns an
+of that happening is to open the app and navigate to the Project context view. A menubar presence turns an
 invisible background process into an observable one, and — because the MCP server
 and the memory layer are useful with the window closed — it also makes "closing
 the window" stop meaning "stopping the product". The widget is an **observer**:
@@ -138,7 +138,7 @@ below, and the section below is left as it was written.
    sentence — *"a row's click simply opens the app on that scope"* — overstates
    what the shell can address. `data-view` and `data-mem-project` are the app's
    own dispatch attributes; the scope picker inside the memory view has no
-   routing attribute, so the click lands on **Agent memory, on that project**,
+   routing attribute, so the click lands on **Project context, on that project**,
    and stops there.
 
 5. **The budget bar and the recency pip are not drawn.** §1.5 accepts both. An
@@ -504,7 +504,7 @@ between LLMs" is the job the memory layer exists to do; the widget is the
 instrument panel for it. Every proposal below is justified against that target,
 and the test applied throughout is: *does this help that person, in that moment,
 without making them stop what they are doing?* If it does not, it is Dock-icon
-work — it belongs in the full app's Agent memory view, not in the menubar.
+work — it belongs in the full app's Project context view, not in the menubar.
 
 **The two concrete shapes it has to serve**, which the first pass did not:
 
@@ -535,10 +535,12 @@ Three things follow from taking the audience seriously:
 
 ### 1.2 The binding constraint: this is an OBSERVER
 
-`src/routes/memory.js` is read-only by design, and its own docblock explains why
-at length. The store has exactly one writer — an agent, through the MCP's
-`save_working_state`. That single-writer property is what makes the per-machine
-path layout safe: two machines never touch the same file, so Personal Sync's
+`src/routes/memory.js` is read-only **over tiers 2 and 3** by design, and its own
+docblock explains why at length (`memory.js:26-33`). Those two tiers have exactly
+one kind of writer — an agent, through `saveWorkingState`, reached either by the
+MCP's `save_working_state` or, since v3.63.0, by `my-curator save`. The rule is
+one writer per FILE with provenance that matches, and that property is what makes
+the per-machine path layout safe: two machines never touch the same file, so Personal Sync's
 `git pull --no-rebase -X theirs` has no conflicting hunk to silently resolve
 away.
 
@@ -551,8 +553,10 @@ writing down before anyone is tempted:
 2. A human edit arriving through the app would wear **the last agent's
    provenance line** — the handoff would claim a model and harness wrote
    something a person typed.
-3. `state/project.md` (tier 1) is hand-authored and **no MCP tool writes it**,
-   deliberately. A widget offering to edit it would be the first tool that does.
+3. `state/project.md` (tier 1) is the human's. Since v3.48.0 the app writes it,
+   stamped `authoredBy.kind: 'human'`, and `save_project_brief` writes it on the
+   owner's explicit instruction. A widget editing it would be a writer with no
+   owner behind it, which is the part that is refused.
 
 The widget reads. Everything it offers that is not a read is a *navigation* —
 open the app, open a file in the user's editor, open the log — never a mutation.
@@ -598,9 +602,11 @@ Three consequences, in order of importance:
 *The capture skill actively encourages the collision.* `skills/curator-continuity`
 tells an agent to **"reuse an existing scope whenever the work continues"** and
 to open a new one only for *"genuinely parallel work"*. That is the right rule for
-continuity across sessions, and it is exactly the rule that puts two
-simultaneously-running harnesses into one folder. Nothing in the skill mentions
-harnesses at all.
+continuity across sessions, and it was exactly the rule that put two
+simultaneously-running harnesses into one folder. **The skill has since been
+corrected:** `skills/curator-continuity/SKILL.md` §8 now names a second harness
+running on one machine as a reason to open a new scope, and states the overwrite
+outright — `[machine]` is per *installation*, not per process.
 
 *The one existing guard does not cover this case.* `would-replace-larger-state`
 refuses a save whose rendered body is under `REPLACE_RATIO` (5%) of a stored
@@ -655,10 +661,14 @@ hand-edited line may have no usable `at`. When it is missing the consumer falls
 back to `lastWriteAt` **and says which one it used** — the same fact-versus-its-
 absence rule this module already enforces everywhere else.
 
-> **This is a pre-existing honesty gap in the shipped Agent memory view**, not
-> only a widget concern: that view renders `formatAge(ageSeconds)` from the same
-> mtime, so on a multi-machine setup it already reports a freshly-pulled handoff
-> as brand new. Worth fixing on its own merits, independently of this feature.
+> **This WAS a pre-existing honesty gap in the shipped Project context view**,
+> not only a widget concern: that view rendered `formatAge(ageSeconds)` from the
+> same mtime, so on a multi-machine setup it reported a freshly-pulled handoff as
+> brand new. **Closed by Phase 0 in v3.34.0:** `effectiveSave()`
+> (`src/public/next/views/memory.js:2868`) prefers the agent's own clock
+> (`writtenAgeSeconds` / `writtenAt`) and falls back to the file's only when there
+> is none, returning `source: 'agent' | 'filesystem'` so every caller can say
+> which clock it showed.
 
 ### 1.3 The use cases, ranked — and the layout that falls out of them
 
@@ -833,7 +843,7 @@ first pass, which proposed project grouping.
 **Flat by recency rather than grouped by project — the argument.** The audience is
 watching *an agent*, and an agent works in one scope at a time. "What has just
 happened" is a recency question, and grouping answers a different one ("what is
-the state of my projects") that the app's Agent memory view already answers
+the state of my projects") that the app's Project context view already answers
 better, with room for it. Grouping also spends vertical space on headings in the
 one surface that has none. The project name survives as a dim prefix on each row,
 so nothing is lost but the ordering.
@@ -1186,7 +1196,7 @@ alive anyway.
 
 ### 1.7 Click a scope, see it — REVERSED IN PART, and here is the safe version
 
-> **NOT BUILT.** There is no popup. A row click opens the app on Agent memory at
+> **NOT BUILT.** There is no popup. A row click opens the app on Project context at
 > that **project** — not that scope; deviation 4 in
 > [§0a](#0a-status--what-shipped-what-deviated-what-is-still-a-plan). The tier rule
 > and the hard constraint in this section are the contract Phase 2 must be built to.
@@ -1208,8 +1218,8 @@ of this section:
 | Tier | What it is | Shape | Surface | Why |
 |---|---|---|---|---|
 | **3 — `journal.jsonl`** | One line per save: `{at, harness, model, headline, rejections}` | A **structured, sanitised, bounded array** | **The widget** | Already parsed by the store; no rendering decisions to make; naturally glanceable |
-| **2 — `current.md`** | The handoff, up to 48 KB of headed markdown | A **document** | The app's Agent memory view | Needs section parsing, markdown rendering, fold state, truncation and duplicate-heading disclosure — every one of which is a place two surfaces can disagree |
-| **1 — `project.md`** | The standing brief, up to 32 KB, changes weekly | A **document**, hand-authored | The user's editor / Obsidian | It is meant to be read in full at session start, and it is the one tier no tool writes |
+| **2 — `current.md`** | The handoff, up to 48 KB of headed markdown | A **document** | The app's Project context view | Needs section parsing, markdown rendering, fold state, truncation and duplicate-heading disclosure — every one of which is a place two surfaces can disagree |
+| **1 — `project.md`** | The standing brief, up to 32 KB, changes weekly | A **document**, hand-authored | The user's editor / Obsidian | It is meant to be read in full at session start, and it is the tier no tool writes UNBIDDEN — the app writes it as the human, and `save_project_brief` only on the owner's instruction |
 
 **Why the journal is safe and `current.md` is not.** `readWorkingState` returns
 the journal as an array of already-sanitised, already-capped fields —
@@ -1465,7 +1475,7 @@ not your app — decide whether to put your menu bar extra in the menu bar"* (§
 
 **But "discovered in Settings" is too passive, and this is the refinement.** The
 moment the feature becomes worth having is the moment a project first accumulates
-real agent traffic. So: **a single dismissible line in the Agent memory view**,
+real agent traffic. So: **a single dismissible line in the Project context view**,
 shown once a project crosses a small threshold (say two saves across at least one
 scope), reading roughly *"Watch this from the menu bar — Turn on · Not now"*. Not
 a modal, not a launch prompt, not a badge. It appears where the user is already
@@ -1590,10 +1600,10 @@ should be protected — see §2.7's recommendation 4.
 
 | Timer | File | Interval | Skips work while hidden? | Runs when? |
 |---|---|---|---|---|
-| `refreshSyncBadge` | `next/app.js:2232` | **60 s** | **NO** | Always, for the life of the page |
-| `refreshSyncRemoteBadge` | `next/app.js:2239` | **10 min** | **NO** | Always — **and it is a network call** (`git fetch`, with a 5-min server-side TTL cache) |
+| `refreshSyncBadgeIfVisible` | `next/app.js:3336` | **60 s** | **YES** (since v3.35.0) | Always, for the life of the page |
+| `refreshSyncRemoteBadgeIfVisible` | `next/app.js:3345` | **10 min** | **YES** (since v3.35.0) | Always — **and it is a network call** (`git fetch`, with a 5-min server-side TTL cache) |
 | Active batch-job watcher | `next/app.js:2137` | 4 s | n/a | Only while a batch job is `running`; cleared on exit |
-| Agent memory poll | `next/views/memory.js` | 20 s adaptive → 300 s cap | **YES** | Only while the Memory view is mounted |
+| Project context poll | `next/views/memory.js` | 20 s adaptive → 300 s cap | **YES** | Only while the Memory view is mounted |
 | Ingest activity poll | `next/views/ingest.js` | 2 s active / 15 s idle | **YES** | Only while the Ingest view is mounted |
 | Onboarding re-check | `next/views/onboarding.js` | 5 s adaptive → 300 s cap | **YES** | Only until all three setup steps are done, then hard-stops |
 | Chat send clock | `next/views/chat.js` | 1 s | n/a | Only during an in-flight turn |
@@ -1607,8 +1617,12 @@ to 1/20th of wall-clock), they **skip fetching entirely while `document.hidden`*
 and they revalidate on `focus`/`visibilitychange`. Nothing in that list needs
 fixing for background mode.
 
-**The two shell-level `setInterval`s are the exception, and they are the finding
-here.** Neither `refreshSyncBadge` nor `refreshSyncRemoteBadge` checks
+> **FIXED — §2.7 recommendation 1 was taken.** Both are now `…IfVisible` wrappers
+> that decline to fetch while `document.hidden` (`src/public/next/app.js:2148`
+> and `:2153`). Read the paragraph below as the finding that produced the fix.
+
+**The two shell-level `setInterval`s were the exception, and they are the finding
+here.** Neither `refreshSyncBadge` nor `refreshSyncRemoteBadge` checked
 `document.hidden`. In a browser tab left open for ten minutes that is invisible.
 **In an always-running app with a hidden window it is a 60-second timer and a
 10-minute network call, forever.** See §2.7 recommendation 1.
@@ -2251,8 +2265,8 @@ the transition on a real build before promising it.
 ## 4. Implementation plan — files that would change
 
 **Phase 0 — the four-line change that unlocks half the design.** Independent of
-everything else, and worth doing on its own merits because it fixes a live honesty
-gap in the shipped Agent memory view (§1.2a(b)).
+everything else, and worth doing on its own merits because it fixed a live honesty
+gap in the shipped Project context view (§1.2a(b)). **Shipped in v3.34.0.**
 
 | File | Change |
 |---|---|
@@ -2297,7 +2311,8 @@ index does not carry — see §5.2.
 **Explicitly NOT changed:** `desktop/lib/quit-decision.js` (the decision is
 correct; only its call context changes), the **write** side of
 `src/brain/working-state.js` (the widget reads, never writes), and `src/routes/memory.js`
-(no write endpoint, ever). (`src/public/app.js` — the `/old` pre-redesign shell this
+(no **tier-2 or tier-3** write endpoint, ever — the project, brief and foundations
+write routes added since v3.48.0 do not reach those files). (`src/public/app.js` — the `/old` pre-redesign shell this
 line used to name — was deleted in v3.41.0 and is no longer in scope for anything.)
 
 ---
@@ -2311,7 +2326,7 @@ in prose, with the answer beside them, so nobody re-opens a closed one.
    the same as an existing install. One code path, no `installOrigin` cleverness.
    The added reason (§1.10) is that a fresh install has **no agent traffic**, so an
    on-by-default widget's only content is its empty state. Discovery moves to a
-   one-line, once-only offer **inside the Agent memory view**, shown when a project
+   one-line, once-only offer **inside the Project context** view, shown when a project
    first accumulates real traffic.
 
 2. **STILL OPEN, and narrowed — does the event strip need an endpoint?** The
@@ -2376,7 +2391,12 @@ in prose, with the answer beside them, so nobody re-opens a closed one.
    documents — build both once and look**, and until then treat question 6 as
    answered "not yet".
 
-10. **NEW — should the collision warning (§1.2a(a), §1.3 #5) ship in Phase 1?** It
+10. **ANSWERED — it shipped in Phase 1.** `WARNING_HARNESS_COLLISION` and
+    `collisionNotices()` in `desktop/lib/tray-model.js:1237, :1289` derive the line
+    and `tray-menu.js:490` renders it as a disabled notice; a supplied
+    `harness-collision` warning wins over the derived one so a collision never
+    burns two rows. The threshold is still untuned against real data. The
+    original question, kept for the argument it records: It
     is the highest-consequence thing the widget can say and it costs no I/O. The
     argument against is that a warning about a condition the user has never hit,
     on a surface they just enabled, is noise — and this project has a recorded rule
@@ -2424,10 +2444,10 @@ at all:
 | **2** — popover panel + scope popup | No further | **Yes** | Memory and a second surface; contained |
 | **3** — bucketed event strip | No | No | Cosmetic; first thing to cut |
 
-**Phase 0 should not wait for any of this.** It is four lines in
-`listWorkingScopes`, it is purely additive, and it corrects a defect that is live
-today in the Agent memory view on any multi-machine setup (§1.2a(b)). It should be
-argued and shipped on its own merits, not carried in on this feature's back.
+**Phase 0 should not wait for any of this.** It was four lines in
+`listWorkingScopes`, purely additive, and it corrected a defect that was live in
+the Project context view on any multi-machine setup (§1.2a(b)). It was argued and
+shipped on its own merits in v3.34.0, not carried in on this feature's back.
 
 **The same still applies to the first pass's two recommendations**: gating the two
 shell `setInterval`s on `document.hidden` (§2.7 rec 1) is a few lines with an
@@ -2517,7 +2537,7 @@ There is a single setting: **Off / On / On, and hide the Dock icon.**
 a brand-new install there is no agent memory yet, so an on-by-default icon's only
 possible content is *"nothing here yet"* — the worst possible first impression,
 and it teaches people the icon is not worth clicking. Instead, the app offers it
-**once**, quietly, in the Agent memory screen, at the moment a project has
+**once**, quietly, in the Project context screen, at the moment a project has
 actually accumulated some work. One line, with *Turn on* and *Not now*. If you say
 not now, it never asks again.
 

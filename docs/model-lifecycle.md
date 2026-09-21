@@ -618,11 +618,9 @@ The guard that produced the previous behaviour has **not** been removed, and it 
 
 The pre-v3.16.0 behaviour — save an OpenRouter key, *don't* activate — existed for a different reason (activating a provider with no build model was a reproduced P0 that silently broke ingest). That guard is still in place and still class-scoped; it simply no longer fires for OpenRouter.
 
-### `/old` does not support OpenRouter
+### `/old` is gone
 
-The legacy interface at `/old` offers Gemini and Anthropic only. This is a **documented limit, not a gap**: its four frontend files are frozen, and this release does not touch them. A user whose only key is an OpenRouter key should use the primary interface.
-
-One known consequence is worth recording, because it is the kind of thing that reads as a bug: `/old`'s first-run overlay checks only for the two original providers' keys, so an OpenRouter-only user who navigates there is shown setup guidance for a key they already have — and that overlay has no Escape, no backdrop close, no close control, and no skip on its first step. It strengthens the existing case for retiring `/old`; it is not a reason to unfreeze it.
+`/old` and `/old/` **302-redirect to `/`** ([`src/server.js:341`](../src/server.js)); the legacy shell's frontend files were deleted in v3.41.0. The OpenRouter limit this section used to record — a frozen interface offering Gemini and Anthropic only, with a first-run overlay that could not be closed — no longer exists, because the interface does not. There is one interface, and it supports all three providers.
 
 ---
 

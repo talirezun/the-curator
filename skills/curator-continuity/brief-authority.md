@@ -38,7 +38,7 @@ not buy authority.
   fine; the silence was the defect.
 - **Authority and accuracy are different axes, and only the first one is granted here.** A
   brief goes stale like anything else, so re-verify what it asserts about the code, the
-  tests or the state of the world before relying on it — SKILL.md §2 step 4 applies to the
+  tests or the state of the world before relying on it — SKILL.md §2 step 3 applies to the
   brief exactly as it applies to the handoff. Being the user's own instruction makes it
   authoritative about *how to work*, never evidence about *what is currently true*.
 - **Precedence is simple.** What the user says in **this** conversation wins over the brief.

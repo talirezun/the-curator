@@ -58,7 +58,7 @@ table lives in [working-state.md](working-state.md#1-the-problem-it-solves).
   on the skill alone, never activating it. Reading working state over MCP is pure protocol and
   works anywhere; saving is a discipline the agent has to be given, and an installed skill only
   gives it if the harness reaches for the skill. The portable fix is prose, not a file format:
-  **Domains → PROJECTS IN THIS DOMAIN → Copy agent instructions** hands you the block to paste into whatever file
+  **Domains → Projects in this domain → Copy agent instructions** hands you the block to paste into whatever file
   your harness already loads — `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` or your Cursor rules
   ([the measurement and its limits](working-state.md#activation-put-the-discipline-where-the-harness-cannot-skip-it)).
 - **Capture is advisory.** Nothing forces a save at the end of a session; the skill layer and that

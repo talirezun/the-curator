@@ -192,7 +192,7 @@ This is the most common case. Steps are entirely no-code unless you want to opti
 
 Follow the [admin setup walkthrough](shared-brain-user-guide.md#3--admin-setup-start-a-new-shared-brain):
 1. Create a **private** GitHub repo (e.g. `your-username/ai-safety-brain`)
-2. In the Curator's **Shared Brain** view, run the **⚙ I'm starting a new Shared Brain** wizard
+2. Open **Domains**, pick the domain, press **Open Shared Brain** in its **Shared Brain** section, and run the **I'm starting a new Shared Brain → Set up →** wizard
 3. Pick **organisational** data handling terms if you're selling to businesses (IP transfer to you), or **contributor_retains** if buyers' contributions should remain their own
 4. Generate the invite token — save it somewhere accessible
 
@@ -246,9 +246,10 @@ Welcome! Three things to get you started:
 2. Install The Curator (free, open source):
    https://github.com/talirezun/the-curator#quick-start
 
-3. In the Curator, click "Shared Brain" in the left sidebar and click
-   "Enable Shared Brain (beta)". Then, in that same view, click the
-   "📨 I have an invite token → Join" card. Paste this invite token:
+3. In the Curator, open Domains, pick a domain, and press "Open Shared
+   Brain" in its Shared Brain section. Click "Enable Shared Brain (beta)",
+   then, in that same view, click the "I have an invite token → Join" card.
+   Paste this invite token:
 
    sbi_xxxxxxxxxxxxxxxxxx
 
@@ -264,9 +265,8 @@ of the brain. Future updates land each week — pull anytime.
 Questions: <your contact>
 ```
 
-> The template describes the current interface. A buyer still on the older
-> interface at `/old` enables Shared Brain from **Settings → Shared Brain
-> (beta)** and joins from the **Sync** tab's "Shared Brains" block instead.
+> The template describes the current interface, and it is the only one there is:
+> `/old` has redirected to it since the pre-redesign shell was deleted in v3.41.0.
 
 Total time per buyer: ~3 minutes. If you sell 50 buyers/month, that's 2.5 hours/month — manageable, and arguably good for trust-building (every buyer hears from you personally).
 
@@ -431,7 +431,7 @@ If you have a white-label case that seems reasonable, ask — [open an issue](ht
 |---|---|---|
 | 1. Build the brain | The Curator | 2-4 weeks |
 | 2. Create private GitHub repo | github.com/new | 2 min |
-| 3. Run admin wizard | The Curator → Shared Brain → ⚙ Set up | 5 min |
+| 3. Run admin wizard | The Curator → Domains → a domain → Shared Brain → Open Shared Brain → Set up | 5 min |
 | 4. Sales page | Gumroad / Lemon Squeezy / Stripe | 1-2 hr |
 | 5. Onboard each buyer | Manual GitHub collaborator + email | 3 min/buyer |
 | 6. Weekly synthesis | The Curator → Push + Synthesize | 30 min/week |
