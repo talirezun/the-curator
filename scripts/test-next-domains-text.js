@@ -95,6 +95,8 @@ import {
 import {
   renderSidebarHead, renderSidebarGroup, renderSidebarRow,
 } from '../src/public/next/shared/sidebar.js';
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
+import { freshnessTier } from '../src/public/next/shared/age.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NEXT = join(ROOT, 'src/public/next');
@@ -347,7 +349,12 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
     renderIssueGroups: () => '<GROUPS/>',
     HEALTH_CATEGORIES: [{ key: 'brokenLinks', label: 'Broken links' }],
     inFlightWriteSlugs: new Set(),
-    renderReadoutGroup, renderDescription, renderStatus,
+    renderDescription, renderStatus,
+    // v3.65.0: the scan's figures are a MONITOR (M6), so renderHealthPanel
+    // composes these two as free identifiers. Injected, and REAL — a stub
+    // here would let the figures say anything while this section asserts
+    // exactly which ones reach the panel.
+    renderMonitor, freshnessTier,
   };
   const names = Object.keys(deps);
   const build = () => makeCallable(
@@ -378,14 +385,39 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
 
   const settled = callOrFail('settled health panel', () => render(base));
   if (settled) {
-    // THE FIGURES ARE AN INSTRUMENT.
-    ok(settled.includes('tx-readout-group'), 'the counts render as a readout GROUP, not a prose sentence');
-    ok((settled.match(/class="tx-readout"/g) || []).length === 5,
-       'all five measurements are readouts — open issues plus the four scan counts ' +
-       `(got ${(settled.match(/class="tx-readout"/g) || []).length})`);
-    ok(/tx-readout-value">3</.test(settled) && /tx-readout-value">41</.test(settled) &&
-       /tx-readout-value">331</.test(settled) && /tx-readout-value">7</.test(settled),
-       'every figure is in a readout VALUE — mono, --text, the design system\'s own rule for counts');
+    // THE FIGURES ARE AN INSTRUMENT — AND SINCE v3.65.0 IT IS THE MONITOR.
+    // They were a five-cell `renderReadoutGroup`, which was the right answer
+    // to the defect this section records (three roles welded into one prose
+    // <div>) and the wrong answer to the one after it: the maintainer put
+    // this block beside the MCP bridge's Connected strip and Context's Last
+    // saved card and asked why one idea had three designs. Same five
+    // measurements, same provenance, one instrument — catalogue entry M6.
+    ok(settled.includes('class="cur-mon"'), 'the counts render as a MONITOR, not a prose sentence');
+    ok((settled.match(/class="cur-mon-line[ "]/g) || []).length === 6,
+       'six lines — open issues, the four scan counts, and when the scan happened ' +
+       `(got ${(settled.match(/class="cur-mon-line[ "]/g) || []).length})`);
+    ok(/cur-mon-value">3</.test(settled) && /cur-mon-value">41</.test(settled) &&
+       /cur-mon-value">331</.test(settled) && /cur-mon-value">7</.test(settled),
+       'every figure is in a monitor VALUE — mono, --text, tabular, the design system\'s own rule for counts');
+    ok(!settled.includes('tx-readout'),
+       '…and NO readout survives beside it: one reading, one treatment, which is the whole '
+       + 'reason the monitor exists');
+    // THE STEP-BODY RULE (v3.64.2's remainder). The block is inside a fold
+    // row whose SUMMARY carries the reading that decides whether to open it.
+    ok(/data-group-key="scan"/.test(settled),
+       'the report sits in a `Scan` fold row, like every other part of this section');
+    ok(settled.indexOf('data-group-key="scan"') < settled.indexOf('class="cur-mon"'),
+       '…and the monitor is the row\'s BODY, not a block above it');
+    ok(/dm-group-meta">3 open issue[s]? · 10s ago</.test(settled),
+       '…whose summary reads the headline and the age, so a closed row still answers the '
+       + 'question the section is for',
+       (/<span class="dm-group-meta">[^<]*/.exec(settled) || ['(none)'])[0]);
+    // THE CHIPS CAME WITH IT. They are the same scan's per-category counts
+    // and were a SECOND bare block under the readouts; folding one and
+    // leaving the other would have left the defect half-fixed.
+    ok(settled.indexOf('dm-chip-row') > settled.indexOf('class="cur-mon"')
+       && settled.indexOf('dm-chip-row') < settled.indexOf('</details>'),
+       'the category chips moved INTO the same row\'s body, under the monitor');
 
     // THE WELD IS GONE. This is the maintainer's own report: three roles in
     // one <div>, which is why it read as a clarification and not a report.
@@ -396,9 +428,14 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
     ok(!/last scanned/.test(settled),
        'the timestamp is no longer a clause inside that sentence');
 
-    // PROVENANCE IS PART OF THE INSTRUMENT, not a separate sentence.
-    ok(/tx-readout-prov">scanned 10s ago</.test(settled),
-       'when the scan happened is the readout\'s PROVENANCE — same instrument, quieter treatment');
+    // PROVENANCE IS PART OF THE INSTRUMENT, not a separate sentence — and it
+    // is the one TIME-BASED reading here, so it takes the app's freshness dot
+    // with the age in WORDS beside it. Never a dot alone.
+    ok(/cur-mon-key">scanned</.test(settled) && /10s ago<\/span>/.test(settled),
+       'when the scan happened is a line of the same instrument, quieter treatment');
+    ok(/<span class="fresh-dot fresh-[a-z]+" aria-hidden="true"><\/span>10s ago/.test(settled),
+       '…carrying the app\'s own freshness dot, aria-hidden, with the age in words beside it',
+       (/<span class="cur-mon-value">[^]{0,90}/.exec(settled) || ['(none)'])[0]);
 
     // A settled panel makes no claim about being stale.
     ok(!settled.includes('tx-status'), 'a settled panel shows no status box — nothing to report is not a state');
@@ -413,9 +450,15 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
        'and it says so as a STATUS — the caveat is a state, not a sentence prefixed to a measurement');
     // ORDER IS A PRIORITY ORDER. A caveat printed after the number it
     // qualifies has already been read too late.
-    ok(revalidating.indexOf('tx-status') < revalidating.indexOf('tx-readout-group'),
+    ok(revalidating.indexOf('tx-status') < revalidating.indexOf('data-group-key="scan"'),
        'the caveat renders BEFORE the figures it qualifies');
-    ok(/tx-readout-value">3</.test(revalidating),
+    // AND IT IS NOT IN THE FOLD. v3.16.1, unmoved: a warning, a cost or an
+    // outcome may never sit behind a chevron. This one says the numbers below
+    // it are the PREVIOUS scan's, which is exactly the kind of thing a
+    // tidy-up would sweep into the row it qualifies.
+    ok(revalidating.indexOf('tx-status') < revalidating.indexOf('<details'),
+       '…outside every fold on the card, because a caveat behind a chevron is not a caveat');
+    ok(/cur-mon-value">3</.test(revalidating),
        'and the cached figures stay on screen — the whole point of not collapsing the panel');
   }
 
@@ -428,7 +471,7 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
     ok(errored.includes('Could not scan this domain'), 'with a constant headline');
     ok(errored.includes('tx-status-detail') && errored.includes('ENOENT: no such file'),
        'and the server\'s own message as the DETAIL rather than glued onto our sentence with an em dash');
-    ok(!/tx-readout-value/.test(errored),
+    ok(!/cur-mon-value/.test(errored) && !/tx-readout-value/.test(errored),
        'and NO stale figures underneath it implying the scan succeeded');
   }
   const hostileErr = callOrFail('errored health panel, hostile message', () =>
@@ -457,7 +500,12 @@ section('§4  ABSENT IS NOT ZERO — at this call site, not just in the module')
     renderConfirmCard: () => '', renderPendingPlan: () => '',
     activeSemanticScan: () => null, renderSemanticScanResult: () => '',
     renderIssueGroups: () => '', HEALTH_CATEGORIES: [], inFlightWriteSlugs: new Set(),
-    renderReadoutGroup, renderDescription, renderStatus,
+    renderDescription, renderStatus,
+    // v3.65.0: the scan's figures are a MONITOR (M6), so renderHealthPanel
+    // composes these two as free identifiers. Injected, and REAL — a stub
+    // here would let the figures say anything while this section asserts
+    // exactly which ones reach the panel.
+    renderMonitor, freshnessTier,
   };
   const names = Object.keys(deps);
   const render = (report) => {
@@ -487,10 +535,18 @@ section('§4  ABSENT IS NOT ZERO — at this call site, not just in the module')
   if (noStamp) {
     ok(!noStamp.includes('never'),
        'a report with no scannedAt does NOT render the word "never" — that is a claim nobody measured');
-    ok(!noStamp.includes('tx-readout-prov'),
-       'it renders NO provenance element at all, rather than a dash or a placeholder');
-    ok(/tx-readout-value">4</.test(noStamp),
+    ok(!/cur-mon-key">scanned</.test(noStamp) && !noStamp.includes('tx-readout-prov'),
+       'it renders NO `scanned` line at all, rather than a dash or a placeholder');
+    ok(!/fresh-dot/.test(noStamp),
+       '…and no freshness dot either — a mark with nothing to qualify is a state invented '
+       + 'out of a missing field');
+    ok(/cur-mon-value">4</.test(noStamp),
        'and the figures it DOES have still render — an absent stamp does not suppress a real measurement');
+    ok(/dm-group-meta">0 open issue[s]?</.test(noStamp)
+       && !/dm-group-meta">[^<]*·/.test(noStamp),
+       '…and the row\'s own summary drops the age clause rather than printing a separator with '
+       + 'nothing after it',
+       (/<span class="dm-group-meta">[^<]*/.exec(noStamp) || ['(none)'])[0]);
   }
 
   const noDismissed = callOrFail('report with no dismissed count', () =>
@@ -498,16 +554,22 @@ section('§4  ABSENT IS NOT ZERO — at this call site, not just in the module')
   if (noDismissed) {
     ok(!noDismissed.includes('undefined'),
        'a missing count renders NOTHING — it used to render the literal string "undefined dismissed"');
-    ok((noDismissed.match(/class="tx-readout"/g) || []).length === 4,
-       'the entry is dropped and the other four survive');
+    ok((noDismissed.match(/class="cur-mon-line[ "]/g) || []).length === 5,
+       'the entry is dropped and the other five lines survive — the four figures and the stamp ' +
+       `(got ${(noDismissed.match(/class="cur-mon-line[ "]/g) || []).length})`);
+    ok(!/cur-mon-key">dismissed</.test(noDismissed),
+       '…and it is the DISMISSED line specifically that is missing');
   }
 
   const zeroes = callOrFail('report with real zeroes', () =>
     render({ counts: { entities: 0, concepts: 0, summaries: 0, dismissed: 0 }, scannedAt: '2026-08-29T12:00:00Z' }));
   if (zeroes) {
-    ok((zeroes.match(/class="tx-readout"/g) || []).length === 5,
+    ok((zeroes.match(/class="cur-mon-line[ "]/g) || []).length === 6,
        'a MEASURED zero is a measurement and still renders — absent is not zero, and zero is not absent');
-    ok((zeroes.match(/tx-readout-value">0</g) || []).length === 5, 'all five read 0');
+    ok((zeroes.match(/cur-mon-value">0</g) || []).length === 5, 'all five read 0');
+    ok(!/cur-mon-warn/.test(zeroes),
+       '…and with nothing open, nothing is toned: a warn class on a zero would be a mark '
+       + 'claiming a state the figure denies');
   }
 }
 

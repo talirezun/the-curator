@@ -429,6 +429,18 @@
    rhythm and the rule below removes the gap between it and its own card. */
 .dm-section-hd + .dm-section,
 .dm-section-hd + .dm-fold { margin-top: 0; }
+/* ── THE SAME HEAD, WITH ITS ⓘ PANEL UNDER IT (v3.65.0) ───────────────────
+   ① Ingest's explanation moved out of the fold's body and behind a mark on
+   its head (R4), and a mark needs a panel to open into. The head and the
+   panel are ONE top-level child of the column — never a wrapper around the
+   `<details>`, which would hide the fold's id one level down and make
+   `patchMainAroundHosts` replace it on every paint (the v3.46.0 shape D-J
+   exists to prevent). So this block takes the adjacency rule `.dm-section-hd`
+   had, and the head row inside it keeps the numeral at the one x position. */
+.dm-section-hd-block { margin-bottom: var(--space-4); }
+.dm-section-hd-block .dm-section-hd { margin-bottom: 0; }
+.dm-section-hd-block + .dm-section,
+.dm-section-hd-block + .dm-fold { margin-top: 0; }
 /* And the card hands the gap back to the section AFTER it, which used to come
    from `.dm-section + .dm-section` and cannot any more: a `<details>` that is
    no longer a `.dm-section` is not the adjacent sibling that rule matches. */
@@ -908,6 +920,25 @@
 }
 .dm-group-dismissed .dm-dismissed-label { color: var(--text-2); }
 
+/* ── THE FOLD ROW'S META (v3.65.0) ────────────────────────────────────────
+   The one-line reading that decides whether to open the row, in the slot
+   `.dm-fold-meta` occupies on this page's two section folds and `.mem-fold`'s
+   does on Context. Same rule, one level in: pushed right, --text-2xs,
+   tabular, and it WRAPS below the label rather than shrinking into a column —
+   measured on the identical row at 568px, `margin-left: auto` handed the meta
+   whatever was left, which was 52px, and a two-clause line stacked into one
+   word per line. `flex-wrap` on the summary plus a basis that cannot fit
+   beside a label is the whole fix; `.dm-group-summary` already wraps. */
+.dm-group-meta {
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 12ch;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  text-align: right;
+  font-variant-numeric: var(--numeric-tabular);
+}
+
 .dm-group-pill {
   font-size: var(--text-2xs);
   color: var(--text-2);
@@ -931,6 +962,18 @@
   flex-direction: column;
   padding: 2px 2px 10px 21px;
 }
+/* ── THE SCAN ROW'S BODY (v3.65.0) ────────────────────────────────────────
+   The monitor and the category chips, which are the same scan's readings at
+   two grains. `gap` rather than a margin on the chip row, because the chip
+   row is shared with nothing here and a margin on it would have to be
+   cancelled somewhere else the day a third thing joins this body. The chip
+   row's own 14px bottom margin IS cancelled — it was spacing against the
+   card, and inside a fold body the body's own padding is the spacing. */
+.dm-scan-body { gap: var(--space-5); }
+.dm-scan-body .dm-chip-row { margin-bottom: 0; }
+/* The summary's own row wraps, so a long meta line goes under the label
+   instead of squeezing it — see `.dm-group-meta`. */
+.dm-group-summary { flex-wrap: wrap; }
 
 .dm-issue-row {
   display: flex;

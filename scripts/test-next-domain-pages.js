@@ -346,6 +346,11 @@ try {
   box = new Function(
     'COPY_SUCCESS_BANNER', 'docsLinkHtml', 'renderOverview',
     PREAMBLE +
+    // v3.65.0 (R4): section ①'s explanation left the fold's BODY for an ⓘ on
+    // its head, and the sentence is a module const so `renderMain` does not
+    // carry a paragraph every lifting sandbox has to carry with it. LIFTED,
+    // not stubbed — the words are the thing R4 moved.
+    extractConstText(SRC, 'INGEST_INFO') + '\n' +
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
     extractConstArray(SRC, 'BROWSE_FOLDERS') + '\n' +

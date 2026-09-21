@@ -51,6 +51,8 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
+import { freshnessTier } from '../src/public/next/shared/age.js';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -217,6 +219,11 @@ try {
     // not in the frozen map, and a stub would let a mistyped key pass here and
     // blank the panel in the browser.
     MAIN_PREAMBLE +
+    // v3.65.0 (R4): section ①'s explanation left the fold's BODY for an ⓘ on
+    // its head, and the sentence is a module const so `renderMain` does not
+    // carry a paragraph every lifting sandbox has to carry with it. LIFTED,
+    // not stubbed — the words are the thing R4 moved.
+    extractConstText(SRC, 'INGEST_INFO') + '\n' +
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
     extractConstArray(SRC, 'BROWSE_FOLDERS') + '\n' +
@@ -416,9 +423,15 @@ section('S3 -- "Scan wiki health" vs "Rescan"');
     renderIssueGroups: () => '<GROUPS/>',
     HEALTH_CATEGORIES: [{ key: 'brokenLinks', label: 'Broken links' }],
     inFlightWriteSlugs: new Set(),
-    renderReadoutGroup: (rows) => '<READOUTS>' + rows.map((r) => r.label + '=' + r.value).join(',') + '</READOUTS>',
     renderDescription: (t) => '<p>' + t + '</p>',
     renderStatus: (o) => '<div class="tx-status tx-status-' + o.state + '">' + o.title + '</div>',
+    // v3.65.0: the scan's five figures are a MONITOR now (catalogue entry M6),
+    // inside a fold row, so `renderHealthPanel` composes `renderMonitor` and
+    // `freshnessTier` as free identifiers. A module-level import is NOT
+    // visible inside a lifted body, so both are injected here — and both are
+    // the REAL functions rather than stubs, because this section renders the
+    // shipped panel and a stub could let the figures say anything.
+    renderMonitor, freshnessTier,
   };
   const names = Object.keys(deps);
   const build = () => new Function(
@@ -428,7 +441,11 @@ section('S3 -- "Scan wiki health" vs "Rescan"');
     extractFunction(SRC, 'healthSection') + '\n' +
     extractFunction(SRC, 'renderHealthPanel') + '\nreturn renderHealthPanel;'
   );
-  const render = (st) => build()(st, ...names.map((n) => deps[n]))({ slug: 'articles' }, false);
+  // `expandedGroups` joined the state this panel reads in v3.65.0: the scan's
+  // figures sit in a fold row whose open state lives there, like every other
+  // group on the card. An empty Set is the shipped default — the row is
+  // CLOSED until pressed, the same call step 3 Knowledge made in v3.64.2.
+  const render = (st) => build()({ expandedGroups: new Set(), ...st }, ...names.map((n) => deps[n]))({ slug: 'articles' }, false);
   const REPORT = { counts: { entities: 1, concepts: 2, summaries: 3, dismissed: 0 }, scannedAt: '2026-09-01T00:00:00Z', brokenLinks: [{}, {}] };
 
   // (a) THE BRANCH THAT WAS LYING: a first scan that failed. There is no
@@ -470,8 +487,23 @@ section('S3 -- "Scan wiki health" vs "Rescan"');
   if (settled) {
     ok('with a report on screen the button says "Rescan"', settled.includes('Rescan'));
     ok('...never "Scan wiki health", which would be false there', !settled.includes('Scan wiki health'));
-    ok('...and the "scanned N ago" provenance is still on the open-issue readout',
-      settled.includes('READOUTS') && settled.includes('Open issues=2'));
+    // v3.65.0: the five readouts became a MONITOR inside a `Scan` fold row
+    // (catalogue entry M6), so the needle follows the figure and the stamp
+    // into the instrument rather than pinning the old container's name.
+    ok('...and the open-issue figure and the scan stamp are both in the monitor',
+      /cur-mon-key">open issues<\/span><span class="cur-mon-value">2</.test(settled)
+      && /cur-mon-key">scanned</.test(settled), settled.slice(settled.indexOf('cur-mon'), settled.indexOf('cur-mon') + 260));
+    // THE WHOLE OPEN TAG, because `open` sits BEFORE `data-group-key` in the
+    // markup and a regex anchored on the key looks past it — which is how the
+    // first cut of this assertion stayed GREEN against a row hardcoded open.
+    const scanTag = (/<details[^>]*data-group-key="scan"[^>]*>/.exec(settled) || [''])[0];
+    ok('...and the row is CLOSED with `expandedGroups` empty, which is the shipped default \u2014 '
+      + 'the headline is the reading, the breakdown is the dive-in',
+      scanTag !== '' && !/\sopen(\s|>)/.test(scanTag), scanTag || '(no scan row)');
+    ok('...while its own summary still says so, so the reading survives the fold rather than '
+      + 'being hidden by it',
+      /dm-group-meta">2 open issue[s]? \u00b7 10s ago</.test(settled),
+      (/<span class="dm-group-meta">[^<]*/.exec(settled) || ['(none)'])[0]);
   }
 
   // (e) MID-SCAN. Neither label: the panel says what is happening.

@@ -195,7 +195,16 @@ import {
 // see shared/age.js. The KNOWLEDGE rows and the DESTINATION rows list the same
 // domains and answer the same question about them, so they say it in the same
 // words rather than in two.
-import { formatDayAge, freshnessDotHtml, clockGlyph } from '../shared/age.js';
+import { formatDayAge, freshnessDotHtml, clockGlyph, freshnessTier } from '../shared/age.js';
+// ── THE MONITOR (v3.65.0) ────────────────────────────────────────────────
+// The ONE treatment for a live-state reading anywhere in the app. The
+// maintainer found four of them wearing four designs — the bridge's
+// Connected strip, Context's Last saved and CAPTURE blocks, and THIS
+// section's five readouts — and his words were: *"it's really hard to
+// understand that this is like a monitor into the specific data and changing
+// state ... we are looking for a unified design AND a distinguished design"*.
+// This view's one adopter is M6, the wiki-health scan's own report.
+import { renderMonitor } from '../shared/monitor.js';
 // ── THE OWNERSHIP CHOOSER, SHARED WITH THE AGENT-MEMORY VIEW (v3.61.0) ────
 //
 // "Where do this project's canonical documents come from" is asked here, on
@@ -356,6 +365,18 @@ const DOMAIN_BLURB = 'A domain is one compounding wiki — a subject you read ab
 // unfolded renderStatus box in the body. renderViewHeader has no tone and
 // no warning field, so this split is the only shape it can take.
 const MIRROR_INFO = 'A read-only mirror of a Shared Brain — synthesised from every contributor’s opted-in pages.';
+
+// ── ① INGEST'S OWN SENTENCE (v3.65.0, R4) ────────────────────────────────
+// It was the first line of the fold's BODY, rendered as a description above
+// the drop zone. The rule for every numbered section on both pages is now the
+// one the maintainer asked for — *"maybe we don't need the first sentence, we
+// just need the information icon beside the title"* — so it lives behind the
+// mark on the head, closed, and the body is the panel and nothing else.
+// A CONSTANT rather than an inline literal, because `renderMain` is lifted by
+// brace-matching and executed by four offline suites: a long string in there
+// is a string they all have to carry, and this one is quoted by
+// scripts/test-next-domains-text.js.
+const INGEST_INFO = 'Drop a PDF, markdown or text file. The model turns it into entities, concepts and a summary, and compounds them into the pages you already have.';
 const MIRROR_WARNING = 'Fix issues in your personal contributing domain instead; changes made here are overwritten on the next Pull.';
 
 // ── Module state ───────────────────────────────────────────────────────────
@@ -3427,10 +3448,34 @@ function renderMain(token) {
     // THE SUMMARY CARRIES `aria-label`, because a disclosure control whose
     // only content is a chevron and a date has no accessible name. The name
     // is the section's, so a screen reader hears what it opens.
+    // ── R4: THE EXPLANATION SITS IN THE ⓘ, NOT IN THE BODY (v3.65.0) ─────
+    // The maintainer's own words about the same shape on the Context view:
+    // *"below the Foundations title we have 'Add the documents an agent must
+    // not act without' with another information icon, so maybe we don't need
+    // the first sentence, we just need the information icon beside the
+    // title."* This section's sentence was the first line of the fold's
+    // BODY, which is worse rather than better: you only reach it by opening
+    // the fold, i.e. at the moment you are about to drop a file and least
+    // want a paragraph.
+    //
+    // THE HEAD BLOCK IS STILL ONE TOP-LEVEL CHILD, and that is the D-J
+    // constraint rather than a layout choice: `patchMainAroundHosts` finds a
+    // hosted fold by `before.id` over the TOP-LEVEL children of
+    // `.main-inner`, so the head and its panel are ONE sibling ABOVE the
+    // `<details>` and never a wrapper around it. The inner shape is ③'s,
+    // verbatim — `.dm-section-head-row` holding `.dm-section-hd` and the
+    // mark at --space-2, then the panel — so the numeral keeps its one x
+    // position and the mark sits where OVERVIEW's already does.
     (readonly ? '' :
-      '<div class="dm-section dm-section-hd">' +
-        '<span class="dm-section-num" aria-hidden="true">1</span>' +
-        '<div class="cur-group-title dm-section-eyebrow">Ingest</div>' +
+      '<div class="dm-section dm-section-hd-block">' +
+        '<div class="dm-section-head-row">' +
+          '<div class="dm-section-hd">' +
+            '<span class="dm-section-num" aria-hidden="true">1</span>' +
+            '<div class="cur-group-title dm-section-eyebrow">Ingest</div>' +
+          '</div>' +
+          infoMark('dm-ingest-info', 'About ingest', INGEST_INFO).btn +
+        '</div>' +
+        infoMark('dm-ingest-info', 'About ingest', INGEST_INFO).panel +
       '</div>' +
       '<details class="dm-fold dm-sources" id="dm-sources-fold" data-dm-fold="sources"' +
         ((state.sectionPrefs && typeof state.sectionPrefs.sources === 'boolean')
@@ -3443,8 +3488,6 @@ function renderMain(token) {
           '</span>' +
         '</summary>' +
         '<div class="dm-fold-body">' +
-          renderDescription('Drop a PDF, markdown or text file. The model turns it into entities, ' +
-            'concepts and a summary, and compounds them into the pages you already have.') +
           '<div class="dm-host" id="dm-sources-host"></div>' +
         '</div>' +
       '</details>') +
@@ -6540,14 +6583,78 @@ function renderHealthPanel(domain, readonly) {
   // `report.counts.dismissed` behaves the same way: a missing count used to
   // render the literal "undefined dismissed", and now drops its entry. A real
   // 0 is a measurement and still renders.
-  const stamp = report.scannedAt ? 'scanned ' + relTime(report.scannedAt) : null;
-  const healthReadouts = renderReadoutGroup([
-    { label: total === 1 ? 'Open issue' : 'Open issues', value: total, provenance: stamp },
-    { label: 'Entities', value: report.counts.entities },
-    { label: 'Concepts', value: report.counts.concepts },
-    { label: 'Summaries', value: report.counts.summaries },
-    { label: 'Dismissed', value: report.counts.dismissed },
-  ]);
+  // ── THE SCAN'S REPORT IS A MONITOR (v3.65.0, catalogue entry M6) ────────
+  // It was a five-cell `renderReadoutGroup` with a chip row beneath it, and
+  // the maintainer put it beside the bridge's Connected strip and Context's
+  // Last saved block and asked why one idea had three designs. It is the same
+  // instrument as those now: mono face, a recessed surface, one fact per
+  // line, key left and value right, and the freshness dot on the only
+  // time-based reading with the age in WORDS beside it.
+  //
+  // ABSENT IS NOT ZERO, and the monitor keeps the rule the readout group had:
+  // `relTime(undefined)` returns the string 'never', so a report with no
+  // `scannedAt` used to render "last scanned never." — a claim about when a
+  // scan happened, made from the absence of the field that would say. A line
+  // whose value is `undefined` is DROPPED by the component (`scalar()`
+  // returns null), so `report.counts.dismissed` behaves the same way: a
+  // missing count renders no line, while a real 0 is a measurement and does.
+  const scannedSec = report.scannedAt
+    ? Math.max(0, (Date.now() - new Date(report.scannedAt).getTime()) / 1000) : null;
+  const healthMonitor = renderMonitor({
+    label: 'Wiki health scan',
+    lines: [
+      { key: total === 1 ? 'open issue' : 'open issues', value: total,
+        // TONE ON THE FIGURE, not a word painted red: the monitor puts a tone
+        // on a MARK or a rule, never on text, because --attention-text fails
+        // the 4.5 floor as words on that surface in the light theme.
+        tone: total > 0 ? 'warn' : undefined },
+      { key: 'entities', value: report.counts.entities },
+      { key: 'concepts', value: report.counts.concepts },
+      { key: 'summaries', value: report.counts.summaries },
+      { key: 'dismissed', value: report.counts.dismissed, tone: 'quiet' },
+      ...(report.scannedAt
+        ? [{ key: 'scanned', value: relTime(report.scannedAt),
+             markHtml: '<span class="fresh-dot fresh-' + freshnessTier(scannedSec) +
+               '" aria-hidden="true"></span>' }]
+        : []),
+    ],
+  });
+
+  // ── AND IT SITS IN A ROW, LIKE EVERYTHING ELSE IN THIS SECTION ──────────
+  // THE STEP-BODY RULE (v3.64.2), applied to the remainder v3.64.2 listed and
+  // did not ship. Wiki health's body was a head row, then a bare readout
+  // block, then a bare chip row, then an action bar, then folds — five
+  // treatments. The counts and the chips are ONE fold row now, whose summary
+  // carries the reading that decides whether to open it, and the issue lists
+  // below it were already rows.
+  //
+  // CLOSED BY DEFAULT, which is the same call step ③ Knowledge made in
+  // v3.64.2: the headline IS the reading, and the breakdown is the dive-in.
+  // `.dm-group` rather than `.dm-fold` because this row lives INSIDE the
+  // health card — `.dm-fold` is the card-level fold two of this page's
+  // sections are, and a card inside a card is two objects where the design
+  // has one.
+  //
+  // WHAT STAYS OUTSIDE IT, and this is v3.16.1 unmoved: the revalidating
+  // caveat below, every banner, every confirm, every plan and the whole Quick
+  // maintenance bar. A warning, a COST or an outcome may never sit behind a
+  // chevron, and that bar carries a price on every button.
+  const scanOpen = state.expandedGroups.has('scan');
+  const scanRow =
+    '<details class="dm-group dm-group-scan"' + (scanOpen ? ' open' : '') + ' data-group-key="scan">' +
+      '<summary class="dm-group-summary">' +
+        icon('chevronRight', 13) +
+        '<span class="dm-group-label">Scan</span>' +
+        '<span class="dm-group-meta">' +
+          escapeHtml(pluralize(total, 'open issue') +
+            (report.scannedAt ? ' · ' + relTime(report.scannedAt) : '')) +
+        '</span>' +
+      '</summary>' +
+      '<div class="dm-group-body dm-scan-body">' +
+        healthMonitor +
+        '<div class="dm-chip-row">' + chips + '</div>' +
+      '</div>' +
+    '</details>';
 
   // Same one-shot token as the page list's, same reason: a report that lands
   // after a 750 ms scan has missed the view-enter animation entirely, so it
@@ -6581,14 +6688,17 @@ function renderHealthPanel(domain, readonly) {
       // its margins on `.dm-health-summary` instead of reaching into the
       // component. That is the stricter and better arrangement: a view that
       // cannot name a role's class cannot quietly restyle it either.
-      '<div class="dm-health-summary">' +
-        (revalidating
-          ? renderStatus({ state: 'attention', title: 'Re-scanning… showing the previous result',
-                           detail: 'The figures below are the last completed scan’s until this one finishes.' })
-          : '') +
-        healthReadouts +
-      '</div>' +
-      '<div class="dm-chip-row">' + chips + '</div>' +
+      // THE WRAPPER EXISTS ONLY WHEN IT HAS SOMETHING IN IT. It carried the
+      // readouts too through v3.64.2, so it was always there; with the
+      // figures inside the Scan row it would otherwise be an empty box
+      // spending its own 16px bottom margin on nothing.
+      (revalidating
+        ? '<div class="dm-health-summary">' +
+            renderStatus({ state: 'attention', title: 'Re-scanning… showing the previous result',
+                           detail: 'The figures below are the last completed scan’s until this one finishes.' }) +
+          '</div>'
+        : '') +
+      '<div class="dm-groups dm-groups-scan">' + scanRow + '</div>' +
       (state.banner ? renderBanner() : '') +
       (readonly ? renderMirrorNote() : renderQuickMaintenance(domain, report, crossMountBusy)) +
       (readonly ? '' : renderAiProgressRing()) +

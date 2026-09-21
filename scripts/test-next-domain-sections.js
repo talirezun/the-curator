@@ -202,6 +202,11 @@ let box;
 try {
   box = new Function('docsLinkHtml', 'renderOverview',
     PREAMBLE +
+    // v3.65.0 (R4): section ①'s explanation left the fold's BODY for an ⓘ on
+    // its head, and the sentence is a module const so `renderMain` does not
+    // carry a paragraph every lifting sandbox has to carry with it. LIFTED,
+    // not stubbed — the words are the thing R4 moved.
+    extractConstText(SRC, 'INGEST_INFO') + '\n' +
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
     extractConstArray(SRC, 'BROWSE_FOLDERS') + '\n' +
@@ -304,10 +309,40 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
     ok('each fold carries exactly one empty host element for its panel',
       (html.match(/id="dm-sources-host"><\/div>/g) || []).length === 1
       && (html.match(/id="dm-shared-host"><\/div>/g) || []).length === 1);
-    // The lede the maintainer wrote, rendered through the shared text role
-    // rather than as a loose paragraph under a heading.
-    ok('INGEST carries its lede, and it is a `.tx-desc`',
-      /<p class="tx-desc">Drop a PDF, markdown or text file\./.test(html), html.slice(0, 400));
+    // ── R4: THE EXPLANATION MOVED INTO THE ⓘ (v3.65.0) ─────────────────
+    // It was a `.tx-desc` inside the fold's BODY, which is worse than a lede
+    // under a heading rather than better: you only reach it by OPENING the
+    // fold, i.e. at the moment you are about to drop a file and least want a
+    // paragraph. The maintainer's rule, from the same shape on the Context
+    // view: *"maybe we don't need the first sentence, we just need the
+    // information icon beside the title."* Nothing was deleted — the words
+    // are asserted present, behind the mark, closed.
+    ok('the fold\'s BODY is the panel\'s host and nothing else',
+      /<div class="dm-fold-body"><div class="dm-host" id="dm-sources-host"><\/div><\/div>/.test(html),
+      (/<div class="dm-fold-body">[^]{0,160}/.exec(html) || ['(none)'])[0]);
+    ok('...so no description survives inside it',
+      !/<div class="dm-fold-body"><p class="tx-desc"/.test(html));
+    ok('the sentence is on the HEAD\'s ⓘ instead, with the same words',
+      /id="dm-ingest-info"[^>]*hidden>Drop a PDF, markdown or text file\./.test(html),
+      (/<div class="tx-vh-panel" id="dm-ingest-info"[^]{0,160}/.exec(html) || ['(none)'])[0]);
+    ok('...and the mark that opens it sits in the head row, beside the title',
+      /<div class="dm-section-head-row"><div class="dm-section-hd"><span class="dm-section-num" aria-hidden="true">1<\/span><div class="cur-group-title dm-section-eyebrow">Ingest<\/div><\/div><button type="button" class="tx-vh-info" id="dm-ingest-info-btn"/.test(html),
+      (/<div class="dm-section dm-section-hd-block">[^]{0,300}/.exec(html) || ['(none)'])[0]);
+    // ── AND THE HEAD BLOCK IS STILL ONE TOP-LEVEL SIBLING ───────────────
+    // D-J: `patchMainAroundHosts` finds a hosted fold by `before.id` over the
+    // TOP-LEVEL children of `.main-inner`. A head that WRAPPED the `<details>`
+    // in order to hold its panel would hide that id one level down, so the
+    // fold would be compared by outerHTML and REPLACED on every paint —
+    // remounting the panel and destroying a drop target under a held drag.
+    {
+      const top = parseHtmlToChildren(html).children;
+      const iHead = top.findIndex((n) => hasClass(n, 'dm-section-hd-block'));
+      const iFold = top.findIndex((n) => n.attrs.id === 'dm-sources-fold');
+      ok('the head block and the fold are SIBLINGS at the top level, head first',
+        iHead >= 0 && iFold >= 0 && iHead + 1 === iFold, iHead + '/' + iFold);
+      ok('...and the panel is INSIDE the head block, not a third sibling between them',
+        iHead >= 0 && flatten(top[iHead]).some((n) => n.attrs.id === 'dm-ingest-info'));
+    }
 
     // ── THE FIVE SECTIONS ARE NUMBERED (v3.64.1) ────────────────────────
     //
