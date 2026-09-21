@@ -251,6 +251,35 @@ section('7. views/sync.css carries the animation and its reduce escape for this 
     'a prefers-reduced-motion: reduce rule in the SAME file disables it (animation: none) for the same selector');
 }
 
+section('8. The connection reading is THE MONITOR \u2014 the same call the MCP bridge makes (v3.65.0, M11)');
+{
+  // `.sync-status-card > .sync-status-top` was a hand copy of
+  // views/settings.js's bridge status card: the same `.status-pill`, the same
+  // mono `<code>` identity line, the same trailing age, written twice in two
+  // files. Both are `renderMonitor()` now. Asserted on the RENDERED string,
+  // not on a class name in the source, because what matters is that the same
+  // two facts still reach the screen through the one component.
+  const html = renderConfigured(statusFixture);
+  ok(html.includes('cur-mon'), 'renderConfigured paints a monitor');
+  ok(/cur-mon-state cur-mon-ok[^]*Connected/.test(html),
+    '\u2026whose head word is the connection state, in the ok tone');
+  ok(html.includes('https://github.com/example/knowledge-base'),
+    '\u2026the repository it is connected TO is a reading');
+  ok(/cur-mon-key">last synced/.test(html) && html.includes('never'),
+    '\u2026and so is the age of the last exchange, which on a fresh connection says "never"');
+  ok((html.match(/class="cur-mon"/g) || []).length === 1,
+    'exactly ONE monitor \u2014 the warning, the cross-write refusal and the action row beside it '
+    + 'are not readings and must not become instruments');
+  ok(!html.includes('status-pill') && !html.includes('sync-status-top')
+     && !html.includes('sync-repo') && !html.includes('sync-last'),
+    'and none of the four retired class names is written any more \u2014 an unreferenced set of '
+    + 'card rules is what a fifth hand-built status card gets assembled out of');
+  ok(!/class="[^"]*\bmono\b[^"]*"/.test(html),
+    'the repo URL keeps the code face from --type-mono on the block, not from the `mono` '
+    + 'utility, so this view spends one fewer of the budget that exists to stop screens '
+    + 'reading as build logs');
+}
+
 console.log('\n' + '─'.repeat(62));
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) {

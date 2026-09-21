@@ -172,7 +172,16 @@ section('§1  THE CLASS GUARD — no view hand-rolls a header');
     // that button into the actions slot, which is a change to a view this pass
     // did not own.
     'domains.js': 4,
-    'settings.js': 1,
+    // settings.js IS GONE FROM THIS LIST (v3.65.0), by this table's own
+    // protocol: adopting turns the entry stale, the count check goes red, and
+    // whoever adopted it deletes the line. Its one hand-rolled
+    // `<div class="sidebar-title">` is `renderSidebarHead()`'s output now
+    // (shared/sidebar.js) — not renderViewHeader's, but the same property and
+    // the one this ratchet is actually about: the title comes from a
+    // component, the component offers no slot under it, and the structure that
+    // would accept a floating paragraph no longer exists in the view. Pinned
+    // INVERTED below, the way chat.js's was, so the adoption cannot regress
+    // into a passing budget of 1.
     // Its title embeds `<span class="sb-beta-pill">beta</span>`. renderViewHeader
     // ESCAPES the title, so adopting needs the markup relocated to the actions
     // slot — a real decision about that view, not a mechanical swap.
@@ -189,6 +198,15 @@ section('§1  THE CLASS GUARD — no view hand-rolls a header');
       viewFiles.includes(f) && (SRC[f].match(HAND_ROLLED) || []).length === PENDING[f],
       `expected ${PENDING[f]}, found ${(SRC[f] ? (SRC[f].match(HAND_ROLLED) || []).length : 'file missing')}`);
   }
+  // SETTINGS' OWN INVERSION (v3.65.0), same rule, same shape as chat.js's
+  // below: the file paints no raw sidebar title, and the head it paints
+  // instead is the kit's — asserted by the CALL, because a count of zero is
+  // also satisfied by a sidebar that stopped rendering a title at all.
+  ok('FIXED, AND PINNED — settings.js paints no raw <div class="sidebar-title">',
+    !/class="sidebar-title"/.test(SRC['settings.js']));
+  ok('…and its sidebar head comes from the component (renderSidebarHead)',
+    /renderSidebarHead\s*\(/.test(SRC['settings.js']));
+
   // THE LIVE ONE, NOW INVERTED. This assertion used to pin the defect's exact
   // shape in chat.js ("RECORDED, NOT FIXED"). Deleting it on the fix would have
   // left the fix guarded only by a COUNT, and a count is satisfied by any three

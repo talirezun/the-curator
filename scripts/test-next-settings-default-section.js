@@ -452,5 +452,71 @@ console.log('\n§6  General uses settingsBlock, and no lede runs past 13 words')
   }
 }
 
+// ═════════════════════════════════════════════════════════════
+console.log('\n§5  THE SIDEBAR IS THE APP’S ONE SIDEBAR (v3.65.0)');
+// ═════════════════════════════════════════════════════════════
+//
+// EXECUTED against the REAL component, on the same lifted `renderSidebar` §4
+// runs, because what the maintainer reported is a rendered thing: *"the same
+// goes for the Settings sidebar: follow the Domains pattern — use the Updates
+// button, put it on top in the same design as Domains ... if I select General
+// I get a violet line on the left; we don\u2019t get this in Domains or Context
+// ... we don\u2019t need this line."*
+{
+  let out = '';
+  const paint = (state) => {
+    let captured = '';
+    new Function(
+      'SETTINGS_SECTIONS', 'state', 'escapeHtml', 'setSidebar', 'lastSidebarHtml',
+      'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow',
+      renderSidebarSrc + '\nreturn renderSidebar;'
+    )(SETTINGS_SECTIONS, state, (x) => String(x), (html) => { captured = html; }, null,
+      renderSidebarHead, renderSidebarGroup, renderSidebarRow)(1);
+    return captured;
+  };
+  out = paint({ section: 'mcp', version: { version: '3.65.0', restartRequired: false } });
+
+  ok(/class="btn btn-secondary cur-sb-secondary" id="settings-updates-btn"/.test(out),
+    'UPDATES IS THE TOP SECONDARY \u2014 the slot Domains gives "Use existing folder", '
+    + 'with the id its handler binds to unchanged');
+  const upAt = out.indexOf('settings-updates-btn');
+  const listAt = out.indexOf('cur-sb-list');
+  const footAt = out.indexOf('settings-sidebar-footer');
+  ok(upAt > 0 && listAt > upAt,
+    '\u2026ON TOP: it is emitted before the row list, not after it');
+  ok(footAt > listAt && upAt < footAt,
+    '\u2026and it has LEFT the footer, which now holds the version label alone');
+  ok(/settings-sidebar-footer"><span class="mono settings-version">The Curator v3.65.0<\/span><\/div>/.test(out),
+    '\u2026exactly alone: a version string is a reading, not an action (R6)');
+
+  ok(/class="cur-sb-row settings-nav-row active"/.test(out),
+    'the selected row is the FILLED row \u2014 the kit\u2019s `active` class, and nothing else');
+  ok((out.match(/class="cur-sb-row settings-nav-row active"/g) || []).length === 1,
+    '\u2026exactly one of them');
+  ok(!/::before|sidebar-edge|nav-edge/.test(out),
+    '\u2026with no edge element of any kind in the markup (R10)');
+
+  // THE ALIAS IS NOT DECORATION: this view’s own click binder queries
+  // `.settings-nav-row`, views/onboarding.js’s "open the MCP bridge" door
+  // queries `.settings-nav-row[data-section="mcp"]`, and four suites name the
+  // tokens. A kit adoption that dropped them would break a door and three
+  // sandboxes, silently.
+  for (const token of ['cur-sb-list settings-nav-list', 'cur-sb-row settings-nav-row',
+                       'cur-sb-name row-label', 'cur-sb-event row-hint']) {
+    ok(out.includes(token), `both names ride the same element: \`${token}\``);
+  }
+  ok(/\.settings-nav-row\[data-section="mcp"\]/.test(
+       readFileSync(join(NEXT, 'views/onboarding.js'), 'utf8')),
+    'CONTROL: views/onboarding.js really does still query that pair \u2014 the alias is load-bearing, '
+    + 'not sentiment');
+
+  // THE OMITTED SLOTS. Settings rows are a name and a hint; passing an empty
+  // figure or a missing age must render NOTHING rather than an empty 11px
+  // line that opens a gap under every label.
+  ok(!out.includes('cur-sb-meta') && !out.includes('cur-sb-dot')
+     && !out.includes('cur-sb-figure') && !out.includes('cur-sb-age'),
+    'the dot, the figure and the age line are OMITTED, not rendered empty');
+}
+
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

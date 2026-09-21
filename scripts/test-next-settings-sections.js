@@ -224,7 +224,7 @@ function baseState() {
   };
 }
 
-function run(name, state, over) {
+function lift(name, state, over) {
   const deps = {
     state,
     escapeHtml: (x) => String(x)
@@ -275,7 +275,19 @@ function run(name, state, over) {
   Object.assign(deps, over || {});
   const names = Object.keys(deps);
   const fn = new Function(...names, [REAL, extractFunction(src, name), `return ${name};`].join('\n'));
-  return fn(...names.map((n) => deps[n]))();
+  return fn(...names.map((n) => deps[n]));
+}
+
+/**
+ * `run()` lifts a renderer and CALLS it with no arguments, which is what every
+ * section renderer here takes. Two v3.65.0 assertions need the FUNCTION
+ * instead: one to hand `renderMcp` the REAL `renderSelfTestResult` as a
+ * collaborator (run()'s default stub of it is precisely what M9 replaced), and
+ * one because `renderSessionStrip` takes arguments. Same sandbox, same REAL
+ * bodies, one step short of the call — so `run` is now that one step.
+ */
+function run(name, state, over) {
+  return lift(name, state, over)();
 }
 
 /**
@@ -677,6 +689,107 @@ section('G5  Every <details> in this view carries a data- hook');
     unhooked.length
       ? `<details> with no data- hook (render() cannot restore it after a repaint):\n      ${unhooked.join('\n      ')}`
       : 'every <details> carries a data- attribute, so render()\'s capture/restore can key on it');
+}
+
+// ═════════════════════════════════════════════════════════════
+section('G6  The MCP bridge\u2019s live readings are MONITORS, and a warning is never a reading');
+// ═════════════════════════════════════════════════════════════
+//
+// v3.65.0 (M7–M10). The status card, the stale-bridge note, the self-test
+// result and the two session readings were four hand-built shapes for one
+// idea; they are `renderMonitor()` calls now. What is asserted here is what a
+// class name alone cannot say: that the STATE WORD is the pill’s own label and
+// its tone is the one `deriveMcpStatus` derived, and — the v3.16.1 rule — that
+// every warning lands OUTSIDE the line list, where it cannot be skimmed past
+// as one more figure.
+//
+// `renderSelfTestResult` is lifted REAL for this section rather than taking
+// run()’s stub, because M9 is precisely what that stub stands in for.
+function linesBlockOf(html) {
+  const a = html.indexOf('cur-mon-lines');
+  if (a < 0) return '';
+  const b = html.indexOf('</div><div class="cur-mon-loud', a);
+  const c = html.indexOf('cur-mon-note', a);
+  const end = [b, c].filter((x) => x > 0).sort((x, y) => x - y)[0];
+  return end ? html.slice(a, end) : html.slice(a);
+}
+
+{
+  const html = run('renderMcp', baseState());
+  ok(html.includes('cur-mon'), 'renderMcp: the connection strip is a MONITOR, not a hand-built status card');
+  ok(html.includes('cur-mon-state') && html.includes('Connected'),
+    '\u2026whose head word is the pill\u2019s own label');
+  ok(/cur-mon-state cur-mon-ok/.test(html),
+    '\u2026carrying the tone deriveMcpStatus derived (connected \u2192 ok)');
+  ok(html.includes('my-curator') && html.includes('/tmp/d'),
+    '\u2026and the server name and domains folder are its lines');
+  ok(!html.includes('status-pill') && !html.includes('mcp-path-line'),
+    '\u2026and neither retired class name is written any more');
+}
+{
+  const off = baseState();
+  off.mcp = { mcp_server_name: 'my-curator', domains_dir: '/tmp/d', installed: false, stale: false };
+  const html = run('renderMcp', off);
+  ok(/cur-mon-state cur-mon-quiet/.test(html) && html.includes('Not connected'),
+    'a bridge nobody has set up is QUIET, never warn \u2014 an amber mark on a fresh install '
+    + 'reports a fault the app invented');
+}
+{
+  const bad = baseState();
+  bad.mcp = { mcp_server_name: 'my-curator', domains_dir: '/tmp/d', claude_config_parse_error: true };
+  const html = run('renderMcp', bad);
+  ok(/cur-mon-state cur-mon-danger/.test(html) && html.includes('Config unreadable'),
+    '\u2026and a config the app could not PARSE is the one danger state');
+}
+{
+  // THE STALE-BRIDGE WARNING (M8) \u2014 loud, and outside the readings.
+  const st = baseState();
+  st.mcp = { ...st.mcp,
+    bridge_processes: { checked: true, running: 2,
+      stale: [{ pid: 1, startedAt: new Date(Date.now() - 36e5).toISOString(), ageMs: 36e5 }] },
+    bridge_stale_remedy: 'Restart the app that launched it.' };
+  const html = run('renderMcp', st);
+  ok(html.includes('cur-mon-loud'), 'the stale-bridge note is a `loud` entry inside the monitor');
+  ok(html.includes('Restart the app that launched it.'),
+    '\u2026carrying the remedy sentence the ROUTE supplied, verbatim');
+  ok(!linesBlockOf(html).includes('still running from before this version'),
+    '\u2026and it is NOT in the line list: v3.16.1 \u2014 a warning is never one more reading');
+  ok(insideHiddenContainer(html, 'still running from before this version') === false,
+    '\u2026nor inside any fold');
+}
+{
+  // THE SELF-TEST OUTCOME (M9), both arms, through the REAL renderer.
+  const okState = baseState();
+  okState.selfTest = { ok: true, tool_count: 24, tool_names: ['get_index'], domains: ['alpha'] };
+  const good = run('renderMcp', okState,
+    { renderSelfTestResult: lift('renderSelfTestResult', okState) });
+  ok(/cur-mon-state cur-mon-ok[^]*Bridge responds/.test(good),
+    'a passing self-test is a monitor whose head word is the outcome');
+  ok(good.includes('24'), '\u2026with the tool count as a reading');
+
+  const failState = baseState();
+  failState.selfTest = { ok: false, error: 'spawn ENOENT' };
+  const bad = run('renderMcp', failState,
+    { renderSelfTestResult: lift('renderSelfTestResult', failState) });
+  ok(/cur-mon-state cur-mon-danger[^]*Self-test failed/.test(bad),
+    'a failing one says so in its head word, in the danger tone');
+  ok(/cur-mon-loud[^]*spawn ENOENT/.test(bad) && !linesBlockOf(bad).includes('spawn ENOENT'),
+    '\u2026and the server\u2019s own message is LOUD, not a reading \u2014 it is the outcome of a press '
+    + 'and the only thing on screen the user can act on');
+}
+{
+  // THE SESSION READINGS (M10) \u2014 one monitor, and the 1s clock still reaches
+  // both lines through the hook composed inside `markHtml`.
+  const stamp = new Date(Date.now() - 45 * 60e3).toISOString();
+  const strip = lift('renderSessionStrip', baseState())(
+    { lastBootstrapAt: stamp, lastSaveAt: null }, Date.now());
+  ok((strip.match(/class="cur-mon-line"/g) || []).length === 2,
+    'the two session readings are TWO LINES of ONE monitor, not two blocks');
+  ok(strip.includes('data-mcp-age-at="' + stamp + '"') && strip.includes('mcp-age-words'),
+    '\u2026and a stamped reading carries the tick hook and the element the clock writes into');
+  ok(!/data-mcp-age-at[^>]*>\s*<span class="mcp-age-words">none since/.test(strip)
+     && strip.includes('none since this log began'),
+    '\u2026while an absent one says so in words and takes no hook, because there is nothing to recount');
 }
 
 console.log('\n────────────────────────────────────────────────────────────');
