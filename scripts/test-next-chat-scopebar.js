@@ -1469,6 +1469,24 @@ section('§15 — THE PINNED PROJECT\'S KNOWLEDGE DOMAINS (v3.65.0, P10)');
       'the mark is a DASHED edge — "belongs to a set", not "selected"');
     ok(!/border-style:\s*dashed/.test(active),
       'CONTROL: and the selected chip is not dashed, so the two never look alike');
+    /* ── THE MARK MUST NOT BE THE PLAIN CHIP'S OWN COLOUR ─────────────────
+       FOUND IN THE BROWSER, not by this suite: the first cut used
+       `--accent-border`, which composited to 1.65:1 against the bar where the
+       plain chip's edge is 1.27:1 — a mark you cannot find, and in the
+       SELECTED chip's own hue. A mark that measures like no mark is the
+       failure mode here, so the token is pinned by name and separated from
+       both neighbours. */
+    const plainDecl = /border:\s*1px\s+solid\s+var\(([^)]+)\)/.exec(bodyOf('.chat-scope-pill'));
+    ok(!!plainDecl, 'CONTROL: the plain chip declares its own border token');
+    const markColor = (/border-color:\s*var\(([^)]+)\)/.exec(mark) || [])[1];
+    ok(!!markColor && markColor.trim() !== plainDecl[1].trim(),
+      `★ the mark's colour is NOT the plain chip's (${markColor} vs ${plainDecl[1]})`);
+    const activeColor = (/border-color:\s*var\(([^)]+)\)/.exec(active) || [])[1];
+    ok(!!activeColor && markColor.trim() !== activeColor.trim(),
+      `★ …and NOT the selected chip's either (${markColor} vs ${activeColor}) — "marked" and "selected" ` +
+      'are different states and must not share an edge colour');
+    ok(/border-color:\s*var\(--accent\)\s*;?\s*$|border-color:\s*var\(--accent\)\s*;/.test(mark.trim() + ';'),
+      '…and it is the full-strength accent, which measured 4.41:1 against the bar (the 3:1 floor for a mark)');
   }
 
   // ── §15c — A DOMAIN THAT IS NOT ON THIS COMPUTER ────────────────────────

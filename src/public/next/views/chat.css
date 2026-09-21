@@ -657,12 +657,24 @@
    half only. */
 .chat-scope-pill.in-project {
   border-style: dashed;
-  border-color: var(--accent-border);
+  /* ── --accent, NOT --accent-border, AND IT WAS MEASURED ────────────────
+     The first cut used `--accent-border` — the token the SELECTED chip's own
+     edge uses. In the browser that composited to 1.65:1 against the bar
+     against the plain chip's 1.27:1: a step too small to find, and the same
+     hue as the selected chip, so the one thing the mark must not say ("this
+     is selected") was the thing it said loudest. `--accent` at full strength
+     measures 4.41:1 — over the 3:1 floor for an informational mark — and is
+     unmistakably NOT the selected chip, which carries a FILL and a solid
+     faint edge. Loud edge + no ground vs quiet edge + ground: two states, two
+     shapes, neither borrowed from the other. */
+  border-color: var(--accent);
 }
-/* Selected AND named by the project: the tint wins the ground, the dashed edge
-   survives. Declared after `.active` (which it ties with) so neither erases
-   the other, and matching `.active`'s own border-color so the edge reads as
-   one control rather than two rings. */
+/* Selected AND named by the project: the tint wins the ground and the edge
+   goes back to `.active`'s own quiet colour, keeping only the dash. A chip
+   that is both does not need shouting at — the fill already says "this is what
+   you are reading", and a full-strength dashed ring on top would make the one
+   chip that matters most the noisiest thing in the bar. Declared after
+   `.active` (which it ties with on specificity) so the order is deliberate. */
 .chat-scope-pill.in-project.active { border-color: var(--accent-border); }
 .chat-scope-pill:not(.active):active { background: var(--surface-active); }
 .chat-scope-pill.active:active { background: var(--accent-tint-strong); }
