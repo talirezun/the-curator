@@ -506,6 +506,17 @@ const EXPECTED = [
   ['post', '/:domain/projects'],
   ['patch', '/:domain/projects/:project'],
   ['delete', '/:domain/projects/:project'],
+  // v3.65.0. WHICH WIKIS A PROJECT'S KNOWLEDGE LIVES IN — curator metadata
+  // about the project (`state/[<project>/]project.json`), so the app is its
+  // one writer and no tier-2/3 rule is touched. FOUR SEGMENTS, and here the
+  // count IS correctness rather than readability: the `patch` row directly
+  // above matches ANY three-segment PATCH whose second segment is literally
+  // `projects`, and a domain's own project is named after the domain — so a
+  // three-segment `…/:project/knowledge` on the maintainer's own
+  // `projects/projects` would have been answered by the RENAME handler,
+  // about a project called `knowledge`. Measured with a stand-in router
+  // before this route was written.
+  ['patch', '/:domain/:project/knowledge/domains'],
   // TIER 0 (v3.59.0; the write rows v3.61.0). Four segments, so none can
   // shadow — or be shadowed by — the two-segment reads below; the ordering
   // WITHIN this group is readability, not correctness, and no `:slug` row
@@ -2455,7 +2466,13 @@ const REPO = join(TMP, 'repo');
   // pattern can match a four-segment path, so the collision cannot reach here.
   {
     const four = ROUTES.filter((r) => r.path.split('/').filter(Boolean).length === 4).map((r) => r.path);
-    ok('every foundations route is four segments deep', four.length === 6, JSON.stringify(four));
+    // SIX tier-0 rows, plus v3.65.0's knowledge-domains PATCH, which is four
+    // segments for the same reason and is counted separately so the tier-0
+    // claim keeps its own number rather than absorbing every later addition.
+    const fourFoundations = four.filter((p) => p.includes('/foundations'));
+    ok('every foundations route is four segments deep', fourFoundations.length === 6, JSON.stringify(four));
+    ok('...and the knowledge-domains write is four segments deep for the same reason',
+      four.includes('/:domain/:project/knowledge/domains'), JSON.stringify(four));
     const twoGet = ROUTES.filter((r) => r.method === 'get'
       && r.path.split('/').filter(Boolean).length === 2).map((r) => r.path);
     eq('...while the colliding literal is a TWO-segment pattern',

@@ -248,6 +248,39 @@ section('§7  Foundations: slug grammar, roles, caps');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+section('§7b  project.json: the file, the cap, and the default EXECUTED');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  const body = sectionText('the project\u2019s own metadata') || sectionText('project.json');
+  ok(body !== null, 'the spec has a §7b for `project.json`');
+  ok(spec.includes(`\`${ws.PROJECT_META_FILENAME}\``), `the spec names the file \`${ws.PROJECT_META_FILENAME}\``);
+  ok(spec.includes(`"version": ${ws.PROJECT_META_VERSION}`),
+    `the spec shows version ${ws.PROJECT_META_VERSION} in the example`);
+  // `(?![0-9])` IS LOAD-BEARING, and it was found by mutation: without it,
+  // moving the live cap to 20 stayed GREEN because the manifest table one
+  // section down says "at most `200` entries", which "at most `?20`?"
+  // happily matches. An anchor that matches something else reports a cap
+  // the spec does not state.
+  ok(new RegExp(`at most \`?${ws.MAX_KNOWLEDGE_DOMAINS}\`?(?![0-9])`).test(body || ''),
+    `the spec states the ${ws.MAX_KNOWLEDGE_DOMAINS}-domain cap — the live MAX_KNOWLEDGE_DOMAINS`);
+  const reservedLine = (spec.split('\n').find((l) => /A project may not be called/.test(l)) || '');
+  ok(reservedLine.includes(`\`${ws.PROJECT_META_FILENAME}\``),
+    'the spec lists it among the reserved project names', reservedLine.slice(0, 120));
+  // EXECUTED, because the claim a table cannot make is the DEFAULT's shape:
+  // "absent is a value, and it is not an empty list."
+  const metaDefault = await ws.readProjectMeta(DOMAIN, DOMAIN);
+  ok(Array.isArray(metaDefault.knowledgeDomains) && metaDefault.knowledgeDomains.length === 1
+    && metaDefault.knowledgeDomains[0] === DOMAIN,
+  'EXECUTED: with no file, the list is the containing domain');
+  ok(metaDefault.knowledgeDomainsDefaulted === true,
+    'EXECUTED: …and the second field says it was defaulted, which is the whole promise');
+  ok(ws.normaliseKnowledgeDomains(Array.from({ length: ws.MAX_KNOWLEDGE_DOMAINS + 1 }, (_, i) => `d${i}`)).domains.length
+    === ws.MAX_KNOWLEDGE_DOMAINS, 'EXECUTED: the cap the spec states is the cap the store applies');
+  ok(ws.projectPrefix(DOMAIN, ws.PROJECT_META_FILENAME) === null,
+    'EXECUTED: the reserved name really is unaddressable as a project');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 section('§8  The usage-log appendix, against mcp-usage.js');
 // ═════════════════════════════════════════════════════════════════════════
 {
