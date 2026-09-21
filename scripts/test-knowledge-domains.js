@@ -378,8 +378,11 @@ section('7. THE ROUTE — a strict body, and no collision with the rename');
     const mirror = await req('PATCH', '/shared-mirror/shared-mirror/knowledge/domains', { knowledgeDomains: ['beta'] });
     eq(mirror.status, 403, 'a Shared Brain mirror is refused with a 403');
     eq(mirror.body.reason, 'readonly', '...under the readonly reason');
-    assert(/rebuilt from the collective/.test(mirror.body.error || ''),
-      '...from the ROUTE\'s own guard, which says what a local write would cost — not merely from the store behind it',
+    // The phrase has to be one ONLY the route says: the store's own readonly
+    // message also contains "rebuilt from the collective", so the obvious
+    // grep matched both layers and the mutation stayed green a second time.
+    assert(/Projects and briefs live in your own/.test(mirror.body.error || ''),
+      '...from the ROUTE\'s own guard, whose sentence is about this app\'s projects — not from the store behind it',
       mirror.body.error);
 
     // ── THE COLLISION CONTROL ────────────────────────────────────────────
