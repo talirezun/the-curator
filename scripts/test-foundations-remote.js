@@ -1049,6 +1049,26 @@ section('13. A MIRROR BORN REMOTE — initFoundations with a `remote` (v3.65.0)'
   eq(gh5.calls.length, 0, '...and no request was made with it');
   assert(!JSON.stringify(planted).includes(CONFIG_TOKEN), '...and the planted value is not echoed back');
   assert(!existsSync(manifestPath('planted')), '...and nothing was written');
+
+  // …AND THE SAME AT THE LAYER THAT COULD ACTUALLY HONOUR ONE. `init` does
+  // not forward `token`, so the assertions above would stay green even if the
+  // REFRESH started reading `opts.token` — measured, by mutation: teaching
+  // `refreshRemoteCore` to prefer a caller's token left this whole section
+  // green. The refresh is where a forwarded token would be used, so the
+  // refusal has to be driven there too.
+  await seedRemoteProject('plantedrefresh', {
+    remote: { owner: 'acme', repo: 'thing', ref: null, path: null },
+  });
+  const gh6 = makeGitHub(REPO_FILES);
+  const plantedRefresh = await refreshFoundationsFromRepo(D, 'plantedrefresh', null, {
+    source: 'remote', token: CONFIG_TOKEN,
+    files: [{ path: 'docs/architecture.md' }],
+    fetchImpl: gh6.fetchImpl, sleepImpl: fakeSleep,
+  });
+  eq(plantedRefresh.ok, false, 'a token in the REFRESH\'s arguments does not authorise it either');
+  eq(plantedRefresh.reason, 'no-token', '...the token is read from a FILE, and there is none');
+  eq(gh6.calls.length, 0, '...so no request was made with it');
+  assert(!JSON.stringify(plantedRefresh).includes(CONFIG_TOKEN), '...and it is not echoed back');
   seedTokens();
 }
 
