@@ -399,7 +399,7 @@ const viewFiles = readdirSync(VIEWS).filter((f) => f.endsWith('.js'));
 // is how a hand-rolled menu gets added back beside the shared one. §5b below
 // asserts memory.js is now free of the component in BOTH directions, so this
 // removal cannot be a silent regression back to a private picker.
-const ADOPTERS = ['ingest.js', 'settings.js', 'chat.js'];
+const ADOPTERS = ['ingest.js', 'settings.js', 'chat.js', 'memory.js'];
 
 // A whole-tree walk, never a hardcoded file list: a hardcoded list is how a
 // previous guard in this repo went blind (v3.9.2).
@@ -432,7 +432,18 @@ ok(selectOffenders.length === 0,
 // The count is pinned rather than left open because an UNPINNED count is how a
 // hand-rolled menu gets added back beside the shared one without anything
 // noticing — which is the state chat.js was in when this file was written.
-const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 3 };
+//   · `mem-k-add`          — step ③'s "+ Add a wiki" (v3.65.0, P10). The
+//                            maintainer: *"how do I select exactly which
+//                            domain I want my project to use? ... Where do I
+//                            select which domain gets sourced — is this even
+//                            an option?"* It was not. ONE ADD AT A TIME,
+//                            because this component implements no
+//                            multi-select and says so in its own header, and
+//                            a second selection paradigm built here is the
+//                            thing v3.65.0 exists to remove; the menu offers
+//                            only the domains not already chosen, and each
+//                            chosen wiki carries its own Remove on its row.
+const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 3, 'memory.js': 1 };
 let total = 0;
 for (const f of ADOPTERS) {
   const src = readFileSync(path.join(VIEWS, f), 'utf8');
@@ -449,29 +460,47 @@ for (const f of ADOPTERS) {
   ok((code.match(/closeAllListboxes\(\)/g) || []).length >= 1,
     `${f} closes any open menu on teardown/repaint (in CODE, not in a comment)`);
 }
-ok(total === 10, `TEN adoptions across three views (found ${total})`);
+ok(total === 11, `ELEVEN adoptions across four views (found ${total})`);
 
-// ── §5b — memory.js is free of the component, in BOTH directions ──────────
-// Dropping a file from ADOPTERS removes every assertion about it, so without
-// this block the view could quietly grow a picker again — or, worse, a
-// hand-rolled one — and nothing here would notice. Asserted over the RAW
-// source for the import and over COMMENT-STRIPPED code for the calls, because
-// this file's own header records a mutation that a comment satisfied.
+// ── §5b — memory.js has exactly ONE picker, and it is this one ────────────
+//
+// WHAT THIS BLOCK USED TO SAY, and why the claim moved rather than went:
+// v3.55.0 deleted this view's scope and machine pickers for a TABLE, and this
+// block pinned their absence in both directions — over the raw source for the
+// import and over comment-stripped code for the calls — because dropping a
+// file from ADOPTERS removes every assertion about it, so without it the view
+// could quietly grow a picker again, or a hand-rolled one, and nothing would
+// notice.
+//
+// v3.65.0 gives it one back, and it is a DIFFERENT question: the two that were
+// deleted hid a LIST the user needed to see, while this one adds to a list
+// that is already on screen as rows. So `memory.js` joins ADOPTERS — which
+// brings the adoption count, the import check and the `closeAllListboxes`
+// check with it — and what this block keeps is the half that still bites: the
+// two DELETED pickers have not come back, and no menu has been hand-rolled.
 {
   const memSrc = readFileSync(path.join(VIEWS, 'memory.js'), 'utf8');
   const memCode = memSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-  for (const name of ['renderListboxHtml', 'mountListbox', 'closeAllListboxes', 'pendingListboxes']) {
-    ok(!new RegExp(name).test(memCode),
-      `memory.js no longer reaches for \`${name}\` — the pickers are a table now`);
-  }
-  ok(!/shared\/listbox\.js/.test(memCode),
-    'memory.js no longer imports the listbox component at all');
-  // AND IT DID NOT REPLACE ONE POPUP WITH ANOTHER. The table is a <table> of
-  // <button>s; a view that grew its own menu would show up here.
-  ok(!/role="listbox"|role="combobox"|aria-haspopup/.test(memSrc),
-    'memory.js did not hand-roll a replacement popup');
+  ok(!/pendingListboxes/.test(memCode),
+    'memory.js needs no render -> wire handoff array — its one picker is mounted '
+    + 'from the cfg `wire` composes, in the same function');
+  // THE ONE ADOPTION IS THE WIKI PICKER, by name, so the count above cannot be
+  // satisfied by some other menu appearing.
+  ok(/id: 'mem-k-add'/.test(memCode),
+    'the one adoption is step ③\'s wiki picker');
+  ok(/renderListboxHtml\(cfg\)/.test(memCode) && /mountListbox\(cfg\)/.test(memCode),
+    '...and both halves are handed the SAME cfg object — two literals is the '
+    + 'two-hand-maintained-copies shape the component\'s own header warns about');
+  // AND THE TWO DELETED PICKERS HAVE NOT COME BACK.
+  ok(!/mem-scope-lb|mem-machine-lb/.test(memSrc),
+    'the scope and machine pickers stay deleted — the table replaced them');
   ok(/renderWorkStreams/.test(memCode) && /<table class="mem-ws-table">/.test(memSrc),
     'CONTROL: memory.js really does render the work-stream TABLE that replaced them');
+  // AND IT DID NOT HAND-ROLL A SECOND MENU. The component emits the only
+  // `role="combobox"` on this screen, so any of these three in the VIEW's own
+  // markup is a menu it built itself.
+  ok(!/role="listbox"|role="combobox"|aria-haspopup/.test(memSrc),
+    'memory.js hand-rolls no menu of its own — the component emits the only one');
 }
 
 // The render -> wire handoff. This is the assertion that makes "one

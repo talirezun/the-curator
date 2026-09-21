@@ -1820,6 +1820,20 @@ section('§10 — THE BINDER: wire() grows no new identifier');
     // shell pair and the lifted chat wrapper. All three are stubbed in that
     // suite's PREAMBLE.
     'requestDomain', 'goToChatScoped', 'navigate',
+    // ── v3.65.0, P10: step ③'s picker and its removes ─────────────────
+    // ONE new name, and the arithmetic is the point: the wiring is a BINDER
+    // (`bindKnowledgeRows`), exactly as tier 0's rows and the work-stream
+    // table are, so `wire()` gains one free identifier rather than the three
+    // it would gain by composing the cfg, mounting the component and calling
+    // the save inline. One name is one stub in the companion suite's
+    // preamble.
+    'bindKnowledgeRows',
+    // ── v3.65.0, R4: the step head ────────────────────────────────────
+    // `renderProject` composes its three numbered steps through this view's
+    // own `memStep` rather than through shared/block.js's `renderBlock`,
+    // because that component emits its ⓘ INSIDE a lede and emits nothing at
+    // all without one — and there is no lede on this page any more.
+    'memStep',
   ]);
   // COMMENTS STRIPPED FIRST. Proven necessary by running it: the docblocks in
   // `wire()` contain prose like "BOTH, because…" and "(the v3.11.0 shape)",

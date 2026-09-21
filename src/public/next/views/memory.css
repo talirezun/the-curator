@@ -186,6 +186,24 @@
 .mem-k-wrap { margin-bottom: var(--space-8); }
 .mem-k-doors { display: flex; flex-wrap: wrap; gap: var(--space-4); }
 
+/* ── STEP ③'s PICKER ROW (v3.65.0, P10) ─────────────────────────────────
+   "+ Add a wiki" and one Remove per chosen wiki, under the rows they act on.
+   A flex row that WRAPS: a project may draw on up to twelve, and a row that
+   scrolls sideways hides the control the maintainer came for.
+
+   `margin-top` rather than a gap on the parent: the rows above are `<details>`
+   elements whose spacing is `.mem-fold + .mem-fold`'s, and adding a second
+   owner of the vertical rhythm is how a 2px step between a title and the
+   sentence under it came to exist (see `.settings-block-hd`'s own note in
+   shell.css). One gap, one owner, at each level.                          */
+.mem-k-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+}
+
 /* ── INSIDE A BLOCK, THE GAP IS SMALLER — AND THAT IS THE WHOLE POINT ──────
    Block ① stacks the Last-saved reading, the Reload offer and the "state on
    disk we are not reading" note. Those three belong TOGETHER: each qualifies

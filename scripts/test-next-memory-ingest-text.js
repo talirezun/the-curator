@@ -65,6 +65,9 @@ import {
 // on an unknown key, so the About panel's link is proven to resolve rather than
 // merely to have been interpolated.
 import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
+// Same contract again: shared/monitor.js takes no imports either, precisely
+// so a suite can run the real component rather than a stand-in for it.
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const NEXT = join(__dirname, '..', 'src', 'public', 'next');
@@ -155,8 +158,15 @@ ok('memory.js: the explainer component is gone — not imported, not called, not
   !/renderExplainer/.test(memCode));
 ok('memory.js: the sidebar error is a STATUS, not a hint (renderStatus inside renderSidebar)',
   callSiteCount(memSrc, 'renderStatus', { within: 'renderSidebar' }) > 0);
-ok('memory.js: the journal count is a READOUT (renderReadout inside renderJournal)',
-  callSiteCount(memSrc, 'renderReadout', { within: 'renderJournal' }) > 0);
+// RE-POINTED (v3.65.0, M4), and the claim got stronger rather than weaker. It
+// pinned the journal's count as a `renderReadout` — an INSTRUMENT rather than
+// a grey sentence, which was the v3.55.0 finding. A live figure with a
+// provenance clause is exactly what the MONITOR is for, and this page draws
+// three other readings with it, so a readout standing alone at the foot of a
+// list was the fourth report treatment the maintainer counted on this screen.
+// The role is unchanged; the component that carries it is the shared one.
+ok('memory.js: the journal count is a MONITOR line (renderMonitor inside renderJournal)',
+  callSiteCount(memSrc, 'renderMonitor', { within: 'renderJournal' }) > 0);
 // RE-POINTED (v3.56.0), and the claim is unchanged: the handoff's provenance is
 // an INSTRUMENT. What moved is where it is painted — `renderHandoff` printed the
 // document on the page and is gone; `handoffReaderContent` composes the payload
@@ -277,11 +287,15 @@ function memRenderers(stateObj) {
   ]);
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
     'JOURNAL_PAGE', 'JOURNAL_MORE',
-    'renderDescription', 'renderStatus', 'renderReadout', 'docsLinkHtml', body)(
+    // THE REAL MONITOR (v3.65.0, M4). The journal's count is one of its lines
+    // now, and §4's escaping battery below runs through whatever paints it —
+    // a stub would let it run past the component.
+    'renderDescription', 'renderStatus', 'renderReadout', 'renderMonitor',
+    'docsLinkHtml', body)(
     stateObj, (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
     () => '<svg></svg>', (s) => '<p>' + s + '</p>', () => '<div class="loader"></div>', null, 10, 50,
-    renderDescription, renderStatus, renderReadout, docsLinkHtml);
+    renderDescription, renderStatus, renderReadout, renderMonitor, docsLinkHtml);
 }
 
 const baseDetail = {
@@ -401,7 +415,11 @@ const baseState = {
   // The journal count is a figure, not a sentence — and the framing prose
   // beside it is a description, so the two no longer share a voice.
   const j = R.renderJournal();
-  ok('the journal count renders as a READOUT figure', /class="tx-readout-value">3</.test(j), j.slice(-500));
+  // A MONITOR LINE SINCE v3.65.0 (M4). The ROLE is unchanged — a measurement
+  // rendered as a measurement rather than as grey prose, which is what
+  // "an explanation and a measurement no longer share one class" below is
+  // about — and the component that carries it is the shared one.
+  ok('the journal count renders as a MONITOR figure', /class="cur-mon-value">3</.test(j), j.slice(-500));
   ok('the journal framing renders as a DESCRIPTION', /class="tx-desc"/.test(j), j.slice(0, 500));
   ok('an explanation and a measurement no longer share one class',
     !/mem-quiet/.test(j), j.slice(0, 300));
@@ -411,9 +429,10 @@ const baseState = {
     ...baseState,
     detail: { ...baseDetail, journal: { returned: 2, total: null, totalUnknown: true, totalUnknownReason: 'journal is huge', entries: baseDetail.journal.entries } },
   }).renderJournal();
-  ok('an unknown journal total still says UNKNOWN in the readout provenance',
-    /tx-readout-prov[^<]*>[^<]*unknown/i.test(unknown), unknown.slice(-500));
-  ok('...and still does NOT print the tail length as the total', !/>2 saves recorded/.test(unknown));
+  ok('an unknown journal total still says UNKNOWN in the line\'s own clause',
+    /cur-mon-sub[^<]*>[^<]*unknown/i.test(unknown), unknown.slice(-500));
+  ok('...and still does NOT print the tail length as the total',
+    !/cur-mon-key">saves recorded/.test(unknown), unknown.slice(-500));
 
   // The brief's "not written" prose is a description, not a fourth grey.
   const brief = R.renderBrief(baseState.projectRead, false);
@@ -833,13 +852,23 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
 // different body, and `test-next-memory-view.js` asserts that over EVERY
 // DELETE call site rather than over the first one it finds.
 {
+  // EIGHT SINCE v3.65.0, over seven routes, and the eighth is step ③'s wiki
+  // choice — CURATOR METADATA about the project, written to `project.json`
+  // and nothing else, so tiers 1, 2 and 3 are untouched by it.
   const methods = (memCode.match(/method:\s*'[A-Z]+'/g) || []).sort();
-  ok('memory.js issues exactly SEVEN mutating HTTP method keys, over six routes',
-    methods.length === 7, methods.join(','));
-  ok('...and they are DELETE, DELETE, PATCH, PATCH, POST, POST and PUT, every one a LITERAL',
+  ok('memory.js issues exactly EIGHT mutating HTTP method keys, over seven routes',
+    methods.length === 8, methods.join(','));
+  ok('...and they are DELETE, DELETE, PATCH, PATCH, PATCH, POST, POST and PUT, every one a LITERAL',
     methods.join(',') === "method: 'DELETE',method: 'DELETE',method: 'PATCH',method: 'PATCH',"
-      + "method: 'POST',method: 'POST',method: 'PUT'",
+      + "method: 'PATCH',method: 'POST',method: 'POST',method: 'PUT'",
     methods.join(','));
+  // THE THIRD PATCH SENDS ONE KEY TOO, and it is the same rule as the
+  // `readFirst` one below: an instruction ABOUT a set of wikis, never a byte
+  // of anything an agent wrote.
+  ok('...the third PATCH aimed at the knowledge-domains endpoint, sending the '
+    + 'whole list and nothing else',
+  /'\/knowledge\/domains'/.test(memCode)
+    && /body: JSON\.stringify\(\{ knowledgeDomains:/.test(memCode));
   ok('...one PATCH aimed at the PROJECTS endpoint, which reaches tier 1 only',
     /'\/api\/memory\/' \+ encodeURIComponent\(e\.domain\) \+ '\/projects\/'/.test(memCode));
   ok('...and it never sends a handoff field',
