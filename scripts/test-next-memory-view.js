@@ -7186,10 +7186,33 @@ const fndRead = (payload) => ({
     + 'where it is the most useful control on the screen',
   /id="mem-fnd-ask"/.test(ask([], { ownership: 'curator' }).btn));
   {
+    // ── THE REASON LEFT THE STEP BODY (v3.65.0) ──────────────────────────
+    // The maintainer, pointing at the sentence under the table: *"then we
+    // have some clarification below — 'an agent's save here is refused, this
+    // project is mirrored from a folder' and the clock — I don't know why
+    // this is here, is this a static message or something that changes."* It
+    // is STATIC. Ownership is set once and refused afterwards, so this is a
+    // standing fact about the project rather than an outcome — and v3.16.1
+    // holds OUTCOMES on the page, not standing facts. The full sentence is a
+    // paragraph of step ①'s own ⓘ now, and the row's summary already reads
+    // `mirrored`, which is the one-word form of it.
+    //
+    // ASSERTED IN BOTH DIRECTIONS, so "moved" cannot be satisfied by
+    // "deleted": the panel is empty HERE, and the sentence is THERE.
     const a = ask([fndDoc({ freshness: 'fresh' })]);
     eq('a MIRROR is not offered it', a.btn, '');
-    ok('...and is told why: an agent\u2019s save there is an ownership mismatch',
-      /refused/.test(a.panel) && /mirrored from a folder/.test(a.panel), a.panel);
+    eq('...and no longer carries a standing fact as a note under the table',
+      a.panel, '');
+    const panel = makeRenderers({
+      activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, journalLimit: 10,
+      projects: [], detail: null, detailLoading: false, wsWindow: WS_WINDOW_SRC,
+      projectRead: fndRead(fndPayload([fndDoc({ freshness: 'fresh' })])),
+    }).renderProject();
+    const at = panel.indexOf('id="settings-block-info-context-canonical"');
+    ok('...because the fact is in step ①\'s ⓘ, where the rest of the ownership '
+      + 'explanation already is',
+    at !== -1 && /an agent’s save here is <b>refused<\/b>/.test(panel.slice(at, at + 4000)),
+    panel.slice(at, at + 600));
   }
   {
     const a = ask([fndDoc({ freshness: 'fresh' })], {}, true);

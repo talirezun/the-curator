@@ -284,6 +284,11 @@ import {
   freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
   bindFoundationsChooser, renderRoleOptions, renderRefusedList,
   readPickedFile, slugForFilename, roleForBasename, titleFromText, formatBytes,
+  // ── THE REMOTE MIRROR'S REFUSAL VOCABULARY (v3.65.0) ───────────────────
+  // Nine store codes, nine sentences, every one naming the token's SOURCE
+  // rather than the token — which is the store's own rule and the one a view
+  // is in a position to break.
+  remoteRefusalText,
   // ── ONE PREDICATE FOR THE COMMIT, SHARED WITH THE OTHER HOST (v3.61.1) ──
   // What makes "Set up documents" pressable is a fact about the CHOICE, not
   // about this view, so the rule lives beside the choice. This view calls it
@@ -4938,6 +4943,13 @@ function renderProject() {
       + 'brief needs, and nothing writes one on its own. Setting this up seeds four '
       + '<b>skeletons</b>: documents that carry prompts rather than prose, which an agent is told '
       + 'to answer rather than to believe.</p>'
+      // THE SENTENCE THAT USED TO SIT UNDER THE TABLE (v3.65.0). A standing
+      // fact about ownership, not an outcome, and ownership is set once — so
+      // it belongs where the rest of the ownership explanation is.
+      + '<p>On a <b>mirrored</b> project an agent’s save here is <b>refused</b>: the documents '
+      + 'belong to the folder they are copied from, so an agent asked to write one is told to '
+      + 'change it there and refresh. The row’s own summary says <b>mirrored</b>, which is the '
+      + 'one-word form of the same fact.</p>'
       + '<p>An edit here is <b>yours</b>, stamped as a human write and never as an agent’s — the '
       + 'same rule the standing brief follows. One cost comes with it: this tier has no per-machine '
       + 'copy, so two computers editing one document converge to whichever saved last. Edit rarely, '
@@ -7614,9 +7626,23 @@ function renderFoundations(read) {
   // `toggleReadFirst` patches it in place rather than re-rendering: a node
   // that has to be CREATED on a tick is a node that tick has to render for.
   const budgetSentence = foundationsBudgetWarning(facts);
+  // ── AND IT GAINS SOMETHING TO DO ABOUT IT (v3.65.0, record §D.6) ──────
+  // It named a consequence and offered nothing. The maintainer's own project
+  // mirrors 24 documents at 1,980 KB against a 200 KB budget, so this is the
+  // sentence he reads every time he opens the screen — correct, and inert.
+  //
+  // "Choose documents" is a DOOR, not a second write path: it opens the
+  // documents row (through the same transient force the editor uses, never
+  // the persisted key, so a close stays closed) and puts the reader in front
+  // of the `read first` column, whose per-row tick is v3.62.0's shipped
+  // `PATCH …/foundations/:slug {readFirst}` — manifest-only, both ownerships.
+  // No new route, no new write.
   const budgetNote = '<div class="tx-note mem-fnd-budget" id="mem-fnd-budget"'
     + (budgetSentence ? '' : ' hidden') + '>' + icon('alertTriangle', 13)
-    + '<span>' + escapeHtml(budgetSentence) + '</span></div>';
+    + '<span>' + escapeHtml(budgetSentence) + '</span>'
+    + '<button type="button" class="btn btn-secondary btn-xs mem-fnd-budget-go" '
+      + 'id="mem-fnd-budget-go">Choose documents</button>'
+    + '</div>';
   // ── `open` COMES FROM TWO PLACES AND ONLY TWO (v3.64.1) ────────────────
   // The user's remembered preference, and the transient set by the press that
   // opened an editor. NOT from `editing`/`adding` themselves: a state derived
@@ -7674,12 +7700,17 @@ function foundationsDraftAsk(facts, readonly) {
   if (!facts.present) return { btn: '', panel: '' };
   if (facts.manifestError) return { btn: '', panel: '' };
   if (facts.ownership !== 'curator') {
-    return {
-      btn: '',
-      panel: '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' +
-        escapeHtml('An agent’s save here is refused — this project is mirrored from a folder.') +
-        '</span></div>',
-    };
+    // ── IT LEAVES THE STEP BODY (v3.65.0) ──────────────────────────────
+    // The maintainer, pointing at it: *"then we have some clarification below
+    // — 'an agent's save here is refused, this project is mirrored from a
+    // folder' and the clock — I don't know why this is here, is this a static
+    // message or something that changes."* It is STATIC: a standing fact
+    // about this project's ownership, which never changes, because ownership
+    // is set once and refused afterwards. A standing fact is not an outcome,
+    // so v3.16.1 does not hold it on the page — the full sentence is a
+    // paragraph of step ①'s ⓘ, and the row's own summary already reads
+    // `mirrored`, which is the one-word form of it.
+    return { btn: '', panel: '' };
   }
   const info = renderInfoMark('mem-fnd-ask-info', 'About the drafting request',
     DRAFT_ASK_INFO_HTML, { html: true });
@@ -8540,8 +8571,18 @@ async function initFoundations(token, facts) {
       body: JSON.stringify(body),
     });
     const got = await res.json();
-    if (!res.ok || !got.ok) error = got.message || got.error || ('HTTP ' + res.status);
-    else data = got;
+    // ── A REMOTE REFUSAL NAMES THE TOKEN'S SOURCE, NEVER THE TOKEN ──────
+    // The store answers a failed remote read with one of nine codes; printing
+    // the code would show a person a word from a protocol. `remoteRefusalText`
+    // turns each into a sentence saying which FILE the token was read from and
+    // what to do about it — and returns null for a code it does not know, so
+    // an unrecognised refusal falls back to the PRODUCER's own message rather
+    // than to a guess. Nothing here can print a token, because nothing here
+    // has one: the store reads it from a file and never returns it.
+    if (!res.ok || !got.ok) {
+      error = remoteRefusalText(got && got.error, { tokenSource: body.tokenSource })
+        || got.message || got.error || ('HTTP ' + res.status);
+    } else data = got;
   } catch (err) {
     error = err.message;
   }
@@ -9794,6 +9835,40 @@ function wire(token) {
 
   document.getElementById('mem-fnd-refresh')?.addEventListener('click', () => {
     refreshFoundations(token).catch((err) => reportAsyncMountFailure(token, err));
+  });
+
+  // ── "CHOOSE DOCUMENTS" — A DOOR, NOT A SECOND WRITE PATH (v3.65.0) ────
+  // The budget warning named a consequence and offered nothing to do about
+  // it. This opens the documents row and puts the reader in front of the
+  // `read first` column, whose per-row tick is the shipped
+  // `PATCH …/foundations/:slug {readFirst}`. THE TRANSIENT, never the
+  // persisted key: `state.fndForceOpen` is what the editor already uses, and
+  // an explicit close clears it (see the toggle listener below), which is
+  // what keeps a close final — the v3.64.1 "it reopens itself" loop.
+  //
+  // Inline, for the reason this function documents four times: it is lifted
+  // by brace-matching and executed against a hand-written set of stubs, so a
+  // module-level helper named here would be a ReferenceError there.
+  document.getElementById('mem-fnd-budget-go')?.addEventListener('click', () => {
+    state.fndForceOpen = true;
+    render(token);
+    // AFTER the paint, not before it: the column does not exist until the
+    // fold is open, and scrolling to a node that is not there is a press that
+    // visibly does nothing. The focus target is the first tick, which is the
+    // control the sentence is about.
+    const first = typeof document.querySelector === 'function'
+      ? document.querySelector('[data-fnd-first]') : null;
+    if (first) {
+      let reduce = false;
+      try {
+        reduce = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+          && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      } catch { reduce = false; }
+      if (typeof first.scrollIntoView === 'function') {
+        first.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+      }
+      if (typeof first.focus === 'function') first.focus();
+    }
   });
 
   // ── STEP ③'s TWO DOORS, AND THE SIDEBAR'S POINTER (v3.62.0) ──────────

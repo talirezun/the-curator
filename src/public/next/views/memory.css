@@ -1949,6 +1949,20 @@
    would add to the gap rather than replace it — the same call
    `.fnd-init-why` makes one file over. */
 .mem-fnd-budget { margin-top: 0; margin-bottom: var(--space-6); }
+/* ── AND IT HAS SOMETHING TO DO ABOUT IT NOW (v3.65.0, record §D.6) ───────
+   `.tx-note` is a one-line flex row (`align-items: center`), and this
+   particular sentence is long — the maintainer's own project reads "24
+   documents · 1,980 KB of a 200 KB budget" — so the note WRAPS and the
+   control must not be dragged along the last line of it. `margin-left: auto`
+   pushes it to the trailing edge, `flex: none` keeps it from being squeezed,
+   and `align-self: center` keeps it optically level with a sentence that may
+   be two or three lines tall.
+
+   The control is `btn btn-secondary btn-xs`: a warning with something to do
+   about it offers the SECOND rung, never the primary — nothing here completes
+   a step, it opens a row.                                                  */
+.mem-fnd-budget { flex-wrap: wrap; }
+.mem-fnd-budget-go { flex: none; margin-left: auto; align-self: center; }
 /* ── THE `[hidden]` COUNTER-RULE, AND IT IS NOT OPTIONAL (design-system §9)
    `.tx-note` declares `display: flex`, and an author `display` at ANY
    specificity beats the UA's `[hidden] { display: none }` — which has none. So
