@@ -81,6 +81,7 @@ __setDomainsDirOverride(DOMAINS);
 const WS = await import('../src/brain/working-state.js');
 const {
   listFoundations, refreshFoundationsFromRepo, initFoundations, setFoundationReadFirst,
+  setFoundationsSource,
   readWorkingState, MAX_FOUNDATION_BYTES, FOUNDATIONS_DIRNAME, FOUNDATIONS_MANIFEST_FILENAME,
 } = WS;
 const GH = await import('../src/brain/github-read-client.js');
@@ -1224,13 +1225,295 @@ section('15. THE ROUTES for both (v3.65.0): a strict init body, and the scan');
   }
 }
 // ═════════════════════════════════════════════════════════════════════════
-section('16. No real network was reached by anything but the two route sections');
+section('16. "MIRROR FROM GITHUB INSTEAD" — the source switch (v3.65.1)');
 {
-  // Sections 1–10, 13 and 14 inject `fetchImpl`; only §11 and §15 drive the
-  // real client. Every recorded attempt must therefore be one of theirs, and
-  // none may have succeeded — the spy throws.
+  // THE GAP: `refreshRemoteCore` has always PRESERVED `repo.root`, which is
+  // right for a refresh and makes "this project now reads GitHub" unsayable —
+  // a mirror born from a folder takes the local arm on that machine for ever.
+  // Every assertion below EXECUTES the store; none reads source.
+
+  /** A repo-owned mirror whose documents came from a FOLDER on this machine. */
+  const seedLocalMirror = (project, { docs, root = path.join(TMP, 'a-checkout') }) => {
+    mkdirSync(fdir(project), { recursive: true });
+    const documents = docs.map((d) => {
+      const buf = Buffer.from(d.stored, 'utf8');
+      writeFileSync(path.join(fdir(project), d.slug), buf);
+      return {
+        slug: d.slug, role: d.role, title: d.title,
+        source: { kind: 'repo', path: d.path },
+        sha256: sha256(buf), bytes: buf.length,
+        updatedAt: '2026-01-01T00:00:00.000Z', commit: 'b'.repeat(40),
+        authoredBy: { kind: 'human', harness: null, model: null, commissionedBy: null },
+        skeleton: false, readFirst: d.readFirst === true,
+      };
+    });
+    writeFileSync(manifestPath(project), JSON.stringify({
+      version: 1,
+      ownership: 'repo',
+      // A LOCAL mirror: a root and NO remote. This is the shape the switch exists for.
+      repo: { root, remote: null, lastRefreshAt: '2026-01-01T00:00:00.000Z', lastRefreshCommit: 'b'.repeat(40) },
+      budgetBytes: 200 * 1024,
+      order: ['architecture', 'decisions', 'conventions', 'roadmap', 'api', 'guide', 'other'],
+      documents,
+    }, null, 2) + '\n');
+    return root;
+  };
+  const fileSha = (abs) => sha256(readFileSync(abs));
+  const blobCalls = (gh) => gh.calls.filter((c) => /\/git\/blobs\//.test(c.url)).length;
+
+  // ── 16a. THE SWITCH ITSELF, on a mirror with a live local root ────────
+  {
+    const PJ = 'switchlocal';
+    await WS.createProject(D, PJ, {});
+    const ROOT = seedLocalMirror(PJ, { docs: [
+      { slug: 'architecture.md', role: 'architecture', title: 'Architecture', path: 'docs/architecture.md', stored: '# Old architecture\n', readFirst: true },
+      { slug: 'decisions.md', role: 'decisions', title: 'Decisions', path: 'docs/decisions.md', stored: '# Old decisions\n', readFirst: false },
+    ] });
+    const gh = makeGitHub(REPO_FILES);
+    const out = await setFoundationsSource(D, PJ, {
+      remote: 'acme/thing', tokenSource: 'config', fetchImpl: gh.fetchImpl, sleepImpl: fakeSleep,
+    });
+    assert(out.ok === true, 'a switch on a local-root mirror succeeds', JSON.stringify(out).slice(0, 300));
+    eq(out.rootCleared, true, '...reporting rootCleared');
+    eq(out.previousRoot, ROOT, '...and naming the folder it used to copy from');
+    const m = manifestOf(PJ);
+    eq(m.repo.root, null, 'THE CLEAR: repo.root is null on disk');
+    eq(m.repo.remote.owner, 'acme', 'THE SET: repo.remote.owner');
+    eq(m.repo.remote.repo, 'thing', '...and repo.remote.repo');
+    eq(m.ownership, 'repo', 'OWNERSHIP IS NOT TOUCHED — still repo, one ownership per project');
+    // The bytes really moved: the stale copies were replaced by the repo's.
+    eq(docOf(PJ, 'architecture.md'), ARCH, 'the stale copy was replaced by the repository’s bytes');
+    eq(docOf(PJ, 'decisions.md'), DEC, '...for both documents');
+    assert(out.refreshed.includes('architecture.md') && out.refreshed.includes('decisions.md'),
+      '...and both are reported refreshed', JSON.stringify(out.refreshed));
+    // READ FIRST, BY SLUG. Both entries were REWRITTEN (the bytes changed),
+    // so this is the preserving line doing work rather than an untouched row.
+    const byslug = new Map(m.documents.map((d) => [d.slug, d]));
+    eq(byslug.get('architecture.md').readFirst, true, 'readFirst survives the switch BY SLUG (flagged stays flagged)');
+    eq(byslug.get('decisions.md').readFirst, false, '...and an unflagged document is not flagged by accident');
+    eq(byslug.get('architecture.md').source.kind, 'repo', '...the source is still the repository');
+    // ONE WRITE: the clear and the set landed together, so no window exists
+    // in which the manifest names both a stale root and a fresh remote.
+    eq(m.repo.lastRefreshCommit, 'a'.repeat(40), 'the same write stamped the commit — one writeManifest, not two');
+  }
+
+  // ── 16b. A CURATOR-OWNED PROJECT IS REFUSED, BYTE FOR BYTE ────────────
+  {
+    const PJ = 'switchcurator';
+    await WS.createProject(D, PJ, {});
+    const init = await initFoundations(D, PJ, { ownership: 'curator' });
+    assert(init.ok === true, '(fixture) a curator-owned project exists', JSON.stringify(init).slice(0, 200));
+    const before = fileSha(manifestPath(PJ));
+    const gh = makeGitHub(REPO_FILES);
+    const out = await setFoundationsSource(D, PJ, { remote: 'acme/thing', fetchImpl: gh.fetchImpl });
+    eq(out.ok, false, 'a switch on a CURATOR-owned project is refused');
+    eq(out.reason, 'ownership-mismatch', '...as an ownership mismatch');
+    eq(out.ownership, 'curator', '...naming the ownership it found');
+    eq(fileSha(manifestPath(PJ)), before, '...and the manifest is BYTE-IDENTICAL afterwards (sha256)');
+    eq(gh.calls.length, 0, '...with ZERO HTTP requests — the ownership is read before anything is fetched');
+  }
+
+  // ── 16c. A PROJECT THAT HAS CHOSEN NOTHING IS NOT SWITCHED INTO ───────
+  {
+    const PJ = 'switchunchosen';
+    await WS.createProject(D, PJ, {});
+    const gh = makeGitHub(REPO_FILES);
+    const out = await setFoundationsSource(D, PJ, { remote: 'acme/thing', fetchImpl: gh.fetchImpl });
+    eq(out.ok, false, 'a project with no manifest is refused');
+    eq(out.reason, 'no-manifest', '...because choosing an ownership is init’s decision, not this one’s');
+    assert(!existsSync(manifestPath(PJ)), '...and no manifest was created sideways');
+    eq(gh.calls.length, 0, '...with ZERO HTTP requests');
+  }
+
+  // ── 16d. A 404 FROM GITHUB LEAVES ROOT, REMOTE AND EVERY DOCUMENT ─────
+  {
+    const PJ = 'switch404';
+    await WS.createProject(D, PJ, {});
+    const ROOT = seedLocalMirror(PJ, { docs: [
+      { slug: 'architecture.md', role: 'architecture', title: 'Architecture', path: 'docs/architecture.md', stored: '# Old architecture\n', readFirst: true },
+    ] });
+    const beforeManifest = fileSha(manifestPath(PJ));
+    const beforeDoc = fileSha(path.join(fdir(PJ), 'architecture.md'));
+    const gh = makeGitHub(REPO_FILES, { forceStatus: 404 });
+    const out = await setFoundationsSource(D, PJ, { remote: 'acme/thing', fetchImpl: gh.fetchImpl, sleepImpl: fakeSleep });
+    eq(out.ok, false, 'a 404 from GitHub refuses the switch');
+    eq(out.reason, 'remote-not-found', '...under the read’s own reason');
+    eq(out.rootCleared, false, '...reporting that nothing was cleared');
+    eq(out.previousRoot, ROOT, '...while still naming the root it would have cleared');
+    eq(fileSha(manifestPath(PJ)), beforeManifest, 'NOTHING WAS WRITTEN: the manifest is byte-identical');
+    eq(manifestOf(PJ).repo.root, ROOT, '...the local root is still there');
+    eq(manifestOf(PJ).repo.remote, null, '...no remote was recorded against a repository that does not exist');
+    eq(fileSha(path.join(fdir(PJ), 'architecture.md')), beforeDoc, '...and the document is untouched');
+  }
+
+  // ── 16e. A TRUNCATED TREE FETCHES ZERO BLOBS ──────────────────────────
+  {
+    const PJ = 'switchtrunc';
+    await WS.createProject(D, PJ, {});
+    seedLocalMirror(PJ, { docs: [
+      { slug: 'architecture.md', role: 'architecture', title: 'Architecture', path: 'docs/architecture.md', stored: '# Old architecture\n', readFirst: false },
+    ] });
+    const before = fileSha(manifestPath(PJ));
+    const gh = makeGitHub(REPO_FILES, { truncated: true });
+    const out = await setFoundationsSource(D, PJ, { remote: 'acme/thing', fetchImpl: gh.fetchImpl, sleepImpl: fakeSleep });
+    eq(out.ok, false, 'a TRUNCATED tree refuses the switch');
+    eq(out.reason, 'remote-tree-truncated', '...loudly, by its own name');
+    eq(blobCalls(gh), 0, '...having fetched ZERO blobs — the refusal fires before the first byte');
+    eq(fileSha(manifestPath(PJ)), before, '...and the manifest is byte-identical');
+  }
+
+  // ── 16f. A PLANTED `token` NEITHER AUTHORISES NOR APPEARS ─────────────
+  {
+    const PJ = 'switchtoken';
+    await WS.createProject(D, PJ, {});
+    seedLocalMirror(PJ, { docs: [
+      { slug: 'architecture.md', role: 'architecture', title: 'Architecture', path: 'docs/architecture.md', stored: '# Old architecture\n', readFirst: false },
+    ] });
+    const before = fileSha(manifestPath(PJ));
+    seedTokens({ config: false, sync: false });   // no credential in ANY file
+    const gh = makeGitHub(REPO_FILES);
+    const out = await setFoundationsSource(D, PJ, {
+      remote: 'acme/thing', tokenSource: 'config',
+      // THE PLANT. A token that can arrive in a function call can arrive in
+      // an HTTP body; this is v3.65.0's M11 re-run at the switch's layer.
+      token: CONFIG_TOKEN,
+      fetchImpl: gh.fetchImpl, sleepImpl: fakeSleep,
+    });
+    eq(out.ok, false, 'a planted `token` does NOT authorise the read');
+    eq(out.reason, 'no-token', '...the credential is read from a FILE and there is none');
+    assert(!JSON.stringify(out).includes(CONFIG_TOKEN), '...and the token appears nowhere in the answer');
+    eq(gh.calls.length, 0, '...and no request was made with it');
+    eq(fileSha(manifestPath(PJ)), before, '...and nothing was written');
+    seedTokens();   // put the fixture credentials back for the sections below
+  }
+
+  // ── 16g. A MIRROR WITH NO DOCUMENTS STILL RECORDS THE DECISION ────────
+  //
+  // The ordinary state of a project born from the chooser's "repo" choice
+  // with nothing ticked. A refresh answers `noop` and writes nothing, which
+  // is right for a refresh and would make the SWITCH silently do nothing.
+  {
+    const PJ = 'switchempty';
+    await WS.createProject(D, PJ, {});
+    const ROOT = seedLocalMirror(PJ, { docs: [] });
+    const gh = makeGitHub(REPO_FILES);
+    const out = await setFoundationsSource(D, PJ, { remote: 'acme/thing', fetchImpl: gh.fetchImpl, sleepImpl: fakeSleep });
+    assert(out.ok === true, 'a mirror with NO documents still switches', JSON.stringify(out).slice(0, 300));
+    eq(out.rootCleared, true, '...clearing the root');
+    eq(out.previousRoot, ROOT, '...naming it');
+    eq(manifestOf(PJ).repo.root, null, '...on disk');
+    eq(manifestOf(PJ).repo.remote.repo, 'thing', '...and recording the repository');
+    eq(blobCalls(gh), 0, 'THE REMOTE IS VERIFIED, NOT ASSUMED: zero blobs fetched');
+    assert(gh.calls.length >= 2 && gh.calls.length <= 3,
+      `...and the ref and tree WERE read (${gh.calls.length} requests)`, gh.calls.map((c) => c.url).join(' | '));
+    eq(manifestOf(PJ).documents.length, 0, '...with no document invented');
+  }
+
+  // ── 16h. THE TWO ARGUMENT REFUSALS ────────────────────────────────────
+  {
+    const PJ = 'switcharg';
+    await WS.createProject(D, PJ, {});
+    seedLocalMirror(PJ, { docs: [] });
+    const before = fileSha(manifestPath(PJ));
+    const noRemote = await setFoundationsSource(D, PJ, {});
+    eq(noRemote.ok, false, 'a switch with NO remote is refused');
+    eq(noRemote.reason, 'invalid-remote', '...rather than falling back to the source it already has');
+    const badRemote = await setFoundationsSource(D, PJ, { remote: 'https://gitlab.com/a/b' });
+    eq(badRemote.reason, 'invalid-remote', 'a non-github remote is refused by the SAME validator the refresh uses');
+    const badToken = await setFoundationsSource(D, PJ, { remote: 'acme/thing', tokenSource: 'env' });
+    eq(badToken.ok, false, 'an unrecognised tokenSource is REFUSED, not normalised');
+    eq(badToken.reason, 'invalid-token-source', '...because this call records a decision');
+    eq(fileSha(manifestPath(PJ)), before, '...and no argument refusal wrote anything');
+  }
+
+  // ── 16i. THE ROUTE ────────────────────────────────────────────────────
+  {
+    const express = (await import('express')).default;
+    const routerMod = await import('../src/routes/memory.js');
+    const app = express();
+    app.use(express.json());
+    app.use('/api/memory', routerMod.default);
+    const server = app.listen(0);
+    await new Promise((r) => server.once('listening', r));
+    const port = server.address().port;
+    const post = async (url, body) => {
+      const res = await REAL_FETCH(`http://127.0.0.1:${port}${url}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}),
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    try {
+      const PJ = 'switchroute';
+      await WS.createProject(D, PJ, {});
+      seedLocalMirror(PJ, { docs: [
+        { slug: 'architecture.md', role: 'architecture', title: 'Architecture', path: 'docs/architecture.md', stored: '# Old architecture\n', readFirst: true },
+      ] });
+      const before = fileSha(manifestPath(PJ));
+      const URL_ = `/api/memory/${D}/${PJ}/foundations/source`;
+
+      // A `token` IN THE BODY IS REFUSED BY NAME. Ignoring it would say
+      // nothing; refusing it says the credential is read from a file.
+      const withToken = await post(URL_, { remote: 'acme/thing', token: CONFIG_TOKEN });
+      eq(withToken.status, 400, 'a `token` in the source body is a 400');
+      eq(withToken.body.reason, 'unexpected_fields', '...as an unexpected field');
+      assert((withToken.body.fields || []).includes('token'), '...naming it', JSON.stringify(withToken.body.fields));
+      assert(/NEVER sent here/.test(withToken.body.error || ''), '...and saying a token is never sent here', withToken.body.error);
+      assert(!JSON.stringify(withToken.body).includes(CONFIG_TOKEN), '...and never echoing the value');
+      eq(fileSha(manifestPath(PJ)), before, '...and nothing was written');
+
+      const unknown = await post(URL_, { remote: 'acme/thing', nonsense: 1 });
+      eq(unknown.status, 400, 'any unknown field is a 400');
+      eq(unknown.body.reason, 'unexpected_fields', '...under one reason');
+      assert(/remote, tokenSource, files/.test(unknown.body.error || ''),
+        '...printing the three fields this route DOES accept', unknown.body.error);
+      eq([...routerMod.SOURCE_BODY_FIELDS].join(','), 'remote,tokenSource,files',
+        'SOURCE_BODY_FIELDS is exported and is exactly those three');
+
+      const noRemote = await post(URL_, {});
+      eq(noRemote.status, 400, 'no remote is a 400');
+      eq(noRemote.body.reason, 'invalid-remote', '...naming the reason');
+
+      // THE REMOTE ARM THROUGH THE ROUTE with the network genuinely blocked:
+      // the plumbing is proven by the refusal's STATUS, which is the upstream
+      // one and not a 400.
+      const blocked = await post(URL_, { remote: 'acme/thing', tokenSource: 'config' });
+      eq(blocked.status, 502, 'a blocked network answers 502 — upstream, not a bad request');
+      eq(blocked.body.reason, 'remote-unreachable', '...under the store’s own reason');
+      assert(!JSON.stringify(blocked.body).includes(CONFIG_TOKEN), '...and the token is not in the response');
+      eq(fileSha(manifestPath(PJ)), before, '...and the mirror is byte-identical');
+
+      // A CURATOR-OWNED PROJECT: 409, and the word is NOT `repo_owned` —
+      // that is the shared table's word for the opposite fact.
+      const curOut = await post(`/api/memory/${D}/switchcurator/foundations/source`, { remote: 'acme/thing' });
+      eq(curOut.status, 409, 'a curator-owned project is a 409 — the server’s state, not a malformed request');
+      eq(curOut.body.reason, 'ownership_mismatch', '...spelled for the wire');
+      eq(curOut.body.ownership, 'curator', '...carrying the ownership it found, so a client need not parse prose');
+      assert(typeof curOut.body.error === 'string' && curOut.body.error.length > 0, '...with a sentence a person can act on');
+
+      const noProject = await post(`/api/memory/${D}/nosuchproject/foundations/source`, { remote: 'acme/thing' });
+      eq(noProject.status, 404, 'an unknown project is a 404');
+
+      // A SHARED BRAIN MIRROR IS REFUSED BEFORE THE STORE IS REACHED.
+      const RO = 'shared-ro';
+      mkdirSync(path.join(DOMAINS, RO, 'wiki'), { recursive: true });
+      writeFileSync(path.join(DOMAINS, RO, 'CLAUDE.md'), '---\nreadonly: true\n---\n# mirror\n');
+      const ro = await post(`/api/memory/${RO}/anything/foundations/source`, { remote: 'acme/thing' });
+      eq(ro.status, 403, 'a read-only Shared Brain mirror is a 403');
+      eq(ro.body.reason, 'readonly', '...as everywhere else in this router');
+    } finally {
+      server.close();
+    }
+  }
+}
+// ═════════════════════════════════════════════════════════════════════════
+section('17. No real network was reached by anything but the three route sections');
+{
+  // Sections 1–10, 13, 14 and 16's store half inject `fetchImpl`; only §11,
+  // §15 and §16's route half drive the real client. Every recorded attempt
+  // must therefore be one of theirs, and none may have succeeded — the spy
+  // throws.
   assert(NET_ATTEMPTS.every((u) => u.startsWith('https://api.github.com/')),
-    `every blocked attempt was §11's or §15's (${NET_ATTEMPTS.length} total)`, NET_ATTEMPTS.join(' | ').slice(0, 300));
+    `every blocked attempt was §11's, §15's or §16's (${NET_ATTEMPTS.length} total)`, NET_ATTEMPTS.join(' | ').slice(0, 300));
   assert(NET_ATTEMPTS.length > 0, '(control) the spy CAN record — a green above is not an empty measurement');
 }
 
