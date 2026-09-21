@@ -87,16 +87,14 @@ release checklist:
 > model, label or URL changes — **and then re-upload the changed files to
 > Lumina by hand.**
 
-**Outstanding for v3.64.0, v3.64.1 and v3.64.2** (the three-place shell, Chat reading a project and
-the first real harness measurement; the same-day hotfix — chat resilience, the domain page's
-numbered sections and install-wide fold/lens preference, and the capture meter's stale-bridge note;
-then the one shared overview card, the domain page's one heading rule, and the step-body rule
-applied to "Last saved" and step 3 Knowledge): **all three of `curator-overview.md`,
-`curator-user-guide.md` and `curator-agent-memory.md` changed in v3.64.0; `curator-user-guide.md`
-and `curator-agent-memory.md` changed again in v3.64.1 AND AGAIN in v3.64.2** and need
-re-uploading after this release lands — see **Uploading to Lumina**, below. `curator-links.md` is
-unchanged across all three. Remove this note once all three are done; a stale note
-left here is how this file stops being read.
+**Outstanding for v3.65.0** (the one sidebar and one monitor component adopted across Domains,
+Context and Settings; Step 3 Knowledge gaining a picker so a project can choose which wikis it
+draws on; and the step-body rule finishing its work on "Last saved" and "Capture", which are now
+both rows built from the monitor component rather than a card and a separate "Sessions" fold):
+**`curator-user-guide.md` and `curator-agent-memory.md` changed in v3.65.0** and need re-uploading
+after this release lands — see **Uploading to Lumina**, below. `curator-overview.md` and
+`curator-links.md` are unchanged. Remove this note once both are done; a stale note left here is
+how this file stops being read.
 
 **Editing a file here changes nothing on the website.** There is no pipeline, no
 webhook and no sync: Lumina serves the copy it was given, so a release that

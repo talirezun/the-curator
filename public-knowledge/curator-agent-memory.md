@@ -369,7 +369,7 @@ A hook never writes CLAUDE.md, AGENTS.md, GEMINI.md or your Cursor rules. That p
 
 ## How do I know whether my agents are actually saving?
 
-The Project context screen opens its Working state step with one line that answers exactly that:
+The Project context screen's Working state step opens with a row called **Capture** that answers exactly that. It is built from the same recessed, monospace, terminal-like reading component — a "monitor" — the app now uses for every live-state display, including the **Last saved** row right above it. Its closed summary already carries the count and the three qualifying clauses:
 
 ```
 CAPTURE   6 sessions in the last 30 days
@@ -378,7 +378,7 @@ CAPTURE   6 sessions in the last 30 days
 
 Three words, defined once. A **session** is one bridge process — one run of your agent tool with The Curator connected, not a conversation and not a day. **Started with the context** means that session asked for the project's brief and state at some point before its first save. **Saved before stopping** means a save succeeded; a refused save is not a save.
 
-The uncomfortable number is written in words rather than as a percentage, on purpose: "67 percent" reads as a grade, while "2 read and did not save" reads as two sessions you could go and look at. Underneath, a closed list shows each session with its start time, the harness that connected, how many calls it made, and whether it read and saved.
+The uncomfortable number is written in words rather than as a percentage, on purpose: "67 percent" reads as a grade, while "2 read and did not save" reads as two sessions you could go and look at. Press the row and it opens to a table listing each session's start time, the harness that connected, how many calls it made, and whether it read and saved — what used to be a separate fold called "Sessions" is now that same row's own body, and the word no longer names anything on the screen.
 
 Three states are told apart rather than blurred: no usage log on this computer yet, a log with no session for this project in the window, and the reading itself. Only the third carries a freshness mark, and that mark is the age of the newest session — not a grade for the ratio.
 
@@ -529,10 +529,10 @@ The **Context** item on the rail — one of three, since version 3.64.0 — open
 - **The overview card** answers the question people actually arrive with: where does this project stand? One reading per layer — FOUNDATIONS, WORKING STATE, KNOWLEDGE — each with its figure, a qualifier under it, and a freshness dot and the word beside it, because colour never carries a reading on its own. Press one and the page jumps to the step it names; unlike the same card on a domain page, nothing here filters — these are readings, not a filter. An unknown age is drawn as a dashed ring and the words, never as age zero.
 - **Step 1, Foundations** holds the canonical documents, or — before ownership is chosen — the question that chooses it.
 - **Step 2, Working state** opens with the **Last saved** reading and the CAPTURE line described [below](#how-do-i-know-whether-my-agents-are-actually-saving) — moved here, to the top of this step, in version 3.64.1, and since version 3.64.2 a fold row like the ones under it rather than a card of its own: the age, the work-stream and the tool that wrote it, on one line, flat with no chevron when there is nothing to explain — then holds three collapsed folds in ownership order: the standing brief (yours, with a pencil), the work-streams (your agents'; press a row to read that handoff in the reader), and the session journal. Everything that qualifies them — content that had to be trimmed, a handoff that arrived by sync, another machine that saved after this one, two tools sharing one handoff file — sits above them and never folds; a warning about a save is never behind a chevron.
-- **Step 3, Knowledge** is, since version 3.64.2, one summary row — "Pages · 767 pages · 1 week ago · articles" — that opens to five wiki figures and two doors: Open in Domains, and Ask this domain.
+- **Step 3, Knowledge** is one row per wiki the project draws on — by default just the domain it lives in — each reading "domain · N pages · last ingest age" and opening to five wiki figures and two doors: Open in Domains, and Ask this domain. Since version 3.65.0 a picker under the rows lets you add up to twelve wikis a project draws on, including a read-only Shared Brain mirror, or remove one — curator metadata about the project (`project.json`), written by the app, never by an agent.
 - **Every fold starts closed and remembers whether you left it open.** Each summary line carries the figure that decides whether to open it.
 
-The qualifying lines on the save-status card:
+The qualifying lines the Last saved row can show:
 
 | Line | When it appears | What it means |
 |---|---|---|

@@ -346,6 +346,18 @@ the-curator/
 │           │                    byte-identity guard that pinned them to it (test-next-ingest-logic-drift.js)
 │           │                    markdown.js — the ONE Markdown renderer of this shell, used by chat.js + domains.js
 │           │                    (v3.8.0; guarded by scripts/test-next-markdown.js — see above)
+│           │                    sidebar.js + sidebar.css — the ONE sidebar component: a title, up to
+│           │                    two action buttons, and rows of identity-dot/name/figure/freshness/
+│           │                    age/event. Adopted by Domains, Context (Project context) and Settings,
+│           │                    with per-host class aliases (`dm`/`mem`/`settings`) so each view's
+│           │                    historical CSS selectors keep resolving (v3.65.0)
+│           │                    monitor.js + monitor.css — the ONE component for every live-state
+│           │                    reading in the app: a recessed, monospace, terminal-like panel of
+│           │                    key→value lines plus always-visible "loud" warning lines. Adopted by
+│           │                    the MCP bridge connection status, its stale-bridge warning, its
+│           │                    self-test result and its session readings, the Sync view's status,
+│           │                    Context's Capture session reading, and Domains' Wiki-health scan
+│           │                    report (v3.65.0)
 │           └── views/          One file + one same-named CSS file per registered VIEW (chat, domains,
 │                                ingest, memory, settings, shared, sync — all real). Since v3.64.0 only
 │                                three of them are rail entries: ingest and shared are HOSTED_VIEWS,
@@ -389,6 +401,10 @@ the-curator/
 │       │   │                    working-state.md for the full tiered layout
 │       │   └── <project>/
 │       │       ├── project.md            Tier 1 — the standing brief
+│       │       ├── project.json           Curator metadata about the project (v3.65.0) — currently
+│       │       │                          just knowledgeDomains, which wikis the project's Context
+│       │       │                          step draws on. Written by the app ONLY, never by an agent —
+│       │       │                          distinct from the agent-writable tiers 2/3 below
 │       │       ├── foundations/           Tier 0 (v3.59.0) — canonical documents
 │       │       │   ├── manifest.json       Provenance + freshness (sha256) for every document
 │       │       │   └── <slug>.md           A canonical document, verbatim — never through writePage
