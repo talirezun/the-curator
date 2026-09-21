@@ -1339,7 +1339,12 @@ section('§14 — THE VIOLET LEFT LINE IS GONE FROM THE CONVERSATION ROWS (R10)'
 // text is what carries the state at a legible contrast.
 {
   const chatCss = readFileSync(path.join(ROOT, 'src/public/next/views/chat.css'), 'utf8');
-  const dmCss = readFileSync(path.join(ROOT, 'src/public/next/views/domains.css'), 'utf8');
+  // `.dm-row.active` moved out of views/domains.css into shared/sidebar.css
+  // as `.cur-sb-row.active` (P2, v3.65.0) — the row rule is the kit's now,
+  // with `dm-row` riding only as an alias token on the element. The
+  // reference for this comparison follows the rule to where it actually
+  // lives, so a further change to it still moves this pin with it.
+  const dmCss = readFileSync(path.join(ROOT, 'src/public/next/shared/sidebar.css'), 'utf8');
   const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
   const bare = strip(chatCss);
 
@@ -1363,10 +1368,10 @@ section('§14 — THE VIOLET LEFT LINE IS GONE FROM THE CONVERSATION ROWS (R10)'
     return d ? d[1].trim() : null;
   };
   eq(decl(chatCss, '.chat-conv-row.active', 'background'),
-     decl(dmCss, '.dm-row.active', 'background'),
+     decl(dmCss, '.cur-sb-row.active', 'background'),
      'the active conversation row is filled with the SAME token the Domains sidebar\'s active row uses');
   eq(decl(chatCss, '.chat-conv-row.active .chat-conv-title', 'font-weight'),
-     decl(dmCss, '.dm-row.active .dm-row-name', 'font-weight'),
+     decl(dmCss, '.cur-sb-row.active .cur-sb-name', 'font-weight'),
      '…and its title takes the same weight step');
   ok(decl(chatCss, '.chat-conv-row.active .chat-conv-title', 'color') === 'var(--text)',
     '…and steps its INK too, so the state is not carried by a 1.3:1 fill alone');
