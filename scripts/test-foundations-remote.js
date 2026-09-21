@@ -992,6 +992,14 @@ section('13. A MIRROR BORN REMOTE — initFoundations with a `remote` (v3.65.0)'
   });
   assert(bare.ok, 'a remote mirror with no documents named is created', bare.message);
   eq(gh4.calls.length, 0, '...making NO network request at all');
+  // THE PROPERTY v3.61.0 RECORDED, restated for this arm: the refresh's own
+  // empty-work-list branch returns `noop: true` and writes NOTHING, so an
+  // init that delegated to it would report success and leave the project
+  // with no manifest and no ownership — and the NEXT init would be allowed.
+  assert(existsSync(manifestPath('bare')),
+    '...and the ownership manifest IS written, although nothing was read — otherwise the ownership is not recorded at all');
+  eq(manifestOf('bare').ownership, 'repo', '...recording the ownership');
+  eq(manifestOf('bare').repo.root, null, '...with no folder on this computer');
   eq(manifestOf('bare').repo.remote.repo, 'thing', '...with the remote recorded for the first refresh');
   eq(manifestOf('bare').documents.length, 0, '...and no documents');
   assert((bare.notes || []).some((n) => /nothing was read/.test(n)), '...saying so in a note', JSON.stringify(bare.notes));

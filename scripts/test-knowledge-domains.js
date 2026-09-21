@@ -152,7 +152,12 @@ section('2. The default is a FACT, and a choice is a different one');
   eq(cleared.cleared, true, '...saying so');
   eq(JSON.stringify(cleared.knowledgeDomains), '["alpha"]', '...and the project reads as its own domain again');
   eq(cleared.knowledgeDomainsDefaulted, true, '...defaulted');
-  const afterClear = JSON.parse(readFileSync(metaPath('alpha', 'proj1'), 'utf8'));
+  // Read DEFENSIVELY: a store that stopped merging would have removed this
+  // file entirely, and a crash here would report the defect as a broken
+  // suite rather than as the assertion it is.
+  const afterClearRaw = existsSync(metaPath('alpha', 'proj1')) ? readFileSync(metaPath('alpha', 'proj1'), 'utf8') : null;
+  assert(afterClearRaw !== null, 'the file SURVIVES a clear when it still holds another field');
+  const afterClear = afterClearRaw ? JSON.parse(afterClearRaw) : {};
   assert(!('knowledgeDomains' in afterClear), 'the field is gone from the file');
   eq(JSON.stringify(afterClear.somethingLater), '{"kept":true}', '...and the unknown field is STILL kept');
 
