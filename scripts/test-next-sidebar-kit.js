@@ -113,6 +113,19 @@ const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => 
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
 ));
 
+/** True iff `css` declares a REAL rule for `selector` — comments stripped
+ *  first, so a rule that NAMES a retired selector in prose (the "this
+ *  replaces the old rule" comment a view leaves behind when it deletes one)
+ *  cannot satisfy a control that is supposed to prove the rule still exists.
+ *  Found live: a sibling suite's `.settings-nav-row::before` CONTROL read the
+ *  raw stylesheet, so it stayed green on a branch that had already deleted
+ *  the rule and replaced it with a comment naming it. */
+function hasRule(css, selector) {
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const re = new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{');
+  return re.test(bare);
+}
+
 // ── A MINIMAL DOM READER ───────────────────────────────────────────────────
 function tags(html) {
   const out = [];
@@ -243,7 +256,14 @@ const DOM_ROWS = domainsRows();
   // and §1d's other arm holds instead. Exactly one is true at a time, and
   // neither can quietly become vacuous.
   section('§1d — the view is either the source of the corpus, or an adopter');
-  const stillHandBuilt = DOMAINS_JS.includes('const rows = state.domains.map');
+  // `'const rows = state.domains.map'` is the LOOP HEADER, not the hand-built
+  // markup — it survives adoption unchanged (the map callback now calls
+  // `renderSidebarRow` instead of concatenating a `<button>` string), so it
+  // reads true on both sides of the adoption and cannot tell them apart. The
+  // marker that actually distinguishes the two states is the hand-built
+  // markup literal itself, `'<button class="dm-row'`, present only before
+  // adoption and gone the moment the view stops building that string.
+  const stillHandBuilt = DOMAINS_JS.includes('\'<button class="dm-row\'');
   const hasAdopted = /from '\.\.\/shared\/sidebar\.js'/.test(DOMAINS_JS)
     && DOMAINS_JS.includes('renderSidebarRow');
   ok(stillHandBuilt !== hasAdopted,
@@ -334,9 +354,15 @@ const DOM_HEAD = renderSidebarHead({
   const group = renderSidebarGroup({ eyebrow: 'KNOWLEDGE', rowsHtml: DOM_ROWS, alias: 'dm' });
   // (c) THE THIRD NORMALISATION: the reference wrote the eyebrow's spacing as
   // an INLINE `style="margin-top:10px"` — the one thing in that sidebar no
-  // stylesheet could reach. It is the same 10px, now in a rule.
-  ok(DOMAINS_JS.includes('<div class="cur-eyebrow" style="margin-top:10px">KNOWLEDGE</div>'),
-    'CONTROL — the reference really does write that spacing inline');
+  // stylesheet could reach. It is the same 10px, now in a rule. FROZEN, like
+  // the row corpus above (v3.65.0): views/domains.js adopted the component
+  // and no longer writes the inline form at all, so a live read of DOMAINS_JS
+  // would make this CONTROL vacuously false forever rather than proving what
+  // it exists to prove — that the normalisation below really does drop
+  // something the shipped v3.64.2 reference actually wrote.
+  const DOMAINS_GROUP_HEAD_V3642 = '<div class="cur-eyebrow" style="margin-top:10px">KNOWLEDGE</div>';
+  ok(DOMAINS_GROUP_HEAD_V3642.includes(' style="margin-top:10px"'),
+    'CONTROL — the frozen v3.64.2 reference really does write that spacing inline');
   ok(/<div class="cur-sb-group-head cur-eyebrow">KNOWLEDGE<\/div>/.test(group),
     '(c) the group head keeps `.cur-eyebrow` and drops the inline style');
   ok(/\.cur-sb-group-head\s*\{[^}]*margin-top:\s*10px/.test(BARE_CSS),
@@ -451,8 +477,18 @@ section('§3 — ACTIVE IS THE FILLED ROW. THERE IS NO LEFT LINE.');
   ok(!/::before/.test(BARE_CSS),
     'the kit declares NO `::before` — one selection idiom, and a component that '
     + 'offered both would offer a future divergence');
-  ok(/\.settings-nav-row::before/.test(readFileSync(path.join(NEXT, 'views/settings.css'), 'utf8')),
+  // COMMENTS STRIPPED (see `hasRule`): a raw scan would still read this
+  // green on a branch where P5 (Settings) has already deleted the rule and
+  // left a comment naming it — this control exists to prove the rule is
+  // real, not that its name appears somewhere in the file.
+  ok(hasRule(readFileSync(path.join(NEXT, 'views/settings.css'), 'utf8'), '.settings-nav-row::before'),
     'CONTROL: the rule this replaces still exists in views/settings.css — P5 deletes it');
+  ok(!hasRule('/* .settings-nav-row::before { content: \'\'; } — retired, see .cur-sb-row.active */'
+    + ' .other { color: red; }', '.settings-nav-row::before'),
+  'CONTROL: hasRule() does NOT count a selector COMMENTED OUT, selector-then-brace and all — '
+    + 'the exact shape a "this replaced that rule" comment leaves behind');
+  ok(hasRule('.settings-nav-row::before { content: \'\'; }', '.settings-nav-row::before'),
+    'CONTROL: ...and it DOES count a real rule');
   // THE PRESS, AND ITS ESCAPE.
   ok(/\.cur-sb-row:active\s*\{[^}]*transform:\s*translateX\(var\(--press-shift\)\)/.test(BARE_CSS),
     'the press nudges along the axis the list does NOT scroll in');
@@ -551,9 +587,16 @@ section('§5 — THE ALIAS TABLE, AND THE PALETTE MAPPING');
     Object.values(ALIASES.dm).sort().join(','),
     'dm-row,dm-row-age,dm-row-dot,dm-row-event,dm-row-figure,dm-row-list,dm-row-main,'
     + 'dm-row-meta,dm-row-name,dm-row-sep');
-  // EVERY aliased token is one a host really uses, checked against that
-  // view's own source rather than against this list.
-  for (const [host, file, src] of [['dm', 'views/domains.js', DOMAINS_JS],
+  // EVERY aliased token is one a host really uses. For `mem` and `settings`,
+  // which still hand-build their rows, that is checked against the view's own
+  // SOURCE. For `dm`, which adopted the component (v3.65.0), the ten tokens
+  // are no longer typed literally anywhere in views/domains.js — the kit
+  // generates them from `alias: 'dm'` — so "actually writes today" is checked
+  // against the view's REAL RENDERED OUTPUT instead: the same DOM_ROWS §1
+  // proved byte-identical to the v3.64.2 reference, plus the group wrapper
+  // that carries `dm-row-list`.
+  const DOM_GROUP = renderSidebarGroup({ eyebrow: 'KNOWLEDGE', rowsHtml: DOM_ROWS, alias: 'dm' });
+  for (const [host, file, src] of [['dm', 'views/domains.js (rendered)', DOM_ROWS + DOM_GROUP],
     ['mem', 'views/memory.js', MEMORY_JS], ['settings', 'views/settings.js', SETTINGS_JS]]) {
     const missing = Object.values(ALIASES[host]).filter((t) => !src.includes(t));
     ok(missing.length === 0,
@@ -578,7 +621,12 @@ section('§5 — THE ALIAS TABLE, AND THE PALETTE MAPPING');
     'the kit declares NO colour for those slots — three of the six light values are '
     + 'derived literals, and test-next-design-kit.js §10 holds the colour-literal '
     + 'baseline at exactly two files, neither of them shared');
-  ok(/\.dm-row-dot-1\s*\{/.test(readFileSync(path.join(NEXT, 'views/domains.css'), 'utf8')),
+  // `.dm-row-dot-1` now sits in a SELECTOR LIST beside `.cur-sb-dot-1` (P2,
+  // v3.65.0) rather than owning the rule alone — the twelve colour rules pair
+  // the two names so a Context row coloured through `identityDotClass()`
+  // paints in both themes. The pattern allows for that list rather than
+  // requiring `.dm-row-dot-1` to be immediately followed by `{`.
+  ok(/\.dm-row-dot-1\b[^{}]*\{/.test(readFileSync(path.join(NEXT, 'views/domains.css'), 'utf8')),
     '...so the palette stays in views/domains.css, where it is already baselined and '
     + 'already measured');
   ok(/identityDotClass/.test(KIT_JS) && KIT_JS.includes('cur-sb-dot-1')
