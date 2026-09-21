@@ -23,6 +23,19 @@
    from index.html BEFORE the view sheets, so a view may still override.
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/* ── THE SECTION IS WHERE THE HOST'S ONE DIAL LIVES ───────────────────────
+   `--cur-ov-min` is DECLARED here, with the default, rather than living only
+   as a `var()` fallback. Two reasons, one of them measured: a fallback-only
+   custom property is UNDEFINED to scripts/test-css-tokens.js §7, which is the
+   guard that exists because v3.0.12 shipped `var(--text-dim)` — a name
+   nothing ever defined — and it reported this one on its first run. And a
+   declaration is the honest place for a default anyway: a host raises the
+   floor with an inline `style="--cur-ov-min:210px"` on this same element,
+   which outranks a declaration but would simply have shadowed a fallback,
+   so the two spellings would have disagreed about where the default lives.
+   The `var()` below keeps its fallback as the second layer. */
+.cur-ov { --cur-ov-min: 110px; }
+
 /* The eyebrow and its ⓘ share one row. The mark's own class belongs to
    shared/text.css and is not named here; the alignment lives on the wrapper,
    exactly as views/domains.css's `.dm-section-head-row` did. --space-2 is the
@@ -51,10 +64,26 @@
   display: grid;
   /* auto-fit rather than a fixed track count: the Domains page renders four,
      five or six figures depending on whether a domain has stray pages, and
-     the Context view renders three. This container is comfortably wider than
-     4 * 110px, so a four-figure row is identical to the fixed repeat(4, 1fr)
-     this replaced. */
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+     the Context view renders three (four once CAPTURE lands). This container
+     is comfortably wider than 4 * 110px, so a four-figure row is identical to
+     the fixed repeat(4, 1fr) this replaced.
+
+     ── THE FLOOR IS THE HOST'S ONE DIAL (v3.65.0) ────────────────────────
+     `--cur-ov-min` replaces the second FIGURE RUNG v3.64.2 added. That rung
+     existed because "saved 57 min ago" wrapped at 22px in a three-track grid
+     — re-measured at the real column width, it does not: the value's content
+     box is 277.7px there and the longest realistic value is 174.8px. It wraps
+     only below ~207px of track, which is a 1024px window or a 1370px one with
+     the onboarding guide docked (`.main-inner` 959px -> 647px,
+     shell.css:1274).
+
+     So the narrow case is answered where it lives. A host whose values are
+     PHRASES raises the floor (the Context view passes 210px); a host that
+     passes nothing keeps 110px and is pixel-identical to what it rendered
+     before this property existed. Two views at two type sizes are two
+     designs; two views at two track floors are one design with different
+     content, which is what they actually have. */
+  grid-template-columns: repeat(auto-fit, minmax(var(--cur-ov-min, 110px), 1fr));
   gap: 10px;
 }
 
@@ -62,6 +91,24 @@
   padding: var(--space-8);
   border-radius: var(--radius-lg);
 }
+/* `[hidden]` LOSES TO AN AUTHOR `display` AT ANY SPECIFICITY, which is how
+   v3.62.0 shipped an empty warning chip that painted anyway. A card whose
+   answer has not arrived is RENDERED and hidden, then revealed by one
+   attribute write with no repaint, so this counter-rule is what makes the
+   hidden state real. It moved here from `.cur-ov-jump[hidden]` when a jump
+   became an ordinary card.
+
+   THE TWO SELECTORS ARE ARITHMETIC, NOT BELT-AND-BRACES, and the first cut
+   of this rule was WRONG. `.cur-ov-card[hidden]` scores (0,2,0). The control
+   form of a card is painted by `.cur-ov-group button.cur-ov-card { display:
+   block }` below, which scores (0,2,1) — HIGHER — so a hidden jump card
+   would have carried the attribute and painted anyway, which is v3.62.0's
+   defect re-created by moving the rule. `.cur-ov-group .cur-ov-card[hidden]`
+   scores (0,3,0) and outranks it; the bare form stays for a card rendered
+   outside a group. A swept class rather than a named list, so the next tile
+   to be conditionally hidden gets it for free. */
+.cur-ov-card[hidden],
+.cur-ov-group .cur-ov-card[hidden] { display: none; }
 .cur-ov-group .cur-ov-card {
   border: 0;
   background: none;
@@ -144,13 +191,6 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
-/* A VALUE THAT IS A SENTENCE takes one rung less, and that is the component's
-   ONE option. Measured at 1370px on a three-track grid: "saved 57 min ago" at
-   --text-2xl broke after "min" and "24 documents" broke after "24" — two
-   lines of 22px in a card whose neighbour holds one. A count keeps the
-   display size, because a count is what that size is for. */
-.cur-ov-value-phrase { font-size: var(--text-lg); }
-
 /* ── THE SECOND LINE ──────────────────────────────────────────────────────
    The Context view's cards answer with a phrase AND a qualifier — "24
    documents" / "4 stale", "saved 12 min ago" / the work-stream it belongs to.
@@ -164,55 +204,6 @@
   font-variant-numeric: var(--numeric-tabular);
 }
 
-/* ── THE JUMP ROW ─────────────────────────────────────────────────────────
-   A second row inside the same group, and a class of its own. These are not
-   figures: they carry a date or a state and they open something further down
-   the page. The chrome is deliberately the SAME as a figure-control's
-   (transparent until hover, the kit's focus ring, the press nudge) so the row
-   reads as part of the group rather than as a toolbar bolted under it. */
-.cur-ov-jumps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  padding: 0 var(--space-8) var(--space-6);
-}
-/* `[hidden]` LOSES TO AN AUTHOR `display` AT ANY SPECIFICITY, which is how
-   v3.62.0 shipped an empty warning chip that painted anyway. A jump tile is
-   rendered on every paint and revealed without a repaint, so this
-   counter-rule is what makes the hidden state real. A swept class rather than
-   a named list: the next tile to be conditionally hidden gets it for free. */
-.cur-ov-jump[hidden] { display: none; }
-.cur-ov-jump {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-4) var(--space-6);
-  border: 0;
-  border-radius: var(--radius-md);
-  background: none;
-  font: inherit;
-  color: inherit;
-  text-align: left;
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: background var(--t-state), box-shadow var(--t-state), transform var(--t-press);
-}
-.cur-ov-jump:hover { background: var(--surface-hover); }
-.cur-ov-jump:focus-visible { outline: none; box-shadow: var(--ring-focus); }
-.cur-ov-jump:active {
-  background: var(--surface-active);
-  transform: translateY(var(--press-shift));
-}
-/* A WORD OR A DATE, NOT A COUNT — so it takes the body size rather than
-   `.cur-ov-value`'s --text-2xl, which would make "3 days ago" the largest
-   thing in the group. */
-.cur-ov-jump-value {
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  color: var(--text);
-}
-
 /* ── Reduced motion ───────────────────────────────────────────────────────
    Press transforms off; every background step above stays, because a colour
    change is not motion and it is what actually acknowledges the click. Last
@@ -222,6 +213,5 @@
    came with the card when it moved out of that file. */
 @media (prefers-reduced-motion: reduce) {
   .cur-ov-group button.cur-ov-card:active,
-  .cur-ov-group button.cur-ov-card[aria-pressed]:active,
-  .cur-ov-jump:active { transform: none; }
+  .cur-ov-group button.cur-ov-card[aria-pressed]:active { transform: none; }
 }

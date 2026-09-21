@@ -269,32 +269,65 @@ const CTX = contextOverview();
   }
 }
 {
-  // §1c — THE ONLY TWO PERMITTED DIFFERENCES, enumerated.
-  section('§1c — the two adopters may differ in exactly two ways');
+  // §1c — THE ONLY THREE PERMITTED DIFFERENCES, enumerated (v3.65.0).
+  //
+  // It was the alias, the second line and the FIGURE RUNG. The rung is gone:
+  // re-measured at the real column width, the wrap that justified it does not
+  // happen (the value's content box is 277.7px in the 3-track grid at 1370 and
+  // the longest realistic value is 174.8px; it wraps only below ~207px, which
+  // is a 1024px window or a 1370px one with the onboarding guide docked). Two
+  // views at two type sizes are two designs, which is the whole report. In its
+  // place, a per-host TRACK FLOOR — different content, one design.
+  section('§1c — the two adopters may differ in exactly three ways');
   ok(withClass(DOM, 'cur-ov-sub').length === 0,
     'the Domains figures carry NO second line, so they are byte-identical to the row they replaced');
   eq('the Context figures carry one each', withClass(CTX, 'cur-ov-sub').length, 3);
   ok(/class="cur-ov-value dm-stat-value/.test(DOM) && !/dm-stat-value/.test(CTX),
     'and the alias token is the second — see §2');
-  // ── AND THE THIRD: THE FIGURE'S RUNG ─────────────────────────────────
-  // A COUNT and a PHRASE are different content. `figure: 'phrase'` drops one
-  // rung, and it is the component's ONLY option — enumerated here so the
-  // next option has to be argued rather than added.
-  ok(!/cur-ov-value-phrase/.test(DOM) && (CTX.match(/cur-ov-value-phrase/g) || []).length === 3,
-    'the Domains counts keep the display rung and all three Context phrases drop one');
+  // ── THE THIRD IS A TRACK FLOOR, NOT A TYPE RUNG ──────────────────────
+  ok(!/cur-ov-value-phrase/.test(DOM) && !/cur-ov-value-phrase/.test(CTX)
+    && !/cur-ov-value-phrase/.test(KIT_JS) && !/cur-ov-value-phrase/.test(KIT_CSS),
+  'NEITHER view drops a rung any more — the second figure size is gone from '
+    + 'the markup, the module and the stylesheet');
+  // COMMENTS STRIPPED, and this is the repo's recorded hazard in its INVERTED
+  // form: the module's own comment EXPLAINS the rung it retired, so a raw
+  // scan read the explanation as the declaration and reported it as still
+  // shipped. Caught by this assertion going red on its first run. A guard
+  // that fires on prose teaches people to delete the explanation.
+  const KIT_JS_BARE = KIT_JS.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok(!/opts\.figure/.test(KIT_JS_BARE) && !/figure:\s*'phrase'/.test(KIT_JS_BARE),
+    '...and `figure` is not an option the component takes at all');
+  ok(/figure: 'phrase'/.test(KIT_JS),
+    'CONTROL: ...while the module still EXPLAINS the rung it retired, in prose');
   const optioned = new Set();
-  for (const m of KIT_JS.matchAll(/opts\.(\w+)/g)) optioned.add(m[1]);
+  for (const m of KIT_JS_BARE.matchAll(/opts\.(\w+)/g)) optioned.add(m[1]);
   optioned.delete('id'); optioned.delete('eyebrow'); optioned.delete('cards');
-  optioned.delete('jumps'); optioned.delete('infoText'); optioned.delete('infoLabel');
+  optioned.delete('infoText'); optioned.delete('infoLabel');
   optioned.delete('infoHtml'); optioned.delete('alias'); optioned.delete('sectionClass');
-  eq('...and `figure` is the only OPTION the component takes beyond its content '
-    + 'and its host\'s own classes', [...optioned].sort().join(','), 'figure');
-  ok(renderOverview({ id: 'p', eyebrow: 'P', figure: 'phrase',
-    cards: [{ label: 'A', value: 'saved 12 min ago' }] }).includes('cur-ov-value-phrase'),
-  'CONTROL: the kit really does render the phrase rung when it is asked for');
-  ok(!renderOverview({ id: 'p', eyebrow: 'P', figure: 'something-else',
-    cards: [{ label: 'A', value: '1' }] }).includes('cur-ov-value-phrase'),
-  '...and an unrecognised value takes the DEFAULT rung rather than none at all');
+  eq('...and `minTrack` is the only OPTION the component takes beyond its content '
+    + 'and its host\'s own classes', [...optioned].sort().join(','), 'minTrack');
+  // THE FLOOR IS A CUSTOM PROPERTY WITH A DEFAULT, not a second rung: a host
+  // that passes nothing gets the stylesheet's 110px and renders exactly the
+  // bytes it rendered before the property existed.
+  const floored = renderOverview({ id: 'p', eyebrow: 'P', minTrack: 210,
+    cards: [{ label: 'A', value: 'saved 12 min ago' }] });
+  ok(/<section class="cur-ov" style="--cur-ov-min:210px">/.test(floored),
+    'a host raises the floor with ONE custom property on the section',
+    floored.slice(0, 120));
+  ok(!/style="/.test(renderOverview({ id: 'p', eyebrow: 'P',
+    cards: [{ label: 'A', value: '1' }] })),
+  '...and a host that passes nothing emits no style attribute at all');
+  ok(/minmax\(var\(--cur-ov-min,\s*110px\),\s*1fr\)/
+    .test(KIT_CSS.replace(/\/\*[\s\S]*?\*\//g, '')),
+  '...because the stylesheet carries the DEFAULT, so an unset host is unaffected');
+  // THE VALUE IS ARITHMETIC, NOT A STRING. A custom property lands in a
+  // `style` attribute, and a caller-composed one is an attribute injection
+  // with a paint attached.
+  for (const bad of ['210px', '210px;background:red', NaN, Infinity, 10, 4000, null, {}]) {
+    ok(!/style="/.test(renderOverview({ id: 'p', eyebrow: 'P', minTrack: bad,
+      cards: [{ label: 'A', value: '1' }] })),
+    'a `minTrack` of ' + JSON.stringify(bad) + ' is REFUSED, not interpolated');
+  }
   // ANTI-VACUITY: a `sub` handed to the Domains shape would render, so the
   // absence above is the CALLER's decision and not a capability the kit lacks.
   ok(renderOverview({ id: 'x', eyebrow: 'X', cards: [{ label: 'A', value: '1', sub: 's' }] })
@@ -306,10 +339,19 @@ const CTX = contextOverview();
 section('§2 — THE ALIAS IS THE DOMAINS PAGE\'S, and it stays there');
 // ═════════════════════════════════════════════════════════════════════════
 {
+  // SIX, not the nine v3.64.2 carried. `dm-jump-row`, `dm-jump-card` and
+  // `dm-jump-value` went with the jump ROW: a jump is an ordinary card now,
+  // so it wears `dm-stat-card` like every other tile. The one suite that
+  // still names those three is scripts/test-next-domain-sections.js (P2's),
+  // which pins them from the Domains side and moves when that view adopts.
   for (const token of ['dm-stats-grid', 'dm-stat-card', 'dm-stat-value', 'dm-stats-group',
-    'dm-section-head-row', 'dm-section-eyebrow', 'dm-jump-row', 'dm-jump-card', 'dm-jump-value']) {
+    'dm-section-head-row', 'dm-section-eyebrow']) {
     ok(DOM.includes(token), 'the Domains card still carries `' + token + '` — four suites, this '
       + 'view\'s listeners and its column patch address it by name');
+  }
+  for (const gone of ['dm-jump-row', 'dm-jump-card', 'dm-jump-value']) {
+    ok(!KIT_JS.includes(gone) || !new RegExp("'" + gone + "'").test(KIT_JS),
+      'the component emits no `' + gone + '` — that alias retired with the jump row');
   }
   const leaked = (CTX.match(/\bdm-[\w-]+/g) || []);
   eq('...and NOT ONE `dm-` token reaches the Context view', leaked.join(','), '');
@@ -347,37 +389,83 @@ section('§3 — A FILTER HIGHLIGHT ONLY WHERE THERE IS A FILTER');
   // EVERY CARD IS A DOOR ON THE CONTEXT PAGE, and each one names its step.
   const jumps = tags(CTX).filter((t) => t.attrs['data-ov-jump'] !== undefined)
     .map((t) => t.attrs['data-ov-jump']);
-  eq('the three readings open the three steps, and CAPTURE the session reading',
-    jumps.join(','), 'context-canonical,context-state,context-knowledge,capture');
+  eq('the three readings open the three steps',
+    jumps.join(','), 'context-canonical,context-state,context-knowledge');
   ok(/aria-label="Foundations, 2 documents — go to step 1"/.test(CTX),
     '...each with an accessible name that says where it goes', CTX.slice(0, 900));
-  // The Domains page's own two doors, unchanged.
   const dj = tags(DOM).filter((t) => t.attrs['data-ov-jump'] !== undefined)
     .map((t) => t.attrs['data-ov-jump']);
-  eq('the Domains card keeps its three doors', dj.join(','), 'projects,sources,shared');
-  ok(/data-stat-jump="projects"/.test(DOM) && /data-stat-jump="sources"/.test(DOM),
+  ok(dj.includes('projects'),
+    'the Domains PROJECTS figure is a door, and it is a card like every other tile');
+  ok(/data-stat-jump="projects"/.test(DOM),
     '...still addressable by the hook `bindStatCardListeners` binds');
+}
+{
+  // ── §3b — A JUMP IS AN ORDINARY CARD (v3.65.0, R5) ───────────────────
+  //
+  // MEASURED CAUSE. The jump row drew SOURCES at 92.8 x 46.4 at x=401 beside
+  // a 181.8 x 78.9 stat tile at x=385 — a different size, a different height
+  // and a 16px indent, inside the same card: *"I don't understand why it is
+  // here and why it is an entirely different design than the five on top"*.
+  //
+  // THE VIEWS HAVE NOT ADOPTED YET (P1 lands first, by the release's own
+  // landing order), so the two builders lifted above still pass a legacy
+  // `jumps: [...]` array. Two things are therefore asserted here: what an
+  // ADOPTING host passes and what it gets, and that the legacy key is inert
+  // rather than half-rendered.
+  const adopted = renderOverview({
+    id: 'dm-overview-info', eyebrow: 'OVERVIEW', alias: 'dm',
+    cards: [
+      { label: 'PAGES', value: '767', facet: 'all', active: true },
+      { label: 'SOURCES', value: '14 days ago', jump: 'sources', name: 'Sources, 14 days ago' },
+      { label: 'SHARED', value: '—', jump: 'shared', hidden: true, name: 'Shared' },
+    ],
+  });
+  const tiles = withClass(adopted, 'cur-ov-card');
+  eq('a jump card is a `.cur-ov-card` like every other tile — same class, same '
+    + 'padding, same track', tiles.length, 3);
+  ok(tiles.every((t) => t.classes.includes('dm-stat-card')),
+    '...including the alias, so the Domains page cannot tell them apart either');
+  ok(!/cur-ov-jump/.test(adopted) && !/dm-jump/.test(adopted),
+    '...and not one jump-row class survives in the markup');
+  ok(/data-ov-jump="sources"/.test(adopted) && /data-stat-jump="sources"/.test(adopted),
+    'the hook `bindStatCardListeners` binds is emitted by the CARD path, so that '
+    + 'binder needs no change');
+  ok(!/data-ov-jump="sources"[^>]*aria-pressed/.test(adopted),
+    'a jump carries NO aria-pressed — it does not stay pressed, and saying so to '
+    + 'a screen reader only would be a lie told to one audience');
+  ok(/aria-pressed="true"/.test(adopted), 'CONTROL: the facet card still does');
 
-  // A DOOR TO A READING THAT HAS NOT ARRIVED IS NOT DRAWN.
-  const noCap = contextOverview({ capture: { domain: 'acme', project: 'lumina', error: null, data: null } });
-  ok(!noCap.includes('CAPTURE'), 'with no capture answer yet there is no CAPTURE door at all');
-  ok(!noCap.includes('cur-ov-jumps'), '...and no jump row either, rather than an empty one');
+  // RENDERED AND HIDDEN, NEVER OMITTED. The tile is revealed later by ONE
+  // attribute write with no repaint; an OMITTED tile means the reveal has
+  // nothing to write to and the reading never appears. (v3.64.2 closed this
+  // exact assertion after it passed GREEN against a fixture that only ever
+  // drove the shown state.)
+  ok(/data-ov-jump="shared"[^>]*hidden>/.test(adopted),
+    'a card whose answer has not arrived is RENDERED and HIDDEN',
+    adopted.slice(adopted.indexOf('shared') - 120, adopted.indexOf('shared') + 200));
+  ok(withClass(adopted, 'cur-ov-card').length === 3,
+    '...so the grid holds the same number of tiles either way');
+  const shown = renderOverview({ id: 'x', eyebrow: 'O',
+    cards: [{ label: 'SHARED', value: '2 cohorts', jump: 'shared' }] });
+  ok(!/hidden>/.test(shown), 'CONTROL: ...and carries no `hidden` once the answer lands');
+  // A PLAIN tile and a HIDDEN plain tile, so the attribute is not a property
+  // of the control path only.
+  ok(/<div class="cur-ov-card" hidden>/.test(renderOverview({ id: 'x', eyebrow: 'O',
+    cards: [{ label: 'A', value: '1', hidden: true }] })),
+  '...and a non-control tile takes it too');
 
-  // THE SHARED TILE IS RENDERED AND HIDDEN, never omitted — it is revealed
-  // without a repaint, and `[hidden]` is what makes that possible.
-  const noShared = domainsOverview();
-  ok(/data-stat-jump="shared"/.test(noShared), 'CONTROL: the SHARED tile is in the markup');
-  const hiddenShared = new RegExp('data-ov-jump="shared"[^>]*hidden');
-  ok(!hiddenShared.test(DOM), '...visible when the panel has reported a connection');
-  // AND HIDDEN WHEN IT IS NOT, which is the half that matters: the tile is
-  // revealed later by ONE attribute write with no repaint, so an omitted tile
-  // means the reveal has nothing to write to and the reading never appears.
-  const noConn = domainsOverview({ __jumps: true });
-  ok(/data-ov-jump="shared"[^>]*hidden/.test(noConn),
-    'a jump whose answer has not warranted it is RENDERED and HIDDEN, never omitted',
-    noConn.slice(noConn.indexOf('cur-ov-jumps'), noConn.indexOf('cur-ov-jumps') + 400));
-  ok(withClass(noConn, 'cur-ov-jump').length === withClass(DOM, 'cur-ov-jump').length,
-    '...so the row holds the same number of tiles either way');
+  // THE LEGACY KEY IS INERT. views/domains.js and views/memory.js still pass
+  // `jumps: [...]` until P2 and P3 adopt; it must render NOTHING rather than
+  // an empty row or a stray container.
+  const legacy = renderOverview({ id: 'x', eyebrow: 'O', alias: 'dm',
+    cards: [{ label: 'A', value: '1' }],
+    jumps: [{ key: 'sources', label: 'SOURCES', value: '14 days ago' }] });
+  ok(!/cur-ov-jump/.test(legacy) && !/dm-jump/.test(legacy) && !/SOURCES/.test(legacy),
+    'a legacy `jumps: [...]` array renders NOTHING — not an empty row, not a stray tile',
+    legacy);
+  eq('...and the card it was passed beside still renders',
+    withClass(legacy, 'cur-ov-card').length, 1);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -488,9 +576,14 @@ section('§6 — THE STYLESHEET, AND THE THREE RULES THAT FAIL SILENTLY');
   ok(emitted.size >= 7, 'CONTROL — the component emits ' + emitted.size + ' kit classes',
     [...emitted].join(','));
   for (const c of emitted) {
-    if (c === 'cur-ov') continue; // the wrapper is a placement hook with no rule of its own
     ok(new RegExp('\\.' + c + '\\b').test(bare), '`.' + c + '` resolves a rule in the kit stylesheet');
   }
+  // THE WRAPPER'S ONE RULE is the track floor's DEFAULT. Declared rather than
+  // left as a `var()` fallback: a fallback-only custom property is UNDEFINED
+  // to scripts/test-css-tokens.js §7 — the guard v3.0.12's `var(--text-dim)`
+  // bought — and it reported this one on its first run.
+  ok(/\.cur-ov\s*\{[^}]*--cur-ov-min:\s*110px/.test(bare),
+    'the section declares the track floor\'s default, so the property is DEFINED');
 
   // THE PRESS AND ITS ESCAPE, in the same file, in that order.
   const press = /\.cur-ov-group button\.cur-ov-card:active,\s*\.cur-ov-group button\.cur-ov-card\[aria-pressed\]:active\s*\{([^}]*)\}/.exec(bare);
@@ -500,18 +593,66 @@ section('§6 — THE STYLESHEET, AND THE THREE RULES THAT FAIL SILENTLY');
   ok(!!sel && bare.indexOf(press[0]) > bare.indexOf(sel[0]),
     '...declared AFTER the selected fill it has to outrank');
   const rm = /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\}\s*\}/.exec(bare);
-  ok(!!rm && /cur-ov-card\[aria-pressed\]:active/.test(rm[1]) && /cur-ov-jump:active/.test(rm[1])
-    && /transform:\s*none/.test(rm[1]),
-  'every press declared here has its reduced-motion escape here too', rm && rm[1]);
-  ok(bare.lastIndexOf('@media (prefers-reduced-motion') > bare.lastIndexOf('.cur-ov-jump-value'),
+  ok(!!rm && /cur-ov-card\[aria-pressed\]:active/.test(rm[1]) && /transform:\s*none/.test(rm[1]),
+    'every press declared here has its reduced-motion escape here too', rm && rm[1]);
+  // EVERY press, enumerated FROM the file rather than from this list: a new
+  // `:active` with a transform and no escape must red, and it cannot if the
+  // check names the selectors it expects.
+  {
+    const pressed = [...bare.matchAll(/([^{}]*:active[^{}]*)\{([^}]*)\}/g)]
+      .filter((m) => /transform:\s*translate/.test(m[2]))
+      .map((m) => m[1].trim());
+    const escaped = rm ? rm[1] : '';
+    const naked = pressed.filter((selList) => !selList.split(',')
+      .every((sel) => escaped.includes(sel.trim())));
+    ok(pressed.length > 0 && naked.length === 0,
+      'CONTROL + RULE: every press transform in the file (' + pressed.length
+        + ') is named in the reduced-motion block', naked.join(' | '));
+  }
+  ok(bare.lastIndexOf('@media (prefers-reduced-motion') > bare.lastIndexOf('.cur-ov-sub'),
     '...declared LAST in the file, because a media query adds no specificity and would '
     + 'otherwise lose to the later of two tied `.class:pseudo` rules');
 
-  // `[hidden]` LOSES TO AN AUTHOR `display:` AT ANY SPECIFICITY.
-  ok(/\.cur-ov-jump\[hidden\]\s*\{\s*display:\s*none;?\s*\}/.test(bare),
-    'the kit carries the counter-rule that makes `hidden` real on a jump tile');
-  ok(/\.cur-ov-jump\s*\{[^}]*display:\s*flex/.test(bare),
-    'CONTROL — the tile really does declare a display of its own');
+  // ── `[hidden]` LOSES TO AN AUTHOR `display:` AT ANY SPECIFICITY ───────
+  // And "any" is the point: the counter-rule has to OUTRANK the highest
+  // `display` declared on a card, not merely exist. The first cut of this
+  // rule was `.cur-ov-card[hidden]` at (0,2,0) against
+  // `.cur-ov-group button.cur-ov-card { display: block }` at (0,2,1) — it
+  // LOST, and a hidden jump card would have painted. Scored here rather than
+  // pattern-matched, so the arithmetic is the assertion.
+  {
+    const score = (sel) => {
+      const classes = (sel.match(/\.[A-Za-z][\w-]*/g) || []).length
+        + (sel.match(/\[[^\]]+\]/g) || []).length
+        + (sel.match(/:(?!:)[a-z-]+(\([^)]*\))?/g) || []).length;
+      const els = (sel.match(/(?:^|[\s>+~])([a-z][\w-]*)/g) || []).length;
+      return classes * 10 + els;
+    };
+    const displaysOnCard = [...bare.matchAll(/([^{}]*cur-ov-card[^{}]*)\{([^}]*)\}/g)]
+      .filter((m) => /(?:^|;)\s*display\s*:/.test(m[2]) && !/\[hidden\]/.test(m[1]))
+      .flatMap((m) => m[1].split(',').map((x) => x.trim()));
+    const hiddenRule = [...bare.matchAll(/([^{}]*cur-ov-card\[hidden\][^{}]*)\{([^}]*)\}/g)]
+      .filter((m) => /display:\s*none/.test(m[2]))
+      .flatMap((m) => m[1].split(',').map((x) => x.trim()));
+    ok(hiddenRule.length > 0,
+      'the kit carries the counter-rule that makes `hidden` real on a card');
+    const best = Math.max(0, ...hiddenRule.map(score));
+    const worst = displaysOnCard.map((sel) => sel + ' = ' + score(sel))
+      .filter((_, i) => score(displaysOnCard[i]) > best);
+    ok(displaysOnCard.length > 0,
+      'CONTROL — a card really does declare a `display` of its own ('
+        + displaysOnCard.join(' | ') + ')');
+    ok(worst.length === 0,
+      '...and the [hidden] rule OUTRANKS every one of them (best ' + best + ')',
+      worst.join(' | '));
+  }
+
+  // THE JUMP ROW'S OWN RULES WENT WITH IT.
+  for (const dead of ['.cur-ov-jumps', '.cur-ov-jump', '.cur-ov-jump-value',
+    '.cur-ov-value-phrase']) {
+    ok(!new RegExp('\\' + dead + '[\\s,{\\[]').test(bare),
+      'the stylesheet declares no `' + dead + '` — the row and the second rung retired together');
+  }
 
   // THE MOVE WAS A MOVE. views/domains.css must no longer own the card.
   const domCss = readFileSync(path.join(NEXT, 'views/domains.css'), 'utf8')

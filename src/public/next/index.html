@@ -194,6 +194,39 @@
      this file's <link> tags. -->
 <link rel="stylesheet" href="/next/shared/overview.css">
 
+<!-- shared/sidebar.css — the ONE sidebar in /next: a title, at most two
+     actions under it, an eyebrow group, and rows of identity dot · name ·
+     key figure · freshness mark · clock glyph + age · last-event line, with
+     ACTIVE = the filled row and no left line anywhere. THREE hosts render it
+     — Domains, Project context and Settings — so its rules can live in none
+     of their stylesheets without one view depending on another's. Every rule
+     in it reproduces views/domains.css's, unchanged in value: that sidebar is
+     the reference design. It owns the whole `cur-sb-` prefix, and declares no
+     `.fresh-` rule (shared/freshness.css owns that scale) and no colour
+     literal (the six identity colours stay in views/domains.css, where the
+     design-kit baseline already accounts for them).
+
+     Linked ABOVE the views on purpose, so a host may still override while it
+     still owns a copy of a rule — the same layering shared/overview.css
+     documents. Load-bearing twice over: without it the sidebar is unstyled on
+     three screens, AND the file is invisible to scripts/test-css-tokens.js
+     §5, which discovers /next stylesheets only from this file's <link>
+     tags. -->
+<link rel="stylesheet" href="/next/shared/sidebar.css">
+
+<!-- shared/monitor.css — the ONE live-state reading in /next: a terminal-like
+     instrument, mono throughout, on an inset surface distinct from a card and
+     from a fold row, one key -> value line per fact, the app's freshness dot
+     on every time-based reading, and `loud` lines (a warning, a cost, an
+     outcome) always rendered and never collapsible. It replaces three
+     treatments — `renderReadout` groups standing alone, the capture block,
+     and the two hand-written status strips in views/settings.js and
+     views/sync.js — across four view stylesheets, so it can live in none of
+     them. It owns the whole `cur-mon-` prefix and declares no `.fresh-` rule.
+
+     Linked here for the same two reasons as its neighbours above. -->
+<link rel="stylesheet" href="/next/shared/monitor.css">
+
 <!-- One CSS file per view (views/README.md) — linked here so the views/
      directory never has to touch this file to add view-specific styling.
      All seven exist even where a view currently has no rules of its own,

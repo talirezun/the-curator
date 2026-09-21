@@ -1,0 +1,219 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   shared/monitor.css — THE MONITOR
+
+   A block that is a LIVE READING, drawn so a reader can tell at a glance that
+   it is one. *"It's really hard to understand that this is like a monitor into
+   the specific data and changing state ... we are looking for a unified design
+   AND a distinguished design, so this can be distinguished from other
+   sections, other cards."*
+
+   ── WHAT MAKES IT DISTINGUISHED, AND WHAT IT IS DISTINGUISHED FROM ───────
+   Three surfaces sit next to each other on these screens, and each has to be
+   tellable from the other two without reading a word:
+
+     a fold row (`.dm-fold` / `.mem-fold`)  a bordered SURFACE on --surface,
+                                            a title and a chevron, sans type
+     a group   (`.cur-group`)               a bordered container on
+                                            --surface-raised holding rows
+     THIS                                   a RECESSED plane: --surface-inset
+                                            behind a 1px --border, mono
+                                            throughout, no chevron, no title
+
+   `--surface-inset` is the app's own "a thing is set INTO the page" token
+   (tokens/color.css: #0A0A11 dark, #F7F7FA light). It is darker than the
+   canvas in dark and lighter than the raised card in light, which is what
+   makes the block read as a recessed instrument panel in both themes rather
+   than as one more card stacked on the others. It is NOT the accent wash a
+   `.tx-vh-panel` uses: that wash means "an explanation", and an explanation
+   and a reading must never look alike.
+
+   ── MONO IS THE WHOLE BLOCK, AND IT COMES FROM HERE ──────────────────────
+   `--type-mono` is set once on the container and inherited. It is NOT the
+   `class="mono"` utility: scripts/test-next-views-kit.js §7 budgets that
+   utility per view file, and a component that made every adopter emit four
+   more `mono` spans would spend a budget that exists to stop screens reading
+   as build logs. A monitor is the one place that IS a build log, and it says
+   so structurally.
+
+   ── WHAT IS NOT HERE, AND WHY IT CANNOT BE ───────────────────────────────
+   · Any `.fresh-*` rule. shared/freshness.css owns that scale and
+     scripts/test-freshness-scale.js §4 forbids a view or kit stylesheet
+     declaring one. The dot arrives as the caller's `markHtml`.
+   · Any `.tx-*` rule. shared/text.css owns that prefix and
+     scripts/test-next-text-system.js §8 proves it against a planted real
+     file — which is also why a monitor line is this component's own markup
+     and not a re-laid-out `renderReadout` (see shared/monitor.js's header).
+   · Any colour literal. scripts/test-next-design-kit.js §10 allows them in
+     exactly two /next stylesheets and neither is a shared one.
+
+   Linked from index.html BEFORE the view sheets, so a host may still place it
+   (margins, width) at equal specificity after this point.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.cur-mon {
+  font: var(--type-mono);
+  letter-spacing: var(--track-mono);
+  color: var(--text-2);
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-6) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* ── THE STATE WORD ───────────────────────────────────────────────────────
+   One word plus a dot, top-left, and it is the pill `.settings-status-card`
+   and `.sync-status-card` each wrote by hand. NOT a bordered pill here: a
+   pill inside a recessed panel is a card inside a card, the shape
+   shared/overview.css records against. The dot takes `currentColor`, so the
+   tone classes below colour the word and its mark together and cannot
+   disagree. */
+.cur-mon-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.cur-mon-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-weight: var(--weight-medium);
+  text-transform: uppercase;
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text);
+}
+.cur-mon-state-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+/* ── THE LINES ────────────────────────────────────────────────────────────
+   Key left, value right, on one line, with an optional clause under the
+   VALUE — so the eye runs down the right-hand edge reading figures, which is
+   what a terminal readout does and what a column of stat tiles cannot.
+
+   `auto 1fr` rather than `1fr auto`: the KEY is the stable column (it is a
+   short caption and it repeats down the block), so it sizes to content and
+   the value takes the rest and is right-aligned inside it. Values therefore
+   line up with each other even when the keys do not. */
+.cur-mon-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.cur-mon-line {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: var(--space-6);
+  align-items: baseline;
+  min-width: 0;
+}
+.cur-mon-key {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+/* THE READING. Tabular figures so a column of counts lines up digit for
+   digit instead of drifting with their glyph widths — the same property
+   `.cur-ov-value` and `.cur-sb-meta` take, for the same reason.
+
+   `inline-flex` with `align-items: baseline` puts the freshness mark on the
+   value's FIRST line and keeps it there when the value wraps; `center` floats
+   it into the middle of a two-line block, beside no word at all (measured for
+   `.tx-readout-value`, and the geometry here is the same). */
+.cur-mon-value {
+  justify-self: end;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: var(--numeric-tabular);
+  overflow-wrap: anywhere;
+  min-width: 0;
+  text-align: right;
+}
+/* The qualifying clause sits UNDER the value, in the value's column, so it
+   reads as belonging to that reading and not to the next one. */
+.cur-mon-sub {
+  grid-column: 2;
+  justify-self: end;
+  margin-top: 2px;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  text-align: right;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+/* ── THE TONES ────────────────────────────────────────────────────────────
+   Colour ONLY where the reading carries state. Applied to the line (or the
+   state word, or a loud entry) and inherited by the value, so a toned line
+   cannot end up with a coloured caption and a neutral figure.
+
+   Every one of these four is a `-text` token, i.e. a rung the palette
+   already holds to the 4.5:1 text floor in both themes; `--text-2` measures
+   8.34 dark / 7.26 light on --surface and is the quiet rung used everywhere
+   else in this file. */
+.cur-mon-ok .cur-mon-value,
+.cur-mon-state.cur-mon-ok,
+.cur-mon-loud.cur-mon-ok { color: var(--success-text); }
+.cur-mon-warn .cur-mon-value,
+.cur-mon-state.cur-mon-warn,
+.cur-mon-loud.cur-mon-warn { color: var(--attention-text); }
+.cur-mon-danger .cur-mon-value,
+.cur-mon-state.cur-mon-danger,
+.cur-mon-loud.cur-mon-danger { color: var(--danger-text); }
+.cur-mon-quiet .cur-mon-value,
+.cur-mon-state.cur-mon-quiet,
+.cur-mon-loud.cur-mon-quiet { color: var(--text-2); }
+
+/* ── THE LOUD LINE (v3.16.1) ──────────────────────────────────────────────
+   A warning, a cost or an outcome. It is rendered OUTSIDE the line list,
+   always, and there is no parameter that puts one inside — the separation is
+   structural in shared/monitor.js, and this rule only has to make it LOOK
+   like the different thing it is: full width, wrapping prose rather than a
+   key/value pair, a left rule in its own tone so it cannot be skimmed past as
+   one more reading.
+
+   It wraps: a warning that ellipsised would be a warning you cannot read. */
+.cur-mon-loud {
+  border-left: 2px solid currentColor;
+  padding-left: var(--space-6);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  overflow-wrap: anywhere;
+  max-width: var(--prose-max);
+}
+
+/* The producer's own sentence, verbatim — the quietest thing in the block,
+   under everything else, and capped as PROSE because that is what it is. */
+.cur-mon-note {
+  font-size: var(--text-2xs);
+  line-height: var(--leading-snug);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  max-width: var(--prose-max);
+}
+
+/* ── NARROW ───────────────────────────────────────────────────────────────
+   Below the rail-plus-sidebar squeeze (measured at 568: rail 72 + a view
+   sidebar 272 leave 224px of column), a two-column line has nowhere to put a
+   long value, so the pair stacks: caption, then reading, left-aligned. The
+   block keeps every other property, so it is still recognisably the same
+   instrument. */
+@media (max-width: 640px) {
+  .cur-mon-line { grid-template-columns: 1fr; }
+  .cur-mon-value,
+  .cur-mon-sub { justify-self: start; text-align: left; grid-column: 1; }
+}
