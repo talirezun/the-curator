@@ -2608,11 +2608,14 @@ section('§15 — v3.65.0: THE GITHUB ARM (record §D.7)');
     + 'store REFUSES an unrecognised one and this call records a decision',
   FI.chooserBody(remoteChoice({ remote: 'o/r', tokenSource: 'made-up' })).tokenSource, 'config');
   // THE ASSERTION THIS SECTION EXISTS FOR.
+  // THE SAME PLANT ON THE BODY: a choice carrying a token must not put one on
+  // the wire, and a fixture with no token could not tell the two apart.
   for (const c of [remoteChoice({ remote: 'o/r' }),
-    remoteChoice({ remote: 'o/r', remoteRef: 'main', tokenSource: 'sync' })]) {
-    ok('NO body from this arm carries a token, under any key',
-      !/token"\s*:\s*"(?!config|sync)/.test(JSON.stringify(FI.chooserBody(c)))
-      && !JSON.stringify(FI.chooserBody(c)).includes('"token"'),
+    remoteChoice({ remote: 'o/r', remoteRef: 'main', tokenSource: 'sync',
+      token: 'ghp_PLANTED_SECRET_0000' })]) {
+    ok('NO body from this arm carries a token, under any key or any value',
+      !JSON.stringify(FI.chooserBody(c)).includes('"token"')
+      && !/PLANTED|ghp_|github_pat/.test(JSON.stringify(FI.chooserBody(c))),
     JSON.stringify(FI.chooserBody(c)));
   }
 
@@ -2666,20 +2669,47 @@ section('§15 — v3.65.0: THE GITHUB ARM (record §D.7)');
       json: async () => ({ ok: true, remote: { owner: 'o', repo: 'r' }, commit: 'abc',
         candidates: [{ path: 'docs/a.md', bytes: 10, suggestedRole: 'architecture',
           firstHeading: null, modifiedAt: null }], truncated: false }) }; };
+    // A TOKEN IS PLANTED IN THE ARGUMENTS, and that is the whole point of
+    // this fixture rather than a flourish: a scan driven with NO token cannot
+    // tell a function that refuses to forward one from a function that would
+    // have. The mutation adding `token=` to the query string was GREEN
+    // against the token-less fixture and reds against this one.
     const got = await FI.scanRemote({ remote: 'o/r', ref: 'main', path: 'docs',
-      tokenSource: 'sync' }, fake);
+      tokenSource: 'sync', token: 'ghp_PLANTED_SECRET_0000' }, fake);
     eq('exactly one request', urls.length, 1);
     ok('...to the repo-scan route, in REMOTE mode, with the repository escaped',
       urls[0].startsWith('/api/memory/repo-scan?source=remote&remote=o%2Fr'), urls[0]);
     ok('...carrying the ref, the folder and the token SOURCE',
       /[?&]ref=main/.test(urls[0]) && /[?&]path=docs/.test(urls[0])
       && /[?&]tokenSource=sync/.test(urls[0]), urls[0]);
-    ok('...and NO token', !/token=[^S]/.test(urls[0]) && !/ghp_|github_pat/.test(urls[0]), urls[0]);
+    ok('...and NOT the token planted in its own arguments — the store reads a '
+      + 'token from a FILE, and a token in an argument neither authorises a '
+      + 'read nor appears in an answer',
+    !/PLANTED/.test(urls[0]) && !/ghp_|github_pat/.test(urls[0])
+      && !/[?&]token=/.test(urls[0]), urls[0]);
     eq('the candidates come back', got.candidates.length, 1);
     eq('...and a remote row carries NO age, uniformly — a git tree has no '
       + 'timestamps, so "not read" is the honest answer and a fake age would '
       + 'be worse than either', got.candidates[0].modifiedAt, null);
     eq('...which the row renderer respects', FI.candidateAgeHtml(null), '');
+    // ── AND THE ARM SAYS SO ONCE, ABOVE THE LIST ──────────────────────
+    // Twenty-five rows each carrying a dash is noise, and a FAKE age would be
+    // worse than either — so the omission is DISCLOSED rather than left to be
+    // noticed. Asserted over the rendered arm with a scan in hand, because
+    // the sentence only appears once there is a list for it to qualify.
+    const listed = FI.renderFoundationsChooser({ id: 'x', choice: remoteChoice({
+      remote: 'o/r', candidates: got.candidates, picks: {} }) });
+    ok('the remote arm discloses that no row carries an age',
+      /Age is unknown for a remote scan/.test(listed), listed.slice(-900));
+    ok('...and no row invents one', !/fnd-init-cand-age/.test(listed), listed.slice(-900));
+    // CONTROL: the LOCAL arm, whose rows DO carry an age, says no such thing.
+    const localListed = FI.renderFoundationsChooser({ id: 'x', choice: {
+      ...FI.freshChooser({}), ownership: 'repo', repoRoot: '/r', picks: {},
+      candidates: [{ path: 'docs/a.md', bytes: 10, suggestedRole: 'other',
+        modifiedAt: new Date(Date.now() - 3600_000).toISOString() }] } });
+    ok('CONTROL: the local arm makes no such disclosure, because its rows have ages',
+      !/Age is unknown/.test(localListed) && /fnd-init-cand-age/.test(localListed),
+      localListed.slice(-900));
   }
   {
     // EVERY REFUSAL IS A SENTENCE, AND EVERY SENTENCE NAMES THE SOURCE.

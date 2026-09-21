@@ -148,6 +148,30 @@ ok('memory.js: renderMain builds its header with renderViewHeader',
   callSiteCount(memSrc, 'renderViewHeader', { within: 'renderMain' }) > 0);
 ok('memory.js: ...and that header carries the mechanism explanation as its `info`',
   /info: aboutInfoHtml\(\)/.test(memSrc) && /infoHtml: true/.test(memSrc));
+// ── THE ONE PRIMARY, TOP RIGHT (v3.65.0, §2(5)) ──────────────────────────
+// The maintainer, with both headers side by side: *"The Copy agent
+// instructions button should be on the top right in a violet button like Ask
+// this domain — the same design pattern."* So the assertion is the PATTERN,
+// not the button: the header's action slot carries exactly one `btn-primary`,
+// it is this control, and it takes the md rung rather than `btn-xs` — the two
+// halves of "like Ask this domain", which is `btn btn-primary dm-ask-btn`.
+{
+  const actions = (/actionsHtml: state\.activeProject[\s\S]{0,400}?: '',/.exec(memCode) || [''])[0];
+  ok('memory.js: the header\'s action slot was found (the scan is not vacuous)',
+    actions.length > 40, actions.slice(0, 120));
+  ok('memory.js: exactly ONE btn-primary in the header, and it is the copy control',
+    (actions.match(/btn-primary/g) || []).length === 1, actions);
+  ok('...carrying the copy control\'s own id, so the pattern cannot be satisfied '
+    + 'by some other button', /id="mem-copy-agent"/.test(actions), actions);
+  ok('...at the md rung, like `Ask this domain`, not the btn-xs it used to be',
+    !/btn-xs/.test(actions), actions);
+  // AND IT REACHES THE EDGE THE SAME WAY DOMAINS DOES: one declaration, the
+  // same one views/domains.css makes about `.dm-ask-btn`, because the actions
+  // group is `flex: 1` precisely so a trailing primary can push itself right.
+  ok('memory.css gives it `margin-left: auto`, the one line the pattern needs',
+    /\.mem-ask-btn\s*\{[^}]*margin-left:\s*auto/.test(memCss),
+    (/\.mem-ask-btn[^}]*\}/.exec(memCss) || [''])[0]);
+}
 // COMMENT-STRIPPED, and that is not a loosening. memory.js's own docblocks
 // explain the move and NAME the component that used to do it ("this was a
 // renderExplainer <details>"), which is exactly the history this repo wants

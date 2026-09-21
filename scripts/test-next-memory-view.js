@@ -4484,6 +4484,27 @@ section('§16 — Projects inside a domain (v3.48.0)');
     + 'which is what a formatted sentence could not express',
     /class="cur-sb-figure">2 scopes<\/span><span class="cur-sb-sep"[^>]*>·<\/span><span class="fresh-dot/
       .test(aged), aged);
+  // ── THE RAIL CANNOT GROW A SECOND ⓘ, AND THAT IS STRUCTURAL ──────────
+  //
+  // The maintainer: *"we have an information icon in the Project context
+  // sidebar which should not be here, because we have another one on the
+  // right side beside Copy agent instructions — we definitely don't need it
+  // in this small section."*
+  //
+  // A SOURCE SCAN FOR "no `info:` here" is the weak form of that, and this is
+  // the strong one: the component is handed an `info` and PAINTS NOTHING, so
+  // the affordance cannot come back by a caller passing the old option. The
+  // mutation that adds `info:` to this view's own head call is inert BECAUSE
+  // of this, which is why the claim is asserted here rather than assumed.
+  ok('the sidebar head paints no ⓘ even when one is handed to it — the option '
+    + 'does not exist, so the mark cannot come back by a caller remembering it',
+  !/tx-vh-info/.test(renderSidebarHead({ title: 'Project context',
+    info: 'a second mark', infoText: 'a second mark',
+    primary: { label: '+ New project' }, secondary: { label: 'Refresh' } })));
+  ok('CONTROL: the head really did render (the scan is not vacuous)',
+    /class="sidebar-title">Project context</.test(
+      renderSidebarHead({ title: 'Project context' })));
+
   ok('a project with NO save says so rather than borrowing another screen\'s words',
     g([{ domain: 'alpha', project: 'fresh', scopeCount: 0, hasBrief: false }], null, null, ['alpha'])
       .includes('no save yet'));
@@ -8127,6 +8148,36 @@ const fndRead = (payload) => ({
   }
 
   {
+    // ── AND TWO OVERLAPPING ASKS FOR ONE DOMAIN ARE ONE REQUEST ────────
+    //
+    // The CACHE cannot cover this: it is written when the answer LANDS, so a
+    // second ask made while the first is still in flight misses it entirely.
+    // Two project switches inside one domain, or two rows naming one wiki,
+    // is the shape — and the cost of getting it wrong is invisible, just
+    // slower, which is why it is driven rather than assumed. (A mutation
+    // deleting the in-flight guard was GREEN against the cache assertion
+    // above; this is what reds it.)
+    let release;
+    const gate = new Promise((res) => { release = res; });
+    const r = mk(async () => { await gate; return okRes({ pageCount: 1, pageCounts: {} }); });
+    await r.api.loadKnowledge(['acme'], 1);
+    await r.api.loadKnowledge(['acme'], 1);
+    await settle();
+    eq('two asks for one domain while the first is in flight issue ONE request',
+      r.calls.urls.length, 1, JSON.stringify(r.calls.urls));
+    release();
+    await settle();
+    // AND THE MARK IS RELEASED, or the domain could never be re-read at all.
+    r.calls.urls.length = 0;
+    r.api.cache.delete('acme');
+    r.st.knowledge.delete('acme');
+    await r.api.loadKnowledge(['acme'], 1);
+    await settle();
+    eq('...and the mark clears when the read settles, so the domain is '
+      + 'readable again', r.calls.urls.length, 1, JSON.stringify(r.calls.urls));
+  }
+
+  {
     // STAMPED AT THE POINT OF USE. A reply for a mount that has ended must
     // never be written into state at all.
     let live = true;
@@ -8227,10 +8278,14 @@ const fndRead = (payload) => ({
   const full = K({ acme: { error: null, data: { pageCount: 3445,
     pageCounts: { entities: 614, concepts: 2780, summaries: 51, other: 0 },
     lastIngestDate: '2026-09-16', lastIngestKind: 'ingest', lastIngestTitle: 'The Footprint' } } });
-  ok('the five figures are MONITOR lines — the third of the three report '
-    + 'treatments this screen carried, now the one instrument',
-  ['pages', 'entities', 'concepts', 'summaries', 'last ingest']
-    .every((w) => full.includes('<span class="cur-mon-key">' + w + '</span>')), full.slice(0, 900));
+  // FIVE, IN ORDER, AND NOTHING ELSE. `every` alone passes over a SIXTH line
+  // — a figure nobody asked for, in the one instrument on this step — so the
+  // keys are read out of the rendered monitor and compared as a sequence.
+  eq('the five figures are MONITOR lines, in the OVERVIEW vocabulary, and '
+    + 'there is no sixth — the third of the three report treatments this '
+    + 'screen carried, now the one instrument',
+  [...full.matchAll(/<span class="cur-mon-key">([^<]*)<\/span>/g)].map((m) => m[1]).join(','),
+  'pages,entities,concepts,summaries,last ingest', full.slice(0, 900));
   ok('...with the counts they were given', /3,445/.test(full) && /2,780/.test(full), full.slice(0, 900));
   ok('the verb comes from the log, never from the view\'s name',
     /Ingested · The Footprint/.test(full), full.slice(0, 1200));
@@ -8294,6 +8349,73 @@ const fndRead = (payload) => ({
     + 'below are the default rather than the choice, and saying nothing would '
     + 'present one as the other',
   /could not be read/.test(bad) && /not valid JSON/.test(bad), bad.slice(0, 400));
+}
+
+// ── §21f2b — the OVERVIEW's jumps land where the reading IS ─────────────
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Three of the four cards open a numbered STEP; CAPTURE opens a READING
+// INSIDE step ②, and since v3.65.0 that reading is a fold row rather than a
+// card above it. The two-step fallback is the point and is what fails
+// silently: land on the ROW when it is on screen, on the step that holds it
+// when it is not. A jump that quietly degraded to the step would look almost
+// right and put the reader at the top of a long section.
+//
+// The listener body is lifted out of `wire()` by brace-match on its own
+// marker and driven against a recording document — the shape §21f2 already
+// uses for the chat door.
+{
+  const liftJump = (src) => {
+    const marker = "document.querySelectorAll('[data-ov-jump]').forEach((btn) => {";
+    const idx = src.indexOf(marker);
+    if (idx === -1) throw new Error('the [data-ov-jump] binder was not found in memory.js');
+    const open = idx + marker.length - 1;
+    let i = open;
+    let depth = 0;
+    for (; i < src.length; i++) {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}') { depth--; if (depth === 0) { i++; break; } }
+    }
+    // The BODY only, without the `{ … }` braces, so it can be dropped into a
+    // `new Function` whose parameter list supplies `btn`.
+    return src.slice(open + 1, i - 1);
+  };
+
+  const run = (where, present) => {
+    const asked = [];
+    const scrolled = [];
+    const mk = (name) => ({ __name: name,
+      scrollIntoView: () => scrolled.push(name),
+      querySelector: () => ({ setAttribute() {}, focus() {} }) });
+    const btn = { dataset: { ovJump: where }, addEventListener(t, fn) { this._click = fn; } };
+    const doc = {
+      querySelectorAll: () => [btn],
+      querySelector: (sel) => { asked.push(sel); return present.includes(sel) ? mk(sel) : null; },
+    };
+    // The lifted body is the forEach CALLBACK, so it is run as a function OF
+    // the button rather than as a closure over one — `btn` is that callback's
+    // own parameter in the shipped code.
+    // eslint-disable-next-line no-new-func
+    new Function('document', 'window', 'btn', liftJump(stripComments(viewSrc)))(
+      doc, { matchMedia: () => ({ matches: false }) }, btn);
+    btn._click();
+    return { asked, scrolled };
+  };
+
+  const onScreen = run('capture', ['.settings-block-context-state', '[data-mem-fold="capture"]']);
+  ok('CAPTURE asks for the ROW the reading now lives in',
+    onScreen.asked.includes('[data-mem-fold="capture"]'), JSON.stringify(onScreen.asked));
+  eq('...and scrolls to it, not to the step around it',
+    onScreen.scrolled.join(','), '[data-mem-fold="capture"]');
+  const offScreen = run('capture', ['.settings-block-context-state']);
+  eq('...and falls back to the step that HOLDS it when the row is not there',
+    offScreen.scrolled.join(','), '.settings-block-context-state');
+  // CONTROL: a card naming a whole step takes no fallback at all.
+  const step = run('context-canonical', ['.settings-block-context-canonical']);
+  eq('CONTROL: a step card opens its own step directly',
+    step.scrolled.join(','), '.settings-block-canonical'.replace('canonical', 'context-canonical'));
+  ok('...and asks for no row', !step.asked.some((a) => a.includes('data-mem-fold')),
+    JSON.stringify(step.asked));
 }
 
 // ── §21f3 — the ONE write step ③ makes, and every refusal it can meet ───
@@ -8366,8 +8488,17 @@ const fndRead = (payload) => ({
     await r.api.saveKnowledgeDomains(['x'], 1);
     return r.st.knowledgeSaveError;
   };
+  // A CAP THE STORE DID NOT SEND is a different fixture from one it did, and
+  // only the second can tell a READ number from a TYPED one. `9` is not the
+  // shipped cap, so a sentence that hard-codes 12 reds here — which is what a
+  // fixture using the real cap could not do, and did not (green first).
   ok('the CAP is named with the store\'s own number, not a copy typed here',
-    (await refusal(400, { error: 'too_many_domains', cap: 12 })) === 'A project can draw on at most 12 wikis.');
+    (await refusal(400, { error: 'too_many_domains', cap: 9 })) === 'A project can draw on at most 9 wikis.',
+    await refusal(400, { error: 'too_many_domains', cap: 9 }));
+  ok('...and a route that sent no cap at all falls back to the shipped one '
+    + 'rather than printing "undefined"',
+  (await refusal(400, { error: 'too_many_domains' })) === 'A project can draw on at most 12 wikis.',
+  await refusal(400, { error: 'too_many_domains' }));
   ok('an unknown domain is NAMED, because the user has to know which one',
     /Not a domain on this computer: ghost\./.test(
       await refusal(400, { error: 'unknown_domain', domains: ['ghost'] })));
@@ -8674,6 +8805,54 @@ const fndRead = (payload) => ({
     /2 wikis/.test(twoWikis) && !/2026-09-10/.test(twoWikis),
     twoWikis.slice(twoWikis.indexOf('KNOWLEDGE'), twoWikis.indexOf('KNOWLEDGE') + 300));
 
+  // ── THE TRACK FLOOR, AND THE ONE FIGURE RUNG (v3.65.0, R8) ──────────
+  //
+  // v3.64.2 dropped these values one rung — 22px to 17px — because "saved 57
+  // min ago" broke after "min". Re-measured at the real column width that
+  // wrap does not happen; it only appears below ~207px of track content,
+  // which is a 1024px window, or a 1370px one with the onboarding guide
+  // docked. So the narrow case is fixed in the TRACK and both views draw
+  // their figures at the ONE display rung — two views whose figures are
+  // different sizes are two designs, which is the whole report.
+  //
+  // THE FLOOR IS ASSERTED AS A NUMBER, not merely as "a floor is passed":
+  // 210 is what makes four cards fit in a 949px grid at 229.75px each, which
+  // is the measurement R8 rests on, and a smaller value silently re-creates
+  // the wrap the second rung was invented for.
+  {
+    const strip = F({ knowledge: kmapOf({ acme: { error: null,
+      data: { pageCount: 1980, pageCounts: {}, lastIngestDate: '2026-09-16' } } }) })
+      .renderLayerStrip({ scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }],
+        knowledgeDomains: ['acme'] });
+    ok('the strip passes the kit a TRACK FLOOR of 210px, which is what keeps a '
+      + 'phrase on one line at the one display rung',
+    /style="--cur-ov-min:210px"/.test(strip), strip.slice(0, 200));
+    ok('...and passes NO second figure rung — `figure` is gone from the '
+      + 'component and no caller may ask for one',
+    !/cur-ov-value-phrase/.test(strip) && !/figure:/.test(stripComments(viewSrc)), strip.slice(0, 300));
+  }
+
+  // ── THE CAPTURE TILE IS RENDERED AND HIDDEN, NEVER OMITTED ──────────
+  //
+  // Its answer arrives on its own clock, after this paint. An OMITTED tile
+  // means the reading never appears unless something repaints the strip —
+  // the green-first mutation v3.64.2 closed on the jump row, in a new place.
+  // `hidden` ships the tile and one attribute write reveals it, with no
+  // repaint; shared/overview.css carries the `[hidden]` counter-rule for the
+  // card, because `[hidden]` loses to an author `display:` at any specificity.
+  {
+    const noCap = F({}).renderLayerStrip({ scopes: [] });
+    ok('with no capture reading in hand the tile is still RENDERED',
+      /data-ov-jump="capture"/.test(noCap), noCap.slice(-600));
+    ok('...and HIDDEN, so revealing it later costs no repaint',
+      /data-ov-jump="capture"[^>]*hidden>/.test(noCap), noCap.slice(-600));
+    const withCap = F({ capture: { domain: 'acme', project: 'lumina', error: null,
+      data: { totals: { sessions: 3 } } } }).renderLayerStrip({ scopes: [] });
+    ok('CONTROL: once the reading lands the same tile is shown, and carries it',
+      /data-ov-jump="capture"/.test(withCap) && !/data-ov-jump="capture"[^>]*hidden>/.test(withCap)
+      && /3 sessions/.test(withCap), withCap.slice(-600));
+  }
+
   // ── CELL ① WHILE THE READ IS IN FLIGHT ──────────────────────────────
   ok('with no project read the FOUNDATIONS cell is omitted — "not set up yet" '
     + 'is a claim that frame cannot make',
@@ -8942,6 +9121,41 @@ const fndRead = (payload) => ({
     + 'place and a node that must be created is a node a tick has to render for',
   /id="mem-fnd-budget"[^>]*hidden/.test(F.renderFoundations(fndRead(fndPayload([fndDoc()])))),
   F.renderFoundations(fndRead(fndPayload([fndDoc()]))).slice(0, 300));
+  // ── AND IT HAS SOMETHING TO DO ABOUT IT (v3.65.0, record §D.6) ───────
+  //
+  // It named a consequence and offered nothing — and the maintainer's own
+  // project mirrors 24 documents at 1,980 KB against a 200 KB budget, so it
+  // is the sentence he reads every time he opens the screen. Correct, and
+  // inert. "Choose documents" is a DOOR: it opens the documents row and puts
+  // the reader in front of the `read first` column, whose per-row tick is the
+  // shipped manifest-only PATCH. No new route, no new write.
+  ok('the warning carries an ACTION, not only a consequence',
+    /id="mem-fnd-budget-go"/.test(html), html.slice(0, 500));
+  ok('...beside the sentence, inside the same note, so the two cannot be read apart',
+    html.indexOf('id="mem-fnd-budget-go"') > html.indexOf('id="mem-fnd-budget"')
+    && html.indexOf('id="mem-fnd-budget-go"') < html.indexOf('</div>',
+      html.indexOf('id="mem-fnd-budget"') + 60) + 60, html.slice(0, 600));
+  ok('...at the SECOND rung — nothing here completes a step, it opens a row',
+    /mem-fnd-budget-go[^>]*>Choose documents/.test(html.replace(/\n/g, ''))
+    && /btn-secondary btn-xs mem-fnd-budget-go/.test(html), html.slice(0, 600));
+  // THE HANDLER, read off the SECOND occurrence of the id — the first is the
+  // markup above. It forces the TRANSIENT, never the persisted fold key, so
+  // an explicit close stays closed (the v3.64.1 "it reopens itself" loop),
+  // and it makes no request of its own: the tick it points at is what writes.
+  {
+    const code = stripComments(viewSrc);
+    // THE LAST occurrence is the handler; the two before it are the class and
+    // the id in the markup above. Taken by lastIndexOf rather than by a count,
+    // so adding another mention of the class in the markup cannot silently
+    // point this scan at a string instead of at the listener.
+    const at = code.lastIndexOf('mem-fnd-budget-go');
+    const handler = at === -1 ? '' : code.slice(at, at + 420);
+    ok('...and it opens a row rather than writing anything: the handler forces '
+      + 'the TRANSIENT, never the persisted fold key, so an explicit close stays closed',
+    /state\.fndForceOpen = true/.test(handler) && !/openFolds/.test(handler), handler.slice(0, 220));
+    ok('...and it makes no request of its own — the tick it points at is the one '
+      + 'that writes', handler.length > 40 && !/fetch\(/.test(handler), handler.slice(0, 220));
+  }
 
   // ── THE ROW CONTROL ─────────────────────────────────────────────────
   const onRow = F.fndRowHtml(fndDoc({ readFirst: true }), true, false);
