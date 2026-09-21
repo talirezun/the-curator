@@ -56,6 +56,19 @@
   color: var(--text-2);
   background: var(--surface-inset);
   border: 1px solid var(--border);
+  /* ── THE WELL, AND WHY THE TINT ALONE WAS NOT ENOUGH ──────────────────
+     MEASURED in a browser, dark theme: --surface-inset is rgb(10,10,17) and
+     a fold row and a `.cur-group` are both rgb(12,12,20) — a 1.03:1 step,
+     which is not a distinction a reader can see. In light the tint does more
+     (#F7F7FA against #FFFFFF), so the block would have read as two different
+     designs depending on the theme.
+
+     --gloss-well-quiet is the design system's OWN "set into the page" device
+     — an inset top shadow, the one a segmented control's track already takes
+     (tokens/material.css defines it per theme, so it is not a value invented
+     here). It reads in both themes because it is a SHADOW rather than a fill,
+     and it is what makes the block a recess rather than one more card. */
+  box-shadow: var(--gloss-well-quiet);
   border-radius: var(--radius-md);
   padding: var(--space-6) var(--space-8);
   display: flex;
@@ -156,27 +169,55 @@
   min-width: 0;
 }
 
-/* ── THE TONES ────────────────────────────────────────────────────────────
-   Colour ONLY where the reading carries state. Applied to the line (or the
-   state word, or a loud entry) and inherited by the value, so a toned line
-   cannot end up with a coloured caption and a neutral figure.
+/* ── THE TONES, AND THE FLOOR THAT DECIDED THEIR SHAPE ───────────────────
+   FOUND BY LOOKING, in the light theme. The first cut painted the state
+   WORD, a toned VALUE and the whole loud LINE in the tone token. Measured on
+   this block's own surface (#F7F7FA):
 
-   Every one of these four is a `-text` token, i.e. a rung the palette
-   already holds to the 4.5:1 text floor in both themes; `--text-2` measures
-   8.34 dark / 7.26 light on --surface and is the quiet rung used everywhere
-   else in this file. */
-.cur-mon-ok .cur-mon-value,
-.cur-mon-state.cur-mon-ok,
-.cur-mon-loud.cur-mon-ok { color: var(--success-text); }
-.cur-mon-warn .cur-mon-value,
-.cur-mon-state.cur-mon-warn,
-.cur-mon-loud.cur-mon-warn { color: var(--attention-text); }
-.cur-mon-danger .cur-mon-value,
-.cur-mon-state.cur-mon-danger,
-.cur-mon-loud.cur-mon-danger { color: var(--danger-text); }
-.cur-mon-quiet .cur-mon-value,
-.cur-mon-state.cur-mon-quiet,
-.cur-mon-loud.cur-mon-quiet { color: var(--text-2); }
+       --danger-text   5.06   PASSES the 4.5:1 text floor
+       --success-text  3.79   FAILS
+       --attention-text 3.35  FAILS
+
+   and there is no darker rung in those two families to reach for (there is
+   no --teal-700 or --summary-700; both resolve to --text). Dark theme passes
+   everywhere, so the defect was light-only and invisible from one theme.
+
+   THE FIX IS THE APP'S OWN RECORDED RULE, not a new one. views/domains.js's
+   `renderStatus` note states it: *"renderStatus carries its state in a 3px
+   rail (a BORDER, so its floor is 3:1, which --danger-text clears in both
+   themes) while the words stay at --text/--text-2, which clear the 4.5:1
+   text floor. The old `.mem-error-text` painted the whole sentence in
+   --danger-text: the state was decoded from colour."* settings.css's
+   `.status-pill-ok` already does the same — tinted fill, toned border, and
+   `color: var(--text)` on the word.
+
+   So in this component the tone rides on a MARK or a RULE, where the floor
+   is 3:1 and all three clear it, and every WORD stays at --text or --text-2.
+   The block is still "in colour of course" — the dot, the severity gutter
+   and the freshness mark are the colour channel; the reading itself stays
+   legible.
+
+   `quiet` is the exception and is not a state at all: it is a
+   de-emphasis, so it paints --text-2 on the value (8.72 light / 8.34 dark)
+   and no rule. */
+.cur-mon-state.cur-mon-ok .cur-mon-state-dot { background: var(--success-text); }
+.cur-mon-state.cur-mon-warn .cur-mon-state-dot { background: var(--attention-text); }
+.cur-mon-state.cur-mon-danger .cur-mon-state-dot { background: var(--danger-text); }
+.cur-mon-state.cur-mon-quiet .cur-mon-state-dot { background: var(--text-2); }
+
+/* A TONED LINE TAKES A SEVERITY GUTTER — the same device as a loud line, one
+   level quieter, which is also what a terminal does. The rule is laid out on
+   EVERY line at zero width so a toned line does not shift its neighbours by
+   the gutter's width when it appears. */
+.cur-mon-line {
+  border-left: 2px solid transparent;
+  padding-left: var(--space-4);
+  margin-left: calc(-1 * var(--space-4) - 2px);
+}
+.cur-mon-line.cur-mon-ok { border-left-color: var(--success-text); }
+.cur-mon-line.cur-mon-warn { border-left-color: var(--attention-text); }
+.cur-mon-line.cur-mon-danger { border-left-color: var(--danger-text); }
+.cur-mon-line.cur-mon-quiet .cur-mon-value { color: var(--text-2); }
 
 /* ── THE LOUD LINE (v3.16.1) ──────────────────────────────────────────────
    A warning, a cost or an outcome. It is rendered OUTSIDE the line list,
@@ -188,13 +229,18 @@
 
    It wraps: a warning that ellipsised would be a warning you cannot read. */
 .cur-mon-loud {
-  border-left: 2px solid currentColor;
+  border-left: 2px solid var(--border-strong);
   padding-left: var(--space-6);
   font-size: var(--text-xs);
   line-height: var(--leading-snug);
+  color: var(--text);
   overflow-wrap: anywhere;
   max-width: var(--prose-max);
 }
+.cur-mon-loud.cur-mon-ok { border-left-color: var(--success-text); }
+.cur-mon-loud.cur-mon-warn { border-left-color: var(--attention-text); }
+.cur-mon-loud.cur-mon-danger { border-left-color: var(--danger-text); }
+.cur-mon-loud.cur-mon-quiet { border-left-color: var(--text-2); }
 
 /* The producer's own sentence, verbatim — the quietest thing in the block,
    under everything else, and capped as PROSE because that is what it is. */
