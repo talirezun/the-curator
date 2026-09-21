@@ -911,13 +911,295 @@ section('12. The Shared Brain adapter DELEGATES rather than duplicating');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('13. No real network was reached by anything but the route section');
+section('13. A MIRROR BORN REMOTE — initFoundations with a `remote` (v3.65.0)');
 {
-  // Sections 1–10 inject `fetchImpl`; only §11 drives the real client. Every
-  // recorded attempt must therefore be one of §11's, and none may have
-  // succeeded — the spy throws.
+  // THE GAP THIS CLOSES: `initFoundations` required an absolute path on THIS
+  // machine for `ownership: 'repo'`, so a laptop with no checkout could
+  // refresh a mirror somebody else started and could never start one.
+  //
+  // THE PROPERTY THAT MATTERS, AND IT IS THE OPPOSITE OF THE LOCAL ARM'S:
+  // ownership is set ONCE and refused afterwards, and the remote arm has no
+  // cheap way to verify the repository first, so NOTHING is written unless
+  // every blob is in hand. A typo must leave the project choosable again.
+  const gh1 = makeGitHub(REPO_FILES);
+  await WS.createProject(D, 'born', {});
+  const born = await initFoundations(D, 'born', {
+    ownership: 'repo',
+    remote: 'acme/thing',
+    tokenSource: 'config',
+    files: [{ path: 'docs/architecture.md' }, { path: 'docs/decisions.md' }],
+    fetchImpl: gh1.fetchImpl, sleepImpl: fakeSleep,
+  });
+  assert(born.ok, 'a repo-owned project can be created from a GitHub remote with no checkout', born.message);
+  eq(born.ownership, 'repo', '...with ownership repo');
+  eq(born.refresh && born.refresh.source, 'remote', '...mirrored over the remote arm');
+  eq(JSON.stringify((born.refresh.added || []).slice().sort()), JSON.stringify(['architecture.md', 'decisions.md']),
+    '...copying the two documents named');
+  eq(docOf('born', 'architecture.md'), ARCH, '...byte for byte');
+  const bm = manifestOf('born');
+  eq(bm.ownership, 'repo', 'the manifest records ownership repo');
+  eq(bm.repo.root, null, '...with repo.root NULL — no folder on this computer was read');
+  eq(bm.repo.remote.owner, 'acme', '...and the remote it mirrors');
+  eq(bm.repo.remote.repo, 'thing', '...owner and repository both');
+  eq(bm.repo.lastRefreshCommit, 'a'.repeat(40), '...stamped with the commit it read');
+  eq(born.remote.owner, 'acme', 'the result names the remote back');
+  eq(born.tokenSource, 'config', '...and WHICH FILE the token came from');
+  assert(!JSON.stringify(born).includes(CONFIG_TOKEN), '...and never the token itself');
+
+  // A SECOND init is refused, exactly as on the local arm.
+  const again = await initFoundations(D, 'born', {
+    ownership: 'curator', fetchImpl: gh1.fetchImpl,
+  });
+  eq(again.reason, 'ownership-set', 'ownership is still set ONCE — a second init is refused');
+
+  // ── THE READ FAILS: NOTHING IS WRITTEN, AND THE PROJECT IS STILL FREE ──
+  const gh2 = makeGitHub(REPO_FILES, { forceStatus: 404 });
+  await WS.createProject(D, 'typo', {});
+  const failed404 = await initFoundations(D, 'typo', {
+    ownership: 'repo', remote: 'acme/thign',
+    files: [{ path: 'docs/architecture.md' }],
+    fetchImpl: gh2.fetchImpl, sleepImpl: fakeSleep,
+  });
+  eq(failed404.ok, false, 'a repository that cannot be read refuses the init');
+  eq(failed404.reason, 'remote-not-found', '...under the read\'s own reason');
+  eq(failed404.ownershipSet, false, '...saying in a field that no ownership was recorded');
+  assert(!existsSync(manifestPath('typo')), '...and NO manifest was written');
+  assert(/still unchosen/.test(failed404.message || ''), '...and the sentence says the choice can be made again',
+    failed404.message);
+  // …and it really can be made again, which is the whole point.
+  const second = await initFoundations(D, 'typo', { ownership: 'curator', seed: false });
+  assert(second.ok, 'the project can still choose an ownership afterwards', second.message);
+  eq(manifestOf('typo').ownership, 'curator', '...and it takes');
+
+  // A TRUNCATED TREE refuses before a single blob, and writes nothing.
+  const gh3 = makeGitHub(REPO_FILES, { truncated: true });
+  await WS.createProject(D, 'trunc', {});
+  const truncInit = await initFoundations(D, 'trunc', {
+    ownership: 'repo', remote: { owner: 'acme', repo: 'thing' },
+    files: [{ path: 'docs/architecture.md' }],
+    fetchImpl: gh3.fetchImpl, sleepImpl: fakeSleep,
+  });
+  eq(truncInit.reason, 'remote-tree-truncated', 'a truncated file listing refuses the init');
+  assert(!existsSync(manifestPath('trunc')), '...with no manifest written');
+  eq(gh3.calls.filter((c) => /git\/blobs\//.test(c.url)).length, 0, '...and no blob fetched at all');
+
+  // NO FILES: the ownership manifest is written and NO request is made.
+  const gh4 = makeGitHub(REPO_FILES);
+  await WS.createProject(D, 'bare', {});
+  const bare = await initFoundations(D, 'bare', {
+    ownership: 'repo', remote: 'https://github.com/acme/thing.git',
+    fetchImpl: gh4.fetchImpl, sleepImpl: fakeSleep,
+  });
+  assert(bare.ok, 'a remote mirror with no documents named is created', bare.message);
+  eq(gh4.calls.length, 0, '...making NO network request at all');
+  eq(manifestOf('bare').repo.remote.repo, 'thing', '...with the remote recorded for the first refresh');
+  eq(manifestOf('bare').documents.length, 0, '...and no documents');
+  assert((bare.notes || []).some((n) => /nothing was read/.test(n)), '...saying so in a note', JSON.stringify(bare.notes));
+  // …and that mirror refreshes from the manifest's own remote, no argument.
+  const later = await refreshFoundationsFromRepo(D, 'bare', null, {
+    source: 'remote', files: [{ path: 'docs/decisions.md' }],
+    fetchImpl: gh4.fetchImpl, sleepImpl: fakeSleep,
+  });
+  assert(later.ok, 'a later refresh reads the remote the init recorded', later.message);
+  eq(docOf('bare', 'decisions.md'), DEC, '...and copies the document');
+
+  // ── THE ARGUMENT REFUSALS, each naming what it refused ────────────────
+  await WS.createProject(D, 'argrefuse', {});
+  const both = await initFoundations(D, 'argrefuse', {
+    ownership: 'repo', repoRoot: CHECKOUT, remote: 'acme/thing',
+  });
+  eq(both.reason, 'root-and-remote', 'a folder AND a repository is refused — a mirror has one source');
+  assert(!existsSync(manifestPath('argrefuse')), '...writing nothing');
+  const curRemote = await initFoundations(D, 'argrefuse', { ownership: 'curator', remote: 'acme/thing' });
+  eq(curRemote.reason, 'remote-not-allowed', 'a curator-owned project given a remote is refused');
+  const badSource = await initFoundations(D, 'argrefuse', {
+    ownership: 'repo', remote: 'acme/thing', tokenSource: 'somewhere-else',
+    files: [{ path: 'docs/architecture.md' }],
+  });
+  eq(badSource.reason, 'invalid-token-source', 'an unrecognised token source is REFUSED, never normalised to config');
+  const badRemote = await initFoundations(D, 'argrefuse', { ownership: 'repo', remote: 'https://gitlab.com/a/b' });
+  eq(badRemote.reason, 'invalid-remote', 'a remote this cannot read is refused with the refresh\'s own words');
+  assert(!existsSync(manifestPath('argrefuse')), 'after four refusals the project still has no manifest');
+
+  // ── A TOKEN IN THE ARGUMENTS IS NOT READ ──────────────────────────────
+  // The token comes from a FILE. Planting one in `opts` must not make the
+  // call work when the file holds none, and must not appear anywhere.
+  seedTokens({ config: false, sync: false });
+  const gh5 = makeGitHub(REPO_FILES);
+  await WS.createProject(D, 'planted', {});
+  const planted = await initFoundations(D, 'planted', {
+    ownership: 'repo', remote: 'acme/thing',
+    token: CONFIG_TOKEN,
+    files: [{ path: 'docs/architecture.md' }],
+    fetchImpl: gh5.fetchImpl, sleepImpl: fakeSleep,
+  });
+  eq(planted.ok, false, 'a token planted in the ARGUMENTS does not authorise the read');
+  eq(planted.reason, 'no-token', '...the store still refuses for want of a token FILE');
+  eq(gh5.calls.length, 0, '...and no request was made with it');
+  assert(!JSON.stringify(planted).includes(CONFIG_TOKEN), '...and the planted value is not echoed back');
+  assert(!existsSync(manifestPath('planted')), '...and nothing was written');
+  seedTokens();
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('14. THE REMOTE SCAN — two requests, no blob, the same three rules');
+{
+  const files = {
+    'docs/architecture.md': ARCH,
+    'docs/decisions.md': DEC,
+    'README.md': '# Readme\n',
+    'src/index.js': 'nope',
+    'node_modules/pkg/README.md': '# vendored\n',
+    '.github/README.md': '# dotfolder\n',
+    'adr/0001-use-markdown.md': '# 0001\n',
+    'a/b/c/d/e/deep-architecture.md': '# too deep\n',
+    'notes/random.md': '# not a canonical name\n',
+  };
+  const gh = makeGitHub(files);
+  const scan = await WS.scanRemoteForFoundations({
+    remote: 'acme/thing', tokenSource: 'config', fetchImpl: gh.fetchImpl, sleepImpl: fakeSleep,
+  });
+  assert(scan.ok, 'a remote repository can be scanned for candidates', scan.message);
+  eq(gh.calls.filter((c) => /git\/blobs\//.test(c.url)).length, 0, 'NO blob is fetched — the tree carries every size');
+  assert(gh.calls.length <= 3, `at most three requests for the whole repository (made ${gh.calls.length})`);
+  const paths2 = scan.candidates.map((c) => c.path);
+  assert(paths2.includes('docs/architecture.md'), 'the docs/ rule admits a file under docs/');
+  assert(paths2.includes('README.md'), 'the name rule admits a README at the root');
+  assert(paths2.includes('adr/0001-use-markdown.md'), 'the decision-folder rule admits a dated ADR');
+  assert(!paths2.includes('src/index.js'), 'a .js file is not a candidate');
+  assert(!paths2.includes('node_modules/pkg/README.md'), 'node_modules is skipped');
+  assert(!paths2.includes('.github/README.md'), 'a dotfolder is skipped');
+  assert(!paths2.includes('notes/random.md'), 'an ordinary note under no rule is not offered');
+  assert(!paths2.includes('a/b/c/d/e/deep-architecture.md'), 'the depth bound is applied to the tree\'s own paths');
+  eq(scan.root, null, 'root is NULL — no folder on this computer was read');
+  eq(scan.commit, 'a'.repeat(40), 'the commit the listing was taken at is named');
+  eq(scan.candidates[0].path, 'docs/architecture.md', 'the order is role rank then path, as on the local scan');
+  assert(scan.candidates.every((c) => c.firstHeading === null), 'firstHeading is null on EVERY row — uniformly "not read"');
+  assert(scan.candidates.every((c) => c.modifiedAt === null), 'modifiedAt is null on every row — a tree carries no timestamp');
+  eq(scan.maxDocumentBytes, MAX_FOUNDATION_BYTES, 'the per-document cap is named, as on the local scan');
+  assert(!JSON.stringify(scan).includes(CONFIG_TOKEN), 'the token is not in the answer');
+
+  // A ROW FROM THE SCAN IS A ROW THE MIRROR ACCEPTS — the two agree, which
+  // is the whole reason the rules are one function rather than two copies.
+  const gh2 = makeGitHub(files);
+  await WS.createProject(D, 'scanned', {});
+  const made = await initFoundations(D, 'scanned', {
+    ownership: 'repo', remote: 'acme/thing',
+    files: scan.candidates.filter((c) => c.suggestedRole === 'architecture').map((c) => ({ path: c.path, role: c.suggestedRole })),
+    fetchImpl: gh2.fetchImpl, sleepImpl: fakeSleep,
+  });
+  assert(made.ok, 'the ticked candidates mirror without a refusal', made.message);
+  eq((made.refresh.refused || []).length, 0, '...none refused');
+  assert((made.refresh.added || []).length > 0, '...and at least one document copied');
+
+  // A FOLDER narrows the tree, and the rules are applied BELOW it.
+  const gh3 = makeGitHub(files);
+  const narrowed = await WS.scanRemoteForFoundations({
+    remote: 'acme/thing', path: 'docs', fetchImpl: gh3.fetchImpl, sleepImpl: fakeSleep,
+  });
+  assert(narrowed.ok, 'a folder can be named', narrowed.message);
+  assert(narrowed.candidates.every((c) => c.path.startsWith('docs/')), 'every candidate is inside it');
+  eq(narrowed.remote.path, 'docs', '...and the folder is named back');
+
+  // REFUSALS: a bad remote, a missing token, a truncated tree.
+  eq((await WS.scanRemoteForFoundations({ remote: 'https://gitlab.com/a/b' })).reason, 'invalid-remote',
+    'a remote this cannot read is refused');
+  eq((await WS.scanRemoteForFoundations({ remote: null })).reason, 'invalid-remote', 'no remote at all is refused');
+  const ghT = makeGitHub(files, { truncated: true });
+  eq((await WS.scanRemoteForFoundations({ remote: 'acme/thing', fetchImpl: ghT.fetchImpl, sleepImpl: fakeSleep })).reason,
+    'remote-tree-truncated', 'a truncated listing refuses LOUDLY rather than showing a short list');
+  seedTokens({ config: false, sync: false });
+  const noTok = await WS.scanRemoteForFoundations({ remote: 'acme/thing', fetchImpl: makeGitHub(files).fetchImpl });
+  eq(noTok.reason, 'no-token', 'no token file, no scan');
+  seedTokens();
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('15. THE ROUTES for both (v3.65.0): a strict init body, and the scan');
+{
+  const express = (await import('express')).default;
+  const routerMod = await import('../src/routes/memory.js');
+  const app = express();
+  app.use(express.json());
+  app.use('/api/memory', routerMod.default);
+  const server = app.listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const port = server.address().port;
+  const post = async (url, body) => {
+    const res = await REAL_FETCH(`http://127.0.0.1:${port}${url}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}),
+    });
+    return { status: res.status, body: await res.json() };
+  };
+  const get = async (url) => {
+    const res = await REAL_FETCH(`http://127.0.0.1:${port}${url}`);
+    return { status: res.status, body: await res.json() };
+  };
+
+  try {
+    await WS.createProject(D, 'routeinit', {});
+    // A `token` IN THE BODY IS REFUSED BY NAME. Ignoring it would say
+    // nothing; refusing it says the credential is read from a file.
+    const withToken = await post(`/api/memory/${D}/routeinit/foundations/init`, {
+      ownership: 'repo', remote: 'acme/thing', token: CONFIG_TOKEN,
+    });
+    eq(withToken.status, 400, 'a `token` in the init body is a 400');
+    eq(withToken.body.reason, 'unexpected_fields', '...as an unexpected field');
+    assert((withToken.body.fields || []).includes('token'), '...naming it', JSON.stringify(withToken.body.fields));
+    assert(/NEVER sent here/.test(withToken.body.error || ''), '...and saying a token is never sent here', withToken.body.error);
+    assert(!existsSync(manifestPath('routeinit')), '...and nothing was written');
+
+    const unknownField = await post(`/api/memory/${D}/routeinit/foundations/init`, { ownership: 'curator', nonsense: 1 });
+    eq(unknownField.status, 400, 'any unknown field is a 400');
+    eq(unknownField.body.reason, 'unexpected_fields', '...under one reason');
+
+    // THE SHIPPED CLIENT'S OWN BODY still passes — measured against the real
+    // `chooserBody`, not against a hand-typed copy of it.
+    const { chooserBody } = await import('../src/public/next/shared/foundations-init.js');
+    for (const choice of [
+      { ownership: 'curator' },
+      { ownership: 'curator', seed: false },
+      { ownership: 'repo', repoRoot: CHECKOUT, candidates: [], picks: {}, roles: {} },
+    ]) {
+      const b = chooserBody(choice) || {};
+      const extra = Object.keys(b).filter((k) => !routerMod.INIT_BODY_FIELDS.has(k));
+      eq(extra.length, 0, `the shipped chooser body for ${choice.ownership}${choice.seed === false ? ' (no seed)' : ''} carries no field this route refuses`);
+    }
+
+    // THE REMOTE ARM THROUGH THE ROUTE, with the network genuinely blocked:
+    // the plumbing is proven by the refusal's STATUS, which is the upstream
+    // one and not a 400.
+    const blocked = await post(`/api/memory/${D}/routeinit/foundations/init`, {
+      ownership: 'repo', remote: 'acme/thing', tokenSource: 'config', files: [{ path: 'docs/architecture.md' }],
+    });
+    eq(blocked.status, 502, 'a blocked network answers 502 on the init too — upstream, not a bad request');
+    eq(blocked.body.reason, 'remote-unreachable', '...under the store\'s own reason');
+    assert(!existsSync(manifestPath('routeinit')), '...and NOTHING was written, so the project can choose again');
+    assert(!JSON.stringify(blocked.body).includes(CONFIG_TOKEN), '...and the token is not in the response');
+
+    // THE SCAN ROUTE: the local arm is untouched, the remote arm reaches the
+    // client (and is blocked here), and a bad remote is a 400.
+    const localScan = await get(`/api/memory/repo-scan?root=${encodeURIComponent(CHECKOUT)}`);
+    eq(localScan.status, 200, 'the LOCAL repo-scan is unchanged');
+    assert(typeof localScan.body.root === 'string', '...still naming the resolved root');
+    const badScan = await get('/api/memory/repo-scan?source=remote&remote=https%3A%2F%2Fgitlab.com%2Fa%2Fb');
+    eq(badScan.status, 400, 'a remote this cannot read is a 400 on the scan');
+    eq(badScan.body.reason, 'invalid-remote', '...naming the reason');
+    const blockedScan = await get('/api/memory/repo-scan?source=remote&remote=acme%2Fthing&tokenSource=config');
+    eq(blockedScan.status, 502, 'a blocked network answers 502 on the scan');
+    assert(!JSON.stringify(blockedScan.body).includes(CONFIG_TOKEN), '...without the token');
+  } finally {
+    server.close();
+  }
+}
+// ═════════════════════════════════════════════════════════════════════════
+section('16. No real network was reached by anything but the two route sections');
+{
+  // Sections 1–10, 13 and 14 inject `fetchImpl`; only §11 and §15 drive the
+  // real client. Every recorded attempt must therefore be one of theirs, and
+  // none may have succeeded — the spy throws.
   assert(NET_ATTEMPTS.every((u) => u.startsWith('https://api.github.com/')),
-    `every blocked attempt was §11's (${NET_ATTEMPTS.length} total)`, NET_ATTEMPTS.join(' | ').slice(0, 300));
+    `every blocked attempt was §11's or §15's (${NET_ATTEMPTS.length} total)`, NET_ATTEMPTS.join(' | ').slice(0, 300));
   assert(NET_ATTEMPTS.length > 0, '(control) the spy CAN record — a green above is not an empty measurement');
 }
 
