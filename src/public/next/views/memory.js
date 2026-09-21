@@ -3832,16 +3832,27 @@ function renderLayerStrip(read) {
     eyebrow: 'OVERVIEW',
     sectionClass: 'mem-section mem-overview',
     // ── ONE FIGURE RUNG, AND A WIDER TRACK INSTEAD (v3.65.0, R8) ───────
-    // v3.64.2 dropped these three values one rung (22px -> 17px) because
-    // "saved 57 min ago" broke after "min". Re-measured at the real column
-    // width that wrap does not happen: the wrap only appears below ~207px of
-    // track content, which is a 1024px window — or a 1370px one with the
-    // ONBOARDING GUIDE DOCKED, narrowing `.main-inner` from 959px to 647px,
-    // which is almost certainly the state the original figure was taken in.
-    // So the narrow case is fixed where it lives, in the TRACK, and both
-    // views draw their figures at the ONE display rung. Two views whose
-    // figures are different sizes are two designs, which is the whole report.
-    minTrack: 210,
+    //
+    // v3.64.2 dropped these values one rung (22px -> 17px) because "saved 57
+    // min ago" broke after "min". That wrap is real; the second TYPE RUNG was
+    // the wrong fix, because two views whose figures are different sizes are
+    // two designs, which is the whole of the report this release answers. The
+    // narrow case belongs to the TRACK.
+    //
+    // 253 IS DERIVED FROM THE WIDEST VALUE, not from a track count — the rule
+    // the domain page's own floor follows. Measured in the browser, in the
+    // real shell, at this view's real column: the widest value this strip can
+    // paint is `manifest unreadable` at 204.5px, and the value box adds the
+    // freshness dot (8) and its gap (8) while the card adds 16px of padding a
+    // side. 204.5 + 8 + 8 + 32 = 252.5, rounded up.
+    //
+    // WHAT IT PRODUCES, measured: at a 1370px window the grid is 893px and
+    // this yields THREE tracks of 291px with CAPTURE on a second row — the
+    // same "second row of the same tiles" the domain page's two jumps take,
+    // rather than four cramped tracks in which `saved 41 min ago` wraps after
+    // `min`. A smaller floor silently re-creates exactly that wrap, which is
+    // why the number is pinned rather than the arrangement.
+    minTrack: 253,
     infoLabel: 'About the readings on this page',
     infoText:
       '<p>These three are the project’s three layers of context, and pressing one goes to the '

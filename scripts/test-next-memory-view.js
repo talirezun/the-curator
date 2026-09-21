@@ -8824,9 +8824,11 @@ const fndRead = (payload) => ({
       data: { pageCount: 1980, pageCounts: {}, lastIngestDate: '2026-09-16' } } }) })
       .renderLayerStrip({ scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }],
         knowledgeDomains: ['acme'] });
-    ok('the strip passes the kit a TRACK FLOOR of 210px, which is what keeps a '
-      + 'phrase on one line at the one display rung',
-    /style="--cur-ov-min:210px"/.test(strip), strip.slice(0, 200));
+    ok('the strip passes the kit a TRACK FLOOR of 253px, which is what keeps a '
+      + 'phrase on one line at the one display rung — DERIVED from the widest '
+      + 'value this strip can paint (`manifest unreadable`, 204.5px measured) '
+      + 'plus the dot, its gap and the card\'s padding, not from a track count',
+    /style="--cur-ov-min:253px"/.test(strip), strip.slice(0, 200));
     ok('...and passes NO second figure rung — `figure` is gone from the '
       + 'component and no caller may ask for one',
     !/cur-ov-value-phrase/.test(strip) && !/figure:/.test(stripComments(viewSrc)), strip.slice(0, 300));
