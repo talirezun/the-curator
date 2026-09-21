@@ -1083,7 +1083,7 @@ section('14. THE REMOTE SCAN — two requests, no blob, the same three rules');
     'node_modules/pkg/README.md': '# vendored\n',
     '.github/README.md': '# dotfolder\n',
     'adr/0001-use-markdown.md': '# 0001\n',
-    'a/b/c/d/e/deep-architecture.md': '# too deep\n',
+    'a/b/c/d/e/architecture-deep.md': '# too deep — and its NAME matches the role rule, so only the depth bound excludes it\n',
     'notes/random.md': '# not a canonical name\n',
   };
   const gh = makeGitHub(files);
@@ -1101,7 +1101,7 @@ section('14. THE REMOTE SCAN — two requests, no blob, the same three rules');
   assert(!paths2.includes('node_modules/pkg/README.md'), 'node_modules is skipped');
   assert(!paths2.includes('.github/README.md'), 'a dotfolder is skipped');
   assert(!paths2.includes('notes/random.md'), 'an ordinary note under no rule is not offered');
-  assert(!paths2.includes('a/b/c/d/e/deep-architecture.md'), 'the depth bound is applied to the tree\'s own paths');
+  assert(!paths2.includes('a/b/c/d/e/architecture-deep.md'), 'the depth bound is applied to the tree\'s own paths — the name rule WOULD admit this one');
   eq(scan.root, null, 'root is NULL — no folder on this computer was read');
   eq(scan.commit, 'a'.repeat(40), 'the commit the listing was taken at is named');
   eq(scan.candidates[0].path, 'docs/architecture.md', 'the order is role rank then path, as on the local scan');
