@@ -36,7 +36,7 @@ import {
 // header body, so that shape is no longer expressible on this view. See
 // shared/text.js's own header for why `info` is the only prose field and why it
 // is emitted only inside a panel that is `hidden` on first paint.
-import { renderViewHeader } from '../shared/text.js';
+import { renderViewHeader, renderReadout } from '../shared/text.js';
 import { renderMarkdown } from '../shared/markdown.js';
 // The ONE honest USD renderer for /next. Imported, never re-implemented: a
 // local `'$' + n.toFixed(4)` renders any charge below $0.00005 as the string
@@ -1582,14 +1582,19 @@ async function sendCurrentMessage() {
       (projectAtSend && state.activeProject === projectAtSend
         && data.projectContext && typeof data.projectContext === 'object')
         ? data.projectContext : null;
-    // PATCHED, never re-rendered. The ordinary-turn branch below deliberately
-    // does NOT repaint the main view (it patches the sidebar's one integer
-    // and the thread), and repainting the scope bar here to move one figure
-    // would rebuild the project picker — and close a menu the user may have
-    // open — for a number. `projectFigureText` is the same producer the
-    // renderer uses, so the two cannot print it differently.
-    const figureEl = document.getElementById('chat-project-figure');
-    if (figureEl) figureEl.textContent = projectFigureText(state.projectLastUsed);
+    // RE-PUBLISHED, never re-rendered. The ordinary-turn branch below
+    // deliberately does NOT repaint the main view (it patches the sidebar's
+    // one integer and the thread), and repainting the scope bar here to move
+    // one figure would rebuild the project picker — and close a menu the
+    // user may have open — for a number.
+    //
+    // Since v3.65.0 the figure lives in the picker's FOOTER, which is part of
+    // a menu that exists only while the menu is open. `patchProjectFooter`
+    // therefore writes `cfg.footHtml` first (what the next build reads) and
+    // touches the DOM only if there is a live footer to touch — the guard
+    // without which the figure would silently stop updating the moment the
+    // picker was closed, which is every moment but one.
+    patchProjectFooter();
     state.thread.push({
       role: 'assistant',
       // ══ REPLACE. NEVER APPEND. ═════════════════════════════════════════
@@ -3124,6 +3129,21 @@ function selectChatProject(value) {
   patchProjectGroup(myMountToken);
 }
 
+/**
+ * The cfg the MOUNTED project picker closed over, or null when this domain
+ * renders one of the three non-picker states.
+ *
+ * WHY A MODULE-LEVEL HANDLE EXISTS AT ALL (v3.65.0). The picker's footer is
+ * `cfg.footHtml`, and shared/listbox.js reads that field when it BUILDS the
+ * menu (`menuHtml(...)`, on open and on `setOptions`) — not once at mount. So
+ * a reading that changes while the menu is shut has exactly one place to be
+ * written: onto the same cfg object the instance holds. Rebuilding the group
+ * would do it too, and is what this deliberately avoids — that tears down the
+ * picker to move a figure, which is the repaint `patchProjectGroup`'s own note
+ * refuses. See `patchProjectFooter`.
+ */
+let projectLbCfg = null;
+
 function projectListboxCfg() {
   const options = [
     { value: '', label: 'No project' },
@@ -3133,25 +3153,118 @@ function projectListboxCfg() {
       detail: r.ageSeconds === null || r.ageSeconds === undefined ? 'no saves' : formatAge(r.ageSeconds),
     })),
   ];
-  return {
+  const cfg = {
     id: 'chat-project-lb',
     options,
     value: state.activeProject || '',
     placeholder: 'No project',
     ariaLabel: 'Project context for this chat',
-    triggerClass: 'lb-sm chat-lb',
+    // ── ONE SELECTOR PARADIGM (v3.65.0) ────────────────────────────────────
+    // The maintainer, on the bar: "the domain chips and the project dropdown
+    // are two paradigms side by side." The domain chips stay the always-
+    // visible selector — they show the whole set at a glance and are what a
+    // user switches most — and the project picker takes their FACE: the same
+    // 28px height, the same pill radius, the same hairline border.
+    //
+    // IT IS NOT `chat-scope-pill`, and the difference is measured rather than
+    // stylistic. That class carries a press TRANSFORM, and shared/listbox.css
+    // refuses a transform on a trigger with a reason in its own comment: the
+    // open menu is positioned by a rAF loop watching the trigger's
+    // `getBoundingClientRect()`, and a transform IS in that rect — so the menu
+    // would twitch, and re-measure a ~200-row list, for the length of a hold.
+    // scripts/test-next-press-motion.js pins `lb-btn` at `moves: false` and
+    // `chat-scope-pill` at `moves: true` for exactly that reason. So the face
+    // is copied into a class of its own and the press is not.
+    triggerClass: 'lb-sm chat-project-pill',
     rootClass: 'chat-project-lb-root',
+    // The pinned project's own reading, in the picker's footer — see
+    // projectFootHtml for what moved here and what it cost.
+    footHtml: projectFootHtml(),
     onChange: selectChatProject,
   };
+  projectLbCfg = cfg;
+  return cfg;
 }
 
 /**
- * The " · 12 KB read" fragment, or '' when nothing was measured.
+ * The picker's footer: what the PINNED project is, in the one place the app
+ * already has for a reading — `shared/text.js`'s `renderReadout`.
  *
- * ONE producer, called from the renderer AND from the targeted patch in
- * `sendCurrentMessage`, so the figure painted on a repaint and the figure
- * patched after a turn cannot disagree — two hand-written copies of one
- * format string is this repo's most reliably repeated defect.
+ * ── WHAT MOVED, AND THE COST, STATED RATHER THAN DISCOVERED ──────────────
+ * Through v3.64.2 the freshness mark and the last turn's measured reading sat
+ * in the BAR, beside the picker. They move here so the bar carries NAMES ONLY
+ * — a domain eyebrow with chips and a count, a project eyebrow with a chip —
+ * which is what "one selector paradigm" means once the two controls look
+ * alike: one group cannot be a selector while the other is a selector plus an
+ * instrument.
+ *
+ * THE COST: the pinned project's freshness is now one press away rather than
+ * always on screen. It is not LOST — every option row already carries its own
+ * project's age as `detail`, so opening the picker shows the ages of all of
+ * them AND, here, the pinned one's own reading. Recorded because it is a real
+ * trade and the previous release added that mark on purpose.
+ *
+ * `markHtml` is `renderReadout`'s ONE trusted field (its own docblock says
+ * so); it carries the shared freshness dot, and the age is in WORDS beside it,
+ * so colour is never the only carrier. Everything else is escaped by the kit.
+ */
+function projectFootHtml() {
+  const row = activeProjectRow();
+  if (!row) return '';
+  const age = Number.isFinite(row.ageSeconds) ? row.ageSeconds : null;
+  return renderReadout({
+    label: row.project,
+    value: age === null ? 'no saves yet' : 'saved ' + formatAge(age),
+    markHtml: '<span class="fresh-dot fresh-' + freshnessTier(age) + '" aria-hidden="true"></span>',
+    // EMPTY until a turn measures something, and `renderReadout` drops an
+    // empty provenance entirely — no zero, no placeholder, no reading nobody
+    // took. Same refusal the node in the bar carried.
+    provenance: projectFigureText(state.projectLastUsed),
+  });
+}
+
+/**
+ * Re-publish the footer after a turn has measured something.
+ *
+ * TWO HALVES, AND THE SECOND ONE IS THE GUARD THE DESIGN NAMES. The footer
+ * lives in `.lb-menu`, which shared/listbox.js creates on <body> when the
+ * picker is opened and REMOVES when it closes — so for most of a
+ * conversation's life there is no node to patch, and a patch-only update
+ * would silently stop updating the moment the menu was shut. Writing
+ * `cfg.footHtml` is therefore the PRIMARY half: it is what the next menu
+ * build reads. The DOM write is the secondary half, for the rarer case where
+ * an answer lands while the menu happens to be open.
+ *
+ * The menu's id is `cfg.id + '-menu'` — the kit's own public contract (it is
+ * what the trigger's `aria-controls` names), not a private reach.
+ *
+ * STILL NOT A REPAINT: `patchProjectGroup(...)` here would rebuild the picker
+ * and close a menu the user has open, to move one figure.
+ */
+function patchProjectFooter() {
+  if (!projectLbCfg) return;
+  projectLbCfg.footHtml = projectFootHtml();
+  const menu = document.getElementById('chat-project-lb-menu');
+  const foot = menu ? menu.querySelector('.lb-foot') : null;
+  if (foot) foot.innerHTML = projectLbCfg.footHtml;
+}
+
+/**
+ * The "12 KB read last turn" phrase, or '' when nothing was measured.
+ *
+ * ONE producer, called from the footer builder AND — through it — from the
+ * post-turn update, so the figure a menu build prints and the figure a live
+ * menu is given cannot disagree. Two hand-written copies of one format string
+ * is this repo's most reliably repeated defect.
+ *
+ * ── IT LOST ITS LEADING SEPARATOR (v3.65.0) ─────────────────────────────
+ * It used to return " · 12 KB read", because it was appended inside the bar's
+ * one-line readout and had to punctuate itself. It now fills `renderReadout`'s
+ * `provenance` slot, which is its own element with its own spacing — a
+ * separator baked into the string would print a stray middot with nothing in
+ * front of it. The words "last turn" join it here for the same reason: in the
+ * bar the neighbouring "saved 4 min ago" said which turn; in the footer the
+ * provenance line stands alone and must say so itself.
  *
  * The SERVER's own measurement of what went into the prompt. Never computed
  * here: the client cannot know what the store returned, and an estimate
@@ -3160,7 +3273,7 @@ function projectListboxCfg() {
  */
 function projectFigureText(used) {
   if (!used || !Number.isFinite(used.chars)) return '';
-  return ' · ' + Math.round(used.chars / 1024) + ' KB read';
+  return Math.round(used.chars / 1024) + ' KB read last turn';
 }
 
 /**
@@ -3176,6 +3289,12 @@ function projectGroupHtml() {
   const loading = state.projectsState === 'idle' || state.projectsState === 'loading';
   const none = state.projectsState === 'ready' && state.projectRows.length === 0;
 
+  // Dropped FIRST, so the three non-picker branches below leave no handle on
+  // a cfg whose trigger is about to leave the document. `patchProjectFooter`
+  // would otherwise mutate a dead object and, worse, read as though a picker
+  // were still mounted.
+  projectLbCfg = null;
+
   let control;
   if (loading) {
     control = '<span class="chat-project-note">Reading projects…</span>';
@@ -3189,30 +3308,12 @@ function projectGroupHtml() {
     control = renderListboxHtml(cfg);
   }
 
-  // The freshness mark: the SHARED scale, dot AND word, never colour alone.
-  // Only for a pinned project — a dot beside "No project" would be a fact
-  // about nothing.
-  let readout = '';
-  const row = activeProjectRow();
-  if (row) {
-    const age = Number.isFinite(row.ageSeconds) ? row.ageSeconds : null;
-    readout =
-      '<span class="chat-project-readout">' +
-        '<span class="fresh-dot fresh-' + freshnessTier(age) + '" aria-hidden="true"></span>' +
-        escapeHtml(age === null ? 'no saves yet' : 'saved ' + formatAge(age)) +
-        // THE LAST TURN'S MEASURED READING, in its own addressable node.
-        // `sendCurrentMessage` patches this ONE element's text when an answer
-        // lands, rather than repainting the group: an ordinary turn changes
-        // one figure, and a group repaint would tear down and rebuild the
-        // picker — including any menu the user has open — for it. Same
-        // discipline as `bumpMessageCountForTurn` two screens over.
-        // EMPTY until a turn measures something: a zero here would be a
-        // reading nobody took.
-        '<span class="chat-project-figure" id="chat-project-figure">' +
-          escapeHtml(projectFigureText(state.projectLastUsed)) +
-        '</span>' +
-      '</span>';
-  }
+  // ── THE READOUT IS NO LONGER HERE (v3.65.0) ────────────────────────────
+  // The freshness mark and the last turn's measured reading used to sit on
+  // this row, between the picker and the ⓘ. They are now the picker's own
+  // footer (`projectFootHtml` → `cfg.footHtml`), so this row carries a name
+  // and a control and nothing else — the same anatomy as the domain group
+  // beside it. The trade is written out in projectFootHtml's docblock.
 
   return (
     // ── TWO ROWS, NOT FOUR ITEMS (v3.64.1) ─────────────────────────────────
@@ -3230,7 +3331,6 @@ function projectGroupHtml() {
     '<div class="chat-project-controls">' +
       '<span class="chat-scope-eyebrow mono">PROJECT</span>' +
       control +
-      readout +
     // 46 words. It says what is read, that it is recorded data, and — the
     // sentence a user actually needs — that nothing is written back.
       '<button type="button" class="chat-project-info" id="chat-project-info-btn"' +
