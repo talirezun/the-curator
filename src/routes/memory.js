@@ -906,6 +906,14 @@ const TIER0_WIRE_REASON = new Map([
   // underscored spelling as every other tier-0 route's.
   ['no-manifest', 'no_manifest'],
   ['unsafe-path', 'unsafe_path'],
+  // v3.65.0 — the remote init arm's own three. Every refusal the GitHub READ
+  // can name (`no-token`, `rate-limited`, `remote-tree-truncated`, …) is
+  // deliberately NOT in this table: those cross the wire in the store's own
+  // spelling, exactly as they do from `…/refresh`, so one client branch reads
+  // both doors.
+  ['remote-not-allowed', 'remote_not_allowed'],
+  ['root-and-remote', 'root_and_remote'],
+  ['invalid-token-source', 'invalid_token_source'],
 ]);
 function tier0Reason(reason) {
   return TIER0_WIRE_REASON.get(String(reason || '')) || reason || 'io';
@@ -1183,6 +1191,67 @@ router.get('/', async (_req, res) => {
 router.get('/repo-scan', async (req, res) => {
   try {
     const root = typeof req.query.root === 'string' ? req.query.root.trim() : '';
+    // ── THE REMOTE ARM (v3.65.0) ────────────────────────────────────────
+    //
+    // `?source=remote&remote=owner/repo` lists the same candidates out of a
+    // GITHUB repository, for the machine that has no checkout to point at.
+    // TWO requests whatever the repository's size (the ref, then one
+    // recursive tree) and no blob is fetched — which is the only reason this
+    // is offered at all rather than a form that asks the owner to type paths.
+    //
+    // STILL A GET, and still the same read-only route. It costs a rate limit
+    // and touches a credential FILE, so it is an action with a button and
+    // never a poll — the same rule `…/refresh` states. It is a GET because it
+    // writes nothing: making it a POST would put a non-mutating read into
+    // every mutating-route census in this repo.
+    //
+    // NO TOKEN CROSSES THIS ROUTE. `tokenSource` names which file to read it
+    // from, exactly as on the init and the refresh.
+    if (req.query.source === 'remote') {
+      const remote = typeof req.query.remote === 'string' ? req.query.remote.trim().slice(0, 300) : '';
+      const scan = await fstore().scanRemoteForFoundations({
+        remote: remote || null,
+        // BESIDE the remote, never inside it: git prints no branch and no
+        // folder in a remote URL, so a caller holding `owner/repo` as a
+        // string has nowhere to put them. The store re-normalises both.
+        ...(typeof req.query.ref === 'string' && req.query.ref.trim() ? { ref: req.query.ref.trim().slice(0, 200) } : {}),
+        ...(typeof req.query.path === 'string' && req.query.path.trim() ? { path: req.query.path.trim().slice(0, 300) } : {}),
+        tokenSource: req.query.tokenSource === 'sync' ? 'sync' : 'config',
+      });
+      if (!scan || scan.ok === false) {
+        const reason = (scan && scan.reason) || 'invalid-remote';
+        const status = REFRESH_REMOTE_STATUS.get(reason) ?? statusForStoreRefusal({ reason });
+        return res.status(status).json(withErrorProse({ ...(scan || {}), ok: false, reason }));
+      }
+      return res.json({
+        ok: true,
+        // NULL, and never a path: nothing on this computer was read.
+        root: null,
+        source: 'remote',
+        remote: scan.remote || null,
+        commit: scan.commit ?? null,
+        tokenSource: scan.tokenSource ?? null,
+        candidates: (Array.isArray(scan.candidates) ? scan.candidates : []).map((c) => ({
+          path: c.path ?? null,
+          bytes: Number.isInteger(c.bytes) ? c.bytes : 0,
+          suggestedRole: c.suggestedRole ?? null,
+          suggestedSlug: c.suggestedSlug ?? null,
+          tooLarge: c.tooLarge === true,
+          matchedBy: c.matchedBy ?? null,
+          // ALWAYS NULL ON THIS ARM, and the same field name rather than an
+          // omitted key: a tree carries no heading and no timestamp, and the
+          // picker renders both as unknown. An absent key would read as "this
+          // server is older" instead of "this repository was not opened".
+          firstHeading: null,
+          modifiedAt: null,
+        })),
+        truncated: scan.truncated === true,
+        cap: Number.isInteger(scan.cap) ? scan.cap : null,
+        maxDepth: Number.isInteger(scan.maxDepth) ? scan.maxDepth : null,
+        maxDocumentBytes: Number.isInteger(scan.maxDocumentBytes) ? scan.maxDocumentBytes : null,
+        requests: Number.isInteger(scan.requests) ? scan.requests : null,
+      });
+    }
     const out = await fstore().scanRepoForFoundations(root);
     if (!out || out.ok === false) {
       // TWO DIFFERENT FACTS, TWO DIFFERENT STATUSES, and the store already
@@ -2144,6 +2213,16 @@ router.delete('/:domain/:project/foundations/:slug', async (req, res) => {
 // overwriting documents written here with a mirror, or stranding the copies
 // of a folder.
 // ═════════════════════════════════════════════════════════════════════════
+/**
+ * THE BODY THIS ROUTE ACCEPTS, and nothing else (v3.65.0).
+ *
+ * Named as a set rather than checked inline so the refusal can PRINT it — a
+ * 400 that says which fields exist is the difference between a caller fixing
+ * a typo and a caller guessing. `token` is deliberately absent: see the
+ * handler.
+ */
+export const INIT_BODY_FIELDS = new Set(['ownership', 'repoRoot', 'files', 'seed', 'remote', 'tokenSource']);
+
 router.post('/:domain/:project/foundations/init', async (req, res) => {
   try {
     const { domain, project } = req.params;
@@ -2154,23 +2233,76 @@ router.post('/:domain/:project/foundations/init', async (req, res) => {
         ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
       });
     }
-    const body = req.body || {};
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    // ── A STRICT BODY (v3.65.0) ──────────────────────────────────────────
+    // The pre-v3.65.0 handler was an allow-list already — it named each field
+    // it forwarded — but it IGNORED anything else. Now an unknown key is a
+    // 400, and the field that made it worth changing is `token`: the remote
+    // arm reads its credential from a FILE and from nothing else, so a `token`
+    // in this body must never look accepted. Refusing it by name says so;
+    // ignoring it says nothing and invites a second attempt.
+    //
+    // MEASURED AGAINST THE ONLY CALLER: `chooserBody` in
+    // `shared/foundations-init.js` sends `{ownership, repoRoot?, files?,
+    // seed?}` and nothing else, so no shipped request becomes a 400.
+    const extra = Object.keys(body).filter((k) => !INIT_BODY_FIELDS.has(k));
+    if (extra.length) {
+      return res.status(400).json({
+        ok: false, reason: 'unexpected_fields', fields: extra.slice(0, 10),
+        error: `This route accepts ${[...INIT_BODY_FIELDS].join(', ')}. It was also sent: ${extra.slice(0, 10).join(', ')}.`
+          + (extra.includes('token')
+            ? ' A GitHub token is NEVER sent here: `tokenSource` names which file on this computer to read it from '
+              + '(`config` = the read-only token in Settings, `sync` = Personal Sync’s own).'
+            : ''),
+      });
+    }
     // EVERY FIELD IS THE STORE'S TO VALIDATE. `ownership` has no default
     // here on purpose: guessing one would record a decision the owner did
     // not make, and it is the one decision this tier will not re-make.
+    const namedRemote = typeof body.remote === 'string' && body.remote.trim()
+      ? body.remote.trim().slice(0, 300)
+      : (body.remote && typeof body.remote === 'object' && !Array.isArray(body.remote) ? body.remote : null);
     const out = await fstore().initFoundations(domain, project, {
       ownership: body.ownership,
       ...(typeof body.repoRoot === 'string' ? { repoRoot: body.repoRoot } : {}),
       ...(Array.isArray(body.files) ? { files: body.files } : {}),
       ...(body.seed === false ? { seed: false } : {}),
+      // ── THE REMOTE ARM (v3.65.0) ───────────────────────────────────────
+      // Forwarded ONLY when the body named one, so an absent key reaches the
+      // store as absent and the local arm is unchanged. NO TOKEN CROSSES THIS
+      // ROUTE: `tokenSource` names the FILE, exactly as on `…/refresh`.
+      ...(namedRemote ? { remote: namedRemote } : {}),
+      ...(typeof body.tokenSource === 'string' ? { tokenSource: body.tokenSource } : {}),
       authoredBy: { kind: 'human' },
     });
-    if (!out || out.ok === false) return tier0Refusal(res, out || { reason: 'io' }, { domain, project });
+    if (!out || out.ok === false) {
+      // The remote read's own refusals are NOT input errors and the shared
+      // table would call them all 400 — the same argument `…/refresh` makes,
+      // and the same table, so a rate limit is a 429 whichever door it came
+      // through.
+      const reason = (out && out.reason) || 'io';
+      const remoteStatus = REFRESH_REMOTE_STATUS.get(reason);
+      if (remoteStatus !== undefined) {
+        return res.status(remoteStatus).json(withErrorProse({
+          ...(out || {}), ok: false, domain, project, reason: tier0Reason(reason),
+        }));
+      }
+      return tier0Refusal(res, out || { reason: 'io' }, { domain, project });
+    }
 
     res.status(201).json({
       ok: true, domain, project,
       ownership: out.ownership || null,
       foundations: foundationsWire(out.foundations) || foundationsWire({ documents: out.documents || [] }),
+      // WHERE IT MIRRORS FROM when it was born remote, and WHICH FILE the
+      // token came from — never the token. Both null on every other arm.
+      remote: out.remote && typeof out.remote === 'object' ? {
+        owner: out.remote.owner ?? null,
+        repo: out.remote.repo ?? null,
+        ref: out.remote.ref ?? null,
+        path: out.remote.path ?? null,
+      } : null,
+      tokenSource: out.tokenSource ?? null,
       // WHICH SKELETONS WERE WRITTEN — empty on the repo arm and on
       // `seed: false`, which is a fact and not an omission.
       seeded: Array.isArray(out.seeded) ? out.seeded : [],

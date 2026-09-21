@@ -6090,6 +6090,61 @@ async function refreshCore(domain, target, paths, realRoot, files) {
 // mirror's sha would flip on every alternation — undocumented, that would
 // look like a defect in the freshness reading rather than in the repository's
 // configuration.
+/**
+ * Load the fetch side, through a DYNAMIC import and never a static one.
+ *
+ * The reason `gitHeadCommit` gives about `child_process`:
+ * `scripts/test-tray-summary.js` §6 walks this module's STATIC import graph to
+ * prove the menubar widget can run no subprocess, and the same argument
+ * applies to an HTTP client — the tray reads `listFoundations` and must never
+ * be able to reach a fetch. EXTRACTED in v3.65.0 so the init arm loads it the
+ * same way rather than growing a second `import()` with its own refusal
+ * wording.
+ */
+async function loadGitHubReader() {
+  try { return { ok: true, gh: await import('./github-read-client.js') }; }
+  catch (err) {
+    return { ok: false, reason: 'remote-unavailable', message: `The GitHub reader could not be loaded (${scrubPaths(String(err?.message ?? err))}).` };
+  }
+}
+
+/**
+ * WHERE TO READ FROM — a caller's `remote`, as `{owner, repo, ref, path}`.
+ *
+ * `{ok:true, remote}` when one was named, `{ok:true, remote:null}` when none
+ * was (the caller then falls back to the manifest's own), or the
+ * `invalid-remote` refusal, WORD FOR WORD what the refresh arm has answered
+ * since v3.63.0 — this is that code, extracted in v3.65.0 so the init arm
+ * validates with the SAME validator rather than a second copy that could
+ * accept a shape the refresh refuses.
+ *
+ * A STRING is parsed as a git remote (`owner/repo`, the https:// or git@ URL)
+ * and carries NO ref and NO path — those are separate fields, and a URL with
+ * a branch in it is not a shape git prints.
+ */
+function resolveRemoteArg(gh, raw) {
+  if (typeof raw === 'string' && raw.trim()) {
+    const parsed = gh.parseGitHubRemote(raw);
+    const asked = parsed ? normaliseRemote({ ...parsed, ref: null, path: null }) : null;
+    if (!asked) {
+      return {
+        ok: false, reason: 'invalid-remote',
+        message: `"${raw.trim().slice(0, 120)}" is not a github.com repository this can read. Give it as `
+          + 'owner/repo, or as the https:// or git@ URL git prints for the remote.',
+      };
+    }
+    return { ok: true, remote: asked };
+  }
+  if (raw) {
+    const asked = normaliseRemote(raw);
+    if (!asked) {
+      return { ok: false, reason: 'invalid-remote', message: 'The remote must name a GitHub owner and repository.' };
+    }
+    return { ok: true, remote: asked };
+  }
+  return { ok: true, remote: null };
+}
+
 async function refreshRemoteCore(domain, target, paths, files, opts) {
   const notes = [];
   const mf = await readManifest(paths.manifestAbs);
@@ -6105,36 +6160,17 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
     };
   }
 
-  // The fetch side is reached through a DYNAMIC import, for the reason
-  // `gitHeadCommit` states about `child_process`: `scripts/test-tray-summary.js`
-  // §6 walks this module's STATIC import graph to prove the menubar widget can
-  // run no subprocess, and the same argument applies to an HTTP client — the
-  // tray reads `listFoundations` and must never be able to reach a fetch.
-  let gh;
-  try { gh = await import('./github-read-client.js'); }
-  catch (err) {
-    return { ok: false, reason: 'remote-unavailable', message: `The GitHub reader could not be loaded (${scrubPaths(String(err?.message ?? err))}).` };
-  }
+  // The fetch side, and the remote's grammar — both through the helpers
+  // above, which are this code extracted in v3.65.0 so `initFoundations`
+  // loads and validates identically rather than in a second copy.
+  const loaded = await loadGitHubReader();
+  if (!loaded.ok) return loaded;
+  const gh = loaded.gh;
 
   // ── WHERE TO READ FROM ────────────────────────────────────────────────
-  let asked = null;
-  if (typeof opts.remote === 'string' && opts.remote.trim()) {
-    const parsed = gh.parseGitHubRemote(opts.remote);
-    asked = parsed ? normaliseRemote({ ...parsed, ref: null, path: null }) : null;
-    if (!asked) {
-      return {
-        ok: false, reason: 'invalid-remote',
-        message: `"${opts.remote.trim().slice(0, 120)}" is not a github.com repository this can read. Give it as `
-          + 'owner/repo, or as the https:// or git@ URL git prints for the remote.',
-      };
-    }
-  } else if (opts.remote) {
-    asked = normaliseRemote(opts.remote);
-    if (!asked) {
-      return { ok: false, reason: 'invalid-remote', message: 'The remote must name a GitHub owner and repository.' };
-    }
-  }
-  const remote = asked || manifest.repo?.remote || null;
+  const askedRes = resolveRemoteArg(gh, opts.remote);
+  if (!askedRes.ok) return askedRes;
+  const remote = askedRes.remote || manifest.repo?.remote || null;
   if (!remote) {
     // BOTH ARMS ARE IMPOSSIBLE, and each says why — the local one because the
     // checkout is not here, the remote one because nothing records which
@@ -6366,13 +6402,44 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
  *               own empty-work-list arm returns `noop: true` and writes
  *               NOTHING, so an init that delegated to it would report success
  *               and leave the project with no manifest and no ownership.
+ *   `repo` +   → THE REMOTE ARM (v3.65.0). A mirror BORN REMOTE, for the
+ *   `remote`     machine that has no checkout at all. Same ownership, same
+ *                one-ownership-per-project rule, `repo.root: null` and
+ *                `repo.remote` set — the shape `refreshRemoteCore` already
+ *                writes, and the shape v3.61.0's read path already tolerates
+ *                (a plain folder records `commit: null` the same way).
+ *
+ * ── WHY THE REMOTE ARM WRITES THE MANIFEST *AFTER* THE READ ──────────────
+ * The local arm writes the ownership manifest FIRST and keeps it even when
+ * the mirror step fails, and that is right THERE: `resolveRepoRoot` has
+ * already proved the folder exists on this disk, so the decision is recorded
+ * against something verified. The remote arm has no such proof without a
+ * network call — the owner, the repository, the ref, the path and the token
+ * are all unverified until the read happens — and ownership is set ONCE and
+ * refused afterwards. Recording it against a typo would leave the project
+ * permanently pointed at a repository that does not exist, fixable only by
+ * deleting the manifest by hand. So: with `files`, the read happens first and
+ * NOTHING is written unless every blob is in hand (`refreshRemoteCore`'s own
+ * guarantee, which also writes the ownership manifest at the end of it);
+ * with no `files` there is nothing to read and the manifest is written with
+ * NO network call at all, exactly as the design record describes.
  *
  * Refusals: an unknown domain/project or a read-only mirror (via
  * `checkProjectTarget`); `invalid-ownership`; `root-not-allowed` (a curator
  * project given a repository root — the two choices are exclusive and a
- * silent ignore would hide which one was made); `repo-unreachable`;
- * `manifest-unreadable`; `ownership-set` when ANY readable manifest exists,
- * even one with zero documents; `locked`.
+ * silent ignore would hide which one was made); `remote-not-allowed` (a
+ * curator project given a remote, same argument); `root-and-remote` (a repo
+ * project given BOTH — two sources is not a choice); `invalid-remote`;
+ * `invalid-token-source`; `repo-unreachable`; `manifest-unreadable`;
+ * `ownership-set` when ANY readable manifest exists, even one with zero
+ * documents; `locked`; and, on the remote arm, every refusal the GitHub read
+ * itself can name (`no-token`, `unauthorised`, `rate-limited`,
+ * `remote-not-found`, `remote-tree-truncated`, `remote-too-large`,
+ * `remote-unreachable`, `remote-http`, `remote-unavailable`).
+ *
+ * THE TOKEN IS NEVER AN ARGUMENT HERE, exactly as on the refresh:
+ * `tokenSource` names WHICH FILE to read it from, and a `token` in `opts` is
+ * not read — not forwarded, not defaulted from, not logged.
  *
  * ONE `withFoundationsLock` acquisition for the whole write — the lock is not
  * re-entrant, which is why the mirror step calls `refreshCore` rather than
@@ -6401,13 +6468,59 @@ export async function initFoundations(domain, project, opts = {}) {
         + 'mirror a checkout, or drop repoRoot. Nothing was written.',
     };
   }
+  // ── THE REMOTE ARM'S ARGUMENTS (v3.65.0) ───────────────────────────────
+  const hasRemote = (typeof inp.remote === 'string' && inp.remote.trim() !== '')
+    || (!!inp.remote && typeof inp.remote === 'object' && !Array.isArray(inp.remote));
+  if (ownership === 'curator' && hasRemote) {
+    return {
+      ok: false, reason: 'remote-not-allowed',
+      message: 'A curator-owned project keeps its own documents and mirrors no repository. Choose "repo" to '
+        + 'mirror a GitHub repository, or drop remote. Nothing was written.',
+    };
+  }
+  if (hasRoot && hasRemote) {
+    return {
+      ok: false, reason: 'root-and-remote',
+      message: 'Name a folder on this computer OR a GitHub repository, not both — a mirror has one source, and '
+        + 'choosing it is the decision this call records. Nothing was written. (A local mirror records the '
+        + 'checkout’s own `origin` on its first refresh, so another machine can refresh it over the network '
+        + 'without being told the repository here.)',
+    };
+  }
+  // WHICH FILE the token comes from, never the token. An unrecognised value
+  // is REFUSED rather than normalised to `config`: the refresh normalises
+  // because it is called repeatedly and a wrong word there costs one retry,
+  // while this call records a decision, and silently reading a different
+  // file than the one named is not a decision the owner made.
+  const tokenSource = inp.tokenSource === undefined || inp.tokenSource === null ? 'config' : inp.tokenSource;
+  if (tokenSource !== 'config' && tokenSource !== 'sync') {
+    return {
+      ok: false, reason: 'invalid-token-source',
+      message: `"${String(inp.tokenSource).slice(0, 40)}" is not a token source. Pass "config" for the read-only `
+        + 'GitHub token in Settings, or "sync" for Personal Sync’s own token. Nothing was written.',
+    };
+  }
   const files = Array.isArray(inp.files) ? inp.files : [];
   const notes = [];
   if (ownership === 'curator' && files.length) {
     notes.push('files: ignored — a curator-owned project is seeded with skeletons, not mirrored from a checkout');
   }
   let realRoot = null;
-  if (ownership === 'repo') {
+  let remote = null;
+  if (ownership === 'repo' && hasRemote) {
+    // The remote's grammar, through the SAME validator the refresh uses.
+    // Loading the reader here also means a build with no read client refuses
+    // BEFORE the lock is taken and before anything is written.
+    const loaded = await loadGitHubReader();
+    if (!loaded.ok) return loaded;
+    const asked = resolveRemoteArg(loaded.gh, inp.remote);
+    if (!asked.ok) return asked;
+    remote = asked.remote;
+    if (!files.length) {
+      notes.push('remote: recorded — no documents were named, so nothing was read from GitHub yet; '
+        + 'use "Refresh from repo" to copy them');
+    }
+  } else if (ownership === 'repo') {
     const root = await resolveRepoRoot(inp.repoRoot);
     if (!root.ok) return root;
     realRoot = root.realRoot;
@@ -6484,6 +6597,54 @@ export async function initFoundations(domain, project, opts = {}) {
       return { ok: true, ownership: 'curator', seeded, refresh: null };
     }
 
+    // ── repo, BORN REMOTE (v3.65.0) ─────────────────────────────────────
+    // The read comes FIRST here and the manifest is written by the mirror
+    // step itself — see the docblock: ownership is set once, and recording it
+    // against an unverified repository would strand the project. With no
+    // files there is nothing to read, so the ownership manifest is written
+    // with NO network call, carrying the remote for the refresh to use.
+    if (remote) {
+      if (!files.length) {
+        const manifest = {
+          ...emptyManifest(), ownership: 'repo',
+          repo: { root: null, remote, lastRefreshAt: null, lastRefreshCommit: null },
+          documents: [],
+        };
+        try { await writeManifest(manifestAbs2, manifest); }
+        catch (err) { return { ok: false, reason: 'io', message: `Could not write the foundations manifest: ${scrubPaths(String(err?.message ?? err))}` }; }
+        return { ok: true, ownership: 'repo', seeded: [], refresh: null, remote };
+      }
+      // `refreshRemoteCore` writes the documents and then the manifest, with
+      // `ownership: 'repo'` and this remote on it — the same bytes this arm
+      // would write itself, and it tolerates an ABSENT manifest by design
+      // (`emptyManifest()`), which is exactly the state it is called in here.
+      const refresh = await refreshRemoteCore(domain, target, paths, files, {
+        source: 'remote',
+        remote,
+        tokenSource,
+        // TEST SEAMS ONLY, forwarded exactly as `refreshFoundationsFromRepo`
+        // forwards them. `token` is NOT among them, here or there.
+        fetchImpl: inp.fetchImpl,
+        sleepImpl: inp.sleepImpl,
+        onWarn: inp.onWarn,
+      });
+      // NOTHING WAS WRITTEN — no manifest, no ownership, no document. The
+      // refusal is returned WHOLE so the caller can say which of the nine
+      // reasons it was, and the owner can fix the repository, the ref, the
+      // path or the token and choose again.
+      if (!refresh || refresh.ok === false) {
+        return {
+          ...(refresh || {}), ok: false,
+          reason: (refresh && refresh.reason) || 'io',
+          ownershipSet: false,
+          message: `${(refresh && refresh.message) || 'The repository could not be read.'} `
+            + 'Nothing was written: this project still has no foundations and its ownership is still unchosen, '
+            + 'so you can correct the repository, branch, folder or token and choose again.',
+        };
+      }
+      return { ok: true, ownership: 'repo', seeded: [], refresh, remote };
+    }
+
     // repo — the ownership manifest FIRST and unconditionally, then the mirror.
     const manifest = {
       ...emptyManifest(), ownership: 'repo',
@@ -6512,6 +6673,12 @@ export async function initFoundations(domain, project, opts = {}) {
     documents: index.ok ? index.documents : [],
     foundations: index.ok ? index : null,
     refresh: done.refresh,
+    // WHERE IT MIRRORS FROM, when it was born remote (v3.65.0). Null on every
+    // other arm, which is a fact rather than an omission: a curator-owned
+    // project has no repository, and a local mirror's remote is whatever its
+    // first refresh observed on the checkout's own `origin`.
+    remote: done.remote || null,
+    tokenSource: done.remote ? tokenSource : null,
     notes: finaliseNotes(notes),
   };
 }
@@ -6537,6 +6704,23 @@ const REPO_SCAN_ROLE_BASENAME_RE =
   /^(architecture|decision|adr|convention|contributing|style|roadmap|plan|api|readme|guide|handbook)/i;
 /** The head of a file the scan reads to show a title beside the path. */
 const REPO_SCAN_HEADING_BYTES = 4096;
+
+/**
+ * WHICH OF THE THREE RULES ADMITS THIS PATH, or null — `[segments]`, so it
+ * knows nothing about a filesystem and can be asked about a path in a GitHub
+ * tree as easily as one on disk. Extracted verbatim in v3.65.0 when the
+ * remote scan arrived: two copies of "what counts as a canonical document"
+ * would be two pickers that disagree about the same repository.
+ */
+function admitsFoundationPath(segments) {
+  const name = segments[segments.length - 1];
+  const dirs = segments.slice(0, -1).map((s) => s.toLowerCase());
+  const stem = name.replace(SOURCE_EXT_RE, '');
+  if (dirs.some((d) => REPO_SCAN_DOCS_DIRS.has(d))) return 'docs-folder';
+  if (REPO_SCAN_ROLE_BASENAME_RE.test(stem)) return 'name';
+  if (/\.md$/i.test(name) && dirs.some((d) => REPO_SCAN_DOC_FOLDERS.has(d))) return 'doc-folder';
+  return null;
+}
 
 /**
  * List the documents in a checkout that COULD become foundations. Read-only:
@@ -6612,15 +6796,7 @@ export async function scanRepoForFoundations(root) {
   let truncated = false;
 
   /** Which of the three rules admits this file, or null. */
-  const admits = (segments) => {
-    const name = segments[segments.length - 1];
-    const dirs = segments.slice(0, -1).map((s) => s.toLowerCase());
-    const stem = name.replace(SOURCE_EXT_RE, '');
-    if (dirs.some((d) => REPO_SCAN_DOCS_DIRS.has(d))) return 'docs-folder';
-    if (REPO_SCAN_ROLE_BASENAME_RE.test(stem)) return 'name';
-    if (/\.md$/i.test(name) && dirs.some((d) => REPO_SCAN_DOC_FOLDERS.has(d))) return 'doc-folder';
-    return null;
-  };
+  const admits = admitsFoundationPath;
 
   /** One directory level. `relDir` is '' for the root. Never throws. */
   const scanDir = async (relDir, depth) => {
@@ -6710,6 +6886,155 @@ export async function scanRepoForFoundations(root) {
     cap: MAX_REPO_SCAN_CANDIDATES,
     maxDepth: REPO_SCAN_MAX_DEPTH,
     maxDocumentBytes: MAX_FOUNDATION_BYTES,
+  };
+}
+
+/**
+ * The same scan, over a GITHUB REPOSITORY this machine has no checkout of
+ * (v3.65.0) — so a mirror can be STARTED from the picker rather than by
+ * typing paths.
+ *
+ * ── WHY IT IS AFFORDABLE, WHICH IS THE ONLY REASON IT EXISTS ────────────
+ * TWO requests, whatever the repository's size: the ref, then ONE recursive
+ * tree, which carries every path AND every blob's size. No blob is fetched.
+ * A per-file heading (what the local scan reads 4 KB of each file for) WOULD
+ * be one request per row, so it is not read at all: `firstHeading` is `null`
+ * on every remote row, uniformly, meaning "not read" rather than "none" —
+ * the same shape the local scan uses for a `tooLarge` row's age.
+ * `modifiedAt` is `null` for a fact rather than a limit: a git tree records
+ * no timestamp, and the alternative — one commits query per file — is the
+ * cost this scan exists to avoid.
+ *
+ * THE SAME THREE RULES, THE SAME CAP, THE SAME ORDER (`admitsFoundationPath`,
+ * `MAX_REPO_SCAN_CANDIDATES`, role rank then path), so a row here becomes the
+ * same document a row there would. Depth and the skipped folders are applied
+ * to the tree's own paths, `remote.path` narrowing the tree first when the
+ * owner named a folder.
+ *
+ * A TRUNCATED TREE IS A REFUSAL, not a short list: the client throws before
+ * this function sees an entry, and a picker showing "your architecture
+ * document is not in this repository" because the listing was cut is the
+ * exact failure the refresh arm refuses loudly to avoid.
+ *
+ * READ-ONLY AND WRITES NOTHING — no manifest, no document, no cache. The
+ * token is read from a FILE by `tokenSource`, never from an argument.
+ */
+export async function scanRemoteForFoundations(opts = {}) {
+  const o = opts && typeof opts === 'object' ? opts : {};
+  const loaded = await loadGitHubReader();
+  if (!loaded.ok) return loaded;
+  const gh = loaded.gh;
+  const asked = resolveRemoteArg(gh, o.remote);
+  if (!asked.ok) return asked;
+  if (!asked.remote) {
+    return {
+      ok: false, reason: 'invalid-remote',
+      message: 'Name the repository as owner/repo, or as the https:// or git@ URL git prints for the remote.',
+    };
+  }
+  // `ref` and `path` may arrive BESIDE a string remote — git prints neither
+  // in a remote URL, so a caller that has the repository as a string has no
+  // way to express them inside it. Re-normalised through the same validator,
+  // so a `..` or an absolute folder is dropped here exactly as it is there.
+  const remote = (o.ref !== undefined && o.ref !== null && o.ref !== '')
+    || (o.path !== undefined && o.path !== null && o.path !== '')
+    ? normaliseRemote({
+      ...asked.remote,
+      ...(o.ref !== undefined && o.ref !== null && o.ref !== '' ? { ref: o.ref } : {}),
+      ...(o.path !== undefined && o.path !== null && o.path !== '' ? { path: o.path } : {}),
+    })
+    : asked.remote;
+  if (!remote) {
+    return { ok: false, reason: 'invalid-remote', message: 'The branch or folder named is not one this can read.' };
+  }
+  const tokenSource = o.tokenSource === 'sync' ? 'sync' : 'config';
+  const tok = gh.readGitHubReadToken(tokenSource);
+  if (!tok.ok) {
+    return {
+      ok: false, reason: 'no-token', tokenSource,
+      remote: { owner: remote.owner, repo: remote.repo, ref: remote.ref, path: remote.path },
+      message: `${tok.message} Until then ${remote.owner}/${remote.repo} cannot be read from here.`,
+    };
+  }
+  const client = gh.createGitHubReadClient({
+    token: tok.token,
+    tokenSource,
+    ...(typeof o.fetchImpl === 'function' ? { fetchImpl: o.fetchImpl } : {}),
+    ...(typeof o.sleepImpl === 'function' ? { sleepImpl: o.sleepImpl } : {}),
+    ...(typeof o.onWarn === 'function' ? { onWarn: o.onWarn } : {}),
+  });
+  let head, tree;
+  try {
+    head = await client.getRef(remote.owner, remote.repo, remote.ref);
+    tree = await client.getTree(remote.owner, remote.repo, head.sha, { recursive: true });
+  } catch (err) {
+    // The SAME mapping the refresh's `remoteRefusal` uses — one vocabulary
+    // for one client, so a picker and a refresh name a rate limit alike.
+    const code = err && err.code ? String(err.code) : '';
+    const reason = code === gh.READ_ERROR_CODES.TREE_TRUNCATED ? 'remote-tree-truncated'
+      : code === gh.READ_ERROR_CODES.UNAUTHORISED ? 'unauthorised'
+        : code === gh.READ_ERROR_CODES.RATE_LIMIT ? 'rate-limited'
+          : code === gh.READ_ERROR_CODES.NOT_FOUND ? 'remote-not-found'
+            : code === gh.READ_ERROR_CODES.TOO_LARGE ? 'remote-too-large'
+              : code === gh.READ_ERROR_CODES.NETWORK ? 'remote-unreachable'
+                : 'remote-http';
+    return {
+      ok: false, reason, tokenSource, remoteError: code || 'unknown',
+      remote: { owner: remote.owner, repo: remote.repo, ref: remote.ref, path: remote.path },
+      message: String(err?.message ?? err).slice(0, 400),
+    };
+  }
+
+  const prefix = remote.path ? `${remote.path}/` : '';
+  const found = [];
+  let truncated = false;
+  for (const e of tree.entries) {
+    const rel = String(e.path || '').replace(/\\/g, '/');
+    if (!rel || rel.includes('\0')) continue;
+    if (prefix && !rel.startsWith(prefix)) continue;
+    if (!SOURCE_EXT_RE.test(rel)) continue;
+    // The path AS THE PICKER WILL USE IT is the repository-relative one; the
+    // rules are applied to the part BELOW `remote.path`, so naming `docs/` as
+    // the folder does not make every file match the `docs-folder` rule.
+    const inner = prefix ? rel.slice(prefix.length) : rel;
+    const segments = inner.split('/');
+    if (segments.length > REPO_SCAN_MAX_DEPTH) continue;
+    if (segments.slice(0, -1).some((s) => REPO_SCAN_SKIP_DIRS.has(s) || s.startsWith('.'))) continue;
+    if (segments[segments.length - 1].startsWith('.')) continue;
+    const rule = admitsFoundationPath(segments);
+    if (!rule) continue;
+    if (found.length >= REPO_SCAN_COLLECT_LIMIT) { truncated = true; break; }
+    const bytes = Number.isInteger(e.size) ? e.size : 0;
+    found.push({
+      path: rel,
+      bytes,
+      suggestedRole: guessRole(inner),
+      suggestedSlug: deriveSlugFromPath(inner),
+      tooLarge: bytes > MAX_FOUNDATION_BYTES,
+      matchedBy: rule,
+      // NOT READ, rather than absent: see the docblock.
+      firstHeading: null,
+      modifiedAt: null,
+    });
+  }
+  const rank = new Map(FOUNDATION_ROLES.map((role, i) => [role, i]));
+  found.sort((a, b) => (rank.get(a.suggestedRole) ?? 99) - (rank.get(b.suggestedRole) ?? 99)
+    || a.path.localeCompare(b.path));
+  if (found.length > MAX_REPO_SCAN_CANDIDATES) truncated = true;
+  return {
+    ok: true,
+    // NULL, and never a path: no folder on this computer was read.
+    root: null,
+    source: 'remote',
+    remote: { owner: remote.owner, repo: remote.repo, ref: head.ref, path: remote.path },
+    commit: head.sha,
+    tokenSource,
+    candidates: found.slice(0, MAX_REPO_SCAN_CANDIDATES),
+    truncated,
+    cap: MAX_REPO_SCAN_CANDIDATES,
+    maxDepth: REPO_SCAN_MAX_DEPTH,
+    maxDocumentBytes: MAX_FOUNDATION_BYTES,
+    requests: client.stats().requests,
   };
 }
 
