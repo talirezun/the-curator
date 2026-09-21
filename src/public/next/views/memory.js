@@ -771,7 +771,7 @@ const FOCUSABLE_IDS = [
   // only because the click causes a render that would otherwise drop focus to
   // <body>. `mem-fnd-add` and `mem-fnd-addrepo` open something in their own
   // place; the three confirm strips replace themselves with an outcome.
-  'mem-fnd-add', 'mem-fnd-addrepo',
+  'mem-fnd-add', 'mem-fnd-addrepo', 'mem-fnd-mirror',
   'mem-fnd-slug', 'mem-fnd-title', 'mem-fnd-text',
   'mem-fnd-save', 'mem-fnd-cancel', 'mem-fnd-preview',
   'mem-fnd-discard', 'mem-fnd-keep',
@@ -859,6 +859,7 @@ const FOCUS_FALLBACK = {
   // field the person asked for is where they should land.
   'mem-fnd-add': '#mem-fnd-text',
   'mem-fnd-addrepo': '.fnd-init-path',
+  'mem-fnd-mirror': '.fnd-init-remote-fields .fnd-init-path',
   // Save and Cancel both dismiss the editor; the row's own Edit control is
   // gone with the row that is about to be re-read, so the nearest stable
   // thing that does the same KIND of thing is the fold the table sits in.
@@ -6975,13 +6976,13 @@ function foundationsControlOffer(facts, readonly) {
   // not an absence (v3.17.1).
   if (readonly) {
     return {
-      refresh: false, add: false, mirror: true,
+      refresh: false, add: false, mirror: false,
       reason: 'A read-only mirror — documents here are copied in, never edited.',
     };
   }
-  if (facts.manifestError) return { refresh: false, add: false, reason: null };
-  if (!facts.present) return { refresh: false, add: false, reason: null };
-  if (facts.ownership === 'curator') return { refresh: false, add: true, reason: null };
+  if (facts.manifestError) return { refresh: false, add: false, mirror: false, reason: null };
+  if (!facts.present) return { refresh: false, add: false, mirror: false, reason: null };
+  if (facts.ownership === 'curator') return { refresh: false, add: true, mirror: false, reason: null };
   // REPO-OWNED. Reachability is read off the DOCUMENTS, never off `repo.root`
   // — the manifest records a path on the machine that last refreshed, which on
   // any other machine is a hint, while each document's own `freshness` is what
@@ -6989,13 +6990,22 @@ function foundationsControlOffer(facts, readonly) {
   const reachable = !facts.count
     || facts.docs.some((d) => d.freshness === 'fresh' || d.freshness === 'stale');
   if (!reachable) {
+    // ── AND THIS IS THE ARM THAT MOST NEEDS THE GITHUB CONTROL ──────────
+    // Through v3.65.0 this arm offered NOTHING — and it is exactly the machine
+    // the store's remote arm was built for: `refreshFoundationsFromRepo` takes
+    // the remote path when the checkout is not reachable
+    // (src/brain/working-state.js:5856-5869), so the app had a shipped
+    // capability with no control on the only computer that needs it. The
+    // reason still stands beside it: the FOLDER is not here, and that is why
+    // the two folder controls are withheld.
     return {
-      refresh: false, add: false,
+      refresh: false, add: false, mirror: true,
       reason: 'The folder these were copied from is not on this computer, so they can neither '
-        + 'be re-copied nor added to here. Open the project on the machine that has it.',
+        + 'be re-copied nor added to here. Mirror it from GitHub instead, or open the '
+        + 'project on the machine that has the folder.',
     };
   }
-  return { refresh: facts.count > 0, add: true, reason: null };
+  return { refresh: facts.count > 0, add: true, mirror: true, reason: null };
 }
 
 /**
@@ -7468,8 +7478,20 @@ function renderFoundations(read) {
       (busy ? ' disabled aria-disabled="true"' : '') + '>' +
       (curator ? 'Add document' : 'Add from folder') + '</button>'
     : '';
+  // ── "Mirror from GitHub instead" (v3.65.1, D6) ────────────────────────
+  // ONE SOURCE PER PROJECT, and this is how it moves: the ownership stays
+  // `repo` — the store's one-ownership-per-project rule is untouched — and
+  // what changes is WHERE the bytes are read from. `repo.root` is cleared and
+  // `repo.remote` is set, in the same manifest write the re-copy performs.
+  //
+  // Offered on BOTH repo-owned arms, including the one where the checkout is
+  // not on this computer: see `foundationsControlOffer`.
+  const mirrorBtn = controls.mirror
+    ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-mirror" id="mem-fnd-mirror"' +
+      (busy ? ' disabled aria-disabled="true"' : '') + '>Mirror from GitHub instead</button>'
+    : '';
   const askBtn = foundationsDraftAsk(facts, readonly);
-  const action = editing ? '' : (refreshBtn + addBtn + askBtn.btn);
+  const action = editing ? '' : (refreshBtn + addBtn + mirrorBtn + askBtn.btn);
   // A WITHHELD CONTROL SAYS WHY (v3.17.1). Two reasons can stand here — the
   // folder is not on this computer, or this is a read-only mirror — and both
   // are `.tx-note`, unfolded: a reason behind a chevron is not a reason.
@@ -7555,8 +7577,10 @@ function renderFoundations(read) {
     return '<div class="mem-fnd-row">' +
         '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
           (editing ? renderFoundationEditor(facts) : renderDescription(emptyBody)) +
-        '</div></div>' +
         '<div class="mem-fnd-head-controls">' + action + '</div>' +
+        '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
+          (editing ? renderFoundationEditor(facts) : renderDescription(emptyBody)) +
+        '</div></div>' +
       '</div>' + askBtn.panel + withheld;
   }
 
@@ -7665,13 +7689,30 @@ function renderFoundations(read) {
   // always read from one field alone; this one now does too.
   const open = (state.fndForceOpen === true
     || (state.openFolds && state.openFolds.foundations)) ? ' open' : '';
-  return budgetNote + '<div class="mem-fnd-row">' +
+  // ── THE CONTROLS ARE A HEAD ROW, ABOVE THE ROWS (v3.65.1) ─────────────
+  // Wiki health's `.dm-health-top` anatomy, which is the one shipped instance
+  // of the pattern and the model the maintainer named: a section's controls sit
+  // BENEATH the heading and ABOVE the rows, left-aligned at the rows' own x.
+  // Through v3.65.0 this row was the LAST child of `.mem-fnd-row` — measured at
+  // 1370, the two controls sat at y=511, below a fold whose summary was at
+  // y=479 — so the only section on this page with controls put them where
+  // nothing else on the page puts them. Same class, same markup, one position.
+  // ── AND THE COST GOES UNDER THE ROW, STILL UNFOLDED (v3.65.1) ─────────
+  // It was emitted BEFORE the row, which put it between the step's heading and
+  // the section's controls — the one place on this page where a sentence sits
+  // under a heading, which is what the head-row rule exists to stop. It is a
+  // SIBLING of the fold, not a child of it: v3.16.1's rule is that a cost may
+  // never sit behind a chevron, so it stays outside the `<details>` and is read
+  // whether the documents are open or not. What changed is its position among
+  // the section's siblings, and nothing else — `toggleReadFirst` still patches
+  // `#mem-fnd-budget` in place by id.
+  return '<div class="mem-fnd-row">' +
+      '<div class="mem-fnd-head-controls">' + action + '</div>' +
       '<details class="mem-fold" data-mem-fold="foundations"' + open + '>' +
         summary +
         '<div class="mem-fold-body">' + body + '</div>' +
       '</details>' +
-      '<div class="mem-fnd-head-controls">' + action + '</div>' +
-    '</div>' + askBtn.panel + withheld;
+    '</div>' + budgetNote + askBtn.panel + withheld;
 }
 
 /**
@@ -7775,13 +7816,20 @@ function renderFoundationsInit(facts) {
   const ini = state.fndInit && state.fndInit.domain === state.activeDomain
     && state.fndInit.project === state.activeProject ? state.fndInit : null;
   const repoOnly = facts.ownership === 'repo';
+  // ── SWITCHING THIS PROJECT'S SOURCE TO GITHUB (v3.65.1, D6) ────────────
+  // A transient on the same stamped record every other state of this panel
+  // rides, so a project switch drops it with the rest. It selects the GitHub
+  // arm, changes the primary's word and the sentence above it, and routes the
+  // commit at `POST …/foundations/source` instead of `…/foundations/init`.
+  const switching = !!(ini && ini.switching);
   const choice = ini && ini.choice
     ? ini.choice
     // A FRESH CHOICE PAINTED FROM NOTHING, so the block renders its own first
     // frame without a click: `state.fndInit` is written by the first
     // interaction, and until then this is a pure function of the payload.
     : freshChooser({ allowLater: false });
-  if (repoOnly) choice.ownership = 'repo';
+  if (switching) choice.ownership = 'remote';
+  else if (repoOnly) choice.ownership = 'repo';
   const busy = !!(ini && ini.busy);
   // ── AND ONE MORE CONDITION, WITH ITS REASON (v3.61.1) ──────────────────
   // A mirror that has been SCANNED and has nothing ticked would set the
@@ -7792,9 +7840,11 @@ function renderFoundationsInit(facts) {
   // decides both the disabled flag and the sentence under the button — one
   // predicate, so the control and its explanation cannot come apart.
   const blocked = commitBlockedReason(choice);
-  const ready = (repoOnly
-    ? !!String(choice.repoRoot || '').trim()
-    : (choice.ownership === 'curator' || !!String(choice.repoRoot || '').trim())) && !blocked;
+  const ready = (switching
+    ? !!String(choice.remote || '').trim()
+    : repoOnly
+      ? !!String(choice.repoRoot || '').trim()
+      : (choice.ownership === 'curator' || !!String(choice.repoRoot || '').trim())) && !blocked;
 
   return (
     // ── THE STATE'S OWN STACK, SO THE RHYTHM IS ONE RULE (v3.61.1) ───────
@@ -7825,18 +7875,47 @@ function renderFoundationsInit(facts) {
       : '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' +
         escapeHtml('Set once — a project is mirrored or kept here, never both.') +
         '</span></div>') +
-    '<div class="mem-fnd-row">' +
-      // `mem-fnd-init-body` gives this card's own contents the same 16px
-      // rhythm and drops the 46px right reserve `.mem-fold-flat` keeps for
-      // the brief's pencil — there is no control in this card's top-right
-      // corner, and the reserve was 32px of the chooser's width spent on
-      // nothing.
-      '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-fnd-init-body">' +
-        renderDescription(repoOnly
-          ? 'Nothing mirrored yet. Point at the folder and choose which files to copy.'
-          : 'No canonical documents yet. Choose how they arrive.') +
+    // ── ONE BOX, AT THE ROWS' OWN WIDTH (v3.65.1) ────────────────────────
+    // The maintainer, on the shipped v3.65.0 panel: *"a truly bad
+    // implementation of the design"* — an inner box narrower than the card,
+    // buttons at the right edge, placeholders cramped. Measured at 1370: the
+    // panel sat 421→1314 inside a row that runs 405→1330, so THREE left edges
+    // (405 / 421 / 436) and three right edges stacked inside one another, and
+    // `.fnd-init-arm` carried `padding: 8px 0 8px 16px` — ZERO on the right
+    // — so its controls ended flush against a visible tinted edge that itself
+    // stopped 31px short of the row above.
+    //
+    // It takes Wiki health's QUICK MAINTENANCE anatomy instead, which is the
+    // panel the maintainer called *"designed properly"*: ONE box at the rows'
+    // own width, 14px on all four sides, an eyebrow row, a content stack and a
+    // footnote. `.dm-quick`'s RULES are not copied here — a second copy of a
+    // panel is the shape this release removes — `.mem-fnd-panel` declares the
+    // same five properties with views/domains.css:753-759 named as the source
+    // of the values, and promoting one kit panel is recorded for v3.66.0.
+    '<div class="mem-fnd-panel">' +
+      '<div class="mem-fnd-panel-eyebrow cur-group-title">' +
+        escapeHtml(switching ? 'MIRROR FROM GITHUB'
+          : repoOnly ? 'ADD FROM FOLDER' : 'SET UP DOCUMENTS') +
+      '</div>' +
+      '<div class="mem-fnd-init-body">' +
+        // ── THE SENTENCE SPLITS ON THE COUNT (v3.65.1) ──────────────────
+        // Through v3.65.0 the `repoOnly` arm said "Nothing mirrored yet" on
+        // EVERY repo-owned project — including one mirroring three documents,
+        // because this panel is also what the head control's "Add from folder"
+        // opens. Measured on the maintainer's own fixture: 1 document, 116 KB,
+        // and the panel said nothing was mirrored. Both arms ride the SAME
+        // renderDescription call, so the tail stays byte-identical.
+        renderDescription(switching
+          ? 'Name the repository this project mirrors from now. The documents are re-copied '
+            + 'from GitHub and the folder on this Mac stops being the source.'
+          : repoOnly
+            ? (facts.count
+              ? 'Add more files from the folder this project mirrors.'
+              : 'Nothing mirrored yet. Point at the folder and choose which files to copy.')
+            : 'No canonical documents yet. Choose how they arrive.') +
         renderFoundationsChooser({
-          id: 'mem-fnd-init', choice, busy, optionsHidden: repoOnly, existingProject: true,
+          id: 'mem-fnd-init', choice, busy, optionsHidden: repoOnly || switching,
+          existingProject: true,
         }) +
         '<div class="mem-fnd-init-actions">' +
           // ── THE PRIMARY IS THE HOST'S DECISION (P2-6) ──────────────────
@@ -7851,8 +7930,9 @@ function renderFoundationsInit(facts) {
           '<button type="button" class="btn btn-primary" id="mem-fnd-init-go"' +
             (busy || !ready ? ' disabled' : '') + '>' +
             escapeHtml(busy
-              ? (repoOnly ? 'Copying…' : 'Setting up…')
-              : (repoOnly ? 'Add from folder' : 'Set up documents')) +
+              ? (switching ? 'Mirroring…' : repoOnly ? 'Copying…' : 'Setting up…')
+              : (switching ? 'Mirror from GitHub'
+                : repoOnly ? 'Add from folder' : 'Set up documents')) +
           '</button>' +
         '</div>' +
         // ── WHY THE COMMIT IS OFF (v3.61.1) ────────────────────────────
@@ -7866,8 +7946,18 @@ function renderFoundationsInit(facts) {
           (blocked ? '' : ' hidden') + '>' +
           '<span>' + escapeHtml(blocked) + '</span>' +
         '</div>' +
-      '</div></div>' +
-    '</div>' +
+        // ── WHAT THE SWITCH COSTS, UNFOLDED (v3.16.1) ──────────────────
+        // A consequence, so it is on screen at the moment of acting rather
+        // than behind the block's ⓘ. Nothing is written until every blob is
+        // in hand — the store's remote arm fetches the whole tree first —
+        // so a failed switch leaves the mirror exactly as it was.
+        (switching
+          ? '<div class="tx-note mem-fnd-switch-note">' + icon('alertCircle', 13) + '<span>' +
+            escapeHtml('The folder on this Mac stops being this project’s source. Nothing is '
+              + 'written unless every document is read, and "read first" is kept by name.') +
+            '</span></div>'
+          : '') +
+      '</div>' +
     '</div>'
   );
 }
@@ -8551,15 +8641,20 @@ async function initFoundations(token, facts) {
   // the form vanish would throw away the path the owner typed (the same rule
   // the project lifecycle form follows on a 4xx).
   const keepAdding = !!(cur && cur.adding);
+  // THE SWITCH SURVIVES THE ROUND TRIP for the same reason `adding` does: a
+  // refused switch that also closed the panel would throw away the repository
+  // the owner named.
+  const keepSwitching = !!(cur && cur.switching);
   state.fndInit = {
     domain, project, choice, busy: true, error: null, refused: [], adding: keepAdding,
+    switching: keepSwitching,
   };
   render(token);
 
   // AN ALREADY-OWNED MIRROR TAKES THE REFRESH ROUTE, which has its own
   // outcome rendering and its own stamped record — so this hands off rather
   // than duplicating it.
-  if (mirrorOnly) {
+  if (mirrorOnly && !keepSwitching) {
     // `adding` IS PRESERVED THROUGH THE COPY. On a populated mirror the picker
     // sits under the table, and dropping the flag here would take it off
     // screen the instant the button was pressed — which reads as the press
@@ -8567,6 +8662,7 @@ async function initFoundations(token, facts) {
     // `refreshFoundations`'s own stamped outcome is what clears it.
     state.fndInit = {
       domain, project, choice, busy: false, error: null, refused: [], adding: keepAdding,
+      switching: false,
     };
     await refreshFoundations(token, body.files || []);
     return;
@@ -8575,11 +8671,33 @@ async function initFoundations(token, facts) {
   let data = null;
   let error = null;
   try {
+    // ── TWO ROUTES, ONE CONTROL, AND THE FACTS DECIDE (v3.65.1) ────────
+    // `…/foundations/init` is the only route that SETS an ownership and the
+    // store lets it run once. A project whose ownership is already settled and
+    // is moving its source to GitHub takes `…/foundations/source`, which
+    // leaves `ownership: 'repo'` where it is, clears `repo.root` and sets
+    // `repo.remote` in the SAME manifest write the re-copy performs — so a
+    // failed read cannot leave a stale root beside a fresh remote.
     const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
-      encodeURIComponent(project) + '/foundations/init', {
+      encodeURIComponent(project) + '/foundations/' + (keepSwitching ? 'source' : 'init'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      // ── THE SOURCE ROUTE TAKES THREE FIELDS AND REFUSES A FOURTH ────
+      // `SOURCE_BODY_FIELDS` is a strict allow-list — `remote`,
+      // `tokenSource`, `files` — and `chooserBody` composes an `ownership`
+      // beside them because `…/foundations/init` needs one. Sending it here
+      // would be a 400 `unexpected_fields`, so the three are picked out
+      // explicitly rather than the object being passed through and hoped for.
+      // NOTHING ELSE MAY BE ADDED HERE: there is no token field on this form
+      // and there may never be one — the store reads a token from a FILE, and
+      // `tokenSource` names WHICH file.
+      body: JSON.stringify(keepSwitching
+        ? {
+          remote: body.remote,
+          tokenSource: body.tokenSource,
+          ...(body.files ? { files: body.files } : {}),
+        }
+        : body),
     });
     const got = await res.json();
     // ── A REMOTE REFUSAL NAMES THE TOKEN'S SOURCE, NEVER THE TOKEN ──────
@@ -8605,6 +8723,7 @@ async function initFoundations(token, facts) {
     // the same rule the project lifecycle form follows on a 4xx.
     state.fndInit = {
       domain, project, choice, busy: false, error, refused: [], adding: keepAdding,
+      switching: keepSwitching,
     };
     render(token);
     return;
@@ -8967,7 +9086,17 @@ function bindFoundationRows(root, token) {
       };
     }
     if (!state.fndInit.choice) state.fndInit.choice = freshChooser({ allowLater: false });
-    if (facts.ownership === 'repo') state.fndInit.choice.ownership = 'repo';
+    // ── THE SAME FORCING THE RENDERER DOES, IN THE SAME ORDER (v3.65.1) ──
+    // `renderFoundationsInit` sets `remote` when the panel is switching this
+    // project's source to GitHub and `repo` otherwise. This line ran AFTER the
+    // render and knew only about `repo`, so it put the ownership back — and
+    // the binder then held a choice whose `ownership` disagreed with the arm
+    // on screen: measured, the remote arm painted while `scanBlockedReason`
+    // answered out of its `repoRoot` branch and the scan stayed disabled
+    // saying "Type or choose the folder first." over a field asking for a
+    // repository. Two writers of one field, and this one is the copy.
+    if (state.fndInit.switching) state.fndInit.choice.ownership = 'remote';
+    else if (facts.ownership === 'repo') state.fndInit.choice.ownership = 'repo';
     bindFoundationsChooser({
       doc: root,
       id: 'mem-fnd-init',
@@ -9032,6 +9161,25 @@ function bindFoundationRows(root, token) {
       };
       state.fndInit.choice.ownership = 'repo';
       // THE FORCE IS A TRANSIENT (v3.64.1) — see `fndForceOpen` in freshState.
+      state.fndForceOpen = true;
+      render(token);
+    });
+  }
+
+  // ── "Mirror from GitHub instead" (v3.65.1, D6) ─────────────────────────
+  // The SAME transient record the two folder controls write, with one more
+  // field: `switching`. It opens the panel with the GitHub arm selected and
+  // routes the commit at the source route; the documents table stays on screen
+  // behind it, for the reason `adding` exists.
+  const mirrorBtn = root.getElementById ? root.getElementById('mem-fnd-mirror') : null;
+  if (mirrorBtn) {
+    mirrorBtn.addEventListener('click', () => {
+      state.fndInit = {
+        domain: state.activeDomain, project: state.activeProject,
+        choice: freshChooser({ allowLater: false }), busy: false, error: null, refused: [],
+        adding: true, switching: true,
+      };
+      state.fndInit.choice.ownership = 'remote';
       state.fndForceOpen = true;
       render(token);
     });

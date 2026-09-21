@@ -151,7 +151,15 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  padding: var(--space-4) 0 var(--space-4) var(--space-8);
+  /* ── SYMMETRIC (v3.65.1) ───────────────────────────────────────────
+     It was `var(--space-4) 0 var(--space-4) var(--space-8)` — 8px 0 8px 16px,
+     ZERO on the right. Measured at 1370: `Find documents` and `Add` ended at
+     x=1299, flush against the tinted background's own visible edge, against a
+     16px gap on the left. That is the measured cause of the maintainer's
+     report of *"buttons clipped at the right edge"* — nothing is clipped in
+     the CSS sense (document overflow is 0) — a control touching a visible
+     edge reads as cut off. Same two values, both sides. */
+  padding: var(--space-4) var(--space-8);
   border-inline-start: 2px solid var(--accent-border);
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
   background: var(--accent-tint);

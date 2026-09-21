@@ -914,7 +914,7 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
     /body: JSON\.stringify\(Array\.isArray\(files\)[^\n]*\{ files \}/.test(memCode)
     && !/body: JSON\.stringify\(\{ files[^\n]*text/.test(memCode), 'the refresh body is not a bare file list');
   ok('...the other POST aimed at the foundations INIT endpoint, which sets the ownership once',
-    /'\/foundations\/init'/.test(memCode));
+    /'\/foundations\/' \+ \(keepSwitching \? 'source' : 'init'\)/.test(memCode));
   ok('...the PUT and the DELETE aimed at ONE document under foundations/',
     /'\/foundations\/' \+ encodeURIComponent\(slug\)/.test(memCode));
   // THE PUT IS THE ONE WRITE THAT CARRIES BYTES, and it carries three fields:

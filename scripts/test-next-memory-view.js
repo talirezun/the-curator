@@ -2547,7 +2547,8 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     && !/text:/.test(first.init), first ? first.init.slice(0, 200) : 'none');
   eq('exactly TWO writes use a LITERAL POST', posts.length, 2);
   const refresh = posts.find((x) => x.url.includes("'/foundations/refresh'"));
-  const init = posts.find((x) => x.url.includes("'/foundations/init'"));
+  // TWO ENDPOINTS IN ONE EXPRESSION SINCE v3.65.1 — see the assertion below.
+  const init = posts.find((x) => x.url.includes("'init'"));
   ok('one POST targets the foundations REFRESH endpoint',
     !!refresh, JSON.stringify(posts.map((x) => x.url.slice(0, 120))));
   // ── THE REFRESH BODY IS A FILE LIST OR NOTHING, NEVER A DOCUMENT ───────
@@ -2564,10 +2565,24 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     refresh ? refresh.init.slice(0, 220) : 'none');
   ok('...and the empty case is still a literal empty object, so the ordinary refresh sends nothing',
     refresh && /:\s*\{\}\s*\)/.test(refresh.init), refresh ? refresh.init.slice(0, 220) : 'none');
+  // TWO ENDPOINTS, ONE EXPRESSION (v3.65.1). `…/foundations/init` sets an
+  // ownership and runs once; `…/foundations/source` moves an already-settled
+  // mirror to GitHub, leaving `ownership: 'repo'` where it is. They are
+  // composed in one fetch rather than two, so the assertion names both and
+  // proves the SWITCH is what picks between them — a second fetch would be a
+  // second copy of the stamping, the refusal mapping and the re-read.
   ok('the other POST targets the foundations INIT endpoint, which sets the ownership once',
-    !!init, JSON.stringify(posts.map((x) => x.url.slice(0, 120))));
+    !!init && /'\/foundations\/' \+ \(keepSwitching \? 'source' : 'init'\)/.test(init.url),
+    JSON.stringify(posts.map((x) => x.url.slice(0, 140))));
   ok('...carrying the chooser\'s OWN body, built by the shared module rather than here',
-    init && /body:\s*JSON\.stringify\(body\)/.test(init.init), init ? init.init.slice(0, 220) : 'none');
+    init && /body:\s*JSON\.stringify\(keepSwitching/.test(init.init)
+      && /:\s*body\)/.test(init.init), init ? init.init.slice(0, 400) : 'none');
+  ok('...and the SOURCE arm sends the three fields that route allows and no fourth '
+    + '— `ownership` would be a 400 `unexpected_fields` there, and there is no '
+    + 'token field on this form',
+  init && /remote: body\.remote/.test(init.init) && /tokenSource: body\.tokenSource/.test(init.init)
+    && !/token:/.test(init.init) && !/ownership:/.test(init.init),
+  init ? init.init.slice(0, 400) : 'none');
   // ── THE PUT IS THE ONE WRITE THAT CARRIES BYTES ───────────────────────
   // A curator-owned document, verbatim, under a slug. THREE fields and no
   // more: the text, its title and its role. `authoredBy` is deliberately
@@ -7481,8 +7496,18 @@ const fndRead = (payload) => ({
   const unchosen = F.renderFoundations(fndRead(fndPayload([], { present: false, ownership: null })));
   ok('a project that has never answered the ownership question gets the CHOOSER',
     unchosen.includes('data-fnd-init="mem-fnd-init"'), unchosen.slice(0, 300));
-  ok('...keeping the flat card, so the block chrome does not move',
-    unchosen.includes('mem-fold-flat'));
+  // ── THE PANEL, NOT A FLAT CARD (v3.65.1) ────────────────────────────
+  // The chooser sat in a `.mem-fold-flat` card inside a `.mem-fnd-row` inside
+  // the wrap — three boxes, measured at 405 / 421 / 436 at a 1370px window,
+  // with the innermost tinted arm carrying zero right padding. It is ONE box
+  // now, on Wiki health's Quick-maintenance anatomy, and the assertion moves
+  // with it rather than being dropped: what it has always proved is that this
+  // state HAS a container of its own and does not paint bare.
+  ok('...in ONE box — the panel — rather than a card nested in a row nested in a stack',
+    unchosen.includes('mem-fnd-panel') && !unchosen.includes('mem-fold-flat'),
+    unchosen.slice(0, 300));
+  ok('...captioned by the eyebrow that says which of the three panels it is',
+    /class="mem-fnd-panel-eyebrow[^"]*">SET UP DOCUMENTS</.test(unchosen), unchosen.slice(0, 400));
   ok('...with both answers on screen at once rather than in a dropdown',
     unchosen.includes('data-fnd-own="curator"') && unchosen.includes('data-fnd-own="repo"'),
     unchosen.slice(0, 600));
@@ -7582,12 +7607,12 @@ const fndRead = (payload) => ({
   // can silently remove: two named stacks, each with one gap.
   ok('the no-manifest state is ONE stack, so the note and the card have a decided gap',
     /<div class="mem-fnd-init-wrap">/.test(unchosen), unchosen.slice(0, 200));
-  ok('...with the never-folded "Set once" note as its first child and the card second',
+  ok('...with the never-folded "Set once" note as its first child and the panel second',
     unchosen.indexOf('mem-fnd-init-wrap') < unchosen.indexOf('Set once')
-      && unchosen.indexOf('Set once') < unchosen.indexOf('mem-fnd-row'), unchosen.slice(0, 600));
-  ok('...and the card’s own contents are a second stack, so the question line, the '
+      && unchosen.indexOf('Set once') < unchosen.indexOf('mem-fnd-panel'), unchosen.slice(0, 600));
+  ok('...and the panel’s own contents are a second stack, so the question line, the '
     + 'chooser and the action row are spaced by one rule rather than three',
-  /class="mem-fold-body mem-fnd-init-body"/.test(unchosen), unchosen.slice(0, 700));
+  /class="mem-fnd-init-body"/.test(unchosen), unchosen.slice(0, 700));
   // The 46px right reserve `.mem-fold-flat` keeps for the brief's pencil is
   // dropped here BY CLASS, because this card has no control in that corner —
   // it was 32px of the chooser's own width spent on nothing (measured: the
@@ -9116,9 +9141,16 @@ const fndRead = (payload) => ({
   // ── THE WARNING REACHES THE BLOCK, UNFOLDED ─────────────────────────
   const html = F.renderFoundations(fndRead(fndPayload([
     big(100, { readFirst: true }), big(100, { slug: 'b.md', readFirst: true })])));
-  ok('the warning is painted, above the fold, and never inside it',
-    html.includes('mem-fnd-budget') && html.indexOf('id="mem-fnd-budget"') < html.indexOf('<details'),
-    html.slice(0, 300));
+  // UNDER THE ROW AND OUTSIDE THE FOLD (v3.65.1). It used to be emitted
+  // BEFORE the row, which put a sentence between the step's heading and its
+  // head row — the one thing the head-row rule exists to stop. What v3.16.1
+  // requires is that it is not behind a chevron, and that is what is asserted:
+  // it is a sibling of the `<details>`, after it, never a descendant of it.
+  ok('the warning is painted OUTSIDE the fold, after the row, never inside it',
+    html.includes('mem-fnd-budget')
+      && html.indexOf('id="mem-fnd-budget"') > html.indexOf('</details>')
+      && !/<details[\s\S]*id="mem-fnd-budget"[\s\S]*<\/details>/.test(html),
+    html.slice(html.indexOf('</details>') - 40, html.indexOf('</details>') + 240));
   ok('...and it is an ELEMENT even when silent, because a tick patches it in '
     + 'place and a node that must be created is a node a tick has to render for',
   /id="mem-fnd-budget"[^>]*hidden/.test(F.renderFoundations(fndRead(fndPayload([fndDoc()])))),

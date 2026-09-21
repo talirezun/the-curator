@@ -1472,13 +1472,19 @@
    the card without it. The 480px basis is gone with the side-by-side
    arrangement it existed for (v3.61.1). */
 .mem-fnd-row > .mem-fold { min-width: 0; }
+/* ── THE SECTION'S CONTROLS, IN A HEAD ROW ABOVE THE ROWS (v3.65.1) ──────
+   Wiki health's `.dm-health-top` anatomy (views/domains.css), the one shipped
+   instance of the pattern and the model the maintainer named. Through v3.65.0
+   this row was emitted AFTER the fold, so the only section on this page with
+   controls put them where nothing else on the page puts them. The class and
+   its declarations are unchanged; what moved is the element's position in
+   `renderFoundations` — and the bottom margin, which used to be the gap above
+   nothing and is now the gap down to the rows. */
 .mem-fnd-head-controls {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-3);
-  /* Their own row under the fold now, so there is no summary line to be
-     optically level with and no width to hold back from the table. */
 }
 .mem-fnd-head-controls:empty { display: none; }
 /* The Domains pointer, on a project with no documents chosen. Its own row
@@ -1844,6 +1850,42 @@
   flex-direction: column;
   gap: var(--space-8);
 }
+
+/* ── THE PANEL — QUICK MAINTENANCE'S ANATOMY, NOT A SECOND ONE (v3.65.1) ──
+   The maintainer's reference for a panel of this kind is Wiki health's QUICK
+   MAINTENANCE on the domain page, which he called *"designed properly"*. The
+   five values below are ITS values, and views/domains.css:753-759 is the
+   source of every one of them — copied deliberately rather than shared,
+   because promoting a kit panel would be a fourth new shared component in one
+   release; the promotion is recorded for v3.66.0.
+
+   WHAT IT REPLACES, measured at 1370 on the shipped v3.65.0 panel: a
+   `.mem-fnd-init-wrap` at 421→1314 holding a `.mem-fold-flat` card holding a
+   `.mem-fold-body` — THREE left edges (405 / 421 / 436) and three right edges
+   nested inside a row that runs 405→1330. One box now, at the rows' own
+   width, with ONE padding: 14px on all four sides, so the content box is
+   symmetric and the arm inside it can reach both edges equally.
+
+   `.mem-fold-flat` and `.mem-fnd-init-body`'s padding fight are both out of
+   this path, and with them the `.mem-fold-flat > .mem-fold-body.mem-fnd-init-body`
+   specificity patch v3.65.0 needed to undo the 46px pencil reserve this card
+   never wanted. */
+.mem-fnd-panel {
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-tint);
+}
+/* The eyebrow says which of the three things this panel is, in the app's one
+   eyebrow treatment (`.cur-group-title` carries the type; this carries the
+   colour and the gap down to the body). */
+.mem-fnd-panel-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--accent-text);
+  margin-bottom: 10px;
+}
 .mem-fnd-init-body {
   display: flex;
   flex-direction: column;
@@ -1868,7 +1910,12 @@
    the one that applies. 14px is the value the other three edges of
    `.mem-fold-flat > .mem-fold-body` already take, so the card is symmetric
    rather than merely wider. */
-.mem-fold-flat > .mem-fold-body.mem-fnd-init-body { padding-right: 14px; }
+/* GONE WITH THE CARD IT PATCHED (v3.65.1). `.mem-fnd-init-body` is a plain
+   flex column inside `.mem-fnd-panel` now, which has ONE symmetric padding,
+   so there is no reserve to undo and no specificity contest to win. The rule
+   is kept as this comment rather than deleted silently, because the defect it
+   closed — an author `padding-right` losing to a two-class selector — is one
+   the next person to nest a card in this file will re-create. */
 
 /* The Edit column of the foundations table. Right-aligned and no wider than
    the control, so the columns before it keep the width. */
@@ -1944,11 +1991,13 @@
   color: var(--text);
 }
 
-/* The budget warning, above the fold. `.tx-note` owns the face; this kills
-   only its top margin, because inside a flex column with a `gap` a margin
-   would add to the gap rather than replace it — the same call
-   `.fnd-init-why` makes one file over. */
-.mem-fnd-budget { margin-top: 0; margin-bottom: var(--space-6); }
+/* The budget warning, UNDER the row and outside the fold (v3.65.1). A cost
+   may never sit behind a chevron (v3.16.1), so it is a sibling of the
+   `<details>` rather than a child of it; what moved in v3.65.1 is which
+   sibling — it used to be emitted before the section's controls, which put a
+   sentence between the step's heading and its head row. `.tx-note` owns the
+   face; this owns only the distance to the row above it. */
+.mem-fnd-budget { margin-top: var(--space-6); margin-bottom: 0; }
 /* ── AND IT HAS SOMETHING TO DO ABOUT IT NOW (v3.65.0, record §D.6) ───────
    `.tx-note` is a one-line flex row (`align-items: center`), and this
    particular sentence is long — the maintainer's own project reads "24
