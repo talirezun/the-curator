@@ -492,6 +492,27 @@ if (slotCount) {
   ok(painted.length === 0,
     `no stylesheet in /next declares a rule for .dm-row-dot-N — it is an alias the kit `
     + `emits and nothing paints (${ALL_NEXT_CSS.length} stylesheets scanned)`, painted.join(', '));
+  // ── AND THE KIT'S OWN SLOTS ARE DECLARED IN EXACTLY ONE FILE ────────────
+  // MUTATION M7 is why this is separate from the check above: planting
+  // `.cur-sb-dot-1 { background: var(--teal-500) }` in views/domains.css
+  // re-creates the exact defect v3.65.1 removed — two copies, no per-view
+  // scope, the later link order silently winning — and a scan for the RETIRED
+  // family cannot see it. views/memory.css is the one KNOWN second copy and
+  // is excluded BY NAME with its deletion recorded, not by a pattern that
+  // would also excuse a new one.
+  const PENDING_DELETION = 'src/public/next/views/memory.css';   // :293-305, P2's
+  const declarers = ALL_NEXT_CSS.filter((rel) => {
+    const bare = readFileSync(path.join(ROOT, rel), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    return /\.cur-sb-dot-\d(?![0-9-])[^{}]*\{/.test(bare);
+  });
+  const unexpected = declarers.filter((rel) =>
+    rel !== 'src/public/next/shared/sidebar.css' && rel !== PENDING_DELETION);
+  ok(unexpected.length === 0,
+    'the identity palette is declared in shared/sidebar.css and nowhere else — '
+    + `${PENDING_DELETION} still carries the v3.65.0 duplicate and is excluded by name until `
+    + 'it is deleted; ADD NOTHING ELSE to this exemption', unexpected.join(', '));
+  ok(declarers.includes('src/public/next/shared/sidebar.css'),
+    'CONTROL — the declarer scan really finds the kit, so "nowhere else" is a reading');
   // POSITIVE CONTROL for the scan above: the same detector, on a planted rule.
   ok(/\.dm-row-dot-1\b[^{}]*\{/.test('.dm-row-dot-1, .x { background: red; }'),
     'CONTROL: the alias scanner DOES fire on a planted rule, including inside a selector list');

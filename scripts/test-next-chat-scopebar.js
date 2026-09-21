@@ -1441,6 +1441,34 @@ section('§15 — THE PINNED PROJECT\'S KNOWLEDGE DOMAINS (v3.65.0, P10)');
       '★ THE SELECTION IS UNTOUCHED: exactly ONE chip is active');
     ok(/class="chat-scope-pill active" data-scope-domain="articles"/.test(r.html),
       '…and it is still the domain the user was on, NOT one the project named');
+    // ── THE IDENTITY DOT (v3.65.1, decision 7) ───────────────────────────
+    // THREE CHANNELS, THREE SHAPES, and this one is the domain's IDENTITY:
+    // `.active`'s fill is SELECTION, `.in-project`'s dashed edge is
+    // MEMBERSHIP, the dot is WHICH DOMAIN. It was `.chat-type-dot` with an
+    // inline `style="background:var(--accent)"` — the same violet on every
+    // chip, a mark that answered no question. The slot is recomputed from the
+    // kit's own mapping against the domain's position in `state.domains`, the
+    // install's order, so a chip coloured from anything else fails.
+    {
+      const chipDots = [...r.html.matchAll(
+        /<button class="chat-scope-pill[^"]*" data-scope-domain="([a-z-]+)"[^>]*>\s*<span class="([^"]*)">/g)];
+      eq(chipDots.length, 3, 'CONTROL — all three chips were found with a leading mark');
+      ['articles', 'research', 'business'].forEach((slug, i) => {
+        const hit = chipDots.find((m) => m[1] === slug);
+        ok(!!hit, `the "${slug}" chip is present`);
+        if (!hit) return;
+        const tokens = hit[2].split(/\s+/);
+        ok(tokens.includes('cur-sb-dot') && tokens.includes(identityDotClass(i)),
+          `…and its dot is the kit's glyph on slot ${identityDotClass(i).slice(-1)} — `
+          + "the same colour as that domain's row on the Domains rail", hit[2]);
+      });
+      ok(!/style="background/.test(r.html),
+        '★ NO chip carries an inline colour — every chip was violet before v3.65.1');
+      const slots = chipDots.map((m) => (/cur-sb-dot-(\d)/.exec(m[2]) || [])[1]);
+      eq(new Set(slots.filter(Boolean)).size, 3,
+        'CONTROL — the three chips take three different slots');
+    }
+
     const foot = r.mounted[0].footHtml;
     ok(/2 domains/.test(foot), 'the footer names how many domains the project reads');
     ok(/research/.test(foot) && /business/.test(foot), '…and names them');

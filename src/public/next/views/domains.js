@@ -3155,7 +3155,7 @@ const PROJECT_BRIEF_TEMPLATE = [
   '',
   '## Read before you…',
   '',
-  'Which canonical document to open for which kind of work. Documents marked',
+  'Which Document to open for which kind of work. Documents marked',
   '"read first" arrive with every session; name the rest here and an agent opens',
   'them by name.',
   '',
@@ -3687,7 +3687,7 @@ const MARKER_INFO_TEXT =
 const AGENT_INFO_TEXT =
   'Copies a short paragraph of instructions naming this project. Paste it into CLAUDE.md, ' +
   'AGENTS.md, GEMINI.md or your Cursor rules — whichever file your agent loads every ' +
-  'session — and it will read your working state before it starts and save a handoff before ' +
+  'session — and it will read your Memory before it starts and save a Handoff before ' +
   'it stops.';
 
 // The section fold. TWO LABELLED PARAGRAPHS, and the only fragment in this
@@ -3695,14 +3695,14 @@ const AGENT_INFO_TEXT =
 // written here, so nothing user-, provider- or store-supplied is interpolated.
 const PROJECTS_INFO_HTML =
   '<p><strong>What a project is.</strong> A domain is one compounding wiki; a project is one ' +
-  'thing you build inside it. Each project has a standing brief you write, and work-streams ' +
+  'thing you build inside it. Each project has a standing brief you write, and Handoffs ' +
   'your agents save handoffs into, so a new session resumes where the last one stopped. Both ' +
   'are plain markdown under this domain’s state folder and travel with Personal Sync.</p>' +
   '<p><strong>The two copy buttons.</strong> Copy marker line copies domain/project; save it ' +
   'as a file named .curator-project at the root of that project’s repository, and an agent ' +
   'there knows which project to resume. Copy agent instructions copies a short paragraph ' +
   'instead — paste it into CLAUDE.md, AGENTS.md, GEMINI.md or your Cursor rules, and agents ' +
-  'read and save working state without being asked.</p>';
+  'read and save its Memory without being asked.</p>';
 
 // ── The Projects sub-section ───────────────────────────────────────────────
 
@@ -3751,7 +3751,7 @@ function renderProjectRow(row, canWrite, index) {
   const saved = savedIso ? relTime(savedIso) : null;
   const facts = [
     saved ? 'last save ' + saved : 'no saves yet',
-    row.newestScope ? 'newest work-stream ' + row.newestScope : null,
+    row.newestScope ? 'newest Handoff ' + row.newestScope : null,
     // The store's own word, and its own claim: this is where the domain's
     // OWN project lives, permanently — not a pre-v3.48.0 leftover waiting
     // for a migration, which is what "original" invited a reader to think.
@@ -4056,7 +4056,7 @@ function renderProjectLifecycleCard() {
     return (
       '<div class="dm-lc-card dm-lc-danger">' +
         '<div class="dm-lc-title">Delete project “' + escapeHtml(f.project) + '”?</div>' +
-        '<div class="dm-lc-body">This removes its standing brief, every work-stream handoff under it, and ' +
+        '<div class="dm-lc-body">This removes its standing brief, every Handoff under it, and ' +
           'every journal line — the notes your agents left for each other. Those are often the only record ' +
           'of decisions nobody wrote down anywhere else. The wiki in this domain is NOT touched. ' +
           escapeHtml(GIT_UNDO_WARN) +
@@ -4437,11 +4437,11 @@ const FOUNDATIONS_INFO_HTML =
 function foundationsField(f, busy) {
   const choice = f.foundations;
   if (!choice) return '';
-  const info = infoMark('dm-proj-fnd-info', 'About canonical documents',
+  const info = infoMark('dm-proj-fnd-info', 'About Documents',
     FOUNDATIONS_INFO_HTML, { html: true });
   return (
     '<div class="dm-lc-label dm-proj-fnd-head">' +
-      '<span>Canonical documents</span>' + info.btn +
+      '<span>Documents</span>' + info.btn +
     '</div>' +
     info.panel +
     // ── THE FIELD'S OWN STACK, SO THE RHYTHM IS ONE RULE (v3.61.1) ────────
@@ -5805,7 +5805,7 @@ async function runProjectAction() {
       ? body.foundationsError : null;
     const detailParts = [];
     if (fndErr) {
-      detailParts.push('The project was created, but its canonical documents were not set up: ' +
+      detailParts.push('The project was created, but its Documents were not set up: ' +
         (fndErr.message || fndErr.reason || 'the server refused it') +
         '. Choose again from Project context → Documents.');
     }

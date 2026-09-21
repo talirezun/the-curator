@@ -493,8 +493,12 @@ section('S3 -- The row: what it says, and what it never says');
   ok('a project with a brief wears a plain-word pill', html.includes('Standing brief'));
   ok('...and never a status vocabulary',
     !/configured|not set|active\b|enabled/i.test(html), html);
-  ok('the newest work-stream is named in the words the model uses',
-    html.includes('newest work-stream main') && !/\bscope\b/.test(html), html);
+  // "work-stream" -> "Handoff" in v3.65.1 (decision 1). `scope` is still the
+  // STORE's word and still must not surface: the rename moved the UI noun,
+  // not the on-disk grammar.
+  ok('the newest handoff is named in the words the UI uses',
+    html.includes('newest Handoff main') && !/\bscope\b/.test(html), html);
+  ok('...and never the retired UI noun', !/work-stream/i.test(html), html);
   ok('the last save is an age, through the shared formatter',
     html.includes('REL(2026-09-06T12:00:00.000Z)'));
 
@@ -930,7 +934,7 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
   const empty = renderProjectLifecycleCard();
   ok('the delete button starts DISABLED', /id="dm-proj-submit" disabled/.test(empty), empty);
   ok('...and the card says what is destroyed, in the model words',
-    /work-stream handoff/.test(empty) && /journal/.test(empty));
+    /every Handoff under it/.test(empty) && /journal/.test(empty), empty);
   ok('...and that the wiki is NOT touched', /wiki in this domain is NOT touched/i.test(empty));
   ok('...and that there is no in-app undo', /no Undo button/i.test(empty));
 

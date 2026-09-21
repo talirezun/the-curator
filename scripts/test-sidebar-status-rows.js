@@ -638,6 +638,35 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
   ok(!rowOf('never').includes('ing-dest-event'),
     '…and carries NO event line, so its row is one line of meta rather than one plus a blank');
 
+  // ── THE IDENTITY DOT (v3.65.1, decision 7) ──────────────────────────────
+  // CONTINUITY BY IDENTITY: a destination row here and that domain's row on
+  // the Domains rail must be the SAME colour, because they are the same
+  // domain. The slot is recomputed here from the kit's own mapping against
+  // the domain's position in `state.domains` — the install's order, the one
+  // listDomains() answers with — rather than re-read out of the markup, so a
+  // row coloured by a FILTERED or REVERSED position fails (mutation M12) and
+  // a row with no dot at all fails (mutation M11).
+  {
+    const SLUGS = ['today', 'three', 'six', 'never'];
+    SLUGS.forEach((slug, i) => {
+      const want = identityDotClass(i);
+      const row = rowOf(slug);
+      const m = /<span class="(cur-sb-dot[^"]*)"><\/span>/.exec(row);
+      ok(!!m, `the "${slug}" destination row carries the kit's identity dot`, row.slice(0, 140));
+      if (m) {
+        const tokens = m[1].split(/\s+/);
+        ok(tokens.includes('cur-sb-dot') && tokens.includes(want),
+          `…and it is slot ${want.slice(-1)} — the domain's own position in the install's list`,
+          m[1]);
+      }
+    });
+    // CONTROL: four DIFFERENT slots, so an assertion that passed by every row
+    // carrying the same class would be visible.
+    const seen = SLUGS.map((slug) => (/<span class="cur-sb-dot[^"]*cur-sb-dot-(\d)"/.exec(rowOf(slug)) || [])[1]);
+    eq(new Set(seen.filter(Boolean)).size, 4,
+      'CONTROL — the four rows take four different slots, so "the right slot" is a reading');
+  }
+
   ok(rowOf('today').includes('3,445 pages'),
     'the key figure is locale-grouped — 3445 reads as an id');
   ok(rowOf('today').includes('Ingested · The Curator — Product Overview'),
@@ -1156,7 +1185,10 @@ section('§8c  THE ROW RULES MOVED — they were not copied');
   // background: a first cut asserted `/\.cur-sb-dot-1/` against the whole file
   // and was GREEN when slot 1's DARK rule lost its selector, because the
   // light-theme rule below still carried it.
-  const dotRules = [...sb.matchAll(/([^{}]*?\.cur-sb-dot-(\d)[^{}]*)\{([^}]*)\}/g)];
+  // `(?![0-9-])` IS LOAD-BEARING: without it `.cur-sb-dot-33` reads as slot 3
+  // with a stray character, so renaming slot 3's dark rule leaves this scan
+  // reporting twelve healthy rules over a file with eleven (mutation M5).
+  const dotRules = [...sb.matchAll(/([^{}]*?\.cur-sb-dot-(\d)(?![0-9-])[^{}]*)\{([^}]*)\}/g)];
   const missing = [];
   for (let n = 1; n <= 6; n++) {
     for (const [theme, want] of [['dark', false], ['light', true]]) {

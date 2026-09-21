@@ -85,7 +85,7 @@
  *    proven equivalent to app.js's in test-next-text-system.js §1.
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -789,6 +789,89 @@ section('§7  STYLESHEET HYGIENE — the view places, the component dresses');
     .filter((v) => !defined.has(v));
   ok(undef.length === 0, `every var() in domains.css resolves to a real token (undefined: ${undef.join(', ') || 'none'})`);
   ok(!/var\(--text-dim\)/.test(domainsCss), '--text-dim is not referenced — it does not exist');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§7b  THE UI VOCABULARY — one noun per thing, across every owned view');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// v3.65.1, decision 1: Documents (was Foundations) · Memory (was Working
+// state) · Handoffs (was Work-streams) · Journal (was Recent saves) · Domain
+// wherever a domain is meant. The STORE's names do not move — `foundations/`,
+// `scope`, `journal.jsonl` and the rest are the public on-disk spec — so this
+// is a census of the words a USER reads, taken over string literals with
+// comments stripped.
+//
+// WHY A CENSUS AND NOT A LIST OF SITES: a rename applied at four of five
+// places reads as a bug rather than as a rename, and the fifth is always the
+// one nobody remembered. MUTATION M20 put ONE retired noun back into
+// views/domains.js and every prose suite stayed green; this is what closes
+// that. It is also what a SIXTH surface adopting the old word trips over.
+{
+  // `foundations` LOWER CASE survives on purpose: it is the store's folder
+  // name, the route segment (`/api/memory/:d/:p/foundations/:slug`), the
+  // manifest key and half the identifiers in shared/foundations-init.js. The
+  // census is of the user-facing NOUN, so it is case-sensitive on the words
+  // that only ever appear capitalised in copy, and phrase-shaped otherwise.
+  const RETIRED = [
+    ['Foundations', /Foundations/],
+    ['Working state / working state', /working state/i],
+    ['Work-stream(s)', /work-stream/i],
+    ['Recent saves', /recent saves/i],
+    // "Canonical documents" was the LAYER's name while FOUNDATIONS was the
+    // BLOCK's; decision 1 collapsed the two into one word, so the phrase is
+    // retired as well as the block name. MUTATION M22 put it back into Chat's
+    // project ⓘ and every prose suite stayed green until this line existed.
+    ['canonical document(s)', /canonical document/i],
+  ];
+  const OWNED = ['views/domains.js', 'views/chat.js', 'views/ingest.js'];
+  const findings = [];
+  for (const rel of OWNED) {
+    const code = readFileSync(join(NEXT, rel), 'utf8')
+      .replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const [name, re] of RETIRED) {
+      const hits = code.split('\n')
+        .map((l, i) => [i + 1, l])
+        .filter(([, l]) => re.test(l))
+        // A FUNCTION NAME is not a user-facing noun: `renderFoundationsChooser`
+        // and `bindFoundationsChooser` are imported from
+        // shared/foundations-init.js and renaming them is a code change with
+        // no user-visible half at all.
+        .filter(([, l]) => !/FoundationsChooser|foundations-init|foundationRows|foundationsFor/.test(l));
+      for (const [ln] of hits) findings.push(`${rel}:${ln} ${name}`);
+    }
+  }
+  // THE FILE LIST IS PINNED (mutation M23). Narrowing OWNED to one file left
+  // this section green over two unscanned views — a census whose scope can be
+  // edited to make it pass is the thing it exists to prevent, and it is the
+  // same shape as editing a baseline. The three are the views this package
+  // owns; a FOURTH view adopting the vocabulary belongs on this list.
+  ok(OWNED.join(',') === 'views/domains.js,views/chat.js,views/ingest.js',
+    'the census covers all three owned views (got: ' + OWNED.join(',') + ')');
+  for (const rel of OWNED) {
+    ok(existsSync(join(NEXT, rel)), `CONTROL: ${rel} is on disk and was really read`);
+  }
+  ok(findings.length === 0,
+    `no retired UI noun survives in the three owned views — Documents · Memory · Handoffs · `
+    + `Journal · Domain are the words on screen (${OWNED.length} files scanned)`,
+    findings.join(' | '));
+  // ANTI-VACUITY, both directions: the scanner fires on a planted retired
+  // noun and does NOT fire on the store's own lower-case folder name.
+  {
+    const probe = (src) => RETIRED.some(([, re]) => re.test(src));
+    ok(probe("x = 'the Foundations block asks again';")
+       && probe("x = 'the canonical documents marked read-first';"),
+      'CONTROL: the census FIRES on a planted retired noun (mutations M20 and M22)');
+    ok(!probe("const p = domain + '/foundations/' + slug;"),
+      "CONTROL: …and NOT on the store's own `foundations/` path segment, which does not move");
+  }
+  // AND THE NEW NOUNS ARE REALLY THERE, so "zero findings" cannot be a file
+  // that stopped being read.
+  {
+    const dom = readFileSync(join(NEXT, 'views/domains.js'), 'utf8');
+    ok(/Project context, under Documents\./.test(dom) && /Handoffs /.test(dom),
+      'CONTROL: views/domains.js really does carry the new nouns');
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════

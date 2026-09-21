@@ -662,15 +662,38 @@ section('§5 — THE ALIAS TABLE, AND THE PALETTE MAPPING');
   // the reading that test-next-design-kit.js §10's two baselined files were
   // two VIEWS — one of them is shared/checkbox.css, so it never was.
   {
-    const slots = [...new Set([...BARE_CSS.matchAll(/\.cur-sb-dot-(\d)\b/g)].map((m) => m[1]))].sort();
+    // EVERY RULE IS PARSED AND ITS SELECTOR CLASSIFIED, rather than each slot
+    // being probed with a regex over the whole file. MUTATION M5 is why: with
+    // slot 3's DARK rule renamed to `.cur-sb-dot-33`, a probe for
+    // `\.cur-sb-dot-3\s*\{` is satisfied by the LIGHT rule two lines below,
+    // and the suite reported six slots in both themes over a file that
+    // painted five in one of them. Twelve rules is twelve places to lose a
+    // selector and the loss shows in ONE theme only, which is the hardest
+    // kind to see.
+    const rules = [...BARE_CSS.matchAll(/([^{}]*)\{([^}]*)\}/g)].map((m) => ({
+      sel: m[1].trim(), body: m[2],
+    }));
+    const slotRule = (n, light) => rules.find((r) =>
+      new RegExp('\\.cur-sb-dot-' + n + '(?![0-9-])').test(r.sel)
+      && /\[data-theme="light"\]/.test(r.sel) === light);
+    const slots = [...new Set([...BARE_CSS.matchAll(/\.cur-sb-dot-(\d)(?![0-9-])/g)]
+      .map((m) => m[1]))].sort();
     eq('the kit declares all six identity slots', slots.join(','), '1,2,3,4,5,6');
     for (let n = 1; n <= 6; n++) {
-      ok(new RegExp('\\.cur-sb-dot-' + n + '\\s*\\{\\s*background:\\s*var\\(--').test(BARE_CSS),
-        `slot ${n} takes its colour from a NAMED value, never a literal in the rule`);
-      ok(new RegExp('\\[data-theme="light"\\] \\.cur-sb-dot-' + n + '\\s*\\{').test(BARE_CSS),
+      const dark = slotRule(n, false);
+      ok(!!dark && /background:\s*var\(--/.test(dark.body),
+        `slot ${n} has a DARK rule of its own and takes its colour from a NAMED value`,
+        dark ? dark.sel + ' {' + dark.body + '}' : 'no unscoped rule');
+      const light = slotRule(n, true);
+      ok(!!light && /background:\s*var\(--/.test(light.body),
         `...and slot ${n} has a light-theme value — the defect that started this was six `
-        + 'DARK values painted in light at 1.85:1');
+        + 'DARK values painted in light at 1.85:1',
+        light ? light.sel : 'no [data-theme="light"] rule');
     }
+    // CONTROL for the classifier: it must tell the two apart on a planted pair.
+    ok(/\.cur-sb-dot-3(?![0-9-])/.test('.cur-sb-dot-3')
+       && !/\.cur-sb-dot-3(?![0-9-])/.test('.cur-sb-dot-33'),
+      'CONTROL: the slot matcher does not read `.cur-sb-dot-33` as slot 3');
   }
   // AND NOBODY ELSE DECLARES IT. One palette means one copy: a view that
   // re-declares a slot silently paints both rails, which is how the two
@@ -692,13 +715,56 @@ section('§5 — THE ALIAS TABLE, AND THE PALETTE MAPPING');
     + 'from ALIASES.dm.dotSlot and the slot the caller already named');
   ok(/export function identityDotClass/.test(KIT_JS),
     'CONTROL — the mapping is EXPORTED from the kit, so a view cannot own a second one');
-  ok(!/function domainDotClass/.test(
-    readFileSync(path.join(NEXT, 'views/domains.js'), 'utf8')
-      .replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')),
-    '...and views/domains.js no longer defines one — its `domainDotClass` was that '
-    + 'second mapping and is deleted');
-  ok(/\.cur-sb-dot\s*\{[^}]*border-radius:\s*50%/.test(BARE_CSS),
-    'the kit owns the dot\'s SHAPE, which is the half that must not differ between views');
+  {
+    const domCode = readFileSync(path.join(NEXT, 'views/domains.js'), 'utf8')
+      .replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    ok(!/function domainDotClass/.test(domCode),
+      '...and views/domains.js no longer defines one — its `domainDotClass` was that '
+      + 'second mapping and is deleted');
+    // A SECOND MAPPING DOES NOT NEED A NAME (mutation M9): inlining
+    // `'dm-row-dot-' + ((i % 6) + 1)` at the call site is the same duplication
+    // with the function removed, and a check for the FUNCTION cannot see it.
+    // No view may compose a slot class from arithmetic at all — the only
+    // producer of one of these names is the kit.
+    for (const rel of ['views/domains.js', 'views/chat.js', 'views/ingest.js']) {
+      const code = readFileSync(path.join(NEXT, rel), 'utf8')
+        .replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+      ok(!/['"`](?:dm-row-dot|cur-sb-dot)-['"`]?\s*\+/.test(code)
+         && !/['"`](?:dm-row-dot|cur-sb-dot)-\d/.test(code),
+        `${rel} composes no identity-slot class of its own — it asks identityDotClass()`);
+    }
+    ok(/['"`](?:dm-row-dot|cur-sb-dot)-['"`]?\s*\+/.test("x = 'dm-row-dot-' + ((i % 6) + 1);"),
+      'CONTROL: that detector DOES fire on the inlined arithmetic mutation M9 planted');
+  }
+  // ── ONE GLYPH: THE SIZE IS PINNED, NOT ONLY THE SHAPE ──────────────────
+  // The maintainer's rule for v3.65.1 is one dot — same colour, same shape
+  // AND same size — on every screen that names a domain. Shape was pinned;
+  // size was not, and mutation M25 walked it 8px -> 6px with every suite
+  // green (6px is what Chat's chips carried before they adopted this glyph,
+  // so the drift has a real precedent). Both dimensions and the radius are
+  // read out of the one rule.
+  {
+    const rule = /\.cur-sb-dot\s*\{([^}]*)\}/.exec(BARE_CSS);
+    ok(!!rule, 'the kit declares `.cur-sb-dot`');
+    const body = rule ? rule[1] : '';
+    eq('the dot is 8px wide', (/width:\s*([^;]+)/.exec(body) || [])[1] || '', '8px');
+    eq('...and 8px tall — a square box, so the radius really rounds it',
+      (/height:\s*([^;]+)/.exec(body) || [])[1] || '', '8px');
+    ok(/border-radius:\s*50%/.test(body),
+      'the kit owns the dot\'s SHAPE, which is the half that must not differ between views');
+    // AND NO VIEW MAY RESIZE IT. A per-view width is how one glyph becomes
+    // four; the palette got here the same way.
+    const resizers = [];
+    for (const rel of ['views/domains.css', 'views/chat.css', 'views/ingest.css',
+      'views/memory.css', 'shell.css']) {
+      const css = readFileSync(path.join(NEXT, rel), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      for (const m of css.matchAll(/([^{}]*\.cur-sb-dot(?![a-z0-9-])[^{}]*)\{([^}]*)\}/g)) {
+        if (/(?:^|[;{\s])(?:width|height|border-radius)\s*:/.test(m[2])) resizers.push(rel + ': ' + m[1].trim());
+      }
+    }
+    ok(resizers.length === 0,
+      'no view stylesheet resizes or reshapes the identity dot', resizers.join(' | '));
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
