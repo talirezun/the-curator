@@ -612,81 +612,27 @@
    declaration that reads as behaviour and is dead on arrival, which is exactly
    what v3.27.0 found and left in progress-ring.js. Saying so is cheaper than
    shipping one and letting the next reader believe it animates.               */
-.mem-save-pip {
-  flex: none;
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
-  background: transparent;
-}
-/* live — under a minute; an agent is saving right now */
-.mem-save-pip-s4 { background: var(--fresh-hot); box-shadow: 0 0 0 3px var(--fresh-hot-halo); }
-/* recent — minutes; this session */
-.mem-save-pip-s3 { background: var(--fresh-hot); }
-/* today — hours */
-.mem-save-pip-s2 { background: var(--fresh-mid); }
-/* week — days */
-.mem-save-pip-s1 { background: var(--fresh-cold); }
-/* dormant — weeks and older. NOT a failure state: a finished work-stream is
-   supposed to look like this, so it is the one step that is hollow. */
-.mem-save-pip-s0 { box-shadow: inset 0 0 0 2px var(--fresh-cold); }
-/* AGE UNKNOWN IS NOT AGE ZERO and it is not "old" either — a dashed ring, so
-   the one state where we do not know is the one state that looks different in
-   kind rather than merely further along the ramp. */
-.mem-save-pip-unknown {
-  box-shadow: none;
-  border: 1.5px dashed var(--text-faint);
-  width: 12px; height: 12px;
-  box-sizing: border-box;
-}
+/* ══ `.mem-save-pip` IS DELETED (v3.65.0, design record R13) ═════════════
+   Six rules — s4/s3/s2/s1/s0 and `unknown` — painting a 12px square on the
+   freshness ladder, beside `.fresh-dot`, which paints the SAME ladder on the
+   rail's rows, the work-stream table, the overview strip and step ③. Two
+   marks for one quantity, on one page, four pixels apart in places.
 
-/* The qualifying lines. Each appears ONLY when it has something to say, so the
-   healthy case is the reading plus one brief line and nothing else. */
-/* THE MEASURE LIMIT LIVES HERE, not on the box. These are the strip's
-   sentences — several of them long — and 68ch is the width at which a line of
-   text is comfortable to read. Capping the CARD instead (which is what this
-   file used to do) made the border stop short as well, which is the ragged
-   right edge this pass removes. */
-.mem-save-line {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  /* NO max-width. It was `--prose-max`, and on the 1200px column that stopped
-     the "summary shortened" explanation and the two-clocks note at roughly 47%
-     of the width while the table under them ran the full column — one of the
-     two widths v3.55.0 removed. These lines are short qualifications under a
-     reading, not running prose, and the block they sit in is a dashboard
-     panel. See this file's header for the reversal and its reason. */
-  margin-top: 9px;
-  /* --text-2, not --text-3: these are the strip's quietest WARNINGS, and this
-     file's standing rule is that a caution must never be the hardest sentence
-     on the screen to read. */
-  color: var(--text-2);
-  font-size: var(--text-xs);
-  line-height: var(--leading-normal);
-}
-.mem-save-line svg { flex: none; margin-top: 1px; color: var(--attention-text); }
-.mem-save-line .mono { font: var(--type-mono); font-size: var(--text-2xs); }
-/* The two conditions that are genuinely wrong: a save the store had to trim,
-   and two tools overwriting one handoff. Same treatment as .mem-note-loud, for
-   the same reason — the rest of the strip is about to read as calm. */
-.mem-save-line-loud {
-  padding: 7px 9px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--attention);
-  background: var(--attention-tint);
-}
-.mem-save-line-loud b { color: var(--text); font-weight: var(--weight-semibold); }
-/* THE BRIEF IS ON A DIFFERENT CLOCK AND GETS NO PIP. It changes on the order
-   of weeks; an old brief is not a stale one, and marking it the way a handoff
-   is marked would state something false. A plain line, always present, because
-   "is the standing brief up to date" was the second half of the question. */
-.mem-save-line-brief {
-  margin-top: 9px;
-  padding-top: 9px;
-  border-top: 1px solid var(--border-subtle);
-  font-size: var(--text-2xs);
-}
+   `shared/freshness.css` owns the `.fresh-` prefix and
+   scripts/test-freshness-scale.js §4 forbids any view or kit stylesheet
+   declaring one — so this deletion is TOWARD that rule rather than around it,
+   and this file now declares no `.fresh-` rule at all. What the pip said in
+   its own comment is not lost: the hot/mid/cold mapping, the halo on the last
+   minute, the hollow dormant step and the dashed unknown ring are all the
+   shared scale's, stated once in shared/freshness.css and asserted against
+   the tier names by the same suite.
+
+   `.mem-save-line`, `-loud` and `-brief` go with it. Those were three
+   hand-styled sentence rows for the qualifications under the reading, and
+   every one of them is a `renderMonitor` LINE or `loud` entry now — one
+   component for every live reading in the app, which is what the maintainer
+   asked for when he put three screenshots of three different report cards
+   side by side. `-brief` had already lost its caller in v3.62.0.           */
 
 /* ── THE WORK-STREAMS TABLE (block ②) ─────────────────────────
 

@@ -198,6 +198,7 @@ import {
 // DRAFTING request's confirmation is NOT this sentence, and a copy here would
 // let the two drift into agreement.
 import { COPY_SUCCESS_BANNER } from '../src/public/next/shared/agent-instructions.js';
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
 import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
   identityDotClass } from '../src/public/next/shared/sidebar.js';
 // ── THE OWNERSHIP CHOOSER, THE REAL ONE (v3.61.0) ─────────────────────────
@@ -1154,7 +1155,6 @@ function makeRenderers(stateObj) {
     extractFunction(viewSrc, 'newestPair', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'harnessOf', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'firstNote', 'memory.js') + '\n' +
-    extractFunction(viewSrc, 'saveLine', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderSaveStatus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'splitHandoffPreamble', 'memory.js') + '\n' +
     // ── THE PICKERS BECAME A TABLE (v3.55.0) ───────────────────────────────
@@ -1410,6 +1410,11 @@ function makeRenderers(stateObj) {
     // glyph and its identity dot is an assertion about the component the app
     // ships, not about a stand-in written here.
     'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow', 'identityDotClass',
+    // THE REAL MONITOR (v3.65.0). Every live reading on this page goes
+    // through it, so a stub would let §6's escaping battery and every
+    // assertion about a warning's PLACE run past the component that draws
+    // both. Injected real for the same reason renderOverview is.
+    'renderMonitor',
     'renderOverview', body)(
     stateObj, escapeHtml, () => '<svg></svg>', renderMarkdown, () => '<div class="loader"></div>', null, 10, 50,
     // The REAL shared block, imported rather than stubbed: renderProject
@@ -1427,6 +1432,7 @@ function makeRenderers(stateObj) {
     docsLinkHtml,
     realFormatDayAge, realDayFreshnessTier, realFreshnessDotHtml,
     renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass,
+    renderMonitor,
     realRenderOverview);
 }
 
@@ -1606,18 +1612,22 @@ ok('read-side sanitisation is stated, not hidden',
     detail: { ...hostileDetail, journal: { returned: 1, total: 1, totalUnknown: false, entries: [hostileDetail.journal.entries[1]] } },
   });
   const one = single.renderJournal();
-  ok('one save singularises (readout label "Save recorded", never "Saves")',
-    one.includes('>Save recorded<') && !one.includes('>Saves recorded<'), one.slice(-400));
-  ok('...and the figure itself is rendered as the readout VALUE',
-    /class="tx-readout-value">1</.test(one), one.slice(-400));
+  // THE COUNT IS A MONITOR LINE (v3.65.0, M4). A live figure with a
+  // provenance clause is what the monitor is for, and a `.tx-readout`
+  // standing alone at the foot of a list was the fourth report treatment on
+  // this page. The three arms and their grammar are unchanged.
+  ok('one save singularises (the line reads "save recorded", never "saves")',
+    one.includes('>save recorded<') && !one.includes('>saves recorded<'), one.slice(-400));
+  ok('...and the figure itself is rendered as the monitor VALUE',
+    /class="cur-mon-value">1</.test(one), one.slice(-400));
 
   const plural = makeRenderers({
     ...hostileState,
     detail: { ...hostileDetail, journal: { returned: 3, total: 3, totalUnknown: false, entries: [hostileDetail.journal.entries[1]] } },
   });
   const many3 = plural.renderJournal();
-  ok('three saves pluralise ("Saves recorded")', many3.includes('>Saves recorded<'), many3.slice(-400));
-  ok('...with the figure as the value', /class="tx-readout-value">3</.test(many3), many3.slice(-400));
+  ok('three saves pluralise ("saves recorded")', many3.includes('>saves recorded<'), many3.slice(-400));
+  ok('...with the figure as the value', /class="cur-mon-value">3</.test(many3), many3.slice(-400));
 
   // ── THE CLOSED SUMMARY, v3.58.0 ───────────────────────────────────────
   // This fold starts shut and stays shut across visits now, so its head is the
@@ -6507,14 +6517,22 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       brief: { present: true, text: '# B\n\n## Goal\n\nShip it.', updatedAt: nowIso },
     },
     detail: {
-      // `machineIsThisMachine: false` pushes a `.mem-save-line` into the notice
-      // stack — the "written somewhere else, local paths may differ" sentence.
-      // It is here so the never-fold check below is not vacuous: the standing-
-      // brief line that used to make that stack unconditional was deleted in
-      // v3.62.0 (the brief fold's summary says the same two facts), so a
-      // fixture with no warning in it now produces no save line at all.
+      // TWO THINGS IN ONE FIXTURE, and both are load-bearing for the
+      // never-fold check below.
+      //
+      // `machineIsThisMachine: false` is an EXPLANATION — "written somewhere
+      // else, local paths may differ" — and since v3.65.0 it is a monitor
+      // LINE, inside the fold. `lastSaveKind: 'replaced'` is a WARNING and is
+      // a `loud` entry, outside it. A fixture carrying only the first would
+      // make the never-fold scan vacuous (v3.64.2's green-first #4, recorded:
+      // "a vacuous fixture, not a missing assertion"), and one carrying only
+      // the second would leave nothing in the body to prove the split is a
+      // split at all. `replaced` rather than `trimmed` deliberately: it emits
+      // no badge, so the fixture gains a warning without also changing what
+      // the READING says about itself.
       scope: 'main', machine: 'boxa', machines: [], machineIsThisMachine: false,
-      current: { present: true, writtenAgeSeconds: 120, writtenAt: nowIso, text: '## Where\n\nx' },
+      current: { present: true, writtenAgeSeconds: 120, writtenAt: nowIso, text: '## Where\n\nx',
+        lastSaveKind: 'replaced', lastSaveNotes: ['overwrote a larger handoff'] },
       journal: { returned: 1, total: 1, totalUnknown: false,
         entries: [{ at: nowIso, headline: 'h', harness: 'claude-code', rejections: [] }] },
     },
@@ -6602,11 +6620,15 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   eq('CONTROL: the five folds were really found (the scan is not vacuous)', panels.length, 5);
   const bodies = [...page.matchAll(/<div class="settings-block-body">([\s\S]*)$/g)].map((m) => m[1]);
   ok('CONTROL: at least one block body was found', bodies.length >= 1);
-  for (const marker of ['id="mem-reload"', 'mem-save-line', 'mem-note-loud']) {
+  // `mem-save-line` BECAME `cur-mon-loud` (v3.65.0): the save warnings are
+  // `renderMonitor` `loud` entries now, built from a different array and
+  // rendered into a different container from the readings, with no field on a
+  // line that can make one loud. The property under test is unchanged.
+  for (const marker of ['id="mem-reload"', 'cur-mon-loud', 'mem-note-loud']) {
     ok('`' + marker + '` is never inside a fold — a warning behind a click is not a warning',
       panels.every((x) => !x.includes(marker)));
   }
-  for (const marker of ['id="mem-reload"', 'mem-save-line']) {
+  for (const marker of ['id="mem-reload"', 'cur-mon-loud']) {
     ok('...and `' + marker + '` really is on the page, so the check above is not vacuous',
       page.includes(marker));
   }
@@ -6730,12 +6752,36 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // document opens in the shell's reader, whose own `.reader-title` carries
   // that line. Dropped from this loop rather than kept as a dead assertion; the
   // pair below names it, so a silent re-introduction is still caught.
-  for (const sel of ['.mem-doc', '.mem-save-line']) {
+  // ONE SELECTOR, NOT TWO, SINCE v3.65.0. `.mem-save-line` is GONE with the
+  // three hand-styled sentence rows it named: every qualification under the
+  // save reading is a `renderMonitor` line or `loud` entry now. The claim
+  // about it survives at the component, where the rule has to hold for every
+  // adopter rather than for this view alone.
+  for (const sel of ['.mem-doc']) {
     const r = ruleOf(sel);
     ok(sel + ' exists', !!r);
     ok(sel + ' no longer caps the TEXT either — every block on this page runs '
       + 'the column, which is what a dashboard is', !!r && !/max-width/.test(r), r || '');
   }
+  ok('.mem-save-line is GONE — the save\'s qualifications are monitor lines now',
+    !ruleOf('.mem-save-line') && !stripComments(viewSrc).includes('mem-save-line'));
+  // AND THE COMPONENT THAT REPLACED IT DRAWS THE LINE IN THE RIGHT PLACE —
+  // which is the distinction this whole section is about rather than a
+  // blanket ban. A READING is not prose and takes the column; a WARNING and
+  // the producer's own NOTE are sentences and are capped at `--prose-max`,
+  // the same rule shell.css applies to `.settings-job-lede`. Checked both
+  // ways, so "capped" cannot be satisfied by capping everything.
+  ok('...and the component that replaced it caps the SENTENCES and not the readings',
+    (() => {
+      const mon = readFileSync(join(NEXT, 'shared/monitor.css'), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '');
+      const bodyOf = (sel) => (new RegExp('\\' + sel + '\\s*\\{([^}]*)\\}').exec(mon) || [, ''])[1];
+      return /max-width:\s*var\(--prose-max\)/.test(bodyOf('.cur-mon-loud'))
+        && /max-width:\s*var\(--prose-max\)/.test(bodyOf('.cur-mon-note'))
+        && !/max-width/.test(bodyOf('.cur-mon'))
+        && !/max-width/.test(bodyOf('.cur-mon-line'))
+        && !/max-width/.test(bodyOf('.cur-mon-value'));
+    })());
   ok('.mem-doc-headline is GONE — the handoff\'s headline is the reader\'s title now',
     !ruleOf('.mem-doc-headline') && !stripComments(viewSrc).includes('mem-doc-headline'));
   ok('...and `--prose-max` appears nowhere in this stylesheet at all',
@@ -8908,7 +8954,7 @@ const EXECUTED = new Set([
   // exactly as before; naming it here would make the census claim a function
   // this file does not contain. scripts/test-freshness-scale.js owns it now.
   'effectiveSave', 'renderSaveStatus', 'newestPair', 'harnessOf',
-  'firstNote', 'saveLine',
+  'firstNote',
   // v3.55.0: the two pickers became a table, and the page became five blocks.
   'renderWorkStreams', 'workStreamCounts', 'newerOnAnotherMachine',
   // v3.55.x: the table's row order, driven directly in §6c and folded into
@@ -9147,8 +9193,18 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
       !/data-mem-fold="saved"\s+open/.test(fsOnlyRow), fsOnlyRow.slice(0, 400));
     ok('...with the explanation INSIDE it, not printed under the reading',
       fsOnlyRow.indexOf('own’s') === -1
-      && fsOnlyRow.indexOf('timestamp') > fsOnlyRow.indexOf('mem-fold-body'),
+      && fsOnlyRow.indexOf('ARRIVED here') > fsOnlyRow.indexOf('mem-fold-body'),
       fsOnlyRow.slice(0, 900));
+    // ── AND THE EXPLANATION IS A MONITOR, NOT FOUR SENTENCES (M1) ──────
+    // One fact per line, key left, reading right, the prose demoted to the
+    // clause under the reading it qualifies — which is what turns the block
+    // from a paragraph into an instrument you go and read.
+    ok('...and the body is the MONITOR, keyed and valued rather than prose',
+      /<div class="cur-mon"/.test(fsOnlyRow)
+      && /class="cur-mon-key">clock<\/span><span class="cur-mon-value">the file’s own</.test(fsOnlyRow),
+      fsOnlyRow.slice(fsOnlyRow.indexOf('mem-fold-body'), fsOnlyRow.indexOf('mem-fold-body') + 400));
+    ok('...and the prose that used to be the whole line is its qualifying clause',
+      /class="cur-mon-sub">No journal entry carried a save time/.test(fsOnlyRow));
     ok('...and the clock named in the summary too, so the closed row does not '
       + 'hide WHICH clock the figure came from',
     /mem-save-prov">[^<]*file time/.test(fsOnlyRow), fsOnlyRow.slice(0, 700));
@@ -9166,9 +9222,18 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
       // what the mutation that swept `lines` into the fold body proved.
       current: { present: true, lastSaveKind: 'trimmed', lastSaveNotes: ['budget'],
         savedAt: new Date(Date.now() - 120000).toISOString() } });
-  const loudAt = trimmedRow.indexOf('mem-save-line-loud');
+  const loudAt = trimmedRow.indexOf('cur-mon-loud');
   ok('CONTROL -- a trimmed save really does produce a loud line', loudAt !== -1,
     trimmedRow.slice(0, 400));
+  // ── IT IS THE MONITOR'S OWN LOUD ROW, IN THE DANGER TONE ─────────────
+  // The warnings and the readings are ONE component now (M1), which is what
+  // makes "unified design AND distinguished design" a structural fact rather
+  // than two stylesheets agreeing. The tone is the component's, from a frozen
+  // table, so a caller cannot compose a class name into it.
+  ok('...drawn by the monitor, in its danger tone', /cur-mon-loud cur-mon-danger/.test(trimmedRow),
+    trimmedRow.slice(loudAt - 40, loudAt + 120));
+  ok('...and it is announced, because a warning appearing IS the thing to tell',
+    /class="cur-mon-loud[^"]*" role="status"/.test(trimmedRow));
   const foldEnd = trimmedRow.lastIndexOf('</details>');
   ok('CONTROL -- this fixture really does produce a fold to be outside of',
     foldEnd !== -1, trimmedRow.slice(0, 500));

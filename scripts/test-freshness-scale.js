@@ -310,8 +310,13 @@ section('§4  No view owns a freshness ladder, and none paints TEXT with one');
     }
     ok(fired, 'CONTROL — the text-painting detector fires on a planted `color: var(--fresh-mid)`');
   }
-  ok(/var\(--fresh-/.test(stripComments(read('views/memory.css'))),
-    'CONTROL — memory.css DOES use the family (on `background` and `box-shadow`), so the ' +
+  // RE-POINTED (v3.65.0): views/memory.css no longer names the family at all —
+  // the pip that used it is deleted and the dot is shared/freshness.css's —
+  // so the control moves to the file that DOES paint it. The property under
+  // test is unchanged: the assertion above is about which PROPERTY a
+  // --fresh-* token may reach, not about the token being absent everywhere.
+  ok(/var\(--fresh-/.test(stripComments(read('shared/freshness.css'))),
+    'CONTROL — shared/freshness.css DOES use the family (on `background` and `box-shadow`), so the ' +
     'assertion above is about the PROPERTY, not about the token being absent');
 }
 
@@ -399,52 +404,47 @@ section('§5  Contrast — every tier ink clears 3:1 in both themes');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§6  The Agent-memory pip wears the same scale');
+section('§6  The Agent-memory pip is GONE, and the dot is what is left');
 {
+  // ── WHAT THIS SECTION USED TO ASSERT, AND WHY THE CLAIM GOT STRONGER ──
+  //
+  // It read: "the Agent-memory pip wears the same scale" — six rules
+  // (`.mem-save-pip-s4` … `-s0`, `-unknown`) each painting the token its tier
+  // names, cross-checked against `shared/freshness.css` so a recolour of one
+  // alone would red. That was the best available answer while TWO marks for
+  // ONE quantity existed on one page: the pip on the save reading, the dot on
+  // the rail's rows, the work-stream table, the overview strip and step ③.
+  //
+  // v3.65.0 deletes the pip (design record R13). There is one mark now, so
+  // "the two cannot disagree" stops being an assertion and becomes a fact
+  // about the source — which is what this section asserts instead, in both
+  // directions: memory.css declares NO `.fresh-` rule and no pip rule, AND
+  // the save reading really does wear a `.fresh-dot` cut on the shared tier.
+  //
+  // §4's rule — no `.fresh-` rule outside shared/freshness.css — is what makes
+  // that deletion the only honest direction: re-declaring the ladder here
+  // under any other name is how the second mark came to exist.
   const css = stripComments(read('views/memory.css'));
-  const ruleFor = (sel) => {
-    const m = new RegExp('\\' + sel + '\\s*\\{([^}]*)\\}').exec(css);
-    return m ? m[1] : null;
-  };
-  // s4/s3 -> hot, s2 -> mid, s1/s0 -> cold, unknown -> --text-faint.
-  // The mapping is the SCALE: freshnessStep's five steps are freshnessTier's
-  // five tiers, so the pip and the dot are the same reading at two sizes.
-  const EXPECT = [
-    ['.mem-save-pip-s4', '--fresh-hot', 'live'],
-    ['.mem-save-pip-s3', '--fresh-hot', 'recent'],
-    ['.mem-save-pip-s2', '--fresh-mid', 'today'],
-    ['.mem-save-pip-s1', '--fresh-cold', 'week'],
-    ['.mem-save-pip-s0', '--fresh-cold', 'dormant'],
-    ['.mem-save-pip-unknown', '--text-faint', 'unknown'],
-  ];
-  for (const [sel, tok, tier] of EXPECT) {
-    const body = ruleFor(sel);
-    ok(body !== null, `${sel} has a rule`);
-    ok(body !== null && body.includes('var(' + tok + ')'),
-      `${sel} — the \`${tier}\` tier — paints ${tok}`);
+  for (const sel of ['.mem-save-pip', '.mem-save-pip-s4', '.mem-save-pip-s3',
+    '.mem-save-pip-s2', '.mem-save-pip-s1', '.mem-save-pip-s0', '.mem-save-pip-unknown']) {
+    ok(!new RegExp('\\' + sel + '\\s*\\{').test(css),
+      sel + ' is gone — one quantity, one mark');
   }
-  // The four tiers the pip's five steps map to must be the SAME tokens the
-  // shared sheet paints for those tier names. Read out of both files rather
-  // than restated, so a recolour of either alone is red.
-  const shared = stripComments(read('shared/freshness.css'));
-  for (const [sel, tok, tier] of EXPECT) {
-    if (tier === 'unknown' || tier === 'dormant') continue; // hollow / dashed, see below
-    const m = new RegExp('\\.fresh-' + tier + '\\s*\\{([^}]*)\\}').exec(shared);
-    ok(m && m[1].includes('var(' + tok + ')'),
-      `…and shared/freshness.css paints \`.fresh-${tier}\` with the same ${tok}, so ${sel} and the ` +
-      'sidebar dot cannot disagree about one tier');
-  }
-  ok(/\.fresh-dormant\s*\{[^}]*var\(--fresh-cold\)/.test(shared)
-     && /\.mem-save-pip-s0\s*\{[^}]*var\(--fresh-cold\)/.test(css),
-    'the dormant end matches too — both HOLLOW, both --fresh-cold');
-  ok(/\.fresh-unknown\s*\{[^}]*dashed[^}]*var\(--text-faint\)/.test(shared)
-     && /\.mem-save-pip-unknown\s*\{[^}]*dashed[^}]*var\(--text-faint\)/.test(css),
-    'and both render an unknown age as a DASHED ring — different in KIND, not further along the ramp');
-  ok(!/\.mem-save-pip[^{]*\{[^}]*var\(--accent/.test(css),
-    'the pip no longer paints BRAND VIOLET, which in this app means identity and primary action');
+  ok(!/\.fresh-[a-z]+\s*\{/.test(css),
+    'and views/memory.css declares no `.fresh-` rule at all, which is §4\'s rule '
+    + 'reached by deletion rather than routed around');
+  // ANTI-VACUITY, TWICE. A scan for absence passes on an empty file, and a
+  // scan for a class passes on a comment — so the file must still be the real
+  // one, and the SOURCE must really emit the shared mark on this reading.
+  ok(css.length > 10000 && /\.mem-fold-summary/.test(css),
+    'CONTROL: the file really was read, and still carries this view\'s own rules');
+  const viewJs = stripComments(read('views/memory.js'));
+  ok(/fresh-dot fresh-' \+ freshnessTier\(eff\.seconds\)/.test(viewJs),
+    'the save reading wears the SHARED dot, cut on the shared tier function');
+  ok(!/class="mem-save-pip/.test(viewJs) && !/'mem-save-pip/.test(viewJs),
+    '...and nothing in the view WRITES the old class either (the name survives '
+    + 'only where the file explains the deletion)');
 }
-
-// ═════════════════════════════════════════════════════════════════════════
 section('§7  Both sidebar renderers emit the shared classes, EXECUTED');
 {
   const NOW = new Date(2026, 8, 17, 12, 0, 0).getTime();

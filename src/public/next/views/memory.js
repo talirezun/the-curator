@@ -192,6 +192,16 @@ import { renderOverview } from '../shared/overview.js';
 // rail's rows by name keep addressing them.
 import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
   identityDotClass } from '../shared/sidebar.js';
+// ── EVERY LIVE READING ON THIS PAGE IS ONE COMPONENT (v3.65.0) ──────────────
+// The maintainer, with three screenshots of three different report cards:
+// *"these active-state cards ... show specific data, the data that is
+// changing, and my idea was to make this similar to a CLI, a terminal kind of
+// data input or output, so it has a distinguished design so people can
+// immediately see what's going on ... All these three cards show something
+// different but the design could be the same."* Two of the three were on this
+// screen (the "Last saved" card and the CAPTURE block) and the third was step
+// ③'s readouts. All three are `renderMonitor` now.
+import { renderMonitor } from '../shared/monitor.js';
 
 // THE FRESHNESS SCALE, imported rather than declared. `freshnessStep` used to
 // live in this file, beside the first screen that needed it; it is now one
@@ -4178,14 +4188,6 @@ function renderCaptureMeter() {
     if (secs !== null) tier = freshnessTier(secs);
   }
 
-  const reading = renderReadout({
-    label: 'CAPTURE',
-    value,
-    provenance: prov || undefined,
-    // The mark is a graphic and carries no reading of its own — the words
-    // beside it are the reading, and it is aria-hidden for that reason.
-    markHtml: '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>',
-  });
 
   // ── THE ROUTE'S OWN NOTE, UNFOLDED ────────────────────────────────────
   // Whatever the route needs to say about the reading it just gave — an absent
@@ -4234,7 +4236,80 @@ function renderCaptureMeter() {
   const limitsHtml = limits
     ? '<p class="mem-capture-limits">' + escapeHtml(limits) + '</p>' : '';
 
-  return shell(reading) + notice + limitsHtml + renderCaptureSessions(f) + '</div>';
+  // ── CAPTURE IS ONE ROW NOW (v3.65.0, R2) ──────────────────────────────
+  //
+  // IT WAS A BLOCK PLUS A FOLD, and that is what the maintainer was reading
+  // when he wrote *"I have no clue what a session is ... I see that the top
+  // card 'captured one session in the last 30 days' is an overview for the
+  // Sessions dropdown."* He is right: one reading was being told twice, under
+  // two names, in two designs — a bespoke `.mem-capture` card above four
+  // `.mem-fold` rows, with a fifth fold called "Sessions" underneath it
+  // carrying the same four numbers again.
+  //
+  // So it is ONE row in the same chrome as its four siblings. The SUMMARY is
+  // the whole reading — the headline and the three clauses — which is what a
+  // closed row has to carry to be worth opening; the BODY is the instrument
+  // and the per-session table. The word "Sessions" leaves the screen: it
+  // survives in the ⓘ, which is where what a session IS belongs, and as the
+  // table's own column heading.
+  //
+  // WHAT STAYS OUTSIDE THE CHEVRON, and this is v3.16.1 rather than a
+  // preference: the route's own `note` and the two line-class disclosures.
+  // The note is an OUTCOME — on a real log it names the limit that applied,
+  // and since v3.64.1 it can name a stale bridge and the remedy for it — and
+  // an outcome may never sit behind a chevron. The disclosures qualify what
+  // the figures are taken OVER, so a reader who never opens the row must
+  // still have them.
+  //
+  // THE ⓘ MOVES INTO THE BODY. An interactive control inside a `<summary>`
+  // toggles its own section when clicked (the v3.0.1-beta.18 hazard), and the
+  // fix this file uses everywhere is the one no later edit can undo: there is
+  // no propagation path, because the control is not there.
+  const meta = '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>'
+    + escapeHtml(value + (prov ? ' · ' + prov : ''));
+  const sessions = renderCaptureSessions(f);
+  // ── THE INSTRUMENT (M2) ───────────────────────────────────────────────
+  // The three clauses again, keyed and valued, plus the newest session's age
+  // on the shared scale. It is not a repetition of the summary for its own
+  // sake: the summary is one line to decide with, this is the reading laid
+  // out so each figure can be found, and the `read and did not save` line
+  // carries a tone when it is not zero. Every figure is dropped INDIVIDUALLY
+  // when the route did not send it — a partial answer prints what it knows.
+  const newestAt = f.rows.length ? (f.rows[0].endedAt || f.rows[0].startedAt) : null;
+  const newestSecs = effectiveSave({ savedAt: newestAt }).seconds;
+  const monitor = renderMonitor({
+    label: 'The capture reading',
+    lines: [
+      f.sessions === null ? null
+        : { key: 'sessions', value: f.sessions, sub: 'in the last ' + win },
+      f.read === null ? null : { key: 'started with the context', value: f.read },
+      f.saved === null ? null : { key: 'saved before stopping', value: f.saved },
+      f.readNotSaved === null ? null
+        : { key: 'read and did not save', value: f.readNotSaved,
+          tone: f.readNotSaved ? 'warn' : undefined },
+      newestSecs === null ? null
+        : { key: 'newest', value: formatAge(newestSecs) || 'time unknown',
+          markHtml: '<span class="fresh-dot fresh-' + freshnessTier(newestSecs)
+            + '" aria-hidden="true"></span>' },
+    ].filter(Boolean),
+  });
+  // NOTHING TO OPEN, NO CHEVRON — the call this function already made for its
+  // own idle state, and the one `renderSaveStatus` makes for a healthy save.
+  const body = monitor + sessions;
+  const open = (state.openFolds && state.openFolds.capture) ? ' open' : '';
+  const row = body
+    ? '<details class="mem-fold" data-mem-fold="capture"' + open + '>'
+      + '<summary class="mem-fold-summary" id="mem-fold-capture">' + icon('chevronRight', 14)
+        + '<span>Capture</span>'
+        + '<span class="mem-fold-meta">' + meta + '</span>'
+      + '</summary>'
+      + '<div class="mem-fold-body">' + infoHtml + body + '</div>'
+    + '</details>'
+    : '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-save-flat">'
+      + '<span>Capture</span>'
+      + '<span class="mem-fold-meta">' + meta + '</span>'
+    + '</div></div>';
+  return row + notice + limitsHtml;
 }
 
 /**
@@ -4251,13 +4326,17 @@ function renderCaptureMeter() {
  */
 function renderCaptureSessions(f) {
   if (!f.rows.length) return '';
-  const open = (state.openFolds && state.openFolds.capture) ? ' open' : '';
-  const meta = [
-    f.sessions === null ? null : f.sessions + ' session' + (f.sessions === 1 ? '' : 's'),
-    f.read === null ? null : f.read + ' read',
-    f.saved === null ? null : f.saved + ' saved',
-    f.readNotSaved === null ? null : f.readNotSaved + ' read and did not save',
-  ].filter(Boolean).join(' · ');
+  // ── NO FOLD OF ITS OWN ANY MORE (v3.65.0, R2) ────────────────────────
+  // This used to be a `<details>` titled "Sessions", sitting under a
+  // `.mem-capture` card that carried the same four numbers as its summary.
+  // One reading, one row: the table is what the CAPTURE row opens, and the
+  // `data-mem-fold="capture"` hook, the `#mem-fold-capture` summary id and
+  // the `FOLD_KEYS` / `FOCUSABLE_IDS` entries all keep their names — they
+  // moved one element up, to the row that now owns them.
+  //
+  // THE SUMMARY LINE THIS BUILT IS GONE WITH THE FOLD, and its four figures
+  // are not lost: they are the row's own summary (in words) and the
+  // monitor's lines (keyed and valued) one level up.
   // A TICK IS NOT A COLOUR AND NOT A COLOUR ALONE: the glyph is aria-hidden
   // and a visually-hidden word carries the fact, so a screen reader hears
   // "read yes" rather than a check mark's name, and nothing here is decoded
@@ -4296,27 +4375,23 @@ function renderCaptureSessions(f) {
       + ' sessions.</p>'
     : '';
   return (
-    '<details class="mem-fold" data-mem-fold="capture"' + open + '>'
-      + '<summary class="mem-fold-summary" id="mem-fold-capture">' + icon('chevronRight', 14)
-        + '<span>Sessions</span>'
-        + '<span class="mem-fold-meta">' + escapeHtml(meta) + '</span>'
-      + '</summary>'
-      + '<div class="mem-fold-body">'
-        + '<div class="mem-cap-wrap">'
-          + '<table class="mem-cap-table">'
-            + '<thead><tr>'
-              + '<th scope="col">Started</th>'
-              + '<th scope="col">Harness</th>'
-              + '<th scope="col">Calls</th>'
-              + '<th scope="col">Read</th>'
-              + '<th scope="col">Saved</th>'
-            + '</tr></thead>'
-            + '<tbody>' + rows + '</tbody>'
-          + '</table>'
-        + '</div>'
-        + cut
-      + '</div>'
-    + '</details>'
+    '<div class="mem-cap-wrap">'
+      + '<table class="mem-cap-table">'
+        // THE ONE PLACE THE WORD "SESSION" STILL APPEARS ON SCREEN, and it is
+        // the right one: a column heading naming what each row IS. R2 takes
+        // it off the screen as a SECTION name, not as a noun.
+        + '<caption class="visually-hidden">Sessions in this window</caption>'
+        + '<thead><tr>'
+          + '<th scope="col">Started</th>'
+          + '<th scope="col">Harness</th>'
+          + '<th scope="col">Calls</th>'
+          + '<th scope="col">Read</th>'
+          + '<th scope="col">Saved</th>'
+        + '</tr></thead>'
+        + '<tbody>' + rows + '</tbody>'
+      + '</table>'
+    + '</div>'
+    + cut
   );
 }
 
@@ -4824,11 +4899,12 @@ function renderSaveStatus(read, d) {
     : null;
   const cur = doc || row;
 
-  // TWO LISTS, because v3.16.1 splits them. `lines` are the WARNINGS — loud,
-  // unfolded, below the row. `detail` is the EXPLANATION — which clock the
-  // figure came from, that the file arrived later than it was written, what
-  // "summary shortened" means — and it expands, because a paragraph beside a
-  // reading is the thing the maintainer's screenshot was pointing at.
+  // TWO LISTS, because v3.16.1 splits them, and since v3.65.0 both hold DATA
+  // rather than markup: `lines` are the WARNINGS — `renderMonitor` `loud`
+  // entries, unfolded, below the row — and `detail` are the monitor LINES,
+  // one fact each, which expand. The split is why they are two arrays and not
+  // one with a flag: a flag is something a later edit can flip, and flipping
+  // it would put a warning behind a chevron.
   const lines = [];
   const detail = [];
   let primary = '';
@@ -4886,10 +4962,20 @@ function renderSaveStatus(read, d) {
       // sit behind a chevron, so every `loud` line stays unfolded BELOW the
       // row, where it is today. That is the one place this row deliberately
       // does not follow "everything is a row".
+      //
+      // ── ONE MARK, ONE LADDER (v3.65.0, design record R13) ─────────────
+      // `.mem-save-pip` is DELETED. It was this view's own six-rung mark for
+      // a save's age, cut on `freshnessStep`, beside `.fresh-dot` — the
+      // app-wide mark, cut on `freshnessTier` — on the SAME page, on the same
+      // quantity: the rail's rows, the work-stream table, the strip and step
+      // ③ all wore the dot while the one reading the page is named for wore
+      // a second thing. shared/freshness.css owns the `.fresh-` prefix and
+      // scripts/test-freshness-scale.js §4 forbids any other stylesheet
+      // declaring one, so this deletion is TOWARD that rule rather than
+      // around it, and views/memory.css now declares no `.fresh-` rule at all.
       primary +=
         '<div class="mem-save-main">' +
-          '<span class="mem-save-pip' + (step === null ? ' mem-save-pip-unknown' : ' mem-save-pip-s' + step) +
-            '" aria-hidden="true"></span>' +
+          '<span class="fresh-dot fresh-' + freshnessTier(eff.seconds) + '" aria-hidden="true"></span>' +
           '<span class="mem-save-age">' + escapeHtml(age) + '</span>' +
           ((prov || clock)
             ? '<span class="mem-save-prov">'
@@ -4913,42 +4999,59 @@ function renderSaveStatus(read, d) {
     }
 
     if (kind === 'trimmed') {
-      lines.push(saveLine('alertTriangle', 'loud',
-        'Part of this handoff did not survive the save — content named in the note below was dropped '
-        + 'or cut short before it was written, so what you are reading beneath is missing it. '
-        + 'Ask the agent to save that content again. '
-        + firstNote(cur.lastSaveNotes), true));
+      lines.push({
+        tone: 'danger',
+        text: 'Part of this handoff did not survive the save — content named in the note below was '
+          + 'dropped or cut short before it was written, so what you are reading beneath is missing '
+          + 'it. Ask the agent to save that content again. ' + firstNote(cur.lastSaveNotes),
+      });
     } else if (kind === 'clipped') {
       // Deliberately NOT the 'loud' tone `trimmed` gets, and deliberately
       // avoids "missing" / "budget" / "save again" — each was part of the
       // false alarm this verdict replaces. See the real case recorded on
       // `classifySaveNotes`: a 244-char headline clipped to 200 chars, body
       // untouched, badged and worded as if content had been lost.
-      detail.push(saveLine('', '',
-        'The handoff itself was written in full. What got shortened is a label attached to the save '
-        + '— most often its one-line summary — not the handoff’s content. That label matters because '
-        + 'it is the only thing a future session sees before deciding whether to open this state. '
-        + firstNote(cur.lastSaveNotes), true));
+      detail.push({
+        key: 'wrote',
+        value: 'the handoff in full',
+        sub: 'What got shortened is a label attached to the save — most often its one-line summary '
+          + '— not the handoff’s content. That label is the only thing a future session sees before '
+          + 'deciding whether to open this state. ' + firstNote(cur.lastSaveNotes),
+      });
     } else if (kind === 'replaced') {
-      lines.push(saveLine('alertTriangle', '',
-        'That save deliberately replaced a larger handoff. Nothing the agent sent was lost, '
-        + 'but the longer document it overwrote is not recoverable. ' + firstNote(cur.lastSaveNotes), true));
+      lines.push({
+        text: 'That save deliberately replaced a larger handoff. Nothing the agent sent was lost, '
+          + 'but the longer document it overwrote is not recoverable. ' + firstNote(cur.lastSaveNotes),
+      });
     }
 
     if (eff.source === 'filesystem') {
-      detail.push(saveLine('alertTriangle', '',
-        'No journal entry carried a save time for this handoff, so the reading above is the file’s own '
-        + 'timestamp. On a computer that syncs, that is when the file arrived here, not when it was written.'));
+      detail.push({
+        key: 'clock',
+        value: 'the file’s own',
+        sub: 'No journal entry carried a save time for this handoff. On a computer that syncs, a '
+          + 'file’s own timestamp is when it ARRIVED here, not when it was written.',
+      });
     } else {
+      // NO `clock: the agent's own` LINE, and the omission is deliberate.
+      // Adding one would make `detail` non-empty on EVERY save, which would
+      // give the healthy reading a chevron that opens on one uninteresting
+      // line — and v3.64.2 chose the flat row for exactly that reason ("an
+      // empty chevron invites a click that does nothing"). The good clock is
+      // the default the ⓘ above already describes; only the fallback is news.
       // BOTH CLOCKS, when they genuinely disagree. Under two minutes they are
       // the same event to a human — a save's own write takes milliseconds — so
       // a gap larger than that means the file changed on this disk well after
       // the agent wrote it, which is what a pull looks like.
       const arrived = effectiveSave({ savedAt: cur.arrivedAt || cur.savedAt || cur.lastWriteAt });
       if (arrived.seconds !== null && eff.seconds !== null && eff.seconds - arrived.seconds > 120) {
-        detail.push(saveLine('', '',
-          'This file arrived on this computer ' + (formatAge(arrived.seconds) || 'recently')
-          + ' — the reading above is the agent’s own clock, not the file’s.'));
+        detail.push({
+          key: 'arrived here',
+          value: formatAge(arrived.seconds) || 'recently',
+          markHtml: '<span class="fresh-dot fresh-' + freshnessTier(arrived.seconds)
+            + '" aria-hidden="true"></span>',
+          sub: 'The reading above is the agent’s own clock, not the file’s.',
+        });
       }
     }
   }
@@ -4962,13 +5065,19 @@ function renderSaveStatus(read, d) {
   // user's — give each tool its own scope — and nothing else on this screen
   // would ever show it.
   for (const s of scopes.filter((x) => x && x.harnessShared === true).slice(0, 3)) {
-    const who = (s.harnesses || []).slice(0, 4).map((h) => escapeHtml(h)).join(' and ');
-    lines.push(saveLine('alertTriangle', 'loud',
-      '<b>Two tools are writing <span class="mem-name">' + escapeHtml(s.scope) + '</span>.</b> '
-      + (who ? who + ' have ' : 'They have ')
-      + 'both saved into the same handoff file, and a save overwrites — so each one has replaced the '
-      + 'other’s. The journal below keeps both trails. Give each tool its own scope and they stop colliding.',
-      true));
+    const who = (s.harnesses || []).slice(0, 4).join(' and ');
+    lines.push({
+      tone: 'danger',
+      // THE SCOPE NAME RIDES IN `strongText`, WHICH THE COMPONENT ESCAPES.
+      // It came off disk and it used to be interpolated into a `<b><span>`
+      // by hand here; the monitor escapes both fields and emphasises this
+      // one, so the emphasis survives and the hand-built markup does not.
+      strongText: 'Give each tool its own work-stream.',
+      text: 'Two tools are writing ' + s.scope + '. '
+        + (who ? who + ' have ' : 'They have ')
+        + 'both saved into the same handoff file, and a save overwrites — so each one has replaced '
+        + 'the other’s. The journal below keeps both trails.',
+    });
   }
 
   // ── NEWER STATE SOMEWHERE ELSE IN THIS PROJECT ──────────────────────────
@@ -4978,11 +5087,11 @@ function renderSaveStatus(read, d) {
     const there = effectiveSave(newest).seconds;
     const samePair = newest.scope === shownScope && newest.machine === shownMachine;
     if (!samePair && there !== null && (here === null || there < here - 60)) {
-      lines.push(saveLine('', '',
-        'Newer state in this project: <span class="mem-name">' + escapeHtml(newest.scope) + '</span>'
-        + (newest.machine && newest.machine !== shownMachine
-          ? ' on <span class="mem-name">' + escapeHtml(newest.machine) + '</span>' : '')
-        + ' — ' + escapeHtml(formatAge(there) || 'unknown age') + '.', true));
+      lines.push({
+        text: 'Newer state in this project: ' + newest.scope
+          + (newest.machine && newest.machine !== shownMachine ? ' on ' + newest.machine : '')
+          + ' — ' + (formatAge(there) || 'unknown age') + '.',
+      });
     }
   }
 
@@ -4999,10 +5108,11 @@ function renderSaveStatus(read, d) {
   // tooltip on a non-focusable span, so the one sentence explaining why the
   // steps below may not apply reached neither keyboard nor touch users.
   if (d && d.machineIsThisMachine === false) {
-    detail.push(saveLine('', '',
-      'Written on <span class="mem-name">' + escapeHtml(d.machine || 'another machine')
-      + '</span> and synced here — local paths and processes may differ from what the handoff describes.',
-      true));
+    detail.push({
+      key: 'written on',
+      value: d.machine || 'another machine',
+      sub: 'Synced here — local paths and processes may differ from what the handoff describes.',
+    });
   }
 
   // ── "ANOTHER COMPUTER SAVED AFTER THIS ONE" ─────────────────────────────
@@ -5015,12 +5125,11 @@ function renderSaveStatus(read, d) {
   // the rule, and why every clause of it is load-bearing.
   const elsewhere = newerOnAnotherMachine(scopes, d);
   if (elsewhere) {
-    lines.push(saveLine('', '',
-      '<span class="mem-name">' + escapeHtml(elsewhere.machine)
-      + '</span> saved after this computer — <span class="mem-name">'
-      + escapeHtml(elsewhere.scope) + '</span>, '
-      + escapeHtml(formatAge(effectiveSave(elsewhere).seconds) || 'unknown age')
-      + '. Pull before you continue, or that work will be waiting there.', true));
+    lines.push({
+      strongText: 'Pull before you continue, or that work will be waiting there.',
+      text: elsewhere.machine + ' saved after this computer — ' + elsewhere.scope + ', '
+        + (formatAge(effectiveSave(elsewhere).seconds) || 'unknown age') + '.',
+    });
   }
 
   // ── THE STANDING-BRIEF LINE IS DELETED (v3.62.0) ────────────────────────
@@ -5036,6 +5145,30 @@ function renderSaveStatus(read, d) {
   // `brief` is still read above for nothing else, so it goes with the line.
 
   if (!primary && !lines.length && !detail.length) return '';
+
+  // ── THE BODY IS A MONITOR (v3.65.0, M1) ──────────────────────────────
+  //
+  // It was four hand-built sentences in `.mem-save-line` divs — one about
+  // which clock the figure came from, one about when the file arrived, one
+  // about which machine wrote it, one about what "summary shortened" means.
+  // The maintainer, on this exact card and two like it elsewhere in the app:
+  // *"it's really hard to understand that this is like a monitor into the
+  // specific data and changing state ... we are looking for a unified design
+  // AND a distinguished design."* So the explanations become an INSTRUMENT:
+  // one fact per line, key left, reading right, the prose demoted to the
+  // qualifying clause under the reading it qualifies.
+  //
+  // WHAT IS A LINE AND WHAT IS A `loud` ENTRY is v3.16.1's split, unmoved: a
+  // line is something you went and read, a loud entry is a warning, a cost or
+  // an outcome — and a loud entry may NEVER sit behind a chevron. So the
+  // monitor in the BODY carries lines only, and the warnings are a second
+  // monitor rendered OUTSIDE the fold, below the row, where they are today.
+  // Two blocks, one component, and the split is structural rather than a
+  // convention: `renderMonitor` builds the two from different arrays and has
+  // no field that can move one into the other.
+  const body = detail.length
+    ? renderMonitor({ label: 'About this save', lines: detail })
+    : '';
   // ── THE ROW, AND THE ONE CASE THAT IS NOT A FOLD ──────────────────────
   // An empty chevron invites a click that does nothing, which is the call
   // `renderCaptureMeter` already makes for its own idle state — so with no
@@ -5049,25 +5182,30 @@ function renderSaveStatus(read, d) {
   // the element.
   const open = (state.openFolds && state.openFolds.saved) ? ' open' : '';
   const savedRow = primary
-    ? (detail.length
+    ? (body
       ? '<details class="mem-fold" data-mem-fold="saved"' + open + '>'
         + '<summary class="mem-fold-summary" id="mem-fold-saved">' + icon('chevronRight', 14)
           + '<span>Last saved</span>'
           + '<span class="mem-fold-meta">' + primary + '</span>'
         + '</summary>'
-        + '<div class="mem-fold-body">' + detail.join('') + '</div>'
+        + '<div class="mem-fold-body">' + body + '</div>'
       + '</details>'
       : '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-save-flat">'
         + '<span>Last saved</span>'
         + '<span class="mem-fold-meta">' + primary + '</span>'
       + '</div></div>')
-    : detail.join('');
+    : body;
+  // THE WARNINGS, IN THE SAME INSTRUMENT AND OUTSIDE THE CHEVRON. One block
+  // whatever their number, so two warnings do not read as two designs.
+  const warnings = lines.length
+    ? renderMonitor({ label: 'Warnings about this save', lines: [], loud: lines })
+    : '';
   // NO `.mem-section` ANY MORE. This is the body of step ② now, not a
   // top-level sibling, so the page's adjacency rule must not put 24px between
   // it and the two notices beside it — `.mem-status-stack` in memory.css owns
   // the spacing INSIDE a block, and `.settings-job-block` owns the spacing
   // between blocks. One gap, one owner, at each level.
-  return '<section class="mem-save" aria-label="Save status">' + savedRow + lines.join('') + '</section>';
+  return '<section class="mem-save" aria-label="Save status">' + savedRow + warnings + '</section>';
 }
 
 /** The newest (scope, machine) in a project by the AGENT'S clock where it exists. */
@@ -5100,12 +5238,13 @@ function firstNote(notes) {
  * contract renderDescription uses, and every interpolated value above goes
  * through escapeHtml at its own site.
  */
-function saveLine(iconName, tone, text, html = false) {
-  const cls = 'mem-save-line' + (tone === 'loud' ? ' mem-save-line-loud' : '')
-    + (tone === 'brief' ? ' mem-save-line-brief' : '');
-  return '<div class="' + cls + '">' + (iconName ? icon(iconName, 13) : '')
-    + '<span>' + (html ? text : escapeHtml(text)) + '</span></div>';
-}
+// `saveLine` IS GONE (v3.65.0). It built one of three hand-styled sentence
+// rows — `.mem-save-line`, `-loud`, `-brief` — and every one of its callers
+// now hands `renderMonitor` a LINE or a `loud` entry instead. The escaping
+// went with it: it took a trailing `html = false` flag and four of its six
+// call sites passed `true`, so four sentences interpolated a scope name, a
+// machine id and a store note into hand-written `<b>` and `<span>` markup.
+// The component escapes every field and emphasises exactly one named one.
 
 /**
  * How many directory entries the store can SEE but will not address.
@@ -8873,26 +9012,31 @@ function renderJournal() {
   // NOT know the count. The VALUE is then the number we can stand behind (what
   // is shown) and the reason we cannot state a total is provenance — never a
   // total printed as if the tail's length were it.
-  let countReadout;
+  // ── IT IS A MONITOR LINE NOW (v3.65.0, M4) ──────────────────────────
+  // A live figure with a provenance clause is exactly what the monitor is
+  // for, and this page draws three other readings with it — so a `.tx-readout`
+  // standing alone at the foot of a list was the fourth treatment the
+  // maintainer counted. The three arms are unchanged and each still keeps a
+  // FACT apart from its ABSENCE: `total: null` with `totalUnknown` means the
+  // journal was longer than the tail we read, so the VALUE is the number we
+  // can stand behind and the reason we cannot state a total is the clause —
+  // never a total printed as if the tail's length were it.
+  //
+  // Composed INLINE rather than through a helper: this function is lifted by
+  // brace-matching and executed, so a module-level helper named here would be
+  // a ReferenceError there.
+  let countLine;
   if (j.totalUnknown) {
-    countReadout = renderReadout({
-      label: 'Saves shown',
-      value: j.returned,
-      provenance: 'most recent · full count unknown — ' +
-        (j.totalUnknownReason || 'only the end of the journal was read'),
-    });
+    countLine = { key: 'saves shown', value: j.returned,
+      sub: 'most recent · full count unknown — '
+        + (j.totalUnknownReason || 'only the end of the journal was read') };
   } else if (typeof j.total === 'number' && j.total > j.returned) {
-    countReadout = renderReadout({
-      label: 'Saves recorded',
-      value: j.total,
-      provenance: 'showing the ' + j.returned + ' most recent',
-    });
+    countLine = { key: 'saves recorded', value: j.total,
+      sub: 'showing the ' + j.returned + ' most recent' };
   } else {
-    countReadout = renderReadout({
-      label: j.returned === 1 ? 'Save recorded' : 'Saves recorded',
-      value: j.returned,
-    });
+    countLine = { key: j.returned === 1 ? 'save recorded' : 'saves recorded', value: j.returned };
   }
+  const countReadout = renderMonitor({ label: 'The journal', lines: [countLine] });
 
   const canExpand = state.journalLimit === JOURNAL_PAGE &&
     (j.totalUnknown || (typeof j.total === 'number' && j.total > j.returned));
@@ -9496,7 +9640,11 @@ function wire(token) {
       // The capture meter is the one target that is not a whole step: it is a
       // reading INSIDE step ②, so the jump lands on the reading when it is on
       // screen and on the step that holds it when it is not.
-      const target = (where === 'capture' && q('.mem-capture')) || block;
+      // CAPTURE IS A ROW INSIDE STEP ② (v3.65.0), not a card above it, so the
+      // jump lands on the ROW when it is on screen and on the step that holds
+      // it when it is not — the same two-step fallback, re-pointed at the
+      // element that carries the reading now.
+      const target = (where === 'capture' && q('[data-mem-fold="capture"]')) || block;
       if (!target) return;
       let reduce = false;
       try {

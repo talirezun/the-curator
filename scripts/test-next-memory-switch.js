@@ -74,6 +74,7 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -789,6 +790,11 @@ section('§8 — patchOpenPair writes what a full render would paint');
     'state', 'document', 'isCurrentMount', 'render', 'bindWorkStreamRows',
     'reportAsyncMountFailure', 'loadScope', 'escapeHtml', 'icon', 'renderReadout',
     'renderDescription', 'renderMarkdown', 'freshnessStep', 'freshnessTier',
+    // THE REAL MONITOR (v3.65.0). `renderSaveStatus` composes its explanations
+    // and its warnings through it, and §8 below compares the stack this patch
+    // WRITES against the stack `renderProject` composes byte for byte — so a
+    // stub here would make both sides agree about a component neither draws.
+    'renderMonitor',
     'docsLinkHtml', 'JOURNAL_MORE', 'JOURNAL_PAGE', 'WS_WINDOW', 'screenSignature',
     'let renderedSignature = null;\n'
     + 'let renders = 0;\n'
@@ -803,7 +809,6 @@ section('§8 — patchOpenPair writes what a full render would paint');
     + lift('newestPair') + '\n'
     + lift('harnessOf') + '\n'
     + lift('firstNote') + '\n'
-    + lift('saveLine') + '\n'
     + lift('newerOnAnotherMachine') + '\n'
     + lift('renderSaveStatus') + '\n'
     + lift('renderStaleNotice') + '\n'
@@ -824,7 +829,7 @@ section('§8 — patchOpenPair writes what a full render would paint');
     (o) => '<span class="tx-readout-value">' + o.value + '</span>',
     (s) => '<p>' + s + '</p>',
     (s) => '<div>' + s + '</div>',
-    () => 1, () => 'recent', () => '<a>guide</a>',
+    () => 1, () => 'recent', renderMonitor, () => '<a>guide</a>',
     JOURNAL_MORE, JOURNAL_PAGE, WS_WINDOW, () => 'SIG');
 
   let fellBack = 0;
