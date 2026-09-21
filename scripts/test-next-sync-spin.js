@@ -57,6 +57,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+// The REAL monitor, injected into the lifted `renderConfigured` below.
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -155,7 +157,14 @@ const sandboxSrc =
   `let state = freshState();\n` +
   `return { state, renderConfigured, freshState };\n`;
 
-const sandbox = new Function(sandboxSrc)();
+// THE REAL MONITOR, THROUGH THE CONSTRUCTOR (v3.65.0). `renderConfigured`
+// renders the connection strip through shared/monitor.js now (M11), and a
+// module-level import is NOT visible inside a body lifted by
+// `extractFunction` — a free `renderMonitor` there is a ReferenceError, i.e.
+// a suite that crashes instead of asserting. It is passed REAL, not stubbed,
+// so what §1-§5 measure is still the markup the view ships: this suite's
+// subject is a spinning icon inside that same returned string.
+const sandbox = new Function('renderMonitor', sandboxSrc)(renderMonitor);
 const { state, renderConfigured, freshState } = sandbox;
 
 // A minimal, realistic `status` payload — the same shape GET /api/sync/status

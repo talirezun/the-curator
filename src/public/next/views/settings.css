@@ -965,35 +965,27 @@
    means "an EDGE". The margin-bottom drops to the block's own flex `gap`:
    `.settings-block-body` is a flex column here, so a margin would ADD to that
    gap rather than replace it. */
-.settings-status-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: var(--space-6) var(--space-8);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--hairline);
-  background: var(--surface);
-  box-shadow: var(--elev-1);
-  flex-wrap: wrap;
-}
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: 3px var(--space-4) 3px var(--space-4);
-  border-radius: var(--radius-full);
-  font: var(--type-mono);
-  font-size: var(--text-2xs);
-}
-/* The dot is `background: currentColor`, so moving the pill's TEXT off the
-   status colour would have silently taken the dot's hue with it — the dot is the
-   pill's only non-text carrier and the whole point of the pattern. It is given
-   the colour explicitly instead. */
-.status-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.status-pill-ok { background: var(--success-tint); border: 1px solid var(--success-text); color: var(--text); }
-.status-pill-ok .status-pill-dot { background: var(--success-text); }
-.status-pill-muted { background: var(--surface-inset); border: 1px solid var(--border); color: var(--text-2); }
-.mcp-path-line { font-size: var(--text-sm); color: var(--text-2); overflow-wrap: anywhere; }
+/* ── THE BRIDGE STATUS CARD IS A MONITOR NOW (v3.65.0, M7+M8) ────────────
+   `.settings-status-card`, `.status-pill`, `.status-pill-dot`,
+   `.status-pill-ok`, `.status-pill-muted` and `.mcp-path-line` were here and
+   are gone. They drew a bordered card holding a tinted pill and one `<code>`
+   identity line — and views/sync.css held a near-byte copy of the same six
+   rules, which is this project's definition of a component since v3.55.0.
+   Both call sites are `renderMonitor()` now (shared/monitor.js +
+   shared/monitor.css), whose head word carries its own dot and whose lines
+   carry the mono face, the tabular figures and the wrapping the pill and the
+   path line were supplying here.
+
+   DELETED RATHER THAN LEFT: nothing in /next writes any of the six class
+   names any more (grepped, both files), and a set of unreferenced card rules
+   sitting in a view stylesheet is exactly what a seventh hand-built status
+   card gets assembled out of.
+
+   `.settings-check-results` / `.check-row` / `.check-glyph` / `.check-label` /
+   `.check-detail` are NOT here and are NOT deleted: the self-test's result
+   left them for the monitor (M9), but System Check — the other block in this
+   file — still renders a real checklist of pass/fail rows through them, and a
+   checklist is not a reading. */
 .mcp-config-snippet {
   margin-top: 12px;
   padding: 12px var(--space-8);
@@ -2707,13 +2699,14 @@
   color: var(--danger-text);
 }
 
-.mcp-session-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-8) var(--space-16);
-  margin-bottom: var(--space-10);
-}
-.mcp-session-reading { flex: none; }
+/* THE TWO SESSION READINGS ARE ONE MONITOR NOW (M10). The strip was a flex
+   row of two `renderReadout`s; the monitor is a block of two key/value lines,
+   so the row's own layout rules went with them and this wrapper keeps only
+   the gap to the tool groups below. `.mcp-session-reading` survives as the
+   AGE HOOK's element — it carries `data-mcp-age-at` inside the line's
+   `markHtml` so `tickMcpAges` can re-word it without a render (see
+   renderSessionStrip) — and it needs no box of its own for that. */
+.mcp-session-strip { margin-bottom: var(--space-10); }
 
 .mcp-tool-group + .mcp-tool-group { margin-top: var(--space-10); }
 

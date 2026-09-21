@@ -44,6 +44,7 @@ import { docsUrl, docsLinkHtml } from '../src/public/next/shared/docs-links.js';
 // Block ③'s real collaborators — see the deps table in §11(b).
 import { formatAge, freshnessTier } from '../src/public/next/shared/age.js';
 import { renderReadout } from '../src/public/next/shared/text.js';
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -1120,7 +1121,7 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
                selfTest: null, configSnippetOpen: false, configSnippet: null,
                defaultDomainInfo: { domains: ['alpha'], defaultDomain: 'alpha' },
                defaultDomainSaving: false, selfTestLoading: false, copyFeedback: null },
-      deriveMcpStatus: () => ({ pillClass: 'status-pill', pillLabel: 'Connected', wizardLabel: 'Reconnect' }),
+      deriveMcpStatus: () => ({ pillTone: 'ok', pillLabel: 'Connected', wizardLabel: 'Reconnect' }),
       renderSelfTestResult: () => '', shouldShowMcpStaleNote: () => false,
       // v3.64.0's bridge-process note. Stubbed off like its two neighbours —
       // this section is about the SENTENCES the wizard and block ① carry, and
@@ -1134,7 +1135,7 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
       // Block ③'s own collaborators. The age vocabulary is the real one
       // (shared/age.js is DOM-free); the loader is a stub because THIS suite
       // is about the sentences the section renders, not about its load gate.
-      formatAge, freshnessTier, renderReadout,
+      formatAge, freshnessTier, renderMonitor,
       gatedLoader: () => '<LOADER/>', loadGate: null,
     };
     const names = Object.keys(deps);
@@ -1142,7 +1143,7 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
       [blockSrc, infoSrc, mapSrc, mcpSrc, 'return renderMcp;'].join('\n')
     )(...names.map((n) => deps[n]))();
   }
-  ok(!!mcpHtml && mcpHtml.includes('status-pill'), 'CONTROL: renderMcp() really rendered its status card');
+  ok(!!mcpHtml && mcpHtml.includes('cur-mon'), 'CONTROL: renderMcp() really rendered its status MONITOR');
   if (mcpHtml) {
     ok(/Works with any MCP client/.test(mcpHtml),
       'the MCP section carries the same claim — a user who never opens the wizard still reads it');

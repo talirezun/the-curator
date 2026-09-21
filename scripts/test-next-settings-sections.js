@@ -54,6 +54,8 @@ import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
 // file's own fixtures. All three modules are DOM-free by contract.
 import { formatAge, freshnessTier } from '../src/public/next/shared/age.js';
 import { renderReadout } from '../src/public/next/shared/text.js';
+// The REAL monitor, injected into every lifted renderer below (see run()).
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -233,7 +235,14 @@ function run(name, state, over) {
     docsLinkHtml,
     formatAge,
     freshnessTier,
-    renderReadout,
+    // THE REAL MONITOR (v3.65.0). The bridge status card, the self-test
+    // result and the two session readings all render through
+    // shared/monitor.js now, and a module-level import is NOT visible inside
+    // a body lifted by `extractFunction` — a free `renderMonitor` there is a
+    // ReferenceError, i.e. a suite that crashes instead of asserting. Injected
+    // REAL rather than stubbed, because every measurement below is about the
+    // markup this section actually ships.
+    renderMonitor,
     gatedLoader: () => '<LOADER/>',
     loadGate: null,
     renderSelfTestResult: () =>
