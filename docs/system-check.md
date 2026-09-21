@@ -102,7 +102,7 @@ click whether your key is fine and the provider is just busy.
 
 - [user-guide.md](user-guide.md) — the master guide.
 - [ai-health.md](ai-health.md) — **Wiki health** (wiki content cleanup) and
-  its **Wiki Health — Scan Limits** settings.
+  its **Health & scan limits** settings.
 - [model-lifecycle.md](model-lifecycle.md) — what happens when a model is retired
   and how fallback models work.
 - [sync.md](sync.md) — Personal Sync setup and troubleshooting.

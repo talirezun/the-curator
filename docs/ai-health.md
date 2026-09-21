@@ -128,7 +128,7 @@ For each orphan, the AI picks the ONE existing page that should most naturally l
 
 ## One-click "Fix N safe issues" (v3.0.1-beta.17)
 
-The **🛠 Fix N safe issues** button runs every *deterministic* fix at once — folder-prefix links, cross-folder duplicates, hyphen variants, missing backlinks, and broken links the scanner already matched to a target. These are mechanical and unambiguous, so there's no AI, no cost, and no preview step (the rule fully determines the fix). It's the fastest way to clear the "safe" pile before you spend a moment of thought on the judgement calls (orphans, semantic duplicates, unmatched broken links). It's one write-locked operation, then the wiki re-scans.
+The **Fix N safe issues** button runs every *deterministic* fix at once — folder-prefix links, cross-folder duplicates, hyphen variants, missing backlinks, and broken links the scanner already matched to a target. These are mechanical and unambiguous, so there's no AI, no cost, and no preview step (the rule fully determines the fix). It's the fastest way to clear the "safe" pile before you spend a moment of thought on the judgement calls (orphans, semantic duplicates, unmatched broken links). It's one write-locked operation, then the wiki re-scans.
 
 ---
 
@@ -136,7 +136,7 @@ The **🛠 Fix N safe issues** button runs every *deterministic* fix at once —
 
 Some duplicates can't be caught by string matching. `email.md` + `e-mail.md` look different to a hyphen-collapse algorithm. `rag.md` + `retrieval-augmented-generation.md` share no characters. These pages **fragment the knowledge graph** — queries return partial results, Obsidian shows separate nodes for the same idea.
 
-Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan is **opt-in** and runs only when you launch it. **To launch it:** open **Domains**, pick a domain, and in its **Wiki health** panel click **Scan** first, then click the **✨ Find duplicate pages** button in the **⚡ Quick maintenance** bar at the top of the results. (In the pre-redesign interface, deleted in v3.41.0, the same flow started from the top-level **Health** tab.) (Before v3.0.1-beta.17 this was a standalone "Scan for semantic duplicates" card; it now lives in the maintenance bar. The button appears whenever an API key is configured — including on a wiki that's otherwise structurally clean, since semantic duplicates are independent of broken links/orphans; this clean-wiki case was fixed in v3.0.1-beta.22.) It's gated by a cost preview and a cost ceiling.
+Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan is **opt-in** and runs only when you launch it. **To launch it:** open **Domains**, pick a domain, and in its **Wiki health** panel click **Scan wiki health** (or **Rescan**) first, then click the **✨ Find duplicate pages** button in the row of maintenance buttons below the scan reading. (In the pre-redesign interface, deleted in v3.41.0, the same flow started from the top-level **Health** tab.) (Before v3.0.1-beta.17 this was a standalone "Scan for semantic duplicates" card; it now lives in the maintenance bar. The button appears whenever an API key is configured — including on a wiki that's otherwise structurally clean, since semantic duplicates are independent of broken links/orphans; this clean-wiki case was fixed in v3.0.1-beta.22.) It's gated by a cost preview and a cost ceiling.
 
 ### The pipeline
 
@@ -165,7 +165,7 @@ Before v3.53.0 none of this was reported. A sibling pair stayed on screen as an 
 
 ### Merge all high-confidence duplicates (v3.0.1-beta.15)
 
-When a scan returns a long list (e.g. 245 pairs), reviewing each one by hand is impractical. After the scan finishes, a **✨ Merge all N high-confidence duplicates** bar appears above the results. It acts ONLY on the green **high confidence** pairs — clear near-identical duplicates like `opacity-objection-ai` ↔ `opacity-objection`. Medium- and low-confidence pairs still require the manual Preview → Merge gate, because they're the ones most likely to be genuinely distinct.
+When a scan returns a long list (e.g. 245 pairs), reviewing each one by hand is impractical. After the scan finishes, a **✨ Merge N high-confidence duplicates** bar appears above the results. It acts ONLY on the green **high confidence** pairs — clear near-identical duplicates like `opacity-objection-ai` ↔ `opacity-objection`. Medium- and low-confidence pairs still require the manual Preview → Merge gate, because they're the ones most likely to be genuinely distinct.
 
 Clicking it shows a confirm step naming exactly how many pages will be deleted, then merges them one after another with a live progress bar. Merges run sequentially server-side, so a pair whose page was already consumed by an earlier merge in the same run cannot error.
 
@@ -178,8 +178,8 @@ Each pair ends in one of three states, and since v3.53.0 they are **named separa
 | Cap | Default | Configurable in |
 |---|---|---|
 | Max pages for a scan to run at all | 20,000 | hard-coded (contact maintainer to raise) |
-| Max candidate pairs sent to the LLM | 500 | Settings → Wiki Health — Scan Limits → Maximum candidate pairs per scan |
-| Cost ceiling per scan (tokens) | 50,000 | Settings → Wiki Health — Scan Limits → Cost ceiling per scan |
+| Max candidate pairs sent to the LLM | 500 | Settings → Health & scan limits → Maximum candidate pairs per scan |
+| Cost ceiling per scan (tokens) | 50,000 | Settings → Health & scan limits → Cost ceiling per scan |
 | Batch merge | High-confidence only, confirm-gated | per-pair Preview still required for medium/low |
 | Max pairs per batch merge | 2,000 | hard-coded |
 
@@ -240,9 +240,9 @@ The format is line-oriented and append-only, so concurrent dismissals on differe
 
 ### The Dismissed section
 
-Below the regular Health issue list (and above the Semantic Duplicates panel), a collapsible **Dismissed (N)** section lists every previously-dismissed item. Each row has an **Un-dismiss** button — restore an item to the active scan with one click. Empty when N=0; hidden entirely if you've never dismissed anything.
+Below the regular Health issue list — and below the Semantic Duplicates panel, which renders first — a collapsible **Dismissed** row with a count pill lists every previously-dismissed item. Each row has an **Un-dismiss** button — restore an item to the active scan with one click. Empty when N=0; hidden entirely if you've never dismissed anything.
 
-A small "N dismissed" chip in the scan summary header tells you how many issues are being filtered.
+The scan reading inside the **Scan** row carries a `dismissed` line telling you how many issues are being filtered.
 
 ### Stale records
 
@@ -301,7 +301,7 @@ The Curator does not aggregate or cache suggestions — each click is an indepen
 
 > **⚠ How to actually undo a Health fix — there is no Undo button, in either interface.**
 >
-> Every doc and several in-app hints have said "revert it from the Sync tab". **That control does not exist and never has.** The backend exposes only `status`, `remote-status`, `preflight` (v3.32.0 — a read-only measurement, it changes nothing), `setup`, `push`, `pull`, `sync` and `disconnect` (`src/routes/sync.js` — enumerate its `router.<verb>` calls rather than trusting this list) — there is no revert or discard endpoint, and the Sync view says as much (*"Commit history & revert are coming soon"*). The pre-redesign shell's Sync tab (deleted in v3.41.0) never had a discard control either. What *is* true is the part underneath: your wiki really is a git working tree, so the change really is recoverable — just from a terminal, not from the app.
+> Every doc and several in-app hints have said "revert it from the Sync tab". **That control does not exist and never has.** The backend exposes only `status`, `remote-status`, `preflight` (v3.32.0 — a read-only measurement, it changes nothing), `setup`, `push`, `pull`, `sync` and `disconnect` (`src/routes/sync.js` — enumerate its `router.<verb>` calls rather than trusting this list) — there is no revert or discard endpoint, and the Sync view says as much behind its ⓘ (*"There is no revert control in the app, but a git client pointed at your knowledge-base folder can browse that history and roll back"*). The pre-redesign shell's Sync tab (deleted in v3.41.0) never had a discard control either. What *is* true is the part underneath: your wiki really is a git working tree, so the change really is recoverable — just from a terminal, not from the app.
 >
 > If you have Personal Sync configured, and **before you push**:
 >

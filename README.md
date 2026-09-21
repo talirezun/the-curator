@@ -232,7 +232,7 @@ at 18–20 outline pages per source and the catalogue spans 5 to 27 on the same 
 
 <p align="center">
   <img src="docs/images/curator-domains.png" alt="The Curator’s Domains view for the &quot;projects&quot; domain: an OVERVIEW strip of five buttons that double as page-list filters — Pages 767, Entities 161, Concepts 553, Summaries 53, Projects 4 — with Pages shown pressed for the default &quot;All&quot; view; below it a PAGES · THE WIKI list filtered by All / Entities / Concepts / Summaries / Memory with a Show 150 more row; below that PROJECTS IN THIS DOMAIN, its heading carrying an ⓘ mark and no loose sentence beneath it, with Copy marker line and Copy agent instructions actions, each now with its own ⓘ mark beside it" width="800"><br>
-  <em>One domain is one compounding wiki. Every page is a file on disk you can open in any editor. Photographed before v3.64.0, which added the INGEST and SHARED BRAIN folds, shortened the <code>PAGES · THE WIKI</code> eyebrow to <strong>PAGES</strong>, and put a Wiki · Context · All lens row above the list.</em>
+  <em>One domain is one compounding wiki. Every page is a file on disk you can open in any editor. Photographed before v3.64.0, which added the Ingest and Shared Brain folds, shortened the <code>PAGES · THE WIKI</code> eyebrow to <strong>Pages</strong>, and put a Wiki · Context · All lens row above the list; before v3.64.1 numbered the five sections and set their titles in Title case; and before v3.65.0 folded the jump row into the OVERVIEW card, so SOURCES and SHARED are now ordinary tiles in the same grid.</em>
 </p>
 
 → The technical deep dive on step 2 — every safeguard, every failure mode, the quality contract —

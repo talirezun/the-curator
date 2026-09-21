@@ -260,7 +260,7 @@ The cohort/team patterns above assume contributors share the brain freely. But S
 
 An AI safety researcher has built a personal `ai-safety-reading` domain with 4 years of paper reading — 300+ entities, 800+ concepts, 200+ summaries with synthesis. They turn it into a Shared Brain and offer access at **€15/month** via Gumroad. Buyers pay; the researcher manually adds each as a GitHub collaborator and sends the invite token by email. Each week the researcher continues reading, ingests papers into their personal opted-in domain, runs Push + synthesize → buyers Pull at their leisure.
 
-Buyers get to: read the synthesised wiki locally in Obsidian; chat with it in the Curator's chat tab; query it via Claude Desktop with the My Curator MCP for deep research like *"across this brain, which papers contradict each other on mechanistic interpretability?"* The brain compounds — buyers who joined month 1 see the brain grow with every weekly synthesis.
+Buyers get to: read the synthesised wiki locally in Obsidian; chat with it in the Curator's Chat view; query it via Claude Desktop with the My Curator MCP for deep research like *"across this brain, which papers contradict each other on mechanistic interpretability?"* The brain compounds — buyers who joined month 1 see the brain grow with every weekly synthesis.
 
 **Comparable pricing reference**: Substack newsletters (€5-15/mo), Stratechery-style premium analyst subscriptions (€15/mo), Patreon tiers (€3-50/mo). A compounding queryable brain sits at the higher end of this range because the value keeps growing.
 
