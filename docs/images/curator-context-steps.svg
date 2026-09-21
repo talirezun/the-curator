@@ -1,21 +1,30 @@
-<svg viewBox="0 0 760 700" xmlns="http://www.w3.org/2000/svg" role="img"
+<svg viewBox="0 0 760 900" xmlns="http://www.w3.org/2000/svg" role="img"
      aria-labelledby="curator-context-steps-title curator-context-steps-desc">
   <title id="curator-context-steps-title">The Project context screen — an overview card and three numbered steps</title>
   <desc id="curator-context-steps-desc">
-    An overview card across the top, four tiles — Foundations, Working state, Knowledge and
-    Capture — each with a freshness dot and a one-line reading, at the same size Domains' own
-    overview uses. Under it, three numbered steps read top to bottom, each heading carrying only
-    a numeral, a Title-case title and an ⓘ mark — no sentence beneath any of them; the explanation
-    that used to sit there now lives behind that ⓘ. Step one, Foundations: a head row with
-    "Refresh from repo" and "Add from folder", then one row, "The documents" — the canonical
-    documents this project is built against, kept word for word and replaced whole; the ones
-    marked "read first" reach every session, the rest are opened by name. Step two, Working
-    state: five closed rows — Last saved, Capture, Work-streams, The brief and Recent saves (the
-    journal) — every reading built from the same terminal-like monitor component, and this layer
-    supersedes, so each save replaces the last. Step three, Knowledge: a head row with an
-    "+ Add a wiki" picker, then one row per wiki this project draws on, each with its own pages,
-    freshness and two doors out to Domains and to Chat — this layer accumulates. A caption at the
-    foot notes that the reading order top to bottom is the order a session start reads in.
+    A breadcrumb at the top carries the domain's own identity dot, the same colour that domain
+    has in the Domains sidebar, in the Context sidebar and on every row below that names it.
+    Under it an overview card of four tiles — Documents, Memory, Knowledge and Capture — each
+    with a freshness dot and a one-line reading, at the same size Domains' own overview uses.
+    Then three numbered steps read top to bottom, each heading carrying only a numeral, a
+    Title-case title and an ⓘ mark; a section's controls sit in a head row beneath that
+    heading, above the rows, aligned to the rows' own left edge. Step one, Documents: the
+    controls "Refresh from repo", "Add from folder" and "Mirror from GitHub instead", then one
+    row, "The documents" — the canonical documents this project is built against, kept word for
+    word and replaced whole; the ones marked "read first" reach every session, the rest are
+    opened by name. Its table's size column carries a depth bar: a tinted bar behind each
+    figure, anchored at the right, its length that document's share of the two-hundred-kilobyte
+    project budget, and a document that alone exceeds the budget takes the whole cell in the
+    warning tone. The total under the table says the same thing in words, because a cost is
+    never only a colour. Step two, Memory: four closed rows — Capture, Handoffs, The brief and
+    Journal — every reading built from the same terminal-like monitor component, and this layer
+    supersedes, so each save replaces the last. Step three, Knowledge: the control "+ Add a
+    domain", then one row per domain this project draws on, each carrying that domain's identity
+    dot, its pages, its freshness, a monitor whose entity, concept and summary counts each carry
+    a depth bar against that domain's own page count, two doors out to Domains and to Chat, and
+    its own Remove — this layer accumulates. Every row's reading is right-aligned at one edge. A
+    caption at the foot notes that the reading order top to bottom is the order a session start
+    reads in.
   </desc>
   <style>
     :root {
@@ -25,12 +34,14 @@
       --text: #1f2328;
       --text-2: #57606a;
       --accent: #2f6fed;
-      --accent-2: #8250df;
-      --accent-3: #1a7f37;
       --fresh: #1a7f37;
       --warm: #9a6700;
       --mon-bg: #eef1f4;
       --mon-border: #c9d1d9;
+      --id-a: #438126;
+      --id-b: #925e13;
+      --depth: #d7dde4;
+      --depth-danger: #f3c9c4;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -40,130 +51,201 @@
         --text: #e6edf3;
         --text-2: #9198a1;
         --accent: #6ea8ff;
-        --accent-2: #c8a6ff;
-        --accent-3: #4ac26b;
         --fresh: #4ac26b;
         --warm: #d29922;
         --mon-bg: #0a0a11;
         --mon-border: #22222f;
+        --id-a: #79c752;
+        --id-b: #e0a33a;
+        --depth: #232a33;
+        --depth-danger: #4a2626;
       }
     }
     .bg { fill: var(--bg); }
     .card { fill: var(--panel); stroke: var(--border); stroke-width: 1.5; }
-    .cell { fill: none; stroke: var(--border); stroke-width: 1.5; }
     .rule { stroke: var(--border); stroke-width: 1.5; }
+    .hair { stroke: var(--border); stroke-width: 1; }
     .num { fill: var(--accent); }
     .numtxt { font: 700 13px system-ui, sans-serif; fill: var(--bg); }
     .h { font: 700 16px system-ui, sans-serif; fill: var(--text); }
     .info { font: 700 11px system-ui, sans-serif; fill: var(--text-2); }
     .lbl { font: 700 10px system-ui, sans-serif; fill: var(--text-2); letter-spacing: .08em; }
     .val { font: 600 13px system-ui, sans-serif; fill: var(--text); }
-    .note { font: 400 12.5px system-ui, sans-serif; fill: var(--text-2); }
+    .crumb { font: 600 12.5px system-ui, sans-serif; fill: var(--text); }
+    .crumb2 { font: 400 12.5px system-ui, sans-serif; fill: var(--text-2); }
     .fold { fill: var(--bg); stroke: var(--border); stroke-width: 1.2; }
     .foldtxt { font: 600 12px system-ui, sans-serif; fill: var(--text); }
     .foldmeta { font: 400 11.5px system-ui, sans-serif; fill: var(--text-2); }
+    .th { font: 700 9.5px system-ui, sans-serif; fill: var(--text-2); letter-spacing: .07em; }
+    .td { font: 400 11.5px system-ui, sans-serif; fill: var(--text); }
+    .tdq { font: 400 11.5px system-ui, sans-serif; fill: var(--text-2); }
     .door { fill: none; stroke: var(--accent); stroke-width: 1.4; }
     .doortxt { font: 600 11.5px system-ui, sans-serif; fill: var(--accent); }
     .btn { fill: none; stroke: var(--text-2); stroke-width: 1.2; }
     .btntxt { font: 600 11px system-ui, sans-serif; fill: var(--text-2); }
     .mon { fill: var(--mon-bg); stroke: var(--mon-border); stroke-width: 1.2; }
     .montxt { font: 600 11px ui-monospace, monospace; fill: var(--text-2); }
+    .monval { font: 600 11px ui-monospace, monospace; fill: var(--text); }
+    .bar { fill: var(--depth); }
+    .barbad { fill: var(--depth-danger); }
+    .warn { font: 600 11.5px system-ui, sans-serif; fill: var(--warm); }
     .cap { font: 400 12px system-ui, sans-serif; fill: var(--text-2); }
   </style>
 
-  <rect class="bg" x="0" y="0" width="760" height="700"/>
+  <rect class="bg" x="0" y="0" width="760" height="900"/>
+
+  <!-- ── THE BREADCRUMB — the domain's identity dot, round, 9px, the SAME
+         colour this domain has in both sidebars and on its Knowledge row ── -->
+  <circle cx="30" cy="28" r="4.5" fill="var(--id-a)"/>
+  <text class="crumb2" x="43" y="32">projects</text>
+  <text class="crumb2" x="93" y="32">/</text>
+  <text class="crumb" x="102" y="32">curator</text>
 
   <!-- ── THE OVERVIEW CARD — four tiles, one component with Domains ─ -->
-  <rect class="card" x="24" y="20" width="712" height="62" rx="10"/>
-  <line class="rule" x1="202" y1="30" x2="202" y2="72"/>
-  <line class="rule" x1="380" y1="30" x2="380" y2="72"/>
-  <line class="rule" x1="558" y1="30" x2="558" y2="72"/>
+  <rect class="card" x="24" y="48" width="712" height="62" rx="10"/>
+  <line class="rule" x1="202" y1="58" x2="202" y2="100"/>
+  <line class="rule" x1="380" y1="58" x2="380" y2="100"/>
+  <line class="rule" x1="558" y1="58" x2="558" y2="100"/>
 
-  <circle cx="40" cy="40" r="4.5" fill="var(--fresh)"/>
-  <text class="lbl" x="52" y="44">FOUNDATIONS</text>
-  <text class="val" x="40" y="66">3 documents · fresh</text>
+  <circle cx="40" cy="68" r="4.5" fill="var(--fresh)"/>
+  <text class="lbl" x="52" y="72">DOCUMENTS</text>
+  <text class="val" x="40" y="94">3 documents · fresh</text>
 
-  <circle cx="218" cy="40" r="4.5" fill="var(--fresh)"/>
-  <text class="lbl" x="230" y="44">WORKING STATE</text>
-  <text class="val" x="218" y="66">saved 14 min ago</text>
+  <circle cx="218" cy="68" r="4.5" fill="var(--fresh)"/>
+  <text class="lbl" x="230" y="72">MEMORY</text>
+  <text class="val" x="218" y="94">saved 14 min ago</text>
 
-  <circle cx="396" cy="40" r="4.5" fill="var(--warm)"/>
-  <text class="lbl" x="408" y="44">KNOWLEDGE</text>
-  <text class="val" x="396" y="66">391 pages · 3 days ago</text>
+  <circle cx="396" cy="68" r="4.5" fill="var(--warm)"/>
+  <text class="lbl" x="408" y="72">KNOWLEDGE</text>
+  <text class="val" x="396" y="94">391 pages · 3 days ago</text>
 
-  <text class="lbl" x="574" y="44">CAPTURE</text>
-  <text class="val" x="574" y="66">1 session · 30 days</text>
+  <text class="lbl" x="574" y="72">CAPTURE</text>
+  <text class="val" x="574" y="94">1 session · 30 days</text>
 
-  <!-- ── STEP ① FOUNDATIONS ──────────────────────────────────────── -->
-  <line class="rule" x1="24" y1="106" x2="736" y2="106"/>
-  <circle class="num" cx="36" cy="130" r="11"/>
-  <text class="numtxt" x="36" y="134.5" text-anchor="middle">1</text>
-  <text class="h" x="58" y="135">Foundations</text>
-  <circle cx="152" cy="130" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
-  <text class="info" x="152" y="134" text-anchor="middle">i</text>
+  <!-- ── STEP ① DOCUMENTS ────────────────────────────────────────────
+         The head is a SIBLING of the body. The section's controls are a head
+         ROW beneath the heading and ABOVE the row, left-aligned at the rows'
+         own x — Wiki health's `.dm-health-top` anatomy, the one shipped
+         instance of the pattern and the maintainer's named model. ──────── -->
+  <line class="rule" x1="24" y1="134" x2="736" y2="134"/>
+  <circle class="num" cx="36" cy="158" r="11"/>
+  <text class="numtxt" x="36" y="162.5" text-anchor="middle">1</text>
+  <text class="h" x="58" y="163">Documents</text>
+  <circle cx="160" cy="158" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
+  <text class="info" x="160" y="162" text-anchor="middle">i</text>
 
-  <rect class="fold" x="58" y="148" width="678" height="30" rx="7"/>
-  <text class="foldtxt" x="72" y="167">▸  The documents</text>
-  <text class="foldmeta" x="722" y="167" text-anchor="end">110 bytes · mirrored · 2 read first · 1 on request</text>
+  <rect class="btn" x="58" y="178" width="132" height="24" rx="6"/>
+  <text class="btntxt" x="124" y="194" text-anchor="middle">Refresh from repo</text>
+  <rect class="btn" x="198" y="178" width="126" height="24" rx="6"/>
+  <text class="btntxt" x="261" y="194" text-anchor="middle">Add from folder</text>
+  <rect class="btn" x="332" y="178" width="178" height="24" rx="6"/>
+  <text class="btntxt" x="421" y="194" text-anchor="middle">Mirror from GitHub instead</text>
 
-  <rect class="btn" x="600" y="186" width="132" height="24" rx="6"/>
-  <text class="btntxt" x="666" y="202" text-anchor="middle">Add from folder</text>
-  <rect class="btn" x="460" y="186" width="132" height="24" rx="6"/>
-  <text class="btntxt" x="526" y="202" text-anchor="middle">Refresh from repo</text>
+  <rect class="fold" x="58" y="210" width="678" height="30" rx="7"/>
+  <text class="foldtxt" x="72" y="229">▾  The documents</text>
+  <text class="foldmeta" x="722" y="229" text-anchor="end">3 documents · 391 KB · mirrored · 2 read first</text>
 
-  <!-- ── STEP ② WORKING STATE — five rows, one instrument each ────── -->
-  <line class="rule" x1="24" y1="212" x2="736" y2="212"/>
-  <circle class="num" cx="36" cy="236" r="11"/>
-  <text class="numtxt" x="36" y="240.5" text-anchor="middle">2</text>
-  <text class="h" x="58" y="241">Working state</text>
-  <circle cx="196" cy="236" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
-  <text class="info" x="196" y="240" text-anchor="middle">i</text>
+  <!-- the table, inside the open row — THE DEPTH BAR'S FIRST PLACEMENT -->
+  <text class="th" x="76" y="260">DOCUMENT</text>
+  <text class="th" x="596" y="260" text-anchor="end">SIZE</text>
+  <text class="th" x="616" y="260">READ</text>
+  <text class="th" x="660" y="260">UPDATED</text>
+  <line class="hair" x1="72" y1="266" x2="722" y2="266"/>
 
-  <rect class="fold" x="58" y="258" width="678" height="28" rx="7"/>
-  <text class="foldtxt" x="72" y="276">▸  Last saved</text>
-  <text class="foldmeta" x="722" y="276" text-anchor="end">14 min ago · browser-pass</text>
+  <rect class="bar" x="547" y="272" width="53" height="16" rx="3"/>
+  <text class="td" x="76" y="284">architecture.md</text>
+  <text class="td" x="596" y="284" text-anchor="end">62 KB</text>
+  <text class="tdq" x="616" y="284">✓</text>
+  <text class="tdq" x="660" y="284">3 days ago</text>
 
-  <rect class="fold" x="58" y="292" width="678" height="28" rx="7"/>
-  <text class="foldtxt" x="72" y="310">▸  Capture</text>
-  <text class="foldmeta" x="722" y="310" text-anchor="end">1 session · 1 saved before stopping</text>
+  <rect class="bar" x="499" y="296" width="101" height="16" rx="3"/>
+  <text class="td" x="76" y="308">decisions.md</text>
+  <text class="td" x="596" y="308" text-anchor="end">119 KB</text>
+  <text class="tdq" x="616" y="308">✓</text>
+  <text class="tdq" x="660" y="308">3 days ago</text>
 
-  <rect class="fold" x="58" y="326" width="678" height="28" rx="7"/>
-  <text class="foldtxt" x="72" y="344">▸  Work-streams</text>
-  <text class="foldmeta" x="722" y="344" text-anchor="end">3 work-streams · 3 saved copies</text>
+  <rect class="barbad" x="430" y="320" width="170" height="16" rx="3"/>
+  <text class="td" x="76" y="332">roadmap.md</text>
+  <text class="td" x="596" y="332" text-anchor="end">210 KB</text>
+  <text class="tdq" x="616" y="332">–</text>
+  <text class="tdq" x="660" y="332">3 days ago</text>
 
-  <rect class="fold" x="58" y="360" width="678" height="28" rx="7"/>
-  <text class="foldtxt" x="72" y="378">▸  The brief</text>
-  <text class="foldmeta" x="722" y="378" text-anchor="end">updated 14 min ago · 126 words        ✎</text>
+  <line class="hair" x1="72" y1="344" x2="722" y2="344"/>
+  <text class="warn" x="76" y="362">⚠  391 KB of a 200 KB budget — agents receive 120 KB per session and the rest is dropped.</text>
 
-  <rect class="fold" x="58" y="394" width="678" height="28" rx="7"/>
-  <text class="foldtxt" x="72" y="412">▸  Recent saves</text>
-  <text class="foldmeta" x="722" y="412" text-anchor="end">1 save · latest 14 min ago</text>
+  <!-- ── STEP ② MEMORY — four rows, one instrument each.
+         "Last saved" is GONE: its fact is the MEMORY tile above and the
+         Handoffs row's own summary. ─────────────────────────────────── -->
+  <line class="rule" x1="24" y1="386" x2="736" y2="386"/>
+  <circle class="num" cx="36" cy="410" r="11"/>
+  <text class="numtxt" x="36" y="414.5" text-anchor="middle">2</text>
+  <text class="h" x="58" y="415">Memory</text>
+  <circle cx="144" cy="410" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
+  <text class="info" x="144" y="414" text-anchor="middle">i</text>
 
-  <!-- ── STEP ③ KNOWLEDGE — a picker, then one row per wiki ───────── -->
-  <line class="rule" x1="24" y1="440" x2="736" y2="440"/>
-  <circle class="num" cx="36" cy="464" r="11"/>
-  <text class="numtxt" x="36" y="468.5" text-anchor="middle">3</text>
-  <text class="h" x="58" y="469">Knowledge</text>
-  <circle cx="166" cy="464" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
-  <text class="info" x="166" y="468" text-anchor="middle">i</text>
+  <rect class="fold" x="58" y="432" width="678" height="28" rx="7"/>
+  <text class="foldtxt" x="72" y="450">▸  Capture</text>
+  <text class="foldmeta" x="722" y="450" text-anchor="end">1 session · 1 saved before stopping</text>
 
-  <rect class="fold" x="58" y="482" width="678" height="30" rx="7"/>
-  <text class="foldtxt" x="72" y="501">▸  projects</text>
-  <text class="foldmeta" x="722" y="501" text-anchor="end">391 pages · 3 days ago</text>
+  <rect class="fold" x="58" y="466" width="678" height="28" rx="7"/>
+  <text class="foldtxt" x="72" y="484">▸  Handoffs</text>
+  <text class="foldmeta" x="722" y="484" text-anchor="end">3 handoffs · saved 14 min ago</text>
 
-  <rect class="mon" x="58" y="518" width="678" height="70" rx="8"/>
-  <text class="montxt" x="72" y="538">entities   120</text>
-  <text class="montxt" x="72" y="554">concepts   240</text>
-  <text class="montxt" x="72" y="570">summaries   31</text>
-  <text class="montxt" x="356" y="538">last ingest   3 days ago</text>
+  <rect class="fold" x="58" y="500" width="678" height="28" rx="7"/>
+  <text class="foldtxt" x="72" y="518">▸  The brief</text>
+  <text class="foldmeta" x="722" y="518" text-anchor="end">updated 14 min ago · 126 words        ✎</text>
 
-  <rect class="door" x="72" y="598" width="132" height="26" rx="6"/>
-  <text class="doortxt" x="138" y="615.5" text-anchor="middle">Open in Domains</text>
-  <rect class="door" x="214" y="598" width="132" height="26" rx="6"/>
-  <text class="doortxt" x="280" y="615.5" text-anchor="middle">Ask this domain</text>
+  <rect class="fold" x="58" y="534" width="678" height="28" rx="7"/>
+  <text class="foldtxt" x="72" y="552">▸  Journal</text>
+  <text class="foldmeta" x="722" y="552" text-anchor="end">17 saves · latest 14 min ago</text>
 
-  <rect class="btn" x="600" y="636" width="136" height="24" rx="6"/>
-  <text class="btntxt" x="668" y="652" text-anchor="middle">+ Add a wiki</text>
+  <!-- ── STEP ③ KNOWLEDGE — a head-row picker, then one row per domain,
+         each carrying THAT domain's identity dot. ────────────────────── -->
+  <line class="rule" x1="24" y1="580" x2="736" y2="580"/>
+  <circle class="num" cx="36" cy="604" r="11"/>
+  <text class="numtxt" x="36" y="608.5" text-anchor="middle">3</text>
+  <text class="h" x="58" y="609">Knowledge</text>
+  <circle cx="168" cy="604" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
+  <text class="info" x="168" y="608" text-anchor="middle">i</text>
 
-  <text class="cap" x="736" y="678" text-anchor="end">Top to bottom is the order a session start reads in.</text>
+  <rect class="btn" x="58" y="624" width="136" height="24" rx="6"/>
+  <text class="btntxt" x="126" y="640" text-anchor="middle">+ Add a domain  ⌄</text>
+
+  <rect class="fold" x="58" y="656" width="678" height="30" rx="7"/>
+  <text class="foldtxt" x="72" y="675">▾</text>
+  <circle cx="98" cy="671" r="4.5" fill="var(--id-a)"/>
+  <text class="foldtxt" x="110" y="675">projects</text>
+  <text class="foldmeta" x="722" y="675" text-anchor="end">391 pages · 3 days ago</text>
+
+  <!-- the monitor — THE DEPTH BAR'S SECOND PLACEMENT, against pageCount -->
+  <rect class="mon" x="72" y="694" width="650" height="86" rx="8"/>
+  <rect class="bar" x="230" y="704" width="61" height="14" rx="3"/>
+  <text class="montxt" x="86" y="715">entities</text>
+  <text class="monval" x="287" y="715" text-anchor="end">120</text>
+  <rect class="bar" x="169" y="722" width="122" height="14" rx="3"/>
+  <text class="montxt" x="86" y="733">concepts</text>
+  <text class="monval" x="287" y="733" text-anchor="end">240</text>
+  <rect class="bar" x="275" y="740" width="16" height="14" rx="3"/>
+  <text class="montxt" x="86" y="751">summaries</text>
+  <text class="monval" x="287" y="751" text-anchor="end">31</text>
+  <text class="montxt" x="400" y="715">last ingest</text>
+  <circle cx="486" cy="711" r="4" fill="var(--warm)"/>
+  <text class="monval" x="496" y="715">3 days ago</text>
+  <text class="montxt" x="400" y="733">pages</text>
+  <text class="monval" x="496" y="733">391</text>
+
+  <rect class="door" x="72" y="790" width="132" height="26" rx="6"/>
+  <text class="doortxt" x="138" y="807.5" text-anchor="middle">Open in Domains</text>
+  <rect class="door" x="214" y="790" width="132" height="26" rx="6"/>
+  <text class="doortxt" x="280" y="807.5" text-anchor="middle">Ask this domain</text>
+  <rect class="btn" x="640" y="790" width="82" height="26" rx="6"/>
+  <text class="btntxt" x="681" y="807.5" text-anchor="middle">Remove</text>
+
+  <rect class="fold" x="58" y="828" width="678" height="30" rx="7"/>
+  <text class="foldtxt" x="72" y="847">▸</text>
+  <circle cx="98" cy="843" r="4.5" fill="var(--id-b)"/>
+  <text class="foldtxt" x="110" y="847">research</text>
+  <text class="foldmeta" x="722" y="847" text-anchor="end">64 pages · 5 months ago</text>
+
+  <text class="cap" x="736" y="882" text-anchor="end">Top to bottom is the order a session start reads in.</text>
 </svg>
