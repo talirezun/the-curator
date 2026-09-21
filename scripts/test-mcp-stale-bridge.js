@@ -376,6 +376,22 @@ section('§7  The two notes on the bridge page');
     '…the status card\u2019s comes straight from deriveStaleBridgeNote\u2019s return');
   ok(/bridgeLoud/.test(viewSrc) && /const bridgeLoud = bridge/.test(viewSrc),
     '…and so does the self-test\u2019s, from the same function on the same payload');
+  // THE REMEDY IS NEVER AUTHORED IN THE VIEW, and this is what says so.
+  // The two assertions above prove both surfaces READ deriveStaleBridgeNote;
+  // neither can tell whether the sentence handed to `strongText` came from its
+  // `.remedy` or from a literal typed beside it. Found by mutation: replacing
+  // `bridgeNote.remedy` with an invented sentence left this whole section
+  // green, which is exactly the defect §6 exists to prevent one file over.
+  const strongs = [...viewSrc.matchAll(/strongText:\s*([^,\n}]+)/g)].map((m) => m[1].trim());
+  ok(strongs.length >= 1, `CONTROL: ${strongs.length} \`strongText\` value(s) found in the view `
+    + '— zero would make the check below vacuous');
+  ok(strongs.every((v) => /\bremedy\b/.test(v)),
+    `every \`strongText\` in the view reads a \`remedy\` off the derivation, never a literal `
+    + `(found: ${strongs.join(' | ')})`);
+  ok(!viewSrc.includes(B.STALE_REMEDY),
+    'and the route\u2019s own sentence appears NOWHERE in the view\u2019s source — a second copy that '
+    + 'happened to be correct today is a second copy that goes stale tomorrow');
+
   const handNotes = viewSrc.split('settings-mcp-stale-note').length - 1;
   ok(handNotes === 1,
     `CONTROL: exactly ${handNotes} hand-built stale NOTE is left in this view (was 2). The one that `

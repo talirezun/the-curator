@@ -783,8 +783,11 @@ function linesBlockOf(html) {
   const stamp = new Date(Date.now() - 45 * 60e3).toISOString();
   const strip = lift('renderSessionStrip', baseState())(
     { lastBootstrapAt: stamp, lastSaveAt: null }, Date.now());
-  ok((strip.match(/class="cur-mon-line"/g) || []).length === 2,
-    'the two session readings are TWO LINES of ONE monitor, not two blocks');
+  ok((strip.match(/class="cur-mon"/g) || []).length === 1
+     && (strip.match(/class="cur-mon-line"/g) || []).length === 2,
+    'the two session readings are TWO LINES of ONE monitor, not two blocks \u2014 found by '
+    + 'mutation: counting the LINES alone is satisfied by two one-line monitors side by side, '
+    + 'which is the ad-hoc strip this replaced wearing the kit\u2019s classes');
   ok(strip.includes('data-mcp-age-at="' + stamp + '"') && strip.includes('mcp-age-words'),
     '\u2026and a stamped reading carries the tick hook and the element the clock writes into');
   ok(!/data-mcp-age-at[^>]*>\s*<span class="mcp-age-words">none since/.test(strip)

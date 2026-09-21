@@ -516,6 +516,36 @@ console.log('\n§5  THE SIDEBAR IS THE APP’S ONE SIDEBAR (v3.65.0)');
   ok(!out.includes('cur-sb-meta') && !out.includes('cur-sb-dot')
      && !out.includes('cur-sb-figure') && !out.includes('cur-sb-age'),
     'the dot, the figure and the age line are OMITTED, not rendered empty');
+
+  // THE THREE STATE RULES THIS FILE STILL OWNS, AND WHAT THEY MAY DECLARE.
+  // `.settings-nav-row`'s box moved to shared/sidebar.css; three rules stayed
+  // because something reads each by NAME (test-next-design-kit reads this file
+  // for the hover; press-motion's census names the class; and `.active` has to
+  // be declared AFTER `:hover` here or the later file wins the tie and hovering
+  // the current section un-highlights it). They stayed on condition that they
+  // paint the KIT's values — otherwise the "one sidebar" is one sidebar with
+  // three exceptions. Found by mutation: swapping `.active` back to the opaque
+  // `--surface-active` reddened NOTHING, and an opaque fill on this plane stops
+  // its blur for the width of the row (test-next-views-kit §8's rule, which
+  // names `.dm-row` and `.mem-row` but not this one).
+  const css = readFileSync(join(NEXT, 'views/settings.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const [sel, token] of [
+    ['\\.settings-nav-row:hover', '--mat-row-hover'],
+    ['\\.settings-nav-row\\.active', '--mat-row-active'],
+    ['\\.settings-nav-row:active', '--mat-row-active'],
+  ]) {
+    const m = new RegExp(sel + '\\s*\\{([^}]*)\\}').exec(css);
+    ok(!!m && m[1].includes('var(' + token + ')'),
+      `${sel.replace(/\\/g, '')} takes the ALPHA OVERLAY ${token}, never an absolute --surface-* `
+      + `colour (got: ${m ? m[1].trim().replace(/\s+/g, ' ') : 'no rule'})`);
+  }
+  ok(css.indexOf('.settings-nav-row.active') > css.indexOf('.settings-nav-row:hover'),
+    '\u2026and `.active` is declared AFTER `:hover`, because the two tie on specificity and the '
+    + 'later one wins \u2014 the selected section must stay selected-looking under the pointer');
+  ok(!/\.settings-nav-row[^{]*\{[^}]*\b(?:padding|display|flex-direction|gap|font-family)\s*:/.test(css),
+    '\u2026and this file declares NO box for the row any more \u2014 that is the kit\u2019s, which is what '
+    + 'puts every sidebar in the app on one row height');
 }
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);
