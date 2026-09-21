@@ -1191,6 +1191,61 @@ router.get('/', async (_req, res) => {
 router.get('/repo-scan', async (req, res) => {
   try {
     const root = typeof req.query.root === 'string' ? req.query.root.trim() : '';
+    // The LOCAL arm first, and returning from inside it, so the remote arm
+    // below is an addition rather than a wrapper: `test-next-foundations-
+    // editor.js` §12 reads a 3,000-character window from this handler's
+    // first line and requires the local arm's per-field `modifiedAt` forward
+    // inside it — an unowned pin, measured, and this ordering is what keeps
+    // it true.
+    if (req.query.source !== 'remote') {
+      const out = await fstore().scanRepoForFoundations(root);
+      if (!out || out.ok === false) {
+        // TWO DIFFERENT FACTS, TWO DIFFERENT STATUSES, and the store already
+        // separates them: `invalid-root` means the text is not a usable
+        // absolute path (400 — fix what you typed), `repo-unreachable` means
+        // it is a fine path that is not on this computer (409 — nothing is
+        // malformed, the folder is simply not here).
+        return tier0Refusal(res, out || { reason: 'invalid-root' }, { root: root || null });
+      }
+      res.json({
+        ok: true,
+        // THE RESOLVED root, not the one that was typed: a symlinked or
+        // `..`-shaped path is answered with where it actually landed, so the
+        // caller mirrors from the same folder the scan read.
+        root: out.root,
+        candidates: (Array.isArray(out.candidates) ? out.candidates : []).map((c) => ({
+          path: c.path ?? null,
+          bytes: Number.isInteger(c.bytes) ? c.bytes : 0,
+          suggestedRole: c.suggestedRole ?? null,
+          // The slug the store WOULD derive from this path, so the picker and
+          // the mirror agree about what a ticked row becomes — the view
+          // deriving its own would be a second copy of a rule.
+          suggestedSlug: c.suggestedSlug ?? null,
+          tooLarge: c.tooLarge === true,
+          // WHICH RULE ADMITTED IT. A picker showing a file from a folder
+          // called `adr/` has to be able to say why it is there.
+          matchedBy: c.matchedBy ?? null,
+          firstHeading: c.firstHeading ?? null,
+          // ── WHEN THE SOURCE FILE WAS LAST TOUCHED (v3.61.1) ────────────
+          // The store's ISO `mtime`, forwarded FIELD BY FIELD like every
+          // other key here rather than by a spread, so a field the store
+          // grows does not reach a client until somebody decides it should.
+          // `?? null` and not a truthiness test: the store already answers
+          // null for an unreadable timestamp, and the picker renders an
+          // absent age as "unknown" rather than inventing one.
+          modifiedAt: typeof c.modifiedAt === 'string' ? c.modifiedAt : null,
+        })),
+        truncated: out.truncated === true,
+        // THE CAP, THE DEPTH AND THE WALL, named rather than left for a view
+        // to hard-code: "200 of them, and we looked 4 levels down" is what
+        // makes a short list readable as a measurement instead of a failure.
+        cap: Number.isInteger(out.cap) ? out.cap : null,
+        maxDepth: Number.isInteger(out.maxDepth) ? out.maxDepth : null,
+        maxDocumentBytes: Number.isInteger(out.maxDocumentBytes) ? out.maxDocumentBytes : null,
+      });
+      return;
+    }
+
     // ── THE REMOTE ARM (v3.65.0) ────────────────────────────────────────
     //
     // `?source=remote&remote=owner/repo` lists the same candidates out of a
@@ -1207,7 +1262,7 @@ router.get('/repo-scan', async (req, res) => {
     //
     // NO TOKEN CROSSES THIS ROUTE. `tokenSource` names which file to read it
     // from, exactly as on the init and the refresh.
-    if (req.query.source === 'remote') {
+    {
       const remote = typeof req.query.remote === 'string' ? req.query.remote.trim().slice(0, 300) : '';
       const scan = await fstore().scanRemoteForFoundations({
         remote: remote || null,
@@ -1252,51 +1307,6 @@ router.get('/repo-scan', async (req, res) => {
         requests: Number.isInteger(scan.requests) ? scan.requests : null,
       });
     }
-    const out = await fstore().scanRepoForFoundations(root);
-    if (!out || out.ok === false) {
-      // TWO DIFFERENT FACTS, TWO DIFFERENT STATUSES, and the store already
-      // separates them: `invalid-root` means the text is not a usable
-      // absolute path (400 — fix what you typed), `repo-unreachable` means
-      // it is a fine path that is not on this computer (409 — nothing is
-      // malformed, the folder is simply not here).
-      return tier0Refusal(res, out || { reason: 'invalid-root' }, { root: root || null });
-    }
-    res.json({
-      ok: true,
-      // THE RESOLVED root, not the one that was typed: a symlinked or
-      // `..`-shaped path is answered with where it actually landed, so the
-      // caller mirrors from the same folder the scan read.
-      root: out.root,
-      candidates: (Array.isArray(out.candidates) ? out.candidates : []).map((c) => ({
-        path: c.path ?? null,
-        bytes: Number.isInteger(c.bytes) ? c.bytes : 0,
-        suggestedRole: c.suggestedRole ?? null,
-        // The slug the store WOULD derive from this path, so the picker and
-        // the mirror agree about what a ticked row becomes — the view
-        // deriving its own would be a second copy of a rule.
-        suggestedSlug: c.suggestedSlug ?? null,
-        tooLarge: c.tooLarge === true,
-        // WHICH RULE ADMITTED IT. A picker showing a file from a folder
-        // called `adr/` has to be able to say why it is there.
-        matchedBy: c.matchedBy ?? null,
-        firstHeading: c.firstHeading ?? null,
-        // ── WHEN THE SOURCE FILE WAS LAST TOUCHED (v3.61.1) ────────────
-        // The store's ISO `mtime`, forwarded FIELD BY FIELD like every
-        // other key here rather than by a spread, so a field the store
-        // grows does not reach a client until somebody decides it should.
-        // `?? null` and not a truthiness test: the store already answers
-        // null for an unreadable timestamp, and the picker renders an
-        // absent age as "unknown" rather than inventing one.
-        modifiedAt: typeof c.modifiedAt === 'string' ? c.modifiedAt : null,
-      })),
-      truncated: out.truncated === true,
-      // THE CAP, THE DEPTH AND THE WALL, named rather than left for a view
-      // to hard-code: "200 of them, and we looked 4 levels down" is what
-      // makes a short list readable as a measurement instead of a failure.
-      cap: Number.isInteger(out.cap) ? out.cap : null,
-      maxDepth: Number.isInteger(out.maxDepth) ? out.maxDepth : null,
-      maxDocumentBytes: Number.isInteger(out.maxDocumentBytes) ? out.maxDocumentBytes : null,
-    });
   } catch (err) {
     console.error('Memory repo-scan error:', err);
     res.status(500).json({ ok: false, error: err.message });
