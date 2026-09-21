@@ -473,6 +473,18 @@ function renderBlock(o) {
     (o.ledeHtml ? '<p>' + o.ledeHtml + '</p>' : '') +
     '<div>' + (o.bodyHtml || '') + '</div></section>';
 }
+// v3.65.0 (the Settings + Sync package's kit, adopted here): renderProject's
+// five blocks compose through memory.js's OWN memStep now, not shared/
+// block.js's renderBlock -- renderBlock above is unused by the lifted body
+// and stays only because nothing asked to delete it. memStep is stubbed the
+// same way -- a marker that CARRIES its id and its body, so an assertion can
+// still tell which block a fragment landed in and a dropped body would red
+// rather than quietly pass. bindKnowledgeRows (the knowledge-row wiring wire()
+// reaches for) is not exercised here, but a lifted function throws on a free
+// identifier, so it is stubbed too: an undefined collaborator is a crash, not
+// a failing assertion.
+function memStep(o) { return '<section data-block="' + o.id + '"><h2>' + o.title + '</h2><div>' + (o.bodyHtml || '') + '</div></section>'; }
+function bindKnowledgeRows() {}
 // v3.56.0: renderHandoff is gone. The handoff is no longer printed on the
 // page -- a work-stream row press opens it in the shell's reader -- so what
 // replaced it is handoffReaderContent (a PAYLOAD, not markup) plus the wiring

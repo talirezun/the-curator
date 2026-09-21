@@ -471,12 +471,14 @@ section('§4b TWO HEADERS IN ONE VIEW CANNOT COLLIDE ON A DOM ID');
 
   // ── ANTI-VACUITY. A parser that silently stops matching reports zero
   // collisions forever. These fail if the scan ever goes blind. ─────────────
-  // 13 real call sites today: chat 3, domains 2, ingest 2, memory 2, settings 1,
-  // shared 1, sync 2. A raw grep says 14 — chat.js:2248 MENTIONS the token in a
-  // comment, and stripComments removes it. That gap is the reason this floor is
-  // a measured number and not a guessed one.
+  // 12 real call sites today: chat 3, domains 2, ingest 2, memory 1, settings 1,
+  // shared 1, sync 2 — memory.js goes 2 → 1 in v3.65.0 (the Context package):
+  // the sidebar's own header is the shared sidebar component now, not a
+  // second renderViewHeader call. A raw grep says 13 — chat.js's call-site
+  // comment MENTIONS the token, and stripComments removes it. That gap is the
+  // reason this floor is a measured number and not a guessed one.
   ok('the scan actually parsed the call sites it is meant to police',
-    totalCalls >= 13, `found ${totalCalls} renderViewHeader calls`);
+    totalCalls >= 12, `found ${totalCalls} renderViewHeader calls`);
   ok('...and found headers that carry `info` at all — otherwise there are no ids to compare',
     infoCalls >= 8, `${infoCalls} info-carrying headers`);
   ok('...and at least one view has TWO of them, so the comparison is non-vacuous',

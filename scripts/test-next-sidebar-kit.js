@@ -593,17 +593,29 @@ section('§5 — THE ALIAS TABLE, AND THE PALETTE MAPPING');
     Object.values(ALIASES.dm).sort().join(','),
     'dm-row,dm-row-age,dm-row-dot,dm-row-event,dm-row-figure,dm-row-list,dm-row-main,'
     + 'dm-row-meta,dm-row-name,dm-row-sep');
-  // EVERY aliased token is one a host really uses. For `mem` and `settings`,
-  // which still hand-build their rows, that is checked against the view's own
-  // SOURCE. For `dm`, which adopted the component (v3.65.0), the ten tokens
-  // are no longer typed literally anywhere in views/domains.js — the kit
-  // generates them from `alias: 'dm'` — so "actually writes today" is checked
-  // against the view's REAL RENDERED OUTPUT instead: the same DOM_ROWS §1
-  // proved byte-identical to the v3.64.2 reference, plus the group wrapper
-  // that carries `dm-row-list`.
+  // EVERY aliased token is one a host really uses. For `settings`, which
+  // still hand-builds its rows, that is checked against the view's own
+  // SOURCE. For `dm` and `mem`, which both adopted the component (v3.65.0 —
+  // `mem` in the Context package, landing alongside this one), their tokens
+  // are no longer typed literally anywhere in views/domains.js or
+  // views/memory.js — the kit generates them from `alias: 'dm'` / `alias:
+  // 'mem'` — so "actually writes today" is checked against each view's REAL
+  // RENDERED OUTPUT instead: the same DOM_ROWS §1 proved byte-identical to
+  // the v3.64.2 reference, plus the group wrapper that carries
+  // `dm-row-list`; and, for `mem`, one row built with every slot memory.js's
+  // own project row fills (name, dot, figure, mark, age, event), so every
+  // one of ALIASES.mem's seven tokens actually renders, plus its own group
+  // wrapper for `mem-row-list`.
   const DOM_GROUP = renderSidebarGroup({ eyebrow: 'KNOWLEDGE', rowsHtml: DOM_ROWS, alias: 'dm' });
+  const MEM_ROWS = renderSidebarRow({
+    alias: 'mem', name: 'curator', dotClass: identityDotClass(0), figure: '3 scopes',
+    markHtml: freshnessDotHtml('2026-09-20', NOW), age: formatDayAge('2026-09-20', NOW),
+    event: 'Working on the seams pass',
+  });
+  const MEM_GROUP = renderSidebarGroup({ eyebrow: 'articles', rowsHtml: MEM_ROWS, alias: 'mem' });
   for (const [host, file, src] of [['dm', 'views/domains.js (rendered)', DOM_ROWS + DOM_GROUP],
-    ['mem', 'views/memory.js', MEMORY_JS], ['settings', 'views/settings.js', SETTINGS_JS]]) {
+    ['mem', 'views/memory.js (rendered)', MEM_ROWS + MEM_GROUP],
+    ['settings', 'views/settings.js', SETTINGS_JS]]) {
     const missing = Object.values(ALIASES[host]).filter((t) => !src.includes(t));
     ok(missing.length === 0,
       'every `' + host + '` alias is a token ' + file + ' actually writes today',

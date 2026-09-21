@@ -334,8 +334,16 @@ section('§4  THE TWO NEW ADOPTIONS, AT NAMED SITES');
 // memory.js call site left v3.20.0's suite green at 98/0.
 {
   const m = SRC['memory.js'], s = SRC['sync.js'];
+  // MOVED ONE STEP FURTHER (v3.65.0, the Context package): the sidebar
+  // density used to be `renderViewHeader({variant: 'sidebar', ...})`, one
+  // more caller of the page-header component asked to render thin. It is now
+  // `renderSidebarHead({...})` — the SIDEBAR component itself, the same one
+  // views/domains.js adopted at the same site. The second clause asserts the
+  // move happened rather than merely gained a second call site: no
+  // `variant: 'sidebar'` survives in this file at all.
   ok('memory.js sidebar: the component, in the sidebar density',
-    /renderViewHeader\(\{\s*variant: 'sidebar',\s*title: 'Project context',/.test(m));
+    /renderSidebarHead\(\{\s*title: 'Project context',/.test(m)
+      && !/variant: 'sidebar'/.test(m));
   // INVERTED DELIBERATELY, and the assertion it replaces was right when it was
   // written. It pinned "eyebrow + title, NO info", because at the time a second
   // description of the three tiers behind the mark would have been a COPY of
