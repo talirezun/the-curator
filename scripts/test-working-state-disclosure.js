@@ -1067,6 +1067,38 @@ function findDroppedDeep(storeObj, payloadObj, prefix = '') {
   ok(/nope\.md \(not-found\)/.test(missPayload.report || ''),
     'corpus: …and the report names it too', String(missPayload.report).slice(-200));
 
+  // ── (8) KNOWLEDGE DOMAINS (v3.65.0) ─────────────────────────────────
+  // The newest member of this class, and the one with the sharpest failure:
+  // `knowledgeDomains` says WHERE an agent should search, and
+  // `knowledgeDomainsDefaulted` says whether the owner chose it or the store
+  // fell back to the containing domain. §7 already requires both to survive
+  // by name for every project in its corpus — but every project there has
+  // NO choice recorded, so it would pass with a consumer that hard-coded the
+  // default. This drives a project that HAS chosen, through both tools, and
+  // requires the chosen list itself to arrive.
+  const P_KD = 'zz-knowledge-domains';
+  mkDomain(P_KD);
+  mkDomain('zz-other-wiki');
+  const chose = await WS.setKnowledgeDomains(P_KD, P_KD, ['zz-other-wiki']);
+  ok(chose.ok, 'FIXTURE: a project points at another domain\'s wiki', JSON.stringify(chose).slice(0, 160));
+  const kdStore = await readWorkingState(P_KD, {});
+  const kdWs = JSON.parse(JSON.stringify(await getWorkingStateHandler({ project: P_KD }, storage)));
+  const kdCtx = JSON.parse(JSON.stringify(await getProjectContextHandler({ project: P_KD }, storage)));
+  ok(JSON.stringify(kdStore.knowledgeDomains) === '["zz-other-wiki"]',
+    'corpus: the store returns the CHOSEN list, not the containing domain', JSON.stringify(kdStore.knowledgeDomains));
+  for (const [label, payload] of [['get_working_state', kdWs], ['get_project_context', kdCtx]]) {
+    ok(JSON.stringify(payload.knowledgeDomains) === '["zz-other-wiki"]',
+      `corpus: ${label} carries the chosen list, not a default it could have guessed`,
+      JSON.stringify(payload.knowledgeDomains));
+    ok(payload.knowledgeDomainsDefaulted === false,
+      `corpus: ${label} carries the second field, which is what tells a choice from a fallback`,
+      JSON.stringify(payload.knowledgeDomainsDefaulted));
+  }
+  ok(findDroppedDeep({ knowledgeDomains: ['zz-other-wiki'], knowledgeDomainsDefaulted: false }, kdWs).length === 0,
+    'corpus: …and the deep detector, run on the pair, reports no drop');
+  ok(findDroppedDeep({ knowledgeDomains: ['a'], knowledgeDomainsDefaulted: false }, { knowledgeDomains: ['a'] }).length === 1,
+    'CONTROL: …while a payload missing the second field IS reported — the detector can see this pair');
+
   // Positive control for the deep detector, every run.
   const probe = { a: 1, nested: { b: 2, list: [1, 2] } };
   ok(findDroppedDeep(probe, { a: 1, nested: { b: 3, list: [1, 2] } }).some((d) => d.key === 'nested.b'),

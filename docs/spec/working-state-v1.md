@@ -58,6 +58,7 @@ comparison:
 ```
 domains/<domain>/state/                     ← the DOMAIN'S OWN project
   project.md
+  project.json
   <scope>/<machine>/current.md
   <scope>/<machine>/journal.jsonl
   foundations/manifest.json
@@ -65,6 +66,7 @@ domains/<domain>/state/                     ← the DOMAIN'S OWN project
 
 domains/<domain>/state/<project>/           ← a NAMED project
   project.md
+  project.json
   <scope>/<machine>/current.md
   <scope>/<machine>/journal.jsonl
   foundations/manifest.json
@@ -82,7 +84,10 @@ and report a fresh, blank project — not an error, which is what makes it dange
 the normal case, so the root layout is frozen.
 
 A directory named `foundations` is therefore **not** a project, and neither are `project.md`,
-`current.md` or `journal.jsonl` — see the reserved names in §4.
+`project.json`, `current.md` or `journal.jsonl` — see the reserved names in §4.
+
+`project.json` is **optional** and absent on most projects: a project with no metadata file is not
+incomplete, it has simply chosen nothing (§7b).
 
 ---
 
@@ -139,8 +144,8 @@ A name that fails is **refused**, not repaired — except for a *scope*, which a
 to a safe segment (`feature/auth` → `feature-auth`) and must then report the name it actually used,
 because the caller will otherwise read back with a name that matches nothing.
 
-**Reserved names.** A project may not be called `project.md`, `journal.jsonl`, `current.md` or
-`foundations`, and a domain's own project is addressed by the domain's name (§2).
+**Reserved names.** A project may not be called `project.md`, `project.json`, `journal.jsonl`,
+`current.md` or `foundations`, and a domain's own project is addressed by the domain's name (§2).
 
 **Foundation slugs** are narrower — see §8: `^[a-z0-9][a-z0-9-]{0,63}\.md$`.
 
@@ -304,6 +309,51 @@ task needs. It is **prose for the agent**, not a parsed field.
 
 ---
 
+## 7b. `project.json` — the project's own metadata (v3.65.0)
+
+One per project, no machine segment, **optional**. A small JSON object holding facts *about* the
+project that are neither state nor a document — metadata the app writes on the owner's behalf.
+
+```json
+{
+  "version": 1,
+  "knowledgeDomains": ["research", "business"]
+}
+```
+
+| Field | Type | Rules |
+|---|---|---|
+| `version` | integer | exactly `1` |
+| `knowledgeDomains` | array of names or absent | which **wikis** this project's knowledge lives in, in the owner's order. Each entry is a domain name (§4). Duplicates collapse to their first position; at most `12` |
+
+**Absent is a value, and it is not an empty list.** A reader with no file — or with a file this
+reader cannot parse — reports the **containing domain** as the list *and* reports that it was
+defaulted. Those are two fields, and a reader that returns only the list cannot tell "the owner
+chose exactly this domain" from "nobody has chosen". The reference implementation names them
+`knowledgeDomains` and `knowledgeDomainsDefaulted`, and carries both on every read of the project
+(§11) rather than only on a detail read.
+
+The containing domain is **not** forced into a chosen list: a project may point only at other
+domains, and a `shared-*` read-only mirror is a legitimate entry — reading a mirror's wiki is what a
+mirror is for.
+
+**A malformed file never refuses a read.** It reads as the default with the defect *named* (the
+reference implementation returns a `metaError` string), for the same reason a malformed
+`foundations/manifest.json` reads as `present: false` with `manifestError`: a hand-editable file
+that syncs must not be able to take a project's whole bootstrap down with it.
+
+**Who writes it.** The owner, through the app — this file is metadata *about* the project, so it is
+not tier 2/3 state and the single-writer rule ("one writer per file, with provenance that matches")
+is satisfied by the app being that one writer. **An agent does not write it**: choosing where a
+project's knowledge lives is the owner's decision, so neither a handoff save nor the CLI's save
+touches this file.
+
+**A writer must merge, not replace.** Read the file, change the one field, write it back — a field a
+later version adds must survive a write by an earlier one. A file left holding nothing but
+`version` should be removed rather than kept as a stub.
+
+---
+
 ## 8. `foundations/` — canonical documents (tier 0)
 
 Documents that must be read **word for word**: an architecture note, an ADR set, conventions, a
@@ -361,7 +411,7 @@ foundations/
 |---|---|---|
 | `version` | integer | exactly `1`. Anything else: refuse the manifest, do not guess |
 | `ownership` | `"repo"` \| `"curator"` \| `null` | **one per project**, set once. A `repo` project's documents are only ever mirrored; a `curator` project's are only ever written for it |
-| `repo.root` | string or `null` | an **advisory** absolute path on the machine that last refreshed. On any other machine it is a hint, never a fact |
+| `repo.root` | string or `null` | an **advisory** absolute path on the machine that last refreshed. On any other machine it is a hint, never a fact. `null` is ordinary: a mirror created from a GitHub repository (v3.65.0) has never been copied from a folder on any machine |
 | `repo.remote` | object or `null` | `{owner, repo, ref, path}` — GitHub coordinates (v3.63.0). `ref` and `path` may be `null`. An unparseable value reads as `null`, which is what `null` has always meant: no mirror recorded |
 | `repo.lastRefreshAt` | ISO string or `null` | |
 | `repo.lastRefreshCommit` | 40 hex or `null` | the commit the last refresh read |
