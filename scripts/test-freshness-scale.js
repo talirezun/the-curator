@@ -445,9 +445,23 @@ section('§6  The Agent-memory pip is GONE, and the dot is what is left');
   // age on this page is cut on the SHARED ladder, and the two readings that
   // still qualify an age in this file are the arrival disclosure and the
   // capture meter's newest session. Both are pinned by the same expression.
-  ok((viewJs.match(/fresh-dot fresh-' \+ freshnessTier\(/g) || []).length >= 2,
+  // ONE SITE SINCE v3.65.1: the capture meter's newest session. The "Last
+  // saved" reading and its arrival disclosure were the other two, and both
+  // went with the unfolded block they stood in — explanations and provenance
+  // above a step's rows, which the step-body rule does not allow. Every mark
+  // this view still paints is cut on the SHARED tier; what the count protects
+  // is that the number never goes UP with a second ladder.
+  ok((viewJs.match(/fresh-dot fresh-' \+ freshnessTier\(/g) || []).length >= 1,
     'every age this view still marks wears the SHARED dot, cut on the shared tier function',
     String((viewJs.match(/fresh-dot fresh-' \+ freshnessTier\(/g) || []).length));
+  // THE OTHER SITES INTERPOLATE A `tier` VARIABLE, and a regex cannot follow
+  // one honestly — so what is asserted is the thing a regex CAN see and the
+  // thing that would actually be wrong: no mark in this file is cut on
+  // `freshnessStep`, this view's own retired six-rung ladder. The assertion
+  // one block down already proves that function is not called here at all.
+  ok(!/fresh-dot fresh-' \+ freshnessStep\(/.test(viewJs),
+    '...and no mark in this file is cut on the retired six-rung ladder',
+    (viewJs.match(/.{0,60}freshnessStep\(.{0,40}/) || [''])[0]);
   ok(!/freshnessStep\(/.test(viewJs.replace(/function freshnessStep[\s\S]*?\n\}/, '')),
     '...and nothing in this view cuts a MARK on its own six-rung ladder any more');
   ok(!/class="mem-save-pip/.test(viewJs) && !/'mem-save-pip/.test(viewJs),

@@ -1581,20 +1581,31 @@ ok('the handoff BODY is rendered through the shared markdown renderer (escape-fi
 ok('the brief BODY is rendered through the shared markdown renderer',
   R.renderBrief(hostileState.projectRead).includes('chat-md-h'));
 
-// ── CROSS-MACHINE: POSITIVE EVIDENCE ONLY, AND IT MOVED HOUSE ─────────────
-// It was a `from <machine>` badge beside the machine picker. The picker is
-// gone; the FACT is not, and it is the same rule — rendered ONLY on an
-// explicit `false`, never on an absent field. It is now a line in the save
-// strip, which is also where it stopped being reachable by hover only.
+// ── CROSS-MACHINE: IT MOVED HOUSE AGAIN, INTO THE TABLE'S OWN COLUMN ──────
+// It was a `from <machine>` badge beside the machine picker; then a
+// `written on <machine>` LINE in an instrument above step ②'s rows. That
+// instrument is deleted (v3.65.1): it stood unfolded, carrying provenance and
+// explanations, which is the bare block the maintainer rejected. The FACT is
+// per-handoff and the Handoffs table names the machine PER ROW in a column of
+// its own — more precise than one line about the open pair — and the COST of
+// the fact ("paths and processes may differ") is one sentence in step ②'s ⓘ.
+//
+// THE POSITIVE-EVIDENCE RULE SURVIVES THE MOVE and is what is asserted: this
+// view must never say "elsewhere" from an ABSENT field, only from an explicit
+// `false`. `wsRowHtml` marks the rows of the machine the store RESOLVED.
 const mineNote = /local paths and processes may differ/;
-ok('an explicit machineIsThisMachine:false says the handoff was written elsewhere',
-  mineNote.test(R.renderSaveStatus(hostileState.projectRead, hostileDetail)));
-{
-  const absent = makeRenderers(hostileState);
-  ok('an ABSENT machineIsThisMachine says NOTHING (a fact is not its absence)',
-    !mineNote.test(absent.renderSaveStatus(hostileState.projectRead,
-      { ...hostileDetail, machineIsThisMachine: undefined })));
-}
+ok('the deleted instrument no longer prints provenance above the rows — it is '
+  + 'the table\'s own MACHINE column now',
+!mineNote.test(R.renderSaveStatus(hostileState.projectRead, hostileDetail)),
+R.renderSaveStatus(hostileState.projectRead, hostileDetail).slice(0, 300));
+ok('...and the table still names the machine, per row, where there is one per '
+  + 'handoff to name', /<th scope="col">Machine<\/th>/.test(
+    R.renderWorkStreams([{ scope: 'a', machine: 'boxa', writtenAgeSeconds: 60 }], null)),
+R.renderWorkStreams([{ scope: 'a', machine: 'boxa', writtenAgeSeconds: 60 }], null).slice(0, 300));
+ok('...and the COST of the fact is in step ②\'s ⓘ, where an explanation goes',
+  /local paths and processes may differ|paths, running processes/.test(
+    makeRenderers(hostileState).renderProject()),
+  'the sentence vanished with the line');
 {
   const same = makeRenderers(hostileState);
   ok('machineIsThisMachine:true says nothing either',
@@ -4059,11 +4070,22 @@ section('§14 — The Reload OFFER is painted, and reaches every content branch'
       + 'answers the question the deleted block existed for',
     /MEMORY/.test(out), out.slice(0, 200));
   }
-  // AND THE PAIR-LEVEL READING IS STILL THERE WHERE THERE IS A PAIR. The strip
-  // is the project's answer; `.mem-save` carries the open pair's, with its
-  // completeness verdict on the figure rather than in a note below it.
-  ok('the open pair\'s own reading survives the restructure, on the FULL branch',
-    classAt(full, 'mem-save') !== -1, full.slice(0, 200));
+  // AND `.mem-save` IS WARNINGS ONLY NOW (v3.65.1). The strip is the project's
+  // answer and the Handoffs row carries the open pair's; what is left in this
+  // wrapper is the loud lines, which appear only when they fire. On a read
+  // with nothing loud to say it must NOT paint — a bordered nothing above four
+  // rows is the block the maintainer rejected.
+  ok('a read with nothing loud to say paints NO block above the rows',
+    classAt(full, 'mem-save') === -1, full.slice(0, 300));
+  ok('CONTROL: and a read WITH something loud still does, unfolded, outside '
+    + 'every chevron',
+  (() => {
+    const loud = makeRenderers({ ...hostileState, staleWrite: false }).renderSaveStatus(
+      { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 60 }] },
+      { scope: 'main', machine: 'boxa', current: { present: true, writtenAgeSeconds: 60,
+        lastSaveKind: 'trimmed', lastSaveNotes: ['budget'] } });
+    return /class="mem-save"/.test(loud) && /cur-mon-loud/.test(loud) && !/<details/.test(loud);
+  })(), 'a loud line does not reach the page');
   ok('self-test: that class matcher is not vacuous and does not match a prefix',
     classAt('<div class="a mem-save b">', 'mem-save') === 5
     && classAt('<div class="mem-saved">', 'mem-save') === -1);
@@ -6686,8 +6708,21 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   const foldHtml = mkHead({}).renderWorkStreamsFold(headRead,
     { scope: 'main', machine: 'boxa',
       current: { present: true, writtenAgeSeconds: 120, writtenAt: at(120) } });
-  ok('the headline the agent wrote LEADS the work-stream fold\'s summary',
-    /class="mem-fold-meta">Rewriting the memory view ·/.test(foldHtml), foldHtml.slice(0, 500));
+  // ── THE HEADLINE IS THE TABLE'S, NOT THE SUMMARY'S (v3.65.1) ──────────
+  // It LED this line from v3.55.0 to here, and on a real project it is a
+  // SENTENCE: measured on the maintainer's own fixture it ran 240 characters
+  // and wrapped the meta onto a second line under the row title — a paragraph
+  // under a fold row, which is the one thing a step body may not contain. The
+  // table this row opens carries it in WORKING ON, on the row that wrote it,
+  // beside that row's machine and harness — which is where it belongs, since
+  // there is one per handoff and a summary could only ever show the newest.
+  ok('the summary is ONE line, and the headline is NOT in it',
+    !/Rewriting the memory view/.test(
+      (/<summary[\s\S]*?<\/summary>/.exec(foldHtml) || [''])[0]),
+    (/<summary[\s\S]*?<\/summary>/.exec(foldHtml) || [''])[0]);
+  ok('...and the headline is in the TABLE, on the row that wrote it',
+    /Rewriting the memory view/.test(foldHtml.slice(foldHtml.indexOf('</summary>'))),
+    foldHtml.slice(foldHtml.indexOf('mem-ws-body'), foldHtml.indexOf('mem-ws-body') + 400));
   // ── AND THE AGE FOLLOWS IT (v3.65.1, D2) ──────────────────────────────
   // Half of the deleted "Last saved" row landed here: the PROJECT's newest
   // save, from `newestPair` — the same derivation the MEMORY overview tile
@@ -6695,8 +6730,9 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // closed row has to carry to be worth opening is "is any of this recent",
   // and `M saved copies` — which is what you open FOR — stayed in the body,
   // where `workStreamCounts` still prints both numbers uncapped.
-  ok('...and the count and the AGE follow it, so one closed line decides whether to open',
-    /Rewriting the memory view · 1 handoff · saved 2 min ago</.test(foldHtml), foldHtml.slice(0, 500));
+  ok('...and the closed line is the count and the AGE — the pair a closed row '
+    + 'has to carry to be worth opening',
+  /class="mem-fold-meta">1 handoff · saved 2 min ago</.test(foldHtml), foldHtml.slice(0, 500));
   // ── AND THE AGE IS THE PROJECT'S NEWEST, NOT THE LAST ROW'S ─────────
   // `newestPair` is the same derivation `renderLayerStrip`'s MEMORY card uses,
   // so the tile and this line can never name different saves. FOUND BY
@@ -6739,14 +6775,20 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     projects: [{ domain: 'acme', project: 'lumina', headline: 'From the index row',
       writtenAgeSeconds: 300, writtenAt: at(300) }],
   }).renderWorkStreamsFold({ scopes: [{ scope: 'main', machine: 'boxa' }], savedCopies: 1 }, null);
-  // NO TRAILING SEPARATOR ASSERTED: this fixture's scope row carries neither
-  // an age nor a distinct-scope count, so there is genuinely no second clause
-  // and a ` · ` here would be a separator before nothing.
-  ok('with no headline on the scope row, the project index row supplies it',
-    /class="mem-fold-meta">From the index row/.test(fromIndex), fromIndex.slice(0, 400));
-  ok('...and with nothing else to say, the line is the headline ALONE — never a '
-    + 'separator before an absent clause',
-  /class="mem-fold-meta">From the index row<\/span>/.test(fromIndex), fromIndex.slice(0, 400));
+  // ── THE HEADLINE IS NO LONGER IN THIS LINE AT ALL (v3.65.1) ──────────
+  // It was a sentence under a fold row. The table carries it now, per handoff.
+  // This fixture's scope row has no age and no distinct-scope count either, so
+  // the line is genuinely EMPTY — and that is the right answer: a separator
+  // before nothing, or a placeholder, would both be worse than silence.
+  ok('the headline is not in the summary, whichever fixture supplies it',
+    !/From the index row/.test(
+      (/<summary[\s\S]*?<\/summary>/.exec(fromIndex) || [''])[0]), fromIndex.slice(0, 400));
+  ok('...and with no count and no age either, the line is EMPTY rather than a '
+    + 'separator before nothing',
+  /class="mem-fold-meta"><\/span>/.test(fromIndex), fromIndex.slice(0, 400));
+  ok('CONTROL: and the headline is still on the page, in the table the row opens',
+    /From the index row/.test(fromIndex.slice(fromIndex.indexOf('</summary>')))
+    || /mem-ws-body/.test(fromIndex), fromIndex.slice(0, 400));
 
   // ABSENT IS ABSENT. No headline anywhere renders no clause, never an em dash.
   const noHead = mkHead({}).renderWorkStreamsFold(
@@ -7291,6 +7333,49 @@ const fndRead = (payload) => ({
     const c = e.indexOf('mem-fnd-head-controls');
     const f = e.indexOf('mem-fold-flat'); return c !== -1 && f !== -1 && c < f; })(),
   block([], { ownership: 'curator' }).slice(0, 300));
+
+  // ── (1b) AND THE CAPTURE NOTE THAT MUST NOT FIRE (v3.65.1, D4) ──────
+  // MEASURED on an isolated copy with NO usage log: the row's summary read
+  // "no usage log on this computer yet" and the route's note read "Saves in
+  // this window arrived through a bridge that logged no sessions — restart the
+  // app that launched it". An alarm and a remedy for a bridge nobody ran,
+  // beside a sentence already saying the log does not exist.
+  //
+  // THE ROOT CAUSE IS AT THE PRODUCER: src/routes/memory.js computes
+  // `noSessionsButSaves = totals.sessions === 0 && newestSaveMs >= sinceMs`
+  // with no term for the log EXISTING, so a machine with saves on disk and no
+  // bridge ever opened takes that arm before the `!present` one below it. The
+  // view's gate is structural — the two fields are on the same envelope — and
+  // it withholds ONLY that note; the other two tenants are untouched.
+  {
+    const meter = (over) => makeRenderers({
+      activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+      capture: { domain: 'acme', project: 'lumina', error: null, data: {
+        logPresent: false, windowDays: 30, sessionsShown: 0, sessionsTruncated: false,
+        totals: { sessions: 0, sessionsRead: 0, sessionsSaved: 0, sessionsReadNotSaved: 0,
+          legacyLines: 0, selfTestLines: 0 },
+        sessions: [], noSessionsButSaves: true,
+        note: 'Saves in this window arrived through a bridge that logged no sessions — '
+          + 'restart the app that launched it (usually Claude Desktop)', ...over } },
+    }).renderCaptureMeter();
+    ok('with NO usage log, the bridge alarm is withheld — a remedy for a bridge '
+      + 'nobody ran, beside a summary already saying the log does not exist',
+    !/logged no sessions/.test(meter()), meter().slice(0, 500));
+    ok('...and the row\'s own summary is the whole answer',
+      /no usage log on this computer yet/.test(meter()), meter().slice(0, 400));
+    ok('CONTROL: with a log PRESENT the same note fires, unfolded — it is a real '
+      + 'contradiction then, and an outcome may never sit behind a chevron',
+    (() => { const h = meter({ logPresent: true });
+      return /logged no sessions/.test(h)
+        && !/<details[\s\S]*logged no sessions[\s\S]*<\/details>/.test(h); })(),
+    meter({ logPresent: true }).slice(0, 500));
+    ok('...and the OTHER two tenants are untouched by the gate — an absent log '
+      + 'still says so, with no bridge flag set',
+    /the meter starts counting/.test(meter({ noSessionsButSaves: false,
+      note: 'no usage log yet — the meter starts counting with the first bridge session on v3.63.0' })),
+    meter({ noSessionsButSaves: false,
+      note: 'no usage log yet — the meter starts counting with the first bridge session on v3.63.0' }).slice(0, 400));
+  }
 
   // ── (2) "Mirror from GitHub instead" — D6 ───────────────────────────
   // The store has had a REMOTE refresh arm since v3.65.0 and no control on the
@@ -8813,11 +8898,31 @@ const fndRead = (payload) => ({
     domainList: ['acme', 'research'],
     knowledge: kmap({ acme: { data: { pageCount: 5, pageCounts: {} }, error: null } }),
     projectRead: { knowledgeDomains: ['acme'], knowledgeDomainsDefaulted: true } }).renderKnowledge();
-  ok('with nothing chosen the one row is the containing domain, and the screen '
+  // ── THE DEFAULT IS A WORD ON THE ROW, NOT A PARAGRAPH UNDER THE STEP ──
+  // v3.65.1. It was forty words of `.tx-desc` under the picker — an
+  // explanation in a step body, which is the one thing a step body may not
+  // contain. The sentence is step ③'s ⓘ verbatim; what a reader needs ON the
+  // row is which of the two it is, and that is one word in the badge class the
+  // documents table already uses.
+  ok('with nothing chosen the one row is the containing domain, and the ROW '
     + 'says that is a DEFAULT rather than a choice',
   dflt.includes('data-mem-fold="knowledge-acme"')
-    && /draws on the domain it\s+lives in/.test(dflt.replace(/\s+/g, ' ')), dflt.slice(-500));
-  ok('CONTROL: a project that HAS chosen says no such thing', !/draws on the domain it/.test(full));
+    && /<span class="mem-badge mem-badge-quiet">default<\/span>/.test(dflt), dflt.slice(0, 600));
+  ok('...and it is INSIDE the row\'s summary, beside the name it qualifies — '
+    + 'never a sentence under the section',
+  /<summary[\s\S]*?mem-badge-quiet">default<[\s\S]*?<\/summary>/.test(dflt),
+  (/<summary[\s\S]*?<\/summary>/.exec(dflt) || [''])[0]);
+  ok('...and NO prose survives in the body — the step is a head row and rows',
+    !/draws on the domain it/.test(dflt), (dflt.match(/tx-desc[^<]*<[^>]*>[^<]*/g) || []).join(' | '));
+  ok('CONTROL: a project that HAS chosen carries no such chip',
+    !/mem-badge-quiet">default</.test(full), full.slice(0, 400));
+  ok('...and the sentence lives in step ③\'s ⓘ, verbatim',
+    /draws on the domain it lives in/.test(makeRenderers({
+      activeDomain: 'acme', activeProject: 'l', openFolds: {}, projects: [],
+      journalLimit: 10, detail: null, detailLoading: false, domainList: ['acme'],
+      knowledge: kmap({ acme: { data: { pageCount: 5, pageCounts: {} }, error: null } }),
+      projectRead: { knowledgeDomains: ['acme'], knowledgeDomainsDefaulted: true },
+    }).renderProject()), 'the sentence vanished with the paragraph');
 
   // ── A MALFORMED project.json IS LOUD ──────────────────────────────────
   const bad = makeRenderers({ activeDomain: 'acme', activeProject: 'l', openFolds: {},
@@ -10461,48 +10566,57 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
   ok('...so step ② opens on its four rows, reached by having nothing to say '
     + 'rather than by hiding something', !/Last saved/.test(healthy), healthy);
 
-  // ── A DISCLOSURE IS A MONITOR LINE, AND IT IS NOT BEHIND A CHEVRON ────
+  // ── THE DISCLOSURES LEFT THIS FUNCTION (v3.65.1) ─────────────────────
+  // `clock: the file's own`, `arrived here` and `written on <machine>` were
+  // monitor LINES in an instrument that stood unfolded at the top of step ②.
+  // They are explanations and provenance, not warnings, and the maintainer's
+  // rule for a step body is that every part of it is the same fold row with
+  // its explanation in the ⓘ. The block is deleted; the two clocks stay in the
+  // overview's ⓘ (verbatim, unchanged) and the machine in the Handoffs table's
+  // own column, so nothing the store computed is dropped by a view that
+  // stopped drawing a row for it.
   const fsOnlyRow = makeRenderers(baseSt()).renderSaveStatus(
     { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }] },
     { scope: 'main', machine: 'boxa', harness: 'claude-code',
-      // NO `writtenAgeSeconds`, so `effectiveSave` falls back to the FILE's
-      // own timestamp — which is the state the disclosure exists for.
       current: { present: true, savedAt: new Date(Date.now() - 120000).toISOString() } });
-  ok('a filesystem-clock reading still SAYS SO — the honesty field the store '
-    + 'computed is not dropped by the view that stopped drawing a row for it',
-  /class="cur-mon-key">clock<\/span><span class="cur-mon-value">the file’s own</.test(fsOnlyRow),
-  fsOnlyRow.slice(0, 600));
-  ok('...with the prose as its qualifying clause, never as a paragraph',
-    /class="cur-mon-sub">No journal entry carried a save time/.test(fsOnlyRow));
-  ok('...and NOT behind a chevron: this function emits no <details> at all now',
-    !/<details/.test(fsOnlyRow) && !/data-mem-fold="saved"/.test(fsOnlyRow),
-    fsOnlyRow.slice(0, 400));
+  eq('a filesystem-clock reading paints NOTHING here — it is an explanation, '
+    + 'and step ② opens on its Capture row', fsOnlyRow, '');
+  {
+    const page = makeRenderers({ activeDomain: 'a', activeProject: 'p', openFolds: {},
+      projects: [], journalLimit: 10, detail: null, detailLoading: false })
+      .renderProject().replace(/\s+/g, ' ');
+    ok('...and the two-clocks explanation is still on the page, in the overview\'s ⓘ',
+      /TWO clocks behind every age on this page/.test(page)
+      && /that is when the file ARRIVED here/.test(page),
+    'the two-clocks paragraph vanished with the line');
+    // AND IT NO LONGER DESCRIBES AN AFFORDANCE THE APP HAS DELETED. Through
+    // v3.65.0 it ended "a reading that had to fall back says “file time” in its
+    // own provenance line" — and v3.65.1 deleted that line with the unfolded
+    // block it lived in. A sentence promising a mark nothing paints is worse
+    // than the gap, so the gap is stated instead.
+    ok('...and it does NOT promise a “file time” marker this screen no longer paints',
+      !/file time/.test(page), (page.match(/.{0,80}file time.{0,80}/) || [''])[0]);
+    ok('...it says what to do instead, which is the honest form of the gap',
+      /read an age you did not expect as the moment the file arrived/.test(page),
+      'the replacement sentence is missing');
+  }
 
   // ── A WARNING NEVER FOLDS (v3.16.1) ──────────────────────────────────
   const trimmedRow = makeRenderers(baseSt()).renderSaveStatus(
     { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }] },
     { scope: 'main', machine: 'boxa', harness: 'claude-code',
-      // BOTH AT ONCE, and that is the whole point of the fixture: a trimmed
-      // save (loud) whose time came from the FILE (a disclosure). With only the
-      // loud line there is nothing for it to be outside OF, and a guard written
-      // against that fixture passes whatever the code does — which is what the
-      // first version of this assertion did.
       current: { present: true, lastSaveKind: 'trimmed', lastSaveNotes: ['budget'],
         savedAt: new Date(Date.now() - 120000).toISOString() } });
-  const loudAt = trimmedRow.indexOf('cur-mon-loud');
-  ok('CONTROL -- a trimmed save really does produce a loud line', loudAt !== -1,
-    trimmedRow.slice(0, 400));
+  ok('CONTROL: a trimmed save really does produce a loud line',
+    trimmedRow.indexOf('cur-mon-loud') !== -1, trimmedRow.slice(0, 400));
   ok('...drawn by the monitor, in its danger tone', /cur-mon-loud cur-mon-danger/.test(trimmedRow),
-    trimmedRow.slice(loudAt - 40, loudAt + 120));
+    trimmedRow.slice(0, 400));
   ok('...and it is announced, because a warning appearing IS the thing to tell',
     /class="cur-mon-loud[^"]*" role="status"/.test(trimmedRow));
-  const lineAt = trimmedRow.indexOf('cur-mon-lines');
-  ok('CONTROL -- this fixture really does produce a disclosure to be after',
-    lineAt !== -1, trimmedRow.slice(0, 500));
-  ok('a loud warning is rendered AFTER the lines and in its own container — the '
-    + 'component builds the two from different arrays and has no field that '
-    + 'moves one into the other (v3.16.1)',
-  loudAt !== -1 && lineAt !== -1 && loudAt > lineAt, loudAt + ' vs ' + lineAt);
+  ok('...and this function emits NO ordinary line at all now, so there is no '
+    + 'array a later edit could move a warning into',
+  !/cur-mon-lines/.test(trimmedRow) && !/cur-mon-line\b/.test(trimmedRow),
+  trimmedRow.slice(0, 400));
   ok('...and nothing in this function can put either behind a chevron',
     !/<details/.test(trimmedRow), trimmedRow.slice(0, 400));
 

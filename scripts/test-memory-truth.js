@@ -686,23 +686,26 @@ const baseDetail = (over = {}) => {
 section('§8 — The strip answers the other three questions, and only when true');
 // ═════════════════════════════════════════════════════════════════════════
 {
-  // WHICH CLOCK. When no journal entry carried a time, the reading is the
-  // file's own and the strip says so — in text, not in a tooltip.
+  // ── WHICH CLOCK: THE EXPLANATION MOVED, AND THIS FUNCTION IS SILENT ──
+  // v3.65.1. The `clock` and `arrived here` lines were an INSTRUMENT standing
+  // unfolded above step ②'s four rows, carrying explanations and provenance —
+  // the bare block the maintainer rejected. The two-clocks paragraph is the
+  // overview's ⓘ, where it already was, and this function composes warnings
+  // only. What this section still protects is the honest half: the app must
+  // not PROMISE a marker it no longer paints.
   const fsOnly = lifted({}).renderSaveStatus(baseRead, baseDetail({
     current: { writtenAt: null, writtenAgeSeconds: null },
   }));
-  ok('a filesystem-time reading is LABELLED as one on the instrument',
-    /class="cur-mon-key">clock<\/span>/.test(fsOnly), fsOnly.slice(0, 700));
-  ok('...and explained, because "file time" alone does not say what goes wrong',
-    /when it ARRIVED here, not when it was written/.test(fsOnly), fsOnly.slice(0, 1200));
-  ok('...as a MONITOR line — one fact, keyed and valued, with the prose as its '
-    + 'qualifying clause rather than as the whole of it',
-    /class="cur-mon-key">clock<\/span><span class="cur-mon-value">the file’s own</.test(fsOnly),
-    fsOnly.slice(0, 1200));
-  ok('CONTROL: an agent-clock reading says neither', !/file time/.test(
-    lifted({}).renderSaveStatus(baseRead, baseDetail())));
+  eq('a filesystem-time reading paints NOTHING here — it is an explanation, and '
+    + 'step ② opens on its Capture row', fsOnly, '');
+  eq('CONTROL: an agent-clock reading paints nothing either, for the same reason',
+    lifted({}).renderSaveStatus(baseRead, baseDetail()), '');
+  ok('...and neither prints the words "file time", which named a provenance '
+    + 'line this view no longer has',
+  !/file time/.test(fsOnly), fsOnly);
 
-  // BOTH CLOCKS, when they genuinely disagree — the synced case.
+  // BOTH CLOCKS, when they genuinely disagree — the synced case. Also silent
+  // here now; the overview ⓘ tells a reader how to read an unexpected age.
   const synced = lifted({}).renderSaveStatus(baseRead, baseDetail({
     current: {
       writtenAgeSeconds: 3 * 3600,
@@ -711,17 +714,13 @@ section('§8 — The strip answers the other three questions, and only when true
       savedAt: new Date(Date.now() - 30_000).toISOString(),
     },
   }));
-  // THE AGE ITSELF IS THE MEMORY TILE'S NOW (v3.65.1); what this function owes
-  // is the DISAGREEMENT — that the figure above came off the agent's clock and
-  // the file landed here much later. Dropping that would be the view silently
-  // losing a field the store honestly computed, which is the defect class the
-  // memory layer records against itself.
-  ok('a handoff written hours ago and pulled seconds ago still states the ARRIVAL',
-    /class="cur-mon-key">arrived here<\/span><span class="cur-mon-value">[\s\S]{0,120}just now</.test(synced)
-    && /the agent’s own clock, not the file’s/.test(synced),
-  synced.slice(0, 1200));
-  ok('CONTROL: when the two clocks agree, no arrival line appears',
-    !/arrived here/i.test(lifted({}).renderSaveStatus(baseRead, baseDetail())));
+  eq('a handoff written hours ago and pulled seconds ago is silent here too — '
+    + 'the disagreement is an explanation, and it lives in the ⓘ', synced, '');
+  ok('CONTROL: and a save that WARRANTS a warning is not silent, so the checks '
+    + 'above are about the kind of fact and not about the function being dead',
+  /cur-mon-loud/.test(lifted({}).renderSaveStatus(baseRead, baseDetail({
+    current: { lastSaveKind: 'trimmed', lastSaveNotes: ['budget'] } }))),
+  'nothing reaches the page at all');
 
   // NEWER STATE SOMEWHERE ELSE IN THIS PROJECT — the "this scope vs any
   // scope" distinction, which is the one that catches an agent saving beside

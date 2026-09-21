@@ -428,9 +428,15 @@ const trimmedHtml = lifted({}).renderSaveStatus(baseRead, baseDetail({
 // renders NOTHING AT ALL — `renderSaveStatus` returns '' when there is no
 // disclosure and no warning, which is what puts step ②'s four rows at the top
 // of the step on an ordinary project.
-ok('a CLIPPED save is a LINE, never a warning — a note, not an alarm',
-  /cur-mon-line/.test(clippedHtml) && !/cur-mon-loud/.test(clippedHtml)
-    && !/incomplete/.test(clippedHtml), clippedHtml.slice(0, 700));
+// v3.65.1: every ordinary LINE left this function with the unfolded block it
+// stood in — those were explanations, and a step body is fold rows with the
+// explanation in the ⓘ. A clipped save is not an explanation: it is an OUTCOME
+// about a specific save, the sibling of `trimmed`, and it fires only when a
+// save was actually clipped. So it stays on screen, unfolded, as a `loud`
+// entry — and what separates it from `trimmed` is the TONE, not the kind.
+ok('a CLIPPED save is a loud entry in the QUIET tone — a note, not an alarm',
+  /cur-mon-loud cur-mon-quiet/.test(clippedHtml) && !/incomplete/.test(clippedHtml),
+  clippedHtml.slice(0, 700));
 ok('...and it is NOT given the danger treatment',
   !/cur-mon-danger/.test(clippedHtml) && !/mem-badge-attn/.test(clippedHtml), clippedHtml);
 ok('the clipped copy does not claim the state budget was hit',
@@ -444,16 +450,18 @@ ok('the clipped copy DOES say the handoff was written/saved in full — the reas
   // handoff in full" — rather than one hand-built sentence containing the words
   // "written in full". The claim is unchanged; the DOM shape that carries it is
   // `.cur-mon-value` on the wrote line.
-  /cur-mon-key">wrote<\/span><span class="cur-mon-value">the handoff in full<\/span>/.test(clippedHtml),
-  clippedHtml);
+  /That save wrote the handoff in full\./.test(clippedHtml), clippedHtml);
 ok('the clipped copy names WHY the shortened label matters (a future session decides whether to open this state from it)',
   /future session/i.test(clippedHtml) && /deciding whether to open this state/i.test(clippedHtml), clippedHtml);
 ok('the store’s own note is quoted, not paraphrased away',
   clippedHtml.includes('headline: truncated to 200 chars (was 244)'), clippedHtml);
 
 ok('a TRIMMED save keeps the loud, danger treatment — unchanged',
-  /cur-mon-loud cur-mon-danger/.test(trimmedHtml) && !/cur-mon-line/.test(trimmedHtml),
+  /cur-mon-loud cur-mon-danger/.test(trimmedHtml) && !/cur-mon-line\b/.test(trimmedHtml),
   trimmedHtml.slice(0, 700));
+ok('...and the two tones really are different, so the four kinds stay legible',
+  /cur-mon-quiet/.test(clippedHtml) && !/cur-mon-quiet/.test(trimmedHtml),
+  clippedHtml.slice(0, 200) + ' || ' + trimmedHtml.slice(0, 200));
 ok('...and a COMPLETE save renders NOTHING — no instrument, no empty card',
   lifted({}).renderSaveStatus(baseRead, baseDetail()) === '',
   JSON.stringify(lifted({}).renderSaveStatus(baseRead, baseDetail())));

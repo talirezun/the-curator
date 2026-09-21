@@ -3857,9 +3857,17 @@ function renderLayerStrip(read) {
       + '<p>There are TWO clocks behind every age on this page. The <b>agent’s clock</b> is the time the '
       + 'agent itself recorded when it saved, taken from the journal line it wrote. The <b>file’s clock</b> '
       + 'is when the file last changed on this disk — and on a computer that syncs, that is when the file '
-      + 'ARRIVED here, not when it was written. The agent’s clock is used whenever there is one, and a '
-      + 'reading that had to fall back says “file time” in its own provenance line, in words, rather '
-      + 'than in a tooltip.</p>'
+      + 'ARRIVED here, not when it was written. The agent’s clock is used whenever there is one.</p>'
+      // ── AND THE COST OF DELETING THE PROVENANCE LINE, SAID OUT LOUD ────
+      // Through v3.65.0 this paragraph ended *"a reading that had to fall back
+      // says “file time” in its own provenance line"* — and v3.65.1 deleted
+      // that line with the unfolded block it lived in. Leaving the sentence
+      // would have been the app describing an affordance it no longer has,
+      // which is worse than the gap. So the gap is stated, and what to do
+      // about it is stated with it.
+      + '<p>Where no journal line carried a save time, the age you see is the file’s own, and this '
+      + 'screen does not mark which of the two it used. On a computer that syncs, read an age you '
+      + 'did not expect as the moment the file arrived rather than the moment it was written.</p>'
       + '<p>MEMORY reads when the last save happened, not whether anything has changed since — no '
       + 'screen can know that — so it never says you ARE saved, and the inference stays with you.</p>'
       + '<p>Each mark is a COMPARISON that was actually made. Documents kept by The Curator have no '
@@ -3941,10 +3949,26 @@ function renderWorkStreamsFold(read, d) {
   // `workStreamCounts` prints both numbers under the table. A closed line is
   // read to decide whether to open; the second figure is what you open FOR.
   // Nothing is lost — the count line is unchanged and still uncapped.
+  // ── THE HEADLINE LEFT THE SUMMARY (v3.65.1) ───────────────────────────
+  //
+  // It LED this line from v3.55.0 to here, and on a real project it is a
+  // sentence: measured on the maintainer's own fixture it ran 240 characters
+  // and wrapped the meta onto a second line under the row title — a PARAGRAPH
+  // under a fold row, which is the one thing a step body may not contain. The
+  // picture has one line and nothing beneath it while the row is closed.
+  //
+  // IT IS NOT LOST AND IT DID NOT MOVE FAR: the table this row opens carries
+  // it in its WORKING ON column, on the row that wrote it, beside the machine
+  // and the harness — which is where a headline belongs, since there is one
+  // per handoff and the summary could only ever show the newest.
+  //
+  // WHAT IS LEFT is the pair a closed row has to carry to be worth opening:
+  // how many, and how recent. `newestPair` is the same derivation the MEMORY
+  // overview tile uses, so the tile and this line can never name different
+  // saves. `M saved copies` stays in the body's own count line, uncapped.
   const newestWs = newestPair(scopes);
   const savedAge = newestWs ? formatAge(effectiveSave(newestWs).seconds) : null;
   const meta = [
-    headline || null,
     streams === null ? null : streams + ' handoff' + (streams === 1 ? '' : 's'),
     savedAge ? 'saved ' + savedAge : null,
   ].filter(Boolean).join(' · ');
@@ -4020,7 +4044,10 @@ function renderKnowledge() {
   const domains = listed.length ? listed
     : (state.activeDomain ? [state.activeDomain] : []);
 
-  const rows = domains.map((domain) => renderKnowledgeRow(domain)).join('');
+  // `defaulted` rides down to the ROW so the one row that is inherited rather
+  // than chosen says so in a word, where the deleted sentence said it in
+  // forty. A chip on the row it describes; never a paragraph under the step.
+  const rows = domains.map((domain) => renderKnowledgeRow(domain, defaulted)).join('');
   // A malformed `project.json` is the store's own disclosure and is loud: it
   // means the chosen set could not be read, so the rows below are the DEFAULT
   // rather than the choice, and saying nothing would present one as the other.
@@ -4086,7 +4113,7 @@ function knowledgeDotHtml(domain) {
     : '';
 }
 
-function renderKnowledgeRow(domain) {
+function renderKnowledgeRow(domain, defaulted) {
   // BOTH DOORS ARE OFFERED IN EVERY STATE, including the one where the
   // figures failed to arrive: a domain's wiki does not stop existing because
   // a stats read did, and a door withheld for the duration of a failed fetch
@@ -4211,6 +4238,13 @@ function renderKnowledgeRow(domain) {
       // they share a position, so they never do.
       + knowledgeDotHtml(domain)
       + '<span>' + escapeHtml(domain) + '</span>'
+      // ── ONE WORD, NOT A SENTENCE (v3.65.1) ────────────────────────────
+      // This row is here because the project lives in this domain, not because
+      // anybody chose it. The forty-word version of that fact was a paragraph
+      // under the picker and is now step ③'s ⓘ; what a reader needs ON the row
+      // is which of the two it is. The same quiet badge class the documents
+      // table uses for "shared mirror".
+      + (defaulted === true ? '<span class="mem-badge mem-badge-quiet">default</span>' : '')
       + '<span class="mem-fold-meta">' + freshnessDotHtml(d.lastIngestDate)
         + escapeHtml(meta) + '</span>'
     + '</summary>'
@@ -4253,9 +4287,24 @@ function renderKnowledgePicker(chosen, defaulted) {
         : 'Reading the domains on this computer…');
   }
   const rest = all.filter((d) => !chosen.includes(d));
-  // EVERY DISABLED CONTROL STATES ITS REASON (v3.61.1's finding), and the
-  // two reasons here are different facts: nothing left to add, and a write in
-  // flight.
+  // ── THE BODY IS THE HEAD ROW AND THE ROWS, AND NOTHING ELSE (v3.65.1) ─
+  //
+  // Two sentences used to sit under this control: "Every domain on this
+  // computer is already chosen." and the longer one about the default. Both
+  // are EXPLANATIONS, and the maintainer's rule for a step body is that every
+  // part of it is the same fold row with its explanation in the ⓘ — a
+  // paragraph under a control is the shape he rejected on this very screen.
+  //
+  // WHERE EACH WENT, and neither is lost:
+  // · THE DEFAULT — into step ③'s ⓘ, VERBATIM, plus a one-word `default`
+  //   chip on the row it is about, because a reader who never opens the ⓘ
+  //   still has to be able to tell a chosen row from an inherited one. A word
+  //   on the row it describes is not a paragraph under the section.
+  // · "EVERY DOMAIN IS ALREADY CHOSEN" — this is why the picker is ABSENT, and
+  //   v3.61.1's finding is that every withheld control states its reason. It
+  //   stays, because a control that vanishes with no word is the defect that
+  //   finding is about — but only in the state where the picker is gone, so it
+  //   never stands under a control that IS there.
   const note = !rest.length
     ? renderDescription('Every domain on this computer is already chosen.')
     : '';
@@ -4277,12 +4326,7 @@ function renderKnowledgePicker(chosen, defaulted) {
     + '<div class="mem-k-pick">'
       + (rest.length ? renderListboxHtml(cfg) : '')
     + '</div>'
-    + note
-    + (defaulted && chosen.length
-      ? renderDescription('Nothing has been chosen yet, so this project draws on the domain it '
-        + 'lives in. Adding a domain keeps it and adds to it; removing the last one puts the '
-        + 'default back.')
-      : '');
+    + note;
 }
 
 /** ONE cfg object, used by both `renderListboxHtml` and `mountListbox` — two
@@ -4679,7 +4723,30 @@ function renderCaptureMeter() {
   // ABOVE this one — "Last saved 47 min ago" beside "no agent session in the
   // last 30 days", both true — and it names the remedy, which is why it
   // outranks the other two rather than queueing behind them.
-  const notice = f.note
+  // ── AND ONE OF ITS THREE TENANTS IS GATED (v3.65.1) ───────────────────
+  //
+  // MEASURED on an isolated copy with NO usage log at all: the row's summary
+  // read "no usage log on this computer yet" and this note read "Saves in this
+  // window arrived through a bridge that logged no sessions — restart the app
+  // that launched it" — an alarm and a remedy for a bridge nobody ran, beside
+  // a sentence already saying the log does not exist. A false alarm about a
+  // fault the user cannot act on is worse than silence.
+  //
+  // THE ROOT CAUSE IS AT THE PRODUCER and is reported rather than patched
+  // here: src/routes/memory.js:2829 computes
+  // `noSessionsButSaves = totals.sessions === 0 && newestSaveMs >= sinceMs`
+  // with NO term for the log existing, so a machine that has saves on disk and
+  // has never opened a bridge takes that arm before the `!present` one right
+  // under it. The route owns the sentence and should carry the third term.
+  //
+  // THE VIEW'S GATE IS STRUCTURAL, not a read of the prose: `noSessionsButSaves`
+  // is the flag that says WHICH note this is, and `logPresent` is on the same
+  // envelope. With no log the note is withheld and the row's own summary is
+  // the whole answer; the other two tenants — an absent log, a log that began
+  // after the window opened — are untouched and still unfolded, because an
+  // outcome may never sit behind a chevron (v3.16.1).
+  const noteIsFalseAlarm = f.noSessionsButSaves === true && f.logPresent !== true;
+  const notice = (f.note && !noteIsFalseAlarm)
     ? renderStatus({ state: 'neutral', title: f.note })
     : '';
 
@@ -5102,6 +5169,14 @@ function renderProject() {
       + 'to read it. Each machine writes to its OWN folder, which is what makes two computers safe '
       + 'over sync: no two of them ever touch one file. So one thread can appear as several rows — '
       + 'one saved copy per machine — and the count under the table says both numbers.</p>'
+      // ── WHAT "WRITTEN ON ANOTHER MACHINE" COSTS (v3.65.1) ───────────
+      // The sentence that used to ride under a `written on <machine>` line in
+      // an instrument above these rows. The FACT is the table's own MACHINE
+      // column, per row; what it MEANS is an explanation, and an explanation
+      // lives here.
+      + '<p>A handoff written on <b>another machine</b> — the table says which — was observed '
+      + 'there: local paths and processes may differ from what it describes, so read its next '
+      + 'steps against your own checkout before acting on them.</p>'
       + '<p>Two rows sharing a thread AND a machine cannot happen; two <b>harnesses</b> on one '
       + 'machine can, and they overwrite each other, because the folder has no harness segment. '
       + 'This step says so when the journal shows it, and the remedy is to give each tool its own '
@@ -5200,6 +5275,12 @@ function renderProject() {
       + '<p>Ingest and chat write it; nothing on this page does. It belongs to the <b>domain</b> '
       + 'rather than to this project, so every project in this domain draws on the same pages and '
       + 'these figures move when you ingest, not when an agent saves.</p>'
+      // THE SENTENCE THAT LEFT THE BODY (v3.65.1), verbatim. It was a
+      // paragraph under the picker; a step body is rows, and an explanation
+      // lives here.
+      + '<p>Nothing has been chosen yet, so this project draws on the domain it lives in — the '
+      + 'row marked <b>default</b>. Adding a domain keeps it and adds to it; removing the last '
+      + 'one puts the default back.</p>'
       + '<p>The counts are taken by walking the folder rather than by reading any page, and no '
       + 'model is called to draw them — opening this screen costs nothing.</p>',
     bodyHtml: renderKnowledge(),
@@ -5418,7 +5499,6 @@ function renderSaveStatus(read, d) {
   // one with a flag: a flag is something a later edit can flip, and flipping
   // it would put a warning behind a chevron.
   const lines = [];
-  const detail = [];
 
   // ── "WORKING ON" LEFT THIS FUNCTION (v3.62.0) ───────────────────────────
   //
@@ -5486,12 +5566,20 @@ function renderSaveStatus(read, d) {
       // false alarm this verdict replaces. See the real case recorded on
       // `classifySaveNotes`: a 244-char headline clipped to 200 chars, body
       // untouched, badged and worded as if content had been lost.
-      detail.push({
-        key: 'wrote',
-        value: 'the handoff in full',
-        sub: 'What got shortened is a label attached to the save — most often its one-line summary '
-          + '— not the handoff’s content. That label is the only thing a future session sees before '
-          + 'deciding whether to open this state. ' + firstNote(cur.lastSaveNotes),
+      // ── A CLIPPED SAVE IS A LOUD ENTRY IN THE QUIET TONE (v3.65.1) ────
+      // It is an OUTCOME about a specific save — the sibling of `trimmed` one
+      // arm up — and it fires only when a save was actually clipped, which is
+      // what earns it a place outside the chevron. What separates it from
+      // `trimmed` is the TONE, not the kind: nothing about the handoff was
+      // lost, only a label was shortened, and badging that as an alarm is the
+      // exact defect this verdict exists to fix. `quiet` says "read this"
+      // without saying "something is wrong".
+      lines.push({
+        tone: 'quiet',
+        text: 'That save wrote the handoff in full. What got shortened is a label attached to it '
+          + '— most often its one-line summary — not the handoff’s content. That label is the only '
+          + 'thing a future session sees before deciding whether to open this state. '
+          + firstNote(cur.lastSaveNotes),
       });
     } else if (kind === 'replaced') {
       lines.push({
@@ -5500,35 +5588,27 @@ function renderSaveStatus(read, d) {
       });
     }
 
-    if (eff.source === 'filesystem') {
-      detail.push({
-        key: 'clock',
-        value: 'the file’s own',
-        sub: 'No journal entry carried a save time for this handoff. On a computer that syncs, a '
-          + 'file’s own timestamp is when it ARRIVED here, not when it was written.',
-      });
-    } else {
-      // NO `clock: the agent's own` LINE, and the omission is deliberate.
-      // Adding one would make `detail` non-empty on EVERY save, which would
-      // give the healthy reading a chevron that opens on one uninteresting
-      // line — and v3.64.2 chose the flat row for exactly that reason ("an
-      // empty chevron invites a click that does nothing"). The good clock is
-      // the default the ⓘ above already describes; only the fallback is news.
-      // BOTH CLOCKS, when they genuinely disagree. Under two minutes they are
-      // the same event to a human — a save's own write takes milliseconds — so
-      // a gap larger than that means the file changed on this disk well after
-      // the agent wrote it, which is what a pull looks like.
-      const arrived = effectiveSave({ savedAt: cur.arrivedAt || cur.savedAt || cur.lastWriteAt });
-      if (arrived.seconds !== null && eff.seconds !== null && eff.seconds - arrived.seconds > 120) {
-        detail.push({
-          key: 'arrived here',
-          value: formatAge(arrived.seconds) || 'recently',
-          markHtml: '<span class="fresh-dot fresh-' + freshnessTier(arrived.seconds)
-            + '" aria-hidden="true"></span>',
-          sub: 'The reading above is the agent’s own clock, not the file’s.',
-        });
-      }
-    }
+    // ── THE TWO CLOCKS AND THE MACHINE LEFT THIS FUNCTION (v3.65.1) ──
+    //
+    // They were `detail` lines — `clock: the file's own`, `arrived here`,
+    // `written on <machine>` — rendered in an instrument that stood UNFOLDED
+    // at the top of step ②. The maintainer's rule for a step body is that
+    // every part of it is the same fold row and that an explanation lives in
+    // the ⓘ and nowhere else; a bare block of provenance above four rows is
+    // the shape he rejected, and these three are explanations and provenance,
+    // not warnings.
+    //
+    // NOTHING IS DROPPED, and each half went somewhere it is already read:
+    // · WHICH CLOCK, and that a synced file's own timestamp is when it
+    //   ARRIVED — the overview ⓘ's two-clocks paragraph, verbatim and
+    //   unchanged, which is on this page above every age it qualifies.
+    // · WHICH MACHINE — the Handoffs table's own MACHINE column, per row,
+    //   which is more precise than one line about the open pair; what that
+    //   COSTS a reader ("paths and processes may differ") is a sentence in
+    //   step ②'s ⓘ.
+    // So `detail` is gone and this function composes warnings only. On a
+    // healthy project it returns '' and step ② opens on its Capture row with
+    // nothing above it, which is the acceptance picture.
   }
 
   // ── TWO HARNESSES, ONE HANDOFF FILE ─────────────────────────────────────
@@ -5570,25 +5650,16 @@ function renderSaveStatus(read, d) {
     }
   }
 
-  // ── "WHAT YOU ARE READING WAS WRITTEN SOMEWHERE ELSE" ───────────────────
-  // This was a `from <machine>` badge and a note beside the machine picker.
-  // The picker is gone; the FACT is not, and it is a real signal rather than
-  // decoration: the next steps in the handoff below were observed on another
-  // computer, so paths, running processes and local checkouts may not match
-  // what is in front of you.
+  // ── "WRITTEN SOMEWHERE ELSE" IS THE TABLE'S COLUMN NOW (v3.65.1) ───────
+  // It was a `written on <machine>` line with a sentence under it, rendered
+  // unfolded above step ②'s four rows. It is PROVENANCE, not a warning, and
+  // the Handoffs table below names the machine PER ROW in a column of its own
+  // — which is both more precise and already on screen. What the fact COSTS a
+  // reader — that paths, running processes and local checkouts may not match
+  // what the handoff describes — is one sentence in step ②'s ⓘ.
   //
-  // POSITIVE EVIDENCE ONLY — an explicit `false`, never an absent field. An
-  // older response that omits `machineIsThisMachine` must not be reported as
-  // either answer. And it is a rendered LINE, not a `title=`: it used to be a
-  // tooltip on a non-focusable span, so the one sentence explaining why the
-  // steps below may not apply reached neither keyboard nor touch users.
-  if (d && d.machineIsThisMachine === false) {
-    detail.push({
-      key: 'written on',
-      value: d.machine || 'another machine',
-      sub: 'Synced here — local paths and processes may differ from what the handoff describes.',
-    });
-  }
+  // The positive-evidence rule it carried is unchanged and now lives where the
+  // table is built: an explicit `false`, never an absent field.
 
   // ── "ANOTHER COMPUTER SAVED AFTER THIS ONE" ─────────────────────────────
   // The menubar widget's `newerElsewhereNotice`, which a Windows or Linux user
@@ -5667,9 +5738,9 @@ function renderSaveStatus(read, d) {
   // component would also return '' for an empty set, but a host that relies on
   // that renders `<section></section>` the moment the component gains a
   // default line, so the decision is made HERE, where the facts are.
-  if (!detail.length && !lines.length) return '';
+  if (!lines.length) return '';
   const instrument = renderMonitor({
-    label: 'About the last save', lines: detail, loud: lines,
+    label: 'Warnings about the last save', lines: [], loud: lines,
   });
   // NO `.mem-section`. This is the first thing inside step ②'s body, not a
   // top-level sibling, so the page's 24px block rhythm must not apply to it —
