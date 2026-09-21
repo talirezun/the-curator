@@ -18,8 +18,20 @@
 // The Domains grid is the reference design and it moved here UNCHANGED in
 // value: same tile padding, same radius, same 22px figure, same transparent
 // chrome inside the group, same hover / focus / pressed / press-nudge
-// vocabulary. What the Context view gains is that shape; what the Domains
-// page gains is nothing visible at all, which is the acceptance test.
+// vocabulary.
+//
+// ── v3.65.0: ONE TILE, ONE RUNG ───────────────────────────────────────────
+// Two things that had made the two hosts still look unlike each other are
+// gone, and both were measured rather than argued (see the two blocks in
+// renderOverview): the separate JUMP ROW, which drew SOURCES / SHARED /
+// CAPTURE at 92.8 x 46.4 beside 181.8 x 78.9 stat tiles inside one card —
+// *"an entirely different design than the five on top"* — and the second
+// FIGURE RUNG (`figure: 'phrase'`), which made the Context values 17px beside
+// the Domains values' 22px. A jump is now an ordinary card with `jump:` set,
+// and a host whose values are phrases raises the grid's track FLOOR
+// (`minTrack`) instead of dropping its type. The Domains OVERVIEW therefore
+// changes VISIBLY for the first time — its SOURCES and SHARED tiles join the
+// grid at tile geometry — and that is the decision, not a regression.
 //
 // ── THE CLASS NAMES, AND WHY THERE ARE TWO SETS ───────────────────────────
 // The kit's own names are `cur-ov-*` and they carry EVERY rule
@@ -81,21 +93,23 @@ function cls(kit, alias) {
  *   infoLabel?: string,       // the ⓘ's accessible name
  *   infoHtml?: boolean,       // treat `infoText` as trusted markup
  *   alias?: string,           // 'dm' adds the Domains page's historical tokens
- *   figure?: 'display'|'phrase', // 'display' (default) is the 22px count; 'phrase'
- *                             // is the 17px rung, for a value that is a sentence
+ *   minTrack?: number,        // px: the grid's track FLOOR (--cur-ov-min).
+ *                             // Omitted, the stylesheet's 110px stands. The
+ *                             // only thing a host may tune, and it exists so
+ *                             // a view whose values are PHRASES gets wider
+ *                             // tracks rather than a smaller type rung.
  *   cards: Array<{
  *     label: string,          // the small mono caption
- *     value: string,          // the large figure or phrase
+ *     value: string,          // the figure or phrase, at the ONE display rung
  *     sub?: string,           // an optional second line under the value
  *     toneClass?: string,     // an ink class the HOST stylesheet owns
  *     markHtml?: string,      // TRUSTED — a freshness dot, rendered before the value
  *     facet?: string,         // makes the card a toggle over a filter
  *     active?: boolean,       // that toggle's state; only meaningful with `facet`
  *     jump?: string,          // makes the card a jump; `facet` wins if both are given
+ *     hidden?: boolean,       // rendered but not shown, for a reading not yet in
  *     name?: string,          // the control's accessible name
  *   }>,
- *   jumps?: Array<{ key: string, label: string, value: string, name?: string,
- *                   hidden?: boolean }>,
  * }} o
  * @returns {string} HTML — '' when there is no id, no eyebrow or no card.
  */
@@ -112,19 +126,23 @@ export function renderOverview(o) {
 
   const alias = typeof opts.alias === 'string' ? classList(opts.alias) : '';
   const dm = alias === 'dm';
-  // ── THE ONE DIVERGENCE THE TWO ADOPTERS ARE ALLOWED IN THE FIGURE ──────
-  // A COUNT and a PHRASE are different content. `--text-2xl` is the type
-  // standard's one deliberate exception and it is what makes "3,416" read as
-  // an instrument; the same size on "saved 12 min ago" wraps to two lines in
-  // a three-track grid at 1370px — MEASURED on the real store, where "saved
-  // 57 min ago" broke after "min" and "24 documents" broke after "24".
+  // ── THE SECOND FIGURE RUNG IS GONE, AND THE MEASUREMENT THAT KILLED IT ──
+  // v3.64.2 added `figure: 'phrase'` — one rung down, 22px -> 17px — because
+  // "at --text-2xl in a three-track grid at 1370px, 'saved 57 min ago' broke
+  // after 'min'". RE-MEASURED at the real column width, that wrap does not
+  // happen: with the value's own content box at 277.7px (the 3-track grid at
+  // 1370), every realistic value renders on ONE line at 22px — `saved 57 min
+  // ago` 174.8px, `no agent session` 167.2, `saved 15 hr ago` 158.9, `24
+  // documents` 144.6, `not set up yet` 134.4, `1,980 pages` 126.9 (intrinsic
+  // widths, dot included). It wraps only below ~207px of track content, which
+  // is a 1024px window — or a 1370px one with the ONBOARDING GUIDE DOCKED,
+  // narrowing `.main-inner` from 959px to 647px (shell.css:1274). That is
+  // almost certainly the state the original figure was taken in.
   //
-  // So `figure: 'phrase'` drops ONE rung, to the 17px block-title face, and
-  // that is the only option this component takes. The v3.65.0 design record
-  // proposed exactly this and called it "the ONLY divergence allowed between
-  // the two adopters"; scripts/test-next-overview-kit.js §1c enumerates it
-  // rather than allowing differences in general.
-  const phrase = opts.figure === 'phrase';
+  // So the narrow case is fixed where it actually lives — the TRACK — with a
+  // host-settable floor (`minTrack` -> `--cur-ov-min`, default 110px) rather
+  // than with a second type rung. One rung, one instrument: two views whose
+  // figures are different sizes are two designs, which is the whole report.
 
   const info = renderInfoMark(
     id, opts.infoLabel || ('About ' + eyebrow.toLowerCase()),
@@ -140,7 +158,6 @@ export function renderOverview(o) {
     const mark = typeof c.markHtml === 'string' ? c.markHtml : '';
     return '<div class="cur-eyebrow">' + escapeHtml(c.label) + '</div>' +
       '<div class="' + cls('cur-ov-value', dm ? 'dm-stat-value' : '')
-        + (phrase ? ' cur-ov-value-phrase' : '')
         + (tone ? ' ' + tone : '') + '">' + mark + escapeHtml(String(c.value)) + '</div>' +
       (c.sub ? '<div class="cur-ov-sub">' + escapeHtml(String(c.sub)) + '</div>' : '');
   };
@@ -162,15 +179,25 @@ export function renderOverview(o) {
   // reads the SOURCE, so `class="' + klass + '"` is a button with no
   // readable class at all — which is exactly what it reported the first time
   // this file was written that way.
+  // ── A TILE IS RENDERED AND HIDDEN, NEVER OMITTED ───────────────────────
+  // When a card's answer has not arrived yet, it ships with the `hidden`
+  // attribute and is revealed by one attribute write with NO repaint —
+  // because a re-render to reveal it would remount whatever the section
+  // hosts, and on the domain page that is a live ingest drop target. An
+  // OMITTED tile means the reading simply never appears, which is the
+  // green-first mutation v3.64.2 closed. `[hidden]` loses to an author
+  // `display:` at any specificity, so shared/overview.css carries the
+  // counter-rule for the card.
   const card = (c) => {
     const alias2 = dm ? ' dm-stat-card' : '';
     const name = typeof c.name === 'string' && c.name ? c.name : c.label;
+    const hidden = c.hidden === true ? ' hidden' : '';
     if (typeof c.facet === 'string' && c.facet) {
       return '<button type="button" class="cur-ov-card' + alias2 + '"' +
         ' data-ov-facet="' + escapeHtml(c.facet) + '"' +
         (dm ? ' data-stat-facet="' + escapeHtml(c.facet) + '"' : '') +
         ' aria-pressed="' + (c.active === true ? 'true' : 'false') + '"' +
-        ' aria-label="' + escapeHtml(name) + '">' + body(c) + '</button>';
+        ' aria-label="' + escapeHtml(name) + '"' + hidden + '>' + body(c) + '</button>';
     }
     if (typeof c.jump === 'string' && c.jump) {
       // NOT A TOGGLE, so no `aria-pressed` — aria-pressed on a control that
@@ -178,41 +205,44 @@ export function renderOverview(o) {
       return '<button type="button" class="cur-ov-card' + alias2 + '"' +
         ' data-ov-jump="' + escapeHtml(c.jump) + '"' +
         (dm ? ' data-stat-jump="' + escapeHtml(c.jump) + '"' : '') +
-        ' aria-label="' + escapeHtml(name) + '">' + body(c) + '</button>';
+        ' aria-label="' + escapeHtml(name) + '"' + hidden + '>' + body(c) + '</button>';
     }
-    return '<div class="cur-ov-card' + alias2 + '">' + body(c) + '</div>';
+    return '<div class="cur-ov-card' + alias2 + '"' + hidden + '>' + body(c) + '</div>';
   };
 
-  // ── THE JUMP ROW — A SECOND ROW INSIDE THE SAME GROUP ──────────────────
-  // These are not figures. They carry a date or a state and they open
-  // something further down the page, so they sit outside the equal-width
-  // tracks of the grid: a seven-track row would narrow every count to make
-  // room for two words, and putting them in the grid would say they are more
-  // of the same number. A tile is RENDERED and HIDDEN rather than omitted
-  // when its answer has not arrived, because the answer arrives after this
-  // paint and a re-render to reveal it would remount whatever the section
-  // hosts. `[hidden]` loses to an author `display:` at any specificity, so
-  // shared/overview.css carries the counter-rule.
-  const jumps = Array.isArray(opts.jumps) ? opts.jumps.filter(
-    (j) => j && typeof j === 'object' && typeof j.key === 'string' && j.key) : [];
-  const jumpRow = jumps.length
-    ? '<div class="' + cls('cur-ov-jumps', dm ? 'dm-jump-row' : '') + '">' +
-      jumps.map((j) => '<button type="button" class="cur-ov-jump'
-        + (dm ? ' dm-jump-card' : '') + '"' +
-        ' data-ov-jump="' + escapeHtml(j.key) + '"' +
-        (dm ? ' data-stat-jump="' + escapeHtml(j.key) + '"' : '') +
-        ' aria-label="' + escapeHtml(j.name || j.label || j.key) + '"' +
-        (j.hidden === true ? ' hidden' : '') + '>' +
-        '<div class="cur-eyebrow">' + escapeHtml(j.label || '') + '</div>' +
-        '<div class="' + cls('cur-ov-jump-value', dm ? 'dm-jump-value' : '') + '">' +
-          escapeHtml(String(j.value == null ? '—' : j.value)) + '</div>' +
-      '</button>').join('') +
-      '</div>'
-    : '';
+  // ── THE JUMP ROW IS GONE. A JUMP IS AN ORDINARY CARD. ──────────────────
+  // It was a second row inside the same group, with its own classes, its own
+  // padding and its own type rung, and it MEASURED as a different object:
+  // 92.8 x 46.4 at x=401, beside a 181.8 x 78.9 stat tile at x=385 — a
+  // different size, a different height and a 16px indent, inside one card.
+  // The report was exactly that: *"SOURCES 14 days ago — I don't understand
+  // why it is here and why it is an entirely different design than the five
+  // on top"*.
+  //
+  // The argument for the separate row was that a seven-track grid would
+  // narrow every count to make room for two words. `auto-fit` with a floor
+  // answers that properly: the tracks are equal, the host raises the floor
+  // when its values are phrases (`minTrack`), and the row wraps to a second
+  // line of the SAME tiles rather than becoming a different object.
+  //
+  // Nothing else had to move: `data-ov-jump` / `data-stat-jump` are emitted
+  // by the card path above, which is what `bindStatCardListeners` already
+  // addresses.
+
+  // ── THE TRACK FLOOR, THE ONE THING A HOST MAY TUNE ─────────────────────
+  // A number of PIXELS, validated and re-formatted here — never interpolated
+  // as a string, because a custom property's value lands in a `style`
+  // attribute and a caller-composed one is an attribute injection with a
+  // paint. Out of range or not a number: the stylesheet's own 110px default
+  // stands, and the attribute is not emitted at all.
+  const minTrack = Number.isFinite(opts.minTrack)
+    && opts.minTrack >= 60 && opts.minTrack <= 400
+    ? Math.round(opts.minTrack) : null;
 
   const sectionClass = classList(opts.sectionClass);
   return (
-    '<section class="cur-ov' + (sectionClass ? ' ' + sectionClass : '') + '">' +
+    '<section class="cur-ov' + (sectionClass ? ' ' + sectionClass : '') + '"' +
+      (minTrack ? ' style="--cur-ov-min:' + minTrack + 'px"' : '') + '>' +
       '<div class="' + cls('cur-ov-head', dm ? 'dm-section-head-row' : '') + '">' +
         '<div class="' + cls('cur-ov-eyebrow cur-group-title',
           dm ? 'dm-section-eyebrow' : '') + '">' + escapeHtml(eyebrow) + '</div>' +
@@ -223,7 +253,6 @@ export function renderOverview(o) {
         '<div class="' + cls('cur-ov-grid', dm ? 'dm-stats-grid' : '') + '">' +
           cards.map(card).join('') +
         '</div>' +
-        jumpRow +
       '</div>' +
     '</section>'
   );

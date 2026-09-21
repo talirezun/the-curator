@@ -1,0 +1,196 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   shared/sidebar.css — THE SIDEBAR
+
+   Every rule here is the DOMAINS sidebar's, reproduced UNCHANGED IN VALUE
+   from views/domains.css. That sidebar is the reference design — the
+   maintainer's own words, against the Context one: *"I suggest we go with
+   the Domains design, which is more polished"* — so nothing below is new
+   geometry. Same 2px list gap, same 7px/8px row padding, same 9px column
+   gap, same 8px identity dot, same --text-2xs meta line, same
+   `--mat-row-*` alpha overlays for hover / active / press, same 1px
+   translateX nudge.
+
+   WHAT IS ADDITIVE AND WHAT IS NOT, stated because it decides what a host
+   package may delete. The kit's names (`cur-sb-*`) and the hosts' historical
+   tokens (`dm-row*`, `mem-row*`, `settings-nav-*`) ride the SAME elements,
+   so while both sets of rules exist they paint the same values and nothing
+   moves. A view that deletes its own copy is then painted by this file
+   alone — and must move whatever suite pins that rule BY NAME
+   (scripts/test-next-views-kit.js §8 is the one that pins `.dm-row:hover`
+   and `.mem-row:hover` to `--mat-row-*`).
+
+   WHAT IS NOT HERE, AND WHY IT CANNOT BE:
+   · The six IDENTITY COLOURS. Three of the light-theme values are derived
+     literals (#16768C / #438126 / #925E13 — there is no --entity-700), and
+     scripts/test-next-design-kit.js §10 permits colour literals in exactly
+     TWO /next stylesheets while asserting the baseline holds exactly two
+     files. Widening an anti-drift ratchet to ship a kit is backwards, so the
+     palette stays in views/domains.css where it is already baselined and
+     already measured; `identityDotClass()` carries the MAPPING and its
+     docblock says what the adopting release adds to that rule's selector
+     list. This file declares the dot's SHAPE only.
+   · Any `.fresh-*` rule. shared/freshness.css owns that prefix and
+     scripts/test-freshness-scale.js §4 forbids a view or kit stylesheet
+     declaring one. The mark arrives as the caller's `markHtml`.
+   · Any `tx-*` rule. shared/text.css owns that prefix
+     (scripts/test-next-text-system.js).
+
+   WHY IT IS A FILE AND NOT A BLOCK IN shell.css: index.html links the view
+   stylesheets LAST, so a rule a second view depends on has to sit at a
+   knowable point in the cascade — the argument shared/overview.css and
+   shared/block.js both record. It is linked BEFORE the view sheets, so a
+   view may still override while it still owns a copy.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── THE GROUP HEAD ───────────────────────────────────────────────────────
+   10px, and the value is not new: it is the `style="margin-top:10px"` that
+   views/domains.js wrote INLINE on its KNOWLEDGE eyebrow, which is the one
+   thing in that sidebar no stylesheet could reach. The type is
+   `.cur-eyebrow`'s, from shell.css, and is not restated here — one eyebrow
+   idiom, declared once. */
+.cur-sb-group-head { margin-top: 10px; }
+
+/* A second group under a first one needs the same separation the first gets
+   from the buttons above it. Context renders one group per domain. */
+.cur-sb-list + .cur-sb-group-head { margin-top: var(--space-8); }
+
+.cur-sb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ── THE TOP SLOT ─────────────────────────────────────────────────────────
+   A primary and a secondary, stacked, each taking the column. The values are
+   `.dm-new-btn` and `.dm-kb-btn`'s. */
+.cur-sb-primary { width: 100%; }
+.cur-sb-secondary { width: 100%; margin-top: 8px; }
+
+/* ── THE ROW ──────────────────────────────────────────────────────────────
+   `border: none` is load-bearing rather than a reset: a <button> with no
+   author border falls through to Chromium's 2px OUTSET UA bevel, which is
+   what reads as "a button with some sort of shadow"
+   (scripts/test-next-button-chrome.js §1 enumerates every button in /next
+   for exactly this). `font: inherit` is the other half — a UA <button>
+   brings its own family, size and centred text. */
+.cur-sb-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  font: inherit;
+  transition: background var(--t-state), color var(--t-state), transform var(--t-press);
+}
+
+/* ROWS ON THE SIDEBAR MATERIAL TAKE THE ALPHA OVERLAY, never an absolute
+   surface colour — an opaque fill stops the blur for the width of the row and
+   reads as a hole punched in the plane. Measured on that plane:
+   --mat-row-hover steps 1.17:1 dark and 1.13:1 light, against 1.00 / 1.009
+   for the --surface-hover it replaced. */
+.cur-sb-row:hover { background: var(--mat-row-hover); }
+
+/* ── ACTIVE IS THE FILLED ROW. THERE IS NO LEFT LINE. ─────────────────────
+   Settings drew its selection as a 2px × 32.75px violet `::before` bar, and
+   nothing else in the app did: *"if I select General I get a violet line on
+   the left; we don't get this in Domains or Context ... it is a completely
+   other design which got in during development"*. One selection idiom, and
+   it is this one. A component that offers both offers a future divergence. */
+.cur-sb-row.active { background: var(--mat-row-active); color: var(--text); }
+.cur-sb-row.active .cur-sb-name { font-weight: var(--weight-medium); }
+
+/* PRESS. A row in a vertical stack nudges along the axis it does NOT scroll
+   in — a 1px vertical shift inside a 2px-gap list reads as the list breathing
+   rather than as this row being pressed. The background step lands on the
+   SAME token `.active` uses, deliberately: pressing an unselected row is the
+   gesture that is about to select it, so previewing the selected surface for
+   the length of the hold is honest, and pressing an ALREADY-selected row then
+   changes nothing but the nudge instead of appearing to deselect. Declared
+   after `.active` because the two tie on specificity. */
+.cur-sb-row:active { background: var(--mat-row-active); transform: translateX(var(--press-shift)); }
+
+/* ── THE IDENTITY DOT — SHAPE ONLY ────────────────────────────────────────
+   Deliberately NOT the same shape or ink as the freshness mark beside it:
+   this one is the item's IDENTITY and carries no state, that one is the
+   state and carries no identity. Two marks that looked alike would read as
+   one scale. Its COLOUR comes from the host's own class — see the file
+   header, and identityDotClass()'s docblock for what the host adds. */
+.cur-sb-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.cur-sb-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.cur-sb-name {
+  font-size: var(--text-md);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── THE META LINE ────────────────────────────────────────────────────────
+   A FLEX ROW, not a sentence: the mark and the clock glyph sit BETWEEN the
+   figure and the age, so they cannot be produced by splitting a formatted
+   string — which is what the Context rail did, and why it had no clock.
+   `align-items: center` keeps an 8px dot and a 12px glyph on the same optical
+   baseline as 11px text. */
+.cur-sb-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  min-width: 0;
+  font-variant-numeric: var(--numeric-tabular);
+}
+/* The figure ticks as pages are written or scopes are saved, so it takes
+   tabular figures — restated on the figure itself so the rule reads alike
+   whether or not the line above it is scoped. */
+.cur-sb-figure { flex: none; font-variant-numeric: var(--numeric-tabular); }
+.cur-sb-sep { flex: none; color: var(--text-2); }
+/* The age is the one part of the line allowed to give way: a long phrase
+   ("12 months ago") must never push the dot or the figure out of the row. */
+.cur-sb-age { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The clock glyph, styled by ELEMENT: shared/age.js emits it without a class
+   because `tx-` belongs to shared/text.css and nothing else may define one.
+   --text-2, not the --text-3 a pure graphic would be allowed — it reads the
+   same and the floor stays where it is. */
+.cur-sb-meta svg { flex: none; color: var(--text-2); }
+
+/* ── LINE THREE — WHAT LAST HAPPENED ──────────────────────────────────────
+   ONE line, always: a source title or an agent's headline is arbitrary length
+   and a row that grew to four lines would push the rest of the list off the
+   fold. --text-2, NOT a third-rank colour: the hierarchy is carried by
+   POSITION — this line sits under the one with the figure and the mark. */
+.cur-sb-event {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Reduced motion ───────────────────────────────────────────────────────
+   The press transform is off; the background step stays, because a colour
+   change is not motion and it is what actually acknowledges the click. Last
+   in the file because a media query adds no specificity and would otherwise
+   lose to the later of two tied `.class:pseudo` rules. */
+@media (prefers-reduced-motion: reduce) {
+  .cur-sb-row:active { transform: none; }
+}
