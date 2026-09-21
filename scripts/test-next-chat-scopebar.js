@@ -53,6 +53,11 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+/* THE REAL `renderReadout`, imported rather than stubbed. shared/text.js
+   imports nothing and touches no browser global, so it loads in Node as it
+   loads in the browser — which makes §11's footer assertions statements about
+   the markup a user is served, not about a fixture that resembles it. */
+import { renderReadout, renderReadoutGroup } from '../src/public/next/shared/text.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CHAT_JS = path.join(ROOT, 'src/public/next/views/chat.js');
@@ -194,6 +199,12 @@ function render(over = {}) {
   }, over);
 
   const captured = { html: null, token: null };
+  /* WHAT `mountListbox` WAS HANDED. The queue itself is drained by renderMain
+     (§6 asserts that), so it is empty by the time a section could read it —
+     and the cfg is the contract for anything the kit renders from a FIELD
+     rather than from markup (`footHtml`, §11). Recording at the mount point
+     catches exactly the object the real kit would have closed over. */
+  const mounted = [];
   const src =
     'let myMountToken = 1;\n' +
     extractConst(chatSrc, 'COMPILE_MIN_USER_MESSAGES') + '\n' +
@@ -208,13 +219,27 @@ function render(over = {}) {
        is the module-level queue the real code pushes a cfg onto; it is
        declared here because the sandbox has no module scope. */
     'const pendingListboxes = [];\n' +
+    /* v3.65.0 — the module-level handle on the MOUNTED picker's cfg. It is
+       declared here for the same reason `pendingListboxes` is: the sandbox has
+       no module scope, and an undeclared assignment inside a lifted body would
+       silently create a global in sloppy mode instead of failing. */
+    'let projectLbCfg = null;\n' +
     extractFunction(chatSrc, 'activeProjectRow') + '\n' +
     extractFunction(chatSrc, 'projectFigureText') + '\n' +
+    /* v3.65.0, P10 — the knowledge-domain disclosure. All REAL: the set, the
+       chip producer and the readout, so §15's assertions are about the markup
+       a user is served rather than about a fixture shaped like it. */
+    extractFunction(chatSrc, 'projectKnowledgeSet') + '\n' +
+    extractFunction(chatSrc, 'scopePillLabelFor') + '\n' +
+    extractFunction(chatSrc, 'scopePillAriaFor') + '\n' +
+    extractFunction(chatSrc, 'scopePillHtml') + '\n' +
+    extractFunction(chatSrc, 'projectKnowledgeReadout') + '\n' +
+    extractFunction(chatSrc, 'projectFootHtml') + '\n' +
     extractFunction(chatSrc, 'projectListboxCfg') + '\n' +
     extractFunction(chatSrc, 'projectGroupHtml') + '\n' +
     extractFunction(chatSrc, 'projectInfoPanelHtml') + '\n' +
     extractFunction(chatSrc, 'renderMain') + '\n' +
-    'return { renderMain, compileControlHtml, compileCaptionText, compileMessageCount, compileTurnCounts, projectGroupHtml, pendingListboxes };';
+    'return { renderMain, compileControlHtml, compileCaptionText, compileMessageCount, compileTurnCounts, projectGroupHtml, projectFootHtml, pendingListboxes, peekProjectLbCfg: () => projectLbCfg };';
 
   const api = new Function(
     'document', 'state', 'isCurrentMount', 'setMain', 'escapeHtml', 'icon',
@@ -222,6 +247,7 @@ function render(over = {}) {
     'renderComposerHtml', 'wireComposer', 'renderThreadOnly', 'renderComposerPickers',
     'startCompile', 'switchDomain', 'reportAsyncActionFailure',
     'renderListboxHtml', 'formatAge', 'freshnessTier', 'selectChatProject', 'mountListbox',
+    'renderReadoutGroup',
     src
   )(
     {
@@ -257,12 +283,15 @@ function render(over = {}) {
     () => {},
     /* Mounting is shared/listbox.js's job and needs a real document. That the
        QUEUE is drained at all is what this file cares about — §6 asserts it
-       is emptied, so the composer's own pass cannot inherit a stale cfg. */
-    () => {},
+       is emptied, so the composer's own pass cannot inherit a stale cfg — and
+       WHICH cfgs were handed over, which is §11's subject. */
+    (cfg) => { mounted.push(cfg); },
+    /* NOT a stub: the real kit function, imported at the top of this file. */
+    renderReadoutGroup,
   );
 
   api.renderMain(1);
-  return { state, api, html: captured.html, tree: parseTree(captured.html || '') };
+  return { state, api, mounted, html: captured.html, tree: parseTree(captured.html || '') };
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -792,55 +821,35 @@ section('§8 — THE PROJECT GROUP\'S THREE STATES, told apart rather than merge
   ok(/could not be read/i.test(failed_.html),
     'ON A FAILED READ: the group says so rather than showing an empty picker that silently sends nothing');
 
-  /* THE FRESHNESS MARK exists only for a PINNED project — a dot beside
-     "No project" would be a fact about nothing — and it is the SHARED scale:
-     a `fresh-<tier>` class from shared/freshness.css, with the age in WORDS
-     beside it so colour is never the only carrier. */
-  const unpinned = render();
-  ok(!findByClass(unpinned.tree, 'chat-project-readout'),
-    'UNPINNED: no freshness readout, because there is nothing for it to be about');
+  /* THE BAR CARRIES NAMES ONLY (v3.65.0). The freshness mark and the measured
+     reading used to sit on the controls row; they are the picker's footer now
+     (§11 proves where they went and that they still update). What this section
+     pins is the ABSENCE — an element whose rule has been deleted must not be
+     re-emitted by a later edit, in any of the four project states. */
+  for (const [label, over] of [
+    ['UNPINNED', {}],
+    ['PINNED', { activeProject: 'curator' }],
+    ['NEVER SAVED', { activeProject: 'lumina' }],
+    ['AFTER A TURN', { activeProject: 'curator', projectLastUsed: { chars: 12288 } }],
+  ]) {
+    const r = render(over);
+    ok(!findByClass(r.tree, 'chat-project-readout'),
+      `${label}: no readout in the BAR — the group is an eyebrow and a control`);
+    ok(!/id="chat-project-figure"/.test(r.html),
+      `${label}: …and no figure node in the bar either`);
+    ok(!/KB read/.test(r.html), `${label}: …nothing in the bar claims a reading`);
+    ok(!/fresh-dot/.test(r.html), `${label}: …and no freshness dot`);
+  }
 
-  const pinned = render({ activeProject: 'curator' });
-  const readout = findByClass(pinned.tree, 'chat-project-readout');
-  ok(!!readout, 'PINNED: the readout appears');
-  const dot = readout.children.find((c) => c.classes.includes('fresh-dot'));
-  ok(!!dot, '…with the shared freshness dot');
-  ok(dot.classes.some((c) => /^fresh-(live|recent|today|week|dormant|unknown)$/.test(c)),
-    '…carrying a tier from the app-wide scale and not a private one');
-  eq(dot.attrs['aria-hidden'], 'true', '…marked aria-hidden, because the words beside it say the same thing');
-  ok(/saved/.test(readout.text), '…and the age is in WORDS, so colour is never the only carrier');
-
-  /* A PROJECT THAT HAS NEVER BEEN SAVED TO is a third fact, and it must not
-     be painted as "just now". */
-  const neverSaved = render({ activeProject: 'lumina' });
-  ok(/no saves yet/.test(findByClass(neverSaved.tree, 'chat-project-readout').text),
-    'A NEVER-SAVED project reads "no saves yet", never an age it does not have');
-
-  /* THE MEASURED READING of the last turn rides the readout, in its OWN
-     addressable node — `sendCurrentMessage` patches that one element's text
-     when an answer lands rather than repainting the group, so the id is part
-     of the contract and not an incidental hook. */
-  const withReading = render({ activeProject: 'curator', projectLastUsed: { chars: 12288 } });
-  const fig = findByClass(withReading.tree, 'chat-project-figure');
-  ok(!!fig, 'the measured reading has its own node');
-  eq(fig.attrs.id, 'chat-project-figure',
-    '…with the id the post-turn patch addresses, so the patch has a target that cannot move silently');
-  ok(ancestorClasses(fig).includes('chat-project-readout'), '…inside the readout it belongs to');
-  ok(/12 KB read/.test(fig.text),
-    'after a turn it states what the project context actually contributed');
-  const emptyFig = findByClass(pinned.tree, 'chat-project-figure');
-  ok(!!emptyFig && emptyFig.text.trim() === '',
-    'CONTROL: before any turn the node is present but EMPTY — no figure at all rather than a zero');
-  ok(!/KB read/.test(findByClass(pinned.tree, 'chat-project-readout').text + (emptyFig.text || '')),
-    'CONTROL: and nothing anywhere in the readout claims a reading');
-
-  /* ONE PRODUCER for the figure. The renderer and the post-turn patch must
-     not print it two ways, which is what a second format string here would
-     mean — the duplication shape this repo records most often. */
-  ok((chatSrc.match(/projectFigureText\(/g) || []).length >= 3,
-    'the figure comes from ONE producer, called by both the renderer and the post-turn patch');
-  ok(/figureEl\.textContent = projectFigureText\(/.test(chatSrc),
-    '…and the post-turn update is a TARGETED patch, not a repaint of the group');
+  /* ONE PRODUCER for the figure, and ONE for the footer that carries it. A
+     second format string, or a second place that builds the footer, is the
+     duplication shape this repo records most often. */
+  ok((chatSrc.match(/projectFigureText\(/g) || []).length >= 2,
+    'the figure comes from ONE producer');
+  eq((chatSrc.match(/return Math\.round\(used\.chars \/ 1024\)/g) || []).length, 1,
+    '…and the KB arithmetic appears exactly once in the file');
+  eq((chatSrc.match(/footHtml = projectFootHtml\(\)|footHtml: projectFootHtml\(\)/g) || []).length, 2,
+    'the footer has ONE builder, used by the cfg and by the post-turn update — and by nothing else');
   ok(!/patchProjectGroup\(mountToken\)/.test(chatSrc),
     'CONTROL: a turn does NOT repaint the project group — that would rebuild the picker, and close an open menu, to move one figure');
 }
@@ -952,69 +961,175 @@ section('§9 — THE BAR WRAPS, SO NO ACTION CAN BE CLIPPED (v3.64.1)');
 // ════════════════════════════════════════════════════════════════════════
 section('§10 — THE EYEBROW SAYS DOMAINS, BECAUSE THE CHIPS ARE DOMAINS (v3.64.1)');
 // ════════════════════════════════════════════════════════════════════════
-// A *scope* in this app is a work-stream inside a project — `state/<project>/
-// <scope>/…`, `scope: "latest"`, the Context view's own vocabulary. The chips
-// under this eyebrow are DOMAINS, one per knowledge base. One word naming two
-// different things in one product is how a reader learns to trust neither.
-{
-  const { tree, html } = render();
-  const scopeGroup = findByClass(tree, 'chat-scope-group');
-  const eyebrow = scopeGroup.children.find((c) => c.classes.includes('chat-scope-eyebrow'));
-  ok(!!eyebrow, 'the domain group carries an eyebrow');
-  eq(eyebrow.text.trim(), 'DOMAINS', 'and it reads DOMAINS');
-  /* NOT a bare `!/SCOPE/` over the whole markup: `.chat-scope-*` CLASS names
-     stay (two suites assert DOM paths through them) and the readout's own
-     phrase "in scope" is ordinary English about how much wiki the
-     conversation can see, not a reference to a work-stream. So the assertion
-     is on the EYEBROW's own text, which is the string that was wrong. */
-  ok(/chat-scope-group/.test(html),
-    'CONTROL: the class names are untouched — only the visible word moved');
-  const count = findByClass(tree, 'chat-scope-count');
-  ok(/in scope/.test(count.text),
-    'CONTROL: the readout keeps "in scope", which is English about the wiki and not the memory layer\'s noun');
-
-  /* THE PROJECT EYEBROW IS UNCHANGED, and the two must stay different words —
-     one selects a knowledge base, the other selects a project's context. */
-  const projectGroup = findByClass(tree, 'chat-project-group');
-  const pRow = projectGroup.children.find((c) => c.classes.includes('chat-project-controls'));
-  const pEyebrow = pRow.children.find((c) => c.classes.includes('chat-scope-eyebrow'));
-  eq(pEyebrow.text.trim(), 'PROJECT', 'the project group still says PROJECT');
-  ok(eyebrow.text.trim() !== pEyebrow.text.trim(), 'and the two eyebrows are different words');
-}
-
+section('§11 — THE READING MOVED INTO THE PICKER\'S FOOTER, AND STILL UPDATES (v3.65.0)');
 // ════════════════════════════════════════════════════════════════════════
-section('§11 — THE SAVED-AGE READOUT STAYS IN THE BAR, BESIDE THE PICKER');
-// ════════════════════════════════════════════════════════════════════════
-// The v3.65.0 design pass proposes moving this readout into the listbox's
-// `cfg.footHtml` slot. That slot renders inside `.lb-menu` (shared/listbox.js
-// menuHtml → rendered at :442 and :760), which exists ONLY while the menu is
-// open — so the freshness of the pinned project would be invisible until you
-// opened a picker to change it, and `#chat-project-figure`, which
-// sendCurrentMessage patches after every turn, would not be in the document to
-// patch. That is a deliberate v3.65.0 trade with a guard designed for it; it
-// is NOT this hotfix's behaviour, and this section pins the hotfix's.
+// THIS SECTION REVERSES ITS OWN v3.64.1 SELF, and the previous text is the
+// reason this one is as long as it is. It read: "The v3.65.0 design pass
+// proposes moving this readout into the listbox's `cfg.footHtml` slot. That
+// slot renders inside `.lb-menu`, which exists ONLY while the menu is open —
+// so the freshness of the pinned project would be invisible until you opened
+// a picker to change it, and `#chat-project-figure`, which sendCurrentMessage
+// patches after every turn, would not be in the document to patch. That is a
+// deliberate v3.65.0 trade with a guard designed for it."
+//
+// BOTH HALVES OF THAT OBJECTION ARE TRUE AND BOTH ARE ANSWERED HERE.
+//  • The FRESHNESS half is a real cost and is paid, not argued away: the
+//    pinned project's age is now one press from the bar instead of on it. It
+//    is not lost — every option row already carries its own project's age as
+//    `detail` (§11c drives that), so the press that hides it also shows the
+//    ages of ALL of them. Recorded so the trade is a decision on the record.
+//  • The PATCH half is the guard, and §11d executes it rather than reading
+//    for it: the post-turn update writes `cfg.footHtml` FIRST — which is what
+//    the next menu build reads — and touches the DOM only if a footer happens
+//    to be live. Without that ordering the figure would freeze the moment the
+//    picker closed, which is every moment but one.
 {
-  const pinned = render({ activeProject: 'curator', projectLastUsed: { chars: 12288 } });
-  const readout = findByClass(pinned.tree, 'chat-project-readout');
-  ok(!!readout, 'the readout is rendered');
-  ok(ancestorClasses(readout).includes('chat-project-group'),
-    '…inside the project group, beside the picker it is about');
-  ok(!ancestorClasses(readout).some((c) => /^lb-/.test(c)),
-    '…and NOT inside the picker\'s menu, which is in the document only while it is open');
-  const trigger = findByClass(pinned.tree, 'lb-btn');
-  ok(nearestCommonAncestor(trigger, readout).classes.includes('chat-project-controls'),
-    'the nearest container holding the picker and the readout is the CONTROLS row — they read as one line, ' +
-    'and the panel that opens under them cannot come between them');
-  /* ONE LINE, NO ORPHAN: the readout, the figure and the age are one element
-     with one text run, so nothing can be left stranded on a row of its own by
-     a wrap between them. */
-  eq(readout.children.filter((c) => c.classes.includes('chat-project-figure')).length, 1,
-    'the measured figure is a child of the readout, not a loose sibling somewhere else in the bar');
-  const fig = readout.children.find((c) => c.classes.includes('chat-project-figure'));
-  ok(/saved/.test(readout.text),
-    'the age is in the readout\'s own text run');
-  ok(/KB read/.test(fig.text),
-    '…and what the project contributed is in the figure node nested inside it, so one wrap cannot separate them');
+  // ── §11a — THE FOOTER IS A CFG FIELD, WHICH IS THE REAL CONTRACT ──────
+  // shared/listbox.js reads `cfg.footHtml` when it BUILDS the menu, so the
+  // string on the cfg IS what a user is served. The sandbox's listbox stub
+  // cannot render it (the menu is the kit's, on <body>), so these assertions
+  // read the queued cfg — the same object `mountListbox` is handed.
+  const pinned = render({ activeProject: 'curator' });
+  const cfg = pinned.mounted[0];
+  ok(!!cfg && cfg.id === 'chat-project-lb', 'the project picker queues its cfg');
+  ok(typeof cfg.footHtml === 'string' && cfg.footHtml.length > 0,
+    'PINNED: the cfg carries a footer');
+  ok(/tx-readout/.test(cfg.footHtml),
+    '…rendered through shared/text.js\'s readout, not a hand-built row');
+  ok(/saved/.test(cfg.footHtml), '…stating the age in WORDS');
+  ok(/fresh-dot fresh-(live|recent|today|week|dormant|unknown)/.test(cfg.footHtml),
+    '…with a tier from the app-wide freshness scale and not a private one');
+  ok(/aria-hidden="true"/.test(cfg.footHtml),
+    '…and the dot is aria-hidden, because the words beside it say the same thing');
+  ok(/>curator</.test(cfg.footHtml), '…and it names the project it is about');
+
+  // ── §11b — THREE STATES, AND THE ABSENCES ARE THE INTERESTING ONES ────
+  const unpinned = render();
+  const cfgU = unpinned.mounted[0];
+  eq(cfgU.footHtml, '',
+    'UNPINNED: no footer at all — with nothing pinned there is no reading to take, ' +
+    'and shared/listbox.js omits `.lb-foot` entirely for an empty string');
+  const never = render({ activeProject: 'lumina' });
+  ok(/no saves yet/.test(never.mounted[0].footHtml),
+    'A NEVER-SAVED project reads "no saves yet", never an age it does not have');
+  ok(!/KB read/.test(pinned.mounted[0].footHtml),
+    'CONTROL: before any turn the footer claims NO reading — no zero, no placeholder');
+  const after = render({ activeProject: 'curator', projectLastUsed: { chars: 12288 } });
+  ok(/12 KB read last turn/.test(after.mounted[0].footHtml),
+    'AFTER A TURN: the footer states what the project context actually contributed');
+  ok(/tx-readout-prov/.test(after.mounted[0].footHtml),
+    '…in the readout\'s provenance slot, which is what that slot is for');
+  ok(!/tx-readout-prov/.test(pinned.mounted[0].footHtml),
+    'CONTROL: and that slot does not exist before there is a measurement to put in it');
+
+  // ── §11c — THE COST IS BOUNDED: THE MENU ALREADY SHOWS EVERY AGE ──────
+  // This is what makes hiding the pinned project's mark a trade rather than a
+  // loss, so it is asserted rather than asserted-about-in-a-comment.
+  const rows = after.mounted[0].options.filter((o) => o.value);
+  ok(rows.length >= 2, 'the picker offers every project in the domain');
+  ok(rows.every((o) => typeof o.detail === 'string' && o.detail.length > 0),
+    '…each row carrying its OWN age, so the press that hides one mark reveals all of them');
+  ok(rows.some((o) => o.detail === 'no saves'),
+    '…including "no saves" for a project that has never been saved to');
+
+  // ── §11e — THE HANDLE IS DROPPED WHEN THERE IS NO PICKER ────────────
+  // Three of the group's four states render no picker at all. The cfg handle
+  // must go with the trigger that is leaving the document, or a turn landing
+  // afterwards would republish onto a dead object — and, worse, read as
+  // though a picker were mounted when none is.
+  /* DRIVEN AS A TRANSITION, NOT AS A FRESH RENDER, and mutation M11 is why:
+     a new sandbox starts with the handle already null, so rendering a
+     no-picker state into a FRESH one passes whether the drop exists or not.
+     The defect is a picker that WAS mounted and then was not, so the sequence
+     has to be exactly that — one sandbox, one state object, two renders. */
+  for (const [label, over] of [
+    ['WHILE LOADING', { projectsState: 'loading', projectRows: [] }],
+    ['WITH NO PROJECTS', { projectsState: 'ready', projectRows: [] }],
+    ['ON A FAILED READ', { projectsState: 'error', projectRows: [] }],
+  ]) {
+    const r = render({ activeProject: 'curator' });
+    ok(!!r.api.peekProjectLbCfg(), `${label} — CONTROL: a picker was mounted first, so there IS a handle to drop`);
+    Object.assign(r.state, over);
+    r.api.renderMain(1);
+    eq(r.api.peekProjectLbCfg(), null,
+      `${label}: the cfg handle is dropped, so nothing republishes onto a trigger that has left`);
+  }
+
+  // ── §11d — THE GUARD, DRIVEN ───────────────────────────────
+  // The real `patchProjectFooter`, against a document that models the ONE
+  // thing that matters: whether a menu is in it. Both arms are executed — the
+  // common one (shut: the cfg is updated and nothing is touched) and the rare
+  // one (open: the live footer is rewritten too).
+  {
+    const state = {
+      activeDomain: 'articles', activeProject: 'curator',
+      projectLastUsed: null,
+      projectsState: 'ready',
+      projectRows: [{ project: 'curator', ageSeconds: 600 }],
+    };
+    const src =
+      extractFunction(chatSrc, 'activeProjectRow') + '\n' +
+      extractFunction(chatSrc, 'projectFigureText') + '\n' +
+      extractFunction(chatSrc, 'projectKnowledgeReadout') + '\n' +
+      extractFunction(chatSrc, 'projectFootHtml') + '\n' +
+      extractFunction(chatSrc, 'patchProjectFooter') + '\n' +
+      'return { patchProjectFooter, projectFootHtml };';
+    const make = (doc, cfgHandle) => new Function(
+      'document', 'state', 'projectLbCfg', 'formatAge', 'freshnessTier', 'renderReadoutGroup',
+      src,
+    )(doc, state, cfgHandle,
+      (sec) => (sec === null ? 'unknown' : Math.round(sec / 60) + ' min ago'),
+      (sec) => (sec === null ? 'unknown' : 'today'),
+      renderReadoutGroup);
+
+    /* CONTROL FIRST: with no picker mounted there is nothing to republish and
+       nothing may be touched. A `patchProjectFooter` that assumed a cfg would
+       throw here, on a domain whose projects failed to read. */
+    let touched = 0;
+    const blindDoc = { getElementById: () => { touched++; return null; } };
+    /* CAUGHT, not allowed to propagate. Without the guard this THROWS on
+       `null.footHtml` — which is the production behaviour too, on a domain
+       whose project read failed — and an uncaught throw here would abort the
+       whole run instead of reporting one failed assertion. Mutation M6
+       (the guard deleted) is what made this distinction worth writing down. */
+    let threw = null;
+    try { make(blindDoc, null).patchProjectFooter(); } catch (e) { threw = e; }
+    ok(threw === null,
+      'NO PICKER MOUNTED: the update returns instead of throwing' + (threw ? ` (threw ${threw.message})` : ''));
+    eq(touched, 0, '…and before it looks for anything');
+
+    /* THE COMMON ARM: the menu is SHUT, so there is no `.lb-foot` in the
+       document. The cfg must still be brought up to date, because that string
+       is what the next open renders. */
+    const cfgShut = { footHtml: 'STALE' };
+    const shutDoc = { getElementById: () => null };
+    state.projectLastUsed = { chars: 12288 };
+    make(shutDoc, cfgShut).patchProjectFooter();
+    ok(/12 KB read last turn/.test(cfgShut.footHtml),
+      '★ MENU SHUT: the cfg is republished anyway — the next open shows the new figure');
+    ok(!/STALE/.test(cfgShut.footHtml), '…and the stale string is gone');
+
+    /* THE RARE ARM: an answer lands while the picker is open. */
+    const foot = { innerHTML: 'STALE' };
+    const menu = { querySelector: (sel) => (sel === '.lb-foot' ? foot : null) };
+    const openDoc = { getElementById: (id) => (id === 'chat-project-lb-menu' ? menu : null) };
+    const cfgOpen = { footHtml: 'STALE' };
+    make(openDoc, cfgOpen).patchProjectFooter();
+    ok(/12 KB read last turn/.test(foot.innerHTML),
+      '★ MENU OPEN: the live footer is rewritten too, so an open picker does not show yesterday\'s figure');
+    ok(foot.innerHTML === cfgOpen.footHtml,
+      '…with the SAME string the cfg got — one producer, so the two cannot disagree');
+
+    /* THE MENU'S ID IS THE KIT'S OWN PUBLIC CONTRACT (`cfg.id + '-menu'`, what
+       the trigger's aria-controls names), so the view may construct it. Pinned
+       because a rename in the kit must break this loudly rather than leave the
+       open-menu arm silently dead. */
+    ok(/chat-project-lb-menu/.test(chatSrc),
+      'the open-menu arm addresses the menu by the kit\'s documented id');
+    ok(/aria-controls="' \+ escapeHtml\(id\) \+ '-menu"/.test(
+      readFileSync(path.join(ROOT, 'src/public/next/shared/listbox.js'), 'utf8')),
+      '…and that id really is what the kit names on the trigger, read from the kit itself');
+  }
 }
 
 
@@ -1086,8 +1201,11 @@ section('§12 — AN OPEN ⓘ SURVIVES A BACKGROUND REPAINT OF ITS GROUP (v3.64.
     const calls = { closed: 0, mounted: 0 };
     const src =
       'const pendingListboxes = [];\n' +
+      'let projectLbCfg = null;\n' +
       extractFunction(chatSrc, 'activeProjectRow') + '\n' +
       extractFunction(chatSrc, 'projectFigureText') + '\n' +
+      extractFunction(chatSrc, 'projectKnowledgeReadout') + '\n' +
+      extractFunction(chatSrc, 'projectFootHtml') + '\n' +
       extractFunction(chatSrc, 'projectListboxCfg') + '\n' +
       extractFunction(chatSrc, 'projectInfoPanelHtml') + '\n' +
       extractFunction(chatSrc, 'projectGroupHtml') + '\n' +
@@ -1096,6 +1214,7 @@ section('§12 — AN OPEN ⓘ SURVIVES A BACKGROUND REPAINT OF ITS GROUP (v3.64.
     const api = new Function(
       'document', 'state', 'isCurrentMount', 'escapeHtml', 'closeAllListboxes',
       'renderListboxHtml', 'formatAge', 'freshnessTier', 'selectChatProject', 'mountListbox',
+      'renderReadoutGroup',
       src
     )(
       doc, state, () => true, escapeHtmlStub,
@@ -1105,6 +1224,7 @@ section('§12 — AN OPEN ⓘ SURVIVES A BACKGROUND REPAINT OF ITS GROUP (v3.64.
       (sec) => (sec === null ? 'unknown' : 'today'),
       () => {},
       () => { calls.mounted++; },
+      renderReadoutGroup,
     );
     return { api, calls };
   }
@@ -1138,6 +1258,671 @@ section('§12 — AN OPEN ⓘ SURVIVES A BACKGROUND REPAINT OF ITS GROUP (v3.64.
     '★ and is still shown — a fetch the user did not ask for cannot close what they opened');
   ok(pOpen.calls.closed === 2,
     'CONTROL: the repaint still closes any open LISTBOX menu each time — that trigger really has left the document');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§13 — ONE SELECTOR PARADIGM: THE PICKER WEARS THE CHIP\'S FACE (v3.65.0)');
+// ════════════════════════════════════════════════════════════════════════
+// THE REPORT: "the domain chips and the project dropdown are two paradigms
+// side by side." The chips stay the always-visible selector; the picker takes
+// their FACE. Two things are asserted here and the SECOND is the load-bearing
+// one — the face is copied into a class of its own and `.chat-scope-pill` is
+// NOT reused, because that class carries a press transform and
+// shared/listbox.css refuses a transform on a trigger for a measured reason
+// (the open menu is held in place by a rAF loop watching the trigger's rect,
+// and a transform is in that rect). scripts/test-next-press-motion.js pins the
+// two families on opposite sides of that line, so one element carrying both
+// classes would sit under `moves: true` and `moves: false` at once.
+{
+  const { html } = render();
+  const chatCss = readFileSync(path.join(ROOT, 'src/public/next/views/chat.css'), 'utf8');
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+  const bodyOf = (sel) => {
+    const m = new RegExp('(?:^|\\})\\s*' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}')
+      .exec(strip(chatCss));
+    return m ? m[1] : '';
+  };
+
+  const cfg = render({ activeProject: 'curator' }).mounted[0];
+  ok(/\bchat-project-pill\b/.test(String(cfg.triggerClass)),
+    'the trigger asks for the chip face by class');
+  ok(!/\bchat-scope-pill\b/.test(String(cfg.triggerClass)),
+    '★ …and NOT `chat-scope-pill`: that class presses with a transform, which ' +
+    'shared/listbox.css refuses on a trigger because the open menu is positioned from its rect');
+  ok(!/\bchat-lb\b/.test(String(cfg.triggerClass)),
+    'CONTROL: the composer\'s 220px-capped face is gone from this trigger — it is a pill now, not a field');
+  ok(/\blb-sm\b/.test(String(cfg.triggerClass)),
+    'it keeps the kit\'s small SIZE variant rather than inventing a third height');
+
+  const face = bodyOf('.chat-project-lb-root .lb-btn.chat-project-pill');
+  ok(face !== '', 'CONTROL: the face rule was found (an empty body makes every line below vacuous)');
+  const chip = bodyOf('.chat-scope-pill');
+  for (const [prop, why] of [
+    ['border-radius', 'the pill radius'],
+    ['height', 'the 28px box'],
+    ['border', 'the hairline'],
+  ]) {
+    const a = (new RegExp(prop + ':\\s*([^;]+)').exec(face) || [])[1];
+    const b = (new RegExp(prop + ':\\s*([^;]+)').exec(chip) || [])[1];
+    ok(!!a && !!b && a.trim() === b.trim(),
+      `${why} is the chips' own value, not a second one (${String(a).trim()} vs ${String(b).trim()})`);
+  }
+  ok(/background:\s*transparent/.test(face),
+    '…on the chips\' transparent ground, not the kit\'s inset fill');
+  ok(!/transform/.test(face) && !/transform/.test(bodyOf('.chat-project-lb-root .lb-btn.chat-project-pill:hover:not(:disabled)')),
+    'and NOTHING here declares a transform — see the rAF argument above');
+
+  /* THE GROUP KEEPS ITS EYEBROW AND ITS HAIRLINE. "One paradigm" is about the
+     two controls looking alike, not about erasing the statement that they
+     select different kinds of thing. */
+  ok(/PROJECT/.test(html), 'the group still carries its PROJECT eyebrow');
+  ok(/border-left:\s*1px solid/.test(bodyOf('.chat-project-group')),
+    '…and its left hairline, which is what says these are two kinds of selection');
+  ok(/min-width:\s*9\.5rem/.test(bodyOf('.chat-project-lb-root .lb-btn')),
+    '…and the trigger keeps its min-width, so a long slug does not move what is beside it');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§14 — THE VIOLET LEFT LINE IS GONE FROM THE CONVERSATION ROWS (R10)');
+// ════════════════════════════════════════════════════════════════════════
+// The maintainer, on the Settings sidebar: "if I select General I get a violet
+// line on the left; we don't get this in Domains or Context — make it the same
+// as Domains, we don't need this line, it is a completely other design which
+// got in during development." `.settings-nav-row::before` and
+// `.chat-conv-row::before` were ONE paradigm, so they go together; Settings'
+// half lands in the same release (scripts/test-next-press-motion.js:603's
+// EDGE_SELECTORS holds both names and is that package's file).
+//
+// WHAT IS ASSERTED: the rule is GONE, and what replaces it is the Domains
+// sidebar's own pair — the overlay fill plus a title that changes weight AND
+// ink. Both halves, because a fill alone at this alpha is a 1.3:1 step and the
+// text is what carries the state at a legible contrast.
+{
+  const chatCss = readFileSync(path.join(ROOT, 'src/public/next/views/chat.css'), 'utf8');
+  const dmCss = readFileSync(path.join(ROOT, 'src/public/next/views/domains.css'), 'utf8');
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+  const bare = strip(chatCss);
+
+  ok(!/\.chat-conv-row::before\s*\{/.test(bare),
+    '★ there is no `.chat-conv-row::before` rule left');
+  ok(!/\.chat-conv-row\.active::before/.test(bare),
+    '★ …and none on the active row either');
+  ok(!/\.chat-conv-row::before/.test(strip(chatCss).replace(/@media[^{]*\{/g, '')),
+    '…including inside the reduced-motion block, whose entry went with it');
+  ok(/chat-conv-row::before/.test(chatCss),
+    'CONTROL: the removal is EXPLAINED in a comment — an unexplained deletion is how a rule comes back');
+
+  /* THE REPLACEMENT IS THE DOMAINS PATTERN, READ FROM DOMAINS. Not a
+     hand-copied expectation: the assertion compares the two files, so a change
+     to the reference moves this pin with it. */
+  const decl = (css, sel, prop) => {
+    const m = new RegExp('(?:^|\\})\\s*' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}')
+      .exec(strip(css));
+    if (!m) return null;
+    const d = new RegExp(prop + ':\\s*([^;]+)').exec(m[1]);
+    return d ? d[1].trim() : null;
+  };
+  eq(decl(chatCss, '.chat-conv-row.active', 'background'),
+     decl(dmCss, '.dm-row.active', 'background'),
+     'the active conversation row is filled with the SAME token the Domains sidebar\'s active row uses');
+  eq(decl(chatCss, '.chat-conv-row.active .chat-conv-title', 'font-weight'),
+     decl(dmCss, '.dm-row.active .dm-row-name', 'font-weight'),
+     '…and its title takes the same weight step');
+  ok(decl(chatCss, '.chat-conv-row.active .chat-conv-title', 'color') === 'var(--text)',
+    '…and steps its INK too, so the state is not carried by a 1.3:1 fill alone');
+  ok(decl(chatCss, '.chat-conv-title', 'color') !== 'var(--text)',
+    'CONTROL: an inactive title really is quieter, so that step is a difference and not a no-op');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§15 — THE PINNED PROJECT\'S KNOWLEDGE DOMAINS (v3.65.0, P10)');
+// ════════════════════════════════════════════════════════════════════════
+// The store gained `knowledgeDomains` / `knowledgeDomainsDefaulted` on
+// `GET /api/memory/:domain/:project`. The design record asks Chat to
+// "pre-select those domain chips when the project is pinned (retrieval across
+// them, the existing multi-domain scope)".
+//
+// THERE IS NO MULTI-DOMAIN SCOPE IN CHAT, and §15d EXECUTES the two reasons
+// rather than asserting them in prose. So this view DISCLOSES the set and
+// MARKS those chips; it does not move the selection. Everything below pins
+// that distinction from both sides — the mark is rendered, and the selection
+// is not touched.
+{
+  const KN = (over) => Object.assign({
+    project: 'curator', domains: ['articles'], defaulted: true, missing: [], error: false,
+  }, over);
+
+  // ── §15a — THE DEFAULT IS NOT A CHOICE, AND IS NOT MARKED ───────────────
+  {
+    const r = render({ activeProject: 'curator', projectKnowledge: KN({ domains: ['articles'], defaulted: true }) });
+    ok(!/in-project/.test(r.html),
+      '★ A DEFAULTED list marks NOTHING — it names the domain the chips are already on, and marking it ' +
+      'would dress "nobody has chosen" up as a choice');
+    const foot = r.mounted[0].footHtml;
+    ok(/the default/.test(foot) && /nobody has chosen/.test(foot),
+      '…and the footer says so in those words, because the store keeps the two facts apart on purpose');
+    ok(!/aria-label=/.test(r.html.slice(r.html.indexOf('chat-scope-pills'), r.html.indexOf('chat-scope-count'))),
+      'CONTROL: no chip gains an accessible name it does not need');
+  }
+
+  // ── §15b — A CHOSEN SET IS MARKED, AND THE SELECTION IS UNTOUCHED ───────
+  {
+    const r = render({
+      domains: [
+        { slug: 'articles', displayName: 'Articles', pageCount: 1406 },
+        { slug: 'research', displayName: 'Research', pageCount: 30 },
+        { slug: 'business', displayName: 'Business', pageCount: 50 },
+      ],
+      activeDomain: 'articles',
+      activeProject: 'curator',
+      projectKnowledge: KN({ domains: ['research', 'business'], defaulted: false }),
+    });
+    const pills = [...r.tree.children[0].children ? [] : []]; // (tree walked by class below)
+    const marked = (r.html.match(/class="chat-scope-pill in-project"/g) || []).length;
+    eq(marked, 2, 'both chosen domains are marked');
+    ok(/data-scope-domain="research"[^>]*aria-label="Research — in this project/.test(r.html)
+       || /aria-label="Research — in this project[^"]*"[^>]*data-scope-domain="research"/.test(r.html),
+      '★ …and the mark is in the accessible NAME too, so colour is never the only carrier');
+    ok(/aria-label="Research — in this/.test(r.html),
+      '…with the visible label as its PREFIX, so "label in name" still holds');
+    eq((r.html.match(/chat-scope-pill active/g) || []).length, 1,
+      '★ THE SELECTION IS UNTOUCHED: exactly ONE chip is active');
+    ok(/class="chat-scope-pill active" data-scope-domain="articles"/.test(r.html),
+      '…and it is still the domain the user was on, NOT one the project named');
+    const foot = r.mounted[0].footHtml;
+    ok(/2 domains/.test(foot), 'the footer names how many domains the project reads');
+    ok(/research/.test(foot) && /business/.test(foot), '…and names them');
+    ok(/chosen for this project/.test(foot), '…and says the owner chose them');
+    ok(/this chat is reading articles/.test(foot),
+      '★ …and states what THIS conversation is actually reading, which is the fact the mark could be misread as');
+    /* TWO READOUTS, NOT ONE LINE. The turn's reading and the project's domains
+       are different facts; this file exists because two unrelated facts went
+       adjacent once and a user misread one as the other. */
+    ok(/tx-readout-group/.test(foot), 'the footer is a readout GROUP, so the two facts keep their own labels');
+    eq((foot.match(/class="tx-readout"/g) || []).length, 2, '…and there are exactly two of them');
+  }
+
+  // ── §15b2 — THE MARK IS NOT A SELECTION, IN CSS TOO ───────────────
+  // Mutation F14 is why this exists: turning the mark into `--accent-tint` +
+  // `--accent-text` — i.e. making a named chip look exactly like the selected
+  // one — left every markup assertion above green, because the markup was
+  // still right. The claim "a marked chip does not read as selected" is about
+  // the RULE, so it is asserted on the rule.
+  {
+    const chatCss = readFileSync(path.join(ROOT, 'src/public/next/views/chat.css'), 'utf8');
+    const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+    const bodyOf = (sel) => {
+      const m = new RegExp('(?:^|\\})\\s*' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}')
+        .exec(strip(chatCss));
+      return m ? m[1] : '';
+    };
+    const mark = bodyOf('.chat-scope-pill.in-project');
+    ok(mark !== '', 'CONTROL: the mark rule was found (an empty body makes the lines below vacuous)');
+    ok(!/background/.test(mark),
+      '★ the mark declares NO background — the ground belongs to `.active`, which is the one chip whose wiki is read');
+    ok(!/(^|[^-])color\s*:/.test(mark),
+      '★ …and no text colour either, for the same reason');
+    const active = bodyOf('.chat-scope-pill.active');
+    ok(/background/.test(active),
+      'CONTROL: `.active` really does own a ground, so the two states are told apart by more than a border');
+    ok(/border-style:\s*dashed/.test(mark),
+      'the mark is a DASHED edge — "belongs to a set", not "selected"');
+    ok(!/border-style:\s*dashed/.test(active),
+      'CONTROL: and the selected chip is not dashed, so the two never look alike');
+    /* ── THE MARK MUST NOT BE THE PLAIN CHIP'S OWN COLOUR ─────────────────
+       FOUND IN THE BROWSER, not by this suite: the first cut used
+       `--accent-border`, which composited to 1.65:1 against the bar where the
+       plain chip's edge is 1.27:1 — a mark you cannot find, and in the
+       SELECTED chip's own hue. A mark that measures like no mark is the
+       failure mode here, so the token is pinned by name and separated from
+       both neighbours. */
+    const plainDecl = /border:\s*1px\s+solid\s+var\(([^)]+)\)/.exec(bodyOf('.chat-scope-pill'));
+    ok(!!plainDecl, 'CONTROL: the plain chip declares its own border token');
+    const markColor = (/border-color:\s*var\(([^)]+)\)/.exec(mark) || [])[1];
+    ok(!!markColor && markColor.trim() !== plainDecl[1].trim(),
+      `★ the mark's colour is NOT the plain chip's (${markColor} vs ${plainDecl[1]})`);
+    const activeColor = (/border-color:\s*var\(([^)]+)\)/.exec(active) || [])[1];
+    ok(!!activeColor && markColor.trim() !== activeColor.trim(),
+      `★ …and NOT the selected chip's either (${markColor} vs ${activeColor}) — "marked" and "selected" ` +
+      'are different states and must not share an edge colour');
+    ok(/border-color:\s*var\(--accent\)\s*;?\s*$|border-color:\s*var\(--accent\)\s*;/.test(mark.trim() + ';'),
+      '…and it is the full-strength accent, which measured 4.41:1 against the bar (the 3:1 floor for a mark)');
+  }
+
+  // ── §15c — A DOMAIN THAT IS NOT ON THIS COMPUTER ────────────────────────
+  {
+    const r = render({
+      domains: [{ slug: 'articles', displayName: 'Articles', pageCount: 1406 },
+                { slug: 'research', displayName: 'Research', pageCount: 30 }],
+      activeDomain: 'articles',
+      activeProject: 'curator',
+      projectKnowledge: KN({ domains: ['research', 'gone'], defaulted: false, missing: ['gone'] }),
+    });
+    eq((r.html.match(/in-project/g) || []).length, 1,
+      'a domain with no chip marks nothing — it is skipped, not invented');
+    const foot = r.mounted[0].footHtml;
+    ok(/gone is not on this computer/.test(foot), '★ …and the footer says the project named a domain that is gone');
+    const panel = findByClass(r.tree, 'chat-project-panel');
+    ok(/not on this computer/.test(panel.text), '★ …and so does the ⓘ');
+    const words = panel.text.trim().split(/\s+/).filter(Boolean).length;
+    ok(words > 46 && words <= 80, `the ⓘ is ${words} words WITH the extra sentence (standing 60 + notes)`);
+  }
+
+  // ── §15c2 — EVERY ⓘ VARIANT IS UNDER THE CEILING, not just the base ─────
+  // THE BUDGET, MEASURED IN THREE PARTS rather than as one number: the
+  // STANDING text keeps the 60-word ceiling it has had since v3.64.0, each
+  // conditional note is capped at 15, and the rendered total at 80. A single
+  // ceiling on the total would squeeze the notes into telegraphese for the one
+  // reader who needs them most.
+  const BASE_PANEL = findByClass(render().tree, 'chat-project-panel').text.trim();
+  const baseWords = BASE_PANEL.split(/\s+/).filter(Boolean).length;
+  ok(baseWords > 0 && baseWords <= 60,
+    `the STANDING ⓘ text is ${baseWords} words, at or under its own 60-word ceiling`);
+  for (const [label, over] of [
+    ['base', {}],
+    ['knowledge elsewhere', { activeProject: 'curator', projectKnowledge: KN({ domains: ['research'], defaulted: false }) }],
+    ['a missing domain', { activeProject: 'curator', projectKnowledge: KN({ domains: ['research', 'gone'], defaulted: false, missing: ['gone'] }) }],
+    ['both at once', { activeProject: 'curator', projectKnowledge: KN({ domains: ['gone'], defaulted: false, missing: ['gone'] }) }],
+  ]) {
+    const panel = findByClass(render(over).tree, 'chat-project-panel');
+    const text = panel.text.trim();
+    const w = text.split(/\s+/).filter(Boolean).length;
+    ok(w > 0 && w <= 80, `ⓘ variant "${label}" is ${w} words, at or under the 80-word rendered total`);
+    ok(text.startsWith(BASE_PANEL.slice(0, 40)),
+      `ⓘ variant "${label}" keeps the standing text — a note is ADDED, never a replacement`);
+    // Each NOTE on its own, so a 15-word cap is a measurement and not a claim.
+    const note = text.slice(BASE_PANEL.length).trim();
+    for (const sentence of note.split('.').map(x => x.trim()).filter(Boolean)) {
+      const sw = sentence.split(/\s+/).filter(Boolean).length;
+      ok(sw <= 15, `ⓘ variant "${label}": the note "${sentence.slice(0, 28)}…" is ${sw} words, at or under 15`);
+    }
+    ok(!/press a chip|switch to/i.test(text),
+      `ⓘ variant "${label}" never tells the user to press a chip — that would undo the pin (§15d)`);
+  }
+
+  // ── §15c3 — A FAILED READ SAYS SO, AND INVENTS NOTHING ──────────────────
+  {
+    const r = render({ activeProject: 'curator',
+      projectKnowledge: { project: 'curator', domains: [], defaulted: false, missing: [], error: true } });
+    const foot = r.mounted[0].footHtml;
+    ok(/could not be read/.test(foot), 'a failed read is stated');
+    ok(!/in-project/.test(r.html), '…and nothing is marked on a list nobody has');
+    const r2 = render({ activeProject: 'curator', projectKnowledge: null });
+    ok(!/Knowledge|domains/.test(r2.mounted[0].footHtml),
+      'NOT ASKED YET renders no knowledge row at all — "not told" is not "none"');
+
+    /* ── `error` IS CHECKED FIRST, and this probe is what makes that testable ─
+       Mutation A5 (the loader's error record reporting `defaulted: true`)
+       stayed GREEN, and correctly so: on a failed read `defaulted` cannot
+       reach any surface, because every consumer tests `error` before it. That
+       makes the FIELD inert — and an inert field is not worth pinning. What IS
+       worth pinning is the ORDER that makes it inert, and the ordinary error
+       record cannot show it: its `domains` is empty, so `projectKnowledgeSet`
+       would return null from the empty-list check even with the error test
+       deleted, and the section would pass while the guard was gone.
+       So the probe is a record the loader never builds: a failed read that
+       still carries a full, plausible list. If `error` stopped winning, this
+       would mark two chips and announce a choice nobody made. */
+    const hostile = { project: 'curator', domains: ['research', 'business'],
+      defaulted: false, missing: [], error: true };
+    const h = render({
+      domains: [{ slug: 'articles', displayName: 'Articles', pageCount: 1406 },
+                { slug: 'research', displayName: 'Research', pageCount: 30 },
+                { slug: 'business', displayName: 'Business', pageCount: 50 }],
+      activeDomain: 'articles', activeProject: 'curator', projectKnowledge: hostile,
+    });
+    ok(!/in-project/.test(h.html),
+      '★ an ERRORED record marks nothing even when it carries a full list — `error` is tested first');
+    ok(/could not be read/.test(h.mounted[0].footHtml),
+      '★ …and the footer states the failure rather than the list it happens to be holding');
+    ok(!/chosen for this project/.test(h.mounted[0].footHtml),
+      '★ …and never announces a choice nobody could confirm');
+    ok(!/knowledge lives in another domain/.test(findByClass(h.tree, 'chat-project-panel').text),
+      '★ …and the ⓘ adds no note about a list it does not trust');
+  }
+
+  // ── §15c4 — A RECORD FOR A DIFFERENT PROJECT IS NEVER SHOWN ─────────────
+  {
+    /* THE DOMAIN LIST MUST CONTAIN THE RECORD'S DOMAIN, or this section is
+       vacuous — mutation F2 proved it. With only `articles` installed there is
+       no `research` chip to mark, so deleting the project-identity guard left
+       the assertion green: it was measuring the absence of a chip, not the
+       presence of a guard. `research` is installed here, so a chip EXISTS and
+       only the guard keeps it unmarked. */
+    const domains = [
+      { slug: 'articles', displayName: 'Articles', pageCount: 1406 },
+      { slug: 'research', displayName: 'Research', pageCount: 30 },
+    ];
+    const control = render({ domains, activeProject: 'curator',
+      projectKnowledge: KN({ project: 'curator', domains: ['research'], defaulted: false }) });
+    ok(/in-project/.test(control.html),
+      'CONTROL: with the SAME project named, the research chip IS marked — so a chip really is available to mark');
+    ok(/research/.test(control.mounted[0].footHtml), 'CONTROL: …and the footer really does name it');
+
+    const r = render({ domains, activeProject: 'lumina',
+      projectKnowledge: KN({ project: 'curator', domains: ['research'], defaulted: false }) });
+    ok(!/in-project/.test(r.html),
+      '★ a record carrying ANOTHER project\'s name marks nothing — the stale-reading-beside-a-fresh-pill refusal');
+    ok(!/research/.test(r.mounted[0].footHtml),
+      '★ …and the FOOTER says nothing about it either (a separate guard, in projectKnowledgeReadout)');
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§15d — WHY THE CHIPS ARE NOT MOVED: the two blockers, EXECUTED');
+// ════════════════════════════════════════════════════════════════════════
+// The design record's parenthetical ("retrieval across them, the existing
+// multi-domain scope") describes a capability this app does not have. Rather
+// than record that as an opinion, both halves are driven here. If either ever
+// becomes false — a pin that survives a domain switch, or a route that
+// resolves a project across domains — these assertions red and the pre-select
+// becomes buildable. That is the point of writing them this way.
+{
+  /* ── BLOCKER 1: switchDomain CLEARS THE PIN. The REAL function. ───────── */
+  const state = {
+    activeDomain: 'projects', activeProject: 'curator', activeProjectScope: 'latest',
+    activeConversationId: 'c1', thread: [{ role: 'user', content: 'q' }],
+    searchQuery: 'x', selectedConvIds: new Set(['c1']), bulkNotice: {}, cancelNotice: {},
+    projectRows: [{ project: 'curator', ageSeconds: 60 }], projectsFor: 'projects',
+    projectsState: 'ready', projectLastUsed: { chars: 4694 }, projectKnowledge: null,
+    domains: [], booted: true, loadError: null,
+  };
+  const calls = { loadProjects: [], loadConvs: [] };
+  const api = new Function(
+    'state', 'localStorage', 'LS_DOMAIN', 'myMountToken', 'cancelSearchTimer',
+    'loadDomainConversations', 'loadProjectsForDomain', 'renderShell', 'reportAsyncActionFailure',
+    extractFunction(chatSrc, 'switchDomain') + '\nreturn { switchDomain };',
+  )(
+    state, { setItem() {} }, 'k', 1, () => {},
+    async (...a) => { calls.loadConvs.push(a); },
+    async (...a) => { calls.loadProjects.push(a); },
+    () => {}, () => {},
+  );
+
+  ok(state.activeProject === 'curator', 'control: a project is pinned before the switch');
+  api.switchDomain('research');     // the move a chip pre-select would make
+  ok(state.activeDomain === 'research', 'control: the domain really did move');
+  ok(state.activeProject === null,
+    '★ BLOCKER 1: switchDomain CLEARS the pin — moving the chips to a project\'s knowledge domain ' +
+    'un-pins the project that asked for the move');
+  ok(state.activeProjectScope === null && state.projectLastUsed === null,
+    '…along with its work-stream and its last measured reading');
+  eq(calls.loadProjects.length, 1,
+    '…and the NEW domain\'s project list is fetched, which is what would then reconcile the pin away');
+  eq(calls.loadProjects[0][0], 'research',
+    '…for the domain just switched to, where a project living in another domain does not appear');
+
+  /* ── BLOCKER 2: the ROUTE resolves the project against the URL's domain ─
+     A SOURCE assertion, and labelled as one: driving Express is this file's
+     neighbour's job (test-chat-project-context.js owns the route). What is
+     pinned here is the coupling itself, anchored on the refusal a user would
+     meet. If the route ever resolves across domains this goes red and the
+     comment above it stops being true, which is exactly when someone should
+     re-read it. */
+  const routeSrc = readFileSync(path.join(ROOT, 'src/routes/chat.js'), 'utf8');
+  ok(/listProjects\(domain, \{ namesOnly: true \}\)/.test(routeSrc),
+    '★ BLOCKER 2: the route checks the project against the URL\'s OWN domain');
+  ok(/reason: 'project_not_found'/.test(routeSrc) && /has no project called/.test(routeSrc),
+    '…and refuses with 400 project_not_found BEFORE the stream opens');
+  ok(/router\.post\('\/:domain'/.test(routeSrc),
+    'CONTROL: there is exactly one domain in the chat URL — no multi-domain send exists to widen to');
+  const brainSrc = readFileSync(path.join(ROOT, 'src/brain/chat.js'), 'utf8');
+  ok(/export async function sendMessage\(domain, conversationId/.test(brainSrc),
+    'CONTROL: and sendMessage takes ONE domain, so retrieval could not span two even if the bar offered it');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§15e — THE READ: once per project per mount, and never for "No project"');
+// ════════════════════════════════════════════════════════════════════════
+{
+  const mkState = () => ({
+    activeDomain: 'projects', activeProject: 'curator', projectKnowledge: null,
+    domains: [{ slug: 'projects' }, { slug: 'research' }],
+  });
+  const make = (state, payloads) => {
+    const fetches = [];
+    const patched = { group: 0, marks: 0 };
+    const api = new Function(
+      'state', 'fetch', 'isCurrentMount', 'patchProjectGroup', 'patchScopePillMarks',
+      'projectKnowledgeCache', 'MAX_PROJECT_KNOWLEDGE_CACHE',
+      extractFunction(chatSrc, 'ensureProjectKnowledge') + '\nreturn { ensureProjectKnowledge };',
+    )(
+      state,
+      async (url) => { fetches.push(url); const p = payloads.shift();
+        if (p === 'boom') throw new Error('network');
+        return { ok: p.status !== 400, json: async () => p }; },
+      () => true,
+      () => { patched.group++; }, () => { patched.marks++; },
+      new Map(), 24,
+    );
+    return { api, fetches, patched };
+  };
+
+  {
+    const st = mkState();
+    const h = make(st, [
+      { ok: true, knowledgeDomains: ['research', 'business'], knowledgeDomainsDefaulted: false },
+    ]);
+    await h.api.ensureProjectKnowledge('projects', 'curator', 1);
+    eq(h.fetches.length, 1, 'ONE request for a newly pinned project');
+    eq(h.fetches[0], '/api/memory/projects/curator', '…to the project\'s own detail route');
+    ok(st.projectKnowledge && st.projectKnowledge.domains.join() === 'research,business',
+      '…and the list lands on the state');
+    eq(st.projectKnowledge.missing.join(), 'business',
+      '★ a named domain this install does not have is computed HERE, with no second request');
+    /* THE FLAG IS READ FROM THE SERVER, NOT ASSUMED. The orchestrator's audit
+       found `defaulted: data.knowledgeDomainsDefaulted === true` could be
+       replaced by `defaulted: true` with this file still green: every section
+       that renders a record BUILT one by hand, and this section drove the
+       loader without ever reading the field. Two halves each covered, the
+       SEAM between them not. §15g drives the whole chain; this is the
+       cheap half, naming the field at the point it is derived. */
+    eq(st.projectKnowledge.defaulted, false,
+      '★ `knowledgeDomainsDefaulted: false` from the server lands as `defaulted: false`');
+    ok(h.patched.group === 1 && h.patched.marks === 1,
+      '…and both targeted patches run — the group for the footer, the chips for the marks');
+    await h.api.ensureProjectKnowledge('projects', 'curator', 1);
+    eq(h.fetches.length, 1, '★ the SECOND read of the same project on the same mount is a cache HIT');
+    await h.api.ensureProjectKnowledge('projects', 'curator', 2);
+    eq(h.fetches.length, 2,
+      '★ …but a NEW MOUNT misses, so knowledge edited in Context is fresh when the user comes back');
+  }
+  {
+    // THE OTHER VALUE of the same field, through the same path — so the
+    // assertion above is a measurement and not a coincidence.
+    const st = mkState();
+    const h = make(st, [{ ok: true, knowledgeDomains: ['projects'], knowledgeDomainsDefaulted: true }]);
+    await h.api.ensureProjectKnowledge('projects', 'curator', 1);
+    eq(st.projectKnowledge.defaulted, true,
+      '★ …and `true` lands as `true`, so the two answers are told apart rather than collapsed');
+  }
+  {
+    const st = mkState();
+    const h = make(st, []);
+    await h.api.ensureProjectKnowledge('projects', null, 1);
+    eq(h.fetches.length, 0, '"No project" makes NO request — there is nothing it could answer');
+    eq(st.projectKnowledge, null, '…and clears any record left by the previous pin');
+  }
+  {
+    const st = mkState();
+    const h = make(st, ['boom']);
+    await h.api.ensureProjectKnowledge('projects', 'curator', 1);
+    ok(st.projectKnowledge && st.projectKnowledge.error === true,
+      'A FAILED READ records the failure rather than an empty list');
+    ok(st.projectKnowledge.domains.length === 0, '…and invents no domains');
+  }
+  {
+    // AN OLDER SERVER, or any answer without the field: "not told" must not
+    // become "none". This is the store's own recorded defect class, from the
+    // other end — a consumer inventing a value for a field it was not sent.
+    const st = mkState();
+    const h = make(st, [{ ok: true }]);
+    await h.api.ensureProjectKnowledge('projects', 'curator', 1);
+    eq(st.projectKnowledge, null,
+      '★ an answer with NO knowledgeDomains leaves the record null — not an empty list');
+  }
+  {
+    // The pin moved while the request was in flight.
+    const st = mkState();
+    const h = make(st, [{ ok: true, knowledgeDomains: ['research'], knowledgeDomainsDefaulted: false }]);
+    const p = h.api.ensureProjectKnowledge('projects', 'curator', 1);
+    st.activeProject = 'lumina';
+    await p;
+    eq(st.projectKnowledge, null,
+      '★ an answer that arrives after the pin changed is DISCARDED — never attached to the project it is not about');
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§15f — THE MARK PATCH TOUCHES MARKS AND NOTHING ELSE');
+// ════════════════════════════════════════════════════════════════════════
+// The chips live in `.chat-scope-group`, which `patchProjectGroup` does not
+// repaint — and a `renderMain()` to move a class would destroy the thread, the
+// draft and the scroll position. Driven against a document that models exactly
+// what the patch touches.
+{
+  const mkBtn = (slug, active) => {
+    const classes = new Set(['chat-scope-pill']);
+    if (active) classes.add('active');
+    const attrs = {};
+    return {
+      dataset: { scopeDomain: slug },
+      classList: {
+        toggle: (c, on) => { if (on) classes.add(c); else classes.delete(c); },
+        has: (c) => classes.has(c),
+      },
+      setAttribute: (k, v) => { attrs[k] = v; },
+      removeAttribute: (k) => { delete attrs[k]; },
+      _classes: classes, _attrs: attrs,
+    };
+  };
+  const btns = [mkBtn('articles', true), mkBtn('research', false), mkBtn('business', false)];
+  const state = {
+    activeDomain: 'articles', activeProject: 'curator',
+    domains: [{ slug: 'articles', displayName: 'Articles' }, { slug: 'research', displayName: 'Research' },
+              { slug: 'business', displayName: 'Business' }],
+    projectKnowledge: { project: 'curator', domains: ['research', 'business'], defaulted: false, missing: [], error: false },
+  };
+  const api = new Function(
+    'document', 'state',
+    extractFunction(chatSrc, 'projectKnowledgeSet') + '\n' +
+    extractFunction(chatSrc, 'scopePillLabelFor') + '\n' +
+    extractFunction(chatSrc, 'scopePillAriaFor') + '\n' +
+    extractFunction(chatSrc, 'patchScopePillMarks') + '\nreturn { patchScopePillMarks };',
+  )({ querySelectorAll: () => btns }, state);
+
+  api.patchScopePillMarks();
+  ok(btns[1]._classes.has('in-project') && btns[2]._classes.has('in-project'), 'the two named chips are marked');
+  ok(!btns[0]._classes.has('in-project'), '…and the one the project did not name is not');
+  ok(btns[0]._classes.has('active') && !btns[1]._classes.has('active') && !btns[2]._classes.has('active'),
+    '★ THE SELECTION IS UNTOUCHED by the patch — `active` is exactly where it was');
+  eq(btns[1]._attrs['aria-label'], 'Research — in this project\'s knowledge',
+    '…and the marked chip gains the accessible name');
+  ok(btns[0]._attrs['aria-label'] === undefined, '…while an unmarked chip gains none');
+
+  // UN-PIN: the marks must come off, including the accessible names.
+  state.activeProject = null;
+  state.projectKnowledge = null;
+  api.patchScopePillMarks();
+  ok(!btns[1]._classes.has('in-project') && !btns[2]._classes.has('in-project'),
+    '★ un-pinning removes every mark');
+  ok(btns[1]._attrs['aria-label'] === undefined,
+    '★ …and the accessible name with it — a stale name is a lie a screen reader cannot see past');
+  ok(btns[0]._classes.has('active'), 'CONTROL: and the selection is STILL untouched');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§15g — THE SEAM: one server answer, the real loader, the real renderer');
+// ════════════════════════════════════════════════════════════════════════
+// ── WHAT A GREEN MUTATION TAUGHT ────────────────────────────────────────
+// The orchestrator's audit replaced `defaulted: data.knowledgeDomainsDefaulted
+// === true` with `defaulted: true` — i.e. made EVERY project's knowledge read
+// as "nobody has chosen", which erases the store's own second field and un-
+// marks every chip — and this file stayed at 292 passed / 0 failed.
+//
+// THE CAUSE WAS NOT A MISSING ASSERTION; IT WAS A MISSING JOIN. §15a-c drive
+// the REAL renderer but with a record BUILT BY HAND (`KN({...})`), and §15e
+// drives the REAL loader but never read `defaulted` off what it produced. Each
+// half was covered. The seam between them — the server's field becoming the
+// record's field becoming the mark on a chip — was not, so a lie told at the
+// seam was invisible from both sides.
+//
+// So this section owns the seam, and the arms differ in EXACTLY ONE BIT: the
+// same envelope, the same two domains, the same install, `knowledgeDomains-
+// Defaulted` true in one and false in the other. Anything that stops the flag
+// deciding the outcome — ignoring it, inverting it, deriving the mark from the
+// list's length instead — has to show up here.
+{
+  /** Run the REAL loader against one intercepted answer; return its record. */
+  async function loadRecord(envelope, domains) {
+    const st = {
+      activeDomain: 'projects', activeProject: 'curator', projectKnowledge: null,
+      domains,
+    };
+    const api = new Function(
+      'state', 'fetch', 'isCurrentMount', 'patchProjectGroup', 'patchScopePillMarks',
+      'projectKnowledgeCache', 'MAX_PROJECT_KNOWLEDGE_CACHE',
+      extractFunction(chatSrc, 'ensureProjectKnowledge') + '\nreturn { ensureProjectKnowledge };',
+    )(
+      st,
+      async () => ({ ok: true, json: async () => envelope }),
+      () => true, () => {}, () => {}, new Map(), 24,
+    );
+    await api.ensureProjectKnowledge('projects', 'curator', 1);
+    return st.projectKnowledge;
+  }
+
+  const DOMAINS = [
+    { slug: 'projects', displayName: 'Projects', pageCount: 30 },
+    { slug: 'research', displayName: 'Research', pageCount: 30 },
+    { slug: 'business', displayName: 'Business', pageCount: 50 },
+  ];
+  // ONE envelope, ONE bit apart.
+  const CHOSEN = { ok: true, knowledgeDomains: ['research', 'business'], knowledgeDomainsDefaulted: false };
+  const DEFAULTED = { ok: true, knowledgeDomains: ['research', 'business'], knowledgeDomainsDefaulted: true };
+
+  const chosenRec = await loadRecord(CHOSEN, DOMAINS);
+  const defaultRec = await loadRecord(DEFAULTED, DOMAINS);
+
+  ok(!!chosenRec && !!defaultRec, 'control: the real loader produced a record for both answers');
+  eq(chosenRec.domains.join(), defaultRec.domains.join(),
+    'control: the two records carry the SAME domains — so nothing below can be explained by the list');
+  ok(chosenRec.defaulted === false && defaultRec.defaulted === true,
+    '★ …and differ in exactly the one bit the server sent');
+
+  const base = { domains: DOMAINS, activeDomain: 'projects', activeProject: 'curator' };
+  // THE RENDERER IS GIVEN THE LOADER'S OWN OUTPUT, not a hand-built stand-in.
+  const chosen = render(Object.assign({}, base, { projectKnowledge: chosenRec }));
+  const defaulted = render(Object.assign({}, base, { projectKnowledge: defaultRec }));
+
+  eq((chosen.html.match(/chat-scope-pill in-project/g) || []).length, 2,
+    '★ CHOSEN, end to end: the server said false, and TWO chips are marked');
+  ok(/data-scope-domain="research"/.test(chosen.html) && /data-scope-domain="business"/.test(chosen.html),
+    '…the two the envelope named');
+  eq((defaulted.html.match(/in-project/g) || []).length, 0,
+    '★ DEFAULTED, end to end: the SAME two domains, the flag flipped, and NOTHING is marked');
+
+  const chosenFoot = chosen.mounted[0].footHtml;
+  const defaultFoot = defaulted.mounted[0].footHtml;
+  ok(/chosen for this project/.test(chosenFoot),
+    '★ …and the footer says the owner chose them');
+  ok(/the default/.test(defaultFoot) && /nobody has chosen/.test(defaultFoot),
+    '★ …while the other says nobody did');
+  ok(!/nobody has chosen/.test(chosenFoot) && !/chosen for this project/.test(defaultFoot),
+    'CONTROL: neither footer prints the other\'s sentence, so the two are told apart rather than both printed');
+  ok(chosenFoot !== defaultFoot,
+    'CONTROL: one bit really does change what a user is served');
+
+  /* AND THE ⓘ, whose conditional note also keys off the flag: a DEFAULTED
+     list can never say "its knowledge lives in another domain", because the
+     default IS this domain — even when, as here, the envelope names two
+     others. Pinned so the note cannot start leaking onto the default. */
+  const chosenPanel = findByClass(chosen.tree, 'chat-project-panel').text;
+  const defaultPanel = findByClass(defaulted.tree, 'chat-project-panel').text;
+  ok(/knowledge lives in another domain/.test(chosenPanel),
+    'the ⓘ names the situation on the CHOSEN arm');
+  ok(!/knowledge lives in another domain/.test(defaultPanel),
+    '★ …and stays silent on the DEFAULTED one, from the same two domains');
 }
 
 console.log(`\n${'─'.repeat(60)}`);

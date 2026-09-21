@@ -52,6 +52,8 @@ import { stripComments, functionSource } from './test-helpers/source-scan.js';
 // table in shared/docs-links.js, whose keys scripts/test-docs-links.js
 // checks against the actual markdown headings in docs/.
 import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
+// The REAL sidebar kit, injected into the lifted `renderSidebar` below.
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../src/public/next/shared/sidebar.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NEXT = join(ROOT, 'src/public/next');
@@ -205,10 +207,19 @@ if (renderSidebarSrc) {
   // this call is always the FIRST one and therefore always paints — an
   // undefined binding would be a ReferenceError crash here rather than a
   // failing assertion, which is the FN_NAMES shape this repo names.
+  // THE KIT'S THREE FUNCTIONS ARE INJECTED, AND THEY ARE THE REAL ONES
+  // (v3.65.0). `renderSidebar` now builds through shared/sidebar.js, and a
+  // module-level import is NOT visible inside a body lifted by
+  // `functionSource` — a free `renderSidebarRow` there is a ReferenceError,
+  // i.e. a suite that CRASHES instead of asserting. They are passed through
+  // the constructor rather than stubbed so what is executed below is the
+  // shipped component, exactly as it is on the screen.
   const fn = new Function(
     'SETTINGS_SECTIONS', 'state', 'escapeHtml', 'setSidebar', 'lastSidebarHtml',
+    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow',
     renderSidebarSrc + '\nreturn renderSidebar;'
-  )(SETTINGS_SECTIONS, { section: 'general', version: null }, (x) => String(x), (html) => { captured = html; }, null);
+  )(SETTINGS_SECTIONS, { section: 'general', version: null }, (x) => String(x), (html) => { captured = html; }, null,
+    renderSidebarHead, renderSidebarGroup, renderSidebarRow);
   fn(1);
   renderedIds = [...captured.matchAll(/data-section="([a-z]+)"/g)].map((m) => m[1]);
 }
@@ -439,6 +450,125 @@ console.log('\n§6  General uses settingsBlock, and no lede runs past 13 words')
     ok(panels.out.includes('A menu bar icon showing what your agents have just saved'),
       'and so does the ACTIVE mode\'s consequence line — the sentence that replaced a hover-only title= in v3.44.0');
   }
+}
+
+// ═════════════════════════════════════════════════════════════
+console.log('\n§5  THE SIDEBAR IS THE APP’S ONE SIDEBAR (v3.65.0)');
+// ═════════════════════════════════════════════════════════════
+//
+// EXECUTED against the REAL component, on the same lifted `renderSidebar` §4
+// runs, because what the maintainer reported is a rendered thing: *"the same
+// goes for the Settings sidebar: follow the Domains pattern — use the Updates
+// button, put it on top in the same design as Domains ... if I select General
+// I get a violet line on the left; we don\u2019t get this in Domains or Context
+// ... we don\u2019t need this line."*
+{
+  let out = '';
+  const paint = (state) => {
+    let captured = '';
+    new Function(
+      'SETTINGS_SECTIONS', 'state', 'escapeHtml', 'setSidebar', 'lastSidebarHtml',
+      'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow',
+      renderSidebarSrc + '\nreturn renderSidebar;'
+    )(SETTINGS_SECTIONS, state, (x) => String(x), (html) => { captured = html; }, null,
+      renderSidebarHead, renderSidebarGroup, renderSidebarRow)(1);
+    return captured;
+  };
+  out = paint({ section: 'mcp', version: { version: '3.65.0', restartRequired: false } });
+
+  ok(/class="btn btn-secondary cur-sb-secondary" id="settings-updates-btn"/.test(out),
+    'UPDATES IS THE TOP SECONDARY \u2014 the slot Domains gives "Use existing folder", '
+    + 'with the id its handler binds to unchanged');
+  const upAt = out.indexOf('settings-updates-btn');
+  const listAt = out.indexOf('cur-sb-list');
+  const footAt = out.indexOf('settings-sidebar-footer');
+  ok(upAt > 0 && listAt > upAt,
+    '\u2026ON TOP: it is emitted before the row list, not after it');
+  ok(footAt > listAt && upAt < footAt,
+    '\u2026and it has LEFT the footer, which now holds the version label alone');
+  ok(/settings-sidebar-footer"><span class="mono settings-version">The Curator v3.65.0<\/span><\/div>/.test(out),
+    '\u2026exactly alone: a version string is a reading, not an action (R6)');
+
+  ok(/class="cur-sb-row settings-nav-row active"/.test(out),
+    'the selected row is the FILLED row \u2014 the kit\u2019s `active` class, and nothing else');
+  ok((out.match(/class="cur-sb-row settings-nav-row active"/g) || []).length === 1,
+    '\u2026exactly one of them');
+  ok(!/::before|sidebar-edge|nav-edge/.test(out),
+    '\u2026with no edge element of any kind in the markup (R10)');
+
+  // THE ALIAS IS NOT DECORATION: this view’s own click binder queries
+  // `.settings-nav-row`, views/onboarding.js’s "open the MCP bridge" door
+  // queries `.settings-nav-row[data-section="mcp"]`, and four suites name the
+  // tokens. A kit adoption that dropped them would break a door and three
+  // sandboxes, silently.
+  for (const token of ['cur-sb-list settings-nav-list', 'cur-sb-row settings-nav-row',
+                       'cur-sb-name row-label', 'cur-sb-event row-hint']) {
+    ok(out.includes(token), `both names ride the same element: \`${token}\``);
+  }
+  ok(/\.settings-nav-row\[data-section="mcp"\]/.test(
+       readFileSync(join(NEXT, 'views/onboarding.js'), 'utf8')),
+    'CONTROL: views/onboarding.js really does still query that pair \u2014 the alias is load-bearing, '
+    + 'not sentiment');
+
+  // THE OMITTED SLOTS. Settings rows are a name and a hint; passing an empty
+  // figure or a missing age must render NOTHING rather than an empty 11px
+  // line that opens a gap under every label.
+  ok(!out.includes('cur-sb-meta') && !out.includes('cur-sb-dot')
+     && !out.includes('cur-sb-figure') && !out.includes('cur-sb-age'),
+    'the dot, the figure and the age line are OMITTED, not rendered empty');
+
+  // THE THREE STATE RULES THIS FILE STILL OWNS, AND WHAT THEY MAY DECLARE.
+  // `.settings-nav-row`'s box moved to shared/sidebar.css; three rules stayed
+  // because something reads each by NAME (test-next-design-kit reads this file
+  // for the hover; press-motion's census names the class; and `.active` has to
+  // be declared AFTER `:hover` here or the later file wins the tie and hovering
+  // the current section un-highlights it). They stayed on condition that they
+  // paint the KIT's values — otherwise the "one sidebar" is one sidebar with
+  // three exceptions. Found by mutation: swapping `.active` back to the opaque
+  // `--surface-active` reddened NOTHING, and an opaque fill on this plane stops
+  // its blur for the width of the row (test-next-views-kit §8's rule, which
+  // names `.dm-row` and `.mem-row` but not this one).
+  const css = readFileSync(join(NEXT, 'views/settings.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const [sel, token] of [
+    ['\\.settings-nav-row:hover', '--mat-row-hover'],
+    ['\\.settings-nav-row\\.active', '--mat-row-active'],
+    ['\\.settings-nav-row:active', '--mat-row-active'],
+  ]) {
+    const m = new RegExp(sel + '\\s*\\{([^}]*)\\}').exec(css);
+    ok(!!m && m[1].includes('var(' + token + ')'),
+      `${sel.replace(/\\/g, '')} takes the ALPHA OVERLAY ${token}, never an absolute --surface-* `
+      + `colour (got: ${m ? m[1].trim().replace(/\s+/g, ' ') : 'no rule'})`);
+  }
+  ok(css.indexOf('.settings-nav-row.active') > css.indexOf('.settings-nav-row:hover'),
+    '\u2026and `.active` is declared AFTER `:hover`, because the two tie on specificity and the '
+    + 'later one wins \u2014 the selected section must stay selected-looking under the pointer');
+  ok(!/\.settings-nav-row[^{]*\{[^}]*\b(?:padding|display|flex-direction|gap|font-family)\s*:/.test(css),
+    '\u2026and this file declares NO box for the row any more \u2014 that is the kit\u2019s, which is what '
+    + 'puts every sidebar in the app on one row height');
+
+  // TWO PLACEMENTS FOUND BY LOOKING, in a browser on the real cascade, each
+  // pinned so it cannot be tidied away as a stray rule.
+  //
+  // (1) `.cur-sb-secondary`'s 8px margin exists to separate a secondary from
+  // the PRIMARY above it. Settings passes no primary, so that margin landed
+  // under the TITLE and put Updates at y=56 where every other sidebar's first
+  // action is at y=48 — one lone button, eight pixels out of step with the
+  // reference design this whole item exists to match. Measured before: 56.
+  // After: 48, Domains' own.
+  ok(/\.sidebar-title\s*\+\s*\.btn\.cur-sb-secondary\s*\{[^}]*margin-top:\s*0/.test(css),
+    'a secondary with NO primary above it takes no top margin \u2014 the adjacency selector is what '
+    + 'expresses that, so the margin returns the moment a primary is added');
+
+  // (2) shared/monitor.css stacks a line into one column below 640px but keeps
+  // `white-space: nowrap` on the key — correct while the key is the stable
+  // left column of a two-column grid, pointless once there is no second
+  // column. Measured at 568: "Last session start" is 133px in a 110px track,
+  // and the line, the list and the block each reported an overflow that main
+  // did not have.
+  ok(/@media\s*\(max-width:\s*640px\)\s*\{[^}]*\.mcp-session-strip\s+\.cur-mon-key\s*\{[^}]*white-space:\s*normal/.test(css),
+    'the session monitor\u2019s captions may WRAP once the pair has stacked \u2014 scoped to that one '
+    + 'strip, at equal specificity, because the kit is linked before this file');
 }
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);

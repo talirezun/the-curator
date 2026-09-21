@@ -177,11 +177,37 @@ import { formatModelSummary } from '../shared/model-summary.js';
 // carrier of the defect renderViewHeader removes: ~3,620 characters of static
 // prose, a paragraph of it directly under the <h1> of four of the five
 // sections. The header component has no parameter that can put it back.
-// `renderReadout` joins it for the tool map's two session readings: they are
-// INSTRUMENTS (a label and a figure), which is the one role that component
-// exists for, and its `.tx-readout-value` is the element the age clock writes
-// into — the same target views/memory.js's own clock uses.
-import { renderViewHeader, renderReadout } from '../shared/text.js';
+// `renderReadout` was ALSO imported here, for the tool map's two session
+// readings; v3.65.0 moved those into the monitor below, so this file takes the
+// header alone. The readout keeps its name, its contract and its nine other
+// call sites — the monitor emits its own line rather than re-laying-out one,
+// because `.tx-readout` is a COLUMN (label above value) and no stylesheet but
+// shared/text.css may declare a `.tx-` rule to turn it into a row.
+import { renderViewHeader } from '../shared/text.js';
+// ── THE SIDEBAR, AND IT IS THE DOMAINS SIDEBAR ───────────────────────────
+// Settings had the app's third answer to "a title, some actions, and a list
+// you select from": rows 48.8px tall against Domains' 63.8, no action in the
+// head at all (Updates sat in the FOOTER, beside the version string), and a
+// selection drawn as a 2px violet `::before` bar that nothing else in the app
+// used. The maintainer's words: *"the same goes for the Settings sidebar:
+// follow the Domains pattern — use the Updates button, put it on top in the
+// same design as Domains ... we don't need this line, it is a completely other
+// design which got in during development."*
+//
+// `alias: 'settings'` keeps `settings-nav-list` / `settings-nav-row` /
+// `row-label` / `row-hint` on the SAME elements, because this file's own click
+// binder (`wireGlobalListeners`) and four suites address them by name.
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../shared/sidebar.js';
+// ── THE MONITOR, for every LIVE-STATE reading on this screen ─────────────
+// The bridge's connection strip, its stale-bridge warning, the self-test
+// outcome and the two session readings were four hand-built treatments of one
+// idea — *"these cards show specific data, the data that is changing ... it's
+// really hard to understand that this is like a monitor into the specific data
+// and changing state ... we are looking for a unified design AND a
+// distinguished design."* views/sync.js's status card was a fifth, and was a
+// near-byte copy of the first. One component now, and `views/sync.js` makes
+// the same call shape.
+import { renderMonitor } from '../shared/monitor.js';
 // Every link out of this screen into the user documentation. A key, never a
 // path: `docsUrl`/`docsLinkHtml` THROW on an unknown key, and
 // scripts/test-docs-links.js reads the real markdown in docs/ and reds on a
@@ -2011,12 +2037,17 @@ let lastMainHtml = null;
  * @returns {boolean} false when nothing was written.
  */
 function renderSidebar(token, force) {
-  const rows = SETTINGS_SECTIONS.map(([id, label, hint]) => (
-    '<button type="button" class="settings-nav-row' + (state.section === id ? ' active' : '') + '" data-section="' + id + '">' +
-      '<span class="row-label">' + escapeHtml(label) + '</span>' +
-      '<span class="row-hint">' + escapeHtml(hint) + '</span>' +
-    '</button>'
-  )).join('');
+  // ONE ROW COMPONENT, three hosts. `name` is the section, `event` is the
+  // hint — the SAME third-line slot Domains' "Ingested · <title>" occupies,
+  // which is why Settings passes no dot, no figure and no age: those slots are
+  // omitted, not re-purposed. See shared/sidebar.js.
+  const rows = SETTINGS_SECTIONS.map(([id, label, hint]) => renderSidebarRow({
+    alias: 'settings',
+    name: label,
+    event: hint,
+    active: state.section === id,
+    data: { section: id },
+  })).join('');
 
   const versionLabel = state.version
     ? 'The Curator v' + escapeHtml(state.version.version) +
@@ -2025,11 +2056,23 @@ function renderSidebar(token, force) {
 
   const html =
     '<div class="settings-sidebar-shell">' +
-      '<div class="sidebar-title">Settings</div>' +
-      '<div class="settings-nav-list">' + rows + '</div>' +
+      // UPDATES IS THE TOP SECONDARY, in the slot Domains gives "Use existing
+      // folder" (R6). There is no PRIMARY: the primary slot means "create the
+      // kind of thing this list holds", and a settings section is not created.
+      // The version string stays at the foot ALONE — it is a reading, not an
+      // action, and it was only ever in the footer's button row because the
+      // head had nothing in it.
+      renderSidebarHead({
+        title: 'Settings',
+        secondary: { label: 'Updates', id: 'settings-updates-btn' },
+      }) +
+      // NO EYEBROW: Domains' KNOWLEDGE names what its list holds among other
+      // possible lists. This sidebar has exactly one list and the title above
+      // it already names it, so a caption would be a label for the whole
+      // screen printed twice.
+      renderSidebarGroup({ alias: 'settings', rowsHtml: rows }) +
       '<div class="settings-sidebar-footer">' +
         '<span class="mono settings-version">' + versionLabel + '</span>' +
-        '<button type="button" class="btn btn-secondary btn-xs" id="settings-updates-btn">Updates</button>' +
       '</div>' +
     '</div>';
   if (force !== true && html === lastSidebarHtml) return false;
@@ -8446,14 +8489,25 @@ function renderModelOption(m, index, defaultId, ctx) {
 function deriveMcpStatus(m) {
   const unreadable = m.claude_config_parse_error === true;
   const connected = !unreadable && m.installed === true && m.stale !== true;
-  const pillClass = connected ? 'status-pill status-pill-ok' : 'status-pill status-pill-muted';
+  // THE TONE, NOT A CLASS LIST (v3.65.0). This returned
+  // `'status-pill status-pill-ok'` — two class names that no longer resolve
+  // anywhere in /next, because the pill and its card are a monitor now
+  // (shared/monitor.js, M7). A pure derivation returning a dead selector is
+  // the rot this file has a dozen comments about, so it derives the STATE
+  // WORD'S TONE instead and the kit owns what that looks like.
+  //
+  // `quiet` for "Not connected" rather than `warn`: a bridge nobody has set
+  // up yet is not a fault, and an amber gutter on a fresh install would be
+  // the app reporting a problem it invented. `danger` is reserved for the one
+  // case the app genuinely cannot read — a config file it could not parse.
+  const pillTone = unreadable ? 'danger' : (connected ? 'ok' : 'quiet');
   const pillLabel = unreadable
     ? 'Config unreadable'
     : (connected ? 'Connected' : (m.installed ? 'Needs re-connect' : 'Not connected'));
   const wizardLabel = unreadable
     ? 'Fix the config file'
     : (connected ? 'Re-run setup' : (m.installed ? 'Re-connect' : 'Set up Claude Desktop'));
-  return { unreadable, connected, pillClass, pillLabel, wizardLabel };
+  return { unreadable, connected, pillTone, pillLabel, wizardLabel };
 }
 
 /**
@@ -8581,7 +8635,7 @@ function renderMcp() {
   }
   const m = state.mcp;
   const status = deriveMcpStatus(m);
-  const { pillClass, pillLabel, wizardLabel } = status;
+  const { pillTone, pillLabel, wizardLabel } = status;
 
   const selfTestHtml = state.selfTest ? renderSelfTestResult() : '';
   const snippetHtml = state.configSnippetOpen && state.configSnippet
@@ -8657,25 +8711,49 @@ function renderMcp() {
     'to be re-run whenever your knowledge folder, the app, or Node moves. ' +
     docsLinkHtml('settings.mcp-bridge', 'Read more in the guide');
 
-  // The bridge-process note sits directly under the status card and ABOVE the
-  // buttons, because it qualifies the PILL: "Connected" is true and what is
-  // connected is running older code. It is not the outcome of anything the
-  // user just pressed, which is what the two notes below the buttons are.
+  // ── M7 + M8 — THE BRIDGE MONITOR ─────────────────────────────────
+  //
+  // This was a `.settings-status-card` holding a pill and one `<code>` line,
+  // and views/sync.js held a near-byte copy of the same shape. It is a LIVE
+  // READING — is a client connected, to which server, over which folder — so
+  // it is a monitor (shared/monitor.js), and sync.js now makes the same call.
+  // *"These cards show specific data, the data that is changing ... it's
+  // really hard to understand that this is like a monitor into the specific
+  // data and changing state."*
+  //
+  // THE TONE COMES FROM `deriveMcpStatus`, which is where the pill's whole
+  // derivation already lived and is the reason that function is separable and
+  // driven standalone by four suites. See its own comment for why "Not
+  // connected" is `quiet` and not `warn`.
+  //
+  // M8 — THE STALE-BRIDGE NOTE IS A `loud` ENTRY INSIDE THIS MONITOR, not a
+  // line and not a separate card underneath. It qualifies the state word
+  // directly: "Connected" is true, and what is connected is running older
+  // code. v3.16.1 is why it is `loud` — a warning is never collapsed in with
+  // the readings — and `renderMonitor` builds `loud` from a different array
+  // into a different container, so no later edit can demote it to a line.
+  //
+  // THE REMEDY SENTENCE STILL COMES FROM THE ROUTE, VERBATIM, and the view
+  // still never authors a second copy: `deriveStaleBridgeNote` returns
+  // `remedy: null` when the payload carries none. `strongText` is ESCAPED by
+  // the component, because its one producer is a payload and a payload is
+  // data. scripts/test-mcp-stale-bridge.js §7 holds all of that.
   const bridgeNote = deriveStaleBridgeNote(m);
-  const bridgeNoteHtml = bridgeNote
-    ? '<div class="settings-mcp-stale-note" role="status">' +
-        icon('alertTriangle', 15) +
-        '<span>' + escapeHtml(bridgeNote.text) +
-        (bridgeNote.remedy ? ' <strong>' + escapeHtml(bridgeNote.remedy) + '</strong>' : '') +
-      '</span></div>'
-    : '';
 
   const connectBody =
-    '<div class="settings-status-card">' +
-      '<span class="' + pillClass + '"><span class="status-pill-dot"></span>' + pillLabel + '</span>' +
-      '<code class="mono mcp-path-line">Claude Desktop → ' + escapeHtml(m.mcp_server_name) + ' → ' + escapeHtml(m.domains_dir) + '</code>' +
-    '</div>' +
-    bridgeNoteHtml +
+    renderMonitor({
+      id: 'mcp-bridge-monitor',
+      label: 'MCP bridge connection',
+      head: { stateWord: pillLabel, tone: pillTone },
+      lines: [
+        { key: 'client', value: 'Claude Desktop' },
+        { key: 'server', value: m.mcp_server_name },
+        { key: 'domains', value: m.domains_dir },
+      ],
+      loud: bridgeNote
+        ? [{ tone: 'warn', text: bridgeNote.text, strongText: bridgeNote.remedy || '' }]
+        : [],
+    }) +
     // Body-level buttons, so md (32px): the SIZE is the container's decision,
     // per the taxonomy comment above `.btn` in shell.css. Exactly one primary
     // — the wizard is the single action that completes this block. Self-test
@@ -8726,12 +8804,24 @@ function renderMcp() {
 
 function renderSelfTestResult() {
   const r = state.selfTest;
+  // ── M9 — THE OUTCOME OF A LIVE PROBE IS A MONITOR ────────────────────
+  // This was three `.check-row`s in a `.settings-check-results` — the shape
+  // System Check's own results use, and that surface KEEPS it: a checklist of
+  // pass/fail rows is a different thing from a reading of one live probe. What
+  // this block reports is a state that changes under you (did the bridge
+  // answer, with how many tools, over how many domains), so it joins the one
+  // instrument. `head.stateWord` is the outcome itself.
   if (!r.ok) {
-    return '<div class="settings-check-results"><div class="check-row check-fail">' +
-      '<span class="check-glyph">' + icon('x', 13) + '</span>' +
-      '<span class="check-label">Self-test failed</span>' +
-      '<span class="check-detail">' + escapeHtml(r.error || 'The bridge did not respond as expected.') + '</span>' +
-    '</div></div>';
+    return renderMonitor({
+      label: 'Bridge self-test',
+      head: { stateWord: 'Self-test failed', tone: 'danger' },
+      // THE SERVER'S OWN MESSAGE IS `loud`, NOT A LINE. It is the outcome of
+      // something the user just pressed and the only thing on screen they can
+      // act on; v3.16.1 keeps it unfolded and in its own tone.
+      lines: [],
+      loud: [{ tone: 'danger',
+               text: r.error || 'The bridge did not respond as expected.' }],
+    });
   }
   const names = (r.tool_names || []).slice(0, 6).join(', ') + ((r.tool_names || []).length > 6 ? ', …' : '');
   const domainsNote = Array.isArray(r.domains) ? r.domains.length + ' domain(s) visible' : 'no domains found yet';
@@ -8741,27 +8831,29 @@ function renderSelfTestResult() {
   // different code, and saying "N tools" without qualifying it is how a user
   // concludes their agent must be able to see all N. The row is added only
   // when the route actually found one — never as a standing disclaimer.
+  //
+  // IT IS A `loud` ENTRY NOW, for the reason it was a `check-warn` row before:
+  // it QUALIFIES the pass, so it must not be readable as one more reading.
   const bridge = state.mcp ? deriveStaleBridgeNote(state.mcp) : null;
-  const bridgeRow = bridge
-    ? '<div class="check-row check-warn">' +
-        '<span class="check-glyph">' + icon('alertTriangle', 13) + '</span>' +
-        '<span class="check-label">…but not the one already open</span>' +
-        '<span class="check-detail">' + escapeHtml(
-          'This spawned a fresh bridge. '
+  const bridgeLoud = bridge
+    ? [{ tone: 'warn',
+         text: '…but not the one already open. This spawned a fresh bridge. '
           + (bridge.count === 1
             ? 'A bridge your client already had open started before this version'
             : bridge.count + ' bridges your client already had open started before this version')
           + (bridge.ageWords ? ' (the oldest ' + bridge.ageWords + ')' : '')
           + (bridge.count === 1 ? ' and still offers' : ' and still offer')
-          + ' the older tool list.') +
-        '</span>' +
-      '</div>'
-    : '';
-  return '<div class="settings-check-results"><div class="check-row check-ok">' +
-    '<span class="check-glyph">' + icon('checkAlt', 13) + '</span>' +
-    '<span class="check-label">Bridge responds</span>' +
-    '<span class="check-detail mono">' + escapeHtml(String(r.tool_count)) + ' tools (' + escapeHtml(names) + ') · ' + escapeHtml(domainsNote) + '</span>' +
-  '</div>' + bridgeRow + '</div>';
+          + ' the older tool list.' }]
+    : [];
+  return renderMonitor({
+    label: 'Bridge self-test',
+    head: { stateWord: 'Bridge responds', tone: 'ok' },
+    lines: [
+      { key: 'tools', value: String(r.tool_count), sub: names },
+      { key: 'domains', value: domainsNote },
+    ],
+    loud: bridgeLoud,
+  });
 }
 
 
@@ -8962,35 +9054,52 @@ function renderToolGroup(label, tools, logStartedAt, now) {
 }
 
 /**
- * The two session readings.
+ * M10 — THE TWO SESSION READINGS, AS ONE MONITOR.
  *
- * They are the map's headline and they are not a tile: "when did a session last
- * bootstrap" and "when did one last save" are the two questions the whole tier
- * exists to answer, and a reader should not have to find two particular tiles
- * among twenty-four to answer them. `renderReadout` is the instrument role from
- * shared/text.js — the same component the Agent-memory screen's own save strip
- * uses, and its `.tx-readout-value` is the element `tickMcpAges` writes into,
- * exactly as memory.js's clock does.
+ * They are the map's headline and they are not a tile: "when did a session
+ * last bootstrap" and "when did one last save" are the two questions the whole
+ * tier exists to answer, and a reader should not have to find two particular
+ * tiles among twenty-four to answer them.
+ *
+ * This was two `renderReadout`s in a flex strip — the app's THIRD treatment of
+ * a live reading, beside the bridge's status card and the capture block on the
+ * Context view. It is the same thing all three were: a reading of changing
+ * state, which is a monitor (shared/monitor.js).
+ *
+ * ── THE AGE HOOK RIDES IN `markHtml`, AND THAT IS DELIBERATE ────────────
+ * `tickMcpAges` re-words every age on this block once a second without a
+ * render, by walking `[data-mcp-age-at]` and writing `textContent` into ONE
+ * named child. A monitor LINE carries no data attribute of its own — the
+ * component takes none, and giving it one would be inventing a hook in a
+ * shared kit for a single caller. `markHtml` is its one TRUSTED field, so the
+ * hook and the words it owns are composed HERE, by the view that owns the
+ * clock, and `value` is left empty because the mark IS the reading. The
+ * alternative was two one-line monitors (a hook per block) or dropping the
+ * tick and living with the 30s revalidate; the first draws two instruments
+ * where there is one reading, and the second silently loses a live clock.
  */
 function renderSessionStrip(sessions, now) {
   const s = sessions && typeof sessions === 'object' ? sessions : {};
-  const reading = (label, iso) => {
+  const reading = (key, iso) => {
     const secs = ageSecondsOf(iso, now);
     const words = secs === null ? null : formatAge(secs);
-    if (!words) {
-      // NOT a blank and not "never": the same rule the tiles keep.
-      return '<div class="mcp-session-reading">' +
-        renderReadout({ label, value: 'none since this log began' }) + '</div>';
-    }
-    return '<div class="mcp-session-reading" data-mcp-age-at="' + escapeHtml(iso) + '">' +
-      renderReadout({ label, value: words }) + '</div>';
+    // NOT a blank and not "never": the same rule the tiles keep. An absent
+    // reading takes no hook either, because there is no stamp to recount.
+    if (!words) return { key, value: 'none since this log began' };
+    return {
+      key,
+      value: '',
+      markHtml: '<span class="mcp-session-reading" data-mcp-age-at="' + escapeHtml(iso) + '">' +
+        '<span class="mcp-age-words">' + escapeHtml(words) + '</span></span>',
+    };
   };
-  return (
-    '<div class="mcp-session-strip">' +
-      reading('Last session start', s.lastBootstrapAt) +
-      reading('Last save', s.lastSaveAt) +
-    '</div>'
-  );
+  return '<div class="mcp-session-strip">' + renderMonitor({
+    label: 'Bridge sessions',
+    lines: [
+      reading('Last session start', s.lastBootstrapAt),
+      reading('Last save', s.lastSaveAt),
+    ],
+  }) + '</div>';
 }
 
 /**
@@ -9109,9 +9218,12 @@ function renderToolMap() {
   const lede = 'What your agents used, and when — kept on this machine only.';
   // ── THE FILENAME IS PLAIN TEXT, NOT A `<code>` ─────────────────────────
   // FOUND BY OPENING THE FOLD: `.tx-vh-panel` is a one-column GRID (its own
-  // comment says so — the measure lives on the track so the card can take the
-  // column), and CSS wraps each contiguous run of text in an ANONYMOUS grid
-  // item. An inline element inside it therefore becomes a row of its own: the
+  // comment says WHY — `renderInfoMark` emits its prose as a BARE TEXT NODE,
+  // and a grid is what can lay one out without a wrapper. The track itself
+  // used to carry the MEASURE, which is what this line said; v3.65.0 made it
+  // `minmax(0, 1fr)`, so the prose now takes the card and the card takes the
+  // column — the grid stayed, the cap went), and CSS wraps each contiguous run
+  // of text in an ANONYMOUS grid item. An inline element inside it therefore becomes a row of its own: the
   // filename sat on its own line and the sentence resumed underneath with a
   // leading comma. So the name is written as text, and the sentence is built
   // so nothing depends on it being set apart. The trailing link is the one
@@ -9156,10 +9268,15 @@ function renderToolMap() {
  * cost: every ⓘ panel and every `<details>` on the section closed itself while
  * the user was reading.
  *
- * TWO NAMED TARGETS, never `el.textContent`: a readout escapes its own value so
- * the words live in the component's `.tx-readout-value`, while a tile's meta
- * line carries a `.mcp-age-words` span this view owns. Writing the wrapper's
- * own text would delete the label beside it.
+ * ONE NAMED TARGET, never `el.textContent`: every hooked element on this block
+ * carries a `.mcp-age-words` span this view owns — a tool tile's meta line
+ * writes one directly, and the session monitor's two lines compose one inside
+ * the `markHtml` they hand the kit (see renderSessionStrip for why the hook
+ * lives there). Writing the wrapper's own text would delete the caption beside
+ * it. It WAS two targets: `.tx-readout-value` was the first, back when the
+ * session strip painted through shared/text.js's readout, and that branch went
+ * with the strip in v3.65.0 rather than being left as a selector matching
+ * nothing.
  */
 function tickMcpAges() {
   if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
@@ -9172,7 +9289,7 @@ function tickMcpAges() {
     if (!Number.isFinite(t)) continue;
     const words = formatAge(Math.max(0, Math.round((now - t) / 1000)));
     if (words === null) continue;
-    const target = el.querySelector('.tx-readout-value') || el.querySelector('.mcp-age-words');
+    const target = el.querySelector('.mcp-age-words');
     if (target && target.textContent !== words) target.textContent = words;
   }
 }
