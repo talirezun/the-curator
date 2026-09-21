@@ -1052,7 +1052,7 @@ flowchart TD
 
 **The remedy is yours, and it is one sentence: give each tool its own work-stream name.** Tell each agent which scope it owns — `main` for one, `drafting` for the other — and they never touch the same file again. The widget names the collision and stops there, on purpose; a menu bar line has no business proposing a fix in six words.
 
-> **What is not lost, and it is worth knowing.** The append-only journal survives a collision — every save writes a line carrying its own tool name, so the record of *what happened* is intact even when the *current handoff* only holds whichever tool saved last. That is how the collision is detected in the first place, and you can read the whole trail in **Project context → step ② → Recent saves**.
+> **What is not lost, and it is worth knowing.** The append-only journal survives a collision — every save writes a line carrying its own tool name, so the record of *what happened* is intact even when the *current handoff* only holds whichever tool saved last. That is how the collision is detected in the first place, and you can read the whole trail in **Project context → step ② → Journal**.
 
 #### Scenario 2 — Two or three computers, one private GitHub repo
 
@@ -1125,7 +1125,8 @@ It does not get a **menu row**, and that is the ranking rather than an oversight
 32 KB of prose that changes on the order of weeks, so it does not earn one of five scarce rows.
 The tooltip is the one surface here with no scarcity — it costs no row, no menu bar width, and no
 extra reading of the disk. For the full picture, **Open Project Context…** still lands you on the
-same readings, in the strip across the top of the page ([§7](#the-save-status-strip)).
+same readings, in the overview card across the top of the page
+([§7](#the-overviews-memory-tile-and-the-warnings-above-the-four-rows)).
 
 > **What the widget can never tell you: whether you are saved *now*.** It knows when the last save happened, not whether anything has changed since. That is why the line reads **Last save**, and not *"you are saved"*.
 
@@ -1428,13 +1429,12 @@ The one-time "The Curator has a new look." notice and its **Use the previous int
 ### Project context — what the screen shows
 
 The **Context** rail item opens **Project context**: everything one project gives an agent, on one
-screen. It was called *Agent memory* through v3.61.1 — same screen, same files, renamed in v3.62.0
-because it had stopped being only about memory.
+screen. It was called *Agent memory* through v3.61.1, then *Project context* from v3.62.0 — same
+screen, same files, renamed because it had stopped being only about memory.
 
 Most of it is **read-only** — agents write the handoffs and the journal over MCP and the app shows
-them. Three things are yours to change here: the **standing brief** (a pencil), a **canonical
-document** you keep in The Curator rather than in a repository, and which documents are marked
-**read first**.
+them. Three things are yours to change here: the **standing brief** (a pencil), a **document** you
+keep in The Curator rather than in a repository, and which documents are marked **read first**.
 
 Since v3.62.0 the page is **three numbered steps**, read top to bottom, under an **overview card**.
 **Since v3.64.2 that card is the same component the domain page draws its own OVERVIEW figures
@@ -1445,27 +1445,44 @@ look on one screen means knowing where to look on the other. The numbering is an
 than decoration: this is the order a session start reads in, so step ① is what the project tells an
 agent, step ② is what the last session left, and step ③ is what it can look things up in.
 
-![A wireframe of the Project context screen. Across the top, a four-tile overview card — the same
-component Domains uses — reading FOUNDATIONS "3 documents · fresh", WORKING STATE "saved 14 min ago",
-KNOWLEDGE "391 pages · 3 days ago" and CAPTURE "1 session · 30 days", each with a freshness dot.
-Below it, three numbered steps separated by hairlines, each heading carrying only a numeral, a
-Title-case title and an ⓘ mark — no sentence beneath any of them. Step 1, Foundations: one closed
-row, "The documents — 110 bytes · mirrored · 2 read first · 1 on request", with the two controls
-"Refresh from repo" and "Add from folder" on their own row beneath it. Step 2, Working state: five
-closed rows, each one instrument — Last saved, Capture, Work-streams, The brief and Recent saves.
-Step 3, Knowledge: one closed row per wiki — here "projects — 391 pages ·
-3 days ago" — opening to a monospace panel of entities, concepts, summaries and the last-ingest
-age, with two doors beneath it, Open in Domains and Ask this domain, and a "+ Add a wiki" picker
-under the last row. At the foot, "Top to bottom is
+**As of v3.65.1 the three steps carry the names the maintainer's own testing settled on** —
+*Documents*, *Memory* and *Knowledge* — after production feedback on the previous release's screen
+called it *"five different styles fighting each other, no continuity, no logic."* The rename is
+copy only, not a new store: the words **foundations**, **working state**, **scope** and
+**journal** did not move on disk or in the MCP tools an agent calls — see
+[the vocabulary table](#the-word-on-screen-and-the-word-on-disk), just below, before the two get
+confusing.
+
+![A wireframe of the Project context screen. A breadcrumb at the top carries the domain's own
+identity dot, the same colour that domain has in the Domains sidebar, in the Context sidebar and
+on every row below that names it. Under it, a four-tile overview card — the same component Domains
+uses — reading DOCUMENTS "3 documents · fresh", MEMORY "saved 14 min ago", KNOWLEDGE "391 pages ·
+3 days ago" and CAPTURE "1 session · 30 days", each with a freshness dot. Below it, three numbered
+steps separated by hairlines, each heading carrying only a numeral, a Title-case title and an ⓘ
+mark — no sentence beneath any of them — and each section's controls sitting in a head row beneath
+its heading, above its rows, aligned to the rows' own left edge. Step 1, Documents: the controls
+"Refresh from repo", "Add from folder" and "Mirror from GitHub instead", then one row, "The
+documents — 3 documents · 391 KB · mirrored · 2 read first", whose SIZE column carries a depth bar
+— a tinted bar behind each figure, anchored at the right, its length that document's share of the
+200 KB project budget — and a warning line beneath the table, in words, when the total is over
+budget. Step 2, Memory: four closed rows, each one instrument — Capture, Handoffs, The brief and
+Journal. Step 3, Knowledge: the control "+ Add a domain", then one row per domain this project
+draws on, each carrying that domain's own identity dot — here "projects — 391 pages · 3 days ago"
+— opening to a monospace panel of entities, concepts and summaries (each with its own depth bar
+against that domain's page count), the last-ingest age, two doors beneath it, Open in Domains and
+Ask this domain, and its own Remove. At the foot, "Top to bottom is
 the order a session start reads in".](images/curator-context-steps.svg)
 
 *The current shape, in wireframe rather than a photograph so it stays legible at any size: three
 numbered steps, each explained only by the ⓘ beside its title — no lede sentence survives under a
-heading — and every live reading, from the overview's four tiles down to a single "Last saved" row,
+heading — and every live reading, from the overview's four tiles down to a single Handoffs row,
 built from the same two components the rest of the app uses: the overview card and the monitor.
-**Foundations replaces its documents whole; Working state supersedes, so each save replaces the
-last; Knowledge accumulates**, one row per wiki the project draws on. A warning about a save is
-never behind a chevron — it stays on the page, unfolded, under the row it qualifies.*
+**Documents are replaced whole; Memory supersedes, so each save replaces the
+last; Knowledge accumulates**, one row per domain the project draws on. A warning about a save is
+never behind a chevron — it stays on the page, unfolded, under the row it qualifies. A domain is
+the same colour everywhere it is named on this screen — the breadcrumb, the sidebar's project rows
+and every Knowledge row — the same [identity dot](design-system-source.md#18-identity--one-palette-one-mapping-one-glyph-v3651) the Domains sidebar
+uses ([§10](#projects-inside-a-domain)).*
 
 The wireframe below is the same shape with the labels called out.
 
@@ -1473,12 +1490,12 @@ The wireframe below is the same shape with the labels called out.
 
 | | Step | The question it answers | Cost to read it |
 |---|---|---|---|
-| ① | **Foundations** | *What is this project built against, and which of it does an agent get automatically?* | A summary line. Open the fold for the table |
-| ② | **Working state** | *Where did the last session stop, and what standing instructions does every agent read?* | Four summary rows — Last saved, then three folds. Open one to read it |
-| ③ | **Knowledge** | *What can an agent look things up in?* | One summary row. Open the fold for the four figures and the two doors |
+| ① | **Documents** | *What is this project built against, and which of it does an agent get automatically?* | A summary line. Open the fold for the table |
+| ② | **Memory** | *Where did the last session stop, and what standing instructions does every agent read?* | Four summary rows, one per fold — Capture, Handoffs, The brief, Journal. Open one to read it |
+| ③ | **Knowledge** | *What can an agent look things up in?* | One summary row per domain. Open a fold for its figures and its two doors |
 
 **The overview card is the "am I saved?" answer, in one line each.** It sits above step ① —
-FOUNDATIONS, WORKING STATE and KNOWLEDGE, the same three nouns the steps use, each with its figure,
+DOCUMENTS, MEMORY and KNOWLEDGE, the same three nouns the steps use, each with its figure,
 the qualifier under it and a freshness mark **and** the word beside it, because the colour never
 carries a reading on its own. Press a card and the page goes to the step that owns it — **they are
 readings, not a filter: nothing narrows when you press one**, which is the one difference from the
@@ -1491,6 +1508,28 @@ two readings for a moment instead of a wrong third. The card replaced a *Status*
 become the problem it was meant to solve: a tier-0 reading, a tier-2 reading, four warnings and a
 tier-1 line under one heading called *Status*. The warnings did not go with it — each moved to the
 step it qualifies, where **warnings, costs, refusals and outcomes are never folded**.
+
+#### The word on screen and the word on disk
+
+Renaming the screen's own nouns (v3.65.1) did not rename anything an agent reads or writes, or
+anything on disk — a rename in the app's copy would be a poor reason to break every existing
+`.curator-project` file, MCP call and synced `state/` folder in the wild. Read **Documents** on
+screen and **foundations** in this chapter, or **Memory** on screen and **working state** in an
+MCP tool's own description, and they are the same thing:
+
+| On screen (v3.65.1) | On disk / in the store | In an MCP tool |
+|---|---|---|
+| **Documents** (step ①) | the `foundations/` folder, `manifest.json` | `get_project_context`, `save_foundation` |
+| **Memory** (step ②, the feature as a whole) | `state/` — tiers 2 and 3 together | `get_working_state`, `save_working_state` |
+| **Handoffs** (a row inside Memory) | one `<project>/<scope>/<machine>/current.md` per row | the `scope` argument; the response's `current` field |
+| **Journal** (a row inside Memory) | `<project>/<scope>/<machine>/journal.jsonl` | the response's `journal` field |
+| **Knowledge** (step ③) | the domain(s) a project draws on — curator metadata, not a tier | `knowledgeDomains` on the wire |
+| **Domain** (everywhere) | `domains/<domain>/` | the `domain` argument |
+
+So a tool description that still says *"work-stream"* or a file still named `journal.jsonl` is not
+a place this release missed — those names are the public contract (**[the on-disk
+spec](spec/working-state-v1.md)**, every MCP tool's argument), and changing them would be changing
+what a synced folder means, not what a screen says.
 
 **Every fold ships closed, and stays how you leave it.** That is v3.58.0's measurement applied to
 the whole page: on this repository's own `curator` project at a 1370px window, the page was
@@ -1512,18 +1551,24 @@ stays where it was.
 
 *One project's state, open, and three of its blocks — **a photograph of a
 superseded screen, kept for what it shows about the readings rather than the
-layout**. It was taken before the fifth block, **Foundations**, shipped in
+layout**. It was taken before the fifth block, **Foundations** (now **Documents**), shipped in
 v3.59.0; before v3.62.0 replaced the blocks with three numbered steps under a
 three-cell strip and renamed **Standing brief** and **Session journal** to **The
-brief** and **Recent saves**; before v3.64.0 cut the rail down the left
-from five places to three; and before v3.65.0 rebuilt the sidebar, the overview
+brief** and **Recent saves** (now **Journal**); before v3.64.0 cut the rail down the left
+from five places to three; before v3.65.0 rebuilt the sidebar, the overview
 card and every live reading (Last saved, Capture, each wiki's figures) from the
-same components Domains uses — the alt text above describes that current shape,
-the photograph does not yet. Every reading below is still on the page — the
+same components Domains uses; and before **v3.65.1** removed the **Last saved** row entirely (its
+fact now lives in the overview's MEMORY tile and in the **Handoffs** row's own summary), renamed
+**Work-streams** to **Handoffs** and **Working state** to **Memory**, gave every domain named on
+this screen its own identity dot, moved the Knowledge picker into a head row above its rows with a
+per-row **Remove**, and added the "Mirror from GitHub instead" switch to step ① — the alt text
+above the wireframe describes that current shape, the photograph does not yet. Every reading below
+is still on the page — the
 [three steps table](#7-finding-your-way-around) above says where each one now
 lives. **Status** was the block's own headline before v3.64.1 folded it into the
 "am I saved?" in one glance — the **Working on** headline, a live age, the Last-saved reading, and
-here one qualifying line: this handoff was written on another machine. **Work-streams** is the
+here one qualifying line: this handoff was written on another machine. **Work-streams** — now
+**Handoffs** — is the
 table that replaced the old Work-stream and Machine dropdowns: one row per saved copy, newest
 first, press a row to read its handoff. It paints the newest **five** of this project's eighteen,
 with **Show 13 more** under it and the count line tracking both figures. Its dots are the app-wide
@@ -1565,34 +1610,61 @@ document printed on the page; opening one is a click, not a scroll.*
 - **"How this works" is the ⓘ beside the title.** It explains the three tiers, the per-machine
   layout and the read-only rule — read once, then never again, which is exactly what the ⓘ is for.
   As of v3.55.0 that panel runs the full width of the column like everything under it, because
-  this page is a dashboard rather than a page of prose. The sidebar has its own ⓘ carrying the
-  short version.
+  this page is a dashboard rather than a page of prose (**since v3.65.0, every ⓘ panel in the app
+  runs the full width of its column** — the previous release had one stopping at about two-thirds).
+  **As of v3.65.1 the sidebar carries no ⓘ of its own** — the short version it used to hold moved
+  into the header's, which already said the same thing once, not twice.
 
 #### The three steps, in detail
 
 *(The page was five unnumbered blocks through v3.61.1 — rebuilt in v3.55.0 from three collapsible
 panels and a row of dropdowns; **Current handoff** became the reader in v3.56.0; **Foundations**
 joined in v3.59.0. v3.62.0 numbered what was left, deleted the **Status** block and moved its
-readings into the strip.)*
+readings into the strip. v3.65.1 renamed the steps and their rows — see
+[the table above](#the-word-on-screen-and-the-word-on-disk) — and rebuilt each step's controls into
+a head row above its rows, the same anatomy Wiki health's Quick maintenance panel already used.)*
 
-##### ① Foundations — what the project tells an agent
+##### ① Documents — what the project tells an agent
 
-**The canonical documents this project is built against, kept word for word.** Architecture, firm
+**The documents this project is built against, kept word for word.** Architecture, firm
 decisions, conventions, a roadmap — the things a competent new contributor reads *before* touching
 anything. They are **replaced whole** and read **verbatim**: an agent gets the document, not a
 paraphrase of it. → [§13b, Foundations](#foundations--canonical-documents-that-travel) for how
-documents get in and what the two ownership modes mean.
+documents get in and what the two ownership modes mean — the store and that chapter still call this
+tier **foundations**; see [the table above](#the-word-on-screen-and-the-word-on-disk).
 
-The fold's summary line is the decision to open it — *"3 documents · 110 bytes · mirrored · 2 read
+**Three controls sit in a head row above the table**, in this order: **Refresh from repo** (a
+local mirror re-reads its checkout), **Add from folder** (opens the panel below), and — new in
+v3.65.1 — **Mirror from GitHub instead**.
+
+The fold's summary line is the decision to open it — *"3 documents · 391 KB · mirrored · 2 read
 first · 1 on request · fresh"*. Inside, one row per document, in eight columns: **ROLE ·
 DOCUMENT · SIZE · READ · SOURCE · COPY · UPDATED**, plus a **Remove**. The READ cell is the control
 — a pill reading `read first` or `on request` that you press to flip it. Press anywhere else on the
-row to read the document in the reader.
+row to read the document in the reader. **As of v3.65.1 the SIZE column carries a depth bar** — a
+tinted bar behind each figure, anchored at the right edge of the cell, its length that document's
+share of the 200 KB project budget; a single document over the budget on its own fills the whole
+cell in the warning colour. The bar is a second way to *see* the same fact the total-over-budget
+warning under the table already states in words — a cost is never only a colour on this screen, so
+the words stay even where the bar makes it obvious at a glance.
 
 **The table scrolls sideways on a narrow window.** It has eight columns as of v3.62.0 — the
 read-first control is the new one — so on a phone-width window the table scrolls inside its own
 card rather than the page scrolling. That is one column worse than v3.59.0 already recorded, and it
 is the honest cost of putting the control in the row it belongs to.
+
+**"Mirror from GitHub instead" re-points an existing mirror at a repository.** It is offered on a
+project that mirrors documents from a folder on this or another computer — including a computer
+this one cannot currently reach, which is exactly the machine that most needs it. There is **one
+source per project**: choosing GitHub re-copies the documents from the repository you name, records
+it, and **clears the folder path** — every machine then reads the same source rather than only the
+one that made the mirror. **Ownership does not move** — the repository is still the author, exactly
+as a folder mirror is — and any document you had marked **read first** stays marked, by name, across
+the switch. As with every mirror, there is **no token field**: you name which file on this computer
+the read-only token is read from (**config** — `.curator-config.json`'s own `githubReadToken` — or
+**sync** — Personal Sync's token), never paste one here. → [the API
+reference](api-reference.md#post-apimemorydomainprojectfoundationssource) for the request this
+button sends and every way it can refuse.
 
 **The `read first` control is the one that changes what your agents get** (*new in v3.62.0*). A
 project with four documents can hand an agent all four at the start of every session. A project
@@ -1628,66 +1700,75 @@ of work, naming the document to open. An agent is told to consult it; when it is
 document roles are the next best signal. → [§13b](#one-standing-brief-many-scopes--how-the-brief-and-your-workstreams-relate) for what else the brief
 carries.
 
-##### ② Working state — what the last session left
+##### ② Memory — what the last session left
 
-**Five closed rows.** This layer **supersedes** — every save replaces the
-last, so a blocker you fixed on Tuesday cannot reappear on Wednesday.
+**Four closed rows, in this order: Capture, Handoffs, The brief, Journal.** This layer
+**supersedes** — every save replaces the last, so a blocker you fixed on Tuesday cannot reappear on
+Wednesday. **Every row's body is the same recessed, monospace instrument** (v3.65.0) — one fact per
+line, key left, reading right — used everywhere a live reading appears in the app: every row here,
+and every knowledge row in step ③.
 
-**Since v3.64.2, "Last saved" is a row like the ones under it**, not a card of its own: the
-age, which work-stream it belongs to and which tool wrote it, on one line. It ships **flat**, with
-no chevron, when there is nothing to explain; open it for the detail — which clock the figure came
-from, and whether the file arrived here long after it was written. A warning about a save is never
-behind that chevron — it stays on the page, unfolded, under the row. **As of v3.65.0 every row's
-body is the same recessed, monospace instrument** — one fact per line, key left, reading right —
-used everywhere a live reading appears in the app: this row, Capture below it, and every knowledge
-row in step ③.
+**"Last saved" was a fifth row through v3.65.0 and is removed in v3.65.1** — the maintainer's own
+reading of the screen was that a whole row answering *"is this saved?"* duplicated what the MEMORY
+tile in the overview already says, one scroll up. Its fact did not disappear: the age lives in the
+overview's **MEMORY** tile, and *which* handoff it was lives in the **Handoffs** row's own summary —
+one clock, told once each in the two places that need it, instead of a third.
 
 | Row | Summary line | Whose it is |
 |---|---|---|
-| **Last saved** | *14 min ago · session-2026-09-20-… · claude-code*, with a freshness pip | Your agents'. Flat when there is nothing to explain; a chevron only when there is |
-| **Capture** | *6 sessions in the last 30 days · 4 started with the context · 4 saved before stopping · 2 read and did not save* | The [meter](#the-meter-did-the-session-read-and-did-it-save), below. Opens to a table, one row per session |
-| **Work-streams** | *`<headline>` · 3 work-streams · 3 saved copies* | Your agents'. One row per saved copy; press a row to read its handoff in the [reader](#reading-a-handoff). See [the table below](#the-work-stream-table) |
+| **Capture** | *1 session in the last 30 days · 1 saved before stopping*, five monitor lines inside — see [the meter](#the-meter-did-the-session-read-and-did-it-save), below | Your agents'. No table — the body is the monitor only |
+| **Handoffs** | *3 handoffs · saved 14 min ago* | Your agents'. One row per saved copy; press a row to read its handoff in the [reader](#reading-a-handoff). See [the table below](#the-handoffs-table) |
 | **The brief** | *updated 14 min ago · 126 words*, with a **pencil** | Yours — see [Editing the standing brief](#editing-the-standing-brief) |
-| **Recent saves** | *1 save · latest 14 min ago* | Your agents'. The journal — one line per save, newest first: when, which harness, which model, the headline, and any notes the store recorded |
+| **Journal** | *17 saves · showing 10 · latest 14 min ago* | Your agents'. One line per save, newest first: when, which harness, which model, the headline, and any notes the store recorded. A **"Show N more"** row extends it in place — the same control the Handoffs table uses, not a separate footer card |
 
-**Work-streams is first among the folds that were there before Capture joined them**, which is the maintainer's call and not the ownership order you might
-expect: the question a returning session actually opens with is *what did the last one leave*. The
-brief follows, because it is the one tier a human owns and an agent reads it on every single call.
-The journal is last because it is **history, not the present**: any entry in it may since have been
+**Capture leads now that Last saved is gone** — it already sat directly under that row, so nothing
+about the reading order changed, only what used to be above it. Handoffs follows, because the
+question a returning session actually opens with is *what did the last one leave*. The brief comes
+next, because it is the one tier a human owns and an agent reads it on every single call. The
+journal is last because it is **history, not the present**: any entry in it may since have been
 superseded — a blocker named in an old headline may have been fixed three saves ago — and the
 current handoff is what is true now.
 
 **Everything that qualifies this step is above the folds and never folds itself**: content that had
 to be trimmed, a handoff that arrived by sync from another machine, newer state in a different
-work-stream, another machine that saved *after* this one, two tools sharing one handoff file, a
+scope, another machine that saved *after* this one, two tools sharing one handoff file, a
 save that landed since you opened the page (with a **Reload**), and state on disk this read could
 not list.
 
-##### ③ Knowledge — which wikis a project draws on
+##### ③ Knowledge — which domains a project draws on
 
-**One row per wiki, plus a picker, since v3.65.0.** Through v3.64.2 a project could only ever read
-the domain it lived in, with no way to say otherwise — *"Where do I select which domain gets
-sourced — is this even an option?"* was the maintainer's own question about the single summary row
-this step used to be. **"+ Add a wiki"**, under the last row, opens the shared picker — the same
-component every multi-select list in the app uses, one at a time, never a menu of checkboxes — over
-every domain on this install; pick one and it becomes a row here, with its own **Remove**. A project
-that has chosen nothing still reads exactly one wiki, the domain it lives in, and the screen says so
-until you choose; choosing **replaces** that default, and removing the last row puts the project
-back on it. At most twelve.
+**One row per domain, plus a picker in a head row above them.** Through v3.64.2 a project could
+only ever read the domain it lived in, with no way to say otherwise — *"Where do I select which
+domain gets sourced — is this even an option?"* was the maintainer's own question about the single
+summary row this step used to be. v3.65.0 added a picker but let the newly-chosen domain **replace**
+the project's own; production feedback called that "why only one? why not two or three?" and traced
+it to copy that contradicted what the route already did. **v3.65.1 makes the code's own behaviour
+legible:** the project's own domain is now an **explicit, always-listed row from the start** — never
+an implied default you have to know about — and **"+ Add a domain"**, in the head row above the
+rows (the same head-row placement step ① uses), *adds* to that list rather than replacing it. Pick
+one from the shared picker — the same component every single-select list in the app uses, one at a
+time, never a menu of checkboxes — over every domain on this install; **Remove** now lives *inside*
+each expanded row, beside its two doors, the same place the documents table's own Remove sits.
+Removing the last added domain puts the project back on just its own. **At most twelve.**
 
-Each row's summary line names the wiki, its page count, and how long ago it was last written to —
-*"projects · 391 pages · 3 days ago"* — and opens to the same recessed, monospace instrument the
-rest of this step uses: entities, concepts, summaries and the last-ingested title, plus two doors,
-**Open in Domains** and **Ask this domain**, for that wiki specifically. A wiki that has since been
-deleted stays on the list as a row that says so, rather than silently disappearing — it may simply
-live on a computer that has not synced here yet. A reading still in flight, or a failed one, is
-**not** turned into a row. This layer **accumulates**: a new source makes an existing page richer
-rather than adding a second copy of it.
+Each row's summary line names the domain, its page count, and how long ago it was last written to —
+*"projects · 391 pages · 3 days ago"*, with the domain's own [identity dot](design-system-source.md#18-identity--one-palette-one-mapping-one-glyph-v3651)
+before the name — and opens to the same recessed, monospace instrument the rest of this step uses:
+entities, concepts, summaries and the last-ingested title, plus two doors, **Open in Domains** and
+**Ask this domain**, for that domain specifically, and its own **Remove**. **As of v3.65.1 the
+entity, concept and summary lines each carry a depth bar** against that domain's own page count —
+the three always sum to at most the page count, which is what makes it an exact denominator rather
+than a guess; the `pages` and `last ingest` lines carry no bar, because one is what the bars are
+measured against and the other is a time. A domain that has since been deleted stays on the list as
+a row that says so, rather than silently disappearing — it may simply live on a computer that has
+not synced here yet. A reading still in flight, or a failed one, is **not** turned into a row. This
+layer **accumulates**: a new source makes an existing page richer rather than adding a second copy
+of it.
 
-The wiki is what the project *reads*, not part of the project, which is why this step is a list of
+The domain is what the project *reads*, not part of the project, which is why this step is a list of
 summary rows and nothing else until one is opened. There is no page list here and no health report:
-both live in **Domains**, and each row's figures come from one cheap request per wiki that reads no
-page content at all, so opening this screen costs one request per chosen wiki rather than a scan.
+both live in **Domains**, and each row's figures come from one cheap request per domain that reads no
+page content at all, so opening this screen costs one request per chosen domain rather than a scan.
 
 **Open in Domains lands on the right domain.** That sounds like nothing and is not: this screen is
 app-wide across domains, so before v3.62.0 a jump from a project in one domain would have landed on
@@ -1703,22 +1784,25 @@ own reach because a project points somewhere else; the footer says so plainly ra
 you, because switching domains would unpin the project. → [§9, Chat with your brain](#9-chat-with-your-brain)
 for the marked chips and what they mean.
 
-#### The work-stream table
+#### The Handoffs table
+
+*(Called the Work-stream table through v3.65.0 — the row it lives inside is now **Handoffs**; the
+store still calls each one a `scope`, [above](#the-word-on-screen-and-the-word-on-disk).)*
 
 The **Work-stream** and **Machine** dropdowns are gone. One table replaces them, one row per
-**(work-stream, machine)** pair, newest first — **ordered by the same clock the rows display**,
+**(scope, machine)** pair, newest first — **ordered by the same clock the rows display**,
 which is the agent's own save time wherever there is one. So the ages run straight down the
 column and the dots cool with them, and the order can never contradict the reading beside it.
 
 | Column | What it holds |
 |---|---|
-| **Work-stream** | A freshness dot and the work-stream slug. The row you have open carries an accent bar down its left edge |
+| **Handoff** | A freshness dot and the scope's slug. The row you have open carries an accent bar down its left edge |
 | **Working on** | That save's own one-line headline — *not* the project's, so a fortnight-old row shows what it was doing a fortnight ago. An em dash when the save carried none |
 | **Last saved** | A relative age (*"3 hr ago"*, *"2 weeks ago"*). The exact timestamp — and the words *file time* when the reading is the file's rather than the agent's — travel in the row's accessible name, so a screen reader announces them |
 | **Machine** | The installation that wrote it, plus a **this machine** tag on every row in your own machine's folder — and only when the app can positively identify it, never guessed from a lookalike name |
 | **Harness** | The agent tool and the model that wrote the save, e.g. *"claude-code · opus"* |
 
-**Press a row to open it.** That replaces the whole picker: pick the work-stream and the machine
+**Press a row to open it.** That replaces the whole picker: pick the scope and the machine
 in one gesture, from a list that already tells you which is worth opening — and since v3.56.0 the
 handoff opens in the [reader](#reading-a-handoff) rather than underneath the table.
 
@@ -1726,9 +1810,11 @@ handoff opens in the [reader](#reading-a-handoff) rather than underneath the tab
 has run for a month across two machines is twenty rows, and twenty rows own the page the same way
 the handoff document used to. The row sits **under** the table rather than inside it, so it can
 never scroll out of reach of the list it extends, and pressing it **appends** the next window —
-the rows you have already read do not move.
+the rows you have already read do not move. **The Journal row's own "Show N more" follows the same
+rule** (v3.65.1) — it used to be a separate footer card with a floating button that dropped your
+scroll position back to the top of the list; now it is one row, appended in place, the same as here.
 
-**The step is all the rest, not another five.** A project with seven work-streams has two hidden,
+**The step is all the rest, not another five.** A project with seven handoffs has two hidden,
 and pressing twice for two rows is the friction rather than the rows; so the button says *"Show 2
 more"* and that is the end of it. Past twenty the step becomes ten, because one press that paints
 forty rows is a wall.
@@ -1736,16 +1822,16 @@ forty rows is a wall.
 Two details worth knowing:
 
 - **The window resets when you switch projects.** Every project opens at five.
-- **The work-stream you have open is always painted**, even when it sits past the window — the
+- **The scope you have open is always painted**, even when it sits past the window — the
   window is *stretched* down to it rather than the row being lifted to the top. This table's
   header says *newest first*, and a highlighted row sitting above one three minutes younger would
   be the same lie in a smaller font.
 
-Under the table sits a line like *"13 work-streams · 16 saved copies"*. **Those are two different
-numbers and both are real:** each machine writes into its own folder inside a work-stream, so one
-work-stream can appear as several rows. While rows are hidden, a third clause is appended —
+Under the table sits a line like *"13 handoffs · 16 saved copies"*. **Those are two different
+numbers and both are real:** each machine writes into its own folder inside a scope, so one
+scope can appear as several rows. While rows are hidden, a third clause is appended —
 *"· showing 5 of 16"*, counted in **rows**, so its second figure is the saved-copy total rather
-than the work-stream one — and it disappears once everything is on screen, because a list that
+than the scope one — and it disappears once everything is on screen, because a list that
 fits says nothing about its own length. That clause is **about this table's window**; if the store
 itself could only return the most recently saved copies, it says so in its own separate clause and
 gives the true total. Two caps, two sentences — neither is ever reported as the other.
@@ -1759,14 +1845,14 @@ still looking at.
 
 ![The reader overlay on the Project context screen — a screenshot taken before v3.62.0 renumbered the page, so the column behind it shows the older unnumbered blocks rather than the three steps; the reader itself is unchanged. The icon rail and the projects sidebar stay fully lit down the left — curator still selected, "13 scopes · 5 hr ago" — while the main column behind is dimmed by a scrim, its Status card, Work-streams table and Standing brief block still legible in outline. Over it, from the right, a panel runs the full height of the window. Its header carries a small book icon, the file’s path in monospace — "state/curator/session-2026-09-17-settings-design-unification/talis…", truncated at the panel’s edge — then an "esc" keycap and an ✕ button. Below that the handoff’s own first line stands as the title, in large type over five lines: "main = edcecd7 (Phase 0 + Agent A General merged, unpushed); B/C/D building on 646c7b6, F told to rebase from 7d732b0; next: merge B, C, D, F then verify + docs + release v3.54.0". Under it a row of chips: a violet dot beside "handoff", then "work-stream: session-2026-09-17-settings-design-unification", and on a second line "machine: talis-macbook-pro-acb035" and "synced from another machine". Then the reading — the small label "Saved" over "5 hr ago" in large monospace, with "Claude Code · claude-fable-5-1 · updates live" beneath it — and no completeness badge, because this save carried none. Below that the handoff itself, rendered as Markdown: a heading "Where things stand" over two long paragraphs of build state, then the heading "Firm decisions — do not re-litigate" over bulleted decisions, the first two reading "Providers & keys is the reference; only the qualify-done build control, qualify Cancel (done) and qualify-done Close (post-merge) change inside it" and "No Co-Authored-By trailer". The document continues below the bottom edge.](images/curator-agent-memory-reader.png)
 
-*A handoff open in the reader. The **path line** along the top is the real file, so you can find it in Obsidian or in your synced repository. The chips name the work-stream and the machine, and say that this copy was **synced from another machine**. The **Saved** reading is the same figure the strip's **WORKING STATE** cell gives — same clock, same function — with the harness and model that wrote it and "updates live" while you watch. Behind the scrim, the page you pressed from is exactly where you left it; **Esc**, the dimmed area or the ✕ close the panel and put the keyboard back on the row.*
+*A handoff open in the reader. The **path line** along the top is the real file, so you can find it in Obsidian or in your synced repository. The chips name the scope and the machine, and say that this copy was **synced from another machine**. The **Saved** reading is the same figure the overview's **MEMORY** tile gives — same clock, same function — with the harness and model that wrote it and "updates live" while you watch. Behind the scrim, the page you pressed from is exactly where you left it; **Esc**, the dimmed area or the ✕ close the panel and put the keyboard back on the row.*
 
 | In the reader | What it holds |
 |---|---|
-| **The path line** | `state/<project>/<work-stream>/<machine>/current.md` — the real file, so you can find it in Obsidian or in your synced repository |
-| **The title** | The handoff's own first line. A handoff with no headline is titled after its work-stream |
-| **The chips** | A `handoff` type badge, then `work-stream: <slug>`, `machine: <name>`, and — only on positive evidence — **this machine** or **synced from another machine**. A handoff that hit the read cap, or that had protocol-shaped text neutralised on read, says so in a chip too |
-| **The reading** | *"Saved 5 hr ago · Claude Code · claude-fable-5-1 · updates live"* — the **same** figure the strip's **WORKING STATE** cell shows, from the same clock, so the two can never name different times for one save. An **`incomplete`** or **`summary shortened`** badge sits on that line when the save carried one, not under it |
+| **The path line** | `state/<project>/<scope>/<machine>/current.md` — the real file, so you can find it in Obsidian or in your synced repository |
+| **The title** | The handoff's own first line. A handoff with no headline is titled after its scope |
+| **The chips** | A `handoff` type badge, then a chip naming the scope (`work-stream: <slug>` as of v3.65.0's build — the store field is `scope`; [the vocabulary table](#the-word-on-screen-and-the-word-on-disk) above), `machine: <name>`, and — only on positive evidence — **this machine** or **synced from another machine**. A handoff that hit the read cap, or that had protocol-shaped text neutralised on read, says so in a chip too |
+| **The reading** | *"Saved 5 hr ago · Claude Code · claude-fable-5-1 · updates live"* — the **same** figure the overview's **MEMORY** tile shows, from the same clock, so the two can never name different times for one save. An **`incomplete`** or **`summary shortened`** badge sits on that line when the save carried one, not under it |
 | **The notes** | The truncation and sanitisation warnings, in full and never folded |
 | **The body** | The handoff, rendered as Markdown |
 
@@ -1866,26 +1952,33 @@ Three things follow from that table and are worth knowing:
 The mark is never the only signal: the age in words sits immediately beside it, every mark is
 hidden from screen readers, and the words are what a screen reader announces.
 
-#### The save-status strip
+#### The overview's MEMORY tile, and the warnings above the four rows
 
-*"Is this saved, and is it any good?"* is answered in one line on a healthy day. Since v3.62.0 it
-is answered in two places rather than one block: the **three-cell strip** across the top of the
-page — FOUNDATIONS · WORKING STATE · KNOWLEDGE, each a freshness dot and a word — and a card
-carrying the **Last saved** reading with the tool and model that wrote it. Through v3.64.0 that
-card sat between step ① and step ②, on its own; **since v3.64.1 it is the first row inside step ②
-Working state**, directly above the CAPTURE reading described
-[below](#the-meter-did-the-session-read-and-did-it-save), because both readings answer the same
-question — *did an agent read and save?* — and belonged together rather than split across a gap.
+*"Is this saved, and is it any good?"* is answered without opening anything, on a healthy day.
+Since v3.62.0 that has meant the overview strip — **DOCUMENTS · MEMORY · KNOWLEDGE**, each a
+freshness dot and a word, joined by **CAPTURE** in v3.64.1. **Through v3.65.0 a fourth reading, a
+"Last saved" card or row, repeated the MEMORY tile's own age with the tool and model that wrote
+it** — first as its own card between step ① and step ②, then, from v3.64.1, as the first row inside
+step ② Memory.
+
+**v3.65.1 removes that row outright.** The maintainer's own reading of the screen was that it
+answered a question the tile one scroll up had already answered, in the same words, on a page whose
+whole subject is not repeating one design twice. The two facts it carried went to the two places
+that actually needed them: the age lives in the **MEMORY** tile, and *which* handoff — the scope, the
+tool, whether it wrote in full — lives in the **[Handoffs](#the-handoffs-table)** row's own summary
+line, open it for the rest.
 
 ```
-□ Last saved   4 min ago
-               main · claude-code
+MEMORY
+saved 4 min ago
 ```
 
-The pip is the pre-attentive half and the words are the exact half. The qualifying lines below
-were once folded into a *Status* block with those readings; they now appear **on the step each one
-qualifies**, unfolded, because a warning is never folded away. They still appear **only when each
-has something to say**:
+The pip is the pre-attentive half and the word is the exact half. The **qualifying lines** below —
+one save's own warnings, never a fact about the project as a whole — were once folded into a
+*Status* block; from v3.64.1 they sat under the "Last saved" row; **as of v3.65.1, with that row
+gone, they render as their own monitor above the four folds**, unfolded, because a warning is never
+folded away regardless of which row it used to sit under. They still appear **only when each has
+something to say**:
 
 | Line | When it appears | What to do |
 |---|---|---|
@@ -1895,12 +1988,11 @@ has something to say**:
 | *"the reading above is the file's own timestamp"* | No journal entry carried a save time, so the age is the file's, not the agent's | On a computer that syncs, that is when the file **arrived**, not when it was written |
 | *"This file arrived on this computer N ago"* | Both clocks are known and disagree by more than two minutes | Nothing — it is telling you the handoff was written elsewhere and pulled in later |
 | *"Written on `<machine>` and synced here"* | The open handoff was written on another installation | Read the next steps with that in mind — local paths, running processes and checkouts may not match what it describes |
-| *"Newer state in this project: `<work-stream>`"* | Some **other** work-stream in this project holds something more recent than the one on screen | Check it — the Work-streams table above is where. An agent told to *"reuse an existing scope"* can be saving beside you into one you are not watching |
+| *"Newer state in this project: `<scope>`"* | Some **other** scope in this project holds something more recent than the one on screen | Check it — the [Handoffs table](#the-handoffs-table) above is where. An agent told to *"reuse an existing scope"* can be saving beside you into one you are not watching |
 | *"`<machine>` saved after this computer"* | Another **machine** has saved more recently than this one — the same reading the menu bar gives | **Pull before you continue**, or that work will be waiting on the other machine. This is a different question from the line above it |
-| *"Two tools are writing `<work-stream>`"* | Two agent tools have both saved into the same handoff file and are overwriting each other | Give each tool its own work-stream name — the same collision, and the same remedy, as [§6b Scenario 1](#scenario-1--two-agent-tools-on-one-computer) |
-| **Standing brief — `<age>`** | Always | Nothing, usually. The brief is on a much slower clock than a handoff and an old brief is not a stale one, which is why it deliberately gets no freshness mark |
+| *"Two tools are writing `<scope>`"* | Two agent tools have both saved into the same handoff file and are overwriting each other | Give each tool its own scope name — the same collision, and the same remedy, as [§6b Scenario 1](#scenario-1--two-agent-tools-on-one-computer) |
 
-> **It says "Last saved", never "you are saved".** It knows when the last save happened; it cannot
+> **The tile says "saved", never "you are saved".** It knows when the last save happened; it cannot
 > know whether anything has changed since. That inference is left where it belongs — with you.
 
 > **There are two clocks behind every age on this page**, and the screen says which one it used.
@@ -1922,7 +2014,7 @@ markdown under `domains/<domain>/state/<project>/`, so you can also open it in a
 it travels with GitHub sync like the rest of your wiki.
 
 **What the screen does not do:** there are no rollups. Nothing composes a Done/Decided/Blocked
-view across work-streams or across projects, and the only thing it writes is the **standing
+view across handoffs or across projects, and the only thing it writes is the **standing
 brief** — the handoff and the journal are written by an agent and by nothing else.
 
 > 💡 **The write half has to be asked for, and installing the skill is not always enough.** Nothing
@@ -1944,16 +2036,18 @@ brief** — the handoff and the journal are written by an agent and by nothing e
 > work-streams, a seven-day save pulse, and the standing brief's age — from the menu bar. It is off by default and
 > it is a reader too: nothing in it writes.
 
-The menu bar icon also carries a small honesty check on a project whose foundations are
-**repo-owned** (see [Foundations](#foundations--canonical-documents-that-travel), below): when
+The menu bar icon also carries a small honesty check on a project whose documents are
+**repo-owned** (see [Foundations](#foundations--canonical-documents-that-travel), below — the store
+still calls this tier **foundations**; the screen calls it **Documents**): when
 one or more of that project's mirrored documents no longer match the checkout they were copied
 from, its header sublabel gains **`· docs stale`**, or **`· N docs stale`** once there is more
-than one — the same computed-not-remembered freshness check the in-app Foundations block already
+than one — the same computed-not-remembered freshness check the in-app Documents block already
 runs, surfaced where you are most likely to see it before starting work. Nothing appears when
-every mirrored document is current, and a curator-owned foundation (one an agent wrote, with
+every mirrored document is current, and a curator-owned document (one an agent wrote, with
 nothing to compare it against) never triggers the mark. If you see it: either **refresh the
-mirror from the repository** — the same action the in-app Foundations block offers, run from
-whichever machine has that checkout — or, for a document an agent wrote rather than mirrored,
+mirror from the repository** — the same action the in-app Documents block offers, run from
+whichever machine has that checkout, or switch it to read from GitHub directly with **"Mirror from
+GitHub instead"** — or, for a document an agent wrote rather than mirrored,
 **save the fresher version from the checkout** you actually want kept.
 
 Full detail — the layout, what goes in state versus what belongs on a wiki page, and the safety
@@ -3073,7 +3167,7 @@ because it is 150 rows *of what currently matches*.
 alongside its wiki. The **Memory** tab beside Summaries lists them:
 
 - **`<project> · Standing brief`** — the project's standing brief, the document you write
-- **`<project> · <work-stream> · <machine>`** — one work-stream's latest handoff, on one machine
+- **`<project> · <scope> · <machine>`** — one scope's latest handoff, on one machine
 
 Each row shows the file's path under `state/`, exactly where it is on disk and in your synced
 folder. Click one and it opens in the same reader a wiki page does.
@@ -3430,14 +3524,18 @@ A small **working-state brief** per project, held as plain markdown inside the d
 
 ```
 domains/<domain>/state/
-  <project>/project.md                            the standing brief — what this project is
-  <project>/<workstream>/<machine>/current.md     the handoff — where things stand right now
-  <project>/<workstream>/<machine>/journal.jsonl  one line per save, append-only
+  <project>/project.md                     the standing brief — what this project is
+  <project>/<scope>/<machine>/current.md     the handoff — where things stand right now
+  <project>/<scope>/<machine>/journal.jsonl  one line per save, append-only
 ```
+
+*(`<scope>` is the field's real name — the Project-context screen shows this as a **Handoff** row,
+since v3.65.1; [the vocabulary table](#the-word-on-screen-and-the-word-on-disk) has the
+full mapping between what you see on screen and what is actually on disk.)*
 
 **A domain holds many projects, as of v3.48.0.** A domain is where *knowledge* lives — one wiki,
 one schema. A project is a thing you *build* with it, and each project has its own standing
-brief and its own work-streams, so two builds can share a wiki without sharing a handoff.
+brief and its own scopes, so two builds can share a wiki without sharing a handoff.
 [Which level to reach for](#one-domain-one-project-or-one-more-work-stream) is a section of its
 own further down. If you had agent memory before v3.48.0, it now reads as one project named
 after its domain, with nothing moved and nothing to do.
@@ -3811,10 +3909,11 @@ when you have asked it to** — write or update this document — in the same wa
 already required an explicit instruction for the standing brief. A session that reads foundations
 correctly all the way through never has to call it.
 
-**How the Foundations block reads, in the app.** Since v3.62.0 it is **step ①** on the Project-context screen
-— the first thing on the page, above step ② *Working state* and its five rows (*Last saved*,
-*Capture*, *Work-streams*, *The brief*, *Recent saves* — since v3.65.0 all five built from the same
-instrument) — and its own fold is closed
+**How the Foundations block reads, in the app.** Since v3.62.0 it is **step ①**, now called
+**Documents**, on the Project-context screen
+— the first thing on the page, above step ② *Memory* and its four rows (*Capture*,
+*Handoffs*, *The brief*, *Journal* — since v3.65.0 all built from the same
+instrument, and since v3.65.1 the "Last saved" row that used to lead them is gone) — and its own fold is closed
 by default like theirs. Its summary
 line reads *"N documents · M KB · fresh · 2 read first · 4 on request"*, or names how many are
 stale, unreachable from this machine, or Curator-authored, whichever applies. Each row in the
@@ -4237,25 +4336,30 @@ a teammate without `my-curator` on their `PATH` would otherwise experience your 
 
 ### The meter: did the session read, and did it save?
 
-Project context → step ② **Working state** carries this reading as one of its five rows — the
-question this whole layer exists for is answered without opening anything.
+Project context → step ② **Memory** carries this reading as its **first** row, **Capture** — the
+question this whole layer exists for is answered without opening anything but that one fold.
 
-![The Project context screen, dark theme, scrolled to step 2 "Working state" (numeral, Title-case
-title and an ⓘ beside it — no sentence under the heading). Five closed rows follow: "Last saved" ·
-"Capture" · "Work-streams" · "The brief" · "Recent saves". Capture's own row reads, at its right
+![The Project context screen, dark theme, scrolled to step 2 "Memory" (numeral, Title-case
+title and an ⓘ beside it — no sentence under the heading). Four closed rows follow: "Capture" ·
+"Handoffs" · "The brief" · "Journal". Capture's own row reads, at its right
 edge, "6 sessions in the last 30 days · 4 started with the context · 4 saved before stopping · 2
 read and did not save", with a green dot. Opening it reveals a recessed, monospace panel — the
-same instrument every live reading in the app now uses — holding a table with the columns STARTED,
-HARNESS, CALLS, READ and SAVED: 12 min ago claude-code 3 ✓ ✓; 5 hr ago codex 3 ✓ ✓; 1 day ago
-gemini-cli 2 ✓ –; 2 days ago other 2 ✓ –; 6 days ago claude-desktop 2 – ✓; 1 week ago opencode 2 –
-✓. Two lines sit below the row, never behind its chevron: "412 lines predate session ids and are
-not counted", and a quieter "25 self-test calls excluded". The word "Sessions" appears nowhere on
-the page outside the ⓘ and the table's own caption.](images/curator-capture-meter.png)
+same instrument every live reading in the app now uses — six lines, no table: sessions in the last
+30 days, started with the context, saved before stopping, read and did not save (in the warning
+tone once it is non-zero), the newest session's age with the harness that wrote it as a sub-line,
+and the calls made across the window. Two lines sit below the row, never behind its chevron: "412
+lines predate session ids and are not counted", and a quieter "25 self-test calls excluded". The
+word "Sessions" appears nowhere on the page outside the ⓘ.](images/curator-capture-meter.png)
 
-*As of v3.65.0, Capture is one row among the other four, not a card sitting above a separate
-"Sessions" fold — clicking it opens the same table that used to live under a second heading, in
-the same place. The route's own disclosures (the pre-session-id count, the excluded self-test
-calls) stay outside the row, unfolded, because a note about what the meter cannot see is exactly
+*As of v3.65.0, Capture became one row among the other four, not a card sitting above a separate
+"Sessions" fold. **As of v3.65.1 its body dropped the per-session table entirely** — the maintainer's
+own reading was that a row plus a table plus a floating ⓘ was three designs answering one question —
+and the six facts the table used to carry now live as six monitor lines, so nothing measured is
+lost, only the table's own per-session rows. The ⓘ that used to float alone above the table moved
+out of the row altogether, into the step's own ⓘ beside its title. The route's own disclosures (the
+pre-session-id count, the excluded self-test calls, and — further down — the note about a bridge
+that logged saves with no session) stay outside the row, unfolded, because a note about what the
+meter cannot see is exactly
 the kind of thing the standing rule says must never sit behind a chevron: a warning, a cost or an
 outcome is never one click further away than the row it qualifies.*
 
@@ -4290,8 +4394,8 @@ line — so it neither helps nor hurts the figures, and a session that never ope
 in the denominator either. And a session that **opened** the bridge but never landed a real tool
 call still writes nothing but its session line, which is exactly what the 2026-09-20 measurement
 ran into: one whole arm recorded zero sessions not because four sessions failed to save, but
-because no session ever reached the bridge at all. The **harness** column is **self-reported** by the client and nothing in
-The Curator branches on it: it labels a row and does nothing else. Calls made before v3.63.0 have no
+because no session ever reached the bridge at all. The **harness** named beside the newest session is **self-reported** by the client and nothing in
+The Curator branches on it: it labels the reading and does nothing else. Calls made before v3.63.0 have no
 session id, so they are counted separately (*"412 lines predate session ids and are not counted"*)
 rather than being invented into sessions. And the app's own *Test all 24 tools* run is excluded
 outright — pressing a button on a Settings screen must never report a session that read and saved.
