@@ -9218,9 +9218,12 @@ function renderToolMap() {
   const lede = 'What your agents used, and when — kept on this machine only.';
   // ── THE FILENAME IS PLAIN TEXT, NOT A `<code>` ─────────────────────────
   // FOUND BY OPENING THE FOLD: `.tx-vh-panel` is a one-column GRID (its own
-  // comment says so — the measure lives on the track so the card can take the
-  // column), and CSS wraps each contiguous run of text in an ANONYMOUS grid
-  // item. An inline element inside it therefore becomes a row of its own: the
+  // comment says WHY — `renderInfoMark` emits its prose as a BARE TEXT NODE,
+  // and a grid is what can lay one out without a wrapper. The track itself
+  // used to carry the MEASURE, which is what this line said; v3.65.0 made it
+  // `minmax(0, 1fr)`, so the prose now takes the card and the card takes the
+  // column — the grid stayed, the cap went), and CSS wraps each contiguous run
+  // of text in an ANONYMOUS grid item. An inline element inside it therefore becomes a row of its own: the
   // filename sat on its own line and the sentence resumed underneath with a
   // leading comma. So the name is written as text, and the sentence is built
   // so nothing depends on it being set apart. The trailing link is the one
