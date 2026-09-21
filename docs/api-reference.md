@@ -4031,7 +4031,7 @@ learns the list was cut without comparing lengths itself.
 | `legacyLines` | lines with no `sid` — every line written before v3.63.0. Counted **before** the project filter, deliberately, because such a line carries no project and never could: the number is about the **log**, not about this project, and it is what lets a caller tell *"no sessions"* from *"this log predates the meter"* |
 | `selfTestLines` | lines from the app's own *Test all 24 tools* run, excluded from every session figure |
 | `newestSaveAt` *(v3.64.1)* | The newest save's **file** clock, independent of `sessions` and of the session-based totals above it — kept as its own reading precisely so it can disagree with them, which is the signal `noSessionsButSaves` below is built from |
-| `noSessionsButSaves` *(v3.64.1)* | `true` when the window holds at least one save (by file clock) and zero sessions. The shape a bridge left running across an app update leaves: it keeps writing saves but, predating the session line added in v3.63.0/moved in v3.64.0, logs no session for them |
+| `noSessionsButSaves` *(v3.64.1; third term v3.65.1)* | `true` when a usage log exists, the window holds at least one save (by file clock), and zero sessions were logged in it — an absent log takes the plain "no usage log yet" note instead, never this one. The shape a bridge left running across an app update leaves: it keeps writing saves but, predating the session line added in v3.63.0/moved in v3.64.0, logs no session for them |
 
 **`client` is `null`, not `"other"`, when no session line survives for that id** — rotated away, or
 the append was in flight when the bridge child exited. *"A name we did not recognise"* and *"no
