@@ -524,8 +524,18 @@ const NAMED_FAMILIES = [
  * the assertion below) — so it is listed with `moves: false` rather than
  * being skipped, which keeps the exclusion visible and asserted.
  */
+// AN ALIASED CLASS IS HALF OF ONE ELEMENT here too, for the same reason §2
+// resolves through ALIAS_PARTNER (v3.65.0): `.dm-row` no longer declares its
+// own box — `renderSidebarRow` writes `class="cur-sb-row dm-row"`, and the
+// kit owns the press rule shared/sidebar.css carries under `.cur-sb-row`.
+// A family whose class is a kit ALIAS is resolved against BOTH names, exactly
+// as §2's transition check already does; a family that has not adopted the
+// kit (its alias partner has no rule of its own to add) sees no rules beyond
+// what a direct match already found, so this cannot manufacture a pass.
 for (const [cls, label, moves] of NAMED_FAMILIES) {
-  const rules = ACTIVE_RULES.filter(r => classRe(cls).test(r.selector));
+  const names = [cls];
+  if (ALIAS_PARTNER.has(cls)) names.push(ALIAS_PARTNER.get(cls));
+  const rules = ACTIVE_RULES.filter(r => names.some((n) => classRe(n).test(r.selector)));
   ok(rules.length > 0, `${label} (.${cls}) has a press rule`);
   const doesSomething = rules.some(r => declares(r.body, 'transform') || declaresFill(r.body));
   ok(doesSomething, `…and it actually CHANGES something (transform or background), not merely exists`);
