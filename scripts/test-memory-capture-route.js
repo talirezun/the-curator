@@ -106,6 +106,19 @@ function clearLog() {
   try { rmSync(LOG); } catch { /* absent already */ }
   usage.__clearUsageCache();
 }
+/**
+ * A log FILE that exists but carries no session in it — a legacy line (no
+ * `sid`) is the honest shape for that: present, but with nothing this window
+ * can call a session. Distinct from `clearLog()` (no file at all), which is
+ * the OTHER honest shape `noSessionsButSaves` must tell apart (v3.65.1 §D4)
+ * — a log a bridge never opened can't have "logged no sessions".
+ */
+function writePresentEmptyLog() {
+  writeFileSync(LOG, `${JSON.stringify({
+    ts: new Date(Date.now() - 60 * 60_000).toISOString(), tool: 'legacy_probe',
+  })}\n`, 'utf8');
+  usage.__clearUsageCache();
+}
 function hasKeyDeep(obj, key) {
   if (!obj || typeof obj !== 'object') return false;
   if (Object.prototype.hasOwnProperty.call(obj, key)) return true;
@@ -540,10 +553,15 @@ try {
       JSON.stringify(saved && (saved.error || saved.reason)));
 
     {
-      clearLog();
+      // THE CONTRADICTION, PROPERLY: a log EXISTS — a bridge did run — and it
+      // logged no session for this window, while the store shows a save in
+      // it. Only a PRESENT log can have "logged no sessions"; §D4 below is
+      // the sibling case where there is no log to have logged anything.
+      writePresentEmptyLog();
       const r = await GET('/alpha/saved/capture');
-      eq(r.status, 200, 'answers 200 with saves present and no log at all');
-      eq(r.body.totals.sessions, 0, 'CONTROL: the log really reports no session');
+      eq(r.status, 200, 'answers 200 with saves present and a log with zero sessions in it');
+      eq(r.body.logPresent, true, 'CONTROL: the log really is present');
+      eq(r.body.totals.sessions, 0, 'CONTROL: and it really reports no session');
       ok(typeof r.body.newestSaveAt === 'string' && Number.isFinite(Date.parse(r.body.newestSaveAt)),
         'newestSaveAt is the project\'s own save clock, as an ISO stamp',
         JSON.stringify(r.body.newestSaveAt));
@@ -552,6 +570,33 @@ try {
         '...and the note names it, with the remedy', JSON.stringify(r.body.note));
       ok(!/no usage log yet/.test(r.body.note || ''),
         '...outranking the absent-log note, which explains a figure rather than a contradiction',
+        JSON.stringify(r.body.note));
+    }
+
+    {
+      // ═══ §D4 (v3.65.1) — NO LOG AT ALL IS NOT "A BRIDGE THAT LOGGED
+      // NOTHING" ═══ Found by the Context builder (REPORT-v3651-context.md
+      // §11 D4): the route's `noSessionsButSaves` carried no term for the
+      // usage log EXISTING, so a machine with saves on disk that never
+      // opened a bridge took the contradiction arm ahead of the `!present`
+      // arm directly below it and painted the loud restart-Claude-Desktop
+      // note over an honest "no usage log yet" — a false alarm. This is the
+      // control the block above needed: same save, same zero sessions, but
+      // the log file itself is ABSENT rather than present-and-empty.
+      clearLog();
+      const r = await GET('/alpha/saved/capture');
+      eq(r.status, 200, 'answers 200 with saves present and NO log at all');
+      eq(r.body.logPresent, false, 'CONTROL: there really is no log on this machine');
+      eq(r.body.totals.sessions, 0, 'CONTROL: so of course it reports no session');
+      ok(typeof r.body.newestSaveAt === 'string' && Number.isFinite(Date.parse(r.body.newestSaveAt)),
+        'CONTROL: and the store still shows the save, same as the block above',
+        JSON.stringify(r.body.newestSaveAt));
+      eq(r.body.noSessionsButSaves, false,
+        'an absent log is never "a bridge that logged no sessions" — nothing was asked to log anything');
+      ok(/no usage log yet/.test(r.body.note || ''),
+        '...the ordinary absent-log note applies instead', JSON.stringify(r.body.note));
+      ok(!/bridge that logged no sessions/.test(r.body.note || ''),
+        '...never the restart-Claude-Desktop remedy, which would blame a bridge that was never asked',
         JSON.stringify(r.body.note));
     }
 
@@ -577,8 +622,10 @@ try {
       // synced to this machine ten minutes ago is exactly that. A note that
       // named a save the figure beside it does not show would be worse than
       // no note, so this drives the two clocks APART and requires the route
-      // to follow the one on screen.
-      clearLog();
+      // to follow the one on screen. A PRESENT log, deliberately (v3.65.1):
+      // this block is testing the file-vs-agent clock, not log presence —
+      // §D4 above already covers an absent log on its own.
+      writePresentEmptyLog();
       // `<scope>/<machine>/journal.jsonl` — the machine segment is minted per
       // install, so it is discovered rather than guessed.
       const scopeDir = join(DOMAINS, 'alpha', 'state', 'saved', 'session-x');
@@ -603,8 +650,9 @@ try {
 
     {
       // A SAVE OLDER THAN THE WINDOW is not a contradiction either: the meter
-      // only claims there were no sessions IN the window.
-      clearLog();
+      // only claims there were no sessions IN the window. A PRESENT log
+      // again (v3.65.1), to isolate the window logic from log presence.
+      writePresentEmptyLog();
       const r = await GET(`/alpha/saved/capture?since=${encodeURIComponent(
         new Date(Date.now() + 60_000).toISOString())}`);
       eq(r.body.noSessionsButSaves, false,
