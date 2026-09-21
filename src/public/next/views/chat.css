@@ -637,6 +637,33 @@
    domain you are currently scoped to in neutral grey while held — reading as
    though the press had unscoped it. Selected deepens its own tint instead.
    Both are declared after `.active`, which they tie with on specificity. */
+/* ── IN THIS PROJECT'S KNOWLEDGE (v3.65.0, P10) ───────────────────────────
+   A DISCLOSURE, NOT A SELECTION. The pinned project names the domains its
+   knowledge lives in; this says which chips those are. It deliberately does
+   NOT look selected — `.active` is still the one chip whose wiki the answer
+   reads, and Chat is single-select by the product decision recorded at the top
+   of views/chat.js. A second lit-looking chip would claim a reach the answer
+   does not have.
+
+   SO IT IS A BORDER, NOT A FILL: `.active` owns `--accent-tint` as a ground,
+   and the two states must be legible together (the domain a project names can
+   also be the one you are reading). A dashed edge says "belongs to a set"
+   without saying "selected", and it composites over the pill's own hairline
+   rather than adding a second box.
+
+   COLOUR IS NEVER THE ONLY CARRIER: `scopePillHtml` puts the same fact in the
+   chip's accessible NAME, with the visible label as its prefix, and the
+   picker's footer names the domains in words. This rule adds the glanceable
+   half only. */
+.chat-scope-pill.in-project {
+  border-style: dashed;
+  border-color: var(--accent-border);
+}
+/* Selected AND named by the project: the tint wins the ground, the dashed edge
+   survives. Declared after `.active` (which it ties with) so neither erases
+   the other, and matching `.active`'s own border-color so the edge reads as
+   one control rather than two rings. */
+.chat-scope-pill.in-project.active { border-color: var(--accent-border); }
 .chat-scope-pill:not(.active):active { background: var(--surface-active); }
 .chat-scope-pill.active:active { background: var(--accent-tint-strong); }
 .chat-scope-pill:active { transform: translateY(var(--press-shift)) scale(var(--press-scale)); }

@@ -36,7 +36,7 @@ import {
 // header body, so that shape is no longer expressible on this view. See
 // shared/text.js's own header for why `info` is the only prose field and why it
 // is emitted only inside a panel that is `hidden` on first paint.
-import { renderViewHeader, renderReadout } from '../shared/text.js';
+import { renderViewHeader, renderReadoutGroup } from '../shared/text.js';
 import { renderMarkdown } from '../shared/markdown.js';
 // The ONE honest USD renderer for /next. Imported, never re-implemented: a
 // local `'$' + n.toFixed(4)` renders any charge below $0.00005 as the string
@@ -426,6 +426,11 @@ const state = {
   // went into the prompt, and a client-side estimate beside a real one is the
   // dead-data shape this file already refuses for `usage`.
   projectLastUsed: null,
+  // v3.65.0, P10 — WHICH WIKIS the pinned project's knowledge lives in, off
+  // `GET /api/memory/:domain/:project`. A DISCLOSURE, never a selection: see
+  // `ensureProjectKnowledge` for the two measured reasons Chat does not move
+  // the chips. `{project, domains, defaulted, missing, error}` or null.
+  projectKnowledge: null,
   responseStyle: 'balanced',
   modelProvider: null,    // null -> global active provider
   availableProviders: [], // config-scoped subset of PROVIDER_KEY_FLAGS' ids
@@ -3111,7 +3116,16 @@ async function loadProjectsForDomain(domain, token) {
     writePinnedProject(domain, null);
     state.projectLastUsed = null;
   }
+  state.projectKnowledge = null;
   patchProjectGroup(token);
+  patchScopePillMarks();
+  // AFTER the reconciliation, never before: a pin that has just been cleared
+  // because the project is gone must not then be read about. This is the one
+  // hook that covers the per-device pin restored on mount AND the pin seeded
+  // by `consumeChatScopeRequest()`, because both settle here.
+  if (state.activeProject) {
+    ensureProjectKnowledge(domain, state.activeProject, token).catch(() => {});
+  }
 }
 
 /** Commit a pick. `''` means "no project". */
@@ -3126,7 +3140,173 @@ function selectChatProject(value) {
   state.activeProjectScope = null;
   state.projectLastUsed = null;
   writePinnedProject(state.activeDomain, next);
+  // The previous project's domains are a fact about a project that is no
+  // longer pinned; dropped here so no repaint between now and the answer can
+  // paint them beside the new name.
+  state.projectKnowledge = null;
   patchProjectGroup(myMountToken);
+  patchScopePillMarks();
+  // UN-PINNING READS NOTHING. "No project" has no knowledge domains, and a
+  // request that can only answer about nothing is a request not worth making.
+  if (next) ensureProjectKnowledge(state.activeDomain, next, myMountToken).catch(() => {});
+}
+
+/**
+ * Per-MOUNT cache of a project's knowledge domains, keyed by mount token as
+ * well as (domain, project).
+ *
+ * The token is in the key rather than in a reset hook, deliberately: leaving
+ * and re-entering Chat mints a new token, so the next read is a MISS and the
+ * answer is fresh. A project whose knowledge domains were just edited in
+ * Context is therefore correct the moment the user comes back, and no reset
+ * site anywhere has to remember this Map exists.
+ */
+const projectKnowledgeCache = new Map();
+const MAX_PROJECT_KNOWLEDGE_CACHE = 24;
+
+/**
+ * Read the pinned project's knowledge domains, ONCE per project per mount.
+ *
+ * ── WHY THIS ONLY DISCLOSES, AND DOES NOT MOVE THE CHIPS ─────────────────
+ * The v3.65.0 design record says "Chat pre-selects those domain chips when the
+ * project is pinned (retrieval across them, the existing multi-domain scope)".
+ * THERE IS NO MULTI-DOMAIN SCOPE IN CHAT, and the parenthetical is the only
+ * part of that sentence this file can act on. Three facts, each of which alone
+ * settles it:
+ *
+ *  1. This view is single-select by an explicit product decision recorded at
+ *     the top of this file: one active domain, `POST /api/chat/:domain`,
+ *     `sendMessage(domain, …)` → `readWikiPages(domain)`, conversations stored
+ *     under that one domain. A chip selection cannot widen retrieval, so two
+ *     lit chips would claim a reach the answer does not have.
+ *  2. `switchDomain` CLEARS the pin ("Projects belong to a DOMAIN … the old
+ *     domain's rows, its pin and its last measured reading are all about
+ *     something the user has just left"), and `loadProjectsForDomain` then
+ *     reconciles the pin against the NEW domain's rows. A project lives in one
+ *     domain, so moving the chips to another of its knowledge domains UNPINS
+ *     THE PROJECT THAT ASKED FOR THE MOVE. The feature would cancel itself.
+ *  3. Even with the pin forced to survive, `src/routes/chat.js` resolves the
+ *     project against the URL's `:domain` and answers 400 `project_not_found`
+ *     BEFORE the stream opens — so the first question after the move would be
+ *     refused.
+ *
+ * (2) and (3) are executed, not read: scripts/test-next-chat-scopebar.js §15
+ * drives the real `switchDomain` and watches the pin go, and §15c drives the
+ * real route predicate. Making this work needs a project pin that is not keyed
+ * by domain AND a route that resolves a project across domains — both outside
+ * this package. Until then the honest rendering is to SAY where the project's
+ * knowledge lives, mark those chips as belonging to it, and leave the one lit
+ * chip meaning exactly what it has always meant: the wiki this answer reads.
+ *
+ * Never throws, never blocks a turn: a failed read records `error` and the
+ * footer says the domains could not be read rather than inventing a list.
+ */
+async function ensureProjectKnowledge(domain, project, token) {
+  if (!domain || !project) { state.projectKnowledge = null; return; }
+  const key = token + '\u0000' + domain + '\u0000' + project;
+  if (projectKnowledgeCache.has(key)) {
+    state.projectKnowledge = projectKnowledgeCache.get(key);
+    patchProjectGroup(token);
+    patchScopePillMarks();
+    return;
+  }
+  let rec;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' + encodeURIComponent(project));
+    const data = await res.json();
+    if (!res.ok || data.ok === false) throw new Error('unreadable');
+    // READ DEFENSIVELY. `knowledgeDomains` is additive (v3.65.0): an older
+    // server answers this route without it, and an absent list must mean "not
+    // told", never an empty one — an empty list rendered as "no domains" would
+    // be a claim about a project whose knowledge is in fact its own domain.
+    const list = Array.isArray(data.knowledgeDomains)
+      ? data.knowledgeDomains.filter(d => typeof d === 'string' && d)
+      : null;
+    rec = list === null ? null : {
+      project,
+      domains: list,
+      defaulted: data.knowledgeDomainsDefaulted === true,
+      // NAMED BUT NOT INSTALLED. The store deliberately does not probe the
+      // domains folder on a read (its own report records why), so the list can
+      // name a domain this machine has deleted or never had. Computed here
+      // against the domain list Chat already holds — no extra request.
+      missing: list.filter(d => !state.domains.some(x => x.slug === d)),
+      error: false,
+    };
+  } catch {
+    rec = { project, domains: [], defaulted: false, missing: [], error: true };
+  }
+  // The pin or the domain moved while this was in flight: this answer is about
+  // something nobody is looking at.
+  if (!isCurrentMount(token) || state.activeDomain !== domain || state.activeProject !== project) return;
+  if (projectKnowledgeCache.size >= MAX_PROJECT_KNOWLEDGE_CACHE) projectKnowledgeCache.clear();
+  projectKnowledgeCache.set(key, rec);
+  state.projectKnowledge = rec;
+  patchProjectGroup(token);
+  patchScopePillMarks();
+}
+
+/**
+ * The domains the pinned project's knowledge lives in, as a Set — or null when
+ * there is nothing to mark.
+ *
+ * NULL WHEN THE LIST IS THE DEFAULT, and that is the point of the store's
+ * second field: a defaulted list names the domain the chips are already on, so
+ * marking it would dress "nobody has chosen" up as a choice.
+ */
+function projectKnowledgeSet() {
+  const k = state.projectKnowledge;
+  if (!k || k.error || k.defaulted || k.project !== state.activeProject) return null;
+  if (!Array.isArray(k.domains) || k.domains.length === 0) return null;
+  return new Set(k.domains);
+}
+
+/**
+ * One domain chip. ONE producer, called by the full render and by the targeted
+ * mark patch, so a repaint and a patch cannot disagree about which chips
+ * belong to the project.
+ *
+ * The mark carries a TEXT carrier as well as a colour one: the chip's
+ * accessible name gains the clause, with the visible label as its prefix so
+ * "label in name" still holds.
+ */
+function scopePillLabelFor(d) {
+  return d.displayName || d.slug;
+}
+function scopePillAriaFor(d) {
+  return scopePillLabelFor(d) + ' \u2014 in this project\'s knowledge';
+}
+function scopePillHtml(d) {
+  const set = projectKnowledgeSet();
+  const inProject = !!set && set.has(d.slug);
+  return '<button class="chat-scope-pill' + (d.slug === state.activeDomain ? ' active' : '')
+    + (inProject ? ' in-project' : '') + '" data-scope-domain="' + escapeHtml(d.slug) + '"'
+    + (inProject ? ' aria-label="' + escapeHtml(scopePillAriaFor(d)) + '"' : '') + '>'
+    + '<span class="chat-type-dot" style="background:var(--accent)"></span>'
+    + escapeHtml(scopePillLabelFor(d))
+    + '</button>';
+}
+
+/**
+ * Move the marks without repainting anything.
+ *
+ * The chips live in `.chat-scope-group`, which `patchProjectGroup` does not
+ * touch — and a `renderMain()` here would destroy the thread, the draft and
+ * the scroll position to change a class. This toggles the class and the
+ * accessible name on the buttons that are already in the document, so the
+ * listeners bound in `renderMain` survive untouched.
+ */
+function patchScopePillMarks() {
+  const set = projectKnowledgeSet();
+  for (const btn of document.querySelectorAll('[data-scope-domain]')) {
+    const slug = btn.dataset ? btn.dataset.scopeDomain : null;
+    if (!slug) continue;
+    const d = state.domains.find(x => x.slug === slug) || { slug };
+    const inProject = !!set && set.has(slug);
+    btn.classList.toggle('in-project', inProject);
+    if (inProject) btn.setAttribute('aria-label', scopePillAriaFor(d));
+    else btn.removeAttribute('aria-label');
+  }
 }
 
 /**
@@ -3212,15 +3392,64 @@ function projectFootHtml() {
   const row = activeProjectRow();
   if (!row) return '';
   const age = Number.isFinite(row.ageSeconds) ? row.ageSeconds : null;
-  return renderReadout({
-    label: row.project,
-    value: age === null ? 'no saves yet' : 'saved ' + formatAge(age),
-    markHtml: '<span class="fresh-dot fresh-' + freshnessTier(age) + '" aria-hidden="true"></span>',
-    // EMPTY until a turn measures something, and `renderReadout` drops an
-    // empty provenance entirely — no zero, no placeholder, no reading nobody
-    // took. Same refusal the node in the bar carried.
-    provenance: projectFigureText(state.projectLastUsed),
-  });
+  return renderReadoutGroup([
+    {
+      label: row.project,
+      value: age === null ? 'no saves yet' : 'saved ' + formatAge(age),
+      markHtml: '<span class="fresh-dot fresh-' + freshnessTier(age) + '" aria-hidden="true"></span>',
+      // EMPTY until a turn measures something, and `renderReadout` drops an
+      // empty provenance entirely — no zero, no placeholder, no reading nobody
+      // took. Same refusal the node in the bar carried.
+      provenance: projectFigureText(state.projectLastUsed),
+    },
+    projectKnowledgeReadout(),
+  ]);
+}
+
+/**
+ * WHERE THIS PROJECT'S KNOWLEDGE LIVES — a second readout, not a second clause
+ * on the first.
+ *
+ * TWO READOUTS RATHER THAN ONE, and the reason is this file's own most
+ * expensive recorded defect: `[Compile to Wiki] 1,406 pages in scope` read as
+ * one phrase because two unrelated facts were adjacent, and a user did not
+ * press the button because of it. "saved 4 min ago · 5 KB read last turn" is
+ * about THIS CONVERSATION's last turn; "research · business" is about the
+ * PROJECT, and is true whether or not anyone ever asks a question. Joined by a
+ * middot in one line they would read as one sentence about the turn.
+ * `renderReadoutGroup` is the kit's own answer for exactly this — several
+ * readings as one cluster, each keeping its own label.
+ *
+ * Returns a value `renderReadoutGroup` drops (`value: null`) when there is
+ * nothing measured, so "not told" never renders as an empty row.
+ */
+function projectKnowledgeReadout() {
+  const k = state.projectKnowledge;
+  if (!k || k.project !== state.activeProject) return { value: null };
+  if (k.error) {
+    return { label: 'Knowledge', value: 'could not be read', provenance: 'the project answered, its domains did not' };
+  }
+  if (!Array.isArray(k.domains) || k.domains.length === 0) return { value: null };
+  const shown = k.domains.slice(0, 3).join(' \u00b7 ');
+  const more = k.domains.length - 3;
+  // WHAT THIS CHAT IS ACTUALLY READING, said in the same breath as where the
+  // project's knowledge lives — because on this view they can differ and the
+  // difference is invisible otherwise. A count alone ("reads 2 domains") would
+  // be read as a claim about the answer; naming the domains, and naming the one
+  // the chips are on, is the same fact without the claim.
+  const parts = [];
+  parts.push(k.defaulted ? 'the default \u2014 nobody has chosen' : 'chosen for this project');
+  if (!k.domains.includes(state.activeDomain)) parts.push('this chat is reading ' + state.activeDomain);
+  if (k.missing.length) {
+    parts.push(k.missing.length === 1
+      ? k.missing[0] + ' is not on this computer'
+      : k.missing.length + ' are not on this computer');
+  }
+  return {
+    label: k.domains.length === 1 ? 'Knowledge' : k.domains.length + ' domains',
+    value: shown + (more > 0 ? ' +' + more : ''),
+    provenance: parts.join(' \u00b7 '),
+  };
 }
 
 /**
@@ -3398,13 +3627,46 @@ function projectGroupHtml() {
  * across its own repaint — see its note.
  */
 function projectInfoPanelHtml() {
+  // ── THE TWO CONDITIONAL SENTENCES, AND THE WORD BUDGET THEY EXTEND ──────
+  // THE STANDING TEXT stays at its 60-word ceiling (the brief's, pinned since
+  // v3.64.0) and is 46 words. Both sentences below state something that is
+  // FALSE for most projects — they read their own domain, and every domain
+  // they name is installed — so printing them always would spend a quarter of
+  // the budget telling nearly every reader about a situation they are not in.
+  //
+  // THE RULE THIS EXTENDS TO, stated rather than fudged: 60 words for the
+  // standing explanation, plus at most TWO conditional notes of at most 15
+  // words each, rendered only when true of the project in front of the reader.
+  // A ceiling of 60 on the rendered total would have forced both notes into
+  // telegraphese to save an explanation the reader in that situation needs
+  // least. The suite counts the standing text, each note, and the total, so
+  // every variant is measured rather than only the base.
+  //
+  // A NOTE ON PLACEMENT, because it is a judgement: the missing-domain line
+  // sits behind a disclosure, and the standing rule since v3.16.1 is that a
+  // warning may never sit behind a chevron. It is kept here because it is not
+  // a cost or a loss — the project works, the chat answers, one name in a
+  // list has nothing behind it — and because the footer states it too. If it
+  // is ever reclassified as a warning it belongs unfolded, in the bar.
+  const k = state.projectKnowledge;
+  const relevant = k && !k.error && k.project === state.activeProject && Array.isArray(k.domains) && k.domains.length;
+  let extra = '';
+  if (relevant && !k.defaulted && !k.domains.includes(state.activeDomain)) {
+    // NOT "press a chip to switch". Pressing one is a domain switch, and
+    // `switchDomain` un-pins the project — so an instruction to press would
+    // be an instruction to undo the pin the sentence is about.
+    extra += ' Its knowledge lives in another domain; a chat reads only the domain its chips select.';
+  }
+  if (relevant && k.missing.length) {
+    extra += ' It also names a domain that is not on this computer.';
+  }
   return (
     '<div class="chat-project-panel" id="chat-project-info" role="group"' +
       ' aria-label="What a pinned project adds" hidden>' +
       'With a project pinned, the answer also draws on its standing brief, its latest handoff ' +
       'and the canonical documents marked read-first — on top of this domain\'s wiki. ' +
       'All of it is treated as recorded data to verify, never as instructions. ' +
-      'Chat never writes to your project.' +
+      'Chat never writes to your project.' + extra +
     '</div>'
   );
 }
@@ -3522,11 +3784,9 @@ function renderMain(token) {
   const active = state.domains.find(d => d.slug === state.activeDomain) || state.domains[0];
   const pageCount = active ? active.pageCount : 0;
 
-  const scopePills = state.domains.map(d => (
-    '<button class="chat-scope-pill' + (d.slug === state.activeDomain ? ' active' : '') + '" data-scope-domain="' + escapeHtml(d.slug) + '">' +
-      '<span class="chat-type-dot" style="background:var(--accent)"></span>' + escapeHtml(d.displayName || d.slug) +
-    '</button>'
-  )).join('');
+  // ONE PRODUCER, shared with `patchScopePillMarks` — see its note for why a
+  // mark must never arrive by repainting this view.
+  const scopePills = state.domains.map(scopePillHtml).join('');
 
   setMain(
     '<div class="chat-view">' +
