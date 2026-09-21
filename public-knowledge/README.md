@@ -91,9 +91,9 @@ release checklist:
 Context and Settings; Step 3 Knowledge gaining a picker so a project can choose which wikis it
 draws on; and the step-body rule finishing its work on "Last saved" and "Capture", which are now
 both rows built from the monitor component rather than a card and a separate "Sessions" fold):
-**`curator-user-guide.md` and `curator-agent-memory.md` changed in v3.65.0** and need re-uploading
-after this release lands — see **Uploading to Lumina**, below. `curator-overview.md` and
-`curator-links.md` are unchanged. Remove this note once both are done; a stale note left here is
+**`curator-user-guide.md`, `curator-agent-memory.md` and `curator-overview.md` changed in v3.65.0** and need re-uploading
+after this release lands — see **Uploading to Lumina**, below. `curator-links.md` is unchanged.
+Remove this note once all three are done; a stale note left here is
 how this file stops being read.
 
 **Editing a file here changes nothing on the website.** There is no pipeline, no
