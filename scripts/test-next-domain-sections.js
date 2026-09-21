@@ -63,6 +63,13 @@ const CSS = readFileSync(join(ROOT, 'src/public/next/views/domains.css'), 'utf8'
 // v3.64.2 — the OVERVIEW card's own rules moved to the shared component's
 // stylesheet when the Project-context view adopted the same card.
 const OV_CSS = readFileSync(join(ROOT, 'src/public/next/shared/overview.css'), 'utf8');
+// v3.65.0 -- section S10 drives the REAL health panel, which composes these
+// two. They are injected into its sandbox rather than stubbed: a stub could
+// let the figures and the freshness mark say anything, and S10 is about what
+// the SHIPPED panel does.
+const { renderMonitor } = await import('../src/public/next/shared/monitor.js');
+const { freshnessTier } = await import('../src/public/next/shared/age.js');
+const { renderStatus, renderDescription } = await import('../src/public/next/shared/text.js');
 
 let passed = 0;
 let failed = 0;
@@ -2075,6 +2082,148 @@ section('S9 -- BOUND ONCE PER NODE (v3.64.1)');
   ok('a stand-in document with no querySelector binds instead of crashing',
     callOrFail('bindBrowseListeners against a querySelector-less document',
       () => { bind2(); return true; }) === true && target.listeners.length > before);
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// WHY THIS SECTION EXISTS, and it is a green mutation the orchestrator found
+// rather than a design note. views/domains.js carried the sentence "CLOSED BY
+// DEFAULT, which is the same call step 3 Knowledge made in v3.64.2" above the
+// Scan row, and the CLAIM had no guard here: hardcoding that row `open`
+// (`(scanOpen ? ' open' : '')` -> `' open'`) left this suite reporting
+// 312 passed / 0 failed.
+//
+// Probing the neighbours turned one green into FOUR. The three issue rows --
+// Broken links, Orphan pages and Dismissed -- had NO default-state assertion
+// anywhere in the repository: `const open = state.expandedGroups.has(...)`
+// -> `const open = true` in BOTH renderIssueGroup and renderDismissedGroup
+// left domain-sections, card-order, domains-text, domain-pages and
+// domain-projects ALL green. Every row of section 5 could have shipped open,
+// on every domain, and nothing would have said so.
+//
+// That predates v3.65.0 -- those rows are v2.4-era markup -- but item 3 made
+// them the section's whole body, so the property is this package's to hold.
+// The assertions below drive the REAL renderHealthPanel and read the OPEN
+// ATTRIBUTE off the rendered `<details>`, one row at a time, in both
+// directions: closed with a fresh preference, open when the preference names
+// that row and no other.
+{
+  const deps = {
+    icon: () => '<ICON/>', escapeHtml: (x) => String(x),
+    pluralize: (n, w) => n + ' ' + w + (n === 1 ? '' : 's'),
+    relTime: () => '10s ago', buttonRingHtml: () => '<RING/>',
+    totalOpenIssues: (r) => ((r.brokenLinks || []).length + (r.orphans || []).length),
+    renderBanner: () => '', renderMirrorNote: () => '<MIRROR/>',
+    renderQuickMaintenance: () => '<QUICK/>', renderAiProgressRing: () => '',
+    renderConfirmCard: () => '', renderPendingPlan: () => '',
+    activeSemanticScan: () => null, renderSemanticScanResult: () => '',
+    // THE REAL ISSUE GROUPS, not a stub: this section is ABOUT their open
+    // state, and `renderIssueGroups: () => '<GROUPS/>'` -- which is what every
+    // other sandbox in the repo passes -- is exactly why the mutation that
+    // opens all three was invisible everywhere.
+    HEALTH_CATEGORIES: [
+      { key: 'brokenLinks', label: 'Broken links' },
+      { key: 'orphans', label: 'Orphan pages', violet: true },
+    ],
+    AUTO_FIX_TYPES: new Set(['brokenLinks']),
+    inFlightWriteSlugs: new Set(),
+    gatedLoader: () => '<LOADER/>', loadGate: {},
+    describeDismissed: (r) => String(r && r.type),
+    renderIssueRow: () => '<div class="dm-issue-row"></div>',
+    renderMonitor, freshnessTier, renderStatus, renderDescription,
+  };
+  const names = Object.keys(deps);
+  const build = () => new Function(
+    'state', ...names,
+    extractFunction(SRC, 'shouldKeepHealthOnReload') + '\n' +
+    extractFunction(SRC, 'healthScanLabel') + '\n' +
+    extractFunction(SRC, 'healthSection') + '\n' +
+    extractFunction(SRC, 'renderIssueGroup') + '\n' +
+    extractFunction(SRC, 'renderDismissedGroup') + '\n' +
+    extractFunction(SRC, 'renderIssueGroups') + '\n' +
+    extractFunction(SRC, 'renderHealthPanel') + '\nreturn renderHealthPanel;'
+  );
+  const REPORT = {
+    counts: { entities: 41, concepts: 331, summaries: 7, dismissed: 2 },
+    scannedAt: '2026-08-29T12:00:00Z',
+    brokenLinks: [{ a: 1 }, { a: 2 }], orphans: [{ b: 1 }],
+  };
+  const render = (open) => build()({
+    healthLoading: false, health: REPORT, healthSlug: 'articles', healthError: null,
+    busyKey: null, expandedGroups: new Set(open || []), dismissedRecords: null,
+  }, ...names.map((n) => deps[n]))({ slug: 'articles' }, false);
+
+  // Every `<details …data-group-key="k">` in the panel, and whether it is open.
+  const rowsOf = (html) => [...html.matchAll(/<details([^>]*)data-group-key="([^"]+)"([^>]*)>/g)]
+    .map((m) => ({ key: m[2], open: /(^|\s)open(\s|$)/.test(m[1] + ' ' + m[3]) }));
+
+  const fresh = callOrFail('the real health panel renders with a fresh preference',
+    () => render([]));
+  if (fresh) {
+    const rows = rowsOf(fresh);
+    const keys = rows.map((r) => r.key);
+    // CONTROL FIRST. Four rows have to BE there, or "none of them is open" is
+    // a statement about an empty list -- the vacuity this suite keeps finding.
+    eq('CONTROL -- section 5 renders four fold rows', keys.length, 4);
+    ok('...and they are Scan, then the two issue kinds, then Dismissed',
+      keys.join(',') === 'scan,brokenLinks,orphans,dismissed', keys.join(','));
+    ok('EVERY one of them ships CLOSED when the preference names none -- the headline '
+      + 'in each summary IS the reading, and the breakdown is the dive-in',
+      rows.every((r) => !r.open), rows.map((r) => r.key + '=' + r.open).join(' '));
+  }
+
+  // ...AND EACH ONE OPENS, ON ITS OWN, WHEN THE PREFERENCE NAMES IT. Without
+  // this half, "nothing is open" is satisfiable by a panel that can never open
+  // anything at all.
+  for (const key of ['scan', 'brokenLinks', 'orphans', 'dismissed']) {
+    const html = callOrFail('the panel renders with ' + key + ' remembered', () => render([key]));
+    if (!html) continue;
+    const rows = rowsOf(html);
+    const mine = rows.find((r) => r.key === key);
+    const others = rows.filter((r) => r.key !== key);
+    ok('`' + key + '` opens when the preference names it, and ONLY it -- so the state '
+      + 'that decides is read per row rather than shared',
+      !!mine && mine.open && others.length === 3 && others.every((r) => !r.open),
+      rows.map((r) => r.key + '=' + r.open).join(' '));
+  }
+
+  // ── THE ECHO CANNOT REACH A PREFERENCE, AND THE REASON IS STRUCTURAL ───
+  // MEASURED in v3.64.1: a `<details open>` created by an innerHTML assignment
+  // fires `toggle` ONCE, after the listener is attached. For the two SECTION
+  // folds that echo reaches `writeSectionPrefs`, and the guard is
+  // `__dmFoldWas` + `programmaticFolds`. Section 5's rows need no such guard,
+  // and this is why: they carry `data-group-key`, never `data-dm-fold`, so
+  // the only binder that answers for them is the one that writes the
+  // in-memory `state.expandedGroups` -- nothing on this path can reach
+  // localStorage at all.
+  if (fresh) {
+    ok('no row in section 5 carries `data-dm-fold`, the attribute the PREFERENCE '
+      + 'writer keys on -- so a paint-time toggle echo here cannot write one',
+      !/<details[^>]*data-dm-fold/.test(fresh), fresh.slice(0, 200));
+    ok('CONTROL -- the detector is not blind: the two SECTION folds DO carry it, and '
+      + 'they are the two with the echo guard',
+      (SRC.match(/data-dm-fold="(sources|shared)"/g) || []).length === 2);
+  }
+  // ...and the storage VALIDATOR would drop such a key even if one arrived.
+  // `readSectionPrefs` accepts the literal true/false under two known fold
+  // names and one of three lens values, and nothing else -- which is what
+  // "no new key and no new storage" means when it is executed rather than
+  // asserted.
+  {
+    const rsp = new Function('localStorage', 'SECTION_PREFS_KEY', 'SECTION_LENSES',
+      extractFunction(SRC, 'readSectionPrefs') + '\nreturn readSectionPrefs;')(
+      { getItem: () => JSON.stringify({ '*': { sources: true, scan: true, brokenLinks: true, lens: 'wiki' } }) },
+      'curator-domain-sections-v1', ['wiki', 'memory', 'all']);
+    const row = rsp();
+    ok('CONTROL -- the real readSectionPrefs keeps the two fold names and the lens',
+      row.sources === true && row.lens === 'wiki', JSON.stringify(row));
+    ok('...and DROPS a health row name outright, so no amount of echoing could make '
+      + 'section 5 remember itself across a reload',
+      !('scan' in row) && !('brokenLinks' in row), JSON.stringify(row));
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
