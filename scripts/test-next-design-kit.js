@@ -800,11 +800,25 @@ section('10. No colour literal in a /next VIEW stylesheet');
     // SVG inside a url() must carry a real colour — there is no var() inside
     // an encoded data URI. Two %23fff, and they are the ONLY ones.
     'shared/checkbox.css': 2,
-    // views/domains.css carries eight pre-existing literals, six of them in
-    // its own graph-node painting. It belongs to the NEXT phase of this work
-    // and is deliberately not touched here — baselining it is the ratchet
-    // working as intended, and the count may only ever shrink.
-    'views/domains.css': 8,
+    // shared/sidebar.css carries the identity palette's three DERIVED
+    // light-theme rungs (#16768C / #438126 / #925E13). v3.65.1 moved them out
+    // of views/domains.css, which was the whole of that file's entry (8, of
+    // which 5 had already been removed; the true count on arrival was 3) and
+    // is now ZERO.
+    //
+    // WHY A THIRD ENTRY IS THE RATCHET TIGHTENING RATHER THAN LOOSENING, and
+    // why the assertion below changed shape with it: the old pair said "the
+    // baseline holds exactly TWO files", read as "two VIEW stylesheets". It
+    // never was — shared/checkbox.css is not a view. So the honest invariants
+    // are the two this section is actually about, and BOTH are strictly
+    // better after the move: the number of VIEW stylesheets carrying a
+    // literal is 1 -> 0, and the app-wide total is 10 -> 5.
+    'shared/sidebar.css': 3,
+    // views/domains.css: ZERO. Kept as an explicit entry, at zero, so the
+    // file that carried this debt for five releases is still named — a
+    // deleted key would let it silently acquire one again under the
+    // `BASELINE[rel] || 0` default, which is the same thing but unrecorded.
+    'views/domains.css': 0,
   };
   const files = walkCss(NEXT).map((f) => path.relative(NEXT, f)).sort();
   const findings = [];
@@ -819,10 +833,29 @@ section('10. No colour literal in a /next VIEW stylesheet');
     findings.length === 0
       ? `every one of the ${files.length} /next stylesheets outside tokens/ names colours by token (or is baselined)`
       : 'colour literals found: ' + findings.join(', '));
-  ok(Object.keys(BASELINE).length === 2,
-    'the baseline holds exactly TWO files — adding a third to make this pass is the thing this assertion exists to prevent');
-  ok((BASELINE['views/domains.css'] || 0) <= 8,
-    "and views/domains.css's entry may only ever SHRINK — those literals are a debt, not a licence");
+  // (1) NO VIEW STYLESHEET MAY CARRY A LITERAL. This is what the section's
+  //     title claims and what it now measures directly, rather than through a
+  //     count of files that happened to be two.
+  const viewOffenders = Object.entries(BASELINE)
+    .filter(([rel, n]) => rel.startsWith('views/') && n > 0).map(([rel, n]) => `${rel}: ${n}`);
+  ok(viewOffenders.length === 0,
+    viewOffenders.length === 0
+      ? 'ZERO /next VIEW stylesheets carry a colour literal (was one, views/domains.css at 8, '
+        + 'until v3.65.1 moved the identity palette into shared/sidebar.css)'
+      : 'a VIEW stylesheet carries a colour literal: ' + viewOffenders.join(', '));
+  // (2) THE APP-WIDE TOTAL MAY ONLY SHRINK. A move between files leaves it
+  //     flat; a new literal anywhere raises it. 10 before v3.65.1, 5 after.
+  const total = Object.values(BASELINE).reduce((a, b) => a + b, 0);
+  ok(total <= 5,
+    `the whole baselined debt is ${total} literals and may only ever SHRINK — `
+    + 'it was 10 before v3.65.1 (8 + 2), and adding a file to make this section pass '
+    + 'raises it, which is the thing this assertion exists to prevent');
+  // (3) EVERY ENTRY IS A FILE THAT EXISTS AND IS SCANNED. A baseline keyed on
+  //     a path the walker never visits is a licence nobody can see.
+  const scanned = new Set(files);
+  const orphans = Object.keys(BASELINE).filter((rel) => !scanned.has(rel));
+  ok(orphans.length === 0,
+    'every baselined path is a file this scanner actually walks', orphans.join(', '));
   // Anti-vacuity.
   ok((stripComments('a{color:#FF0000}').match(/#[0-9a-fA-F]{3,8}\b/g) || []).length === 1
     && (stripComments('/* #FF0000 */ a{color:var(--x)}').match(/#[0-9a-fA-F]{3,8}\b/g) || []).length === 0,

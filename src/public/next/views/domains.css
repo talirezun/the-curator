@@ -122,108 +122,29 @@
    scripts/test-next-domain-dots.js §5 read those declarations and now read
    them from shared/sidebar.css.
 
-   WHAT STAYS HERE, and why each one cannot move:
-     · the six IDENTITY COLOURS below. Three of the light values are DERIVED
-       literals (#16768C / #438126 / #925E13 — there is no --entity-700) and
-       scripts/test-next-design-kit.js §10 permits a colour literal in exactly
-       TWO /next stylesheets while asserting the baseline holds exactly two
-       files. Widening an anti-drift ratchet in order to ship a kit is
-       backwards; the kit exports the MAPPING (identityDotClass) instead, and
-       the selector lists below name BOTH so a view that colours a dot through
-       the kit is painted by the same measured values.
+   THE SIX IDENTITY COLOURS FOLLOWED THEM in v3.65.1 — see the note below
+   and shared/sidebar.css. This file now declares NO colour literal at all.
+
+   WHAT STAYS HERE, and why it cannot move:
      · `.dm-row-mirror` and `.dm-row-attn`. They are this view's own BADGES,
        handed to the component as `badgesHtml`; the kit reserves the slot and
        says nothing about what goes in it.                                  */
 
-/* ── The six domain identity colours ──────────────────────────────────────
-   These were SIX RAW HEX VALUES in an inline `style="background:#3FBFD8"`
-   in views/domains.js. An inline style is unreachable by every stylesheet
-   and by every [data-theme] block, so the DARK values were painted in LIGHT
-   too. Measured in a real browser against the backdrop each dot actually
-   sits on (the probe's controls returned 1.00 on an identical pair and
-   21.00 on black-on-white):
+/* ── THE SIX IDENTITY COLOURS MOVED TO shared/sidebar.css (v3.65.1) ───────
+   The twelve rules, the three derived light rungs and the whole measured
+   argument for them now live beside `.cur-sb-dot`'s shape, under ONE family
+   of names. This file kept them through v3.65.0 on the reading that
+   scripts/test-next-design-kit.js §10 allowed a literal in two VIEW
+   stylesheets and a shared file could not be a third — but one of §10's two
+   entries is shared/checkbox.css, so the rule was never about views, and
+   this file's own literal count is now ZERO.
 
-     BEFORE, light theme, on the SELECTED row (--surface-active #ECECF2 —
-     the worst backdrop, and the one offline arithmetic against --surface
-     missed):  1.85 · 1.77 · 1.88 · 2.14 · 2.12 · 1.98.
-     All six under WCAG 1.4.11's 3:1 floor for non-text. On the unselected
-     row (--surface #FFFFFF) they are 2.17 · 2.08 · 2.22 · 2.52 · 2.50 ·
-     2.34 — still all six under the floor.
+   TWO COPIES EXISTED. views/memory.css declared `.cur-sb-dot-N` again, byte
+   for byte, and said so in its own comment; CSS has no per-view scope, so
+   each copy painted BOTH rails. One domain is now one colour from one place.
 
-     AFTER, same backdrops:  4.46 · 4.05 · 4.66 · 3.44 · 4.60 · 4.96 on the
-     selected row; 5.24 · 4.77 · 5.48 · 4.05 · 5.41 · 5.84 on --surface.
-     DARK is BYTE-IDENTICAL to before (7.83 · 8.20 · 7.68 · 6.77 · 6.82 ·
-     7.29 on --surface-active) — it always passed, so it does not move.
-
-   THE RULE THAT PICKED THE LIGHT VALUES, so a future colour is derived and
-   not invented:
-     (a) START from the light counterpart the design system ALREADY defines
-         for that colour's role — tokens/color.css's own [data-theme="light"]
-         block moves --type-entity/-concept/-summary to -600, --success to
-         teal-600 and --danger to red-600. For the neutral there is no such
-         alias, so --ink-400: the same dark->light move the system makes for
-         --text-2, which is #A8A8BC in dark and #55556A in light, taken to
-         the nearest ramp entry so the value stays a token.
-     (b) WHERE THAT STILL MISSES 3:1 on the SELECTED row, continue the
-         family's OWN 500->600 channel ratio one further step. Entity,
-         concept and summary measure 2.95 / 2.74 / 3.04 at -600 and the
-         bundle defines nothing darker in those families, so each gets one
-         derived step, written as a literal here because tokens/color.css is
-         byte-identical to the design bundle and must stay that way. Three of
-         the six are therefore system tokens outright. This is a COMPONENT
-         gap, not palette drift, and no token file is touched.
-
-   SEPARABILITY IS THE OTHER HALF OF THE REQUIREMENT: six domains have to
-   stay tellable apart, not merely legible. Minimum pairwise CIEDE2000 over
-   the six is 16.14 before (dark, unchanged) and 14.58 after (light) —
-   both an order of magnitude over the ~2.3 just-noticeable difference, and
-   the hues are untouched, so the set separates exactly as it did.        */
-.dm-row-dot-1,
-.cur-sb-dot-1 { background: var(--entity-500); }
-.dm-row-dot-2,
-.cur-sb-dot-2 { background: var(--concept-500); }
-.dm-row-dot-3,
-.cur-sb-dot-3 { background: var(--summary-500); }
-.dm-row-dot-4,
-.cur-sb-dot-4 { background: var(--teal-500); }
-.dm-row-dot-5,
-.cur-sb-dot-5 { background: var(--red-400); }
-.dm-row-dot-6,
-.cur-sb-dot-6 { background: var(--ink-200); }
-
-/* ── THE THREE DERIVED RUNGS ARE NOW NAMED, BECAUSE TWO THINGS NEED THEM ──
-   These literals were written for the ROW DOTS. `.dm-stat-value` needs the
-   same three values for the same reason (see its own note below), and the
-   answer to "two rules need one colour" is a name, not a second copy of the
-   literal — views/chat.css's colour-literal baseline is ZERO and this file's
-   is EIGHT, a number the design-kit suite allows only to SHRINK.
-
-   Declared under `[data-theme="light"]` only. In DARK the type triad's own
-   -500 rungs already clear both floors with room (dot 6.77-8.20, stat text
-   8.78-9.37), so the names simply alias the tokens there and no dark value
-   moves by a byte. */
-:root {
-  --dm-ink-entity:  var(--type-entity);
-  --dm-ink-concept: var(--type-concept);
-  --dm-ink-summary: var(--type-summary);
-}
-[data-theme="light"] {
-  --dm-ink-entity:  #16768C;  /* entity-600 -> one ramp step */
-  --dm-ink-concept: #438126;  /* concept-600 -> one ramp step */
-  --dm-ink-summary: #925E13;  /* summary-600 -> one ramp step */
-}
-[data-theme="light"] .dm-row-dot-1,
-[data-theme="light"] .cur-sb-dot-1 { background: var(--dm-ink-entity); }
-[data-theme="light"] .dm-row-dot-2,
-[data-theme="light"] .cur-sb-dot-2 { background: var(--dm-ink-concept); }
-[data-theme="light"] .dm-row-dot-3,
-[data-theme="light"] .cur-sb-dot-3 { background: var(--dm-ink-summary); }
-[data-theme="light"] .dm-row-dot-4,
-[data-theme="light"] .cur-sb-dot-4 { background: var(--teal-600); }
-[data-theme="light"] .dm-row-dot-5,
-[data-theme="light"] .cur-sb-dot-5 { background: var(--red-600); }
-[data-theme="light"] .dm-row-dot-6,
-[data-theme="light"] .cur-sb-dot-6 { background: var(--ink-400); }
+   `--id-ink-1/-concept/-summary` moved with them and are `--id-ink-1/-2/-3`
+   there: `.dm-stat-value` below still reads those three values, by name.   */
 
 /* `.dm-row-main`, `.dm-row-name`, `.dm-row-meta`, `.dm-row-figure`,
    `.dm-row-sep`, `.dm-row-age`, `.dm-row-meta svg` and `.dm-row-event` moved
@@ -578,9 +499,9 @@
    which is why they are now named rather than copied:
        entity 5.24 · concept 4.77 · summary 5.48
    DARK is byte-identical to before (8.95 / 9.37 / 8.78). */
-.dm-stat-entity  { color: var(--dm-ink-entity); }
-.dm-stat-concept { color: var(--dm-ink-concept); }
-.dm-stat-summary { color: var(--dm-ink-summary); }
+.dm-stat-entity  { color: var(--id-ink-1); }
+.dm-stat-concept { color: var(--id-ink-2); }
+.dm-stat-summary { color: var(--id-ink-3); }
 .dm-stat-other   { color: var(--text-2); }
 
 /* ── Health card ──────────────────────────────────────────────────────── */

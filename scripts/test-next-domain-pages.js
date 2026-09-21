@@ -709,8 +709,15 @@ section('S2c -- THE SELECTED FIGURE STILL READS, ON THE TINT IT GAINS');
     return out;
   };
   const COLOR = readFileSync(join(NEXT, 'tokens/color.css'), 'utf8');
-  const DARK = blocksFor(COLOR, ':root') + blocksFor(CSS, ':root');
-  const LIGHT = DARK + blocksFor(COLOR, '[data-theme="light"]') + blocksFor(CSS, '[data-theme="light"]');
+  // shared/sidebar.css joins the table (v3.65.1): the identity palette's three
+  // derived light rungs moved there with the twelve colour rules, so the three
+  // `--id-ink-*` names `.dm-stat-value` reads are declared in the KIT now.
+  // Without it every one of them resolves to null and the three assertions
+  // below grade nothing — loudly, since the ratio helper throws on a null.
+  const KIT = readFileSync(join(NEXT, 'shared/sidebar.css'), 'utf8');
+  const DARK = blocksFor(COLOR, ':root') + blocksFor(KIT, ':root') + blocksFor(CSS, ':root');
+  const LIGHT = DARK + blocksFor(COLOR, '[data-theme="light"]')
+    + blocksFor(KIT, '[data-theme="light"]') + blocksFor(CSS, '[data-theme="light"]');
   const table = (src) => {
     const t = {};
     for (const m of src.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) t[m[1]] = m[2].trim();
@@ -751,7 +758,7 @@ section('S2c -- THE SELECTED FIGURE STILL READS, ON THE TINT IT GAINS');
       resolve(t, '--surface') + ' / ' + resolve(t, '--accent-tint'));
     if (!surface || !tint) continue;
     const bg = over(tint, surface);
-    for (const tok of ['--text', '--dm-ink-entity', '--dm-ink-concept', '--dm-ink-summary']) {
+    for (const tok of ['--text', '--id-ink-1', '--id-ink-2', '--id-ink-3']) {
       const fg = toRgb(resolve(t, tok));
       const got = fg ? ratio(fg, bg) : 0;
       ok(theme + ': ' + tok + ' reads ' + got.toFixed(2) + ':1 on a SELECTED figure (floor ' + FIG_FLOOR + ')',
@@ -763,8 +770,8 @@ section('S2c -- THE SELECTED FIGURE STILL READS, ON THE TINT IT GAINS');
       eb >= SMALL_FLOOR);
     // ANTI-VACUITY: the tint really does move the plane, so these are findings
     // and not a restatement of the plain-surface figures the kit already has.
-    const plain = ratio(toRgb(resolve(t, '--dm-ink-concept')), surface);
-    const tinted = ratio(toRgb(resolve(t, '--dm-ink-concept')), bg);
+    const plain = ratio(toRgb(resolve(t, '--id-ink-2')), surface);
+    const tinted = ratio(toRgb(resolve(t, '--id-ink-2')), bg);
     ok(theme + ': CONTROL -- the tint MOVES the reading (' + plain.toFixed(2) + ' -> ' + tinted.toFixed(2) + ')',
       Math.abs(plain - tinted) > 0.05);
   }

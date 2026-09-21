@@ -385,6 +385,11 @@ const gate = await import('../src/public/next/shared/loading-gate.js');
 // spread in below: the sidebar renders for real in this suite, and a stubbed
 // age would let the row's wording drift from the module that owns it.
 const age = await import('../src/public/next/shared/age.js');
+// The destination row's IDENTITY dot (v3.65.1). REAL, for the same reason:
+// views/ingest.js now colours each row through the kit's one mapping, and the
+// module-level import in that file is invisible to a body loaded with
+// `new Function`, so the name has to be provided here or every render throws.
+const sidebarKit = await import('../src/public/next/shared/sidebar.js');
 
 let strippedControlDone = false;
 function loadView(dom) {
@@ -444,6 +449,7 @@ function loadView(dom) {
   const provided = {
     ...appStubs, ...listboxStubs,
     ...logic, ...text, ...usd, ...ring, ...gate, ...age,
+    identityDotClass: sidebarKit.identityDotClass,
     document: dom.document,
     window: dom.window,
     localStorage: null,

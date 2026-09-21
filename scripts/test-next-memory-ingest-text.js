@@ -704,21 +704,20 @@ for (const [name, rawCss] of [['memory.css', memCss], ['ingest.css', ingCss]]) {
   // deliberate edit here too.
   const tokenCss = ['base', 'color', 'space', 'shape', 'typography', 'motion', 'material']
     .map((n) => read('tokens/' + n + '.css')).join('\n');
-  // ── AND views/domains.css, FOR THREE NAMES AND A STATED REASON ────────
-  // v3.65.0: views/memory.css paints the six IDENTITY DOT colours on the
-  // sidebar kit's own class names, and three of them (`--dm-ink-entity` /
-  // `-concept` / `-summary`) are declared in views/domains.css. That is not
-  // an oversight and cannot be fixed by copying: those three names exist
-  // precisely so two rules needing one colour do not become two copies of a
-  // LITERAL, and scripts/test-next-design-kit.js §10 permits colour literals
-  // in exactly two /next stylesheets while asserting the baseline holds
-  // exactly two files — so re-declaring the values here would widen an
-  // anti-drift ratchet in order to ship a kit.
+  // ── AND shared/sidebar.css + views/domains.css, FOR A STATED REASON ────
+  // v3.65.0: views/memory.css painted the six IDENTITY DOT colours on the
+  // sidebar kit's own class names while three of the values were declared in
+  // views/domains.css — a second copy of the twelve rules, byte-identical to
+  // that view's, each of them painting BOTH rails because CSS has no per-view
+  // scope. v3.65.1 moved the palette and the three derived rungs into
+  // shared/sidebar.css (`--id-ink-1/-2/-3`), which is why the kit joins this
+  // universe; views/domains.css stays in it because `.dm-stat-value` reads
+  // the same three rungs and a typo in either direction must still red.
   //
-  // WHAT IS STILL GUARDED: every OTHER var() in both files must resolve, and
-  // a typo in one of these three still reds, because they are read out of the
-  // real views/domains.css rather than allow-listed by name.
-  const shell = read('shell.css') + '\n' + read('views/domains.css');
+  // WHAT IS STILL GUARDED: every var() in both files must resolve, read out
+  // of the real stylesheets rather than allow-listed by name.
+  const shell = read('shell.css') + '\n' + read('shared/sidebar.css')
+    + '\n' + read('views/domains.css');
   for (const [name, css] of [['memory.css', memCss], ['ingest.css', ingCss]]) {
     const defined = new Set([...(tokenCss + shell + css).matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
     const used = [...css.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]);

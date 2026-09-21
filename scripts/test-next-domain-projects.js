@@ -493,8 +493,12 @@ section('S3 -- The row: what it says, and what it never says');
   ok('a project with a brief wears a plain-word pill', html.includes('Standing brief'));
   ok('...and never a status vocabulary',
     !/configured|not set|active\b|enabled/i.test(html), html);
-  ok('the newest work-stream is named in the words the model uses',
-    html.includes('newest work-stream main') && !/\bscope\b/.test(html), html);
+  // "work-stream" -> "Handoff" in v3.65.1 (decision 1). `scope` is still the
+  // STORE's word and still must not surface: the rename moved the UI noun,
+  // not the on-disk grammar.
+  ok('the newest handoff is named in the words the UI uses',
+    html.includes('newest Handoff main') && !/\bscope\b/.test(html), html);
+  ok('...and never the retired UI noun', !/work-stream/i.test(html), html);
   ok('the last save is an age, through the shared formatter',
     html.includes('REL(2026-09-06T12:00:00.000Z)'));
 
@@ -930,7 +934,7 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
   const empty = renderProjectLifecycleCard();
   ok('the delete button starts DISABLED', /id="dm-proj-submit" disabled/.test(empty), empty);
   ok('...and the card says what is destroyed, in the model words',
-    /work-stream handoff/.test(empty) && /journal/.test(empty));
+    /every Handoff under it/.test(empty) && /journal/.test(empty), empty);
   ok('...and that the wiki is NOT touched', /wiki in this domain is NOT touched/i.test(empty));
   ok('...and that there is no in-app undo', /no Undo button/i.test(empty));
 
@@ -2108,24 +2112,36 @@ section('S11 -- THE THREE-LAYER LEGEND ON THE OVERVIEW BLOCK (v3.62.0, P1-14)');
   // ── THE THREE VERBS, each exactly once and each on its own layer ──────
   // A legend whose value is the contrast has to state all three, and stating
   // one twice is how the contrast quietly becomes a list.
-  for (const [verb, layer] of [['accumulates', 'the wiki'],
-    ['supersedes', 'working state'],
-    ['replaced whole', 'canonical documents']]) {
+  // THE THREE NOUNS MOVED IN v3.65.1 (decision 1) and the three VERBS did
+  // not. The layers are Knowledge · Memory · Documents — the same three words
+  // the Project-context view's three steps carry, which is the continuity the
+  // rename exists for. "the wiki", "working state" and "canonical documents"
+  // are the retired ones, and the assertion below says so by name so a
+  // half-applied rename cannot pass.
+  for (const [verb, layer] of [['accumulates', 'knowledge'],
+    ['supersedes', 'memory'],
+    ['replaced whole', 'documents']]) {
     ok('the legend names "' + verb + '" — the verb for ' + layer,
       html.includes(verb), html);
   }
-  ok('...and names the wiki, working state and canonical documents by name',
-    /<strong>wiki<\/strong>/.test(html)
-    && /<strong>working\s+state<\/strong>/.test(html)
-    && /<strong>canonical\s+documents<\/strong>/.test(html), html);
+  ok('...and names knowledge, memory and documents by name — the Project-context '
+    + 'view\'s own three step titles',
+    /<strong>knowledge<\/strong>/.test(html)
+    && /<strong>memory<\/strong>/.test(html)
+    && /<strong>documents<\/strong>/.test(html), html);
+  ok('...and carries none of the three RETIRED nouns',
+    !/<strong>wiki<\/strong>/.test(html)
+    && !/working\s+state/i.test(html)
+    && !/canonical\s+documents/i.test(html), html);
 
-  // ── ONE NOUN FOR THE BLOCK (D-K) ──────────────────────────────────────
-  // "Canonical documents" survives ONLY as the adjective inside this
-  // definition. The block that holds them is FOUNDATIONS wherever it is
-  // named, and a legend that introduced a second name for it would be the
-  // thing the naming decision exists to stop.
-  ok('the legend does NOT name the block — it defines the layer',
-    !/Foundations/.test(html), html);
+  // ── ONE NOUN FOR THE BLOCK (D-K, tightened by v3.65.1) ────────────────
+  // Through v3.65.0 the layer was "canonical documents" and the block that
+  // held it was FOUNDATIONS — two names, and this assertion kept the legend
+  // from introducing a third. Decision 1 collapsed the two into one word,
+  // Documents, so the legend and the block now agree; FOUNDATIONS is the
+  // retired name and must not come back.
+  ok('the legend does NOT use the retired block name',
+    !/Foundations/i.test(html), html);
 
   // ── IT IS A DEFINITION, NOT A WARNING (v3.16.1 / design-system §3) ────
   // Warnings, costs, refusals and outcomes never fold. Nothing in here is

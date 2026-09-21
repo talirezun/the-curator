@@ -130,7 +130,8 @@ import { renderOverview } from '../shared/overview.js';
 // fixed stub list — so those five sandboxes inject them, and they inject the
 // REAL kit functions rather than stubs, which is what makes their assertions
 // about this sidebar assertions about the shipped component.
-import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../shared/sidebar.js';
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
+  identityDotClass } from '../shared/sidebar.js';
 import { renderMarkdown } from '../shared/markdown.js';
 import { formatUsdHonest } from '../shared/format-usd.js';
 
@@ -232,28 +233,27 @@ import {
 
 // ── Domain identity colour ────────────────────────────────────────────────
 // Domains aren't typed like pages (no entity/concept/summary triad), but
-// the design still gives each one a stable colour dot in the sidebar list
-// and header. No backend field carries a per-domain colour, so this is a
-// small fixed palette assigned by stable list position. Deliberately
-// excludes brand violet (reserved for identity/action per the design's
-// "violet means action and nothing else" rule) even though the design
-// bundle's OWN placeholder DOMAINS array uses a violet dot for one entry —
-// treated here as a placeholder-data inconsistency, not a rule to copy.
+// the design still gives each one a stable colour dot wherever it is named.
+// No backend field carries a per-domain colour, so it is a small fixed
+// palette assigned by stable list position. Deliberately excludes brand
+// violet (reserved for identity/action per the design's "violet means action
+// and nothing else" rule).
 //
-// THE COLOUR ITSELF LIVES IN domains.css, NOT HERE, AND THAT IS THE FIX.
-// This was `['#3FBFD8', …]` emitted as `style="background:#3FBFD8"`. An
-// inline style is unreachable by every stylesheet and by every
-// `[data-theme]` block, so all six dots kept their DARK-theme values in
-// light and measured 1.85:1 (dot 1 on the selected row) against WCAG
-// 1.4.11's 3:1 floor for non-text. A class per palette slot is what makes
-// the light theme expressible at all; see the `.dm-row-dot-N` block in
-// domains.css for the measured values and the rule that picked them.
-// Guarded by scripts/test-next-domain-dots.js, which enumerates the slots
-// from THIS constant and the rules from that file.
-const DOMAIN_DOT_SLOTS = 6;
-function domainDotClass(index) {
-  return 'dm-row-dot-' + ((index % DOMAIN_DOT_SLOTS) + 1);
-}
+// THIS VIEW NO LONGER OWNS EITHER HALF OF IT (v3.65.1). It had
+// `domainDotClass(i) -> 'dm-row-dot-N'`, a second copy of the kit's own
+// arithmetic under a second family of names, and views/domains.css held the
+// only copy of the twelve colour rules — which views/memory.css then declared
+// a second time, byte for byte, because CSS has no per-view scope. Both are
+// now ONE thing in the kit: `identityDotClass(i)` in shared/sidebar.js and
+// the `.cur-sb-dot-N` block in shared/sidebar.css. That is what makes the
+// same domain the same colour on this rail, on the Context rail and
+// breadcrumb, on Chat's domain chips and on Ingest's destination rows —
+// CONTINUITY BY IDENTITY, one palette and one mapping.
+//
+// `dm-row-dot-N` is still EMITTED, by the kit's `ALIASES.dm.dotSlot`, and
+// resolves no background; scripts/test-next-domain-dots.js reads the slots by
+// running identityDotClass and the rules out of shared/sidebar.css, and
+// asserts the alias paints nothing.
 
 // ── The KNOWLEDGE row's second line: WHAT the last write was ─────────────
 //
@@ -2922,13 +2922,20 @@ function renderSidebar(token) {
     // The IDENTITY dot (`.dm-row-dot`, six palette colours) and the ATTENTION
     // dot (`.dm-row-attn`, open health issues) are untouched: three marks,
     // three separate facts, and folding any of them into the others would
-    // make one dot answer questions it cannot. The identity COLOUR stays this
-    // view's — see domainDotClass and the `.dm-row-dot-N` block in
-    // domains.css for why it cannot live in a shared stylesheet.
+    // make one dot answer questions it cannot. The identity COLOUR is the
+    // KIT's now (v3.65.1) — `identityDotClass(i)` and shared/sidebar.css's
+    // `.cur-sb-dot-N` — so this row, a Context project row, a Chat chip and
+    // an Ingest destination row all take the same colour from the same place.
+    //
+    // `i` IS THE INSTALL'S DOMAIN INDEX, not a position in some filtered
+    // view: `state.domains` is GET /api/domains/stats' own order, which is
+    // listDomains()'s. A dot that meant "second in the list I happen to be
+    // showing" would be a different colour per screen, which is the defect
+    // this whole system exists to remove.
     return renderSidebarRow({
       alias: 'dm',
       name: d.displayName || d.slug,
-      dotClass: domainDotClass(i),
+      dotClass: identityDotClass(i),
       figure: pagesText,
       markHtml: freshnessDotHtml(d.lastIngestDate, now),
       age: formatDayAge(d.lastIngestDate, now),
@@ -3148,7 +3155,7 @@ const PROJECT_BRIEF_TEMPLATE = [
   '',
   '## Read before you…',
   '',
-  'Which canonical document to open for which kind of work. Foundations marked',
+  'Which Document to open for which kind of work. Documents marked',
   '"read first" arrive with every session; name the rest here and an agent opens',
   'them by name.',
   '',
@@ -3680,7 +3687,7 @@ const MARKER_INFO_TEXT =
 const AGENT_INFO_TEXT =
   'Copies a short paragraph of instructions naming this project. Paste it into CLAUDE.md, ' +
   'AGENTS.md, GEMINI.md or your Cursor rules — whichever file your agent loads every ' +
-  'session — and it will read your working state before it starts and save a handoff before ' +
+  'session — and it will read your Memory before it starts and save a Handoff before ' +
   'it stops.';
 
 // The section fold. TWO LABELLED PARAGRAPHS, and the only fragment in this
@@ -3688,14 +3695,14 @@ const AGENT_INFO_TEXT =
 // written here, so nothing user-, provider- or store-supplied is interpolated.
 const PROJECTS_INFO_HTML =
   '<p><strong>What a project is.</strong> A domain is one compounding wiki; a project is one ' +
-  'thing you build inside it. Each project has a standing brief you write, and work-streams ' +
+  'thing you build inside it. Each project has a standing brief you write, and Handoffs ' +
   'your agents save handoffs into, so a new session resumes where the last one stopped. Both ' +
   'are plain markdown under this domain’s state folder and travel with Personal Sync.</p>' +
   '<p><strong>The two copy buttons.</strong> Copy marker line copies domain/project; save it ' +
   'as a file named .curator-project at the root of that project’s repository, and an agent ' +
   'there knows which project to resume. Copy agent instructions copies a short paragraph ' +
   'instead — paste it into CLAUDE.md, AGENTS.md, GEMINI.md or your Cursor rules, and agents ' +
-  'read and save working state without being asked.</p>';
+  'read and save its Memory without being asked.</p>';
 
 // ── The Projects sub-section ───────────────────────────────────────────────
 
@@ -3744,7 +3751,7 @@ function renderProjectRow(row, canWrite, index) {
   const saved = savedIso ? relTime(savedIso) : null;
   const facts = [
     saved ? 'last save ' + saved : 'no saves yet',
-    row.newestScope ? 'newest work-stream ' + row.newestScope : null,
+    row.newestScope ? 'newest Handoff ' + row.newestScope : null,
     // The store's own word, and its own claim: this is where the domain's
     // OWN project lives, permanently — not a pre-v3.48.0 leftover waiting
     // for a migration, which is what "original" invited a reader to think.
@@ -4049,7 +4056,7 @@ function renderProjectLifecycleCard() {
     return (
       '<div class="dm-lc-card dm-lc-danger">' +
         '<div class="dm-lc-title">Delete project “' + escapeHtml(f.project) + '”?</div>' +
-        '<div class="dm-lc-body">This removes its standing brief, every work-stream handoff under it, and ' +
+        '<div class="dm-lc-body">This removes its standing brief, every Handoff under it, and ' +
           'every journal line — the notes your agents left for each other. Those are often the only record ' +
           'of decisions nobody wrote down anywhere else. The wiki in this domain is NOT touched. ' +
           escapeHtml(GIT_UNDO_WARN) +
@@ -4245,7 +4252,7 @@ const CREATE_INFO_HTML =
   'It is optional here and can be written later from Project context.</p>' +
   '<p><strong>The documents choice is answered once.</strong> A project is all mirrored from a ' +
   'folder or all kept here, never a mix, and the store refuses a change afterwards. Decide later ' +
-  'is a real answer: the Foundations block on the Project context page asks again.</p>';
+  'is a real answer: the Documents block on the Project context page asks again.</p>';
 
 /**
  * WHAT WAS WRITTEN, IN ONE SENTENCE — from the SERVER'S answer (P1-10).
@@ -4353,25 +4360,33 @@ function createConsequence(f) {
 //     DEFINITION, which is exactly what an ⓘ is for and exactly what a lede
 //     is not (docs/design-system-source.md §3).
 //
-// ONE NOUN, AND ONE DELIBERATE MISMATCH. "Canonical documents" appears here as
-// the ADJECTIVE inside the definition; the block that holds them is called
-// FOUNDATIONS everywhere it is named. And this panel says "wiki" where the
-// Project-context view's third step says "Knowledge" — because here the legend
-// is sitting on the wiki's own figures, and there the wiki is the layer rather
-// than the artefact. Both name the same thing in the same sentence at least
-// once, which is the honest fix rather than forcing one word into both places.
+// ONE NOUN PER LAYER, AND NO MISMATCH LEFT (v3.65.1, decision 1). Through
+// v3.65.0 this panel said "canonical documents" for a block called
+// FOUNDATIONS, "working state" for the step now called MEMORY, and "wiki" for
+// the layer the Project-context view's third step calls Knowledge — three
+// places where the app used two words for one thing. The UI vocabulary is now
+// Documents · Memory · Handoffs · Journal · Domain, and this panel uses it;
+// the store's own names (`foundations/`, `scope`, `journal.jsonl`) do NOT
+// move, because they are the public on-disk spec.
+//
+// The three nouns here are now EXACTLY the Project-context view's three step
+// titles — Documents · Memory · Knowledge — which is the point: the panel that
+// explains the three layers and the page that shows them say the same three
+// words. "wiki" standing in for a layer (or for a domain) is what decision 1
+// removes; the word survives in the app where it means the artefact, as in
+// "a domain is one compounding wiki".
 //
 // Every character is written HERE, so nothing user-, provider- or
 // store-supplied is interpolated into the `{html: true}` fragment.
 function threeLayersInfoHtml() {
   return '<p><strong>One domain, three kinds of context.</strong> The four figures on the left '
-    + 'count your <strong>wiki</strong> — the pages ingest and chat write. It '
-    + '<strong>accumulates</strong>: a new source makes an existing page richer rather than '
+    + 'count this domain\u2019s <strong>knowledge</strong> — the pages ingest and chat write. '
+    + 'It <strong>accumulates</strong>: a new source makes an existing page richer rather than '
     + 'adding a second copy.</p>'
-    + '<p><strong>Projects</strong> counts the other two. A project\u2019s <strong>working '
-    + 'state</strong> — its standing brief, its handoffs, its journal — '
+    + '<p><strong>Projects</strong> counts the other two. A project\u2019s '
+    + '<strong>memory</strong> — its standing brief, its handoffs, its journal — '
     + '<strong>supersedes</strong>: every save replaces the last, so a problem you solved cannot '
-    + 'come back. A project\u2019s <strong>canonical documents</strong> — its architecture, '
+    + 'come back. A project\u2019s <strong>documents</strong> — its architecture, '
     + 'decisions, conventions, roadmap — are <strong>replaced whole and read verbatim</strong>, '
     + 'so an agent gets the document rather than a paraphrase.</p>'
     + '<p>All three live in this one folder, sync together, and open to your agents in one '
@@ -4409,7 +4424,7 @@ const FOUNDATIONS_INFO_HTML =
   'file you choose is read in this browser and shown to you before it is saved.</p>' +
   '<p><strong>It is answered once.</strong> A project is all mirrored or all kept here, never a ' +
   'mix, and the store refuses a change afterwards. Decide later is a real answer — and the ' +
-  'default one — because the Foundations block on the Project context page asks again.</p>';
+  'default one — because the Documents block on the Project context page asks again.</p>';
 
 /**
  * THE DOCUMENTS FIELD ON THE CREATE FORM — a label, a mark, and the chooser.
@@ -4422,11 +4437,11 @@ const FOUNDATIONS_INFO_HTML =
 function foundationsField(f, busy) {
   const choice = f.foundations;
   if (!choice) return '';
-  const info = infoMark('dm-proj-fnd-info', 'About canonical documents',
+  const info = infoMark('dm-proj-fnd-info', 'About Documents',
     FOUNDATIONS_INFO_HTML, { html: true });
   return (
     '<div class="dm-lc-label dm-proj-fnd-head">' +
-      '<span>Canonical documents</span>' + info.btn +
+      '<span>Documents</span>' + info.btn +
     '</div>' +
     info.panel +
     // ── THE FIELD'S OWN STACK, SO THE RHYTHM IS ONE RULE (v3.61.1) ────────
@@ -5434,7 +5449,7 @@ async function openMemoryPageFromBrowse(row) {
         // route does not send (the other half of the same v3.61.0 defect).
         readonlyNote: (data.source && data.source.kind === 'repo')
           ? 'Mirrored from the folder — edit it there, then refresh.'
-          : 'Edit this in Project context, under Foundations.',
+          : 'Edit this in Project context, under Documents.',
         bodyHtml: (notes.length ? notes.map((n) => renderDescription(n)).join('') : '')
           + renderMarkdown(body),
         backlinks: [],
@@ -5790,9 +5805,9 @@ async function runProjectAction() {
       ? body.foundationsError : null;
     const detailParts = [];
     if (fndErr) {
-      detailParts.push('The project was created, but its canonical documents were not set up: ' +
+      detailParts.push('The project was created, but its Documents were not set up: ' +
         (fndErr.message || fndErr.reason || 'the server refused it') +
-        '. Choose again from Project context → Foundations.');
+        '. Choose again from Project context → Documents.');
     }
     if (failed.length) {
       detailParts.push(failed.length + ' file' + (failed.length === 1 ? '' : 's') +

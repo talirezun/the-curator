@@ -67,7 +67,8 @@ import { formatDayAge, freshnessDotHtml, clockGlyph } from '../src/public/next/s
 // rather than asserts. They are injected through the sandbox's constructor,
 // and they are the REAL functions, so every assertion below stays an
 // assertion about the shipped component.
-import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../src/public/next/shared/sidebar.js';
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass }
+  from '../src/public/next/shared/sidebar.js';
 import { tmpdir } from 'os';
 import path from 'path';
 
@@ -251,7 +252,6 @@ function render() { calls.render++; }
 function isCurrentMount() { return true; }
 function reportAsyncActionFailure() {}
 function openLifecycle() { calls.openLifecycle++; }
-function domainDotClass() { return 'dm-row-dot-1'; }
 function gatedLoader() { return '<GATED/>'; }
 let loadGate = {};
 function setSidebar(html) { calls.sidebar.push(html); }
@@ -308,7 +308,12 @@ let sandbox;
 try {
   sandbox = new Function(
     'formatDayAge', 'freshnessDotHtml', 'clockGlyph',
-    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow',
+    // identityDotClass joins the injected kit (v3.65.1): views/domains.js's
+    // own domainDotClass was a second copy of the same mapping and is gone,
+    // so the lifted renderSidebar calls this one. A module-level import is
+    // NOT visible inside a lifted body, so it is a PARAMETER, and it is the
+    // REAL function rather than a stub returning a fixed slot.
+    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow', 'identityDotClass',
     PREAMBLE +
     FNS.map((n) => extractFunction(src, n)).join('\n\n') + '\n' +
     `return { ${FNS.join(', ')},
@@ -327,7 +332,7 @@ try {
       __node: makeNode,
       __nodes: () => domNodes };`
   )(formatDayAge, freshnessDotHtml, clockGlyph,
-    renderSidebarHead, renderSidebarGroup, renderSidebarRow);
+    renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js — ' + err.message);
   process.exit(1);

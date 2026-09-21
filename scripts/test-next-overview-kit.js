@@ -696,8 +696,15 @@ section('§6 — THE STYLESHEET, AND THE THREE RULES THAT FAIL SILENTLY');
     ok(!new RegExp('\\' + dead + '[\\s,{]').test(domCss),
       'views/domains.css declares no rule for `' + dead + '` — the card moved, it was not copied');
   }
-  ok(/\.dm-stat-entity\s*\{[^}]*--dm-ink-entity/.test(domCss),
-    'CONTROL: the three ink classes stayed, because they read this view\'s own ramp');
+  // The three ink classes stayed in views/domains.css; the RAMP they read did
+  // not. v3.65.1 moved the identity palette — six colour rules x two themes
+  // plus these three derived light rungs — into shared/sidebar.css beside the
+  // glyph it paints, so a domain is one colour on every screen that names it.
+  // `--dm-ink-*` became `--id-ink-1/-2/-3` with them.
+  ok(/\.dm-stat-entity\s*\{[^}]*--id-ink-1/.test(domCss),
+    'CONTROL: the three ink classes stayed, and read the identity palette\'s own rungs');
+  ok(!/--dm-ink-/.test(domCss),
+    '...and the retired `--dm-ink-*` names are gone from this view entirely');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
