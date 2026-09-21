@@ -906,6 +906,83 @@ and was not built this release.
 
 ---
 
+### v3.65.1 — the Context view, continuity by identity, and the depth bar *(shipped — 2026-09-21)*
+
+**The maintainer's verdict on v3.65.0's Context view, in production, within the hour:** *"five
+different styles fighting each other, no continuity, no logic."* Domains was *"more or less
+polished."* This release does three things and nothing else: renames five nouns, makes the Context
+view obey the layout rules Domains already obeyed, and makes one domain one colour everywhere it is
+named — plus one new visual primitive and one small additive store function.
+
+**D1 — the vocabulary.** In UI copy and docs only, never in the store: **Documents** (was
+Foundations) · **Memory** (was Working state) · **Handoffs** (was Work-streams) · **Journal** (was
+Recent saves) · **Domain** everywhere a domain is meant (the Knowledge picker now reads *"Add a
+domain"*, never *"wiki"*). `foundations/`, `manifest.json`, `scope`, `journal.jsonl`, `state/` and
+every MCP tool name and argument are untouched — a synced folder and a running agent see exactly
+what they saw before. → [user-guide.md](user-guide.md#the-word-on-screen-and-the-word-on-disk)
+carries the full mapping.
+
+**D2–D4 — step ② Memory, rebuilt.** The **"Last saved"** row is removed; its fact moved into the
+overview's MEMORY tile and into the **Handoffs** row's own summary line — a screen whose whole
+subject this release is stopped saying one thing twice. **Journal** becomes one row with the same
+inline **"Show N more"** the Handoffs row already used, replacing a separate footer card and a
+floating button that reset the reader's scroll position on every press. **Capture**'s body drops
+its per-session table entirely: the six facts the table carried (sessions, started with the
+context, saved before stopping, read and did not save, the newest session's age with its harness,
+and the calls made across the window) become six lines in the shared monitor, and the ⓘ that used
+to float alone above the table moved into the step's own ⓘ.
+
+**D5 — step ③ Knowledge, corrected rather than redesigned.** The route already wrote
+`knowledgeDomains` as an ADD, not a replace, from the very first domain chosen — the *code* was
+right and the *copy* under the picker was wrong, and production feedback ("why only one? why not
+two or three?") traced straight to that false sentence. v3.65.1 makes the project's own domain an
+explicit, always-listed row from the start, moves the **"+ Add a domain"** picker into a head row
+above the rows (the same head-row placement step ① uses), and moves **Remove** inside each expanded
+row, beside its two doors — the same place the Documents table's own Remove already sits.
+
+**D6 — "Mirror from GitHub instead."** A project mirrored from a folder was stuck reading that
+folder forever, on the one machine that had it. The new `POST …/foundations/source` (additive to
+`src/brain/working-state.js`'s `setFoundationsSource`) re-points an existing **repo-owned** mirror
+at a repository: the documents are re-copied, `repo.remote` is recorded and `repo.root` is cleared
+in the **same** manifest write, ownership never moves, and every `readFirst` flag survives the
+switch by slug. → [api-reference.md](api-reference.md#post-apimemorydomainprojectfoundationssource)
+and [working-state.md](working-state.md#mirroring-from-github-when-the-checkout-is-not-here-v3630).
+
+**D7 — continuity by identity.** One palette, one mapping (`identityDotClass(i)` in
+`shared/sidebar.js`, keyed on the install's own domain index), one 8px round glyph
+(`shared/sidebar.css`). Two duplications that existed since the sidebar and monitor components
+shipped in v3.65.0 — a second `domainDotClass` in `views/domains.js`, and the same twelve colour
+rules declared twice, in `views/domains.css` **and** `views/memory.css` — collapse to one. The dot
+now reaches the Context breadcrumb (previously a plain violet square unrelated to any domain), step
+③'s Knowledge rows, Chat's domain chips (previously all one violet, `chat-type-dot`, 6px) and
+Ingest's DESTINATION rows (previously no dot at all). → [design-system-source.md, §18](design-system-source.md#18-identity--one-palette-one-mapping-one-glyph-v3651).
+
+**D9 — the depth bar, a new visual primitive.** A tinted bar behind a row's value, right-anchored,
+length proportional to magnitude — the app's **third** channel, after the freshness dot (TIME) and
+the identity dot (WHICH DOMAIN), and it never borrows their meanings: no bar encodes an age, none
+sits in a sidebar row or a `<summary>` line, and a bar carrying the danger tone never stands alone —
+the same fact is always in words too. Ships as one exported helper in `shared/monitor.js`
+(`renderDepthCell`) with exactly two callers this release: the Documents table's SIZE column
+(against the 200 KB project budget) and the Knowledge row monitor's entity/concept/summary counts
+(against that domain's own page count — an exact invariant, not an estimate). →
+[design-system-source.md, §19](design-system-source.md#19-the-depth-bar-v3651).
+
+**What was proposed and refused for this release, on the code's own evidence, and recorded for
+later:** a depth bar on the MCP bridge Tool map — the map is a grid of 24 tiles with no numeric
+column to anchor a bar to, so the honest shape is a monitor of the top tools by weekly calls,
+alongside the existing session strip, not a bar on a grid tile; Wiki health's Scan monitor per issue
+category; step ③'s Knowledge ROWS carrying pages-per-domain bars (refused because that figure lives
+in a `<summary>`, where no bar may go); and Capture's saved-vs-did-not-save split as a bar of
+counts, never a percentage.
+
+**The menu bar widget's own depth bar is explicitly NOT this release.** The maintainer's proposal
+for a short drawn bar in the tray menu's icon gutter — per-project sessions-that-saved, per-domain
+pages, the open project's documents budget — has an agreed shape and is scheduled for **v3.66.0**,
+once the app-side primitive (this section) has been seen in production; it ships in its own desktop
+package with its own width measurement and is not part of v3.65.1.
+
+---
+
 ### v3.66.0 (planned) — closing the loops
 
 **Retitled 2026-09-19.** This section carried the title *"v3.64.0 — awareness and promotion"* through
