@@ -205,7 +205,16 @@ import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
 // different but the design could be the same."* Two of the three were on this
 // screen (the "Last saved" card and the CAPTURE block) and the third was step
 // ③'s readouts. All three are `renderMonitor` now.
-import { renderMonitor } from '../shared/monitor.js';
+// ── AND THE THIRD VISUAL CHANNEL (v3.65.1) ─────────────────────────────────
+// `renderDepthCell` draws a figure's SHARE behind it, right-anchored, against
+// a NAMED denominator. Two placements on this screen, both with an exact
+// denominator rather than "the largest visible row": the Documents table's
+// SIZE column against the 200 KB PROJECT budget, and each Knowledge row's
+// entity / concept / summary counts against that domain's own `pageCount`.
+// It is in shared/monitor.js because a bar is a CELL decoration, which is what
+// a monitor line already is; its CSS is separate because the table below uses
+// the bar without rendering a monitor.
+import { renderMonitor, renderDepthCell } from '../shared/monitor.js';
 // ── THE ONE PICKER ON THIS SCREEN (v3.65.0, P10) ───────────────────────────
 // Step ③'s "+ Add a wiki". The shared listbox, ADD ONE AT A TIME: the
 // component implements no multi-select and says so in its own header, and
@@ -4004,8 +4013,19 @@ function renderKnowledge() {
       title: 'This project’s chosen domains could not be read',
       detail: read.knowledgeDomainsError + ' Showing the domain this project lives in instead.' })
     : '';
-  return err + (rows || renderDescription('No domain is chosen for this project yet.'))
-    + renderKnowledgePicker(domains, defaulted);
+  // ── THE CONTROL IS A HEAD ROW, ABOVE THE ROWS (v3.65.1, D5) ───────────
+  // Step ①'s rule, applied to the only other section on this page with a
+  // control of its own: the section's controls sit BENEATH the heading and
+  // ABOVE the rows, left-aligned at the rows' own x. `renderKnowledgePicker`
+  // is unchanged except that it no longer carries the per-row Removes, which
+  // are inside their rows now.
+  //
+  // THE ERROR STAYS FIRST. A `project.json` that could not be read means the
+  // rows below are the DEFAULT rather than the choice, and that is a
+  // disclosure about everything under it — it is read before the control as
+  // well as before the rows.
+  return err + renderKnowledgePicker(domains, defaulted)
+    + (rows || renderDescription('No domain is chosen for this project yet.'));
 }
 
 /**
@@ -4025,6 +4045,31 @@ function renderKnowledge() {
  * project synced from a machine that has one this one does not, is a fact the
  * owner has to be able to see and act on.
  */
+/**
+ * ONE DOMAIN'S IDENTITY DOT — the mapping, never a second palette (v3.65.1, D7).
+ *
+ * `identityDotClass` is `shared/sidebar.js`'s, imported rather than copied, and
+ * the index is the domain's place in the INSTALL's list (`GET /api/domains`,
+ * which answers out of the same `listDomains()` the Domains page's own rows are
+ * numbered by). That is what makes `projects` the same colour in the Domains
+ * rail, in the Context rail, in this page's breadcrumb and on this row.
+ *
+ * '' RATHER THAN A FALLBACK COLOUR when the list has not arrived or the domain
+ * is not in it — identity has no states, and a placeholder here would be some
+ * OTHER domain's colour, which is worse than no mark at all. The same call the
+ * rail makes with `dotClass: ''`.
+ *
+ * NO CSS OF ITS OWN: `.cur-sb-dot` carries the 8px round shape and the twelve
+ * colour rules are declared once, outside this view.
+ */
+function knowledgeDotHtml(domain) {
+  const list = Array.isArray(state.domainList) ? state.domainList : [];
+  const slot = list.indexOf(String(domain || ''));
+  return slot >= 0
+    ? '<span class="cur-sb-dot mem-k-dot ' + identityDotClass(slot) + '" aria-hidden="true"></span>'
+    : '';
+}
+
 function renderKnowledgeRow(domain) {
   // BOTH DOORS ARE OFFERED IN EVERY STATE, including the one where the
   // figures failed to arrive: a domain's wiki does not stop existing because
@@ -4035,12 +4080,24 @@ function renderKnowledgeRow(domain) {
   // were bound by id in `wire()`, and an id must be unique — N rows means N
   // pairs. The pattern is `bindFoundationRows`'s: one delegated listener over
   // the attribute, which also survives the row being re-rendered.
+  // ── AND THE ROW'S OWN REMOVE, ON `margin-left: auto` (v3.65.1, D5) ────
+  // It was a sibling of the PICKER, in a flex row under every row it could
+  // act on — "Remove projects", "Remove research", left-aligned beside "+ Add
+  // a wiki". A per-row action belongs in its row, which is where the documents
+  // table already puts its own, and the name it needs is then the row's
+  // (`Remove`, not `Remove <domain>`), because the row says which domain.
+  // `data-mem-k-drop` is unchanged, so `bindKnowledgeRows`' delegation finds
+  // it wherever in the block it sits.
+  const dropBusy = !!(state.knowledgeSaving);
   const doors =
     '<div class="mem-k-doors">'
       + '<button type="button" class="btn btn-secondary btn-xs" data-mem-k-domains="'
         + escapeHtml(domain) + '">Open in Domains</button>'
       + '<button type="button" class="btn btn-secondary btn-xs" data-mem-k-chat="'
         + escapeHtml(domain) + '">Ask this domain</button>'
+      + '<button type="button" class="btn btn-ghost btn-xs mem-k-drop" data-mem-k-drop="'
+        + escapeHtml(domain) + '"' + (dropBusy ? ' disabled' : '')
+        + ' aria-label="' + escapeHtml('Remove ' + domain + ' from this project') + '">Remove</button>'
     + '</div>';
 
   const k = state.knowledge instanceof Map ? state.knowledge.get(domain) : null;
@@ -4083,11 +4140,33 @@ function renderKnowledgeRow(domain) {
   // the one instrument every live reading in the app now takes.
   const figures = renderMonitor({
     label: 'The ' + domain + ' domain',
+    // ── THE DEPTH BAR'S SECOND PLACEMENT (v3.65.1, §9) ────────────────
+    // The three category counts against this domain's OWN `pageCount`, which
+    // is an EXACT denominator rather than "the largest visible row": the
+    // producer states `pageCount === entities + concepts + summaries + other`
+    // as an invariant (src/brain/files.js). So the three bars can never sum
+    // past the full track, and the remainder is the `other` the invariant
+    // names — which is why the gap is honest rather than a rounding artefact.
+    //
+    // `pages` CARRIES NO BAR: it IS the denominator, and a bar at 100% on
+    // every row would read as a reading rather than as a definition.
+    // `last ingest` carries none either — that is a TIME, and the dot owns
+    // time. Tone: neutral, always. These are categories within one domain, so
+    // nothing here is an over-run and nothing may be red.
     lines: [
       { key: 'pages', value: num(d.pageCount) },
-      { key: 'entities', value: num(counts.entities) },
-      { key: 'concepts', value: num(counts.concepts) },
-      { key: 'summaries', value: num(counts.summaries) },
+      { key: 'entities',
+        value: num(counts.entities),
+        depth: { amount: counts.entities, max: d.pageCount,
+          label: 'of ' + num(d.pageCount) + ' pages in ' + domain } },
+      { key: 'concepts',
+        value: num(counts.concepts),
+        depth: { amount: counts.concepts, max: d.pageCount,
+          label: 'of ' + num(d.pageCount) + ' pages in ' + domain } },
+      { key: 'summaries',
+        value: num(counts.summaries),
+        depth: { amount: counts.summaries, max: d.pageCount,
+          label: 'of ' + num(d.pageCount) + ' pages in ' + domain } },
       {
         key: 'last ingest',
         value: day || 'nothing ingested yet',
@@ -4108,6 +4187,13 @@ function renderKnowledgeRow(domain) {
   return '<details class="mem-fold" data-mem-fold="' + escapeHtml(key) + '"' + open + '>'
     + '<summary class="mem-fold-summary" id="mem-fold-' + escapeHtml(key) + '">'
       + icon('chevronRight', 14)
+      // ── TWO DOTS, TWO CHANNELS, AND NEVER THE SAME GLYPH POSITION ──────
+      // The IDENTITY dot precedes the NAME on the left; the FRESHNESS dot
+      // precedes the READING on the right. One says WHICH DOMAIN — the same
+      // colour this domain wears in both sidebars and in the breadcrumb — and
+      // the other says HOW OLD. Reading them as one mark is only possible if
+      // they share a position, so they never do.
+      + knowledgeDotHtml(domain)
       + '<span>' + escapeHtml(domain) + '</span>'
       + '<span class="mem-fold-meta">' + freshnessDotHtml(d.lastIngestDate)
         + escapeHtml(meta) + '</span>'
@@ -4151,9 +4237,6 @@ function renderKnowledgePicker(chosen, defaulted) {
         : 'Reading the domains on this computer…');
   }
   const rest = all.filter((d) => !chosen.includes(d));
-  const removable = chosen.map((d) =>
-    '<button type="button" class="btn btn-ghost btn-xs mem-k-drop" data-mem-k-drop="'
-      + escapeHtml(d) + '"' + (busy ? ' disabled' : '') + '>Remove ' + escapeHtml(d) + '</button>').join('');
   // EVERY DISABLED CONTROL STATES ITS REASON (v3.61.1's finding), and the
   // two reasons here are different facts: nothing left to add, and a write in
   // flight.
@@ -4161,10 +4244,22 @@ function renderKnowledgePicker(chosen, defaulted) {
     ? renderDescription('Every domain on this computer is already chosen.')
     : '';
   const cfg = knowledgePickerCfg(rest, busy);
+  // ── THE PICKER IS A HEAD ROW NOW, AND REMOVE HAS LEFT IT (v3.65.1, D5) ─
+  //
+  // THE REPORTED DEFECT: *"'+ Add a wiki' and 'Remove projects' are two
+  // un-synced buttons in a really poor implementation."* Measured at 1370 with
+  // two domains chosen, the row held THREE controls left to right — the picker
+  // at x=404, `Remove projects` at 527.9, `Remove research` at 642.2 — two of
+  // which are PER-ROW actions that had left their rows, under the rows they
+  // act on.
+  //
+  // So: one control here, and it is the section's, in the head row above the
+  // rows at the rows' own x — step ①'s rule and Wiki health's anatomy. Remove
+  // moves INSIDE each expanded row, beside that row's two doors, exactly as
+  // the documents table's per-row Remove already is.
   return err
     + '<div class="mem-k-pick">'
       + (rest.length ? renderListboxHtml(cfg) : '')
-      + removable
     + '</div>'
     + note
     + (defaulted && chosen.length
@@ -4836,7 +4931,29 @@ function renderProject() {
   // can answer "which domain is this?".
   const header =
     '<div class="mem-project-head mem-section">' +
-      '<span class="mem-project-mark"></span>' +
+      // ── THE MARK IS THE DOMAIN'S IDENTITY DOT (v3.65.1, D7) ──────────
+      // It was `background: var(--accent)` — a 9×9 VIOLET SQUARE, the same on
+      // every project in every domain, beside a breadcrumb naming the domain
+      // it did not identify. Measured: rgb(124,90,245), border-radius 2px,
+      // 9px, against rgb(121,199,82) round 8px for that same domain's row in
+      // the rail three inches to the left.
+      //
+      // CONTINUITY BY IDENTITY: one palette, one mapping, one glyph. The
+      // mapping is `identityDotClass` from shared/sidebar.js — imported, never
+      // a second copy — and the index is the domain's place in the INSTALL's
+      // list, which is what makes the colour the same on every screen.
+      //
+      // NO MARK AT ALL until `state.domainList` has answered. Identity has no
+      // states (the rail's own rule, `dotClass: ''` on a project with nothing
+      // saved): a placeholder colour would be a different domain's.
+      (() => {
+        const list = Array.isArray(state.domainList) ? state.domainList : [];
+        const slot = list.indexOf(String(state.activeDomain || ''));
+        return slot >= 0
+          ? '<span class="cur-sb-dot mem-project-mark ' + identityDotClass(slot) + '"'
+            + ' aria-hidden="true"></span>'
+          : '';
+      })() +
       '<span class="mem-project-domain">' + escapeHtml(String(state.activeDomain || '')) + '</span>' +
       '<span class="mem-project-sep">/</span>' +
       '<span class="mem-project-name">' + escapeHtml(state.activeProject) + '</span>' +
@@ -7000,7 +7117,7 @@ function renderFoundationStop(facts) {
   );
 }
 
-function fndRowHtml(d, editable, readonly) {
+function fndRowHtml(d, editable, readonly, budgetBytes) {
   const slug = String(d.slug || '');
   const rowId = 'mem-fnd-' + slug.replace(/[^a-z0-9]+/gi, '-');
   // `.fnd-src-path`, NOT the shared `.mono` utility span. The work-stream slug
@@ -7060,7 +7177,29 @@ function fndRowHtml(d, editable, readonly) {
           escapeHtml(d.title || slug) +
         '</button>' +
       '</td>' +
-      '<td class="fnd-cell-size">' + escapeHtml(size) + '</td>' +
+      // ── THE DEPTH BAR'S FIRST PLACEMENT (v3.65.1, §9) ────────────────
+      //
+      // THE DENOMINATOR IS `FOUNDATIONS_BUDGET_BYTES` — 200 KB, the PROJECT's
+      // disk budget — and it is named in the cell's own hidden sentence and in
+      // the unfolded warning under the table, because a bar whose denominator
+      // the reader cannot name is decoration.
+      //
+      // IT IS NOT THE 120 KB BOOTSTRAP BUDGET, and the two must stay named
+      // apart (CLAUDE.md's own invariant): `CONTEXT_MAX_BYTES_DEFAULT` is the
+      // READING budget and applies only to the `readFirst` subset, while this
+      // column lists EVERY document. Measuring every row against the reading
+      // budget would paint an ordinary project's third document red.
+      //
+      // A DOCUMENT WHOSE OWN BYTES EXCEED THE BUDGET takes the whole cell in
+      // the danger tone — the component's one automatic tone, and the only
+      // condition that may set it. v3.16.1 still holds: the same fact is in
+      // words, unfolded, in `#mem-fnd-budget` under the row.
+      '<td class="fnd-cell-size">' + renderDepthCell({
+        value: size,
+        amount: bytes,
+        budget: budgetBytes,
+        label: fndSize(bytes) + ' of a ' + fndSize(budgetBytes) + ' project budget',
+      }) + '</td>' +
       // ── "READ FIRST" — WHAT AN AGENT IS HANDED WITHOUT ASKING ────────
       //
       // A flagged document's BODY arrives with every session; an unflagged one
@@ -7526,7 +7665,8 @@ function renderFoundations(read) {
       '</span>' +
     '</summary>';
 
-  const rows = facts.docs.map((d) => fndRowHtml(d, curator, readonly)).join('');
+  const rows = facts.docs.map(
+    (d) => fndRowHtml(d, curator, readonly, facts.budgetBytes)).join('');
   // ── THE EDITOR REPLACES THE TABLE, IT DOES NOT SIT UNDER IT ────────────
   // The standing brief's own precedent one block up, and the same reason: two
   // views of one set of documents on screen at once, one of them describing a

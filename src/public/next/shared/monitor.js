@@ -120,6 +120,107 @@ function scalar(v) {
   return null;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  THE DEPTH BAR — the app's THIRD visual channel (v3.65.1)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The maintainer's proposal, from an exchange order book: a tinted bar behind
+// each row's value, right-anchored, its length proportional to that row's
+// magnitude. Agreed, with one rule attached, which is what this comment is
+// for — because the value of a third channel is entirely in never confusing
+// it with the two the app already has:
+//
+//   | channel      | glyph                  | answers         | owner               |
+//   |--------------|------------------------|-----------------|---------------------|
+//   | TIME         | the freshness dot      | how old         | shared/freshness.css|
+//   | WHICH DOMAIN | the identity dot       | whose           | shared/sidebar.css  |
+//   | SIZE / SHARE | the DEPTH BAR          | how much, of what| shared/depth-bar.css|
+//
+// · IT NEVER ENCODES TIME. No bar in the journal, the handoffs list, a
+//   `lastIngest` line or any age. The dot owns age, and a bar whose length
+//   was an age would be a second ladder wearing the first's meaning — the
+//   same mistake `renderCaptureMeter`'s own note refuses for its mark.
+// · IT NEVER APPEARS IN A `<summary>` OR A SIDEBAR ROW. Both are one line of
+//   text read at a glance; a background there competes with the row's own
+//   active fill (`--mat-row-active`) and with the identity dot beside it.
+// · IT LIVES INSIDE MONITORS AND TABLES, where there is a numeric column to
+//   anchor to.
+// · ITS DENOMINATOR IS STATED, NEVER IMPLIED: `value ÷ budget` where a budget
+//   exists, otherwise `value ÷ max(visible rows)`. A bar whose denominator the
+//   reader cannot name is decoration, so `label` is a visually-hidden sentence
+//   naming it and the host prints the same fact in words nearby.
+// · A COST IS NEVER ONLY A COLOUR (v3.16.1). Wherever a bar takes the danger
+//   tone, the same fact is also on screen in words, unfolded.
+//
+// ── WHY IT LIVES HERE AND NOT IN A MODULE OF ITS OWN ──────────────────────
+// The monitor is the only shared component that hosts it in v3.65.1 and
+// already owns the escaping discipline and the trusted-field contract; a bar
+// is a CELL decoration, which is what `renderMonitor`'s own line already is;
+// and a third new shared module in one release means a third census entry and
+// a third stylesheet link. A separate module is correct the moment a third
+// host outside a monitor appears — recorded, not pre-built. (The stylesheet
+// IS separate, `shared/depth-bar.css`, because the Documents TABLE uses it
+// without using the monitor.)
+
+/** The class alphabet a tone may use. A NAME is filtered, never escaped and
+ *  hoped — shared/overview.js's rule, and the reason is that an escaped class
+ *  attribute is still an attribute the caller composed. */
+function depthTone(t) {
+  return typeof t === 'string' && /^[A-Za-z0-9_-]+$/.test(t) ? t : '';
+}
+
+/**
+ * ONE FIGURE, WITH ITS SHARE DRAWN BEHIND IT.
+ *
+ * @param {{
+ *   value: string|number,   // the figure to PRINT (escaped; a non-scalar is dropped)
+ *   amount?: number,        // the figure to MEASURE, when it is not `value` itself
+ *                           //   (e.g. value "62 KB", amount 63488)
+ *   max?: number,           // the denominator when there is no budget
+ *   budget?: number,        // optional; REPLACES max as the denominator
+ *   toneClass?: string,     // a class NAME, filtered to [A-Za-z0-9_-]
+ *   label?: string,         // the visually-hidden sentence naming the denominator
+ * }} o
+ * @returns {string} HTML — the value alone, with NO bar, when the denominator
+ *   is absent, zero or not finite, or when the amount is not a finite number.
+ */
+export function renderDepthCell(o) {
+  const opts = o && typeof o === 'object' ? o : {};
+  const printed = scalar(opts.value);
+  if (printed === null) return '';
+  const amount = Number.isFinite(opts.amount) ? opts.amount
+    : (typeof opts.value === 'number' && Number.isFinite(opts.value) ? opts.value : null);
+  const budget = Number.isFinite(opts.budget) && opts.budget > 0 ? opts.budget : null;
+  const max = Number.isFinite(opts.max) && opts.max > 0 ? opts.max : null;
+  const denom = budget !== null ? budget : max;
+
+  const valueHtml = '<span class="cur-depth-value">' + escapeHtml(printed) + '</span>';
+  // NO DENOMINATOR, NO BAR. A bar drawn against nothing is decoration, and a
+  // zero-width one reads as "none of it" rather than as "unknown".
+  if (denom === null || amount === null || amount < 0) return valueHtml;
+
+  // CLAMPED TO [0, 100] and rounded to one decimal, so a value over its budget
+  // FILLS the cell rather than overflowing it. `budget` present AND
+  // `amount > budget` is the ONLY condition that may set the danger tone by
+  // itself: an over-run against a stated budget is a fact, while being the
+  // largest of a set of visible rows is not.
+  const pct = Math.min(100, Math.max(0, Math.round((amount / denom) * 1000) / 10));
+  const over = budget !== null && amount > budget;
+  const tone = depthTone(opts.toneClass) || (over ? 'cur-depth-danger' : '');
+  const label = typeof opts.label === 'string' && opts.label.trim() ? opts.label.trim() : '';
+
+  // `width` IS AN INLINE STYLE, and it is the one place this component writes
+  // one — unavoidable, because the length IS the data. It is a number this
+  // function computed from two numbers it validated; a caller's string never
+  // reaches it.
+  return '<span class="cur-depth">' +
+    '<span class="cur-depth-bar' + (tone ? ' ' + tone : '') + '"' +
+      ' style="width:' + pct + '%" aria-hidden="true"></span>' +
+    valueHtml +
+    (label ? '<span class="visually-hidden"> ' + escapeHtml(label) + '</span>' : '') +
+  '</span>';
+}
+
 /**
  * ONE MONITOR.
  *
@@ -133,6 +234,10 @@ function scalar(v) {
  *     markHtml?: string,             // TRUSTED — a .fresh-dot, before the value
  *     tone?: 'ok'|'warn'|'danger'|'quiet',
  *     sub?: string,                  // one qualifying clause under the value
+ *     depth?: {                      // DATA, never markup — the SHARE behind
+ *       amount?: number, max?: number, budget?: number,
+ *       toneClass?: string, label?: string,
+ *     },                             //   the figure; see renderDepthCell
  *   }>,
  *   loud?: Array<{ tone?: 'ok'|'warn'|'danger'|'quiet',
  *                  text: string, strongText?: string }>,
@@ -182,13 +287,25 @@ export function renderMonitor(o) {
     ? '<div class="cur-mon-lines">' + lines.map((l) => {
         const tone = toneClass(l.tone);
         const sub = typeof l.sub === 'string' ? l.sub.trim() : '';
+        // ── A LINE MAY CARRY ITS SHARE (v3.65.1) ──────────────────────
+        // `depth` is DATA — `{amount, max, budget, label, toneClass}` — and
+        // the component draws the bar from it. It is deliberately NOT a
+        // second trusted HTML field: a caller that could hand over markup for
+        // the VALUE would be a caller that could hand over anything, and the
+        // one trusted field on this component (`markHtml`) is the whole of
+        // what its escaping discipline has to reason about. `renderDepthCell`
+        // escapes the figure itself and computes the width from two numbers
+        // it validated.
+        const depth = l.depth && typeof l.depth === 'object' ? l.depth : null;
+        const figure = depth
+          ? renderDepthCell({ ...depth, value: scalar(l.value) })
+          : escapeHtml(scalar(l.value));
         return '<div class="cur-mon-line' + (tone ? ' ' + tone : '') + '">' +
           '<span class="cur-mon-key">' + escapeHtml(l.key) + '</span>' +
           // The mark rides INSIDE the value, before the figure, so the dot
           // sits beside the reading it qualifies rather than floating in a
           // column of its own — the placement `renderReadout` already uses.
-          '<span class="cur-mon-value">' + trusted(l.markHtml) +
-            escapeHtml(scalar(l.value)) + '</span>' +
+          '<span class="cur-mon-value">' + trusted(l.markHtml) + figure + '</span>' +
           (sub ? '<span class="cur-mon-sub">' + escapeHtml(sub) + '</span>' : '') +
         '</div>';
       }).join('') + '</div>'

@@ -198,7 +198,11 @@ import {
 // DRAFTING request's confirmation is NOT this sentence, and a copy here would
 // let the two drift into agreement.
 import { COPY_SUCCESS_BANNER } from '../src/public/next/shared/agent-instructions.js';
-import { renderMonitor } from '../src/public/next/shared/monitor.js';
+// `renderDepthCell` joins it in v3.65.1 (§9) — the REAL one, for the same
+// reason: the Documents table's SIZE column and step ③'s three category counts
+// draw their share through it, and a stub would let every assertion about a
+// bar's denominator run past the function that computes the width.
+import { renderMonitor, renderDepthCell } from '../src/public/next/shared/monitor.js';
 import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
   identityDotClass } from '../src/public/next/shared/sidebar.js';
 // ── THE OWNERSHIP CHOOSER, THE REAL ONE (v3.61.0) ─────────────────────────
@@ -1331,6 +1335,9 @@ function makeRenderers(stateObj) {
     // composes them and a module-level function is not visible inside a body
     // this harness lifts.
     extractFunction(viewSrc, 'knowledgePickerCfg', 'memory.js') + '\n' +
+    // v3.65.1 (D7): the row's identity dot, from the SHARED mapping. Lifted
+    // rather than stubbed, so the assertions below read the real class names.
+    extractFunction(viewSrc, 'knowledgeDotHtml', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderKnowledgeRow', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderKnowledgePicker', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderKnowledge', 'memory.js') + '\n' +
@@ -1434,7 +1441,7 @@ function makeRenderers(stateObj) {
     // through it, so a stub would let §6's escaping battery and every
     // assertion about a warning's PLACE run past the component that draws
     // both. Injected real for the same reason renderOverview is.
-    'renderMonitor',
+    'renderMonitor', 'renderDepthCell',
     // ── THE LISTBOX IS STUBBED, AND THE REASON IS MECHANICAL ──────────
     // `shared/listbox.js` imports `app.js`, which touches `document` at
     // import time, so it cannot be imported into a Node suite at all — the
@@ -1462,7 +1469,7 @@ function makeRenderers(stateObj) {
     docsLinkHtml,
     realFormatDayAge, realDayFreshnessTier, realFreshnessDotHtml,
     renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass,
-    renderMonitor,
+    renderMonitor, renderDepthCell,
     (cfg) => '<button type="button" id="' + cfg.id + '" data-lb-stub="'
       + escapeHtml(JSON.stringify({ options: cfg.options.map((o) => o.value),
         disabled: cfg.disabled === true, placeholder: cfg.placeholder })) + '"></button>',
@@ -2809,11 +2816,29 @@ function ruleFor(css, selector) {
   // So what is asserted is that this view declares NO row-mark geometry of
   // its own any more, that the six COLOURS are here (they cannot be in the
   // kit — see memory.css), and that every one of them is a `var()` rather
-  // than a literal. The BREADCRUMB's square is untouched: it marks the
-  // project itself, not a row in a list, and nothing about it was reported.
+  // than a literal.
+  //
+  // ── AND THE BREADCRUMB'S SQUARE IS GONE TOO (v3.65.1, D7) ───────────
+  // It was the LAST mark on this screen that was not an identity: a 9×9
+  // `var(--accent)` square, identical on every project in every domain,
+  // beside a breadcrumb naming the domain it did not identify. Measured:
+  // rgb(124,90,245) / 2px / 9px, against rgb(121,199,82) / 50% / 8px for the
+  // same domain in the rail. It takes `.cur-sb-dot` and `identityDotClass`
+  // now, so this view declares no geometry for it either — one palette, one
+  // mapping, ONE GLYPH.
   const head = ruleFor(viewCss, '.mem-project-mark');
   ok('.mem-project-mark exists', !!head);
-  ok('.mem-project-mark is SQUARE, not a circle', !!head && /border-radius:\s*2px/.test(head) && !/50%/.test(head));
+  ok('.mem-project-mark declares NO geometry and NO colour — the kit\'s dot '
+    + 'carries both, so the breadcrumb cannot drift from the rail',
+  !!head && !/border-radius/.test(head) && !/background/.test(head)
+    && !/width|height/.test(head), head);
+  ok('...and the view EMITS it as a kit dot with the shared mapping',
+    /class="cur-sb-dot mem-project-mark ' \+ identityDotClass\(slot\)/.test(viewSrc),
+    (viewSrc.match(/.{0,120}mem-project-mark.{0,120}/s) || [''])[0]);
+  ok('...withheld entirely until the domain list has answered, because identity '
+    + 'has no states and a placeholder would be another domain\'s colour',
+  /slot >= 0\s*\n?\s*\? '<span class="cur-sb-dot mem-project-mark/.test(viewSrc)
+    || /slot >= 0/.test(viewSrc));
   ok('this view declares NO row-mark geometry — the kit owns the row',
     !ruleFor(viewCss, '.mem-row-mark') && !ruleFor(viewCss, '.mem-row'));
   const slots = [...viewCss.matchAll(/\.cur-sb-dot-(\d)\s*\{\s*background:\s*([^;]+);/g)];
@@ -9691,7 +9716,7 @@ const EXECUTED = new Set([
   // every state (in flight, failed, gone, one wiki, two, defaulted, a
   // malformed project.json); `saveKnowledgeDomains` is driven in §21f3
   // against the store's refusals.
-  'renderKnowledgeRow', 'renderKnowledgePicker', 'knowledgePickerCfg', 'saveKnowledgeDomains',
+  'knowledgeDotHtml', 'renderKnowledgeRow', 'renderKnowledgePicker', 'knowledgePickerCfg', 'saveKnowledgeDomains',
   'bindKnowledgeRows',
   // v3.65.0 — the install's domain list. One cheap read per mount, with two
   // readers: the rail's identity colour and step ③'s picker. Driven in §16d

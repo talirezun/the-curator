@@ -1,0 +1,113 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   shared/depth-bar.css — THE DEPTH BAR
+
+   The app's THIRD visual channel, and the whole of its value is in never being
+   confused with the two it joins:
+
+     TIME          the freshness dot + a word   how old        shared/freshness.css
+     WHICH DOMAIN  the identity dot             whose          shared/sidebar.css
+     SIZE / SHARE  THIS                         how much, of what
+
+   A tinted bar drawn BEHIND a figure, anchored at the figure's right edge, its
+   length that row's share of a named denominator. The maintainer's proposal,
+   from an exchange order book; the rules below are the ones agreed with it.
+
+   ── WHERE IT MAY NOT GO, AND WHY EACH IS STRUCTURAL ─────────────────────
+   · NEVER a `<summary>` line. A fold summary is one line read at a glance and
+     already carries the row's own active fill (`--mat-row-active`) plus, on
+     step ③, an identity dot — a third background there is three things
+     competing in one strip of pixels.
+   · NEVER a sidebar row, for the same reason plus one more: the rail is the
+     one surface where the identity colour has to be unmistakable.
+   · NEVER an age. The dot owns time. A bar whose length was an age would be a
+     second ladder wearing the first's meaning.
+   It lives inside MONITORS and TABLES, where there is a numeric column to
+   anchor to and a header naming what the column is.
+
+   ── WHY THE STYLESHEET IS SEPARATE WHEN THE FUNCTION IS NOT ─────────────
+   `renderDepthCell` lives in shared/monitor.js: the monitor is its only
+   component host this release, and a bar is a CELL decoration, which is what a
+   monitor line already is. But the Documents TABLE uses the bar WITHOUT using
+   the monitor, so the rules cannot live in monitor.css — a table would then
+   depend on a stylesheet for a component it does not render.
+
+   ── THE GEOMETRY ────────────────────────────────────────────────────────
+   The wrapper is `position: relative` and `inline-flex`, so it takes exactly
+   the width of the figure it decorates PLUS the bar's own track — and the bar
+   is absolutely positioned with `right: 0`, which is what "anchored at the
+   right" means without reserving a width the figure then has to fit inside.
+   `min-width` gives a one-character figure a track long enough for its share
+   to be legible; without it "31" against 767 pages draws a bar shorter than
+   the glyph it sits behind. */
+
+.cur-depth {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 72px;
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-xs);
+}
+
+/* ── THE BAR ITSELF ──────────────────────────────────────────────────────
+   A NON-TEXT MARK, so its floor is 3:1 against the surface behind it — and
+   because a value is printed ON it, the composite has to keep that value at
+   4.5:1. Both floors are measured on the composite rather than on the token,
+   and both join scripts/test-next-contrast-ratchet.js.
+
+   `color-mix` over `--text-3` rather than a new colour: the tint has to work
+   on BOTH surfaces this can sit on (`--surface` in a table, `--surface-inset`
+   in a monitor) in both themes, and a fixed grey that reads at one value on
+   one reads as a block on the other. A low-alpha overlay of the page's own
+   quiet ink composites correctly on every one of the four.
+
+   ── THE ALPHA IS ANCHORED TO THE APP'S OWN FILLS, NOT TO 3:1 ────────────
+   MEASURED in dark at 1370: `--mat-row-active` (the fill that says "this row
+   is the one you chose") composites to **1.21:1** against `--surface`, and
+   `--hairline-strong` to **1.24:1**. 18% of `--text-3` puts this bar in that
+   same band. A 3:1 floor would need roughly 38% — a solid mid-grey block
+   behind every figure in a table, LOUDER than the selected-row state, which
+   cannot be right for a mark that qualifies a figure rather than naming one.
+
+   The 3:1 non-text floor is for a graphic a reader NEEDS in order to
+   understand the content, and this one is deliberately never that: the figure
+   is printed ON the bar (measured 13.7–14.4:1, against a 4.5 floor), the
+   denominator is named in a visually-hidden sentence on every cell, and
+   wherever the danger tone is painted the same fact is in words, unfolded,
+   under the table (v3.16.1). The bar is `aria-hidden`. Recorded rather than
+   assumed — see the report. */
+.cur-depth-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--text-3) 18%, transparent);
+  pointer-events: none;
+}
+
+/* THE ONE TONE A BAR MAY SET BY ITSELF, and only against a stated BUDGET:
+   being the largest of a set of visible rows is not a fault, and colouring it
+   as one would make a bar an alarm every time somebody sorted a table. An
+   over-run against a budget IS a fact — and v3.16.1 still applies, so wherever
+   this tone is painted the same fact is on screen in words, unfolded. */
+.cur-depth-danger {
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
+}
+
+/* ── THE FIGURE ──────────────────────────────────────────────────────────
+   Above the bar, at full ink, with tabular numerals so a column of them lines
+   up — the same property `.cur-mon-value` takes, declared here because a
+   table cell does not inherit it from a monitor it is not inside. */
+.cur-depth-value {
+  position: relative;
+  color: var(--text);
+  font-variant-numeric: var(--numeric-tabular);
+}
+
+/* `[hidden]` LOSES TO AN AUTHOR `display:` AT ANY SPECIFICITY — v3.62.0's
+   measured defect, where a chip painted although it was `hidden`. Swept by
+   class rather than listed by name, so a later element wearing it is covered
+   without anybody remembering to add it. */
+.cur-depth[hidden] { display: none; }

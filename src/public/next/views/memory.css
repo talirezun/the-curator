@@ -143,14 +143,32 @@
    them belongs to this view. Both doors are `btn-secondary btn-xs` and wrap
    as a row, so nothing here paints a button — `shell.css`'s taxonomy does. */
 .mem-k-wrap { margin-bottom: var(--space-8); }
-.mem-k-doors { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.mem-k-doors { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+/* THE ROW'S OWN REMOVE, pushed away from the two doors rather than sitting
+   beside them — the same call `.mem-fnd-delete` makes one block up, and for
+   the same reason: a control that takes a domain off this project must not be
+   one mis-click from a door that merely navigates. */
+.mem-k-drop { margin-left: auto; }
+/* THE IDENTITY DOT ON A KNOWLEDGE ROW. Shape and colour are the kit's
+   (`.cur-sb-dot` plus `cur-sb-dot-N`); this owns only the gap to the name it
+   identifies. It sits before the NAME, on the left; the FRESHNESS dot sits
+   before the READING, on the right — two channels, and never the same glyph
+   position, which is the only thing that keeps them legible as two. */
+.mem-k-dot { margin-right: var(--space-3); }
 
-/* ── STEP ③'s PICKER ROW (v3.65.0, P10) ─────────────────────────────────
-   "+ Add a wiki" and one Remove per chosen wiki, under the rows they act on.
-   A flex row that WRAPS: a project may draw on up to twelve, and a row that
-   scrolls sideways hides the control the maintainer came for.
+/* ── STEP ③'s HEAD ROW (v3.65.1, D5) ────────────────────────────────────
+   ONE control: "+ Add a domain", in the head row ABOVE the rows, at the rows'
+   own x — step ①'s rule and Wiki health's `.dm-health-top` anatomy.
 
-   `margin-top` rather than a gap on the parent: the rows above are `<details>`
+   WHAT LEFT IT: one Remove per chosen domain. Measured at 1370 with two
+   domains chosen, this row held three controls left to right — the picker at
+   x=404, `Remove projects` at 527.9, `Remove research` at 642.2 — two of them
+   PER-ROW actions sitting under the rows they act on, which is what the
+   maintainer read as *"two un-synced buttons in a really poor
+   implementation"*. Each Remove is inside its own expanded row now, beside
+   that row's two doors, exactly as the documents table's per-row Remove is.
+
+   `margin-bottom` rather than a gap on the parent: the rows below are `<details>`
    elements whose spacing is `.mem-fold + .mem-fold`'s, and adding a second
    owner of the vertical rhythm is how a 2px step between a title and the
    sentence under it came to exist (see `.settings-block-hd`'s own note in
@@ -160,8 +178,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-4);
-  margin-top: var(--space-6);
+  margin-bottom: var(--space-6);
 }
+.mem-k-pick:empty { display: none; }
 
 /* ── INSIDE A BLOCK, THE GAP IS SMALLER — AND THAT IS THE WHOLE POINT ──────
    Block ① stacks the Last-saved reading, the Reload offer and the "state on
@@ -313,13 +332,17 @@
   /* NO margin of its own. `.mem-section + .mem-section` owns every gap on this
      page — see the rhythm block at the top of the file. */
 }
-.mem-project-mark {
-  width: 9px;
-  height: 9px;
-  flex: none;
-  border-radius: 2px;                      /* square — same rule as the rows */
-  background: var(--accent);
-}
+/* ── THE BREADCRUMB'S MARK IS THE DOMAIN'S IDENTITY DOT (v3.65.1, D7) ────
+   It declared `background: var(--accent)` — a 9×9 VIOLET SQUARE, identical on
+   every project in every domain, beside a breadcrumb naming the domain it did
+   not identify. Measured: rgb(124,90,245), 2px radius, 9px, against
+   rgb(121,199,82) round 8px for that same domain three inches to the left in
+   the rail. CONTINUITY BY IDENTITY is one palette, one mapping and ONE GLYPH,
+   so the element takes `.cur-sb-dot` — shared/sidebar.css's own 8px round
+   shape — and its colour from `identityDotClass`. NOTHING about size, shape or
+   colour is declared here any more: a view that restates a kit mark's geometry
+   is how two ladders for one quantity came to exist in the first place. */
+.mem-project-mark { flex: none; }
 /* ── THE BREADCRUMB IS A SUBTITLE, NOT A HEADING ─────────────────────────
    `domain / project` sits directly under the view's own <h1> ("Agent
    memory", --type-h1, 27/600) and directly ABOVE the page's block titles
