@@ -438,6 +438,18 @@ Per document:
 **`readFirst` is tri-state on write**: omitted leaves an existing value alone, and `absent = false`
 on a new document.
 
+**One source per project, and it can be RE-CHOSEN (v3.65.1).** A repo-owned mirror records
+`repo.root` (a folder on one machine), `repo.remote` (a GitHub repository), or **both** — and at
+least one of them, or there is nothing to copy from. A mirror **born remote**, or one **switched to
+remote**, carries `root: null`, which is ordinary and **not** an error. Switching the source
+re-copies the bytes, sets `repo.remote` and clears `repo.root` **in the same write** — a second
+write would be a second failure point, able to leave a mirror naming a stale folder and a fresh
+repository at once. `ownership` never moves: it stays `repo`, one ownership per project, and the
+repository is still the author. `readFirst` is preserved **by slug** across the re-copy, for the
+reason §8 gives: the repository owns the bytes, the owner owns the routing. A reader holding both a
+`root` and a `remote` prefers the folder when it is reachable on this machine, and the network
+otherwise.
+
 ### Freshness is computed, never remembered
 
 No document carries a "fresh" flag. A reader compares the **stored `sha256`** against the source's

@@ -40,6 +40,7 @@ import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSyn
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -278,6 +279,64 @@ section('§7b  project.json: the file, the cap, and the default EXECUTED');
     === ws.MAX_KNOWLEDGE_DOMAINS, 'EXECUTED: the cap the spec states is the cap the store applies');
   ok(ws.projectPrefix(DOMAIN, ws.PROJECT_META_FILENAME) === null,
     'EXECUTED: the reserved name really is unaddressable as a project');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§7c  One source per project, RE-CHOSEN — the switch, EXECUTED');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  const body = sectionText('`manifest.json`') || '';
+  ok(/re-chosen/i.test(body), 'the spec says a mirror’s source can be RE-CHOSEN');
+  ok(/`root: null`/.test(body) && /ordinary/.test(body) && /not\*{0,2}\s*an error/i.test(body),
+    'the spec says `root: null` is ordinary and not an error');
+  ok(/in the same write/i.test(body), 'the spec says the clear and the set land in ONE write');
+  ok(/`ownership` never moves/.test(body), 'the spec says `ownership` never moves');
+  ok(/preserved \*{0,2}by slug\*{0,2}/.test(body), 'the spec says `readFirst` is preserved by slug');
+  ok(typeof ws.setFoundationsSource === 'function',
+    'the store exports `setFoundationsSource`, the operation the paragraph describes');
+
+  // EXECUTED (1): "root, remote, or BOTH" is a shape the store reads back
+  // whole — including the one the paragraph calls ordinary, `root: null`.
+  const dir = path.join(DOMAINS, DOMAIN, 'state', 'srcswitch', 'foundations');
+  mkdirSync(path.join(DOMAINS, DOMAIN, 'state', 'srcswitch'), { recursive: true });
+  mkdirSync(dir, { recursive: true });
+  const manifestAbs = path.join(dir, 'manifest.json');
+  const writeManifest = (repo) => writeFileSync(manifestAbs, JSON.stringify({
+    version: ws.FOUNDATIONS_MANIFEST_VERSION,
+    ownership: 'repo', repo,
+    budgetBytes: ws.FOUNDATIONS_BUDGET_BYTES,
+    order: [...ws.FOUNDATION_ROLES], documents: [],
+  }, null, 2) + '\n');
+  const REMOTE = { owner: 'acme', repo: 'thing', ref: null, path: null };
+
+  writeManifest({ root: '/somewhere/checkout', remote: REMOTE, lastRefreshAt: null, lastRefreshCommit: null });
+  const both = await ws.listFoundations(DOMAIN, 'srcswitch');
+  ok(both.ok === true && both.repo && both.repo.root === '/somewhere/checkout' && both.repo.remote
+     && both.repo.remote.owner === 'acme',
+  'EXECUTED: a mirror holding BOTH a root and a remote reads back with both');
+
+  writeManifest({ root: null, remote: REMOTE, lastRefreshAt: null, lastRefreshCommit: null });
+  const remoteOnly = await ws.listFoundations(DOMAIN, 'srcswitch');
+  ok(remoteOnly.ok === true && remoteOnly.ownership === 'repo' && remoteOnly.repo.root === null
+     && remoteOnly.repo.remote.repo === 'thing',
+  'EXECUTED: `root: null` with a remote is a readable mirror, not a refusal');
+
+  // EXECUTED (2): "ownership never moves" — the switch REFUSES rather than
+  // re-deciding it, and writes nothing while refusing. No network is reached:
+  // the ownership is read before any client is built.
+  const curDir = path.join(DOMAINS, DOMAIN, 'state', 'srccurator', 'foundations');
+  mkdirSync(curDir, { recursive: true });
+  const curManifest = path.join(curDir, 'manifest.json');
+  writeFileSync(curManifest, JSON.stringify({
+    version: ws.FOUNDATIONS_MANIFEST_VERSION, ownership: 'curator', repo: null,
+    budgetBytes: ws.FOUNDATIONS_BUDGET_BYTES, order: [...ws.FOUNDATION_ROLES], documents: [],
+  }, null, 2) + '\n');
+  const before = createHash('sha256').update(readFileSync(curManifest)).digest('hex');
+  const refused = await ws.setFoundationsSource(DOMAIN, 'srccurator', { remote: 'acme/thing' });
+  ok(refused.ok === false && refused.reason === 'ownership-mismatch',
+    'EXECUTED: switching a curator-owned project’s source is refused', JSON.stringify(refused).slice(0, 160));
+  ok(createHash('sha256').update(readFileSync(curManifest)).digest('hex') === before,
+    'EXECUTED: …and its manifest is byte-identical afterwards (sha256)');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
