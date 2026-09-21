@@ -1550,6 +1550,35 @@ section('§15 — THE PINNED PROJECT\'S KNOWLEDGE DOMAINS (v3.65.0, P10)');
     const r2 = render({ activeProject: 'curator', projectKnowledge: null });
     ok(!/Knowledge|domains/.test(r2.mounted[0].footHtml),
       'NOT ASKED YET renders no knowledge row at all — "not told" is not "none"');
+
+    /* ── `error` IS CHECKED FIRST, and this probe is what makes that testable ─
+       Mutation A5 (the loader's error record reporting `defaulted: true`)
+       stayed GREEN, and correctly so: on a failed read `defaulted` cannot
+       reach any surface, because every consumer tests `error` before it. That
+       makes the FIELD inert — and an inert field is not worth pinning. What IS
+       worth pinning is the ORDER that makes it inert, and the ordinary error
+       record cannot show it: its `domains` is empty, so `projectKnowledgeSet`
+       would return null from the empty-list check even with the error test
+       deleted, and the section would pass while the guard was gone.
+       So the probe is a record the loader never builds: a failed read that
+       still carries a full, plausible list. If `error` stopped winning, this
+       would mark two chips and announce a choice nobody made. */
+    const hostile = { project: 'curator', domains: ['research', 'business'],
+      defaulted: false, missing: [], error: true };
+    const h = render({
+      domains: [{ slug: 'articles', displayName: 'Articles', pageCount: 1406 },
+                { slug: 'research', displayName: 'Research', pageCount: 30 },
+                { slug: 'business', displayName: 'Business', pageCount: 50 }],
+      activeDomain: 'articles', activeProject: 'curator', projectKnowledge: hostile,
+    });
+    ok(!/in-project/.test(h.html),
+      '★ an ERRORED record marks nothing even when it carries a full list — `error` is tested first');
+    ok(/could not be read/.test(h.mounted[0].footHtml),
+      '★ …and the footer states the failure rather than the list it happens to be holding');
+    ok(!/chosen for this project/.test(h.mounted[0].footHtml),
+      '★ …and never announces a choice nobody could confirm');
+    ok(!/knowledge lives in another domain/.test(findByClass(h.tree, 'chat-project-panel').text),
+      '★ …and the ⓘ adds no note about a list it does not trust');
   }
 
   // ── §15c4 — A RECORD FOR A DIFFERENT PROJECT IS NEVER SHOWN ─────────────
@@ -1681,6 +1710,15 @@ section('§15e — THE READ: once per project per mount, and never for "No proje
       '…and the list lands on the state');
     eq(st.projectKnowledge.missing.join(), 'business',
       '★ a named domain this install does not have is computed HERE, with no second request');
+    /* THE FLAG IS READ FROM THE SERVER, NOT ASSUMED. The orchestrator's audit
+       found `defaulted: data.knowledgeDomainsDefaulted === true` could be
+       replaced by `defaulted: true` with this file still green: every section
+       that renders a record BUILT one by hand, and this section drove the
+       loader without ever reading the field. Two halves each covered, the
+       SEAM between them not. §15g drives the whole chain; this is the
+       cheap half, naming the field at the point it is derived. */
+    eq(st.projectKnowledge.defaulted, false,
+      '★ `knowledgeDomainsDefaulted: false` from the server lands as `defaulted: false`');
     ok(h.patched.group === 1 && h.patched.marks === 1,
       '…and both targeted patches run — the group for the footer, the chips for the marks');
     await h.api.ensureProjectKnowledge('projects', 'curator', 1);
@@ -1688,6 +1726,15 @@ section('§15e — THE READ: once per project per mount, and never for "No proje
     await h.api.ensureProjectKnowledge('projects', 'curator', 2);
     eq(h.fetches.length, 2,
       '★ …but a NEW MOUNT misses, so knowledge edited in Context is fresh when the user comes back');
+  }
+  {
+    // THE OTHER VALUE of the same field, through the same path — so the
+    // assertion above is a measurement and not a coincidence.
+    const st = mkState();
+    const h = make(st, [{ ok: true, knowledgeDomains: ['projects'], knowledgeDomainsDefaulted: true }]);
+    await h.api.ensureProjectKnowledge('projects', 'curator', 1);
+    eq(st.projectKnowledge.defaulted, true,
+      '★ …and `true` lands as `true`, so the two answers are told apart rather than collapsed');
   }
   {
     const st = mkState();
@@ -1782,6 +1829,100 @@ section('§15f — THE MARK PATCH TOUCHES MARKS AND NOTHING ELSE');
   ok(btns[1]._attrs['aria-label'] === undefined,
     '★ …and the accessible name with it — a stale name is a lie a screen reader cannot see past');
   ok(btns[0]._classes.has('active'), 'CONTROL: and the selection is STILL untouched');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+section('§15g — THE SEAM: one server answer, the real loader, the real renderer');
+// ════════════════════════════════════════════════════════════════════════
+// ── WHAT A GREEN MUTATION TAUGHT ────────────────────────────────────────
+// The orchestrator's audit replaced `defaulted: data.knowledgeDomainsDefaulted
+// === true` with `defaulted: true` — i.e. made EVERY project's knowledge read
+// as "nobody has chosen", which erases the store's own second field and un-
+// marks every chip — and this file stayed at 292 passed / 0 failed.
+//
+// THE CAUSE WAS NOT A MISSING ASSERTION; IT WAS A MISSING JOIN. §15a-c drive
+// the REAL renderer but with a record BUILT BY HAND (`KN({...})`), and §15e
+// drives the REAL loader but never read `defaulted` off what it produced. Each
+// half was covered. The seam between them — the server's field becoming the
+// record's field becoming the mark on a chip — was not, so a lie told at the
+// seam was invisible from both sides.
+//
+// So this section owns the seam, and the arms differ in EXACTLY ONE BIT: the
+// same envelope, the same two domains, the same install, `knowledgeDomains-
+// Defaulted` true in one and false in the other. Anything that stops the flag
+// deciding the outcome — ignoring it, inverting it, deriving the mark from the
+// list's length instead — has to show up here.
+{
+  /** Run the REAL loader against one intercepted answer; return its record. */
+  async function loadRecord(envelope, domains) {
+    const st = {
+      activeDomain: 'projects', activeProject: 'curator', projectKnowledge: null,
+      domains,
+    };
+    const api = new Function(
+      'state', 'fetch', 'isCurrentMount', 'patchProjectGroup', 'patchScopePillMarks',
+      'projectKnowledgeCache', 'MAX_PROJECT_KNOWLEDGE_CACHE',
+      extractFunction(chatSrc, 'ensureProjectKnowledge') + '\nreturn { ensureProjectKnowledge };',
+    )(
+      st,
+      async () => ({ ok: true, json: async () => envelope }),
+      () => true, () => {}, () => {}, new Map(), 24,
+    );
+    await api.ensureProjectKnowledge('projects', 'curator', 1);
+    return st.projectKnowledge;
+  }
+
+  const DOMAINS = [
+    { slug: 'projects', displayName: 'Projects', pageCount: 30 },
+    { slug: 'research', displayName: 'Research', pageCount: 30 },
+    { slug: 'business', displayName: 'Business', pageCount: 50 },
+  ];
+  // ONE envelope, ONE bit apart.
+  const CHOSEN = { ok: true, knowledgeDomains: ['research', 'business'], knowledgeDomainsDefaulted: false };
+  const DEFAULTED = { ok: true, knowledgeDomains: ['research', 'business'], knowledgeDomainsDefaulted: true };
+
+  const chosenRec = await loadRecord(CHOSEN, DOMAINS);
+  const defaultRec = await loadRecord(DEFAULTED, DOMAINS);
+
+  ok(!!chosenRec && !!defaultRec, 'control: the real loader produced a record for both answers');
+  eq(chosenRec.domains.join(), defaultRec.domains.join(),
+    'control: the two records carry the SAME domains — so nothing below can be explained by the list');
+  ok(chosenRec.defaulted === false && defaultRec.defaulted === true,
+    '★ …and differ in exactly the one bit the server sent');
+
+  const base = { domains: DOMAINS, activeDomain: 'projects', activeProject: 'curator' };
+  // THE RENDERER IS GIVEN THE LOADER'S OWN OUTPUT, not a hand-built stand-in.
+  const chosen = render(Object.assign({}, base, { projectKnowledge: chosenRec }));
+  const defaulted = render(Object.assign({}, base, { projectKnowledge: defaultRec }));
+
+  eq((chosen.html.match(/chat-scope-pill in-project/g) || []).length, 2,
+    '★ CHOSEN, end to end: the server said false, and TWO chips are marked');
+  ok(/data-scope-domain="research"/.test(chosen.html) && /data-scope-domain="business"/.test(chosen.html),
+    '…the two the envelope named');
+  eq((defaulted.html.match(/in-project/g) || []).length, 0,
+    '★ DEFAULTED, end to end: the SAME two domains, the flag flipped, and NOTHING is marked');
+
+  const chosenFoot = chosen.mounted[0].footHtml;
+  const defaultFoot = defaulted.mounted[0].footHtml;
+  ok(/chosen for this project/.test(chosenFoot),
+    '★ …and the footer says the owner chose them');
+  ok(/the default/.test(defaultFoot) && /nobody has chosen/.test(defaultFoot),
+    '★ …while the other says nobody did');
+  ok(!/nobody has chosen/.test(chosenFoot) && !/chosen for this project/.test(defaultFoot),
+    'CONTROL: neither footer prints the other\'s sentence, so the two are told apart rather than both printed');
+  ok(chosenFoot !== defaultFoot,
+    'CONTROL: one bit really does change what a user is served');
+
+  /* AND THE ⓘ, whose conditional note also keys off the flag: a DEFAULTED
+     list can never say "its knowledge lives in another domain", because the
+     default IS this domain — even when, as here, the envelope names two
+     others. Pinned so the note cannot start leaking onto the default. */
+  const chosenPanel = findByClass(chosen.tree, 'chat-project-panel').text;
+  const defaultPanel = findByClass(defaulted.tree, 'chat-project-panel').text;
+  ok(/knowledge lives in another domain/.test(chosenPanel),
+    'the ⓘ names the situation on the CHOSEN arm');
+  ok(!/knowledge lives in another domain/.test(defaultPanel),
+    '★ …and stays silent on the DEFAULTED one, from the same two domains');
 }
 
 console.log(`\n${'─'.repeat(60)}`);
