@@ -464,12 +464,23 @@
    ended hundreds of pixels short of it. The maintainer saw a control floating
    top-right belonging to nothing, which is exactly what it was.
 
-   The button is `btn btn-secondary btn-xs` in renderViewHeader's `actionsHtml`
-   slot now — the sanctioned place for a control beside a title, the one
-   views/domains.js uses for Rename / Delete / Ask this domain — so shell.css
-   paints it and shared/text.css places it. This view declares nothing about it,
-   which is the point: a view that restyles a kit control is how five copies of
-   `.btn-xs` came to exist in five stylesheets.                               */
+   The button is `btn btn-primary mem-ask-btn` in renderViewHeader's
+   `actionsHtml` slot now — the sanctioned place for a control beside a title,
+   the one views/domains.js uses for Rename / Delete / Ask this domain — so
+   shell.css paints it and shared/text.css places it.
+
+   ── THE ONE DECLARATION THIS VIEW MAKES ABOUT IT (v3.65.0) ─────────────
+   `margin-left: auto`, and it is the SAME one line views/domains.css makes
+   about `.dm-ask-btn`, for the same reason: the actions group is `flex: 1`
+   precisely so a trailing primary can push itself to the right edge of the
+   header row. The maintainer asked for the two headers to read the same way
+   — *"The Copy agent instructions button should be on the top right in a
+   violet button like Ask this domain — the same design pattern"* — and the
+   pattern is the slot plus this line, not a second set of geometry. Nothing
+   else about the control is declared here: a view that restyles a kit
+   control is how five copies of `.btn-xs` came to exist in five
+   stylesheets.                                                             */
+.mem-ask-btn { margin-left: auto; }
 
 /* The clipboard-refusal fallback. The block is a paragraph, so it cannot go
    in a status sentence; a sunken mono block that wraps rather than scrolls

@@ -1074,18 +1074,12 @@ const numConst = (name) => {
   if (!m) throw new Error(name + ' not found in memory.js — §6e would be a paraphrase');
   return Number(m[1]);
 };
-// THE THREE STEP LEDES, off LIVE SOURCE for the reason BRIEF_TEMPLATE is: the
-// skeleton and the filled page must emit BYTE-IDENTICAL ledes (that is the
-// whole point of the skeleton), and a copy typed here could agree with itself
-// while the two shipped renderers disagreed.
-const strConst = (name) => {
-  const m = new RegExp("^const " + name + " = '([^']*)';$", 'm').exec(viewSrc);
-  if (!m) throw new Error(name + ' not found in memory.js — §18i would be a paraphrase');
-  return m[1];
-};
-const LEDE_CANONICAL_SRC = strConst('LEDE_CANONICAL');
-const LEDE_STATE_SRC = strConst('LEDE_STATE');
-const LEDE_KNOWLEDGE_SRC = strConst('LEDE_KNOWLEDGE');
+// THE THREE STEP LEDES ARE GONE (v3.65.0, R4). They were read off live source
+// here because the skeleton and the filled page had to emit BYTE-IDENTICAL
+// ledes; neither emits one now, and §18i asserts their ABSENCE from the
+// rendered page together with the presence of the ⓘ in the head row, which is
+// the claim that replaces them. `strConst` goes with them — it had no other
+// caller — rather than being left as a helper nothing uses.
 
 // The store's session budget, off LIVE SOURCE for the reason BRIEF_MAX_BYTES
 // is: it is the number `get_project_context` drops bodies at, and a copy typed
@@ -1312,9 +1306,15 @@ function makeRenderers(stateObj) {
     // newest save's headline that the fold summary reads, the work-stream
     // table's own fold, and step ③. All lifted: each is a pane `renderProject`
     // composes, and §18i drives every one of them through the real page.
-    'const LEDE_CANONICAL = ' + JSON.stringify(LEDE_CANONICAL_SRC) + ';\n' +
-    'const LEDE_STATE = ' + JSON.stringify(LEDE_STATE_SRC) + ';\n' +
-    'const LEDE_KNOWLEDGE = ' + JSON.stringify(LEDE_KNOWLEDGE_SRC) + ';\n' +
+    // ── THE STEP HEAD, LIFTED (v3.65.0) ───────────────────────────────
+    // `renderProject` and `renderProjectSkeleton` compose all three numbered
+    // steps through `memStep` now rather than through `shared/block.js`, and
+    // a module-level function is NOT visible inside a body this harness lifts
+    // — it would be a ReferenceError, i.e. a CRASH rather than a failing
+    // assertion (BUILDER-RULES rule 10). It is lifted, not stubbed, because
+    // every §18i assertion about where the ⓘ sits is an assertion about what
+    // this function emits.
+    extractFunction(viewSrc, 'memStep', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderLayerStrip', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'projectHeadline', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderWorkStreamsFold', 'memory.js') + '\n' +
@@ -1357,7 +1357,7 @@ function makeRenderers(stateObj) {
     + 'foundationsOwnershipWord, foundationsSummaryMeta, foundationsBudgetWarning, ' +
     'fndSize, skeletonOf, fndRowHtml, ' +
     'renderFoundations, foundationsNotices, foundationReaderContent, ' +
-    'renderLayerStrip, projectHeadline, renderWorkStreamsFold, renderKnowledge, ' +
+    'memStep, renderLayerStrip, projectHeadline, renderWorkStreamsFold, renderKnowledge, ' +
     'captureFacts, renderCaptureMeter, renderCaptureSessions, ' +
     'fndStats, fndSlugError, fndShrinkWarn, renderFoundationEditor, renderFoundationsInit, ' +
     'renderJournal, renderBrief, aboutInfoHtml, ' +
@@ -4684,37 +4684,28 @@ section('§16 — Projects inside a domain (v3.48.0)');
     !mkEdit({ text: 'changed' }).renderBriefEditor(present, false).includes('id="mem-brief-discard"'));
 }
 
-// ── 16e1. THE SKELETON'S LEDE IS THE REAL ONE, BYTE FOR BYTE (v3.58.0) ────
+// ── 16e1. NO STEP HAS A LEDE, AND THE ⓘ IS IN THE HEAD ROW (v3.65.0, R4) ─
 //
-// `renderProjectSkeleton` exists so the column does not change size between
-// the first frame and the filled one — measured in v3.57.0 as a main column
-// going 5,062px -> 215px and back. That only holds if the block CHROME is
-// identical, and the chrome includes the lede. The two are separate literals
-// in separate functions (the skeleton cannot call renderProject), so nothing
-// but a comparison keeps them equal — and v3.58.0 shortened one of them.
+// WHAT THIS REPLACES, AND WHY IT IS A STRONGER CLAIM. It used to compare the
+// three step LEDES the skeleton emits against the three the filled page
+// emits, byte for byte, because the skeleton exists so the column does not
+// change size between the first frame and the filled one (v3.57.0 measured
+// 5,062px -> 215px and back) and the chrome included the lede.
 //
-// EXECUTED THROUGH THE REAL renderBlock on both sides, not compared as source
-// strings: a source pin would keep passing if one of them stopped REACHING the
-// page at all.
+// The maintainer, on step ①: *"below the Foundations title we have 'Add the
+// documents an agent must not act without' with another information icon, so
+// maybe we don't need the first sentence, we just need the information icon
+// beside the title."* So there is no lede to compare on either side — the
+// sentence is the first paragraph of that step's own ⓘ — and what is asserted
+// instead is that NEITHER renderer emits one, that all three sentences
+// survive behind the marks, and that the mark sits INSIDE `.settings-block-hd`
+// rather than under it. A lede that came back on one side only would red the
+// count; a mark that drifted out of the head row would red the placement.
+//
+// EXECUTED on both sides through the real `memStep`, not compared as source
+// strings: a source pin would keep passing if one of them stopped REACHING
+// the page at all.
 {
-  // ── RE-DERIVED FOR THE THREE STEPS (v3.62.0) ─────────────────────────
-  //
-  // The standing brief is a FOLD inside step ② now, not a block of its own, so
-  // there is no `settings-block-memory-brief` lede to compare. What the
-  // skeleton must still not move is the chrome of the three STEPS, and that is
-  // a stronger claim than the one it replaces: three ledes instead of one.
-  //
-  // EXECUTED THROUGH THE REAL renderBlock on both sides, not compared as
-  // source strings: a source pin would keep passing if one of them stopped
-  // REACHING the page at all.
-  const ledesOf = (markup) => [...markup.matchAll(
-    /<p class="settings-job-lede settings-block-lede">([\s\S]*?)<\/p>/g)]
-    // The ⓘ mark rides INSIDE the lede paragraph (shared/block.js appends
-    // `info.btn` to it), and the skeleton deliberately emits no fold — a help
-    // panel a user could open and have torn away 30ms later is worse than one
-    // that arrives with the content. So the mark is stripped before the
-    // comparison: what is under test is the SENTENCE, not the affordance.
-    .map((m) => m[1].replace(/<button[^>]*class="tx-vh-info"[\s\S]*?<\/button>/g, ''));
   const st = {
     activeDomain: 'acme', activeProject: 'alpha', scope: 'main', machine: 'boxa',
     detailLoading: false, detail: null, staleWrite: false, journalLimit: 10, openFolds: {},
@@ -4723,55 +4714,74 @@ section('§16 — Projects inside a domain (v3.48.0)');
       brief: { present: true, text: '# B\n\n## Goal\n\nShip.', updatedAt: new Date().toISOString() } },
   };
   const R2 = makeRenderers(st);
-  const real = ledesOf(R2.renderProject());
-  const ghost = ledesOf(R2.renderProjectSkeleton());
-  eq('CONTROL: the filled page emits THREE step ledes', real.length, 3);
-  eq('CONTROL: so does the skeleton', ghost.length, 3);
+  const real = R2.renderProject();
+  const ghost = R2.renderProjectSkeleton();
 
-  // ── STEPS ② AND ③ ARE BYTE-IDENTICAL, AND ① IS BY ITS TAIL ───────────
-  // Step ①'s lede carries a bold "Start here." prefix while the project has no
-  // documents and drops it the moment one exists — the Providers block-1 rule,
-  // whose whole point is that the TAIL is byte-identical so a returning reader
-  // sees the same sentence with one clause gone rather than a different one.
-  // The skeleton cannot know the count, so it paints the tail. This fixture
-  // carries no foundations at all, which is the state that exercises it.
-  eq('the skeleton quotes step ②\'s lede byte for byte — the block chrome does '
-    + 'not move between the two paints', ghost[1], real[1]);
-  eq('...and step ③\'s', ghost[2], real[2]);
-  ok('...and step ①\'s, but for the "Start here." prefix the count-0 state adds',
-    real[0].endsWith(ghost[0]) && ghost[0].length > 0, JSON.stringify([real[0], ghost[0]]));
-  ok('...and that prefix is really there in this state, so the check above is '
-    + 'not vacuous', /Start here\./.test(real[0]), real[0]);
+  const ledesIn = (markup) => (markup.match(
+    /<p class="settings-job-lede settings-block-lede">/g) || []).length;
+  eq('the filled page emits NO step lede', ledesIn(real), 0);
+  eq('...and neither does the skeleton', ledesIn(ghost), 0);
+  // NOT VACUOUS: the page really is composed of three numbered steps.
+  eq('CONTROL: the filled page still paints three numbered heads',
+    (real.match(/<span class="settings-block-num"/g) || []).length, 3);
+  eq('CONTROL: ...and so does the skeleton',
+    (ghost.match(/<span class="settings-block-num"/g) || []).length, 3);
 
-  // AND THE PREFIX DROPS. One document, and the two renderers agree exactly.
+  // ── THE MARK IS IN THE HEAD ROW, BESIDE THE NUMERAL AND THE TITLE ────
+  // An index compare (head < mark) would pass for a mark rendered anywhere
+  // AFTER the head closes, which is the lone-ⓘ-under-the-title shape this
+  // release removes — the green-first v3.64.2 closed on the overview head.
+  // So the head's anatomy is asserted ELEMENTWISE: every `.settings-block-hd`
+  // on the page contains a numeral, a title and the mark, in that order, and
+  // the mark is INSIDE the div.
+  const heads = [...real.matchAll(/<div class="settings-block-hd">([\s\S]*?)<\/div>/g)]
+    .map((m) => m[1]);
+  eq('three head rows', heads.length, 3);
+  for (const hd of heads) {
+    const num = hd.indexOf('class="settings-block-num"');
+    const title = hd.indexOf('<h2 class="settings-job-title">');
+    const mark = hd.indexOf('class="tx-vh-info"');
+    ok('the head row is numeral -> title -> ⓘ, and the ⓘ is INSIDE it',
+      num >= 0 && title > num && mark > title, hd.slice(0, 160));
+  }
+  // The panel is the head's SIBLING, not its child: a <div> inside a flex
+  // head row would sit beside the title rather than under the step.
+  eq('each step carries its own ⓘ panel, outside the head row',
+    (real.match(/<div class="settings-block-info">/g) || []).length, 3);
+
+  // ── THE THREE SENTENCES SURVIVED, BEHIND THE MARKS ───────────────────
+  // Moved, not deleted. Each is asserted inside the panel of ITS OWN step,
+  // so a sentence that landed on the wrong step reds.
+  const panelOf = (id) => {
+    const i = real.indexOf('id="settings-block-info-' + id + '"');
+    return i < 0 ? '' : real.slice(i, real.indexOf('</div>', i));
+  };
+  ok('step ①\'s sentence is the first paragraph of its own ⓘ',
+    /^[\s\S]*?<p>(<b>Start here\.<\/b> )?Add the documents an agent must not act without\.<\/p>/
+      .test(panelOf('context-canonical')), panelOf('context-canonical').slice(0, 200));
+  ok('step ②\'s sentence is the first paragraph of its own ⓘ',
+    /<p>You write the brief; agents write handoffs and the journal\.<\/p>/
+      .test(panelOf('context-state')));
+  ok('step ③\'s sentence is the first paragraph of its own ⓘ',
+    /<p>The wikis this project draws on\./.test(panelOf('context-knowledge')));
+  // THE "Start here." PREFIX STILL DROPS. It is the Providers block-1 rule and
+  // it moved into the panel with the sentence rather than being lost with the
+  // lede: this fixture has no foundations, the next one has one document.
+  ok('...and the "Start here." prefix is there while the project has no documents',
+    /<b>Start here\.<\/b> Add the documents/.test(panelOf('context-canonical')));
   const withDocs = makeRenderers({ ...st,
     projectRead: { ...st.projectRead,
       foundations: { present: true, ownership: 'curator', totalBytes: 100,
-        documents: [{ slug: 'architecture', title: 'A', role: 'architecture', bytes: 100 }] } } });
-  const realWith = ledesOf(withDocs.renderProject());
-  eq('with one document the prefix is gone and step ①\'s lede is byte-identical '
-    + 'to the skeleton\'s', realWith[0], ghost[0]);
+        documents: [{ slug: 'architecture', title: 'A', role: 'architecture', bytes: 100 }] } } })
+    .renderProject();
+  const i2 = withDocs.indexOf('id="settings-block-info-context-canonical"');
+  ok('...and it is gone the moment one document exists, with the tail unchanged',
+    !/<b>Start here\.<\/b>/.test(withDocs.slice(i2, i2 + 400))
+    && /<p>Add the documents an agent must not act without\.<\/p>/
+      .test(withDocs.slice(i2, i2 + 400)));
 
-  // ── AND EVERY LEDE IS AN INSTRUCTION, NOT A DEFINITION ───────────────
-  // The release rule: a lede is at most thirteen visible words and carries an
-  // instruction, a condition or a reading needed before acting. A DEFINITION
-  // belongs in the ⓘ. The brief's used to read "Your goals, firm decisions and
-  // working model — read by every agent, written by you." — fifteen words
-  // whose first eight define the thing.
-  for (const lede of real) {
-    const words = lede.replace(/<[^>]*>/g, ' ').trim().split(/\s+/).filter(Boolean);
-    ok('a step lede is at most thirteen visible words (' + words.length + ')',
-      words.length <= 13 && words.length > 0, lede);
-  }
   ok('the definition the brief lede used to carry is in step ②\'s ⓘ instead',
-    /rarely changes/.test(R2.renderProject()));
-  // ── AND NO LEDE SAYS WHAT A CLOSED SUMMARY SAYS ──────────────────────
-  // The folds' heads are the first glance — age, size, counts — so a lede
-  // repeating any of them would be the same fact twice, three lines apart.
-  for (const lede of real) {
-    ok('no step lede restates a fold summary\'s age, size or count',
-      !/updated|\bword|document[s]? ·/i.test(lede), lede);
-  }
+    /rarely changes/.test(real));
 }
 
 // ── 16e2. The keyboard contract, EXECUTED ────────────────────────────────
@@ -6395,27 +6405,20 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     [...page.matchAll(/class="settings-block-num"[^>]*>(\d+)</g)].map((m) => m[1]).join(','),
     '1,2,3');
 
-  // ── ≤ 13 VISIBLE WORDS PER LEDE ─────────────────────────────────────
+  // ── ZERO LEDES, AND THE CEILING BECOMES A BAN (v3.65.0, R4) ─────────
   //
-  // THE CEILING DROPPED 20 → 13 (v3.62.0). Twenty was this page's own number
-  // and the design system's is thirteen (design-system-source.md §3), which
-  // scripts/test-next-settings-sections.js G3 has enforced on Settings since
-  // v3.58.0. Every lede on this page was already inside thirteen, so the
-  // change costs nothing and closes an app-wide gap that existed only here.
-  const ledes = [...page.matchAll(/<p class="settings-job-lede settings-block-lede">([\s\S]*?)<\/p>/g)]
-    .map((m) => m[1]
-      // The ⓘ button is emitted INSIDE the lede paragraph; its accessible
-      // name is not prose the reader sees as part of the sentence.
-      .replace(/<button[\s\S]*?<\/button>/g, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/&[a-z#0-9]+;/g, 'x')
-      .trim());
-  eq('every step carries a lede (the scan is not vacuous)', ledes.length, 3);
-  for (const lede of ledes) {
-    const words = lede.split(/\s+/).filter(Boolean).length;
-    ok('lede is at most 13 visible words (' + words + '): "' + lede.slice(0, 60) + '…"',
-      words <= 13 && words > 0, lede);
-  }
+  // The ceiling was 20 visible words, then 13 (v3.62.0, the design system's
+  // own number). It is now NONE on this page: the sentence under each
+  // numbered title is the first paragraph of that step's ⓘ instead, and the
+  // mark sits in the head row (§16e1 asserts both halves elementwise). This
+  // is the same rule one rung stricter, so it is written as a ban plus a
+  // positive control that the scan can still SEE a lede when there is one —
+  // without that control a renamed class would report zero and pass.
+  eq('no step carries a lede any more — the sentence is behind its own ⓘ',
+    (page.match(/class="settings-job-lede settings-block-lede"/g) || []).length, 0);
+  ok('CONTROL: the scan really can see a lede paragraph when one exists',
+    (('<p class="settings-job-lede settings-block-lede">x</p>')
+      .match(/class="settings-job-lede settings-block-lede"/g) || []).length === 1);
 
   // ── THE DEPTH IS BEHIND THE MARK, AND IT IS REALLY THERE ────────────
   eq('every step carries an ⓘ with a panel of its own',
@@ -8396,11 +8399,15 @@ const fndRead = (payload) => ({
   }
 }
 
-// ── §21g — the skeleton's lede is BYTE-IDENTICAL ────────────────────────
+// ── §21g — the skeleton's step ① HEAD is byte-identical (v3.65.0) ───────
 //
 // The skeleton exists so the block chrome does not move between the two
-// paints. Both renderers are executed and their emitted ledes compared, which
-// is the only form of this claim a suite holding one of them could not fake.
+// paints, and the chrome used to include the lede. There is no lede on either
+// side now (R4), so what is compared is the HEAD ROW itself — the numeral,
+// the title, and whether a mark is offered — which is the whole of the chrome
+// that remains. Both renderers are executed and their emitted heads compared,
+// which is the only form of this claim a suite holding one of them could not
+// fake.
 {
   const st = {
     activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, journalLimit: 10,
@@ -8408,19 +8415,36 @@ const fndRead = (payload) => ({
     projectRead: fndRead(fndPayload([fndDoc()])), detail: null, detailLoading: false,
   };
   const R = makeRenderers(st);
-  const ledeOf = (html) => {
+  const headOf = (html) => {
     const i = html.indexOf('settings-block-context-canonical');
-    const m = /<p class="settings-job-lede settings-block-lede">([\s\S]*?)<\/p>/.exec(html.slice(i));
+    if (i < 0) return null;
+    const m = /<div class="settings-block-hd">([\s\S]*?)<\/div>/.exec(html.slice(i));
+    // The MARK is stripped before the comparison: the skeleton deliberately
+    // offers no ⓘ (a help panel a user could open and have torn away 30ms
+    // later is worse than one that arrives with the content), and what is
+    // under test is the numeral and the title.
     return m ? m[1].replace(/<button[\s\S]*?<\/button>/g, '').trim() : null;
   };
-  const a = ledeOf(R.renderProject());
-  const b = ledeOf(R.renderProjectSkeleton());
-  ok('both renderers really emitted the block', !!a && !!b, JSON.stringify([a, b]));
-  eq('the skeleton\'s lede is byte-identical to the real one', b, a);
-  const words = String(a).split(/\s+/).filter(Boolean).length;
-  ok('...and it is at most 13 visible words (the v3.58.0 rule): "' + a + '"', words <= 13, String(words));
-  ok('...and it is an INSTRUCTION, not a definition — no "is a" clause',
-    !/\bis a\b/.test(String(a)), String(a));
+  const a = headOf(R.renderProject());
+  const b = headOf(R.renderProjectSkeleton());
+  ok('both renderers really emitted step ①', !!a && !!b, JSON.stringify([a, b]));
+  eq('the skeleton\'s head row is byte-identical to the real one', b, a);
+  ok('...and it is the numeral and the Title-case title, in that order',
+    /class="settings-block-num"[^>]*>1<[\s\S]*<h2 class="settings-job-title">Foundations<\/h2>/
+      .test(String(a)), String(a));
+  // THE FILLED PAGE OFFERS THE MARK; the skeleton does not. Asserted in both
+  // directions so "identical" cannot be satisfied by neither having one.
+  const iReal = R.renderProject().indexOf('settings-block-context-canonical');
+  ok('the filled page offers the ⓘ in that head row',
+    /<div class="settings-block-hd">[\s\S]*?class="tx-vh-info"[\s\S]*?<\/div>/
+      .test(R.renderProject().slice(iReal)));
+  // Scoped to the STEP's own head row: the strip above the steps carries an ⓘ
+  // of its own in both frames, and a document-wide scan would be measuring it.
+  ok('...and the skeleton offers none there, because it would be torn away 30ms later',
+    !/class="tx-vh-info"/.test(String(
+      /<div class="settings-block-hd">([\s\S]*?)<\/div>/.exec(
+        R.renderProjectSkeleton().slice(
+          R.renderProjectSkeleton().indexOf('settings-block-context-canonical')))[1])));
 }
 
 // ── §21h — a freshness change is a repaint, and nothing else has moved ──
@@ -8743,6 +8767,12 @@ const EXECUTED = new Set([
   'renderJournal', 'renderBrief', 'aboutInfoHtml',
   'renderEmptyProject', 'renderStaleNotice', 'renderUnlistedNote', 'renderBriefOnlyNotice',
   'unlistedCount', 'renderCopyOutcome', 'renderProject',
+  // v3.65.0 — the step head. `memStep` replaced shared/block.js's renderBlock
+  // for this page's three numbered steps (it emits the ⓘ inside the head row,
+  // which renderBlock cannot), and it is LIFTED rather than stubbed: every
+  // §16e1 assertion about where the mark sits is an assertion about what this
+  // function emits.
+  'memStep',
   'render', 'captureFocus', 'restoreFocus',
   'screenSignature', 'nextPollDelay', 'stopPoll', 'schedulePoll',
   'fetchIndex', 'fetchState', 'refreshIndex', 'refreshScopeList', 'reloadActive', 'loadScope',

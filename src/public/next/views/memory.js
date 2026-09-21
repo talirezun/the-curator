@@ -174,7 +174,6 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // consumer outside Settings. Its CSS (24 | hairline | 24, the `.settings-*`
 // names shared/block.js's header explains) lives in shell.css, so a view can
 // rely on it without depending on another view's stylesheet.
-import { renderBlock } from '../shared/block.js';
 // ── THE OVERVIEW CARD (v3.64.2) ────────────────────────────────────────────
 // The three readings above the three steps used to be a three-cell mono strip
 // of `renderReadout`s with a lone ⓘ pushed to the right, while the domain page
@@ -3142,8 +3141,18 @@ function renderMain(token) {
       // to its default, because the cap is right for every view whose header
       // panel really is a paragraph of prose.
       panelWide: true,
+      // ── THE ONE PRIMARY, TOP RIGHT (v3.65.0, R7/§2(5)) ────────────────
+      // The maintainer, with both headers side by side: *"The Copy agent
+      // instructions button should be on the top right in a violet button
+      // like Ask this domain — the same design pattern."* So it takes
+      // `dm-ask-btn`'s slot and `dm-ask-btn`'s rung: `btn-primary`, the md
+      // (32px) size rather than `btn-xs`, and `margin-left: auto` in this
+      // view's own stylesheet, exactly as views/domains.css declares it for
+      // its own trailing primary. The id and the clipboard behaviour are
+      // untouched — `composeAgentInstructionsFull` is not this release's
+      // subject and the block it copies is byte-frozen.
       actionsHtml: state.activeProject
-        ? '<button type="button" class="btn btn-secondary btn-xs" id="mem-copy-agent">'
+        ? '<button type="button" class="btn btn-primary mem-ask-btn" id="mem-copy-agent">'
           + 'Copy agent instructions</button>'
         : '',
     }) +
@@ -3396,13 +3405,61 @@ async function copyDraftingAsk(token) {
 // new project does not have: on a fresh project it is the only step that can
 // do anything, which is the Providers block-1 test verbatim.
 //
-// THE LEDES ARE CONSTANTS because `renderProjectSkeleton` paints the same
-// three blocks while the read is in flight, and the whole point of that frame
-// is that the block chrome does not move between the two paints. Two
-// hand-typed copies is how they would drift; one const cannot.
-const LEDE_CANONICAL = 'Add the documents an agent must not act without.';
-const LEDE_STATE = 'You write the brief; agents write handoffs and the journal.';
-const LEDE_KNOWLEDGE = 'The wiki this project draws on. Open it in Domains.';
+// ══════════════════════════════════════════════════════════════════════════
+//  THE STEP HEAD — a numeral, a Title-case title, and the ⓘ BESIDE IT
+// ══════════════════════════════════════════════════════════════════════════
+//
+// ── THE THREE LEDES ARE GONE (v3.65.0, R4) ────────────────────────────────
+// `LEDE_CANONICAL` / `LEDE_STATE` / `LEDE_KNOWLEDGE` were three sentences
+// under three numbered titles. The maintainer, looking at step ①: *"below the
+// Foundations title we have 'Add the documents an agent must not act without'
+// with another information icon, so maybe we don't need the first sentence,
+// we just need the information icon beside the title."* Each sentence is now
+// the FIRST PARAGRAPH of that step's own ⓘ — moved, not deleted — and the
+// mark sits in the head row beside the numeral and the title.
+//
+// ── WHY THIS IS A LOCAL FUNCTION AND NOT `renderBlock` ────────────────────
+// `shared/block.js` emits the ⓘ INSIDE the lede paragraph and emits NOTHING
+// at all when there is no lede (`renderBlock` :38-41), so "no lede, ⓘ beside
+// the title" is not expressible through it. That file is owned by no package
+// in this release, and BUILDER-RULES rule 2 is that a builder who needs
+// another package's file stops and reports rather than widening — so the head
+// is composed here, from the SAME shell.css classes `renderBlock` uses
+// (`.settings-job-block`, `.settings-block-hd`, `.settings-block-num`,
+// `.settings-job-title`, `.settings-block-info`, `.settings-block-body`), and
+// nothing about shell.css moves. `views/domains.js` already hand-builds its
+// five numbered heads for its own reasons; when `shared/block.js` gains the
+// parameter both callers collapse into it in one reviewable diff.
+//
+// `.settings-block-hd` is `display: flex; align-items: baseline; gap: 12px`,
+// so the mark is a third child of the head row and needs no rule of its own —
+// which matters, because `shared/text.css` owns the whole `tx-` prefix and
+// scripts/test-next-text-system.js §8 fails any other /next stylesheet that
+// declares a `tx-` selector, comments included.
+//
+// THE HEAD IS THE CARD'S SIBLING, NEVER ITS WRAPPER — the standing heading
+// rule (v3.64.2) — and this composition keeps it so: head, then panel, then
+// body, three siblings inside the block.
+//
+// `bodyHtml`, `noticeHtml` and `infoHtml` are TRUSTED, exactly as
+// `renderBlock`'s are; `title` is escaped.
+function memStep(o) {
+  const id = String(o.id);
+  const info = renderInfoMark(
+    'settings-block-info-' + id, 'More about ' + o.title, o.infoText || '', { html: true });
+  return (
+    '<div class="settings-job-block settings-block settings-block-' + escapeHtml(id) + '">' +
+      (o.noticeHtml || '') +
+      '<div class="settings-block-hd">' +
+        '<span class="settings-block-num" aria-hidden="true">' + escapeHtml(String(o.num)) + '</span>' +
+        '<h2 class="settings-job-title">' + escapeHtml(o.title) + '</h2>' +
+        info.btn +
+      '</div>' +
+      (info.panel ? '<div class="settings-block-info">' + info.panel + '</div>' : '') +
+      '<div class="settings-block-body">' + (o.bodyHtml || '') + '</div>' +
+    '</div>'
+  );
+}
 
 /**
  * THE THREE-CELL STRIP — one reading per layer, above the three steps.
@@ -3527,28 +3584,46 @@ function renderLayerStrip(read) {
 
   if (!cards.length) return '';
 
-  // ── THE CAPTURE JUMP ──────────────────────────────────────────────────
-  // A jump tile rather than a fourth card, and the distinction is the one the
-  // Domains page already draws: the three cards are the three LAYERS, and a
-  // fourth would break that mapping. CAPTURE is a reading ABOUT whether
-  // sessions used them, so it sits in the jump row with the other doors.
-  // Rendered only once the meter's own request has landed — a door to a
-  // reading that does not exist yet is the control-with-no-outcome rule.
+  // ── CAPTURE IS A CARD IN THE SAME GRID (v3.65.0, R5) ──────────────────
+  //
+  // IT WAS A JUMP TILE, and the jump tile is the thing the maintainer was
+  // pointing at: *"we have some additional information, SOURCES 14 days ago —
+  // I don't understand why it is here and why it is an entirely different
+  // design than the five on top"*. Measured on v3.64.2: a jump tile was
+  // 92.8 x 46.4 at x=401 while a stat tile beside it was 181.8 x 78.9 at
+  // x=385 — a different size, a different height and a 16px indent, inside
+  // one card. `jumps[]` is gone from shared/overview.js entirely; a jump is
+  // an ordinary card carrying `jump:`, at the one tile geometry.
+  //
+  // RENDERED AND HIDDEN, NEVER OMITTED. The meter's own request lands after
+  // this paint, and an omitted tile means the reading simply never appears
+  // unless something repaints the strip — the green-first mutation v3.64.2
+  // closed on the jump row. `hidden` ships the tile and one attribute write
+  // reveals it, with no repaint; shared/overview.css carries the `[hidden]`
+  // counter-rule for the card, because `[hidden]` loses to an author
+  // `display:` at any specificity (the v3.62.0 defect).
   const cap = state.capture && state.capture.domain === state.activeDomain
     && state.capture.project === state.activeProject && state.capture.data
     ? state.capture.data : null;
   const capTotals = cap && cap.totals && typeof cap.totals === 'object' ? cap.totals : null;
   const capSessions = capTotals && Number.isInteger(capTotals.sessions) ? capTotals.sessions : null;
-  const jumps = cap
-    ? [{
-      key: 'capture',
-      label: 'CAPTURE',
-      value: capSessions === null
-        ? 'not counted'
-        : capSessions.toLocaleString('en-US') + ' session' + (capSessions === 1 ? '' : 's'),
-      name: 'Capture — open the session reading in step 2',
-    }]
-    : [];
+  const capValue = capSessions === null
+    ? 'not counted'
+    : capSessions.toLocaleString('en-US') + ' session' + (capSessions === 1 ? '' : 's');
+  //
+  // NO SECOND LINE, AND NOT FOR TIDINESS: `renderLayerStrip` is LIFTED by
+  // brace-matching and EXECUTED by scripts/test-next-overview-kit.js, which
+  // this package does not own, so a module-level constant named in this body
+  // (`CAPTURE_WINDOW_DAYS`, for "in the last 30 days") is a ReferenceError
+  // there — a suite that CRASHES rather than asserts. The window is stated in
+  // words in step ②'s own row summary, which is where the jump lands.
+  cards.push({
+    label: 'CAPTURE',
+    value: cap ? capValue : 'not counted',
+    hidden: !cap,
+    jump: 'capture',
+    name: 'Capture — open the session reading in step 2',
+  });
 
   // ── THE ⓘ BELONGS TO THE INSTRUMENT, NOT TO A STEP ────────────────────
   // It explains every age on this page — the two clocks, and what "last
@@ -3558,10 +3633,17 @@ function renderLayerStrip(read) {
     id: 'mem-layers-info',
     eyebrow: 'OVERVIEW',
     sectionClass: 'mem-section mem-overview',
-    // THE THREE VALUES HERE ARE PHRASES, not counts — "24 documents", "saved
-    // 12 min ago", "767 pages" — so they take the kit's `phrase` rung. See
-    // the component for the measurement that decided it.
-    figure: 'phrase',
+    // ── ONE FIGURE RUNG, AND A WIDER TRACK INSTEAD (v3.65.0, R8) ───────
+    // v3.64.2 dropped these three values one rung (22px -> 17px) because
+    // "saved 57 min ago" broke after "min". Re-measured at the real column
+    // width that wrap does not happen: the wrap only appears below ~207px of
+    // track content, which is a 1024px window — or a 1370px one with the
+    // ONBOARDING GUIDE DOCKED, narrowing `.main-inner` from 959px to 647px,
+    // which is almost certainly the state the original figure was taken in.
+    // So the narrow case is fixed where it lives, in the TRACK, and both
+    // views draw their figures at the ONE display rung. Two views whose
+    // figures are different sizes are two designs, which is the whole report.
+    minTrack: 210,
     infoLabel: 'About the readings on this page',
     infoText:
       '<p>These three are the project’s three layers of context, and pressing one goes to the '
@@ -3583,7 +3665,6 @@ function renderLayerStrip(read) {
       + '<p>' + docsLinkHtml('memory.handoff', 'Read more in the guide') + '</p>',
     infoHtml: true,
     cards,
-    jumps,
   });
 }
 
@@ -4286,13 +4367,17 @@ function renderProject() {
   // above the heading inside the block's wrapper rather than inside the body's
   // 32px prose indent. That slot is what `shared/block.js` built them for, and
   // no block on this page had ever passed one.
-  const canonicalBlock = renderBlock({
+  const canonicalBlock = memStep({
     num: 1,
     id: 'context-canonical',
     title: 'Foundations',
-    ledeHtml: (fndFacts.count ? '' : '<b>Start here.</b> ') + LEDE_CANONICAL,
     infoText:
-      '<p>A <b>foundation</b> is a canonical document this project carries VERBATIM — the '
+      // THE LEDE, MOVED (R4). It was the sentence under the title; it is the
+      // first thing behind the mark now, and it keeps the "Start here."
+      // prefix that drops the moment one document exists.
+      '<p>' + (fndFacts.count ? '' : '<b>Start here.</b> ')
+      + 'Add the documents an agent must not act without.</p>'
+      + '<p>A <b>foundation</b> is a canonical document this project carries VERBATIM — the '
       + 'architecture, the decisions, the conventions, the roadmap. Not a summary of one: the '
       + 'bytes, so an agent reads what you would read. Each one is <b>replaced whole</b> on every '
       + 'write and never merged, which is what makes it quotable.</p>'
@@ -4322,7 +4407,6 @@ function renderProject() {
       + 'then sync.</p>'
       + '<p>' + docsLinkHtml('memory.foundations', 'Read more in the guide') + ' · '
       + docsLinkHtml('memory.foundations-edit', 'Starting a project') + '</p>',
-    infoHtml: true,
     noticeHtml: foundationsNotices(read),
     bodyHtml: renderFoundations(read),
   });
@@ -4367,13 +4451,14 @@ function renderProject() {
   // `patchOpenPair` re-composes; the two are compared byte-for-byte by
   // scripts/test-next-memory-switch.js §8.
   const statusHtml = renderSaveStatus(read, d) + renderStaleNotice() + renderUnlistedNote(read, d);
-  const stateBlock = renderBlock({
+  const stateBlock = memStep({
     num: 2,
     id: 'context-state',
     title: 'Working state',
-    ledeHtml: LEDE_STATE,
     infoText:
-      '<p>State <b>supersedes</b>. Every save REPLACES the last one rather than being merged into '
+      // THE LEDE, MOVED (R4).
+      '<p>You write the brief; agents write handoffs and the journal.</p>'
+      + '<p>State <b>supersedes</b>. Every save REPLACES the last one rather than being merged into '
       + 'it, which is the whole point: state has to be able to say “no longer true”, and a store '
       + 'that only accumulates cannot.</p>'
       + '<p>You own the <b>standing brief</b> — the one tier a human owns. Agents READ it on every '
@@ -4401,10 +4486,9 @@ function renderProject() {
       + '<p>' + docsLinkHtml('memory.standing-brief', 'The standing brief') + ' · '
       + docsLinkHtml('memory.handoff', 'Handoffs') + ' · '
       + docsLinkHtml('memory.session-journal', 'The journal') + '</p>',
-    infoHtml: true,
     // EMPTY, AND THAT IS THE POINT (v3.64.1) — nothing renders above this
-    // step's heading. The slot stays available to the component; this caller
-    // simply has nothing that belongs above a heading.
+    // step's heading. The slot stays available; this caller simply has
+    // nothing that belongs above a heading.
     noticeHtml: '',
     bodyHtml:
       '<div class="mem-state-stack">'
@@ -4437,13 +4521,14 @@ function renderProject() {
   // key this panel wants (`memory.knowledge`) lives in shared/docs-links.js,
   // which this release's shell package owns. A hand-typed URL here would be
   // the one thing scripts/test-docs-links.js cannot check.
-  const knowledgeBlock = renderBlock({
+  const knowledgeBlock = memStep({
     num: 3,
     id: 'context-knowledge',
     title: 'Knowledge',
-    ledeHtml: LEDE_KNOWLEDGE,
     infoText:
-      '<p>The wiki <b>accumulates</b>. A new source deepens the pages that are already there '
+      // THE LEDE, MOVED (R4).
+      '<p>The wikis this project draws on. Open one in Domains, or ask it in Chat.</p>'
+      + '<p>The wiki <b>accumulates</b>. A new source deepens the pages that are already there '
       + 'rather than adding a copy beside them — which is the difference between this layer and the '
       + 'two above it, where a save replaces what was there and a foundation is carried word for '
       + 'word.</p>'
@@ -4452,7 +4537,6 @@ function renderProject() {
       + 'these figures move when you ingest, not when an agent saves.</p>'
       + '<p>The counts are taken by walking the folder rather than by reading any page, and no '
       + 'model is called to draw them — opening this screen costs nothing.</p>',
-    infoHtml: true,
     bodyHtml: renderKnowledge(),
   });
 
@@ -4510,12 +4594,14 @@ function renderProjectSkeleton() {
   for (let i = 0; i < ghostRows; i++) rows += '<div class="mem-ghost mem-ghost-row"></div>';
 
   // THE THREE STEPS ARE THE SAME COMPONENT, with the same numerals, ids and
-  // ledes as the real ones — so the skeleton and the fill differ only in their
-  // bodies and the block chrome does not move at all between the two paints.
-  // The ledes are the shared constants rather than second copies, which is why
-  // they cannot drift. The ⓘ folds are deliberately omitted: a help panel a
-  // user could open and have torn away 30ms later is worse than one that
-  // arrives with the content.
+  // titles as the real ones — so the skeleton and the fill differ only in
+  // their bodies and the block chrome does not move at all between the two
+  // paints. The ledes are GONE from both (R4), which is one fewer thing that
+  // could differ between the two paints rather than one more. The ⓘ panels
+  // are deliberately omitted here: a help panel a user could open and have
+  // torn away 30ms later is worse than one that arrives with the content —
+  // and `memStep` emits no mark at all when `infoText` is empty, so the head
+  // row is the numeral and the title in both frames.
   //
   // ── THE STRIP PAINTS FOR REAL, WITH THE HALF OF THE DATA WE HAVE ──────
   // `GET /api/memory` has ALREADY told this view, for every project, when the
@@ -4527,15 +4613,13 @@ function renderProjectSkeleton() {
   // small growth this frame allows and the honest one.
   return (
     renderLayerStrip(null) +
-    renderBlock({
+    memStep({
       num: 1, id: 'context-canonical', title: 'Foundations',
-      ledeHtml: LEDE_CANONICAL,
       bodyHtml: '<div class="mem-ghost-wrap" aria-busy="true">'
         + '<div class="mem-ghost mem-ghost-line"></div></div>',
     }) +
-    renderBlock({
+    memStep({
       num: 2, id: 'context-state', title: 'Working state',
-      ledeHtml: LEDE_STATE,
       bodyHtml: '<div class="mem-state-stack">'
         + '<div class="mem-ghost-wrap" aria-busy="true">' + rows + '</div>'
         // ONLY WHEN THE INDEX SAYS THERE IS ONE. Reserving space for a standing
@@ -4554,9 +4638,8 @@ function renderProjectSkeleton() {
     // a switch inside one domain they are already in hand and the step lands
     // filled on the first frame. `renderKnowledge` reserves its own height
     // when they are not.
-    renderBlock({
+    memStep({
       num: 3, id: 'context-knowledge', title: 'Knowledge',
-      ledeHtml: LEDE_KNOWLEDGE,
       bodyHtml: renderKnowledge(),
     })
   );

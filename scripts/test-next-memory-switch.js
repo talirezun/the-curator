@@ -1000,21 +1000,30 @@ section('§9 — The skeleton reserves the height and invents no reading');
   // ── THREE COLLABORATORS INSTEAD OF ONE (v3.62.0) ─────────────────────
   // The skeleton no longer asks `renderSaveStatus` for the one reading it can
   // paint — that line moved to the STRIP, which reads the index row itself.
-  // So the spies are the strip, step ③ and the three lede constants, and what
-  // this harness still asks is unchanged: what does the skeleton RESERVE, and
-  // does it claim anything it cannot know.
+  // So the spies are the step head, the strip and step ③, and what this
+  // harness still asks is unchanged: what does the skeleton RESERVE, and does
+  // it claim anything it cannot know.
+  //
+  // ── `memStep`, NOT `renderBlock` (v3.65.0) ───────────────────────────
+  // The three numbered steps go through this view's own head composer now,
+  // because shared/block.js emits its ⓘ inside a LEDE and emits nothing at
+  // all without one — and there is no lede on this page any more (R4). The
+  // spy records what the skeleton ASKS for, so the three lede constants that
+  // used to be injected here are gone with the parameter they fed: a lede
+  // asked for would show up as a key `memStep` does not take, which is what
+  // the `data-lede` probe below now asserts the absence of.
   const mkSkeleton = (stateObj) => new Function(
-    'state', 'renderBlock', 'renderLayerStrip', 'renderKnowledge', 'WS_WINDOW',
-    'LEDE_CANONICAL', 'LEDE_STATE', 'LEDE_KNOWLEDGE',
+    'state', 'memStep', 'renderLayerStrip', 'renderKnowledge', 'WS_WINDOW',
     lift('renderProjectSkeleton') + '\nreturn { renderProjectSkeleton };')(
     stateObj,
     (o) => '<section data-block="' + o.id + '" data-num="' + (o.num === undefined ? '' : o.num)
-      + '" data-lede="' + (o.ledeHtml || '') + '">' + (o.bodyHtml || '') + '</section>',
+      + '" data-lede="' + (o.ledeHtml === undefined ? 'NONE' : o.ledeHtml) + '">'
+      + (o.bodyHtml || '') + '</section>',
     // The REAL ones are driven in test-next-memory-view.js; here the question
     // is what the skeleton ASKS them for, so spies are honest.
     (read) => '<!--strip:' + JSON.stringify(read) + '-->',
     () => '<!--knowledge-->',
-    WS_WINDOW, 'L1', 'L2', 'L3').renderProjectSkeleton();
+    WS_WINDOW).renderProjectSkeleton();
 
   const withRow = mkSkeleton({
     activeDomain: 'acme', activeProject: 'alpha',
@@ -1030,10 +1039,15 @@ section('§9 — The skeleton reserves the height and invents no reading');
   withRow.includes('data-block="context-canonical" data-num="1"')
     && withRow.includes('data-block="context-state" data-num="2"')
     && withRow.includes('data-block="context-knowledge" data-num="3"'), withRow.slice(0, 400));
-  ok('...and the ledes are the shared constants rather than second copies, '
-    + 'which is what makes drifting impossible rather than merely unlikely',
-  withRow.includes('data-lede="L1"') && withRow.includes('data-lede="L2"')
-    && withRow.includes('data-lede="L3"'), withRow.slice(0, 400));
+  // ── AND IT ASKS FOR NO LEDE (v3.65.0, R4) ────────────────────────────
+  // The three sentences under the three numbered titles are gone from BOTH
+  // paints — each is the first paragraph of that step's own ⓘ now — so the
+  // skeleton asking for one would be the skeleton painting chrome the filled
+  // page does not. The spy writes the literal `NONE` when the key is absent,
+  // so an empty string passed deliberately is told apart from nothing passed.
+  eq('...and it asks for NO lede on any of the three, so the chrome it '
+    + 'reserves is the chrome the filled page paints',
+  (withRow.match(/data-lede="NONE"/g) || []).length, 3);
   ok('every reserved region says it is still filling', (withRow.match(/aria-busy="true"/g) || []).length >= 2);
 
   const many = mkSkeleton({
