@@ -1656,6 +1656,45 @@ ok('read-side sanitisation is stated, not hidden',
   const metaOf = (h) => (/<span class="mem-fold-meta"[^>]*>([\s\S]*?)<\/span><\/summary>/.exec(h) || [, ''])[1];
   ok('one save singularises (the summary reads "1 save", never "1 saves")',
     /(^|[^0-9])1 save(?!s)/.test(metaOf(one)) && !/1 saves/.test(metaOf(one)), metaOf(one));
+  // ── ONE "Show N more", AND IT IS THE HANDOFFS LIST'S (v3.65.1, D3) ──
+  // The maintainer named the Handoffs implementation as the right one by name
+  // — *"Work-streams' inline 'Show 17 more' is the right design"* — against a
+  // journal footer that was a monitor card plus a floating `btn-xs`. So the
+  // assertion is not "a control exists" but "it is THE SAME control": the same
+  // class the other list emits, and NOT a `.btn`, which is what makes it a
+  // full-width row in flow rather than a button beside a card.
+  // FOUND BY MUTATION: swapping `cur-group-row` back to `btn btn-secondary
+  // btn-xs` was green against every suite in this repository.
+  {
+    const withMore = makeRenderers({
+      ...hostileState, journalLimit: 10,
+      detail: { ...hostileDetail, journal: { returned: 10, total: 31, totalUnknown: false,
+        entries: [hostileDetail.journal.entries[1]] } },
+    }).renderJournal();
+    const wsMore = makeRenderers({ ...hostileState, wsWindow: 5 })
+      .renderWorkStreams(Array.from({ length: 9 }, (_, i) => ({
+        scope: 's' + i, machine: 'm', writtenAgeSeconds: 60 * (i + 1) })), null, 5);
+    ok('CONTROL: both lists really produced a "Show more"',
+      /id="mem-journal-more"/.test(withMore) && /id="mem-ws-more"/.test(wsMore),
+      withMore.slice(-300) + ' || ' + wsMore.slice(-200));
+    const cls = (h, id) => (new RegExp('class="([^"]*)"[^>]*id="' + id + '"').exec(h) || [, ''])[1];
+    ok('the journal\'s control wears the SAME class the handoffs list\'s does',
+      cls(withMore, 'mem-journal-more').split(' ').includes('cur-group-row')
+      && cls(wsMore, 'mem-ws-more').split(' ').includes('cur-group-row'),
+      cls(withMore, 'mem-journal-more') + ' || ' + cls(wsMore, 'mem-ws-more'));
+    ok('...and it is NOT a .btn — a floating btn-xs beside a card is the shape '
+      + 'the maintainer called "from another dimension"',
+    !/(^| )btn( |$)/.test(cls(withMore, 'mem-journal-more')), cls(withMore, 'mem-journal-more'));
+    ok('...naming HOW MANY more, because the total is known here',
+      /Show 21 more/.test(withMore), (withMore.match(/Show[^<]*/) || [''])[0]);
+    ok('...and saying only "Show more" when the total is NOT known, rather than '
+      + 'printing a figure it cannot stand behind',
+    /<span class="mem-ws-more-label">Show more<\/span>/.test(makeRenderers({
+      ...hostileState, journalLimit: 10,
+      detail: { ...hostileDetail, journal: { returned: 10, total: null, totalUnknown: true,
+        entries: [hostileDetail.journal.entries[1]] } },
+    }).renderJournal()));
+  }
   ok('...and the count is in the ROW\'s summary, not in a card under the list',
     !one.includes('mem-j-foot') && !/cur-mon/.test(one), one.slice(-400));
 
@@ -2821,10 +2860,53 @@ function ruleFor(css, selector) {
   // mapping, ONE GLYPH.
   const head = ruleFor(viewCss, '.mem-project-mark');
   ok('.mem-project-mark exists', !!head);
+  // ── AND `.mem-save` IS NO LONGER A CARD (v3.65.1, D2) ───────────────
+  // It was `padding: 12px 14px; border: 1px solid` — a CARD wrapping a ROW —
+  // and that is what cost its reading 15px a side: measured at 1370, every
+  // other summary's meta ended at x=1316 and this one at 1301. The alignment
+  // rule §7 pins in the browser has exactly one offline cause, and this is it.
+  // FOUND BY MUTATION: restoring the padding and the border was green.
+  {
+    const save = ruleFor(viewCss, '.mem-save');
+    ok('CONTROL: the .mem-save rule was found', !!save, 'no .mem-save rule');
+    ok('.mem-save declares NO box — no padding, no border, no background — so '
+      + 'the rows inside step ② all end at one x',
+    !!save && !/padding|border|background/.test(save), save);
+  }
   ok('.mem-project-mark declares NO geometry and NO colour — the kit\'s dot '
     + 'carries both, so the breadcrumb cannot drift from the rail',
   !!head && !/border-radius/.test(head) && !/background/.test(head)
     && !/width|height/.test(head), head);
+  // AND IT IS WITHHELD WHEN THE LIST HAS NOT ANSWERED. Identity has no states
+  // (the rail's own rule, `dotClass: ''` on a project with nothing saved), so a
+  // placeholder here would be some OTHER domain's colour. FOUND BY MUTATION,
+  // which hardcoded a list and painted a mark the install cannot justify.
+  {
+    const crumb = (over) => makeRenderers({
+      activeDomain: 'research', activeProject: 'lumina', openFolds: {}, projects: [],
+      journalLimit: 10, detail: null, detailLoading: false, wsWindow: WS_WINDOW_SRC,
+      // A PLAIN payload rather than `fndRead(fndPayload(...))`: those helpers are
+      // defined further down this file and a `const` is not hoisted, so naming
+      // them here is a ReferenceError rather than a failing assertion. The
+      // breadcrumb reads neither.
+      projectRead: { scopes: [], brief: { present: false } }, ...over,
+    }).renderProject();
+    const headOf2 = (h) => (h.match(/<div class="mem-project-head[\s\S]{0,260}/) || [''])[0];
+    ok('the breadcrumb carries NO mark until the domain list has answered',
+      !/mem-project-mark/.test(crumb({ domainList: [] })),
+      headOf2(crumb({ domainList: [] })));
+    ok('...nor when the active domain is not in the list the install sent',
+      !/mem-project-mark/.test(crumb({ domainList: ['acme', 'other'] })),
+      headOf2(crumb({ domainList: ['acme', 'other'] })));
+    ok('CONTROL: and it DOES carry one at the domain\'s own index in that list',
+      /cur-sb-dot mem-project-mark cur-sb-dot-3/.test(
+        crumb({ domainList: ['acme', 'other', 'research'] })),
+      headOf2(crumb({ domainList: ['acme', 'other', 'research'] })));
+    ok('...which is the SAME slot the rail gives that domain, from the same '
+      + 'mapping — one domain, one colour, on every screen',
+    /cur-sb-dot-3/.test(crumb({ domainList: ['acme', 'other', 'research'] }))
+      && identityDotClass(2) === 'cur-sb-dot-3', identityDotClass(2));
+  }
   ok('...and the view EMITS it as a kit dot with the shared mapping',
     /class="cur-sb-dot mem-project-mark ' \+ identityDotClass\(slot\)/.test(viewSrc),
     (viewSrc.match(/.{0,120}mem-project-mark.{0,120}/s) || [''])[0]);
@@ -6615,6 +6697,25 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // where `workStreamCounts` still prints both numbers uncapped.
   ok('...and the count and the AGE follow it, so one closed line decides whether to open',
     /Rewriting the memory view · 1 handoff · saved 2 min ago</.test(foldHtml), foldHtml.slice(0, 500));
+  // ── AND THE AGE IS THE PROJECT'S NEWEST, NOT THE LAST ROW'S ─────────
+  // `newestPair` is the same derivation `renderLayerStrip`'s MEMORY card uses,
+  // so the tile and this line can never name different saves. FOUND BY
+  // MUTATION: with a one-scope fixture, "the newest" and "the last in the
+  // array" are the same row and a mutation swapping one for the other stayed
+  // green. Two scopes, deliberately OUT of age order.
+  ok('the age is the PROJECT\'s newest save, not the last row in the list',
+    /· saved 3 min ago</.test(mkHead({}).renderWorkStreamsFold({
+      scopes: [
+        { scope: 'a', machine: 'm1', writtenAgeSeconds: 180 },
+        { scope: 'b', machine: 'm2', writtenAgeSeconds: 7200 },
+      ], savedCopies: 2, distinctScopeCount: 2,
+    }, null)),
+  mkHead({}).renderWorkStreamsFold({
+    scopes: [
+      { scope: 'a', machine: 'm1', writtenAgeSeconds: 180 },
+      { scope: 'b', machine: 'm2', writtenAgeSeconds: 7200 },
+    ], savedCopies: 2, distinctScopeCount: 2,
+  }, null).slice(0, 400));
   ok('...and "N saved copies" is NOT in the summary — it is the count line under '
     + 'the table, which is uncapped and says both numbers',
   !/saved cop/.test((/<summary[\s\S]*?<\/summary>/.exec(foldHtml) || [''])[0])
@@ -7154,6 +7255,283 @@ const fndRead = (payload) => ({
   ok('the word `Curator-authored` is gone from the ladder entirely',
     !['written', 'fresh', 'none yet'].some((x) => x === 'Curator-authored')
     && w([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' }) !== 'Curator-authored');
+}
+
+// ── §21b1c — v3.65.1: THE HEAD ROW, THE THIRD CONTROL, AND ONE SENTENCE ─
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Three findings from production, and each of them can be undone by ONE edit
+// with everything else still green — which is why each has a guard of its own
+// rather than riding on the block rendering at all.
+{
+  const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {} });
+  const block = (docs, over) => F.renderFoundations(fndRead(fndPayload(docs, over)));
+
+  // ── (1) THE CONTROLS ARE A HEAD ROW, ABOVE THE ROWS ─────────────────
+  // Wiki health's `.dm-health-top` anatomy, the one shipped instance of the
+  // pattern and the model the maintainer named. Through v3.65.0 this row was
+  // emitted AFTER the fold: measured at 1370, the two controls sat at y=511
+  // under a fold whose summary was at y=479, so the only section on this page
+  // with controls put them where nothing else on the page does. DOCUMENT
+  // ORDER is what the browser's geometry follows, so document order is what is
+  // asserted.
+  const populated = block([fndDoc(), fndDoc({ slug: 'b.md' })]);
+  const ctrlAt = populated.indexOf('mem-fnd-head-controls');
+  const foldAt = populated.indexOf('data-mem-fold="foundations"');
+  ok('CONTROL: the populated arm really renders both', ctrlAt !== -1 && foldAt !== -1,
+    populated.slice(0, 300));
+  ok('the section\'s controls PRECEDE its rows, which is what puts them in a '
+    + 'head row under the heading rather than under the table',
+  ctrlAt < foldAt, ctrlAt + ' vs ' + foldAt);
+  // THE EMPTY ARM IS THE CURATOR-OWNED ONE: a repo-owned project with nothing
+  // copied yet returns the scan picker instead, which has no fold to precede.
+  ok('...and on the empty arm too, so the two states do not disagree about '
+    + 'where a control lives',
+  (() => { const e = block([], { ownership: 'curator' });
+    const c = e.indexOf('mem-fnd-head-controls');
+    const f = e.indexOf('mem-fold-flat'); return c !== -1 && f !== -1 && c < f; })(),
+  block([], { ownership: 'curator' }).slice(0, 300));
+
+  // ── (2) "Mirror from GitHub instead" — D6 ───────────────────────────
+  // The store has had a REMOTE refresh arm since v3.65.0 and no control on the
+  // machine that needs it. Offered on BOTH repo-owned arms, including the one
+  // where the checkout is not on this computer — which through v3.65.0 offered
+  // nothing at all — and NEVER on a curator-owned project, where the route
+  // answers 409 `ownership_mismatch` and a control whose only outcome is a
+  // refusal is worse than none (v3.16.1).
+  const offer = (docs, over, readonly) =>
+    F.foundationsControlOffer(F.foundationsFacts(fndRead(fndPayload(docs, over))), readonly === true);
+  ok('a repo-owned project with a reachable folder is offered the GitHub switch',
+    offer([fndDoc()]).mirror === true, JSON.stringify(offer([fndDoc()])));
+  ok('...and so is one whose folder is NOT on this computer — the arm the store '
+    + 'built the remote reader for, and the one that offered nothing at all',
+  offer([fndDoc({ freshness: 'unreachable' })]).mirror === true
+    && offer([fndDoc({ freshness: 'unreachable' })]).refresh === false,
+  JSON.stringify(offer([fndDoc({ freshness: 'unreachable' })])));
+  ok('...and the withheld folder controls still say WHY, naming the folder',
+    /not on this computer/.test(offer([fndDoc({ freshness: 'unreachable' })]).reason || ''),
+    offer([fndDoc({ freshness: 'unreachable' })]).reason);
+  ok('...saying "folder", never "repository", on the LOCAL half of that sentence',
+    !/repositor/i.test(offer([fndDoc({ freshness: 'unreachable' })]).reason || ''),
+    offer([fndDoc({ freshness: 'unreachable' })]).reason);
+  ok('a CURATOR-owned project is NOT offered it — the store refuses the switch '
+    + 'with 409 ownership_mismatch, and an offered refusal is worse than none',
+  offer([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' }).mirror === false,
+  JSON.stringify(offer([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' })));
+  ok('a read-only Shared Brain mirror is not offered it either',
+    offer([fndDoc()], {}, true).mirror === false,
+    JSON.stringify(offer([fndDoc()], {}, true)));
+  ok('and the control reaches the BLOCK, under its own id',
+    /id="mem-fnd-mirror"/.test(populated), populated.slice(0, 600));
+  ok('CONTROL: and it is absent from a curator-owned block, so the offer and '
+    + 'the markup cannot disagree',
+  !/id="mem-fnd-mirror"/.test(block([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' })));
+
+  // ── (3) "Nothing mirrored yet" ON A PROJECT THAT MIRRORS THREE ──────
+  // MEASURED on the maintainer's own fixture: 1 document, 116 KB, and the
+  // Add-from-folder panel said nothing was mirrored. The sentence splits on
+  // the COUNT; both arms ride the same renderDescription call.
+  const adding = (docs) => makeRenderers({
+    activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+    fndInit: { domain: 'acme', project: 'lumina', adding: true, choice: null, busy: false },
+  }).renderFoundations(fndRead(fndPayload(docs)));
+  ok('a mirror that already has documents is asked for MORE, not told it is empty',
+    /Add more files from the folder this project mirrors\./.test(adding([fndDoc()]))
+    && !/Nothing mirrored yet/.test(adding([fndDoc()])),
+    (adding([fndDoc()]).match(/class="tx-desc">[^<]*/) || [''])[0]);
+  ok('CONTROL: and a mirror with nothing in it still says so',
+    /Nothing mirrored yet/.test(block([], {})), (block([], {}).match(/class="tx-desc">[^<]*/) || [''])[0]);
+
+  // ── (4) THE SWITCH SELECTS THE GITHUB ARM, IN BOTH PASSES ───────────
+  // FOUND BY MUTATION: the renderer's forcing and the WIRING pass's forcing are
+  // two writers of one field, and breaking either one alone was green. The
+  // defect that taught this is real and was measured: through the first draft
+  // of this package the wiring pass re-forced `ownership = 'repo'` AFTER the
+  // render, so the remote arm painted while `scanBlockedReason` answered out of
+  // its `repoRoot` branch and the scan stayed disabled saying "Type or choose
+  // the folder first." over a field asking for a repository.
+  {
+    const switching = makeRenderers({
+      activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+      fndInit: { domain: 'acme', project: 'lumina', adding: true, switching: true,
+        choice: null, busy: false },
+    }).renderFoundations(fndRead(fndPayload([fndDoc()])));
+    ok('the switch panel renders the REMOTE arm, not the folder one',
+      /class="fnd-init-remote-fields"/.test(switching)
+      && !/class="fnd-init-path"[^>]*placeholder="\/Users/.test(switching),
+    switching.slice(switching.indexOf('fnd-init'), switching.indexOf('fnd-init') + 400));
+    ok('...under its own eyebrow, so the panel says which of the three it is',
+      /class="mem-fnd-panel-eyebrow[^"]*">MIRROR FROM GITHUB</.test(switching),
+      (switching.match(/mem-fnd-panel-eyebrow[^<]*<\/div>[^<]*/) || [''])[0]);
+    // AND THE OTHER TWO ARMS KEEP THEIR OWN WORDS. Three states, three labels,
+    // and a mutation collapsing any two of them must red — FOUND BY MUTATION,
+    // which collapsed "Set up documents" into "Add from folder" and was green.
+    ok('the no-manifest chooser commits with "Set up documents"',
+      />Set up documents</.test(makeRenderers({
+        activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+      }).renderFoundations(fndRead(fndPayload([], { present: false, ownership: null })))),
+    'the chooser lost its own word');
+    ok('...and a mirror being added to commits with "Add from folder"',
+      />Add from folder</.test(makeRenderers({
+        activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+        fndInit: { domain: 'acme', project: 'lumina', adding: true, choice: null, busy: false },
+      }).renderFoundations(fndRead(fndPayload([fndDoc()])))),
+    'the add arm lost its own word');
+    ok('...and its primary commits the switch rather than the copy',
+      />Mirror from GitHub</.test(switching), (switching.match(/id="mem-fnd-init-go"[\s\S]{0,120}/) || [''])[0]);
+    ok('...with the ownership OPTIONS withheld, because the store settled that '
+      + 'question and this call does not move it',
+    !/data-fnd-own="curator"/.test(switching), switching.slice(0, 400));
+    ok('...and the consequence stated UNFOLDED, at the moment of acting (v3.16.1)',
+      /mem-fnd-switch-note/.test(switching)
+      && /stops being this project’s source/.test(switching),
+    (switching.match(/mem-fnd-switch-note[\s\S]{0,240}/) || [''])[0]);
+    // AND THE WIRING PASS AGREES WITH THE RENDERER. One predicate, written
+    // twice because the two passes cannot share a local — so both are asserted.
+    ok('the WIRING pass forces the same ownership the renderer does, or the arm '
+      + 'on screen and the choice behind it disagree',
+    /if \(state\.fndInit\.switching\) state\.fndInit\.choice\.ownership = 'remote';/.test(viewSrc)
+      && /if \(switching\) choice\.ownership = 'remote';/.test(viewSrc),
+    'one of the two forcings is missing');
+  }
+
+  // ── (5) ONE BOX, AND ITS EYEBROW ────────────────────────────────────
+  ok('the panel is ONE box on Quick maintenance\'s anatomy, never a card nested '
+    + 'in a row nested in a stack', /class="mem-fnd-panel"/.test(adding([fndDoc()]))
+    && !/mem-fold-flat/.test(adding([fndDoc()]).slice(adding([fndDoc()]).indexOf('mem-fnd-init-wrap'))),
+  adding([fndDoc()]).slice(adding([fndDoc()]).indexOf('mem-fnd-init-wrap'), 400));
+}
+
+// ── §21b1d — v3.65.1 §9: THE DEPTH BAR'S TWO PLACEMENTS ────────────────
+// ═════════════════════════════════════════════════════════════════════════
+//
+// The primitive is scripts/test-next-monitor-kit.js §8's. What is asserted
+// HERE is the two things only this view can get wrong: WHICH DENOMINATOR each
+// placement uses, and WHERE a bar is allowed to appear.
+{
+  const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+    domainList: ['acme'] });
+  const pct = (h, after) => {
+    const i = after === undefined ? 0 : h.indexOf(after);
+    const m = /style="width:([\d.]+)%"/.exec(h.slice(i));
+    return m ? Number(m[1]) : null;
+  };
+
+  // ── (1) THE DOCUMENTS TABLE'S SIZE COLUMN, AGAINST 200 KB ───────────
+  // `FOUNDATIONS_BUDGET_BYTES` is the PROJECT's disk budget. It is NOT the
+  // 120 KB bootstrap budget: that one is the READING budget and applies only
+  // to the `readFirst` subset, while this column lists EVERY document —
+  // measuring every row against the reading budget paints an ordinary
+  // project's third document red. CLAUDE.md's own invariant is that the two
+  // are named apart, and this is where a view would collapse them.
+  const table = F.renderFoundations(fndRead(fndPayload([
+    fndDoc({ slug: 'a.md', bytes: 63488 }),
+    fndDoc({ slug: 'b.md', bytes: 215042 }),
+  ])));
+  ok('CONTROL: the table really drew bars', /cur-depth-bar/.test(table), table.slice(0, 300));
+  // THE DENOMINATOR IS THE PROJECT BUDGET the payload carries — the store's own
+  // figure where it sent one, which is what `foundationsFacts` already does for
+  // the warning under the table, so the bar and the sentence can never disagree.
+  const fixtureBudget = fndPayload([]).budgetBytes;
+  eq('the SIZE column measures against the PROJECT budget the store sent',
+    pct(table, 'a.md'), Math.round((63488 / fixtureBudget) * 1000) / 10);
+  ok('...and NEVER the 120 KB bootstrap budget, which applies only to the '
+    + 'readFirst subset while this column lists EVERY document — CLAUDE.md\'s '
+    + 'own invariant is that the two are named apart',
+  Math.round((63488 / fixtureBudget) * 1000) / 10
+    !== Math.round((63488 / (120 * 1024)) * 1000) / 10,
+  'the two budgets give the same figure on this fixture, so the check is vacuous');
+  // A PAYLOAD WITH NO `budgetBytes` KEY AT ALL — `{ budgetBytes: undefined }`
+  // spreads as a PRESENT key holding undefined, which is a different thing and
+  // would test the wrong branch.
+  {
+    const bare = fndPayload([fndDoc({ slug: 'a.md', bytes: 63488 })]);
+    delete bare.budgetBytes;
+    ok('...and with no budget on the wire it falls back to FOUNDATIONS_BUDGET_BYTES, '
+      + 'the shipped project budget, rather than drawing no bar at all',
+    pct(F.renderFoundations(fndRead(bare)), 'a.md')
+      === Math.round((63488 / FOUNDATIONS_BUDGET_BYTES) * 1000) / 10,
+    String(pct(F.renderFoundations(fndRead(bare)), 'a.md')) + ' vs '
+      + Math.round((63488 / FOUNDATIONS_BUDGET_BYTES) * 1000) / 10);
+  }
+  ok('a document that alone exceeds the budget takes the whole cell, in the '
+    + 'danger tone', /cur-depth-bar cur-depth-danger" style="width:100%"/.test(table),
+  (table.match(/cur-depth-bar[^>]*/g) || []).join(' | '));
+  ok('...and the one under it does NOT — a bar is not an alarm for being long',
+    (table.match(/cur-depth-danger/g) || []).length === 1,
+    (table.match(/cur-depth-bar[^>]*/g) || []).join(' | '));
+  ok('every SIZE cell names its denominator in a sentence a screen reader gets — '
+    + 'a bar whose denominator the reader cannot name is decoration',
+  (table.match(/class="visually-hidden"> [^<]*project budget/g) || []).length === 2,
+  (table.match(/class="visually-hidden">[^<]*/g) || []).join(' | '));
+  // A COST IS NEVER ONLY A COLOUR (v3.16.1): the same fact is in words,
+  // unfolded, outside the fold.
+  ok('...and the over-budget fact is ALSO in words, outside the chevron',
+    /id="mem-fnd-budget"/.test(table)
+    && table.indexOf('id="mem-fnd-budget"') > table.indexOf('</details>'),
+    table.slice(table.indexOf('</details>'), table.indexOf('</details>') + 200));
+
+  // ── (2) THE KNOWLEDGE MONITOR, AGAINST THAT DOMAIN'S OWN pageCount ──
+  // An EXACT denominator, not "the largest visible row": the producer states
+  // `pageCount === entities + concepts + summaries + other` as an invariant,
+  // so the three bars can never sum past the full track and the remainder is
+  // the `other` the invariant names.
+  const kn = makeRenderers({
+    activeDomain: 'acme', activeProject: 'lumina', domainList: ['acme'],
+    openFolds: { 'knowledge-acme': true },
+    knowledge: new Map([['acme', { error: null, data: { pageCount: 767,
+      pageCounts: { entities: 161, concepts: 553, summaries: 53 },
+      lastIngestDate: '2026-09-13', lastIngestKind: 'ingest' } }]]),
+    projectRead: { knowledgeDomains: ['acme'], knowledgeDomainsDefaulted: false },
+  }).renderKnowledge();
+  ok('CONTROL: the knowledge monitor really drew bars', /cur-depth-bar/.test(kn), kn.slice(0, 300));
+  for (const [key, n] of [['entities', 161], ['concepts', 553], ['summaries', 53]]) {
+    eq('the ' + key + ' count measures against that domain\'s OWN pageCount',
+      pct(kn, 'cur-mon-key">' + key + '<'), Math.round((n / 767) * 1000) / 10);
+  }
+  eq('the three bars sum to at most the full track, because the producer\'s '
+    + 'invariant makes the denominator exact',
+  [161, 553, 53].reduce((a2, b2) => a2 + b2) <= 767, true);
+  ok('`pages` carries NO bar — it IS the denominator, and a bar at 100% on '
+    + 'every row would read as a reading rather than as a definition',
+  !/cur-mon-key">pages<\/span><span class="cur-mon-value"><span class="cur-depth"/.test(kn),
+  (kn.match(/cur-mon-key">pages[\s\S]{0,160}/) || [''])[0]);
+  ok('`last ingest` carries none either — that is a TIME, and the dot owns time',
+    !/cur-mon-key">last ingest<\/span><span class="cur-mon-value"><span class="cur-depth"/.test(kn),
+    (kn.match(/cur-mon-key">last ingest[\s\S]{0,200}/) || [''])[0]);
+  ok('...and NOTHING in this view tones a knowledge bar — these are categories '
+    + 'within one domain, so nothing here is an over-run',
+  !/cur-depth-danger/.test(kn), (kn.match(/cur-depth-bar[^>]*/g) || []).join(' | '));
+
+  // ── (3) WHERE A BAR MAY NEVER APPEAR ────────────────────────────────
+  // Never in a `<summary>` (one line of text already carrying a row fill and,
+  // on step ③, an identity dot), never in a sidebar row, never on an age.
+  const page = makeRenderers({
+    activeDomain: 'acme', activeProject: 'lumina', domainList: ['acme'],
+    journalLimit: 10, projects: [], detail: null, detailLoading: false,
+    wsWindow: WS_WINDOW_SRC,
+    knowledge: new Map([['acme', { error: null, data: { pageCount: 10,
+      pageCounts: { entities: 4, concepts: 5, summaries: 1 }, lastIngestDate: '2026-09-13' } }]]),
+    openFolds: { foundations: true, 'knowledge-acme': true },
+    projectRead: { ...fndRead(fndPayload([fndDoc({ bytes: 4096 })])),
+      knowledgeDomains: ['acme'], knowledgeDomainsDefaulted: false },
+  }).renderProject();
+  ok('CONTROL: the page really drew bars', /cur-depth/.test(page), String(page.length));
+  const summaries = [...page.matchAll(/<summary[\s\S]*?<\/summary>/g)].map((m) => m[0]);
+  ok('CONTROL: the page really has summaries to check', summaries.length >= 2,
+    String(summaries.length));
+  ok('NO bar inside any `<summary>` — a background there competes with the '
+    + 'row\'s own fill and with the identity dot beside it',
+  summaries.every((x) => !/cur-depth/.test(x)),
+  (summaries.find((x) => /cur-depth/.test(x)) || '').slice(0, 200));
+  ok('NO bar in the overview card — its figures are readings about the screen, '
+    + 'not shares of anything',
+  !/cur-ov-card[\s\S]*?cur-depth/.test(page.slice(page.indexOf('cur-ov'), page.indexOf('settings-block'))),
+  'a bar reached the overview');
+  ok('NO bar on an age anywhere on the page — the dot owns time, and a bar '
+    + 'whose length was an age would be a second ladder wearing the first\'s '
+    + 'meaning',
+  !/fresh-dot[^<]*<\/span>\s*<span class="cur-depth"/.test(page));
 }
 
 // ── §21b2 — the SUMMARY LINE: four clauses, and three readings of zero ──
@@ -8840,6 +9218,137 @@ const fndRead = (payload) => ({
   // And the skeleton says it too, or the chrome moves between the two paints.
   ok('the skeleton titles step ① the same way',
     /<h2 class="settings-job-title">Documents<\/h2>/.test(makeRenderers(st).renderProjectSkeleton()));
+
+  // ══ THE VOCABULARY CENSUS (v3.65.1, D1) ═══════════════════════════════
+  //
+  // The maintainer's first decision, and the one a later edit can undo one
+  // string at a time with nothing going red. Five nouns moved in UI COPY —
+  // Documents · Memory · Handoffs · Journal · domain — and the STORE's names
+  // did not: `foundations/`, `scope`, `journal.jsonl`, `state/` and every
+  // field on the wire are the public spec.
+  //
+  // So the census is over WHAT A READER SEES, not over the source: the
+  // rendered page with every fold's markup in it, its ⓘ panels, its accessible
+  // names and its eyebrows — which is why each old word is looked for after
+  // the attribute-and-class noise is stripped rather than by a grep of
+  // memory.js, where `data-mem-fold="foundations"` and `/foundations/init` are
+  // both correct and both must stay.
+  //
+  // FOUND BY MUTATION: four of these six could be reverted one at a time —
+  // step ②'s title, the Handoffs row, the Journal row and the picker's
+  // placeholder — with every suite still green.
+  {
+    // ── A FIXTURE THAT PAINTS EVERY ROW, WHICH `st` DOES NOT ──────────
+    // FOUND BY MUTATION, and it is the shape a census gets wrong every time:
+    // the first draft ran over `st` alone, whose `detail` is null and whose
+    // `domainList` is empty — so the Handoffs row, the Journal row and the
+    // Knowledge picker were never RENDERED, and reverting all three of their
+    // titles left this census green. A scan for an absent word passes on an
+    // empty string; the control below is what stops that, and this fixture is
+    // what makes the control meaningful.
+    const full = {
+      ...st,
+      scope: 'main', machine: 'boxa',
+      domainList: ['acme', 'research'],
+      knowledge: new Map([['acme', { error: null, data: { pageCount: 10,
+        pageCounts: { entities: 4, concepts: 5, summaries: 1 },
+        lastIngestDate: '2026-09-13', lastIngestKind: 'ingest' } }]]),
+      capture: { domain: 'acme', project: 'lumina', error: null, data: {
+        logPresent: true, windowDays: 30, sessionsShown: 1, sessionsTruncated: false,
+        totals: { sessions: 3, sessionsRead: 2, sessionsSaved: 1, sessionsReadNotSaved: 1,
+          legacyLines: 0, selfTestLines: 4 },
+        sessions: [{ sid: 'a1', client: 'claude-code', calls: 7, read: true, saved: true,
+          startedAt: '2026-09-20T10:00:00.000Z', endedAt: '2026-09-20T10:30:00.000Z' }] } },
+      projectRead: {
+        ...fndRead(fndPayload([fndDoc()])),
+        knowledgeDomains: ['acme'], knowledgeDomainsDefaulted: false,
+        savedCopies: 3, distinctScopeCount: 2,
+        scopes: [
+          { scope: 'main', machine: 'boxa', headline: 'A headline', harness: 'claude-code',
+            writtenAgeSeconds: 120, writtenAt: '2026-09-20T10:00:00.000Z' },
+          { scope: 'other', machine: 'boxb', writtenAgeSeconds: 900 },
+        ],
+        brief: { present: true, text: '# B', updatedAt: '2026-09-14T09:00:00.000Z' },
+      },
+      detail: {
+        scope: 'main', machine: 'boxa',
+        current: { present: true, text: '# T', writtenAgeSeconds: 120 },
+        journal: { returned: 2, total: 9, totalUnknown: false, entries: [
+          { at: '2026-09-20T10:00:00.000Z', harness: 'claude-code', model: 'opus', headline: 'H' },
+        ] },
+      },
+      openFolds: { streams: true, journal: true, capture: true, brief: true,
+        foundations: true, 'knowledge-acme': true },
+    };
+    const both = makeRenderers(st).renderProject()
+      + '\n' + makeRenderers(st).renderProjectSkeleton()
+      + '\n' + makeRenderers(full).renderProject();
+    // What a reader sees: tag names, attribute NAMES and class values are not
+    // copy. Values of the attributes that ARE read aloud (aria-label, title,
+    // placeholder) are kept, because a screen reader reads them.
+    const spoken = (both.match(/(?:aria-label|title|placeholder|alt)="([^"]*)"/g) || []).join(' ');
+    const visible = both
+      .replace(/<[^>]*>/g, ' ')          // every tag, with its attributes
+      .replace(/&[a-z]+;/g, ' ');
+    // ── AND THE PICKER'S OWN WORDS, WHICH THE STUB SWALLOWS ───────────
+    // `renderListboxHtml` is stubbed in this suite (the real component imports
+    // app.js, which touches `document` at import time — the wall
+    // scripts/test-next-listbox.js documents), and the stub encodes the cfg
+    // into a `data-lb-stub` JSON attribute. Stripping tags therefore throws the
+    // placeholder and the accessible name away, and the ban on "wiki" ran past
+    // `+ Add a wiki` with nothing going red — FOUND BY MUTATION. The cfg is the
+    // shipped one either way, so it is read directly and appended to the copy.
+    const pickerCfg = makeRenderers(full).knowledgePickerCfg(['research'], false);
+    const copy = visible + ' ' + spoken + ' '
+      + pickerCfg.placeholder + ' ' + pickerCfg.ariaLabel;
+    for (const [word, re] of [
+      ['Foundations', /\bfoundations?\b/i],
+      ['Working state', /\bworking state\b/i],
+      ['Work-stream', /\bwork.?streams?\b/i],
+      ['Recent saves', /\brecent saves\b/i],
+      // "session" SURVIVES as the definition of the word, in the Capture ⓘ:
+      // `A <b>session</b> is one bridge process`. What may not survive is
+      // "Sessions" as the NAME of a thing on the screen — a heading, a row
+      // title, a column, a fold. Both halves are asserted, so the ban cannot
+      // be satisfied by deleting the definition.
+      ['Sessions (as a name)', /\bSessions\b/],
+      ['wiki (as a noun for a domain)', /\bwikis?\b/i],
+    ]) {
+      ok('the Context view says nothing of "' + word + '" in its copy',
+        !re.test(copy), (copy.match(new RegExp('.{0,70}' + re.source + '.{0,70}', re.flags)) || [''])[0]);
+    }
+    // ── THE CONTROL IS WHAT MAKES THE SIX BANS MEAN ANYTHING ──────────
+    // A scan for an ABSENT word passes on an empty string, so the census has to
+    // prove that every surface it bans a word FROM was actually painted. Each
+    // of the five renamed rows is named, positively, by its new word.
+    for (const [what, word] of [
+      ['step ①', 'Documents'], ['step ②', 'Memory'], ['step ③', 'Knowledge'],
+      ['the handoffs row', 'Handoffs'], ['the journal row', 'Journal'],
+      ['the capture row', 'Capture'],
+      ['the picker', '+ Add a domain'], ['the picker\'s accessible name', 'Add a domain this'],
+    ]) {
+      ok('CONTROL: ' + what + ' really painted, under its new word',
+        copy.includes(word), word + ' is absent — the bans above are vacuous');
+    }
+    ok('CONTROL: and the page is a real page, not a stub',
+      copy.length > 4000, String(copy.length));
+    ok('...and the word "session" DOES survive where it is defined, so the ban '
+      + 'above cannot be satisfied by deleting the definition',
+    /\bsession\b/.test(copy), (copy.match(/.{0,60}\bsession\b.{0,60}/) || [''])[0]);
+    // AND THE STORE'S OWN NAMES ARE UNTOUCHED — the other half of D1, and the
+    // half a zealous rename breaks. These are the public spec.
+    // Split three ways rather than `&&`-ed into one: an assertion that can fail
+    // for three reasons tells you nothing about which — and the first draft of
+    // this one failed on the journal half because THIS fixture has no journal,
+    // while reading as though a store name had been renamed.
+    ok('the fold key is still the STORE\'s word, not the screen\'s',
+      /data-mem-fold="foundations"/.test(both),
+      (both.match(/data-mem-fold="[a-z-]*"/g) || []).join(' '));
+    ok('...and the route path is still /foundations/',
+      /\/foundations\//.test(viewSrc), 'the route was renamed with the copy');
+    ok('...and the localStorage key is unmoved, so a user\'s open folds survive '
+      + 'the update', /curator-memory-folds-v1/.test(viewSrc), 'the storage key moved');
+  }
 }
 
 // ── §21f5 — THE STRIP: three readings, and an unknown one says so ───────
@@ -10005,6 +10514,83 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
   const kn = makeRenderers(kst({ acme: { error: null, data: {
     pageCount: 767, pageCounts: { entities: 400, concepts: 300, summaries: 67 },
     lastIngestDate: '2026-09-13', lastIngestKind: 'ingest' } } })).renderKnowledge();
+  // ── §21g — v3.65.1: THE HEAD ROW AND THE TWO DOTS (D5, D7) ──────────
+  {
+    const K = makeRenderers(kst({
+      acme: { error: null, data: { pageCount: 100,
+        pageCounts: { entities: 40, concepts: 50, summaries: 10 },
+        lastIngestDate: '2026-09-13', lastIngestKind: 'ingest' } },
+      research: { error: null, data: { pageCount: 20,
+        pageCounts: { entities: 8, concepts: 10, summaries: 2 },
+        lastIngestDate: '2026-09-10', lastIngestKind: 'ingest' } },
+    }, { domainList: ['acme', 'research'] }));
+    const block = K.renderKnowledge();
+
+    // (1) THE PICKER IS A HEAD ROW, ABOVE THE ROWS. Step ①'s rule and Wiki
+    // health's anatomy. Measured at 1370 before: the picker at x=404 UNDER the
+    // rows, with two per-row Removes beside it at 527.9 and 642.2 — *"two
+    // un-synced buttons in a really poor implementation"*. Document order is
+    // what the geometry follows, so document order is asserted.
+    const pickAt = block.indexOf('mem-k-pick');
+    const rowAt = block.indexOf('data-mem-fold="knowledge-');
+    ok('CONTROL: the block really renders both a picker and rows',
+      pickAt !== -1 && rowAt !== -1, block.slice(0, 300));
+    ok('step ③\'s control PRECEDES its rows — the same head-row rule step ① follows',
+      pickAt < rowAt, pickAt + ' vs ' + rowAt);
+    ok('...and the picker row holds ONE control, not one per chosen domain',
+      (block.slice(pickAt, rowAt).match(/<button/g) || []).length <= 1,
+      block.slice(pickAt, rowAt).slice(0, 300));
+
+    // (2) REMOVE IS INSIDE ITS OWN ROW, beside that row's two doors — where
+    // the documents table already puts its per-row Remove.
+    const rowOf = (d) => {
+      const i = block.indexOf('data-mem-fold="knowledge-' + d + '"');
+      const j = block.indexOf('</details>', i);
+      return block.slice(i, j === -1 ? block.length : j);
+    };
+    for (const d of ['acme', 'research']) {
+      ok('the ' + d + ' row carries its OWN Remove, inside the row',
+        new RegExp('data-mem-k-drop="' + d + '"').test(rowOf(d)), rowOf(d).slice(-400));
+      ok('...inside the doors group, so it sits beside the controls it belongs with',
+        rowOf(d).indexOf('mem-k-doors') !== -1
+        && rowOf(d).indexOf('mem-k-doors') < rowOf(d).indexOf('data-mem-k-drop'),
+        rowOf(d).slice(-300));
+      // PUSHED AWAY FROM THE DOORS, not sitting beside them — the same call
+      // `.mem-fnd-delete` makes one block up: a control that takes a domain off
+      // this project must not be one mis-click from a door that merely
+      // navigates. FOUND BY MUTATION, which set `margin-left: 0` and was green.
+      ok('the row\'s Remove is pushed away from the two doors beside it',
+        /\.mem-k-drop\s*\{[^}]*margin-left:\s*auto/.test(viewCss),
+        (viewCss.match(/\.mem-k-drop\s*\{[^}]*\}/) || [''])[0]);
+      ok('...labelled just "Remove" — the ROW says which domain, so the button '
+        + 'need not repeat it', />Remove</.test(rowOf(d)) && !new RegExp('>Remove ' + d + '<').test(rowOf(d)),
+      (rowOf(d).match(/>Remove[^<]*</) || [''])[0]);
+    }
+
+    // (3) EVERY ROW CARRIES ITS DOMAIN'S IDENTITY DOT (D7) — the same colour
+    // that domain wears in both sidebars and in the breadcrumb, from the SAME
+    // mapping. Two domains, two DIFFERENT slots, which is the whole point: a
+    // dot that is the same on every row identifies nothing, and that is
+    // exactly what the breadcrumb's violet square was.
+    const dotOf = (d) => (/<span class="cur-sb-dot mem-k-dot (cur-sb-dot-\d)"/.exec(rowOf(d)) || [, null])[1];
+    ok('the first Knowledge row carries an identity dot', !!dotOf('acme'), rowOf('acme').slice(0, 300));
+    ok('...and so does the second', !!dotOf('research'), rowOf('research').slice(0, 300));
+    ok('...and the two are DIFFERENT slots, because they are different domains '
+      + '— one colour on every row identifies nothing',
+    dotOf('acme') !== dotOf('research'), dotOf('acme') + ' vs ' + dotOf('research'));
+    ok('...cut on the INSTALL\'s domain index, so the colour matches the rails',
+      dotOf('acme') === 'cur-sb-dot-1' && dotOf('research') === 'cur-sb-dot-2',
+      dotOf('acme') + ' / ' + dotOf('research'));
+    ok('...before the NAME, while the freshness dot stays before the READING — '
+      + 'two channels, never the same glyph position',
+    rowOf('acme').indexOf('mem-k-dot') < rowOf('acme').indexOf('>acme<')
+      && rowOf('acme').indexOf('mem-fold-meta') < rowOf('acme').indexOf('fresh-dot'),
+    rowOf('acme').slice(0, 400));
+    ok('...and NO dot at all when the domain list has not answered, because '
+      + 'identity has no states and a placeholder would be another domain\'s',
+    !/mem-k-dot/.test(makeRenderers(kst({ acme: { error: null, data: { pageCount: 1,
+      pageCounts: {}, lastIngestDate: '2026-09-13' } } }, { domainList: [] })).renderKnowledge()));
+  }
   ok('step ③ is one row PER WIKI, keyed by its own domain',
     /<details class="mem-fold" data-mem-fold="knowledge-acme"/.test(kn), kn.slice(0, 300));
   ok('...shipping CLOSED', !/data-mem-fold="knowledge-acme"\s+open/.test(kn), kn.slice(0, 300));

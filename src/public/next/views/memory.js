@@ -5619,8 +5619,6 @@ function renderSaveStatus(read, d) {
   //
   // `brief` is still read above for nothing else, so it goes with the line.
 
-  if (!lines.length && !detail.length) return '';
-
   // ── THE BODY IS A MONITOR (v3.65.0, M1) ──────────────────────────────
   //
   // It was four hand-built sentences in `.mem-save-line` divs — one about
@@ -5662,11 +5660,17 @@ function renderSaveStatus(read, d) {
   // step ② opens on its four rows with nothing above them. That is the
   // acceptance picture, and it is reached by having nothing to say rather than
   // by hiding something.
+  // ONE GUARD, AND IT IS STATED ONCE. Three copies of this condition lived in
+  // this function for a while — a leftover from the "Last saved" deletion plus
+  // two written since — and a mutation that broke any ONE of them stayed green,
+  // which is the whole reason three copies of a rule are worse than one. The
+  // component would also return '' for an empty set, but a host that relies on
+  // that renders `<section></section>` the moment the component gains a
+  // default line, so the decision is made HERE, where the facts are.
   if (!detail.length && !lines.length) return '';
   const instrument = renderMonitor({
     label: 'About the last save', lines: detail, loud: lines,
   });
-  if (!instrument) return '';
   // NO `.mem-section`. This is the first thing inside step ②'s body, not a
   // top-level sibling, so the page's 24px block rhythm must not apply to it —
   // `.mem-status-stack` in memory.css owns the spacing inside a block.
@@ -7664,9 +7668,9 @@ function renderFoundations(read) {
       ? 'Mirrored from ' + ((facts.repo && facts.repo.root) || 'a folder on this Mac')
         + '. Nothing copied yet.'
       : 'Kept here. No documents yet. Write the first one yourself, or ask an agent to draft them.';
+    // THE HEAD ROW FIRST HERE TOO (v3.65.1) — the empty arm and the populated
+    // one must not disagree about where a section's controls live.
     return '<div class="mem-fnd-row">' +
-        '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
-          (editing ? renderFoundationEditor(facts) : renderDescription(emptyBody)) +
         '<div class="mem-fnd-head-controls">' + action + '</div>' +
         '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
           (editing ? renderFoundationEditor(facts) : renderDescription(emptyBody)) +
@@ -8005,7 +8009,13 @@ function renderFoundationsInit(facts) {
               : 'Nothing mirrored yet. Point at the folder and choose which files to copy.')
             : 'No canonical documents yet. Choose how they arrive.') +
         renderFoundationsChooser({
-          id: 'mem-fnd-init', choice, busy, optionsHidden: repoOnly || switching,
+          // `optionsHidden: repoOnly` ALONE, and `|| switching` is deliberately
+          // not written: the switch is offered on repo-owned projects only
+          // (`foundationsControlOffer` returns `mirror: false` on the curator
+          // arm, because the route answers 409 there), so `switching` implies
+          // `repoOnly` and the second clause is unreachable. Proved dead by a
+          // mutation that removed it and reddened nothing.
+          id: 'mem-fnd-init', choice, busy, optionsHidden: repoOnly,
           existingProject: true,
         }) +
         '<div class="mem-fnd-init-actions">' +

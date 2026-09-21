@@ -63,7 +63,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { renderMonitor } from '../src/public/next/shared/monitor.js';
+import { renderMonitor, renderDepthCell } from '../src/public/next/shared/monitor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -522,6 +522,176 @@ section('§7 — THE COPIED HELPER, PINNED RATHER THAN TRUSTED');
   eq('the kit imports NOTHING — it is the leaf of the kit graph', imports.join(','), '');
   ok(!/document|window/.test(BARE_JS),
     '...and touches no DOM, so an offline suite can import it');
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§8 — THE DEPTH BAR: a length is a measurement, not a decoration');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// v3.65.1. The app's THIRD visual channel — the freshness dot answers HOW OLD,
+// the identity dot answers WHOSE, and this answers HOW MUCH, OF WHAT. The
+// whole value of a third channel is in never being confused with the two it
+// joins, so what is asserted here is the arithmetic (a length that is not
+// value/denominator is a lie drawn to scale), the clamp, the ONE automatic
+// tone and the places a bar may never appear.
+{
+  const pctOf = (h) => {
+    const m = /style="width:([\d.]+)%"/.exec(h);
+    return m ? Number(m[1]) : null;
+  };
+
+  // ── THE ARITHMETIC ───────────────────────────────────────────────────
+  eq('a bar is value ÷ max, to one decimal',
+    pctOf(renderDepthCell({ value: '161', amount: 161, max: 767 })), 21);
+  eq('...and value ÷ BUDGET when there is one, which REPLACES max',
+    pctOf(renderDepthCell({ value: '62 KB', amount: 63488, budget: 204800, max: 9 })), 31);
+  eq('...rounded to one decimal, because a category at 6.9% of a domain and one '
+    + 'at 7.4% are different readings',
+  pctOf(renderDepthCell({ value: '53', amount: 53, max: 767 })), 6.9);
+
+  // ── THE CLAMP ────────────────────────────────────────────────────────
+  // A value over its budget FILLS the cell rather than overflowing it: a bar
+  // 105% wide is a bar drawn outside the figure it qualifies.
+  eq('a value over its budget fills the cell and does not overflow it',
+    pctOf(renderDepthCell({ value: '210 KB', amount: 215042, budget: 204800 })), 100);
+  eq('...and a negative amount draws nothing rather than a reversed bar',
+    pctOf(renderDepthCell({ value: '-1', amount: -1, max: 10 })), null);
+
+  // ── NO DENOMINATOR, NO BAR ───────────────────────────────────────────
+  // A bar drawn against nothing is decoration, and a zero-width one reads as
+  // "none of it" rather than as "unknown".
+  for (const [what, o] of [
+    ['no denominator at all', { value: '5', amount: 5 }],
+    ['a zero denominator', { value: '5', amount: 5, max: 0 }],
+    ['a non-finite denominator', { value: '5', amount: 5, max: Infinity }],
+    ['an amount that is not a number', { value: 'many', max: 10 }],
+  ]) {
+    const h = renderDepthCell(o);
+    ok(
+      !/cur-depth-bar/.test(h) && /cur-depth-value/.test(h),'with ' + what + ' the FIGURE is printed and NO bar is drawn', h);
+  }
+
+  // ── THE ONE AUTOMATIC TONE, AND ONLY AGAINST A BUDGET ────────────────
+  // Being the largest of a set of visible rows is not a fault; colouring it as
+  // one would make a bar an alarm every time somebody sorted a table. An
+  // over-run against a STATED budget is a fact.
+  ok(
+    /cur-depth-bar cur-depth-danger/.test(
+      renderDepthCell({ value: '210 KB', amount: 215042, budget: 204800 })),'a value over its BUDGET takes the danger tone by itself');
+  ok(!/cur-depth-danger/.test(renderDepthCell({ value: '999', amount: 999, max: 999 })),
+    '...and a value that is merely the LARGEST of a set does NOT',
+    renderDepthCell({ value: '999', amount: 999, max: 999 }));
+  // AND A VALUE THAT EXCEEDS ITS `max` STILL DOES NOT — which is the case a
+  // mutation reaches by swapping the condition to `amount > max`. A `max` is a
+  // COMPARISON ("the largest of the rows you can see"), and being larger than
+  // one is what happens when the denominator is stale or the set is filtered;
+  // colouring that red would make a bar an alarm every time somebody sorted a
+  // table. Only a stated BUDGET can be over-run.
+  ok(!/cur-depth-danger/.test(renderDepthCell({ value: '1200', amount: 1200, max: 999 })),
+    '...nor does one that EXCEEDS its max — a max is a comparison, not a limit, '
+    + 'and only a stated budget can be over-run',
+  renderDepthCell({ value: '1200', amount: 1200, max: 999 }));
+  ok(
+    !/cur-depth-danger/.test(renderDepthCell({ value: '200 KB', amount: 204800, budget: 204800 })),'...and exactly ON the budget is not over it');
+
+  // ── A TONE IS A CLASS NAME, FILTERED — NEVER ESCAPED AND HOPED ───────
+  // shared/overview.js's rule: an escaped class attribute is still an
+  // attribute the caller composed.
+  const hostile = renderDepthCell({ value: '1', amount: 1, max: 2,
+    toneClass: 'x" onload="alert(1)' });
+  ok(
+    !/onload/.test(hostile) && !/alert/.test(hostile),'a tone carrying quotes is DROPPED, not escaped into the attribute', hostile);
+  ok(
+    /cur-depth-bar cur-depth-quiet/.test(
+      renderDepthCell({ value: '1', amount: 1, max: 2, toneClass: 'cur-depth-quiet' })),'CONTROL: a legitimate tone name survives');
+
+  // ── THE FIGURE AND THE LABEL ARE ESCAPED ─────────────────────────────
+  const xss = renderDepthCell({ value: '<img src=x onerror=alert(1)>', amount: 1, max: 2,
+    label: '<b>of</b> 2' });
+  ok( !/<img/.test(xss) && /&lt;img/.test(xss),'the printed figure is escaped', xss);
+  ok(
+    !/<b>/.test(xss) && /&lt;b&gt;/.test(xss),'...and so is the denominator sentence — it is DATA, never markup', xss);
+  ok(
+  /<span class="visually-hidden"> of a 200 KB budget<\/span>/.test(
+    renderDepthCell({ value: '62 KB', amount: 63488, budget: 204800, label: 'of a 200 KB budget' })),'the denominator rides as a visually-hidden sentence, because a bar whose '
+    + 'denominator the reader cannot name is decoration');
+  ok(
+    /class="cur-depth-bar"[^>]*aria-hidden="true"/.test(
+      renderDepthCell({ value: '1', amount: 1, max: 2 })),'and the bar itself is aria-hidden — the figure ON it is the reading');
+
+  // ── A NON-SCALAR IS DROPPED, NOT STRINGIFIED ────────────────────
+  // The same rule `renderMonitor`'s own `value` follows: an object, an array or
+  // a function is DROPPED rather than turned into "[object Object]" on the
+  // page. A cell that prints a figure is a cell whose figure is a figure.
+  eq('an object value renders NOTHING rather than "[object Object]"',
+    renderDepthCell({ value: { a: 1 }, amount: 1, max: 2 }), '');
+  eq('...and so does an array', renderDepthCell({ value: [1, 2], amount: 1, max: 2 }), '');
+  eq('...and a missing value', renderDepthCell({ amount: 1, max: 2 }), '');
+  ok(/cur-depth-value">0</.test(renderDepthCell({ value: 0, amount: 0, max: 2 })),
+    'CONTROL: a legitimate ZERO is still printed — dropping it would be the '
+    + '"an absent figure is not a zero" defect read backwards',
+  renderDepthCell({ value: 0, amount: 0, max: 2 }));
+
+  // A `depth` THAT IS NOT AN OBJECT IS IGNORED, not spread. A string spreads
+  // into its characters, which would hand `renderDepthCell` a `0`, `1`, `2`…
+  // map and a `value` it never asked for.
+  ok(!/cur-depth/.test(renderMonitor({ lines: [{ key: 'k', value: 1, depth: 'max: 10' }] })),
+    'a depth that is not an object draws no bar rather than being spread',
+    renderMonitor({ lines: [{ key: 'k', value: 1, depth: 'max: 10' }] }));
+  ok(/cur-mon-value">1</.test(renderMonitor({ lines: [{ key: 'k', value: 1, depth: 'max: 10' }] })),
+    '...and the figure is still printed, escaped, as an ordinary line');
+
+  // ── A MONITOR LINE DECLARES `depth` AS DATA, NEVER AS MARKUP ─────────
+  // The component draws the bar. A caller that could hand over markup for the
+  // VALUE would be a caller that could hand over anything, and `markHtml` is
+  // the whole of what this component's escaping discipline has to reason about.
+  const mon = renderMonitor({ lines: [
+    { key: 'entities', value: 161, depth: { amount: 161, max: 767, label: 'of 767 pages' } },
+    { key: 'pages', value: 767 },
+  ] });
+  ok( /cur-depth-bar/.test(mon),'a line carrying `depth` is drawn WITH a bar', mon);
+  eq('...at the length its own numbers give it', pctOf(mon), 21);
+  ok(
+  (mon.match(/cur-depth-bar/g) || []).length === 1,'...and a line WITHOUT `depth` gets none — the denominator line is not a '
+    + 'reading about itself', mon);
+  const forged = renderMonitor({ lines: [
+    { key: 'k', value: '<img src=x>', depth: { amount: 1, max: 2 } }] });
+  ok(
+    !/<img/.test(forged) && /&lt;img/.test(forged),'a figure inside a depth cell is still escaped by the component', forged);
+
+  // ── AND THE COMPONENT EMITS NO <details>, SO NO BAR CAN FOLD ─────────
+  ok(
+    !/<details/.test(mon) && !/<summary/.test(mon),'nothing this component draws can put a bar behind a chevron', mon);
+
+  // ── THE STYLESHEET ───────────────────────────────────────────────────
+  {
+    const css = readFileSync(path.join(NEXT, 'shared/depth-bar.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    ok(
+    !/\.fresh-/.test(css),'shared/depth-bar.css declares NO `.fresh-` rule — the freshness scale is '
+      + 'owned outright by shared/freshness.css, and a bar never encodes time', (css.match(/.{0,60}\.fresh-.{0,60}/) || [''])[0]);
+    ok(
+      !/\.tx-/.test(css),'...and no `tx-` rule either — shared/text.css owns that prefix', (css.match(/.{0,60}\.tx-.{0,60}/) || [''])[0]);
+    ok(
+      [...css.matchAll(/(^|\})\s*([^{}]+)\{/g)].map((m) => m[2].trim())
+        .every((sel) => sel.split(',').every((x) => /\.cur-depth/.test(x))),'...and every selector it declares is under its own `cur-depth` prefix',
+      [...css.matchAll(/(^|\})\s*([^{}]+)\{/g)].map((m) => m[2].trim()).join(' | '));
+    ok(
+    /\.cur-depth\[hidden\]\s*\{[^}]*display:\s*none/.test(css),'the `[hidden]` counter-rule is present — `[hidden]` loses to an author '
+      + '`display:` at any specificity, which is v3.62.0\'s measured defect', css.slice(0, 200));
+    ok(
+    /\.cur-depth-bar\s*\{[^}]*right:\s*0/.test(css),'the bar is anchored at the RIGHT — that is what makes a column of them '
+      + 'comparable at a glance', css.slice(0, 200));
+    ok(
+      /\.cur-depth-bar\s*\{[^}]*position:\s*absolute/.test(css),'...and it is positioned, so it sits BEHIND the figure rather than beside it');
+    ok(
+      /<link[^>]*href="\/next\/shared\/depth-bar\.css"/.test(
+        readFileSync(path.join(NEXT, 'index.html'), 'utf8').replace(/<!--[\s\S]*?-->/g, '')),
+    'and the stylesheet is LINKED — checked with the HTML COMMENTS STRIPPED, '
+      + 'because a commented-out <link> still matches a bare filename scan and '
+      + 'that mutation was green');
+  }
 }
 
 console.log('\n  ' + '─'.repeat(60));
