@@ -17,9 +17,10 @@
  *   1. ONE OF THE TWO VIEWS GROWING ITS OWN MARKUP AGAIN. §1 renders BOTH
  *      views' real inputs through the shipped function and requires the
  *      element shape — head, eyebrow, ⓘ, `.cur-group`, grid, card, value — to
- *      be the SAME on both. The two adopters may differ in exactly two ways
- *      (the Domains alias tokens, and the optional second line), and §1c
- *      enumerates that difference rather than allowing any difference.
+ *      be the SAME on both. The two adopters may differ in exactly three ways
+ *      (the Domains alias tokens, the optional second line, and a per-host
+ *      track floor), and §1c enumerates that difference rather than allowing
+ *      any difference.
  *   2. THE ALIAS LEAKING. The `dm-` tokens exist so four shipped suites, this
  *      view's own listeners and its column-patch walk keep addressing the
  *      same elements. They are the DOMAINS page's, and §2 fails if one
@@ -232,10 +233,11 @@ const CTX = contextOverview();
     c.slice(1, 5).join(' > '),
     'DIV.cur-ov-head > DIV.cur-ov-eyebrow > DIV.cur-ov-group > DIV.cur-ov-grid');
 
-  eq('the grid holds five figures on a domain', withClass(DOM, 'cur-ov-card').length, 5);
+  eq('the grid holds seven figures on a domain — five facets plus the two former '
+    + 'jumps, which are ordinary cards now (v3.65.0)', withClass(DOM, 'cur-ov-card').length, 7);
   eq('...and three on a project', withClass(CTX, 'cur-ov-card').length, 3);
   eq('every figure on both carries a `.cur-ov-value`',
-    withClass(DOM, 'cur-ov-value').length + '/' + withClass(CTX, 'cur-ov-value').length, '5/3');
+    withClass(DOM, 'cur-ov-value').length + '/' + withClass(CTX, 'cur-ov-value').length, '7/3');
   ok(/class="cur-eyebrow">PAGES</.test(DOM) && /class="cur-eyebrow">FOUNDATIONS</.test(CTX),
     'and every figure is captioned by the SAME `.cur-eyebrow` the kit uses everywhere');
 
@@ -317,9 +319,10 @@ const CTX = contextOverview();
   ok(!/style="/.test(renderOverview({ id: 'p', eyebrow: 'P',
     cards: [{ label: 'A', value: '1' }] })),
   '...and a host that passes nothing emits no style attribute at all');
-  ok(/minmax\(var\(--cur-ov-min,\s*110px\),\s*1fr\)/
+  ok(/var\(--cur-ov-min,\s*110px\)/
     .test(KIT_CSS.replace(/\/\*[\s\S]*?\*\//g, '')),
-  '...because the stylesheet carries the DEFAULT, so an unset host is unaffected');
+  '...because the stylesheet carries the DEFAULT, so an unset host is unaffected '
+    + '(the `min(…, 100%)` wrap around it is §6\'s own assertion)');
   // THE VALUE IS ARITHMETIC, NOT A STRING. A custom property lands in a
   // `style` attribute, and a caller-composed one is an attribute injection
   // with a paint attached.
@@ -584,6 +587,17 @@ section('§6 — THE STYLESHEET, AND THE THREE RULES THAT FAIL SILENTLY');
   // bought — and it reported this one on its first run.
   ok(/\.cur-ov\s*\{[^}]*--cur-ov-min:\s*110px/.test(bare),
     'the section declares the track floor\'s default, so the property is DEFINED');
+
+  // THE FLOOR MUST NOT OVERFLOW A CONTAINER NARROWER THAN ITSELF. Measured on
+  // Domains at 568px: `.cur-ov-grid 175 > 158` — `minmax(var(--cur-ov-min,
+  // 110px), 1fr)` alone makes a track that is never narrower than the floor,
+  // so a container below the floor overflows it (Context's 210px floor would
+  // clip 52px at the same width). `min(var(--cur-ov-min, 110px), 100%)` wraps
+  // the custom property so the track can shrink below the floor once the
+  // container itself is narrower than it.
+  ok(/minmax\(\s*min\(\s*var\(--cur-ov-min,\s*110px\)\s*,\s*100%\s*\)\s*,\s*1fr\s*\)/.test(bare),
+    'the track-floor declaration wraps `var(--cur-ov-min, …)` in `min(…, 100%)`, so the grid '
+      + 'never overflows a container narrower than the floor');
 
   // THE PRESS AND ITS ESCAPE, in the same file, in that order.
   const press = /\.cur-ov-group button\.cur-ov-card:active,\s*\.cur-ov-group button\.cur-ov-card\[aria-pressed\]:active\s*\{([^}]*)\}/.exec(bare);

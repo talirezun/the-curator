@@ -82,8 +82,19 @@
      passes nothing keeps 110px and is pixel-identical to what it rendered
      before this property existed. Two views at two type sizes are two
      designs; two views at two track floors are one design with different
-     content, which is what they actually have. */
-  grid-template-columns: repeat(auto-fit, minmax(var(--cur-ov-min, 110px), 1fr));
+     content, which is what they actually have.
+
+     ── THE FLOOR MUST NOT OVERFLOW A CONTAINER NARROWER THAN ITSELF ─────
+     `minmax(var(--cur-ov-min, 110px), 1fr)` on its own makes a track that is
+     NEVER narrower than the floor, so a container below the floor overflows
+     it — measured on Domains at 568px: `.cur-ov-grid 175 > 158` (`.cur-ov-
+     group`'s `overflow: hidden` clips the 17px rather than spilling it, so
+     the document's own overflow count stayed 0 and this went unnoticed).
+     Context's 210px floor would clip 52px at the same width. `min(var(--cur-
+     ov-min, 110px), 100%)` keeps the floor at every width the grid actually
+     has room for, and lets the track go narrower than it only when the
+     container itself is narrower than the floor. */
+  grid-template-columns: repeat(auto-fit, minmax(min(var(--cur-ov-min, 110px), 100%), 1fr));
   gap: 10px;
 }
 
