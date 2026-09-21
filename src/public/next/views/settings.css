@@ -124,6 +124,23 @@
    door clicks). A border reset costing nothing is cheaper than an alias that
    resolves to a bevel the day someone writes that name again. */
 .settings-nav-row { border: none; }
+
+/* ── THE HEAD'S ONE ACTION SITS WHERE DOMAINS' FIRST ACTION SITS ────────
+   MEASURED at 1370, both sidebars, same build: Domains draws title 16–36,
+   `New domain` 48–80, `Use existing folder` 100–132 — 12px under the title,
+   then 20px between the two buttons. `.cur-sb-secondary`'s 8px margin is what
+   makes that second gap, and it is correct THERE. Settings passes no primary,
+   so the same 8px landed under the TITLE and put Updates at y=56 where every
+   other sidebar's first action is at y=48: one lone button, eight pixels out
+   of step with the reference design this release exists to match.
+
+   The host places its own control (shared/sidebar.css is linked before this
+   file and says a host may), and the adjacency is what expresses the rule —
+   the margin returns the moment a primary is added above it. The kit-side
+   version of this is `.sidebar-title + .cur-sb-secondary { margin-top: 0 }`,
+   which is P1's file; stated here so it can move up rather than be found
+   again. */
+.sidebar-title + .btn.cur-sb-secondary { margin-top: 0; }
 .settings-nav-row:hover { background: var(--mat-row-hover); }
 .settings-nav-row.active { background: var(--mat-row-active); }
 .settings-nav-row:active { background: var(--mat-row-active); transform: translateX(var(--press-shift)); }
@@ -2697,6 +2714,27 @@
   background: var(--danger-tint);
   border-color: var(--danger-text);
   color: var(--danger-text);
+}
+
+/* ── AND ITS CAPTIONS MAY WRAP ONCE THE PAIR HAS STACKED ───────────────
+   MEASURED at 568 (rail 72 + the view sidebar 272 leave 224px of column, and
+   this block sits two boxes further in at 136px): shared/monitor.css stacks a
+   line into one column below 640px, but `.cur-mon-key` keeps
+   `white-space: nowrap` — correct while the key is the stable LEFT column of a
+   two-column grid, and pointless once there is no second column to protect.
+   "Last session start" is 133px in a 110px track, so the line, the list and
+   the block each reported an overflow (0 on main, which drew a flex strip of
+   two readouts here).
+
+   It is a HOST placement, at equal specificity, scoped to this one strip:
+   shared/monitor.css is linked before the view sheets precisely so a host can
+   place what it owns. The kit-side version is `white-space: normal` inside
+   that same media query — P1's file; stated here so it can move up.
+
+   Document overflow was 0 at 568 before and after; what this closes is three
+   elements overflowing their own boxes inside a column that already does. */
+@media (max-width: 640px) {
+  .mcp-session-strip .cur-mon-key { white-space: normal; }
 }
 
 /* THE TWO SESSION READINGS ARE ONE MONITOR NOW (M10). The strip was a flex

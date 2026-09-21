@@ -546,6 +546,29 @@ console.log('\n§5  THE SIDEBAR IS THE APP’S ONE SIDEBAR (v3.65.0)');
   ok(!/\.settings-nav-row[^{]*\{[^}]*\b(?:padding|display|flex-direction|gap|font-family)\s*:/.test(css),
     '\u2026and this file declares NO box for the row any more \u2014 that is the kit\u2019s, which is what '
     + 'puts every sidebar in the app on one row height');
+
+  // TWO PLACEMENTS FOUND BY LOOKING, in a browser on the real cascade, each
+  // pinned so it cannot be tidied away as a stray rule.
+  //
+  // (1) `.cur-sb-secondary`'s 8px margin exists to separate a secondary from
+  // the PRIMARY above it. Settings passes no primary, so that margin landed
+  // under the TITLE and put Updates at y=56 where every other sidebar's first
+  // action is at y=48 — one lone button, eight pixels out of step with the
+  // reference design this whole item exists to match. Measured before: 56.
+  // After: 48, Domains' own.
+  ok(/\.sidebar-title\s*\+\s*\.btn\.cur-sb-secondary\s*\{[^}]*margin-top:\s*0/.test(css),
+    'a secondary with NO primary above it takes no top margin \u2014 the adjacency selector is what '
+    + 'expresses that, so the margin returns the moment a primary is added');
+
+  // (2) shared/monitor.css stacks a line into one column below 640px but keeps
+  // `white-space: nowrap` on the key — correct while the key is the stable
+  // left column of a two-column grid, pointless once there is no second
+  // column. Measured at 568: "Last session start" is 133px in a 110px track,
+  // and the line, the list and the block each reported an overflow that main
+  // did not have.
+  ok(/@media\s*\(max-width:\s*640px\)\s*\{[^}]*\.mcp-session-strip\s+\.cur-mon-key\s*\{[^}]*white-space:\s*normal/.test(css),
+    'the session monitor\u2019s captions may WRAP once the pair has stacked \u2014 scoped to that one '
+    + 'strip, at equal specificity, because the kit is linked before this file');
 }
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);
