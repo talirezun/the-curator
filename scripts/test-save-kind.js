@@ -347,6 +347,16 @@ function extractFunction(src, name, where) {
 
 const viewSrc = readFileSync(join(NEXT, 'views/memory.js'), 'utf8');
 const { renderReadout } = await import('../src/public/next/shared/text.js');
+// v3.65.0 (M1): the four hand-built `.mem-save-line` sentences became an
+// INSTRUMENT — `renderSaveStatus` composes its body and its warnings through
+// `renderMonitor` (shared/monitor.js) and cuts every mark on `freshnessTier`
+// (shared/age.js) rather than the view's own `freshnessStep`-only ladder.
+// Both take no imports of their own, so they are handed in as the REAL
+// shipped functions — not stubs — exactly like `renderReadout` above: a stub
+// would assert this suite's own guess at their shape, not memory.js's actual
+// dependency on them.
+const { renderMonitor } = await import('../src/public/next/shared/monitor.js');
+const { freshnessTier } = await import('../src/public/next/shared/age.js');
 const escapeHtml = new Function(extractFunction(
   readFileSync(join(NEXT, 'app.js'), 'utf8'), 'escapeHtml', 'app.js') + '\nreturn escapeHtml;')();
 
@@ -360,9 +370,12 @@ const escapeHtml = new Function(extractFunction(
 // `freshnessStep` and `state.projects`) and the tray's newer-elsewhere reading
 // (`newerOnAnotherMachine`), so both travel with it. A lift list that is short
 // by one collaborator is a ReferenceError, not a failing assertion.
+// `saveLine` is DELETED (v3.65.0, M1) — its four sentences are `renderMonitor`
+// lines now, composed inline in `renderSaveStatus`, so there is no separate
+// function left to lift.
 const LIFT_VIEW = ['formatAge', 'effectiveSave', 'newestPair', 'harnessOf',
   'newerOnAnotherMachine',
-  'firstNote', 'saveLine', 'renderSaveStatus'];
+  'firstNote', 'renderSaveStatus'];
 const LIFT_AGE = ['freshnessStep'];
 const LIFT = [...LIFT_VIEW, ...LIFT_AGE];
 const ageSrc = readFileSync(join(NEXT, 'shared/age.js'), 'utf8');
@@ -371,8 +384,10 @@ function lifted(stateObj) {
     .concat(LIFT_AGE.map((n) => extractFunction(ageSrc, n, 'shared/age.js')))
     .join('\n') +
     '\nreturn { ' + LIFT.join(', ') + ' };';
-  return new Function('state', 'escapeHtml', 'icon', 'renderReadout', body)(
-    stateObj, escapeHtml, (n) => '<svg data-icon="' + n + '"></svg>', renderReadout);
+  return new Function(
+    'state', 'escapeHtml', 'icon', 'renderReadout', 'renderMonitor', 'freshnessTier', body)(
+    stateObj, escapeHtml, (n) => '<svg data-icon="' + n + '"></svg>',
+    renderReadout, renderMonitor, freshnessTier);
 }
 
 const baseRead = {
@@ -406,7 +421,7 @@ ok('a CLIPPED save gets its own quiet badge, not "incomplete"',
   /mem-badge-quiet">summary shortened<\/span>/.test(clippedHtml) && !/incomplete/.test(clippedHtml),
   clippedHtml.slice(0, 700));
 ok('...and it is NOT given the loud/attention treatment — this is a note, not an alarm',
-  !/mem-save-line-loud/.test(clippedHtml) && !/mem-badge-attn/.test(clippedHtml), clippedHtml);
+  !/cur-mon-loud cur-mon-danger/.test(clippedHtml) && !/mem-badge-attn/.test(clippedHtml), clippedHtml);
 ok('the clipped copy does not claim the state budget was hit',
   !/state budget/i.test(clippedHtml), clippedHtml);
 ok('the clipped copy does not say the handoff is missing anything',
@@ -414,14 +429,19 @@ ok('the clipped copy does not say the handoff is missing anything',
 ok('the clipped copy does not tell the user to save again',
   !/save (it |that content )?again/i.test(clippedHtml), clippedHtml);
 ok('the clipped copy DOES say the handoff was written/saved in full — the reassurance is present, not just the absence of alarm',
-  /written in full/i.test(clippedHtml), clippedHtml);
+  // v3.65.0 (M1): the sentence is a monitor LINE now — key "wrote", value "the
+  // handoff in full" — rather than one hand-built sentence containing the words
+  // "written in full". The claim is unchanged; the DOM shape that carries it is
+  // `.cur-mon-value` on the wrote line.
+  /cur-mon-key">wrote<\/span><span class="cur-mon-value">the handoff in full<\/span>/.test(clippedHtml),
+  clippedHtml);
 ok('the clipped copy names WHY the shortened label matters (a future session decides whether to open this state from it)',
   /future session/i.test(clippedHtml) && /deciding whether to open this state/i.test(clippedHtml), clippedHtml);
 ok('the store’s own note is quoted, not paraphrased away',
   clippedHtml.includes('headline: truncated to 200 chars (was 244)'), clippedHtml);
 
 ok('a TRIMMED save keeps the "incomplete" badge and the loud treatment — unchanged',
-  /mem-badge-attn">incomplete<\/span>/.test(trimmedHtml) && /mem-save-line-loud/.test(trimmedHtml),
+  /mem-badge-attn">incomplete<\/span>/.test(trimmedHtml) && /cur-mon-loud cur-mon-danger/.test(trimmedHtml),
   trimmedHtml.slice(0, 700));
 ok('the corrected trimmed copy no longer claims the state budget was hit as the cause',
   !/did not fit the state budget/i.test(trimmedHtml), trimmedHtml);

@@ -1096,8 +1096,16 @@ section('§10 cross-file couplings, read-only');
     'and "memory" is still one of the rail views');
 
   const memJs = read(path.join(ROOT, 'src', 'public', 'next', 'views', 'memory.js'));
-  ok(/data-mem-project="/.test(memJs),
-    'the memory view still emits data-mem-project — the attribute the shell matches a project row on');
+  // v3.65.0 (the Context package): the row is the shared sidebar component's
+  // now, so the literal attribute string `data-mem-project="` no longer sits
+  // in this file's source — the kit builds it from a `data: {'mem-project':
+  // …}` option handed to renderSidebarRow. The property the tray depends on
+  // (a `data-mem-project` attribute really reaching the DOM) is unchanged;
+  // only where it is typed moved, so the pin reads the source for the key
+  // the kit is handed.
+  ok(/'mem-project':\s*p\.project/.test(memJs),
+    'the memory view still passes mem-project through the sidebar kit\'s data option — '
+    + 'the source of the data-mem-project attribute the shell matches a project row on');
   ok(/\.mem-row\[data-mem-project\]/.test(memJs),
     'and its own click handler still selects rows the same way, so the shell is using the app\'s routing primitive and not a styling hook');
 

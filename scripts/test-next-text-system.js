@@ -909,8 +909,10 @@ console.log('\n§10  THE ROLE -> TOKEN STANDARD');
   // `.cur-sb-name` (v3.65.0): the row rule itself now lives in
   // shared/sidebar.css, with `dm-row-name` riding only as an alias TOKEN on
   // the rendered element — no stylesheet declares a rule for that name any
-  // more, so the standard follows the rule the kit actually owns.
-  const ROW_NAME = ['.cur-sb-name', '.mem-row-name', '.sync-domain-name',
+  // more, so the standard follows the rule the kit actually owns. `.mem-row-
+  // name` is gone the same way — memory.js's sidebar row is the kit's row
+  // now too, so `.cur-sb-name` alone carries this rung for it as well.
+  const ROW_NAME = ['.cur-sb-name', '.sync-domain-name',
                     '.sb-conn-name', '.ing-dest-name', '.chat-conv-title'];
 
   /**

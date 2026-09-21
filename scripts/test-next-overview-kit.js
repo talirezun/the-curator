@@ -176,7 +176,14 @@ function contextOverview(over) {
     activeDomain: 'acme',
     activeProject: 'lumina',
     projects: [],
-    knowledge: { domain: 'acme', error: null, data: { pageCount: 767, lastIngestDate: '2026-09-13' } },
+    // `state.knowledge` is a Map KEYED BY DOMAIN (v3.65.0's P10 package),
+    // not a single-domain object — `renderLayerStrip` reads it as
+    // `state.knowledge instanceof Map ? state.knowledge : null`, so the old
+    // plain-object fixture silently failed that check and dropped the
+    // KNOWLEDGE card out of the strip entirely.
+    knowledge: new Map([['acme', {
+      error: null, data: { pageCount: 767, lastIngestDate: '2026-09-13' },
+    }]]),
     capture: { domain: 'acme', project: 'lumina', error: null,
       data: { logPresent: true, totals: { sessions: 1 }, sessions: [] } },
     ...(over || {}),
@@ -188,6 +195,10 @@ function contextOverview(over) {
     foundations: { present: true, documents: [
       { slug: 'architecture.md', freshness: 'fresh' }, { slug: 'decisions.md', freshness: 'stale' },
     ] },
+    // WHICH DOMAIN(S) the strip reads out of the Map above — `renderLayerStrip`
+    // falls back to `[state.activeDomain]` when this is absent, but the real
+    // caller always supplies it, so the fixture does too.
+    knowledgeDomains: ['acme'],
     ...(over && over.__read ? over.__read : {}),
   };
   // `freshnessTier` is shared/age.js's, imported by the view — injected REAL
@@ -235,9 +246,14 @@ const CTX = contextOverview();
 
   eq('the grid holds seven figures on a domain — five facets plus the two former '
     + 'jumps, which are ordinary cards now (v3.65.0)', withClass(DOM, 'cur-ov-card').length, 7);
-  eq('...and three on a project', withClass(CTX, 'cur-ov-card').length, 3);
+  // v3.65.0's Context package: the fixture's `state.knowledge` is a Map
+  // keyed by domain, exactly the shape `renderLayerStrip` requires — with it
+  // supplied (see contextOverview() above), the KNOWLEDGE card the fixture
+  // was silently dropping now renders, so the strip carries FOUR cards, not
+  // three. Both figures below move the same way.
+  eq('...and four on a project', withClass(CTX, 'cur-ov-card').length, 4);
   eq('every figure on both carries a `.cur-ov-value`',
-    withClass(DOM, 'cur-ov-value').length + '/' + withClass(CTX, 'cur-ov-value').length, '7/3');
+    withClass(DOM, 'cur-ov-value').length + '/' + withClass(CTX, 'cur-ov-value').length, '7/4');
   ok(/class="cur-eyebrow">PAGES</.test(DOM) && /class="cur-eyebrow">FOUNDATIONS</.test(CTX),
     'and every figure is captioned by the SAME `.cur-eyebrow` the kit uses everywhere');
 
@@ -390,10 +406,14 @@ section('§3 — A FILTER HIGHLIGHT ONLY WHERE THERE IS A FILTER');
   ok(!DOM.includes('not a filter'), 'CONTROL: the Domains ⓘ makes no such claim');
 
   // EVERY CARD IS A DOOR ON THE CONTEXT PAGE, and each one names its step.
+  // FOUR now, not three (see the card-count note above): the KNOWLEDGE card
+  // the fixture was silently dropping is a door too, and CAPTURE joined the
+  // jump row in v3.64.2 — so the fourth entry here is CAPTURE's own step, not
+  // a second KNOWLEDGE jump.
   const jumps = tags(CTX).filter((t) => t.attrs['data-ov-jump'] !== undefined)
     .map((t) => t.attrs['data-ov-jump']);
-  eq('the three readings open the three steps',
-    jumps.join(','), 'context-canonical,context-state,context-knowledge');
+  eq('the four readings open their four steps',
+    jumps.join(','), 'context-canonical,context-state,context-knowledge,capture');
   ok(/aria-label="Foundations, 2 documents — go to step 1"/.test(CTX),
     '...each with an accessible name that says where it goes', CTX.slice(0, 900));
   const dj = tags(DOM).filter((t) => t.attrs['data-ov-jump'] !== undefined)

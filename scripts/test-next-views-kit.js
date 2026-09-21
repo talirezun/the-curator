@@ -504,7 +504,11 @@ section('6. Digits that align or tick carry tabular figures');
     // emitted. The figure's tabular treatment did not go with it — it lives on
     // `.tx-readout-value` in shared/text.css, which is where the role is now.
     ['views/ingest.css', '.ing-num'],
-    ['views/memory.css', '.mem-row-meta'], ['views/memory.css', '.mem-j-when'],
+    // `.mem-row-meta` WAS HERE. v3.65.0's Context package adopted the shared
+    // sidebar row for memory.js; the tabular rule for that figure now lives on
+    // `.cur-sb-meta` in shared/sidebar.css (see its own font-variant-numeric
+    // rule), so this WANT entry named a selector the view no longer writes.
+    ['views/memory.css', '.mem-j-when'],
     ['views/sync.css', '.sync-pending-note'],
     ['views/shared.css', '.sb-num'],
   ];
@@ -646,13 +650,14 @@ section('8. Rows on a material take the alpha overlay, not an opaque fill');
     // same element as an ALIAS, but the RULES moved to shared/sidebar.css
     // when all three sidebars became one component — so the declaration this
     // section is really about is read where the browser reads it. The
-    // `.mem-row` entry below stays pointed at views/memory.css until the
-    // Context view adopts the same component.
+    // `.mem-row` entry that used to sit here is GONE: v3.65.0's Context
+    // package adopted the same kit row for memory.js, so `.cur-sb-row:hover`
+    // above already covers it — a second entry would assert the same rule
+    // under a selector that no longer exists.
     ['shared/sidebar.css', '.cur-sb-row:hover', '--mat-row-hover'],
     ['shared/sidebar.css', '.cur-sb-row.active', '--mat-row-active'],
     ['views/ingest.css', '.ing-dest-row:hover:not([disabled])', '--mat-row-hover'],
     ['views/ingest.css', '.ing-dest-row.active', '--mat-row-active'],
-    ['views/memory.css', '.mem-row:hover', '--mat-row-hover'],
   ];
   const wrong = [];
   for (const [file, sel, tok] of ROWS) {
@@ -682,12 +687,11 @@ section('8. Rows on a material take the alpha overlay, not an opaque fill');
       `${name}: the overlay steps ${step}:1 off the plane where --surface-hover managed ${wasStep}:1`);
   }
 
-  // THE ONE ROW DELIBERATELY LEFT ALONE, asserted so a later "make them all
-  // uniform" pass has to read the reason: a selected .mem-row is ACCENT-
-  // tinted, which is STATE rather than the plane, and neutralising it would
-  // make pressing the scope you are reading look like leaving it.
-  ok(declFor(read('views/memory.css'), '.mem-row.active', 'background') === 'var(--accent-tint)',
-    '.mem-row.active keeps its accent tint — that is selection state, not a lit plane');
+  // THE EXCEPTION THIS SECTION USED TO CARVE OUT FOR `.mem-row.active` IS
+  // RETIRED (v3.65.0, R2): the accent-tinted "selected scope" treatment is
+  // gone with the bespoke row — the kit's `.cur-sb-row.active` above is a
+  // FILLED plane (`--mat-row-active`) like every other row, so the active
+  // state is uniform everywhere now and there is nothing left to carve out.
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -870,7 +874,11 @@ section('11. What §10 CANNOT see, pinned by name because a browser found it');
     ['views/onboarding.css', '.obp-dismiss', /position:\s*relative/],
     ['views/domains.css', '.dm-dismiss-btn', /height:\s*var\(--control-sm\)/],
     ['views/domains.css', '.dm-group-fixall-btn', /height:\s*var\(--control-sm\)/],
-    ['views/memory.css', '.mem-refresh', /min-height:\s*var\(--hit-min\)/],
+    // `.mem-refresh` WAS HERE, at its browser-found 51x16. v3.65.0's Context
+    // package retired that bespoke link: Refresh is a full-width
+    // `btn btn-secondary` in the head slot now, so its height comes from
+    // `.btn`'s `--control-md` — the ordinary control floor, not a hit-target
+    // grown past its own box.
     ['views/ingest.css', '.ing-browse-link', /min-height:\s*var\(--hit-min\)/],
   ];
   const unpinned = [];
