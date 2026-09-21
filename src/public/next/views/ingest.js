@@ -164,6 +164,14 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // rows and the tray speak, and why the dot and the words are cut on one set
 // of bands.
 import { formatDayAge, freshnessDotHtml, clockGlyph } from '../shared/age.js';
+// CONTINUITY BY IDENTITY (v3.65.1). The ONE mapping from an install's domain
+// index to its colour slot; the colours are shared/sidebar.css's
+// `.cur-sb-dot-N`. This list is a SECOND implementation of the sidebar row's
+// anatomy and stays one this release (re-pointing it at renderSidebarRow is a
+// second adoption with its own suites) — but the dot it now carries is the
+// kit's own glyph and the kit's own colour, so a destination row and that
+// domain's row on the Domains rail cannot disagree.
+import { identityDotClass } from '../shared/sidebar.js';
 
 const ALLOWED_EXT = ['.txt', '.md', '.pdf'];
 const QUEUE_API = '/api/ingest-queue';
@@ -1679,7 +1687,7 @@ function renderSidebar(token) {
   // disagree about what "today" is — the v3.34.0 rule that an age has ONE
   // source, applied to the render rather than to the store.
   const now = Date.now();
-  const rows = state.domains.map((d) => {
+  const rows = state.domains.map((d, i) => {
     const isActive = d.slug === state.domain;
     const isRunning = running.has(d.slug);
     // A domain that is running again is described as RUNNING, not as settled.
@@ -1694,6 +1702,15 @@ function renderSidebar(token) {
         ' data-dest-slug="' + escapeHtml(d.slug) + '"' +
         (rowsLocked ? ' disabled' : '') +
         (isActive ? ' aria-current="true"' : '') + '>' +
+        // THE IDENTITY DOT — the same glyph and the same palette slot this
+        // domain carries on the Domains rail, on the Context rail and on its
+        // Chat chip. `i` is the position in `state.domains`, which is
+        // GET /api/domains/stats' order and therefore listDomains()'s: the
+        // index every one of those surfaces counts from. It is aria-hidden by
+        // omission of any text — the row's accessible name is the domain name
+        // beside it, and a screen reader announcing a colour would add
+        // nothing a sighted glance is not already getting for free.
+        '<span class="cur-sb-dot ' + identityDotClass(i) + '"></span>' +
         '<span class="ing-dest-main">' +
           '<span class="ing-dest-name">' + escapeHtml(d.displayName || d.slug) + '</span>' +
           // Line one: the key figure, then the freshness mark, the clock glyph

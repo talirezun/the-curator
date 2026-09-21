@@ -43,8 +43,10 @@
  *   6. THE STYLESHEET GOING MISSING OR OVERREACHING. §6 requires every
  *      emitted class to resolve a rule, the press to keep its reduced-motion
  *      escape, and the file to declare NO `.fresh-` rule (shared/freshness.css
- *      owns that scale) and NO colour literal (the design-kit baseline holds
- *      exactly two files, neither of them shared).
+ *      owns that scale). It carries EXACTLY THREE colour literals since
+ *      v3.65.1 — the identity palette's three derived light-theme rungs, the
+ *      only values in the app with no token behind them — and §6 pins that
+ *      count so a fourth cannot arrive quietly.
  *
  * ── EXECUTED, NOT SCANNED ──────────────────────────────────────────────────
  * §1 lifts views/domains.js's real row-building block by brace-matching and
@@ -589,10 +591,31 @@ section('§5 — THE ALIAS TABLE, AND THE PALETTE MAPPING');
     Object.keys(ALIASES).sort().join(','), 'dm,mem,settings');
   ok(Object.isFrozen(ALIASES) && Object.values(ALIASES).every(Object.isFrozen),
     '...and it is frozen, so a caller cannot give one view another\'s tokens');
-  eq('the `dm` entry is the nine tokens views/domains.js\'s suites address by name',
+  eq('the `dm` entry is the nine row tokens views/domains.js\'s suites address by '
+    + 'name, plus the one per-slot PREFIX',
     Object.values(ALIASES.dm).sort().join(','),
-    'dm-row,dm-row-age,dm-row-dot,dm-row-event,dm-row-figure,dm-row-list,dm-row-main,'
-    + 'dm-row-meta,dm-row-name,dm-row-sep');
+    'dm-row,dm-row-age,dm-row-dot,dm-row-dot,dm-row-event,dm-row-figure,dm-row-list,'
+    + 'dm-row-main,dm-row-meta,dm-row-name,dm-row-sep');
+  // `dotSlot` is the tenth VALUE and the only one that is not a finished
+  // class: the kit appends the slot number the row's own `dotClass` names.
+  eq('...and `dotSlot` is that prefix, on `dm` ALONE', ALIASES.dm.dotSlot, 'dm-row-dot');
+  ok(!('dotSlot' in ALIASES.mem) && !('dotSlot' in ALIASES.settings),
+    '...so no other host is given a dead per-slot token');
+  {
+    // EXECUTED: the alias rides the SAME slot the kit token names, and it
+    // appears only when the host asked for it.
+    const dmRow = renderSidebarRow({ alias: 'dm', name: 'A', dotClass: identityDotClass(2) });
+    ok(/class="cur-sb-dot dm-row-dot cur-sb-dot-3 dm-row-dot-3"/.test(dmRow),
+      'a `dm` row emits the kit slot AND its alias, both naming slot 3', dmRow);
+    const memRow2 = renderSidebarRow({ alias: 'mem', name: 'A', dotClass: identityDotClass(2) });
+    ok(/class="cur-sb-dot mem-row-mark cur-sb-dot-3"/.test(memRow2),
+      '...and a `mem` row emits the kit slot alone', memRow2);
+    ok(!/dot-\d+ [a-z-]+-\d+/.test(renderSidebarRow({ name: 'A', dotClass: identityDotClass(0) })),
+      '...and an aliasless row emits no slot alias at all');
+    ok(!/dm-row-dot-/.test(renderSidebarRow({ alias: 'dm', name: 'A', dotClass: 'not-a-slot' })),
+      'a dotClass that is not one of the kit\'s slots gets NO alias — the alias is '
+      + 'derived from the class the caller passed, never from a second mapping');
+  }
   // EVERY aliased token is one a host really uses. For `settings`, which
   // still hand-builds its rows, that is checked against the view's own
   // SOURCE. For `dm` and `mem`, which both adopted the component (v3.65.0 —
@@ -635,20 +658,45 @@ section('§5 — THE ALIAS TABLE, AND THE PALETTE MAPPING');
   eq('...and a negative index wraps rather than producing `cur-sb-dot-0`',
     identityDotClass(-1), 'cur-sb-dot-2');
   eq('...and a non-number is slot 1 rather than NaN', identityDotClass('x'), 'cur-sb-dot-1');
-  ok(!/cur-sb-dot-\d/.test(BARE_CSS),
-    'the kit declares NO colour for those slots — three of the six light values are '
-    + 'derived literals, and test-next-design-kit.js §10 holds the colour-literal '
-    + 'baseline at exactly two files, neither of them shared');
-  // `.dm-row-dot-1` now sits in a SELECTOR LIST beside `.cur-sb-dot-1` (P2,
-  // v3.65.0) rather than owning the rule alone — the twelve colour rules pair
-  // the two names so a Context row coloured through `identityDotClass()`
-  // paints in both themes. The pattern allows for that list rather than
-  // requiring `.dm-row-dot-1` to be immediately followed by `{`.
-  ok(/\.dm-row-dot-1\b[^{}]*\{/.test(readFileSync(path.join(NEXT, 'views/domains.css'), 'utf8')),
-    '...so the palette stays in views/domains.css, where it is already baselined and '
-    + 'already measured');
-  ok(/identityDotClass/.test(KIT_JS) && KIT_JS.includes('cur-sb-dot-1')
-    === false || true, 'CONTROL — the mapping is exported from the kit, not from a view');
+  // THE PALETTE IS THE KIT'S NOW (v3.65.1). It was views/domains.css's, on
+  // the reading that test-next-design-kit.js §10's two baselined files were
+  // two VIEWS — one of them is shared/checkbox.css, so it never was.
+  {
+    const slots = [...new Set([...BARE_CSS.matchAll(/\.cur-sb-dot-(\d)\b/g)].map((m) => m[1]))].sort();
+    eq('the kit declares all six identity slots', slots.join(','), '1,2,3,4,5,6');
+    for (let n = 1; n <= 6; n++) {
+      ok(new RegExp('\\.cur-sb-dot-' + n + '\\s*\\{\\s*background:\\s*var\\(--').test(BARE_CSS),
+        `slot ${n} takes its colour from a NAMED value, never a literal in the rule`);
+      ok(new RegExp('\\[data-theme="light"\\] \\.cur-sb-dot-' + n + '\\s*\\{').test(BARE_CSS),
+        `...and slot ${n} has a light-theme value — the defect that started this was six `
+        + 'DARK values painted in light at 1.85:1');
+    }
+  }
+  // AND NOBODY ELSE DECLARES IT. One palette means one copy: a view that
+  // re-declares a slot silently paints both rails, which is how the two
+  // copies came to exist.
+  {
+    const OTHERS = ['views/domains.css', 'views/chat.css', 'views/ingest.css'];
+    for (const rel of OTHERS) {
+      const css = readFileSync(path.join(NEXT, rel), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      ok(!/\.cur-sb-dot-\d\b[^{}]*\{/.test(css) && !/\.dm-row-dot-\d\b[^{}]*\{/.test(css),
+        `${rel} declares NO identity-slot rule — the palette lives in shared/sidebar.css alone`);
+    }
+    // views/memory.css is EXCLUDED FROM THIS LIST ON PURPOSE AND ONLY UNTIL
+    // MERGE: it still carries the second, byte-identical copy at :293-305,
+    // which is the Context package's file to delete in the same release. Add
+    // it to OTHERS above in the commit that deletes those lines.
+  }
+  ok(/\.dm-row-dot-\d/.test(KIT_JS) === false,
+    'CONTROL — the kit JS names no `dm-row-dot-N` literal either; the alias is COMPOSED '
+    + 'from ALIASES.dm.dotSlot and the slot the caller already named');
+  ok(/export function identityDotClass/.test(KIT_JS),
+    'CONTROL — the mapping is EXPORTED from the kit, so a view cannot own a second one');
+  ok(!/function domainDotClass/.test(
+    readFileSync(path.join(NEXT, 'views/domains.js'), 'utf8')
+      .replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')),
+    '...and views/domains.js no longer defines one — its `domainDotClass` was that '
+    + 'second mapping and is deleted');
   ok(/\.cur-sb-dot\s*\{[^}]*border-radius:\s*50%/.test(BARE_CSS),
     'the kit owns the dot\'s SHAPE, which is the half that must not differ between views');
 }
@@ -688,8 +736,18 @@ section('§6 — THE STYLESHEET, AND WHAT IT MAY NOT DECLARE');
     + 'test-freshness-scale.js §4 forbids a view or kit sheet declaring one');
   ok(!/\.tx-/.test(BARE_CSS),
     'NO `.tx-` rule — shared/text.css owns that prefix');
-  ok(!/#[0-9a-fA-F]{3,8}\b/.test(BARE_CSS),
-    'NO colour literal — every colour is a token');
+  // THREE COLOUR LITERALS, NAMED AND COUNTED. They are the identity palette's
+  // derived light-theme rungs (#16768C / #438126 / #925E13): the design
+  // bundle defines nothing darker than -600 in those three families, and
+  // tokens/color.css is byte-identical to the bundle and must stay so. Every
+  // other colour in this file is a token. A FOURTH is a regression.
+  {
+    const lits = (BARE_CSS.match(/#[0-9a-fA-F]{3,8}\b/g) || []);
+    eq('EXACTLY three colour literals, and they are the three derived rungs',
+      lits.sort().join(',').toUpperCase(), '#16768C,#438126,#925E13');
+    ok(new RegExp('\\[data-theme="light"\\]\\s*\\{[^}]*#16768C').test(BARE_CSS),
+      '...and all three are inside the [data-theme="light"] block — DARK moves by no byte');
+  }
   ok(!/font-size:\s*\d+px/.test(BARE_CSS),
     'NO px font-size — the --font-scale control would not reach it');
 }

@@ -131,15 +131,21 @@ const { formatAge, formatDayAge, dayFreshnessStep, dayFreshnessTier, freshnessDo
 // ── THE REAL KIT, NOT A STUB (v3.65.0) ────────────────────────────────────
 // §8 lifts `renderSidebar` out of views/domains.js and EXECUTES it. Since
 // that function builds its head, its group and its rows through
-// shared/sidebar.js, those three names are FREE IDENTIFIERS inside the lifted
+// shared/sidebar.js, those names are FREE IDENTIFIERS inside the lifted
 // body — and a module-level import is NOT visible there, so a call to one is
 // a ReferenceError: a suite that CRASHES rather than asserts. They are
 // injected through the sandbox's constructor, and they are the REAL functions
 // rather than stubs, which is what keeps every assertion below an assertion
 // about the SHIPPED component.
+//
+// `identityDotClass` JOINED THEM IN v3.65.1. views/domains.js used to own a
+// second copy of the kit's mapping (`domainDotClass` -> `dm-row-dot-N`); one
+// mapping and one palette now serve every surface that names a domain, so the
+// lifted body calls the kit's function and this suite injects it.
 const sidebarKit = await import(
   pathToFileURL(path.join(ROOT, 'src/public/next/shared/sidebar.js')).href);
-const { renderSidebarHead, renderSidebarGroup, renderSidebarRow } = sidebarKit;
+const { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
+  identityDotClass } = sidebarKit;
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§0  Positive control — everything this suite needs really loaded');
@@ -571,10 +577,16 @@ let queueJobId = null;
 const myMountToken = 1;
 const document = { getElementById() { return null; }, querySelectorAll() { return []; } };
 `;
+  // identityDotClass is injected here too (v3.65.1): the DESTINATION row now
+  // carries the domain's identity dot, from the same mapping and the same
+  // palette the Domains rail uses — this list is still a SECOND
+  // implementation of the row anatomy (re-pointing it at renderSidebarRow is
+  // a separate adoption with its own suites), but the dot on it is the kit's.
   const make = new Function('formatDayAge', 'freshnessDotHtml', 'clockGlyph',
+    'identityDotClass',
     PREAMBLE + NEED.map((n) => bodies[n]).join('\n\n') +
     '\nreturn { run: (s) => { state = s; renderSidebar(2); return captured; } };');
-  const api = make(formatDayAge, freshnessDotHtml, clockGlyph);
+  const api = make(formatDayAge, freshnessDotHtml, clockGlyph, identityDotClass);
 
   const NOW_DAY = (() => {
     const d = new Date();
@@ -663,7 +675,9 @@ section('§8  The Domains KNOWLEDGE row, rendered');
   // returns the secondary action's DESCRIPTOR now, not a `<button>`, and a
   // stub returning markup would silently prove the head renders a string this
   // view no longer produces.
-  const NEED = ['renderSidebar', 'domainLastEventText', 'domainDotClass', 'knowledgeFolderBtn'];
+  // `domainDotClass` LEFT THIS LIST in v3.65.1 — views/domains.js no longer
+  // defines it; the kit's `identityDotClass` is injected below instead.
+  const NEED = ['renderSidebar', 'domainLastEventText', 'knowledgeFolderBtn'];
   const bodies = {};
   let fatal = false;
   for (const n of NEED) {
@@ -693,10 +707,6 @@ function openLifecycle() {}
 function selectDomain() {}
 function onChooseKnowledgeFolder() { return Promise.resolve(); }
 function reportAsyncActionFailure() {}
-// The real constant, not a stand-in: scripts/test-next-domain-dots.js already
-// enumerates the slots from it, and a different number here would silently
-// change which identity dot a row is asserted to carry.
-const DOMAIN_DOT_SLOTS = 6;
 // See the note on the same stub in §7: FALSE makes this renderer return
 // before it builds a single row.
 function isCurrentMount() { return true; }
@@ -705,11 +715,11 @@ const myMountToken = 1;
 const document = { getElementById() { return null; }, querySelectorAll() { return []; } };
 `;
   const make = new Function('formatDayAge', 'freshnessDotHtml', 'clockGlyph',
-    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow',
+    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow', 'identityDotClass',
     PREAMBLE + NEED.map((n) => bodies[n]).join('\n\n') +
     '\nreturn { run: (s) => { state = s; renderSidebar(2); return captured; } };');
   const api = make(formatDayAge, freshnessDotHtml, clockGlyph,
-    renderSidebarHead, renderSidebarGroup, renderSidebarRow);
+    renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass);
 
   const today = (() => {
     const d = new Date();
@@ -770,8 +780,21 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
   // THE THREE MARKS ARE THREE FACTS. The identity dot and the health dot are
   // separate readings and folding any of them together would make one dot
   // answer questions it cannot.
-  ok(rowOf('articles').includes('dm-row-dot dm-row-dot-1'),
-    'the domain IDENTITY dot survives, unchanged');
+  // v3.65.1: the identity slot is the KIT's class now (`cur-sb-dot-1`), with
+  // `dm-row-dot-1` riding beside it as an alias exactly as the other nine
+  // `dm-` tokens do. Asserted as a SET naming ONE slot rather than as an
+  // adjacent pair — the pair was an accident of concatenation order, and a
+  // pin on it would fail on a change that moved nothing a user can see.
+  {
+    const cls = /<span class="([^"]*cur-sb-dot[^"]*)"><\/span>/.exec(rowOf('articles'));
+    const tokens = cls ? cls[1].split(/\s+/) : [];
+    ok(tokens.includes('cur-sb-dot') && tokens.includes('dm-row-dot')
+       && tokens.includes('cur-sb-dot-1') && tokens.includes('dm-row-dot-1'),
+      'the domain IDENTITY dot survives: the kit glyph and slot, and the host alias for both',
+      tokens.join(' '));
+    ok(tokens.filter((t) => /-dot-\d$/.test(t)).every((t) => t.endsWith('-1')),
+      '...and every slot token on it names the SAME slot — two names, one colour');
+  }
   ok(rowOf('articles').includes('dm-row-attn'),
     'and so does the ATTENTION dot — open health issues is a different question from freshness');
   ok(rowOf('articles').includes('4 open health issue'),
@@ -932,7 +955,17 @@ function gatedLoader() { return '<loader/>'; }
 function renderStatus(o) { return '<div>' + escapeHtml(o && o.title || '') + '</div>'; }
 function bindSidebarButtons() {}
 function selectDomain() {}
-const DOMAIN_DOT_SLOTS = 6;
+// THE FROZEN REFERENCE CARRIES ITS OWN FROZEN HELPER (v3.65.1).
+// domainDotClass was lifted from the LIVE views/domains.js and shared by both
+// arms while it still existed there. It does not any more -- one mapping,
+// identityDotClass, serves every surface that names a domain -- so the
+// v3.64.2 reference below, which is frozen source and must keep producing
+// exactly what v3.64.2 produced, gets a frozen copy of the function IT
+// called. A helper only the reference uses belongs to the reference; lifting
+// one from the live file was always a way for the two arms to move together
+// and cancel out.
+// (NO BACKTICKS IN THIS BLOCK: it sits inside a template literal.)
+function domainDotClass(index) { return 'dm-row-dot-' + ((index % 6) + 1); }
 function isCurrentMount() { return true; }
 let loadGate = {};
 const myMountToken = 1;
@@ -943,16 +976,17 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
     // arms, because neither changed in this adoption and a second frozen copy
     // of `domainLastEventText` would be a second thing to keep in step.
     const LIFT = ['renderSidebar', 'knowledgeFolderBtn'];
-    const SHARED_FNS = ['domainLastEventText', 'domainDotClass'];
+    const SHARED_FNS = ['domainLastEventText'];
     const build = (src, kit) => {
       const body = PRE2 + SHARED_FNS.map((n) => extractFunction(NOW, n)).join('\n\n') + '\n\n'
         + LIFT.map((n) => extractFunction(src, n)).join('\n\n') +
         '\nreturn { run: (s) => { state = s; renderSidebar(2); return captured; } };';
       return kit
         ? new Function('formatDayAge', 'freshnessDotHtml', 'clockGlyph',
-            'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow', body)(
+            'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow',
+            'identityDotClass', body)(
             formatDayAge, freshnessDotHtml, clockGlyph,
-            renderSidebarHead, renderSidebarGroup, renderSidebarRow)
+            renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass)
         : new Function('formatDayAge', 'freshnessDotHtml', 'clockGlyph', body)(
             formatDayAge, freshnessDotHtml, clockGlyph);
     };
@@ -1109,49 +1143,44 @@ section('§8c  THE ROW RULES MOVED — they were not copied');
     '.cur-sb-figure', '.cur-sb-sep', '.cur-sb-age', '.cur-sb-event']
     .filter((sel) => new RegExp(sel.replace('.', '\\.') + '(?![a-z0-9-])[^{}]*\\{').test(sb));
   eq(kitHas.length, 9, 'CONTROL — and the kit declares all nine under its own names');
-  // THE TWO THINGS THAT COULD NOT MOVE, asserted so a later tidy-up has to
-  // read the reason rather than discover it.
-  // ── ALL SIX SLOTS, IN BOTH THEMES, PAIRED ─────────────────────────────
-  // A first cut asserted `/\.cur-sb-dot-1/` against the whole file and was
-  // GREEN when slot 1's DARK rule lost the kit's name, because the light-theme
-  // rule below still carried it. Six colours x two themes is twelve places to
-  // drop a selector, and a Context project row coloured through
-  // identityDotClass() would then paint nothing at all in one theme only.
-  // So each of the twelve is read as a RULE and its two selectors are checked
-  // against each other.
-  const dotRules = [...dm.matchAll(/([^{}]*?\.(?:dm-row-dot|cur-sb-dot)-(\d)[^{}]*)\{([^}]*)\}/g)];
+  // ── THE PALETTE FOLLOWED THE ROW (v3.65.1) ────────────────────────────
+  // v3.65.0 left the twelve colour rules in views/domains.css, naming the
+  // kit's class beside the host's, on the reading that the colour-literal
+  // baseline "holds exactly two files, neither of them shared". One of those
+  // two is shared/checkbox.css, so it never was two views — and leaving them
+  // here had a measured cost: views/memory.css declared its own byte-identical
+  // copy of the same twelve rules, and CSS has no per-view scope, so each
+  // copy painted BOTH rails. One palette, one file, six slots x two themes.
+  //
+  // Each of the twelve is read as a RULE and required to declare a
+  // background: a first cut asserted `/\.cur-sb-dot-1/` against the whole file
+  // and was GREEN when slot 1's DARK rule lost its selector, because the
+  // light-theme rule below still carried it.
+  const dotRules = [...sb.matchAll(/([^{}]*?\.cur-sb-dot-(\d)[^{}]*)\{([^}]*)\}/g)];
   const missing = [];
   for (let n = 1; n <= 6; n++) {
     for (const [theme, want] of [['dark', false], ['light', true]]) {
       const rule = dotRules.find((m) => Number(m[2]) === n
         && /\[data-theme="light"\]/.test(m[1]) === want);
       if (!rule) { missing.push(`slot ${n} ${theme}: no rule`); continue; }
-      const sels = rule[1].split(',').map((x) => x.trim());
-      const hostSel = sels.find((x) => x.endsWith('.dm-row-dot-' + n));
-      const kitSel = sels.find((x) => x.endsWith('.cur-sb-dot-' + n));
-      if (!hostSel) missing.push(`slot ${n} ${theme}: host class absent`);
-      if (!kitSel) missing.push(`slot ${n} ${theme}: kit class absent`);
-      if (want && hostSel && kitSel
-          && !(/\[data-theme="light"\]/.test(hostSel) && /\[data-theme="light"\]/.test(kitSel))) {
-        missing.push(`slot ${n} light: one of the two is unscoped`);
-      }
       if (!/background\s*:/.test(rule[3])) missing.push(`slot ${n} ${theme}: declares no background`);
     }
   }
   ok(missing.length === 0,
-    'all six identity COLOURS stay in views/domains.css and EVERY one of the twelve rules '
-    + '(six slots x two themes) names the kit\'s class beside the host\'s — three of the light '
-    + 'values are derived literals and the colour-literal baseline holds exactly two files, so '
-    + 'the palette could not move into the kit; the selector list is what lets a second view '
-    + 'colour a dot through identityDotClass() without importing from a view',
+    'all twelve identity COLOUR rules (six slots x two themes) live in shared/sidebar.css, '
+    + 'beside the glyph they paint — so the Domains rail, the Context rail, Chat\'s domain '
+    + 'chips and Ingest\'s destination rows take one colour from one place',
     missing.join(' | '));
   ok(dotRules.length >= 12,
     `CONTROL — the scan really found the twelve rules (${dotRules.length}), so "nothing missing" `
     + 'is a reading rather than a regex that stopped matching');
+  ok(!/\.dm-row-dot-\d\b[^{}]*\{/.test(dm),
+    '...and views/domains.css declares NO identity-slot rule of its own — `dm-row-dot-N` is a '
+    + 'markup alias the kit emits and nothing paints');
   ok(/\.dm-row-mirror\s*\{/.test(dm) && /\.dm-row-attn\s*\{/.test(dm),
-    '…and so do the two BADGES, which are this view\'s own markup in the kit\'s trusted slot');
-  ok(!/\.cur-sb-dot-1\s*\{[^}]*background/.test(sb) && !/\.fresh-/.test(sb),
-    'CONTROL — the kit declares neither an identity COLOUR nor any `.fresh-` rule; it owns the '
+    '…the two BADGES do stay, being this view\'s own markup in the kit\'s trusted slot');
+  ok(/\.cur-sb-dot-1\s*\{[^}]*background/.test(sb) && !/\.fresh-/.test(sb),
+    'CONTROL — the kit declares the identity COLOUR now and still NO `.fresh-` rule; it owns the '
     + 'dot\'s shape and nothing about which colour or which state it carries');
 }
 

@@ -36,10 +36,17 @@
  *     identical; comments are stripped and the maps are compared.
  *  §3 CLASS INVARIANT: no `style=` attribute anywhere in views/domains.js
  *     carries a literal colour. Scanned over the whole file, not a named list.
- *  §4 The dot slots are ENUMERATED BY RUNNING the real `domainDotClass`
- *     extracted from the real source — never a hardcoded list of class names —
- *     and each returned class must have BOTH a default rule and a
- *     `[data-theme="light"]` rule in views/domains.css.
+ *  §4 The dot slots are ENUMERATED BY RUNNING the real `identityDotClass`
+ *     IMPORTED from shared/sidebar.js — never a hardcoded list of class names
+ *     — and each returned class must have BOTH a default rule and a
+ *     `[data-theme="light"]` rule in shared/sidebar.css. v3.65.1 moved both
+ *     halves there: views/domains.js's `domainDotClass` was a SECOND copy of
+ *     the same arithmetic under a second family of names, and the twelve
+ *     colour rules existed TWICE (views/domains.css and views/memory.css,
+ *     byte-identical, each painting both rails because CSS has no per-view
+ *     scope). §4 now also asserts that `dm-row-dot-N` survives as a MARKUP
+ *     alias that resolves no background anywhere — which is the whole
+ *     content of "one palette".
  *  §5 Every slot clears 3:1 against every backdrop a domain row can have, in
  *     BOTH themes. The backdrop list is derived from the `.dm-row` rules on
  *     disk plus `.sidebar` in shell.css, so moving a row's background moves
@@ -83,20 +90,26 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { readdirSync } from 'fs';
 import { stripComments, functionSource } from './test-helpers/source-scan.js';
+// THE MAPPING AND THE ROW ARE IMPORTED, NOT LIFTED (v3.65.1). Both are
+// exported from a module this suite can simply load; rebuilding either from
+// its source text would be a second chance to get it wrong.
+import { identityDotClass, IDENTITY_DOT_SLOTS, renderSidebarRow }
+  from '../src/public/next/shared/sidebar.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DOMAINS_JS = path.join(ROOT, 'src/public/next/views/domains.js');
 const DOMAINS_CSS = path.join(ROOT, 'src/public/next/views/domains.css');
 const SHELL_CSS = path.join(ROOT, 'src/public/next/shell.css');
-/* ── shared/sidebar.css JOINS THE READ LIST (v3.65.0) ─────────────────────
-   The row itself — `.dm-row`, its hover / active / press states and the dot's
-   SHAPE — moved OUT of views/domains.css into the kit when all three sidebars
-   became one component. What stayed behind is the one thing that could not
-   move: the six identity COLOURS, three of whose light values are derived
-   literals, against a colour-literal baseline that holds exactly two files.
-   So §5's backdrop model reads its three row rules from the kit and its six
-   colours from the view, which is where each of them now lives. */
+/* ── shared/sidebar.css IS NOW THE WHOLE OF IT (v3.65.0, v3.65.1) ─────────
+   v3.65.0 moved the row — `.dm-row`, its hover / active / press states and
+   the dot's SHAPE — out of views/domains.css into the kit when all three
+   sidebars became one component, leaving the six identity COLOURS behind.
+   v3.65.1 moved those too, because leaving them made the palette one view's
+   property: views/memory.css had declared its own byte-identical copy of the
+   same twelve rules, and CSS has no per-view scope, so each copy painted BOTH
+   rails. §5 now reads the row rules AND the six colours from this one file. */
 const SIDEBAR_CSS = path.join(ROOT, 'src/public/next/shared/sidebar.css');
 const COLOR_CSS = path.join(ROOT, 'src/public/next/tokens/color.css');
 /* tokens/material.css is read TOO, and it is not optional. The `.sidebar` /
@@ -109,6 +122,19 @@ const COLOR_CSS = path.join(ROOT, 'src/public/next/tokens/color.css');
    the reduced-transparency and increased-contrast degradations are excluded:
    grading the shipped design against its fallback would grade the fallback. */
 const MATERIAL_CSS = path.join(ROOT, 'src/public/next/tokens/material.css');
+
+/** Every stylesheet under /next, relative to ROOT — walked, never listed, so
+ *  a new view sheet that re-declares an identity slot is caught on arrival. */
+function walkNextCss(dir) {
+  const out = [];
+  for (const d of readdirSync(dir, { withFileTypes: true })) {
+    const abs = path.join(dir, d.name);
+    if (d.isDirectory()) out.push(...walkNextCss(abs));
+    else if (d.name.endsWith('.css')) out.push(path.relative(ROOT, abs).split(path.sep).join('/'));
+  }
+  return out;
+}
+const ALL_NEXT_CSS = walkNextCss(path.join(ROOT, 'src/public/next'));
 
 const jsRaw = readFileSync(DOMAINS_JS, 'utf8');
 const js = stripComments(jsRaw);
@@ -127,7 +153,12 @@ const materialCss = readFileSync(MATERIAL_CSS, 'utf8');
    three dots it exists for — so the view's own custom properties are read
    too, concatenated LAST because index.html links views/ after tokens/ and
    `:root` in a view file therefore wins the same tie in the browser. */
-const tokenCss = `${colorCss}\n${materialCss}\n${domainsCss}`;
+// shared/sidebar.css joins the token universe in v3.65.1: `--id-ink-1/-2/-3`
+// (the identity palette's three derived light rungs, formerly `--dm-ink-*` in
+// views/domains.css) are declared there now, and a universe without it
+// resolves all three to null — which would make §5 grade nothing while
+// reporting green.
+const tokenCss = `${colorCss}\n${materialCss}\n${sidebarCss}\n${domainsCss}`;
 
 let passed = 0, failed = 0;
 const ok = (cond, label) => { if (cond) { passed++; console.log(`  ✓ ${label}`); } else { failed++; console.log(`  ✗ ${label}`); } };
@@ -416,28 +447,58 @@ function inlineColorStyles(source) {
 }
 
 // ── §4 the slots, enumerated by RUNNING the real class picker ──────────────
-section('§4 Dot slots enumerated by executing the real domainDotClass');
-let domainDotClass = null, slotCount = null;
+section('§4 Dot slots enumerated by executing the real identityDotClass');
+let slotCount = null;
 {
-  const fnSrc = functionSource(js, 'domainDotClass');
-  ok(fnSrc !== null, 'domainDotClass extracted from views/domains.js');
-  const slotDecl = /const\s+DOMAIN_DOT_SLOTS\s*=\s*(\d+)/.exec(js);
-  ok(slotDecl !== null, 'DOMAIN_DOT_SLOTS declared in views/domains.js');
-  if (fnSrc && slotDecl) {
-    slotCount = Number(slotDecl[1]);
-    domainDotClass = new Function(`const DOMAIN_DOT_SLOTS = ${slotCount};\n${fnSrc}\nreturn domainDotClass;`)();
-  }
-  ok(typeof domainDotClass === 'function', 'domainDotClass runs in a sandbox');
+  // THE MAPPING IS THE KIT'S (v3.65.1) and is IMPORTED, not lifted: it is an
+  // exported function in a module this suite can load, so a sandbox rebuilt
+  // from its source text would only be a second chance to get it wrong.
+  ok(typeof identityDotClass === 'function', 'identityDotClass imported from shared/sidebar.js');
+  slotCount = IDENTITY_DOT_SLOTS;
   // Pinned to a LITERAL, not read back off the constant the code uses.
   eq(slotCount, 6, 'six identity slots (the design gives each domain a stable colour by list position)');
+  // AND THE SECOND MAPPING IS GONE. Comments are stripped first, so the note
+  // views/domains.js leaves behind naming the deleted function cannot satisfy
+  // this — the shape that let a sibling suite stay green over a deleted rule.
+  const jsCode = js;
+  ok(!/function\s+domainDotClass/.test(jsCode),
+    'views/domains.js defines NO domainDotClass — that was the second copy of this arithmetic');
+  ok(!/DOMAIN_DOT_SLOTS/.test(jsCode),
+    '...and no DOMAIN_DOT_SLOTS either — one slot count, in the kit');
 }
 const SLOT_CLASSES = [];
-if (domainDotClass && slotCount) {
-  for (let i = 0; i < slotCount; i++) SLOT_CLASSES.push(domainDotClass(i));
+if (slotCount) {
+  for (let i = 0; i < slotCount; i++) SLOT_CLASSES.push(identityDotClass(i));
   const unique = new Set(SLOT_CLASSES);
   eq(unique.size, slotCount, 'every slot yields a DISTINCT class');
-  eq(domainDotClass(slotCount), SLOT_CLASSES[0], 'the picker wraps around at the slot count');
-  eq(domainDotClass(slotCount * 3 + 2), SLOT_CLASSES[2], 'and keeps wrapping for a long domain list');
+  eq(identityDotClass(slotCount), SLOT_CLASSES[0], 'the picker wraps around at the slot count');
+  eq(identityDotClass(slotCount * 3 + 2), SLOT_CLASSES[2], 'and keeps wrapping for a long domain list');
+  eq(SLOT_CLASSES[0], 'cur-sb-dot-1', 'and the names are the KIT\'s, not a view\'s');
+}
+{
+  // ── ONE PALETTE: `dm-row-dot-N` IS MARKUP ONLY ───────────────────────────
+  // It survives as an alias because scripts/test-sidebar-status-rows.js §8b
+  // compares this sidebar's markup against a FROZEN v3.64.2 reference token
+  // for token. What it must NOT do is paint: a second family of names that
+  // resolved a background would be the two-palette defect wearing the fix's
+  // clothes. Checked across every /next stylesheet, not a named pair.
+  const painted = [];
+  for (const rel of ALL_NEXT_CSS) {
+    const bare = readFileSync(path.join(ROOT, rel), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    for (let n = 1; n <= 6; n++) {
+      if (new RegExp('\\.dm-row-dot-' + n + '\\b[^{}]*\\{').test(bare)) painted.push(`${rel} .dm-row-dot-${n}`);
+    }
+  }
+  ok(painted.length === 0,
+    `no stylesheet in /next declares a rule for .dm-row-dot-N — it is an alias the kit `
+    + `emits and nothing paints (${ALL_NEXT_CSS.length} stylesheets scanned)`, painted.join(', '));
+  // POSITIVE CONTROL for the scan above: the same detector, on a planted rule.
+  ok(/\.dm-row-dot-1\b[^{}]*\{/.test('.dm-row-dot-1, .x { background: red; }'),
+    'CONTROL: the alias scanner DOES fire on a planted rule, including inside a selector list');
+  // ...and the alias really is emitted, by the kit, beside the kit token.
+  const dmRow = renderSidebarRow({ alias: 'dm', name: 'A', dotClass: identityDotClass(3) });
+  ok(/cur-sb-dot-4 dm-row-dot-4/.test(dmRow),
+    'CONTROL: a `dm` row emits the alias beside the kit slot, naming the SAME slot', dmRow);
 }
 {
   // The call site itself — a function with no callers proves nothing (this
@@ -451,10 +512,45 @@ if (domainDotClass && slotCount) {
   // picker is still called from the row builder, and that what is passed is a
   // name and not a style.
   const rowFn = functionSource(js, 'renderSidebar') || js;
-  ok(/domainDotClass\(/.test(js), 'domainDotClass has a call site');
-  ok(/dotClass:\s*domainDotClass\(/.test(rowFn),
-    'the row hands the kit a class NAME from domainDotClass — inside renderSidebar, so the '
+  ok(/identityDotClass\(/.test(js), 'identityDotClass has a call site in views/domains.js');
+  ok(/dotClass:\s*identityDotClass\(/.test(rowFn),
+    'the row hands the kit a class NAME from identityDotClass — inside renderSidebar, so the '
     + 'picker still has a real caller and not merely a definition');
+  ok(/identityDotClass\s*\}?\s*from '\.\.\/shared\/sidebar\.js'/.test(js)
+    || /identityDotClass[\s\S]{0,120}from '\.\.\/shared\/sidebar\.js'/.test(js),
+    '...and it is IMPORTED from the kit rather than redefined here');
+  // THE OTHER THREE SURFACES THAT NAME A DOMAIN (v3.65.1, decision 7). Each
+  // takes the SAME function; a view that hand-wrote a slot class, or reached
+  // for `--accent` again, would break continuity silently — which is exactly
+  // what Chat's chips did (every chip violet) and what Ingest's rows did (no
+  // mark at all).
+  for (const [rel, what] of [
+    ['src/public/next/views/chat.js', "Chat's domain chips"],
+    ['src/public/next/views/ingest.js', "Ingest's DESTINATION rows"],
+    ['src/public/next/views/memory.js', "the Context rail's project rows"],
+  ]) {
+    const src = readFileSync(path.join(ROOT, rel), 'utf8');
+    ok(/from '\.\.\/shared\/sidebar\.js'/.test(src) && /identityDotClass\(/.test(src),
+      `${what} take their colour from the kit's identityDotClass (${rel})`);
+    const code = src.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    ok(!/cur-sb-dot-\d/.test(code),
+      `...and ${rel} hardcodes no slot class — the index goes through the mapping`);
+  }
+  {
+    // COMMENTS STRIPPED FIRST, and that is not tidiness: views/chat.js's own
+    // docblock now QUOTES the markup it replaced, and a raw-source scan reads
+    // that quotation as the defect. Caught by this assertion going red on the
+    // commit that fixed the thing it checks.
+    const chat = stripComments(
+      readFileSync(path.join(ROOT, 'src/public/next/views/chat.js'), 'utf8'));
+    ok(!/chat-type-dot[^>]*style\s*=/.test(chat),
+      "Chat's scope chip carries NO inline colour — it was "
+      + '`style="background:var(--accent)"` on every chip, one violet for every domain');
+    ok(/chat-type-dot[^>]*style\s*=/.test('<span class="chat-type-dot" style="background:var(--accent)">'),
+      'CONTROL: that detector DOES fire on the markup this release deleted');
+    ok(/cur-sb-dot[\s\S]{0,40}identityDotClass\(/.test(chat),
+      "...and the chip's dot is the kit's glyph, coloured by the one mapping");
+  }
   ok(!/dm-row-dot[^>]*style\s*=/.test(js), 'the dot span carries no style attribute at all');
   ok(/dotClass\?:/.test(readFileSync(SIDEBAR_CSS.replace(/\.css$/, '.js'), 'utf8')),
     'CONTROL — and the component really does take a `dotClass`, so the field name above is '
@@ -519,7 +615,7 @@ const THEMES = [
 const resolvedSlots = { dark: [], light: [] };
 for (const theme of THEMES) {
   for (const cls of SLOT_CLASSES) {
-    const decl = declFor(domainsCss, theme.selectorFor(cls), 'background');
+    const decl = declFor(sidebarCss, theme.selectorFor(cls), 'background');
     ok(decl !== null, `${theme.name}: .${cls} has a background declaration (${theme.selectorFor(cls)})`);
     const hex = decl === null ? null : resolveColor(decl, theme.tokens, DARK_TOKENS);
     ok(hex !== null, `${theme.name}: .${cls} resolves to an opaque hex (${decl} -> ${hex})`);
@@ -830,14 +926,14 @@ section('§8 POSITIVE CONTROLS — every detector is watched failing');
   ok(inlineColorStyles('<span style="color: rgba(1,2,3,.5)">').length === 1, '§3 detector FIRES on an inline rgba() too');
 }
 {
-  const cssMissingLight = '.dm-row-dot-1 { background: var(--entity-500); }';
-  ok(declFor(cssMissingLight, '[data-theme="light"] .dm-row-dot-1', 'background') === null,
+  const cssMissingLight = '.cur-sb-dot-1 { background: var(--entity-500); }';
+  ok(declFor(cssMissingLight, '[data-theme="light"] .cur-sb-dot-1', 'background') === null,
     '§4 detector FIRES when a slot has no [data-theme="light"] rule');
-  ok(declFor('[data-theme="light"] .dm-row-dot-1 { background: #16768C; }', '[data-theme="light"] .dm-row-dot-1', 'background') === '#16768C',
+  ok(declFor('[data-theme="light"] .cur-sb-dot-1 { background: #16768C; }', '[data-theme="light"] .cur-sb-dot-1', 'background') === '#16768C',
     '§4 detector reads a present light rule (so its null above is a finding, not blindness)');
   // The comment trap, planted: a rule named only inside a CSS comment must NOT
   // be read as a rule.
-  ok(declFor('/* [data-theme="light"] .dm-row-dot-9 { background: #FFF; } */', '[data-theme="light"] .dm-row-dot-9', 'background') === null,
+  ok(declFor('/* [data-theme="light"] .cur-sb-dot-9 { background: #FFF; } */', '[data-theme="light"] .cur-sb-dot-9', 'background') === null,
     '§4 detector is not satisfied by a selector that appears only in a CSS comment');
 }
 {

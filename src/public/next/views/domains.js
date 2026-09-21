@@ -130,7 +130,8 @@ import { renderOverview } from '../shared/overview.js';
 // fixed stub list — so those five sandboxes inject them, and they inject the
 // REAL kit functions rather than stubs, which is what makes their assertions
 // about this sidebar assertions about the shipped component.
-import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../shared/sidebar.js';
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
+  identityDotClass } from '../shared/sidebar.js';
 import { renderMarkdown } from '../shared/markdown.js';
 import { formatUsdHonest } from '../shared/format-usd.js';
 
@@ -232,28 +233,27 @@ import {
 
 // ── Domain identity colour ────────────────────────────────────────────────
 // Domains aren't typed like pages (no entity/concept/summary triad), but
-// the design still gives each one a stable colour dot in the sidebar list
-// and header. No backend field carries a per-domain colour, so this is a
-// small fixed palette assigned by stable list position. Deliberately
-// excludes brand violet (reserved for identity/action per the design's
-// "violet means action and nothing else" rule) even though the design
-// bundle's OWN placeholder DOMAINS array uses a violet dot for one entry —
-// treated here as a placeholder-data inconsistency, not a rule to copy.
+// the design still gives each one a stable colour dot wherever it is named.
+// No backend field carries a per-domain colour, so it is a small fixed
+// palette assigned by stable list position. Deliberately excludes brand
+// violet (reserved for identity/action per the design's "violet means action
+// and nothing else" rule).
 //
-// THE COLOUR ITSELF LIVES IN domains.css, NOT HERE, AND THAT IS THE FIX.
-// This was `['#3FBFD8', …]` emitted as `style="background:#3FBFD8"`. An
-// inline style is unreachable by every stylesheet and by every
-// `[data-theme]` block, so all six dots kept their DARK-theme values in
-// light and measured 1.85:1 (dot 1 on the selected row) against WCAG
-// 1.4.11's 3:1 floor for non-text. A class per palette slot is what makes
-// the light theme expressible at all; see the `.dm-row-dot-N` block in
-// domains.css for the measured values and the rule that picked them.
-// Guarded by scripts/test-next-domain-dots.js, which enumerates the slots
-// from THIS constant and the rules from that file.
-const DOMAIN_DOT_SLOTS = 6;
-function domainDotClass(index) {
-  return 'dm-row-dot-' + ((index % DOMAIN_DOT_SLOTS) + 1);
-}
+// THIS VIEW NO LONGER OWNS EITHER HALF OF IT (v3.65.1). It had
+// `domainDotClass(i) -> 'dm-row-dot-N'`, a second copy of the kit's own
+// arithmetic under a second family of names, and views/domains.css held the
+// only copy of the twelve colour rules — which views/memory.css then declared
+// a second time, byte for byte, because CSS has no per-view scope. Both are
+// now ONE thing in the kit: `identityDotClass(i)` in shared/sidebar.js and
+// the `.cur-sb-dot-N` block in shared/sidebar.css. That is what makes the
+// same domain the same colour on this rail, on the Context rail and
+// breadcrumb, on Chat's domain chips and on Ingest's destination rows —
+// CONTINUITY BY IDENTITY, one palette and one mapping.
+//
+// `dm-row-dot-N` is still EMITTED, by the kit's `ALIASES.dm.dotSlot`, and
+// resolves no background; scripts/test-next-domain-dots.js reads the slots by
+// running identityDotClass and the rules out of shared/sidebar.css, and
+// asserts the alias paints nothing.
 
 // ── The KNOWLEDGE row's second line: WHAT the last write was ─────────────
 //
@@ -2922,13 +2922,20 @@ function renderSidebar(token) {
     // The IDENTITY dot (`.dm-row-dot`, six palette colours) and the ATTENTION
     // dot (`.dm-row-attn`, open health issues) are untouched: three marks,
     // three separate facts, and folding any of them into the others would
-    // make one dot answer questions it cannot. The identity COLOUR stays this
-    // view's — see domainDotClass and the `.dm-row-dot-N` block in
-    // domains.css for why it cannot live in a shared stylesheet.
+    // make one dot answer questions it cannot. The identity COLOUR is the
+    // KIT's now (v3.65.1) — `identityDotClass(i)` and shared/sidebar.css's
+    // `.cur-sb-dot-N` — so this row, a Context project row, a Chat chip and
+    // an Ingest destination row all take the same colour from the same place.
+    //
+    // `i` IS THE INSTALL'S DOMAIN INDEX, not a position in some filtered
+    // view: `state.domains` is GET /api/domains/stats' own order, which is
+    // listDomains()'s. A dot that meant "second in the list I happen to be
+    // showing" would be a different colour per screen, which is the defect
+    // this whole system exists to remove.
     return renderSidebarRow({
       alias: 'dm',
       name: d.displayName || d.slug,
-      dotClass: domainDotClass(i),
+      dotClass: identityDotClass(i),
       figure: pagesText,
       markHtml: freshnessDotHtml(d.lastIngestDate, now),
       age: formatDayAge(d.lastIngestDate, now),

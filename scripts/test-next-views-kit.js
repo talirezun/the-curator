@@ -103,10 +103,12 @@ function parseTokenBlock(body) {
  *  accessibility degradations, and grading the shipped design against its own
  *  fallback grades the fallback.
  *
- *  THE VIEW FILES ARE IN THIS LIST, not just tokens/. views/domains.css
- *  declares `--dm-ink-entity/-concept/-summary` — one name for a derived rung
- *  that both the sidebar row dots and the stat counts need — and a table built
- *  from tokens/ alone resolves all three to null, which would make §3 grade
+ *  THE VIEW FILES ARE IN THIS LIST, not just tokens/ — and since v3.65.1
+ *  shared/sidebar.css is too, because that is where the three derived rungs
+ *  went. They were `--dm-ink-entity/-concept/-summary` in views/domains.css;
+ *  they are `--id-ink-1/-2/-3` in the kit, one name for a value that both the
+ *  identity dots and this view's stat counts need, and a table built from
+ *  tokens/ alone resolves all three to null — which would make §3 grade
  *  nothing while reporting green. Concatenated in index.html's LINK ORDER, so
  *  a `:root` in a view wins the same (0,1,0) tie it wins in the browser. */
 function themeTables(files) {
@@ -225,7 +227,8 @@ section('0. Helper controls — nothing below counts until these pass');
 // ═════════════════════════════════════════════════════════════════════════
 section('1. The theme tables parse and every owned file is on disk');
 // ═════════════════════════════════════════════════════════════════════════
-const { dark: D, light: L } = themeTables(['tokens/color.css', 'tokens/material.css', ...OWNED]);
+const { dark: D, light: L } = themeTables(
+  ['tokens/color.css', 'tokens/material.css', 'shared/sidebar.css', ...OWNED]);
 {
   const missing = [...OWNED, ...OWNED_JS].filter((f) => !existsSync(path.join(NEXT, f)));
   ok(missing.length === 0, missing.length === 0
@@ -233,10 +236,21 @@ const { dark: D, light: L } = themeTables(['tokens/color.css', 'tokens/material.
     : 'missing: ' + missing.join(', '));
   ok(resolve(D, '--type-entity') === '#3FBFD8' && resolve(L, '--type-entity') === '#2596AE',
     'the type triad resolves differently per theme (dark -500, light -600) — so the tables are really two tables');
-  ok(resolve(L, '--dm-ink-entity') !== resolve(L, '--type-entity'),
-    "views/domains.css's own light-theme rungs are IN the table (they are declared in a view, not in tokens/)");
-  ok(resolve(D, '--dm-ink-entity') === resolve(D, '--type-entity'),
+  ok(resolve(L, '--id-ink-1') !== resolve(L, '--type-entity'),
+    "the identity palette's light-theme rungs are IN the table (they are declared in "
+    + 'shared/sidebar.css, not in tokens/)');
+  ok(resolve(D, '--id-ink-1') === resolve(D, '--type-entity'),
     '…and in DARK they alias the token, so no dark value moved by a byte');
+  // ONE PALETTE: the three rungs are declared ONCE, and the file that
+  // declares them is the kit's. A view re-declaring one is the two-copies
+  // defect v3.65.1 removed, in its subtlest form — same name, same value,
+  // different file, and whichever is linked last silently wins.
+  for (const tok of ['--id-ink-1', '--id-ink-2', '--id-ink-3']) {
+    const declarers = [...OWNED, 'shared/sidebar.css']
+      .filter((rel) => new RegExp('(?:^|[;{\\s])' + tok + '\\s*:').test(stripComments(read(rel))));
+    ok(declarers.length === 1 && declarers[0] === 'shared/sidebar.css',
+      `${tok} is declared in shared/sidebar.css and NOWHERE else`, declarers.join(', '));
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -328,8 +342,9 @@ section('3. The domain stat counts clear AA in the light theme');
   // v3.64.2 — the tile and its group are the SHARED overview component's now
   // (the Project-context view renders the same card), so the rule is read
   // from that stylesheet and the markup from that module. Only the three ink
-  // classes below stayed in views/domains.css, because they read this view's
-  // own `--dm-ink-*` ramp.
+  // classes below stayed in views/domains.css; since v3.65.1 they read the
+  // identity palette's own `--id-ink-*` rungs from shared/sidebar.css, which
+  // is the point — the number and the dot beside it are one colour.
   const ov = read('shared/overview.css');
   const tileBg = declFor(ov, '.cur-ov-group .cur-ov-card', 'background');
   ok(tileBg === 'none',
@@ -337,7 +352,7 @@ section('3. The domain stat counts clear AA in the light theme');
   ok(read('shared/overview.js').includes(`class="cur-group ' + cls('cur-ov-group'`),
      '…and the group the component renders really is the kit\'s `.cur-group` — otherwise the two reads ' +
      'above describe a plane nothing paints');
-  for (const [ty, tok] of [['entity', '--dm-ink-entity'], ['concept', '--dm-ink-concept'], ['summary', '--dm-ink-summary']]) {
+  for (const [ty, tok] of [['entity', '--id-ink-1'], ['concept', '--id-ink-2'], ['summary', '--id-ink-3']]) {
     const decl = declFor(dom, `.dm-stat-${ty}`, 'color');
     ok(decl === `var(${tok})`, `.dm-stat-${ty} takes ${tok} (got ${decl})`);
     for (const [name, T] of [['dark', D], ['light', L]]) {

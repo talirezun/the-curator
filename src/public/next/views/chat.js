@@ -82,6 +82,12 @@ import { readSseFrames } from '../shared/sse.js';
 // means the same thing here as it does in Context and Domains. One ladder,
 // one stylesheet (shared/freshness.css owns the `fresh-` prefix outright).
 import { formatAge, freshnessTier } from '../shared/age.js';
+// CONTINUITY BY IDENTITY (v3.65.1). The ONE mapping from an install's domain
+// index to its colour slot; the colours are shared/sidebar.css's
+// `.cur-sb-dot-N`. Imported here so a domain chip in the scope bar is the
+// same colour as that domain's row on the Domains rail, its project rows on
+// the Context rail, and its destination row in Ingest.
+import { identityDotClass } from '../shared/sidebar.js';
 
 // ── Markdown rendering ──────────────────────────────────────────────────
 // The renderer now lives in next/shared/markdown.js so the wiki-browse
@@ -3269,6 +3275,16 @@ function projectKnowledgeSet() {
  * The mark carries a TEXT carrier as well as a colour one: the chip's
  * accessible name gains the clause, with the visible label as its prefix so
  * "label in name" still holds.
+ *
+ * THE DOT IS THE DOMAIN'S IDENTITY (v3.65.1), not decoration. It was
+ * `<span class="chat-type-dot" style="background:var(--accent)">` — the same
+ * violet on every chip, which is a mark that answers no question. `i` is the
+ * position in `state.domains`, which is GET /api/domains' own order and
+ * therefore listDomains()'s, the same index the Domains rail, the Context
+ * rail and Ingest's destination list count from; `identityDotClass` turns it
+ * into the one palette's slot. Two channels never collide here: this is
+ * IDENTITY (which domain), `.in-project`'s dashed edge is MEMBERSHIP (is it
+ * in the pinned project's knowledge) and `.active`'s fill is SELECTION.
  */
 function scopePillLabelFor(d) {
   return d.displayName || d.slug;
@@ -3276,13 +3292,13 @@ function scopePillLabelFor(d) {
 function scopePillAriaFor(d) {
   return scopePillLabelFor(d) + ' \u2014 in this project\'s knowledge';
 }
-function scopePillHtml(d) {
+function scopePillHtml(d, i) {
   const set = projectKnowledgeSet();
   const inProject = !!set && set.has(d.slug);
   return '<button class="chat-scope-pill' + (d.slug === state.activeDomain ? ' active' : '')
     + (inProject ? ' in-project' : '') + '" data-scope-domain="' + escapeHtml(d.slug) + '"'
     + (inProject ? ' aria-label="' + escapeHtml(scopePillAriaFor(d)) + '"' : '') + '>'
-    + '<span class="chat-type-dot" style="background:var(--accent)"></span>'
+    + '<span class="cur-sb-dot ' + identityDotClass(i) + '"></span>'
     + escapeHtml(scopePillLabelFor(d))
     + '</button>';
 }

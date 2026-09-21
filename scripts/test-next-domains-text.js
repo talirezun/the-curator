@@ -93,7 +93,7 @@ import {
   renderReadout, renderReadoutGroup, renderDescription, renderStatus, renderBadge, renderExplainer,
 } from '../src/public/next/shared/text.js';
 import {
-  renderSidebarHead, renderSidebarGroup, renderSidebarRow,
+  renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass,
 } from '../src/public/next/shared/sidebar.js';
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
 import { freshnessTier } from '../src/public/next/shared/age.js';
@@ -674,12 +674,15 @@ section('§6  THE OTHER THREE SITES — mirror note, sidebar error, browse error
       // that THROWS rather than asserting. These three are the REAL
       // functions, so what the assertions below read is the shipped markup.
       renderSidebarHead, renderSidebarGroup, renderSidebarRow,
-      // `domainDotClass` replaced `domainDotColor` when the identity dots
-      // stopped being inline hex (see scripts/test-next-domain-dots.js). The
-      // name in this list must track the real one: renderSidebar's deps are
-      // supplied POSITIONALLY, so a stale name is a ReferenceError waiting for
-      // the first case here that renders an actual domain row.
-      escapeHtml: (x) => String(x), domainDotClass: () => 'dm-row-dot-1', renderStatus,
+      // `identityDotClass` replaced views/domains.js's own `domainDotClass`
+      // when v3.65.1 made one mapping serve every surface that names a domain
+      // (see scripts/test-next-domain-dots.js); `domainDotColor` was the
+      // inline-hex version before that. The name in this list must track the
+      // real one: renderSidebar's deps are supplied POSITIONALLY, so a stale
+      // name is a ReferenceError waiting for the first case here that renders
+      // an actual domain row. The REAL function is injected, not a stub —
+      // the markup these assertions read is then the shipped markup.
+      escapeHtml: (x) => String(x), identityDotClass, renderStatus,
     };
     const names = Object.keys(deps);
     const run = (st) => {
@@ -774,7 +777,12 @@ section('§7  STYLESHEET HYGIENE — the view places, the component dresses');
     for (const m of readFileSync(join(NEXT, 'tokens', f), 'utf8').matchAll(/(--[a-z0-9-]+)\s*:/g)) defined.add(m[1]);
   }
   ok(defined.size > 40, `token definitions enumerated from tokens/*.css (${defined.size} custom properties)`);
-  for (const css of [domainsCss, readFileSync(join(NEXT, 'shell.css'), 'utf8')]) {
+  // shared/sidebar.css JOINS THIS UNIVERSE (v3.65.1): the identity palette's
+  // three derived rungs are declared there now (`--id-ink-1/-2/-3`, formerly
+  // `--dm-ink-*` in this very file), and `.dm-stat-value` still reads them —
+  // so a universe without the kit reports three false undefineds.
+  for (const css of [domainsCss, readFileSync(join(NEXT, 'shell.css'), 'utf8'),
+                     readFileSync(join(NEXT, 'shared/sidebar.css'), 'utf8')]) {
     for (const m of css.matchAll(/(--[a-z0-9-]+)\s*:/g)) defined.add(m[1]);
   }
   const undef = [...new Set([...domainsCssCode.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]))]
