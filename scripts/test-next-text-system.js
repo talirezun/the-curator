@@ -905,8 +905,12 @@ console.log('\n§10  THE ROLE -> TOKEN STANDARD');
   ];
   // The page-subtitle rung: the line that qualifies the <h1> it sits under.
   const PAGE_SUBTITLE = ['.mem-project-name', '.mem-project-domain', '.mem-project-sep'];
-  // The sidebar list row's own name.
-  const ROW_NAME = ['.dm-row-name', '.mem-row-name', '.sync-domain-name',
+  // The sidebar list row's own name. `.dm-row-name` moved to the kit's own
+  // `.cur-sb-name` (v3.65.0): the row rule itself now lives in
+  // shared/sidebar.css, with `dm-row-name` riding only as an alias TOKEN on
+  // the rendered element — no stylesheet declares a rule for that name any
+  // more, so the standard follows the rule the kit actually owns.
+  const ROW_NAME = ['.cur-sb-name', '.mem-row-name', '.sync-domain-name',
                     '.sb-conn-name', '.ing-dest-name', '.chat-conv-title'];
 
   /**

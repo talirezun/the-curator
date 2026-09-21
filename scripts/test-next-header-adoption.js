@@ -168,10 +168,14 @@ section('§1  THE CLASS GUARD — no view hand-rolls a header');
     // INVERTED rather than removed — see below the loop — so the fix cannot
     // quietly regress into a passing budget of 3.
     //
-    // Four call sites, each concatenating a `newBtn`; adoption means moving
-    // that button into the actions slot, which is a change to a view this pass
-    // did not own.
-    'domains.js': 4,
+    // domains.js IS GONE FROM THIS LIST TOO (v3.65.0): its sidebar head now
+    // goes through shared/sidebar.js's renderSidebarHead, which renders the
+    // shell's own `.sidebar-title` div — so the four `class="sidebar-title"`
+    // literals this entry used to carry are no longer typed anywhere in
+    // views/domains.js's own source, and the budget check above would fail a
+    // count of 4 against an actual 0. Per this docblock's own rule: adopting
+    // a view turns its entry stale, the count check goes red, and whoever
+    // adopted it deletes the line.
     'settings.js': 1,
     // Its title embeds `<span class="sb-beta-pill">beta</span>`. renderViewHeader
     // ESCAPES the title, so adopting needs the markup relocated to the actions

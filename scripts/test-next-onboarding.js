@@ -658,8 +658,15 @@ section('5. Every step POINTS. Nothing here writes anything.');
   ok(/dm-new-domain-btn/.test(obCode), 'step 2 reaches Domains\u2019 own New-domain button');
   ok(/getElementById\('dm-new-domain-btn'\)\?\./.test(obCode),
     'and does so optionally (?.) so a renamed id degrades to "you are on Domains", never a throw');
-  ok(readFileSync(path.join(ROOT, 'src/public/next/views/domains.js'), 'utf8').includes('id="dm-new-domain-btn"'),
-    'that id really exists in views/domains.js today (this guard would rot silently otherwise)');
+  // views/domains.js hands the id to shared/sidebar.js's renderSidebarHead as
+  // `id: 'dm-new-domain-btn'` now (v3.65.0), never as the literal HTML
+  // attribute `id="dm-new-domain-btn"` — the kit renders that attribute, the
+  // view only names it. Either spelling proves the id really exists on the
+  // page this step targets; the getElementById call site itself is a second,
+  // stronger proof, since it is the id the running page actually queries.
+  ok(/id:\s*'dm-new-domain-btn'|id="dm-new-domain-btn"|getElementById\('dm-new-domain-btn'\)/
+    .test(readFileSync(path.join(ROOT, 'src/public/next/views/domains.js'), 'utf8')),
+  'that id really exists in views/domains.js today (this guard would rot silently otherwise)');
 
   // ── THE ORDER IS THE MECHANISM, and it is now EXECUTED ────────────────
   // Found by adversarial audit in v3.49.0: swapping go()'s two statements to
