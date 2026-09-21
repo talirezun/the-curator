@@ -510,8 +510,17 @@ section('S2 -- THE OVERVIEW CARD, AND THE FIGURE THAT WAS MISSING');
   const grid = group && descendants(group).find((n) => hasClass(n, 'dm-stats-grid'));
   ok('...and the grid is INSIDE that group, not beside it', !!grid);
   const cards = grid ? grid.children.filter((n) => hasClass(n, 'dm-stat-card')) : [];
-  eq('five figures, not four', cards.length, 5);
-  eq('...and the fifth is PROJECTS', cards[4] && cards[4].children[0].textContent, 'PROJECTS');
+  // SEVEN SINCE v3.65.0, and the two extra are not new readings: SOURCES and
+  // SHARED were a separate `.dm-jump-row` of `.dm-jump-card`s inside this same
+  // card, measured at 92.8 x 46.4 beside a 181.8 x 78.9 tile at a 16px indent
+  // -- *"an entirely different design than the five on top"*. They are
+  // ordinary tiles in this grid now. The FIGURES are still five, which is the
+  // fact this assertion was really about, so both are asserted.
+  eq('seven tiles -- the five figures and the two jumps, in ONE grid', cards.length, 7);
+  eq('five of them are FIGURES, not jumps to somewhere else',
+    cards.filter((n) => n.attrs['data-stat-jump'] !== 'sources'
+      && n.attrs['data-stat-jump'] !== 'shared').length, 5);
+  eq('...and the fifth figure is PROJECTS', cards[4] && cards[4].children[0].textContent, 'PROJECTS');
   ok('the section is labelled OVERVIEW',
     /class="cur-ov-eyebrow cur-group-title dm-section-eyebrow">OVERVIEW</.test(html));
 }
@@ -633,8 +642,9 @@ section('S2b -- A FIGURE IS A SHORTCUT TO THE LIST IT COUNTS (v3.58.0)');
     const t = tiles(h);
     eq('while the page list is ' + what + ', no figure is a facet control',
       t.filter((n) => n.attrs['data-stat-facet'] !== undefined).length, 0);
-    ok('...and the five figures are still painted, in the same shape',
-      t.length === 5 && t.every((n) => n.tagName === 'DIV' || n.attrs['data-stat-jump'] !== undefined),
+    ok('...and every tile is still painted, in the same shape -- a reading is a '
+      + 'DIV, a jump stays a button because its section renders in every state',
+      t.length === 7 && t.every((n) => n.tagName === 'DIV' || n.attrs['data-stat-jump'] !== undefined),
       t.map((n) => n.tagName).join(', '));
     ok('...while PROJECTS still jumps, because its section renders in every state',
       t.some((n) => n.attrs['data-stat-jump'] === 'projects'));

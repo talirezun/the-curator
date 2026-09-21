@@ -610,8 +610,9 @@
 .dm-name { color: var(--text); font-weight: var(--weight-medium); }
 
 /* ── THE OVERVIEW CARD'S INK, AND ONLY ITS INK (v3.64.2) ──────────────────
-   The card itself — the group, the grid, the tile, the figure, the jump row
-   and every state on them — MOVED to shared/overview.css, because the
+   The card itself — the group, the grid, the tile, the figure (a jump is an
+   ordinary tile since v3.65.0) and every state on them — MOVED to
+   shared/overview.css, because the
    Project-context view renders the same component now and a rule a second
    view depends on may not live in this file (index.html links the view sheets
    last, so its place in the cascade would be unknowable from there).
@@ -1995,8 +1996,9 @@
      travels with the control instead of being restated per view. */
   .dm-browse-row:active,
   .dm-browse-more:active,
-  /* The OVERVIEW figures and their two jump tiles took their press — and
-     therefore their escape from it — to shared/overview.css with the rest of
-     the card in v3.64.2. Listed there, beside the rules they cancel. */
+  /* The OVERVIEW figures — the two jumps among them since v3.65.0 — took
+     their press, and therefore their escape from it, to shared/overview.css
+     with the rest of the card in v3.64.2. Listed there, beside the rules they
+     cancel. */
   .reader-source-reveal:active:not(:disabled) { transform: none; }
 }

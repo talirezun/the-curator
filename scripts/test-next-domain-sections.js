@@ -710,13 +710,18 @@ section('S3 -- A `shared-*` MIRROR: NO INGEST, NO JUMPS, NO ENABLE CONTROL');
     !mirror.includes('dm-sources-host'));
   ok('...while the SHARED BRAIN section is still there, because a mirror IS one',
     nodes.some((n) => n.attrs.id === 'dm-shared-fold'));
-  ok('...and the OVERVIEW offers no jump row, since there is nothing to jump to',
-    !nodes.some((n) => hasClass(n, 'dm-jump-row')));
-  // CONTROL, so the four above are not vacuous.
+  ok('...and the OVERVIEW offers NEITHER jump tile, since there is nothing to jump to',
+    !nodes.some((n) => n.attrs['data-stat-jump'] === 'sources'
+      || n.attrs['data-stat-jump'] === 'shared'));
+  ok('...so its grid holds the five figures and nothing else',
+    (() => { const g = nodes.find((n) => hasClass(n, 'dm-stats-grid'));
+             return !!g && g.children.filter((n) => hasClass(n, 'dm-stat-card')).length === 5; })());
+  // CONTROL, so the five above are not vacuous.
   const normal = renderCard();
-  ok('CONTROL -- a contributing domain renders both, and the jump row',
+  ok('CONTROL -- a contributing domain renders both sections, and both jump tiles',
     flatten(parseHtmlToChildren(normal)).some((n) => n.attrs.id === 'dm-sources-fold')
-    && flatten(parseHtmlToChildren(normal)).some((n) => hasClass(n, 'dm-jump-row')));
+    && flatten(parseHtmlToChildren(normal)).filter((n) => n.attrs['data-stat-jump'] === 'sources'
+      || n.attrs['data-stat-jump'] === 'shared').length === 2);
 }
 {
   // ── THE CENSUS, OVER RENDERED OUTPUT ──────────────────────────────────
@@ -1634,29 +1639,62 @@ section('S6 -- THE TEARDOWN TAKES BOTH PANELS DOWN');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('S7 -- THE TWO JUMP TILES');
+section('S7 -- THE TWO JUMPS ARE TILES IN THE GRID (v3.65.0)');
 // ═════════════════════════════════════════════════════════════════════════
+//
+// THE DEFECT THIS SECTION NOW GUARDS AGAINST IS THE ONE IT USED TO REQUIRE.
+// Through v3.64.2 SOURCES and SHARED were a separate `.dm-jump-row` of
+// `.dm-jump-card`s inside the same OVERVIEW card, and the assertion here read
+// `they are NOT .dm-stat-cards, so the five figures stay five`. Measured in a
+// browser, that row drew its tiles at 92.8 x 46.4 at x=401 beside a 181.8 x
+// 78.9 stat tile at x=385 -- a different size, a different height and a 16px
+// indent, inside one card -- which is precisely what the maintainer reported:
+// *"an entirely different design than the five on top"*. So a jump is an
+// ordinary tile now, in the same grid, at the same geometry, and what is
+// pinned is that it IS one.
 {
   const html = renderCard();
-  const tiles = flatten(parseHtmlToChildren(html)).filter((n) => hasClass(n, 'dm-jump-card'));
-  eq('two jump tiles render', tiles.length, 2);
-  eq('...SOURCES first', tiles[0].attrs['data-stat-jump'], 'sources');
-  eq('...then SHARED', tiles[1].attrs['data-stat-jump'], 'shared');
+  const grid = flatten(parseHtmlToChildren(html)).find((n) => hasClass(n, 'dm-stats-grid'));
+  ok('CONTROL -- the grid is in the tree', !!grid);
+  const cards = grid ? grid.children.filter((n) => hasClass(n, 'dm-stat-card')) : [];
+  eq('seven tiles in ONE grid -- five figures, then the two jumps', cards.length, 7);
+  // PROJECTS is a jump too -- it scrolls to the projects section -- so the
+  // two the report was about are named by their KEYS rather than by the
+  // presence of the hook, which would count three.
+  const tiles = cards.filter((n) => n.attrs['data-stat-jump'] === 'sources'
+    || n.attrs['data-stat-jump'] === 'shared');
+  eq('two of the seven are the SOURCES and SHARED jumps', tiles.length, 2);
+  eq('...SOURCES sixth', cards[5] && cards[5].attrs['data-stat-jump'], 'sources');
+  eq('...SHARED seventh', cards[6] && cards[6].attrs['data-stat-jump'], 'shared');
+  ok('THE DESIGN RULE ITSELF -- a jump carries the SAME tile class as a figure, '
+    + 'so it cannot be given a geometry of its own again',
+    tiles.length === 2 && tiles.every((t) => hasClass(t, 'cur-ov-card') && hasClass(t, 'dm-stat-card')),
+    tiles.map((t) => t.attrs.class).join(' | '));
+  ok('...and no `.dm-jump-row` / `.dm-jump-card` survives anywhere in the card',
+    !flatten(parseHtmlToChildren(html)).some(
+      (n) => hasClass(n, 'dm-jump-row') || hasClass(n, 'dm-jump-card')));
+  ok('...and the grid is told to keep its tracks wide enough for a PHRASE rather '
+    + 'than the tiles being dropped a type rung: seven 127px tracks wrap "14 days '
+    + 'ago" and make every tile 110.8px tall, a floor of 150 yields 5+2 at the '
+    + 'shipped 181.797 x 78.898',
+    /style="--cur-ov-min:150px"/.test(html), html.slice(0, 400));
   ok('neither carries aria-pressed -- a jump is not a toggle, and saying so to a '
     + 'screen reader only would be a lie told to one audience',
     tiles.every((t) => t.attrs['aria-pressed'] === undefined));
   ok('...and both carry an accessible name that says where they go',
-    tiles.every((t) => (t.attrs['aria-label'] || '').length > 10),
+    tiles.length === 2 && tiles.every((t) => (t.attrs['aria-label'] || '').length > 10),
     tiles.map((t) => t.attrs['aria-label']).join(' | '));
-  ok('they are NOT `.dm-stat-card`s, so the five figures stay five',
-    tiles.every((t) => !hasClass(t, 'dm-stat-card')));
+  ok('CONTROL -- the four FACET figures still select the page list, so "make them '
+    + 'all tiles" did not flatten a control into a reading',
+    cards.filter((t) => t.attrs['data-stat-facet'] !== undefined).length === 4,
+    cards.map((t) => t.attrs['data-stat-facet'] || t.attrs['data-stat-jump'] || '-').join(', '));
   eq('SHARED is hidden until the panel says this domain is part of one',
-    Object.hasOwn(tiles[1].attrs, 'hidden'), true);
+    cards.length === 7 && Object.hasOwn(cards[6].attrs, 'hidden'), true);
   // The SOURCES reading is the domain's own last write, or the honest absence.
-  ok('SOURCES reads the last ingest', /dm-jump-value">just now</.test(html), html.slice(0, 300));
+  ok('SOURCES reads the last ingest', /dm-stat-value">just now</.test(html), html.slice(0, 300));
   const never = renderCard({ domains: [{ slug: 'alpha', displayName: 'Alpha', pageCount: 0,
     lastIngestDate: null, pageCounts: { entities: 0, concepts: 0, summaries: 0, other: 0 } }] });
-  ok('...and says "nothing yet" rather than inventing a date', /dm-jump-value">nothing yet</.test(never));
+  ok('...and says "nothing yet" rather than inventing a date', /dm-stat-value">nothing yet</.test(never));
 }
 {
   // THE READING IS DERIVED IN ONE PLACE, because it is read twice: by the
@@ -1674,17 +1712,55 @@ section('S7 -- THE TWO JUMP TILES');
   ok('a mirror says what it is rather than counting', mir.show === true && mir.value === 'mirror', JSON.stringify(mir));
   // AND THE MARKUP READS IT, rather than deriving a second answer.
   const shown = renderCard({ sharedJump: { show: true, value: '2 cohorts' } });
-  const tile = flatten(parseHtmlToChildren(shown)).filter((n) => hasClass(n, 'dm-jump-card'))[1];
-  ok('a warranted reading reveals the tile', !Object.hasOwn(tile.attrs, 'hidden'));
-  ok('...carrying the value the reading produced', /dm-jump-value">2 cohorts</.test(shown));
+  const tile = flatten(parseHtmlToChildren(shown)).find((n) => n.attrs['data-stat-jump'] === 'shared');
+  ok('a warranted reading reveals the tile', !!tile && !Object.hasOwn(tile.attrs, 'hidden'));
+  ok('...carrying the value the reading produced', /dm-stat-value">2 cohorts</.test(shown));
+
+  // ── AND THE NO-REPAINT REVEAL ADDRESSES THE SAME TWO NAMES ────────────
+  // `onSharedLensChange` runs with the column already painted and writes ONE
+  // attribute, deliberately without a render. If it still queried the retired
+  // `.dm-jump-card` / `.dm-jump-value` it would find nothing, and the SHARED
+  // tile would stay hidden FOREVER on every install that has a Shared Brain
+  // — in silence, with no console error, and with every rendered-output
+  // assertion above still green. So it is read from the source: the function
+  // is not reachable from this sandbox (it takes the live document), and a
+  // stub of it would prove nothing about the shipped selector.
+  // COMMENTS STRIPPED FIRST, and that is not tidiness: the function's own
+  // note NAMES the retired selector in order to record what it replaced, and
+  // a scan that read it would fire on the explanation rather than on the
+  // defect -- which teaches the next person to delete the explanation. Same
+  // hazard the overview kit's own suite recorded twice.
+  const revealBody = SRC.slice(SRC.indexOf('function onSharedLensChange('),
+    SRC.indexOf('function sectionFoldEl('))
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  ok('CONTROL -- the reveal was lifted and really is the attribute write',
+    revealBody.length > 150 && revealBody.includes('tile.hidden'), revealBody.slice(0, 200));
+  ok('the reveal queries the TILE class every other figure carries',
+    revealBody.includes('.dm-stat-card[data-stat-jump=') && !revealBody.includes('.dm-jump-card'),
+    revealBody);
+  ok('...and reads the value through `.dm-stat-value`',
+    revealBody.includes('.dm-stat-value') && !revealBody.includes('.dm-jump-value'), revealBody);
+  ok('CONTROL -- and the comment that records WHICH selector this replaced is still '
+    + 'in the file, so the two assertions above cannot be satisfied by deleting the '
+    + 'explanation instead of keeping the code right',
+    /`\.dm-stat-card`, not `\.dm-jump-card`/.test(SRC));
 }
 {
   // `[hidden]` LOSES TO AN AUTHOR `display:` AT ANY SPECIFICITY -- v3.62.0
   // shipped an empty warning chip that painted anyway on exactly this shape.
-  ok('views/domains.css carries the counter-rule that makes `hidden` real',
-    /\.cur-ov-jump\[hidden\]\s*\{\s*display:\s*none;?\s*\}/.test(OV_CSS));
-  ok('CONTROL -- the tile really does declare a display of its own',
-    /\.cur-ov-jump\s*\{[^}]*display:\s*flex/.test(OV_CSS));
+  // THE RULE MOVED WITH THE TILE (v3.65.0): the hidden one is a `.cur-ov-card`
+  // now, and the counter-rule needs the HIGHER-specificity arm, because the
+  // control form is painted by `.cur-ov-group button.cur-ov-card` at (0,2,1)
+  // and a bare `.cur-ov-card[hidden]` at (0,2,0) LOSES to it -- which is the
+  // v3.62.0 defect exactly, re-created by moving a rule.
+  ok('shared/overview.css carries the counter-rule that makes `hidden` real',
+    /\.cur-ov-group\s+\.cur-ov-card\[hidden\]\s*\{\s*display:\s*none;?\s*\}/.test(OV_CSS), OV_CSS.slice(0, 1));
+  ok('CONTROL -- the tile really does declare a display of its own, at a higher '
+    + 'specificity than a bare attribute selector',
+    /\.cur-ov-group\s+button\.cur-ov-card\s*\{[^}]*display:/.test(OV_CSS));
+  ok('...and no `.cur-ov-jump` SELECTOR survives to paint a second tile design '
+    + '(the name appears only in the prose recording where the rule moved from)',
+    !/^\s*[^\n{}]*\.cur-ov-jump[^\n{}]*\{/m.test(OV_CSS.replace(/\/\*[\s\S]*?\*\//g, '')));
 }
 
 // ═════════════════════════════════════════════════════════════════════════

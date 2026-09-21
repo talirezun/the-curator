@@ -1086,10 +1086,13 @@ function onSharedLensChange(summary) {
   state.sharedLens = summary && typeof summary === 'object' ? summary : null;
   state.sharedJump = sharedJumpReading(state.sharedLens);
   if (typeof document === 'undefined' || !document.querySelector) return;
-  const tile = document.querySelector('.dm-jump-card[data-stat-jump="shared"]');
+  // `.dm-stat-card`, not `.dm-jump-card`: since v3.65.0 a jump IS an ordinary
+  // tile in the same grid, so the reveal addresses the tile class every other
+  // figure carries and finds it by its `data-stat-jump` hook.
+  const tile = document.querySelector('.dm-stat-card[data-stat-jump="shared"]');
   if (!tile) return;
   tile.hidden = !state.sharedJump.show;
-  const value = tile.querySelector('.dm-jump-value');
+  const value = tile.querySelector('.dm-stat-value');
   if (value) value.textContent = state.sharedJump.value;
 }
 
@@ -3321,7 +3324,7 @@ function renderMain(token) {
     renderLifecycleCard() +
     renderStatCards(counts, pages, projectCount(), {
       // A `shared-*` mirror gets NO Ingest section (views/ingest.js refuses a
-      // mirror as a destination), so it gets no jump row either — a tile that
+      // mirror as a destination), so it gets neither jump tile — a tile that
       // scrolls to nothing is the control-with-no-outcome this card already
       // refuses to draw for a facet with no list.
       sources: !readonly,
@@ -4443,8 +4446,8 @@ function projectCount() {
  * ── AND SINCE v3.64.2 IT BUILDS DESCRIPTIONS, NOT MARKUP ──────────────────
  * Every decision above is still taken here — which figures exist, which are
  * controls, what each one's accessible name says, when PROJECTS is an em dash
- * rather than a zero, whether the jump row exists at all. What left is the
- * HTML: `renderOverview` emits it, and the Project-context view's three
+ * rather than a zero, whether the two jump tiles exist at all. What left is
+ * the HTML: `renderOverview` emits it, and the Project-context view's three
  * readings go through the same function, so the two screens can no longer
  * drift into two designs for one idea. The maintainer's question was exactly
  * that: "how are these the same?"
@@ -4494,6 +4497,35 @@ function renderStatCards(counts, pages, projects, jumps) {
   if (otherCount > 0) {
     cards.push({ label: 'OTHER', value: otherCount.toLocaleString(), toneClass: 'dm-stat-other' });
   }
+  // ── THE TWO JUMPS ARE TILES NOW, NOT A SECOND ROW (v3.65.0) ───────────
+  // They were `jumps[]`, a row of their own inside the same card, and they
+  // MEASURED as a different object: 92.8 x 46.4 at x=401 beside a 181.8 x
+  // 78.9 stat tile at x=385 — a different size, a different height and a
+  // 16px indent, inside one card. The maintainer's words were exactly that:
+  // *"SOURCES 14 days ago — I don't understand why it is here and why it is
+  // an entirely different design than the five on top"*. So the option is
+  // gone from the component and a jump is an ordinary card with `jump:` set.
+  //
+  // SHARED IS RENDERED AND HIDDEN, NEVER OMITTED — the same contract it had
+  // in the jump row, and for the same reason: the answer arrives from the
+  // Shared Brain panel AFTER this paint, and a re-render to reveal it would
+  // remount the panel, which would report again — a loop. `hidden` is one
+  // attribute write with no repaint. See sharedJumpReading() and
+  // onSharedLensChange().
+  //
+  // A `shared-*` mirror gets NEITHER: the caller passes `sources: false`,
+  // because a mirror gets no Ingest section and a tile that scrolls to
+  // nothing is the control-with-no-outcome this card already refuses to draw
+  // for a facet with no list.
+  if (jumps && jumps.sources) {
+    cards.push({ label: 'SOURCES', jump: 'sources',
+      value: jumps.lastIngest ? relTime(jumps.lastIngest) : 'nothing yet',
+      name: 'Sources \u2014 open the Ingest section' });
+    cards.push({ label: 'SHARED', jump: 'shared',
+      value: (jumps.shared && jumps.shared.value) || '\u2014',
+      hidden: !(jumps.shared && jumps.shared.show),
+      name: 'Shared Brain \u2014 open the Shared Brain section' });
+  }
 
   return renderOverview({
     id: 'dm-overview-info',
@@ -4509,27 +4541,17 @@ function renderStatCards(counts, pages, projects, jumps) {
     // header for why they are aliases rather than names.
     alias: 'dm',
     cards,
-    // BOTH READINGS ARE HANDED IN, ALREADY DERIVED, and SHARED is rendered
-    // always and hidden until it is warranted: the answer arrives from the
-    // Shared Brain panel AFTER this paint, and a re-render to reveal it would
-    // remount the panel, which would report again — a loop. One markup
-    // source, one attribute write, no repaint. See sharedJumpReading().
-    //
-    // A `shared-*` mirror gets no jump row at all (the caller passes
-    // `sources: false`), because a mirror gets no Ingest section and a tile
-    // that scrolls to nothing is the control-with-no-outcome this card
-    // already refuses to draw for a facet with no list.
-    jumps: (jumps && jumps.sources)
-      ? [
-        { key: 'sources', label: 'SOURCES',
-          value: jumps.lastIngest ? relTime(jumps.lastIngest) : 'nothing yet',
-          name: 'Sources \u2014 open the Ingest section' },
-        { key: 'shared', label: 'SHARED',
-          value: (jumps.shared && jumps.shared.value) || '\u2014',
-          hidden: !(jumps.shared && jumps.shared.show),
-          name: 'Shared Brain \u2014 open the Shared Brain section' },
-      ]
-      : [],
+    // ── THE TRACK FLOOR, AND WHY IT IS 150 AND NOT THE DEFAULT ──────────
+    // MEASURED in the real 949px grid at a 1370px window with the onboarding
+    // guide dismissed. At the stylesheet's own 110px floor, seven equal
+    // tracks are 127px wide and the two PHRASE values — `14 days ago` and
+    // `2 cohorts` — wrap to two lines, which makes EVERY tile 110.8px tall:
+    // visibly worse than what shipped. At a floor of 150 (anything in
+    // 137-189 yields five tracks) the first row is PIXEL-IDENTICAL to the
+    // five tiles that shipped in v3.64.2 — 181.797 x 78.898, same x
+    // positions — and SOURCES / SHARED form a second row of the SAME tile.
+    // That is "at tile geometry", met exactly, rather than approximately.
+    minTrack: 150,
   });
 }
 
