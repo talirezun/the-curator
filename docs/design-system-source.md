@@ -1359,6 +1359,95 @@ conversation rows) is gone from both, with no way back to it in the shared
 component.
 
 
+### 18. Identity — one palette, one mapping, one glyph (v3.65.1)
+
+A domain is the same colour everywhere it is named. The mapping is `identityDotClass(i)` in
+`shared/sidebar.js`, where `i` is the **install's domain index** — `GET /api/domains` and
+`GET /api/domains/stats` both answer out of `listDomains()`, so position N is position N on every
+screen, and a caller holding a slug finds its position in that same list rather than inventing one
+from a hash of the name. The colours are the twelve `.cur-sb-dot-N` rules in `shared/sidebar.css`
+(six slots × two themes), which also carries the three derived light rungs `--id-ink-1/-2/-3` — the
+only three values in `/next` with no token behind them, because the design bundle defines nothing
+darker than `-600` in the entity, concept and summary families. The glyph is `.cur-sb-dot`: **8px,
+round**, and no view stylesheet may resize or reshape it. The surfaces, as of v3.65.1: the Domains
+sidebar rows, the Context sidebar's project rows (the domain the project lives in), the Context
+breadcrumb, step ③'s Knowledge rows, Chat's domain chips and Ingest's DESTINATION rows.
+
+**Three channels, and they never borrow each other's shapes.** IDENTITY is this dot — which domain,
+no state. TIME is the freshness mark ([§6](#6-the-freshness-scale-v3550--one-ladder-six-named-tiers)) — state, no identity; it is deliberately a
+different shape, because two marks that looked alike would read as one scale. SIZE/SHARE is the
+[depth bar](#19-the-depth-bar-v3651), below, which lives inside monitors and tables and never in a
+sidebar row or a fold's summary line.
+
+**Two things were duplicated before v3.65.1, and both duplications were invisible.**
+`views/domains.js` carried `domainDotClass(i) -> 'dm-row-dot-N'`, the same arithmetic as the kit's
+under a second family of names; and the twelve colour rules existed in BOTH `views/domains.css` and
+`views/memory.css`, byte-identical, each painting both rails because CSS has no per-view scope.
+`dm-row-dot-N` survives in the markup as an alias the kit emits (`ALIASES.dm.dotSlot`) and paints
+nothing — a suite compares the Domains sidebar's markup against a frozen v3.64.2 reference token for
+token, and that is the only reason the name is still there; the alias and its table entry are
+recorded to be removed once that reference is re-cut.
+
+**The anti-drift ratchet was re-pinned on the two facts it is about**
+(`scripts/test-next-design-kit.js` §10): no `/next` VIEW stylesheet may carry a colour literal (it
+is now ZERO files, was one), and the app-wide baselined total may only shrink (five, was ten). It
+used to assert "exactly two baselined files", which was read as "two views" and was not —
+`shared/checkbox.css` is one of the two.
+
+**What v3.65.1 renamed on top of this.** Continuity by identity was decided alongside a vocabulary
+rename (Foundations → Documents, Working state → Memory, Work-streams → Handoffs, Recent saves →
+Journal — UI copy and docs only, never the store's own `foundations/`, `scope` or `journal.jsonl`).
+The Domains OVERVIEW ⓘ now names the three layers **Knowledge · Memory · Documents** — exactly the
+Project-context view's own three step titles, which is the continuity the rename is for.
+
+### 19. The depth bar (v3.65.1)
+
+**The proposal.** A tinted bar behind a row's value, right-anchored, its length proportional to
+that row's magnitude, its colour the row's category — a THIRD visual channel, never confused with
+the other two:
+
+| channel | glyph | answers | owner |
+|---|---|---|---|
+| TIME | the freshness dot + a word | *how old* | `shared/freshness.css` |
+| WHICH DOMAIN | the identity dot ([§18](#18-identity--one-palette-one-mapping-one-glyph-v3651)) | *whose* | `shared/sidebar.css` |
+| **SIZE / SHARE** | **the depth bar** | *how much, against what* | `shared/depth-bar.css` |
+
+**It never encodes time** — no bar in the Journal, the Handoffs list, a `lastIngest` line, or any
+age; the dot owns age. **It never appears in a `<summary>` or a sidebar row** — both are one line of
+text read at a glance, and a background there competes with the row's own active fill and with the
+identity dot. **It lives inside monitors and tables**, where there is a numeric column to anchor to.
+**Its denominator is stated, never implied**: `value ÷ budget` where a budget exists, otherwise
+`value ÷ max(visible rows)`. **A cost is never only a colour** ([§14](#14-the-step-body-rule-v3642v3650)):
+wherever a bar carries a danger tone, the same fact is also on screen in words, unfolded.
+
+**The primitive.** One exported helper in `shared/monitor.js` — `renderDepthCell({value, max,
+budget, toneClass, label})` — rather than a fourth shared module, because the monitor is the only
+shared component hosting it in v3.65.1 and already owns the escaping discipline and the
+`markHtml`-style trusted-field contract a bar's inline `width` needs. The percentage is clamped to
+`[0, 100]` and rounded to one decimal, so an over-budget value fills the cell rather than
+overflowing it; `budget` present **and** `value > budget` is the only condition that may set the
+danger tone automatically. No `mono` utility span (the face comes from the container) and no
+`.fresh-`/`tx-` class — a bar is not a freshness surface and not a text-system component, even
+though it sits beside both.
+
+**The tones.** *neutral* — a low-alpha overlay of `--text-3` for rows that are not domains.
+*identity* — the row's identity colour at ≤ 18% alpha, only where the rows ARE domains. *danger* —
+`--danger-*` at the same alpha discipline, only for an over-budget row or remainder. The bar is a
+background under a value, so the composite must keep the value ≥ 4.5:1 in both themes; the bar
+itself, as a non-text mark, keeps the 3:1 floor — both join `test-next-contrast-ratchet.js`.
+
+**Where it shipped in v3.65.1.** (1) The Documents table's SIZE column, against
+`FOUNDATIONS_BUDGET_BYTES` (200 KB, the project's disk budget — **not** the 120 KB bootstrap
+reading budget, which applies only to the `readFirst` subset and is named apart on purpose). The
+budget line itself stays words, not a bar — the drop order the app promises ("last in reading order
+first") maps to ROWS down the table, which a right-anchored split bar would draw backwards. (2) The
+Knowledge row monitor's entity/concept/summary counts, against that domain's own `pageCount` — an
+exact invariant (`pageCount === entities + concepts + summaries + other`), not a "largest visible
+row" guess. Recorded for a later release: the MCP bridge Tool map (refused for v3.65.1 — no numeric
+column to anchor to; a monitor of the top tools by calls-per-week is the honest shape, not a bar on
+a grid tile), Wiki health's Scan monitor per issue category, and Capture's saved-vs-did-not-save
+split as counts, never a percentage.
+
 ## Things the app deliberately does not take from the bundle
 
 Recorded so a future conformance audit does not flag them as drift:
