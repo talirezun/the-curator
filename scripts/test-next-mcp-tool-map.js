@@ -44,6 +44,7 @@ import path from 'node:path';
 import { formatAge, freshnessTier } from '../src/public/next/shared/age.js';
 import { renderReadout } from '../src/public/next/shared/text.js';
 import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -101,7 +102,7 @@ function build(extra, over, alsoReturn) {
     docsLinkHtml,
     formatAge,
     freshnessTier,
-    renderReadout,
+    renderMonitor,
     gatedLoader: () => '<LOADER/>',
     loadGate: null,
     document: undefined,
@@ -294,8 +295,10 @@ section('5. The two session readings, and the empty state');
   const strip = MAP.renderSessionStrip(FIXTURE.sessions, NOW);
   ok(strip.includes('data-mcp-age-at="' + FIXTURE.sessions.lastBootstrapAt + '"'),
     'each reading carries the tick hook');
-  ok(strip.includes('tx-readout-value'),
-    '…and paints through the shared readout, whose value element the clock writes into');
+  ok(strip.includes('cur-mon-line'),
+    '…and paints through the shared MONITOR, one line per reading');
+  ok(strip.includes('mcp-age-words'),
+    '…whose words live in the element the clock writes into');
   const none = MAP.renderSessionStrip({ lastBootstrapAt: null, lastSaveAt: null }, NOW);
   ok(/none since this log began/.test(none) && !/\bnever\b/i.test(none),
     'an absent reading says "none since this log began", never "never"');
@@ -538,13 +541,20 @@ section('9. The age clock writes text into named nodes, and only those');
     };
   }
   const tile = el(ago(45 * 60), 'mcp-age-words', 'stale words');
-  const readout = el(ago(30), 'tx-readout-value', 'stale words');
-  const nodes = [tile, readout];
+  // ONE NAMED TARGET SINCE v3.65.0. `.tx-readout-value` was the second, back
+  // when the session strip painted through shared/text.js's readout; the strip
+  // is a monitor now (M10) and its two lines compose their own
+  // `.mcp-age-words` inside the `markHtml` they hand the kit — so both hooked
+  // shapes on this block name the SAME child, and the branch that named the
+  // other one went with the strip rather than being left matching nothing.
+  const session = el(ago(30), 'mcp-age-words', 'stale words');
+  const nodes = [tile, session];
   const api = build(null, { document: { querySelectorAll: () => nodes } });
   api.tickMcpAges();
   ok(tile.child.textContent !== 'stale words', 'a tile’s `.mcp-age-words` is recounted');
-  ok(readout.child.textContent !== 'stale words', 'a readout’s `.tx-readout-value` is recounted');
-  ok(tile.textContent === 'WRAPPER TEXT' && readout.textContent === 'WRAPPER TEXT',
+  ok(session.child.textContent !== 'stale words',
+    'a session line’s `.mcp-age-words`, composed inside the monitor’s markHtml, is recounted too');
+  ok(tile.textContent === 'WRAPPER TEXT' && session.textContent === 'WRAPPER TEXT',
     '…and neither wrapper’s own text is touched');
   // NO UNNAMED FALLBACK. A hook on a wrapper that holds neither named element
   // must be SKIPPED, not written: the tile's meta line also carries the "not

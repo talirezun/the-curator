@@ -95,6 +95,15 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // paragraph cannot float under the title; renderStatus carries the cross-write
 // refusal that used to live in a `title=` on a DISABLED button (see below).
 import { renderViewHeader, renderStatus } from '../shared/text.js';
+// ── THE MONITOR ─────────────────────────────────────────────
+// `.sync-status-card` was a HAND COPY of views/settings.js's bridge status
+// card — the same status pill, the same mono `<code>` identity
+// line, the same trailing age — written twice in two files. Two hand copies of
+// one pattern is this project's definition of a component since v3.55.0, and
+// the maintainer's own reading of them is the reason: *"we are looking for a
+// unified design AND a distinguished design, so this can be distinguished from
+// other sections, other cards."* Both call sites are now the same call.
+import { renderMonitor } from '../shared/monitor.js';
 
 function freshState() {
   return {
@@ -580,11 +589,25 @@ function renderConfigured(s) {
 
   return (
     '<div class="sync-status-card">' +
-      '<div class="sync-status-top">' +
-        '<span class="status-pill status-pill-ok"><span class="status-pill-dot"></span>Connected</span>' +
-        '<code class="mono sync-repo">' + escapeHtml(s.repoUrl || '') + '</code>' +
-        '<span class="sync-last">last synced ' + escapeHtml(lastSyncLabel) + '</span>' +
-      '</div>' +
+      // M11 — THE SAME CALL SHAPE AS THE MCP BRIDGE'S (views/settings.js). One
+      // call site pattern, two callers, and no third: the connection's state
+      // word in the head, the identity it is connected TO and the age of the
+      // last exchange as its lines. `lastSyncLabel` is already this view's own
+      // formatted stamp, so it goes in as the value it is.
+      //
+      // IT REPLACES `.sync-status-top` IN PLACE, inside the card, rather than
+      // taking the card's job: what surrounds it is a warning, a refusal and
+      // the action row, and those are not readings. A monitor is the
+      // instrument INSIDE the thing that names it.
+      renderMonitor({
+        id: 'sync-status-monitor',
+        label: 'Sync connection',
+        head: { stateWord: 'Connected', tone: 'ok' },
+        lines: [
+          { key: 'repo', value: s.repoUrl || '' },
+          { key: 'last synced', value: lastSyncLabel },
+        ],
+      }) +
       (state.statusError ? '<div class="settings-inline-error">' + escapeHtml(state.statusError) + '</div>' : '') +
       // THE ALREADY-SPLIT INSTALL. setup()'s adoption closes the split for a
       // connect made from now on and does nothing for an install that is

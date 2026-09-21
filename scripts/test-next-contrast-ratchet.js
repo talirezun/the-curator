@@ -536,9 +536,16 @@ ok(worst('--success-text', '--surface') >= NONTEXT_FLOOR,
    'though it clears the 3:1 non-text floor, so its use as a dot or a rail is correct');
 
 const successAsText = OWNED.reduce((n, f) => n + colorDecls(['--success-text'], FILES[f]).length, 0);
-ok(successAsText === 12,
+// TIGHTENED 12 -> 11 IN v3.65.0, which is the direction this ratchet says it
+// may move. views/sync.css's one hit was `.status-pill-ok { color:
+// var(--success-text) }` — the head of the hand-built sync status card, which
+// is a `renderMonitor()` call now (M11). The kit had already taken the same
+// decision for the same measured reason: on the monitor's own surface
+// --success-text measures 3.79 in light, so the component carries its state on
+// a DOT and a RULE at the 3:1 floor and keeps every word at --text.
+ok(successAsText === 11,
    `RATCHETED: exactly ${successAsText} declarations across the three owned files paint --success-text as TEXT. ` +
-   'Expected 12 (domains 4, sync 1, shared 7). It may fall; it must not rise. This is a KNOWN, UNFIXED failure in the light theme ' +
+   'Expected 11 (domains 4, sync 0, shared 7). It may fall; it must not rise. This is a KNOWN, UNFIXED failure in the light theme ' +
    '(4.05 on --surface, 3.59 on --success-tint) reported rather than repaired, because a fourth colour family ' +
    'was outside this wave\'s brief. The fix is the same one applied to amber: tone on the rail, words in --text.');
 

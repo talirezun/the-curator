@@ -359,8 +359,45 @@ section('§7  The two notes on the bridge page');
   // reading of the payload.
   const uses = viewSrc.split('deriveStaleBridgeNote(').length - 1;
   ok(uses >= 3, `deriveStaleBridgeNote is the only reading, used at ${uses - 1} call sites plus its definition`);
-  ok(viewSrc.includes('bridgeNoteHtml') && /check-row check-warn/.test(viewSrc),
-    'both surfaces exist: the status-card note and the self-test row');
+  // BOTH SURFACES, BY THE SHAPE THEY HAVE SINCE v3.65.0. The claim is
+  // unchanged — the fact is told in two places and both read the same
+  // derivation — but neither is a hand-built note any more: the bridge status
+  // card and the self-test result are both `renderMonitor()` calls now (M7/M8
+  // and M9), and the note is a `loud` entry inside each. A `loud` entry is
+  // built from a different array into a different container than a reading,
+  // which is the component's own structural guarantee that a warning cannot be
+  // demoted to one more line — the property `check-row check-warn` was
+  // standing in for. The SELECTOR moved; the claim did not.
+  const loudUses = viewSrc.split('loud:').length - 1;
+  ok(loudUses >= 2,
+    `the fact reaches TWO surfaces — ${loudUses} monitors on this view carry a \`loud\` entry `
+    + '(the bridge status card, and the self-test result that qualifies its own pass)');
+  ok(/loud:\s*bridgeNote\s*\n?\s*\?/.test(viewSrc) || /loud:\s*bridgeNote/.test(viewSrc),
+    '…the status card\u2019s comes straight from deriveStaleBridgeNote\u2019s return');
+  ok(/bridgeLoud/.test(viewSrc) && /const bridgeLoud = bridge/.test(viewSrc),
+    '…and so does the self-test\u2019s, from the same function on the same payload');
+  // THE REMEDY IS NEVER AUTHORED IN THE VIEW, and this is what says so.
+  // The two assertions above prove both surfaces READ deriveStaleBridgeNote;
+  // neither can tell whether the sentence handed to `strongText` came from its
+  // `.remedy` or from a literal typed beside it. Found by mutation: replacing
+  // `bridgeNote.remedy` with an invented sentence left this whole section
+  // green, which is exactly the defect §6 exists to prevent one file over.
+  const strongs = [...viewSrc.matchAll(/strongText:\s*([^,\n}]+)/g)].map((m) => m[1].trim());
+  ok(strongs.length >= 1, `CONTROL: ${strongs.length} \`strongText\` value(s) found in the view `
+    + '— zero would make the check below vacuous');
+  ok(strongs.every((v) => /\bremedy\b/.test(v)),
+    `every \`strongText\` in the view reads a \`remedy\` off the derivation, never a literal `
+    + `(found: ${strongs.join(' | ')})`);
+  ok(!viewSrc.includes(B.STALE_REMEDY),
+    'and the route\u2019s own sentence appears NOWHERE in the view\u2019s source — a second copy that '
+    + 'happened to be correct today is a second copy that goes stale tomorrow');
+
+  const handNotes = viewSrc.split('settings-mcp-stale-note').length - 1;
+  ok(handNotes === 1,
+    `CONTROL: exactly ${handNotes} hand-built stale NOTE is left in this view (was 2). The one that `
+    + 'survives is the saved-config / self-test RECONCILIATION note, which is not about bridge '
+    + 'processes at all; the bridge-process note stopped being a second card under the status card '
+    + 'and became a `loud` entry inside it');
   ok(!/bridge_processes/.test(viewSrc.replace(/function deriveStaleBridgeNote[\s\S]*?\n}\n/, '')),
     'nothing outside the derivation reads bridge_processes directly');
 }

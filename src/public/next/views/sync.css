@@ -12,17 +12,13 @@
    `.settings-hint-text` and `.settings-inline-error` went the same way,
    back to views/settings.css which was already rendering them. */
 
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 3px 9px 3px 7px;
-  border-radius: var(--radius-full);
-  font: var(--type-mono);
-  font-size: var(--text-2xs);
-}
-.status-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.status-pill-ok { background: var(--success-tint); border: 1px solid var(--success-text); color: var(--success-text); }
+/* `.status-pill` / `.status-pill-dot` / `.status-pill-ok` WERE HERE, and in
+   views/settings.css, and both copies are gone (v3.65.0). The pill was the
+   head of two hand-built status cards — this view's and the MCP bridge's —
+   and both are `renderMonitor()` calls now, whose head word carries its own
+   dot from shared/monitor.css. Nothing in /next writes the class any more;
+   deleting the rules rather than leaving them is what stops a third card
+   being built out of the leftovers. */
 
 /* ── Sidebar: per-domain list ─────────────────────────────────────────── */
 
@@ -58,10 +54,13 @@
   background: var(--text-3);
 }
 /* ── WHAT THIS VIEW STILL SETS IN CODE TYPE ───────────────────────────────
-   The two setup INPUTS (a repo URL and a personal access token) and the
-   `<code class="sync-repo">` readout, because those are LITERALS a user
-   pastes or copies and character-level legibility is the whole point of the
-   face there.
+   The two setup INPUTS (a repo URL and a personal access token), because
+   those are LITERALS a user pastes or copies and character-level legibility
+   is the whole point of the face there. The `<code class="sync-repo">`
+   readout used to be the third: it is a monitor LINE now (M11), which takes
+   the mono face from `--type-mono` on the block rather than from the `mono`
+   utility, so the same repo URL is still set in code type and this view emits
+   one fewer `mono` class.
 
    Everything else lost it: a domain name, a changed-file list, a sync
    timestamp, a pending count and the Shared Brain meta line are the app
@@ -69,7 +68,8 @@
    made this screen read as terminal output. The figures keep the one thing
    the code face was actually buying — tabular digits, so a count and a
    timestamp do not reflow the words beside them as they change. */
-.sync-last,
+/* `.sync-last` left this list with its rule (M11): the monitor declares
+   `font-variant-numeric: var(--numeric-tabular)` on every value it paints. */
 .sync-pending-note,
 .sync-sb-meta,
 .sync-decision-files { font-variant-numeric: var(--numeric-tabular); }
@@ -194,18 +194,13 @@
   background: var(--surface);
   margin-bottom: 22px;
 }
-.sync-status-top {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
-}
-/* --text-sm (12px), not a frozen 12.5px — same fix, same reason, as
-   views/shared.css's `.sb-card-repo`: a px literal is the one size the
-   Settings > General text-size control cannot reach. */
-.sync-repo { flex: 1; min-width: 220px; font-size: var(--text-sm); color: var(--text-2); overflow-wrap: anywhere; }
-.sync-last { font-size: var(--text-2xs); color: var(--text-2); flex: none; }
+/* `.sync-status-top`, `.sync-repo` and `.sync-last` WERE HERE. The pill row
+   they laid out is the monitor now (M11) — it brings its own mono face, its
+   own key/value grid and its own tabular figures, which is every property
+   these three were supplying. `.sync-status-card` survives them because it is
+   still a real container: the monitor, then the split-history warning, the
+   cross-write refusal and the action row, none of which are readings. */
+.sync-status-card > .cur-mon { margin-bottom: 14px; }
 
 .sync-status-actions {
   display: flex;
