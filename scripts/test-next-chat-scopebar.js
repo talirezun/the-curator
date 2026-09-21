@@ -1442,6 +1442,35 @@ section('§15 — THE PINNED PROJECT\'S KNOWLEDGE DOMAINS (v3.65.0, P10)');
     eq((foot.match(/class="tx-readout"/g) || []).length, 2, '…and there are exactly two of them');
   }
 
+  // ── §15b2 — THE MARK IS NOT A SELECTION, IN CSS TOO ───────────────
+  // Mutation F14 is why this exists: turning the mark into `--accent-tint` +
+  // `--accent-text` — i.e. making a named chip look exactly like the selected
+  // one — left every markup assertion above green, because the markup was
+  // still right. The claim "a marked chip does not read as selected" is about
+  // the RULE, so it is asserted on the rule.
+  {
+    const chatCss = readFileSync(path.join(ROOT, 'src/public/next/views/chat.css'), 'utf8');
+    const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+    const bodyOf = (sel) => {
+      const m = new RegExp('(?:^|\\})\\s*' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}')
+        .exec(strip(chatCss));
+      return m ? m[1] : '';
+    };
+    const mark = bodyOf('.chat-scope-pill.in-project');
+    ok(mark !== '', 'CONTROL: the mark rule was found (an empty body makes the lines below vacuous)');
+    ok(!/background/.test(mark),
+      '★ the mark declares NO background — the ground belongs to `.active`, which is the one chip whose wiki is read');
+    ok(!/(^|[^-])color\s*:/.test(mark),
+      '★ …and no text colour either, for the same reason');
+    const active = bodyOf('.chat-scope-pill.active');
+    ok(/background/.test(active),
+      'CONTROL: `.active` really does own a ground, so the two states are told apart by more than a border');
+    ok(/border-style:\s*dashed/.test(mark),
+      'the mark is a DASHED edge — "belongs to a set", not "selected"');
+    ok(!/border-style:\s*dashed/.test(active),
+      'CONTROL: and the selected chip is not dashed, so the two never look alike');
+  }
+
   // ── §15c — A DOMAIN THAT IS NOT ON THIS COMPUTER ────────────────────────
   {
     const r = render({
@@ -1507,11 +1536,28 @@ section('§15 — THE PINNED PROJECT\'S KNOWLEDGE DOMAINS (v3.65.0, P10)');
 
   // ── §15c4 — A RECORD FOR A DIFFERENT PROJECT IS NEVER SHOWN ─────────────
   {
-    const r = render({ activeProject: 'lumina',
+    /* THE DOMAIN LIST MUST CONTAIN THE RECORD'S DOMAIN, or this section is
+       vacuous — mutation F2 proved it. With only `articles` installed there is
+       no `research` chip to mark, so deleting the project-identity guard left
+       the assertion green: it was measuring the absence of a chip, not the
+       presence of a guard. `research` is installed here, so a chip EXISTS and
+       only the guard keeps it unmarked. */
+    const domains = [
+      { slug: 'articles', displayName: 'Articles', pageCount: 1406 },
+      { slug: 'research', displayName: 'Research', pageCount: 30 },
+    ];
+    const control = render({ domains, activeProject: 'curator',
+      projectKnowledge: KN({ project: 'curator', domains: ['research'], defaulted: false }) });
+    ok(/in-project/.test(control.html),
+      'CONTROL: with the SAME project named, the research chip IS marked — so a chip really is available to mark');
+    ok(/research/.test(control.mounted[0].footHtml), 'CONTROL: …and the footer really does name it');
+
+    const r = render({ domains, activeProject: 'lumina',
       projectKnowledge: KN({ project: 'curator', domains: ['research'], defaulted: false }) });
     ok(!/in-project/.test(r.html),
       '★ a record carrying ANOTHER project\'s name marks nothing — the stale-reading-beside-a-fresh-pill refusal');
-    ok(!/research/.test(r.mounted[0].footHtml), '…and says nothing about it either');
+    ok(!/research/.test(r.mounted[0].footHtml),
+      '★ …and the FOOTER says nothing about it either (a separate guard, in projectKnowledgeReadout)');
   }
 }
 
