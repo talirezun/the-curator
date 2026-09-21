@@ -224,6 +224,29 @@ export function freshChooser(opts) {
     // keystroke WITHOUT a re-render (the house rule: a render rebuilds the
     // field and takes the caret with it).
     repoRoot: '',
+    // ── THE REMOTE MIRROR'S FOUR FIELDS (v3.65.0) ──────────────────────
+    // The maintainer asked for this twice, and the gap it closes is named in
+    // the store's own docblock: `initFoundations` refused anything that was
+    // not an absolute path on this machine, so a computer with no checkout
+    // could REFRESH a mirror somebody else started and could never START one.
+    //
+    // `remote` takes `owner/repo`, an https:// URL or a git@ URL — the store
+    // resolves all three through ONE validator, so this field accepts what
+    // that validator accepts rather than carrying a second grammar. A blank
+    // `remoteRef` is the repository's default branch and a blank
+    // `remotePath` is the whole repository, both of which the store spells
+    // out, so both are OMITTED rather than sent empty.
+    //
+    // THERE IS NO TOKEN FIELD, AND THERE MAY NEVER BE ONE. `tokenSource`
+    // names WHICH FILE the store reads a token out of — `config` is the
+    // read-only token in Settings, `sync` is Personal Sync's PAT — and the
+    // store's own rule is that a token in an argument neither authorises a
+    // read nor appears in an answer. This form may not become the first
+    // credential path into the app.
+    remote: '',
+    remoteRef: '',
+    remotePath: '',
+    tokenSource: 'config',
     // Seed the four skeletons. Curator arm only; the owner may untick it.
     seed: true,
     // The scan (GET /api/memory/repo-scan), and its three states.
@@ -297,6 +320,28 @@ export function chooserBody(choice) {
     if (c.seed === false) out.seed = false;
     return out;
   }
+  // ── A REMOTE MIRROR IS STILL `ownership: 'repo'` (v3.65.0) ───────────
+  // The store keeps ONE ownership per project and a remote mirror IS a
+  // mirror: what makes it remote is a non-null `repo.remote`, not a third
+  // ownership word. So this arm sends `remote` + `tokenSource` INSTEAD of
+  // `repoRoot` — the store refuses the two together by name
+  // (`root-and-remote`, "a mirror has one source"), which is why they are
+  // exclusive here too rather than merely conventionally so.
+  //
+  // `remote` GOES AS A STRING when there is nothing else to say and as the
+  // four-field OBJECT when a ref or a path was given; the store's own
+  // `resolveRemoteArg` accepts both, and a string cannot carry a ref.
+  if (c.ownership === 'remote') {
+    const remote = String(c.remote || '').trim();
+    if (!remote) return null;
+    const ref = String(c.remoteRef || '').trim();
+    const path = String(c.remotePath || '').trim();
+    const out = { ownership: 'repo', tokenSource: tokenSourceOf(c) };
+    out.remote = (ref || path) ? remoteObject(remote, ref, path) : remote;
+    const files = pickedFiles(c);
+    if (files.length) out.files = files;
+    return out;
+  }
   if (c.ownership !== 'repo') return null;
   const out = { ownership: 'repo' };
   const root = String(c.repoRoot || '').trim();
@@ -304,6 +349,40 @@ export function chooserBody(choice) {
   const files = pickedFiles(c);
   if (files.length) out.files = files;
   return out;
+}
+
+/**
+ * THE TOKEN SOURCE, filtered to the two the store names.
+ *
+ * `config` on anything else, and the reason is that the store REFUSES an
+ * unrecognised word outright (`invalid-token-source`) rather than
+ * normalising it, because this call RECORDS a decision that cannot be
+ * changed afterwards. A wrong word would strand the project.
+ */
+export function tokenSourceOf(choice) {
+  const v = choice && typeof choice === 'object' ? choice.tokenSource : null;
+  return v === 'sync' ? 'sync' : 'config';
+}
+
+/**
+ * `owner/repo` (plus an optional ref and path) as the object the store takes.
+ *
+ * A URL form is left WHOLE in `repo` for the store to resolve: this file
+ * parses `owner/repo` because that is the one shape it can split without
+ * inventing a grammar, and hands anything else over unparsed rather than
+ * guessing at it. `undefined` rather than `''` for an absent ref or path —
+ * the store reads an absent ref as the default branch and an absent path as
+ * the whole repository, and an empty string would be a third meaning.
+ */
+export function remoteObject(remote, ref, path) {
+  const raw = String(remote || '').trim();
+  const simple = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(raw);
+  const base = simple
+    ? { owner: raw.split('/')[0], repo: raw.split('/')[1] }
+    : { repo: raw };
+  if (ref) base.ref = ref;
+  if (path) base.path = path;
+  return base;
 }
 
 /**
@@ -576,6 +655,22 @@ export function budgetWarning(choice) {
 export function scanBlockedReason(choice) {
   const c = choice && typeof choice === 'object' ? choice : {};
   if (c.scanning === true) return '';
+  // ── THE REMOTE ARM'S OWN REASON (v3.65.0) ────────────────────────────
+  // Every disabled control states its reason as a note — v3.61.1's finding,
+  // from the maintainer concluding there was no scan at all because the
+  // button was silently off. A remote scan needs a repository named and a
+  // token to read it with, and those are two different reasons: one is
+  // something to type here, the other is something to set in Settings.
+  if (c.ownership === 'remote') {
+    if (!String(c.remote || '').trim()) return 'Name the repository first.';
+    if (tokenSourceOf(c) === 'config' && c.hasReadToken === false) {
+      return 'No read-only token is set — add one in Settings, or read with Personal Sync’s token.';
+    }
+    if (tokenSourceOf(c) === 'sync' && c.hasSyncToken === false) {
+      return 'Personal Sync is not connected, so there is no token to read with.';
+    }
+    return '';
+  }
   if (!String(c.repoRoot || '').trim()) return 'Type or choose the folder first.';
   return '';
 }
@@ -593,6 +688,19 @@ export function scanBlockedReason(choice) {
  */
 export function commitBlockedReason(choice) {
   const c = choice && typeof choice === 'object' ? choice : {};
+  // ── THE REMOTE ARM HAS ONE MORE REASON (v3.65.0) ─────────────────────
+  // A remote mirror with no repository named cannot be committed at all, and
+  // a remote INIT that carries no `files` performs no network call — so a
+  // set-up with nothing ticked would record an ownership pointing at a
+  // repository nobody has proved exists. The store refuses to record
+  // ownership against a failed read for exactly that reason; this refuses
+  // one that was never attempted.
+  if (c.ownership === 'remote') {
+    if (!String(c.remote || '').trim()) return 'Name the repository first.';
+    if (!Array.isArray(c.candidates) || !c.candidates.length) return 'Find the documents first.';
+    if (!pickedFiles(c).length) return 'Tick at least one document.';
+    return '';
+  }
   if (c.ownership !== 'repo') return '';
   if (!Array.isArray(c.candidates) || !c.candidates.length) return '';
   if (pickedFiles(c).length) return '';
@@ -705,6 +813,13 @@ export function renderFoundationsChooser(cfg) {
         'Four skeletons to fill — by you or an agent. Or your own files.') +
       opt('repo', 'Mirror a folder on this Mac',
         'Copied byte for byte from a folder. You pick which files.') +
+      // ── THE THIRD SOURCE (v3.65.0, record §D.7) ──────────────────────
+      // The maintainer asked for this twice. Until now a project could only
+      // mirror a folder that exists on THIS computer, which meant a machine
+      // with no checkout could refresh a mirror somebody else started and
+      // could never start one — the store's own recorded gap.
+      opt('remote', 'Mirror a GitHub repository',
+        'Read over the network. No checkout needed on this computer.') +
       (choice.allowLater
         ? opt('later', 'Decide later',
           'Nothing is written now. Foundations asks again when you are ready.')
@@ -715,6 +830,7 @@ export function renderFoundationsChooser(cfg) {
     '<div class="fnd-init" data-fnd-init="' + escapeHtml(id) + '">' +
       options +
       (own === 'repo' ? repoArm(id, choice, busy) : '') +
+      (own === 'remote' ? remoteArm(id, choice, busy) : '') +
       (own === 'curator' ? curatorArm(id, choice, busy, c.existingProject === true) : '') +
     '</div>'
   );
@@ -736,6 +852,123 @@ export function renderFoundationsChooser(cfg) {
  * there is no picker), the disabled scan control carrying the sentence that
  * arms it, and the list under a one-line instruction saying what a tick means.
  */
+/**
+ * THE GITHUB ARM (v3.65.0, record §D.7).
+ *
+ * ── WHAT IT SHARES WITH THE FOLDER ARM, AND WHY THAT MATTERS ────────────
+ * Everything after the source: the candidate list, the tick defaults, the
+ * count line and the running budget total are the SAME functions the local
+ * arm uses, so "4 of 25 ticked · 186 KB of a 200 KB budget" reads the same
+ * way whichever source it came from. What differs is the four fields above
+ * the list and one honest omission in every row.
+ *
+ * ── NO AGE ON A REMOTE CANDIDATE, AND IT SAYS SO ────────────────────────
+ * A git tree carries no timestamp, so `modifiedAt` is `null` on every remote
+ * row — uniformly, which is the store's own word. That is "not read", not
+ * "none", and `candidateAgeHtml` renders nothing for it. A line above the
+ * list says so once rather than every row carrying a dash: an unknown age on
+ * twenty-five rows is noise, and a FAKE age would be worse than either.
+ *
+ * ── AND NO TOKEN FIELD ──────────────────────────────────────────────────
+ * The radio names WHICH FILE the token is read from. The store reads it from
+ * `.curator-config.json` (`config`) or from Personal Sync's PAT (`sync`) and
+ * from nowhere else; a token in a body is not read, here or in the store. The
+ * place to SET one is Settings, and this form points at it rather than
+ * becoming a second credential path into the app.
+ */
+function remoteArm(id, choice, busy) {
+  const dis = busy ? ' disabled' : '';
+  const scanning = choice.scanning === true;
+  const cands = Array.isArray(choice.candidates) ? choice.candidates : null;
+
+  const armLede =
+    '<p class="fnd-init-armhd">Name the repository, then tick the documents to copy.</p>';
+
+  const text = (name, label, placeholder, value) =>
+    '<label class="fnd-init-label cur-eyebrow" for="' + escapeHtml(id) + '-' + name + '">' +
+      escapeHtml(label) + '</label>' +
+    '<input class="fnd-init-path" id="' + escapeHtml(id) + '-' + name + '" type="text"' +
+      ' autocomplete="off" spellcheck="false" placeholder="' + escapeHtml(placeholder) + '"' +
+      ' value="' + escapeHtml(value || '') + '"' + dis + ' />';
+
+  // THE TOKEN SOURCE, AS TWO RADIOS. Each one says whether it is AVAILABLE,
+  // because a source that is not set up is a choice that cannot work and a
+  // person has to be told which before they press anything (v3.61.1: every
+  // disabled control states its reason).
+  const src = tokenSourceOf(choice);
+  const tokenOpt = (value, label, state) =>
+    '<label class="fnd-init-token-opt">' +
+      '<input type="radio" name="' + escapeHtml(id) + '-token" value="' + escapeHtml(value) + '"' +
+        ' data-fnd-token="' + escapeHtml(value) + '"' +
+        (src === value ? ' checked' : '') + dis + ' />' +
+      '<span>' + escapeHtml(label) + '</span>' +
+      '<span class="fnd-init-token-state">' + escapeHtml(state) + '</span>' +
+    '</label>';
+  const tokens =
+    '<div class="fnd-init-label cur-eyebrow">Read with</div>' +
+    '<div class="fnd-init-tokens" role="radiogroup"' +
+      ' aria-label="Which stored token to read the repository with">' +
+      tokenOpt('config', 'The read-only token in Settings',
+        choice.hasReadToken === false ? 'not set'
+          : choice.hasReadToken === true ? 'available' : '') +
+      tokenOpt('sync', 'Personal Sync’s token',
+        choice.hasSyncToken === false ? 'not connected'
+          : choice.hasSyncToken === true ? 'available' : '') +
+    '</div>' +
+    '<p class="fnd-init-note"><span>The token is never typed here — this chooses which '
+      + 'stored one to read with. Add a read-only token in Settings.</span></p>';
+
+  const fields =
+    '<div class="fnd-init-remote-fields">' +
+      text('remote', 'Repository', 'owner/repo', choice.remote) +
+      text('remote-ref', 'Branch or tag', 'the default branch', choice.remoteRef) +
+      text('remote-path', 'Folder', 'the whole repository', choice.remotePath) +
+    '</div>' +
+    tokens +
+    '<div class="fnd-init-row">' +
+      '<button type="button" class="btn btn-secondary btn-xs fnd-init-scan"' +
+        ' id="' + escapeHtml(id) + '-scan"' +
+        (busy || scanning || scanBlockedReason(choice) ? ' disabled' : '') + '>' +
+        (scanning ? 'Looking…' : 'Find documents') +
+      '</button>' +
+    '</div>' +
+    reasonNote(id + '-why', scanBlockedReason(choice));
+
+  const err = choice.scanError
+    ? '<div class="fnd-init-note fnd-init-note-loud"><span>' +
+      escapeHtml('Nothing was read: ' + choice.scanError) + '</span></div>'
+    : '';
+
+  let list = '';
+  if (cands && !cands.length) {
+    list = '<div class="fnd-init-note"><span>Nothing matched in that repository. The scan ' +
+      'looks in docs folders and for documents named after a role; try a narrower folder, or ' +
+      'a different branch.</span></div>';
+  } else if (cands) {
+    list =
+      '<p class="fnd-init-listhd">Tick the documents an agent must read first.</p>' +
+      // ONE LINE, NOT TWENTY-FIVE DASHES. See the docblock.
+      '<p class="fnd-init-note"><span>Age is unknown for a remote scan — a git tree carries no ' +
+        'timestamps, so nothing here claims one.</span></p>' +
+      '<div class="fnd-init-cands">' +
+        cands.map((cand) => candidateRow(id, choice, cand, busy)).join('') +
+      '</div>' +
+      (choice.truncated
+        ? '<div class="fnd-init-note"><span>Only the first ' + cands.length +
+          ' files are listed. Mirror these now and refresh later for the rest.</span></div>'
+        : '') +
+      '<div class="fnd-init-count" id="' + escapeHtml(id) + '-count">' +
+        escapeHtml(countLineText(choice)) +
+      '</div>' +
+      '<div class="fnd-init-note fnd-init-note-loud fnd-init-budget"' +
+        ' id="' + escapeHtml(id) + '-budget"' + (budgetWarning(choice) ? '' : ' hidden') + '>' +
+        '<span>' + escapeHtml(budgetWarning(choice)) + '</span>' +
+      '</div>';
+  }
+
+  return '<div class="fnd-init-arm">' + armLede + fields + err + list + '</div>';
+}
+
 function repoArm(id, choice, busy) {
   const dis = busy ? ' disabled' : '';
   const scanning = choice.scanning === true;
@@ -1258,6 +1491,98 @@ export async function scanRepo(root, fetchImpl) {
 }
 
 /**
+ * WHAT IS IN THAT REPOSITORY — a read, and only a read (v3.65.0).
+ *
+ * `GET /api/memory/repo-scan?source=remote&remote=owner%2Frepo[&ref][&path]
+ * [&tokenSource]`. TWO REQUESTS at the producer for any repository — the ref,
+ * then ONE recursive tree carrying every path and every blob size — and NO
+ * BLOB IS FETCHED, so the cost does not grow with the number of candidates.
+ *
+ * NEVER THROWS, and every refusal the store names comes back as a SENTENCE
+ * naming the token's SOURCE rather than the token: `no-token` says which file
+ * is empty, `unauthorised` says the token in that file was refused. The token
+ * itself is never in a request, never in an answer and never in an error —
+ * that is the store's rule and this function is the only place a view could
+ * have broken it.
+ */
+export async function scanRemote(opts, fetchImpl) {
+  const o = opts && typeof opts === 'object' ? opts : {};
+  const f = typeof fetchImpl === 'function' ? fetchImpl
+    : (typeof fetch === 'function' ? fetch : null);
+  if (!f) return { ok: false, error: 'this browser cannot make requests' };
+  const remote = String(o.remote || '').trim();
+  if (!remote) return { ok: false, error: 'name the repository first' };
+  const q = ['source=remote', 'remote=' + encodeURIComponent(remote)];
+  if (String(o.ref || '').trim()) q.push('ref=' + encodeURIComponent(String(o.ref).trim()));
+  if (String(o.path || '').trim()) q.push('path=' + encodeURIComponent(String(o.path).trim()));
+  q.push('tokenSource=' + encodeURIComponent(o.tokenSource === 'sync' ? 'sync' : 'config'));
+  try {
+    const res = await f('/api/memory/repo-scan?' + q.join('&'));
+    let data = null;
+    try { data = await res.json(); } catch { /* non-JSON error page */ }
+    if (!res.ok || !data || !data.ok) {
+      const code = data && typeof data.error === 'string' ? data.error : null;
+      return { ok: false, error: remoteRefusalText(code, o)
+        || (data && data.message) || ('HTTP ' + res.status) };
+    }
+    return {
+      ok: true,
+      remote: data.remote || null,
+      commit: typeof data.commit === 'string' ? data.commit : null,
+      candidates: Array.isArray(data.candidates) ? data.candidates : [],
+      truncated: data.truncated === true,
+    };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || 'the request failed' };
+  }
+}
+
+/**
+ * ONE REFUSAL, ONE SENTENCE — and every sentence names the token's SOURCE.
+ *
+ * The store names nine ways a remote read can fail and answers each with a
+ * code; a view that printed the code would be showing a person a word from a
+ * protocol. `null` for a code this table does not know, so the caller falls
+ * back to the producer's own message rather than to a guess — the collapse
+ * this repository keeps paying for is a consumer inventing an answer where
+ * the producer already gave one.
+ */
+export function remoteRefusalText(code, opts) {
+  const where = (opts && opts.tokenSource === 'sync')
+    ? 'Personal Sync’s token' : 'the read-only token in Settings';
+  switch (code) {
+    case 'no-token':
+      return 'There is no token to read with — ' + where + ' is not set.';
+    case 'unauthorised':
+      return where.charAt(0).toUpperCase() + where.slice(1)
+        + ' was refused by GitHub. It may have expired, or it may not reach this repository.';
+    case 'rate-limited':
+      return 'GitHub is rate-limiting this token. Try again in a few minutes.';
+    case 'remote-not-found':
+      return 'GitHub has no such repository, branch or folder — or ' + where
+        + ' cannot see it.';
+    case 'remote-tree-truncated':
+      // THE STORE THROWS RATHER THAN MIRRORING PART OF A REPOSITORY, and the
+      // sentence says what to do about it instead of what went wrong.
+      return 'That repository is too large to list in one read. Name a folder inside it.';
+    case 'remote-too-large':
+      return 'One of those documents is larger than a foundation may be.';
+    case 'invalid-remote':
+      return 'That is not a repository this can read. Use owner/repo, or the repository’s URL.';
+    case 'invalid-token-source':
+      return 'That is not a token this app stores.';
+    case 'remote-unreachable':
+      return 'GitHub could not be reached from this computer.';
+    case 'remote-http':
+      return 'GitHub answered with an error. Try again in a moment.';
+    case 'remote-unavailable':
+      return 'The remote reader is not available on this build.';
+    default:
+      return null;
+  }
+}
+
+/**
  * ASK FOR A FOLDER — `POST /api/config/pick-path`, which MUTATES NOTHING.
  *
  * Deliberately not `pick-folder`: that route repoints the whole knowledge
@@ -1410,7 +1735,83 @@ export function bindFoundationsChooser(cfg) {
     });
   }
 
+  // ── THE THREE REMOTE FIELDS, STRAIGHT INTO STATE (v3.65.0) ─────────────
+  // The same rule as the path field above and for the same reason: a render
+  // rebuilds the input and takes the caret with it. What changes on screen as
+  // you type is the scan button's disabled flag and the sentence that says
+  // why, and both are patched on the LIVE nodes from the SAME predicate the
+  // renderer used — so the control and its reason cannot come apart.
+  const syncScanGate = () => {
+    const scan = doc.getElementById(id + '-scan');
+    const reason = scanBlockedReason(choice);
+    if (scan) scan.disabled = !!reason || choice.scanning === true;
+    const why = doc.getElementById(id + '-why');
+    if (why) {
+      const span = typeof why.querySelector === 'function' ? why.querySelector('span') : null;
+      if (span) span.textContent = reason;
+      why.hidden = !reason;
+    }
+  };
+  for (const [suffix, field] of [['remote', 'remote'], ['remote-ref', 'remoteRef'],
+    ['remote-path', 'remotePath']]) {
+    const el = typeof doc.getElementById === 'function' ? doc.getElementById(id + '-' + suffix) : null;
+    if (!el) continue;
+    el.addEventListener('input', () => { choice[field] = el.value; syncScanGate(); });
+    el.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter') return;
+      if (typeof ev.preventDefault === 'function') ev.preventDefault();
+      const scan = doc.getElementById(id + '-scan');
+      if (scan && !scan.disabled) scan.click();
+    });
+  }
+  // THE TOKEN SOURCE. A repaint, not a patch: the two radios carry their own
+  // availability words and the scan gate reads the chosen source, so what
+  // changes is more than one node's disabled flag.
+  all('[data-fnd-token]').forEach((el) => {
+    el.addEventListener('change', () => {
+      const next = el.dataset ? el.dataset.fndToken : el.getAttribute('data-fnd-token');
+      if (next !== 'config' && next !== 'sync') return;
+      choice.tokenSource = next;
+      rerender();
+    });
+  });
+
   const runScan = () => {
+      // ── THE REMOTE ARM READS OVER THE NETWORK (v3.65.0) ──────────────
+      // ONE read, and it is the only network call this form makes before the
+      // owner ticks anything. Two requests at the producer for any
+      // repository — the ref, then one recursive tree — and no blob, so the
+      // cost does not grow with the number of candidates. A truncated tree
+      // refuses LOUDLY and mirrors nothing, which is the store's own rule.
+      if (choice.ownership === 'remote') {
+        const want = String(choice.remote || '').trim();
+        if (!want || choice.scanning || scanBlockedReason(choice)) return;
+        choice.scanning = true;
+        choice.scanError = null;
+        rerender();
+        scanRemote({ remote: want, ref: choice.remoteRef, path: choice.remotePath,
+          tokenSource: tokenSourceOf(choice) }, c.fetchImpl).then((got) => {
+          // The reply belongs to the repository it was asked for. Somebody who
+          // corrects the name and scans again must not have the first answer
+          // land on top of the second.
+          if (String(choice.remote || '').trim() !== want) return;
+          choice.scanning = false;
+          if (!got.ok) {
+            choice.scanError = got.error;
+            choice.candidates = null;
+          } else {
+            choice.scanError = null;
+            choice.candidates = got.candidates;
+            choice.truncated = got.truncated;
+            // THE SAME TICK DEFAULT the local arm uses — four canonical
+            // roles, not everything — so a 25-document repository does not
+            // arrive 1,875 KB over a 200 KB budget.
+            choice.picks = defaultPicks(got.candidates);
+          }
+          rerender();
+        }).catch((err) => fail(err));
+        return;
+      }
       const root2 = String(choice.repoRoot || '').trim();
       if (!root2 || choice.scanning) return;
       choice.scanning = true;

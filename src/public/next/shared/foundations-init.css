@@ -222,6 +222,56 @@
 }
 .fnd-init-path:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
+/* ── THE GITHUB ARM (v3.65.0, record §D.7) ────────────────────────────────
+   Three fields and a token-source choice, above the SAME candidate list, the
+   SAME tick defaults and the SAME running budget total the local arm has.
+   Nothing below the source differs, which is the point: "4 of 25 ticked ·
+   186 KB of a 200 KB budget" reads one way whichever source it came from.
+
+   A GRID, not the flex row the local arm uses: three labelled fields stacked
+   in a row read as one address, and at the widths this form lives at (the
+   Domains create card and the Context step, both under 700px) a flex row
+   would break them apart unpredictably. `auto-fit` with a 150px floor gives
+   three tracks where there is room and one where there is not.            */
+.fnd-init-remote-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3) var(--space-4);
+  align-items: end;
+  margin-bottom: var(--space-5);
+}
+/* The field takes the whole track here — `flex: 1 1 260px` means nothing to a
+   grid item, and a 260px basis in a 150px track is what would overflow. */
+.fnd-init-remote-fields .fnd-init-path { width: 100%; }
+
+/* ── WHICH STORED TOKEN, AND NEVER THE TOKEN ITSELF ───────────────────────
+   Two radios naming two FILES. The state word beside each one is the reason a
+   choice may not work, stated before it is pressed rather than after (the
+   v3.61.1 rule: every withheld or failing control states its reason), and it
+   is EMPTY when nothing on this build reports it — "we did not look" must not
+   be rendered as "available".                                             */
+.fnd-init-tokens {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.fnd-init-token-opt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text);
+}
+/* --text-2, not --text-3: this is the clause that decides whether the choice
+   beside it can work, and this file's standing rule is that a caution is
+   never the hardest thing on the screen to read. */
+.fnd-init-token-state {
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+}
+
 /* ── A NOTE, AND A LOUD ONE ───────────────────────────────────────────────
    Both are in FLOW and neither is ever inside a fold: a scan that refused a
    path, a file over the per-document cap and a file the browser could not read

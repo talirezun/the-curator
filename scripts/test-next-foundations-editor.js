@@ -657,9 +657,24 @@ section('§5 — THE CHOOSER, RENDERED, IN BOTH HOSTS');
   ok('the curator arm names the owner before the agent',
     full.indexOf('by you') >= 0 && full.indexOf('by you') < full.indexOf('or an agent'),
     full.slice(0, 900));
-  ok('...and no arm says "repository" anywhere',
-    !/repositor/i.test(full), full.slice(0, 1200));
+  // ── THE WORD IS FOLDER ON THE LOCAL ARM, AND ONLY THERE (v3.65.0) ─────
+  // The rule this assertion carries is P1-9's and is unchanged: a label
+  // saying "repository" on the LOCAL arm turns away everybody whose documents
+  // live in ~/Documents/lumina-docs, because `resolveRepoRoot` requires only
+  // an absolute, reachable DIRECTORY. A GitHub mirror is a different source
+  // and the word is not a euphemism there — it IS a repository, named by
+  // owner and repo — so the ban narrows from "anywhere" to "the local arm",
+  // which is where it always meant something.
+  const localArm = FI.renderFoundationsChooser({ id: 'x',
+    choice: { ...FI.freshChooser({ allowLater: true }), ownership: 'repo' } });
+  ok('...and the LOCAL mirror arm says "folder", never "repository"',
+    !/repositor/i.test(localArm.slice(localArm.indexOf('fnd-init-arm'))),
+    localArm.slice(localArm.indexOf('fnd-init-arm'), localArm.indexOf('fnd-init-arm') + 800));
   ok('...and the mirror arm says "folder"', /Mirror a folder on this Mac/.test(full));
+  // ── AND THE THIRD CARD IS THE ONE THAT MAY SAY IT ────────────────────
+  ok('the GitHub card is offered beside the other two',
+    /data-fnd-own="remote"/.test(full) && /Mirror a GitHub repository/.test(full),
+    full.slice(0, 1400));
   ok('no ⓘ of its own: both hosts already carry one on the block that contains it, and a '
     + 'third mark beside them would be a third voice', !/tx-vh-info/.test(full));
   ok('and NO native <select> anywhere — v3.18.0 purged those from /next because the popup a '
@@ -1549,7 +1564,12 @@ function writeRig(responder) {
   const api = new Function('state', 'render', 'isCurrentMount', 'fetch', 'forgetProject',
     'reloadActive', 'refreshIndex', 'reportAsyncMountFailure', 'refreshFoundations',
     'fetchState', 'localStorage', 'FOUNDATION_ROLES', 'FOUNDATION_SLUG_RE',
-    'MAX_FOUNDATION_BYTES', 'freshChooser', 'chooserBody', 'JSON', 'TextEncoder', body)(
+    // THE REAL REFUSAL VOCABULARY (v3.65.0). `initFoundations` maps a store
+    // refusal code to a sentence naming the token's SOURCE before it prints
+    // one; injected real rather than stubbed, because the whole property
+    // under test is which words reach the screen.
+    'MAX_FOUNDATION_BYTES', 'freshChooser', 'chooserBody', 'remoteRefusalText',
+    'JSON', 'TextEncoder', body)(
     st,
     () => { calls.render++; },
     () => true,
@@ -1563,7 +1583,7 @@ function writeRig(responder) {
     async () => ({ data: { scopes: [], brief: { present: false } } }),
     { getItem: () => null, setItem: () => {} },
     FI.FOUNDATION_ROLES, FI.FOUNDATION_SLUG_RE, FI.MAX_FOUNDATION_BYTES,
-    FI.freshChooser, FI.chooserBody, JSON, TextEncoder);
+    FI.freshChooser, FI.chooserBody, FI.remoteRefusalText, JSON, TextEncoder);
   return { api, st, calls };
 }
 
@@ -1751,6 +1771,39 @@ function writeRig(responder) {
   st.fndInit = { domain: 'acme', project: 'lumina', busy: false, error: null, refused: [], choice };
   await api.initFoundations(1, { present: false, ownership: null });
   ok('the refusal is reported', /already has a manifest/.test(String(st.fndInit && st.fndInit.error)));
+  // ── A REMOTE REFUSAL NAMES THE TOKEN'S SOURCE, NEVER THE TOKEN (v3.65.0)
+  // The store answers a failed remote read with one of nine codes; printing
+  // the code would show a person a word from a protocol. And the ONE thing a
+  // view is in a position to get wrong here is putting a credential on
+  // screen — so the sentence names the FILE and the assertion says so.
+  {
+    const r2 = writeRig(() => ({ ok: false, status: 403, json: async () => ({
+      ok: false, error: 'unauthorised', message: 'unauthorised' }) }));
+    r2.st.fndInit = { domain: 'acme', project: 'lumina', busy: false, error: null, refused: [],
+      choice: { ...FI.freshChooser({}), ownership: 'remote', remote: 'o/r', tokenSource: 'sync',
+        candidates: [{ path: 'a.md', bytes: 1, suggestedRole: 'other' }], picks: { 'a.md': true } } };
+    await r2.api.initFoundations(1, { present: false, ownership: null });
+    const msg = String(r2.st.fndInit && r2.st.fndInit.error);
+    ok('a remote refusal is a SENTENCE, not the store\'s code',
+      !/unauthorised$/.test(msg) && /refused by GitHub/.test(msg), msg);
+    ok('...naming WHICH stored token was used', /Personal Sync’s token/.test(msg), msg);
+    ok('...and the request carried the token SOURCE and no token',
+      /"tokenSource":"sync"/.test(String(r2.calls.inits[0].body))
+      && !/"token"/.test(String(r2.calls.inits[0].body)), String(r2.calls.inits[0].body));
+    ok('...and the repository, as the store\'s own argument',
+      /"remote":"o\/r"/.test(String(r2.calls.inits[0].body)), String(r2.calls.inits[0].body));
+    // A CODE THIS TABLE DOES NOT KNOW falls back to the PRODUCER's message
+    // rather than to a guess — the collapse this repo keeps paying for is a
+    // consumer inventing an answer where the producer already gave one.
+    const r3 = writeRig(() => ({ ok: false, status: 400, json: async () => ({
+      ok: false, error: 'something_new', message: 'the producer said this' }) }));
+    r3.st.fndInit = { domain: 'acme', project: 'lumina', busy: false, error: null, refused: [],
+      choice: { ...FI.freshChooser({}), ownership: 'remote', remote: 'o/r',
+        candidates: [{ path: 'a.md', bytes: 1, suggestedRole: 'other' }], picks: { 'a.md': true } } };
+    await r3.api.initFoundations(1, { present: false, ownership: null });
+    eq('an unrecognised code falls back to the producer\'s own sentence',
+      String(r3.st.fndInit && r3.st.fndInit.error), 'the producer said this');
+  }
   eq('...and the scan the person read is STILL THERE',
     st.fndInit && st.fndInit.choice ? st.fndInit.choice.candidates.length : '<choice gone>', 1);
   eq('...with their ticks',
@@ -1820,6 +1873,20 @@ section('§10 — THE BINDER: wire() grows no new identifier');
     // shell pair and the lifted chat wrapper. All three are stubbed in that
     // suite's PREAMBLE.
     'requestDomain', 'goToChatScoped', 'navigate',
+    // ── v3.65.0, P10: step ③'s picker and its removes ─────────────────
+    // ONE new name, and the arithmetic is the point: the wiring is a BINDER
+    // (`bindKnowledgeRows`), exactly as tier 0's rows and the work-stream
+    // table are, so `wire()` gains one free identifier rather than the three
+    // it would gain by composing the cfg, mounting the component and calling
+    // the save inline. One name is one stub in the companion suite's
+    // preamble.
+    'bindKnowledgeRows',
+    // ── v3.65.0, R4: the step head ────────────────────────────────────
+    // `renderProject` composes its three numbered steps through this view's
+    // own `memStep` rather than through shared/block.js's `renderBlock`,
+    // because that component emits its ⓘ INSIDE a lede and emits nothing at
+    // all without one — and there is no lede on this page any more.
+    'memStep',
   ]);
   // COMMENTS STRIPPED FIRST. Proven necessary by running it: the docblocks in
   // `wire()` contain prose like "BOTH, because…" and "(the v3.11.0 shape)",
@@ -2496,6 +2563,210 @@ section('§14 — EVERY `hidden` ELEMENT THIS MODULE EMITS REALLY HIDES');
     !hasCounterRule('fnd-init-opt'), 'fnd-init-opt');
   ok('CONTROL: `declaresDisplay` finds the `display` on .tx-note, which is what makes the '
     + 'counter-rule necessary in the first place', declaresDisplay('tx-note'));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§15 — v3.65.0: THE GITHUB ARM (record §D.7)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// THE GAP IT CLOSES, in the store's own words: `initFoundations` refused
+// anything that was not an absolute path on THIS machine, so a computer with
+// no checkout could REFRESH a mirror somebody else started and could never
+// START one. The maintainer asked for it twice.
+//
+// THE ONE THING A VIEW IS IN A POSITION TO GET WRONG HERE is putting a
+// credential on screen or on the wire, so that is what most of this section
+// is about. Every arm is driven with `fetch` intercepted; nothing reaches the
+// network.
+{
+  const remoteChoice = (over) => ({ ...FI.freshChooser({ allowLater: true }),
+    ownership: 'remote', ...over });
+
+  // ── THE BODY ──────────────────────────────────────────────────────────
+  eq('a remote mirror is still `ownership: repo` — the store keeps ONE '
+    + 'ownership per project and a remote mirror IS a mirror',
+  JSON.stringify(FI.chooserBody(remoteChoice({ remote: 'o/r' }))),
+  JSON.stringify({ ownership: 'repo', tokenSource: 'config', remote: 'o/r' }));
+  ok('...and it carries NO repoRoot — the store refuses the two together by '
+    + 'name, because a mirror has one source',
+  !('repoRoot' in FI.chooserBody(remoteChoice({ remote: 'o/r', repoRoot: '/x' }))));
+  eq('a ref or a path makes `remote` the OBJECT the store also accepts',
+    JSON.stringify(FI.chooserBody(remoteChoice({ remote: 'o/r', remoteRef: 'main',
+      remotePath: 'docs/' })).remote),
+    JSON.stringify({ owner: 'o', repo: 'r', ref: 'main', path: 'docs/' }));
+  ok('...and a URL form is handed over UNPARSED rather than guessed at',
+    FI.chooserBody(remoteChoice({ remote: 'https://github.com/o/r.git', remoteRef: 'v2' }))
+      .remote.repo === 'https://github.com/o/r.git');
+  eq('an absent ref and an absent path are OMITTED, never sent empty — the '
+    + 'store reads absent as "the default branch" and "the whole repository"',
+  JSON.stringify(FI.chooserBody(remoteChoice({ remote: 'o/r', remoteRef: '', remotePath: '' }))),
+  JSON.stringify({ ownership: 'repo', tokenSource: 'config', remote: 'o/r' }));
+  eq('with no repository named there is no body at all', FI.chooserBody(remoteChoice({})), null);
+  eq('the token SOURCE rides, filtered to the two the store names',
+    FI.chooserBody(remoteChoice({ remote: 'o/r', tokenSource: 'sync' })).tokenSource, 'sync');
+  eq('...and an unknown word becomes `config` rather than being sent — the '
+    + 'store REFUSES an unrecognised one and this call records a decision',
+  FI.chooserBody(remoteChoice({ remote: 'o/r', tokenSource: 'made-up' })).tokenSource, 'config');
+  // THE ASSERTION THIS SECTION EXISTS FOR.
+  // THE SAME PLANT ON THE BODY: a choice carrying a token must not put one on
+  // the wire, and a fixture with no token could not tell the two apart.
+  for (const c of [remoteChoice({ remote: 'o/r' }),
+    remoteChoice({ remote: 'o/r', remoteRef: 'main', tokenSource: 'sync',
+      token: 'ghp_PLANTED_SECRET_0000' })]) {
+    ok('NO body from this arm carries a token, under any key or any value',
+      !JSON.stringify(FI.chooserBody(c)).includes('"token"')
+      && !/PLANTED|ghp_|github_pat/.test(JSON.stringify(FI.chooserBody(c))),
+    JSON.stringify(FI.chooserBody(c)));
+  }
+
+  // ── THE MARKUP ────────────────────────────────────────────────────────
+  const arm = FI.renderFoundationsChooser({ id: 'x',
+    choice: remoteChoice({ remote: 'o/r', remoteRef: 'main' }) });
+  ok('three fields: the repository, the ref and the folder',
+    /id="x-remote"/.test(arm) && /id="x-remote-ref"/.test(arm) && /id="x-remote-path"/.test(arm),
+    arm.slice(0, 900));
+  ok('...and NO field for a token, in any shape at all',
+    !/type="password"/.test(arm) && !/name="token"/.test(arm) && !/id="x-token"/.test(arm)
+    && !/Paste/.test(arm), arm);
+  ok('the token source is two radios naming two FILES',
+    /data-fnd-token="config"/.test(arm) && /data-fnd-token="sync"/.test(arm), arm.slice(0, 1600));
+  ok('...and the form says outright that the token is never typed here',
+    /never typed here/.test(arm));
+  ok('a blank ref and a blank folder say what blank MEANS rather than nothing',
+    /placeholder="the default branch"/.test(arm) && /placeholder="the whole repository"/.test(arm),
+    arm.slice(0, 1200));
+
+  // ── THE DISABLED CONTROL STATES ITS REASON (v3.61.1's finding) ─────────
+  eq('with nothing named, the scan says why it is off',
+    FI.scanBlockedReason(remoteChoice({})), 'Name the repository first.');
+  ok('...and with no read token on this build it says which one to add',
+    /add one in Settings/.test(FI.scanBlockedReason(
+      remoteChoice({ remote: 'o/r', hasReadToken: false }))));
+  ok('...and Personal Sync not being connected is a DIFFERENT sentence',
+    /Personal Sync is not connected/.test(FI.scanBlockedReason(
+      remoteChoice({ remote: 'o/r', tokenSource: 'sync', hasSyncToken: false }))));
+  eq('CONTROL: a build that does not report availability blocks NOTHING — '
+    + '"we did not look" must not be rendered as "not set"',
+  FI.scanBlockedReason(remoteChoice({ remote: 'o/r' })), '');
+
+  // ── AND THE COMMIT ────────────────────────────────────────────────────
+  eq('a remote mirror with nothing found cannot be committed — a remote init '
+    + 'with no files performs NO network call, so it would record an ownership '
+    + 'pointing at a repository nobody has proved exists',
+  FI.commitBlockedReason(remoteChoice({ remote: 'o/r' })), 'Find the documents first.');
+  eq('...and one found but nothing ticked says so',
+    FI.commitBlockedReason(remoteChoice({ remote: 'o/r',
+      candidates: [{ path: 'a.md', bytes: 1 }], picks: {} })), 'Tick at least one document.');
+  eq('...and a ticked one is committable',
+    FI.commitBlockedReason(remoteChoice({ remote: 'o/r',
+      candidates: [{ path: 'a.md', bytes: 1, suggestedRole: 'other' }],
+      picks: { 'a.md': true } })), '');
+
+  // ── THE SCAN: ONE READ, AND NO TOKEN ON THE WIRE ──────────────────────
+  {
+    const urls = [];
+    const fake = async (u) => { urls.push(String(u)); return { ok: true,
+      json: async () => ({ ok: true, remote: { owner: 'o', repo: 'r' }, commit: 'abc',
+        candidates: [{ path: 'docs/a.md', bytes: 10, suggestedRole: 'architecture',
+          firstHeading: null, modifiedAt: null }], truncated: false }) }; };
+    // A TOKEN IS PLANTED IN THE ARGUMENTS, and that is the whole point of
+    // this fixture rather than a flourish: a scan driven with NO token cannot
+    // tell a function that refuses to forward one from a function that would
+    // have. The mutation adding `token=` to the query string was GREEN
+    // against the token-less fixture and reds against this one.
+    const got = await FI.scanRemote({ remote: 'o/r', ref: 'main', path: 'docs',
+      tokenSource: 'sync', token: 'ghp_PLANTED_SECRET_0000' }, fake);
+    eq('exactly one request', urls.length, 1);
+    ok('...to the repo-scan route, in REMOTE mode, with the repository escaped',
+      urls[0].startsWith('/api/memory/repo-scan?source=remote&remote=o%2Fr'), urls[0]);
+    ok('...carrying the ref, the folder and the token SOURCE',
+      /[?&]ref=main/.test(urls[0]) && /[?&]path=docs/.test(urls[0])
+      && /[?&]tokenSource=sync/.test(urls[0]), urls[0]);
+    ok('...and NOT the token planted in its own arguments — the store reads a '
+      + 'token from a FILE, and a token in an argument neither authorises a '
+      + 'read nor appears in an answer',
+    !/PLANTED/.test(urls[0]) && !/ghp_|github_pat/.test(urls[0])
+      && !/[?&]token=/.test(urls[0]), urls[0]);
+    eq('the candidates come back', got.candidates.length, 1);
+    eq('...and a remote row carries NO age, uniformly — a git tree has no '
+      + 'timestamps, so "not read" is the honest answer and a fake age would '
+      + 'be worse than either', got.candidates[0].modifiedAt, null);
+    eq('...which the row renderer respects', FI.candidateAgeHtml(null), '');
+    // ── AND THE ARM SAYS SO ONCE, ABOVE THE LIST ──────────────────────
+    // Twenty-five rows each carrying a dash is noise, and a FAKE age would be
+    // worse than either — so the omission is DISCLOSED rather than left to be
+    // noticed. Asserted over the rendered arm with a scan in hand, because
+    // the sentence only appears once there is a list for it to qualify.
+    const listed = FI.renderFoundationsChooser({ id: 'x', choice: remoteChoice({
+      remote: 'o/r', candidates: got.candidates, picks: {} }) });
+    ok('the remote arm discloses that no row carries an age',
+      /Age is unknown for a remote scan/.test(listed), listed.slice(-900));
+    ok('...and no row invents one', !/fnd-init-cand-age/.test(listed), listed.slice(-900));
+    // CONTROL: the LOCAL arm, whose rows DO carry an age, says no such thing.
+    const localListed = FI.renderFoundationsChooser({ id: 'x', choice: {
+      ...FI.freshChooser({}), ownership: 'repo', repoRoot: '/r', picks: {},
+      candidates: [{ path: 'docs/a.md', bytes: 10, suggestedRole: 'other',
+        modifiedAt: new Date(Date.now() - 3600_000).toISOString() }] } });
+    ok('CONTROL: the local arm makes no such disclosure, because its rows have ages',
+      !/Age is unknown/.test(localListed) && /fnd-init-cand-age/.test(localListed),
+      localListed.slice(-900));
+  }
+  {
+    // EVERY REFUSAL IS A SENTENCE, AND EVERY SENTENCE NAMES THE SOURCE.
+    const refuse = async (code) => FI.scanRemote({ remote: 'o/r', tokenSource: 'config' },
+      async () => ({ ok: false, status: 403, json: async () => ({ ok: false, error: code }) }));
+    ok('an unauthorised read names WHICH stored token was refused',
+      /read-only token in Settings was refused/i.test((await refuse('unauthorised')).error),
+      (await refuse('unauthorised')).error);
+    ok('a missing token says which file is empty, not "auth failed"',
+      /no token to read with/.test((await refuse('no-token')).error));
+    ok('a truncated tree says what to DO — the store throws before the first '
+      + 'blob rather than mirroring part of a repository',
+    /Name a folder inside it/.test((await refuse('remote-tree-truncated')).error));
+    ok('a rate limit is told apart from a refusal',
+      /rate-limiting/.test((await refuse('rate-limited')).error));
+    for (const code of ['unauthorised', 'no-token', 'rate-limited', 'remote-not-found',
+      'remote-tree-truncated', 'remote-too-large', 'invalid-remote', 'invalid-token-source',
+      'remote-unreachable', 'remote-http', 'remote-unavailable']) {
+      const msg = (await refuse(code)).error;
+      ok('`' + code + '` is a sentence a person can act on, not a protocol word',
+        typeof msg === 'string' && msg.length > 20 && !msg.includes(code), msg);
+    }
+    const unknown = await FI.scanRemote({ remote: 'o/r' },
+      async () => ({ ok: false, status: 400,
+        json: async () => ({ ok: false, error: 'brand_new', message: 'the producer said this' }) }));
+    eq('an unrecognised code falls back to the PRODUCER\'s own message rather '
+      + 'than to a guess', unknown.error, 'the producer said this');
+    const broke = await FI.scanRemote({ remote: 'o/r' }, async () => { throw new Error('offline'); });
+    eq('a thrown fetch is caught and disclosed', broke.error, 'offline');
+    eq('CONTROL: no repository named is refused before any request',
+      (await FI.scanRemote({}, async () => { throw new Error('should not be called'); })).error,
+      'name the repository first');
+  }
+
+  // ── THE BINDER: THE SAME TICK DEFAULT AS THE LOCAL ARM ────────────────
+  {
+    const choice = remoteChoice({ remote: 'o/r' });
+    const scan = node({});
+    const why = node({ hidden: true, querySelector: () => node({}) });
+    const doc = docModel({ 'x-scan': scan, 'x-why': why,
+      'x-remote': node({ value: 'o/r' }), 'x-remote-ref': node({ value: '' }),
+      'x-remote-path': node({ value: '' }) }, {});
+    FI.bindFoundationsChooser({ doc, id: 'x', choice, onChange: () => {},
+      fetchImpl: async () => ({ ok: true, json: async () => ({ ok: true,
+        candidates: [
+          { path: 'docs/architecture.md', bytes: 10, suggestedRole: 'architecture' },
+          { path: 'docs/notes.md', bytes: 10, suggestedRole: 'other' },
+        ], truncated: false }) }) });
+    scan.fire('click');
+    await new Promise((r) => setTimeout(r, 0));
+    eq('the scan landed', Array.isArray(choice.candidates) ? choice.candidates.length : -1, 2);
+    ok('...and only the CANONICAL roles are ticked, exactly as the local arm '
+      + 'does — v3.61.0 ticked everything and came out 1,875 KB over a 200 KB '
+      + 'budget on the maintainer\'s own repository',
+    choice.picks['docs/architecture.md'] === true && !choice.picks['docs/notes.md'],
+    JSON.stringify(choice.picks));
+  }
 }
 
 // ── Done ─────────────────────────────────────────────────────────────────

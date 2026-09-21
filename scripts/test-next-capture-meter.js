@@ -60,6 +60,7 @@ import { renderReadout, renderStatus, renderInfoMark } from '../src/public/next/
 import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
 import { freshnessTier } from '../src/public/next/shared/age.js';
 import { MAX_LINE_BYTES, MAX_LINE_BYTES_LABEL } from '../src/brain/mcp-usage.js';
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -138,9 +139,13 @@ function makeMeter(stateObj) {
     extractFunction(viewSrc, 'renderCaptureMeter') + '\n' +
     'return { captureFacts, renderCaptureMeter, renderCaptureSessions, formatAge, effectiveSave };';
   return new Function('state', 'escapeHtml', 'icon', 'renderReadout', 'renderStatus',
-    'renderInfoMark', 'docsLinkHtml', 'freshnessTier', body)(
+    'renderInfoMark', 'docsLinkHtml', 'freshnessTier',
+    // THE REAL MONITOR (v3.65.0). The reading's BODY is one, and every
+    // assertion below about where a figure or a disclosure sits is an
+    // assertion about what that component emits.
+    'renderMonitor', body)(
     stateObj, escapeHtml, () => '<svg></svg>', renderReadout, renderStatus,
-    renderInfoMark, docsLinkHtml, freshnessTier);
+    renderInfoMark, docsLinkHtml, freshnessTier, renderMonitor);
 }
 
 const NOW = Date.now();
@@ -216,12 +221,31 @@ section('§1 — THE FOUR NUMBERS, AND THE ONE THAT MATTERS IS NAMED');
   ok(!/last 7 days/.test(html),
     'the window in the words is DERIVED from CAPTURE_WINDOW_DAYS, never typed');
 
-  // Every figure reaches the page through the shared readout, so the label,
-  // the value and the provenance take the kit's type rather than this view's.
-  ok(html.includes('class="tx-readout-label">CAPTURE<'),
-    'the reading is a shared readout, labelled CAPTURE');
-  ok(html.includes('tx-readout-prov'),
-    '...with the three clauses in the readout\'s provenance slot');
+  // ── THE READING IS A ROW SUMMARY NOW, AND THE BODY IS A MONITOR ──────
+  // It was a `renderReadout` inside a bespoke `.mem-capture` card, above a
+  // separate fold called "Sessions" whose own summary carried the same four
+  // numbers. The maintainer read that card and its fold as two things and
+  // said so. One row: the headline AND the three clauses are the closed line,
+  // and the instrument opens under it.
+  ok(/<summary class="mem-fold-summary" id="mem-fold-capture">[\s\S]*?<span>Capture<\/span>/.test(html),
+    'the reading is a fold row, titled Capture, in the same chrome as its four siblings',
+    html.slice(0, 400));
+  ok(/<span class="mem-fold-meta"><span class="fresh-dot[^>]*><\/span>6 sessions in the last [0-9]+ days · 4 started with the context/
+    .test(html), '...with the headline AND the three clauses as its one closed line',
+  html.slice(0, 600));
+  ok(html.includes('<div class="cur-mon"'),
+    '...and the body is the MONITOR, the one component every live reading in the app uses');
+  ok(/class="cur-mon-key">read and did not save<\/span><span class="cur-mon-value cur-mon-warn"|cur-mon-line cur-mon-warn/
+    .test(html), '...which tones the uncomfortable figure when it is not zero', html.slice(html.indexOf('cur-mon'), html.indexOf('cur-mon') + 700));
+  // THE WORD "Sessions" LEAVES THE SCREEN (R2). The maintainer: *"I have no
+  // clue what a session is."* It survives in the ⓘ, where what a session IS
+  // belongs, and as the table's own heading — never as the name of a section.
+  const visible = html.replace(/<div class="tx-vh-panel"[\s\S]*?<\/div>\s*(?=<|$)/g, '')
+    .replace(/class="visually-hidden">[^<]*</g, 'class="visually-hidden"><');
+  ok(!/<span>Sessions<\/span>/.test(visible) && !/>Sessions</.test(visible),
+    'no section on the screen is called "Sessions" any more', visible.slice(0, 400));
+  ok(/A <b>session<\/b> is one bridge process/.test(html),
+    'CONTROL: the word survives in the ⓘ, which is where the definition belongs');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -263,9 +287,28 @@ section('§2 — THE THREE STATES, TOLD APART (roadmap B12)');
     '...and does not claim the log is missing', idle.slice(0, 300));
   ok(idle.includes('fresh-dot fresh-unknown'),
     '...and takes the unknown ring too: there is no age to read');
-  ok(!idle.includes('data-mem-fold="capture"'),
-    '...and there is NO FOLD, because an empty chevron invites a click that '
-    + 'answers nothing (the flat-card call renderWorkStreamsFold makes)');
+  // IT IS STILL A FOLD, and the reason changed with the shape rather than
+  // being abandoned: the rule is "no chevron when there is nothing to open",
+  // and an idle log HAS something to open — the monitor, which states the
+  // four figures as zeroes taken over a real window. What it does not have is
+  // a session table, and the flat branch below proves the flat case is still
+  // reachable, so this is not the rule being quietly dropped.
+  ok(idle.includes('data-mem-fold="capture"'),
+    '...and it is still a row, opening on the monitor even with no table under it');
+  ok(!idle.includes('mem-cap-table'),
+    '...with no session table in it, because there were no sessions');
+  const blind = makeMeter(stFor({
+    capture: { domain: 'acme', project: 'lumina', error: null, data: payload({
+      logPresent: false,
+      totals: { sessions: null, sessionsRead: null, sessionsSaved: null,
+        sessionsReadNotSaved: null, legacyLines: 0, selfTestLines: 0 },
+      sessions: [], sessionsShown: 0,
+    }) },
+  })).renderCaptureMeter();
+  ok(!blind.includes('data-mem-fold="capture"') && blind.includes('mem-fold-flat'),
+    'CONTROL: a reading with NO figure at all is a FLAT row — an empty chevron '
+    + 'invites a click that answers nothing (the call renderWorkStreamsFold makes)',
+  blind.slice(0, 400));
 
   // ── (c) SESSIONS RAN ───────────────────────────────────────────────────
   const live = makeMeter(stFor()).renderCaptureMeter();
@@ -301,15 +344,37 @@ section('§3 — THE READING NEVER FOLDS; THE SESSION LIST DOES, AND SHIPS SHUT'
     .renderCaptureMeter().includes('data-mem-fold="capture" open'),
   '...and no other fold\'s key opens it');
 
-  // ── THE FOUR NUMBERS ARE OUTSIDE EVERY <details> AND EVERY ⓘ PANEL ─────
-  // Asserted by POSITION over the rendered page rather than by reading the
-  // source: v3.16.1 cost a release precisely because a measured finding was
-  // collapsed into a disclosure on 199 of 206 rows.
-  const beforeFold = html.slice(0, html.indexOf('<details'));
+  // ── VISIBLE WHILE THE ROW IS CLOSED — the same rule, a new shape ──────
+  //
+  // This used to read `html.slice(0, html.indexOf('<details'))`: the four
+  // numbers had to be painted BEFORE the first fold, because the reading was
+  // a card ABOVE a fold called "Sessions". The reading IS the fold row now
+  // (R2), so that index is 0 and the old form expresses nothing.
+  //
+  // THE RULE IT ENCODED IS v3.16.1 AND IT IS UNCHANGED: a user who has not
+  // clicked anything can read the outcome. What satisfies it is now "in the
+  // row's own <summary>, or outside every fold", which is exactly what a
+  // closed page shows — so that is what is computed, and a positive control
+  // below proves a claim moved into the BODY reds it.
+  const summaryOf = (h, key) => {
+    const at = h.indexOf('data-mem-fold="' + key + '"');
+    if (at === -1) return '';
+    const m = /<summary[\s\S]*?<\/summary>/.exec(h.slice(at));
+    return m ? m[0] : '';
+  };
+  const outsideAllDetails = (h) => h.replace(/<details[\s\S]*?<\/details>/g, '');
+  const closedText = summaryOf(html, 'capture') + outsideAllDetails(html);
   for (const claim of ['6 sessions in the last', '2 read and did not save']) {
-    ok(beforeFold.includes(claim),
-      '`' + claim + '…` is painted BEFORE the fold opens — an outcome behind a click is not an outcome');
+    ok(closedText.includes(claim),
+      '`' + claim + '…` is readable while the row is CLOSED — an outcome behind a click is not an outcome');
   }
+  // THE POSITIVE CONTROL, without which the scan above passes on anything:
+  // a claim that exists ONLY inside the fold body must not be found.
+  ok(!closedText.includes('Started</th>') && html.includes('Started</th>'),
+    'CONTROL: the detector really does exclude the fold BODY — the session '
+    + 'table\'s own column heading is on the page and NOT in the closed text');
+  ok(summaryOf(html, 'capture').length > 40,
+    'CONTROL: the summary was really found (the scan is not vacuous)');
   const panels = [...html.matchAll(/<div class="tx-vh-panel"[^>]*hidden>([\s\S]*?)<\/div>/g)].map((m) => m[1]);
   eq('CONTROL: the meter\'s one ⓘ panel was really found', panels.length, 1);
   ok(panels.every((x) => !x.includes('read and did not save')),
@@ -427,7 +492,14 @@ section('§5 — AN ABSENT FIGURE IS NOT A ZERO');
   // would find the definition and pass while the figure was quietly zero.
   // Found by writing it the page-wide way first and watching it fail on
   // correct output.
-  const provOf = (h) => (/<span class="tx-readout-prov">([\s\S]*?)<\/span>/.exec(h) || [, ''])[1];
+  // READ OFF THE ROW'S OWN CLOSED LINE, not off the whole page: the ⓘ panel
+  // explains what "saved before stopping" MEANS, so a page-wide `includes`
+  // would find the definition and pass while the figure was quietly zero.
+  // Found by writing it the page-wide way first and watching it fail on
+  // correct output. RE-POINTED in v3.65.0 from the readout's provenance slot
+  // to the fold summary's meta, which is where the three clauses now read.
+  const provOf = (h) => (/<span class="mem-fold-meta">([\s\S]*?)<\/span>\s*<\/summary>/.exec(h)
+    || /<span class="mem-fold-meta">([\s\S]*?)<\/span>/.exec(h) || [, ''])[1];
   ok(!provOf(partial).includes('saved before stopping'),
     '...and a figure the route did not send is DROPPED from the reading, not printed as zero',
     provOf(partial));
@@ -457,8 +529,13 @@ section('§5 — AN ABSENT FIGURE IS NOT A ZERO');
     + 'work this reading cannot attribute');
   ok(dirty.includes('25 self-test calls excluded'),
     '...and so is the app\'s own self-test run, the exact contamination `via` was invented to keep out');
-  ok(dirty.indexOf('carried no session id') < dirty.indexOf('<details'),
-    '...both in the open, above the fold: a limit on a reading is part of the reading');
+  // OUTSIDE THE ROW, not above it: the reading IS the row now, and the two
+  // disclosures sit under it where they qualify it. The claim that matters is
+  // unchanged and is checked the same way §3 checks the four numbers — a user
+  // who has not clicked anything must have them.
+  ok(!/<details[\s\S]*carried no session id[\s\S]*<\/details>/.test(dirty)
+    && dirty.includes('carried no session id'),
+  '...both in the open, OUTSIDE every fold: a limit on a reading is part of the reading');
   ok(!makeMeter(stFor()).renderCaptureMeter().includes('cannot be counted'),
     'CONTROL: with neither class present the line is absent, so it is not always on');
 
@@ -840,14 +917,14 @@ section('§11 — SAVES WITH NO SESSION TO ACCOUNT FOR THEM (v3.64.1)');
     'the route\'s sentence is rendered VERBATIM — the view never authors a second copy of a '
     + 'remedy the producer owns', html.slice(0, 900));
   // POSITION: under the reading, not above it and not inside the fold.
-  const atRead = html.indexOf('CAPTURE');
+  const atRead = html.indexOf('mem-fold-capture');
   const atNote = html.indexOf('bridge that logged no sessions');
-  const atFold = html.indexOf('data-mem-fold="capture"');
   ok(atRead !== -1 && atNote > atRead,
     'the note is rendered UNDER the reading it qualifies', atRead + ' vs ' + atNote);
-  ok(atFold === -1 || atNote < atFold,
-    '...and never inside the session fold — an outcome may not sit behind a chevron (v3.16.1)',
-    atNote + ' vs ' + atFold);
+  // RE-POINTED (v3.65.0): the reading IS the fold now, so "before the fold"
+  // is meaningless and "outside every fold" is the rule. v3.16.1, unmoved.
+  ok(!/<details[\s\S]*bridge that logged no sessions[\s\S]*<\/details>/.test(html),
+    '...and never inside the row\'s body — an outcome may not sit behind a chevron (v3.16.1)');
 
   // THE DISCLOSURE THE NEW NOTE DOES NOT MAKE. The legacy clause defers to the
   // route's note, because on a real log THAT note IS the legacy count — but

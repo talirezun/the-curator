@@ -67,6 +67,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSyn
 import { join, dirname, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
+import { freshnessTier } from '../src/public/next/shared/age.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -503,7 +505,12 @@ const escapeHtml = new Function(extractFunction(
 // by one collaborator is a ReferenceError, not a failing assertion.
 const LIFT_VIEW = ['formatAge', 'effectiveSave', 'newestPair', 'harnessOf',
   'newerOnAnotherMachine',
-  'firstNote', 'saveLine', 'renderSaveStatus'];
+  // `saveLine` IS GONE (v3.65.0): every qualification under the save reading
+  // is a `renderMonitor` LINE or `loud` entry now, so the collaborator this
+  // list has to carry is the COMPONENT rather than a local sentence builder.
+  // `freshnessTier` joins it for the same reason — the pip was deleted for the
+  // app-wide `.fresh-dot`, which is cut on the tier rather than on the step.
+  'firstNote', 'renderSaveStatus'];
 const LIFT_AGE = ['freshnessStep'];
 const LIFT = [...LIFT_VIEW, ...LIFT_AGE];
 const ageSrc = readFileSync(join(NEXT, 'shared/age.js'), 'utf8');
@@ -512,8 +519,10 @@ function lifted(stateObj) {
     .concat(LIFT_AGE.map((n) => extractFunction(ageSrc, n, 'shared/age.js')))
     .join('\n') +
     '\nreturn { ' + LIFT.join(', ') + ' };';
-  return new Function('state', 'escapeHtml', 'icon', 'renderReadout', body)(
-    stateObj, escapeHtml, (n) => '<svg data-icon="' + n + '"></svg>', renderReadout);
+  return new Function('state', 'escapeHtml', 'icon', 'renderReadout', 'renderMonitor',
+    'freshnessTier', body)(
+    stateObj, escapeHtml, (n) => '<svg data-icon="' + n + '"></svg>', renderReadout,
+    renderMonitor, freshnessTier);
 }
 const V = lifted({});
 
@@ -554,33 +563,33 @@ const V = lifted({});
     V.freshnessStep(300) + ' vs ' + V.freshnessStep(4 * 3600));
 }
 
-// Every step the function can return has a rule in the stylesheet. A step with
-// no class is an invisible pip.
+// ── THE PIP IS DELETED, AND THE DOT IS WHAT IS LEFT (v3.65.0, R13) ───────
+//
+// This block used to require a CSS rule per step — a step with no class is an
+// invisible pip — plus that the ink came from the app-wide `--fresh-*` family
+// rather than from brand violet. Both were the right guards while TWO marks
+// existed for ONE quantity: `.mem-save-pip` on this reading, `.fresh-dot` on
+// the rail's rows, the work-stream table, the overview strip and step ③, on
+// the same page.
+//
+// There is one mark now. `freshnessStep` survives — the five steps above are
+// still the boundaries `formatAge` cuts on, and the tray reads them — but
+// nothing in this view paints them. So what is asserted is the deletion,
+// in both directions: no pip rule and no `.fresh-` rule in this view's
+// stylesheet, and the reading really does wear the SHARED dot, cut on
+// `freshnessTier`, which is the function the rest of the page uses.
 {
-  const missing = [0, 1, 2, 3, 4].filter((s) => !viewCss.includes('.mem-save-pip-s' + s));
-  ok('every one of the five steps has its own CSS rule', missing.length === 0, JSON.stringify(missing));
-  ok('...and so does the unknown state', viewCss.includes('.mem-save-pip-unknown'));
-  // THE INK IS THE APP-WIDE SCALE'S, not this view's own. The five steps used
-  // to paint brand violet, which means identity and primary action; the two
-  // sidebar ladders painted the same violet on a different number of steps,
-  // and the menubar tray a user sees in the same glance painted teal/amber/
-  // neutral. scripts/test-freshness-scale.js owns the full mapping; this
-  // assertion is here so a recolour of the pip alone reds the suite that is
-  // ABOUT the pip.
-  //
-  // COMMENTS STRIPPED FIRST, and it is load-bearing rather than tidy: the
-  // block above these rules EXPLAINS that the pip used to paint
-  // `var(--accent)`, so a raw scan reads the explanation and reports the
-  // opposite of the truth. The first draft of this assertion did exactly
-  // that and went red against a correct file.
   const pipCss = viewCss.replace(/\/\*[\s\S]*?\*\//g, '');
-  ok('the pip names no colour but the shared --fresh-* family (and --text-faint for unknown)',
-    !/\.mem-save-pip[^{]*\{[^}]*var\(--(accent|text-3)\b/.test(pipCss)
-    && /\.mem-save-pip-s4[^{]*\{[^}]*var\(--fresh-hot\)/.test(pipCss));
-  ok('CONTROL — the stripped copy still holds the rules, so the assertion above is not green over an empty string',
-    /\.mem-save-pip-s0[^{]*\{/.test(pipCss) && pipCss.length > 2000);
-  ok('the pip carries NO transition — every render replaces the pane, so one could never run',
-    !/\.mem-save-pip[^{]*\{[^}]*transition/.test(viewCss));
+  const survivors = [0, 1, 2, 3, 4].filter((n) => pipCss.includes('.mem-save-pip-s' + n));
+  ok('not one of the five pip rules survives — one quantity, one mark',
+    survivors.length === 0, JSON.stringify(survivors));
+  ok('...nor the unknown state\'s', !pipCss.includes('.mem-save-pip-unknown'));
+  ok('...and this view declares no `.fresh-` rule either, so the ladder is '
+    + 'reached by deletion rather than re-declared under another name',
+    !/\.fresh-[a-z]+\s*\{/.test(pipCss));
+  ok('CONTROL — the stripped copy still holds this view\'s own rules, so the '
+    + 'three assertions above are not green over an empty string',
+    /\.mem-fold-summary[^{]*\{/.test(pipCss) && pipCss.length > 2000);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -618,8 +627,8 @@ const baseDetail = (over = {}) => {
 
 {
   const clean = lifted({}).renderSaveStatus(baseRead, baseDetail());
-  ok('the healthy reading is a Last saved instrument with a freshness pip',
-    /mem-save-pip mem-save-pip-s3/.test(clean) && />Last saved</.test(clean), clean.slice(0, 400));
+  ok('the healthy reading is a Last saved instrument with the APP-WIDE freshness dot',
+    /fresh-dot fresh-recent/.test(clean) && />Last saved</.test(clean), clean.slice(0, 400));
   // v3.64.2 — the reading is the meta of a `.mem-fold` row now, not a
   // highlighted card with a readout in it: "Last saved" on the left, the pip,
   // the age and the provenance on the right, in the same chrome as the four
@@ -628,7 +637,7 @@ const baseDetail = (over = {}) => {
   ok('...and the scope and harness as its provenance',
     /mem-save-prov">main · claude-code</.test(clean), clean.slice(0, 600));
   ok('...carrying NO incomplete badge and no warning line',
-    !/incomplete/.test(clean) && !/mem-save-line-loud/.test(clean));
+    !/incomplete/.test(clean) && !/cur-mon-loud/.test(clean));
   ok('THE LABEL IS "Last saved", NEVER "saved" — this screen cannot know whether '
     + 'anything has changed since, and must not imply it does',
     !/\bYou are saved\b/i.test(clean) && !/\bAll saved\b/i.test(clean));
@@ -642,7 +651,10 @@ const baseDetail = (over = {}) => {
   ok('...and the store\'s own note is quoted rather than paraphrased',
     trimmed.includes('nextSteps: 3 item(s) omitted over the state size budget'), trimmed.slice(0, 900));
   ok('...in the loud treatment, because the rest of the strip reads as calm',
-    /mem-save-line-loud/.test(trimmed));
+    /cur-mon-loud cur-mon-danger/.test(trimmed), trimmed.slice(0, 1200));
+  ok('...OUTSIDE the fold, because a warning behind a chevron is not a warning',
+    trimmed.lastIndexOf('cur-mon-loud') > trimmed.lastIndexOf('</details>')
+    || !trimmed.includes('</details>'), trimmed.slice(0, 900));
   ok('CONTROL: the same fixture without the trim renders neither',
     !/incomplete/.test(clean) && !clean.includes('omitted over the state size budget'));
 
@@ -653,7 +665,12 @@ const baseDetail = (over = {}) => {
   ok('a deliberate REPLACE is stated but NOT badged as incomplete — nothing the agent sent was lost',
     replaced.includes('replaced a larger handoff') && !/incomplete<\/span>/.test(replaced),
     replaced.slice(0, 600));
-  ok('...and it is not given the loud treatment either', !/mem-save-line-loud/.test(replaced));
+  // STILL A `loud` ENTRY, because it is an outcome — but in the DEFAULT tone
+  // rather than the danger one, which is the distinction that used to be
+  // carried by having a loud class or not having one.
+  ok('...and it is not given the DANGER tone either — nothing was lost',
+    /cur-mon-loud cur-mon-warn/.test(replaced) && !/cur-mon-danger/.test(replaced),
+    replaced.slice(0, 900));
 
   const noted = lifted({}).renderSaveStatus(baseRead, baseDetail({
     current: { lastSaveKind: 'noted', lastSaveNotes: ['observations: 1 item(s) stamped with the save time'] },
@@ -674,7 +691,11 @@ section('§8 — The strip answers the other three questions, and only when true
   ok('a filesystem-time reading is LABELLED as one on the instrument',
     /mem-save-prov">[^<]*file time/.test(fsOnly), fsOnly.slice(0, 700));
   ok('...and explained, because "file time" alone does not say what goes wrong',
-    /when the file arrived here, not when it was written/.test(fsOnly), fsOnly.slice(0, 1200));
+    /when it ARRIVED here, not when it was written/.test(fsOnly), fsOnly.slice(0, 1200));
+  ok('...as a MONITOR line — one fact, keyed and valued, with the prose as its '
+    + 'qualifying clause rather than as the whole of it',
+    /class="cur-mon-key">clock<\/span><span class="cur-mon-value">the file’s own</.test(fsOnly),
+    fsOnly.slice(0, 1200));
   ok('CONTROL: an agent-clock reading says neither', !/file time/.test(
     lifted({}).renderSaveStatus(baseRead, baseDetail())));
 
@@ -688,10 +709,11 @@ section('§8 — The strip answers the other three questions, and only when true
     },
   }));
   ok('a handoff written hours ago and pulled seconds ago states BOTH',
-    /mem-save-age">3 hr ago</.test(synced) && /arrived on this computer just now/i.test(synced),
-    synced.slice(0, 900));
+    /mem-save-age">3 hr ago</.test(synced)
+    && /class="cur-mon-key">arrived here<\/span><span class="cur-mon-value">[\s\S]{0,120}just now</.test(synced),
+    synced.slice(0, 1200));
   ok('CONTROL: when the two clocks agree, no arrival line appears',
-    !/arrived on this computer/i.test(lifted({}).renderSaveStatus(baseRead, baseDetail())));
+    !/arrived here/i.test(lifted({}).renderSaveStatus(baseRead, baseDetail())));
 
   // NEWER STATE SOMEWHERE ELSE IN THIS PROJECT — the "this scope vs any
   // scope" distinction, which is the one that catches an agent saving beside
@@ -713,19 +735,26 @@ section('§8 — The strip answers the other three questions, and only when true
       harnessShared: true, harnesses: ['claude-code', 'opencode'] }],
   }, baseDetail());
   ok('two tools sharing one handoff file is stated, loudly',
-    /mem-save-line-loud/.test(collide) && /Two tools are writing/.test(collide), collide.slice(0, 1400));
+    /cur-mon-loud cur-mon-danger/.test(collide) && /Two tools are writing/.test(collide),
+    collide.slice(0, 1400));
   ok('...naming both tools', /claude-code and opencode/.test(collide));
-  // The class moved `mono` -> `mem-name` in the design pass, and the PROPERTY
-  // this asserts is unchanged: the scope is still marked up as a distinct
-  // token inside the sentence, still the way every other scope and machine
-  // name on this screen reads. What moved is HOW it is marked — colour and
-  // weight rather than a change of face mid-line — because those other slugs
-  // moved off the monospace face in the same pass. An assertion pinning
-  // `mono` here would now be pinning the ONE site that did not move.
-  ok('...and rendering the scope as a name, the way every other scope and machine on this screen reads',
-    /Two tools are writing <span class="mem-name">main<\/span>/.test(collide), collide.slice(0, 900));
-  ok('...and naming the remedy, which is the user\'s to apply',
-    /own scope/.test(collide));
+  // ── THE SCOPE IS NO LONGER MARKED UP BY HAND (v3.65.0) ────────────────
+  //
+  // It was `<span class="mem-name">main</span>`, interpolated here into a
+  // sentence this function built as raw HTML — one of four such sentences,
+  // every one of them carrying a value that came off disk. `renderMonitor`
+  // escapes every field it is given and emphasises exactly ONE named field,
+  // `strongText`, so the emphasis survives the move and the hand-built markup
+  // does not. What the old assertion protected — that the scope is a
+  // distinguishable token in the sentence rather than a bare word — is now
+  // carried by the sentence naming it in the FIRST clause, and what it cost
+  // is an escaping hazard per sentence.
+  ok('...naming the work-stream, escaped by the component rather than by hand',
+    /Two tools are writing main\./.test(collide) && !/mem-name/.test(collide),
+    collide.slice(0, 900));
+  ok('...and naming the remedy, which is the user\'s to apply — in the one '
+    + 'field the component emphasises',
+    /<strong>Give each tool its own work-stream\.<\/strong>/.test(collide), collide.slice(0, 1400));
   ok('CONTROL: no sharing, no line',
     !/Two tools are writing/.test(lifted({}).renderSaveStatus(baseRead, baseDetail())));
 
@@ -748,8 +777,9 @@ section('§8 — The strip answers the other three questions, and only when true
   ok('the save reading no longer states the standing brief — the fold summary '
     + 'below it carries that, from the same two fields',
   !/Standing brief/.test(withBrief), withBrief.slice(-400));
-  ok('...and it still gets NO freshness pip anywhere: an old brief is not a stale one',
-    (withBrief.match(/<span class="mem-save-pip/g) || []).length === 1, withBrief.slice(0, 400));
+  ok('...and it still gets NO freshness mark anywhere: an old brief is not a '
+    + 'stale one, and exactly ONE mark is painted here — the save\'s',
+    (withBrief.match(/<span class="fresh-dot/g) || []).length === 1, withBrief.slice(0, 400));
   const noBrief = lifted({}).renderSaveStatus({ ...baseRead, brief: { present: false } }, baseDetail());
   ok('...and a missing brief is not stated here either, in either direction',
     !/Standing brief/.test(noBrief), noBrief.slice(-300));

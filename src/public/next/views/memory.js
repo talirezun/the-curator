@@ -160,7 +160,11 @@ import { renderMarkdown } from '../shared/markdown.js';
 // asserts these imports are present AND reached, because a component that ships
 // unused is the shape this repo keeps re-learning.
 import {
-  renderDescription, renderStatus, renderReadout, renderReadoutGroup,
+  // `renderReadoutGroup` LEFT THIS LIST in v3.65.0. Its one call site was step
+  // ③'s five cells, and those are a `renderMonitor` now — the one instrument
+  // every live reading in the app takes. An unused import is an unadopted
+  // component, which is the state `fetchOpenRouterCatalogue` shipped in.
+  renderDescription, renderStatus, renderReadout,
   renderViewHeader, renderInfoMark,
 } from '../shared/text.js';
 // Every link out of the app into docs/ is a key in ONE table, checked offline
@@ -174,7 +178,6 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // consumer outside Settings. Its CSS (24 | hairline | 24, the `.settings-*`
 // names shared/block.js's header explains) lives in shell.css, so a view can
 // rely on it without depending on another view's stylesheet.
-import { renderBlock } from '../shared/block.js';
 // ── THE OVERVIEW CARD (v3.64.2) ────────────────────────────────────────────
 // The three readings above the three steps used to be a three-cell mono strip
 // of `renderReadout`s with a lone ⓘ pushed to the right, while the domain page
@@ -183,6 +186,33 @@ import { renderBlock } from '../shared/block.js';
 // question was the whole brief: "how are these the same?" They are one
 // component now, and the domain page's card is the design that won.
 import { renderOverview } from '../shared/overview.js';
+// ── THE SIDEBAR IS THE KIT'S NOW (v3.65.0, R2) ──────────────────────────────
+// The maintainer, with both rails in front of him: *"We have two middle menus,
+// Domains and Context, in totally different designs ... I suggest we go with
+// the Domains design, which is more polished: it has clocks showing when it
+// was changed; in Context we don't have that."* `shared/sidebar.js` IS that
+// design, extracted; this view passes content and nothing else. `mem-` rides
+// as an ALIAS on the same elements, so the four suites that address this
+// rail's rows by name keep addressing them.
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
+  identityDotClass } from '../shared/sidebar.js';
+// ── EVERY LIVE READING ON THIS PAGE IS ONE COMPONENT (v3.65.0) ──────────────
+// The maintainer, with three screenshots of three different report cards:
+// *"these active-state cards ... show specific data, the data that is
+// changing, and my idea was to make this similar to a CLI, a terminal kind of
+// data input or output, so it has a distinguished design so people can
+// immediately see what's going on ... All these three cards show something
+// different but the design could be the same."* Two of the three were on this
+// screen (the "Last saved" card and the CAPTURE block) and the third was step
+// ③'s readouts. All three are `renderMonitor` now.
+import { renderMonitor } from '../shared/monitor.js';
+// ── THE ONE PICKER ON THIS SCREEN (v3.65.0, P10) ───────────────────────────
+// Step ③'s "+ Add a wiki". The shared listbox, ADD ONE AT A TIME: the
+// component implements no multi-select and says so in its own header, and
+// building a second selection paradigm here is the shape this release exists
+// to remove. `closeAllListboxes` is called on teardown, because navigate()
+// does not reach into view-owned popovers.
+import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
 
 // THE FRESHNESS SCALE, imported rather than declared. `freshnessStep` used to
 // live in this file, beside the first screen that needed it; it is now one
@@ -254,6 +284,11 @@ import {
   freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
   bindFoundationsChooser, renderRoleOptions, renderRefusedList,
   readPickedFile, slugForFilename, roleForBasename, titleFromText, formatBytes,
+  // ── THE REMOTE MIRROR'S REFUSAL VOCABULARY (v3.65.0) ───────────────────
+  // Nine store codes, nine sentences, every one naming the token's SOURCE
+  // rather than the token — which is the store's own rule and the one a view
+  // is in a position to break.
+  remoteRefusalText,
   // ── ONE PREDICATE FOR THE COMMIT, SHARED WITH THE OTHER HOST (v3.61.1) ──
   // What makes "Set up documents" pressable is a fact about the CHOICE, not
   // about this view, so the rule lives beside the choice. This view calls it
@@ -279,10 +314,15 @@ import {
 // first time a Windows or Linux user has been able to see them at all.
 //
 // `renderWorkStreams` therefore renders a TABLE, one row per (scope, machine)
-// pair, newest first, each row a button. There is no cfg to carry across the
-// paint, so there is no handoff array and no `mountListbox` pass in wire().
-// scripts/test-next-listbox.js counts this view's adoptions and now expects
-// ZERO of them.
+// pair, newest first, each row a button — no picker, no cfg, no menu.
+//
+// ── ONE ADOPTION IS BACK, AND IT IS A DIFFERENT QUESTION (v3.65.0) ────────
+// Step ③'s "+ Add a wiki" IS a listbox, and it is the shape the component was
+// built for: a short, closed set of names, one of which is chosen, with a
+// real commit behind it. What was wrong about the two pickers this file
+// deleted was that they hid a LIST the user needed to see; this one adds to a
+// list that is already on screen as rows. scripts/test-next-listbox.js counts
+// this view's adoptions and expects exactly ONE.
 //
 // The `<summary>` hazard this file's header records is unaffected: the table
 // is a SIBLING of every <details> on the page, exactly as the pickers were.
@@ -422,6 +462,22 @@ function freshState() {
     loading: true,
     projects: [],          // GET /api/memory -> projects[]
     indexError: null,
+    // ── THE INSTALL'S DOMAINS, IN listDomains() ORDER (v3.65.0) ──────────
+    // `null` until `GET /api/domains` answers, and `null` forever if it
+    // refuses. TWO readers, which is why it is fetched at all rather than
+    // derived: the rail's identity colours need the domain's place in THIS
+    // list (the same list the Domains page paints from, so one domain is one
+    // colour everywhere), and step ③'s picker needs the set of domains a
+    // project may draw on. `readonly` is kept beside it because a `shared-*`
+    // mirror is an allowed knowledge domain and a refused ingest target, and
+    // conflating the two is how a picker comes to hide a legitimate choice.
+    domainList: null,
+    domainListReadonly: [],
+    // TRUE only once a read has been ATTEMPTED and refused. `domainList`
+    // stays null in both cases — "not asked yet" and "asked and refused" —
+    // and step ③'s picker says something different about each, because
+    // "reading…" over a permanent refusal is a spinner that never stops.
+    domainListRefused: false,
     // HOW MANY DOMAINS THE SERVER LOOKED AT. `null` until the first answer,
     // and `null` from a server too old to say — which is why the empty state
     // reads it as three values and not as a number. An empty `projects` means
@@ -612,12 +668,21 @@ function freshState() {
     // surface that could answer this was ruled out by cost and the reasons are
     // at `loadKnowledge`.
     //
-    // STAMPED WITH ITS DOMAIN, like every other async result on this screen:
-    // this view switches domain without unmounting, and an unstamped payload
-    // would paint one wiki's page count under another wiki's project.
-    // `null` means nothing has been asked for yet, which is neither loading
-    // nor an error and must not be rendered as either.
-    knowledge: null,
+    // ── A MAP, KEYED BY DOMAIN (v3.65.0, P10) ──────────────────────────
+    // A project draws on N wikis now, so N answers arrive on N clocks and a
+    // single `{domain, data, error}` slot could only ever describe the last
+    // one to land. Each entry is `{data, error, gone}`; `gone` is the 404
+    // arm, which is a DIFFERENT fact from a read that failed — the store
+    // keeps a slug whose domain this install does not have, and the row says
+    // so rather than reporting a failure.
+    //
+    // An ABSENT entry means nothing has been asked for yet, which is neither
+    // loading nor an error and must not be rendered as either.
+    knowledge: new Map(),
+    // The write step ③ makes, and its refusal. Both null/false until somebody
+    // adds or removes a wiki.
+    knowledgeSaving: false,
+    knowledgeSaveError: null,
 
     // ── THE HONESTY METER'S ONE READ (v3.63.0) ─────────────────────────
     //
@@ -888,9 +953,11 @@ const readCache = new Map();
 // thousands of projects — the LRU below exists because a project read carries
 // a whole handoff document, which this does not.
 const knowledgeCache = new Map();
-// The domain a stats read is in flight for, so two project switches inside one
-// domain do not issue two requests. Cleared when that read settles.
-let knowledgeInFlight = null;
+// The domains a stats read is in flight for, so two project switches inside
+// one domain — or two rows naming one domain — do not issue two requests.
+// A SET since v3.65.0, because a project draws on N wikis and a single slot
+// could only ever hold the last one asked for.
+const knowledgeInFlight = new Set();
 
 // ── THE METER'S READ, CACHED PER (DOMAIN, PROJECT) (v3.63.0) ────────────
 // The same discipline as `knowledgeCache` one line up, keyed one level finer
@@ -903,6 +970,14 @@ const captureCache = new Map();
 // The (domain, project) a capture read is in flight for, so two rapid switches
 // back and forth do not issue two requests. Cleared when that read settles.
 let captureInFlight = null;
+
+// ── THE INSTALL'S DOMAIN LIST (v3.65.0) ────────────────────────────────
+// Read ONCE per mount and held in `state.domainList`, so the in-flight mark
+// is a bare boolean rather than a key: there is one list and it does not
+// change while a mount lives (a domain created in another view arrives with
+// the next mount, which is the same staleness every other list on this
+// screen accepts).
+let domainListInFlight = false;
 
 const MAX_CACHE = 24;
 
@@ -1014,14 +1089,13 @@ registerView('memory', {
       // walking a DOM that belongs to whatever view mounted next, once a
       // second, for the life of the page.
       if (ageTimer !== null) { clearInterval(ageTimer); ageTimer = null; }
-      // NO POPOVER TO CLOSE ANY MORE. This used to call `closeAllListboxes()`
-      // because navigate() explicitly does not reach into view-owned popovers,
-      // so a scope or machine menu left open on a rail click was this view's to
-      // shut. Both pickers are gone (see the note where `pendingListboxes` was
-      // declared) and the work-stream table opens nothing, so there is no menu
-      // that can outlive a teardown. Deleted rather than left standing: a
-      // teardown step with nothing to tear down is a claim about the screen
-      // that is no longer true.
+      // ── ONE POPOVER TO CLOSE AGAIN (v3.65.0) ───────────────────────
+      // The scope and machine pickers were deleted in v3.55.0 and this step
+      // went with them; step ③'s wiki picker brings it back, and the reason
+      // is unchanged: `navigate()` explicitly does not reach into view-owned
+      // popovers, so a menu left open on a rail click is this view's to shut
+      // or it outlives the view that opened it.
+      closeAllListboxes();
       if (wakeHandler) {
         if (typeof window !== 'undefined') window.removeEventListener('focus', wakeHandler);
         if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wakeHandler);
@@ -1249,7 +1323,15 @@ const FOLDS_KEY = 'curator-memory-folds-v1';
 // of its own and became the step's first ROW, in the same chrome as the four
 // below it. Its WARNINGS stay unfolded beside the row — the same v3.16.1 split
 // `capture` makes one line above.
+// `knowledge` stays in the list although step ③ no longer uses it: a user who
+// had it open before updating has `{"knowledge": true}` on disk, and dropping
+// the name would make that value unreadable rather than harmless.
 const FOLD_KEYS = ['brief', 'journal', 'foundations', 'streams', 'capture', 'saved', 'knowledge'];
+// The per-domain form step ③ writes since v3.65.0, and the ONLY dynamic key
+// this map accepts. The alphabet is the domain-name one and the length bound
+// is the store's, so a hand-edited value can add at most a bounded number of
+// `true`s under names nothing else reads.
+const KNOWLEDGE_FOLD_RE = /^knowledge-[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 export function readRememberedFolds() {
   try {
@@ -1259,6 +1341,16 @@ export function readRememberedFolds() {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const out = {};
     for (const k of FOLD_KEYS) if (parsed[k] === true) out[k] = true;
+    // ── ONE KEY PER KNOWLEDGE DOMAIN (v3.65.0, P10) ───────────────────
+    // Step ③ is one row per chosen wiki, so its keys carry the domain:
+    // `knowledge-<slug>`. NO NEW localStorage KEY — these live in the same
+    // map under the same name, so scripts/test-ui-state.js's registry does
+    // not move. The grammar is what bounds a hand-edited value: the slug is
+    // the domain-name alphabet and at most 64 characters, and only `true`
+    // survives, exactly as for the six fixed names above.
+    for (const k of Object.keys(parsed)) {
+      if (parsed[k] === true && KNOWLEDGE_FOLD_RE.test(k)) out[k] = true;
+    }
     return out;
   } catch {
     return {};
@@ -1552,13 +1644,22 @@ function screenSignature() {
   // `formatAge`. Neither dot can change without something already in this
   // signature changing first — folding them in would be a second copy of one
   // fact, which is the call this function already makes about the rail's dot.
-  const kn = state.knowledge;
+  //
+  // A MAP SINCE v3.65.0, because a project draws on N wikis. Every entry is
+  // folded in, keyed by its domain, so a second wiki's figures landing is a
+  // change this signature can see — the whole lesson this block records, one
+  // row wider. The keys are sorted so two identical sets in different
+  // insertion orders produce one signature.
+  const kn = state.knowledge instanceof Map ? state.knowledge : null;
   const knowledgeMark = kn
-    ? [kn.domain, kn.error || null,
-      kn.data ? [kn.data.pageCount, (kn.data.pageCounts || {}).entities,
-        (kn.data.pageCounts || {}).concepts, (kn.data.pageCounts || {}).summaries,
-        kn.data.lastIngestDate || null, kn.data.lastIngestKind || null,
-        kn.data.lastIngestTitle || null] : null]
+    ? [...kn.keys()].sort().map((d) => {
+      const e = kn.get(d);
+      return [d, e.error || null, e.gone === true,
+        e.data ? [e.data.pageCount, (e.data.pageCounts || {}).entities,
+          (e.data.pageCounts || {}).concepts, (e.data.pageCounts || {}).summaries,
+          e.data.lastIngestDate || null, e.data.lastIngestKind || null,
+          e.data.lastIngestTitle || null] : null];
+    })
     : null;
 
   // ── THE HONESTY METER IS A PANE, AND ITS FIGURES COME FROM A THIRD READ
@@ -2015,6 +2116,13 @@ function takePendingProject() {
 
 async function loadIndex(token) {
   const gate = loadGate;                 // capture: the next mount replaces it
+  // ── THE DOMAIN LIST, IN PARALLEL AND UNAWAITED (v3.65.0) ─────────────
+  // It is needed by the rail (the identity colour is the domain's place in
+  // THIS list) and by step ③'s picker, and it is independent of the index —
+  // so it goes out beside it rather than behind it, and a slow answer never
+  // delays the first paint. Its own arrival renders; until then the rail
+  // falls back to its local order.
+  loadDomainList(token).catch((err) => reportAsyncMountFailure(token, err));
   const got = await fetchIndex(token);
   if (!isCurrentMount(token)) return;
   if (got) {
@@ -2165,6 +2273,18 @@ async function selectProject(domain, project, token, opts = {}) {
   const pKey = cacheKeyProject(domain, project);
   const hit = cacheGet(pKey);
   const fromCache = !!(hit && applyProjectRead(hit.data, hit.at).opened);
+  // ── THE CHOSEN WIKIS, AT THE CALL SITE (v3.65.0, P10) ────────────────
+  // NOT inside `applyProjectRead`: that function is lifted by brace-matching
+  // and executed against a fixed set of injected collaborators, so a new free
+  // identifier in its body is a ReferenceError — a CRASH rather than a
+  // failing assertion. The v3.64.0 lesson, applied: a new free variable goes
+  // at the CALL SITE. There are two (a cache hit here, a fresh read below)
+  // and each asks with what it just applied.
+  if (fromCache && state.projectRead && Array.isArray(state.projectRead.knowledgeDomains)
+    && state.projectRead.knowledgeDomains.length) {
+    loadKnowledge(state.projectRead.knowledgeDomains, token)
+      .catch((err) => reportAsyncMountFailure(token, err));
+  }
   if (!fromCache) {
     state.projectRead = null;
     state.detail = null;
@@ -2187,7 +2307,12 @@ async function selectProject(domain, project, token, opts = {}) {
   // cache-hit arm has none — so moving between two projects of one domain
   // paints step ③ filled on the frame the click lands, and only a genuine
   // miss costs a second paint.
-  loadKnowledge(domain, token).catch((err) => reportAsyncMountFailure(token, err));
+  //
+  // WITH THE CONTAINING DOMAIN, WHICH IS THE STORE'S OWN DEFAULT. The chosen
+  // set rides on the project read and has not landed yet at this point, so
+  // this asks for the one wiki that is right unless the owner has chosen
+  // otherwise; `applyProjectRead` asks for the rest the moment it knows.
+  loadKnowledge([domain], token).catch((err) => reportAsyncMountFailure(token, err));
   // ── AND THE HONESTY METER'S, FOR THE SAME REASON (v3.63.0) ──────────
   // Not awaited and BEFORE the render, exactly like its sibling above: an
   // async function runs synchronously up to its first await and
@@ -2246,6 +2371,14 @@ async function selectProject(domain, project, token, opts = {}) {
   if (fromCache && payloadSignature(read.data) === payloadSignature(hit.data)) return;
 
   const applied = applyProjectRead(read.data, startedAt);
+  // THE SECOND CALL SITE — see the first, on the cache-hit path above. The
+  // chosen wikis ride on the project read and this is the first moment the
+  // real set is known; `loadKnowledge` is cached per domain, so the
+  // containing domain asked for before the first paint costs nothing here.
+  if (Array.isArray(read.data.knowledgeDomains) && read.data.knowledgeDomains.length) {
+    loadKnowledge(read.data.knowledgeDomains, token)
+      .catch((err) => reportAsyncMountFailure(token, err));
+  }
   render(token);
   if (!applied.opened && applied.pick) {
     // The fallback: an older server, or one that picked a pair this view would
@@ -2391,7 +2524,7 @@ async function loadScope(scope, machine, token, opts = {}) {
     // paint must not claim to have just read the file.
     state.detailFetchedAt = hit.at;
     if (opts.reader) patchOpenPair(token); else render(token);
-  } else if (!opts.reader) {
+  } else if (!opts.reader && !opts.keepDetail) {
     // Drop the previous scope's read before painting: keeping it would render
     // the OLD machine list and the OLD handoff under the NEW scope's label for
     // the duration of the fetch, which is a wrong answer stated confidently.
@@ -2399,6 +2532,35 @@ async function loadScope(scope, machine, token, opts = {}) {
     state.detailLoading = true;
     render(token);
   }
+  // ── `keepDetail`: THE SAME PAIR, MORE OF IT (v3.65.0) ─────────────────
+  //
+  // THE DEFECT, and it is the maintainer's: *"below Recent saves there is
+  // another report card, '24 recorded', and you can Show more, and if I click
+  // Show more I'm dropped at the top of the recent saves, which is not good
+  // UX."* The mechanism, read from code and then measured in a browser: this
+  // function's uncached branch nulls `state.detail` and renders BEFORE the
+  // fetch; `renderJournal` opens with `if (!d || !d.journal) return ''`, so
+  // the fold the user is reading DISAPPEARS for the whole round trip, the
+  // column shrinks, `main.main` clamps its `scrollTop` to the new maximum,
+  // and the taller content comes back under a reader who is now above where
+  // they were. `restoreFocus` then focuses `#mem-fold-journal` with
+  // `preventScroll: true`, so nothing brings the viewport back either.
+  //
+  // TWO CONTROLS WERE MEASURED so the next reader does not chase the wrong
+  // thing: a full `render()` alone does NOT reset scroll, and a work-stream
+  // row press goes through `patchOpenPair` and moves neither height nor
+  // scroll. The SHRINK is the whole mechanism.
+  //
+  // So the fix is one word: do not empty the pane you are about to refill.
+  // "Show more" is not a scope change — it is the SAME (scope, machine) with
+  // a larger `journalLimit` — so the drop-before-paint rule that protects a
+  // scope SWITCH from showing the old handoff under the new label has nothing
+  // to protect here. The precedent is `showMoreWorkStreams`, which appends in
+  // place and renders nothing at all; this keeps the render (the journal's
+  // rows, its foot and its summary all move) and only stops the blank frame.
+  //
+  // A FAILED read still clears the fold, exactly as before: `state.detail` is
+  // assigned the answer below whatever this flag said.
 
   const startedAt = Date.now();
   const read = await fetchState(domain, project, q, token);
@@ -2614,7 +2776,11 @@ function patchOpenPair(token) {
       jm.addEventListener('click', () => {
         state.journalLimit = JOURNAL_MORE;
         const m = state.detail ? state.detail.machine : state.machine;
-        loadScope(state.scope, m, token).catch((err) => reportAsyncMountFailure(token, err));
+        // `keepDetail` — see loadScope. Without it the fold the user is
+        // reading is removed for the length of the fetch and the column
+        // shrinks under them.
+        loadScope(state.scope, m, token, { keepDetail: true })
+          .catch((err) => reportAsyncMountFailure(token, err));
       });
     }
   }
@@ -2922,7 +3088,7 @@ function restoreFocus() {
  * Pure and exported through __testing: this is the function the grouping
  * assertions drive.
  */
-export function renderProjectGroups(projects, activeDomain, activeProject) {
+export function renderProjectGroups(projects, activeDomain, activeProject, domainOrder) {
   const rows = Array.isArray(projects) ? projects.filter(Boolean) : [];
   const order = [];
   const byDomain = new Map();
@@ -2931,77 +3097,119 @@ export function renderProjectGroups(projects, activeDomain, activeProject) {
     if (!byDomain.has(d)) { byDomain.set(d, []); order.push(d); }
     byDomain.get(d).push(p);
   }
+  // ── THE IDENTITY COLOUR IS THE DOMAIN'S OWN, NOT THIS LIST'S POSITION ──
+  //
+  // `identityDotClass(i)` is the SAME mapping views/domains.js paints its
+  // KNOWLEDGE rows with, so a domain has one colour across the whole app —
+  // which is the entire value of an identity mark and is the reason it is a
+  // kit function rather than a second copy. The index has to be the domain's
+  // place in the INSTALL's list, not in this screen's: a domain with no
+  // project context at all is absent here and present there, and taking the
+  // local position would slide every colour below it by one.
+  //
+  // `domainOrder` is that list, from `GET /api/domains` (the same
+  // `listDomains()` order `GET /api/domains/stats` hands the Domains page).
+  // It is a PARAMETER rather than a read of module state because this
+  // function is lifted and executed by four suites; when it has not arrived
+  // yet the local order stands in, which is right far more often than not and
+  // is never wrong about which SET of colours is in use.
+  const slots = Array.isArray(domainOrder) && domainOrder.length ? domainOrder : order;
   return order.map((domain) => {
-    const inner = byDomain.get(domain).map((p) => {
+    const slot = slots.indexOf(domain);
+    const rowsHtml = byDomain.get(domain).map((p) => {
       const active = p.domain === activeDomain && p.project === activeProject;
       const has = p.scopeCount > 0 || p.hasBrief;
       // THE FRESHNESS DOT, on the app-wide scale. The rail said "3 scopes ·
       // 2 hr ago" and made you READ it to rank two projects; the dot answers
       // the same question pre-attentively, from `freshnessTier` — the same
-      // function the work-stream table's dots and (under its other name,
-      // `freshnessStep`) the save strip's pip are cut on, so a project row and
-      // its own newest work-stream can never disagree about how fresh it is.
-      // It is aria-hidden: the words beside it say the same thing.
-      const tier = freshnessTier(effectiveSave(p).seconds);
-      return (
-        '<button class="mem-row' + (active ? ' active' : '') + (has ? '' : ' mem-row-quiet') + '"' +
-          ' data-mem-domain="' + escapeHtml(domain) + '"' +
-          ' data-mem-project="' + escapeHtml(p.project) + '"' +
-          (active ? ' aria-current="true"' : '') + '>' +
-          // SQUARE, not round — see this file's header comment.
-          '<span class="mem-row-mark' + (has ? '' : ' mem-row-mark-off') + '"></span>' +
-          '<span class="mem-row-main">' +
-            '<span class="mem-row-name">' + escapeHtml(p.project) + '</span>' +
-            // "WORKING ON:" IN THE RAIL. `headline` rides on every index row
-            // and nothing had ever rendered it; the menubar widget leads with
-            // it. One line, ellipsised, and OMITTED rather than filled with a
-            // placeholder when there is none — an em dash under every project
-            // with no saves would be noise on the one list you scan.
-            (p.headline
-              ? '<span class="mem-row-head">' + escapeHtml(p.headline) + '</span>'
-              : '') +
-            '<span class="mem-row-meta">' +
-              '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' +
-              '<span>' + escapeHtml(projectMetaLine(p)) + '</span>' +
-            '</span>' +
-          '</span>' +
-        '</button>'
-      );
+      // function the work-stream table's dots and the save row's own mark are
+      // cut on, so a project row and its own newest work-stream can never
+      // disagree about how fresh it is. It is aria-hidden: the words beside
+      // it say the same thing.
+      const eff = effectiveSave(p);
+      const tier = freshnessTier(eff.seconds);
+      // THE FIGURE AND THE AGE ARE TWO SLOTS, NOT ONE SENTENCE — and that is
+      // the whole of what the maintainer was pointing at. `projectMetaLine`
+      // composes "18 scopes · 15 hr ago" as a STRING, so there was nowhere
+      // for a clock glyph to go: *"it has clocks showing when it was changed;
+      // in Context we don't have that, we have some sort of colours but no
+      // clocks."* The kit puts the mark and the glyph BETWEEN the figure and
+      // the age, which cannot be done by splitting a formatted line, and it
+      // emits the glyph itself so a host cannot forget it.
+      const n = Number.isInteger(p.scopeCount) ? p.scopeCount : null;
+      const figure = n === null ? '' : n + ' scope' + (n === 1 ? '' : 's');
+      return renderSidebarRow({
+        alias: 'mem',
+        name: p.project,
+        // NO DOT AT ALL on a project with neither a brief nor a save: the
+        // hollow ring `.mem-row-mark-off` painted was a SECOND state on the
+        // identity mark, and identity does not have states. The quiet row
+        // class already says it, in the name's own ink.
+        dotClass: has && slot >= 0 ? identityDotClass(slot) : '',
+        figure,
+        markHtml: '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>',
+        age: formatAge(eff.seconds),
+        // A PROJECT WITH NO SAVE HAS NO AGE, and says so rather than
+        // borrowing "nothing written yet" from a domain that has no pages.
+        ageFallback: 'no save yet',
+        // "WORKING ON:" IN THE RAIL, on line THREE. `headline` rides on every
+        // index row and nothing had ever rendered it; the menubar widget
+        // leads with it. It sat on line TWO, ABOVE the figure — the one place
+        // the two rails' anatomy really differed — and it is a LAST EVENT,
+        // which is the slot Domains' "Ingested · <title>" already occupies.
+        // OMITTED rather than filled with a placeholder when there is none.
+        event: p.headline || '',
+        active,
+        stateClass: has ? '' : 'mem-row-quiet',
+        ariaCurrent: active,
+        data: { 'mem-domain': domain, 'mem-project': p.project },
+      });
     }).join('');
-    return (
-      '<div class="mem-group">' +
-        '<div class="mem-group-head cur-eyebrow">' + escapeHtml(domain) + '</div>' +
-        '<div class="mem-row-list">' + inner + '</div>' +
-      '</div>'
-    );
+    // THE GROUP HEAD IS THE DOMAIN, and `.cur-eyebrow` upper-cases it — so
+    // the maintainer's own domain, which is literally named `projects`, reads
+    // PROJECTS. That is correct and is not the duplicate-word defect it was
+    // reported as: the OTHER PROJECTS on that screen was the actions eyebrow,
+    // which this release retires with the row of ghost buttons it captioned.
+    return renderSidebarGroup({ eyebrow: domain, alias: 'mem', rowsHtml });
   }).join('');
 }
 
 function renderSidebar(token) {
-  // NO PARAGRAPH UNDER THE TITLE. v3.20.0 moved this sentence from
-  // `.sidebar-hint` into renderDescription, which changed its CLASS and left it
-  // in the same position — still prose floating under a title. renderViewHeader
-  // has no field that can put it back there.
+  // ── THE KIT'S HEAD: A TITLE, A PRIMARY, A SECONDARY (v3.65.0, R2/R7) ────
   //
-  // The clause that was cut is `read here, written by them`: it is back, in
-  // ONE place, as the second sentence of this panel.
+  // NO ⓘ. The maintainer: *"we have an information icon in the Project
+  // context sidebar which should not be here, because we have another one on
+  // the right side beside Copy agent instructions — we definitely don't need
+  // it in this small section."* `renderSidebarHead` takes no `info` option at
+  // all, so this is enforced by the component rather than remembered by a
+  // caller; the sentence the rail's panel carried is the second paragraph of
+  // the MAIN header's own ⓘ (`aboutInfoHtml`), which is where it was already
+  // half-said.
   //
-  // WHY IT MOVED. It had been a floating card at the foot of the rail — a lock
-  // glyph and a sentence, under the project list, belonging to nothing. The
-  // maintainer flagged it as undesigned, and he is right about the mechanism as
-  // well as the look: it is the same KIND of content as the sentence already
-  // behind this mark (what this screen is and who writes it), rendered in a
-  // second place with a second treatment. One mark, one panel, one voice.
+  // THE TWO SLOTS MEAN SOMETHING, and that is why the pair swapped rungs. The
+  // primary slot is "create the kind of thing this list holds" — `New domain`
+  // on Domains, `+ New project` here — and the secondary is the one
+  // alternative route. Both used to be `btn-ghost btn-xs` inside a
+  // `.mem-projects-head` row under an eyebrow, which is the *"Refresh without
+  // a button — it is a button but not visible as one"* the report names.
   //
-  // The Refresh button's tooltip is folded in here rather than deleted. It was
-  // the only place that said the screen re-checks by itself, and a `title=` is
-  // invisible to keyboard and to touch — the class v3.20.0 counted 11 of.
-  const head = renderViewHeader({
-    variant: 'sidebar',
+  // `+ New project` NAVIGATES TO DOMAINS, by design: Domains stays the one
+  // place a project is created, one form and one set of refusals. A primary
+  // face is honest about intent and its accessible name keeps "in Domains",
+  // so the destination is announced before the press rather than discovered
+  // after it.
+  const head = renderSidebarHead({
     title: 'Project context',
-    info: 'The working brief your agents leave for each other. This screen re-checks by itself '
-      + 'when you come back to it, so Refresh is rarely needed. '
-      + 'Agents save handoffs here over MCP; you write the standing brief.',
+    primary: {
+      label: '+ New project',
+      id: 'mem-new-project',
+      className: 'mem-new-project',
+    },
+    secondary: {
+      label: 'Refresh',
+      id: 'mem-refresh',
+      className: 'mem-refresh',
+    },
   });
 
   if (state.loading) {
@@ -3023,60 +3231,24 @@ function renderSidebar(token) {
     return;
   }
   if (!state.projects.length) {
-    setSidebar(head + '<div class="cur-eyebrow" style="margin-top:10px">PROJECTS</div>' +
+    setSidebar(head +
       renderDescription('No domains yet. Project context is kept per domain — create one in Domains first.'),
       token);
     return;
   }
 
-  const rows = renderProjectGroups(state.projects, state.activeDomain, state.activeProject);
-
-  // A VISIBLE, KEYBOARD-REACHABLE way to re-ask. The automatic triggers
-  // (select, wake, poll) cover the cases we can predict; this covers the one
-  // we cannot, which is a user who simply does not believe the screen.
-  //
-  // Plain text rather than a glyph: there is no refresh icon in ICON_BODY,
-  // and icon() renders a loud placeholder for a name it does not know rather
-  // than guessing (v3.9.0), so inventing one would ship a broken icon. A
-  // word also needs no aria-label to be announced correctly.
-  //
   // Hoisted into a local rather than inlined into the setSidebar() call
   // below: test-next-memory-view §9 reads the token argument within a
   // 12-line window of the call, and it is right to — a call whose arguments
   // no longer fit on a screen is a call whose token is easy to drop.
-  const projectsHead =
-    '<div class="mem-projects-head">' +
-      '<span class="cur-eyebrow">PROJECTS</span>' +
-      // No `title=`. The sentence it carried is in the header's info panel,
-      // where a keyboard or touch user can actually reach it; the word
-      // "Refresh" is its own accessible name.
-      //
-      // THE KIT'S QUIET TIER, NAMED. shell.css's taxonomy calls this rung
-      // `.btn-ghost` — a control that must be reachable and must not compete —
-      // and this button is its definition: the fallback for an automatic
-      // revalidation, where prominence would imply the screen does not update
-      // on its own. It used to be a bespoke `.mem-refresh` rule painting the
-      // same intent by hand, which is the one-copy-per-view shape the design
-      // foundation removed for `.btn-xs`. `.mem-refresh` survives for the hit
-      // target and the flex behaviour only.
-      '<button type="button" class="btn btn-ghost btn-xs mem-refresh" id="mem-refresh">Refresh</button>' +
-      // ── A POINTER, NOT A SECOND CREATE PATH (D-J, P1-11) ─────────────
-      // Domains stays the ONE place a project is created: one form, one
-      // POST, one set of refusals to keep in step. What this screen owed the
-      // user is the pointer — the rail groups by domain and this list is
-      // where somebody notices a project is missing — so the control carries
-      // the domain it was pressed in, through the shell's `requestDomain`,
-      // and Domains lands on that domain rather than on whichever one it
-      // last had. `btn-ghost btn-xs`, beside Refresh: it does not act here.
-      '<button type="button" class="btn btn-ghost btn-xs mem-new-project" id="mem-new-project">'
-        + '+ New project</button>' +
-    '</div>';
+  const rows = renderProjectGroups(
+    state.projects, state.activeDomain, state.activeProject, state.domainList);
 
-  // NO FOOT CARD. The lock glyph and its sentence are the header's info panel
-  // now (see `head` above). What sat here was a floating, undesigned block
-  // under the list — and, once the same fact was behind the mark, a second
-  // copy of it on the same screen.
-  setSidebar(head + projectsHead + rows, token);
+  // NO FOOT CARD, and no `.mem-projects-head` either. The first was a lock
+  // glyph and a sentence under the list, belonging to nothing; the second was
+  // an eyebrow captioning two ghost buttons. Both are gone, and what is left
+  // is the shape all three sidebars share: a title, two actions, and groups.
+  setSidebar(head + rows, token);
 }
 
 function renderMain(token) {
@@ -3142,8 +3314,18 @@ function renderMain(token) {
       // to its default, because the cap is right for every view whose header
       // panel really is a paragraph of prose.
       panelWide: true,
+      // ── THE ONE PRIMARY, TOP RIGHT (v3.65.0, R7/§2(5)) ────────────────
+      // The maintainer, with both headers side by side: *"The Copy agent
+      // instructions button should be on the top right in a violet button
+      // like Ask this domain — the same design pattern."* So it takes
+      // `dm-ask-btn`'s slot and `dm-ask-btn`'s rung: `btn-primary`, the md
+      // (32px) size rather than `btn-xs`, and `margin-left: auto` in this
+      // view's own stylesheet, exactly as views/domains.css declares it for
+      // its own trailing primary. The id and the clipboard behaviour are
+      // untouched — `composeAgentInstructionsFull` is not this release's
+      // subject and the block it copies is byte-frozen.
       actionsHtml: state.activeProject
-        ? '<button type="button" class="btn btn-secondary btn-xs" id="mem-copy-agent">'
+        ? '<button type="button" class="btn btn-primary mem-ask-btn" id="mem-copy-agent">'
           + 'Copy agent instructions</button>'
         : '',
     }) +
@@ -3396,13 +3578,61 @@ async function copyDraftingAsk(token) {
 // new project does not have: on a fresh project it is the only step that can
 // do anything, which is the Providers block-1 test verbatim.
 //
-// THE LEDES ARE CONSTANTS because `renderProjectSkeleton` paints the same
-// three blocks while the read is in flight, and the whole point of that frame
-// is that the block chrome does not move between the two paints. Two
-// hand-typed copies is how they would drift; one const cannot.
-const LEDE_CANONICAL = 'Add the documents an agent must not act without.';
-const LEDE_STATE = 'You write the brief; agents write handoffs and the journal.';
-const LEDE_KNOWLEDGE = 'The wiki this project draws on. Open it in Domains.';
+// ══════════════════════════════════════════════════════════════════════════
+//  THE STEP HEAD — a numeral, a Title-case title, and the ⓘ BESIDE IT
+// ══════════════════════════════════════════════════════════════════════════
+//
+// ── THE THREE LEDES ARE GONE (v3.65.0, R4) ────────────────────────────────
+// `LEDE_CANONICAL` / `LEDE_STATE` / `LEDE_KNOWLEDGE` were three sentences
+// under three numbered titles. The maintainer, looking at step ①: *"below the
+// Foundations title we have 'Add the documents an agent must not act without'
+// with another information icon, so maybe we don't need the first sentence,
+// we just need the information icon beside the title."* Each sentence is now
+// the FIRST PARAGRAPH of that step's own ⓘ — moved, not deleted — and the
+// mark sits in the head row beside the numeral and the title.
+//
+// ── WHY THIS IS A LOCAL FUNCTION AND NOT `renderBlock` ────────────────────
+// `shared/block.js` emits the ⓘ INSIDE the lede paragraph and emits NOTHING
+// at all when there is no lede (`renderBlock` :38-41), so "no lede, ⓘ beside
+// the title" is not expressible through it. That file is owned by no package
+// in this release, and BUILDER-RULES rule 2 is that a builder who needs
+// another package's file stops and reports rather than widening — so the head
+// is composed here, from the SAME shell.css classes `renderBlock` uses
+// (`.settings-job-block`, `.settings-block-hd`, `.settings-block-num`,
+// `.settings-job-title`, `.settings-block-info`, `.settings-block-body`), and
+// nothing about shell.css moves. `views/domains.js` already hand-builds its
+// five numbered heads for its own reasons; when `shared/block.js` gains the
+// parameter both callers collapse into it in one reviewable diff.
+//
+// `.settings-block-hd` is `display: flex; align-items: baseline; gap: 12px`,
+// so the mark is a third child of the head row and needs no rule of its own —
+// which matters, because `shared/text.css` owns the whole `tx-` prefix and
+// scripts/test-next-text-system.js §8 fails any other /next stylesheet that
+// declares a `tx-` selector, comments included.
+//
+// THE HEAD IS THE CARD'S SIBLING, NEVER ITS WRAPPER — the standing heading
+// rule (v3.64.2) — and this composition keeps it so: head, then panel, then
+// body, three siblings inside the block.
+//
+// `bodyHtml`, `noticeHtml` and `infoHtml` are TRUSTED, exactly as
+// `renderBlock`'s are; `title` is escaped.
+function memStep(o) {
+  const id = String(o.id);
+  const info = renderInfoMark(
+    'settings-block-info-' + id, 'More about ' + o.title, o.infoText || '', { html: true });
+  return (
+    '<div class="settings-job-block settings-block settings-block-' + escapeHtml(id) + '">' +
+      (o.noticeHtml || '') +
+      '<div class="settings-block-hd">' +
+        '<span class="settings-block-num" aria-hidden="true">' + escapeHtml(String(o.num)) + '</span>' +
+        '<h2 class="settings-job-title">' + escapeHtml(o.title) + '</h2>' +
+        info.btn +
+      '</div>' +
+      (info.panel ? '<div class="settings-block-info">' + info.panel + '</div>' : '') +
+      '<div class="settings-block-body">' + (o.bodyHtml || '') + '</div>' +
+    '</div>'
+  );
+}
 
 /**
  * THE THREE-CELL STRIP — one reading per layer, above the three steps.
@@ -3503,23 +3733,48 @@ function renderLayerStrip(read) {
   // Omitted until the one request lands. A card reading "—" while a fetch is
   // in flight is an instrument claiming a reading it does not have; step ③
   // below carries the loading and the error, where there is room to say why.
-  const k = state.knowledge && state.knowledge.domain === state.activeDomain
-    && state.knowledge.data ? state.knowledge.data : null;
-  if (k) {
-    const pages = Number.isInteger(k.pageCount) ? k.pageCount : 0;
-    const day = formatDayAge(k.lastIngestDate);
+  //
+  // ── IT SUMS THE CHOSEN WIKIS NOW (v3.65.0, P10) ─────────────────────
+  // A project can draw on several, so the card is the TOTAL and its second
+  // line names how many and when any of them was last written to. It is
+  // omitted until at least one answer has landed: a card reading "—" while a
+  // fetch is in flight is an instrument claiming a reading it does not have,
+  // and step ③ below carries the loading and the error, where there is room
+  // to say why.
+  // `read` RATHER THAN `state.projectRead`: this function takes the project
+  // read as its argument precisely so the SKELETON can call it with null, and
+  // reading module state instead would make the two paints disagree about
+  // which project they are describing.
+  const kmap = state.knowledge instanceof Map ? state.knowledge : null;
+  const kchosen = (read && Array.isArray(read.knowledgeDomains) && read.knowledgeDomains.length)
+    ? read.knowledgeDomains
+    : (state.activeDomain ? [state.activeDomain] : []);
+  const kread = kmap ? kchosen.map((d) => kmap.get(d)).filter((e) => e && e.data) : [];
+  if (kread.length) {
+    const pages = kread.reduce(
+      (n, e) => n + (Number.isInteger(e.data.pageCount) ? e.data.pageCount : 0), 0);
+    // THE NEWEST WRITE ACROSS THE SET. A date string sorts lexically because
+    // it is `YYYY-MM-DD`, which is the same property the day-freshness ladder
+    // relies on one line down.
+    const newestDay = kread.map((e) => e.data.lastIngestDate)
+      .filter((x) => typeof x === 'string' && x).sort().pop() || null;
+    const day = formatDayAge(newestDay);
     const pagesValue = pages.toLocaleString('en-US') + ' page' + (pages === 1 ? '' : 's');
     cards.push({
       label: 'KNOWLEDGE',
       value: pagesValue,
-      // THE DOMAIN IS NAMED, because this is the one layer the project READS
-      // rather than owns: every project in the domain draws on the same wiki,
-      // and a figure with no owner beside it reads as the project's own.
-      sub: [day || 'nothing ingested yet', state.activeDomain || null].filter(Boolean).join(' · '),
+      // HOW MANY WIKIS, because this is the one layer the project READS
+      // rather than owns: a figure with no owner beside it reads as the
+      // project's own, and the owner may now be several.
+      // ONE WIKI IS NAMED; SEVERAL ARE COUNTED. A figure with no owner beside
+      // it reads as the project's own, and the owner may now be several.
+      sub: [day || 'nothing ingested yet',
+        kread.length === 1 ? (kchosen[0] || null) : kread.length + ' wikis']
+        .filter(Boolean).join(' · '),
       // The CALENDAR-DAY ladder, because `lastIngestDate` is a `YYYY-MM-DD`
       // heading with no time of day in it. A null date resolves to the dashed
       // unknown ring through `dayFreshnessTier`'s own null arm.
-      markHtml: freshnessDotHtml(k.lastIngestDate),
+      markHtml: freshnessDotHtml(newestDay),
       jump: 'context-knowledge',
       name: 'Knowledge, ' + pagesValue + ' — go to step 3',
     });
@@ -3527,28 +3782,46 @@ function renderLayerStrip(read) {
 
   if (!cards.length) return '';
 
-  // ── THE CAPTURE JUMP ──────────────────────────────────────────────────
-  // A jump tile rather than a fourth card, and the distinction is the one the
-  // Domains page already draws: the three cards are the three LAYERS, and a
-  // fourth would break that mapping. CAPTURE is a reading ABOUT whether
-  // sessions used them, so it sits in the jump row with the other doors.
-  // Rendered only once the meter's own request has landed — a door to a
-  // reading that does not exist yet is the control-with-no-outcome rule.
+  // ── CAPTURE IS A CARD IN THE SAME GRID (v3.65.0, R5) ──────────────────
+  //
+  // IT WAS A JUMP TILE, and the jump tile is the thing the maintainer was
+  // pointing at: *"we have some additional information, SOURCES 14 days ago —
+  // I don't understand why it is here and why it is an entirely different
+  // design than the five on top"*. Measured on v3.64.2: a jump tile was
+  // 92.8 x 46.4 at x=401 while a stat tile beside it was 181.8 x 78.9 at
+  // x=385 — a different size, a different height and a 16px indent, inside
+  // one card. `jumps[]` is gone from shared/overview.js entirely; a jump is
+  // an ordinary card carrying `jump:`, at the one tile geometry.
+  //
+  // RENDERED AND HIDDEN, NEVER OMITTED. The meter's own request lands after
+  // this paint, and an omitted tile means the reading simply never appears
+  // unless something repaints the strip — the green-first mutation v3.64.2
+  // closed on the jump row. `hidden` ships the tile and one attribute write
+  // reveals it, with no repaint; shared/overview.css carries the `[hidden]`
+  // counter-rule for the card, because `[hidden]` loses to an author
+  // `display:` at any specificity (the v3.62.0 defect).
   const cap = state.capture && state.capture.domain === state.activeDomain
     && state.capture.project === state.activeProject && state.capture.data
     ? state.capture.data : null;
   const capTotals = cap && cap.totals && typeof cap.totals === 'object' ? cap.totals : null;
   const capSessions = capTotals && Number.isInteger(capTotals.sessions) ? capTotals.sessions : null;
-  const jumps = cap
-    ? [{
-      key: 'capture',
-      label: 'CAPTURE',
-      value: capSessions === null
-        ? 'not counted'
-        : capSessions.toLocaleString('en-US') + ' session' + (capSessions === 1 ? '' : 's'),
-      name: 'Capture — open the session reading in step 2',
-    }]
-    : [];
+  const capValue = capSessions === null
+    ? 'not counted'
+    : capSessions.toLocaleString('en-US') + ' session' + (capSessions === 1 ? '' : 's');
+  //
+  // NO SECOND LINE, AND NOT FOR TIDINESS: `renderLayerStrip` is LIFTED by
+  // brace-matching and EXECUTED by scripts/test-next-overview-kit.js, which
+  // this package does not own, so a module-level constant named in this body
+  // (`CAPTURE_WINDOW_DAYS`, for "in the last 30 days") is a ReferenceError
+  // there — a suite that CRASHES rather than asserts. The window is stated in
+  // words in step ②'s own row summary, which is where the jump lands.
+  cards.push({
+    label: 'CAPTURE',
+    value: cap ? capValue : 'not counted',
+    hidden: !cap,
+    jump: 'capture',
+    name: 'Capture — open the session reading in step 2',
+  });
 
   // ── THE ⓘ BELONGS TO THE INSTRUMENT, NOT TO A STEP ────────────────────
   // It explains every age on this page — the two clocks, and what "last
@@ -3558,10 +3831,28 @@ function renderLayerStrip(read) {
     id: 'mem-layers-info',
     eyebrow: 'OVERVIEW',
     sectionClass: 'mem-section mem-overview',
-    // THE THREE VALUES HERE ARE PHRASES, not counts — "24 documents", "saved
-    // 12 min ago", "767 pages" — so they take the kit's `phrase` rung. See
-    // the component for the measurement that decided it.
-    figure: 'phrase',
+    // ── ONE FIGURE RUNG, AND A WIDER TRACK INSTEAD (v3.65.0, R8) ───────
+    //
+    // v3.64.2 dropped these values one rung (22px -> 17px) because "saved 57
+    // min ago" broke after "min". That wrap is real; the second TYPE RUNG was
+    // the wrong fix, because two views whose figures are different sizes are
+    // two designs, which is the whole of the report this release answers. The
+    // narrow case belongs to the TRACK.
+    //
+    // 253 IS DERIVED FROM THE WIDEST VALUE, not from a track count — the rule
+    // the domain page's own floor follows. Measured in the browser, in the
+    // real shell, at this view's real column: the widest value this strip can
+    // paint is `manifest unreadable` at 204.5px, and the value box adds the
+    // freshness dot (8) and its gap (8) while the card adds 16px of padding a
+    // side. 204.5 + 8 + 8 + 32 = 252.5, rounded up.
+    //
+    // WHAT IT PRODUCES, measured: at a 1370px window the grid is 893px and
+    // this yields THREE tracks of 291px with CAPTURE on a second row — the
+    // same "second row of the same tiles" the domain page's two jumps take,
+    // rather than four cramped tracks in which `saved 41 min ago` wraps after
+    // `min`. A smaller floor silently re-creates exactly that wrap, which is
+    // why the number is pinned rather than the arrangement.
+    minTrack: 253,
     infoLabel: 'About the readings on this page',
     infoText:
       '<p>These three are the project’s three layers of context, and pressing one goes to the '
@@ -3583,7 +3874,6 @@ function renderLayerStrip(read) {
       + '<p>' + docsLinkHtml('memory.handoff', 'Read more in the guide') + '</p>',
     infoHtml: true,
     cards,
-    jumps,
   });
 }
 
@@ -3689,20 +3979,86 @@ function renderWorkStreamsFold(read, d) {
  * commit; here it is one of two ways out.
  */
 function renderKnowledge() {
-  // BOTH DOORS ARE OFFERED IN EVERY STATE, including the one where the figures
-  // failed to arrive: a domain's wiki does not stop existing because a stats
-  // read did, and a door withheld for the duration of a failed fetch is a
-  // control that disappears exactly when somebody wants to go and look.
+  // ── WHICH WIKIS, AND IT IS A CHOICE NOW (v3.65.0, P10) ────────────────
+  //
+  // THE REPORT: *"This knowledge section should be the compounding wiki — how
+  // do I select exactly which domain I want my project to use? I can have a
+  // compounding wiki domain with specific knowledge that coding agents would
+  // need and I have no way to select it here ... Where do I select which
+  // domain gets sourced — is this even an option?"* It was not. The step drew
+  // the CONTAINING domain, always, with no control.
+  //
+  // The store answers it: `knowledgeDomains` rides the project read, and
+  // `knowledgeDomainsDefaulted` says whether anyone chose. ONE ROW PER
+  // DOMAIN, in the same chrome as step ②'s five, each one a summary you can
+  // decide with and a monitor plus that domain's own two doors behind it.
+  //
+  // IT IS CURATOR METADATA ABOUT THE PROJECT, and writing it from this screen
+  // does not touch the single-writer rule the memory layer rests on: the
+  // PATCH writes `project.json` and nothing else — not the brief (tier 1),
+  // not a handoff or a journal line (tiers 2 and 3, agent-only over MCP), not
+  // a foundation's bytes. It is the same shape as v3.62.0's `readFirst`: an
+  // instruction ABOUT documents, never part of them, so every file an agent
+  // owns stays byte-for-byte what the agent wrote.
+  const read = state.projectRead;
+  const listed = read && Array.isArray(read.knowledgeDomains)
+    ? read.knowledgeDomains.filter((d) => typeof d === 'string' && d) : [];
+  const defaulted = !read || read.knowledgeDomainsDefaulted !== false;
+  // THE CONTAINING DOMAIN STANDS IN while the project read is in flight: it
+  // is what the store defaults to, so the first frame paints the row the
+  // answer will almost always confirm rather than an empty step.
+  const domains = listed.length ? listed
+    : (state.activeDomain ? [state.activeDomain] : []);
+
+  const rows = domains.map((domain) => renderKnowledgeRow(domain)).join('');
+  // A malformed `project.json` is the store's own disclosure and is loud: it
+  // means the chosen set could not be read, so the rows below are the DEFAULT
+  // rather than the choice, and saying nothing would present one as the other.
+  const err = read && typeof read.knowledgeDomainsError === 'string' && read.knowledgeDomainsError
+    ? renderStatus({ state: 'attention',
+      title: 'This project’s chosen wikis could not be read',
+      detail: read.knowledgeDomainsError + ' Showing the domain this project lives in instead.' })
+    : '';
+  return err + (rows || renderDescription('No wiki is chosen for this project yet.'))
+    + renderKnowledgePicker(domains, defaulted);
+}
+
+/**
+ * ONE KNOWLEDGE DOMAIN, AS A ROW.
+ *
+ * Summary: the domain, its page count, the age of its last ingest and the
+ * shared freshness mark — the four facts that decide whether to open it.
+ * Body: the MONITOR (M3) carrying the other four figures and the last write,
+ * then that domain's own two doors.
+ *
+ * A READING STILL IN FLIGHT AND A FAILED READ ARE NOT ROWS, which is the call
+ * v3.64.2 made for this step and the same one `renderCaptureMeter` makes for
+ * its idle state: a chevron over a ghost opens on nothing.
+ *
+ * A DOMAIN THAT NO LONGER EXISTS IS A ROW THAT SAYS SO, never a silent drop.
+ * The store keeps the slug deliberately — a domain deleted by accident, or a
+ * project synced from a machine that has one this one does not, is a fact the
+ * owner has to be able to see and act on.
+ */
+function renderKnowledgeRow(domain) {
+  // BOTH DOORS ARE OFFERED IN EVERY STATE, including the one where the
+  // figures failed to arrive: a domain's wiki does not stop existing because
+  // a stats read did, and a door withheld for the duration of a failed fetch
+  // is a control that disappears exactly when somebody wants to go and look.
+  //
+  // THE IDS BECAME DATA ATTRIBUTES (v3.65.0). `mem-k-domains` / `mem-k-chat`
+  // were bound by id in `wire()`, and an id must be unique — N rows means N
+  // pairs. The pattern is `bindFoundationRows`'s: one delegated listener over
+  // the attribute, which also survives the row being re-rendered.
   const doors =
     '<div class="mem-k-doors">'
-      + '<button type="button" class="btn btn-secondary btn-xs" id="mem-k-domains">'
-      + 'Open in Domains</button>'
-      + '<button type="button" class="btn btn-secondary btn-xs" id="mem-k-chat">'
-      + 'Ask this domain</button>'
+      + '<button type="button" class="btn btn-secondary btn-xs" data-mem-k-domains="'
+        + escapeHtml(domain) + '">Open in Domains</button>'
+      + '<button type="button" class="btn btn-secondary btn-xs" data-mem-k-chat="'
+        + escapeHtml(domain) + '">Ask this domain</button>'
     + '</div>';
 
-  const k = state.knowledge && state.knowledge.domain === state.activeDomain
-    ? state.knowledge : null;
+  const k = state.knowledge instanceof Map ? state.knowledge.get(domain) : null;
   if (!k || (!k.data && !k.error)) {
     // RESERVE THE HEIGHT, exactly as the project skeleton does one level up:
     // the figures land in one local request, and a column that empties and
@@ -3711,10 +4067,19 @@ function renderKnowledge() {
       + '<div class="mem-ghost mem-ghost-line"></div></div>' + doors;
   }
   if (k.error) {
+    // A 404 IS A DIFFERENT SENTENCE FROM A FAILURE. `gone` is the store
+    // keeping a slug whose domain this install no longer has; anything else
+    // is a read that did not work, and telling the second as the first would
+    // send somebody looking for a domain that is fine.
     return renderStatus({
-      state: 'danger',
-      title: 'Could not read this domain’s wiki',
-      detail: k.error,
+      state: k.gone ? 'attention' : 'danger',
+      title: k.gone
+        ? '“' + domain + '” is not a domain on this computer'
+        : 'Could not read “' + domain + '”',
+      detail: k.gone
+        ? 'This project still lists it. It may have been deleted, or it may live on another '
+          + 'computer that has not synced here yet — remove it below if it is gone for good.'
+        : k.error,
     }) + doors;
   }
 
@@ -3724,54 +4089,41 @@ function renderKnowledge() {
   const day = formatDayAge(d.lastIngestDate);
   const verb = d.lastIngestKind === 'ingest' ? 'Ingested'
     : d.lastIngestKind === 'compile' ? 'Compiled' : 'Last write';
-  // THE ABSOLUTE DATE, KEPT AND REACHABLE — visually hidden rather than a
-  // `title=`, which is hover-only and therefore invisible to keyboard and to
-  // touch. This view's hover-only ceiling is pinned elsewhere and must not
-  // rise. It rides inside `markHtml`, the readout kit's one trusted slot, so
-  // it lands inside the value element it qualifies rather than beside it;
-  // `.visually-hidden` is absolutely positioned, so it takes no part in the
-  // value's inline-flex gap.
-  const lastMark = freshnessDotHtml(d.lastIngestDate)
-    + (d.lastIngestDate
-      ? '<span class="visually-hidden">(' + escapeHtml(String(d.lastIngestDate)) + ')</span>'
-      : '');
-  // THE OVERVIEW VOCABULARY, VERBATIM — the same five words the Domains
-  // screen's own tiles use, so the two screens name one thing once.
-  const figures = renderReadoutGroup([
-    { label: 'PAGES', value: num(d.pageCount) },
-    { label: 'ENTITIES', value: num(counts.entities) },
-    { label: 'CONCEPTS', value: num(counts.concepts) },
-    { label: 'SUMMARIES', value: num(counts.summaries) },
-    {
-      label: 'LAST INGEST',
-      value: day || 'nothing ingested yet',
-      markHtml: lastMark,
-      provenance: d.lastIngestDate
-        ? [verb, d.lastIngestTitle || null].filter(Boolean).join(' · ')
-        : undefined,
-    },
-  ]);
-  // ── STEP ③ IS ONE ROW (v3.64.2) ─────────────────────────────────
-  //
-  // THE STEP-BODY RULE: inside a numbered step every part is the SAME row —
-  // a title on the left, a one-line summary on the right, a chevron, and the
-  // detail behind it. Step ③ was five readouts and two buttons loose in the
-  // block body, which was a third design on a screen that already had two.
-  //
-  // The SUMMARY is the reading somebody came for — "767 pages · 1 week ago ·
-  // <domain>", the same three facts the OVERVIEW card's KNOWLEDGE figure
-  // carries, from the same payload — and the other four figures and both
-  // doors are what opens. The DOMAIN IS NAMED because this is the one layer
-  // the project READS rather than owns: every project in the domain draws on
-  // the same wiki, and a page count with no owner beside it reads as this
-  // project's own.
+  // ── THE MONITOR (M3) ──────────────────────────────────────────────────
+  // It was a `renderReadoutGroup` of five cells — the third of the three
+  // report treatments the maintainer counted on this screen, and the one he
+  // named outright: *"again two different designs here: pages, entities,
+  // concepts, summaries and then Last ingest — another information card."*
+  // Same five figures, same vocabulary the Domains screen's own tiles use, in
+  // the one instrument every live reading in the app now takes.
+  const figures = renderMonitor({
+    label: 'The ' + domain + ' wiki',
+    lines: [
+      { key: 'pages', value: num(d.pageCount) },
+      { key: 'entities', value: num(counts.entities) },
+      { key: 'concepts', value: num(counts.concepts) },
+      { key: 'summaries', value: num(counts.summaries) },
+      {
+        key: 'last ingest',
+        value: day || 'nothing ingested yet',
+        markHtml: freshnessDotHtml(d.lastIngestDate),
+        sub: d.lastIngestDate
+          ? [verb, d.lastIngestTitle || null].filter(Boolean).join(' · ')
+          : undefined,
+      },
+    ],
+  });
   const pagesText = num(d.pageCount) + ' page' + (d.pageCount === 1 ? '' : 's');
-  const meta = [pagesText, day || 'nothing ingested yet', state.activeDomain || null]
-    .filter(Boolean).join(' · ');
-  const open = (state.openFolds && state.openFolds.knowledge) ? ' open' : '';
-  return '<details class="mem-fold" data-mem-fold="knowledge"' + open + '>'
-    + '<summary class="mem-fold-summary" id="mem-fold-knowledge">' + icon('chevronRight', 14)
-      + '<span>Pages</span>'
+  const meta = [pagesText, day || 'nothing ingested yet'].filter(Boolean).join(' · ');
+  // PER-DOMAIN FOLD KEY. `readRememberedFolds` accepts `knowledge-<slug>` on
+  // the same storage key the other five folds use — no new localStorage key,
+  // and the grammar bounds what a hand-edited value can put in the map.
+  const key = 'knowledge-' + domain;
+  const open = (state.openFolds && state.openFolds[key]) ? ' open' : '';
+  return '<details class="mem-fold" data-mem-fold="' + escapeHtml(key) + '"' + open + '>'
+    + '<summary class="mem-fold-summary" id="mem-fold-' + escapeHtml(key) + '">'
+      + icon('chevronRight', 14)
+      + '<span>' + escapeHtml(domain) + '</span>'
       + '<span class="mem-fold-meta">' + freshnessDotHtml(d.lastIngestDate)
         + escapeHtml(meta) + '</span>'
     + '</summary>'
@@ -3779,6 +4131,76 @@ function renderKnowledge() {
       + '<div class="mem-k-wrap">' + figures + '</div>' + doors
     + '</div>'
   + '</details>';
+}
+
+/**
+ * THE PICKER — one add at a time, and a Remove on every row.
+ *
+ * ── WHY NOT A MULTI-SELECT ───────────────────────────────────────────────
+ * Because `shared/listbox.js` is not one, and says so in its own header:
+ * *"This does not implement multi-select."* Building a second selection
+ * paradigm here — a menu of checkboxes with an implicit commit — is the
+ * shape this release exists to remove, and adopting the component honestly
+ * means adopting what it does. So the control is ADD ONE, the menu offers
+ * only domains not already chosen, and each row carries its own Remove.
+ *
+ * `shared-*` MIRRORS ARE OFFERED. A read-only Shared Brain mirror is a
+ * perfectly good thing for a project to draw on — it is a refused INGEST
+ * target, which is a different question — and the store allows it.
+ *
+ * NOTHING IS OFFERED WHILE THE LIST HAS NOT BEEN READ. `state.domainList` is
+ * null until `GET /api/domains` answers and stays null if it refuses, so the
+ * control says it could not read the list rather than presenting an empty
+ * menu as "there are no other domains".
+ */
+function renderKnowledgePicker(chosen, defaulted) {
+  const all = Array.isArray(state.domainList) ? state.domainList : null;
+  const busy = state.knowledgeSaving === true;
+  const err = state.knowledgeSaveError
+    ? renderStatus({ state: 'danger', title: 'That wiki was not added', detail: state.knowledgeSaveError })
+    : '';
+  if (!all) {
+    return err + renderDescription(
+      state.domainListRefused
+        ? 'The list of domains could not be read, so there is nothing to choose from here yet.'
+        : 'Reading the domains on this computer…');
+  }
+  const rest = all.filter((d) => !chosen.includes(d));
+  const removable = chosen.map((d) =>
+    '<button type="button" class="btn btn-ghost btn-xs mem-k-drop" data-mem-k-drop="'
+      + escapeHtml(d) + '"' + (busy ? ' disabled' : '') + '>Remove ' + escapeHtml(d) + '</button>').join('');
+  // EVERY DISABLED CONTROL STATES ITS REASON (v3.61.1's finding), and the
+  // two reasons here are different facts: nothing left to add, and a write in
+  // flight.
+  const note = !rest.length
+    ? renderDescription('Every domain on this computer is already chosen.')
+    : '';
+  const cfg = knowledgePickerCfg(rest, busy);
+  return err
+    + '<div class="mem-k-pick">'
+      + (rest.length ? renderListboxHtml(cfg) : '')
+      + removable
+    + '</div>'
+    + note
+    + (defaulted && chosen.length
+      ? renderDescription('No wiki has been chosen yet, so this project draws on the domain it '
+        + 'lives in. Choosing one replaces that default.')
+      : '');
+}
+
+/** ONE cfg object, used by both `renderListboxHtml` and `mountListbox` — two
+ *  literals is the two-hand-maintained-copies shape the component's own
+ *  header warns about. */
+function knowledgePickerCfg(options, busy) {
+  return {
+    id: 'mem-k-add',
+    value: null,
+    placeholder: '+ Add a wiki',
+    ariaLabel: 'Add a wiki this project draws on',
+    disabled: busy === true,
+    triggerClass: 'btn btn-secondary btn-xs',
+    options: options.map((d) => ({ value: d, label: d })),
+  };
 }
 
 /**
@@ -3812,34 +4234,181 @@ function renderKnowledge() {
  * NEVER THROWS, and a failure is a DISCLOSURE rather than a blank: the step
  * says it could not read, and both doors stay offered.
  */
-async function loadKnowledge(domain, token) {
-  if (!domain) return;
-  const hit = knowledgeCache.get(domain);
-  if (hit) {
-    state.knowledge = { domain, data: hit, error: null };
-    return;
-  }
-  if (knowledgeInFlight === domain) return;
-  knowledgeInFlight = domain;
-  state.knowledge = { domain, data: null, error: null };
-  let next;
+/**
+ * THE INSTALL'S DOMAIN LIST — one cheap read, once per mount (v3.65.0).
+ *
+ * `GET /api/domains` is a `readdir` plus one readonly probe per domain. No
+ * stats, no wiki read, no LLM. `GET /api/domains/stats` (what the Domains
+ * page calls) walks every wiki folder to count pages, and this view needs
+ * only the NAMES and their ORDER, so it asks for the cheaper of the two.
+ *
+ * WHY THE ORDER MATTERS AND IS NOT INCIDENTAL: both routes answer out of
+ * `listDomains()`, so position N here is position N on the Domains page, and
+ * `identityDotClass(N)` therefore paints one domain the same colour on both
+ * screens. Deriving the index from THIS view's own grouping instead would
+ * slide every colour below a domain that has no project context yet.
+ *
+ * NEVER THROWS, and a failure leaves `domainList` null rather than empty: the
+ * rail then falls back to its local order (right far more often than not) and
+ * step ③'s picker says it could not read the list instead of offering none.
+ */
+async function loadDomainList(token) {
+  if (state.domainList || domainListInFlight) return;
+  domainListInFlight = true;
   try {
-    const res = await fetch('/api/domains/' + encodeURIComponent(domain) + '/stats');
+    const res = await fetch('/api/domains');
     const data = await res.json();
-    next = res.ok
-      ? { domain, data, error: null }
-      : { domain, data: null, error: data && data.error ? data.error : 'HTTP ' + res.status };
-  } catch (err) {
-    next = { domain, data: null, error: err.message };
+    if (!isCurrentMount(token)) return;
+    if (res.ok && Array.isArray(data.domains)) {
+      state.domainList = data.domains.filter((d) => typeof d === 'string');
+      state.domainListReadonly = Array.isArray(data.readonlyDomains)
+        ? data.readonlyDomains.filter((d) => typeof d === 'string') : [];
+      render(token);
+    } else {
+      state.domainListRefused = true;
+      render(token);
+    }
+  } catch {
+    // The rail keeps its local order and the picker says it could not read
+    // the list — never an empty menu, which would read as "there are no
+    // other domains".
+    state.domainListRefused = true;
+  } finally {
+    domainListInFlight = false;
   }
-  if (knowledgeInFlight === domain) knowledgeInFlight = null;
+}
+
+async function loadKnowledge(domains, token) {
+  // ── N DOMAINS, N REQUESTS, AND THE COST IS STATED ─────────────────────
+  // One `GET /api/domains/:domain/stats` per CHOSEN domain, not per project
+  // and not per paint: the Map is keyed by domain and survives a project
+  // switch, so moving between two projects of one domain costs nothing and a
+  // project drawing on three wikis costs three cheap reads once. The producer
+  // is a dirent-only walk — no page content, no health scan, no model call.
+  const want = (Array.isArray(domains) ? domains : [domains])
+    .filter((d) => typeof d === 'string' && d);
+  if (!want.length) return;
+  // STATE IS A MAP NOW, not one {domain, data, error}: N rows need N answers,
+  // and a single slot could only ever describe the last one to land.
+  if (!(state.knowledge instanceof Map)) state.knowledge = new Map();
+  let painted = false;
+  for (const domain of want) {
+    const hit = knowledgeCache.get(domain);
+    if (hit) { state.knowledge.set(domain, { data: hit, error: null, gone: false }); continue; }
+    if (knowledgeInFlight.has(domain)) continue;
+    knowledgeInFlight.add(domain);
+    if (!state.knowledge.has(domain)) {
+      state.knowledge.set(domain, { data: null, error: null, gone: false });
+    }
+    // NOT AWAITED IN SEQUENCE. Three wikis must not paint one after another
+    // over three round trips; each answer writes its own row and asks for one
+    // repaint, and the stamp below drops any that arrives after the mount or
+    // the chosen set has moved on.
+    (async () => {
+      let next;
+      try {
+        const res = await fetch('/api/domains/' + encodeURIComponent(domain) + '/stats');
+        const data = await res.json();
+        next = res.ok
+          ? { data, error: null, gone: false }
+          // A 404 IS A DIFFERENT FACT and is carried as one: the store keeps a
+          // slug whose domain this install does not have, and the row says so
+          // rather than reporting a read failure.
+          : { data: null, gone: res.status === 404,
+            error: data && data.error ? data.error : 'HTTP ' + res.status };
+      } catch (err) {
+        next = { data: null, error: err.message, gone: false };
+      }
+      knowledgeInFlight.delete(domain);
+      if (!isCurrentMount(token)) return;
+      if (next.data) knowledgeCache.set(domain, next.data);
+      state.knowledge.set(domain, next);
+      render(token);
+    })().catch((err) => reportAsyncMountFailure(token, err));
+    painted = true;
+  }
+  if (painted) return;
+}
+
+/**
+ * WHICH WIKIS THIS PROJECT DRAWS ON — the one write this step makes.
+ *
+ * `PATCH /api/memory/:domain/:project/knowledge/domains` with the WHOLE list,
+ * never a delta: the store's body is strict and one field, and a partial
+ * write is the shape that makes two clients disagree about a set.
+ *
+ * IT IS CURATOR METADATA, AND SAYING SO IS NOT A FORMALITY. The route writes
+ * `project.json` and nothing else — not the standing brief, not a handoff,
+ * not a journal line, not a foundation's bytes. The single-writer rule the
+ * memory layer rests on is "one writer per FILE, with provenance that
+ * matches", and this file has exactly one writer (the app) for exactly one
+ * kind of fact (the owner's choice about which wikis to draw on). Tiers 2 and
+ * 3 stay agent-only over MCP, unchanged.
+ *
+ * EVERY REFUSAL BECOMES A SENTENCE. The store names nine, and two of them
+ * carry data the user needs — the cap, and which domain was not recognised —
+ * so those are read off the payload rather than paraphrased.
+ */
+async function saveKnowledgeDomains(next, token) {
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  if (!domain || !project || state.knowledgeSaving) return;
+  state.knowledgeSaving = true;
+  state.knowledgeSaveError = null;
+  render(token);
+  let error = null;
+  let applied = null;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/'
+      + encodeURIComponent(project) + '/knowledge/domains', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      // `null` CLEARS, which is what removing the last one means: the project
+      // goes back to drawing on the domain it lives in. An empty ARRAY is a
+      // refusal at the store (`empty-list`), deliberately — "none at all" is
+      // not a state a project can be in.
+      body: JSON.stringify({ knowledgeDomains: next && next.length ? next : null }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data && data.ok) {
+      applied = data;
+    } else {
+      const code = data && data.error ? String(data.error) : 'HTTP ' + res.status;
+      error = code === 'too_many_domains'
+        ? 'A project can draw on at most ' + (data.cap || 12) + ' wikis.'
+        : code === 'unknown_domain'
+          ? 'Not a domain on this computer: '
+            + (Array.isArray(data.domains) ? data.domains.join(', ') : 'unknown') + '.'
+          : code === 'invalid_domain' ? 'That is not a usable domain name.'
+            : code === 'readonly'
+              ? 'This project is a read-only Shared Brain mirror, so its choices cannot be changed here.'
+              : code === 'project_not_found' ? 'This project no longer exists.'
+                : code === 'locked'
+                  ? 'Another write is in progress on this project. Try again in a moment.'
+                  : code;
+    }
+  } catch (err) {
+    error = err.message;
+  }
   if (!isCurrentMount(token)) return;
-  // STAMPED AT THE POINT OF USE. This view switches domain without
-  // unmounting, so a reply for a domain the user has already left must never
-  // be written into state at all.
-  if (state.activeDomain !== domain) return;
-  if (next.data) knowledgeCache.set(domain, next.data);
-  state.knowledge = next;
+  state.knowledgeSaving = false;
+  state.knowledgeSaveError = error;
+  if (applied) {
+    // THE ROUTE'S OWN ANSWER, not the list we sent: it carries the normalised
+    // set and whether the project is back on its default, which is enough to
+    // repaint without a second read.
+    if (state.projectRead) {
+      state.projectRead = { ...state.projectRead,
+        knowledgeDomains: Array.isArray(applied.knowledgeDomains) ? applied.knowledgeDomains : [],
+        knowledgeDomainsDefaulted: applied.knowledgeDomainsDefaulted === true };
+    }
+    // The project read is cached; a stale copy would put the old set back on
+    // the next visit.
+    forgetProject(domain, project);
+    loadKnowledge(
+      (state.projectRead && state.projectRead.knowledgeDomains) || [], token)
+      .catch((err) => reportAsyncMountFailure(token, err));
+  }
   render(token);
 }
 
@@ -4019,14 +4588,6 @@ function renderCaptureMeter() {
     if (secs !== null) tier = freshnessTier(secs);
   }
 
-  const reading = renderReadout({
-    label: 'CAPTURE',
-    value,
-    provenance: prov || undefined,
-    // The mark is a graphic and carries no reading of its own — the words
-    // beside it are the reading, and it is aria-hidden for that reason.
-    markHtml: '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>',
-  });
 
   // ── THE ROUTE'S OWN NOTE, UNFOLDED ────────────────────────────────────
   // Whatever the route needs to say about the reading it just gave — an absent
@@ -4075,7 +4636,80 @@ function renderCaptureMeter() {
   const limitsHtml = limits
     ? '<p class="mem-capture-limits">' + escapeHtml(limits) + '</p>' : '';
 
-  return shell(reading) + notice + limitsHtml + renderCaptureSessions(f) + '</div>';
+  // ── CAPTURE IS ONE ROW NOW (v3.65.0, R2) ──────────────────────────────
+  //
+  // IT WAS A BLOCK PLUS A FOLD, and that is what the maintainer was reading
+  // when he wrote *"I have no clue what a session is ... I see that the top
+  // card 'captured one session in the last 30 days' is an overview for the
+  // Sessions dropdown."* He is right: one reading was being told twice, under
+  // two names, in two designs — a bespoke `.mem-capture` card above four
+  // `.mem-fold` rows, with a fifth fold called "Sessions" underneath it
+  // carrying the same four numbers again.
+  //
+  // So it is ONE row in the same chrome as its four siblings. The SUMMARY is
+  // the whole reading — the headline and the three clauses — which is what a
+  // closed row has to carry to be worth opening; the BODY is the instrument
+  // and the per-session table. The word "Sessions" leaves the screen: it
+  // survives in the ⓘ, which is where what a session IS belongs, and as the
+  // table's own column heading.
+  //
+  // WHAT STAYS OUTSIDE THE CHEVRON, and this is v3.16.1 rather than a
+  // preference: the route's own `note` and the two line-class disclosures.
+  // The note is an OUTCOME — on a real log it names the limit that applied,
+  // and since v3.64.1 it can name a stale bridge and the remedy for it — and
+  // an outcome may never sit behind a chevron. The disclosures qualify what
+  // the figures are taken OVER, so a reader who never opens the row must
+  // still have them.
+  //
+  // THE ⓘ MOVES INTO THE BODY. An interactive control inside a `<summary>`
+  // toggles its own section when clicked (the v3.0.1-beta.18 hazard), and the
+  // fix this file uses everywhere is the one no later edit can undo: there is
+  // no propagation path, because the control is not there.
+  const meta = '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>'
+    + escapeHtml(value + (prov ? ' · ' + prov : ''));
+  const sessions = renderCaptureSessions(f);
+  // ── THE INSTRUMENT (M2) ───────────────────────────────────────────────
+  // The three clauses again, keyed and valued, plus the newest session's age
+  // on the shared scale. It is not a repetition of the summary for its own
+  // sake: the summary is one line to decide with, this is the reading laid
+  // out so each figure can be found, and the `read and did not save` line
+  // carries a tone when it is not zero. Every figure is dropped INDIVIDUALLY
+  // when the route did not send it — a partial answer prints what it knows.
+  const newestAt = f.rows.length ? (f.rows[0].endedAt || f.rows[0].startedAt) : null;
+  const newestSecs = effectiveSave({ savedAt: newestAt }).seconds;
+  const monitor = renderMonitor({
+    label: 'The capture reading',
+    lines: [
+      f.sessions === null ? null
+        : { key: 'sessions', value: f.sessions, sub: 'in the last ' + win },
+      f.read === null ? null : { key: 'started with the context', value: f.read },
+      f.saved === null ? null : { key: 'saved before stopping', value: f.saved },
+      f.readNotSaved === null ? null
+        : { key: 'read and did not save', value: f.readNotSaved,
+          tone: f.readNotSaved ? 'warn' : undefined },
+      newestSecs === null ? null
+        : { key: 'newest', value: formatAge(newestSecs) || 'time unknown',
+          markHtml: '<span class="fresh-dot fresh-' + freshnessTier(newestSecs)
+            + '" aria-hidden="true"></span>' },
+    ].filter(Boolean),
+  });
+  // NOTHING TO OPEN, NO CHEVRON — the call this function already made for its
+  // own idle state, and the one `renderSaveStatus` makes for a healthy save.
+  const body = monitor + sessions;
+  const open = (state.openFolds && state.openFolds.capture) ? ' open' : '';
+  const row = body
+    ? '<details class="mem-fold" data-mem-fold="capture"' + open + '>'
+      + '<summary class="mem-fold-summary" id="mem-fold-capture">' + icon('chevronRight', 14)
+        + '<span>Capture</span>'
+        + '<span class="mem-fold-meta">' + meta + '</span>'
+      + '</summary>'
+      + '<div class="mem-fold-body">' + infoHtml + body + '</div>'
+    + '</details>'
+    : '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-save-flat">'
+      + '<span>Capture</span>'
+      + '<span class="mem-fold-meta">' + meta + '</span>'
+    + '</div></div>';
+  return row + notice + limitsHtml;
 }
 
 /**
@@ -4092,13 +4726,17 @@ function renderCaptureMeter() {
  */
 function renderCaptureSessions(f) {
   if (!f.rows.length) return '';
-  const open = (state.openFolds && state.openFolds.capture) ? ' open' : '';
-  const meta = [
-    f.sessions === null ? null : f.sessions + ' session' + (f.sessions === 1 ? '' : 's'),
-    f.read === null ? null : f.read + ' read',
-    f.saved === null ? null : f.saved + ' saved',
-    f.readNotSaved === null ? null : f.readNotSaved + ' read and did not save',
-  ].filter(Boolean).join(' · ');
+  // ── NO FOLD OF ITS OWN ANY MORE (v3.65.0, R2) ────────────────────────
+  // This used to be a `<details>` titled "Sessions", sitting under a
+  // `.mem-capture` card that carried the same four numbers as its summary.
+  // One reading, one row: the table is what the CAPTURE row opens, and the
+  // `data-mem-fold="capture"` hook, the `#mem-fold-capture` summary id and
+  // the `FOLD_KEYS` / `FOCUSABLE_IDS` entries all keep their names — they
+  // moved one element up, to the row that now owns them.
+  //
+  // THE SUMMARY LINE THIS BUILT IS GONE WITH THE FOLD, and its four figures
+  // are not lost: they are the row's own summary (in words) and the
+  // monitor's lines (keyed and valued) one level up.
   // A TICK IS NOT A COLOUR AND NOT A COLOUR ALONE: the glyph is aria-hidden
   // and a visually-hidden word carries the fact, so a screen reader hears
   // "read yes" rather than a check mark's name, and nothing here is decoded
@@ -4137,27 +4775,23 @@ function renderCaptureSessions(f) {
       + ' sessions.</p>'
     : '';
   return (
-    '<details class="mem-fold" data-mem-fold="capture"' + open + '>'
-      + '<summary class="mem-fold-summary" id="mem-fold-capture">' + icon('chevronRight', 14)
-        + '<span>Sessions</span>'
-        + '<span class="mem-fold-meta">' + escapeHtml(meta) + '</span>'
-      + '</summary>'
-      + '<div class="mem-fold-body">'
-        + '<div class="mem-cap-wrap">'
-          + '<table class="mem-cap-table">'
-            + '<thead><tr>'
-              + '<th scope="col">Started</th>'
-              + '<th scope="col">Harness</th>'
-              + '<th scope="col">Calls</th>'
-              + '<th scope="col">Read</th>'
-              + '<th scope="col">Saved</th>'
-            + '</tr></thead>'
-            + '<tbody>' + rows + '</tbody>'
-          + '</table>'
-        + '</div>'
-        + cut
-      + '</div>'
-    + '</details>'
+    '<div class="mem-cap-wrap">'
+      + '<table class="mem-cap-table">'
+        // THE ONE PLACE THE WORD "SESSION" STILL APPEARS ON SCREEN, and it is
+        // the right one: a column heading naming what each row IS. R2 takes
+        // it off the screen as a SECTION name, not as a noun.
+        + '<caption class="visually-hidden">Sessions in this window</caption>'
+        + '<thead><tr>'
+          + '<th scope="col">Started</th>'
+          + '<th scope="col">Harness</th>'
+          + '<th scope="col">Calls</th>'
+          + '<th scope="col">Read</th>'
+          + '<th scope="col">Saved</th>'
+        + '</tr></thead>'
+        + '<tbody>' + rows + '</tbody>'
+      + '</table>'
+    + '</div>'
+    + cut
   );
 }
 
@@ -4286,13 +4920,17 @@ function renderProject() {
   // above the heading inside the block's wrapper rather than inside the body's
   // 32px prose indent. That slot is what `shared/block.js` built them for, and
   // no block on this page had ever passed one.
-  const canonicalBlock = renderBlock({
+  const canonicalBlock = memStep({
     num: 1,
     id: 'context-canonical',
     title: 'Foundations',
-    ledeHtml: (fndFacts.count ? '' : '<b>Start here.</b> ') + LEDE_CANONICAL,
     infoText:
-      '<p>A <b>foundation</b> is a canonical document this project carries VERBATIM — the '
+      // THE LEDE, MOVED (R4). It was the sentence under the title; it is the
+      // first thing behind the mark now, and it keeps the "Start here."
+      // prefix that drops the moment one document exists.
+      '<p>' + (fndFacts.count ? '' : '<b>Start here.</b> ')
+      + 'Add the documents an agent must not act without.</p>'
+      + '<p>A <b>foundation</b> is a canonical document this project carries VERBATIM — the '
       + 'architecture, the decisions, the conventions, the roadmap. Not a summary of one: the '
       + 'bytes, so an agent reads what you would read. Each one is <b>replaced whole</b> on every '
       + 'write and never merged, which is what makes it quotable.</p>'
@@ -4316,13 +4954,19 @@ function renderProject() {
       + 'brief needs, and nothing writes one on its own. Setting this up seeds four '
       + '<b>skeletons</b>: documents that carry prompts rather than prose, which an agent is told '
       + 'to answer rather than to believe.</p>'
+      // THE SENTENCE THAT USED TO SIT UNDER THE TABLE (v3.65.0). A standing
+      // fact about ownership, not an outcome, and ownership is set once — so
+      // it belongs where the rest of the ownership explanation is.
+      + '<p>On a <b>mirrored</b> project an agent’s save here is <b>refused</b>: the documents '
+      + 'belong to the folder they are copied from, so an agent asked to write one is told to '
+      + 'change it there and refresh. The row’s own summary says <b>mirrored</b>, which is the '
+      + 'one-word form of the same fact.</p>'
       + '<p>An edit here is <b>yours</b>, stamped as a human write and never as an agent’s — the '
       + 'same rule the standing brief follows. One cost comes with it: this tier has no per-machine '
       + 'copy, so two computers editing one document converge to whichever saved last. Edit rarely, '
       + 'then sync.</p>'
       + '<p>' + docsLinkHtml('memory.foundations', 'Read more in the guide') + ' · '
       + docsLinkHtml('memory.foundations-edit', 'Starting a project') + '</p>',
-    infoHtml: true,
     noticeHtml: foundationsNotices(read),
     bodyHtml: renderFoundations(read),
   });
@@ -4367,13 +5011,14 @@ function renderProject() {
   // `patchOpenPair` re-composes; the two are compared byte-for-byte by
   // scripts/test-next-memory-switch.js §8.
   const statusHtml = renderSaveStatus(read, d) + renderStaleNotice() + renderUnlistedNote(read, d);
-  const stateBlock = renderBlock({
+  const stateBlock = memStep({
     num: 2,
     id: 'context-state',
     title: 'Working state',
-    ledeHtml: LEDE_STATE,
     infoText:
-      '<p>State <b>supersedes</b>. Every save REPLACES the last one rather than being merged into '
+      // THE LEDE, MOVED (R4).
+      '<p>You write the brief; agents write handoffs and the journal.</p>'
+      + '<p>State <b>supersedes</b>. Every save REPLACES the last one rather than being merged into '
       + 'it, which is the whole point: state has to be able to say “no longer true”, and a store '
       + 'that only accumulates cannot.</p>'
       + '<p>You own the <b>standing brief</b> — the one tier a human owns. Agents READ it on every '
@@ -4401,10 +5046,9 @@ function renderProject() {
       + '<p>' + docsLinkHtml('memory.standing-brief', 'The standing brief') + ' · '
       + docsLinkHtml('memory.handoff', 'Handoffs') + ' · '
       + docsLinkHtml('memory.session-journal', 'The journal') + '</p>',
-    infoHtml: true,
     // EMPTY, AND THAT IS THE POINT (v3.64.1) — nothing renders above this
-    // step's heading. The slot stays available to the component; this caller
-    // simply has nothing that belongs above a heading.
+    // step's heading. The slot stays available; this caller simply has
+    // nothing that belongs above a heading.
     noticeHtml: '',
     bodyHtml:
       '<div class="mem-state-stack">'
@@ -4437,13 +5081,14 @@ function renderProject() {
   // key this panel wants (`memory.knowledge`) lives in shared/docs-links.js,
   // which this release's shell package owns. A hand-typed URL here would be
   // the one thing scripts/test-docs-links.js cannot check.
-  const knowledgeBlock = renderBlock({
+  const knowledgeBlock = memStep({
     num: 3,
     id: 'context-knowledge',
     title: 'Knowledge',
-    ledeHtml: LEDE_KNOWLEDGE,
     infoText:
-      '<p>The wiki <b>accumulates</b>. A new source deepens the pages that are already there '
+      // THE LEDE, MOVED (R4).
+      '<p>The wikis this project draws on. Open one in Domains, or ask it in Chat.</p>'
+      + '<p>The wiki <b>accumulates</b>. A new source deepens the pages that are already there '
       + 'rather than adding a copy beside them — which is the difference between this layer and the '
       + 'two above it, where a save replaces what was there and a foundation is carried word for '
       + 'word.</p>'
@@ -4452,7 +5097,6 @@ function renderProject() {
       + 'these figures move when you ingest, not when an agent saves.</p>'
       + '<p>The counts are taken by walking the folder rather than by reading any page, and no '
       + 'model is called to draw them — opening this screen costs nothing.</p>',
-    infoHtml: true,
     bodyHtml: renderKnowledge(),
   });
 
@@ -4510,12 +5154,14 @@ function renderProjectSkeleton() {
   for (let i = 0; i < ghostRows; i++) rows += '<div class="mem-ghost mem-ghost-row"></div>';
 
   // THE THREE STEPS ARE THE SAME COMPONENT, with the same numerals, ids and
-  // ledes as the real ones — so the skeleton and the fill differ only in their
-  // bodies and the block chrome does not move at all between the two paints.
-  // The ledes are the shared constants rather than second copies, which is why
-  // they cannot drift. The ⓘ folds are deliberately omitted: a help panel a
-  // user could open and have torn away 30ms later is worse than one that
-  // arrives with the content.
+  // titles as the real ones — so the skeleton and the fill differ only in
+  // their bodies and the block chrome does not move at all between the two
+  // paints. The ledes are GONE from both (R4), which is one fewer thing that
+  // could differ between the two paints rather than one more. The ⓘ panels
+  // are deliberately omitted here: a help panel a user could open and have
+  // torn away 30ms later is worse than one that arrives with the content —
+  // and `memStep` emits no mark at all when `infoText` is empty, so the head
+  // row is the numeral and the title in both frames.
   //
   // ── THE STRIP PAINTS FOR REAL, WITH THE HALF OF THE DATA WE HAVE ──────
   // `GET /api/memory` has ALREADY told this view, for every project, when the
@@ -4527,15 +5173,13 @@ function renderProjectSkeleton() {
   // small growth this frame allows and the honest one.
   return (
     renderLayerStrip(null) +
-    renderBlock({
+    memStep({
       num: 1, id: 'context-canonical', title: 'Foundations',
-      ledeHtml: LEDE_CANONICAL,
       bodyHtml: '<div class="mem-ghost-wrap" aria-busy="true">'
         + '<div class="mem-ghost mem-ghost-line"></div></div>',
     }) +
-    renderBlock({
+    memStep({
       num: 2, id: 'context-state', title: 'Working state',
-      ledeHtml: LEDE_STATE,
       bodyHtml: '<div class="mem-state-stack">'
         + '<div class="mem-ghost-wrap" aria-busy="true">' + rows + '</div>'
         // ONLY WHEN THE INDEX SAYS THERE IS ONE. Reserving space for a standing
@@ -4554,9 +5198,8 @@ function renderProjectSkeleton() {
     // a switch inside one domain they are already in hand and the step lands
     // filled on the first frame. `renderKnowledge` reserves its own height
     // when they are not.
-    renderBlock({
+    memStep({
       num: 3, id: 'context-knowledge', title: 'Knowledge',
-      ledeHtml: LEDE_KNOWLEDGE,
       bodyHtml: renderKnowledge(),
     })
   );
@@ -4663,11 +5306,12 @@ function renderSaveStatus(read, d) {
     : null;
   const cur = doc || row;
 
-  // TWO LISTS, because v3.16.1 splits them. `lines` are the WARNINGS — loud,
-  // unfolded, below the row. `detail` is the EXPLANATION — which clock the
-  // figure came from, that the file arrived later than it was written, what
-  // "summary shortened" means — and it expands, because a paragraph beside a
-  // reading is the thing the maintainer's screenshot was pointing at.
+  // TWO LISTS, because v3.16.1 splits them, and since v3.65.0 both hold DATA
+  // rather than markup: `lines` are the WARNINGS — `renderMonitor` `loud`
+  // entries, unfolded, below the row — and `detail` are the monitor LINES,
+  // one fact each, which expand. The split is why they are two arrays and not
+  // one with a flag: a flag is something a later edit can flip, and flipping
+  // it would put a warning behind a chevron.
   const lines = [];
   const detail = [];
   let primary = '';
@@ -4725,10 +5369,20 @@ function renderSaveStatus(read, d) {
       // sit behind a chevron, so every `loud` line stays unfolded BELOW the
       // row, where it is today. That is the one place this row deliberately
       // does not follow "everything is a row".
+      //
+      // ── ONE MARK, ONE LADDER (v3.65.0, design record R13) ─────────────
+      // `.mem-save-pip` is DELETED. It was this view's own six-rung mark for
+      // a save's age, cut on `freshnessStep`, beside `.fresh-dot` — the
+      // app-wide mark, cut on `freshnessTier` — on the SAME page, on the same
+      // quantity: the rail's rows, the work-stream table, the strip and step
+      // ③ all wore the dot while the one reading the page is named for wore
+      // a second thing. shared/freshness.css owns the `.fresh-` prefix and
+      // scripts/test-freshness-scale.js §4 forbids any other stylesheet
+      // declaring one, so this deletion is TOWARD that rule rather than
+      // around it, and views/memory.css now declares no `.fresh-` rule at all.
       primary +=
         '<div class="mem-save-main">' +
-          '<span class="mem-save-pip' + (step === null ? ' mem-save-pip-unknown' : ' mem-save-pip-s' + step) +
-            '" aria-hidden="true"></span>' +
+          '<span class="fresh-dot fresh-' + freshnessTier(eff.seconds) + '" aria-hidden="true"></span>' +
           '<span class="mem-save-age">' + escapeHtml(age) + '</span>' +
           ((prov || clock)
             ? '<span class="mem-save-prov">'
@@ -4752,42 +5406,59 @@ function renderSaveStatus(read, d) {
     }
 
     if (kind === 'trimmed') {
-      lines.push(saveLine('alertTriangle', 'loud',
-        'Part of this handoff did not survive the save — content named in the note below was dropped '
-        + 'or cut short before it was written, so what you are reading beneath is missing it. '
-        + 'Ask the agent to save that content again. '
-        + firstNote(cur.lastSaveNotes), true));
+      lines.push({
+        tone: 'danger',
+        text: 'Part of this handoff did not survive the save — content named in the note below was '
+          + 'dropped or cut short before it was written, so what you are reading beneath is missing '
+          + 'it. Ask the agent to save that content again. ' + firstNote(cur.lastSaveNotes),
+      });
     } else if (kind === 'clipped') {
       // Deliberately NOT the 'loud' tone `trimmed` gets, and deliberately
       // avoids "missing" / "budget" / "save again" — each was part of the
       // false alarm this verdict replaces. See the real case recorded on
       // `classifySaveNotes`: a 244-char headline clipped to 200 chars, body
       // untouched, badged and worded as if content had been lost.
-      detail.push(saveLine('', '',
-        'The handoff itself was written in full. What got shortened is a label attached to the save '
-        + '— most often its one-line summary — not the handoff’s content. That label matters because '
-        + 'it is the only thing a future session sees before deciding whether to open this state. '
-        + firstNote(cur.lastSaveNotes), true));
+      detail.push({
+        key: 'wrote',
+        value: 'the handoff in full',
+        sub: 'What got shortened is a label attached to the save — most often its one-line summary '
+          + '— not the handoff’s content. That label is the only thing a future session sees before '
+          + 'deciding whether to open this state. ' + firstNote(cur.lastSaveNotes),
+      });
     } else if (kind === 'replaced') {
-      lines.push(saveLine('alertTriangle', '',
-        'That save deliberately replaced a larger handoff. Nothing the agent sent was lost, '
-        + 'but the longer document it overwrote is not recoverable. ' + firstNote(cur.lastSaveNotes), true));
+      lines.push({
+        text: 'That save deliberately replaced a larger handoff. Nothing the agent sent was lost, '
+          + 'but the longer document it overwrote is not recoverable. ' + firstNote(cur.lastSaveNotes),
+      });
     }
 
     if (eff.source === 'filesystem') {
-      detail.push(saveLine('alertTriangle', '',
-        'No journal entry carried a save time for this handoff, so the reading above is the file’s own '
-        + 'timestamp. On a computer that syncs, that is when the file arrived here, not when it was written.'));
+      detail.push({
+        key: 'clock',
+        value: 'the file’s own',
+        sub: 'No journal entry carried a save time for this handoff. On a computer that syncs, a '
+          + 'file’s own timestamp is when it ARRIVED here, not when it was written.',
+      });
     } else {
+      // NO `clock: the agent's own` LINE, and the omission is deliberate.
+      // Adding one would make `detail` non-empty on EVERY save, which would
+      // give the healthy reading a chevron that opens on one uninteresting
+      // line — and v3.64.2 chose the flat row for exactly that reason ("an
+      // empty chevron invites a click that does nothing"). The good clock is
+      // the default the ⓘ above already describes; only the fallback is news.
       // BOTH CLOCKS, when they genuinely disagree. Under two minutes they are
       // the same event to a human — a save's own write takes milliseconds — so
       // a gap larger than that means the file changed on this disk well after
       // the agent wrote it, which is what a pull looks like.
       const arrived = effectiveSave({ savedAt: cur.arrivedAt || cur.savedAt || cur.lastWriteAt });
       if (arrived.seconds !== null && eff.seconds !== null && eff.seconds - arrived.seconds > 120) {
-        detail.push(saveLine('', '',
-          'This file arrived on this computer ' + (formatAge(arrived.seconds) || 'recently')
-          + ' — the reading above is the agent’s own clock, not the file’s.'));
+        detail.push({
+          key: 'arrived here',
+          value: formatAge(arrived.seconds) || 'recently',
+          markHtml: '<span class="fresh-dot fresh-' + freshnessTier(arrived.seconds)
+            + '" aria-hidden="true"></span>',
+          sub: 'The reading above is the agent’s own clock, not the file’s.',
+        });
       }
     }
   }
@@ -4801,13 +5472,19 @@ function renderSaveStatus(read, d) {
   // user's — give each tool its own scope — and nothing else on this screen
   // would ever show it.
   for (const s of scopes.filter((x) => x && x.harnessShared === true).slice(0, 3)) {
-    const who = (s.harnesses || []).slice(0, 4).map((h) => escapeHtml(h)).join(' and ');
-    lines.push(saveLine('alertTriangle', 'loud',
-      '<b>Two tools are writing <span class="mem-name">' + escapeHtml(s.scope) + '</span>.</b> '
-      + (who ? who + ' have ' : 'They have ')
-      + 'both saved into the same handoff file, and a save overwrites — so each one has replaced the '
-      + 'other’s. The journal below keeps both trails. Give each tool its own scope and they stop colliding.',
-      true));
+    const who = (s.harnesses || []).slice(0, 4).join(' and ');
+    lines.push({
+      tone: 'danger',
+      // THE SCOPE NAME RIDES IN `strongText`, WHICH THE COMPONENT ESCAPES.
+      // It came off disk and it used to be interpolated into a `<b><span>`
+      // by hand here; the monitor escapes both fields and emphasises this
+      // one, so the emphasis survives and the hand-built markup does not.
+      strongText: 'Give each tool its own work-stream.',
+      text: 'Two tools are writing ' + s.scope + '. '
+        + (who ? who + ' have ' : 'They have ')
+        + 'both saved into the same handoff file, and a save overwrites — so each one has replaced '
+        + 'the other’s. The journal below keeps both trails.',
+    });
   }
 
   // ── NEWER STATE SOMEWHERE ELSE IN THIS PROJECT ──────────────────────────
@@ -4817,11 +5494,11 @@ function renderSaveStatus(read, d) {
     const there = effectiveSave(newest).seconds;
     const samePair = newest.scope === shownScope && newest.machine === shownMachine;
     if (!samePair && there !== null && (here === null || there < here - 60)) {
-      lines.push(saveLine('', '',
-        'Newer state in this project: <span class="mem-name">' + escapeHtml(newest.scope) + '</span>'
-        + (newest.machine && newest.machine !== shownMachine
-          ? ' on <span class="mem-name">' + escapeHtml(newest.machine) + '</span>' : '')
-        + ' — ' + escapeHtml(formatAge(there) || 'unknown age') + '.', true));
+      lines.push({
+        text: 'Newer state in this project: ' + newest.scope
+          + (newest.machine && newest.machine !== shownMachine ? ' on ' + newest.machine : '')
+          + ' — ' + (formatAge(there) || 'unknown age') + '.',
+      });
     }
   }
 
@@ -4838,10 +5515,11 @@ function renderSaveStatus(read, d) {
   // tooltip on a non-focusable span, so the one sentence explaining why the
   // steps below may not apply reached neither keyboard nor touch users.
   if (d && d.machineIsThisMachine === false) {
-    detail.push(saveLine('', '',
-      'Written on <span class="mem-name">' + escapeHtml(d.machine || 'another machine')
-      + '</span> and synced here — local paths and processes may differ from what the handoff describes.',
-      true));
+    detail.push({
+      key: 'written on',
+      value: d.machine || 'another machine',
+      sub: 'Synced here — local paths and processes may differ from what the handoff describes.',
+    });
   }
 
   // ── "ANOTHER COMPUTER SAVED AFTER THIS ONE" ─────────────────────────────
@@ -4854,12 +5532,11 @@ function renderSaveStatus(read, d) {
   // the rule, and why every clause of it is load-bearing.
   const elsewhere = newerOnAnotherMachine(scopes, d);
   if (elsewhere) {
-    lines.push(saveLine('', '',
-      '<span class="mem-name">' + escapeHtml(elsewhere.machine)
-      + '</span> saved after this computer — <span class="mem-name">'
-      + escapeHtml(elsewhere.scope) + '</span>, '
-      + escapeHtml(formatAge(effectiveSave(elsewhere).seconds) || 'unknown age')
-      + '. Pull before you continue, or that work will be waiting there.', true));
+    lines.push({
+      strongText: 'Pull before you continue, or that work will be waiting there.',
+      text: elsewhere.machine + ' saved after this computer — ' + elsewhere.scope + ', '
+        + (formatAge(effectiveSave(elsewhere).seconds) || 'unknown age') + '.',
+    });
   }
 
   // ── THE STANDING-BRIEF LINE IS DELETED (v3.62.0) ────────────────────────
@@ -4875,6 +5552,30 @@ function renderSaveStatus(read, d) {
   // `brief` is still read above for nothing else, so it goes with the line.
 
   if (!primary && !lines.length && !detail.length) return '';
+
+  // ── THE BODY IS A MONITOR (v3.65.0, M1) ──────────────────────────────
+  //
+  // It was four hand-built sentences in `.mem-save-line` divs — one about
+  // which clock the figure came from, one about when the file arrived, one
+  // about which machine wrote it, one about what "summary shortened" means.
+  // The maintainer, on this exact card and two like it elsewhere in the app:
+  // *"it's really hard to understand that this is like a monitor into the
+  // specific data and changing state ... we are looking for a unified design
+  // AND a distinguished design."* So the explanations become an INSTRUMENT:
+  // one fact per line, key left, reading right, the prose demoted to the
+  // qualifying clause under the reading it qualifies.
+  //
+  // WHAT IS A LINE AND WHAT IS A `loud` ENTRY is v3.16.1's split, unmoved: a
+  // line is something you went and read, a loud entry is a warning, a cost or
+  // an outcome — and a loud entry may NEVER sit behind a chevron. So the
+  // monitor in the BODY carries lines only, and the warnings are a second
+  // monitor rendered OUTSIDE the fold, below the row, where they are today.
+  // Two blocks, one component, and the split is structural rather than a
+  // convention: `renderMonitor` builds the two from different arrays and has
+  // no field that can move one into the other.
+  const body = detail.length
+    ? renderMonitor({ label: 'About this save', lines: detail })
+    : '';
   // ── THE ROW, AND THE ONE CASE THAT IS NOT A FOLD ──────────────────────
   // An empty chevron invites a click that does nothing, which is the call
   // `renderCaptureMeter` already makes for its own idle state — so with no
@@ -4888,25 +5589,30 @@ function renderSaveStatus(read, d) {
   // the element.
   const open = (state.openFolds && state.openFolds.saved) ? ' open' : '';
   const savedRow = primary
-    ? (detail.length
+    ? (body
       ? '<details class="mem-fold" data-mem-fold="saved"' + open + '>'
         + '<summary class="mem-fold-summary" id="mem-fold-saved">' + icon('chevronRight', 14)
           + '<span>Last saved</span>'
           + '<span class="mem-fold-meta">' + primary + '</span>'
         + '</summary>'
-        + '<div class="mem-fold-body">' + detail.join('') + '</div>'
+        + '<div class="mem-fold-body">' + body + '</div>'
       + '</details>'
       : '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-save-flat">'
         + '<span>Last saved</span>'
         + '<span class="mem-fold-meta">' + primary + '</span>'
       + '</div></div>')
-    : detail.join('');
+    : body;
+  // THE WARNINGS, IN THE SAME INSTRUMENT AND OUTSIDE THE CHEVRON. One block
+  // whatever their number, so two warnings do not read as two designs.
+  const warnings = lines.length
+    ? renderMonitor({ label: 'Warnings about this save', lines: [], loud: lines })
+    : '';
   // NO `.mem-section` ANY MORE. This is the body of step ② now, not a
   // top-level sibling, so the page's adjacency rule must not put 24px between
   // it and the two notices beside it — `.mem-status-stack` in memory.css owns
   // the spacing INSIDE a block, and `.settings-job-block` owns the spacing
   // between blocks. One gap, one owner, at each level.
-  return '<section class="mem-save" aria-label="Save status">' + savedRow + lines.join('') + '</section>';
+  return '<section class="mem-save" aria-label="Save status">' + savedRow + warnings + '</section>';
 }
 
 /** The newest (scope, machine) in a project by the AGENT'S clock where it exists. */
@@ -4939,12 +5645,13 @@ function firstNote(notes) {
  * contract renderDescription uses, and every interpolated value above goes
  * through escapeHtml at its own site.
  */
-function saveLine(iconName, tone, text, html = false) {
-  const cls = 'mem-save-line' + (tone === 'loud' ? ' mem-save-line-loud' : '')
-    + (tone === 'brief' ? ' mem-save-line-brief' : '');
-  return '<div class="' + cls + '">' + (iconName ? icon(iconName, 13) : '')
-    + '<span>' + (html ? text : escapeHtml(text)) + '</span></div>';
-}
+// `saveLine` IS GONE (v3.65.0). It built one of three hand-styled sentence
+// rows — `.mem-save-line`, `-loud`, `-brief` — and every one of its callers
+// now hands `renderMonitor` a LINE or a `loud` entry instead. The escaping
+// went with it: it took a trailing `html = false` flag and four of its six
+// call sites passed `true`, so four sentences interpolated a scope name, a
+// machine id and a store note into hand-written `<b>` and `<span>` markup.
+// The component escapes every field and emphasises exactly one named one.
 
 /**
  * How many directory entries the store can SEE but will not address.
@@ -6930,9 +7637,23 @@ function renderFoundations(read) {
   // `toggleReadFirst` patches it in place rather than re-rendering: a node
   // that has to be CREATED on a tick is a node that tick has to render for.
   const budgetSentence = foundationsBudgetWarning(facts);
+  // ── AND IT GAINS SOMETHING TO DO ABOUT IT (v3.65.0, record §D.6) ──────
+  // It named a consequence and offered nothing. The maintainer's own project
+  // mirrors 24 documents at 1,980 KB against a 200 KB budget, so this is the
+  // sentence he reads every time he opens the screen — correct, and inert.
+  //
+  // "Choose documents" is a DOOR, not a second write path: it opens the
+  // documents row (through the same transient force the editor uses, never
+  // the persisted key, so a close stays closed) and puts the reader in front
+  // of the `read first` column, whose per-row tick is v3.62.0's shipped
+  // `PATCH …/foundations/:slug {readFirst}` — manifest-only, both ownerships.
+  // No new route, no new write.
   const budgetNote = '<div class="tx-note mem-fnd-budget" id="mem-fnd-budget"'
     + (budgetSentence ? '' : ' hidden') + '>' + icon('alertTriangle', 13)
-    + '<span>' + escapeHtml(budgetSentence) + '</span></div>';
+    + '<span>' + escapeHtml(budgetSentence) + '</span>'
+    + '<button type="button" class="btn btn-secondary btn-xs mem-fnd-budget-go" '
+      + 'id="mem-fnd-budget-go">Choose documents</button>'
+    + '</div>';
   // ── `open` COMES FROM TWO PLACES AND ONLY TWO (v3.64.1) ────────────────
   // The user's remembered preference, and the transient set by the press that
   // opened an editor. NOT from `editing`/`adding` themselves: a state derived
@@ -6990,12 +7711,17 @@ function foundationsDraftAsk(facts, readonly) {
   if (!facts.present) return { btn: '', panel: '' };
   if (facts.manifestError) return { btn: '', panel: '' };
   if (facts.ownership !== 'curator') {
-    return {
-      btn: '',
-      panel: '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' +
-        escapeHtml('An agent’s save here is refused — this project is mirrored from a folder.') +
-        '</span></div>',
-    };
+    // ── IT LEAVES THE STEP BODY (v3.65.0) ──────────────────────────────
+    // The maintainer, pointing at it: *"then we have some clarification below
+    // — 'an agent's save here is refused, this project is mirrored from a
+    // folder' and the clock — I don't know why this is here, is this a static
+    // message or something that changes."* It is STATIC: a standing fact
+    // about this project's ownership, which never changes, because ownership
+    // is set once and refused afterwards. A standing fact is not an outcome,
+    // so v3.16.1 does not hold it on the page — the full sentence is a
+    // paragraph of step ①'s ⓘ, and the row's own summary already reads
+    // `mirrored`, which is the one-word form of it.
+    return { btn: '', panel: '' };
   }
   const info = renderInfoMark('mem-fnd-ask-info', 'About the drafting request',
     DRAFT_ASK_INFO_HTML, { html: true });
@@ -7856,8 +8582,18 @@ async function initFoundations(token, facts) {
       body: JSON.stringify(body),
     });
     const got = await res.json();
-    if (!res.ok || !got.ok) error = got.message || got.error || ('HTTP ' + res.status);
-    else data = got;
+    // ── A REMOTE REFUSAL NAMES THE TOKEN'S SOURCE, NEVER THE TOKEN ──────
+    // The store answers a failed remote read with one of nine codes; printing
+    // the code would show a person a word from a protocol. `remoteRefusalText`
+    // turns each into a sentence saying which FILE the token was read from and
+    // what to do about it — and returns null for a code it does not know, so
+    // an unrecognised refusal falls back to the PRODUCER's own message rather
+    // than to a guess. Nothing here can print a token, because nothing here
+    // has one: the store reads it from a file and never returns it.
+    if (!res.ok || !got.ok) {
+      error = remoteRefusalText(got && got.error, { tokenSource: body.tokenSource })
+        || got.message || got.error || ('HTTP ' + res.status);
+    } else data = got;
   } catch (err) {
     error = err.message;
   }
@@ -8712,26 +9448,31 @@ function renderJournal() {
   // NOT know the count. The VALUE is then the number we can stand behind (what
   // is shown) and the reason we cannot state a total is provenance — never a
   // total printed as if the tail's length were it.
-  let countReadout;
+  // ── IT IS A MONITOR LINE NOW (v3.65.0, M4) ──────────────────────────
+  // A live figure with a provenance clause is exactly what the monitor is
+  // for, and this page draws three other readings with it — so a `.tx-readout`
+  // standing alone at the foot of a list was the fourth treatment the
+  // maintainer counted. The three arms are unchanged and each still keeps a
+  // FACT apart from its ABSENCE: `total: null` with `totalUnknown` means the
+  // journal was longer than the tail we read, so the VALUE is the number we
+  // can stand behind and the reason we cannot state a total is the clause —
+  // never a total printed as if the tail's length were it.
+  //
+  // Composed INLINE rather than through a helper: this function is lifted by
+  // brace-matching and executed, so a module-level helper named here would be
+  // a ReferenceError there.
+  let countLine;
   if (j.totalUnknown) {
-    countReadout = renderReadout({
-      label: 'Saves shown',
-      value: j.returned,
-      provenance: 'most recent · full count unknown — ' +
-        (j.totalUnknownReason || 'only the end of the journal was read'),
-    });
+    countLine = { key: 'saves shown', value: j.returned,
+      sub: 'most recent · full count unknown — '
+        + (j.totalUnknownReason || 'only the end of the journal was read') };
   } else if (typeof j.total === 'number' && j.total > j.returned) {
-    countReadout = renderReadout({
-      label: 'Saves recorded',
-      value: j.total,
-      provenance: 'showing the ' + j.returned + ' most recent',
-    });
+    countLine = { key: 'saves recorded', value: j.total,
+      sub: 'showing the ' + j.returned + ' most recent' };
   } else {
-    countReadout = renderReadout({
-      label: j.returned === 1 ? 'Save recorded' : 'Saves recorded',
-      value: j.returned,
-    });
+    countLine = { key: j.returned === 1 ? 'save recorded' : 'saves recorded', value: j.returned };
   }
+  const countReadout = renderMonitor({ label: 'The journal', lines: [countLine] });
 
   const canExpand = state.journalLimit === JOURNAL_PAGE &&
     (j.totalUnknown || (typeof j.total === 'number' && j.total > j.returned));
@@ -8822,6 +9563,18 @@ function aboutInfoHtml() {
     '<p>A <b>domain</b> is where your knowledge lives — one compounding wiki. A <b>project</b> is a ' +
     'thing you build inside it, and a domain can hold several. Project context is kept per project, in ' +
     '<span class="mono">state/</span> beside that domain’s wiki, and synced with it.</p>' +
+    // ── THE RAIL'S OWN SENTENCE, MOVED HERE (v3.65.0, R2) ─────────────
+    // The sidebar had a second ⓘ carrying this line, and the maintainer
+    // asked for it to go: *"we have an information icon in the Project
+    // context sidebar which should not be here, because we have another one
+    // on the right side beside Copy agent instructions — we definitely
+    // don't need it in this small section."* The MARK went; the SENTENCE
+    // did not, and this is the panel it belongs in — the paragraph below
+    // already says the same thing about the same two writers at length, so
+    // this is the one-line form of it, kept verbatim because it is the form
+    // a reader who opens the panel and reads nothing else gets.
+    '<p>Agents save handoffs here over MCP; you write the standing brief. ' +
+    'This screen re-checks by itself when you come back to it, so Refresh is rarely needed.</p>' +
     '<ul class="mem-about-list">' +
       '<li><b>Standing brief</b> — the part that rarely changes: the goal, the firm decisions, the working ' +
       'model. One per project, returned on every agent read. <b>You write this one</b>, here or in a text ' +
@@ -8860,6 +9613,50 @@ function aboutInfoHtml() {
  * nothing to accumulate on, and a per-row handler keeps the data it needs on
  * its own element.
  */
+/**
+ * STEP ③'s PICKER AND ITS REMOVES (v3.65.0, P10).
+ *
+ * The shared listbox, ADD ONE AT A TIME: `shared/listbox.js` says in its own
+ * header that it implements no multi-select, and building a second selection
+ * paradigm here is the shape this release exists to remove. The WHOLE list is
+ * sent on every write, never a delta — the store's body is strict and one
+ * field, and a partial write is how two clients come to disagree about a set.
+ *
+ * ONE cfg OBJECT for both halves. `renderKnowledgePicker` composed the markup
+ * from `knowledgePickerCfg` and this mounts from the same function; two cfg
+ * literals is the two-hand-maintained-copies shape the component's own header
+ * warns about.
+ */
+function bindKnowledgeRows(root, token) {
+  const chosen = (state.projectRead && Array.isArray(state.projectRead.knowledgeDomains)
+    && state.projectRead.knowledgeDomains.length)
+    ? state.projectRead.knowledgeDomains.slice()
+    : (state.activeDomain ? [state.activeDomain] : []);
+  const all = Array.isArray(state.domainList) ? state.domainList : [];
+  const rest = all.filter((d) => !chosen.includes(d));
+  if (rest.length && typeof document !== 'undefined'
+    && typeof document.getElementById === 'function' && document.getElementById('mem-k-add')) {
+    const cfg = knowledgePickerCfg(rest, state.knowledgeSaving === true);
+    cfg.onSelect = (value) => {
+      if (!value || chosen.includes(value)) return;
+      saveKnowledgeDomains(chosen.concat([value]), token)
+        .catch((err) => reportAsyncMountFailure(token, err));
+    };
+    mountListbox(cfg);
+  }
+  root.querySelectorAll('[data-mem-k-drop]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const gone = btn.dataset.memKDrop;
+      if (!gone) return;
+      // REMOVING THE LAST ONE CLEARS THE CHOICE rather than emptying it: the
+      // project goes back to drawing on the domain it lives in, which is the
+      // store's own default and the only honest meaning of "none".
+      saveKnowledgeDomains(chosen.filter((d) => d !== gone), token)
+        .catch((err) => reportAsyncMountFailure(token, err));
+    });
+  });
+}
+
 function bindWorkStreamRows(root, token) {
   root.querySelectorAll('.mem-ws-open[data-mem-scope]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -9051,6 +9848,40 @@ function wire(token) {
     refreshFoundations(token).catch((err) => reportAsyncMountFailure(token, err));
   });
 
+  // ── "CHOOSE DOCUMENTS" — A DOOR, NOT A SECOND WRITE PATH (v3.65.0) ────
+  // The budget warning named a consequence and offered nothing to do about
+  // it. This opens the documents row and puts the reader in front of the
+  // `read first` column, whose per-row tick is the shipped
+  // `PATCH …/foundations/:slug {readFirst}`. THE TRANSIENT, never the
+  // persisted key: `state.fndForceOpen` is what the editor already uses, and
+  // an explicit close clears it (see the toggle listener below), which is
+  // what keeps a close final — the v3.64.1 "it reopens itself" loop.
+  //
+  // Inline, for the reason this function documents four times: it is lifted
+  // by brace-matching and executed against a hand-written set of stubs, so a
+  // module-level helper named here would be a ReferenceError there.
+  document.getElementById('mem-fnd-budget-go')?.addEventListener('click', () => {
+    state.fndForceOpen = true;
+    render(token);
+    // AFTER the paint, not before it: the column does not exist until the
+    // fold is open, and scrolling to a node that is not there is a press that
+    // visibly does nothing. The focus target is the first tick, which is the
+    // control the sentence is about.
+    const first = typeof document.querySelector === 'function'
+      ? document.querySelector('[data-fnd-first]') : null;
+    if (first) {
+      let reduce = false;
+      try {
+        reduce = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+          && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      } catch { reduce = false; }
+      if (typeof first.scrollIntoView === 'function') {
+        first.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+      }
+      if (typeof first.focus === 'function') first.focus();
+    }
+  });
+
   // ── STEP ③'s TWO DOORS, AND THE SIDEBAR'S POINTER (v3.62.0) ──────────
   //
   // BOTH DOORS NAME THE DOMAIN. This view is app-wide across domains and
@@ -9065,15 +9896,24 @@ function wire(token) {
   // `goToChatScoped` is the EXISTING wrapper, lifted to shared/ rather than
   // copied: `requestChatScope` has a documented no-slug hazard and it stays
   // guarded once, in one function, for both hosts.
-  document.getElementById('mem-k-domains')?.addEventListener('click', () => {
-    const domain = state.activeDomain;
-    if (!domain) return;
-    requestDomain(domain, { reason: 'knowledge' });
-    navigate('domains');
+  //
+  // ── ONE PAIR PER ROW (v3.65.0, P10) ──────────────────────────────────
+  // A project draws on N wikis, so there are N pairs of doors, and an id must
+  // be unique. Each door carries its OWN domain in a data attribute — the
+  // pattern `bindFoundationRows` already uses — so a row's doors name the row
+  // rather than whichever domain the project happens to live in.
+  document.querySelectorAll('[data-mem-k-domains]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const domain = btn.dataset.memKDomains;
+      if (!domain) return;
+      requestDomain(domain, { reason: 'knowledge' });
+      navigate('domains');
+    });
   });
-  document.getElementById('mem-k-chat')?.addEventListener('click', () => {
-    const domain = state.activeDomain;
-    if (!domain) return;
+  document.querySelectorAll('[data-mem-k-chat]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const domain = btn.dataset.memKChat;
+      if (!domain) return;
     // ── AND THE PROJECT, WHEN ONE IS OPEN (v3.64.0, §4.1) ──────────────
     // This door is pressed FROM a project's page. Handing Chat the domain
     // and dropping the project on the way would make the user re-choose,
@@ -9085,8 +9925,18 @@ function wire(token) {
     // recording a project that names nothing, so this is one shape in both
     // states. Still exactly one navigate(), still record-then-navigate —
     // the wrapper owns that ritual and this passes through it.
-    goToChatScoped(domain, { project: state.activeProject });
+      goToChatScoped(domain, { project: state.activeProject });
+    });
   });
+
+  // ── STEP ③'s PICKER AND ITS REMOVES (v3.65.0, P10) ───────────────────
+  // ONE binder, exactly as `bindFoundationRows` and `bindWorkStreamRows` are,
+  // and the reason is mechanical rather than tidy: this function is lifted by
+  // brace-matching and EXECUTED against a hand-written set of stubs in
+  // scripts/test-agent-instructions.js, so every name it calls has to be one
+  // that suite supplies — and one new name is one stub rather than three.
+  bindKnowledgeRows(document, token);
+
   document.getElementById('mem-new-project')?.addEventListener('click', () => {
     const domain = state.activeDomain;
     // NO DOMAIN, NO REQUEST — but still the pointer. A user with no project
@@ -9323,7 +10173,11 @@ function wire(token) {
       // The capture meter is the one target that is not a whole step: it is a
       // reading INSIDE step ②, so the jump lands on the reading when it is on
       // screen and on the step that holds it when it is not.
-      const target = (where === 'capture' && q('.mem-capture')) || block;
+      // CAPTURE IS A ROW INSIDE STEP ② (v3.65.0), not a card above it, so the
+      // jump lands on the ROW when it is on screen and on the step that holds
+      // it when it is not — the same two-step fallback, re-pointed at the
+      // element that carries the reading now.
+      const target = (where === 'capture' && q('[data-mem-fold="capture"]')) || block;
       if (!target) return;
       let reduce = false;
       try {
@@ -9414,7 +10268,13 @@ function wire(token) {
       // otherwise expanding the journal could silently swap which machine's
       // history is on screen if another machine wrote in the meantime.
       const m = state.detail ? state.detail.machine : state.machine;
-      loadScope(state.scope, m, token).catch((err) => reportAsyncMountFailure(token, err));
+      // `keepDetail` — see loadScope for the measured mechanism. This is the
+      // FIRST of the two "Show more" call sites; the second is in
+      // `patchOpenPair`, each names the other, and
+      // scripts/test-next-memory-switch.js drives both and requires them to
+      // do the same thing — so a flag added to one and not the other is red.
+      loadScope(state.scope, m, token, { keepDetail: true })
+        .catch((err) => reportAsyncMountFailure(token, err));
     });
   }
 }

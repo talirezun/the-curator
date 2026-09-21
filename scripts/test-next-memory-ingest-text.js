@@ -65,6 +65,9 @@ import {
 // on an unknown key, so the About panel's link is proven to resolve rather than
 // merely to have been interpolated.
 import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
+// Same contract again: shared/monitor.js takes no imports either, precisely
+// so a suite can run the real component rather than a stand-in for it.
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const NEXT = join(__dirname, '..', 'src', 'public', 'next');
@@ -145,6 +148,30 @@ ok('memory.js: renderMain builds its header with renderViewHeader',
   callSiteCount(memSrc, 'renderViewHeader', { within: 'renderMain' }) > 0);
 ok('memory.js: ...and that header carries the mechanism explanation as its `info`',
   /info: aboutInfoHtml\(\)/.test(memSrc) && /infoHtml: true/.test(memSrc));
+// ── THE ONE PRIMARY, TOP RIGHT (v3.65.0, §2(5)) ──────────────────────────
+// The maintainer, with both headers side by side: *"The Copy agent
+// instructions button should be on the top right in a violet button like Ask
+// this domain — the same design pattern."* So the assertion is the PATTERN,
+// not the button: the header's action slot carries exactly one `btn-primary`,
+// it is this control, and it takes the md rung rather than `btn-xs` — the two
+// halves of "like Ask this domain", which is `btn btn-primary dm-ask-btn`.
+{
+  const actions = (/actionsHtml: state\.activeProject[\s\S]{0,400}?: '',/.exec(memCode) || [''])[0];
+  ok('memory.js: the header\'s action slot was found (the scan is not vacuous)',
+    actions.length > 40, actions.slice(0, 120));
+  ok('memory.js: exactly ONE btn-primary in the header, and it is the copy control',
+    (actions.match(/btn-primary/g) || []).length === 1, actions);
+  ok('...carrying the copy control\'s own id, so the pattern cannot be satisfied '
+    + 'by some other button', /id="mem-copy-agent"/.test(actions), actions);
+  ok('...at the md rung, like `Ask this domain`, not the btn-xs it used to be',
+    !/btn-xs/.test(actions), actions);
+  // AND IT REACHES THE EDGE THE SAME WAY DOMAINS DOES: one declaration, the
+  // same one views/domains.css makes about `.dm-ask-btn`, because the actions
+  // group is `flex: 1` precisely so a trailing primary can push itself right.
+  ok('memory.css gives it `margin-left: auto`, the one line the pattern needs',
+    /\.mem-ask-btn\s*\{[^}]*margin-left:\s*auto/.test(memCss),
+    (/\.mem-ask-btn[^}]*\}/.exec(memCss) || [''])[0]);
+}
 // COMMENT-STRIPPED, and that is not a loosening. memory.js's own docblocks
 // explain the move and NAME the component that used to do it ("this was a
 // renderExplainer <details>"), which is exactly the history this repo wants
@@ -155,8 +182,15 @@ ok('memory.js: the explainer component is gone — not imported, not called, not
   !/renderExplainer/.test(memCode));
 ok('memory.js: the sidebar error is a STATUS, not a hint (renderStatus inside renderSidebar)',
   callSiteCount(memSrc, 'renderStatus', { within: 'renderSidebar' }) > 0);
-ok('memory.js: the journal count is a READOUT (renderReadout inside renderJournal)',
-  callSiteCount(memSrc, 'renderReadout', { within: 'renderJournal' }) > 0);
+// RE-POINTED (v3.65.0, M4), and the claim got stronger rather than weaker. It
+// pinned the journal's count as a `renderReadout` — an INSTRUMENT rather than
+// a grey sentence, which was the v3.55.0 finding. A live figure with a
+// provenance clause is exactly what the MONITOR is for, and this page draws
+// three other readings with it, so a readout standing alone at the foot of a
+// list was the fourth report treatment the maintainer counted on this screen.
+// The role is unchanged; the component that carries it is the shared one.
+ok('memory.js: the journal count is a MONITOR line (renderMonitor inside renderJournal)',
+  callSiteCount(memSrc, 'renderMonitor', { within: 'renderJournal' }) > 0);
 // RE-POINTED (v3.56.0), and the claim is unchanged: the handoff's provenance is
 // an INSTRUMENT. What moved is where it is painted — `renderHandoff` printed the
 // document on the page and is gone; `handoffReaderContent` composes the payload
@@ -277,11 +311,15 @@ function memRenderers(stateObj) {
   ]);
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
     'JOURNAL_PAGE', 'JOURNAL_MORE',
-    'renderDescription', 'renderStatus', 'renderReadout', 'docsLinkHtml', body)(
+    // THE REAL MONITOR (v3.65.0, M4). The journal's count is one of its lines
+    // now, and §4's escaping battery below runs through whatever paints it —
+    // a stub would let it run past the component.
+    'renderDescription', 'renderStatus', 'renderReadout', 'renderMonitor',
+    'docsLinkHtml', body)(
     stateObj, (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
     () => '<svg></svg>', (s) => '<p>' + s + '</p>', () => '<div class="loader"></div>', null, 10, 50,
-    renderDescription, renderStatus, renderReadout, docsLinkHtml);
+    renderDescription, renderStatus, renderReadout, renderMonitor, docsLinkHtml);
 }
 
 const baseDetail = {
@@ -401,7 +439,11 @@ const baseState = {
   // The journal count is a figure, not a sentence — and the framing prose
   // beside it is a description, so the two no longer share a voice.
   const j = R.renderJournal();
-  ok('the journal count renders as a READOUT figure', /class="tx-readout-value">3</.test(j), j.slice(-500));
+  // A MONITOR LINE SINCE v3.65.0 (M4). The ROLE is unchanged — a measurement
+  // rendered as a measurement rather than as grey prose, which is what
+  // "an explanation and a measurement no longer share one class" below is
+  // about — and the component that carries it is the shared one.
+  ok('the journal count renders as a MONITOR figure', /class="cur-mon-value">3</.test(j), j.slice(-500));
   ok('the journal framing renders as a DESCRIPTION', /class="tx-desc"/.test(j), j.slice(0, 500));
   ok('an explanation and a measurement no longer share one class',
     !/mem-quiet/.test(j), j.slice(0, 300));
@@ -411,9 +453,10 @@ const baseState = {
     ...baseState,
     detail: { ...baseDetail, journal: { returned: 2, total: null, totalUnknown: true, totalUnknownReason: 'journal is huge', entries: baseDetail.journal.entries } },
   }).renderJournal();
-  ok('an unknown journal total still says UNKNOWN in the readout provenance',
-    /tx-readout-prov[^<]*>[^<]*unknown/i.test(unknown), unknown.slice(-500));
-  ok('...and still does NOT print the tail length as the total', !/>2 saves recorded/.test(unknown));
+  ok('an unknown journal total still says UNKNOWN in the line\'s own clause',
+    /cur-mon-sub[^<]*>[^<]*unknown/i.test(unknown), unknown.slice(-500));
+  ok('...and still does NOT print the tail length as the total',
+    !/cur-mon-key">saves recorded/.test(unknown), unknown.slice(-500));
 
   // The brief's "not written" prose is a description, not a fourth grey.
   const brief = R.renderBrief(baseState.projectRead, false);
@@ -655,7 +698,21 @@ for (const [name, rawCss] of [['memory.css', memCss], ['ingest.css', ingCss]]) {
   // deliberate edit here too.
   const tokenCss = ['base', 'color', 'space', 'shape', 'typography', 'motion', 'material']
     .map((n) => read('tokens/' + n + '.css')).join('\n');
-  const shell = read('shell.css');
+  // ── AND views/domains.css, FOR THREE NAMES AND A STATED REASON ────────
+  // v3.65.0: views/memory.css paints the six IDENTITY DOT colours on the
+  // sidebar kit's own class names, and three of them (`--dm-ink-entity` /
+  // `-concept` / `-summary`) are declared in views/domains.css. That is not
+  // an oversight and cannot be fixed by copying: those three names exist
+  // precisely so two rules needing one colour do not become two copies of a
+  // LITERAL, and scripts/test-next-design-kit.js §10 permits colour literals
+  // in exactly two /next stylesheets while asserting the baseline holds
+  // exactly two files — so re-declaring the values here would widen an
+  // anti-drift ratchet in order to ship a kit.
+  //
+  // WHAT IS STILL GUARDED: every OTHER var() in both files must resolve, and
+  // a typo in one of these three still reds, because they are read out of the
+  // real views/domains.css rather than allow-listed by name.
+  const shell = read('shell.css') + '\n' + read('views/domains.css');
   for (const [name, css] of [['memory.css', memCss], ['ingest.css', ingCss]]) {
     const defined = new Set([...(tokenCss + shell + css).matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
     const used = [...css.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]);
@@ -819,13 +876,23 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
 // different body, and `test-next-memory-view.js` asserts that over EVERY
 // DELETE call site rather than over the first one it finds.
 {
+  // EIGHT SINCE v3.65.0, over seven routes, and the eighth is step ③'s wiki
+  // choice — CURATOR METADATA about the project, written to `project.json`
+  // and nothing else, so tiers 1, 2 and 3 are untouched by it.
   const methods = (memCode.match(/method:\s*'[A-Z]+'/g) || []).sort();
-  ok('memory.js issues exactly SEVEN mutating HTTP method keys, over six routes',
-    methods.length === 7, methods.join(','));
-  ok('...and they are DELETE, DELETE, PATCH, PATCH, POST, POST and PUT, every one a LITERAL',
+  ok('memory.js issues exactly EIGHT mutating HTTP method keys, over seven routes',
+    methods.length === 8, methods.join(','));
+  ok('...and they are DELETE, DELETE, PATCH, PATCH, PATCH, POST, POST and PUT, every one a LITERAL',
     methods.join(',') === "method: 'DELETE',method: 'DELETE',method: 'PATCH',method: 'PATCH',"
-      + "method: 'POST',method: 'POST',method: 'PUT'",
+      + "method: 'PATCH',method: 'POST',method: 'POST',method: 'PUT'",
     methods.join(','));
+  // THE THIRD PATCH SENDS ONE KEY TOO, and it is the same rule as the
+  // `readFirst` one below: an instruction ABOUT a set of wikis, never a byte
+  // of anything an agent wrote.
+  ok('...the third PATCH aimed at the knowledge-domains endpoint, sending the '
+    + 'whole list and nothing else',
+  /'\/knowledge\/domains'/.test(memCode)
+    && /body: JSON\.stringify\(\{ knowledgeDomains:/.test(memCode));
   ok('...one PATCH aimed at the PROJECTS endpoint, which reaches tier 1 only',
     /'\/api\/memory\/' \+ encodeURIComponent\(e\.domain\) \+ '\/projects\/'/.test(memCode));
   ok('...and it never sends a handoff field',
@@ -977,10 +1044,21 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
 // this screen is — one mark, one panel, one voice. What is still pinned is that
 // the sentence exists, that it is the rail header's `info` and not a floating
 // block, and that the block has not come back.
+// RE-POINTED AGAIN (v3.65.0, R2), and again the property is narrowed
+// honestly rather than quietly. The RAIL'S OWN ⓘ is gone — the maintainer:
+// *"we have an information icon in the Project context sidebar which should
+// not be here, because we have another one on the right side beside Copy
+// agent instructions — we definitely don't need it in this small section"* —
+// and `renderSidebarHead` takes no `info` option at all, so the affordance
+// cannot come back by a caller forgetting. The SENTENCE did not go with it:
+// it is a paragraph of `aboutInfoHtml`, the MAIN header's panel, which is the
+// one panel on this screen that describes what it is and who writes it.
 ok('the sidebar states the split in the rail header\u2019s own \u24d8, in one sentence',
   /Agents save handoffs here over MCP; you write the standing brief\./.test(memCode));
-ok('...as part of that header\u2019s info field, not as a paragraph beside it',
-  new RegExp("variant: 'sidebar',[\\s\\S]{0,600}Agents save handoffs here over MCP").test(memCode));
+ok('...as part of the MAIN header\u2019s info panel, not as a paragraph beside it',
+  new RegExp("function aboutInfoHtml[\\s\\S]{0,3000}Agents save handoffs here over MCP").test(memCode));
+ok('...and the rail offers NO \u24d8 of its own any more — the component has no such option',
+  !/variant: 'sidebar'/.test(memCode) && /renderSidebarHead\(\{/.test(memCode));
 ok('...and the floating foot card it replaces has not come back',
   !/mem-sidebar-foot/.test(memCode));
 
@@ -1112,8 +1190,21 @@ ok('CONTROL: the "no <details> on the estimate" detector fires when one is plant
   // wording, so an assertion pinning that arrangement now pins the defect.
   // Deleting it would lose the mutation's lesson; inverting keeps it pointed at
   // the same site, in the same file, one step further on.
-  ok('the Project-context sidebar is the header COMPONENT, not a title plus a paragraph',
-    /renderViewHeader\(\{\s*variant: 'sidebar',\s*title: 'Project context',/.test(stripComments(memSrc)));
+  // RE-POINTED ONE STEP FURTHER ON (v3.65.0, R2), for the reason the comment
+  // above gives about the previous re-pointing: the SHAPE under test moved
+  // again, from a title plus a paragraph, to the header component, to the
+  // SIDEBAR component — which is the one that carries the two action slots
+  // and offers no ⓘ at all. Pinning the header component here now would pin
+  // the shape this release removes, exactly as pinning renderDescription
+  // would have in v3.20.0. Both halves are asserted so "adopted" cannot be
+  // satisfied by having dropped the old call without making the new one.
+  ok('the Project-context sidebar is the SIDEBAR component, not the view header',
+    /renderSidebarHead\(\{\s*title: 'Project context',/.test(stripComments(memSrc))
+    && !/variant: 'sidebar'/.test(stripComments(memSrc)));
+  ok('...and it passes a PRIMARY and a SECONDARY, which is what made the two '
+    + 'ghost buttons buttons again',
+    /primary: \{\s*label: '\+ New project'/.test(stripComments(memSrc))
+    && /secondary: \{\s*label: 'Refresh'/.test(stripComments(memSrc)));
   ok('and the sentence has NOT returned as a paragraph under that title, in EITHER shape',
     !/class="sidebar-hint">The working brief/.test(stripComments(memSrc))
     && !/renderDescription\(\s*'The working brief your agents leave/.test(stripComments(memSrc)));

@@ -74,6 +74,7 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -789,6 +790,11 @@ section('§8 — patchOpenPair writes what a full render would paint');
     'state', 'document', 'isCurrentMount', 'render', 'bindWorkStreamRows',
     'reportAsyncMountFailure', 'loadScope', 'escapeHtml', 'icon', 'renderReadout',
     'renderDescription', 'renderMarkdown', 'freshnessStep', 'freshnessTier',
+    // THE REAL MONITOR (v3.65.0). `renderSaveStatus` composes its explanations
+    // and its warnings through it, and §8 below compares the stack this patch
+    // WRITES against the stack `renderProject` composes byte for byte — so a
+    // stub here would make both sides agree about a component neither draws.
+    'renderMonitor',
     'docsLinkHtml', 'JOURNAL_MORE', 'JOURNAL_PAGE', 'WS_WINDOW', 'screenSignature',
     'let renderedSignature = null;\n'
     + 'let renders = 0;\n'
@@ -803,7 +809,6 @@ section('§8 — patchOpenPair writes what a full render would paint');
     + lift('newestPair') + '\n'
     + lift('harnessOf') + '\n'
     + lift('firstNote') + '\n'
-    + lift('saveLine') + '\n'
     + lift('newerOnAnotherMachine') + '\n'
     + lift('renderSaveStatus') + '\n'
     + lift('renderStaleNotice') + '\n'
@@ -824,7 +829,7 @@ section('§8 — patchOpenPair writes what a full render would paint');
     (o) => '<span class="tx-readout-value">' + o.value + '</span>',
     (s) => '<p>' + s + '</p>',
     (s) => '<div>' + s + '</div>',
-    () => 1, () => 'recent', () => '<a>guide</a>',
+    () => 1, () => 'recent', renderMonitor, () => '<a>guide</a>',
     JOURNAL_MORE, JOURNAL_PAGE, WS_WINDOW, () => 'SIG');
 
   let fellBack = 0;
@@ -1000,21 +1005,30 @@ section('§9 — The skeleton reserves the height and invents no reading');
   // ── THREE COLLABORATORS INSTEAD OF ONE (v3.62.0) ─────────────────────
   // The skeleton no longer asks `renderSaveStatus` for the one reading it can
   // paint — that line moved to the STRIP, which reads the index row itself.
-  // So the spies are the strip, step ③ and the three lede constants, and what
-  // this harness still asks is unchanged: what does the skeleton RESERVE, and
-  // does it claim anything it cannot know.
+  // So the spies are the step head, the strip and step ③, and what this
+  // harness still asks is unchanged: what does the skeleton RESERVE, and does
+  // it claim anything it cannot know.
+  //
+  // ── `memStep`, NOT `renderBlock` (v3.65.0) ───────────────────────────
+  // The three numbered steps go through this view's own head composer now,
+  // because shared/block.js emits its ⓘ inside a LEDE and emits nothing at
+  // all without one — and there is no lede on this page any more (R4). The
+  // spy records what the skeleton ASKS for, so the three lede constants that
+  // used to be injected here are gone with the parameter they fed: a lede
+  // asked for would show up as a key `memStep` does not take, which is what
+  // the `data-lede` probe below now asserts the absence of.
   const mkSkeleton = (stateObj) => new Function(
-    'state', 'renderBlock', 'renderLayerStrip', 'renderKnowledge', 'WS_WINDOW',
-    'LEDE_CANONICAL', 'LEDE_STATE', 'LEDE_KNOWLEDGE',
+    'state', 'memStep', 'renderLayerStrip', 'renderKnowledge', 'WS_WINDOW',
     lift('renderProjectSkeleton') + '\nreturn { renderProjectSkeleton };')(
     stateObj,
     (o) => '<section data-block="' + o.id + '" data-num="' + (o.num === undefined ? '' : o.num)
-      + '" data-lede="' + (o.ledeHtml || '') + '">' + (o.bodyHtml || '') + '</section>',
+      + '" data-lede="' + (o.ledeHtml === undefined ? 'NONE' : o.ledeHtml) + '">'
+      + (o.bodyHtml || '') + '</section>',
     // The REAL ones are driven in test-next-memory-view.js; here the question
     // is what the skeleton ASKS them for, so spies are honest.
     (read) => '<!--strip:' + JSON.stringify(read) + '-->',
     () => '<!--knowledge-->',
-    WS_WINDOW, 'L1', 'L2', 'L3').renderProjectSkeleton();
+    WS_WINDOW).renderProjectSkeleton();
 
   const withRow = mkSkeleton({
     activeDomain: 'acme', activeProject: 'alpha',
@@ -1030,10 +1044,15 @@ section('§9 — The skeleton reserves the height and invents no reading');
   withRow.includes('data-block="context-canonical" data-num="1"')
     && withRow.includes('data-block="context-state" data-num="2"')
     && withRow.includes('data-block="context-knowledge" data-num="3"'), withRow.slice(0, 400));
-  ok('...and the ledes are the shared constants rather than second copies, '
-    + 'which is what makes drifting impossible rather than merely unlikely',
-  withRow.includes('data-lede="L1"') && withRow.includes('data-lede="L2"')
-    && withRow.includes('data-lede="L3"'), withRow.slice(0, 400));
+  // ── AND IT ASKS FOR NO LEDE (v3.65.0, R4) ────────────────────────────
+  // The three sentences under the three numbered titles are gone from BOTH
+  // paints — each is the first paragraph of that step's own ⓘ now — so the
+  // skeleton asking for one would be the skeleton painting chrome the filled
+  // page does not. The spy writes the literal `NONE` when the key is absent,
+  // so an empty string passed deliberately is told apart from nothing passed.
+  eq('...and it asks for NO lede on any of the three, so the chrome it '
+    + 'reserves is the chrome the filled page paints',
+  (withRow.match(/data-lede="NONE"/g) || []).length, 3);
   ok('every reserved region says it is still filling', (withRow.match(/aria-busy="true"/g) || []).length >= 2);
 
   const many = mkSkeleton({
@@ -1093,6 +1112,16 @@ section('§10 — The two "Show more" call sites do the same thing');
   eq('...and they do the same thing, ignoring comments and whitespace', a, b);
   ok('CONTROL: the extracted body is a real handler, not an empty string',
     a && a.includes('loadScope(state.scope'), a);
+  // ── AND BOTH CARRY `keepDetail` (v3.65.0) ────────────────────────────
+  // Equality above stops the two drifting APART; it says nothing about what
+  // they do. This names the one option that makes "Show more" keep the reader
+  // where they are — without it `loadScope` nulls `state.detail` and renders
+  // before the fetch, the journal fold vanishes for the round trip, the
+  // column shrinks and the scroll container clamps. Asserted on BOTH, so a
+  // revert of either is red rather than half-red.
+  ok('both call sites pass `keepDetail`, which is what stops the column '
+    + 'shrinking under the reader', /keepDetail: true/.test(a) && /keepDetail: true/.test(b),
+  JSON.stringify([a, b]));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -1203,9 +1232,18 @@ section('§10 — THE HANDOFF FROM DOMAINS: one project, once (v3.61.0, P1-10)')
   const rig = (rows) => {
     const picked = [];
     // eslint-disable-next-line no-new-func
+    const domainReads = [];
+    // eslint-disable-next-line no-new-func
     const api = new Function(
       'state', 'fetchIndex', 'isCurrentMount', 'render', 'settleGate', 'selectProject',
       'readRememberedProjects', 'loadGate',
+      // ── THE DOMAIN LIST GOES OUT BESIDE THE INDEX (v3.65.0) ──────────
+      // It is a free identifier inside `loadIndex`'s body, so a spy is
+      // required or this harness is a ReferenceError. It is also the claim
+      // worth making here: the list read must be UNAWAITED and must not sit
+      // behind the index, or a slow answer delays the first paint of a
+      // screen that already has everything it needs to draw.
+      'loadDomainList', 'reportAsyncMountFailure',
       'let pendingProject = null;\n'
       + lift('requestProject') + '\n'
       + lift('takePendingProject') + '\n'
@@ -1219,8 +1257,12 @@ section('§10 — THE HANDOFF FROM DOMAINS: one project, once (v3.61.0, P1-10)')
       (_g, fn) => fn(),
       async (d, p) => { picked.push(d + '/' + p); },
       () => null,
-      null);
-    return { api, picked };
+      null,
+      // NEVER RESOLVES, deliberately: if `loadIndex` awaited it, nothing
+      // below would ever run and the suite would hang rather than pass.
+      () => { domainReads.push(1); return new Promise(() => {}); },
+      () => {});
+    return { api, picked, domainReads };
   };
   const ROWS = [
     // A brand-new project: NO saves at all, so recency cannot reach it.
@@ -1230,10 +1272,16 @@ section('§10 — THE HANDOFF FROM DOMAINS: one project, once (v3.61.0, P1-10)')
   ];
 
   {
-    const { api, picked } = rig(ROWS);
+    const { api, picked, domainReads } = rig(ROWS);
     await api.loadIndex(1);
     eq('CONTROL: with no request, the ordinary arrival opens the freshest save '
       + '— which is NOT the new project', picked.join(), 'other/busy');
+    // ── THE DOMAIN LIST WENT OUT, AND IT WAS NOT AWAITED (v3.65.0) ─────
+    // The spy returns a promise that NEVER settles, so an awaited call would
+    // hang this harness rather than pass it — which is what makes the second
+    // half a measurement instead of a hope.
+    eq('the install\'s domain list is asked for once, beside the index', domainReads.length, 1);
+    eq('...and the index still resolved, so the read is not awaited', picked.length, 1);
   }
   {
     const { api, picked } = rig(ROWS);
