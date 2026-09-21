@@ -7348,7 +7348,18 @@ function foundationsNotices(read) {
   const ini = state.fndInit && state.fndInit.domain === state.activeDomain
     && state.fndInit.project === state.activeProject ? state.fndInit : null;
   if (ini && ini.error) {
-    notes += renderStatus({ state: 'danger', title: 'Nothing was set up', detail: ini.error });
+    // TWO TITLES, BECAUSE THEY ARE TWO REFUSALS (v3.65.1). "Nothing was set up"
+    // is the init arm's — an ownership that was not recorded. A refused SWITCH
+    // set nothing up either way: the project keeps the source it had, and
+    // saying so is what tells the owner nothing is half-done. The store makes
+    // that true rather than this sentence: `refreshRemoteCore` writes nothing
+    // until every blob is in hand, so a failed read leaves the mirror exactly
+    // as it was.
+    notes += renderStatus({
+      state: 'danger',
+      title: ini.switching ? 'The source was not changed' : 'Nothing was set up',
+      detail: ini.error,
+    });
   }
   if (ini && Array.isArray(ini.refused) && ini.refused.length) {
     notes += renderRefusedList(ini.refused);
@@ -8632,7 +8643,18 @@ async function initFoundations(token, facts) {
     // than to a guess. Nothing here can print a token, because nothing here
     // has one: the store reads it from a file and never returns it.
     if (!res.ok || !got.ok) {
-      error = remoteRefusalText(got && got.error, { tokenSource: body.tokenSource })
+      // ── THE CODE IS `reason`, NOT `error` (corrected v3.65.1) ─────────
+      // `error` is PROSE — `withErrorProse` copies the store's `message` into
+      // it when the route did not compose one — so keying the nine sentences
+      // on it matched nothing and every remote refusal fell through to the
+      // producer's own words. The wire CODE is `reason`, and the GitHub-read
+      // refusals deliberately cross it in the store's own dash spelling
+      // (`no-token`, `rate-limited`, `remote-tree-truncated`, …) precisely so
+      // one client branch reads both doors — src/routes/memory.js:919-923 says
+      // so in the table that excludes them. `error` is still tried, because it
+      // carried a code on some paths and trying both costs nothing.
+      error = remoteRefusalText(got && got.reason, { tokenSource: body.tokenSource })
+        || remoteRefusalText(got && got.error, { tokenSource: body.tokenSource })
         || got.message || got.error || ('HTTP ' + res.status);
     } else data = got;
   } catch (err) {
