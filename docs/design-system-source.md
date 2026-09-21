@@ -392,10 +392,11 @@ prominence**, and the size is a property of where the button *is*.
 **Neither consequence variant is glossed, and that is structural.** Gloss
 asserts "this is a raised object". The two controls in the app that cost you
 something must never also be the most inviting thing on screen, so the tint
-**replaces** tier 1 rather than decorating it. `.btn-ai`'s seven consumers are
-the seven paid actions: **Ingest**, **Start batch** (`views/ingest.js`),
-**Compile to wiki** (`views/chat.js`), **Push contributions** and **Run
-synthesis** (`views/shared.js`), **AI maintenance** (`views/domains.js`) and
+**replaces** tier 1 rather than decorating it. `.btn-ai` has seven call sites
+carrying nine paid actions: **Ingest**, **Start batch** (`views/ingest.js`),
+**Compile to Wiki** (`views/chat.js`), **Push contributions** and **Run
+synthesis** (`views/shared.js`), Quick maintenance's three ✨ actions — one
+`.btn-ai` each, from `quickAiButton()` (`views/domains.js`) — and
 **Verify AI connection · $0.0001** (`views/settings.js`). The price stays on the
 label, never in a fold.
 
@@ -477,7 +478,7 @@ the 32px indent that exists only to clear a numeral.
 | **General** | Software update · Appearance · System check · Setup guide | No — none of them is step 1 of anything |
 | **Providers & keys** | ① Connect a provider · ② What builds your wiki · ③ Chat · ④ All models | **Yes** — the page reads top to bottom as a sequence |
 | **Knowledge base** | Vault folder | No |
-| **MCP bridge** | ① Connect a client · ② Default domain for MCP writes | **Yes** — ② is the answer to a question ① has to raise first |
+| **MCP bridge** | ① Connect a client · ② Default domain for MCP writes · ③ Tool map | **Yes** — ② answers a question ① has to raise first, and ③ has nothing to show until both are settled |
 | **Health & scan limits** | Semantic-duplicate scan limits | No |
 
 The 32px indent is **derived, not chosen**: 20px numeral + the 12px
@@ -741,19 +742,20 @@ the only carrier.
   share an ink while `today` takes a different hue: *5 minutes ago* and *4 hours
   ago* have to differ before you read them.
 
-**Two tiers currently have no `.fresh-dot` consumer**, and that is stated in the
-file rather than hidden. Both sidebars read a `YYYY-MM-DD` heading with no time
-of day, so `dayFreshnessTier` enters the scale at `today`. The rules exist
-because `freshnessTier` — the second-resolution half, which the Agent-memory pip
-is cut on — *can* return them, and a tier the scale names with no rule behind it
-is an invisible mark on the first second-resolution consumer. The guard asserts
+**Every tier now has a `.fresh-dot` consumer (v3.65.0).** Both sidebars still
+enter the scale at `today`, because they read a `YYYY-MM-DD` heading with no time
+of day and `dayFreshnessTier` cannot answer finer than that — but `renderMonitor`'s
+time lines and the capture reading paint `.fresh-dot` straight off `freshnessTier`,
+the second-resolution half (`views/memory.js:4692`, `views/domains.js:6638`), so
+`live` and `recent` reach the screen. The guard still asserts
 the set of rules in the stylesheet **equals** the set of tiers those two
 functions can return, in both directions.
 
-**The shape is not shared, only the scale.** A domain's row wears a round 8px
-`.fresh-dot`; an Agent-memory work-stream wears a 12px square pip with a 2px
-radius, whose geometry stays in `views/memory.css`. The tier modifiers set ink
-and fill and touch no geometry, so any future mark can wear them.
+**One shape now (v3.65.0).** `.mem-save-pip`, the Project-context view's own
+12px square pip, is **deleted** (`views/memory.css:633`): every recency mark in
+the window is the round 8px `.fresh-dot`, and `views/memory.css` declares no
+`.fresh-` rule of its own. The tier modifiers still set ink and fill and touch no
+geometry, so any future mark can wear them.
 
 **No transition, no animation.** Every `/next` view re-renders by replacing
 `innerHTML`, so a class-keyed transition on a mark could never run — it would be
@@ -1041,7 +1043,7 @@ cannot walk away from.
 | Tile figure — a **display** readout in a dedicated group | `--text-2xl` | 22 / 600 sans | `.dm-stat-value` (the five OVERVIEW tiles) — the one deliberate exception, below |
 | Sidebar row name | `--text-md` (weight steps to `--weight-medium` on the **active** row only) | 13 | `.dm-row-name`, `.mem-row-name`, `.sync-domain-name`, `.sb-conn-name`, `.ing-dest-name`, `.chat-conv-title` |
 | Sidebar row meta | `--text-2xs` | 10 / 400 | `.dm-row-meta`, `.mem-row-meta`, `.chat-conv-meta`, `.ing-dest-meta`, `.sb-conn-state` |
-| Micro-label — a table header or an uppercase strip label | `--text-2xs` / `--weight-medium`, uppercase | 10 / 500 | `.mem-ws-table th`, `.browse-table th`, `.mem-working-label` |
+| Micro-label — a table header or an uppercase strip label | `--text-2xs` / `--weight-medium`, uppercase | 10 / 500 | `.mem-ws-table th`, `.browse-table th` |
 | Note / caption | `--text-xs` | 11 / 400 | `.tx-note`, `.rail-cap` (`--type-caption`) |
 | Button label | `--text-md`; `--text-xs` on `.btn-xs` | 13 / 11 | `.btn` in `shell.css` |
 
@@ -1075,7 +1077,7 @@ title of the block containing it.**
 
 #### The one deliberate exception: the Domains OVERVIEW tiles
 
-`.dm-stat-value` (an alias of `.cur-ov-stat-value` since v3.64.2 — see
+`.dm-stat-value` (an alias of `.cur-ov-value` since v3.64.2 — see
 [§12, the overview card](#12-the-overview-card-v3642v3650), below) stays at
 **`--text-2xl` (22 / 600, sans)** rather than joining the readout rung. Through
 v3.64.1 it was the only size in the table not shared with another view; since
@@ -1141,12 +1143,14 @@ grid row when there are more tiles than fit on one row.
 The two hosts may differ in exactly **three** ways, enumerated by
 `test-next-overview-kit.js` rather than left open-ended:
 
-- **`alias: 'dm'`** — the domain page's nine historical `dm-` class names
-  (`dm-stats-grid`, `dm-stat-card`, `dm-stat-value`, `dm-stats-group`,
-  `dm-jump-row`, `dm-jump-card`, `dm-jump-value`, `dm-section-head-row`,
-  `dm-section-eyebrow`) ride the *same elements* as the kit-neutral `cur-ov-*`
+- **`alias: 'dm'`** — the domain page's **six** surviving historical `dm-`
+  class names (`dm-stats-grid`, `dm-stat-card`, `dm-stat-value`,
+  `dm-stats-group`, `dm-section-head-row`, `dm-section-eyebrow`) ride the *same
+  elements* as the kit-neutral `cur-ov-*`
   classes, opt-in, because four existing suites and the view's own listeners
-  and column-patch walk still address them by name. No `dm-` string reaches
+  and column-patch walk still address them by name. The three jump-row names
+  (`dm-jump-row`, `dm-jump-card`, `dm-jump-value`) went with the jump row
+  itself in v3.65.0 and are emitted nowhere. No `dm-` string reaches
   `views/memory.js` — the kit suite reds if one does.
 - **A second line under a card's figure** — the domain page's tiles are a bare
   figure over a label; the Project-context cards add a qualifier ("saved 12 min
@@ -1241,7 +1245,9 @@ would separate a control from what it does.
 
 ### 15. The sidebar (v3.65.0)
 
-Every sidebar in the app is one component: a title with **no ⓘ**, at most two
+Three of the app's sidebars — **Domains**, **Context** and **Settings** — are now
+one component (Chat, Sync, Shared Brain and Ingest still build their own): a
+title with **no ⓘ**, at most two
 actions stacked under it (a `btn-primary` that creates the kind of thing the
 list holds, a `btn-secondary` for the one alternative route), an eyebrow group
 head, and rows of **identity dot · name · key figure · freshness mark · clock
@@ -1294,11 +1300,14 @@ the instrument inside the thing that names it, which is the line between a
 monitor and a sidebar ROW (a row is a navigation target whose reading is
 incidental).
 
-**Five real surfaces adopted this component in v3.65.0**: the MCP bridge's
-connection strip, its stale-bridge warning (as a `loud` entry inside the
-bridge monitor, not a second component), its self-test result, its two
-session readings, and the Sync view's status card — previously two
-near-byte-identical hand-built treatments of the same idea. Two rules the
+**Twelve call sites across four views adopted this component in v3.65.0**: the
+MCP bridge's connection strip, its stale-bridge warning (as a `loud` entry
+inside the bridge monitor, not a second component), its two self-test results
+and its session readings; the Sync view's status card — previously two
+near-byte-identical hand-built treatments of the same idea; the Domains page's
+Wiki-health card; and, on Project context, the Last-saved detail and its
+warnings, the capture reading, step ③'s per-wiki figures and the journal's
+count line. Two rules the
 adoption established for every later host: a **warning is a `loud` entry,
 never a line** (the component itself has no way to make a line loud — it's a
 structurally separate array rendered into a separate container), and **a state

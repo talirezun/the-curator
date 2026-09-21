@@ -2512,8 +2512,8 @@ in v3.61.0 — `repo-scan`, which has the same one-segment-past-`/api/memory/` s
 `RESERVED_PROJECT_NAMES`** (`projects`, `repo-scan`, `project.md`, `journal.jsonl`, `foundations`)
 — a set this file, not the store, maintains, precisely because `projects` and `repo-scan` are
 collisions this ROUTER's URL shape creates and the store has no reason to know about. **The store
-keeps its own, narrower set** (`project.md`, `journal.jsonl`, `current.md`, `foundations` — the
-names of its own on-disk entries), so a project directory literally named `repo-scan` created out
+keeps its own, narrower set** (`project.md`, `journal.jsonl`, `current.md`, `foundations`, and —
+new in v3.65.0 — `project.json`: the names of its own on-disk entries), so a project directory literally named `repo-scan` created out
 of band (by an agent writing state directly, say) is refused by the router's create/rename routes
 but not by the store's `initFoundations` — it would still be listed and still readable by every MCP
 tool. Since v3.62.0 its detail URL is reachable too: `repo-scan` has always had a two-segment detail
@@ -2552,7 +2552,7 @@ which this router *does* ignore when it does not recognise it. The difference is
 costs: `open` picks how much of one resource to send, while `as` picks **which resource** — so
 silently serving the list to somebody who typed `as=projct` is the exact failure this parameter
 exists to remove. The two accepted values are exported as `AS_LIST` / `AS_PROJECT`
-(`src/routes/memory.js:1279`) so a suite pins the literal rather than re-typing it.
+(`src/routes/memory.js:1386`) so a suite pins the literal rather than re-typing it.
 
 A new path (`…/project/…`) was refused instead: it would be a second public shape for a read that
 already has one, on a router already carrying one deprecated alias it is trying to retire. `as` is
@@ -3409,7 +3409,7 @@ is `MAX_KNOWLEDGE_DOMAINS` (12), named rather than left for a client to hard-cod
 | Status | Condition |
 |--------|-----------|
 | `400` | `invalid_knowledge_domains` — `knowledgeDomains` is missing from the body, is not a list, or (after normalising) is an empty list; `invalid_domain` — an entry is not a usable domain name; `too_many_domains` — more than 12 named, the refusal carries `cap`; `unexpected_fields` — a field other than `knowledgeDomains` was sent; `invalid_project` |
-| `400` | `unknown_domain` — one or more named domains are not on this computer; the refusal names them in `domains` |
+| `400` | `unknown_domain` — one or more named domains are not on this computer; the refusal names them in `domains`; `unsafe_path` — the project resolves outside the state folder |
 | `403` | `readonly` — a Shared Brain mirror |
 | `404` | `project_not_found` |
 | `409` | `locked` — another write to this project's foundations is in flight (the same cross-process `.write-lock` [`PUT …/foundations/:slug`](#put-apimemorydomainprojectfoundationsslug) takes; this route reads and rewrites `project.json` under it because it has no machine segment, exactly as `state/project.md` does not) |
@@ -3475,6 +3475,11 @@ the project's containing domain. Forwarded straight from `readWorkingState` like
 on this route (this route is deliberately 1:1 with the store rather than reshaped, per the note
 above), so no separate call is needed to read them; set them with
 [`PATCH …/knowledge/domains`](#patch-apimemorydomainprojectknowledgedomains) above.
+
+A **third** field, `knowledgeDomainsError`, rides along **only** when `project.json` could not be
+read or parsed — over the 64 KB read cap, not valid JSON, not an object, or a chosen list that
+normalises to empty. It names the defect while `knowledgeDomains` still reports the default, so an
+unreadable metadata file never takes a project's bootstrap down with it.
 
 **On this route `scopeCount` is the `(scope, machine)` pair count** — the opposite of what the
 same name means on `GET /api/memory`, because this route spreads the store's shape verbatim.
@@ -3846,8 +3851,9 @@ any `files` entry that failed its own validation — `{ path, reason }`, each st
 characters and the array itself capped at **50 entries** (`refreshWire()`) — forwarded rather than
 silently dropped, and rendered **un-folded** beside the outcome rather than tucked behind a
 disclosure, because a document someone asked to mirror and did not get is the kind of fact a fold
-successfully hides. `refreshed`, `unchanged`, `added` and `missing` are each capped at 200 entries
-by the same function, and `notes` at 20.
+successfully hides. `refreshed`, `unchanged`, `added` and `missing` are forwarded **whole** on this
+route; they carry `refreshWire()`'s 200-entry cap (and a `notes` array capped at 20) only where that
+helper builds the report — inside `POST …/projects` and `POST …/foundations/init`.
 
 **Error responses**
 
@@ -3859,6 +3865,7 @@ by the same function, and `notes` at 20.
 | `403` | `unauthorised` — the stored credential cannot read that repository. Not `401`: you are not being asked to authenticate to The Curator |
 | `429` | `rate-limited` — GitHub's limit, not ours, and the one status that means *later* |
 | `502` | `remote-tree-truncated` (GitHub silently truncates a huge recursive tree, and a silent miss would keep a stale copy while reporting success), `remote-http`, `remote-unreachable`, `remote-too-large`. Nothing is malformed and nothing is broken locally, which is what `502` says and `400` would deny |
+| `500` | `remote-unavailable` — the GitHub read could not be completed and no more specific upstream condition applies |
 
 **Nothing is written until everything is fetched** on the remote arm: the ref, the tree and every
 changed blob are read first, and the documents and manifest are written only once all of them are in
@@ -3880,7 +3887,7 @@ session would be enforcement, and capture is deliberately advisory.
 | Parameter | Default | Notes |
 |---|---|---|
 | `since` | 30 days ago | ISO 8601. **Best-effort**: an unparseable value falls back to the default rather than `400`ing |
-| `limit` | `20`, max `200` | How many sessions to list. Out of range falls back to the default |
+| `limit` | `20`, max `200` | How many sessions to list. Non-numeric, or below 1, falls back to the default; above 200 is **clamped** to 200 |
 
 **Success response** `200 OK`
 
@@ -4041,10 +4048,16 @@ an integrator against the store (or against that tool) would otherwise have to i
   reachable, the save **also** runs a foundations refresh as a side effect and reports it under
   `foundationsRefresh` in the result — never failing the save itself if the refresh does. Neither
   field is required; a save that omits them behaves exactly as before v3.59.0.
-- **New in v3.59.0: `get_working_state` gains a `foundations` summary** —
-  `{present, count, totalBytes, staleCount}` — on every response, scope-less or scoped, disclosed
+- **New in v3.59.0: `get_working_state` gains a `foundations` summary**, forwarded whole from
+  `summariseFoundations` — `{present, count, totalBytes, staleCount, unreachableCount,
+  skeletonCount, readFirstCount, onRequestCount, budgetExceeded, orphanFileCount, manifestError}`,
+  grown by v3.61.0 and v3.62.0 — on every response, scope-less or scoped, disclosed
   the same way every other field on this response already is (`test-working-state-disclosure.js`
   extended for it, never exempted).
+- **New in v3.65.0: `get_working_state` also forwards `knowledgeDomains` /
+  `knowledgeDomainsDefaulted`** (and `knowledgeDomainsError` when `project.json` is unreadable), in
+  the store's own spelling, exactly as `get_project_context` does — one fact, one spelling, across
+  both tools.
 
 Full contract: [working-state.md](working-state.md) and
 [architecture.md § `src/brain/working-state.js`](architecture.md#srcbrainworking-statejs-v3170).
@@ -4074,6 +4087,7 @@ bootstrap carries only what has moved since it last recorded reading.
 {
   "ok": true, "domain": "acme", "project": "lumina", "resolved_by": "explicit",
   "content_is_data": ["current", "foundations.documents"],
+  "knowledgeDomains": ["acme"], "knowledgeDomainsDefaulted": true,
   "brief": { "authority_note": "…", "brief_authority": "owner", "text": "…", "…": "…" },
   "current": { "…": "…" },
   "foundations": {
@@ -4093,6 +4107,11 @@ The envelope order mirrors `get_working_state` exactly — `ok`, `project`, `dom
 caller that has already learned to read one response should not have to re-learn the other. `seen`
 is the map to send back on the **next** `save_working_state` call, as `foundations_read`: the
 bootstrap itself never writes, so recording what was read is the caller's job, on its own save.
+
+**New in v3.65.0:** the envelope also carries `knowledgeDomains` / `knowledgeDomainsDefaulted` —
+and `knowledgeDomainsError` when `project.json` could not be read — because the handler forwards
+every unhandled store key verbatim, and `report` gains a clause naming which wikis to search with
+`search_wiki` / `search_cross_domain`.
 
 **`save_foundation`** *(write)* — refused without `commissioned_by_owner: true`, the same
 commissioned-only rule `save_project_brief` already enforces:
