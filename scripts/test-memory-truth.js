@@ -627,27 +627,30 @@ const baseDetail = (over = {}) => {
 
 {
   const clean = lifted({}).renderSaveStatus(baseRead, baseDetail());
-  ok('the healthy reading is a Last saved instrument with the APP-WIDE freshness dot',
-    /fresh-dot fresh-recent/.test(clean) && />Last saved</.test(clean), clean.slice(0, 400));
-  // v3.64.2 — the reading is the meta of a `.mem-fold` row now, not a
-  // highlighted card with a readout in it: "Last saved" on the left, the pip,
-  // the age and the provenance on the right, in the same chrome as the four
-  // rows under it. The FACTS are unchanged and each is still asserted.
-  ok('...with the age as the figure', /mem-save-age">2 min ago</.test(clean), clean.slice(0, 500));
-  ok('...and the scope and harness as its provenance',
-    /mem-save-prov">main · claude-code</.test(clean), clean.slice(0, 600));
-  ok('...carrying NO incomplete badge and no warning line',
-    !/incomplete/.test(clean) && !/cur-mon-loud/.test(clean));
-  ok('THE LABEL IS "Last saved", NEVER "saved" — this screen cannot know whether '
-    + 'anything has changed since, and must not imply it does',
-    !/\bYou are saved\b/i.test(clean) && !/\bAll saved\b/i.test(clean));
+  // ── THE READING LEFT THIS FUNCTION (v3.65.1, D2) ─────────────────────
+  // "Last saved" said what the MEMORY overview tile and the Handoffs row's
+  // summary already say, in a second shape — a card wrapping a row. The claim
+  // this section has always really made is the HONESTY one, and it moves with
+  // the fact: the screen knows when the last save happened, not whether
+  // anything has changed since, so nothing anywhere may imply otherwise.
+  eq('a healthy save paints NOTHING here — the reading is the MEMORY tile\'s', clean, '');
+  ok('and nothing left behind claims you ARE saved — this screen cannot know '
+    + 'whether anything has changed since the last save, and must not imply it does',
+  !/\bYou are saved\b/i.test(clean) && !/\bAll saved\b/i.test(clean), clean);
+  // AND THE CLAIM IS PINNED WHERE IT NOW LIVES. `renderLayerStrip`'s card ②
+  // carries `saved <age>` and its work-stream — the words, not a ratio, and
+  // never a verdict about the present.
+  ok('the MEMORY tile is what says it, in the same words',
+    /'saved ' \+ savedAge/.test(viewSrc) && /label: 'MEMORY'/.test(viewSrc),
+    (viewSrc.match(/.{0,80}label: 'MEMORY'.{0,160}/s) || [''])[0]);
 
   const trimmed = lifted({}).renderSaveStatus(baseRead, baseDetail({
     current: { lastSaveKind: 'trimmed',
       lastSaveNotes: ['nextSteps: 3 item(s) omitted over the state size budget'] },
   }));
-  ok('a TRIMMED save is marked ON the reading, not only in a note below it',
-    /mem-save-main[\s\S]*incomplete<\/span>/.test(trimmed), trimmed.slice(0, 700));
+  ok('a TRIMMED save is a LOUD entry, in the danger tone, never a line you '
+    + 'have to open something to reach (v3.16.1)',
+  /cur-mon-loud cur-mon-danger/.test(trimmed) && !/<details/.test(trimmed), trimmed.slice(0, 700));
   ok('...and the store\'s own note is quoted rather than paraphrased',
     trimmed.includes('nextSteps: 3 item(s) omitted over the state size budget'), trimmed.slice(0, 900));
   ok('...in the loud treatment, because the rest of the strip reads as calm',
@@ -689,7 +692,7 @@ section('§8 — The strip answers the other three questions, and only when true
     current: { writtenAt: null, writtenAgeSeconds: null },
   }));
   ok('a filesystem-time reading is LABELLED as one on the instrument',
-    /mem-save-prov">[^<]*file time/.test(fsOnly), fsOnly.slice(0, 700));
+    /class="cur-mon-key">clock<\/span>/.test(fsOnly), fsOnly.slice(0, 700));
   ok('...and explained, because "file time" alone does not say what goes wrong',
     /when it ARRIVED here, not when it was written/.test(fsOnly), fsOnly.slice(0, 1200));
   ok('...as a MONITOR line — one fact, keyed and valued, with the prose as its '
@@ -708,10 +711,15 @@ section('§8 — The strip answers the other three questions, and only when true
       savedAt: new Date(Date.now() - 30_000).toISOString(),
     },
   }));
-  ok('a handoff written hours ago and pulled seconds ago states BOTH',
-    /mem-save-age">3 hr ago</.test(synced)
-    && /class="cur-mon-key">arrived here<\/span><span class="cur-mon-value">[\s\S]{0,120}just now</.test(synced),
-    synced.slice(0, 1200));
+  // THE AGE ITSELF IS THE MEMORY TILE'S NOW (v3.65.1); what this function owes
+  // is the DISAGREEMENT — that the figure above came off the agent's clock and
+  // the file landed here much later. Dropping that would be the view silently
+  // losing a field the store honestly computed, which is the defect class the
+  // memory layer records against itself.
+  ok('a handoff written hours ago and pulled seconds ago still states the ARRIVAL',
+    /class="cur-mon-key">arrived here<\/span><span class="cur-mon-value">[\s\S]{0,120}just now</.test(synced)
+    && /the agent’s own clock, not the file’s/.test(synced),
+  synced.slice(0, 1200));
   ok('CONTROL: when the two clocks agree, no arrival line appears',
     !/arrived here/i.test(lifted({}).renderSaveStatus(baseRead, baseDetail())));
 
@@ -777,9 +785,9 @@ section('§8 — The strip answers the other three questions, and only when true
   ok('the save reading no longer states the standing brief — the fold summary '
     + 'below it carries that, from the same two fields',
   !/Standing brief/.test(withBrief), withBrief.slice(-400));
-  ok('...and it still gets NO freshness mark anywhere: an old brief is not a '
-    + 'stale one, and exactly ONE mark is painted here — the save\'s',
-    (withBrief.match(/<span class="fresh-dot/g) || []).length === 1, withBrief.slice(0, 400));
+  ok('...and NO freshness mark is painted here at all now: an old brief is not '
+    + 'a stale one, and the save\'s own mark went with the reading it qualified',
+  (withBrief.match(/<span class="fresh-dot/g) || []).length === 0, withBrief.slice(0, 400));
   const noBrief = lifted({}).renderSaveStatus({ ...baseRead, brief: { present: false } }, baseDetail());
   ok('...and a missing brief is not stated here either, in either direction',
     !/Standing brief/.test(noBrief), noBrief.slice(-300));
@@ -793,15 +801,19 @@ section('§8 — The strip answers the other three questions, and only when true
       harness: 'claude-code', lastSaveKind: 'complete', lastSaveNotes: [] }],
     brief: { present: false },
   }, null);
-  ok('with the scoped read still in flight the reading is served from the index row',
-    /mem-save-age">2 min ago</.test(midSwitch) && /mem-save-prov">main · claude-code</.test(midSwitch),
-    midSwitch.slice(0, 500));
-  ok('...and the completeness verdict comes with it, so a trim cannot vanish mid-switch',
-    /incomplete/.test(lifted({ scope: 'main', machine: 'boxa' }).renderSaveStatus({
-      scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120, harness: 'claude-code',
-        lastSaveKind: 'trimmed', lastSaveNotes: ['nextSteps: 1 item(s) omitted over the state size budget'] }],
-      brief: { present: false },
-    }, null)));
+  // THE INDEX-ROW FALLBACK SURVIVES, and what it has to carry is what is left
+  // of this function: the completeness verdict. A healthy mid-switch row paints
+  // nothing, which is correct — there is nothing to disclose — but a TRIMMED
+  // one must not vanish for the length of the fetch.
+  eq('a healthy mid-switch row paints nothing, because there is nothing to disclose',
+    midSwitch, '');
+  ok('...and the completeness verdict IS served from the index row, so a trim '
+    + 'cannot vanish mid-switch',
+  /cur-mon-loud cur-mon-danger/.test(lifted({ scope: 'main', machine: 'boxa' }).renderSaveStatus({
+    scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120, harness: 'claude-code',
+      lastSaveKind: 'trimmed', lastSaveNotes: ['nextSteps: 1 item(s) omitted over the state size budget'] }],
+    brief: { present: false },
+  }, null)));
 
   // ABSENT IS NOT ZERO, at the site most likely to break it.
   const nothing = lifted({}).renderSaveStatus(null, null);

@@ -737,14 +737,18 @@ section('§8 — patchOpenPair writes what a full render would paint');
 
   const tbody = el('tbody');
   const stack = el('div');
-  // ── THE "Last saved" ROW LIVES IN THE STACK NOW (v3.64.2) ────────────
-  // The patch writes the stack WHOLESALE, so the row that replaces the old
-  // one has no `toggle` listener — `wire` binds those once per render and
-  // this patch deliberately does not render. Without the re-bind the row
-  // silently stops remembering itself, which is the same class of silent
-  // loss the journal fold's element-preserving swap exists to prevent. The
-  // stack therefore answers for its own fold here, so the re-bind is
-  // OBSERVABLE rather than assumed.
+  // ── AND THERE IS NO FOLD IN THE STACK ANY MORE (v3.65.1, D2) ─────────
+  // Through v3.65.0 the stack held a `<details data-mem-fold="saved">` and the
+  // patch re-attached its `toggle` listener by hand, because `wire` binds those
+  // once per render and this patch deliberately does not render. "Last saved"
+  // is deleted; what the stack holds is warnings and disclosures, and
+  // `renderMonitor` emits NO `<details>` at all, by contract.
+  //
+  // The stub still ANSWERS the old selector, deliberately, and the assertion
+  // below inverts: if the shipped code goes looking for that fold again, this
+  // model hands one over and the listener count rises — so a re-introduced
+  // re-bind is caught rather than silently passing on a stub that returns null
+  // to everything.
   const savedFold = el('details');
   stack.querySelector = (sel) => (sel.includes('data-mem-fold="saved"') ? savedFold : null);
   const count = el('div');
@@ -845,10 +849,12 @@ section('§8 — patchOpenPair writes what a full render would paint');
   eq('every precondition held, so no full render was needed', fellBack, 0);
   eq('...and it SAYS it patched, rather than leaving the caller to infer it '
     + 'from a render that did not happen', outcome, 'patched');
-  // v3.64.2 — see the stub's own note.
-  ok('the "Last saved" row that the patch just wrote gets its toggle listener '
-    + 'back, or it stops remembering itself with nothing on screen to say so',
-  savedFold._listeners === 1, 'listeners: ' + savedFold._listeners);
+  // v3.65.1 — see the stub's own note. The stack holds no fold now, so the
+  // patch must not go looking for one: a re-bind against a row that is not
+  // there is dead code, and a re-introduced ROW would need `wire` to bind it
+  // rather than this patch.
+  eq('the patch binds NO toggle in the stack — there is no fold left in it',
+    savedFold._listeners, 0);
   ok('the table was repainted from the SAME row renderer the painter uses',
     tbody.innerHTML.includes('data-mem-scope="alpha-old"')
     && tbody.innerHTML.includes('mem-ws-row-open'), tbody.innerHTML.slice(0, 200));

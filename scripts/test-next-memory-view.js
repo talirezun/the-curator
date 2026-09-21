@@ -1338,8 +1338,14 @@ function makeRenderers(stateObj) {
     // window the shipped view asks the route for.
     'const CAPTURE_WINDOW_DAYS = ' + CAPTURE_WINDOW_DAYS_SRC + ';\n' +
     'const CAPTURE_SESSION_LIMIT = ' + CAPTURE_SESSION_LIMIT_SRC + ';\n' +
+    // ── THE CAPTURE PROSE, LIFTED FROM LIVE SOURCE (v3.65.1, D4) ──────
+    // `CAPTURE_INFO_HTML` is a module-level const that step ②'s ⓘ composes
+    // and `renderCaptureMeter` no longer opens with a mark of its own. It is
+    // sliced out of the shipped file rather than stubbed, so the panel scan
+    // below reads the REAL words — a stub would let this suite agree with
+    // itself about text nobody ships.
+    (/const CAPTURE_INFO_HTML =[\s\S]*?;\n/.exec(viewSrc) || [''])[0] + '\n' +
     extractFunction(viewSrc, 'captureFacts', 'memory.js') + '\n' +
-    extractFunction(viewSrc, 'renderCaptureSessions', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderCaptureMeter', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderStaleNotice', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'unlistedCount', 'memory.js') + '\n' +
@@ -1369,7 +1375,7 @@ function makeRenderers(stateObj) {
     'renderFoundations, foundationsNotices, foundationReaderContent, ' +
     'memStep, renderLayerStrip, projectHeadline, renderWorkStreamsFold, renderKnowledge, '
     + 'renderKnowledgeRow, renderKnowledgePicker, knowledgePickerCfg, ' +
-    'captureFacts, renderCaptureMeter, renderCaptureSessions, ' +
+    'captureFacts, renderCaptureMeter, ' +
     'fndStats, fndSlugError, fndShrinkWarn, renderFoundationEditor, renderFoundationsInit, ' +
     'renderJournal, renderBrief, aboutInfoHtml, ' +
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
@@ -1634,22 +1640,40 @@ ok('read-side sanitisation is stated, not hidden',
     detail: { ...hostileDetail, journal: { returned: 1, total: 1, totalUnknown: false, entries: [hostileDetail.journal.entries[1]] } },
   });
   const one = single.renderJournal();
-  // THE COUNT IS A MONITOR LINE (v3.65.0, M4). A live figure with a
-  // provenance clause is what the monitor is for, and a `.tx-readout`
-  // standing alone at the foot of a list was the fourth report treatment on
-  // this page. The three arms and their grammar are unchanged.
-  ok('one save singularises (the line reads "save recorded", never "saves")',
-    one.includes('>save recorded<') && !one.includes('>saves recorded<'), one.slice(-400));
-  ok('...and the figure itself is rendered as the monitor VALUE',
-    /class="cur-mon-value">1</.test(one), one.slice(-400));
+  // THE COUNT IS THE ROW'S OWN SUMMARY (v3.65.1, D3). It was a monitor CARD at
+  // the foot of the list with a floating `btn-xs` beside it — measured at 1370,
+  // the card 421→723.5 under a list 893px wide, the button at x=735.5 — which
+  // the maintainer read as *"from another dimension"*. It is the meta slot of
+  // the row now, where every other reading on this page is. THE THREE ARMS AND
+  // THEIR GRAMMAR ARE UNCHANGED, and both are still pinned in both directions:
+  // reverting to a hardcoded label reds the first, dropping the count the
+  // second.
+  const metaOf = (h) => (/<span class="mem-fold-meta"[^>]*>([\s\S]*?)<\/span><\/summary>/.exec(h) || [, ''])[1];
+  ok('one save singularises (the summary reads "1 save", never "1 saves")',
+    /(^|[^0-9])1 save(?!s)/.test(metaOf(one)) && !/1 saves/.test(metaOf(one)), metaOf(one));
+  ok('...and the count is in the ROW\'s summary, not in a card under the list',
+    !one.includes('mem-j-foot') && !/cur-mon/.test(one), one.slice(-400));
 
   const plural = makeRenderers({
     ...hostileState,
     detail: { ...hostileDetail, journal: { returned: 3, total: 3, totalUnknown: false, entries: [hostileDetail.journal.entries[1]] } },
   });
   const many3 = plural.renderJournal();
-  ok('three saves pluralise ("saves recorded")', many3.includes('>saves recorded<'), many3.slice(-400));
-  ok('...with the figure as the value', /class="cur-mon-value">3</.test(many3), many3.slice(-400));
+  ok('three saves pluralise ("3 saves")', /3 saves/.test(metaOf(many3)), metaOf(many3));
+  ok('...and a capped read says BOTH figures — what exists and what is shown',
+    /12 saves · showing 3/.test(metaOf(makeRenderers({
+      ...hostileState,
+      detail: { ...hostileDetail, journal: { returned: 3, total: 12, totalUnknown: false, entries: [hostileDetail.journal.entries[1]] } },
+    }).renderJournal())),
+  metaOf(makeRenderers({
+    ...hostileState,
+    detail: { ...hostileDetail, journal: { returned: 3, total: 12, totalUnknown: false, entries: [hostileDetail.journal.entries[1]] } },
+  }).renderJournal()));
+  ok('...and an UNKNOWN total says so rather than printing the tail\'s length as one',
+    /full count unknown/.test(metaOf(makeRenderers({
+      ...hostileState,
+      detail: { ...hostileDetail, journal: { returned: 3, total: null, totalUnknown: true, entries: [hostileDetail.journal.entries[1]] } },
+    }).renderJournal())));
 
   // ── THE CLOSED SUMMARY, v3.58.0 ───────────────────────────────────────
   // This fold starts shut and stays shut across visits now, so its head is the
@@ -6782,13 +6806,14 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // it that way first and watching it fail on correct output.
   const panels = [...page.matchAll(/<div class="tx-vh-panel"[^>]*hidden>([\s\S]*?)<\/div>/g)]
     .map((m) => m[1]);
-  // FIVE, and each one is named: the three steps, the STRIP's own ⓘ (which
+  // FOUR, and each one is named: the three steps and the STRIP's own ⓘ, which
   // explains every age on the page and therefore belongs to the instrument
-  // rather than to any one step), and — since v3.63.0 — the honesty meter's,
-  // which carries what a session is and what the usage log cannot see. The
-  // meter's own READING is deliberately not among them: it is in step ②'s
-  // body, unfolded, because it is an outcome (v3.16.1).
-  eq('CONTROL: the five folds were really found (the scan is not vacuous)', panels.length, 5);
+  // rather than to any one step. The honesty meter's was the fifth through
+  // v3.65.0 and left in v3.65.1 (D4) — what a session IS is step ②'s
+  // explanation now, and a step has ONE mark. The meter's own READING was
+  // never among them: it is in step ②'s body, unfolded, because it is an
+  // outcome (v3.16.1).
+  eq('CONTROL: the four folds were really found (the scan is not vacuous)', panels.length, 4);
   const bodies = [...page.matchAll(/<div class="settings-block-body">([\s\S]*)$/g)].map((m) => m[1]);
   ok('CONTROL: at least one block body was found', bodies.length >= 1);
   // `mem-save-line` BECAME `cur-mon-loud` (v3.65.0): the save warnings are
@@ -9741,7 +9766,7 @@ const EXECUTED = new Set([
   // renderProject, which §6/§14/§18i execute; §22 in
   // scripts/test-next-capture-meter.js drives each of them directly over the
   // route's states as well.
-  'captureFacts', 'renderCaptureMeter', 'renderCaptureSessions',
+  'captureFacts', 'renderCaptureMeter',
 ]);
 
 // NOT executed, each with the reason it is not — so the gap is a decision on
@@ -9857,85 +9882,69 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
     wsWindow: WS_WINDOW_SRC, ...over,
   });
 
-  // ── "Last saved" WITH NOTHING TO EXPLAIN IS A FLAT ROW ────────────────
+  // ── "Last saved" IS DELETED, AND A HEALTHY SAVE PAINTS NOTHING ───────
+  // v3.65.1, D2. The row said what the MEMORY overview tile and the Handoffs
+  // row's summary already say, in a second shape — a CARD wrapping a ROW, whose
+  // reading ended at x=1301 against 1316 for every other row on the page. The
+  // maintainer: *"no clue why it is here, what it communicates."*
+  //
+  // What is left is the part that was never a duplicate: the DISCLOSURES
+  // (which clock the figure came from; that the file arrived long after it was
+  // written; that a clipped save wrote the handoff in full) and the WARNINGS.
+  // Both are outside a chevron — v3.16.1 covers the warnings, and a disclosure
+  // whose only door has been removed is a dropped field.
   const healthy = makeRenderers(baseSt()).renderSaveStatus(
     { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }] },
     { scope: 'main', machine: 'boxa', harness: 'claude-code',
       current: { present: true, writtenAgeSeconds: 120 } });
-  ok('the healthy reading is a ROW in the same chrome as the folds under it',
-    /class="mem-fold mem-fold-flat"/.test(healthy), healthy.slice(0, 400));
-  ok('...titled on the left, like every other row on this page',
-    /<span>Last saved<\/span>/.test(healthy), healthy.slice(0, 400));
-  ok('...with the age in the meta slot every other row uses',
-    /class="mem-fold-meta">[\s\S]*?mem-save-age">2 min ago</.test(healthy), healthy.slice(0, 500));
-  ok('...and NO chevron, because an empty chevron invites a click that does '
-    + 'nothing — the call renderCaptureMeter already makes for its idle state',
-  !/data-mem-fold="saved"/.test(healthy), healthy.slice(0, 400));
+  eq('a healthy save paints NOTHING — no row, no card, no empty instrument', healthy, '');
+  ok('...so step ② opens on its four rows, reached by having nothing to say '
+    + 'rather than by hiding something', !/Last saved/.test(healthy), healthy);
 
-  // ── WITH SOMETHING TO EXPLAIN IT IS A FOLD, AND IT SHIPS CLOSED ───────
+  // ── A DISCLOSURE IS A MONITOR LINE, AND IT IS NOT BEHIND A CHEVRON ────
   const fsOnlyRow = makeRenderers(baseSt()).renderSaveStatus(
     { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }] },
     { scope: 'main', machine: 'boxa', harness: 'claude-code',
       // NO `writtenAgeSeconds`, so `effectiveSave` falls back to the FILE's
-      // own timestamp — which is the state the explanation exists for.
+      // own timestamp — which is the state the disclosure exists for.
       current: { present: true, savedAt: new Date(Date.now() - 120000).toISOString() } });
-  const isFold = /data-mem-fold="saved"/.test(fsOnlyRow);
-  ok('an explanation makes it a FOLD with this view\'s own hook', isFold, fsOnlyRow.slice(0, 400));
-  if (isFold) {
-    ok('...shipping CLOSED, like every other fold on the page',
-      !/data-mem-fold="saved"\s+open/.test(fsOnlyRow), fsOnlyRow.slice(0, 400));
-    ok('...with the explanation INSIDE it, not printed under the reading',
-      fsOnlyRow.indexOf('own’s') === -1
-      && fsOnlyRow.indexOf('ARRIVED here') > fsOnlyRow.indexOf('mem-fold-body'),
-      fsOnlyRow.slice(0, 900));
-    // ── AND THE EXPLANATION IS A MONITOR, NOT FOUR SENTENCES (M1) ──────
-    // One fact per line, key left, reading right, the prose demoted to the
-    // clause under the reading it qualifies — which is what turns the block
-    // from a paragraph into an instrument you go and read.
-    ok('...and the body is the MONITOR, keyed and valued rather than prose',
-      /<div class="cur-mon"/.test(fsOnlyRow)
-      && /class="cur-mon-key">clock<\/span><span class="cur-mon-value">the file’s own</.test(fsOnlyRow),
-      fsOnlyRow.slice(fsOnlyRow.indexOf('mem-fold-body'), fsOnlyRow.indexOf('mem-fold-body') + 400));
-    ok('...and the prose that used to be the whole line is its qualifying clause',
-      /class="cur-mon-sub">No journal entry carried a save time/.test(fsOnlyRow));
-    ok('...and the clock named in the summary too, so the closed row does not '
-      + 'hide WHICH clock the figure came from',
-    /mem-save-prov">[^<]*file time/.test(fsOnlyRow), fsOnlyRow.slice(0, 700));
-  }
+  ok('a filesystem-clock reading still SAYS SO — the honesty field the store '
+    + 'computed is not dropped by the view that stopped drawing a row for it',
+  /class="cur-mon-key">clock<\/span><span class="cur-mon-value">the file’s own</.test(fsOnlyRow),
+  fsOnlyRow.slice(0, 600));
+  ok('...with the prose as its qualifying clause, never as a paragraph',
+    /class="cur-mon-sub">No journal entry carried a save time/.test(fsOnlyRow));
+  ok('...and NOT behind a chevron: this function emits no <details> at all now',
+    !/<details/.test(fsOnlyRow) && !/data-mem-fold="saved"/.test(fsOnlyRow),
+    fsOnlyRow.slice(0, 400));
 
   // ── A WARNING NEVER FOLDS (v3.16.1) ──────────────────────────────────
   const trimmedRow = makeRenderers(baseSt()).renderSaveStatus(
     { scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 120 }] },
     { scope: 'main', machine: 'boxa', harness: 'claude-code',
       // BOTH AT ONCE, and that is the whole point of the fixture: a trimmed
-      // save (loud) whose time came from the FILE (an explanation). With only
-      // the loud line the row is flat, there is no fold to be outside of, and
-      // a guard written against that fixture passes whatever the code does —
-      // which is exactly what the first version of this assertion did, and
-      // what the mutation that swept `lines` into the fold body proved.
+      // save (loud) whose time came from the FILE (a disclosure). With only the
+      // loud line there is nothing for it to be outside OF, and a guard written
+      // against that fixture passes whatever the code does — which is what the
+      // first version of this assertion did.
       current: { present: true, lastSaveKind: 'trimmed', lastSaveNotes: ['budget'],
         savedAt: new Date(Date.now() - 120000).toISOString() } });
   const loudAt = trimmedRow.indexOf('cur-mon-loud');
   ok('CONTROL -- a trimmed save really does produce a loud line', loudAt !== -1,
     trimmedRow.slice(0, 400));
-  // ── IT IS THE MONITOR'S OWN LOUD ROW, IN THE DANGER TONE ─────────────
-  // The warnings and the readings are ONE component now (M1), which is what
-  // makes "unified design AND distinguished design" a structural fact rather
-  // than two stylesheets agreeing. The tone is the component's, from a frozen
-  // table, so a caller cannot compose a class name into it.
   ok('...drawn by the monitor, in its danger tone', /cur-mon-loud cur-mon-danger/.test(trimmedRow),
     trimmedRow.slice(loudAt - 40, loudAt + 120));
   ok('...and it is announced, because a warning appearing IS the thing to tell',
     /class="cur-mon-loud[^"]*" role="status"/.test(trimmedRow));
-  const foldEnd = trimmedRow.lastIndexOf('</details>');
-  ok('CONTROL -- this fixture really does produce a fold to be outside of',
-    foldEnd !== -1, trimmedRow.slice(0, 500));
-  ok('a loud warning is OUTSIDE the fold — an outcome may not sit behind a '
-    + 'chevron (v3.16.1), which is the one place the step-body rule stops',
-  loudAt !== -1 && foldEnd !== -1 && loudAt > foldEnd, loudAt + ' vs ' + foldEnd);
-  ok('...and it still carries the badge on the READING, where a one-second '
-    + 'glance reaches it',
-  /mem-badge-attn">incomplete</.test(trimmedRow), trimmedRow.slice(0, 700));
+  const lineAt = trimmedRow.indexOf('cur-mon-lines');
+  ok('CONTROL -- this fixture really does produce a disclosure to be after',
+    lineAt !== -1, trimmedRow.slice(0, 500));
+  ok('a loud warning is rendered AFTER the lines and in its own container — the '
+    + 'component builds the two from different arrays and has no field that '
+    + 'moves one into the other (v3.16.1)',
+  loudAt !== -1 && lineAt !== -1 && loudAt > lineAt, loudAt + ' vs ' + lineAt);
+  ok('...and nothing in this function can put either behind a chevron',
+    !/<details/.test(trimmedRow), trimmedRow.slice(0, 400));
 
   // ── STEP ③ IS ONE ROW PER CHOSEN WIKI (v3.65.0, P10) ─────────────────
   const kst = (knowledge, over) => baseSt({

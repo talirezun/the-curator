@@ -114,7 +114,8 @@
    `tx-` selector declared in this file — so a view asks for flex behaviour
    around a kit component by wrapping it, never by reaching into it. */
 .mem-capture-cells { flex: 1 1 auto; min-width: 0; }
-.mem-capture-info { flex: none; margin-left: auto; }
+/* `.mem-capture-info` is deleted (v3.65.1, D4): the ⓘ is step ②'s own now.
+   The reading's head is one cell wide and needs no second slot. */
 
 /* THE TWO LINE CLASSES THIS READING DOES NOT COUNT, and the truncation note
    under the table. --text-2, not --text-3: this file carries ZERO
@@ -128,56 +129,14 @@
   font-variant-numeric: var(--numeric-tabular);
 }
 
-/* ── THE SESSION TABLE ────────────────────────────────────────────────────
-   Deliberately NOT `.mem-ws-table`. That table's cells are a CONTROL — the
-   first cell is a button, the row carries hover, press and a selected state —
-   and this one is a list of facts with nothing to press. Sharing the class
-   would hand every session row a hover highlight that promises a click it does
-   not have, which is the one thing a table of readings must not do. The type
-   and the rules are the same on purpose; the behaviour is not.
-
-   It scrolls inside its own wrapper rather than overflowing the step, which is
-   what keeps a five-column table honest in a 224px column at 568px. */
-.mem-cap-wrap { overflow-x: auto; }
-.mem-cap-table { width: 100%; border-collapse: collapse; }
-.mem-cap-table th {
-  text-align: left;
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--track-eyebrow);
-  text-transform: uppercase;
-  color: var(--text-2);
-  padding: 0 var(--space-5) var(--space-3) 0;
-  border-bottom: var(--hairline-w) solid var(--hairline-strong);
-  white-space: nowrap;
-}
-.mem-cap-table td {
-  padding: var(--space-3) var(--space-5) var(--space-3) 0;
-  border-bottom: var(--hairline-w) solid var(--hairline);
-  font-size: var(--text-xs);
-  color: var(--text-2);
-  vertical-align: middle;
-  white-space: nowrap;
-}
-.mem-cap-table tbody tr:last-child td { border-bottom: none; }
-/* The call count ticks and the ages line up under each other, so the figures
-   take tabular numerals — the same property `.mem-row-meta` and `.mem-j-when`
-   take, and for the same reason: a proportional `1` is narrower than a `4`. */
-.mem-cap-num { font-variant-numeric: var(--numeric-tabular); }
-
-/* THE TICK AND THE DASH. The glyph is aria-hidden and a visually-hidden word
-   carries the fact, so nothing here is decoded from ink alone — which is what
-   lets the "did" state take a colour at all.
-
-   --success on --surface: 4.05 light / 10.07 dark, both clear of the 4.5 TEXT
-   floor in dark and — at 4.05 — BELOW it in light. That is why the glyph is
-   not the carrier: it is a MARK beside a word a screen reader reads, and the
-   column header above it says which question it answers. The "did not" state
-   takes --text-2 rather than a status colour, because a session that did not
-   save is a reading and not a fault: --attention means a human has to act, and
-   this meter reports and never blocks (Decision G). */
-.mem-cap-flag { color: var(--text-2); }
-.mem-cap-flag-on { color: var(--success); }
+/* ── THE SESSION TABLE IS DELETED (v3.65.1, D4) ──────────────────────────
+   `.mem-cap-wrap`, `.mem-cap-table`, `.mem-cap-num`, `.mem-cap-flag` and
+   `.mem-cap-flag-on` went with `renderCaptureSessions`. The maintainer, on the
+   CAPTURE row's body: *"two different designs, one row-like then table-like."*
+   Every figure the table carried is a monitor line now — including the two it
+   alone had, the window's total tool calls and the newest session's harness —
+   and the cap it disclosed ("showing the N most recent of M") joined the two
+   line-class disclosures OUTSIDE the row, where a disclosure belongs.
 
 /* ── STEP ③ — THE WIKI'S FIGURES AND ITS TWO DOORS (v3.62.0, P1-8) ────────
    The readouts are the shared group again; only the gap to the doors below
@@ -542,51 +501,18 @@
                     --attention border  7.22 /  3.21   (3:1 non-text floor)
                     --text-2            8.67 /  8.38
                     --text (the bold lead) 13.75 / 16.41                    */
-/* NO max-width, and NO margin. The box runs to the column's edge like every
-   other section; the MEASURE limit is on the sentences inside it (see
-   .mem-save-line below), which is where a measure limit belongs. */
-.mem-save {
-  padding: 12px 14px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  background: var(--surface);
-}
-/* ── THE READING IS A ROW'S META NOW (v3.64.2) ────────────────────────────
-   It was a highlighted card with a readout in it, sitting above a bare CAPTURE
-   readout in a third design, above three fold rows — "the worst UX", on the
-   maintainer's screenshot of step ②. It is the meta slot of a `.mem-fold` row
-   now, so it inherits that row's type and colour and carries only its own
-   arrangement: the pip, the age, the pair and tool that wrote it, and the
-   completeness badge, on one line that wraps as a whole.
+/* ── THE "Last saved" CARD IS DELETED (v3.65.1, D2) ──────────────────────
+   `.mem-save` was `padding: 12px 14px; border: 1px solid` — a CARD wrapping a
+   ROW — and it cost that row 15px a side: measured at 1370, every other
+   summary's reading ended at x=1316 and this one at 1301. It said what the
+   MEMORY overview tile and the Handoffs row's summary already say. The class
+   name survives on the warnings block alone, with no box of its own, because
+   `patchOpenPair` writes `.mem-status-stack` by selector and the disclosures
+   it now holds are per-pair.
 
-   `min-width: 0` for the same reason `.mem-ctl` needs it — the provenance
-   carries a machine id, which is long and hex-suffixed. */
-.mem-save-main {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 8px;
-  min-width: 0;
-}
-/* The age is the figure a one-second glance is looking for, so it is the one
-   thing in the row at full ink. */
-.mem-save-age { color: var(--text); font-weight: var(--weight-medium); }
-/* And the pair and the tool that wrote it stay at the row's own --text-2,
-   which `.mem-fold-summary` already sets — declared so the rule is nameable
-   and the two halves cannot be recoloured together by accident. */
-.mem-save-prov { color: var(--text-2); }
-/* The FLAT case: a reading with nothing to explain is the same row without a
-   chevron, rather than a fold that opens on nothing. Same padding as every
-   other flat body; the title and the meta arrange exactly as a summary's do. */
-.mem-save-flat {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: var(--text-sm);
-  color: var(--text-2);
-}
-.mem-save-flat .mem-fold-meta { margin-left: auto; }
+   `.mem-save-main`, `.mem-save-age`, `.mem-save-prov` and `.mem-save-flat`
+   went with the reading they arranged. */
+.mem-save { display: contents; }
 
 /* THE PIP — five discrete steps, and NOT a bar.
 
@@ -836,7 +762,12 @@
 
    NO PRESS TRANSFORM of its own — `.cur-group-row` carries the kit's, and the
    reduced-motion block at the foot of this file already covers that family.  */
-.mem-ws-more {
+/* ── AND THE JOURNAL'S SHOW-MORE IS THE SAME CONTROL (v3.65.1, D3) ─────
+   Not a copy: the SAME declarations, on both selectors. The maintainer named
+   the Handoffs implementation as the right one, so the journal's floating
+   `btn-xs` beside a monitor card was deleted rather than re-styled. */
+.mem-ws-more,
+.mem-j-more {
   position: relative;
   display: flex;
   align-items: center;
@@ -862,7 +793,8 @@
    kit's `.cur-group-row + .cur-group-row::before` needs the element above to be
    a `.cur-group-row` too, and the element above this one is `.mem-ws-wrap`. The
    precondition does not hold, so the line is stated rather than inherited. */
-.mem-ws-more::before {
+.mem-ws-more::before,
+.mem-j-more::before {
   content: "";
   position: absolute;
   left: 10px;
@@ -871,9 +803,12 @@
   height: var(--hairline-w);
   background: var(--hairline-strong);
 }
-.mem-ws-more:hover { background: var(--surface-hover); }
-.mem-ws-more:active { background: var(--surface-active); transform: translateX(var(--press-shift)); }
-.mem-ws-more:focus-visible { outline: none; box-shadow: var(--ring-focus); border-radius: var(--radius-xs); }
+.mem-ws-more:hover,
+.mem-j-more:hover { background: var(--surface-hover); }
+.mem-ws-more:active,
+.mem-j-more:active { background: var(--surface-active); transform: translateX(var(--press-shift)); }
+.mem-ws-more:focus-visible,
+.mem-j-more:focus-visible { outline: none; box-shadow: var(--ring-focus); border-radius: var(--radius-xs); }
 /* The label lines up with the Work-stream column above it — the table's first
    cell takes the same 10px — rather than floating at the row's own padding. */
 .mem-ws-more-label { font-weight: var(--weight-medium); }
@@ -1254,11 +1189,20 @@
   border-left: 2px solid var(--attention);
 }
 .mem-j-rej-loss svg { color: var(--attention-text); }
-/* The foot holds the journal's live count (a readout) and, when there is more
-   to fetch, the Show more button. `align-items: flex-end` because the readout
-   is a two- or three-line column and the button belongs on its last line. */
-.mem-j-foot { display: flex; align-items: flex-end; gap: 12px; margin-top: 10px; }
-.mem-j-more { flex: none; }
+/* ── THE FOOT IS DELETED (v3.65.1, D3) ───────────────────────────────────
+   `.mem-j-foot` held a monitor card reading "SAVES RECORDED 15 · showing the
+   10 most recent" and a floating `btn-xs` beside it — measured at 1370, the
+   card 421→723.5 and the button at x=735.5 w=77, under a list 893px wide. The
+   maintainer's word for it: *"from another dimension."* The count is in the
+   row's own summary now, and "Show N more" is the Handoffs list's
+   implementation — `.cur-group-row`, the list's own last row, full width — so
+   `.mem-j-more` needs no rule of its own. `.mem-ws-more`'s own declarations
+   carry it; the class survives as the binder's hook.
+
+   ONE EXCEPTION, and it is the alignment rule: `.mem-ws-more` sits after a
+   scrolling `.mem-ws-wrap` and this one after an `<ol>`, so the gap above it
+   is declared here rather than inherited from a sibling it does not have. */
+.mem-j-list + .mem-j-more { margin-top: var(--space-4); }
 
 
 

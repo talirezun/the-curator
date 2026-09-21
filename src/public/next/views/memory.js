@@ -751,7 +751,11 @@ const FOCUSABLE_IDS = [
   // a client label is self-reported, and what the log cannot see. Without this
   // entry a keyboard user reading that panel is dropped to <body> on the next
   // poll, which is the case the strip's own mark is here for.
-  'mem-capture-info-btn',
+  // The capture reading's ⓘ button left this list with the mark in v3.65.1 —
+  // what a session IS is step ②'s explanation now, and mem-layers-info-btn two
+  // lines down is the page's other mark. A stale id here would be a focus
+  // target that resolves to nothing, which is why it is deleted rather than
+  // left "harmlessly" behind.
   // ── THE STRIP'S ⓘ AND STEP ③'s TWO DOORS (v3.62.0) ───────────────────
   // The mark explains every age on the page and is a real <button>; a render
   // replaces the pane it sits in, so without it a keyboard user reading the
@@ -1320,13 +1324,14 @@ const FOLDS_KEY = 'curator-memory-folds-v1';
 // 3,241 → 1,278px once the brief and the journal folded) is the reason.
 // `capture` joined in v3.63.0 with the honesty meter's session list. The
 // READING above it never folds (v3.16.1) — only the per-session detail does.
-// `saved` joined in v3.64.2, when "Last saved" stopped being a highlighted card
-// of its own and became the step's first ROW, in the same chrome as the four
-// below it. Its WARNINGS stay unfolded beside the row — the same v3.16.1 split
-// `capture` makes one line above.
-// `knowledge` stays in the list although step ③ no longer uses it: a user who
-// had it open before updating has `{"knowledge": true}` on disk, and dropping
-// the name would make that value unreadable rather than harmless.
+// `saved` joined in v3.64.2 and its ROW LEFT in v3.65.1 — "Last saved" said what
+// the MEMORY overview tile and the Handoffs row's own summary already say, in a
+// second shape (a card wrapping a row, whose reading ended 15px short of every
+// other row's). The NAME stays for the same reason `knowledge` does, one line
+// down: a user who had it open before updating has `{"saved": true}` on disk,
+// and dropping the name would make that value unreadable rather than harmless.
+// `knowledge` stays in the list although step ③ no longer uses it, for exactly
+// that reason.
 const FOLD_KEYS = ['brief', 'journal', 'foundations', 'streams', 'capture', 'saved', 'knowledge'];
 // The per-domain form step ③ writes since v3.65.0, and the ONLY dynamic key
 // this map accepts. The alphabet is the domain-name one and the length bound
@@ -2727,37 +2732,16 @@ function patchOpenPair(token) {
   bindWorkStreamRows(tbody, token);
 
   if (stack) {
+    // ── NO FOLD IN HERE ANY MORE, SO NO LISTENER TO RE-ATTACH (v3.65.1) ──
+    // Through v3.65.0 this write replaced a `<details data-mem-fold="saved">`
+    // that `wire` had bound on the last render, so the arm below re-attached
+    // its `toggle` listener by hand — otherwise the row stopped remembering
+    // itself after one row press. `statusHtml` is warnings and disclosures
+    // now, with no `<details>` in it at all (`renderMonitor` emits none, by
+    // contract), so there is nothing here to re-bind. The write stays: the
+    // disclosures are per-pair and a row press changes which pair they are
+    // about.
     stack.innerHTML = statusHtml;
-    // ── THE "Last saved" ROW IS A FOLD NOW, AND THIS WRITE REPLACES IT ────
-    // `wire` binds `toggle` on every `[data-mem-fold]` once per render, and
-    // this patch deliberately does not render — so the row that just replaced
-    // the old one has no listener and would stop remembering itself. The
-    // journal fold solves the same problem by keeping its ELEMENT and writing
-    // its innards; that is not available here, because the reading and the
-    // warnings beside it are one expression the two call sites compare
-    // byte-for-byte (scripts/test-next-memory-switch.js §8). So the listener
-    // is re-attached instead, and `open` needs no copying: `renderSaveStatus`
-    // derives it from `state.openFolds`, which is the same source the toggle
-    // writes to.
-    //
-    // INLINE, and the duplication of the key literal is the same one `wire`
-    // documents: neither function may name a module-level helper, because
-    // both are lifted by brace-matching and executed against fixed stub
-    // lists. scripts/test-next-memory-view.js pins the copies against
-    // `FOLDS_KEY`.
-    const savedFold = stack.querySelector('[data-mem-fold="saved"]');
-    if (savedFold) {
-      savedFold.__memFoldWas = !!savedFold.open;
-      savedFold.addEventListener('toggle', () => {
-        if (!state.openFolds) state.openFolds = {};
-        if (!!savedFold.open === savedFold.__memFoldWas) return;
-        savedFold.__memFoldWas = !!savedFold.open;
-        state.openFolds.saved = !!savedFold.open;
-        try {
-          localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
-        } catch { /* storage refused: forget, never break */ }
-      });
-    }
   }
 
   const count = document.getElementById('mem-ws-count');
@@ -4499,43 +4483,58 @@ function captureFacts(payload) {
  * session, no stamp) is the dashed unknown ring with the words beside it —
  * never age zero.
  */
+// ── WHAT A SESSION IS — ONE COPY, READ BY STEP ②'s ⓘ (v3.65.1, D4) ───────
+// Through v3.65.0 this text sat behind a mark of its own, alone on the first
+// line of the CAPTURE row's body, above the instrument and the table — three
+// treatments in one row. The maintainer's word for that body: *"two different
+// designs."* The words are unchanged, byte for byte; what moved is the mark
+// that opens them, into step ②'s own ⓘ, where the rest of the step's
+// explanation is. A step has ONE explanatory mark on this page and a reading
+// inside it is not a step.
+const CAPTURE_INFO_HTML =
+  '<p>A <b>session</b> is one bridge process — one run of the MCP server, from the moment an '
+  + 'agent connects to the moment its window closes. It is identified by a random id the bridge '
+  + 'mints for itself, so two sessions are never merged and one session is never split in two.</p>'
+  + '<p>A session <b>started with the context</b> when it asked for this project’s brief, '
+  + 'handoff or documents before it saved anything — at any point before that first save, not '
+  + 'necessarily as its first call. It <b>saved before stopping</b> when a save succeeded; a '
+  + 'refused save is not a save.</p>'
+  + '<p><b>What this cannot see.</b> Only calls that came through the bridge are here. A save '
+  + 'written by the command line, by a hook, or by hand in a text editor is a real save and does '
+  + 'not appear in this count unless it went through the bridge. A session that never opened the '
+  + 'bridge at all is not in the denominator either — so this reading is about agent sessions '
+  + 'that used The Curator, and never a claim about your whole week.</p>'
+  + '<p>The <b>harness name</b> beside each session is <b>self-reported</b>: the client chooses '
+  + 'the name it sends, it is matched against a list of harnesses that have actually been '
+  + 'measured, and anything else is shown as unknown. Nothing in the app behaves differently '
+  + 'because of it — it is a label on a row and nothing more.</p>'
+  + '<p>It comes from a local file beside your settings, never inside your knowledge folder, so '
+  + 'nothing here is ever synced. A line carries the tool’s name, the domain and project it '
+  + 'touched, whether it succeeded and how long it took — never an argument, never a result, '
+  + 'never a file path. Calls made by the bridge’s own self-test are excluded.</p>'
+  + '<p><b>Nothing here stops a session.</b> This reading reports; it never refuses, delays or '
+  + 'warns an agent, and no number on it can.</p>';
+
 function renderCaptureMeter() {
   const c = state.capture && state.capture.domain === state.activeDomain
     && state.capture.project === state.activeProject ? state.capture : null;
 
-  // The ⓘ is composed once and offered in EVERY state, including the two that
-  // carry no figures: what a session is, and what the log cannot see, is most
-  // worth reading precisely when the reading is empty or failed.
-  const info = renderInfoMark('mem-capture-info', 'About the capture reading',
-    '<p>A <b>session</b> is one bridge process — one run of the MCP server, from the moment an '
-    + 'agent connects to the moment its window closes. It is identified by a random id the bridge '
-    + 'mints for itself, so two sessions are never merged and one session is never split in two.</p>'
-    + '<p>A session <b>started with the context</b> when it asked for this project’s brief, '
-    + 'handoff or documents before it saved anything — at any point before that first save, not '
-    + 'necessarily as its first call. It <b>saved before stopping</b> when a save succeeded; a '
-    + 'refused save is not a save.</p>'
-    + '<p><b>What this cannot see.</b> Only calls that came through the bridge are here. A save '
-    + 'written by the command line, by a hook, or by hand in a text editor is a real save and does '
-    + 'not appear in this count unless it went through the bridge. A session that never opened the '
-    + 'bridge at all is not in the denominator either — so this reading is about agent sessions '
-    + 'that used The Curator, and never a claim about your whole week.</p>'
-    + '<p>The <b>harness name</b> beside each session is <b>self-reported</b>: the client chooses '
-    + 'the name it sends, it is matched against a list of harnesses that have actually been '
-    + 'measured, and anything else is shown as unknown. Nothing in the app behaves differently '
-    + 'because of it — it is a label on a row and nothing more.</p>'
-    + '<p>It comes from a local file beside your settings, never inside your knowledge folder, so '
-    + 'nothing here is ever synced. A line carries the tool’s name, the domain and project it '
-    + 'touched, whether it succeeded and how long it took — never an argument, never a result, '
-    + 'never a file path. Calls made by the bridge’s own self-test are excluded.</p>'
-    + '<p><b>Nothing here stops a session.</b> This reading reports; it never refuses, delays or '
-    + 'warns an agent, and no number on it can.</p>'
-    + '<p>' + docsLinkHtml('memory.handoff', 'Read more in the guide') + '</p>',
-    { html: true });
-  const infoHtml = '<div class="mem-capture-info">' + info.btn + info.panel + '</div>';
+  // ── THE ⓘ HAS LEFT THIS READING (v3.65.1, D4) ────────────────────────
+  // It was a mark of its own, alone on the first line of the row's body, above
+  // an instrument and a table — the *"two different designs"* the maintainer
+  // counted, with a third floating above them. What a session IS, what the log
+  // cannot see and that nothing here stops a session are explanations of the
+  // STEP, so they are the last paragraphs of step ②'s own ⓘ now. There is one
+  // explanatory mark per step on this page and this reading is not a step.
+  //
+  // IT COULD NOT MOVE INTO THE `<summary>`: an interactive control there
+  // toggles its own section when clicked (the v3.0.1-beta.18 hazard, named at
+  // this function's own head), and the fix this file uses everywhere is the one
+  // no later edit can undo — there is no propagation path, because the control
+  // is not there.
   const shell = (bodyHtml) => '<div class="mem-capture">'
     + '<div class="mem-capture-head">'
       + '<div class="mem-capture-cells">' + bodyHtml + '</div>'
-      + infoHtml
     + '</div>';
 
   if (!c || (!c.data && !c.error)) {
@@ -4629,6 +4628,17 @@ function renderCaptureMeter() {
   // owes. The test is therefore "is the route's note ABOUT this", answered
   // structurally from the flag rather than by matching the producer's prose.
   const limits = [
+    // ── THE SESSION CAP, MOVED OUT OF THE DELETED TABLE (v3.65.1) ───────
+    // `renderCaptureSessions` owned this sentence and went with the table.
+    // It is a DISCLOSURE about what the figures are taken over — the same
+    // class as the two below it — so it belongs where they are: outside the
+    // chevron, never inside a body a reader may not open. THE CAP IS THE
+    // ROUTE'S ANSWER, NOT THE REQUEST: `sessionsTruncated` is what the
+    // producer said it had to leave out, and printing CAPTURE_SESSION_LIMIT
+    // here instead would report a cap as a measurement.
+    f.truncated
+      ? 'showing the ' + f.shown + ' most recent of '
+        + (f.sessions === null ? f.shown : f.sessions) + ' sessions' : null,
     ((!f.note || f.noSessionsButSaves) && f.legacyLines)
       ? f.legacyLines.toLocaleString('en-US') + ' earlier call'
       + (f.legacyLines === 1 ? '' : 's') + ' carried no session id and cannot be counted' : null,
@@ -4669,7 +4679,6 @@ function renderCaptureMeter() {
   // no propagation path, because the control is not there.
   const meta = '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>'
     + escapeHtml(value + (prov ? ' · ' + prov : ''));
-  const sessions = renderCaptureSessions(f);
   // ── THE INSTRUMENT (M2) ───────────────────────────────────────────────
   // The three clauses again, keyed and valued, plus the newest session's age
   // on the shared scale. It is not a repetition of the summary for its own
@@ -4677,8 +4686,41 @@ function renderCaptureMeter() {
   // out so each figure can be found, and the `read and did not save` line
   // carries a tone when it is not zero. Every figure is dropped INDIVIDUALLY
   // when the route did not send it — a partial answer prints what it knows.
-  const newestAt = f.rows.length ? (f.rows[0].endedAt || f.rows[0].startedAt) : null;
+  // ── THE BODY IS THE MONITOR, AND ONLY THE MONITOR (v3.65.1, D4) ───────
+  //
+  // The maintainer, on the shipped body: *"two different designs, one row-like
+  // then table-like"* — a `.mem-capture-info` ⓘ alone on its own line, then
+  // the monitor, then a five-column `<table class="mem-cap-table">` (Started ·
+  // Harness · Calls · Read · Saved). Three treatments inside one row, for one
+  // reading. Measured at 1370: the ⓘ 421×893×25.3, the monitor 421×893×130.1,
+  // the table below both.
+  //
+  // So `renderCaptureSessions` and its `.mem-cap-*` CSS are DELETED, and the
+  // monitor carries every fact the table carried rather than losing one:
+  // `calls` is the sum of the window's per-session calls — the table's only
+  // figure that had nowhere else to live — and `newest` gains the newest
+  // session's HARNESS as its qualifying clause, in the table's own words
+  // ("not reported" when the log has no client name for it), which is the
+  // reading the maintainer went to the table for when his Claude Code
+  // sessions came back as `other`.
+  //
+  // WHAT IS NOT IN HERE, and both are deliberate: `self-test calls excluded`
+  // stays OUTSIDE the row in `.mem-capture-limits`, and the route's own
+  // `note` stays outside it too — they are disclosures and an outcome, and
+  // v3.16.1 is that neither sits behind a chevron. The ⓘ leaves the body
+  // altogether: what a session IS belongs in the STEP's explanation, and it
+  // cannot go in the `<summary>` because an interactive control there toggles
+  // its own section (the v3.0.1-beta.18 hazard).
+  const newest = f.rows.length ? f.rows[0] : null;
+  const newestAt = newest ? (newest.endedAt || newest.startedAt) : null;
   const newestSecs = effectiveSave({ savedAt: newestAt }).seconds;
+  // THE TABLE'S ONLY LOST FIGURE. Summed over the UNCAPPED rows the route
+  // sent; `sessionsTruncated` is disclosed separately by `.mem-capture-limits`,
+  // so a partial list is never reported as a total — the value is dropped
+  // entirely when the route sent no usable per-session calls at all.
+  const callsTotal = f.rows.reduce(
+    (n, r) => n + (Number.isInteger(r && r.calls) && r.calls >= 0 ? r.calls : 0), 0);
+  const hasCalls = f.rows.some((r) => Number.isInteger(r && r.calls));
   const monitor = renderMonitor({
     label: 'The capture reading',
     lines: [
@@ -4689,15 +4731,20 @@ function renderCaptureMeter() {
       f.readNotSaved === null ? null
         : { key: 'read and did not save', value: f.readNotSaved,
           tone: f.readNotSaved ? 'warn' : undefined },
+      !hasCalls ? null
+        : { key: callsTotal === 1 ? 'tool call' : 'tool calls', value: callsTotal,
+          sub: f.truncated ? 'over the sessions listed' : undefined },
       newestSecs === null ? null
         : { key: 'newest', value: formatAge(newestSecs) || 'time unknown',
           markHtml: '<span class="fresh-dot fresh-' + freshnessTier(newestSecs)
-            + '" aria-hidden="true"></span>' },
+            + '" aria-hidden="true"></span>',
+          sub: (newest && typeof newest.client === 'string' && newest.client)
+            ? newest.client : 'not reported' },
     ].filter(Boolean),
   });
   // NOTHING TO OPEN, NO CHEVRON — the call this function already made for its
   // own idle state, and the one `renderSaveStatus` makes for a healthy save.
-  const body = monitor + sessions;
+  const body = monitor;
   const open = (state.openFolds && state.openFolds.capture) ? ' open' : '';
   const row = body
     ? '<details class="mem-fold" data-mem-fold="capture"' + open + '>'
@@ -4705,7 +4752,7 @@ function renderCaptureMeter() {
         + '<span>Capture</span>'
         + '<span class="mem-fold-meta">' + meta + '</span>'
       + '</summary>'
-      + '<div class="mem-fold-body">' + infoHtml + body + '</div>'
+      + '<div class="mem-fold-body">' + body + '</div>'
     + '</details>'
     : '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-save-flat">'
       + '<span>Capture</span>'
@@ -4714,88 +4761,6 @@ function renderCaptureMeter() {
   return row + notice + limitsHtml;
 }
 
-/**
- * THE PER-SESSION LIST, IN A CLOSED FOLD.
- *
- * One row per session, newest first, each saying what that session did rather
- * than what it should have done: when it started, which harness reported
- * itself, how many calls it made, whether it read and whether it saved.
- *
- * THE MISSING THING STAYS MISSING WHERE YOU LOOKED FOR IT (v3.17.1): with no
- * rows there is no fold at all — the reading above has already said so in
- * words, and an empty chevron would invite a click that answers nothing. That
- * is the same call `renderWorkStreamsFold` makes with its flat card.
- */
-function renderCaptureSessions(f) {
-  if (!f.rows.length) return '';
-  // ── NO FOLD OF ITS OWN ANY MORE (v3.65.0, R2) ────────────────────────
-  // This used to be a `<details>` titled "Sessions", sitting under a
-  // `.mem-capture` card that carried the same four numbers as its summary.
-  // One reading, one row: the table is what the CAPTURE row opens, and the
-  // `data-mem-fold="capture"` hook, the `#mem-fold-capture` summary id and
-  // the `FOLD_KEYS` / `FOCUSABLE_IDS` entries all keep their names — they
-  // moved one element up, to the row that now owns them.
-  //
-  // THE SUMMARY LINE THIS BUILT IS GONE WITH THE FOLD, and its four figures
-  // are not lost: they are the row's own summary (in words) and the
-  // monitor's lines (keyed and valued) one level up.
-  // A TICK IS NOT A COLOUR AND NOT A COLOUR ALONE: the glyph is aria-hidden
-  // and a visually-hidden word carries the fact, so a screen reader hears
-  // "read yes" rather than a check mark's name, and nothing here is decoded
-  // from ink. The dash is an en dash rather than a hyphen for the same reason
-  // the rest of this view uses one — it is a mark, not a minus.
-  const flag = (on, word) => '<span class="mem-cap-flag' + (on ? ' mem-cap-flag-on' : '') + '">'
-    + '<span aria-hidden="true">' + (on ? '✓' : '–') + '</span>'
-    + '<span class="visually-hidden">' + word + (on ? ' yes' : ' no') + '</span></span>';
-  const rows = f.rows.map((r) => {
-    const at = typeof r.startedAt === 'string' ? r.startedAt : null;
-    const secs = effectiveSave({ savedAt: at }).seconds;
-    const words = formatAge(secs);
-    return '<tr>'
-      + '<td' + (at ? ' data-mem-age-at="' + escapeHtml(at) + '"' : '') + '>'
-        + '<span class="mem-age-words">' + escapeHtml(words || 'time unknown') + '</span>'
-        // THE ABSOLUTE STAMP, KEPT AND REACHABLE — visually hidden rather than
-        // a `title=`, which is hover-only and therefore invisible to keyboard
-        // and to touch. This view's hover-only ceiling is one and must not rise.
-        + (at ? '<span class="visually-hidden"> (' + escapeHtml(at) + ')</span>' : '')
-      + '</td>'
-      // DECISION I: the client name is a LABEL. It is escaped like any other
-      // untrusted string, nothing branches on it, and an absent or unmatched
-      // one reads "not reported" rather than being guessed at.
-      + '<td>' + escapeHtml(typeof r.client === 'string' && r.client ? r.client : 'not reported') + '</td>'
-      + '<td class="mem-cap-num">' + escapeHtml(String(Number.isInteger(r.calls) ? r.calls : 0)) + '</td>'
-      + '<td>' + flag(r.read === true, 'read') + '</td>'
-      + '<td>' + flag(r.saved === true, 'saved') + '</td>'
-    + '</tr>';
-  }).join('');
-  // THE CAP IS THE ROUTE'S ANSWER, NOT THE REQUEST. `sessionsTruncated` is
-  // what the producer said it had to leave out; printing CAPTURE_SESSION_LIMIT
-  // here instead would report a cap as a measurement.
-  const cut = f.truncated
-    ? '<p class="mem-capture-limits">Showing the ' + escapeHtml(String(f.shown))
-      + ' most recent of ' + escapeHtml(String(f.sessions === null ? f.shown : f.sessions))
-      + ' sessions.</p>'
-    : '';
-  return (
-    '<div class="mem-cap-wrap">'
-      + '<table class="mem-cap-table">'
-        // THE ONE PLACE THE WORD "SESSION" STILL APPEARS ON SCREEN, and it is
-        // the right one: a column heading naming what each row IS. R2 takes
-        // it off the screen as a SECTION name, not as a noun.
-        + '<caption class="visually-hidden">Sessions in this window</caption>'
-        + '<thead><tr>'
-          + '<th scope="col">Started</th>'
-          + '<th scope="col">Harness</th>'
-          + '<th scope="col">Calls</th>'
-          + '<th scope="col">Read</th>'
-          + '<th scope="col">Saved</th>'
-        + '</tr></thead>'
-        + '<tbody>' + rows + '</tbody>'
-      + '</table>'
-    + '</div>'
-    + cut
-  );
-}
 
 /**
  * THE METER'S ONE REQUEST (v3.63.0).
@@ -5044,6 +5009,11 @@ function renderProject() {
       + 'SUPERSEDED — a blocker named in an old headline can have been fixed three saves ago. It '
       + 'survives what a handoff cannot: two agent tools writing one thread overwrite each '
       + 'other’s handoff, and both trails are still here.</p>'
+      // ── AND WHAT CAPTURE IS READING (v3.65.1, D4) ───────────────────
+      // One copy, defined beside the meter it describes; the mark that used
+      // to open it inside the CAPTURE row's body is gone, because a step has
+      // one explanatory mark and a reading inside it is not a step.
+      + CAPTURE_INFO_HTML
       + '<p>' + docsLinkHtml('memory.standing-brief', 'The standing brief') + ' · '
       + docsLinkHtml('memory.handoff', 'Handoffs') + ' · '
       + docsLinkHtml('memory.session-journal', 'The journal') + '</p>',
@@ -5315,7 +5285,6 @@ function renderSaveStatus(read, d) {
   // it would put a warning behind a chevron.
   const lines = [];
   const detail = [];
-  let primary = '';
 
   // ── "WORKING ON" LEFT THIS FUNCTION (v3.62.0) ───────────────────────────
   //
@@ -5328,7 +5297,13 @@ function renderSaveStatus(read, d) {
 
   if (cur) {
     const eff = effectiveSave(cur);
-    const step = freshnessStep(eff.seconds);
+    // `freshnessStep` LEFT THIS FUNCTION with the reading it cut (v3.65.1, D2).
+    // It was this view's own six-rung ladder beside `freshnessTier`, the
+    // app-wide one, on the same quantity — v3.65.0 moved the MARK to the shared
+    // tier and left the step computed for a `.mem-save-pip` that no longer
+    // existed. The reading is gone now, so the computation goes too:
+    // shared/age.js still exports it, and this view no longer cuts a mark on
+    // any ladder of its own.
     const age = formatAge(eff.seconds);
     // Provenance is the scope you are in and the tool that wrote it — the two
     // facts that turn "2 min ago" into "2 min ago, by the thing I am running".
@@ -5342,69 +5317,27 @@ function renderSaveStatus(read, d) {
     const clock = eff.source === 'filesystem' ? 'file time' : null;
     const kind = cur.lastSaveKind || null;
 
-    if (age) {
-      // `+=` SURVIVES THE DELETION OF THE LINE ABOVE IT, deliberately. The
-      // "Working on" line used to be written into `primary` here and a plain
-      // assignment silently DELETED it — caught by §18g the first time it ran,
-      // which is the whole argument for driving the rendered output rather
-      // than reading the source. `primary` is written once now; the operator
-      // stays so that re-introducing a leading reading cannot reopen it.
-      // ── IT IS A ROW NOW, NOT A CARD (v3.64.2) ─────────────────────────
-      //
-      // THE REPORT, on a screenshot of step ②: "the worst UX" — a highlighted
-      // "Last saved" card, then a bare CAPTURE readout in a different design
-      // outside any card, then three fold rows. Three designs, stacked, for
-      // one step's contents. The rule now: inside a numbered step EVERY part
-      // is the same row — title on the left, a one-line summary on the right,
-      // a chevron where there is something to open.
-      //
-      // So the reading moves into a `.mem-fold-summary`: "Last saved" on the
-      // left, and the age, the pair that wrote it and the tool that wrote it
-      // on the right, in the meta slot every other row on this page uses. The
-      // pip goes with it — the mark belongs beside the age it qualifies.
-      //
-      // WHAT IS IN THE BODY, AND WHAT MAY NEVER BE. The explanations — which
-      // clock the figure came from, that the file arrived later than it was
-      // written, what "summary shortened" means — expand. The WARNINGS do
-      // not: v3.16.1's rule is that a warning, a cost or an outcome may not
-      // sit behind a chevron, so every `loud` line stays unfolded BELOW the
-      // row, where it is today. That is the one place this row deliberately
-      // does not follow "everything is a row".
-      //
-      // ── ONE MARK, ONE LADDER (v3.65.0, design record R13) ─────────────
-      // `.mem-save-pip` is DELETED. It was this view's own six-rung mark for
-      // a save's age, cut on `freshnessStep`, beside `.fresh-dot` — the
-      // app-wide mark, cut on `freshnessTier` — on the SAME page, on the same
-      // quantity: the rail's rows, the work-stream table, the strip and step
-      // ③ all wore the dot while the one reading the page is named for wore
-      // a second thing. shared/freshness.css owns the `.fresh-` prefix and
-      // scripts/test-freshness-scale.js §4 forbids any other stylesheet
-      // declaring one, so this deletion is TOWARD that rule rather than
-      // around it, and views/memory.css now declares no `.fresh-` rule at all.
-      primary +=
-        '<div class="mem-save-main">' +
-          '<span class="fresh-dot fresh-' + freshnessTier(eff.seconds) + '" aria-hidden="true"></span>' +
-          '<span class="mem-save-age">' + escapeHtml(age) + '</span>' +
-          ((prov || clock)
-            ? '<span class="mem-save-prov">'
-              + escapeHtml([prov, clock].filter(Boolean).join(' · ')) + '</span>'
-            : '') +
-          // The badge is on the READING, not in a note underneath it. A
-          // completeness caveat that lives below the figure is a caveat the
-          // one-second glance never reaches.
-          //
-          // `clipped` gets the QUIET badge class (the one "shared mirror"
-          // uses), not the attention one `trimmed` gets: nothing about the
-          // handoff was lost, only a metadata field — most often the
-          // one-line summary — was shortened to fit its own limit. Badging
-          // that `incomplete` is the exact defect this verdict exists to
-          // fix, so it must never share `trimmed`'s badge or its class.
-          (kind === 'trimmed'
-            ? '<span class="mem-badge mem-badge-attn">incomplete</span>'
-            : kind === 'clipped'
-              ? '<span class="mem-badge mem-badge-quiet">summary shortened</span>' : '') +
-        '</div>';
-    }
+    // ── THE READING ITSELF IS GONE (v3.65.1, D2) ─────────────────────────
+    //
+    // It was a dot, an age, the pair and the tool that wrote it, and a
+    // completeness badge — and every one of those facts is already on this
+    // screen twice. The MEMORY overview tile carries `saved <age>` with the
+    // work-stream under it; the Handoffs row's summary carries the newest
+    // handoff's age beside its count; the Handoffs TABLE carries the pair, the
+    // machine and the harness per row. The maintainer's verdict on the row
+    // that repeated them: *"no clue why it is here, what it communicates."*
+    //
+    // Two costs came with it and both leave with it. It was a CARD wrapping a
+    // ROW — measured at 1370, its reading ended at x=1301 against 1316 for
+    // every other row on the page, because `.mem-save`'s `12px 14px` padding
+    // and 1px border cost 15px a side. And it was the one row whose title said
+    // what the step above it already says.
+    //
+    // `age`, `prov`, `clock` and `freshnessTier` are still computed above:
+    // `clock` decides one of the disclosure lines below, and the rest are what
+    // the four save KINDS are told apart by. Nothing reads `primary` any more,
+    // so there is no `primary`.
+    void age; void prov;
 
     if (kind === 'trimmed') {
       lines.push({
@@ -5552,7 +5485,7 @@ function renderSaveStatus(read, d) {
   //
   // `brief` is still read above for nothing else, so it goes with the line.
 
-  if (!primary && !lines.length && !detail.length) return '';
+  if (!lines.length && !detail.length) return '';
 
   // ── THE BODY IS A MONITOR (v3.65.0, M1) ──────────────────────────────
   //
@@ -5574,46 +5507,36 @@ function renderSaveStatus(read, d) {
   // Two blocks, one component, and the split is structural rather than a
   // convention: `renderMonitor` builds the two from different arrays and has
   // no field that can move one into the other.
-  const body = detail.length
-    ? renderMonitor({ label: 'About this save', lines: detail })
-    : '';
-  // ── THE ROW, AND THE ONE CASE THAT IS NOT A FOLD ──────────────────────
-  // An empty chevron invites a click that does nothing, which is the call
-  // `renderCaptureMeter` already makes for its own idle state — so with no
-  // explanation to open, the reading is a FLAT row in the identical chrome
-  // (`.mem-fold-flat`, the shape `renderWorkStreamsFold` uses for an empty
-  // project) rather than a fold that opens on nothing.
+  // ── ONE INSTRUMENT, UNFOLDED, AND NOTHING WHEN THERE IS NOTHING TO SAY ─
   //
-  // `open` is derived from `state.openFolds`, the same way every other fold
-  // on this page derives it — so the row survives `patchOpenPair` replacing
-  // the stack it lives in, which re-binds the toggle rather than preserving
-  // the element.
-  const open = (state.openFolds && state.openFolds.saved) ? ' open' : '';
-  const savedRow = primary
-    ? (body
-      ? '<details class="mem-fold" data-mem-fold="saved"' + open + '>'
-        + '<summary class="mem-fold-summary" id="mem-fold-saved">' + icon('chevronRight', 14)
-          + '<span>Last saved</span>'
-          + '<span class="mem-fold-meta">' + primary + '</span>'
-        + '</summary>'
-        + '<div class="mem-fold-body">' + body + '</div>'
-      + '</details>'
-      : '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-save-flat">'
-        + '<span>Last saved</span>'
-        + '<span class="mem-fold-meta">' + primary + '</span>'
-      + '</div></div>')
-    : body;
-  // THE WARNINGS, IN THE SAME INSTRUMENT AND OUTSIDE THE CHEVRON. One block
-  // whatever their number, so two warnings do not read as two designs.
-  const warnings = lines.length
-    ? renderMonitor({ label: 'Warnings about this save', lines: [], loud: lines })
-    : '';
-  // NO `.mem-section` ANY MORE. This is the body of step ② now, not a
-  // top-level sibling, so the page's adjacency rule must not put 24px between
-  // it and the two notices beside it — `.mem-status-stack` in memory.css owns
-  // the spacing INSIDE a block, and `.settings-job-block` owns the spacing
-  // between blocks. One gap, one owner, at each level.
-  return '<section class="mem-save" aria-label="Save status">' + savedRow + warnings + '</section>';
+  // WHAT IS LEFT after the "Last saved" row is deleted is the part that was
+  // never a duplicate: the DISCLOSURES. `detail` holds the qualifications the
+  // store honestly computed and this view would otherwise drop — which clock
+  // the figure came from, that the file arrived here long after it was
+  // written, that a clipped save wrote the handoff in full and shortened only
+  // a label — and `lines` holds the warnings: a trimmed handoff, a replaced
+  // one, two harnesses overwriting one file, a newer save on another machine.
+  //
+  // They are ONE monitor now rather than a fold body plus a block beside it,
+  // and it is NOT behind a chevron. v3.16.1 covers `lines`; `detail` joins
+  // them outside the chevron because the row that used to open is gone, and a
+  // disclosure whose only door has been removed is a dropped field — the
+  // dominant defect class the memory layer records against itself.
+  //
+  // AND IT RENDERS NOTHING ON AN ORDINARY PROJECT. A save on the agent's own
+  // clock, complete, with one harness, produces no line and no warning, so
+  // step ② opens on its four rows with nothing above them. That is the
+  // acceptance picture, and it is reached by having nothing to say rather than
+  // by hiding something.
+  if (!detail.length && !lines.length) return '';
+  const instrument = renderMonitor({
+    label: 'About the last save', lines: detail, loud: lines,
+  });
+  if (!instrument) return '';
+  // NO `.mem-section`. This is the first thing inside step ②'s body, not a
+  // top-level sibling, so the page's 24px block rhythm must not apply to it —
+  // `.mem-status-stack` in memory.css owns the spacing inside a block.
+  return '<section class="mem-save" aria-label="About the last save">' + instrument + '</section>';
 }
 
 /** The newest (scope, machine) in a project by the AGENT'S clock where it exists. */
@@ -9609,28 +9532,53 @@ function renderJournal() {
   // Composed INLINE rather than through a helper: this function is lifted by
   // brace-matching and executed, so a module-level helper named here would be
   // a ReferenceError there.
-  let countLine;
+  // ── THE COUNT IS THE SUMMARY'S, NOT A CARD AT THE FOOT (v3.65.1, D3) ──
+  //
+  // THE REPORTED DEFECT, in the maintainer's words: the journal's footer was a
+  // monitor card reading "SAVES RECORDED 15 · showing the 10 most recent" with
+  // a floating "Show more" button beside it — *"from another dimension"* —
+  // while the Handoffs list one row up ends in a full-width inline row that
+  // says "Show 17 more". Measured at 1370: the footer monitor ran 421→723.5
+  // and the button floated at x=735.5 w=77, against a list 893px wide.
+  //
+  // So the count moves into the row's own summary, where every other row on
+  // this page puts its reading, and "Show N more" becomes the ONE
+  // implementation — `wsMoreHtml`'s `cur-group-row`, the list's own last row.
+  // THE THREE ARMS ARE UNCHANGED and each still keeps a FACT apart from its
+  // ABSENCE: `total: null` with `totalUnknown` means the journal was longer
+  // than the tail we read, so the figure we print is the one we can stand
+  // behind and the reason we cannot state a total rides beside it — never a
+  // total printed as if the tail's length were it.
+  let countClause;
   if (j.totalUnknown) {
-    countLine = { key: 'saves shown', value: j.returned,
-      sub: 'most recent · full count unknown — '
-        + (j.totalUnknownReason || 'only the end of the journal was read') };
+    countClause = j.returned + ' save' + (j.returned === 1 ? '' : 's') + ' shown'
+      + ' · full count unknown';
   } else if (typeof j.total === 'number' && j.total > j.returned) {
-    countLine = { key: 'saves recorded', value: j.total,
-      sub: 'showing the ' + j.returned + ' most recent' };
+    countClause = j.total + ' save' + (j.total === 1 ? '' : 's')
+      + ' · showing ' + j.returned;
   } else {
-    countLine = { key: j.returned === 1 ? 'save recorded' : 'saves recorded', value: j.returned };
+    countClause = j.returned + ' save' + (j.returned === 1 ? '' : 's');
   }
-  const countReadout = renderMonitor({ label: 'The journal', lines: [countLine] });
 
   const canExpand = state.journalLimit === JOURNAL_PAGE &&
     (j.totalUnknown || (typeof j.total === 'number' && j.total > j.returned));
+  // ── ONE "Show N more", AND IT IS THE HANDOFFS LIST'S (v3.65.1, D3) ────
+  // The same `cur-group-row` shape `wsMoreHtml` emits: the list's own last
+  // ROW, full width, in flow — never a floating `btn-xs` beside a card. The
+  // maintainer named the Handoffs implementation as the right one by name, so
+  // this is not a third opinion; it is that one, here. The id and the class
+  // `mem-j-more` are kept because BOTH binder call sites (`wire` and
+  // `patchOpenPair`) find the control by them, and the number is named where
+  // it can be: with a known total we can say how many more there are, and with
+  // `totalUnknown` we honestly cannot.
   // In the <details> BODY, never in its <summary> — see the header comment.
+  const moreRest = (!j.totalUnknown && typeof j.total === 'number')
+    ? Math.max(0, j.total - j.returned) : null;
   const moreBtn = canExpand
-    // btn-secondary: same reason as mem-stale-btn above — `.btn` alone used
-    // to resolve to native OS button chrome (2px outset bevel over
-    // ButtonFace). Named rather than left to the baseline so this reads as a
-    // real control.
-    ? '<button class="btn btn-secondary btn-xs mem-j-more" id="mem-journal-more">Show more</button>'
+    ? '<button type="button" class="cur-group-row mem-j-more" id="mem-journal-more">'
+      + '<span class="mem-ws-more-label">'
+      + (moreRest ? 'Show ' + moreRest.toLocaleString('en-US') + ' more' : 'Show more')
+      + '</span></button>'
     : '';
 
   // ── THE META HAS TO BE ENOUGH TO DECIDE WITH (v3.58.0) ──────────────────
@@ -9646,7 +9594,7 @@ function renderJournal() {
   const latestAge = latest
     ? formatAge(Math.max(0, Math.round((Date.now() - Date.parse(latest)) / 1000))) : null;
   const journalMeta =
-    escapeHtml(String(j.returned)) + ' save' + (j.returned === 1 ? '' : 's') +
+    escapeHtml(countClause) +
     (latestAge ? ' · latest <span class="mem-age-words">' + escapeHtml(latestAge) + '</span>' : '');
 
   return (
@@ -9667,8 +9615,7 @@ function renderJournal() {
           renderDescription('History, newest first. Any entry may since have been ' +
             'superseded — the current handoff above is what is true now.') +
         '</div>' +
-        '<ol class="mem-j-list">' + rows + '</ol>' +
-        '<div class="mem-j-foot">' + countReadout + moreBtn + '</div>' +
+        '<ol class="mem-j-list">' + rows + '</ol>' + moreBtn +
       '</div>' +
     '</details>'
   );

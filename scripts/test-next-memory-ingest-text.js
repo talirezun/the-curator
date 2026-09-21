@@ -182,15 +182,18 @@ ok('memory.js: the explainer component is gone — not imported, not called, not
   !/renderExplainer/.test(memCode));
 ok('memory.js: the sidebar error is a STATUS, not a hint (renderStatus inside renderSidebar)',
   callSiteCount(memSrc, 'renderStatus', { within: 'renderSidebar' }) > 0);
-// RE-POINTED (v3.65.0, M4), and the claim got stronger rather than weaker. It
-// pinned the journal's count as a `renderReadout` — an INSTRUMENT rather than
-// a grey sentence, which was the v3.55.0 finding. A live figure with a
-// provenance clause is exactly what the MONITOR is for, and this page draws
-// three other readings with it, so a readout standing alone at the foot of a
-// list was the fourth report treatment the maintainer counted on this screen.
-// The role is unchanged; the component that carries it is the shared one.
-ok('memory.js: the journal count is a MONITOR line (renderMonitor inside renderJournal)',
-  callSiteCount(memSrc, 'renderMonitor', { within: 'renderJournal' }) > 0);
+// RE-POINTED AGAIN (v3.65.1, D3), and the v3.55.0 finding this has always
+// protected is unchanged: a MEASUREMENT must not be painted as grey prose.
+// What moved is which element carries it. The count was a `renderReadout`,
+// then a `renderMonitor` card at the foot of the list with a floating button
+// beside it — *"from another dimension"* — and it is the ROW'S OWN SUMMARY
+// now, in the meta slot every other reading on this page uses. So the pin is
+// that `renderJournal` composes no instrument of its own AND still emits the
+// figure into the summary's meta, which is what stops this becoming "the
+// count was deleted and the suite agreed".
+ok('memory.js: the journal count is the ROW\'s summary, not an instrument of its own',
+  callSiteCount(memSrc, 'renderMonitor', { within: 'renderJournal' }) === 0
+  && /countClause/.test(memSrc) && /journalMeta =\s*\n?\s*escapeHtml\(countClause\)/.test(memSrc));
 // RE-POINTED (v3.56.0), and the claim is unchanged: the handoff's provenance is
 // an INSTRUMENT. What moved is where it is painted — `renderHandoff` printed the
 // document on the page and is gone; `handoffReaderContent` composes the payload
@@ -439,11 +442,14 @@ const baseState = {
   // The journal count is a figure, not a sentence — and the framing prose
   // beside it is a description, so the two no longer share a voice.
   const j = R.renderJournal();
-  // A MONITOR LINE SINCE v3.65.0 (M4). The ROLE is unchanged — a measurement
-  // rendered as a measurement rather than as grey prose, which is what
-  // "an explanation and a measurement no longer share one class" below is
-  // about — and the component that carries it is the shared one.
-  ok('the journal count renders as a MONITOR figure', /class="cur-mon-value">3</.test(j), j.slice(-500));
+  // THE ROW'S SUMMARY SINCE v3.65.1 (D3). The ROLE is unchanged — a
+  // measurement rendered as a measurement rather than as grey prose, which is
+  // what "an explanation and a measurement no longer share one class" below is
+  // about — and the slot that carries it is the one every other row uses.
+  ok('the journal count renders in the row\'s own meta slot',
+    /<span class="mem-fold-meta"[^>]*>3 saves/.test(j), j.slice(0, 600));
+  ok('...and renderJournal draws no instrument of its own under the list',
+    !/cur-mon/.test(j) && !/mem-j-foot/.test(j), j.slice(-400));
   ok('the journal framing renders as a DESCRIPTION', /class="tx-desc"/.test(j), j.slice(0, 500));
   ok('an explanation and a measurement no longer share one class',
     !/mem-quiet/.test(j), j.slice(0, 300));
@@ -453,10 +459,10 @@ const baseState = {
     ...baseState,
     detail: { ...baseDetail, journal: { returned: 2, total: null, totalUnknown: true, totalUnknownReason: 'journal is huge', entries: baseDetail.journal.entries } },
   }).renderJournal();
-  ok('an unknown journal total still says UNKNOWN in the line\'s own clause',
-    /cur-mon-sub[^<]*>[^<]*unknown/i.test(unknown), unknown.slice(-500));
+  ok('an unknown journal total still says UNKNOWN in the summary\'s own clause',
+    /<span class="mem-fold-meta"[^>]*>[^<]*full count unknown/i.test(unknown), unknown.slice(0, 600));
   ok('...and still does NOT print the tail length as the total',
-    !/cur-mon-key">saves recorded/.test(unknown), unknown.slice(-500));
+    !/>2 saves<|2 saves ·(?! )/.test(unknown) && /2 saves shown/.test(unknown), unknown.slice(0, 600));
 
   // The brief's "not written" prose is a description, not a fourth grey.
   const brief = R.renderBrief(baseState.projectRead, false);

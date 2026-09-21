@@ -134,10 +134,16 @@ function makeMeter(stateObj) {
     'const CAPTURE_SESSION_LIMIT = ' + SESSION_LIMIT + ';\n' +
     extractFunction(viewSrc, 'formatAge') + '\n' +
     extractFunction(viewSrc, 'effectiveSave') + '\n' +
+    // ── THE CAPTURE PROSE, LIFTED FROM LIVE SOURCE (v3.65.1, D4) ──────
+    // `CAPTURE_INFO_HTML` is a module-level const that step ②'s ⓘ composes
+    // and `renderCaptureMeter` no longer opens with a mark of its own. It is
+    // sliced out of the shipped file rather than stubbed, so the panel scan
+    // below reads the REAL words — a stub would let this suite agree with
+    // itself about text nobody ships.
+    (/const CAPTURE_INFO_HTML =[\s\S]*?;\n/.exec(viewSrc) || [''])[0] + '\n' +
     extractFunction(viewSrc, 'captureFacts') + '\n' +
-    extractFunction(viewSrc, 'renderCaptureSessions') + '\n' +
     extractFunction(viewSrc, 'renderCaptureMeter') + '\n' +
-    'return { captureFacts, renderCaptureMeter, renderCaptureSessions, formatAge, effectiveSave };';
+    'return { captureFacts, renderCaptureMeter, formatAge, effectiveSave };';
   return new Function('state', 'escapeHtml', 'icon', 'renderReadout', 'renderStatus',
     'renderInfoMark', 'docsLinkHtml', 'freshnessTier',
     // THE REAL MONITOR (v3.65.0). The reading's BODY is one, and every
@@ -244,8 +250,14 @@ section('§1 — THE FOUR NUMBERS, AND THE ONE THAT MATTERS IS NAMED');
     .replace(/class="visually-hidden">[^<]*</g, 'class="visually-hidden"><');
   ok(!/<span>Sessions<\/span>/.test(visible) && !/>Sessions</.test(visible),
     'no section on the screen is called "Sessions" any more', visible.slice(0, 400));
-  ok(/A <b>session<\/b> is one bridge process/.test(html),
-    'CONTROL: the word survives in the ⓘ, which is where the definition belongs');
+  // v3.65.1 (D4): the ⓘ left this reading for step ②'s own panel — a step has
+  // ONE explanatory mark and a reading inside it is not a step. The WORDS are
+  // unchanged and are pinned where they now live, in scripts/test-next-memory-view.js's
+  // panel scan; what this control proves here is that the reading no longer
+  // carries a mark of its own.
+  ok(!/A <b>session<\/b> is one bridge process/.test(html)
+    && !/mem-capture-info/.test(html) && !/tx-vh-panel/.test(html),
+  'the reading carries NO ⓘ of its own — the definition is step ②\'s', html.slice(0, 400));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -370,17 +382,17 @@ section('§3 — THE READING NEVER FOLDS; THE SESSION LIST DOES, AND SHIPS SHUT'
   }
   // THE POSITIVE CONTROL, without which the scan above passes on anything:
   // a claim that exists ONLY inside the fold body must not be found.
-  ok(!closedText.includes('Started</th>') && html.includes('Started</th>'),
-    'CONTROL: the detector really does exclude the fold BODY — the session '
-    + 'table\'s own column heading is on the page and NOT in the closed text');
+  // THE POSITIVE CONTROL, re-pointed in v3.65.1: the session table is deleted,
+  // so its column heading is no longer the thing that exists only in the body.
+  // The monitor's own lines are — they ARE the body — so one of those is the
+  // control, and it proves the detector is not vacuous exactly as the heading did.
+  ok(!closedText.includes('cur-mon-key') && html.includes('cur-mon-key'),
+    'CONTROL: the detector really does exclude the fold BODY — the monitor\'s '
+    + 'lines are on the page and NOT in the closed text');
   ok(summaryOf(html, 'capture').length > 40,
     'CONTROL: the summary was really found (the scan is not vacuous)');
   const panels = [...html.matchAll(/<div class="tx-vh-panel"[^>]*hidden>([\s\S]*?)<\/div>/g)].map((m) => m[1]);
-  eq('CONTROL: the meter\'s one ⓘ panel was really found', panels.length, 1);
-  ok(panels.every((x) => !x.includes('read and did not save')),
-    '...and the reading is not inside it');
-  ok(html.includes('tx-vh-panel') && / hidden>/.test(html),
-    'the ⓘ ships CLOSED — the definition is read once, the reading every time');
+  eq('the meter emits NO ⓘ panel of its own (v3.65.1, D4)', panels.length, 0);
 
   // ── THE <summary> HAZARD ──────────────────────────────────────────────
   // An interactive control inside a <summary> toggles its own section when
@@ -401,75 +413,93 @@ section('§3 — THE READING NEVER FOLDS; THE SESSION LIST DOES, AND SHIPS SHUT'
   ok(!!focusable, 'FOCUSABLE_IDS was found in live source');
   ok(focusable[1].includes("'mem-fold-capture'"),
     '...and knows the fold\'s summary, so the poll cannot drop a keyboard user who just toggled it');
-  ok(focusable[1].includes("'mem-capture-info-btn'"),
-    '...and the ⓘ button, for the same reason the strip\'s mark is in the list');
-  ok(html.includes('id="mem-fold-capture"') && html.includes('id="mem-capture-info-btn"'),
-    'CONTROL: both ids are really emitted, so the two entries are not pointing at nothing');
+  ok(!focusable[1].includes("'mem-capture-info-btn'"),
+    '...and NOT the deleted ⓘ button — a stale id in this list is a focus target that '
+    + 'resolves to nothing, which is what the control below proves it would have been');
+  ok(html.includes('id="mem-fold-capture"') && !html.includes('id="mem-capture-info-btn"'),
+    'CONTROL: the fold\'s id is really emitted and the ⓘ\'s really is not');
   ok(/const FOLDS_KEY = 'curator-memory-folds-v1';/.test(viewSrc),
     'and the localStorage KEY itself is unmoved — the registry test-ui-state.js holds');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§4 — THE SESSION ROWS: WHAT EACH SESSION DID, AND NOTHING INVENTED');
+section('§4 — THE TABLE IS GONE, AND THE MONITOR CARRIES WHAT IT CARRIED');
 // ═════════════════════════════════════════════════════════════════════════
+//
+// v3.65.1, D4. The maintainer, on the shipped CAPTURE body: *"two different
+// designs, one row-like then table-like"* — an ⓘ alone on its own line, then
+// the monitor, then a five-column table. `renderCaptureSessions` is deleted.
+//
+// WHAT THIS SECTION NOW PROVES is the only thing that made the deletion safe:
+// every fact the table carried is still on screen. Two of its figures had
+// nowhere else to live — the window's TOTAL TOOL CALLS and the NEWEST
+// SESSION'S HARNESS — and both are monitor lines now. Its CAP disclosure
+// ("showing the N most recent of M") moved OUTSIDE the row, beside the two
+// line-class disclosures, because it says what the figures are taken over.
 {
   const html = makeMeter(stFor({ openFolds: { capture: true } })).renderCaptureMeter();
-  const rows = [...html.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].map((m) => m[1]);
-  eq('one row per session, plus the header row', rows.length, 4);
-  ok(html.indexOf('claude-code') < html.indexOf('codex'),
-    'newest first — the order the route sent, not re-sorted here');
-  ok(rows[1].includes('claude-code'), 'the harness label is painted as the route sent it');
-  ok(rows[3].includes('not reported'),
-    'a session whose client sent no name reads "not reported" — never guessed at, '
-    + 'and never the previous row\'s label');
-  ok(rows[1].includes('data-mem-age-at="' + escapeHtml(payload().sessions[0].startedAt) + '"'),
-    'each row carries the age-clock hook, so the list ticks without a render');
-  ok(rows[1].includes('class="mem-age-words"'),
-    '...into the named target tickAges writes to, never the cell\'s own text');
-  ok(rows[1].includes('<span class="visually-hidden"> (' + payload().sessions[0].startedAt + ')</span>'),
-    'the exact stamp is visually hidden and keyboard-reachable, never a hover-only title=');
-  // THE REAL RULE (test-next-header-adoption.js): a `title=` is hover-only and
-  // therefore invisible to keyboard and to touch UNLESS it sits on a focusable
-  // element. The kit's ⓘ button carries one legitimately; nothing this view
-  // emits may. Measured the same way that suite measures it — the nearest
-  // opening tag before each `title=`.
-  {
-    const offenders = [...html.matchAll(/\btitle="/g)].filter((mt) => {
-      const before = html.slice(Math.max(0, mt.index - 400), mt.index);
-      const tag = before.lastIndexOf('<');
-      return !/^<(a|button|input|select|textarea|summary)\b/.test(
-        tag >= 0 ? before.slice(tag, tag + 12) : '');
-    });
-    ok(offenders.length === 0,
-      'no hover-only title= on a non-focusable element — this view\'s ceiling is one '
-      + '(the journal\'s ISO stamp) and the meter does not raise it',
-      String(offenders.length));
-    ok(/title="/.test(html),
-      'CONTROL: the scan really found a title= (the kit\'s ⓘ button, which is focusable)');
-  }
+  ok(!/<table/.test(html) && !/mem-cap-table/.test(html) && !/mem-cap-flag/.test(html),
+    'no table, and none of its classes, anywhere in the reading', html.slice(0, 400));
+  ok(!/Started<\/th>|Harness<\/th>|Calls<\/th>/.test(html),
+    '...and none of its column headings survive as orphaned markup');
 
-  // ── THE TICK IS NOT A COLOUR ALONE ────────────────────────────────────
-  ok(rows[1].includes('<span class="visually-hidden">read yes</span>')
-    && rows[1].includes('<span class="visually-hidden">saved yes</span>'),
-  'a session that read and saved says so in words a screen reader gets');
-  ok(rows[2].includes('<span class="visually-hidden">read yes</span>')
-    && rows[2].includes('<span class="visually-hidden">saved no</span>'),
-  '...and the one that read and did NOT save says that, in words');
-  ok(/aria-hidden="true">[✓–]</.test(rows[1]),
-    '...while the glyph itself is aria-hidden, so nothing is decoded from ink alone');
+  // THE FIGURES THE TABLE ALONE HAD.
+  // A LINE READ WHOLE, then split. `cur-mon-value` can CONTAIN a span (the
+  // freshness dot rides inside it), so a lazy `[\\s\\S]*?<\\/span>` stops at the
+  // dot's own close and reports an empty sub — which is a green on the wrong
+  // bytes. The line's own container is the boundary instead.
+  const lineOf = (h, key) => {
+    const at = h.indexOf('<span class="cur-mon-key">' + key + '</span>');
+    if (at === -1) return null;
+    const start = h.lastIndexOf('<div class="cur-mon-line', at);
+    const end = h.indexOf('</div>', h.indexOf('</span>', at));
+    const block = h.slice(start, end === -1 ? h.length : end + 6);
+    const v = /<span class="cur-mon-value">([\s\S]*?)<\/span>(?=<span class="cur-mon-sub"|<\/div>)/.exec(block);
+    const sub = /<span class="cur-mon-sub">([\s\S]*?)<\/span>/.exec(block);
+    return { value: v ? v[1] : '', sub: sub ? sub[1] : '', block };
+  };
+  const calls = lineOf(html, 'tool calls');
+  ok(!!calls, 'the window\'s TOOL CALLS are a line — the table\'s only figure with '
+    + 'nowhere else to live', html.slice(html.indexOf('cur-mon'), html.indexOf('cur-mon') + 900));
+  eq('...and it is the SUM the route sent, not a count of rows',
+    calls && calls.value,
+    String(payload().sessions.reduce((n, r) => n + (r.calls || 0), 0)));
+  const newest = lineOf(html, 'newest');
+  ok(!!newest, 'the newest session is a line');
+  ok(newest && newest.sub === payload().sessions[0].client,
+    '...carrying that session\'s HARNESS as its clause, which is the reading the table '
+    + 'was opened for', JSON.stringify(newest));
+  ok(newest && /fresh-dot fresh-/.test(newest.value),
+    '...and its age wears the app-wide dot, never a second mark');
 
-  // ── THE CAP IS THE ROUTE'S ANSWER, NOT THE REQUEST ────────────────────
+  // A CLIENT THAT SENT NO NAME. The table read "not reported" and never
+  // guessed; the line must do the same rather than omitting the clause, which
+  // would read as "the newest session was the one below it".
+  const anon = makeMeter(stFor({
+    capture: { domain: 'acme', project: 'lumina', error: null,
+      data: payload({ sessions: payload().sessions.map((r, k) => (k ? r : { ...r, client: null })) }) },
+    openFolds: { capture: true },
+  })).renderCaptureMeter();
+  ok(/<span class="cur-mon-key">newest<\/span>[\s\S]*?<span class="cur-mon-sub">not reported<\/span>/
+    .test(anon), 'a newest session whose client sent no name reads "not reported"',
+  anon.slice(anon.indexOf('newest'), anon.indexOf('newest') + 300));
+
+  // ── THE CAP IS THE ROUTE'S ANSWER, NOT THE REQUEST, AND IT IS OUTSIDE ──
   const cut = makeMeter(stFor({
     capture: { domain: 'acme', project: 'lumina', error: null,
       data: payload({ sessionsTruncated: true, sessionsShown: 3 }) },
     openFolds: { capture: true },
   })).renderCaptureMeter();
-  ok(cut.includes('Showing the 3 most recent of 6 sessions.'),
-    'a truncated list discloses BOTH numbers — what is on screen and what exists');
+  ok(cut.includes('showing the 3 most recent of 6 sessions'),
+    'a truncated list discloses BOTH numbers — what was counted and what exists',
+    cut.slice(cut.indexOf('mem-capture-limits') - 20, cut.indexOf('mem-capture-limits') + 260));
+  ok(cut.replace(/<details[\s\S]*?<\/details>/g, '').includes('showing the 3 most recent'),
+    '...OUTSIDE the chevron, where the other two disclosures are — a reader who never '
+    + 'opens the row still learns what the figures are taken over');
   ok(!cut.includes(String(SESSION_LIMIT) + ' most recent'),
     '...taken from the route\'s own `sessionsShown`, never from the limit the view asked for '
     + '(printing a cap as a measurement is the defect distinctScopeCount is counted early to avoid)');
-  ok(!html.includes('Showing the'),
+  ok(!html.includes('most recent of'),
     'CONTROL: an untruncated list discloses nothing, so the line above is not always on');
 }
 
@@ -571,8 +601,9 @@ section('§6 — LOADING, FAILING, AND NOTHING HOSTILE REACHING THE PAGE');
     'before the read lands the step RESERVES the height rather than emptying and refilling');
   ok(!pending.includes('tx-readout'),
     '...and claims no reading it does not have');
-  ok(pending.includes('mem-capture-info'),
-    '...while the ⓘ stays offered, which is when its limits are most worth reading');
+  ok(!pending.includes('mem-capture-info') && !pending.includes('tx-vh-panel'),
+    '...and carries NO ⓘ of its own, in this state as in every other (v3.65.1, D4) — '
+    + 'what a session IS is step ②\'s explanation now');
 
   const wrongProject = makeMeter(stFor({
     capture: { domain: 'acme', project: 'OTHER', error: null, data: payload() },
@@ -850,7 +881,11 @@ section('§10 — THE STYLESHEET KEEPS THIS FILE\'S STANDING RULES');
   const css = stripComments(viewCss);
   const capRules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .filter((m) => /\.mem-cap(ture)?[-\s{,:]/.test(m[1] + '{'));
-  ok(capRules.length >= 8, 'CONTROL: the meter\'s rules were really found (' + capRules.length + ')');
+  // v3.65.1: five `.mem-cap-*` rules went with the deleted session table, so
+  // the floor drops from 8 to 4 — the reading is one head, one cells wrapper,
+  // the limits line and the row it lives in. The assertion is still "the scan
+  // is not blind", which is what the number is for.
+  ok(capRules.length >= 4, 'CONTROL: the meter\'s rules were really found (' + capRules.length + ')');
   ok(capRules.every((m) => !/color:\s*var\(--text-3\)/.test(m[2])),
     'no rule takes --text-3 as a TEXT colour — this file measures it under 4.5:1 on every '
     + 'surface it has, and a guard holds the whole file to a count of zero');
@@ -859,28 +894,30 @@ section('§10 — THE STYLESHEET KEEPS THIS FILE\'S STANDING RULES');
     + 'shared/freshness.css, and a copy here would be a second ladder');
   ok(!/\.mem-cap[a-z-]*\s*\{[^}]*\.tx-/.test(css) && !/^\s*\.tx-/m.test(css),
     'and this file declares no `tx-` selector — shared/text.css owns that prefix');
-  ok(/\.mem-cap-num\s*\{[^}]*font-variant-numeric:\s*var\(--numeric-tabular\)/.test(css),
-    'the call count takes tabular figures, so a column of them lines up and a tick does '
-    + 'not reflow the words beside it');
-  // The session table is NOT the work-stream table's class, and that is a
-  // decision rather than duplication: those rows are a control and these are
-  // not, so sharing the class would promise a click that does not exist.
-  // Asserted over the RENDERED table rather than over source: the work-stream
-  // table has a Harness column of its own, so a source scan for that word
-  // matches the wrong table and reds on correct output (found by writing it
-  // that way first).
+  // v3.65.1 (D4): `.mem-cap-num` went with the table. The figures are monitor
+  // VALUES now, and `shared/monitor.css` gives `.cur-mon-value` the tabular
+  // numerals — one declaration for every live reading in the app instead of one
+  // per table. Asserted against the KIT's stylesheet, because that is where the
+  // property lives and a copy here would be the duplication this release removes.
+  ok(!/\.mem-cap-num/.test(css) && !/\.mem-cap-table/.test(css) && !/\.mem-cap-flag/.test(css),
+    'the deleted table takes its five rules with it — no orphaned selector survives it');
+  ok(/font-variant-numeric:\s*var\(--numeric-tabular\)/.test(
+    stripComments(readFileSync(path.join(ROOT, 'src/public/next/shared/monitor.css'), 'utf8'))),
+  'and the figures still take tabular numerals, from the KIT\'s own rule, so a '
+    + 'column of readings lines up wherever a monitor is drawn');
+  // ── THE TABLE IS DELETED, AND SO IS THE QUESTION IT RAISED (v3.65.1) ──
+  // It used to be asserted that the session table did not borrow the
+  // work-stream table's classes — those rows are a CONTROL (hover, press, a
+  // selected state) and these were readings, so sharing the class would have
+  // promised a click that did not exist. There is no table now, so the
+  // assertion is replaced by the one that keeps the reason true: the reading
+  // paints NO table and NO row that could be mistaken for a control.
   {
     const rendered = makeMeter(stFor({ openFolds: { capture: true } })).renderCaptureMeter();
-    const table = rendered.slice(rendered.indexOf('<table'), rendered.indexOf('</table>'));
-    ok(table.includes('class="mem-cap-table"'),
-      'CONTROL: the session table was really found, under its own class');
-    ok(!/mem-ws-table|mem-ws-row|mem-ws-open/.test(table),
-      'and it does not borrow the work-stream table\'s classes — those rows are a CONTROL '
-      + '(hover, press, a selected state) and these are readings, so the class would promise '
-      + 'a click that does not exist');
+    ok(!/<table|<tr>|mem-ws-table|mem-ws-row|mem-ws-open/.test(rendered),
+      'the reading paints no table and borrows no row class — every figure is a '
+      + 'monitor line, which nothing on this page reads as pressable', rendered.slice(0, 300));
   }
-  ok(/\.mem-cap-wrap\s*\{[^}]*overflow-x:\s*auto/.test(css),
-    'and it scrolls inside its own wrapper rather than overflowing the step at 568px');
 }
 
 // ═════════════════════════════════════════════════════════════════════════

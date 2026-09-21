@@ -439,8 +439,17 @@ section('§6  The Agent-memory pip is GONE, and the dot is what is left');
   ok(css.length > 10000 && /\.mem-fold-summary/.test(css),
     'CONTROL: the file really was read, and still carries this view\'s own rules');
   const viewJs = stripComments(read('views/memory.js'));
-  ok(/fresh-dot fresh-' \+ freshnessTier\(eff\.seconds\)/.test(viewJs),
-    'the save reading wears the SHARED dot, cut on the shared tier function');
+  // RE-POINTED (v3.65.1, D2): the "Last saved" READING is deleted — it said
+  // what the MEMORY overview tile and the Handoffs row's summary already say —
+  // so the dot it wore went with it. What this section protects is that every
+  // age on this page is cut on the SHARED ladder, and the two readings that
+  // still qualify an age in this file are the arrival disclosure and the
+  // capture meter's newest session. Both are pinned by the same expression.
+  ok((viewJs.match(/fresh-dot fresh-' \+ freshnessTier\(/g) || []).length >= 2,
+    'every age this view still marks wears the SHARED dot, cut on the shared tier function',
+    String((viewJs.match(/fresh-dot fresh-' \+ freshnessTier\(/g) || []).length));
+  ok(!/freshnessStep\(/.test(viewJs.replace(/function freshnessStep[\s\S]*?\n\}/, '')),
+    '...and nothing in this view cuts a MARK on its own six-rung ladder any more');
   ok(!/class="mem-save-pip/.test(viewJs) && !/'mem-save-pip/.test(viewJs),
     '...and nothing in the view WRITES the old class either (the name survives '
     + 'only where the file explains the deletion)');
