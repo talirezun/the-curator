@@ -754,7 +754,7 @@ section('§8 — The strip answers the other three questions, and only when true
     collide.slice(0, 900));
   ok('...and naming the remedy, which is the user\'s to apply — in the one '
     + 'field the component emphasises',
-    /<strong>Give each tool its own work-stream\.<\/strong>/.test(collide), collide.slice(0, 1400));
+    /<strong>Give each tool its own handoff\.<\/strong>/.test(collide), collide.slice(0, 1400));
   ok('CONTROL: no sharing, no line',
     !/Two tools are writing/.test(lifted({}).renderSaveStatus(baseRead, baseDetail())));
 

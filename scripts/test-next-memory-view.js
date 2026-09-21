@@ -1778,7 +1778,7 @@ ok('read-side sanitisation is stated, not hidden',
   // THE COUNTS ARE THE STORE'S, NEVER THE ROW COUNT.
   const counts = T.workStreamCounts({ savedCopies: 9, distinctScopeCount: 4, scopesTruncated: true }, 3);
   ok('the count line reports the store\'s uncapped totals, not the rows shown',
-    counts.includes('4 work-streams') && counts.includes('9 saved copies'), counts);
+    counts.includes('4 handoffs') && counts.includes('9 saved copies'), counts);
   ok('...and says so when the list was capped', counts.includes('showing the 3 most recently saved'), counts);
   ok('an empty list renders no table at all', T.renderWorkStreams([], null) === '');
 }
@@ -2004,7 +2004,7 @@ ok('read-side sanitisation is stated, not hidden',
   // ── THE COUNT LINE KEEPS THE STORE'S TOTALS AND ADDS THE WINDOW ─────────
   const counts = T.workStreamCounts({ savedCopies: 8, distinctScopeCount: 8 }, 8, 5);
   ok('the count line still reports the store\'s uncapped totals',
-    counts.includes('8 work-streams') && counts.includes('8 saved copies'), counts);
+    counts.includes('8 handoffs') && counts.includes('8 saved copies'), counts);
   ok('...and says how much of them is on screen',
     counts.includes('showing 5 of 8'), counts);
   ok('...and says nothing about a window when everything is shown',
@@ -3902,7 +3902,7 @@ section('§14 — The Reload OFFER is painted, and reaches every content branch'
       classAt(out, 'mem-overview') + ' vs ' + classAt(out, 'mem-stale'));
     ok('...and it always carries the WORKING STATE cell, which is the one that '
       + 'answers the question the deleted block existed for',
-    /WORKING STATE/.test(out), out.slice(0, 200));
+    /MEMORY/.test(out), out.slice(0, 200));
   }
   // AND THE PAIR-LEVEL READING IS STILL THERE WHERE THERE IS A PAIR. The strip
   // is the project's answer; `.mem-save` carries the open pair's, with its
@@ -5079,7 +5079,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
     /<p>You write the brief; agents write handoffs and the journal\.<\/p>/
       .test(panelOf('context-state')));
   ok('step ③\'s sentence is the first paragraph of its own ⓘ',
-    /<p>The wikis this project draws on\./.test(panelOf('context-knowledge')));
+    /<p>The domains this project draws on\./.test(panelOf('context-knowledge')));
   // THE "Start here." PREFIX STILL DROPS. It is the Providers block-1 rule and
   // it moved into the panel with the sentence rather than being lost with the
   // lede: this fixture has no foundations, the next one has one document.
@@ -5638,7 +5638,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     c.slug === 'state/lumina/main/boxa/current.md', c.slug);
   ok('...and the machine and work-stream are chips as well, so they are readable '
     + 'rather than parsed out of a path',
-    c.tags.includes('work-stream: main') && c.tags.includes('machine: boxa'),
+    c.tags.includes('handoff: main') && c.tags.includes('machine: boxa'),
     JSON.stringify(c.tags));
   ok('THE TITLE is the agent\'s own headline, promoted out of the preamble',
     c.title === 'Headline', c.title);
@@ -6534,12 +6534,12 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   ok('the headline the agent wrote LEADS the work-stream fold\'s summary',
     /class="mem-fold-meta">Rewriting the memory view ·/.test(foldHtml), foldHtml.slice(0, 500));
   ok('...and the two counts follow it, so one closed line decides whether to open',
-    /Rewriting the memory view · 1 work-stream · 1 saved copy</.test(foldHtml), foldHtml.slice(0, 500));
+    /Rewriting the memory view · 1 handoff · 1 saved copy</.test(foldHtml), foldHtml.slice(0, 500));
 
   // AND THE AGE IS THE STRIP'S, with the shared dot and a LIVE hook.
   const stripHtml = mkHead({}).renderLayerStrip(headRead);
-  ok('the strip carries the newest save\'s age under WORKING STATE',
-    /WORKING STATE<\/div><div class="cur-ov-value[^"]*">[\s\S]*?saved 2 min ago</.test(stripHtml),
+  ok('the strip carries the newest save\'s age under MEMORY',
+    /MEMORY<\/div><div class="cur-ov-value[^"]*">[\s\S]*?saved 2 min ago</.test(stripHtml),
     stripHtml.slice(0, 600));
   ok('...with the shared freshness dot inside the value, on the same step the '
     + 'work-stream rows are cut on', /fresh-dot fresh-recent/.test(stripHtml), stripHtml.slice(0, 600));
@@ -6561,7 +6561,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   const noHead = mkHead({}).renderWorkStreamsFold(
     { scopes: [{ scope: 'main', writtenAgeSeconds: 60 }], savedCopies: 1, distinctScopeCount: 1 }, null);
   ok('CONTROL: with no headline at all the clause is omitted, not filled with a '
-    + 'placeholder', /class="mem-fold-meta">1 work-stream ·/.test(noHead), noHead.slice(0, 400));
+    + 'placeholder', /class="mem-fold-meta">1 handoff ·/.test(noHead), noHead.slice(0, 400));
 
   // ── ...AND IN THE RAIL ────────────────────────────────────────────────
   const rail = makeRenderers({}).renderProjectGroups(
@@ -8048,7 +8048,7 @@ const fndRead = (payload) => ({
   // were one cell before and are two lines now; what this helper has always
   // returned is WHAT THE CARD SAYS.
   const cellOf = (html) => {
-    const i = html.indexOf('>FOUNDATIONS<');
+    const i = html.indexOf('>DOCUMENTS<');
     if (i === -1) return null;
     const j = html.indexOf('<div class="cur-ov-value', i);
     if (j === -1) return null;
@@ -8057,7 +8057,7 @@ const fndRead = (payload) => ({
       .replace(/<\/div>/g, ' \u00b7 ').replace(/<[^>]*>/g, ' ')
       .replace(/\s+/g, ' ').replace(/ \u00b7 $/, '').trim();
   };
-  ok('a project that has never had a foundation SAYS SO, rather than going silent '
+  ok('a project that has never had a document SAYS SO, rather than going silent '
     + '— the strip is three readings, and a missing one is a fourth thing to '
     + 'wonder about', /not set up yet/.test(String(cellOf(F.renderLayerStrip({ scopes: [] })))),
   String(cellOf(F.renderLayerStrip({ scopes: [] }))));
@@ -8065,7 +8065,7 @@ const fndRead = (payload) => ({
     + 'different state', /no documents yet/.test(String(cellOf(F.renderLayerStrip(fndRead(fndPayload([])))))));
   const line = F.renderLayerStrip(fndRead(fndPayload([fndDoc(), fndDoc({ slug: 'b.md' })])));
   ok('with documents it reads on the same instrument every other figure on this '
-    + 'page uses', line.includes('cur-ov-card') && line.includes('>FOUNDATIONS<'), line.slice(0, 300));
+    + 'page uses', line.includes('cur-ov-card') && line.includes('>DOCUMENTS<'), line.slice(0, 300));
   ok('...and quotes the same word the fold\'s summary does',
     String(cellOf(line)).includes('2 documents · fresh'), String(cellOf(line)));
   ok('...with the shared freshness dot INSIDE the value, which the deleted line '
@@ -8089,9 +8089,9 @@ const fndRead = (payload) => ({
     projectRead: fndRead(fndPayload([fndDoc()])), detail: null, detailLoading: false,
   }).renderProject();
   ok('the reading really lands on the page, above step ①',
-    page.indexOf('>FOUNDATIONS<') > page.indexOf('mem-project-head')
-    && page.indexOf('>FOUNDATIONS<') < page.indexOf('settings-block-context-canonical'),
-    String(page.indexOf('>FOUNDATIONS<')));
+    page.indexOf('>DOCUMENTS<') > page.indexOf('mem-project-head')
+    && page.indexOf('>DOCUMENTS<') < page.indexOf('settings-block-context-canonical'),
+    String(page.indexOf('>DOCUMENTS<')));
   ok('...and the deleted renderer is gone from live source, not merely unused',
     !/function renderFoundationsStatus/.test(viewSrc));
 }
@@ -8493,11 +8493,11 @@ const fndRead = (payload) => ({
   // shipped cap, so a sentence that hard-codes 12 reds here — which is what a
   // fixture using the real cap could not do, and did not (green first).
   ok('the CAP is named with the store\'s own number, not a copy typed here',
-    (await refusal(400, { error: 'too_many_domains', cap: 9 })) === 'A project can draw on at most 9 wikis.',
+    (await refusal(400, { error: 'too_many_domains', cap: 9 })) === 'A project can draw on at most 9 domains.',
     await refusal(400, { error: 'too_many_domains', cap: 9 }));
   ok('...and a route that sent no cap at all falls back to the shipped one '
     + 'rather than printing "undefined"',
-  (await refusal(400, { error: 'too_many_domains' })) === 'A project can draw on at most 12 wikis.',
+  (await refusal(400, { error: 'too_many_domains' })) === 'A project can draw on at most 12 domains.',
   await refusal(400, { error: 'too_many_domains' }));
   ok('an unknown domain is NAMED, because the user has to know which one',
     /Not a domain on this computer: ghost\./.test(
@@ -8720,11 +8720,11 @@ const fndRead = (payload) => ({
     projectRead: fndRead(fndPayload([fndDoc()])),
   };
   const page = makeRenderers(st).renderProject();
-  ok('step ① is titled FOUNDATIONS',
-    /<h2 class="settings-job-title">Foundations<\/h2>/.test(page), page.slice(0, 400));
+  ok('step ① is titled Documents',
+    /<h2 class="settings-job-title">Documents<\/h2>/.test(page), page.slice(0, 400));
   ok('...and the strip\'s cell ① carries the same word, so the reading and the '
     + 'step it summarises cannot be read as two things',
-  /cur-eyebrow">FOUNDATIONS</.test(page), page.slice(0, 600));
+  /cur-eyebrow">DOCUMENTS</.test(page), page.slice(0, 600));
   // THE ADJECTIVE SURVIVES, IN THE ⓘ AND NOWHERE ELSE. Checked over the
   // PANELS' own contents rather than by offset, the same way §18i checks the
   // never-fold rule: renderBlock emits the fold before the body.
@@ -8738,7 +8738,7 @@ const fndRead = (payload) => ({
   (outside.match(/.{0,60}canonical document.{0,60}/i) || [''])[0]);
   // And the skeleton says it too, or the chrome moves between the two paints.
   ok('the skeleton titles step ① the same way',
-    /<h2 class="settings-job-title">Foundations<\/h2>/.test(makeRenderers(st).renderProjectSkeleton()));
+    /<h2 class="settings-job-title">Documents<\/h2>/.test(makeRenderers(st).renderProjectSkeleton()));
 }
 
 // ── §21f5 — THE STRIP: three readings, and an unknown one says so ───────
@@ -8802,7 +8802,7 @@ const fndRead = (payload) => ({
   ok('two chosen wikis read as ONE total, because that is what the project draws on',
     /15 pages/.test(twoWikis), twoWikis.slice(twoWikis.indexOf('KNOWLEDGE'), twoWikis.indexOf('KNOWLEDGE') + 300));
   ok('...with the NEWEST write across the set, not the first one to land',
-    /2 wikis/.test(twoWikis) && !/2026-09-10/.test(twoWikis),
+    /2 domains/.test(twoWikis) && !/2026-09-10/.test(twoWikis),
     twoWikis.slice(twoWikis.indexOf('KNOWLEDGE'), twoWikis.indexOf('KNOWLEDGE') + 300));
 
   // ── THE TRACK FLOOR, AND THE ONE FIGURE RUNG (v3.65.0, R8) ──────────
@@ -8858,10 +8858,10 @@ const fndRead = (payload) => ({
   // ── CELL ① WHILE THE READ IS IN FLIGHT ──────────────────────────────
   ok('with no project read the FOUNDATIONS cell is omitted — "not set up yet" '
     + 'is a claim that frame cannot make',
-  !/FOUNDATIONS/.test(F({}).renderLayerStrip(null)));
-  ok('...but the WORKING STATE cell still paints, from the index row the page '
+  !/DOCUMENTS/.test(F({}).renderLayerStrip(null)));
+  ok('...but the MEMORY cell still paints, from the index row the page '
     + 'is already holding',
-  /WORKING STATE/.test(F({ projects: [{ domain: 'acme', project: 'lumina',
+  /MEMORY/.test(F({ projects: [{ domain: 'acme', project: 'lumina',
     writtenAgeSeconds: 300 }] }).renderLayerStrip(null)));
 }
 
@@ -9287,7 +9287,7 @@ const fndRead = (payload) => ({
   ok('both renderers really emitted step ①', !!a && !!b, JSON.stringify([a, b]));
   eq('the skeleton\'s head row is byte-identical to the real one', b, a);
   ok('...and it is the numeral and the Title-case title, in that order',
-    /class="settings-block-num"[^>]*>1<[\s\S]*<h2 class="settings-job-title">Foundations<\/h2>/
+    /class="settings-block-num"[^>]*>1<[\s\S]*<h2 class="settings-job-title">Documents<\/h2>/
       .test(String(a)), String(a));
   // THE FILLED PAGE OFFERS THE MARK; the skeleton does not. Asserted in both
   // directions so "identical" cannot be satisfied by neither having one.

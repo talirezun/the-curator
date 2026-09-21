@@ -1506,7 +1506,7 @@ section('§8 — THE READER SAYS WHY, PER OWNERSHIP');
       source: { kind: 'curator' } }, 'lumina');
     eq('a payload in the ROUTE\'s real shape — source.kind and no ownership field — '
       + 'says where it IS edited, not that it is mirrored',
-    asRouteSends.readonlyNote, 'Edit this in the Foundations table behind this panel.');
+    asRouteSends.readonlyNote, 'Edit this in the Documents table behind this panel.');
     ok('...and its ownership chip agrees',
       asRouteSends.tags.includes('Curator-authored')
       && !asRouteSends.tags.includes('mirrored from a folder'),
@@ -1523,7 +1523,7 @@ section('§8 — THE READER SAYS WHY, PER OWNERSHIP');
     text: '# A', ownership: 'curator', freshness: 'n/a',
     source: { kind: 'curator', path: null } }, 'lumina');
   eq('a CURATOR-owned one points at the table it came from', cur.readonlyNote,
-    'Edit this in the Foundations table behind this panel.');
+    'Edit this in the Documents table behind this panel.');
   ok('neither of them mentions Shared Brain, which is a different feature',
     !/Shared Brain/.test(String(repo.readonlyNote)) && !/Shared Brain/.test(String(cur.readonlyNote)));
 

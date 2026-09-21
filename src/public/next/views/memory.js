@@ -3353,12 +3353,12 @@ function renderNoProjects() {
   // server-supplied INTEGER, which is why `n` is checked with Number.isInteger
   // before it is used and rendered as a count rather than interpolated raw.
   const body = noDomains
-    ? 'Project context is kept per domain, under <code>state/</code> beside that domain’s wiki. ' +
+    ? 'Project context is kept per domain, under <code>state/</code> beside that domain’s knowledge. ' +
       'Create a domain first, then point an agent at it — the brief appears here the moment one saves.'
     : (Number.isInteger(n) && n > 0
         ? 'Nothing has been saved in ' + (n === 1 ? 'your domain' : 'any of your ' + n + ' domains') + ' yet. '
         : 'Nothing has been saved yet. ') +
-      'Project context lives under <code>state/</code> beside a domain’s wiki, and a project appears here ' +
+      'Project context lives under <code>state/</code> beside a domain’s knowledge, and a project appears here ' +
       'the moment an agent saves a handoff or you write it a standing brief in Domains → Projects.';
   // ── WHO THIS IS FOR, SAID ON THE SCREEN WHERE THE QUESTION IS ASKED ───
   // v3.64.0, §5.2. The rail cannot carry prose — its captions are one word
@@ -3696,12 +3696,12 @@ function renderLayerStrip(read) {
           : facts.fresh ? 'recent' : null;
     }
     cards.push({
-      label: 'FOUNDATIONS',
+      label: 'DOCUMENTS',
       value,
       sub,
       markHtml: tier ? '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' : '',
       jump: 'context-canonical',
-      name: 'Foundations, ' + value + ' — go to step 1',
+      name: 'Documents, ' + value + ' — go to step 1',
     });
   }
 
@@ -3717,7 +3717,7 @@ function renderLayerStrip(read) {
   const savedAge = formatAge(savedEff.seconds);
   const savedValue = savedAge ? 'saved ' + savedAge : 'nothing saved yet';
   cards.push({
-    label: 'WORKING STATE',
+    label: 'MEMORY',
     value: savedValue,
     // WHICH work-stream that save belongs to. A save age with no work-stream
     // beside it is the reading the work-stream fold had to be opened to
@@ -3726,7 +3726,7 @@ function renderLayerStrip(read) {
     markHtml: '<span class="fresh-dot fresh-'
       + (savedAge ? freshnessTier(savedEff.seconds) : 'unknown') + '" aria-hidden="true"></span>',
     jump: 'context-state',
-    name: 'Working state, ' + savedValue + ' — go to step 2',
+    name: 'Memory, ' + savedValue + ' — go to step 2',
   });
 
   // ── CARD ③ — KNOWLEDGE ────────────────────────────────────────────────
@@ -3769,7 +3769,7 @@ function renderLayerStrip(read) {
       // ONE WIKI IS NAMED; SEVERAL ARE COUNTED. A figure with no owner beside
       // it reads as the project's own, and the owner may now be several.
       sub: [day || 'nothing ingested yet',
-        kread.length === 1 ? (kchosen[0] || null) : kread.length + ' wikis']
+        kread.length === 1 ? (kchosen[0] || null) : kread.length + ' domains']
         .filter(Boolean).join(' · '),
       // The CALENDAR-DAY ladder, because `lastIngestDate` is a `YYYY-MM-DD`
       // heading with no time of day in it. A null date resolves to the dashed
@@ -3855,8 +3855,9 @@ function renderLayerStrip(read) {
     minTrack: 253,
     infoLabel: 'About the readings on this page',
     infoText:
-      '<p>These three are the project’s three layers of context, and pressing one goes to the '
-      + 'step that owns it. They are READINGS, not a filter — nothing on this page narrows when '
+      '<p>The first three are the project’s three layers of context, and pressing one goes to the '
+      + 'step that owns it; CAPTURE reads whether agents are using them. They are READINGS, not a '
+      + 'filter — nothing on this page narrows when '
       + 'you press one, unlike the figures on a domain page, which also select what the list '
       + 'below them shows.</p>'
       + '<p>There are TWO clocks behind every age on this page. The <b>agent’s clock</b> is the time the '
@@ -3865,9 +3866,8 @@ function renderLayerStrip(read) {
       + 'ARRIVED here, not when it was written. The agent’s clock is used whenever there is one, and a '
       + 'reading that had to fall back says “file time” in its own provenance line, in words, rather '
       + 'than in a tooltip.</p>'
-      + '<p>“Last saved” is exactly that. It knows when the last save happened, not whether anything has '
-      + 'changed since — no screen can know that — so it never says you are saved, and the inference stays '
-      + 'with you.</p>'
+      + '<p>MEMORY reads when the last save happened, not whether anything has changed since — no '
+      + 'screen can know that — so it never says you ARE saved, and the inference stays with you.</p>'
       + '<p>Each mark is a COMPARISON that was actually made. Documents kept by The Curator have no '
       + 'upstream to compare against and carry no mark at all; a reading nobody could take is the dashed '
       + 'ring and the words beside it, never a zero.</p>'
@@ -3935,14 +3935,14 @@ function renderWorkStreamsFold(read, d) {
   const pairs = read && Number.isInteger(read.savedCopies) ? read.savedCopies : scopes.length;
   const meta = [
     headline || null,
-    streams === null ? null : streams + ' work-stream' + (streams === 1 ? '' : 's'),
+    streams === null ? null : streams + ' handoff' + (streams === 1 ? '' : 's'),
     pairs + ' saved cop' + (pairs === 1 ? 'y' : 'ies'),
   ].filter(Boolean).join(' · ');
   const open = (state.openFolds && state.openFolds.streams) ? ' open' : '';
   return (
     '<details class="mem-fold" data-mem-fold="streams"' + open + '>'
       + '<summary class="mem-fold-summary" id="mem-fold-streams">' + icon('chevronRight', 14)
-        + '<span>Work-streams</span>'
+        + '<span>Handoffs</span>'
         + '<span class="mem-fold-meta">' + escapeHtml(meta) + '</span>'
       + '</summary>'
       + '<div class="mem-fold-body">'
@@ -4016,10 +4016,10 @@ function renderKnowledge() {
   // rather than the choice, and saying nothing would present one as the other.
   const err = read && typeof read.knowledgeDomainsError === 'string' && read.knowledgeDomainsError
     ? renderStatus({ state: 'attention',
-      title: 'This project’s chosen wikis could not be read',
+      title: 'This project’s chosen domains could not be read',
       detail: read.knowledgeDomainsError + ' Showing the domain this project lives in instead.' })
     : '';
-  return err + (rows || renderDescription('No wiki is chosen for this project yet.'))
+  return err + (rows || renderDescription('No domain is chosen for this project yet.'))
     + renderKnowledgePicker(domains, defaulted);
 }
 
@@ -4097,7 +4097,7 @@ function renderKnowledgeRow(domain) {
   // Same five figures, same vocabulary the Domains screen's own tiles use, in
   // the one instrument every live reading in the app now takes.
   const figures = renderMonitor({
-    label: 'The ' + domain + ' wiki',
+    label: 'The ' + domain + ' domain',
     lines: [
       { key: 'pages', value: num(d.pageCount) },
       { key: 'entities', value: num(counts.entities) },
@@ -4157,7 +4157,7 @@ function renderKnowledgePicker(chosen, defaulted) {
   const all = Array.isArray(state.domainList) ? state.domainList : null;
   const busy = state.knowledgeSaving === true;
   const err = state.knowledgeSaveError
-    ? renderStatus({ state: 'danger', title: 'That wiki was not added', detail: state.knowledgeSaveError })
+    ? renderStatus({ state: 'danger', title: 'That domain was not added', detail: state.knowledgeSaveError })
     : '';
   if (!all) {
     return err + renderDescription(
@@ -4183,8 +4183,9 @@ function renderKnowledgePicker(chosen, defaulted) {
     + '</div>'
     + note
     + (defaulted && chosen.length
-      ? renderDescription('No wiki has been chosen yet, so this project draws on the domain it '
-        + 'lives in. Choosing one replaces that default.')
+      ? renderDescription('Nothing has been chosen yet, so this project draws on the domain it '
+        + 'lives in. Adding a domain keeps it and adds to it; removing the last one puts the '
+        + 'default back.')
       : '');
 }
 
@@ -4195,8 +4196,8 @@ function knowledgePickerCfg(options, busy) {
   return {
     id: 'mem-k-add',
     value: null,
-    placeholder: '+ Add a wiki',
-    ariaLabel: 'Add a wiki this project draws on',
+    placeholder: '+ Add a domain',
+    ariaLabel: 'Add a domain this project draws on',
     disabled: busy === true,
     triggerClass: 'btn btn-secondary btn-xs',
     options: options.map((d) => ({ value: d, label: d })),
@@ -4375,7 +4376,7 @@ async function saveKnowledgeDomains(next, token) {
     } else {
       const code = data && data.error ? String(data.error) : 'HTTP ' + res.status;
       error = code === 'too_many_domains'
-        ? 'A project can draw on at most ' + (data.cap || 12) + ' wikis.'
+        ? 'A project can draw on at most ' + (data.cap || 12) + ' domains.'
         : code === 'unknown_domain'
           ? 'Not a domain on this computer: '
             + (Array.isArray(data.domains) ? data.domains.join(', ') : 'unknown') + '.'
@@ -4509,7 +4510,7 @@ function renderCaptureMeter() {
     + 'agent connects to the moment its window closes. It is identified by a random id the bridge '
     + 'mints for itself, so two sessions are never merged and one session is never split in two.</p>'
     + '<p>A session <b>started with the context</b> when it asked for this project’s brief, '
-    + 'handoff or foundations before it saved anything — at any point before that first save, not '
+    + 'handoff or documents before it saved anything — at any point before that first save, not '
     + 'necessarily as its first call. It <b>saved before stopping</b> when a save succeeded; a '
     + 'refused save is not a save.</p>'
     + '<p><b>What this cannot see.</b> Only calls that came through the bridge are here. A save '
@@ -4923,14 +4924,14 @@ function renderProject() {
   const canonicalBlock = memStep({
     num: 1,
     id: 'context-canonical',
-    title: 'Foundations',
+    title: 'Documents',
     infoText:
       // THE LEDE, MOVED (R4). It was the sentence under the title; it is the
       // first thing behind the mark now, and it keeps the "Start here."
       // prefix that drops the moment one document exists.
       '<p>' + (fndFacts.count ? '' : '<b>Start here.</b> ')
       + 'Add the documents an agent must not act without.</p>'
-      + '<p>A <b>foundation</b> is a canonical document this project carries VERBATIM — the '
+      + '<p>These are <b>canonical documents</b> — this project carries each one VERBATIM: the '
       + 'architecture, the decisions, the conventions, the roadmap. Not a summary of one: the '
       + 'bytes, so an agent reads what you would read. Each one is <b>replaced whole</b> on every '
       + 'write and never merged, which is what makes it quotable.</p>'
@@ -5014,7 +5015,7 @@ function renderProject() {
   const stateBlock = memStep({
     num: 2,
     id: 'context-state',
-    title: 'Working state',
+    title: 'Memory',
     infoText:
       // THE LEDE, MOVED (R4).
       '<p>You write the brief; agents write handoffs and the journal.</p>'
@@ -5028,20 +5029,19 @@ function renderProject() {
       + 'part that <b>rarely changes</b>: the goal, the firm decisions not to re-litigate, the '
       + 'working model, and pointers to where the depth lives — so an OLD brief is not a stale one, '
       + 'which is why it carries a date and deliberately no freshness mark.</p>'
-      + '<p>Agents own the rest. A <b>work-stream</b> is one thread of work — the files call it a '
-      + '<i>scope</i>, and the slug is still shown as one — and parallel threads get their own, so '
-      + 'they never overwrite each other. Press a row to read that work-stream’s <b>handoff</b>, '
-      + 'what the last session left for the next one. Each machine writes to its OWN folder inside '
-      + 'a work-stream, which is what makes two computers safe over sync: no two of them ever touch '
-      + 'one file. So one work-stream can appear as several rows — one saved copy per machine — and '
-      + 'the count under the table says both numbers.</p>'
-      + '<p>Two rows sharing a work-stream AND a machine cannot happen; two <b>harnesses</b> on one '
+      + '<p>Agents own the rest. A <b>handoff</b> is what the last session left for the next one, one '
+      + 'per thread of work — the files call that thread a <i>scope</i>, and the slug is still shown '
+      + 'as one — and parallel threads get their own, so they never overwrite each other. Press a row '
+      + 'to read it. Each machine writes to its OWN folder, which is what makes two computers safe '
+      + 'over sync: no two of them ever touch one file. So one thread can appear as several rows — '
+      + 'one saved copy per machine — and the count under the table says both numbers.</p>'
+      + '<p>Two rows sharing a thread AND a machine cannot happen; two <b>harnesses</b> on one '
       + 'machine can, and they overwrite each other, because the folder has no harness segment. '
-      + 'This step says so above the heading when the journal shows it, and the remedy is to give '
-      + 'each tool its own work-stream.</p>'
+      + 'This step says so when the journal shows it, and the remedy is to give each tool its own '
+      + 'handoff.</p>'
       + '<p>The <b>journal</b> is append-only and it accumulates, so any entry MAY SINCE HAVE BEEN '
       + 'SUPERSEDED — a blocker named in an old headline can have been fixed three saves ago. It '
-      + 'survives what a handoff cannot: two agent tools writing one work-stream overwrite each '
+      + 'survives what a handoff cannot: two agent tools writing one thread overwrite each '
       + 'other’s handoff, and both trails are still here.</p>'
       + '<p>' + docsLinkHtml('memory.standing-brief', 'The standing brief') + ' · '
       + docsLinkHtml('memory.handoff', 'Handoffs') + ' · '
@@ -5087,13 +5087,13 @@ function renderProject() {
     title: 'Knowledge',
     infoText:
       // THE LEDE, MOVED (R4).
-      '<p>The wikis this project draws on. Open one in Domains, or ask it in Chat.</p>'
-      + '<p>The wiki <b>accumulates</b>. A new source deepens the pages that are already there '
+      '<p>The domains this project draws on. Open one in Domains, or ask it in Chat.</p>'
+      + '<p>A domain <b>accumulates</b>. A new source deepens the pages that are already there '
       + 'rather than adding a copy beside them — which is the difference between this layer and the '
-      + 'two above it, where a save replaces what was there and a foundation is carried word for '
+      + 'two above it, where a save replaces what was there and a document is carried word for '
       + 'word.</p>'
       + '<p>Ingest and chat write it; nothing on this page does. It belongs to the <b>domain</b> '
-      + 'rather than to this project, so every project in this domain draws on the same wiki and '
+      + 'rather than to this project, so every project in this domain draws on the same pages and '
       + 'these figures move when you ingest, not when an agent saves.</p>'
       + '<p>The counts are taken by walking the folder rather than by reading any page, and no '
       + 'model is called to draw them — opening this screen costs nothing.</p>',
@@ -5174,12 +5174,12 @@ function renderProjectSkeleton() {
   return (
     renderLayerStrip(null) +
     memStep({
-      num: 1, id: 'context-canonical', title: 'Foundations',
+      num: 1, id: 'context-canonical', title: 'Documents',
       bodyHtml: '<div class="mem-ghost-wrap" aria-busy="true">'
         + '<div class="mem-ghost mem-ghost-line"></div></div>',
     }) +
     memStep({
-      num: 2, id: 'context-state', title: 'Working state',
+      num: 2, id: 'context-state', title: 'Memory',
       bodyHtml: '<div class="mem-state-stack">'
         + '<div class="mem-ghost-wrap" aria-busy="true">' + rows + '</div>'
         // ONLY WHEN THE INDEX SAYS THERE IS ONE. Reserving space for a standing
@@ -5479,7 +5479,7 @@ function renderSaveStatus(read, d) {
       // It came off disk and it used to be interpolated into a `<b><span>`
       // by hand here; the monitor escapes both fields and emphasises this
       // one, so the emphasis survives and the hand-built markup does not.
-      strongText: 'Give each tool its own work-stream.',
+      strongText: 'Give each tool its own handoff.',
       text: 'Two tools are writing ' + s.scope + '. '
         + (who ? who + ' have ' : 'They have ')
         + 'both saved into the same handoff file, and a save overwrites — so each one has replaced '
@@ -5725,7 +5725,7 @@ function renderBriefOnlyNotice(read, unlisted) {
       renderDescription(msg +
         (unlisted ? '' :
           ' The brief below is what every agent read returns. A handoff appears here the first time ' +
-          'an agent saves its working state at the end of a session.')) +
+          'an agent saves a handoff at the end of a session.')) +
     '</div>'
   );
 }
@@ -5765,7 +5765,7 @@ function renderEmptyProject(unlistedEntries) {
       // than relying on the component: opting into raw HTML moves that duty to
       // the caller and this is the one interpolated value in the sentence.
       renderDescription('No agent has written a handoff here. Ask an agent connected through ' +
-        '<span class="mono">my-curator</span> to save its working state for ' +
+        '<span class="mono">my-curator</span> to save a handoff for ' +
         '<span class="mem-name">' + escapeHtml(state.activeProject) +
         '</span> at the end of a session, and it will show up here.', { html: true }) +
     '</div>'
@@ -5948,7 +5948,7 @@ function renderWorkStreams(scopes, open, windowSize = WS_WINDOW) {
     '<div class="mem-ws-wrap">' +
       '<table class="mem-ws-table">' +
         '<thead><tr>' +
-          '<th scope="col">Work-stream</th>' +
+          '<th scope="col">Handoff</th>' +
           '<th scope="col">Working on</th>' +
           '<th scope="col">Last saved</th>' +
           '<th scope="col">Machine</th>' +
@@ -6040,7 +6040,7 @@ function workStreamCounts(read, listed, painted) {
   const pairs = typeof read.savedCopies === 'number' ? read.savedCopies : listed;
   const streams = typeof read.distinctScopeCount === 'number' ? read.distinctScopeCount : null;
   const parts = [];
-  if (streams !== null) parts.push(streams + ' work-stream' + (streams === 1 ? '' : 's'));
+  if (streams !== null) parts.push(streams + ' handoff' + (streams === 1 ? '' : 's'));
   parts.push(pairs + ' saved cop' + (pairs === 1 ? 'y' : 'ies'));
   const truncated = read.scopesTruncated
     ? ' · showing the ' + listed + ' most recently saved'
@@ -6240,7 +6240,7 @@ function handoffReaderContent() {
   const bodyHtml = present
     ? meta + noteHtml + '<div class="mem-reader-doc">' + renderMarkdown(split.body) + '</div>'
     : meta + noteHtml + renderDescription(d.message
-      || 'Nothing has been saved under this work-stream on this machine yet.');
+      || 'Nothing has been saved under this handoff on this machine yet.');
 
   return {
     slug,
@@ -6250,7 +6250,7 @@ function handoffReaderContent() {
     type: 'memory',
     typeLabel: 'handoff',
     tags: [
-      scope ? 'work-stream: ' + scope : null,
+      scope ? 'handoff: ' + scope : null,
       machine ? 'machine: ' + machine : null,
       d.machineIsThisMachine === true ? 'this machine' : null,
       d.machineIsThisMachine === false ? 'synced from another machine' : null,
@@ -6384,7 +6384,7 @@ function renderBriefEditor(read, readonly) {
       icon('alertTriangle', 13) +
       '<span><b>Too long to save.</b> The standing brief is capped at ' +
       escapeHtml(String(BRIEF_MAX_BYTES)) + ' bytes — the count above is this draft. ' +
-      'Shorten it, or move the detail into a wiki page and point at it from here.</span></div>';
+      'Shorten it, or move the detail into a page in your domain and point at it from here.</span></div>';
 
   // THE UNSAVED-DRAFT BAR. Raised by Escape (see briefDismissDecision), never
   // by a timer and never by the poll, and it is INLINE rather than a modal so
@@ -7376,13 +7376,13 @@ function foundationsNotices(read) {
   let notes = '';
   if (facts.manifestError) {
     notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
-      '<span>This project’s foundations manifest could not be read, so nothing below it can be ' +
+      '<span>This project’s documents manifest could not be read, so nothing below it can be ' +
       'trusted: ' + escapeHtml(String(facts.manifestError)) + '</span></div>';
   }
   if (facts.orphanFiles.length) {
     notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
       '<span>' + escapeHtml(facts.orphanFiles.length + ' file' +
-        (facts.orphanFiles.length === 1 ? ' is' : 's are') + ' in the foundations folder with no ' +
+        (facts.orphanFiles.length === 1 ? ' is' : 's are') + ' in the documents folder with no ' +
         'manifest entry (' + facts.orphanFiles.slice(0, 3).join(', ') + '). ' +
         'The manifest is written last, so a save that was interrupted leaves the document behind ' +
         'rather than an entry pointing at nothing.') + '</span></div>';
@@ -8349,7 +8349,7 @@ function foundationReaderContent(doc, project) {
     // what `readonly` says — but "not here, and there instead" is the half a
     // person actually needs.
     readonlyNote: curatorOwned
-      ? 'Edit this in the Foundations table behind this panel.'
+      ? 'Edit this in the Documents table behind this panel.'
       : 'Mirrored from the folder — edit it there, then refresh.',
     bodyHtml: meta + noteHtml + '<div class="mem-reader-doc">' +
       renderMarkdown(typeof doc.text === 'string' ? doc.text : '') + '</div>',
@@ -9346,7 +9346,7 @@ function renderJournal() {
     return (
       '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
         '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
-          '<span>Recent saves</span><span class="mem-fold-meta">empty</span></summary>' +
+          '<span>Journal</span><span class="mem-fold-meta">empty</span></summary>' +
         '<div class="mem-fold-body">' +
           renderDescription('No saves recorded under this scope and machine yet.') +
         '</div>' +
@@ -9504,7 +9504,7 @@ function renderJournal() {
   return (
     '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
       '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
-        '<span>Recent saves</span>' +
+        '<span>Journal</span>' +
         '<span class="mem-fold-meta"' +
           (latest && latestAge ? ' data-mem-age-at="' + escapeHtml(latest) + '"' : '') + '>' +
           journalMeta + '</span></summary>' +
@@ -9560,9 +9560,9 @@ function renderJournal() {
  */
 function aboutInfoHtml() {
   return (
-    '<p>A <b>domain</b> is where your knowledge lives — one compounding wiki. A <b>project</b> is a ' +
-    'thing you build inside it, and a domain can hold several. Project context is kept per project, in ' +
-    '<span class="mono">state/</span> beside that domain’s wiki, and synced with it.</p>' +
+    '<p>A <b>domain</b> is where your knowledge lives — one compounding set of pages. A <b>project</b> ' +
+    'is a thing you build inside it, and a domain can hold several. Project context is kept per project, ' +
+    'in <span class="mono">state/</span> beside that domain’s pages, and synced with it.</p>' +
     // ── THE RAIL'S OWN SENTENCE, MOVED HERE (v3.65.0, R2) ─────────────
     // The sidebar had a second ⓘ carrying this line, and the maintainer
     // asked for it to go: *"we have an information icon in the Project
@@ -9580,14 +9580,14 @@ function aboutInfoHtml() {
       'model. One per project, returned on every agent read. <b>You write this one</b>, here or in a text ' +
       'editor; saving replaces the whole document.</li>' +
       '<li><b>Current handoff</b> — where things stand right now: what an agent leaves for the next ' +
-      'session, so it starts knowing what you already settled. One per <b>work-stream</b> per machine ' +
-      '(the files call a work-stream a <i>scope</i>), so parallel threads never overwrite each other. ' +
+      'session, so it starts knowing what you already settled. One per thread of work per machine ' +
+      '(the files call that thread a <i>scope</i>), so parallel threads never overwrite each other. ' +
       'Overwritten on every save, so it never grows stale behind you.</li>' +
       '<li><b>Session journal</b> — one line per save: when, which harness, which model, and the headline. ' +
       'It is history and it accumulates, so an old entry can describe something already resolved.</li>' +
     '</ul>' +
     '<p>Each machine writes to its own folder, so two machines can never overwrite each ' +
-    'other over sync. Reading a work-stream with no machine named gives you the most recently written one, ' +
+    'other over sync. Reading a handoff with no machine named gives you the most recently written one, ' +
     'whichever machine that was.</p>' +
     '<p>Your agents write the handoff and the journal through the ' +
     '<span class="mono">my-curator</span> MCP tools, and this screen never does — a handoff is worth ' +
@@ -9727,7 +9727,7 @@ async function openWorkStream(scope, machine, token) {
   if (content) openReader(content, token);
   else openReader({
     slug: scope, title: scope,
-    error: state.detailError || 'That work-stream could not be read.',
+    error: state.detailError || 'That handoff could not be read.',
   }, token);
 }
 
