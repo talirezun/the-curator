@@ -1,4 +1,4 @@
-<svg viewBox="0 0 760 660" xmlns="http://www.w3.org/2000/svg" role="img"
+<svg viewBox="0 0 760 700" xmlns="http://www.w3.org/2000/svg" role="img"
      aria-labelledby="curator-context-steps-title curator-context-steps-desc">
   <title id="curator-context-steps-title">The Project context screen — an overview card and three numbered steps</title>
   <desc id="curator-context-steps-desc">
@@ -71,7 +71,7 @@
     .cap { font: 400 12px system-ui, sans-serif; fill: var(--text-2); }
   </style>
 
-  <rect class="bg" x="0" y="0" width="760" height="660"/>
+  <rect class="bg" x="0" y="0" width="760" height="700"/>
 
   <!-- ── THE OVERVIEW CARD — four tiles, one component with Domains ─ -->
   <rect class="card" x="24" y="20" width="712" height="62" rx="10"/>
@@ -102,14 +102,14 @@
   <circle cx="152" cy="130" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
   <text class="info" x="152" y="134" text-anchor="middle">i</text>
 
-  <rect class="btn" x="600" y="120" width="132" height="24" rx="6"/>
-  <text class="btntxt" x="666" y="136" text-anchor="middle">Add from folder</text>
-  <rect class="btn" x="460" y="120" width="132" height="24" rx="6"/>
-  <text class="btntxt" x="526" y="136" text-anchor="middle">Refresh from repo</text>
+  <rect class="fold" x="58" y="148" width="678" height="30" rx="7"/>
+  <text class="foldtxt" x="72" y="167">▸  The documents</text>
+  <text class="foldmeta" x="722" y="167" text-anchor="end">110 bytes · mirrored · 2 read first · 1 on request</text>
 
-  <rect class="fold" x="58" y="156" width="678" height="30" rx="7"/>
-  <text class="foldtxt" x="72" y="175">▸  The documents</text>
-  <text class="foldmeta" x="722" y="175" text-anchor="end">110 bytes · mirrored · 2 read first · 1 on request</text>
+  <rect class="btn" x="600" y="186" width="132" height="24" rx="6"/>
+  <text class="btntxt" x="666" y="202" text-anchor="middle">Add from folder</text>
+  <rect class="btn" x="460" y="186" width="132" height="24" rx="6"/>
+  <text class="btntxt" x="526" y="202" text-anchor="middle">Refresh from repo</text>
 
   <!-- ── STEP ② WORKING STATE — five rows, one instrument each ────── -->
   <line class="rule" x1="24" y1="212" x2="736" y2="212"/>
@@ -147,23 +147,23 @@
   <circle cx="166" cy="464" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
   <text class="info" x="166" y="468" text-anchor="middle">i</text>
 
-  <rect class="btn" x="600" y="454" width="136" height="24" rx="6"/>
-  <text class="btntxt" x="668" y="470" text-anchor="middle">+ Add a wiki</text>
+  <rect class="fold" x="58" y="482" width="678" height="30" rx="7"/>
+  <text class="foldtxt" x="72" y="501">▸  projects</text>
+  <text class="foldmeta" x="722" y="501" text-anchor="end">391 pages · 3 days ago</text>
 
-  <rect class="fold" x="58" y="486" width="678" height="30" rx="7"/>
-  <text class="foldtxt" x="72" y="505">▸  projects</text>
-  <text class="foldmeta" x="722" y="505" text-anchor="end">391 pages · 3 days ago</text>
+  <rect class="mon" x="58" y="518" width="678" height="70" rx="8"/>
+  <text class="montxt" x="72" y="538">entities   120</text>
+  <text class="montxt" x="72" y="554">concepts   240</text>
+  <text class="montxt" x="72" y="570">summaries   31</text>
+  <text class="montxt" x="356" y="538">last ingest   3 days ago</text>
 
-  <rect class="mon" x="58" y="522" width="678" height="70" rx="8"/>
-  <text class="montxt" x="72" y="542">entities   120</text>
-  <text class="montxt" x="72" y="558">concepts   240</text>
-  <text class="montxt" x="72" y="574">summaries   31</text>
-  <text class="montxt" x="356" y="542">last ingest   3 days ago</text>
+  <rect class="door" x="72" y="598" width="132" height="26" rx="6"/>
+  <text class="doortxt" x="138" y="615.5" text-anchor="middle">Open in Domains</text>
+  <rect class="door" x="214" y="598" width="132" height="26" rx="6"/>
+  <text class="doortxt" x="280" y="615.5" text-anchor="middle">Ask this domain</text>
 
-  <rect class="door" x="72" y="602" width="132" height="26" rx="6"/>
-  <text class="doortxt" x="138" y="619.5" text-anchor="middle">Open in Domains</text>
-  <rect class="door" x="214" y="602" width="132" height="26" rx="6"/>
-  <text class="doortxt" x="280" y="619.5" text-anchor="middle">Ask this domain</text>
+  <rect class="btn" x="600" y="636" width="136" height="24" rx="6"/>
+  <text class="btntxt" x="668" y="652" text-anchor="middle">+ Add a wiki</text>
 
-  <text class="cap" x="736" y="644" text-anchor="end">Top to bottom is the order a session start reads in.</text>
+  <text class="cap" x="736" y="678" text-anchor="end">Top to bottom is the order a session start reads in.</text>
 </svg>
