@@ -301,7 +301,7 @@ function makeFetch(mode, payload) {
 function makeSandbox(opts = {}) {
   const doc = makeDoc(['chat-input', 'chat-send-btn']);
   const { calls, fetchImpl, ctl } = makeFetch(opts.mode || 'hang', opts.payload);
-  const rendered = { thread: 0, threadOpts: [], composerBusy: [], shell: 0, sidebar: 0 };
+  const rendered = { thread: 0, threadOpts: [], composerBusy: [], shell: 0, sidebar: 0, projectFooter: 0 };
   const state = {
     sending: false,
     activeDomain: opts.domain || 'articles',
@@ -377,6 +377,12 @@ function makeSandbox(opts = {}) {
     'escapeHtml', 'icon', 'AbortController', 'bootGate', 'cancelSearchTimer', 'escHandler',
     'closeAllListboxes', 'closeBrowseDialog', 'closeConfirmIfOpen',
     'readSseFrames', 'schedulePaintStream',
+    // v3.65.0 — the project picker's footer carries the last turn's measured
+    // reading, so a completed turn republishes it. A SPY: what the footer says
+    // is test-next-chat-scopebar.js §11's subject; what this file needs is
+    // that the completion path still calls it exactly once, and that a
+    // cancelled turn does not.
+    'patchProjectFooter',
     src
   )(
     doc, state, fetchImpl,
@@ -391,6 +397,7 @@ function makeSandbox(opts = {}) {
     // rather than modelled. The paint is a spy: this suite owns cancellation,
     // not rendering — test-next-chat-streaming.js drives the real painter.
     readSseFrames, (t) => { paints.push(t); },
+    () => { rendered.projectFooter++; },
   );
 
   return { api, doc, state, calls, clock, rendered, loadCalls, paints, ctl };
@@ -692,6 +699,34 @@ section('§4  A STOPPED TURN, END TO END');
   await tick();
   ok(s.state.cancelNotice === null, 'starting a new turn clears the previous Stop notice');
   ok(s.state.sending === true, 'control: that turn really did start');
+}
+{
+  /* ── §4b — THE PROJECT FOOTER IS REPUBLISHED BY A COMPLETED TURN ONLY ──
+     v3.65.0 moved the last turn's measured reading out of the scope bar and
+     into the picker's footer (`cfg.footHtml`; what it SAYS is
+     test-next-chat-scopebar.js §11's subject). The wiring is this file's,
+     because the call sits on `sendCurrentMessage`'s completion path — and a
+     figure that is never republished is the exact failure the guard exists to
+     prevent, invisibly, since a stale footer still renders.
+
+     BOTH DIRECTIONS. A turn that finishes republishes ONCE. A turn that is
+     STOPPED must not: there is no measurement, and rewriting the footer from
+     a cleared `projectLastUsed` would erase the previous turn's real reading
+     on a gesture that measured nothing. */
+  const done = makeSandbox({ mode: 'ok', payload: { answer: 'a', conversationId: 'conv-1' } });
+  done.doc.getElementById('chat-input').value = 'q';
+  await done.api.sendCurrentMessage();
+  ok(done.rendered.projectFooter === 1,
+    '★ a COMPLETED turn republishes the picker\'s footer exactly once (got ' + done.rendered.projectFooter + ')');
+
+  const stopped = makeSandbox();
+  stopped.doc.getElementById('chat-input').value = 'q';
+  const pending = stopped.api.sendCurrentMessage();
+  await tick();
+  stopped.api.cancelCurrentSend();
+  await pending;
+  ok(stopped.rendered.projectFooter === 0,
+    '★ CONTROL: a STOPPED turn republishes nothing — it measured nothing, and the previous turn\'s reading stands');
 }
 
 
