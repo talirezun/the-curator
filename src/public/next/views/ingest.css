@@ -331,6 +331,13 @@
 
 .ing-dest-list { display: flex; flex-direction: column; gap: var(--space-px); }
 
+/* THE IDENTITY DOT ON THIS ROW IS THE KIT'S (v3.65.1) — `.cur-sb-dot` plus
+   `.cur-sb-dot-N`, declared in shared/sidebar.css, the same 8px round glyph
+   and the same six colours the Domains rail, the Context rail and Chat's
+   domain chips use. This file declares NO rule for either class on purpose:
+   a view that restyled the shared glyph would be a second palette, which is
+   the defect the move removed. The row's own `gap` spaces it like any other
+   child. */
 .ing-dest-row {
   display: flex;
   align-items: center;

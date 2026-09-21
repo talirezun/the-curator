@@ -597,7 +597,18 @@
    macOS's DEFAULT control target is 28x28pt. These two are the scope bar's
    only controls and the ones a user hits most often on this view, and they
    were the smallest. The BOX grew; nothing inside it did — same type, same
-   dot, same padding ratio. */
+   padding ratio.
+
+   ── THE DOT IS THE KIT'S, NOT THIS FILE'S (v3.65.1) ───────────────────────
+   It was `.chat-type-dot` (6px) with an INLINE `style="background:var(--accent)"`,
+   so every chip in the bar was the same violet and none of them said WHICH
+   domain. It is `.cur-sb-dot` + `.cur-sb-dot-N` now — shared/sidebar.css's
+   8px round glyph and the one identity palette — which is why this chip, the
+   domain's row on the Domains rail, its project rows on the Context rail and
+   its destination row in Ingest are one colour. The chip is 2px wider for it
+   and nothing else moves; this file declares NO rule for either class, by
+   design: a view that restyled the shared glyph would be the second palette
+   all over again. */
 .chat-scope-pill {
   display: inline-flex;
   align-items: center;

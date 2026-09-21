@@ -145,6 +145,19 @@ export const ALIASES = Object.freeze({
     list: 'dm-row-list', row: 'dm-row', dot: 'dm-row-dot', main: 'dm-row-main',
     name: 'dm-row-name', meta: 'dm-row-meta', figure: 'dm-row-figure',
     sep: 'dm-row-sep', age: 'dm-row-age', event: 'dm-row-event',
+    // THE ONE PER-SLOT ALIAS (v3.65.1). `dotSlot` is not a part of the row
+    // like the nine above it: it is a PREFIX, and the kit appends the slot
+    // number this row's `dotClass` already names. It exists for exactly one
+    // reason and the reason is recorded rather than implied — the frozen
+    // v3.64.2 reference in scripts/test-sidebar-status-rows.js §8b compares
+    // this sidebar's markup token for token, so `dm-row-dot-N` leaving the
+    // markup would read as a regression in a proof that exists to catch
+    // one. It resolves NO background anywhere (the palette is declared on
+    // `.cur-sb-dot-N` alone in shared/sidebar.css), which is the whole
+    // content of "one palette" and is asserted by
+    // scripts/test-next-domain-dots.js. `mem` and `settings` deliberately
+    // have no entry: a dead token is a cost, and only this host is owed one.
+    dotSlot: 'dm-row-dot',
   }),
   mem: Object.freeze({
     list: 'mem-row-list', row: 'mem-row', dot: 'mem-row-mark', main: 'mem-row-main',
@@ -178,22 +191,21 @@ export const IDENTITY_DOT_SLOTS = 6;
  * only copy, and a second view may not import from a view. It returns the
  * KIT's name (`cur-sb-dot-N`), so an adopting view emits no foreign token.
  *
- * WHAT THE HOST OWES IT, and why it is not here: the six COLOURS are three
- * system tokens plus three derived light-theme literals, and
- * scripts/test-next-design-kit.js §10 permits a colour literal in exactly two
- * /next stylesheets — neither of them a shared one. views/domains.css already
- * declares all six, already carries the measured contrast argument for them,
- * and is already one of the two baselined files. So the adopting release adds
- * the kit's names to THAT rule's selector list:
+ * THE HOST OWES IT NOTHING SINCE v3.65.1. The six COLOURS moved into
+ * shared/sidebar.css beside the dot's shape, so this function and the values
+ * it selects are one unit in one place — CONTINUITY BY IDENTITY: the same
+ * domain is the same colour on the Domains rail, the Context rail, the
+ * Context breadcrumb, Chat's domain chips and Ingest's destination rows,
+ * because every one of them asks THIS function and is painted by THAT block.
+ * views/domains.js's `domainDotClass`, a second copy of this arithmetic under
+ * a second family of names, is deleted; `dm-row-dot-N` survives in the markup
+ * as an alias only (see ALIASES.dm.dotSlot) and resolves no background.
  *
- *     .dm-row-dot-1, .cur-sb-dot-1 { background: var(--entity-500); }
- *     [data-theme="light"] .dm-row-dot-1,
- *     [data-theme="light"] .cur-sb-dot-1 { background: var(--dm-ink-entity); }
- *
- * — a selector-list addition: zero new literals, zero changed values, and
- * views/domains.js's own `domainDotClass` may then call this and drop its
- * copy. Recorded here because it is the one thing this module cannot do for
- * itself.
+ * THE INDEX IS THE INSTALL'S DOMAIN INDEX, and that is what makes the system
+ * work at all: GET /api/domains and GET /api/domains/stats both answer out of
+ * listDomains(), so position N is position N on every screen. A caller that
+ * has a SLUG and not a position must find the position in the same list
+ * (`state.domains.findIndex(...)`), never invent one from a hash of the name.
  */
 export function identityDotClass(index) {
   const n = Number.isFinite(index) ? Math.abs(Math.trunc(index)) : 0;
@@ -366,6 +378,13 @@ export function renderSidebarRow(o) {
 
   const a = aliasSet(opts.alias);
   const dot = classList(opts.dotClass);
+  // The per-slot alias, appended only when the host declares a `dotSlot` AND
+  // the class it passed is one of the kit's own slots. Derived from the class
+  // the caller already gave us rather than from a second call: there is ONE
+  // mapping from an index to a slot and it is identityDotClass().
+  const slotMatch = (a && a.dotSlot)
+    ? /(?:^|\s)cur-sb-dot-(\d+)(?:\s|$)/.exec(dot) : null;
+  const dotAlias = slotMatch ? ' ' + a.dotSlot + '-' + slotMatch[1] : '';
   const figure = typeof opts.figure === 'string' ? opts.figure.trim() : '';
   const mark = trusted(opts.markHtml);
   const age = typeof opts.age === 'string' ? opts.age.trim() : '';
@@ -429,7 +448,7 @@ export function renderSidebarRow(o) {
       (opts.ariaCurrent === true ? ' aria-current="true"' : '') +
       (typeof opts.ariaLabel === 'string' && opts.ariaLabel
         ? ' aria-label="' + escapeHtml(opts.ariaLabel) + '"' : '') + '>' +
-    (dot ? '<span class="' + cls('cur-sb-dot', a && a.dot) + ' ' + dot + '"></span>' : '') +
+    (dot ? '<span class="' + cls('cur-sb-dot', a && a.dot) + ' ' + dot + dotAlias + '"></span>' : '') +
     '<span class="' + cls('cur-sb-main', a && a.main) + '">' +
       '<span class="' + cls('cur-sb-name', a && a.name) + '">' + escapeHtml(name) + '</span>' +
       meta +
