@@ -998,10 +998,13 @@ section('13. A MIRROR BORN REMOTE — initFoundations with a `remote` (v3.65.0)'
   // with no manifest and no ownership — and the NEXT init would be allowed.
   assert(existsSync(manifestPath('bare')),
     '...and the ownership manifest IS written, although nothing was read — otherwise the ownership is not recorded at all');
-  eq(manifestOf('bare').ownership, 'repo', '...recording the ownership');
-  eq(manifestOf('bare').repo.root, null, '...with no folder on this computer');
-  eq(manifestOf('bare').repo.remote.repo, 'thing', '...with the remote recorded for the first refresh');
-  eq(manifestOf('bare').documents.length, 0, '...and no documents');
+  // Guarded, so a missing manifest is reported by the assertion above rather
+  // than aborting the file with an ENOENT four lines later.
+  const bareManifest = existsSync(manifestPath('bare')) ? manifestOf('bare') : null;
+  eq(bareManifest && bareManifest.ownership, 'repo', '...recording the ownership');
+  eq(bareManifest && bareManifest.repo.root, null, '...with no folder on this computer');
+  eq(bareManifest && bareManifest.repo.remote.repo, 'thing', '...with the remote recorded for the first refresh');
+  eq(bareManifest && bareManifest.documents.length, 0, '...and no documents');
   assert((bare.notes || []).some((n) => /nothing was read/.test(n)), '...saying so in a note', JSON.stringify(bare.notes));
   // …and that mirror refreshes from the manifest's own remote, no argument.
   const later = await refreshFoundationsFromRepo(D, 'bare', null, {
