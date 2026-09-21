@@ -172,7 +172,7 @@ There is a dedicated file in this knowledge base covering how it is structured, 
 
 Nothing forces an agent to save. The discipline is carried by a skill, an instruction block you paste into your harness's entry file, and — where a harness has a usable lifecycle hook — a hook The Curator can install for you. All three are advisory: a session that ends without saving leaves the previous handoff in place, which is stale rather than damaged.
 
-So the app measures it instead of promising it. Project context opens its Working-state step with one line, computed from a local, content-free log of which tools were called: how many sessions in the last 30 days, how many started with the project's context, how many saved before stopping, and how many read and did not save. It is stated in words, never as a percentage, and it reports rather than blocks.
+So the app measures it instead of promising it. Project context opens its Memory step with a **Capture** row, one line computed from a local, content-free log of which tools were called: how many sessions in the last 30 days, how many started with the project's context, how many saved before stopping, and how many read and did not save. It is stated in words, never as a percentage, and it reports rather than blocks.
 
 As of 20 September 2026 exactly one harness has been measured against the protocol — Claude Code, four runs per arm. With the hook installed, the context reached the agent in 4 of 4 sessions and 4 of 4 saved before stopping; in that same headless mode the stop hook never fired at all. Every other harness reads "not measured", in the product and in the documentation.
 

@@ -2,7 +2,7 @@
 
 ## What is project context?
 
-Project context is everything one project gives an agent. The screen that shows it was called Agent memory until v3.62.0, and the older name still describes half of it: the working state an agent leaves behind at the end of a session so the next session picks the work up instead of starting cold. The other half is the project's foundations — the canonical documents it is built against.
+Project context is everything one project gives an agent. The screen that shows it was called Agent memory until v3.62.0, and the older name still describes half of it: the working state — called **Memory** on screen since v3.65.1 — an agent leaves behind at the end of a session so the next session picks the work up instead of starting cold. The other half is the project's foundations, shown on screen as **Documents** — the canonical documents it is built against. These are copy renames only: the store still uses `foundations`, `scope` and `journal.jsonl` on disk and over MCP.
 
 Layers 1 and 2 of The Curator are your sources and the wiki built from them. Layer 3 is this.
 
@@ -92,13 +92,13 @@ Freshness is **computed, never remembered**: there is no stored flag, only a sha
 
 Each document is capped at 512 KB and is refused above it, because a canonical document cannot be honestly trimmed. A project's foundations are capped at 200 KB in total, and an over-budget save there is accepted and disclosed rather than refused — the same rule a handoff follows, since a rejected save loses the document outright.
 
-In the app, Foundations is step 1 on the Project context screen, closed by default. Each row shows the document's role, title, size, whether it is marked read first, its source and its freshness; pressing a row opens it in the reader.
+In the app, Documents is step 1 on the Project context screen, closed by default. Each row shows the document's role, title, size, whether it is marked read first, its source and its freshness; pressing a row opens it in the reader.
 
 ## How do I start a project, and where do its foundations come from?
 
 Creating a project — Domains → Projects → New project — asks a second question below the brief: where do this project's foundations live? A project holds only one ownership mode, and the first document saved into it sets that mode for good, so this is the one moment it is free to choose.
 
-Three choices. **Curator keeps them** (the default) seeds four skeleton documents immediately — architecture, decisions, conventions and roadmap — each a prompt to answer, not a fact; this makes the project curator-owned. **Mirror from a repository on this Mac** points at a checkout (a plain folder works too, no git required) and scans it for candidate documents to copy byte-for-byte; this makes the project repository-owned. **Decide later** writes nothing, and the same choice reappears the first time you open that project's Foundations block.
+Three choices. **Curator keeps them** (the default) seeds four skeleton documents immediately — architecture, decisions, conventions and roadmap — each a prompt to answer, not a fact; this makes the project curator-owned. **Mirror from a repository on this Mac** points at a checkout (a plain folder works too, no git required) and scans it for candidate documents to copy byte-for-byte; this makes the project repository-owned. **Decide later** writes nothing, and the same choice reappears the first time you open that project's Documents block.
 
 A skeleton is a real markdown document, not a fill-in-the-blanks template: real headings, and under each one a question rather than an invented answer, with a fixed banner at the top saying it is unfilled. An agent fills one in only when you ask it to — the same commissioned-only rule the standing brief already follows.
 
@@ -108,7 +108,7 @@ An existing project that already has its documents is not stuck asking an agent 
 
 Yes, since version 3.61.0 — but only a **curator-owned** one. A repository-owned document is mirrored, so editing it in the app would be overwritten by the next refresh; the app tells you to edit the source and refresh instead.
 
-On a curator-owned project, each row in the Foundations block carries an Edit control, and the block's own header carries Add document. Either opens an editor in place of the table, the same pattern the standing brief already uses. Saving is disabled past 512 KB — a canonical document cannot be honestly trimmed — and a project nearing its 200 KB total budget is told so without being stopped. Filling in a skeleton and saving it clears the skeleton mark for good.
+On a curator-owned project, each row in the Documents block carries an Edit control. The block's own head row carries Refresh from repo, Add from folder and, on a repository-owned project since v3.65.1, Mirror from GitHub instead — for re-pointing an existing mirror at a different repository without changing who owns the documents. Edit opens an editor in place of the table, the same pattern the standing brief already uses. Saving is disabled past 512 KB — a canonical document cannot be honestly trimmed — and a project nearing its 200 KB total budget is told so without being stopped. Filling in a skeleton and saving it clears the skeleton mark for good.
 
 This does not add a second writer to a document the way it might sound: one ownership is set per project, and a human edit is stamped as a human's the same way an agent's edit is stamped as an agent's, so nothing reading a foundation's history is ever told the wrong thing wrote it.
 
@@ -178,7 +178,7 @@ Name resolution itself never guesses either. A project name that matches nothing
 
 ## What is a work-stream, and what should I call mine?
 
-A work-stream, called a scope in the tools, is a piece of work inside a project — `main`, `auth-refactor`, `v4-migration`. Work-streams are independent: each has its own handoff and its own journal per machine. A save that names none goes to `main`.
+A work-stream — called a **scope** in the tools, and shown on screen as a row in the **Handoffs** table since v3.65.1 — is a piece of work inside a project — `main`, `auth-refactor`, `v4-migration`. Work-streams are independent: each has its own handoff and its own journal per machine. A save that names none goes to `main`.
 
 Any read may pass `latest` in place of a name and get the project's most recently written work-stream. That is what makes a one-line resume possible: you say "pick up the Lumina work", the project resolves, and `latest` resolves to the work-stream you were actually in, without you or the agent knowing the slug.
 
@@ -369,7 +369,7 @@ A hook never writes CLAUDE.md, AGENTS.md, GEMINI.md or your Cursor rules. That p
 
 ## How do I know whether my agents are actually saving?
 
-The Project context screen's Working state step opens with a row called **Capture** that answers exactly that. It is built from the same recessed, monospace, terminal-like reading component — a "monitor" — the app now uses for every live-state display, including the **Last saved** row right above it. Its closed summary already carries the count and the three qualifying clauses:
+The Project context screen's Memory step opens with a row called **Capture** that answers exactly that. It is built from the same recessed, monospace, terminal-like reading component — a "monitor" — the app uses for every live-state display. Its closed summary already carries the count and the three qualifying clauses:
 
 ```
 CAPTURE   6 sessions in the last 30 days
@@ -378,7 +378,7 @@ CAPTURE   6 sessions in the last 30 days
 
 Three words, defined once. A **session** is one bridge process — one run of your agent tool with The Curator connected, not a conversation and not a day. **Started with the context** means that session asked for the project's brief and state at some point before its first save. **Saved before stopping** means a save succeeded; a refused save is not a save.
 
-The uncomfortable number is written in words rather than as a percentage, on purpose: "67 percent" reads as a grade, while "2 read and did not save" reads as two sessions you could go and look at. Press the row and it opens to a table listing each session's start time, the harness that connected, how many calls it made, and whether it read and saved — what used to be a separate fold called "Sessions" is now that same row's own body, and the word no longer names anything on the screen.
+The uncomfortable number is written in words rather than as a percentage, on purpose: "67 percent" reads as a grade, while "2 read and did not save" reads as two sessions you could go and look at. Press the row and it opens to the same six monitor lines — sessions, started with the context, saved before stopping, read and did not save, the newest session's age with the harness that wrote it, and the calls made across the window — no per-session table since v3.65.1. What used to be a separate fold called "Sessions" is gone; the word no longer names anything on the screen.
 
 Three states are told apart rather than blurred: no usage log on this computer yet, a log with no session for this project in the window, and the reading itself. Only the third carries a freshness mark, and that mark is the age of the newest session — not a grade for the ratio.
 
@@ -411,6 +411,10 @@ It only ever reads. The client has no way to write — no PUT, no DELETE and no 
 It does not borrow your sync credential without asking. The recommended setup is a second, read-only, fine-grained GitHub token scoped to the source repository, saved as `githubReadToken` in `.curator-config.json`. Personal Sync's own token can be used instead, but only when you name it, because a classic token of that kind can read every repository you own and that permission was granted for sync rather than for this. Either way the token is never written to a log, never placed in a URL and never included in an error message; when something fails, the message names which file the token came from, which is the part you can act on.
 
 What it does not change: the copies still travel by sync, a mirror refreshed on two machines between syncs still converges to whichever saved last, and the repository is still the source of truth.
+
+## Can I switch a mirrored project from a folder to GitHub?
+
+Yes, since version 3.65.1 — **"Mirror from GitHub instead"**, in the Documents block's own controls. It re-copies the project's documents from a repository you name, records that repository, and clears the folder path the mirror used to read from, so every machine reads the same source afterwards instead of only the one that made the mirror. Ownership does not move — the repository is still the source of truth, exactly as it was before the switch — and any document you had marked read first stays marked, by name. As with any mirror action, there is no token field: you name which file on this computer the read-only token comes from.
 
 ## What is "Copy agent instructions", and what does it give me?
 
@@ -533,17 +537,17 @@ The standing brief is the one file two machines can genuinely conflict on, becau
 
 ## Where do I see this inside the app?
 
-The **Context** item on the rail — one of three, since version 3.64.0 — opens **Project context**, which shows everything one project gives an agent. Since v3.62.0 it is three numbered steps under an overview card, read top to bottom, in the order a session start reads them: step 1 **Foundations**, step 2 **Working state**, step 3 **Knowledge**. Since version 3.64.2 that overview card is the same component the Domains page draws its own OVERVIEW figures in — one shared component, not two builds of the same idea, and through v3.64.1 this page built its own separate three-cell strip.
+The **Context** item on the rail — one of three, since version 3.64.0 — opens **Project context**, which shows everything one project gives an agent. Since v3.62.0 it is three numbered steps under an overview card, read top to bottom, in the order a session start reads them: step 1 **Documents**, step 2 **Memory**, step 3 **Knowledge** — renamed from *Foundations*/*Working state* in v3.65.1, copy only; the store still says `foundations` and `working state`. Since version 3.64.2 that overview card is the same component the Domains page draws its own OVERVIEW figures in — one shared component, not two builds of the same idea. Since v3.65.1, a domain named anywhere on this screen — the breadcrumb, a sidebar row, a Knowledge row — carries that domain's own colour, the same one it has on the Domains page.
 
 - **The sidebar lists your projects, grouped by domain**, each with its work-stream count and how long ago it was last written to. A project with a brief but no save yet is listed, dimmed, reading "no state saved yet", because that is a real answer rather than a broken row. The screen opens on whichever project was written to most recently and remembers the last project you looked at in each domain.
 - **The header carries Copy agent instructions**, beside a breadcrumb naming the domain and project.
-- **The overview card** answers the question people actually arrive with: where does this project stand? One reading per layer — FOUNDATIONS, WORKING STATE, KNOWLEDGE — each with its figure, a qualifier under it, and a freshness dot and the word beside it, because colour never carries a reading on its own. Press one and the page jumps to the step it names; unlike the same card on a domain page, nothing here filters — these are readings, not a filter. An unknown age is drawn as a dashed ring and the words, never as age zero.
-- **Step 1, Foundations** holds the canonical documents, or — before ownership is chosen — the question that chooses it.
-- **Step 2, Working state** opens with the **Last saved** reading and the CAPTURE line described [below](#how-do-i-know-whether-my-agents-are-actually-saving) — moved here, to the top of this step, in version 3.64.1, and since version 3.64.2 a fold row like the ones under it rather than a card of its own: the age, the work-stream and the tool that wrote it, on one line, flat with no chevron when there is nothing to explain — then holds three more collapsed rows, in this order: Work-streams (your agents'; press a row to read that handoff in the reader), The brief (yours, with a pencil beside it), and Recent saves — the session journal. Everything that qualifies them — content that had to be trimmed, a handoff that arrived by sync, another machine that saved after this one, two tools sharing one handoff file — sits above them and never folds; a warning about a save is never behind a chevron.
-- **Step 3, Knowledge** is one row per wiki the project draws on — by default just the domain it lives in — each reading "domain · N pages · last ingest age" and opening to five wiki figures and two doors: Open in Domains, and Ask this domain. Since version 3.65.0 a picker under the rows lets you add up to twelve wikis a project draws on, including a read-only Shared Brain mirror, or remove one — curator metadata about the project (`project.json`), written by the app, never by an agent.
+- **The overview card** answers the question people actually arrive with: where does this project stand? One reading per layer — DOCUMENTS, MEMORY, KNOWLEDGE, plus CAPTURE — each with its figure, a qualifier under it, and a freshness dot and the word beside it, because colour never carries a reading on its own. Press one and the page jumps to the step it names; unlike the same card on a domain page, nothing here filters — these are readings, not a filter. An unknown age is drawn as a dashed ring and the words, never as age zero.
+- **Step 1, Documents** holds the canonical documents, or — before ownership is chosen — the question that chooses it. Its head row carries Refresh from repo, Add from folder and, since v3.65.1, Mirror from GitHub instead. Its table's SIZE column carries a small tinted bar behind each figure, showing that document's share of the 200 KB project budget.
+- **Step 2, Memory** holds four collapsed rows, in this order: Capture (the honesty meter, below), Handoffs (your agents'; press a row to read that handoff in the reader), The brief (yours, with a pencil beside it), and Journal — the session journal, with an inline "Show N more". Everything that qualifies them — content that had to be trimmed, a handoff that arrived by sync, another machine that saved after this one, two tools sharing one handoff file — sits above them and never folds; a warning about a save is never behind a chevron. **There is no "Last saved" row as of v3.65.1** — that fact now lives in the overview's MEMORY tile and in the Handoffs row's own summary.
+- **Step 3, Knowledge** is one row per domain the project draws on — the project's own domain is always listed, since v3.65.1 — each reading "domain · N pages · last ingest age" with that domain's own colour dot, and opening to five figures (entity/concept/summary each with a small bar against that domain's page count) and two doors: Open in Domains, and Ask this domain, plus its own Remove. A **"+ Add a domain"** picker in the step's head row lets you add up to twelve domains a project draws on, including a read-only Shared Brain mirror — curator metadata about the project (`project.json`), written by the app, never by an agent.
 - **Every fold starts closed and remembers whether you left it open.** Each summary line carries the figure that decides whether to open it.
 
-The qualifying lines the Last saved row can show:
+The qualifying lines that can appear above the Memory step's rows:
 
 | Line | When it appears | What it means |
 |---|---|---|
@@ -554,9 +558,8 @@ The qualifying lines the Last saved row can show:
 | "This file arrived on this computer N ago" | Both clocks are known and disagree by more than two minutes | The handoff was written elsewhere and pulled in later |
 | "Newer state in this project" | Another work-stream in this project holds something more recent | Worth checking. An agent can be saving beside you into a work-stream you are not watching |
 | "Two tools are writing this work-stream" | Two agent tools have both saved into the same handoff file | Give each tool its own work-stream name |
-| "Standing brief — age" | Always | Usually nothing. The brief is on a much slower clock, which is why it gets no freshness dot |
 
-It says "Last saved", never "you are saved". It knows when the last save happened; it cannot know whether anything has changed since.
+The overview's MEMORY tile says "saved", never "you are saved". It knows when the last save happened; it cannot know whether anything has changed since.
 
 Almost all of the screen is read-only, and that is by design rather than by omission. A browser write path into a handoff would make the app a second writer to those files, which is the property the whole sync-safety argument rests on, and a human edit arriving through the app would wear the last agent's provenance line. The standing brief is the one exception, because it was never in that argument: it has no machine segment and it is your document.
 
