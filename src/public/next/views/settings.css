@@ -60,108 +60,73 @@
   gap: 12px;
 }
 
-.settings-nav-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
+/* ── THE LIST AND THE ROW ARE shared/sidebar.css's NOW ────────────────────
+   `renderSidebarGroup` / `renderSidebarRow` (shared/sidebar.js) emit
+   `cur-sb-list settings-nav-list` and `cur-sb-row settings-nav-row` on the
+   SAME elements, so every token this file's binder and four suites address by
+   name survives — and every RULE comes from the kit. What was deleted here,
+   and why each deletion is the point:
 
-.settings-nav-row {
-  position: relative;
-  width: 100%;
-  text-align: left;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-4) var(--space-6);
-  border-radius: var(--radius-md);
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background var(--t-state), transform var(--t-press);
-}
-/* ── THE HOVER IS AN ALPHA OVERLAY, NOT AN ABSOLUTE COLOUR ───────────────
-   This read `var(--surface-hover)` and DID NOTHING. Measured in the running
-   app with a real pointer, both themes:
+     .settings-nav-list's flex column + 2px gap   identical values in the kit
+     .settings-nav-row's box (display, direction, gap, padding, radius,
+       border, background, cursor, font-family, transition, width,
+       text-align)                               the kit's, and the reason the
+                                                 row lands on the app's ONE
+                                                 row height (measured 47.75
+                                                 before, 63.84 after — Domains'
+                                                 own) instead of a third one
+     .settings-nav-row::before and its
+       reduced-motion entry                      R10 — THE VIOLET LEFT LINE.
+                                                 *"if I select General I get a
+                                                 violet line on the left; we
+                                                 don't get this in Domains or
+                                                 Context ... it is a completely
+                                                 other design which got in
+                                                 during development."* The kit
+                                                 declares no `::before` at all,
+                                                 so there is no way back to it.
+     .row-label / .row-hint                      `.cur-sb-name` and
+                                                 `.cur-sb-event`. The hint was
+                                                 `--type-mono` and nothing else
+                                                 in any sidebar was — *"totally
+                                                 different designs — I also
+                                                 think different fonts"* — so
+                                                 it joins the last-event slot
+                                                 Domains' "Ingested · <title>"
+                                                 already occupies.
+     .settings-nav-row.active's --surface-active  the kit paints the filled row
+                                                 with the --mat-row-* ALPHA
+                                                 overlay (an opaque fill stops
+                                                 the sidebar plane's blur for
+                                                 the width of the row). The
+                                                 rule below keeps the NAME and
+                                                 takes the kit's VALUE.
 
-     dark   plane #14141E  ->  hover rgb(21,21,31)   = 1.03:1
-     light  plane #F7F7FA  ->  hover rgb(245,245,249) = 1.01:1
-
-   On dark the hover colour is BYTE-FOR-BYTE the sidebar plane's own declared
-   value (--mat-sidebar is rgba(21,21,31,0.92)), so hovering a row painted it
-   the same colour it already was, only opaque — a difference of one unit per
-   channel after compositing. On light the step is two units, and DARKER than
-   the plane in a theme where every other hover goes lighter.
-
-   NOTHING IS WRONG WITH --surface-hover. It is an ABSOLUTE colour authored
-   one rung off --surface, and it still steps correctly for anything sitting
-   on the content plane. This row does not: the material pass moved the
-   sidebar from --surface to --mat-sidebar, and an absolute hover colour
-   cannot follow a plane it was never told about. It is the same shape as the
-   --inset-hi defect this pass already fixed — a correct token landing on a
-   surface it was not authored for — and the fix is the same: change the
-   PAIRING, not the token.
-
-   --mat-row-hover / --mat-row-active are ALPHA OVERLAYS, so they step by the
-   same perceived amount on ANY plane and cannot be orphaned by a background
-   moving under them again. shell.css's .rail-btn:hover already uses them for
-   this exact reason. Recomputed on the plane this row actually sits on:
-   1.17:1 dark and 1.13:1 light, against 1.03 / 1.01.
-
-   THE SAME DEFECT IS LIVE IN FOUR VIEW STYLESHEETS THIS FILE DOES NOT OWN —
-   .chat-conv-row, .dm-row, .mem-row and .ing-dest-row all sit on the sidebar
-   plane and all still read var(--surface-hover). Measured at 1.00 dark and
-   1.009 light. Recorded here rather than reached into. */
+   THREE RULES STAY, each because something reads it BY NAME and the value is
+   the kit's own, so the duplication paints nothing different:
+     :hover    scripts/test-next-design-kit.js §? reads THIS FILE and asserts
+               the alpha overlay, with the shipped --surface-hover as its
+               anti-vacuity control.
+     .active   declared AFTER :hover so the selected row stays selected-looking
+               under the pointer. Deleting it would hand the tie to
+               `.settings-nav-row:hover` — later file, equal specificity — and
+               hovering the current section would un-highlight it.
+     :active   scripts/test-next-press-motion.js's press-transform census names
+               `settings-nav-row` in NAMED_FAMILIES with `moves: true`, and
+               that census reads class names, not kit names.            */
+/* THE ONE BOX PROPERTY THAT STAYS ON THE HISTORICAL NAME. `border: none` is
+   not a reset here, it is the whole subject of scripts/test-next-button-chrome.js:
+   a <button> whose class list resolves NO author border falls through to
+   Chromium's 2px OUTSET UA bevel. shared/sidebar.css declares it on
+   `.cur-sb-row`, which is on the same element — but that scanner resolves the
+   class names it reads in SOURCE, and `.settings-nav-row` is still written by
+   name in views/onboarding.js (the selector its "open the MCP bridge section"
+   door clicks). A border reset costing nothing is cheaper than an alias that
+   resolves to a bevel the day someone writes that name again. */
+.settings-nav-row { border: none; }
 .settings-nav-row:hover { background: var(--mat-row-hover); }
-.settings-nav-row.active { background: var(--surface-active); }
+.settings-nav-row.active { background: var(--mat-row-active); }
 .settings-nav-row:active { background: var(--mat-row-active); transform: translateX(var(--press-shift)); }
-
-/* ── THE SELECTION EDGE, AND THE REAL REASON IT HARD-CUT ──────────────────
-   The motion audit read this as a missing DURATION token and proposed a
-   `--t-select`. It is not: the row's BACKGROUND has transitioned at
-   `--t-state` since it was written, and so has every other row family's.
-   What could not animate was this accent edge — because the `::before` was
-   generated by the `.active` selector, so it did not EXIST on the unselected
-   row and had no start value to transition from. A pseudo-element that only
-   comes into being in its final state can only ever appear instantly, at any
-   duration, from any token.
-
-   The fix is structural, not a new token: the edge is declared on the BASE
-   rule at `scaleY(0)` — laid out, painted, zero-height, invisible — and
-   `.active` scales it to 1. Now there are two states of one element and the
-   transition has something to interpolate.
-
-   `transform-origin: center` so it grows from the middle outward rather than
-   unrolling from the top, which is what makes it read as the row asserting
-   itself rather than as something being drawn on. `--t-state` is the
-   duration, the same 120ms the background beside it already used — the two
-   halves of one state change should not resolve at different speeds, which
-   is the other reason a separate select duration would have been wrong. */
-.settings-nav-row::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--accent);
-  transform: scaleY(0);
-  transform-origin: center;
-  transition: transform var(--t-state);
-}
-.settings-nav-row.active::before { transform: scaleY(1); }
-.settings-nav-row .row-label {
-  font: var(--type-label);
-  color: var(--text-2);
-}
-.settings-nav-row.active .row-label { color: var(--text); }
-.settings-nav-row .row-hint {
-  font: var(--type-mono);
-  font-size: var(--text-2xs);
-  color: var(--text-2);
-}
 
 .settings-sidebar-footer {
   margin-top: auto;
@@ -2067,32 +2032,28 @@
   white-space: nowrap;
 }
 
-/* ── Reduced motion ───────────────────────────────────────────────────────
-   TWO DIFFERENT DECISIONS, and they are different on purpose.
-
+/* ── Reduced motion ──────────────────────────────────────────────
    PRESS TRANSFORMS: DISABLED. The colour step lands instantly and carries
    the acknowledgement on its own, so removing the travel costs nothing.
 
-   THE SELECTION EDGE: KEEPS ITS POSITION, loses only its transition. It is
-   NOT reset to `transform: none`, because `none` would collapse the scaleY(1)
-   that makes the active row's accent bar visible at all — the bar IS the
-   state, and a reduced-motion user would simply lose the only mark saying
-   which settings section they are in. tokens/motion.css's reduce block
-   already zeroes `--dur-*`, so `--t-state` resolves to 0ms and the edge snaps
-   to full height with no travel; this rule states it explicitly rather than
-   relying on that, because a token change elsewhere must not be able to
-   silently reintroduce an animation here.
-
-   That distinction — travel removed, STATE preserved — is the whole per-
-   element rule, and it is why there is no blanket "transform: none" sweep
-   in this tree. */
+   THIS BLOCK USED TO CARRY A SECOND, OPPOSITE DECISION — the selection edge
+   kept its position and lost only its transition, because `transform: none`
+   on an `.active::before` would have collapsed the one mark saying which
+   section you are in. That reasoning was correct and it is now moot: v3.65.0
+   deleted the edge (R10). The selected row is the FILLED row, in every
+   sidebar in the app, and a fill is a colour — there is no motion in it to
+   reduce. shared/sidebar.css carries the row's own reduced-motion escape for
+   the press. */
 @media (prefers-reduced-motion: reduce) {
   /* `.theme-seg-btn:active` used to be on this line. It left with the
      control, to shell.css, where the press it cancels now lives — a
      reduced-motion opt-out that is not in the same file as its press still
      works and cannot be found from it. */
+  /* `.settings-nav-row::before { transition: none }` used to be on the next
+     line. The edge it cancelled is gone (R10, see the sidebar block at the
+     top of this file): the selected row is the FILLED row, which is a colour
+     and not motion, so there is nothing here left to reduce. */
   .settings-nav-row:active { transform: none; }
-  .settings-nav-row::before { transition: none; }
 }
 
 .settings-block-footnote {

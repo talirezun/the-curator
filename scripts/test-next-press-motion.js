@@ -69,6 +69,13 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+// THE ALIAS TABLE, READ RATHER THAN RETYPED (v3.65.0). `shared/sidebar.js`
+// emits the kit's `cur-sb-*` tokens and a host's historical ones on the SAME
+// element, so a class-by-class resolution of "does this pressed class also
+// transition?" now has to know which two names are one element. Importing the
+// frozen table is what keeps this suite from asserting against a copy of it
+// that can drift; the module is DOM-free (its only import is shared/age.js).
+import { ALIASES } from '../src/public/next/shared/sidebar.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -337,14 +344,38 @@ for (const r of RULES) {
 ok(halfPx.length === 0,
   `no rule reintroduces a sub-pixel translate (the 0.4716px defect)${halfPx.length ? ' (found: ' + halfPx.join('; ') + ')' : ''}`);
 
-/** Every press transform needs a transform TRANSITION, or it snaps. */
+/**
+ * Every press transform needs a transform TRANSITION, or it snaps.
+ *
+ * AN ALIASED CLASS IS HALF OF ONE ELEMENT (v3.65.0). `.settings-nav-row` no
+ * longer declares a box of its own: `renderSidebarRow` writes
+ * `class="cur-sb-row settings-nav-row"`, the kit owns the transition, and this
+ * file keeps only the press rule the NAMED_FAMILIES census above reads by
+ * name. A class-by-class resolution would therefore report a snap on an
+ * element that transitions perfectly well — so a class the frozen ALIASES
+ * table pairs with a kit class is resolved against BOTH names. The table is
+ * imported, not transcribed, and it may only shrink, so this widening cannot
+ * outlive the transition it exists for.
+ */
+const ALIAS_PARTNER = new Map();
+for (const set of Object.values(ALIASES)) {
+  if (set && typeof set.row === 'string') ALIAS_PARTNER.set(set.row, 'cur-sb-row');
+}
+ok(ALIAS_PARTNER.size >= 1,
+  `CONTROL: the sidebar kit's alias table still pairs ${ALIAS_PARTNER.size} row class(es) with `
+  + '`cur-sb-row` — an empty table would silently narrow the check below back to one name');
+
 const noTransitionFor = [];
 for (const r of ACTIVE_RULES) {
   const tf = declValue(r.body, 'transform');
   if (!tf || tf === 'none') continue;
   for (const cls of classesIn(r.selector)) {
-    const re = classRe(cls);
-    const hasT = NORMAL_RULES.some(x => re.test(x.selector) && /transform/.test(declValue(x.body, 'transition') || ''));
+    const names = [cls];
+    if (ALIAS_PARTNER.has(cls)) names.push(ALIAS_PARTNER.get(cls));
+    const hasT = names.some((n) => {
+      const re = classRe(n);
+      return NORMAL_RULES.some(x => re.test(x.selector) && /transform/.test(declValue(x.body, 'transition') || ''));
+    });
     if (!hasT) noTransitionFor.push(`${r.file} ${r.selector} (.${cls})`);
   }
 }
@@ -594,27 +625,66 @@ ok(ringReduce.length === 1 && /pring-breathe/.test(declValue(ringReduce[0].body,
   '…specifically a slow opacity breath, so the "still working" signal survives');
 
 /**
- * THE SELECTION EDGES KEEP THEIR POSITION. `transform: scaleY(1)` on an
- * `.active::before` IS the accent bar. A reduce rule that set `transform:
- * none` there would collapse the bar and take away the only mark saying
- * which row is selected — removing information rather than motion. The edges
- * must be reduced by killing the TRANSITION, never the transform.
+ * THE SELECTION EDGES ARE GONE, AND THIS IS THE RATCHET THAT KEEPS THEM GONE.
+ *
+ * This section used to assert the OPPOSITE — that `.settings-nav-row::before`
+ * and `.chat-conv-row::before` were declared on the base rule at `scaleY(0)`,
+ * scaled to 1 by `.active`, and reduced by killing the TRANSITION rather than
+ * the transform (because `transform: none` on an `.active::before` collapses
+ * the bar and deletes the only mark saying which row is selected). Every word
+ * of that was true of the edge it described, and the edge is what v3.65.0
+ * removed: *"if I select General I get a violet line on the left; we don't get
+ * this in Domains or Context ... it is a completely other design which got in
+ * during development."* (R10.)
+ *
+ * FIVE ASSERTIONS BECAME VACUOUS WITH IT — per selector: declared at
+ * scaleY(0); `.active::before` at scaleY(1); the base transitions transform;
+ * the reduce rule declares no transform; the reduce rule says `transition:
+ * none`. They are replaced here by the assertion that makes the DELETION
+ * permanent, plus the one that says what carries the state instead.
+ *
+ * `EDGE_SELECTORS` is now EMPTY and stays in the file as the record of what it
+ * held. `RETIRED_EDGES` is a RATCHET and may only ever shrink: Settings' half
+ * is asserted GONE outright (this package), and the total is bounded at one so
+ * Chat's half — which lands from its own branch in this same release — cannot
+ * be joined by a third while it is still on its way.
  */
-const EDGE_SELECTORS = ['.settings-nav-row::before', '.chat-conv-row::before'];
-for (const sel of EDGE_SELECTORS) {
-  const base = NORMAL_RULES.find(r => r.selector === sel);
-  ok(!!base && declValue(base.body, 'transform') === 'scaleY(0)',
-    `${sel} is declared on the BASE rule at scaleY(0) — a ::before generated by .active has no start value and can only appear instantly`);
-  const activeEdge = NORMAL_RULES.find(r => r.selector === sel.replace('::before', '.active::before'));
-  ok(!!activeEdge && declValue(activeEdge.body, 'transform') === 'scaleY(1)',
-    `${sel.replace('::before', '.active::before')} scales it to 1, so there are two states to interpolate`);
-  ok(!!base && /transform/.test(declValue(base.body, 'transition') || ''),
-    `${sel} transitions its transform`);
-  const red = REDUCE_RULES.filter(r => r.selector.split(',').map(s => s.trim()).includes(sel));
-  ok(red.length > 0 && red.every(r => !declares(r.body, 'transform')),
-    `${sel} under reduced motion loses its TRANSITION and KEEPS its position — transform: none would delete the state marker`);
-  ok(red.some(r => declValue(r.body, 'transition') === 'none'),
-    `…and it does explicitly say transition: none`);
+const EDGE_SELECTORS = [];
+ok(EDGE_SELECTORS.length === 0,
+  'there is no selection EDGE left to reduce — a filled row is a colour, not motion');
+
+const RETIRED_EDGES = ['.settings-nav-row::before', '.chat-conv-row::before'];
+{
+  const surviving = RETIRED_EDGES.filter(
+    (sel) => RULES.some((r) => r.selector.split(',').map((s) => s.trim()).includes(sel)));
+  ok(!surviving.includes('.settings-nav-row::before'),
+    'the Settings selection bar is gone from every /next stylesheet — no rule declares '
+    + '`.settings-nav-row::before`, so the active row\'s computed `content` is the UA '
+    + 'default `none` (confirmed in a browser: v3.65.0 §4 row 13)');
+  ok(surviving.length <= 1,
+    `at most ONE retired edge may still be on the tree (found: ${surviving.join(', ') || 'none'}) `
+    + '— the ratchet may only shrink, so a re-introduced edge reds here even while the other '
+    + 'half is still in flight');
+
+  // WHAT CARRIES THE STATE NOW, asserted rather than assumed: deleting a mark
+  // without checking that something replaced it is how a selection becomes
+  // invisible. The filled row is the app's ONE selection idiom.
+  const fill = RULES.find((r) => r.selector === '.cur-sb-row.active');
+  ok(!!fill && /var\(--mat-row-active\)/.test(declValue(fill.body, 'background') || ''),
+    'the selected row is the FILLED row — shared/sidebar.css paints `.cur-sb-row.active` '
+    + 'with the --mat-row-* alpha overlay');
+  const weight = RULES.find((r) => r.selector === '.cur-sb-row.active .cur-sb-name');
+  ok(!!weight && declares(weight.body, 'font-weight'),
+    '…and the state is carried a second way, by the label\'s weight, so it does not rest '
+    + 'on one 1.31:1 fill alone');
+
+  // ANTI-VACUITY. A selector scan that silently stopped matching `::before`
+  // would report every edge retired forever. The tree has ~29 of them in
+  // shell.css alone.
+  const anyBefore = RULES.filter((r) => /::before/.test(r.selector));
+  ok(anyBefore.length >= 10,
+    `CONTROL: the scanner still sees ${anyBefore.length} \`::before\` rules in /next — `
+    + 'finding none would mean the resolver broke, not that the tree is clean');
 }
 
 // ─────────────────────────────────────────────────────────────────────────

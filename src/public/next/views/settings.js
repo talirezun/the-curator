@@ -182,6 +182,30 @@ import { formatModelSummary } from '../shared/model-summary.js';
 // exists for, and its `.tx-readout-value` is the element the age clock writes
 // into — the same target views/memory.js's own clock uses.
 import { renderViewHeader, renderReadout } from '../shared/text.js';
+// ── THE SIDEBAR, AND IT IS THE DOMAINS SIDEBAR ───────────────────────────
+// Settings had the app's third answer to "a title, some actions, and a list
+// you select from": rows 48.8px tall against Domains' 63.8, no action in the
+// head at all (Updates sat in the FOOTER, beside the version string), and a
+// selection drawn as a 2px violet `::before` bar that nothing else in the app
+// used. The maintainer's words: *"the same goes for the Settings sidebar:
+// follow the Domains pattern — use the Updates button, put it on top in the
+// same design as Domains ... we don't need this line, it is a completely other
+// design which got in during development."*
+//
+// `alias: 'settings'` keeps `settings-nav-list` / `settings-nav-row` /
+// `row-label` / `row-hint` on the SAME elements, because this file's own click
+// binder (`wireGlobalListeners`) and four suites address them by name.
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../shared/sidebar.js';
+// ── THE MONITOR, for every LIVE-STATE reading on this screen ─────────────
+// The bridge's connection strip, its stale-bridge warning, the self-test
+// outcome and the two session readings were four hand-built treatments of one
+// idea — *"these cards show specific data, the data that is changing ... it's
+// really hard to understand that this is like a monitor into the specific data
+// and changing state ... we are looking for a unified design AND a
+// distinguished design."* views/sync.js's status card was a fifth, and was a
+// near-byte copy of the first. One component now, and `views/sync.js` makes
+// the same call shape.
+import { renderMonitor } from '../shared/monitor.js';
 // Every link out of this screen into the user documentation. A key, never a
 // path: `docsUrl`/`docsLinkHtml` THROW on an unknown key, and
 // scripts/test-docs-links.js reads the real markdown in docs/ and reds on a
@@ -2011,12 +2035,17 @@ let lastMainHtml = null;
  * @returns {boolean} false when nothing was written.
  */
 function renderSidebar(token, force) {
-  const rows = SETTINGS_SECTIONS.map(([id, label, hint]) => (
-    '<button type="button" class="settings-nav-row' + (state.section === id ? ' active' : '') + '" data-section="' + id + '">' +
-      '<span class="row-label">' + escapeHtml(label) + '</span>' +
-      '<span class="row-hint">' + escapeHtml(hint) + '</span>' +
-    '</button>'
-  )).join('');
+  // ONE ROW COMPONENT, three hosts. `name` is the section, `event` is the
+  // hint — the SAME third-line slot Domains' "Ingested · <title>" occupies,
+  // which is why Settings passes no dot, no figure and no age: those slots are
+  // omitted, not re-purposed. See shared/sidebar.js.
+  const rows = SETTINGS_SECTIONS.map(([id, label, hint]) => renderSidebarRow({
+    alias: 'settings',
+    name: label,
+    event: hint,
+    active: state.section === id,
+    data: { section: id },
+  })).join('');
 
   const versionLabel = state.version
     ? 'The Curator v' + escapeHtml(state.version.version) +
@@ -2025,11 +2054,23 @@ function renderSidebar(token, force) {
 
   const html =
     '<div class="settings-sidebar-shell">' +
-      '<div class="sidebar-title">Settings</div>' +
-      '<div class="settings-nav-list">' + rows + '</div>' +
+      // UPDATES IS THE TOP SECONDARY, in the slot Domains gives "Use existing
+      // folder" (R6). There is no PRIMARY: the primary slot means "create the
+      // kind of thing this list holds", and a settings section is not created.
+      // The version string stays at the foot ALONE — it is a reading, not an
+      // action, and it was only ever in the footer's button row because the
+      // head had nothing in it.
+      renderSidebarHead({
+        title: 'Settings',
+        secondary: { label: 'Updates', id: 'settings-updates-btn' },
+      }) +
+      // NO EYEBROW: Domains' KNOWLEDGE names what its list holds among other
+      // possible lists. This sidebar has exactly one list and the title above
+      // it already names it, so a caption would be a label for the whole
+      // screen printed twice.
+      renderSidebarGroup({ alias: 'settings', rowsHtml: rows }) +
       '<div class="settings-sidebar-footer">' +
         '<span class="mono settings-version">' + versionLabel + '</span>' +
-        '<button type="button" class="btn btn-secondary btn-xs" id="settings-updates-btn">Updates</button>' +
       '</div>' +
     '</div>';
   if (force !== true && html === lastSidebarHtml) return false;

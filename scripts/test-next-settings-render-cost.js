@@ -68,6 +68,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { stripComments, functionSource } from './test-helpers/source-scan.js';
+// The REAL sidebar kit, injected into the lifted `renderSidebar` (see §3).
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../src/public/next/shared/sidebar.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -357,6 +359,13 @@ function mainHarness(initialState) {
     escapeHtml,
     setSidebar: (html) => { written.push(html); },
     lastSidebarHtml: null,
+    // THE REAL SIDEBAR KIT (v3.65.0). `renderSidebar` builds through
+    // shared/sidebar.js now, and a module-level import is invisible inside a
+    // body lifted by `extractFunction` — a free `renderSidebarRow` there
+    // crashes the suite instead of failing an assertion. Injected REAL, so
+    // §3's "an unchanged render writes nothing" is still a statement about the
+    // HTML that actually ships.
+    renderSidebarHead, renderSidebarGroup, renderSidebarRow,
   };
   const S = build(['renderSidebar'], deps, 'renderSidebar');
   ok(S.renderSidebar(1) === true && written.length === 1, 'the sidebar paints on first render');

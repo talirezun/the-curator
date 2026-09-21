@@ -52,6 +52,8 @@ import { stripComments, functionSource } from './test-helpers/source-scan.js';
 // table in shared/docs-links.js, whose keys scripts/test-docs-links.js
 // checks against the actual markdown headings in docs/.
 import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
+// The REAL sidebar kit, injected into the lifted `renderSidebar` below.
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../src/public/next/shared/sidebar.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NEXT = join(ROOT, 'src/public/next');
@@ -205,10 +207,19 @@ if (renderSidebarSrc) {
   // this call is always the FIRST one and therefore always paints — an
   // undefined binding would be a ReferenceError crash here rather than a
   // failing assertion, which is the FN_NAMES shape this repo names.
+  // THE KIT'S THREE FUNCTIONS ARE INJECTED, AND THEY ARE THE REAL ONES
+  // (v3.65.0). `renderSidebar` now builds through shared/sidebar.js, and a
+  // module-level import is NOT visible inside a body lifted by
+  // `functionSource` — a free `renderSidebarRow` there is a ReferenceError,
+  // i.e. a suite that CRASHES instead of asserting. They are passed through
+  // the constructor rather than stubbed so what is executed below is the
+  // shipped component, exactly as it is on the screen.
   const fn = new Function(
     'SETTINGS_SECTIONS', 'state', 'escapeHtml', 'setSidebar', 'lastSidebarHtml',
+    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow',
     renderSidebarSrc + '\nreturn renderSidebar;'
-  )(SETTINGS_SECTIONS, { section: 'general', version: null }, (x) => String(x), (html) => { captured = html; }, null);
+  )(SETTINGS_SECTIONS, { section: 'general', version: null }, (x) => String(x), (html) => { captured = html; }, null,
+    renderSidebarHead, renderSidebarGroup, renderSidebarRow);
   fn(1);
   renderedIds = [...captured.matchAll(/data-section="([a-z]+)"/g)].map((m) => m[1]);
 }
