@@ -114,7 +114,8 @@
    `tx-` selector declared in this file — so a view asks for flex behaviour
    around a kit component by wrapping it, never by reaching into it. */
 .mem-capture-cells { flex: 1 1 auto; min-width: 0; }
-.mem-capture-info { flex: none; margin-left: auto; }
+/* `.mem-capture-info` is deleted (v3.65.1, D4): the ⓘ is step ②'s own now.
+   The reading's head is one cell wide and needs no second slot. */
 
 /* THE TWO LINE CLASSES THIS READING DOES NOT COUNT, and the truncation note
    under the table. --text-2, not --text-3: this file carries ZERO
@@ -128,70 +129,46 @@
   font-variant-numeric: var(--numeric-tabular);
 }
 
-/* ── THE SESSION TABLE ────────────────────────────────────────────────────
-   Deliberately NOT `.mem-ws-table`. That table's cells are a CONTROL — the
-   first cell is a button, the row carries hover, press and a selected state —
-   and this one is a list of facts with nothing to press. Sharing the class
-   would hand every session row a hover highlight that promises a click it does
-   not have, which is the one thing a table of readings must not do. The type
-   and the rules are the same on purpose; the behaviour is not.
-
-   It scrolls inside its own wrapper rather than overflowing the step, which is
-   what keeps a five-column table honest in a 224px column at 568px. */
-.mem-cap-wrap { overflow-x: auto; }
-.mem-cap-table { width: 100%; border-collapse: collapse; }
-.mem-cap-table th {
-  text-align: left;
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--track-eyebrow);
-  text-transform: uppercase;
-  color: var(--text-2);
-  padding: 0 var(--space-5) var(--space-3) 0;
-  border-bottom: var(--hairline-w) solid var(--hairline-strong);
-  white-space: nowrap;
-}
-.mem-cap-table td {
-  padding: var(--space-3) var(--space-5) var(--space-3) 0;
-  border-bottom: var(--hairline-w) solid var(--hairline);
-  font-size: var(--text-xs);
-  color: var(--text-2);
-  vertical-align: middle;
-  white-space: nowrap;
-}
-.mem-cap-table tbody tr:last-child td { border-bottom: none; }
-/* The call count ticks and the ages line up under each other, so the figures
-   take tabular numerals — the same property `.mem-row-meta` and `.mem-j-when`
-   take, and for the same reason: a proportional `1` is narrower than a `4`. */
-.mem-cap-num { font-variant-numeric: var(--numeric-tabular); }
-
-/* THE TICK AND THE DASH. The glyph is aria-hidden and a visually-hidden word
-   carries the fact, so nothing here is decoded from ink alone — which is what
-   lets the "did" state take a colour at all.
-
-   --success on --surface: 4.05 light / 10.07 dark, both clear of the 4.5 TEXT
-   floor in dark and — at 4.05 — BELOW it in light. That is why the glyph is
-   not the carrier: it is a MARK beside a word a screen reader reads, and the
-   column header above it says which question it answers. The "did not" state
-   takes --text-2 rather than a status colour, because a session that did not
-   save is a reading and not a fault: --attention means a human has to act, and
-   this meter reports and never blocks (Decision G). */
-.mem-cap-flag { color: var(--text-2); }
-.mem-cap-flag-on { color: var(--success); }
+/* ── THE SESSION TABLE IS DELETED (v3.65.1, D4) ──────────────────────────
+   `.mem-cap-wrap`, `.mem-cap-table`, `.mem-cap-num`, `.mem-cap-flag` and
+   `.mem-cap-flag-on` went with `renderCaptureSessions`. The maintainer, on the
+   CAPTURE row's body: *"two different designs, one row-like then table-like."*
+   Every figure the table carried is a monitor line now — including the two it
+   alone had, the window's total tool calls and the newest session's harness —
+   and the cap it disclosed ("showing the N most recent of M") joined the two
+   line-class disclosures OUTSIDE the row, where a disclosure belongs.
 
 /* ── STEP ③ — THE WIKI'S FIGURES AND ITS TWO DOORS (v3.62.0, P1-8) ────────
    The readouts are the shared group again; only the gap to the doors below
    them belongs to this view. Both doors are `btn-secondary btn-xs` and wrap
    as a row, so nothing here paints a button — `shell.css`'s taxonomy does. */
 .mem-k-wrap { margin-bottom: var(--space-8); }
-.mem-k-doors { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.mem-k-doors { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+/* THE ROW'S OWN REMOVE, pushed away from the two doors rather than sitting
+   beside them — the same call `.mem-fnd-delete` makes one block up, and for
+   the same reason: a control that takes a domain off this project must not be
+   one mis-click from a door that merely navigates. */
+.mem-k-drop { margin-left: auto; }
+/* THE IDENTITY DOT ON A KNOWLEDGE ROW. Shape and colour are the kit's
+   (`.cur-sb-dot` plus `cur-sb-dot-N`); this owns only the gap to the name it
+   identifies. It sits before the NAME, on the left; the FRESHNESS dot sits
+   before the READING, on the right — two channels, and never the same glyph
+   position, which is the only thing that keeps them legible as two. */
+.mem-k-dot { margin-right: var(--space-3); }
 
-/* ── STEP ③'s PICKER ROW (v3.65.0, P10) ─────────────────────────────────
-   "+ Add a wiki" and one Remove per chosen wiki, under the rows they act on.
-   A flex row that WRAPS: a project may draw on up to twelve, and a row that
-   scrolls sideways hides the control the maintainer came for.
+/* ── STEP ③'s HEAD ROW (v3.65.1, D5) ────────────────────────────────────
+   ONE control: "+ Add a domain", in the head row ABOVE the rows, at the rows'
+   own x — step ①'s rule and Wiki health's `.dm-health-top` anatomy.
 
-   `margin-top` rather than a gap on the parent: the rows above are `<details>`
+   WHAT LEFT IT: one Remove per chosen domain. Measured at 1370 with two
+   domains chosen, this row held three controls left to right — the picker at
+   x=404, `Remove projects` at 527.9, `Remove research` at 642.2 — two of them
+   PER-ROW actions sitting under the rows they act on, which is what the
+   maintainer read as *"two un-synced buttons in a really poor
+   implementation"*. Each Remove is inside its own expanded row now, beside
+   that row's two doors, exactly as the documents table's per-row Remove is.
+
+   `margin-bottom` rather than a gap on the parent: the rows below are `<details>`
    elements whose spacing is `.mem-fold + .mem-fold`'s, and adding a second
    owner of the vertical rhythm is how a 2px step between a title and the
    sentence under it came to exist (see `.settings-block-hd`'s own note in
@@ -201,8 +178,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-4);
-  margin-top: var(--space-6);
+  margin-bottom: var(--space-6);
 }
+.mem-k-pick:empty { display: none; }
 
 /* ── INSIDE A BLOCK, THE GAP IS SMALLER — AND THAT IS THE WHOLE POINT ──────
    Block ① stacks the Last-saved reading, the Reload offer and the "state on
@@ -269,39 +247,21 @@
      not have states, and the quiet row class already says it in the ink.
 
    WHAT THIS FILE STILL OWNS about the rail is below: the quiet row's ink, and
-   the six identity COLOURS, which cannot live in the kit — three of the
-   light-theme values are derived literals and
-   scripts/test-next-design-kit.js §10 permits colour literals in exactly TWO
-   /next stylesheets, asserting the baseline holds exactly two files. Widening
-   an anti-drift ratchet in order to ship a kit is backwards.              */
+   nothing else.                                                           */
 
-/* ── THE SIX IDENTITY COLOURS, ON THE KIT'S CLASS NAMES ─────────────────
-   NOT ONE COLOUR LITERAL: every value here is a `var()` reference, six to the
-   type triad and the three neutral rungs, six more to `--dm-ink-*` — the
-   three names views/domains.css declares for exactly this, precisely so two
-   rules needing one colour do not become two copies of a literal.
+/* ── THE SIX IDENTITY COLOURS LEFT THIS FILE (v3.65.1, D7) ──────────────
+   Twelve rules used to be declared here, byte-identical to views/domains.css's
+   own copy — and CSS has no per-view scope, so each file was painting both
+   rails. The note this block carried predicted exactly that: *"if both files
+   end up declaring them, one copy should go."* Both went. The palette is
+   `shared/sidebar.css`'s now, under `--id-ink-*`, beside `.cur-sb-dot`'s own
+   shape — one file for the mapping, the glyph and the colours, which is what
+   makes a domain the same colour in the Domains rail, in this one, in this
+   page's breadcrumb, on every Knowledge row and on Chat's chips.
 
-   ONE DECLARATION FOR BOTH RAILS. CSS has no per-view scope: these rules
-   paint `cur-sb-dot-N` wherever it appears, so the Domains rail is painted by
-   them too the moment it adopts `identityDotClass()`. They are written here
-   rather than in views/domains.css only because this is the view that adopts
-   first; if both files end up declaring them, one copy should go.
-
-   The `[data-theme="light"]` arm is the measured one: in DARK the type
-   triad's own -500 rungs already clear the 3:1 non-text floor with room, so
-   the names alias the tokens there and no dark value moves by a byte.     */
-.cur-sb-dot-1 { background: var(--entity-500); }
-.cur-sb-dot-2 { background: var(--concept-500); }
-.cur-sb-dot-3 { background: var(--summary-500); }
-.cur-sb-dot-4 { background: var(--teal-500); }
-.cur-sb-dot-5 { background: var(--red-400); }
-.cur-sb-dot-6 { background: var(--ink-200); }
-[data-theme="light"] .cur-sb-dot-1 { background: var(--dm-ink-entity); }
-[data-theme="light"] .cur-sb-dot-2 { background: var(--dm-ink-concept); }
-[data-theme="light"] .cur-sb-dot-3 { background: var(--dm-ink-summary); }
-[data-theme="light"] .cur-sb-dot-4 { background: var(--teal-600); }
-[data-theme="light"] .cur-sb-dot-5 { background: var(--red-600); }
-[data-theme="light"] .cur-sb-dot-6 { background: var(--ink-400); }
+   NOTHING IN THIS FILE OR IN views/memory.js MAY NAME `--dm-ink-*` any more:
+   those three survive in the kit only as deprecated aliases while the last
+   callers are moved, and they are removed after this merge.              */
 
 /* A project row with nothing saved yet. It was --text-3, which this file's own
    note on the meta line argued against in principle: "Sub-threshold contrast
@@ -354,13 +314,17 @@
   /* NO margin of its own. `.mem-section + .mem-section` owns every gap on this
      page — see the rhythm block at the top of the file. */
 }
-.mem-project-mark {
-  width: 9px;
-  height: 9px;
-  flex: none;
-  border-radius: 2px;                      /* square — same rule as the rows */
-  background: var(--accent);
-}
+/* ── THE BREADCRUMB'S MARK IS THE DOMAIN'S IDENTITY DOT (v3.65.1, D7) ────
+   It declared `background: var(--accent)` — a 9×9 VIOLET SQUARE, identical on
+   every project in every domain, beside a breadcrumb naming the domain it did
+   not identify. Measured: rgb(124,90,245), 2px radius, 9px, against
+   rgb(121,199,82) round 8px for that same domain three inches to the left in
+   the rail. CONTINUITY BY IDENTITY is one palette, one mapping and ONE GLYPH,
+   so the element takes `.cur-sb-dot` — shared/sidebar.css's own 8px round
+   shape — and its colour from `identityDotClass`. NOTHING about size, shape or
+   colour is declared here any more: a view that restates a kit mark's geometry
+   is how two ladders for one quantity came to exist in the first place. */
+.mem-project-mark { flex: none; }
 /* ── THE BREADCRUMB IS A SUBTITLE, NOT A HEADING ─────────────────────────
    `domain / project` sits directly under the view's own <h1> ("Agent
    memory", --type-h1, 27/600) and directly ABOVE the page's block titles
@@ -542,51 +506,18 @@
                     --attention border  7.22 /  3.21   (3:1 non-text floor)
                     --text-2            8.67 /  8.38
                     --text (the bold lead) 13.75 / 16.41                    */
-/* NO max-width, and NO margin. The box runs to the column's edge like every
-   other section; the MEASURE limit is on the sentences inside it (see
-   .mem-save-line below), which is where a measure limit belongs. */
-.mem-save {
-  padding: 12px 14px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  background: var(--surface);
-}
-/* ── THE READING IS A ROW'S META NOW (v3.64.2) ────────────────────────────
-   It was a highlighted card with a readout in it, sitting above a bare CAPTURE
-   readout in a third design, above three fold rows — "the worst UX", on the
-   maintainer's screenshot of step ②. It is the meta slot of a `.mem-fold` row
-   now, so it inherits that row's type and colour and carries only its own
-   arrangement: the pip, the age, the pair and tool that wrote it, and the
-   completeness badge, on one line that wraps as a whole.
+/* ── THE "Last saved" CARD IS DELETED (v3.65.1, D2) ──────────────────────
+   `.mem-save` was `padding: 12px 14px; border: 1px solid` — a CARD wrapping a
+   ROW — and it cost that row 15px a side: measured at 1370, every other
+   summary's reading ended at x=1316 and this one at 1301. It said what the
+   MEMORY overview tile and the Handoffs row's summary already say. The class
+   name survives on the warnings block alone, with no box of its own, because
+   `patchOpenPair` writes `.mem-status-stack` by selector and the disclosures
+   it now holds are per-pair.
 
-   `min-width: 0` for the same reason `.mem-ctl` needs it — the provenance
-   carries a machine id, which is long and hex-suffixed. */
-.mem-save-main {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 8px;
-  min-width: 0;
-}
-/* The age is the figure a one-second glance is looking for, so it is the one
-   thing in the row at full ink. */
-.mem-save-age { color: var(--text); font-weight: var(--weight-medium); }
-/* And the pair and the tool that wrote it stay at the row's own --text-2,
-   which `.mem-fold-summary` already sets — declared so the rule is nameable
-   and the two halves cannot be recoloured together by accident. */
-.mem-save-prov { color: var(--text-2); }
-/* The FLAT case: a reading with nothing to explain is the same row without a
-   chevron, rather than a fold that opens on nothing. Same padding as every
-   other flat body; the title and the meta arrange exactly as a summary's do. */
-.mem-save-flat {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: var(--text-sm);
-  color: var(--text-2);
-}
-.mem-save-flat .mem-fold-meta { margin-left: auto; }
+   `.mem-save-main`, `.mem-save-age`, `.mem-save-prov` and `.mem-save-flat`
+   went with the reading they arranged. */
+.mem-save { display: contents; }
 
 /* THE PIP — five discrete steps, and NOT a bar.
 
@@ -836,7 +767,12 @@
 
    NO PRESS TRANSFORM of its own — `.cur-group-row` carries the kit's, and the
    reduced-motion block at the foot of this file already covers that family.  */
-.mem-ws-more {
+/* ── AND THE JOURNAL'S SHOW-MORE IS THE SAME CONTROL (v3.65.1, D3) ─────
+   Not a copy: the SAME declarations, on both selectors. The maintainer named
+   the Handoffs implementation as the right one, so the journal's floating
+   `btn-xs` beside a monitor card was deleted rather than re-styled. */
+.mem-ws-more,
+.mem-j-more {
   position: relative;
   display: flex;
   align-items: center;
@@ -862,7 +798,8 @@
    kit's `.cur-group-row + .cur-group-row::before` needs the element above to be
    a `.cur-group-row` too, and the element above this one is `.mem-ws-wrap`. The
    precondition does not hold, so the line is stated rather than inherited. */
-.mem-ws-more::before {
+.mem-ws-more::before,
+.mem-j-more::before {
   content: "";
   position: absolute;
   left: 10px;
@@ -871,9 +808,12 @@
   height: var(--hairline-w);
   background: var(--hairline-strong);
 }
-.mem-ws-more:hover { background: var(--surface-hover); }
-.mem-ws-more:active { background: var(--surface-active); transform: translateX(var(--press-shift)); }
-.mem-ws-more:focus-visible { outline: none; box-shadow: var(--ring-focus); border-radius: var(--radius-xs); }
+.mem-ws-more:hover,
+.mem-j-more:hover { background: var(--surface-hover); }
+.mem-ws-more:active,
+.mem-j-more:active { background: var(--surface-active); transform: translateX(var(--press-shift)); }
+.mem-ws-more:focus-visible,
+.mem-j-more:focus-visible { outline: none; box-shadow: var(--ring-focus); border-radius: var(--radius-xs); }
 /* The label lines up with the Work-stream column above it — the table's first
    cell takes the same 10px — rather than floating at the row's own padding. */
 .mem-ws-more-label { font-weight: var(--weight-medium); }
@@ -1254,11 +1194,20 @@
   border-left: 2px solid var(--attention);
 }
 .mem-j-rej-loss svg { color: var(--attention-text); }
-/* The foot holds the journal's live count (a readout) and, when there is more
-   to fetch, the Show more button. `align-items: flex-end` because the readout
-   is a two- or three-line column and the button belongs on its last line. */
-.mem-j-foot { display: flex; align-items: flex-end; gap: 12px; margin-top: 10px; }
-.mem-j-more { flex: none; }
+/* ── THE FOOT IS DELETED (v3.65.1, D3) ───────────────────────────────────
+   `.mem-j-foot` held a monitor card reading "SAVES RECORDED 15 · showing the
+   10 most recent" and a floating `btn-xs` beside it — measured at 1370, the
+   card 421→723.5 and the button at x=735.5 w=77, under a list 893px wide. The
+   maintainer's word for it: *"from another dimension."* The count is in the
+   row's own summary now, and "Show N more" is the Handoffs list's
+   implementation — `.cur-group-row`, the list's own last row, full width — so
+   `.mem-j-more` needs no rule of its own. `.mem-ws-more`'s own declarations
+   carry it; the class survives as the binder's hook.
+
+   ONE EXCEPTION, and it is the alignment rule: `.mem-ws-more` sits after a
+   scrolling `.mem-ws-wrap` and this one after an `<ol>`, so the gap above it
+   is declared here rather than inherited from a sibling it does not have. */
+.mem-j-list + .mem-j-more { margin-top: var(--space-4); }
 
 
 
@@ -1472,14 +1421,37 @@
    the card without it. The 480px basis is gone with the side-by-side
    arrangement it existed for (v3.61.1). */
 .mem-fnd-row > .mem-fold { min-width: 0; }
+/* ── THE SECTION'S CONTROLS, IN A HEAD ROW ABOVE THE ROWS (v3.65.1) ──────
+   Wiki health's `.dm-health-top` anatomy (views/domains.css), the one shipped
+   instance of the pattern and the model the maintainer named. Through v3.65.0
+   this row was emitted AFTER the fold, so the only section on this page with
+   controls put them where nothing else on the page puts them. The class and
+   its declarations are unchanged; what moved is the element's position in
+   `renderFoundations` — and the bottom margin, which used to be the gap above
+   nothing and is now the gap down to the rows. */
 .mem-fnd-head-controls {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-3);
-  /* Their own row under the fold now, so there is no summary line to be
-     optically level with and no width to hold back from the table. */
+  /* ── AND ITS LABELS WRAP RATHER THAN OVERFLOW (v3.65.1) ──────────────
+     The row holds THREE controls since this release, and the widest —
+     "Mirror from GitHub instead" — is 160px at `btn-xs`. MEASURED at 568,
+     where the rail (72) plus this view's sidebar (272) leave `.main-inner`
+     at 224px and this row a 136px content box: `flex-wrap` cannot help,
+     because the button itself is wider than the line it would wrap onto, so
+     the row reported scrollWidth 160 against clientWidth 136 and joined the
+     list of elements that overflow their own box at that width.
+
+     Two lines beat a clipped word. This declares a property of THIS ROW's
+     content, not of the button's chrome — `.btn`'s padding, height, ink and
+     press all stay shell.css's — and it is scoped to the row so no other
+     `btn-xs` in the app can wrap by accident. The alternative,
+     `overflow-x: auto`, was refused: a control row that scrolls hides the
+     control somebody came for, which is v3.61.1's own finding one block up. */
+  min-width: 0;
 }
+.mem-fnd-head-controls > .btn { white-space: normal; text-align: left; }
 .mem-fnd-head-controls:empty { display: none; }
 /* The Domains pointer, on a project with no documents chosen. Its own row
    under the notes rather than beside the chooser: it leaves this view, and a
@@ -1844,6 +1816,42 @@
   flex-direction: column;
   gap: var(--space-8);
 }
+
+/* ── THE PANEL — QUICK MAINTENANCE'S ANATOMY, NOT A SECOND ONE (v3.65.1) ──
+   The maintainer's reference for a panel of this kind is Wiki health's QUICK
+   MAINTENANCE on the domain page, which he called *"designed properly"*. The
+   five values below are ITS values, and views/domains.css:753-759 is the
+   source of every one of them — copied deliberately rather than shared,
+   because promoting a kit panel would be a fourth new shared component in one
+   release; the promotion is recorded for v3.66.0.
+
+   WHAT IT REPLACES, measured at 1370 on the shipped v3.65.0 panel: a
+   `.mem-fnd-init-wrap` at 421→1314 holding a `.mem-fold-flat` card holding a
+   `.mem-fold-body` — THREE left edges (405 / 421 / 436) and three right edges
+   nested inside a row that runs 405→1330. One box now, at the rows' own
+   width, with ONE padding: 14px on all four sides, so the content box is
+   symmetric and the arm inside it can reach both edges equally.
+
+   `.mem-fold-flat` and `.mem-fnd-init-body`'s padding fight are both out of
+   this path, and with them the `.mem-fold-flat > .mem-fold-body.mem-fnd-init-body`
+   specificity patch v3.65.0 needed to undo the 46px pencil reserve this card
+   never wanted. */
+.mem-fnd-panel {
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-tint);
+}
+/* The eyebrow says which of the three things this panel is, in the app's one
+   eyebrow treatment (`.cur-group-title` carries the type; this carries the
+   colour and the gap down to the body). */
+.mem-fnd-panel-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--accent-text);
+  margin-bottom: 10px;
+}
 .mem-fnd-init-body {
   display: flex;
   flex-direction: column;
@@ -1868,7 +1876,12 @@
    the one that applies. 14px is the value the other three edges of
    `.mem-fold-flat > .mem-fold-body` already take, so the card is symmetric
    rather than merely wider. */
-.mem-fold-flat > .mem-fold-body.mem-fnd-init-body { padding-right: 14px; }
+/* GONE WITH THE CARD IT PATCHED (v3.65.1). `.mem-fnd-init-body` is a plain
+   flex column inside `.mem-fnd-panel` now, which has ONE symmetric padding,
+   so there is no reserve to undo and no specificity contest to win. The rule
+   is kept as this comment rather than deleted silently, because the defect it
+   closed — an author `padding-right` losing to a two-class selector — is one
+   the next person to nest a card in this file will re-create. */
 
 /* The Edit column of the foundations table. Right-aligned and no wider than
    the control, so the columns before it keep the width. */
@@ -1944,11 +1957,13 @@
   color: var(--text);
 }
 
-/* The budget warning, above the fold. `.tx-note` owns the face; this kills
-   only its top margin, because inside a flex column with a `gap` a margin
-   would add to the gap rather than replace it — the same call
-   `.fnd-init-why` makes one file over. */
-.mem-fnd-budget { margin-top: 0; margin-bottom: var(--space-6); }
+/* The budget warning, UNDER the row and outside the fold (v3.65.1). A cost
+   may never sit behind a chevron (v3.16.1), so it is a sibling of the
+   `<details>` rather than a child of it; what moved in v3.65.1 is which
+   sibling — it used to be emitted before the section's controls, which put a
+   sentence between the step's heading and its head row. `.tx-note` owns the
+   face; this owns only the distance to the row above it. */
+.mem-fnd-budget { margin-top: var(--space-6); margin-bottom: 0; }
 /* ── AND IT HAS SOMETHING TO DO ABOUT IT NOW (v3.65.0, record §D.6) ───────
    `.tx-note` is a one-line flex row (`align-items: center`), and this
    particular sentence is long — the maintainer's own project reads "24
@@ -2011,7 +2026,13 @@
   /* The table's footer presses like its rows, so its opt-out sits beside
      theirs — in the SAME file as the transform, which is what
      scripts/test-next-press-motion.js requires. */
-  .mem-ws-more:active { transform: none; }
+  .mem-ws-more:active,
+  /* AND THE JOURNAL'S, which is the SAME control since v3.65.1 (D3) — one set
+     of declarations on both selectors up the file, so one opt-out on both
+     here. A press transform whose reduced-motion rule is in another file is
+     what scripts/test-next-press-motion.js exists to catch, and it caught this
+     one on the first run after `.mem-j-more` joined the family. */
+  .mem-j-more:active { transform: none; }
   /* Tier 0's rows press exactly as the work-stream rows above them do, so
      their opt-out sits beside theirs — in the SAME file as the transform,
      which is what scripts/test-next-press-motion.js requires. The Refresh

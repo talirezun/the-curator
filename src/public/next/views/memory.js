@@ -205,7 +205,16 @@ import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
 // different but the design could be the same."* Two of the three were on this
 // screen (the "Last saved" card and the CAPTURE block) and the third was step
 // ③'s readouts. All three are `renderMonitor` now.
-import { renderMonitor } from '../shared/monitor.js';
+// ── AND THE THIRD VISUAL CHANNEL (v3.65.1) ─────────────────────────────────
+// `renderDepthCell` draws a figure's SHARE behind it, right-anchored, against
+// a NAMED denominator. Two placements on this screen, both with an exact
+// denominator rather than "the largest visible row": the Documents table's
+// SIZE column against the 200 KB PROJECT budget, and each Knowledge row's
+// entity / concept / summary counts against that domain's own `pageCount`.
+// It is in shared/monitor.js because a bar is a CELL decoration, which is what
+// a monitor line already is; its CSS is separate because the table below uses
+// the bar without rendering a monitor.
+import { renderMonitor, renderDepthCell } from '../shared/monitor.js';
 // ── THE ONE PICKER ON THIS SCREEN (v3.65.0, P10) ───────────────────────────
 // Step ③'s "+ Add a wiki". The shared listbox, ADD ONE AT A TIME: the
 // component implements no multi-select and says so in its own header, and
@@ -751,7 +760,11 @@ const FOCUSABLE_IDS = [
   // a client label is self-reported, and what the log cannot see. Without this
   // entry a keyboard user reading that panel is dropped to <body> on the next
   // poll, which is the case the strip's own mark is here for.
-  'mem-capture-info-btn',
+  // The capture reading's ⓘ button left this list with the mark in v3.65.1 —
+  // what a session IS is step ②'s explanation now, and mem-layers-info-btn two
+  // lines down is the page's other mark. A stale id here would be a focus
+  // target that resolves to nothing, which is why it is deleted rather than
+  // left "harmlessly" behind.
   // ── THE STRIP'S ⓘ AND STEP ③'s TWO DOORS (v3.62.0) ───────────────────
   // The mark explains every age on the page and is a real <button>; a render
   // replaces the pane it sits in, so without it a keyboard user reading the
@@ -771,7 +784,7 @@ const FOCUSABLE_IDS = [
   // only because the click causes a render that would otherwise drop focus to
   // <body>. `mem-fnd-add` and `mem-fnd-addrepo` open something in their own
   // place; the three confirm strips replace themselves with an outcome.
-  'mem-fnd-add', 'mem-fnd-addrepo',
+  'mem-fnd-add', 'mem-fnd-addrepo', 'mem-fnd-mirror',
   'mem-fnd-slug', 'mem-fnd-title', 'mem-fnd-text',
   'mem-fnd-save', 'mem-fnd-cancel', 'mem-fnd-preview',
   'mem-fnd-discard', 'mem-fnd-keep',
@@ -859,6 +872,7 @@ const FOCUS_FALLBACK = {
   // field the person asked for is where they should land.
   'mem-fnd-add': '#mem-fnd-text',
   'mem-fnd-addrepo': '.fnd-init-path',
+  'mem-fnd-mirror': '.fnd-init-remote-fields .fnd-init-path',
   // Save and Cancel both dismiss the editor; the row's own Edit control is
   // gone with the row that is about to be re-read, so the nearest stable
   // thing that does the same KIND of thing is the fold the table sits in.
@@ -1319,13 +1333,14 @@ const FOLDS_KEY = 'curator-memory-folds-v1';
 // 3,241 → 1,278px once the brief and the journal folded) is the reason.
 // `capture` joined in v3.63.0 with the honesty meter's session list. The
 // READING above it never folds (v3.16.1) — only the per-session detail does.
-// `saved` joined in v3.64.2, when "Last saved" stopped being a highlighted card
-// of its own and became the step's first ROW, in the same chrome as the four
-// below it. Its WARNINGS stay unfolded beside the row — the same v3.16.1 split
-// `capture` makes one line above.
-// `knowledge` stays in the list although step ③ no longer uses it: a user who
-// had it open before updating has `{"knowledge": true}` on disk, and dropping
-// the name would make that value unreadable rather than harmless.
+// `saved` joined in v3.64.2 and its ROW LEFT in v3.65.1 — "Last saved" said what
+// the MEMORY overview tile and the Handoffs row's own summary already say, in a
+// second shape (a card wrapping a row, whose reading ended 15px short of every
+// other row's). The NAME stays for the same reason `knowledge` does, one line
+// down: a user who had it open before updating has `{"saved": true}` on disk,
+// and dropping the name would make that value unreadable rather than harmless.
+// `knowledge` stays in the list although step ③ no longer uses it, for exactly
+// that reason.
 const FOLD_KEYS = ['brief', 'journal', 'foundations', 'streams', 'capture', 'saved', 'knowledge'];
 // The per-domain form step ③ writes since v3.65.0, and the ONLY dynamic key
 // this map accepts. The alphabet is the domain-name one and the length bound
@@ -2726,37 +2741,16 @@ function patchOpenPair(token) {
   bindWorkStreamRows(tbody, token);
 
   if (stack) {
+    // ── NO FOLD IN HERE ANY MORE, SO NO LISTENER TO RE-ATTACH (v3.65.1) ──
+    // Through v3.65.0 this write replaced a `<details data-mem-fold="saved">`
+    // that `wire` had bound on the last render, so the arm below re-attached
+    // its `toggle` listener by hand — otherwise the row stopped remembering
+    // itself after one row press. `statusHtml` is warnings and disclosures
+    // now, with no `<details>` in it at all (`renderMonitor` emits none, by
+    // contract), so there is nothing here to re-bind. The write stays: the
+    // disclosures are per-pair and a row press changes which pair they are
+    // about.
     stack.innerHTML = statusHtml;
-    // ── THE "Last saved" ROW IS A FOLD NOW, AND THIS WRITE REPLACES IT ────
-    // `wire` binds `toggle` on every `[data-mem-fold]` once per render, and
-    // this patch deliberately does not render — so the row that just replaced
-    // the old one has no listener and would stop remembering itself. The
-    // journal fold solves the same problem by keeping its ELEMENT and writing
-    // its innards; that is not available here, because the reading and the
-    // warnings beside it are one expression the two call sites compare
-    // byte-for-byte (scripts/test-next-memory-switch.js §8). So the listener
-    // is re-attached instead, and `open` needs no copying: `renderSaveStatus`
-    // derives it from `state.openFolds`, which is the same source the toggle
-    // writes to.
-    //
-    // INLINE, and the duplication of the key literal is the same one `wire`
-    // documents: neither function may name a module-level helper, because
-    // both are lifted by brace-matching and executed against fixed stub
-    // lists. scripts/test-next-memory-view.js pins the copies against
-    // `FOLDS_KEY`.
-    const savedFold = stack.querySelector('[data-mem-fold="saved"]');
-    if (savedFold) {
-      savedFold.__memFoldWas = !!savedFold.open;
-      savedFold.addEventListener('toggle', () => {
-        if (!state.openFolds) state.openFolds = {};
-        if (!!savedFold.open === savedFold.__memFoldWas) return;
-        savedFold.__memFoldWas = !!savedFold.open;
-        state.openFolds.saved = !!savedFold.open;
-        try {
-          localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
-        } catch { /* storage refused: forget, never break */ }
-      });
-    }
   }
 
   const count = document.getElementById('mem-ws-count');
@@ -3353,12 +3347,12 @@ function renderNoProjects() {
   // server-supplied INTEGER, which is why `n` is checked with Number.isInteger
   // before it is used and rendered as a count rather than interpolated raw.
   const body = noDomains
-    ? 'Project context is kept per domain, under <code>state/</code> beside that domain’s wiki. ' +
+    ? 'Project context is kept per domain, under <code>state/</code> beside that domain’s knowledge. ' +
       'Create a domain first, then point an agent at it — the brief appears here the moment one saves.'
     : (Number.isInteger(n) && n > 0
         ? 'Nothing has been saved in ' + (n === 1 ? 'your domain' : 'any of your ' + n + ' domains') + ' yet. '
         : 'Nothing has been saved yet. ') +
-      'Project context lives under <code>state/</code> beside a domain’s wiki, and a project appears here ' +
+      'Project context lives under <code>state/</code> beside a domain’s knowledge, and a project appears here ' +
       'the moment an agent saves a handoff or you write it a standing brief in Domains → Projects.';
   // ── WHO THIS IS FOR, SAID ON THE SCREEN WHERE THE QUESTION IS ASKED ───
   // v3.64.0, §5.2. The rail cannot carry prose — its captions are one word
@@ -3696,12 +3690,12 @@ function renderLayerStrip(read) {
           : facts.fresh ? 'recent' : null;
     }
     cards.push({
-      label: 'FOUNDATIONS',
+      label: 'DOCUMENTS',
       value,
       sub,
       markHtml: tier ? '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' : '',
       jump: 'context-canonical',
-      name: 'Foundations, ' + value + ' — go to step 1',
+      name: 'Documents, ' + value + ' — go to step 1',
     });
   }
 
@@ -3717,7 +3711,7 @@ function renderLayerStrip(read) {
   const savedAge = formatAge(savedEff.seconds);
   const savedValue = savedAge ? 'saved ' + savedAge : 'nothing saved yet';
   cards.push({
-    label: 'WORKING STATE',
+    label: 'MEMORY',
     value: savedValue,
     // WHICH work-stream that save belongs to. A save age with no work-stream
     // beside it is the reading the work-stream fold had to be opened to
@@ -3726,7 +3720,7 @@ function renderLayerStrip(read) {
     markHtml: '<span class="fresh-dot fresh-'
       + (savedAge ? freshnessTier(savedEff.seconds) : 'unknown') + '" aria-hidden="true"></span>',
     jump: 'context-state',
-    name: 'Working state, ' + savedValue + ' — go to step 2',
+    name: 'Memory, ' + savedValue + ' — go to step 2',
   });
 
   // ── CARD ③ — KNOWLEDGE ────────────────────────────────────────────────
@@ -3769,7 +3763,7 @@ function renderLayerStrip(read) {
       // ONE WIKI IS NAMED; SEVERAL ARE COUNTED. A figure with no owner beside
       // it reads as the project's own, and the owner may now be several.
       sub: [day || 'nothing ingested yet',
-        kread.length === 1 ? (kchosen[0] || null) : kread.length + ' wikis']
+        kread.length === 1 ? (kchosen[0] || null) : kread.length + ' domains']
         .filter(Boolean).join(' · '),
       // The CALENDAR-DAY ladder, because `lastIngestDate` is a `YYYY-MM-DD`
       // heading with no time of day in it. A null date resolves to the dashed
@@ -3855,19 +3849,27 @@ function renderLayerStrip(read) {
     minTrack: 253,
     infoLabel: 'About the readings on this page',
     infoText:
-      '<p>These three are the project’s three layers of context, and pressing one goes to the '
-      + 'step that owns it. They are READINGS, not a filter — nothing on this page narrows when '
+      '<p>The first three are the project’s three layers of context, and pressing one goes to the '
+      + 'step that owns it; CAPTURE reads whether agents are using them. They are READINGS, not a '
+      + 'filter — nothing on this page narrows when '
       + 'you press one, unlike the figures on a domain page, which also select what the list '
       + 'below them shows.</p>'
       + '<p>There are TWO clocks behind every age on this page. The <b>agent’s clock</b> is the time the '
       + 'agent itself recorded when it saved, taken from the journal line it wrote. The <b>file’s clock</b> '
       + 'is when the file last changed on this disk — and on a computer that syncs, that is when the file '
-      + 'ARRIVED here, not when it was written. The agent’s clock is used whenever there is one, and a '
-      + 'reading that had to fall back says “file time” in its own provenance line, in words, rather '
-      + 'than in a tooltip.</p>'
-      + '<p>“Last saved” is exactly that. It knows when the last save happened, not whether anything has '
-      + 'changed since — no screen can know that — so it never says you are saved, and the inference stays '
-      + 'with you.</p>'
+      + 'ARRIVED here, not when it was written. The agent’s clock is used whenever there is one.</p>'
+      // ── AND THE COST OF DELETING THE PROVENANCE LINE, SAID OUT LOUD ────
+      // Through v3.65.0 this paragraph ended *"a reading that had to fall back
+      // says “file time” in its own provenance line"* — and v3.65.1 deleted
+      // that line with the unfolded block it lived in. Leaving the sentence
+      // would have been the app describing an affordance it no longer has,
+      // which is worse than the gap. So the gap is stated, and what to do
+      // about it is stated with it.
+      + '<p>Where no journal line carried a save time, the age you see is the file’s own, and this '
+      + 'screen does not mark which of the two it used. On a computer that syncs, read an age you '
+      + 'did not expect as the moment the file arrived rather than the moment it was written.</p>'
+      + '<p>MEMORY reads when the last save happened, not whether anything has changed since — no '
+      + 'screen can know that — so it never says you ARE saved, and the inference stays with you.</p>'
       + '<p>Each mark is a COMPARISON that was actually made. Documents kept by The Curator have no '
       + 'upstream to compare against and carry no mark at all; a reading nobody could take is the dashed '
       + 'ring and the words beside it, never a zero.</p>'
@@ -3933,16 +3935,48 @@ function renderWorkStreamsFold(read, d) {
   const streams = read && Number.isInteger(read.distinctScopeCount)
     ? read.distinctScopeCount : null;
   const pairs = read && Number.isInteger(read.savedCopies) ? read.savedCopies : scopes.length;
+  // ── AND THE NEWEST HANDOFF'S AGE (v3.65.1, D2) ────────────────────────
+  //
+  // This is where half of the deleted "Last saved" row went — the other half
+  // is the MEMORY overview tile. The row said what this summary and that tile
+  // both say, in a card of its own, and the fact a closed row has to carry to
+  // be worth opening is *is any of this recent*. It is the PROJECT's newest
+  // pair, not the open one, from `newestPair` — the same derivation
+  // `renderLayerStrip`'s card ② uses, so the tile and this line can never name
+  // different saves.
+  //
+  // `M saved copies` LEAVES THE SUMMARY and stays in the body, where
+  // `workStreamCounts` prints both numbers under the table. A closed line is
+  // read to decide whether to open; the second figure is what you open FOR.
+  // Nothing is lost — the count line is unchanged and still uncapped.
+  // ── THE HEADLINE LEFT THE SUMMARY (v3.65.1) ───────────────────────────
+  //
+  // It LED this line from v3.55.0 to here, and on a real project it is a
+  // sentence: measured on the maintainer's own fixture it ran 240 characters
+  // and wrapped the meta onto a second line under the row title — a PARAGRAPH
+  // under a fold row, which is the one thing a step body may not contain. The
+  // picture has one line and nothing beneath it while the row is closed.
+  //
+  // IT IS NOT LOST AND IT DID NOT MOVE FAR: the table this row opens carries
+  // it in its WORKING ON column, on the row that wrote it, beside the machine
+  // and the harness — which is where a headline belongs, since there is one
+  // per handoff and the summary could only ever show the newest.
+  //
+  // WHAT IS LEFT is the pair a closed row has to carry to be worth opening:
+  // how many, and how recent. `newestPair` is the same derivation the MEMORY
+  // overview tile uses, so the tile and this line can never name different
+  // saves. `M saved copies` stays in the body's own count line, uncapped.
+  const newestWs = newestPair(scopes);
+  const savedAge = newestWs ? formatAge(effectiveSave(newestWs).seconds) : null;
   const meta = [
-    headline || null,
-    streams === null ? null : streams + ' work-stream' + (streams === 1 ? '' : 's'),
-    pairs + ' saved cop' + (pairs === 1 ? 'y' : 'ies'),
+    streams === null ? null : streams + ' handoff' + (streams === 1 ? '' : 's'),
+    savedAge ? 'saved ' + savedAge : null,
   ].filter(Boolean).join(' · ');
   const open = (state.openFolds && state.openFolds.streams) ? ' open' : '';
   return (
     '<details class="mem-fold" data-mem-fold="streams"' + open + '>'
       + '<summary class="mem-fold-summary" id="mem-fold-streams">' + icon('chevronRight', 14)
-        + '<span>Work-streams</span>'
+        + '<span>Handoffs</span>'
         + '<span class="mem-fold-meta">' + escapeHtml(meta) + '</span>'
       + '</summary>'
       + '<div class="mem-fold-body">'
@@ -4010,17 +4044,31 @@ function renderKnowledge() {
   const domains = listed.length ? listed
     : (state.activeDomain ? [state.activeDomain] : []);
 
-  const rows = domains.map((domain) => renderKnowledgeRow(domain)).join('');
+  // `defaulted` rides down to the ROW so the one row that is inherited rather
+  // than chosen says so in a word, where the deleted sentence said it in
+  // forty. A chip on the row it describes; never a paragraph under the step.
+  const rows = domains.map((domain) => renderKnowledgeRow(domain, defaulted)).join('');
   // A malformed `project.json` is the store's own disclosure and is loud: it
   // means the chosen set could not be read, so the rows below are the DEFAULT
   // rather than the choice, and saying nothing would present one as the other.
   const err = read && typeof read.knowledgeDomainsError === 'string' && read.knowledgeDomainsError
     ? renderStatus({ state: 'attention',
-      title: 'This project’s chosen wikis could not be read',
+      title: 'This project’s chosen domains could not be read',
       detail: read.knowledgeDomainsError + ' Showing the domain this project lives in instead.' })
     : '';
-  return err + (rows || renderDescription('No wiki is chosen for this project yet.'))
-    + renderKnowledgePicker(domains, defaulted);
+  // ── THE CONTROL IS A HEAD ROW, ABOVE THE ROWS (v3.65.1, D5) ───────────
+  // Step ①'s rule, applied to the only other section on this page with a
+  // control of its own: the section's controls sit BENEATH the heading and
+  // ABOVE the rows, left-aligned at the rows' own x. `renderKnowledgePicker`
+  // is unchanged except that it no longer carries the per-row Removes, which
+  // are inside their rows now.
+  //
+  // THE ERROR STAYS FIRST. A `project.json` that could not be read means the
+  // rows below are the DEFAULT rather than the choice, and that is a
+  // disclosure about everything under it — it is read before the control as
+  // well as before the rows.
+  return err + renderKnowledgePicker(domains, defaulted)
+    + (rows || renderDescription('No domain is chosen for this project yet.'));
 }
 
 /**
@@ -4040,7 +4088,32 @@ function renderKnowledge() {
  * project synced from a machine that has one this one does not, is a fact the
  * owner has to be able to see and act on.
  */
-function renderKnowledgeRow(domain) {
+/**
+ * ONE DOMAIN'S IDENTITY DOT — the mapping, never a second palette (v3.65.1, D7).
+ *
+ * `identityDotClass` is `shared/sidebar.js`'s, imported rather than copied, and
+ * the index is the domain's place in the INSTALL's list (`GET /api/domains`,
+ * which answers out of the same `listDomains()` the Domains page's own rows are
+ * numbered by). That is what makes `projects` the same colour in the Domains
+ * rail, in the Context rail, in this page's breadcrumb and on this row.
+ *
+ * '' RATHER THAN A FALLBACK COLOUR when the list has not arrived or the domain
+ * is not in it — identity has no states, and a placeholder here would be some
+ * OTHER domain's colour, which is worse than no mark at all. The same call the
+ * rail makes with `dotClass: ''`.
+ *
+ * NO CSS OF ITS OWN: `.cur-sb-dot` carries the 8px round shape and the twelve
+ * colour rules are declared once, outside this view.
+ */
+function knowledgeDotHtml(domain) {
+  const list = Array.isArray(state.domainList) ? state.domainList : [];
+  const slot = list.indexOf(String(domain || ''));
+  return slot >= 0
+    ? '<span class="cur-sb-dot mem-k-dot ' + identityDotClass(slot) + '" aria-hidden="true"></span>'
+    : '';
+}
+
+function renderKnowledgeRow(domain, defaulted) {
   // BOTH DOORS ARE OFFERED IN EVERY STATE, including the one where the
   // figures failed to arrive: a domain's wiki does not stop existing because
   // a stats read did, and a door withheld for the duration of a failed fetch
@@ -4050,12 +4123,24 @@ function renderKnowledgeRow(domain) {
   // were bound by id in `wire()`, and an id must be unique — N rows means N
   // pairs. The pattern is `bindFoundationRows`'s: one delegated listener over
   // the attribute, which also survives the row being re-rendered.
+  // ── AND THE ROW'S OWN REMOVE, ON `margin-left: auto` (v3.65.1, D5) ────
+  // It was a sibling of the PICKER, in a flex row under every row it could
+  // act on — "Remove projects", "Remove research", left-aligned beside "+ Add
+  // a wiki". A per-row action belongs in its row, which is where the documents
+  // table already puts its own, and the name it needs is then the row's
+  // (`Remove`, not `Remove <domain>`), because the row says which domain.
+  // `data-mem-k-drop` is unchanged, so `bindKnowledgeRows`' delegation finds
+  // it wherever in the block it sits.
+  const dropBusy = !!(state.knowledgeSaving);
   const doors =
     '<div class="mem-k-doors">'
       + '<button type="button" class="btn btn-secondary btn-xs" data-mem-k-domains="'
         + escapeHtml(domain) + '">Open in Domains</button>'
       + '<button type="button" class="btn btn-secondary btn-xs" data-mem-k-chat="'
         + escapeHtml(domain) + '">Ask this domain</button>'
+      + '<button type="button" class="btn btn-ghost btn-xs mem-k-drop" data-mem-k-drop="'
+        + escapeHtml(domain) + '"' + (dropBusy ? ' disabled' : '')
+        + ' aria-label="' + escapeHtml('Remove ' + domain + ' from this project') + '">Remove</button>'
     + '</div>';
 
   const k = state.knowledge instanceof Map ? state.knowledge.get(domain) : null;
@@ -4097,12 +4182,34 @@ function renderKnowledgeRow(domain) {
   // Same five figures, same vocabulary the Domains screen's own tiles use, in
   // the one instrument every live reading in the app now takes.
   const figures = renderMonitor({
-    label: 'The ' + domain + ' wiki',
+    label: 'The ' + domain + ' domain',
+    // ── THE DEPTH BAR'S SECOND PLACEMENT (v3.65.1, §9) ────────────────
+    // The three category counts against this domain's OWN `pageCount`, which
+    // is an EXACT denominator rather than "the largest visible row": the
+    // producer states `pageCount === entities + concepts + summaries + other`
+    // as an invariant (src/brain/files.js). So the three bars can never sum
+    // past the full track, and the remainder is the `other` the invariant
+    // names — which is why the gap is honest rather than a rounding artefact.
+    //
+    // `pages` CARRIES NO BAR: it IS the denominator, and a bar at 100% on
+    // every row would read as a reading rather than as a definition.
+    // `last ingest` carries none either — that is a TIME, and the dot owns
+    // time. Tone: neutral, always. These are categories within one domain, so
+    // nothing here is an over-run and nothing may be red.
     lines: [
       { key: 'pages', value: num(d.pageCount) },
-      { key: 'entities', value: num(counts.entities) },
-      { key: 'concepts', value: num(counts.concepts) },
-      { key: 'summaries', value: num(counts.summaries) },
+      { key: 'entities',
+        value: num(counts.entities),
+        depth: { amount: counts.entities, max: d.pageCount,
+          label: 'of ' + num(d.pageCount) + ' pages in ' + domain } },
+      { key: 'concepts',
+        value: num(counts.concepts),
+        depth: { amount: counts.concepts, max: d.pageCount,
+          label: 'of ' + num(d.pageCount) + ' pages in ' + domain } },
+      { key: 'summaries',
+        value: num(counts.summaries),
+        depth: { amount: counts.summaries, max: d.pageCount,
+          label: 'of ' + num(d.pageCount) + ' pages in ' + domain } },
       {
         key: 'last ingest',
         value: day || 'nothing ingested yet',
@@ -4123,7 +4230,21 @@ function renderKnowledgeRow(domain) {
   return '<details class="mem-fold" data-mem-fold="' + escapeHtml(key) + '"' + open + '>'
     + '<summary class="mem-fold-summary" id="mem-fold-' + escapeHtml(key) + '">'
       + icon('chevronRight', 14)
+      // ── TWO DOTS, TWO CHANNELS, AND NEVER THE SAME GLYPH POSITION ──────
+      // The IDENTITY dot precedes the NAME on the left; the FRESHNESS dot
+      // precedes the READING on the right. One says WHICH DOMAIN — the same
+      // colour this domain wears in both sidebars and in the breadcrumb — and
+      // the other says HOW OLD. Reading them as one mark is only possible if
+      // they share a position, so they never do.
+      + knowledgeDotHtml(domain)
       + '<span>' + escapeHtml(domain) + '</span>'
+      // ── ONE WORD, NOT A SENTENCE (v3.65.1) ────────────────────────────
+      // This row is here because the project lives in this domain, not because
+      // anybody chose it. The forty-word version of that fact was a paragraph
+      // under the picker and is now step ③'s ⓘ; what a reader needs ON the row
+      // is which of the two it is. The same quiet badge class the documents
+      // table uses for "shared mirror".
+      + (defaulted === true ? '<span class="mem-badge mem-badge-quiet">default</span>' : '')
       + '<span class="mem-fold-meta">' + freshnessDotHtml(d.lastIngestDate)
         + escapeHtml(meta) + '</span>'
     + '</summary>'
@@ -4157,7 +4278,7 @@ function renderKnowledgePicker(chosen, defaulted) {
   const all = Array.isArray(state.domainList) ? state.domainList : null;
   const busy = state.knowledgeSaving === true;
   const err = state.knowledgeSaveError
-    ? renderStatus({ state: 'danger', title: 'That wiki was not added', detail: state.knowledgeSaveError })
+    ? renderStatus({ state: 'danger', title: 'That domain was not added', detail: state.knowledgeSaveError })
     : '';
   if (!all) {
     return err + renderDescription(
@@ -4166,26 +4287,46 @@ function renderKnowledgePicker(chosen, defaulted) {
         : 'Reading the domains on this computer…');
   }
   const rest = all.filter((d) => !chosen.includes(d));
-  const removable = chosen.map((d) =>
-    '<button type="button" class="btn btn-ghost btn-xs mem-k-drop" data-mem-k-drop="'
-      + escapeHtml(d) + '"' + (busy ? ' disabled' : '') + '>Remove ' + escapeHtml(d) + '</button>').join('');
-  // EVERY DISABLED CONTROL STATES ITS REASON (v3.61.1's finding), and the
-  // two reasons here are different facts: nothing left to add, and a write in
-  // flight.
+  // ── THE BODY IS THE HEAD ROW AND THE ROWS, AND NOTHING ELSE (v3.65.1) ─
+  //
+  // Two sentences used to sit under this control: "Every domain on this
+  // computer is already chosen." and the longer one about the default. Both
+  // are EXPLANATIONS, and the maintainer's rule for a step body is that every
+  // part of it is the same fold row with its explanation in the ⓘ — a
+  // paragraph under a control is the shape he rejected on this very screen.
+  //
+  // WHERE EACH WENT, and neither is lost:
+  // · THE DEFAULT — into step ③'s ⓘ, VERBATIM, plus a one-word `default`
+  //   chip on the row it is about, because a reader who never opens the ⓘ
+  //   still has to be able to tell a chosen row from an inherited one. A word
+  //   on the row it describes is not a paragraph under the section.
+  // · "EVERY DOMAIN IS ALREADY CHOSEN" — this is why the picker is ABSENT, and
+  //   v3.61.1's finding is that every withheld control states its reason. It
+  //   stays, because a control that vanishes with no word is the defect that
+  //   finding is about — but only in the state where the picker is gone, so it
+  //   never stands under a control that IS there.
   const note = !rest.length
     ? renderDescription('Every domain on this computer is already chosen.')
     : '';
   const cfg = knowledgePickerCfg(rest, busy);
+  // ── THE PICKER IS A HEAD ROW NOW, AND REMOVE HAS LEFT IT (v3.65.1, D5) ─
+  //
+  // THE REPORTED DEFECT: *"'+ Add a wiki' and 'Remove projects' are two
+  // un-synced buttons in a really poor implementation."* Measured at 1370 with
+  // two domains chosen, the row held THREE controls left to right — the picker
+  // at x=404, `Remove projects` at 527.9, `Remove research` at 642.2 — two of
+  // which are PER-ROW actions that had left their rows, under the rows they
+  // act on.
+  //
+  // So: one control here, and it is the section's, in the head row above the
+  // rows at the rows' own x — step ①'s rule and Wiki health's anatomy. Remove
+  // moves INSIDE each expanded row, beside that row's two doors, exactly as
+  // the documents table's per-row Remove already is.
   return err
     + '<div class="mem-k-pick">'
       + (rest.length ? renderListboxHtml(cfg) : '')
-      + removable
     + '</div>'
-    + note
-    + (defaulted && chosen.length
-      ? renderDescription('No wiki has been chosen yet, so this project draws on the domain it '
-        + 'lives in. Choosing one replaces that default.')
-      : '');
+    + note;
 }
 
 /** ONE cfg object, used by both `renderListboxHtml` and `mountListbox` — two
@@ -4195,8 +4336,8 @@ function knowledgePickerCfg(options, busy) {
   return {
     id: 'mem-k-add',
     value: null,
-    placeholder: '+ Add a wiki',
-    ariaLabel: 'Add a wiki this project draws on',
+    placeholder: '+ Add a domain',
+    ariaLabel: 'Add a domain this project draws on',
     disabled: busy === true,
     triggerClass: 'btn btn-secondary btn-xs',
     options: options.map((d) => ({ value: d, label: d })),
@@ -4375,7 +4516,7 @@ async function saveKnowledgeDomains(next, token) {
     } else {
       const code = data && data.error ? String(data.error) : 'HTTP ' + res.status;
       error = code === 'too_many_domains'
-        ? 'A project can draw on at most ' + (data.cap || 12) + ' wikis.'
+        ? 'A project can draw on at most ' + (data.cap || 12) + ' domains.'
         : code === 'unknown_domain'
           ? 'Not a domain on this computer: '
             + (Array.isArray(data.domains) ? data.domains.join(', ') : 'unknown') + '.'
@@ -4501,39 +4642,22 @@ function renderCaptureMeter() {
   const c = state.capture && state.capture.domain === state.activeDomain
     && state.capture.project === state.activeProject ? state.capture : null;
 
-  // The ⓘ is composed once and offered in EVERY state, including the two that
-  // carry no figures: what a session is, and what the log cannot see, is most
-  // worth reading precisely when the reading is empty or failed.
-  const info = renderInfoMark('mem-capture-info', 'About the capture reading',
-    '<p>A <b>session</b> is one bridge process — one run of the MCP server, from the moment an '
-    + 'agent connects to the moment its window closes. It is identified by a random id the bridge '
-    + 'mints for itself, so two sessions are never merged and one session is never split in two.</p>'
-    + '<p>A session <b>started with the context</b> when it asked for this project’s brief, '
-    + 'handoff or foundations before it saved anything — at any point before that first save, not '
-    + 'necessarily as its first call. It <b>saved before stopping</b> when a save succeeded; a '
-    + 'refused save is not a save.</p>'
-    + '<p><b>What this cannot see.</b> Only calls that came through the bridge are here. A save '
-    + 'written by the command line, by a hook, or by hand in a text editor is a real save and does '
-    + 'not appear in this count unless it went through the bridge. A session that never opened the '
-    + 'bridge at all is not in the denominator either — so this reading is about agent sessions '
-    + 'that used The Curator, and never a claim about your whole week.</p>'
-    + '<p>The <b>harness name</b> beside each session is <b>self-reported</b>: the client chooses '
-    + 'the name it sends, it is matched against a list of harnesses that have actually been '
-    + 'measured, and anything else is shown as unknown. Nothing in the app behaves differently '
-    + 'because of it — it is a label on a row and nothing more.</p>'
-    + '<p>It comes from a local file beside your settings, never inside your knowledge folder, so '
-    + 'nothing here is ever synced. A line carries the tool’s name, the domain and project it '
-    + 'touched, whether it succeeded and how long it took — never an argument, never a result, '
-    + 'never a file path. Calls made by the bridge’s own self-test are excluded.</p>'
-    + '<p><b>Nothing here stops a session.</b> This reading reports; it never refuses, delays or '
-    + 'warns an agent, and no number on it can.</p>'
-    + '<p>' + docsLinkHtml('memory.handoff', 'Read more in the guide') + '</p>',
-    { html: true });
-  const infoHtml = '<div class="mem-capture-info">' + info.btn + info.panel + '</div>';
+  // ── THE ⓘ HAS LEFT THIS READING (v3.65.1, D4) ────────────────────────
+  // It was a mark of its own, alone on the first line of the row's body, above
+  // an instrument and a table — the *"two different designs"* the maintainer
+  // counted, with a third floating above them. What a session IS, what the log
+  // cannot see and that nothing here stops a session are explanations of the
+  // STEP, so they are the last paragraphs of step ②'s own ⓘ now. There is one
+  // explanatory mark per step on this page and this reading is not a step.
+  //
+  // IT COULD NOT MOVE INTO THE `<summary>`: an interactive control there
+  // toggles its own section when clicked (the v3.0.1-beta.18 hazard, named at
+  // this function's own head), and the fix this file uses everywhere is the one
+  // no later edit can undo — there is no propagation path, because the control
+  // is not there.
   const shell = (bodyHtml) => '<div class="mem-capture">'
     + '<div class="mem-capture-head">'
       + '<div class="mem-capture-cells">' + bodyHtml + '</div>'
-      + infoHtml
     + '</div>';
 
   if (!c || (!c.data && !c.error)) {
@@ -4599,7 +4723,30 @@ function renderCaptureMeter() {
   // ABOVE this one — "Last saved 47 min ago" beside "no agent session in the
   // last 30 days", both true — and it names the remedy, which is why it
   // outranks the other two rather than queueing behind them.
-  const notice = f.note
+  // ── AND ONE OF ITS THREE TENANTS IS GATED (v3.65.1) ───────────────────
+  //
+  // MEASURED on an isolated copy with NO usage log at all: the row's summary
+  // read "no usage log on this computer yet" and this note read "Saves in this
+  // window arrived through a bridge that logged no sessions — restart the app
+  // that launched it" — an alarm and a remedy for a bridge nobody ran, beside
+  // a sentence already saying the log does not exist. A false alarm about a
+  // fault the user cannot act on is worse than silence.
+  //
+  // THE ROOT CAUSE IS AT THE PRODUCER and is reported rather than patched
+  // here: src/routes/memory.js:2829 computes
+  // `noSessionsButSaves = totals.sessions === 0 && newestSaveMs >= sinceMs`
+  // with NO term for the log existing, so a machine that has saves on disk and
+  // has never opened a bridge takes that arm before the `!present` one right
+  // under it. The route owns the sentence and should carry the third term.
+  //
+  // THE VIEW'S GATE IS STRUCTURAL, not a read of the prose: `noSessionsButSaves`
+  // is the flag that says WHICH note this is, and `logPresent` is on the same
+  // envelope. With no log the note is withheld and the row's own summary is
+  // the whole answer; the other two tenants — an absent log, a log that began
+  // after the window opened — are untouched and still unfolded, because an
+  // outcome may never sit behind a chevron (v3.16.1).
+  const noteIsFalseAlarm = f.noSessionsButSaves === true && f.logPresent !== true;
+  const notice = (f.note && !noteIsFalseAlarm)
     ? renderStatus({ state: 'neutral', title: f.note })
     : '';
 
@@ -4627,6 +4774,17 @@ function renderCaptureMeter() {
   // owes. The test is therefore "is the route's note ABOUT this", answered
   // structurally from the flag rather than by matching the producer's prose.
   const limits = [
+    // ── THE SESSION CAP, MOVED OUT OF THE DELETED TABLE (v3.65.1) ───────
+    // `renderCaptureSessions` owned this sentence and went with the table.
+    // It is a DISCLOSURE about what the figures are taken over — the same
+    // class as the two below it — so it belongs where they are: outside the
+    // chevron, never inside a body a reader may not open. THE CAP IS THE
+    // ROUTE'S ANSWER, NOT THE REQUEST: `sessionsTruncated` is what the
+    // producer said it had to leave out, and printing CAPTURE_SESSION_LIMIT
+    // here instead would report a cap as a measurement.
+    f.truncated
+      ? 'showing the ' + f.shown + ' most recent of '
+        + (f.sessions === null ? f.shown : f.sessions) + ' sessions' : null,
     ((!f.note || f.noSessionsButSaves) && f.legacyLines)
       ? f.legacyLines.toLocaleString('en-US') + ' earlier call'
       + (f.legacyLines === 1 ? '' : 's') + ' carried no session id and cannot be counted' : null,
@@ -4667,7 +4825,6 @@ function renderCaptureMeter() {
   // no propagation path, because the control is not there.
   const meta = '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>'
     + escapeHtml(value + (prov ? ' · ' + prov : ''));
-  const sessions = renderCaptureSessions(f);
   // ── THE INSTRUMENT (M2) ───────────────────────────────────────────────
   // The three clauses again, keyed and valued, plus the newest session's age
   // on the shared scale. It is not a repetition of the summary for its own
@@ -4675,8 +4832,41 @@ function renderCaptureMeter() {
   // out so each figure can be found, and the `read and did not save` line
   // carries a tone when it is not zero. Every figure is dropped INDIVIDUALLY
   // when the route did not send it — a partial answer prints what it knows.
-  const newestAt = f.rows.length ? (f.rows[0].endedAt || f.rows[0].startedAt) : null;
+  // ── THE BODY IS THE MONITOR, AND ONLY THE MONITOR (v3.65.1, D4) ───────
+  //
+  // The maintainer, on the shipped body: *"two different designs, one row-like
+  // then table-like"* — a `.mem-capture-info` ⓘ alone on its own line, then
+  // the monitor, then a five-column `<table class="mem-cap-table">` (Started ·
+  // Harness · Calls · Read · Saved). Three treatments inside one row, for one
+  // reading. Measured at 1370: the ⓘ 421×893×25.3, the monitor 421×893×130.1,
+  // the table below both.
+  //
+  // So `renderCaptureSessions` and its `.mem-cap-*` CSS are DELETED, and the
+  // monitor carries every fact the table carried rather than losing one:
+  // `calls` is the sum of the window's per-session calls — the table's only
+  // figure that had nowhere else to live — and `newest` gains the newest
+  // session's HARNESS as its qualifying clause, in the table's own words
+  // ("not reported" when the log has no client name for it), which is the
+  // reading the maintainer went to the table for when his Claude Code
+  // sessions came back as `other`.
+  //
+  // WHAT IS NOT IN HERE, and both are deliberate: `self-test calls excluded`
+  // stays OUTSIDE the row in `.mem-capture-limits`, and the route's own
+  // `note` stays outside it too — they are disclosures and an outcome, and
+  // v3.16.1 is that neither sits behind a chevron. The ⓘ leaves the body
+  // altogether: what a session IS belongs in the STEP's explanation, and it
+  // cannot go in the `<summary>` because an interactive control there toggles
+  // its own section (the v3.0.1-beta.18 hazard).
+  const newest = f.rows.length ? f.rows[0] : null;
+  const newestAt = newest ? (newest.endedAt || newest.startedAt) : null;
   const newestSecs = effectiveSave({ savedAt: newestAt }).seconds;
+  // THE TABLE'S ONLY LOST FIGURE. Summed over the UNCAPPED rows the route
+  // sent; `sessionsTruncated` is disclosed separately by `.mem-capture-limits`,
+  // so a partial list is never reported as a total — the value is dropped
+  // entirely when the route sent no usable per-session calls at all.
+  const callsTotal = f.rows.reduce(
+    (n, r) => n + (Number.isInteger(r && r.calls) && r.calls >= 0 ? r.calls : 0), 0);
+  const hasCalls = f.rows.some((r) => Number.isInteger(r && r.calls));
   const monitor = renderMonitor({
     label: 'The capture reading',
     lines: [
@@ -4687,15 +4877,20 @@ function renderCaptureMeter() {
       f.readNotSaved === null ? null
         : { key: 'read and did not save', value: f.readNotSaved,
           tone: f.readNotSaved ? 'warn' : undefined },
+      !hasCalls ? null
+        : { key: callsTotal === 1 ? 'tool call' : 'tool calls', value: callsTotal,
+          sub: f.truncated ? 'over the sessions listed' : undefined },
       newestSecs === null ? null
         : { key: 'newest', value: formatAge(newestSecs) || 'time unknown',
           markHtml: '<span class="fresh-dot fresh-' + freshnessTier(newestSecs)
-            + '" aria-hidden="true"></span>' },
+            + '" aria-hidden="true"></span>',
+          sub: (newest && typeof newest.client === 'string' && newest.client)
+            ? newest.client : 'not reported' },
     ].filter(Boolean),
   });
   // NOTHING TO OPEN, NO CHEVRON — the call this function already made for its
   // own idle state, and the one `renderSaveStatus` makes for a healthy save.
-  const body = monitor + sessions;
+  const body = monitor;
   const open = (state.openFolds && state.openFolds.capture) ? ' open' : '';
   const row = body
     ? '<details class="mem-fold" data-mem-fold="capture"' + open + '>'
@@ -4703,7 +4898,7 @@ function renderCaptureMeter() {
         + '<span>Capture</span>'
         + '<span class="mem-fold-meta">' + meta + '</span>'
       + '</summary>'
-      + '<div class="mem-fold-body">' + infoHtml + body + '</div>'
+      + '<div class="mem-fold-body">' + body + '</div>'
     + '</details>'
     : '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-save-flat">'
       + '<span>Capture</span>'
@@ -4712,88 +4907,6 @@ function renderCaptureMeter() {
   return row + notice + limitsHtml;
 }
 
-/**
- * THE PER-SESSION LIST, IN A CLOSED FOLD.
- *
- * One row per session, newest first, each saying what that session did rather
- * than what it should have done: when it started, which harness reported
- * itself, how many calls it made, whether it read and whether it saved.
- *
- * THE MISSING THING STAYS MISSING WHERE YOU LOOKED FOR IT (v3.17.1): with no
- * rows there is no fold at all — the reading above has already said so in
- * words, and an empty chevron would invite a click that answers nothing. That
- * is the same call `renderWorkStreamsFold` makes with its flat card.
- */
-function renderCaptureSessions(f) {
-  if (!f.rows.length) return '';
-  // ── NO FOLD OF ITS OWN ANY MORE (v3.65.0, R2) ────────────────────────
-  // This used to be a `<details>` titled "Sessions", sitting under a
-  // `.mem-capture` card that carried the same four numbers as its summary.
-  // One reading, one row: the table is what the CAPTURE row opens, and the
-  // `data-mem-fold="capture"` hook, the `#mem-fold-capture` summary id and
-  // the `FOLD_KEYS` / `FOCUSABLE_IDS` entries all keep their names — they
-  // moved one element up, to the row that now owns them.
-  //
-  // THE SUMMARY LINE THIS BUILT IS GONE WITH THE FOLD, and its four figures
-  // are not lost: they are the row's own summary (in words) and the
-  // monitor's lines (keyed and valued) one level up.
-  // A TICK IS NOT A COLOUR AND NOT A COLOUR ALONE: the glyph is aria-hidden
-  // and a visually-hidden word carries the fact, so a screen reader hears
-  // "read yes" rather than a check mark's name, and nothing here is decoded
-  // from ink. The dash is an en dash rather than a hyphen for the same reason
-  // the rest of this view uses one — it is a mark, not a minus.
-  const flag = (on, word) => '<span class="mem-cap-flag' + (on ? ' mem-cap-flag-on' : '') + '">'
-    + '<span aria-hidden="true">' + (on ? '✓' : '–') + '</span>'
-    + '<span class="visually-hidden">' + word + (on ? ' yes' : ' no') + '</span></span>';
-  const rows = f.rows.map((r) => {
-    const at = typeof r.startedAt === 'string' ? r.startedAt : null;
-    const secs = effectiveSave({ savedAt: at }).seconds;
-    const words = formatAge(secs);
-    return '<tr>'
-      + '<td' + (at ? ' data-mem-age-at="' + escapeHtml(at) + '"' : '') + '>'
-        + '<span class="mem-age-words">' + escapeHtml(words || 'time unknown') + '</span>'
-        // THE ABSOLUTE STAMP, KEPT AND REACHABLE — visually hidden rather than
-        // a `title=`, which is hover-only and therefore invisible to keyboard
-        // and to touch. This view's hover-only ceiling is one and must not rise.
-        + (at ? '<span class="visually-hidden"> (' + escapeHtml(at) + ')</span>' : '')
-      + '</td>'
-      // DECISION I: the client name is a LABEL. It is escaped like any other
-      // untrusted string, nothing branches on it, and an absent or unmatched
-      // one reads "not reported" rather than being guessed at.
-      + '<td>' + escapeHtml(typeof r.client === 'string' && r.client ? r.client : 'not reported') + '</td>'
-      + '<td class="mem-cap-num">' + escapeHtml(String(Number.isInteger(r.calls) ? r.calls : 0)) + '</td>'
-      + '<td>' + flag(r.read === true, 'read') + '</td>'
-      + '<td>' + flag(r.saved === true, 'saved') + '</td>'
-    + '</tr>';
-  }).join('');
-  // THE CAP IS THE ROUTE'S ANSWER, NOT THE REQUEST. `sessionsTruncated` is
-  // what the producer said it had to leave out; printing CAPTURE_SESSION_LIMIT
-  // here instead would report a cap as a measurement.
-  const cut = f.truncated
-    ? '<p class="mem-capture-limits">Showing the ' + escapeHtml(String(f.shown))
-      + ' most recent of ' + escapeHtml(String(f.sessions === null ? f.shown : f.sessions))
-      + ' sessions.</p>'
-    : '';
-  return (
-    '<div class="mem-cap-wrap">'
-      + '<table class="mem-cap-table">'
-        // THE ONE PLACE THE WORD "SESSION" STILL APPEARS ON SCREEN, and it is
-        // the right one: a column heading naming what each row IS. R2 takes
-        // it off the screen as a SECTION name, not as a noun.
-        + '<caption class="visually-hidden">Sessions in this window</caption>'
-        + '<thead><tr>'
-          + '<th scope="col">Started</th>'
-          + '<th scope="col">Harness</th>'
-          + '<th scope="col">Calls</th>'
-          + '<th scope="col">Read</th>'
-          + '<th scope="col">Saved</th>'
-        + '</tr></thead>'
-        + '<tbody>' + rows + '</tbody>'
-      + '</table>'
-    + '</div>'
-    + cut
-  );
-}
 
 /**
  * THE METER'S ONE REQUEST (v3.63.0).
@@ -4869,7 +4982,29 @@ function renderProject() {
   // can answer "which domain is this?".
   const header =
     '<div class="mem-project-head mem-section">' +
-      '<span class="mem-project-mark"></span>' +
+      // ── THE MARK IS THE DOMAIN'S IDENTITY DOT (v3.65.1, D7) ──────────
+      // It was `background: var(--accent)` — a 9×9 VIOLET SQUARE, the same on
+      // every project in every domain, beside a breadcrumb naming the domain
+      // it did not identify. Measured: rgb(124,90,245), border-radius 2px,
+      // 9px, against rgb(121,199,82) round 8px for that same domain's row in
+      // the rail three inches to the left.
+      //
+      // CONTINUITY BY IDENTITY: one palette, one mapping, one glyph. The
+      // mapping is `identityDotClass` from shared/sidebar.js — imported, never
+      // a second copy — and the index is the domain's place in the INSTALL's
+      // list, which is what makes the colour the same on every screen.
+      //
+      // NO MARK AT ALL until `state.domainList` has answered. Identity has no
+      // states (the rail's own rule, `dotClass: ''` on a project with nothing
+      // saved): a placeholder colour would be a different domain's.
+      (() => {
+        const list = Array.isArray(state.domainList) ? state.domainList : [];
+        const slot = list.indexOf(String(state.activeDomain || ''));
+        return slot >= 0
+          ? '<span class="cur-sb-dot mem-project-mark ' + identityDotClass(slot) + '"'
+            + ' aria-hidden="true"></span>'
+          : '';
+      })() +
       '<span class="mem-project-domain">' + escapeHtml(String(state.activeDomain || '')) + '</span>' +
       '<span class="mem-project-sep">/</span>' +
       '<span class="mem-project-name">' + escapeHtml(state.activeProject) + '</span>' +
@@ -4923,14 +5058,14 @@ function renderProject() {
   const canonicalBlock = memStep({
     num: 1,
     id: 'context-canonical',
-    title: 'Foundations',
+    title: 'Documents',
     infoText:
       // THE LEDE, MOVED (R4). It was the sentence under the title; it is the
       // first thing behind the mark now, and it keeps the "Start here."
       // prefix that drops the moment one document exists.
       '<p>' + (fndFacts.count ? '' : '<b>Start here.</b> ')
       + 'Add the documents an agent must not act without.</p>'
-      + '<p>A <b>foundation</b> is a canonical document this project carries VERBATIM — the '
+      + '<p>These are <b>canonical documents</b> — this project carries each one VERBATIM: the '
       + 'architecture, the decisions, the conventions, the roadmap. Not a summary of one: the '
       + 'bytes, so an agent reads what you would read. Each one is <b>replaced whole</b> on every '
       + 'write and never merged, which is what makes it quotable.</p>'
@@ -5014,7 +5149,7 @@ function renderProject() {
   const stateBlock = memStep({
     num: 2,
     id: 'context-state',
-    title: 'Working state',
+    title: 'Memory',
     infoText:
       // THE LEDE, MOVED (R4).
       '<p>You write the brief; agents write handoffs and the journal.</p>'
@@ -5028,21 +5163,66 @@ function renderProject() {
       + 'part that <b>rarely changes</b>: the goal, the firm decisions not to re-litigate, the '
       + 'working model, and pointers to where the depth lives — so an OLD brief is not a stale one, '
       + 'which is why it carries a date and deliberately no freshness mark.</p>'
-      + '<p>Agents own the rest. A <b>work-stream</b> is one thread of work — the files call it a '
-      + '<i>scope</i>, and the slug is still shown as one — and parallel threads get their own, so '
-      + 'they never overwrite each other. Press a row to read that work-stream’s <b>handoff</b>, '
-      + 'what the last session left for the next one. Each machine writes to its OWN folder inside '
-      + 'a work-stream, which is what makes two computers safe over sync: no two of them ever touch '
-      + 'one file. So one work-stream can appear as several rows — one saved copy per machine — and '
-      + 'the count under the table says both numbers.</p>'
-      + '<p>Two rows sharing a work-stream AND a machine cannot happen; two <b>harnesses</b> on one '
+      + '<p>Agents own the rest. A <b>handoff</b> is what the last session left for the next one, one '
+      + 'per thread of work — the files call that thread a <i>scope</i>, and the slug is still shown '
+      + 'as one — and parallel threads get their own, so they never overwrite each other. Press a row '
+      + 'to read it. Each machine writes to its OWN folder, which is what makes two computers safe '
+      + 'over sync: no two of them ever touch one file. So one thread can appear as several rows — '
+      + 'one saved copy per machine — and the count under the table says both numbers.</p>'
+      // ── WHAT "WRITTEN ON ANOTHER MACHINE" COSTS (v3.65.1) ───────────
+      // The sentence that used to ride under a `written on <machine>` line in
+      // an instrument above these rows. The FACT is the table's own MACHINE
+      // column, per row; what it MEANS is an explanation, and an explanation
+      // lives here.
+      + '<p>A handoff written on <b>another machine</b> — the table says which — was observed '
+      + 'there: local paths and processes may differ from what it describes, so read its next '
+      + 'steps against your own checkout before acting on them.</p>'
+      + '<p>Two rows sharing a thread AND a machine cannot happen; two <b>harnesses</b> on one '
       + 'machine can, and they overwrite each other, because the folder has no harness segment. '
-      + 'This step says so above the heading when the journal shows it, and the remedy is to give '
-      + 'each tool its own work-stream.</p>'
+      + 'This step says so when the journal shows it, and the remedy is to give each tool its own '
+      + 'handoff.</p>'
       + '<p>The <b>journal</b> is append-only and it accumulates, so any entry MAY SINCE HAVE BEEN '
       + 'SUPERSEDED — a blocker named in an old headline can have been fixed three saves ago. It '
-      + 'survives what a handoff cannot: two agent tools writing one work-stream overwrite each '
+      + 'survives what a handoff cannot: two agent tools writing one thread overwrite each '
       + 'other’s handoff, and both trails are still here.</p>'
+      // ── AND WHAT CAPTURE IS READING (v3.65.1, D4) ───────────────────
+      // Through v3.65.0 these paragraphs sat behind a mark of THEIR OWN, alone
+      // on the first line of the CAPTURE row's body, above the instrument and
+      // the table — three treatments in one row, which is what the maintainer
+      // called *"two different designs"* with a third floating over them. The
+      // words are unchanged, byte for byte; the mark that opens them is step
+      // ②'s, because a step has ONE explanatory mark and a reading inside it
+      // is not a step.
+      //
+      // INLINE, NOT A MODULE-LEVEL CONSTANT, and the reason is mechanical:
+      // this function is lifted by brace-matching and EXECUTED by several
+      // suites against fixed stub lists, and a module-level binding is not
+      // visible inside a lifted body — a free identifier here is a
+      // ReferenceError there, not a failing assertion (BUILDER-RULES rule 10,
+      // and the same wall `renderJournal`'s own count line records one
+      // function up). There is exactly one copy of these words either way.
+      + '<p>A <b>session</b> is one bridge process — one run of the MCP server, from the moment an '
+      + 'agent connects to the moment its window closes. It is identified by a random id the bridge '
+      + 'mints for itself, so two sessions are never merged and one session is never split in two.</p>'
+      + '<p>A session <b>started with the context</b> when it asked for this project’s brief, '
+      + 'handoff or documents before it saved anything — at any point before that first save, not '
+      + 'necessarily as its first call. It <b>saved before stopping</b> when a save succeeded; a '
+      + 'refused save is not a save.</p>'
+      + '<p><b>What this cannot see.</b> Only calls that came through the bridge are here. A save '
+      + 'written by the command line, by a hook, or by hand in a text editor is a real save and does '
+      + 'not appear in this count unless it went through the bridge. A session that never opened the '
+      + 'bridge at all is not in the denominator either — so this reading is about agent sessions '
+      + 'that used The Curator, and never a claim about your whole week.</p>'
+      + '<p>The <b>harness name</b> beside each session is <b>self-reported</b>: the client chooses '
+      + 'the name it sends, it is matched against a list of harnesses that have actually been '
+      + 'measured, and anything else is shown as unknown. Nothing in the app behaves differently '
+      + 'because of it — it is a label on a row and nothing more.</p>'
+      + '<p>It comes from a local file beside your settings, never inside your knowledge folder, so '
+      + 'nothing here is ever synced. A line carries the tool’s name, the domain and project it '
+      + 'touched, whether it succeeded and how long it took — never an argument, never a result, '
+      + 'never a file path. Calls made by the bridge’s own self-test are excluded.</p>'
+      + '<p><b>Nothing here stops a session.</b> This reading reports; it never refuses, delays or '
+      + 'warns an agent, and no number on it can.</p>'
       + '<p>' + docsLinkHtml('memory.standing-brief', 'The standing brief') + ' · '
       + docsLinkHtml('memory.handoff', 'Handoffs') + ' · '
       + docsLinkHtml('memory.session-journal', 'The journal') + '</p>',
@@ -5087,14 +5267,20 @@ function renderProject() {
     title: 'Knowledge',
     infoText:
       // THE LEDE, MOVED (R4).
-      '<p>The wikis this project draws on. Open one in Domains, or ask it in Chat.</p>'
-      + '<p>The wiki <b>accumulates</b>. A new source deepens the pages that are already there '
+      '<p>The domains this project draws on. Open one in Domains, or ask it in Chat.</p>'
+      + '<p>A domain <b>accumulates</b>. A new source deepens the pages that are already there '
       + 'rather than adding a copy beside them — which is the difference between this layer and the '
-      + 'two above it, where a save replaces what was there and a foundation is carried word for '
+      + 'two above it, where a save replaces what was there and a document is carried word for '
       + 'word.</p>'
       + '<p>Ingest and chat write it; nothing on this page does. It belongs to the <b>domain</b> '
-      + 'rather than to this project, so every project in this domain draws on the same wiki and '
+      + 'rather than to this project, so every project in this domain draws on the same pages and '
       + 'these figures move when you ingest, not when an agent saves.</p>'
+      // THE SENTENCE THAT LEFT THE BODY (v3.65.1), verbatim. It was a
+      // paragraph under the picker; a step body is rows, and an explanation
+      // lives here.
+      + '<p>Nothing has been chosen yet, so this project draws on the domain it lives in — the '
+      + 'row marked <b>default</b>. Adding a domain keeps it and adds to it; removing the last '
+      + 'one puts the default back.</p>'
       + '<p>The counts are taken by walking the folder rather than by reading any page, and no '
       + 'model is called to draw them — opening this screen costs nothing.</p>',
     bodyHtml: renderKnowledge(),
@@ -5174,12 +5360,12 @@ function renderProjectSkeleton() {
   return (
     renderLayerStrip(null) +
     memStep({
-      num: 1, id: 'context-canonical', title: 'Foundations',
+      num: 1, id: 'context-canonical', title: 'Documents',
       bodyHtml: '<div class="mem-ghost-wrap" aria-busy="true">'
         + '<div class="mem-ghost mem-ghost-line"></div></div>',
     }) +
     memStep({
-      num: 2, id: 'context-state', title: 'Working state',
+      num: 2, id: 'context-state', title: 'Memory',
       bodyHtml: '<div class="mem-state-stack">'
         + '<div class="mem-ghost-wrap" aria-busy="true">' + rows + '</div>'
         // ONLY WHEN THE INDEX SAYS THERE IS ONE. Reserving space for a standing
@@ -5313,8 +5499,6 @@ function renderSaveStatus(read, d) {
   // one with a flag: a flag is something a later edit can flip, and flipping
   // it would put a warning behind a chevron.
   const lines = [];
-  const detail = [];
-  let primary = '';
 
   // ── "WORKING ON" LEFT THIS FUNCTION (v3.62.0) ───────────────────────────
   //
@@ -5327,7 +5511,13 @@ function renderSaveStatus(read, d) {
 
   if (cur) {
     const eff = effectiveSave(cur);
-    const step = freshnessStep(eff.seconds);
+    // `freshnessStep` LEFT THIS FUNCTION with the reading it cut (v3.65.1, D2).
+    // It was this view's own six-rung ladder beside `freshnessTier`, the
+    // app-wide one, on the same quantity — v3.65.0 moved the MARK to the shared
+    // tier and left the step computed for a `.mem-save-pip` that no longer
+    // existed. The reading is gone now, so the computation goes too:
+    // shared/age.js still exports it, and this view no longer cuts a mark on
+    // any ladder of its own.
     const age = formatAge(eff.seconds);
     // Provenance is the scope you are in and the tool that wrote it — the two
     // facts that turn "2 min ago" into "2 min ago, by the thing I am running".
@@ -5341,69 +5531,27 @@ function renderSaveStatus(read, d) {
     const clock = eff.source === 'filesystem' ? 'file time' : null;
     const kind = cur.lastSaveKind || null;
 
-    if (age) {
-      // `+=` SURVIVES THE DELETION OF THE LINE ABOVE IT, deliberately. The
-      // "Working on" line used to be written into `primary` here and a plain
-      // assignment silently DELETED it — caught by §18g the first time it ran,
-      // which is the whole argument for driving the rendered output rather
-      // than reading the source. `primary` is written once now; the operator
-      // stays so that re-introducing a leading reading cannot reopen it.
-      // ── IT IS A ROW NOW, NOT A CARD (v3.64.2) ─────────────────────────
-      //
-      // THE REPORT, on a screenshot of step ②: "the worst UX" — a highlighted
-      // "Last saved" card, then a bare CAPTURE readout in a different design
-      // outside any card, then three fold rows. Three designs, stacked, for
-      // one step's contents. The rule now: inside a numbered step EVERY part
-      // is the same row — title on the left, a one-line summary on the right,
-      // a chevron where there is something to open.
-      //
-      // So the reading moves into a `.mem-fold-summary`: "Last saved" on the
-      // left, and the age, the pair that wrote it and the tool that wrote it
-      // on the right, in the meta slot every other row on this page uses. The
-      // pip goes with it — the mark belongs beside the age it qualifies.
-      //
-      // WHAT IS IN THE BODY, AND WHAT MAY NEVER BE. The explanations — which
-      // clock the figure came from, that the file arrived later than it was
-      // written, what "summary shortened" means — expand. The WARNINGS do
-      // not: v3.16.1's rule is that a warning, a cost or an outcome may not
-      // sit behind a chevron, so every `loud` line stays unfolded BELOW the
-      // row, where it is today. That is the one place this row deliberately
-      // does not follow "everything is a row".
-      //
-      // ── ONE MARK, ONE LADDER (v3.65.0, design record R13) ─────────────
-      // `.mem-save-pip` is DELETED. It was this view's own six-rung mark for
-      // a save's age, cut on `freshnessStep`, beside `.fresh-dot` — the
-      // app-wide mark, cut on `freshnessTier` — on the SAME page, on the same
-      // quantity: the rail's rows, the work-stream table, the strip and step
-      // ③ all wore the dot while the one reading the page is named for wore
-      // a second thing. shared/freshness.css owns the `.fresh-` prefix and
-      // scripts/test-freshness-scale.js §4 forbids any other stylesheet
-      // declaring one, so this deletion is TOWARD that rule rather than
-      // around it, and views/memory.css now declares no `.fresh-` rule at all.
-      primary +=
-        '<div class="mem-save-main">' +
-          '<span class="fresh-dot fresh-' + freshnessTier(eff.seconds) + '" aria-hidden="true"></span>' +
-          '<span class="mem-save-age">' + escapeHtml(age) + '</span>' +
-          ((prov || clock)
-            ? '<span class="mem-save-prov">'
-              + escapeHtml([prov, clock].filter(Boolean).join(' · ')) + '</span>'
-            : '') +
-          // The badge is on the READING, not in a note underneath it. A
-          // completeness caveat that lives below the figure is a caveat the
-          // one-second glance never reaches.
-          //
-          // `clipped` gets the QUIET badge class (the one "shared mirror"
-          // uses), not the attention one `trimmed` gets: nothing about the
-          // handoff was lost, only a metadata field — most often the
-          // one-line summary — was shortened to fit its own limit. Badging
-          // that `incomplete` is the exact defect this verdict exists to
-          // fix, so it must never share `trimmed`'s badge or its class.
-          (kind === 'trimmed'
-            ? '<span class="mem-badge mem-badge-attn">incomplete</span>'
-            : kind === 'clipped'
-              ? '<span class="mem-badge mem-badge-quiet">summary shortened</span>' : '') +
-        '</div>';
-    }
+    // ── THE READING ITSELF IS GONE (v3.65.1, D2) ─────────────────────────
+    //
+    // It was a dot, an age, the pair and the tool that wrote it, and a
+    // completeness badge — and every one of those facts is already on this
+    // screen twice. The MEMORY overview tile carries `saved <age>` with the
+    // work-stream under it; the Handoffs row's summary carries the newest
+    // handoff's age beside its count; the Handoffs TABLE carries the pair, the
+    // machine and the harness per row. The maintainer's verdict on the row
+    // that repeated them: *"no clue why it is here, what it communicates."*
+    //
+    // Two costs came with it and both leave with it. It was a CARD wrapping a
+    // ROW — measured at 1370, its reading ended at x=1301 against 1316 for
+    // every other row on the page, because `.mem-save`'s `12px 14px` padding
+    // and 1px border cost 15px a side. And it was the one row whose title said
+    // what the step above it already says.
+    //
+    // `age`, `prov`, `clock` and `freshnessTier` are still computed above:
+    // `clock` decides one of the disclosure lines below, and the rest are what
+    // the four save KINDS are told apart by. Nothing reads `primary` any more,
+    // so there is no `primary`.
+    void age; void prov;
 
     if (kind === 'trimmed') {
       lines.push({
@@ -5418,12 +5566,20 @@ function renderSaveStatus(read, d) {
       // false alarm this verdict replaces. See the real case recorded on
       // `classifySaveNotes`: a 244-char headline clipped to 200 chars, body
       // untouched, badged and worded as if content had been lost.
-      detail.push({
-        key: 'wrote',
-        value: 'the handoff in full',
-        sub: 'What got shortened is a label attached to the save — most often its one-line summary '
-          + '— not the handoff’s content. That label is the only thing a future session sees before '
-          + 'deciding whether to open this state. ' + firstNote(cur.lastSaveNotes),
+      // ── A CLIPPED SAVE IS A LOUD ENTRY IN THE QUIET TONE (v3.65.1) ────
+      // It is an OUTCOME about a specific save — the sibling of `trimmed` one
+      // arm up — and it fires only when a save was actually clipped, which is
+      // what earns it a place outside the chevron. What separates it from
+      // `trimmed` is the TONE, not the kind: nothing about the handoff was
+      // lost, only a label was shortened, and badging that as an alarm is the
+      // exact defect this verdict exists to fix. `quiet` says "read this"
+      // without saying "something is wrong".
+      lines.push({
+        tone: 'quiet',
+        text: 'That save wrote the handoff in full. What got shortened is a label attached to it '
+          + '— most often its one-line summary — not the handoff’s content. That label is the only '
+          + 'thing a future session sees before deciding whether to open this state. '
+          + firstNote(cur.lastSaveNotes),
       });
     } else if (kind === 'replaced') {
       lines.push({
@@ -5432,35 +5588,27 @@ function renderSaveStatus(read, d) {
       });
     }
 
-    if (eff.source === 'filesystem') {
-      detail.push({
-        key: 'clock',
-        value: 'the file’s own',
-        sub: 'No journal entry carried a save time for this handoff. On a computer that syncs, a '
-          + 'file’s own timestamp is when it ARRIVED here, not when it was written.',
-      });
-    } else {
-      // NO `clock: the agent's own` LINE, and the omission is deliberate.
-      // Adding one would make `detail` non-empty on EVERY save, which would
-      // give the healthy reading a chevron that opens on one uninteresting
-      // line — and v3.64.2 chose the flat row for exactly that reason ("an
-      // empty chevron invites a click that does nothing"). The good clock is
-      // the default the ⓘ above already describes; only the fallback is news.
-      // BOTH CLOCKS, when they genuinely disagree. Under two minutes they are
-      // the same event to a human — a save's own write takes milliseconds — so
-      // a gap larger than that means the file changed on this disk well after
-      // the agent wrote it, which is what a pull looks like.
-      const arrived = effectiveSave({ savedAt: cur.arrivedAt || cur.savedAt || cur.lastWriteAt });
-      if (arrived.seconds !== null && eff.seconds !== null && eff.seconds - arrived.seconds > 120) {
-        detail.push({
-          key: 'arrived here',
-          value: formatAge(arrived.seconds) || 'recently',
-          markHtml: '<span class="fresh-dot fresh-' + freshnessTier(arrived.seconds)
-            + '" aria-hidden="true"></span>',
-          sub: 'The reading above is the agent’s own clock, not the file’s.',
-        });
-      }
-    }
+    // ── THE TWO CLOCKS AND THE MACHINE LEFT THIS FUNCTION (v3.65.1) ──
+    //
+    // They were `detail` lines — `clock: the file's own`, `arrived here`,
+    // `written on <machine>` — rendered in an instrument that stood UNFOLDED
+    // at the top of step ②. The maintainer's rule for a step body is that
+    // every part of it is the same fold row and that an explanation lives in
+    // the ⓘ and nowhere else; a bare block of provenance above four rows is
+    // the shape he rejected, and these three are explanations and provenance,
+    // not warnings.
+    //
+    // NOTHING IS DROPPED, and each half went somewhere it is already read:
+    // · WHICH CLOCK, and that a synced file's own timestamp is when it
+    //   ARRIVED — the overview ⓘ's two-clocks paragraph, verbatim and
+    //   unchanged, which is on this page above every age it qualifies.
+    // · WHICH MACHINE — the Handoffs table's own MACHINE column, per row,
+    //   which is more precise than one line about the open pair; what that
+    //   COSTS a reader ("paths and processes may differ") is a sentence in
+    //   step ②'s ⓘ.
+    // So `detail` is gone and this function composes warnings only. On a
+    // healthy project it returns '' and step ② opens on its Capture row with
+    // nothing above it, which is the acceptance picture.
   }
 
   // ── TWO HARNESSES, ONE HANDOFF FILE ─────────────────────────────────────
@@ -5479,7 +5627,7 @@ function renderSaveStatus(read, d) {
       // It came off disk and it used to be interpolated into a `<b><span>`
       // by hand here; the monitor escapes both fields and emphasises this
       // one, so the emphasis survives and the hand-built markup does not.
-      strongText: 'Give each tool its own work-stream.',
+      strongText: 'Give each tool its own handoff.',
       text: 'Two tools are writing ' + s.scope + '. '
         + (who ? who + ' have ' : 'They have ')
         + 'both saved into the same handoff file, and a save overwrites — so each one has replaced '
@@ -5502,25 +5650,16 @@ function renderSaveStatus(read, d) {
     }
   }
 
-  // ── "WHAT YOU ARE READING WAS WRITTEN SOMEWHERE ELSE" ───────────────────
-  // This was a `from <machine>` badge and a note beside the machine picker.
-  // The picker is gone; the FACT is not, and it is a real signal rather than
-  // decoration: the next steps in the handoff below were observed on another
-  // computer, so paths, running processes and local checkouts may not match
-  // what is in front of you.
+  // ── "WRITTEN SOMEWHERE ELSE" IS THE TABLE'S COLUMN NOW (v3.65.1) ───────
+  // It was a `written on <machine>` line with a sentence under it, rendered
+  // unfolded above step ②'s four rows. It is PROVENANCE, not a warning, and
+  // the Handoffs table below names the machine PER ROW in a column of its own
+  // — which is both more precise and already on screen. What the fact COSTS a
+  // reader — that paths, running processes and local checkouts may not match
+  // what the handoff describes — is one sentence in step ②'s ⓘ.
   //
-  // POSITIVE EVIDENCE ONLY — an explicit `false`, never an absent field. An
-  // older response that omits `machineIsThisMachine` must not be reported as
-  // either answer. And it is a rendered LINE, not a `title=`: it used to be a
-  // tooltip on a non-focusable span, so the one sentence explaining why the
-  // steps below may not apply reached neither keyboard nor touch users.
-  if (d && d.machineIsThisMachine === false) {
-    detail.push({
-      key: 'written on',
-      value: d.machine || 'another machine',
-      sub: 'Synced here — local paths and processes may differ from what the handoff describes.',
-    });
-  }
+  // The positive-evidence rule it carried is unchanged and now lives where the
+  // table is built: an explicit `false`, never an absent field.
 
   // ── "ANOTHER COMPUTER SAVED AFTER THIS ONE" ─────────────────────────────
   // The menubar widget's `newerElsewhereNotice`, which a Windows or Linux user
@@ -5551,8 +5690,6 @@ function renderSaveStatus(read, d) {
   //
   // `brief` is still read above for nothing else, so it goes with the line.
 
-  if (!primary && !lines.length && !detail.length) return '';
-
   // ── THE BODY IS A MONITOR (v3.65.0, M1) ──────────────────────────────
   //
   // It was four hand-built sentences in `.mem-save-line` divs — one about
@@ -5573,46 +5710,42 @@ function renderSaveStatus(read, d) {
   // Two blocks, one component, and the split is structural rather than a
   // convention: `renderMonitor` builds the two from different arrays and has
   // no field that can move one into the other.
-  const body = detail.length
-    ? renderMonitor({ label: 'About this save', lines: detail })
-    : '';
-  // ── THE ROW, AND THE ONE CASE THAT IS NOT A FOLD ──────────────────────
-  // An empty chevron invites a click that does nothing, which is the call
-  // `renderCaptureMeter` already makes for its own idle state — so with no
-  // explanation to open, the reading is a FLAT row in the identical chrome
-  // (`.mem-fold-flat`, the shape `renderWorkStreamsFold` uses for an empty
-  // project) rather than a fold that opens on nothing.
+  // ── ONE INSTRUMENT, UNFOLDED, AND NOTHING WHEN THERE IS NOTHING TO SAY ─
   //
-  // `open` is derived from `state.openFolds`, the same way every other fold
-  // on this page derives it — so the row survives `patchOpenPair` replacing
-  // the stack it lives in, which re-binds the toggle rather than preserving
-  // the element.
-  const open = (state.openFolds && state.openFolds.saved) ? ' open' : '';
-  const savedRow = primary
-    ? (body
-      ? '<details class="mem-fold" data-mem-fold="saved"' + open + '>'
-        + '<summary class="mem-fold-summary" id="mem-fold-saved">' + icon('chevronRight', 14)
-          + '<span>Last saved</span>'
-          + '<span class="mem-fold-meta">' + primary + '</span>'
-        + '</summary>'
-        + '<div class="mem-fold-body">' + body + '</div>'
-      + '</details>'
-      : '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-save-flat">'
-        + '<span>Last saved</span>'
-        + '<span class="mem-fold-meta">' + primary + '</span>'
-      + '</div></div>')
-    : body;
-  // THE WARNINGS, IN THE SAME INSTRUMENT AND OUTSIDE THE CHEVRON. One block
-  // whatever their number, so two warnings do not read as two designs.
-  const warnings = lines.length
-    ? renderMonitor({ label: 'Warnings about this save', lines: [], loud: lines })
-    : '';
-  // NO `.mem-section` ANY MORE. This is the body of step ② now, not a
-  // top-level sibling, so the page's adjacency rule must not put 24px between
-  // it and the two notices beside it — `.mem-status-stack` in memory.css owns
-  // the spacing INSIDE a block, and `.settings-job-block` owns the spacing
-  // between blocks. One gap, one owner, at each level.
-  return '<section class="mem-save" aria-label="Save status">' + savedRow + warnings + '</section>';
+  // WHAT IS LEFT after the "Last saved" row is deleted is the part that was
+  // never a duplicate: the DISCLOSURES. `detail` holds the qualifications the
+  // store honestly computed and this view would otherwise drop — which clock
+  // the figure came from, that the file arrived here long after it was
+  // written, that a clipped save wrote the handoff in full and shortened only
+  // a label — and `lines` holds the warnings: a trimmed handoff, a replaced
+  // one, two harnesses overwriting one file, a newer save on another machine.
+  //
+  // They are ONE monitor now rather than a fold body plus a block beside it,
+  // and it is NOT behind a chevron. v3.16.1 covers `lines`; `detail` joins
+  // them outside the chevron because the row that used to open is gone, and a
+  // disclosure whose only door has been removed is a dropped field — the
+  // dominant defect class the memory layer records against itself.
+  //
+  // AND IT RENDERS NOTHING ON AN ORDINARY PROJECT. A save on the agent's own
+  // clock, complete, with one harness, produces no line and no warning, so
+  // step ② opens on its four rows with nothing above them. That is the
+  // acceptance picture, and it is reached by having nothing to say rather than
+  // by hiding something.
+  // ONE GUARD, AND IT IS STATED ONCE. Three copies of this condition lived in
+  // this function for a while — a leftover from the "Last saved" deletion plus
+  // two written since — and a mutation that broke any ONE of them stayed green,
+  // which is the whole reason three copies of a rule are worse than one. The
+  // component would also return '' for an empty set, but a host that relies on
+  // that renders `<section></section>` the moment the component gains a
+  // default line, so the decision is made HERE, where the facts are.
+  if (!lines.length) return '';
+  const instrument = renderMonitor({
+    label: 'Warnings about the last save', lines: [], loud: lines,
+  });
+  // NO `.mem-section`. This is the first thing inside step ②'s body, not a
+  // top-level sibling, so the page's 24px block rhythm must not apply to it —
+  // `.mem-status-stack` in memory.css owns the spacing inside a block.
+  return '<section class="mem-save" aria-label="About the last save">' + instrument + '</section>';
 }
 
 /** The newest (scope, machine) in a project by the AGENT'S clock where it exists. */
@@ -5725,7 +5858,7 @@ function renderBriefOnlyNotice(read, unlisted) {
       renderDescription(msg +
         (unlisted ? '' :
           ' The brief below is what every agent read returns. A handoff appears here the first time ' +
-          'an agent saves its working state at the end of a session.')) +
+          'an agent saves a handoff at the end of a session.')) +
     '</div>'
   );
 }
@@ -5765,7 +5898,7 @@ function renderEmptyProject(unlistedEntries) {
       // than relying on the component: opting into raw HTML moves that duty to
       // the caller and this is the one interpolated value in the sentence.
       renderDescription('No agent has written a handoff here. Ask an agent connected through ' +
-        '<span class="mono">my-curator</span> to save its working state for ' +
+        '<span class="mono">my-curator</span> to save a handoff for ' +
         '<span class="mem-name">' + escapeHtml(state.activeProject) +
         '</span> at the end of a session, and it will show up here.', { html: true }) +
     '</div>'
@@ -5948,7 +6081,7 @@ function renderWorkStreams(scopes, open, windowSize = WS_WINDOW) {
     '<div class="mem-ws-wrap">' +
       '<table class="mem-ws-table">' +
         '<thead><tr>' +
-          '<th scope="col">Work-stream</th>' +
+          '<th scope="col">Handoff</th>' +
           '<th scope="col">Working on</th>' +
           '<th scope="col">Last saved</th>' +
           '<th scope="col">Machine</th>' +
@@ -6040,7 +6173,7 @@ function workStreamCounts(read, listed, painted) {
   const pairs = typeof read.savedCopies === 'number' ? read.savedCopies : listed;
   const streams = typeof read.distinctScopeCount === 'number' ? read.distinctScopeCount : null;
   const parts = [];
-  if (streams !== null) parts.push(streams + ' work-stream' + (streams === 1 ? '' : 's'));
+  if (streams !== null) parts.push(streams + ' handoff' + (streams === 1 ? '' : 's'));
   parts.push(pairs + ' saved cop' + (pairs === 1 ? 'y' : 'ies'));
   const truncated = read.scopesTruncated
     ? ' · showing the ' + listed + ' most recently saved'
@@ -6240,7 +6373,7 @@ function handoffReaderContent() {
   const bodyHtml = present
     ? meta + noteHtml + '<div class="mem-reader-doc">' + renderMarkdown(split.body) + '</div>'
     : meta + noteHtml + renderDescription(d.message
-      || 'Nothing has been saved under this work-stream on this machine yet.');
+      || 'Nothing has been saved under this handoff on this machine yet.');
 
   return {
     slug,
@@ -6250,7 +6383,7 @@ function handoffReaderContent() {
     type: 'memory',
     typeLabel: 'handoff',
     tags: [
-      scope ? 'work-stream: ' + scope : null,
+      scope ? 'handoff: ' + scope : null,
       machine ? 'machine: ' + machine : null,
       d.machineIsThisMachine === true ? 'this machine' : null,
       d.machineIsThisMachine === false ? 'synced from another machine' : null,
@@ -6384,7 +6517,7 @@ function renderBriefEditor(read, readonly) {
       icon('alertTriangle', 13) +
       '<span><b>Too long to save.</b> The standing brief is capped at ' +
       escapeHtml(String(BRIEF_MAX_BYTES)) + ' bytes — the count above is this draft. ' +
-      'Shorten it, or move the detail into a wiki page and point at it from here.</span></div>';
+      'Shorten it, or move the detail into a page in your domain and point at it from here.</span></div>';
 
   // THE UNSAVED-DRAFT BAR. Raised by Escape (see briefDismissDecision), never
   // by a timer and never by the poll, and it is INLINE rather than a modal so
@@ -6975,13 +7108,13 @@ function foundationsControlOffer(facts, readonly) {
   // not an absence (v3.17.1).
   if (readonly) {
     return {
-      refresh: false, add: false, mirror: true,
+      refresh: false, add: false, mirror: false,
       reason: 'A read-only mirror — documents here are copied in, never edited.',
     };
   }
-  if (facts.manifestError) return { refresh: false, add: false, reason: null };
-  if (!facts.present) return { refresh: false, add: false, reason: null };
-  if (facts.ownership === 'curator') return { refresh: false, add: true, reason: null };
+  if (facts.manifestError) return { refresh: false, add: false, mirror: false, reason: null };
+  if (!facts.present) return { refresh: false, add: false, mirror: false, reason: null };
+  if (facts.ownership === 'curator') return { refresh: false, add: true, mirror: false, reason: null };
   // REPO-OWNED. Reachability is read off the DOCUMENTS, never off `repo.root`
   // — the manifest records a path on the machine that last refreshed, which on
   // any other machine is a hint, while each document's own `freshness` is what
@@ -6989,13 +7122,22 @@ function foundationsControlOffer(facts, readonly) {
   const reachable = !facts.count
     || facts.docs.some((d) => d.freshness === 'fresh' || d.freshness === 'stale');
   if (!reachable) {
+    // ── AND THIS IS THE ARM THAT MOST NEEDS THE GITHUB CONTROL ──────────
+    // Through v3.65.0 this arm offered NOTHING — and it is exactly the machine
+    // the store's remote arm was built for: `refreshFoundationsFromRepo` takes
+    // the remote path when the checkout is not reachable
+    // (src/brain/working-state.js:5856-5869), so the app had a shipped
+    // capability with no control on the only computer that needs it. The
+    // reason still stands beside it: the FOLDER is not here, and that is why
+    // the two folder controls are withheld.
     return {
-      refresh: false, add: false,
+      refresh: false, add: false, mirror: true,
       reason: 'The folder these were copied from is not on this computer, so they can neither '
-        + 'be re-copied nor added to here. Open the project on the machine that has it.',
+        + 'be re-copied nor added to here. Mirror it from GitHub instead, or open the '
+        + 'project on the machine that has the folder.',
     };
   }
-  return { refresh: facts.count > 0, add: true, reason: null };
+  return { refresh: facts.count > 0, add: true, mirror: true, reason: null };
 }
 
 /**
@@ -7067,7 +7209,7 @@ function renderFoundationStop(facts) {
   );
 }
 
-function fndRowHtml(d, editable, readonly) {
+function fndRowHtml(d, editable, readonly, budgetBytes) {
   const slug = String(d.slug || '');
   const rowId = 'mem-fnd-' + slug.replace(/[^a-z0-9]+/gi, '-');
   // `.fnd-src-path`, NOT the shared `.mono` utility span. The work-stream slug
@@ -7127,7 +7269,29 @@ function fndRowHtml(d, editable, readonly) {
           escapeHtml(d.title || slug) +
         '</button>' +
       '</td>' +
-      '<td class="fnd-cell-size">' + escapeHtml(size) + '</td>' +
+      // ── THE DEPTH BAR'S FIRST PLACEMENT (v3.65.1, §9) ────────────────
+      //
+      // THE DENOMINATOR IS `FOUNDATIONS_BUDGET_BYTES` — 200 KB, the PROJECT's
+      // disk budget — and it is named in the cell's own hidden sentence and in
+      // the unfolded warning under the table, because a bar whose denominator
+      // the reader cannot name is decoration.
+      //
+      // IT IS NOT THE 120 KB BOOTSTRAP BUDGET, and the two must stay named
+      // apart (CLAUDE.md's own invariant): `CONTEXT_MAX_BYTES_DEFAULT` is the
+      // READING budget and applies only to the `readFirst` subset, while this
+      // column lists EVERY document. Measuring every row against the reading
+      // budget would paint an ordinary project's third document red.
+      //
+      // A DOCUMENT WHOSE OWN BYTES EXCEED THE BUDGET takes the whole cell in
+      // the danger tone — the component's one automatic tone, and the only
+      // condition that may set it. v3.16.1 still holds: the same fact is in
+      // words, unfolded, in `#mem-fnd-budget` under the row.
+      '<td class="fnd-cell-size">' + renderDepthCell({
+        value: size,
+        amount: bytes,
+        budget: budgetBytes,
+        label: fndSize(bytes) + ' of a ' + fndSize(budgetBytes) + ' project budget',
+      }) + '</td>' +
       // ── "READ FIRST" — WHAT AN AGENT IS HANDED WITHOUT ASKING ────────
       //
       // A flagged document's BODY arrives with every session; an unflagged one
@@ -7376,13 +7540,13 @@ function foundationsNotices(read) {
   let notes = '';
   if (facts.manifestError) {
     notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
-      '<span>This project’s foundations manifest could not be read, so nothing below it can be ' +
+      '<span>This project’s documents manifest could not be read, so nothing below it can be ' +
       'trusted: ' + escapeHtml(String(facts.manifestError)) + '</span></div>';
   }
   if (facts.orphanFiles.length) {
     notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
       '<span>' + escapeHtml(facts.orphanFiles.length + ' file' +
-        (facts.orphanFiles.length === 1 ? ' is' : 's are') + ' in the foundations folder with no ' +
+        (facts.orphanFiles.length === 1 ? ' is' : 's are') + ' in the documents folder with no ' +
         'manifest entry (' + facts.orphanFiles.slice(0, 3).join(', ') + '). ' +
         'The manifest is written last, so a save that was interrupted leaves the document behind ' +
         'rather than an entry pointing at nothing.') + '</span></div>';
@@ -7415,7 +7579,18 @@ function foundationsNotices(read) {
   const ini = state.fndInit && state.fndInit.domain === state.activeDomain
     && state.fndInit.project === state.activeProject ? state.fndInit : null;
   if (ini && ini.error) {
-    notes += renderStatus({ state: 'danger', title: 'Nothing was set up', detail: ini.error });
+    // TWO TITLES, BECAUSE THEY ARE TWO REFUSALS (v3.65.1). "Nothing was set up"
+    // is the init arm's — an ownership that was not recorded. A refused SWITCH
+    // set nothing up either way: the project keeps the source it had, and
+    // saying so is what tells the owner nothing is half-done. The store makes
+    // that true rather than this sentence: `refreshRemoteCore` writes nothing
+    // until every blob is in hand, so a failed read leaves the mirror exactly
+    // as it was.
+    notes += renderStatus({
+      state: 'danger',
+      title: ini.switching ? 'The source was not changed' : 'Nothing was set up',
+      detail: ini.error,
+    });
   }
   if (ini && Array.isArray(ini.refused) && ini.refused.length) {
     notes += renderRefusedList(ini.refused);
@@ -7468,8 +7643,20 @@ function renderFoundations(read) {
       (busy ? ' disabled aria-disabled="true"' : '') + '>' +
       (curator ? 'Add document' : 'Add from folder') + '</button>'
     : '';
+  // ── "Mirror from GitHub instead" (v3.65.1, D6) ────────────────────────
+  // ONE SOURCE PER PROJECT, and this is how it moves: the ownership stays
+  // `repo` — the store's one-ownership-per-project rule is untouched — and
+  // what changes is WHERE the bytes are read from. `repo.root` is cleared and
+  // `repo.remote` is set, in the same manifest write the re-copy performs.
+  //
+  // Offered on BOTH repo-owned arms, including the one where the checkout is
+  // not on this computer: see `foundationsControlOffer`.
+  const mirrorBtn = controls.mirror
+    ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-mirror" id="mem-fnd-mirror"' +
+      (busy ? ' disabled aria-disabled="true"' : '') + '>Mirror from GitHub instead</button>'
+    : '';
   const askBtn = foundationsDraftAsk(facts, readonly);
-  const action = editing ? '' : (refreshBtn + addBtn + askBtn.btn);
+  const action = editing ? '' : (refreshBtn + addBtn + mirrorBtn + askBtn.btn);
   // A WITHHELD CONTROL SAYS WHY (v3.17.1). Two reasons can stand here — the
   // folder is not on this computer, or this is a read-only mirror — and both
   // are `.tx-note`, unfolded: a reason behind a chevron is not a reason.
@@ -7552,11 +7739,13 @@ function renderFoundations(read) {
       ? 'Mirrored from ' + ((facts.repo && facts.repo.root) || 'a folder on this Mac')
         + '. Nothing copied yet.'
       : 'Kept here. No documents yet. Write the first one yourself, or ask an agent to draft them.';
+    // THE HEAD ROW FIRST HERE TOO (v3.65.1) — the empty arm and the populated
+    // one must not disagree about where a section's controls live.
     return '<div class="mem-fnd-row">' +
+        '<div class="mem-fnd-head-controls">' + action + '</div>' +
         '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
           (editing ? renderFoundationEditor(facts) : renderDescription(emptyBody)) +
         '</div></div>' +
-        '<div class="mem-fnd-head-controls">' + action + '</div>' +
       '</div>' + askBtn.panel + withheld;
   }
 
@@ -7568,7 +7757,8 @@ function renderFoundations(read) {
       '</span>' +
     '</summary>';
 
-  const rows = facts.docs.map((d) => fndRowHtml(d, curator, readonly)).join('');
+  const rows = facts.docs.map(
+    (d) => fndRowHtml(d, curator, readonly, facts.budgetBytes)).join('');
   // ── THE EDITOR REPLACES THE TABLE, IT DOES NOT SIT UNDER IT ────────────
   // The standing brief's own precedent one block up, and the same reason: two
   // views of one set of documents on screen at once, one of them describing a
@@ -7665,13 +7855,30 @@ function renderFoundations(read) {
   // always read from one field alone; this one now does too.
   const open = (state.fndForceOpen === true
     || (state.openFolds && state.openFolds.foundations)) ? ' open' : '';
-  return budgetNote + '<div class="mem-fnd-row">' +
+  // ── THE CONTROLS ARE A HEAD ROW, ABOVE THE ROWS (v3.65.1) ─────────────
+  // Wiki health's `.dm-health-top` anatomy, which is the one shipped instance
+  // of the pattern and the model the maintainer named: a section's controls sit
+  // BENEATH the heading and ABOVE the rows, left-aligned at the rows' own x.
+  // Through v3.65.0 this row was the LAST child of `.mem-fnd-row` — measured at
+  // 1370, the two controls sat at y=511, below a fold whose summary was at
+  // y=479 — so the only section on this page with controls put them where
+  // nothing else on the page puts them. Same class, same markup, one position.
+  // ── AND THE COST GOES UNDER THE ROW, STILL UNFOLDED (v3.65.1) ─────────
+  // It was emitted BEFORE the row, which put it between the step's heading and
+  // the section's controls — the one place on this page where a sentence sits
+  // under a heading, which is what the head-row rule exists to stop. It is a
+  // SIBLING of the fold, not a child of it: v3.16.1's rule is that a cost may
+  // never sit behind a chevron, so it stays outside the `<details>` and is read
+  // whether the documents are open or not. What changed is its position among
+  // the section's siblings, and nothing else — `toggleReadFirst` still patches
+  // `#mem-fnd-budget` in place by id.
+  return '<div class="mem-fnd-row">' +
+      '<div class="mem-fnd-head-controls">' + action + '</div>' +
       '<details class="mem-fold" data-mem-fold="foundations"' + open + '>' +
         summary +
         '<div class="mem-fold-body">' + body + '</div>' +
       '</details>' +
-      '<div class="mem-fnd-head-controls">' + action + '</div>' +
-    '</div>' + askBtn.panel + withheld;
+    '</div>' + budgetNote + askBtn.panel + withheld;
 }
 
 /**
@@ -7775,13 +7982,20 @@ function renderFoundationsInit(facts) {
   const ini = state.fndInit && state.fndInit.domain === state.activeDomain
     && state.fndInit.project === state.activeProject ? state.fndInit : null;
   const repoOnly = facts.ownership === 'repo';
+  // ── SWITCHING THIS PROJECT'S SOURCE TO GITHUB (v3.65.1, D6) ────────────
+  // A transient on the same stamped record every other state of this panel
+  // rides, so a project switch drops it with the rest. It selects the GitHub
+  // arm, changes the primary's word and the sentence above it, and routes the
+  // commit at `POST …/foundations/source` instead of `…/foundations/init`.
+  const switching = !!(ini && ini.switching);
   const choice = ini && ini.choice
     ? ini.choice
     // A FRESH CHOICE PAINTED FROM NOTHING, so the block renders its own first
     // frame without a click: `state.fndInit` is written by the first
     // interaction, and until then this is a pure function of the payload.
     : freshChooser({ allowLater: false });
-  if (repoOnly) choice.ownership = 'repo';
+  if (switching) choice.ownership = 'remote';
+  else if (repoOnly) choice.ownership = 'repo';
   const busy = !!(ini && ini.busy);
   // ── AND ONE MORE CONDITION, WITH ITS REASON (v3.61.1) ──────────────────
   // A mirror that has been SCANNED and has nothing ticked would set the
@@ -7792,9 +8006,11 @@ function renderFoundationsInit(facts) {
   // decides both the disabled flag and the sentence under the button — one
   // predicate, so the control and its explanation cannot come apart.
   const blocked = commitBlockedReason(choice);
-  const ready = (repoOnly
-    ? !!String(choice.repoRoot || '').trim()
-    : (choice.ownership === 'curator' || !!String(choice.repoRoot || '').trim())) && !blocked;
+  const ready = (switching
+    ? !!String(choice.remote || '').trim()
+    : repoOnly
+      ? !!String(choice.repoRoot || '').trim()
+      : (choice.ownership === 'curator' || !!String(choice.repoRoot || '').trim())) && !blocked;
 
   return (
     // ── THE STATE'S OWN STACK, SO THE RHYTHM IS ONE RULE (v3.61.1) ───────
@@ -7825,18 +8041,53 @@ function renderFoundationsInit(facts) {
       : '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' +
         escapeHtml('Set once — a project is mirrored or kept here, never both.') +
         '</span></div>') +
-    '<div class="mem-fnd-row">' +
-      // `mem-fnd-init-body` gives this card's own contents the same 16px
-      // rhythm and drops the 46px right reserve `.mem-fold-flat` keeps for
-      // the brief's pencil — there is no control in this card's top-right
-      // corner, and the reserve was 32px of the chooser's width spent on
-      // nothing.
-      '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-fnd-init-body">' +
-        renderDescription(repoOnly
-          ? 'Nothing mirrored yet. Point at the folder and choose which files to copy.'
-          : 'No canonical documents yet. Choose how they arrive.') +
+    // ── ONE BOX, AT THE ROWS' OWN WIDTH (v3.65.1) ────────────────────────
+    // The maintainer, on the shipped v3.65.0 panel: *"a truly bad
+    // implementation of the design"* — an inner box narrower than the card,
+    // buttons at the right edge, placeholders cramped. Measured at 1370: the
+    // panel sat 421→1314 inside a row that runs 405→1330, so THREE left edges
+    // (405 / 421 / 436) and three right edges stacked inside one another, and
+    // `.fnd-init-arm` carried `padding: 8px 0 8px 16px` — ZERO on the right
+    // — so its controls ended flush against a visible tinted edge that itself
+    // stopped 31px short of the row above.
+    //
+    // It takes Wiki health's QUICK MAINTENANCE anatomy instead, which is the
+    // panel the maintainer called *"designed properly"*: ONE box at the rows'
+    // own width, 14px on all four sides, an eyebrow row, a content stack and a
+    // footnote. `.dm-quick`'s RULES are not copied here — a second copy of a
+    // panel is the shape this release removes — `.mem-fnd-panel` declares the
+    // same five properties with views/domains.css:753-759 named as the source
+    // of the values, and promoting one kit panel is recorded for v3.66.0.
+    '<div class="mem-fnd-panel">' +
+      '<div class="mem-fnd-panel-eyebrow cur-group-title">' +
+        escapeHtml(switching ? 'MIRROR FROM GITHUB'
+          : repoOnly ? 'ADD FROM FOLDER' : 'SET UP DOCUMENTS') +
+      '</div>' +
+      '<div class="mem-fnd-init-body">' +
+        // ── THE SENTENCE SPLITS ON THE COUNT (v3.65.1) ──────────────────
+        // Through v3.65.0 the `repoOnly` arm said "Nothing mirrored yet" on
+        // EVERY repo-owned project — including one mirroring three documents,
+        // because this panel is also what the head control's "Add from folder"
+        // opens. Measured on the maintainer's own fixture: 1 document, 116 KB,
+        // and the panel said nothing was mirrored. Both arms ride the SAME
+        // renderDescription call, so the tail stays byte-identical.
+        renderDescription(switching
+          ? 'Name the repository this project mirrors from now. The documents are re-copied '
+            + 'from GitHub and the folder on this Mac stops being the source.'
+          : repoOnly
+            ? (facts.count
+              ? 'Add more files from the folder this project mirrors.'
+              : 'Nothing mirrored yet. Point at the folder and choose which files to copy.')
+            : 'No canonical documents yet. Choose how they arrive.') +
         renderFoundationsChooser({
-          id: 'mem-fnd-init', choice, busy, optionsHidden: repoOnly, existingProject: true,
+          // `optionsHidden: repoOnly` ALONE, and `|| switching` is deliberately
+          // not written: the switch is offered on repo-owned projects only
+          // (`foundationsControlOffer` returns `mirror: false` on the curator
+          // arm, because the route answers 409 there), so `switching` implies
+          // `repoOnly` and the second clause is unreachable. Proved dead by a
+          // mutation that removed it and reddened nothing.
+          id: 'mem-fnd-init', choice, busy, optionsHidden: repoOnly,
+          existingProject: true,
         }) +
         '<div class="mem-fnd-init-actions">' +
           // ── THE PRIMARY IS THE HOST'S DECISION (P2-6) ──────────────────
@@ -7851,8 +8102,9 @@ function renderFoundationsInit(facts) {
           '<button type="button" class="btn btn-primary" id="mem-fnd-init-go"' +
             (busy || !ready ? ' disabled' : '') + '>' +
             escapeHtml(busy
-              ? (repoOnly ? 'Copying…' : 'Setting up…')
-              : (repoOnly ? 'Add from folder' : 'Set up documents')) +
+              ? (switching ? 'Mirroring…' : repoOnly ? 'Copying…' : 'Setting up…')
+              : (switching ? 'Mirror from GitHub'
+                : repoOnly ? 'Add from folder' : 'Set up documents')) +
           '</button>' +
         '</div>' +
         // ── WHY THE COMMIT IS OFF (v3.61.1) ────────────────────────────
@@ -7866,8 +8118,18 @@ function renderFoundationsInit(facts) {
           (blocked ? '' : ' hidden') + '>' +
           '<span>' + escapeHtml(blocked) + '</span>' +
         '</div>' +
-      '</div></div>' +
-    '</div>' +
+        // ── WHAT THE SWITCH COSTS, UNFOLDED (v3.16.1) ──────────────────
+        // A consequence, so it is on screen at the moment of acting rather
+        // than behind the block's ⓘ. Nothing is written until every blob is
+        // in hand — the store's remote arm fetches the whole tree first —
+        // so a failed switch leaves the mirror exactly as it was.
+        (switching
+          ? '<div class="tx-note mem-fnd-switch-note">' + icon('alertCircle', 13) + '<span>' +
+            escapeHtml('The folder on this Mac stops being this project’s source. Nothing is '
+              + 'written unless every document is read, and "read first" is kept by name.') +
+            '</span></div>'
+          : '') +
+      '</div>' +
     '</div>'
   );
 }
@@ -8349,7 +8611,7 @@ function foundationReaderContent(doc, project) {
     // what `readonly` says — but "not here, and there instead" is the half a
     // person actually needs.
     readonlyNote: curatorOwned
-      ? 'Edit this in the Foundations table behind this panel.'
+      ? 'Edit this in the Documents table behind this panel.'
       : 'Mirrored from the folder — edit it there, then refresh.',
     bodyHtml: meta + noteHtml + '<div class="mem-reader-doc">' +
       renderMarkdown(typeof doc.text === 'string' ? doc.text : '') + '</div>',
@@ -8551,15 +8813,20 @@ async function initFoundations(token, facts) {
   // the form vanish would throw away the path the owner typed (the same rule
   // the project lifecycle form follows on a 4xx).
   const keepAdding = !!(cur && cur.adding);
+  // THE SWITCH SURVIVES THE ROUND TRIP for the same reason `adding` does: a
+  // refused switch that also closed the panel would throw away the repository
+  // the owner named.
+  const keepSwitching = !!(cur && cur.switching);
   state.fndInit = {
     domain, project, choice, busy: true, error: null, refused: [], adding: keepAdding,
+    switching: keepSwitching,
   };
   render(token);
 
   // AN ALREADY-OWNED MIRROR TAKES THE REFRESH ROUTE, which has its own
   // outcome rendering and its own stamped record — so this hands off rather
   // than duplicating it.
-  if (mirrorOnly) {
+  if (mirrorOnly && !keepSwitching) {
     // `adding` IS PRESERVED THROUGH THE COPY. On a populated mirror the picker
     // sits under the table, and dropping the flag here would take it off
     // screen the instant the button was pressed — which reads as the press
@@ -8567,6 +8834,7 @@ async function initFoundations(token, facts) {
     // `refreshFoundations`'s own stamped outcome is what clears it.
     state.fndInit = {
       domain, project, choice, busy: false, error: null, refused: [], adding: keepAdding,
+      switching: false,
     };
     await refreshFoundations(token, body.files || []);
     return;
@@ -8575,11 +8843,33 @@ async function initFoundations(token, facts) {
   let data = null;
   let error = null;
   try {
+    // ── TWO ROUTES, ONE CONTROL, AND THE FACTS DECIDE (v3.65.1) ────────
+    // `…/foundations/init` is the only route that SETS an ownership and the
+    // store lets it run once. A project whose ownership is already settled and
+    // is moving its source to GitHub takes `…/foundations/source`, which
+    // leaves `ownership: 'repo'` where it is, clears `repo.root` and sets
+    // `repo.remote` in the SAME manifest write the re-copy performs — so a
+    // failed read cannot leave a stale root beside a fresh remote.
     const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
-      encodeURIComponent(project) + '/foundations/init', {
+      encodeURIComponent(project) + '/foundations/' + (keepSwitching ? 'source' : 'init'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      // ── THE SOURCE ROUTE TAKES THREE FIELDS AND REFUSES A FOURTH ────
+      // `SOURCE_BODY_FIELDS` is a strict allow-list — `remote`,
+      // `tokenSource`, `files` — and `chooserBody` composes an `ownership`
+      // beside them because `…/foundations/init` needs one. Sending it here
+      // would be a 400 `unexpected_fields`, so the three are picked out
+      // explicitly rather than the object being passed through and hoped for.
+      // NOTHING ELSE MAY BE ADDED HERE: there is no token field on this form
+      // and there may never be one — the store reads a token from a FILE, and
+      // `tokenSource` names WHICH file.
+      body: JSON.stringify(keepSwitching
+        ? {
+          remote: body.remote,
+          tokenSource: body.tokenSource,
+          ...(body.files ? { files: body.files } : {}),
+        }
+        : body),
     });
     const got = await res.json();
     // ── A REMOTE REFUSAL NAMES THE TOKEN'S SOURCE, NEVER THE TOKEN ──────
@@ -8591,7 +8881,18 @@ async function initFoundations(token, facts) {
     // than to a guess. Nothing here can print a token, because nothing here
     // has one: the store reads it from a file and never returns it.
     if (!res.ok || !got.ok) {
-      error = remoteRefusalText(got && got.error, { tokenSource: body.tokenSource })
+      // ── THE CODE IS `reason`, NOT `error` (corrected v3.65.1) ─────────
+      // `error` is PROSE — `withErrorProse` copies the store's `message` into
+      // it when the route did not compose one — so keying the nine sentences
+      // on it matched nothing and every remote refusal fell through to the
+      // producer's own words. The wire CODE is `reason`, and the GitHub-read
+      // refusals deliberately cross it in the store's own dash spelling
+      // (`no-token`, `rate-limited`, `remote-tree-truncated`, …) precisely so
+      // one client branch reads both doors — src/routes/memory.js:919-923 says
+      // so in the table that excludes them. `error` is still tried, because it
+      // carried a code on some paths and trying both costs nothing.
+      error = remoteRefusalText(got && got.reason, { tokenSource: body.tokenSource })
+        || remoteRefusalText(got && got.error, { tokenSource: body.tokenSource })
         || got.message || got.error || ('HTTP ' + res.status);
     } else data = got;
   } catch (err) {
@@ -8605,6 +8906,7 @@ async function initFoundations(token, facts) {
     // the same rule the project lifecycle form follows on a 4xx.
     state.fndInit = {
       domain, project, choice, busy: false, error, refused: [], adding: keepAdding,
+      switching: keepSwitching,
     };
     render(token);
     return;
@@ -8967,7 +9269,17 @@ function bindFoundationRows(root, token) {
       };
     }
     if (!state.fndInit.choice) state.fndInit.choice = freshChooser({ allowLater: false });
-    if (facts.ownership === 'repo') state.fndInit.choice.ownership = 'repo';
+    // ── THE SAME FORCING THE RENDERER DOES, IN THE SAME ORDER (v3.65.1) ──
+    // `renderFoundationsInit` sets `remote` when the panel is switching this
+    // project's source to GitHub and `repo` otherwise. This line ran AFTER the
+    // render and knew only about `repo`, so it put the ownership back — and
+    // the binder then held a choice whose `ownership` disagreed with the arm
+    // on screen: measured, the remote arm painted while `scanBlockedReason`
+    // answered out of its `repoRoot` branch and the scan stayed disabled
+    // saying "Type or choose the folder first." over a field asking for a
+    // repository. Two writers of one field, and this one is the copy.
+    if (state.fndInit.switching) state.fndInit.choice.ownership = 'remote';
+    else if (facts.ownership === 'repo') state.fndInit.choice.ownership = 'repo';
     bindFoundationsChooser({
       doc: root,
       id: 'mem-fnd-init',
@@ -9032,6 +9344,25 @@ function bindFoundationRows(root, token) {
       };
       state.fndInit.choice.ownership = 'repo';
       // THE FORCE IS A TRANSIENT (v3.64.1) — see `fndForceOpen` in freshState.
+      state.fndForceOpen = true;
+      render(token);
+    });
+  }
+
+  // ── "Mirror from GitHub instead" (v3.65.1, D6) ─────────────────────────
+  // The SAME transient record the two folder controls write, with one more
+  // field: `switching`. It opens the panel with the GitHub arm selected and
+  // routes the commit at the source route; the documents table stays on screen
+  // behind it, for the reason `adding` exists.
+  const mirrorBtn = root.getElementById ? root.getElementById('mem-fnd-mirror') : null;
+  if (mirrorBtn) {
+    mirrorBtn.addEventListener('click', () => {
+      state.fndInit = {
+        domain: state.activeDomain, project: state.activeProject,
+        choice: freshChooser({ allowLater: false }), busy: false, error: null, refused: [],
+        adding: true, switching: true,
+      };
+      state.fndInit.choice.ownership = 'remote';
       state.fndForceOpen = true;
       render(token);
     });
@@ -9346,7 +9677,7 @@ function renderJournal() {
     return (
       '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
         '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
-          '<span>Recent saves</span><span class="mem-fold-meta">empty</span></summary>' +
+          '<span>Journal</span><span class="mem-fold-meta">empty</span></summary>' +
         '<div class="mem-fold-body">' +
           renderDescription('No saves recorded under this scope and machine yet.') +
         '</div>' +
@@ -9461,28 +9792,53 @@ function renderJournal() {
   // Composed INLINE rather than through a helper: this function is lifted by
   // brace-matching and executed, so a module-level helper named here would be
   // a ReferenceError there.
-  let countLine;
+  // ── THE COUNT IS THE SUMMARY'S, NOT A CARD AT THE FOOT (v3.65.1, D3) ──
+  //
+  // THE REPORTED DEFECT, in the maintainer's words: the journal's footer was a
+  // monitor card reading "SAVES RECORDED 15 · showing the 10 most recent" with
+  // a floating "Show more" button beside it — *"from another dimension"* —
+  // while the Handoffs list one row up ends in a full-width inline row that
+  // says "Show 17 more". Measured at 1370: the footer monitor ran 421→723.5
+  // and the button floated at x=735.5 w=77, against a list 893px wide.
+  //
+  // So the count moves into the row's own summary, where every other row on
+  // this page puts its reading, and "Show N more" becomes the ONE
+  // implementation — `wsMoreHtml`'s `cur-group-row`, the list's own last row.
+  // THE THREE ARMS ARE UNCHANGED and each still keeps a FACT apart from its
+  // ABSENCE: `total: null` with `totalUnknown` means the journal was longer
+  // than the tail we read, so the figure we print is the one we can stand
+  // behind and the reason we cannot state a total rides beside it — never a
+  // total printed as if the tail's length were it.
+  let countClause;
   if (j.totalUnknown) {
-    countLine = { key: 'saves shown', value: j.returned,
-      sub: 'most recent · full count unknown — '
-        + (j.totalUnknownReason || 'only the end of the journal was read') };
+    countClause = j.returned + ' save' + (j.returned === 1 ? '' : 's') + ' shown'
+      + ' · full count unknown';
   } else if (typeof j.total === 'number' && j.total > j.returned) {
-    countLine = { key: 'saves recorded', value: j.total,
-      sub: 'showing the ' + j.returned + ' most recent' };
+    countClause = j.total + ' save' + (j.total === 1 ? '' : 's')
+      + ' · showing ' + j.returned;
   } else {
-    countLine = { key: j.returned === 1 ? 'save recorded' : 'saves recorded', value: j.returned };
+    countClause = j.returned + ' save' + (j.returned === 1 ? '' : 's');
   }
-  const countReadout = renderMonitor({ label: 'The journal', lines: [countLine] });
 
   const canExpand = state.journalLimit === JOURNAL_PAGE &&
     (j.totalUnknown || (typeof j.total === 'number' && j.total > j.returned));
+  // ── ONE "Show N more", AND IT IS THE HANDOFFS LIST'S (v3.65.1, D3) ────
+  // The same `cur-group-row` shape `wsMoreHtml` emits: the list's own last
+  // ROW, full width, in flow — never a floating `btn-xs` beside a card. The
+  // maintainer named the Handoffs implementation as the right one by name, so
+  // this is not a third opinion; it is that one, here. The id and the class
+  // `mem-j-more` are kept because BOTH binder call sites (`wire` and
+  // `patchOpenPair`) find the control by them, and the number is named where
+  // it can be: with a known total we can say how many more there are, and with
+  // `totalUnknown` we honestly cannot.
   // In the <details> BODY, never in its <summary> — see the header comment.
+  const moreRest = (!j.totalUnknown && typeof j.total === 'number')
+    ? Math.max(0, j.total - j.returned) : null;
   const moreBtn = canExpand
-    // btn-secondary: same reason as mem-stale-btn above — `.btn` alone used
-    // to resolve to native OS button chrome (2px outset bevel over
-    // ButtonFace). Named rather than left to the baseline so this reads as a
-    // real control.
-    ? '<button class="btn btn-secondary btn-xs mem-j-more" id="mem-journal-more">Show more</button>'
+    ? '<button type="button" class="cur-group-row mem-j-more" id="mem-journal-more">'
+      + '<span class="mem-ws-more-label">'
+      + (moreRest ? 'Show ' + moreRest.toLocaleString('en-US') + ' more' : 'Show more')
+      + '</span></button>'
     : '';
 
   // ── THE META HAS TO BE ENOUGH TO DECIDE WITH (v3.58.0) ──────────────────
@@ -9498,13 +9854,13 @@ function renderJournal() {
   const latestAge = latest
     ? formatAge(Math.max(0, Math.round((Date.now() - Date.parse(latest)) / 1000))) : null;
   const journalMeta =
-    escapeHtml(String(j.returned)) + ' save' + (j.returned === 1 ? '' : 's') +
+    escapeHtml(countClause) +
     (latestAge ? ' · latest <span class="mem-age-words">' + escapeHtml(latestAge) + '</span>' : '');
 
   return (
     '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
       '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
-        '<span>Recent saves</span>' +
+        '<span>Journal</span>' +
         '<span class="mem-fold-meta"' +
           (latest && latestAge ? ' data-mem-age-at="' + escapeHtml(latest) + '"' : '') + '>' +
           journalMeta + '</span></summary>' +
@@ -9519,8 +9875,7 @@ function renderJournal() {
           renderDescription('History, newest first. Any entry may since have been ' +
             'superseded — the current handoff above is what is true now.') +
         '</div>' +
-        '<ol class="mem-j-list">' + rows + '</ol>' +
-        '<div class="mem-j-foot">' + countReadout + moreBtn + '</div>' +
+        '<ol class="mem-j-list">' + rows + '</ol>' + moreBtn +
       '</div>' +
     '</details>'
   );
@@ -9560,9 +9915,9 @@ function renderJournal() {
  */
 function aboutInfoHtml() {
   return (
-    '<p>A <b>domain</b> is where your knowledge lives — one compounding wiki. A <b>project</b> is a ' +
-    'thing you build inside it, and a domain can hold several. Project context is kept per project, in ' +
-    '<span class="mono">state/</span> beside that domain’s wiki, and synced with it.</p>' +
+    '<p>A <b>domain</b> is where your knowledge lives — one compounding set of pages. A <b>project</b> ' +
+    'is a thing you build inside it, and a domain can hold several. Project context is kept per project, ' +
+    'in <span class="mono">state/</span> beside that domain’s pages, and synced with it.</p>' +
     // ── THE RAIL'S OWN SENTENCE, MOVED HERE (v3.65.0, R2) ─────────────
     // The sidebar had a second ⓘ carrying this line, and the maintainer
     // asked for it to go: *"we have an information icon in the Project
@@ -9580,14 +9935,14 @@ function aboutInfoHtml() {
       'model. One per project, returned on every agent read. <b>You write this one</b>, here or in a text ' +
       'editor; saving replaces the whole document.</li>' +
       '<li><b>Current handoff</b> — where things stand right now: what an agent leaves for the next ' +
-      'session, so it starts knowing what you already settled. One per <b>work-stream</b> per machine ' +
-      '(the files call a work-stream a <i>scope</i>), so parallel threads never overwrite each other. ' +
+      'session, so it starts knowing what you already settled. One per thread of work per machine ' +
+      '(the files call that thread a <i>scope</i>), so parallel threads never overwrite each other. ' +
       'Overwritten on every save, so it never grows stale behind you.</li>' +
       '<li><b>Session journal</b> — one line per save: when, which harness, which model, and the headline. ' +
       'It is history and it accumulates, so an old entry can describe something already resolved.</li>' +
     '</ul>' +
     '<p>Each machine writes to its own folder, so two machines can never overwrite each ' +
-    'other over sync. Reading a work-stream with no machine named gives you the most recently written one, ' +
+    'other over sync. Reading a handoff with no machine named gives you the most recently written one, ' +
     'whichever machine that was.</p>' +
     '<p>Your agents write the handoff and the journal through the ' +
     '<span class="mono">my-curator</span> MCP tools, and this screen never does — a handoff is worth ' +
@@ -9727,7 +10082,7 @@ async function openWorkStream(scope, machine, token) {
   if (content) openReader(content, token);
   else openReader({
     slug: scope, title: scope,
-    error: state.detailError || 'That work-stream could not be read.',
+    error: state.detailError || 'That handoff could not be read.',
   }, token);
 }
 

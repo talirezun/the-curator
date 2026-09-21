@@ -1506,7 +1506,7 @@ section('§8 — THE READER SAYS WHY, PER OWNERSHIP');
       source: { kind: 'curator' } }, 'lumina');
     eq('a payload in the ROUTE\'s real shape — source.kind and no ownership field — '
       + 'says where it IS edited, not that it is mirrored',
-    asRouteSends.readonlyNote, 'Edit this in the Foundations table behind this panel.');
+    asRouteSends.readonlyNote, 'Edit this in the Documents table behind this panel.');
     ok('...and its ownership chip agrees',
       asRouteSends.tags.includes('Curator-authored')
       && !asRouteSends.tags.includes('mirrored from a folder'),
@@ -1523,7 +1523,7 @@ section('§8 — THE READER SAYS WHY, PER OWNERSHIP');
     text: '# A', ownership: 'curator', freshness: 'n/a',
     source: { kind: 'curator', path: null } }, 'lumina');
   eq('a CURATOR-owned one points at the table it came from', cur.readonlyNote,
-    'Edit this in the Foundations table behind this panel.');
+    'Edit this in the Documents table behind this panel.');
   ok('neither of them mentions Shared Brain, which is a different feature',
     !/Shared Brain/.test(String(repo.readonlyNote)) && !/Shared Brain/.test(String(cur.readonlyNote)));
 
@@ -2767,6 +2767,94 @@ section('§15 — v3.65.0: THE GITHUB ARM (record §D.7)');
     choice.picks['docs/architecture.md'] === true && !choice.picks['docs/notes.md'],
     JSON.stringify(choice.picks));
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§16 — v3.65.1: THE ARM IS SYMMETRIC, AND ITS HOST IS ONE BOX');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// THE REPORTED DEFECT, in the maintainer's words: *"an inner box narrower than
+// the card, buttons clipped at the right edge"* — and nothing was clipped in
+// the CSS sense (document overflow measured 0 at 1370 and at 1100). What he was
+// reading is an ASYMMETRY: `.fnd-init-arm` declared
+// `padding: var(--space-4) 0 var(--space-4) var(--space-8)` — 8px 0 8px 16px,
+// ZERO on the right — over an `--accent-tint` ground with a visible edge, so
+// "Find documents" and "Add" ended at x=1299 flush against that edge while the
+// left had 16px. A control touching a visible edge reads as cut off.
+//
+// ASSERTED AS A MEASUREMENT, not as a literal: the two horizontal values are
+// parsed out of the shipped rule and compared to each other, so the fix cannot
+// be undone by re-writing the same asymmetry with different tokens, and the
+// values may still be tuned.
+{
+  const css = readFileSync(join(NEXT, 'shared/foundations-init.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = /\.fnd-init-arm\s*\{([^}]*)\}/.exec(css);
+  ok('CONTROL: the arm\'s rule was found (the scan is not vacuous)', !!rule, 'no rule');
+  const pad = rule && /padding:\s*([^;]+);/.exec(rule[1]);
+  ok('CONTROL: and it declares a padding', !!pad, rule ? rule[1].slice(0, 200) : '');
+  if (pad) {
+    // CSS shorthand: 1 value = all, 2 = block/inline, 3 = top/inline/bottom,
+    // 4 = top/right/bottom/left.
+    const parts = pad[1].trim().split(/\s+/);
+    const right = parts.length === 1 ? parts[0] : parts[1];
+    const left = parts.length <= 2 ? right : parts.length === 3 ? parts[1] : parts[3];
+    eq('the tinted arm\'s horizontal padding is SYMMETRIC — a control flush '
+      + 'against a visible tinted edge is what "clipped at the right" was',
+    String(right), String(left));
+    ok('...and the right padding is not zero, which is the exact value that '
+      + 'shipped through v3.65.0', right !== '0' && right !== '0px', String(right));
+  }
+
+  // AND ITS HOST IS ONE BOX, on Wiki health's Quick-maintenance anatomy. The
+  // five properties are views/domains.css's own values, copied deliberately
+  // rather than shared — promoting a kit panel is recorded for v3.66.0 — so
+  // the assertion is that all five are declared, not that they match a literal.
+  const memCss = readFileSync(join(NEXT, 'views/memory.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const panel = /\.mem-fnd-panel\s*\{([^}]*)\}/.exec(memCss);
+  ok('the Add-from-folder panel is ONE box with a rule of its own', !!panel, 'no rule');
+  if (panel) {
+    for (const prop of ['padding', 'border-radius', 'border', 'background']) {
+      ok('...declaring ' + prop + ', as .dm-quick does',
+        new RegExp('(^|;|\\s)' + prop + '\\s*:').test(panel[1]), panel[1].slice(0, 200));
+    }
+    const p = /padding:\s*([^;]+);/.exec(panel[1]);
+    eq('...and its padding is ONE value, so the box is symmetric on all four '
+      + 'sides — three nested boxes at 405 / 421 / 436 is what it replaces',
+    p ? p[1].trim().split(/\s+/).length : 0, 1);
+  }
+  // AND THE SPECIFICITY PATCH THAT CARD NEEDED IS GONE WITH IT.
+  ok('the reserve-undo rule is deleted — there is no 46px pencil reserve to '
+    + 'undo in a box with one symmetric padding',
+  !/\.mem-fold-flat\s*>\s*\.mem-fold-body\.mem-fnd-init-body/.test(memCss),
+  'the patch survives its card');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§17 — v3.65.1 D1: the chooser says "Documents", not "Foundations"');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// The shared chooser has TWO hosts — the Context view's step ① and the "New
+// project" form on the Domains page — and it carries one sentence naming the
+// block that will ask again. That sentence is the last place the old noun
+// survived outside a comment, and it is reachable from neither host's own
+// vocabulary census, because this module composes it. FOUND BY MUTATION.
+{
+  const later = FI.renderFoundationsChooser({
+    id: 'x', choice: FI.freshChooser({ allowLater: true }),
+  });
+  // NOTE THE ARGUMENT ORDER: `ok(label, cond, detail)` in THIS file, and
+  // `ok(cond, label, detail)` in scripts/test-next-monitor-kit.js. Writing the
+  // wrong one does not fail — it passes a non-empty STRING as the condition, so
+  // every assertion is vacuously green. It happened twice while this release
+  // was built, once in each direction.
+  ok('the "decide later" card names the block by its v3.65.1 word',
+    /Documents asks again when you are ready\./.test(later), later.slice(0, 600));
+  ok('...and the old noun is gone from every card this module renders',
+    !/Foundations/.test(later), (later.match(/.{0,60}Foundations.{0,60}/) || [''])[0]);
+  ok('CONTROL: the "decide later" card was really rendered (the scan is not vacuous)',
+    /data-fnd-own="later"/.test(later), later.slice(0, 200));
 }
 
 // ── Done ─────────────────────────────────────────────────────────────────

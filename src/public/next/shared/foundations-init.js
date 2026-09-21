@@ -822,7 +822,7 @@ export function renderFoundationsChooser(cfg) {
         'Read over the network. No checkout needed on this computer.') +
       (choice.allowLater
         ? opt('later', 'Decide later',
-          'Nothing is written now. Foundations asks again when you are ready.')
+          'Nothing is written now. Documents asks again when you are ready.')
         : '') +
     '</div>';
 

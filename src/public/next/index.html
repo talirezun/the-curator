@@ -227,6 +227,20 @@
      Linked here for the same two reasons as its neighbours above. -->
 <link rel="stylesheet" href="/next/shared/monitor.css">
 
+<!-- shared/depth-bar.css — the app's THIRD visual channel (v3.65.1): a tinted
+     bar drawn BEHIND a figure, anchored at its right edge, its length that
+     row's share of a NAMED denominator. The freshness dot answers "how old"
+     and the identity dot answers "whose"; this answers "how much, of what",
+     and the three may never be confused — so it never encodes time, never
+     appears in a `<summary>` or a sidebar row, and states its denominator
+     rather than implying it.
+
+     A SEPARATE FILE although `renderDepthCell` lives in shared/monitor.js:
+     the Documents table uses the bar WITHOUT rendering a monitor, and a table
+     may not depend on the stylesheet of a component it does not draw. It owns
+     the whole `cur-depth-` prefix and declares no `.fresh-` rule. -->
+<link rel="stylesheet" href="/next/shared/depth-bar.css">
+
 <!-- One CSS file per view (views/README.md) — linked here so the views/
      directory never has to touch this file to add view-specific styling.
      All seven exist even where a view currently has no rules of its own,
