@@ -374,6 +374,23 @@ Isolation: both `CURATOR_TEST_DOMAINS_DIR` and `CURATOR_TEST_USER_DATA_DIR` are 
 fixture **before the store is imported**, and the fixture is removed at the end. It writes nothing
 outside that directory.
 
+**Three new OFFLINE suites in v3.65.0**, each pinning a shared component or a new store field:
+
+- **`test-next-sidebar-kit.js`** — one sidebar, rendered by **three** views (Domains, Context,
+  Settings). It executes each host's real builder through `shared/sidebar.js` and enumerates the
+  permitted differences rather than leaving them open-ended, so "Domains stays pixel-identical"
+  is an assertion and not a claim. The selection edge (`.settings-nav-row::before`,
+  `.chat-conv-row::before`) is asserted **gone**, with a ratchet that may only shrink.
+- **`test-next-monitor-kit.js`** — one live-state reading, everywhere in the app. The rule it
+  guards is v3.16.1's: a warning, a cost or an outcome is a `loud` entry rendered **outside** the
+  line list, and the component has no parameter that can put one behind a chevron because
+  `loud` is a structurally separate array. It also pins `escapeHtml`'s body byte-for-byte against
+  `app.js`'s, which is the only reason a fourth hand-copy of it is allowed to exist.
+- **`test-knowledge-domains.js`** — which wikis a project's knowledge lives in. The defect it
+  exists to stop is silent: an absent `project.json` must read as the containing domain **with
+  `knowledgeDomainsDefaulted: true` beside it**, because "nobody chose" and "the owner chose
+  exactly this one" are different facts that one list cannot tell apart.
+
 **Three new OFFLINE suites in v3.64.0**, each pinning something a reviewer cannot see by reading:
 
 - **`test-mcp-stale-bridge.js`** — the stale-bridge reading and the three surfaces that render it.
