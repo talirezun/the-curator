@@ -46,7 +46,7 @@ client can call all 24 tools. The skills were not. Three things tied them to one
 
 | | Portable? |
 |---|---|
-| The playbook prose (~30–44 KB each) | **Yes.** Measured: `mcp__` appears in these files only on the `allowed-tools:` frontmatter line. Every tool reference in all four bodies is already a bare name. |
+| The playbook prose (~33–50 KB each) | **Yes.** Measured: `mcp__` appears in these files only on the `allowed-tools:` frontmatter line. Every tool reference in all four bodies is already a bare name. |
 | `allowed-tools:` in the YAML frontmatter | No — `mcp__my-curator__<tool>` is Claude Code's namespacing. |
 | Auto-activation from the YAML `description` | **Partly, and not the way this row used to claim.** It was written as a Claude-only mechanism; measured, opencode reads `skills: { paths }` and activated `curator-continuity` first in 4 of 4 runs, while Claude Code headless activated it in **0 of 4** with the identical skill installed. Portability is not the question — *whether a given host's model reaches for it* is, and that is answered per host, below. |
 | The documented install path (`~/.claude/skills/`) | No. |
@@ -227,7 +227,7 @@ The Curator generates it for you with the project's names filled in: **Domains �
 Copy agent instructions**. It is 6 lines, it is the same text everywhere, and it sits
 *beside* whichever install option you pick below rather than replacing it.
 
-With that settled, the choice below is about where the ~30–44 KB of PLAYBOOK lives, not
+With that settled, the choice below is about where the ~33–50 KB of PLAYBOOK lives, not
 about whether the agent knows to save. Both options have a real cost; be deliberate.
 
 **Always-on** (paste it into the file your host loads every session). The agent always
@@ -237,12 +237,12 @@ every turn of every session, including the ones with nothing to do with the wiki
 
 | Built with | Bytes | Rough tokens (bytes ÷ 4 — an estimate, not a measurement) |
 |---|---|---|
-| `my-curator` | 47.0 KB | ~12,000 |
-| `my-curator --core` | 33.2 KB | ~8,500 |
-| `curator-continuity` | 60.0 KB | ~15,400 |
-| `curator-continuity --core` | 49.9 KB | ~12,800 |
-| both | 107.0 KB | ~27,400 |
-| both, `--core` | 83.1 KB | ~21,300 |
+| `my-curator` | 49.2 KB | ~12,600 |
+| `my-curator --core` | 35.4 KB | ~9,100 |
+| `curator-continuity` | 62.0 KB | ~15,900 |
+| `curator-continuity --core` | 51.9 KB | ~13,300 |
+| both | 111.2 KB | ~28,500 |
+| both, `--core` | 87.3 KB | ~22,400 |
 | either, `--examples` | +19.6–23.2 KB | +~5,000–5,900 |
 
 Measured with `wc -c` on the generated files at the time of writing, not estimated — but they
@@ -291,7 +291,7 @@ applies.
 
 | Feature | Needs |
 |---|---|
-| The 20 MCP tools, Shared Brain mirror domains (`shared-*`), Health scan-but-not-fix on mirrors | v3.0.0+ |
+| The core MCP tool set (17 tools at v3.0.0, 18 from v3.5.0), Shared Brain mirror domains (`shared-*`), Health scan-but-not-fix on mirrors | v3.0.0+ |
 | `get_raw_source` and the compiled-first / verbatim-on-escalation rule | v3.5.0+ |
 | `get_working_state` / `save_working_state` — the whole `curator-continuity` skill | v3.17.0+ (below it there is no working-state store at all, and the tool count is 18) |
 | The `clipped` save verdict (metadata shortened, body stored in full) | v3.39.0+ (below it a clipped headline was reported as content loss) |
@@ -318,11 +318,12 @@ Notes that belong to whoever maintains the playbooks rather than to an agent rea
   tool layer rather than passed through, so they are snake_case in an otherwise camelCase
   block. The skill says the operative rule — if a response does not match a key used there,
   trust the response.
-- `save_working_state` writes **Tier 2 only**, and at the time of writing no brief-writing
-  tool is registered — checked by enumerating the call sites, not from memory. **That absence
-  is what the owner framing in `brief-authority.md` rests on**, so if a future build registers
-  one, the brief stops being provably human-authored and that file has to be revisited
-  alongside it. The project's own firm decision is that no tool may ever write tier 1.
+- `save_working_state` writes **Tier 2 only** — checked by enumerating the call sites, not
+  from memory. **One tool does write tier 1**, `save_project_brief` (v3.48.0,
+  `mcp/tools/index.js`), and only on the owner's explicit instruction: every write it makes
+  stamps a provenance header, which is why `brief-authority.md` carries two trusted values
+  (`owner` and `commissioned`) rather than one. The firm decision is that no tool may write
+  tier 1 **unasked**.
 - Both working-state tools accept `domain` as a synonym for `project`, so a mistaken label
   does not lose a handoff. Prefer `project`.
 - Every numeric cap quoted in either playbook is pinned to its constant by

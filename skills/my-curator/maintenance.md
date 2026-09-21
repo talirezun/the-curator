@@ -61,7 +61,8 @@ Because `targetSlug` is your judgement and not the scanner's, treat it exactly l
 invented `suggestedTarget`: **propose it to the user and get agreement before calling.** It
 writes `- [[orphanSlug]] — description` into the target's Related section. If no existing
 page is a genuine home, say so and leave the orphan alone — the app's bulk
-**✨ Rescue orphans** flow (Domains → the domain → Wiki health → Quick maintenance) plans
+**Rescue N orphans** action — a sparkles icon, not a literal ✨ — (Domains → the domain →
+Wiki health → Quick maintenance) plans
 them in one batch and previews before writing.
 
 ## When there is no scanner target
@@ -69,7 +70,7 @@ them in one batch and previews before writing.
 A `suggestedTarget` you compose is rejected outright unless it names a page that exists —
 and even then it is your guess, not the scanner's. For a broken link with no scanner
 target, the right move is to say so and leave the link alone, or tell the user about the
-app's bulk **✨ Fix broken links** flow (Domains → the domain → Wiki health → Quick
+app's bulk **Fix N broken links** action (Domains → the domain → Wiki health → Quick
 maintenance), which plans the whole domain, previews it, and applies its own
 version/polarity safety gate before writing.
 

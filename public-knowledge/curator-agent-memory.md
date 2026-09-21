@@ -172,7 +172,7 @@ Three ways, in order, and nothing is guessed.
 2. Otherwise, if a file called `.curator-project` exists in the working directory or a parent, the agent reads it. It holds one line, always `domain/project`. For a domain's own project both halves are the same word — `acme/acme` is correct, not a mistake. The app's Projects rows have a **Copy marker line** button that hands you the exact line.
 3. Otherwise the agent calls `list_projects` and asks you which one.
 
-The marker is a convention, not a mechanism: no server code and no tool reads that file. The continuity skill is what reads it. So it does nothing at all in an agent that has not been told about it, and an agent that has been told is instructed to fall back to asking rather than to guessing — a question costs a turn, and a wrong project costs a handoff.
+The marker is a convention rather than something the bridge acts on: no server code and no MCP tool reads that file. The continuity skill reads it, and since version 3.63.0 so does the `my-curator` command — which is what `my-curator resolve` answers with. So it does nothing at all in an agent that has not been told about it, and an agent that has been told is instructed to fall back to asking rather than to guessing — a question costs a turn, and a wrong project costs a handoff.
 
 Name resolution itself never guesses either. A project name that matches nothing comes back as a refusal with near-match candidates. A bare name matching projects in several domains comes back as a refusal with the matching domain-and-project pairs. Landing in the wrong project is not a smaller error than not landing at all, because the wrong project's handoff is overwritten by the save that got there by mistake.
 
@@ -416,7 +416,7 @@ What it does not change: the copies still travel by sync, a mirror refreshed on 
 
 It is a button in two places: on every project's row under Domains, beside **Copy marker line**; and in the header of the **Project context** screen. It puts a short block on your clipboard with your domain and project already filled in. A banner then names where to paste it.
 
-This is the composed block. `<domain>` and `<project>` stand where your own names appear; the project name is substituted at three points and the `domain/project` pair at one.
+This is the composed block. `<domain>` and `<project>` stand where your own names appear; the project name is substituted at two points and the `domain/project` pair at one.
 
 ```markdown
 ## Working state
@@ -433,9 +433,20 @@ decisions — that travel with it. At session start, call `get_project_context` 
 `get_working_state` to receive them alongside the brief and handoff. On every
 `save_working_state` call, include `foundations_read` (the hashes you were given) so the next
 session knows what changed.
+
+Some foundations may be skeletons — prompts, not facts; the document says so
+at the top. As you learn the project, fill each one and save it with
+`save_foundation` (`commissioned_by_owner: true` — this block is the owner's
+commission). If the project has a repository, export the filled
+foundations into its `docs/` folder on the first commit.
+
+Foundations marked "read first" arrive with their text; the rest arrive as an index.
+Open any of them by name with `get_project_context` and `slugs` when the work calls
+for it — the brief's "Read before you…" section says which. An index entry with no
+text is a document waiting to be asked for, not one that is missing.
 ```
 
-The first paragraph is frozen, including its line breaks, because it is the artefact that was measured. Editing a word of it does not improve the wording; it invalidates the evidence that any of it works. The second paragraph was added in version 3.59.0 for the foundations tier, which the measurement predates, and is composed after the frozen one rather than merged into it.
+The first paragraph is frozen, including its line breaks, because it is the artefact that was measured. Editing a word of it does not improve the wording; it invalidates the evidence that any of it works. The three paragraphs after it were added in versions 3.59.0 (foundations), 3.61.0 (filling in a skeleton) and 3.62.0 (read-first documents, and asking for the rest by name). Each is composed after the frozen one rather than merged into it, which is what lets the first stay byte-identical to what was measured.
 
 Where it goes — plain prose in a file each of these already reads on its own. Nothing needs to be installed, and it is the same text everywhere.
 
@@ -528,7 +539,7 @@ The **Context** item on the rail — one of three, since version 3.64.0 — open
 - **The header carries Copy agent instructions**, beside a breadcrumb naming the domain and project.
 - **The overview card** answers the question people actually arrive with: where does this project stand? One reading per layer — FOUNDATIONS, WORKING STATE, KNOWLEDGE — each with its figure, a qualifier under it, and a freshness dot and the word beside it, because colour never carries a reading on its own. Press one and the page jumps to the step it names; unlike the same card on a domain page, nothing here filters — these are readings, not a filter. An unknown age is drawn as a dashed ring and the words, never as age zero.
 - **Step 1, Foundations** holds the canonical documents, or — before ownership is chosen — the question that chooses it.
-- **Step 2, Working state** opens with the **Last saved** reading and the CAPTURE line described [below](#how-do-i-know-whether-my-agents-are-actually-saving) — moved here, to the top of this step, in version 3.64.1, and since version 3.64.2 a fold row like the ones under it rather than a card of its own: the age, the work-stream and the tool that wrote it, on one line, flat with no chevron when there is nothing to explain — then holds three collapsed folds in ownership order: the standing brief (yours, with a pencil), the work-streams (your agents'; press a row to read that handoff in the reader), and the session journal. Everything that qualifies them — content that had to be trimmed, a handoff that arrived by sync, another machine that saved after this one, two tools sharing one handoff file — sits above them and never folds; a warning about a save is never behind a chevron.
+- **Step 2, Working state** opens with the **Last saved** reading and the CAPTURE line described [below](#how-do-i-know-whether-my-agents-are-actually-saving) — moved here, to the top of this step, in version 3.64.1, and since version 3.64.2 a fold row like the ones under it rather than a card of its own: the age, the work-stream and the tool that wrote it, on one line, flat with no chevron when there is nothing to explain — then holds three more collapsed rows, in this order: Work-streams (your agents'; press a row to read that handoff in the reader), The brief (yours, with a pencil beside it), and Recent saves — the session journal. Everything that qualifies them — content that had to be trimmed, a handoff that arrived by sync, another machine that saved after this one, two tools sharing one handoff file — sits above them and never folds; a warning about a save is never behind a chevron.
 - **Step 3, Knowledge** is one row per wiki the project draws on — by default just the domain it lives in — each reading "domain · N pages · last ingest age" and opening to five wiki figures and two doors: Open in Domains, and Ask this domain. Since version 3.65.0 a picker under the rows lets you add up to twelve wikis a project draws on, including a read-only Shared Brain mirror, or remove one — curator metadata about the project (`project.json`), written by the app, never by an agent.
 - **Every fold starts closed and remembers whether you left it open.** Each summary line carries the figure that decides whether to open it.
 
@@ -617,9 +628,9 @@ Reads are capped at the source, so a hand-edited or synced oversized file cannot
 
 ## What does this deliberately not do?
 
-- **Nothing forces a save.** There are no hooks and no scheduler. Capture is guided by the skill layer and by the block you paste, and it is advisory.
+- **Nothing forces a save.** A hook can ask for one and can never write it, and there is no scheduler. Capture is guided by the skill layer and by the block you paste, and it is advisory.
 - **Nothing saves periodically or automatically.** Every save is an agent deciding to make one.
-- **The app writes only the standing brief.** The handoff and the journal are written by an agent and by nothing else — in the app, in the menu bar icon, and everywhere else.
+- **The app writes the standing brief, curator-owned canonical documents, and the project's own metadata — and nothing else.** The handoff and the journal are written by an agent and by nothing else — in the app, in the menu bar icon, and everywhere else.
 - **There are no rollups.** Nothing composes a Done, Decided or Blocked view across work-streams or projects.
 - **Nothing migrates.** A tree written before projects existed is read where it lies. Moving it under a name of its own is a hand move you may make if you want it, and the app does not offer it.
 - **An ambiguous folder is reported, not repaired.** The store names it and leaves it exactly as it found it.
