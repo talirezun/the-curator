@@ -699,16 +699,14 @@ section('§5 — THE ALIAS TABLE, AND THE PALETTE MAPPING');
   // re-declares a slot silently paints both rails, which is how the two
   // copies came to exist.
   {
-    const OTHERS = ['views/domains.css', 'views/chat.css', 'views/ingest.css'];
+    const OTHERS = ['views/domains.css', 'views/chat.css', 'views/ingest.css', 'views/memory.css'];
     for (const rel of OTHERS) {
       const css = readFileSync(path.join(NEXT, rel), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
       ok(!/\.cur-sb-dot-\d\b[^{}]*\{/.test(css) && !/\.dm-row-dot-\d\b[^{}]*\{/.test(css),
         `${rel} declares NO identity-slot rule — the palette lives in shared/sidebar.css alone`);
     }
-    // views/memory.css is EXCLUDED FROM THIS LIST ON PURPOSE AND ONLY UNTIL
-    // MERGE: it still carries the second, byte-identical copy at :293-305,
-    // which is the Context package's file to delete in the same release. Add
-    // it to OTHERS above in the commit that deletes those lines.
+    // views/memory.css joined OTHERS when the Context package deleted its second
+    // copy (v3.65.1) — the exemption this comment used to record is closed.
   }
   ok(/\.dm-row-dot-\d/.test(KIT_JS) === false,
     'CONTROL — the kit JS names no `dm-row-dot-N` literal either; the alias is COMPOSED '

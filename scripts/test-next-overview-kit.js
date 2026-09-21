@@ -254,7 +254,7 @@ const CTX = contextOverview();
   eq('...and four on a project', withClass(CTX, 'cur-ov-card').length, 4);
   eq('every figure on both carries a `.cur-ov-value`',
     withClass(DOM, 'cur-ov-value').length + '/' + withClass(CTX, 'cur-ov-value').length, '7/4');
-  ok(/class="cur-eyebrow">PAGES</.test(DOM) && /class="cur-eyebrow">FOUNDATIONS</.test(CTX),
+  ok(/class="cur-eyebrow">PAGES</.test(DOM) && /class="cur-eyebrow">DOCUMENTS</.test(CTX),
     'and every figure is captioned by the SAME `.cur-eyebrow` the kit uses everywhere');
 
   // THE EYEBROW AND ITS ⓘ — one pattern, one word, one component.
@@ -414,7 +414,7 @@ section('§3 — A FILTER HIGHLIGHT ONLY WHERE THERE IS A FILTER');
     .map((t) => t.attrs['data-ov-jump']);
   eq('the four readings open their four steps',
     jumps.join(','), 'context-canonical,context-state,context-knowledge,capture');
-  ok(/aria-label="Foundations, 2 documents — go to step 1"/.test(CTX),
+  ok(/aria-label="Documents, 2 documents — go to step 1"/.test(CTX),
     '...each with an accessible name that says where it goes', CTX.slice(0, 900));
   const dj = tags(DOM).filter((t) => t.attrs['data-ov-jump'] !== undefined)
     .map((t) => t.attrs['data-ov-jump']);

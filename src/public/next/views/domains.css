@@ -482,7 +482,7 @@
    last, so its place in the cascade would be unknowable from there).
 
    These four classes stayed, and the reason is the token they read:
-   `--dm-ink-*` is THIS VIEW's derived ramp, declared 350 lines above beside
+   `--id-ink-*` is the kit's identity ramp (shared/sidebar.css since v3.65.1), read here beside
    the row dots that share it. A shared stylesheet reaching into a view's
    token set would be exactly the dependency the move removes. The kit takes
    them as `toneClass`, a class name the HOST owns — so the figure's colour

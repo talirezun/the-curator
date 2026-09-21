@@ -217,20 +217,8 @@
   --id-ink-3: #925E13;  /* summary-600 -> one ramp step */
 }
 
-/* ── ONE DEPRECATED ALIAS PAIR, WITH ITS OWN DELETION DATE ────────────────
-   views/memory.css:293-305 still carries a SECOND, byte-identical copy of the
-   twelve rules above, reading the old `--dm-ink-*` names. That copy is the
-   Context package's file to delete, not this one's, and until it goes these
-   three aliases are what keep its light-theme declarations VALID — an
-   undefined custom property is invalid at computed-value time, which would
-   leave the Context rail's first three dots with no background at all in
-   light. DELETE THESE THREE LINES in the same commit that deletes
-   views/memory.css:293-305; nothing else in the tree reads them.            */
-:root {
-  --dm-ink-entity:  var(--id-ink-1);
-  --dm-ink-concept: var(--id-ink-2);
-  --dm-ink-summary: var(--id-ink-3);
-}
+/* The three deprecated `--dm-ink-*` aliases that bridged v3.65.1's palette move lived
+   here until views/memory.css's second copy was deleted in the same release. Gone. */
 
 [data-theme="light"] .cur-sb-dot-1 { background: var(--id-ink-1); }
 [data-theme="light"] .cur-sb-dot-2 { background: var(--id-ink-2); }
