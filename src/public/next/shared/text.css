@@ -634,24 +634,43 @@
      at 1370 and 48.7% at 2000 — while the group of project rows under it ran
      the full width.
 
-     So the box is uncapped and the MEASURE moves inside it. The panel becomes
-     a one-column grid whose track is `minmax(0, 92ch)`: every child — and,
-     because CSS wraps a contiguous run of text in an anonymous grid item,
-     every bare text node too — is laid out in that track. The `0` minimum is
-     what keeps a long unbreakable token from pushing the track past the card
-     (with `overflow-wrap: anywhere` below it as the second layer).
+     So the box is uncapped and the layout moves inside it. The panel is a
+     one-column grid: every child — and, because CSS wraps a contiguous run of
+     text in an anonymous grid item, every bare text node too — is laid out in
+     that one track.
 
      WHY A GRID AND NOT `max-width` ON A WRAPPER: `renderInfoMark` emits the
      escaped prose as a bare text node inside the panel — no element — and
      shipped suites plus views/settings.js's hand copy pin those exact bytes,
      so a wrapper would have to be added in several places at once. The grid
-     caps the anonymous box that already exists.
+     lays out the anonymous box that already exists.
 
-     92ch, not 68: the number is set so the cap does NOT bite at the window
-     the maintainer actually uses. At 1370 the panel's own content box is
-     931px = 116ch, so 92ch (739px) is the only thing between a fold and a
-     116-column line; at 2000 it is 739 of 1116. The cap is insurance against
-     an unreadable line on a wide monitor, not the layout.
+     ── v3.65.0: THE TRACK IS `1fr`. THE PROSE TAKES THE CARD. ─────────────
+     The track was `minmax(0, 92ch)`, and the comment that stood here argued
+     that 92ch "does NOT bite at the window the maintainer actually uses".
+     MEASURED on his own window, it bites everywhere: Domains -> OVERVIEW ⓘ,
+     onboarding guide dismissed, the track resolves to **753.3px** — 81.2% of
+     the 928px panel content box at a 1370px window, and **67.7%** of the
+     1113px box at 1920. His words were "limited to let's say two thirds of
+     the screen ... in this way it would not be so thick at the end within
+     the UI", and 67.7% is that number exactly. Because a `ch` track does not
+     grow with the window, the panel's HEIGHT does not fall with it either —
+     which is the "so thick" half of the complaint, and the half a merely
+     WIDER cap would not have fixed.
+
+     So the measure is retired rather than raised. §4 of
+     docs/design-system-source.md — *cap the prose, never the cards* — was
+     already being satisfied the wrong way round: this panel IS a card
+     (border, accent rule, tinted wash, its own padding), it sits in a column
+     `.main-inner` already caps at 1200px, and the block it explains runs the
+     full width underneath it. A measure inside a capped column is a cap on a
+     cap, and it is the one the reader sees.
+
+     `minmax(0, 1fr)`, not a bare `1fr`: a grid track's automatic minimum is
+     `auto`, which an unbreakable token — a path, a slug, a URL, and this
+     panel quotes all three — would push the card past. The `0` minimum is
+     the one the old declaration carried and it is load-bearing for the same
+     reason, with `overflow-wrap: anywhere` below it as the second layer.
 
      `display: grid` is safe against `hidden` ONLY because the
      `.tx-vh-panel[hidden] { display: none }` rule above it is at (0,2,0) and
@@ -660,7 +679,7 @@
      exactly an author `display` beating the UA's `[hidden]`. */
   max-width: none;
   display: grid;
-  grid-template-columns: minmax(0, 92ch);
+  grid-template-columns: minmax(0, 1fr);
   row-gap: 8px;
   overflow-wrap: anywhere;
   /* ── PANEL ENTER ───────────────────────────────────────────────────────

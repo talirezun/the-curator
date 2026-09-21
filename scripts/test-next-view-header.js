@@ -878,7 +878,7 @@ section('§11  CSS HYGIENE');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§11b THE BOX TAKES THE COLUMN, THE PROSE KEEPS A MEASURE (v3.58.0)');
+section('§11b THE PROSE TAKES THE CARD, AND THE CARD TAKES THE COLUMN (v3.65.0)');
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // The panel used to cap its own BOX at 68ch, which is the wrong half of
@@ -890,11 +890,25 @@ section('§11b THE BOX TAKES THE COLUMN, THE PROSE KEEPS A MEASURE (v3.58.0)');
 // is the "block-level ⓘ panels keep the 68ch cap" item v3.55.0 and v3.56.0
 // both carried as known-and-unfixed.
 //
-// So: the box is uncapped, and the measure lives on a one-column grid track
-// inside it. The grid is load-bearing rather than decorative — renderInfoMark
+// v3.58.0 uncapped the BOX and moved a 92ch MEASURE onto a one-column grid
+// track inside it. v3.65.0 retires that measure too, and this section moved
+// with it — one rule stricter, not a rule abandoned.
+//
+// WHY, MEASURED rather than argued: with `minmax(0, 92ch)` the track resolves
+// to 753.3px — 81.2% of the panel's 928px content box at a 1370px window and
+// 67.7% of its 1113px box at 1920. The maintainer's report was "limited to
+// let's say two thirds of the screen ... in this way it would not be so thick
+// at the end within the UI": 67.7% is that fraction, and because a `ch` track
+// does not grow with the window the panel's HEIGHT does not fall with it,
+// which is the "so thick" half and the half a merely WIDER cap would not fix.
+// A measure inside a column `.main-inner` already caps at 1200px is a cap on
+// a cap.
+//
+// The GRID stays, and is load-bearing rather than decorative — renderInfoMark
 // emits its escaped prose as a BARE TEXT NODE, which only a grid (or a
 // wrapper this file cannot add without breaking three suites and settings.js's
-// hand copy) can constrain.
+// hand copy) can lay out; the `0` minimum stays with it, because a track's
+// automatic minimum is `auto` and this panel quotes paths, slugs and URLs.
 {
   // The same slice §11 takes: the view-header block of shared/text.css.
   const vh = (() => { const c = read('shared/text.css'); return c.slice(c.indexOf('/* ── 6. View header')); })();
@@ -907,12 +921,29 @@ section('§11b THE BOX TAKES THE COLUMN, THE PROSE KEEPS A MEASURE (v3.58.0)');
   const body = rule ? rule[1].replace(/\/\*[\s\S]*?\*\//g, '') : '';
   ok('the BOX is uncapped — max-width: none',
     /max-width:\s*none/.test(body) && !/max-width:\s*\d+ch/.test(body), body.match(/max-width:[^;]*/));
-  ok('...and the MEASURE moved inside it, as a one-column grid track',
-    /display:\s*grid/.test(body) && /grid-template-columns:\s*minmax\(0,\s*\d+ch\)/.test(body),
+  ok('...and the panel is still a ONE-COLUMN GRID, which is what lays out the bare text node',
+    /display:\s*grid/.test(body)
+      && /grid-template-columns:\s*minmax\(0,[^;]*\)\s*;/.test(body)
+      && !/grid-template-columns:[^;]*,[^;]*,/.test(body),
     body.match(/grid-template-columns:[^;]*/));
-  const measure = Number((/grid-template-columns:\s*minmax\(0,\s*(\d+)ch\)/.exec(body) || [])[1]);
-  ok('...at a measure wider than the old box cap but still a measure (68 < n <= 110)',
-    measure > 68 && measure <= 110, String(measure));
+  // THE RULE, ONE LEVEL STRICTER THAN v3.58.0's: the track is `1fr`. The prose
+  // takes the card, and the card takes the column — there is no second measure
+  // between the reader and the window any more.
+  ok('...and the track is 1fr — the PROSE takes the card, no ch measure survives',
+    /grid-template-columns:\s*minmax\(0,\s*1fr\)/.test(body)
+      && !/grid-template-columns:[^;]*\d+ch/.test(body),
+    body.match(/grid-template-columns:[^;]*/));
+  // POSITIVE CONTROL. A re-introduced `ch` track has to RED this, or the
+  // assertion above is a description of today's bytes rather than a rule.
+  {
+    const relapse = body.replace(/grid-template-columns:\s*minmax\(0,\s*1fr\)/,
+      'grid-template-columns: minmax(0, 92ch)');
+    ok('...control: a re-introduced `minmax(0, 92ch)` track fails that assertion',
+      !(/grid-template-columns:\s*minmax\(0,\s*1fr\)/.test(relapse)
+        && !/grid-template-columns:[^;]*\d+ch/.test(relapse)));
+    // …and the control really did rewrite something, so it is not vacuous.
+    ok('...control: the relapse text differs from the shipped rule', relapse !== body);
+  }
   ok('...with a ZERO track minimum, so an unbreakable token cannot push the card wide',
     /minmax\(0,/.test(body));
   ok('...and overflow-wrap as the second layer under it',
