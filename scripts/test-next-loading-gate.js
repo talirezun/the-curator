@@ -119,6 +119,12 @@ import {
 import {
   renderReadoutGroup, renderDescription, renderStatus, renderViewHeader,
 } from '../src/public/next/shared/text.js';
+// v3.65.0: renderHealthPanel now composes renderMonitor and freshnessTier
+// (the Scan row's monitor body, P2's item 3) — a module-level import is not
+// visible inside a lifted function body, so these join the injected `deps`
+// bag below the same way renderReadoutGroup already does.
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
+import { freshnessTier } from '../src/public/next/shared/age.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NEXT = join(ROOT, 'src/public/next');
@@ -641,6 +647,7 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
     HEALTH_CATEGORIES: [{ key: 'brokenLinks', label: 'Broken links' }],
     inFlightWriteSlugs: new Set(),
     renderReadoutGroup, renderDescription, renderStatus,
+    renderMonitor, freshnessTier,
   };
   const names = Object.keys(deps);
   const fn = new Function(
@@ -664,12 +671,14 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
   const REPORT = { counts: { entities: 1, concepts: 2, summaries: 3, dismissed: 0 }, scannedAt: 1, brokenLinks: [] };
   const COLLAPSED = /dm-health-body">Scanning…/;
   // The open-issue total, which totalOpenIssues is stubbed to report as 6.
-  // It used to be the literal 'Found 6 issues'; the panel now renders it as a
-  // READOUT rather than a prose sentence, so the needle follows the figure
-  // instead of the wording. The property being guarded is unchanged and is
-  // the one that matters: whether THIS domain's cached figures are on screen.
-  // The four sibling counts are 1/2/3/0, so this matches only the total.
-  const FIGURES = /tx-readout-value">6</;
+  // It used to be the literal 'Found 6 issues', then a `.tx-readout-value`
+  // READOUT; the Scan row's report is a MONITOR now (v3.65.0, P2 item 3) —
+  // `.cur-mon-value` is the figure's class — so the needle follows the figure
+  // instead of the wording either way. The property being guarded is
+  // unchanged and is the one that matters: whether THIS domain's cached
+  // figures are on screen. The four sibling counts are 1/2/3/0, so this
+  // matches only the total.
+  const FIGURES = /cur-mon-value">6</;
 
   // THE DEFECT: re-entry used to null the report and collapse the panel.
   let h = render({ healthLoading: true, health: REPORT, healthSlug: 'articles', healthError: null, busyKey: null, expandedGroups: new Set() });
