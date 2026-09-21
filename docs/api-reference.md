@@ -2499,6 +2499,7 @@ collision (see below the table).
 | `DELETE` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0**, works on **either** ownership **since v3.61.1**. Remove one document, behind a name confirmation — on a mirror this stops mirroring it, the source file untouched |
 | `POST` | `/api/memory/:domain/:project/foundations/init` | **New in v3.61.0.** Set a project's foundations ownership for the first time, optionally seeding or mirroring in the same call. **v3.65.0** adds a `remote`/`tokenSource` arm — a mirror born from GitHub with no checkout on this machine — and makes the body strict |
 | `POST` | `/api/memory/:domain/:project/foundations/refresh` | Re-mirror from a checkout (v3.59.0; gains a `files` body in v3.61.0) — **or, in v3.63.0, from the GitHub repository itself** when the checkout is not on this machine |
+| `POST` | `/api/memory/:domain/:project/foundations/source` | **New in v3.65.1.** *"Mirror from GitHub instead"* — re-points an existing **repo-owned** mirror at a GitHub repository, clearing its local folder path in the same write. Ownership never moves |
 | `GET` | `/api/memory/:domain/:project/capture` | **New in v3.63.0.** The honesty meter — how many bridge sessions ran for this project, how many read, how many saved |
 | `GET` | `/api/memory/:domain/:project` | One project's brief plus its state |
 | `GET` | `/api/memory/:project` | **Deprecated** alias for that domain's default project |
@@ -3870,6 +3871,103 @@ helper builds the report — inside `POST …/projects` and `POST …/foundation
 **Nothing is written until everything is fetched** on the remote arm: the ref, the tree and every
 changed blob are read first, and the documents and manifest are written only once all of them are in
 hand. So *"a truncated tree refuses loudly"* also means *"and changed nothing"*.
+
+### POST /api/memory/:domain/:project/foundations/source
+
+**New in v3.65.1.** *"Mirror from GitHub instead"* — the control step ① of Project-context offers a
+project that already mirrors documents from a folder. `…/init` makes the ownership decision **once**
+and refuses to re-make it; this route never touches ownership — it stays `repo` — and changes only
+**where the bytes are copied from**. The gap it closes: `refreshFoundationsFromRepo` has always
+*preserved* `repo.root` on a refresh, so a mirror born from a folder went on taking the local arm on
+that machine forever, and *"this project now reads from GitHub"* was inexpressible — including on a
+machine that never had the checkout in the first place, which is exactly the machine that needs this
+control most.
+
+**A `POST`, not a `PATCH`**: it fetches blobs and rewrites files, so it joins the mutating-route
+census beside `…/init` and `…/refresh`.
+
+**Body**
+
+```json
+{
+  "remote": "acme/lumina",
+  "tokenSource": "config",
+  "files": [{ "path": "docs/roadmap.md", "role": "roadmap" }]
+}
+```
+
+The body is a **strict allow-list of exactly these three keys** — anything else is a `400
+unexpected_fields` (with a `fields` array naming what was sent), and a `token` key gets an extra
+sentence spelling out why: **no token crosses this route, ever** — `tokenSource` names *which file
+on this computer* the read-only credential is read from (`config` — `.curator-config.json`'s
+`githubReadToken` — or `sync` — Personal Sync's PAT), never a value in the body.
+
+* **`remote`** (required) — `owner/repo`, an `https://` or `git@` URL, or the `{owner, repo, ref,
+  path}` object. An unparseable value is `400 invalid-remote`.
+* **`tokenSource`** (optional, default `config`) — **refused**, not normalised, when it is neither
+  `config` nor `sync`: this call *records a decision* about which credential authored the copy, the
+  same reasoning `…/init` already applies.
+* **`files`** (optional) — defaults to the mirror's own existing documents, which is the right
+  default for a source switch (same documents, new source). A named list can only **add** a new
+  slug — it cannot re-point an existing one; removing a document first
+  ([`DELETE …/foundations/:slug`](#delete-apimemorydomainprojectfoundationsslug)) and re-adding it
+  is the way to change what an existing slug reads from.
+
+**Success response** `200 OK`
+
+```json
+{ "ok": true, "domain": "acme", "project": "lumina",
+  "remote": { "owner": "acme", "repo": "lumina", "ref": "main", "path": "docs" },
+  "tokenSource": "config",
+  "rootCleared": true, "previousRoot": "/Users/you/code/your-project",
+  "refreshed": [], "unchanged": ["architecture.md", "decisions.md"],
+  "added": [], "missing": [], "refused": [],
+  "totalBytes": 391034, "budgetBytes": 204800, "budgetExceeded": true,
+  "documentCount": 2, "commit": "9f3c1a…", "notes": ["source: acme/lumina"] }
+```
+
+`remote` and `tokenSource` are always read back **from the store**, never echoed from the request —
+a response can never name a source that was not actually used. `rootCleared` is `true` on every
+successful switch and `previousRoot` names the folder path the mirror used to read from (or `null`
+when it had none — a mirror already born remote, or one with no reachable root on this machine).
+Every mirrored document's **`readFirst` flag survives the switch, by slug** — it is curator metadata
+about the document, not part of its bytes, so nothing about the switch needs to re-apply it. A
+project whose documents already fit under the 200 KB budget answers with `budgetExceeded: false`,
+same as `…/refresh`.
+
+**A project with no documents yet still runs the switch.** `refreshFoundationsFromRepo`'s ordinary
+no-op guard (nothing to do, so nothing is written) is skipped here specifically **because a source
+switch with zero documents would otherwise report success and change nothing at all** — the ref and
+tree are still read (proving the repository is reachable) and the manifest is written with the new
+`repo` block, at the cost of the same few read requests any switch makes.
+
+**Error responses**
+
+| Status | `reason` | Condition |
+|--------|----------|-----------|
+| `400` | `unexpected_fields` (+ `fields`) | Any key but the three above — a `token` key gets the extra "never sent here" sentence |
+| `400` | `invalid_project` | The project name |
+| `400` | `invalid-remote` | Missing or unparseable `remote` |
+| `400` | `invalid_token_source` | `tokenSource` is neither `config` nor `sync` |
+| `400` | `no_manifest` | The project has never chosen an ownership at all |
+| `404` | `unknown_domain` | Unknown domain |
+| `404` | `unknown-state-project` | No such project (the store's own hyphenated spelling — matches `…/init`, not the underscored `project_not_found` an earlier design sketch used) |
+| `403` | `readonly` | A `shared-*` mirror — refused **before** the store is asked |
+| `409` | `ownership_mismatch` (+ `ownership`) | The project is **curator-owned**, or has chosen no ownership yet. `ownership` carries `'curator'` or `null` so a client can branch without parsing prose. (This route answers `409` here rather than `…/refresh`'s `400 curator_owned` and `…/:slug`'s `400 repo_owned`, because neither existing word is true of this refusal — nothing is malformed, the server's own state simply is not one this request can act on) |
+| `409` | `no-token` | No readable credential for `tokenSource` |
+| `429` | `rate-limited` | GitHub's limit |
+| `404` | `remote-not-found` | The repository, ref or path is not there — or the token cannot see it |
+| `502` | `remote-tree-truncated` / `remote-http` / `remote-unreachable` / `remote-too-large` | The same statuses [`…/refresh`](#post-apimemorydomainprojectfoundationsrefresh) gives its own remote arm |
+| `500` | `remote-unavailable` | The GitHub read could not complete and nothing more specific applies |
+| `409` | `locked` | Another tier-0 write holds this project's lock |
+| `500` | `io` | |
+
+**Nothing is written until every blob is in hand**, exactly as `…/refresh`'s remote arm: the ref,
+the tree and every changed blob are read first; a truncated tree refuses *before the first blob is
+fetched*, so a failed switch leaves the manifest — `repo.root`, `repo.remote`, every document —
+**byte-identical** to what it was. The clearing of `repo.root` and the writing of the new `repo.remote`
+happen in the **same** manifest write the document copy performs, never a second write, so there is
+no window where a failure could leave a stale root beside a fresh remote.
 
 ### GET /api/memory/:domain/:project/capture
 
