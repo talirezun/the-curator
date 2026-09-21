@@ -370,8 +370,17 @@ section('7. THE ROUTE — a strict body, and no collision with the rename');
     eq(ghost.body.reason, 'project_not_found', '...under the name the sibling reads use');
     eq((await req('PATCH', '/no-such-domain/p/knowledge/domains', { knowledgeDomains: ['beta'] })).status, 404,
       'an unknown domain is a 404, through requireDomain');
+    // TWO LAYERS REFUSE THIS, and they must be told apart. The store's own
+    // project gate answers `readonly` with a 403 as well, so a status alone
+    // cannot say whether the ROUTE's guard is still there — measured by
+    // mutation: deleting `refuseMirror` from this handler left a status-only
+    // assertion green. The route's refusal carries its own sentence.
     const mirror = await req('PATCH', '/shared-mirror/shared-mirror/knowledge/domains', { knowledgeDomains: ['beta'] });
-    eq(mirror.status, 403, 'a Shared Brain mirror is refused with a 403, through refuseMirror');
+    eq(mirror.status, 403, 'a Shared Brain mirror is refused with a 403');
+    eq(mirror.body.reason, 'readonly', '...under the readonly reason');
+    assert(/rebuilt from the collective/.test(mirror.body.error || ''),
+      '...from the ROUTE\'s own guard, which says what a local write would cost — not merely from the store behind it',
+      mirror.body.error);
 
     // ── THE COLLISION CONTROL ────────────────────────────────────────────
     // `PATCH /:domain/projects/:project` is registered ABOVE this route and
