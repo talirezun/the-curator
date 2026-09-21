@@ -59,7 +59,7 @@ verbatim — the original *is* the product. Full design record of the three laye
 **Two recommendations the maintainer adopted, and they order everything below.**
 
 1. **The project is the unit for audience 2, and the one-call bootstrap is the core primitive.**
-   `get_project_context` ([mcp/tools/catalogue.js](../mcp/tools/catalogue.js), v3.59.0) already
+   `get_project_context` ([mcp/tools/working-state.js](../mcp/tools/working-state.js), v3.59.0) already
    returns the brief, the latest handoff and the canonical documents a caller has not seen, in one
    response. Everything else on the read side is an optimisation of that call.
 2. **The hard problem is CAPTURE, not storage.** State exists only if agents save it. Capture is
@@ -90,7 +90,7 @@ basics** — they are first because they must not regress, not because they are 
 | K2 | 1 | Point the app at a wiki folder that already exists, or create the first domain | shipped (`views/domains.js`) | built |
 | K3 | 1 | Ingest one source; read the created / updated / unchanged split | shipped (`views/ingest.js`) | built |
 | K4 | 1 | Drop 2+ files: a batch, a free estimate before the spend, an optional USD cap, sequential execution | shipped | built |
-| K5 | 1 | An ingest finishes while they are on another view — **nothing tells them** | v3.65.0 (there is no Ingest rail button left to badge — it moves to the Domains entry) | planned |
+| K5 | 1 | An ingest finishes while they are on another view — **nothing tells them** | v3.66.0 (there is no Ingest rail button left to badge — it moves to the Domains entry) | planned |
 | K6 | 1 | They drop a `.md` they wanted kept verbatim; it is billed, atomized, and the original lands in gitignored `raw/` | v3.61.0 pointer note · v3.62.0 the full ingest-or-keep fork | in flight / designed |
 | K7 | 1 | Browse a domain, filter the page list from the OVERVIEW tiles, open a page in the reader, follow a backlink | shipped | built |
 | K8 | 1 | Ask a question and get an answer citing their own pages, with a per-answer cost and a reasoning breakdown | shipped (v3.58.0) | built |
@@ -100,32 +100,32 @@ basics** — they are first because they must not regress, not because they are 
 | K12 | 1 | Run a Shared Brain for a cohort; join one with an invite token; revoke a member | shipped | built |
 | K13 | 1 | Sync to their own private repository; set up a second machine without losing anything | shipped | built |
 | K14 | 1 | Open the vault folder in Obsidian and colour the graph by type | shipped + guide | built |
-| K15 | 1 | Chat's view header states `the default view`, untrue since v3.49.0 moved the default to Domains | v3.62.0 | planned |
+| K15 | 1 | Chat's view header stated `the default view`, untrue since v3.49.0 moved the default to Domains | v3.61.0 | built |
 | K16 | 1 | `index.md` has rotted, and it is the grounding step for every agent write into their wiki | standing (§D) | open |
-| K17 | 1 | OVERVIEW, PAGES · THE WIKI and WIKI HEALTH have no ⓘ to explain themselves | v3.62.0 | planned |
-| B1 | 2 | Create a project and choose, once, where its documents come from: keep them here · mirror a folder · decide later | v3.61.0 | in flight |
-| B2 | 2 | Onboard a checkout: name a folder, scan it, tick the documents, mirror them byte-for-byte | v3.61.0 | in flight |
-| B3 | 2 | Mirror a **plain folder with no git** — supported by the store today; only the copy said "repository" | v3.61.0 | in flight |
-| B4 | 2 | Seed four skeletons (architecture, decisions, conventions, roadmap) and answer the prompts by hand, with no agent and no repo | v3.61.0 (`src/brain/foundation-skeletons.js`) | in flight |
-| B5 | 2 | Get an agent to draft those four: one copyable request naming the project, the tool and the approval gate | v3.61.0 | designed |
-| B6 | 2 | Import a `.md`/`.txt` from disk into a curator-owned project, reviewed in the editor before it is saved | v3.61.0 | in flight |
-| B7 | 2 | Choose *decide later*, and be offered the same choice again at the Foundations block | v3.61.0 | in flight |
-| B8 | 2 | Edit or delete a curator-owned document in the app, on raw bytes, with a human provenance stamp | v3.61.0 | in flight |
+| K17 | 1 | Pages and Wiki health still have no ⓘ to explain themselves (OVERVIEW gained one in v3.62.0) | v3.66.0 | partly built |
+| B1 | 2 | Create a project and choose, once, where its documents come from: keep them here · mirror a folder · decide later | v3.61.0 | built |
+| B2 | 2 | Onboard a checkout: name a folder, scan it, tick the documents, mirror them byte-for-byte | v3.61.0 | built |
+| B3 | 2 | Mirror a **plain folder with no git** — supported by the store today; only the copy said "repository" | v3.61.0 | built |
+| B4 | 2 | Seed four skeletons (architecture, decisions, conventions, roadmap) and answer the prompts by hand, with no agent and no repo | v3.61.0 (`src/brain/foundation-skeletons.js`) | built |
+| B5 | 2 | Get an agent to draft those four: one copyable request naming the project, the tool and the approval gate | v3.61.0 | built |
+| B6 | 2 | Import a `.md`/`.txt` from disk into a curator-owned project, reviewed in the editor before it is saved | v3.61.0 | built |
+| B7 | 2 | Choose *decide later*, and be offered the same choice again at the Foundations block | v3.61.0 | built |
+| B8 | 2 | Edit or delete a curator-owned document in the app, on raw bytes, with a human provenance stamp | v3.61.0 | built |
 | B9 | 2 | A cold session on any harness: one call returns the brief, the last handoff and the documents it has not seen | v3.59.0 | built |
 | B10 | 2 | An agent saves a handoff before it stops; the save overwrites, so a missed one yields the previous state | v3.59.0 (advisory) | built |
 | B11 | 2 | **A harness whose model never activates the skill saves nothing, and nothing says so** | v3.63.0 | **shipped, and the last clause first**: the meter names the sessions that did not save. The hooks that ask are written; **no harness has yet been measured with them installed** |
 | B12 | 2 | Prove capture happened: sessions this week, by harness, saved / not saved | v3.63.0 (honesty meter) | **shipped**. Three states told apart — no log · a log with no session in the window · the reading — over a 30-day window |
 | B13 | 2 | A non-Claude tool writes the format without any skill at all | v3.63.0 (public spec + a neutral `my-curator` command) | **the spec is published** and pinned to the live constants by a suite. The acceptance run — a writer built by somebody without this repository — **has not been done** |
 | B14 | 2 | A session ends by compaction rather than by choice, and the handoff still lands | v3.63.0 (per-harness hooks, where one exists) | **partly**: the pre-compaction hook is written for the harnesses that have one, and the research settled that **Codex is the only harness whose pre-compaction hook can block**. Not measured on any of them |
-| B15 | 2 | Two harnesses work one project in parallel and each needs to know what the other recorded | v3.65.0 (awareness digest) | planned |
-| B16 | 2 | A decision that has stopped being volatile becomes canonical, on the owner's instruction | v3.65.0 (promote-to-foundation) | planned |
+| B15 | 2 | Two harnesses work one project in parallel and each needs to know what the other recorded | v3.66.0 (awareness digest) | planned |
+| B16 | 2 | A decision that has stopped being volatile becomes canonical, on the owner's instruction | v3.66.0 (promote-to-foundation) | planned |
 | B17 | 2 | A mirror has gone stale, or its checkout is not on this machine: the state is visible and Refresh is withheld with its reason | v3.59.0 / v3.60.0 | built |
-| B18 | 2 | Their first minute tells them to get an API key the memory layer does not need | v3.62.0 | planned |
+| B18 | 2 | Their first minute told them to get an API key the memory layer does not need | v3.61.0 | built |
 | B19 | 2 | Their unit of work is five clicks deep, below an "advanced" divider, in a view that cannot create it | v3.61.0 pointer · v3.62.0 rail order · **v3.64.0 the divider is gone and Context is one of three** | built |
-| B20 | 2 | Plan a project in Chat with no repo and no agent, then save one answer as a canonical document | v3.65.0 | designed |
+| B20 | 2 | Plan a project in Chat with no repo and no agent, then save one answer as a canonical document | v3.66.0 | designed |
 | B21 | 2 | A Chat conversation that starts from the project's canonical documents instead of a keyword search over them | v3.64.0 | built |
-| B22 | 2 | Extend an existing mirror with a fifth document — Add and Refresh are not mutually exclusive | v3.61.0 | in flight |
-| B23 | 2 | The domain's **own** project (which cannot be renamed or deleted) gets foundations like any other | v3.61.0 | in flight |
+| B22 | 2 | Extend an existing mirror with a fifth document — Add and Refresh are not mutually exclusive | v3.61.0 | built |
+| B23 | 2 | The domain's **own** project (which cannot be renamed or deleted) gets foundations like any other | v3.61.0 | built |
 | B24 | 2 | The menu bar icon marks a project whose mirrored documents are behind their source | v3.60.0 | built |
 
 **41 rows — 17 for audience 1, 24 for audience 2.** Two things the spine deliberately does not do:
@@ -283,14 +283,16 @@ beside two head controls — nothing in the design pass was rendered (§F D13).
 
 > **SHIPPED — and what shipped is the mechanism, not the measurement.** The command, the adapters,
 > the public spec, the honesty meter and the GitHub mirror arm all landed. **Every harness row in
-> the matrix reads *not measured*.** The protocol that would change one is fixed and written down
+> the matrix read *not measured* when this release shipped**; the first real verdict landed in
+> v3.64.0 (Claude Code, 2026-09-20 — `src/brain/harness-adapters.js`, still the only non-null
+> `measured` of the fourteen).** The protocol that would change one is fixed and written down
 > (`scripts/measure-harness.js`'s header *is* the protocol: arms A/B/C, N=4, one task that never
 > mentions saving, an isolated fixture), and until it has been run against a real harness nothing in
 > the product or the docs describes a hook as working. Three corrections the build made to the scope
 > below, each because the code or the research said otherwise:
 >
 > - **The research doubled this release's adapter work.** The premise was that lifecycle hooks are
->   rare. **Ten of thirteen harnesses have one**, they disagree on the event, the file, the format
+>   rare. **Eleven of fourteen harnesses have one**, they disagree on the event, the file, the format
 >   and the response shape, and **three accept a hook that never fires**. So `hooks.state` is four
 >   words rather than a boolean (`verified` · `unverified` · `present-useless` · `none`), and
 >   `install-hooks` has to be able to **refuse** and still be useful.
@@ -396,9 +398,9 @@ in the real store. Verdict words, from the instrument's own output:
 
 | Arm | Sessions | Read at start | Saved before stopping | Verdict |
 |---|---|---|---|---|
-| **C** — skill + block + hooks | 4 | 1 via a tool call, **4 via the `SessionStart` hook** | 4 | `measured-partial` |
-| **B** — skill + block, no hooks | 0 | 0 | 0 | `not-measured` |
-| **A** — skill only | 1 | 1 | 1 | `measured-partial` |
+| **C** — skill + block + hooks | 4 run (4 logged) | 1 via a tool call, **4 via the `SessionStart` hook** | 4 | `measured-partial` |
+| **B** — skill + block, no hooks | 4 run (0 logged) | 0 | 0 | `not-measured` |
+| **A** — skill only | 4 run (1 logged) | 1 | 1 | `measured-partial` |
 
 **Two limits of the instrument, named so the counts are not over-read.** (1) A bridge process that
 never receives a real tool call writes **no session line at all**, so arm B's zero means *no session
@@ -1162,8 +1164,9 @@ and the 501-byte measured block keep their own pins untouched.
 13. **The brief template exists in three copies and they have drifted.** `briefTemplate` in
     `src/brain/working-state.js` is authoritative and is what seeds a real `project.md`;
     `views/memory.js` and `views/domains.js` carry their own placeholder copies, which still say
-    `## Working model` where the store says `## How I want you to work here`, and neither has
-    v3.62.0's `## Read before you…`. A user can therefore read a heading in the app's editor that
+    `## Working model` where the store says `## How I want you to work here`. Both have since
+    gained v3.62.0's `## Read before you…` (`views/domains.js:3149`, `views/memory.js:6475`), so
+    only the `## Working model` half of this divergence is still live. A user can therefore read a heading in the app's editor that
     the seeded file does not contain. The fix is one shared constant, the same move
     `src/brain/foundation-skeletons.js` already makes for the skeletons; it was not taken in
     v3.62.0 because it touches two views in a release whose view package was owned elsewhere.

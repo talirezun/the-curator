@@ -76,7 +76,7 @@ Health is rule-based. Curate is editorial. Different action, different surface.
 - Apply button on each suggestion → routes through `writePage` (additive merge handles non-destructive updates) or `fixIssue` for structural ones.
 
 **Backend reuse.**
-- Probably no new tools required — composes existing primitives: `readWikiPage`, `writePage`, the chat pipeline, and (if AI-suggested edits target other pages) `injectRelatedLink` from `files.js`.
+- Probably no new tools required — composes existing primitives: `getWikiPage` (`src/brain/wiki-read.js`), `writePage`, the chat pipeline, and (if AI-suggested edits target other pages) `injectRelatedLink` from `files.js`.
 - New module if needed: `src/brain/curate.js` — but might just live inside the chat route as additional context-injection logic.
 - Route: extend `POST /api/chat/:domain` with an optional `curateContext: { pagePath }` field, OR a separate `POST /api/curate/:domain/:pagePath`. Decision pending.
 
