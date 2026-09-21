@@ -354,7 +354,8 @@ whichever it finds. The gate's whole value is that "green" means a specific run
 on a specific SHA. A convenience trigger that can make that ambiguous is worth
 less than the ambiguity costs.
 
-**Evidence.** `.github/workflows/` contains exactly **one** file, `test.yml`.
+**Evidence.** `.github/workflows/` contains **two** files — `test.yml`, the CI
+gate discussed here, and `desktop-dmg.yml`, the tag-triggered DMG build (D7).
 Its trigger is a bare `push:` with only `paths-ignore` — and **that absence is
 load-bearing**: `scripts/release.js` refuses with `ci-not-reachable` if a
 `branches:` or `branches-ignore:` key ever appears under `push:`, because a
@@ -468,7 +469,8 @@ would be a *replace-any-directory-with-any-other* primitive reachable from a pag
 - **Rosetta is not accommodated on purpose.** An arm64 install running under x64
   stays on x64; a silent architecture migration behind a progress bar is not
   something to do without an explicit offer.
-- **`/old` has no in-app path at all** and still posts to the git updater.
+- **`/old` no longer exists**: it 302-redirects to the current interface, and the
+  frozen shell it named was deleted in v3.41.0.
 
 ---
 
@@ -740,7 +742,8 @@ under the app it is the same wizard reaching a different launcher
 > worktree branched from `v3.29.0`, which predates the code below, so the first
 > draft recorded this as `DECIDED` and stated that `POST /api/mcp/write-config`
 > and the `mcp_launch_style` / `launcher_path` / `launcher_exists` fields did
-> not exist. They do: `src/routes/mcp.js:328` and `:243-245`, shipped in
+> not exist. They do: `src/routes/mcp.js:473` (the `write-config` route, its
+> handler at `:370`) and `:282-284`, shipped in
 > v3.30.0, along with `src/brain/mcp-launcher.js` and `getMcpLauncherDir()`.
 >
 > The method was right and the baseline was stale — the third time in one

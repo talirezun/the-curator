@@ -2554,8 +2554,9 @@ After ingesting a few sources, you can have a full multi-turn conversation with 
 
 ### Pin a project, and the answer reads its context too (v3.64.0; picker rebuilt in v3.65.0)
 
-The bar above a chat holds two selectors and nothing else. On the left, one chip per knowledge
-base — press one to change what this conversation can see. On the right of them, under **PROJECT**,
+The bar above a chat holds two selectors on the left and **Compile to Wiki** pushed to its far
+right. On the left, one chip per knowledge
+base — press one to change what this conversation can see. Beside them, under **PROJECT**,
 a chip that wears the same face as a domain chip — only its chevron says it opens a list, since
 v3.65.0. Open it and pick a project; the answer also draws on its **standing brief**, its **latest
 handoff** and the canonical documents marked **read first** — on top of the domain's wiki, never

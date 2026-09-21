@@ -122,7 +122,7 @@ what makes an icon vanish behind the notch on a narrow screen. **Hovering** the 
 the headline plus the standing brief's age, without a click.
 
 **The menu draws its pictures in colour.** The save pulse is a still image redrawn each time
-you open the menu — **14 twelve-hour blocks across the last seven days, drawn as violet bars on
+you open the menu — **28 six-hour blocks across the last seven days, drawn as violet bars on
 a baseline**, with the baseline dotted where the store did not exist yet, one tick per day below
 it, and an amber cap on any block in which a different agent tool took over. Every row carries a
 **draining-clock** recency mark beside it: a full disc for *right now*, then three quarters, a
@@ -148,7 +148,7 @@ project's **foundations** (its mirrored architecture, decisions and conventions 
 and
 [user-guide.md § Foundations](user-guide.md#foundations--canonical-documents-that-travel)) are
 **repo-owned** and one or more no longer match the checkout they were mirrored from, the header's
-sublabel gains `· docs stale` (or `· N docs stale` once there is more than one), clipped by the
+sublabel gains `· 1 doc stale` (or `· N docs stale` once there is more than one), clipped by the
 same `labelBudgetChars` every other sublabel respects. Nothing is added when every mirrored
 document is current, and a curator-owned foundation — one an agent wrote rather than mirrored —
 never produces the mark, because there is no second copy to be stale against. It never becomes a
@@ -408,9 +408,6 @@ side under known names, with the recovery written into
 > **Rosetta:** an arm64 build installed under x64 emulation stays on x64. The app
 > updates like for like and will not silently migrate you to another architecture
 > behind a progress bar.
-
-**`/old` has no in-app update path.** The frozen previous interface still posts to
-the git updater, which a packaged app refuses. Use the current interface.
 
 ### Why a pre-release can be offered
 
