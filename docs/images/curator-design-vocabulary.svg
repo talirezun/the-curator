@@ -1,0 +1,157 @@
+<svg viewBox="0 0 760 420" xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-labelledby="curator-design-vocabulary-title curator-design-vocabulary-desc">
+  <title id="curator-design-vocabulary-title">The four shared components, side by side</title>
+  <desc id="curator-design-vocabulary-desc">
+    Four small mock-ups in a row, each one component used everywhere its kind of content appears
+    in the app, with a one-line caption underneath naming it. First, the overview card: a small
+    grid of tiles, each a label over a value, one press away from the section it names — used at
+    the top of both the Domains page and the Project context page. Second, a sidebar row: an
+    identity dot, a name, a figure, a freshness dot with a clock and an age, and a last-event
+    line — used in the Domains, Context and Settings sidebars, with the active row shown as a
+    filled row rather than a line down its side. Third, a fold row: a title on the left, a
+    one-line summary on the right, and a chevron — used for every collapsible section body in the
+    app, and the shape every step's content is built from. Fourth, the monitor: a recessed,
+    monospace panel of key-value lines with a coloured state word above them and one warning line
+    in colour that never folds — used for every live, changing reading in the app, such as the
+    MCP bridge connection, a session count, or a sync status. A caption at the foot reads: one
+    component per kind of content, not per screen — so the same reading looks the same wherever
+    it appears.
+  </desc>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --panel: #f6f8fa;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --text-2: #57606a;
+      --accent: #2f6fed;
+      --accent-2: #8250df;
+      --accent-3: #1a7f37;
+      --fresh: #1a7f37;
+      --warm: #9a6700;
+      --mon-bg: #eef1f4;
+      --mon-border: #c9d1d9;
+      --active: rgba(47, 111, 237, 0.10);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --text: #e6edf3;
+        --text-2: #9198a1;
+        --accent: #6ea8ff;
+        --accent-2: #c8a6ff;
+        --accent-3: #4ac26b;
+        --fresh: #4ac26b;
+        --warm: #d29922;
+        --mon-bg: #0a0a11;
+        --mon-border: #22222f;
+        --active: rgba(255, 255, 255, 0.10);
+      }
+    }
+    .bg { fill: var(--bg); }
+    .card { fill: var(--panel); stroke: var(--border); stroke-width: 1.5; }
+    .rule { stroke: var(--border); stroke-width: 1.2; }
+    .h { font: 700 13px system-ui, sans-serif; fill: var(--text); }
+    .lbl { font: 700 9px system-ui, sans-serif; fill: var(--text-2); letter-spacing: .07em; }
+    .val { font: 600 12px system-ui, sans-serif; fill: var(--text); }
+    .name { font: 600 12px system-ui, sans-serif; fill: var(--text); }
+    .meta { font: 400 10.5px system-ui, sans-serif; fill: var(--text-2); }
+    .event { font: 400 10px system-ui, sans-serif; fill: var(--text-2); }
+    .foldtxt { font: 600 12px system-ui, sans-serif; fill: var(--text); }
+    .foldmeta { font: 400 10.5px system-ui, sans-serif; fill: var(--text-2); }
+    .mon { fill: var(--mon-bg); stroke: var(--mon-border); stroke-width: 1.2; }
+    .montxt { font: 600 10.5px ui-monospace, monospace; fill: var(--text-2); }
+    .monval { font: 600 10.5px ui-monospace, monospace; fill: var(--text); }
+    .state { font: 700 10.5px ui-monospace, monospace; }
+    .cap { font: 700 12px system-ui, sans-serif; fill: var(--text); text-anchor: middle; }
+    .sub { font: 400 11px system-ui, sans-serif; fill: var(--text-2); text-anchor: middle; }
+    .foot { font: 400 12px system-ui, sans-serif; fill: var(--text-2); }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="760" height="420"/>
+
+  <!-- ── 1. THE OVERVIEW CARD ────────────────────────────────────── -->
+  <rect class="card" x="20" y="24" width="164" height="150" rx="10"/>
+  <rect class="rule" x="102" y="40" width="0.1" height="34" fill="none"/>
+  <line class="rule" x1="102" y1="40" x2="102" y2="74"/>
+  <line class="rule" x1="20" y1="100" x2="184" y2="100"/>
+  <line class="rule" x1="102" y1="100" x2="102" y2="150"/>
+
+  <text class="lbl" x="34" y="54">PAGES</text>
+  <text class="val" x="34" y="70">767</text>
+  <text class="lbl" x="116" y="54">PROJECTS</text>
+  <text class="val" x="116" y="70">4</text>
+
+  <text class="lbl" x="34" y="118">SOURCES</text>
+  <text class="val" x="34" y="134">3 days ago</text>
+  <text class="lbl" x="116" y="118">SHARED</text>
+  <text class="val" x="116" y="134">2 cohorts</text>
+
+  <text class="cap" x="102" y="196">The overview card</text>
+  <text class="sub" x="102" y="212">counts, and jumps</text>
+
+  <!-- ── 2. A SIDEBAR ROW ────────────────────────────────────────── -->
+  <rect class="card" x="204" y="24" width="164" height="150" rx="10"/>
+  <rect x="212" y="34" width="148" height="36" rx="7" fill="var(--active)"/>
+  <circle cx="226" cy="52" r="5" fill="var(--accent-2)"/>
+  <text class="name" x="240" y="49">projects</text>
+  <text class="meta" x="240" y="63">767 pages · ⬤ 🕐 3 days ago</text>
+
+  <circle cx="226" cy="90" r="5" fill="var(--accent-3)"/>
+  <text class="name" x="240" y="87">research</text>
+  <text class="meta" x="240" y="101">1,240 pages · ⬤ 🕐 1 week ago</text>
+  <text class="event" x="240" y="114">Ingested · The Curator Handbook</text>
+
+  <circle cx="226" cy="132" r="5" fill="var(--warm)"/>
+  <text class="name" x="240" y="129">business</text>
+  <text class="meta" x="240" y="143">88 pages · ⬤ 🕐 6 weeks ago</text>
+
+  <text class="cap" x="286" y="196">A sidebar row</text>
+  <text class="sub" x="286" y="212">active = the filled row</text>
+
+  <!-- ── 3. A FOLD ROW ───────────────────────────────────────────── -->
+  <rect class="card" x="388" y="24" width="164" height="150" rx="10"/>
+  <rect x="398" y="36" width="144" height="30" rx="7" fill="none" stroke="var(--border)" stroke-width="1.2"/>
+  <text class="foldtxt" x="408" y="55">▸  Capture</text>
+  <text class="foldmeta" x="534" y="55" text-anchor="end">6 sessions</text>
+
+  <rect x="398" y="72" width="144" height="30" rx="7" fill="none" stroke="var(--border)" stroke-width="1.2"/>
+  <text class="foldtxt" x="408" y="91">▸  The brief</text>
+  <text class="foldmeta" x="534" y="91" text-anchor="end">126 words</text>
+
+  <rect x="398" y="108" width="144" height="30" rx="7" fill="none" stroke="var(--border)" stroke-width="1.2"/>
+  <text class="foldtxt" x="408" y="127">▾  Recent saves</text>
+  <text class="foldmeta" x="534" y="127" text-anchor="end">1 save</text>
+  <text class="meta" x="408" y="150">14 min ago · claude-code</text>
+
+  <text class="cap" x="470" y="196">A fold row</text>
+  <text class="sub" x="470" y="212">title left, reading right</text>
+
+  <!-- ── 4. THE MONITOR ──────────────────────────────────────────── -->
+  <rect class="mon" x="572" y="24" width="168" height="150" rx="8"/>
+  <circle cx="586" cy="42" r="4" fill="var(--fresh)"/>
+  <text class="state" x="596" y="46" fill="var(--fresh)">CONNECTED</text>
+
+  <text class="montxt" x="586" y="68">client</text>
+  <text class="monval" x="724" y="68" text-anchor="end">Claude Desktop</text>
+  <line class="rule" x1="586" y1="76" x2="726" y2="76"/>
+
+  <text class="montxt" x="586" y="92">server</text>
+  <text class="monval" x="724" y="92" text-anchor="end">my-curator</text>
+  <line class="rule" x1="586" y1="100" x2="726" y2="100"/>
+
+  <text class="montxt" x="586" y="116">tools</text>
+  <text class="monval" x="724" y="116" text-anchor="end">24</text>
+
+  <rect x="580" y="132" width="152" height="20" rx="4" fill="none" stroke="var(--warm)" stroke-width="1.2"/>
+  <text class="montxt" x="586" y="145" fill="var(--warm)">⚠ a stale bridge is open</text>
+
+  <text class="cap" x="656" y="196">The monitor</text>
+  <text class="sub" x="656" y="212">one live reading, always</text>
+
+  <text class="foot" x="20" y="260">One component per KIND of content, not per screen — so the same reading looks the same wherever it appears.</text>
+  <text class="foot" x="20" y="280">The overview card counts and jumps; a sidebar row navigates; a fold row opens; the monitor reports a changing state.</text>
+  <text class="foot" x="20" y="300">A warning, a cost or an outcome never sits behind a fold's chevron — inside the monitor it is a coloured line that never folds.</text>
+</svg>
