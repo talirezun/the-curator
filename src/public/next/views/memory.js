@@ -3927,10 +3927,26 @@ function renderWorkStreamsFold(read, d) {
   const streams = read && Number.isInteger(read.distinctScopeCount)
     ? read.distinctScopeCount : null;
   const pairs = read && Number.isInteger(read.savedCopies) ? read.savedCopies : scopes.length;
+  // ── AND THE NEWEST HANDOFF'S AGE (v3.65.1, D2) ────────────────────────
+  //
+  // This is where half of the deleted "Last saved" row went — the other half
+  // is the MEMORY overview tile. The row said what this summary and that tile
+  // both say, in a card of its own, and the fact a closed row has to carry to
+  // be worth opening is *is any of this recent*. It is the PROJECT's newest
+  // pair, not the open one, from `newestPair` — the same derivation
+  // `renderLayerStrip`'s card ② uses, so the tile and this line can never name
+  // different saves.
+  //
+  // `M saved copies` LEAVES THE SUMMARY and stays in the body, where
+  // `workStreamCounts` prints both numbers under the table. A closed line is
+  // read to decide whether to open; the second figure is what you open FOR.
+  // Nothing is lost — the count line is unchanged and still uncapped.
+  const newestWs = newestPair(scopes);
+  const savedAge = newestWs ? formatAge(effectiveSave(newestWs).seconds) : null;
   const meta = [
     headline || null,
     streams === null ? null : streams + ' handoff' + (streams === 1 ? '' : 's'),
-    pairs + ' saved cop' + (pairs === 1 ? 'y' : 'ies'),
+    savedAge ? 'saved ' + savedAge : null,
   ].filter(Boolean).join(' · ');
   const open = (state.openFolds && state.openFolds.streams) ? ' open' : '';
   return (

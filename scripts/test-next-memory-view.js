@@ -6602,8 +6602,19 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       current: { present: true, writtenAgeSeconds: 120, writtenAt: at(120) } });
   ok('the headline the agent wrote LEADS the work-stream fold\'s summary',
     /class="mem-fold-meta">Rewriting the memory view ·/.test(foldHtml), foldHtml.slice(0, 500));
-  ok('...and the two counts follow it, so one closed line decides whether to open',
-    /Rewriting the memory view · 1 handoff · 1 saved copy</.test(foldHtml), foldHtml.slice(0, 500));
+  // ── AND THE AGE FOLLOWS IT (v3.65.1, D2) ──────────────────────────────
+  // Half of the deleted "Last saved" row landed here: the PROJECT's newest
+  // save, from `newestPair` — the same derivation the MEMORY overview tile
+  // uses, so the tile and this line can never name different saves. What a
+  // closed row has to carry to be worth opening is "is any of this recent",
+  // and `M saved copies` — which is what you open FOR — stayed in the body,
+  // where `workStreamCounts` still prints both numbers uncapped.
+  ok('...and the count and the AGE follow it, so one closed line decides whether to open',
+    /Rewriting the memory view · 1 handoff · saved 2 min ago</.test(foldHtml), foldHtml.slice(0, 500));
+  ok('...and "N saved copies" is NOT in the summary — it is the count line under '
+    + 'the table, which is uncapped and says both numbers',
+  !/saved cop/.test((/<summary[\s\S]*?<\/summary>/.exec(foldHtml) || [''])[0])
+    && /saved cop/.test(foldHtml), foldHtml.slice(0, 500));
 
   // AND THE AGE IS THE STRIP'S, with the shared dot and a LIVE hook.
   const stripHtml = mkHead({}).renderLayerStrip(headRead);
@@ -6623,8 +6634,14 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     projects: [{ domain: 'acme', project: 'lumina', headline: 'From the index row',
       writtenAgeSeconds: 300, writtenAt: at(300) }],
   }).renderWorkStreamsFold({ scopes: [{ scope: 'main', machine: 'boxa' }], savedCopies: 1 }, null);
+  // NO TRAILING SEPARATOR ASSERTED: this fixture's scope row carries neither
+  // an age nor a distinct-scope count, so there is genuinely no second clause
+  // and a ` · ` here would be a separator before nothing.
   ok('with no headline on the scope row, the project index row supplies it',
-    /class="mem-fold-meta">From the index row ·/.test(fromIndex), fromIndex.slice(0, 400));
+    /class="mem-fold-meta">From the index row/.test(fromIndex), fromIndex.slice(0, 400));
+  ok('...and with nothing else to say, the line is the headline ALONE — never a '
+    + 'separator before an absent clause',
+  /class="mem-fold-meta">From the index row<\/span>/.test(fromIndex), fromIndex.slice(0, 400));
 
   // ABSENT IS ABSENT. No headline anywhere renders no clause, never an em dash.
   const noHead = mkHead({}).renderWorkStreamsFold(
