@@ -477,12 +477,18 @@ section('§3 — ACTIVE IS THE FILLED ROW. THERE IS NO LEFT LINE.');
   ok(!/::before/.test(BARE_CSS),
     'the kit declares NO `::before` — one selection idiom, and a component that '
     + 'offered both would offer a future divergence');
-  // COMMENTS STRIPPED (see `hasRule`): a raw scan would still read this
-  // green on a branch where P5 (Settings) has already deleted the rule and
-  // left a comment naming it — this control exists to prove the rule is
-  // real, not that its name appears somewhere in the file.
-  ok(hasRule(readFileSync(path.join(NEXT, 'views/settings.css'), 'utf8'), '.settings-nav-row::before'),
-    'CONTROL: the rule this replaces still exists in views/settings.css — P5 deletes it');
+  // COMMENTS STRIPPED (see `hasRule`): a raw scan would read this green on a
+  // branch where P5 (Settings) has already deleted the rule and left a
+  // comment naming it — exactly this branch, after the v3.65.0 merge: P5
+  // landed here too, and views/settings.css no longer declares the rule at
+  // all, only comments that name it while explaining what replaced it. So
+  // the live assertion is that the rule is genuinely GONE, not merely that
+  // a raw scan can no longer find its name — the two self-tests right below
+  // prove `hasRule()` tells a real rule from a commented-out one in EITHER
+  // direction, which is what makes this absence trustworthy.
+  ok(!hasRule(readFileSync(path.join(NEXT, 'views/settings.css'), 'utf8'), '.settings-nav-row::before'),
+    'the rule this replaced is genuinely gone from views/settings.css, not merely renamed into a '
+    + 'comment (P5)');
   ok(!hasRule('/* .settings-nav-row::before { content: \'\'; } — retired, see .cur-sb-row.active */'
     + ' .other { color: red; }', '.settings-nav-row::before'),
   'CONTROL: hasRule() does NOT count a selector COMMENTED OUT, selector-then-brace and all — '
