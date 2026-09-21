@@ -58,6 +58,13 @@ import { fileURLToPath } from 'node:url';
    loads in the browser — which makes §11's footer assertions statements about
    the markup a user is served, not about a fixture that resembles it. */
 import { renderReadout, renderReadoutGroup } from '../src/public/next/shared/text.js';
+// THE IDENTITY MAPPING, REAL AND INJECTED (v3.65.1). `scopePillHtml` colours
+// each domain chip through the kit's one mapping now — it was an inline
+// `style="background:var(--accent)"`, the same violet on every chip — and a
+// module-level import in views/chat.js is NOT visible inside a body lifted by
+// brace-matching, so the name is a constructor parameter below. The REAL
+// function, so §15's markup assertions stay assertions about what ships.
+import { identityDotClass } from '../src/public/next/shared/sidebar.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CHAT_JS = path.join(ROOT, 'src/public/next/views/chat.js');
@@ -247,7 +254,7 @@ function render(over = {}) {
     'renderComposerHtml', 'wireComposer', 'renderThreadOnly', 'renderComposerPickers',
     'startCompile', 'switchDomain', 'reportAsyncActionFailure',
     'renderListboxHtml', 'formatAge', 'freshnessTier', 'selectChatProject', 'mountListbox',
-    'renderReadoutGroup',
+    'renderReadoutGroup', 'identityDotClass',
     src
   )(
     {
@@ -287,7 +294,7 @@ function render(over = {}) {
        WHICH cfgs were handed over, which is §11's subject. */
     (cfg) => { mounted.push(cfg); },
     /* NOT a stub: the real kit function, imported at the top of this file. */
-    renderReadoutGroup,
+    renderReadoutGroup, identityDotClass,
   );
 
   api.renderMain(1);

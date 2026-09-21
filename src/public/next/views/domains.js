@@ -3155,7 +3155,7 @@ const PROJECT_BRIEF_TEMPLATE = [
   '',
   '## Read before you…',
   '',
-  'Which canonical document to open for which kind of work. Foundations marked',
+  'Which canonical document to open for which kind of work. Documents marked',
   '"read first" arrive with every session; name the rest here and an agent opens',
   'them by name.',
   '',
@@ -4252,7 +4252,7 @@ const CREATE_INFO_HTML =
   'It is optional here and can be written later from Project context.</p>' +
   '<p><strong>The documents choice is answered once.</strong> A project is all mirrored from a ' +
   'folder or all kept here, never a mix, and the store refuses a change afterwards. Decide later ' +
-  'is a real answer: the Foundations block on the Project context page asks again.</p>';
+  'is a real answer: the Documents block on the Project context page asks again.</p>';
 
 /**
  * WHAT WAS WRITTEN, IN ONE SENTENCE — from the SERVER'S answer (P1-10).
@@ -4360,25 +4360,33 @@ function createConsequence(f) {
 //     DEFINITION, which is exactly what an ⓘ is for and exactly what a lede
 //     is not (docs/design-system-source.md §3).
 //
-// ONE NOUN, AND ONE DELIBERATE MISMATCH. "Canonical documents" appears here as
-// the ADJECTIVE inside the definition; the block that holds them is called
-// FOUNDATIONS everywhere it is named. And this panel says "wiki" where the
-// Project-context view's third step says "Knowledge" — because here the legend
-// is sitting on the wiki's own figures, and there the wiki is the layer rather
-// than the artefact. Both name the same thing in the same sentence at least
-// once, which is the honest fix rather than forcing one word into both places.
+// ONE NOUN PER LAYER, AND NO MISMATCH LEFT (v3.65.1, decision 1). Through
+// v3.65.0 this panel said "canonical documents" for a block called
+// FOUNDATIONS, "working state" for the step now called MEMORY, and "wiki" for
+// the layer the Project-context view's third step calls Knowledge — three
+// places where the app used two words for one thing. The UI vocabulary is now
+// Documents · Memory · Handoffs · Journal · Domain, and this panel uses it;
+// the store's own names (`foundations/`, `scope`, `journal.jsonl`) do NOT
+// move, because they are the public on-disk spec.
+//
+// The three nouns here are now EXACTLY the Project-context view's three step
+// titles — Documents · Memory · Knowledge — which is the point: the panel that
+// explains the three layers and the page that shows them say the same three
+// words. "wiki" standing in for a layer (or for a domain) is what decision 1
+// removes; the word survives in the app where it means the artefact, as in
+// "a domain is one compounding wiki".
 //
 // Every character is written HERE, so nothing user-, provider- or
 // store-supplied is interpolated into the `{html: true}` fragment.
 function threeLayersInfoHtml() {
   return '<p><strong>One domain, three kinds of context.</strong> The four figures on the left '
-    + 'count your <strong>wiki</strong> — the pages ingest and chat write. It '
-    + '<strong>accumulates</strong>: a new source makes an existing page richer rather than '
+    + 'count this domain\u2019s <strong>knowledge</strong> — the pages ingest and chat write. '
+    + 'It <strong>accumulates</strong>: a new source makes an existing page richer rather than '
     + 'adding a second copy.</p>'
-    + '<p><strong>Projects</strong> counts the other two. A project\u2019s <strong>working '
-    + 'state</strong> — its standing brief, its handoffs, its journal — '
+    + '<p><strong>Projects</strong> counts the other two. A project\u2019s '
+    + '<strong>memory</strong> — its standing brief, its handoffs, its journal — '
     + '<strong>supersedes</strong>: every save replaces the last, so a problem you solved cannot '
-    + 'come back. A project\u2019s <strong>canonical documents</strong> — its architecture, '
+    + 'come back. A project\u2019s <strong>documents</strong> — its architecture, '
     + 'decisions, conventions, roadmap — are <strong>replaced whole and read verbatim</strong>, '
     + 'so an agent gets the document rather than a paraphrase.</p>'
     + '<p>All three live in this one folder, sync together, and open to your agents in one '
@@ -4416,7 +4424,7 @@ const FOUNDATIONS_INFO_HTML =
   'file you choose is read in this browser and shown to you before it is saved.</p>' +
   '<p><strong>It is answered once.</strong> A project is all mirrored or all kept here, never a ' +
   'mix, and the store refuses a change afterwards. Decide later is a real answer — and the ' +
-  'default one — because the Foundations block on the Project context page asks again.</p>';
+  'default one — because the Documents block on the Project context page asks again.</p>';
 
 /**
  * THE DOCUMENTS FIELD ON THE CREATE FORM — a label, a mark, and the chooser.
@@ -5441,7 +5449,7 @@ async function openMemoryPageFromBrowse(row) {
         // route does not send (the other half of the same v3.61.0 defect).
         readonlyNote: (data.source && data.source.kind === 'repo')
           ? 'Mirrored from the folder — edit it there, then refresh.'
-          : 'Edit this in Project context, under Foundations.',
+          : 'Edit this in Project context, under Documents.',
         bodyHtml: (notes.length ? notes.map((n) => renderDescription(n)).join('') : '')
           + renderMarkdown(body),
         backlinks: [],
@@ -5799,7 +5807,7 @@ async function runProjectAction() {
     if (fndErr) {
       detailParts.push('The project was created, but its canonical documents were not set up: ' +
         (fndErr.message || fndErr.reason || 'the server refused it') +
-        '. Choose again from Project context → Foundations.');
+        '. Choose again from Project context → Documents.');
     }
     if (failed.length) {
       detailParts.push(failed.length + ' file' + (failed.length === 1 ? '' : 's') +

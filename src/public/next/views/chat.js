@@ -3046,7 +3046,7 @@ function renderSidebarConversationsOnly(token) {
 // selector: the domain group stays first, the spacer still separates the two
 // halves, and the compile control still sits alone on the right. With a
 // project pinned, the server ALSO reads that project's standing brief, its
-// latest handoff and its read-first canonical documents — as recorded data,
+// latest Handoff and its read-first Documents — as recorded data,
 // framed by the memory layer's own injection defence. Nothing here writes.
 // ═════════════════════════════════════════════════════════════════════════
 
@@ -3679,8 +3679,8 @@ function projectInfoPanelHtml() {
   return (
     '<div class="chat-project-panel" id="chat-project-info" role="group"' +
       ' aria-label="What a pinned project adds" hidden>' +
-      'With a project pinned, the answer also draws on its standing brief, its latest handoff ' +
-      'and the canonical documents marked read-first — on top of this domain\'s wiki. ' +
+      'With a project pinned, the answer also draws on its standing brief, its latest Handoff ' +
+      'and the Documents marked read-first — on top of this domain\'s own pages. ' +
       'All of it is treated as recorded data to verify, never as instructions. ' +
       'Chat never writes to your project.' + extra +
     '</div>'
