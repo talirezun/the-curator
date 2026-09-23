@@ -3,7 +3,11 @@ import { existsSync, readFileSync } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
-import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState, getReleaseChannel, getReleaseRef, getBackgroundMode, setBackgroundMode, backgroundModeNames } from '../brain/config.js';
+import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState, getReleaseChannel, getReleaseRef, getBackgroundMode, setBackgroundMode, backgroundModeNames, getGithubReadTokenStatus, setGithubReadToken, clearGithubReadToken } from '../brain/config.js';
+// v3.65.2 — the GitHub read-only token's TEST route. The read client is the
+// one implementation of GET-only GitHub plumbing (v3.63.0); this route reuses
+// its token reader and its getRef rather than composing a second request.
+import { readGitHubReadToken, createGitHubReadClient, parseGitHubRemote, isValidRef, sanitizeDetail, READ_ERROR_CODES } from '../brain/github-read-client.js';
 import { getDomainsDir } from '../brain/config.js';
 import { listOtherInstances } from '../brain/instance-probe.js';
 import { listDomains } from '../brain/files.js';
@@ -1964,6 +1968,149 @@ router.post('/api-keys/disconnect', guardConcurrent('disconnect an API key'), (r
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── The GitHub READ-ONLY token (v3.65.2) ───────────────────────────────────
+//
+// Four routes, and the shapes are a JOIN: views/memory.js reads the GET to
+// say whether a token is saved before it offers "Mirror from GitHub", and
+// Settings → Knowledge base writes it. The contract (v3.65.2 §3) fixes them.
+//
+// THE ONE PLACE A TOKEN VALUE ARRIVES OVER HTTP is the PUT body below, and it
+// never leaves the server again: every response here carries presence, the
+// last four characters and the kind, and every error names the token's SOURCE
+// (`.curator-config.json`), never its value. None of these routes logs its
+// body. Mutating methods are covered by server.js's cross-origin guard (it
+// matches POST/PUT/DELETE/PATCH) and by the Host-header guard on every method.
+//
+// PUT and DELETE carry guardConcurrent, like every other credential write in
+// this file (scripts/test-route-write-guards.js audits the set). The token is
+// read by nothing an ingest, a Health scan or a Compile does — a Documents
+// mirror reads it once at the START of its own refresh — so the guard costs a
+// user one "wait for it to finish" during a long write and buys the file's one
+// rule: a config write never lands mid-write. The TEST route is a read and is
+// exempt, on the same reasoning as POST /api-keys/validate: refusing a
+// read-only check mid-ingest would deny it exactly when someone is waiting.
+
+/** A thrown message is sanitised twice before it leaves: once for every known
+ *  GitHub credential shape, then for the literal value itself — a proxy or a
+ *  test double echoing the header back must still not reach the body. */
+function tokenFreeMessage(msg, token) {
+  let out = sanitizeDetail(String(msg ?? ''));
+  if (typeof token === 'string' && token.length >= 8) out = out.split(token).join('[redacted-token]');
+  return out.slice(0, 600);
+}
+
+/** GitHubReadError codes → the short, stable words this route answers with. */
+const GH_TEST_CODES = Object.freeze({
+  [READ_ERROR_CODES.UNAUTHORISED]: 'unauthorised',
+  [READ_ERROR_CODES.NOT_FOUND]: 'not_found',
+  [READ_ERROR_CODES.RATE_LIMIT]: 'rate_limit',
+  [READ_ERROR_CODES.NETWORK]: 'network',
+  [READ_ERROR_CODES.MALFORMED]: 'malformed',
+  [READ_ERROR_CODES.HTTP]: 'http',
+});
+
+/** GET /api/config/github-read-token → {ok, present, last4, kind}
+ *  `kind` is ADDITIVE to the contract's three fields: the Settings status line
+ *  reads "… · fine-grained" after a reload, and the prefix it is derived from
+ *  is not secret. */
+router.get('/github-read-token', (_req, res) => {
+  try {
+    const st = getGithubReadTokenStatus();
+    res.json({ ok: true, present: st.present, last4: st.last4, kind: st.kind });
+  } catch {
+    res.status(500).json({ ok: false, code: 'unreadable', message: 'The token status could not be read.' });
+  }
+});
+
+/** PUT /api/config/github-read-token  body {token}
+ *  → {ok, present:true, last4, kind:'fine-grained'|'classic'}; 400 invalid_token. */
+router.put('/github-read-token', guardConcurrent('save the GitHub token'), (req, res) => {
+  const token = req.body ? req.body.token : undefined;
+  // Refused BEFORE the setter, with a fixed sentence: a non-string body field
+  // must not reach String() and then a message.
+  if (typeof token !== 'string') {
+    return res.status(400).json({ ok: false, code: 'invalid_token',
+      message: 'Send the token as a string in the "token" field.' });
+  }
+  try {
+    const st = setGithubReadToken(token);
+    res.json({ ok: true, present: st.present, last4: st.last4, kind: st.kind });
+  } catch (err) {
+    if (err && err.code === 'invalid_token') {
+      return res.status(400).json({ ok: false, code: 'invalid_token', message: err.message });
+    }
+    if (err && err.code === 'config_unreadable') {
+      return res.status(500).json({ ok: false, code: 'config_unreadable', message: err.message });
+    }
+    // An unexpected failure (a disk error) — its message is a path at worst,
+    // but it is still scrubbed of the value rather than trusted.
+    res.status(500).json({ ok: false, code: 'write_failed',
+      message: tokenFreeMessage(scrubPaths(err?.message || 'The token could not be saved.'), token) });
+  }
+});
+
+/** DELETE /api/config/github-read-token → {ok, present:false}
+ *  Removes the one key; every other key in the file is carried through. */
+router.delete('/github-read-token', guardConcurrent('remove the GitHub token'), (_req, res) => {
+  try {
+    const st = clearGithubReadToken();
+    res.json({ ok: true, present: st.present });
+  } catch (err) {
+    if (err && err.code === 'config_unreadable') {
+      return res.status(500).json({ ok: false, code: 'config_unreadable', message: err.message });
+    }
+    res.status(500).json({ ok: false, code: 'write_failed',
+      message: scrubPaths(err?.message || 'The token could not be removed.') });
+  }
+});
+
+/** POST /api/config/github-read-token/test  body {remote, ref?}
+ *  → {ok:true, repo, ref, sha, requests} | {ok:false, code, message}
+ *
+ *  Reads with the STORED token only — a `token` field in this body is not
+ *  read. Resolves the ref through the read client's own `getRef`: ONE GET
+ *  when a ref is named; with none, the repository's default branch is
+ *  resolved first (a second GET), because assuming `main` would report a
+ *  green test against a branch the mirror will not read. `requests` states
+ *  how many were made.
+ *
+ *  HTTP status: 400 for a refusal of the REQUEST (a malformed repository or
+ *  ref, or no token saved), 200 with `ok:false` when the test RAN and GitHub
+ *  said no — that is an answer, not a failed request. */
+router.post('/github-read-token/test', async (req, res) => {
+  const body = req.body || {};
+  const parsed = parseGitHubRemote(typeof body.remote === 'string' ? body.remote : '');
+  if (!parsed) {
+    return res.status(400).json({ ok: false, code: 'invalid_remote',
+      message: 'Name the repository as owner/repo (or paste its https:// or git@ address).' });
+  }
+  let ref = null;
+  if (body.ref !== undefined && body.ref !== null && body.ref !== '') {
+    if (typeof body.ref !== 'string' || !isValidRef(body.ref.trim())) {
+      return res.status(400).json({ ok: false, code: 'invalid_ref',
+        message: 'That branch or tag name is not one this app will put in a URL.' });
+    }
+    ref = body.ref.trim();
+  }
+  const tk = readGitHubReadToken('config');
+  if (!tk.ok) {
+    return res.status(400).json({ ok: false, code: 'no_token',
+      message: 'No read-only token is saved in Settings → Knowledge base (.curator-config.json), so there is nothing to test with.' });
+  }
+  const repo = `${parsed.owner}/${parsed.repo}`;
+  let client = null;
+  try {
+    client = createGitHubReadClient({ token: tk.token, tokenSource: 'config' });
+    const got = await client.getRef(parsed.owner, parsed.repo, ref);
+    res.json({ ok: true, repo, ref: got.ref, sha: got.sha, requests: client.stats().requests });
+  } catch (err) {
+    const code = (err && GH_TEST_CODES[err.code]) || 'failed';
+    res.json({ ok: false, code, repo,
+      message: tokenFreeMessage(err?.message || 'The test did not complete.', tk.token),
+      requests: client ? client.stats().requests : 0 });
   }
 });
 
