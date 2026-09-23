@@ -1369,6 +1369,10 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     'B: names the domains this install\'s brains draw on, each with its identity dot');
   ok(/fixed when you join/.test(B) && !/Contribute this domain/.test(B),
     'B: says contributing domains are fixed at join — and offers no button the store cannot honour');
+  // A domain the host cannot place gets NO dot — never a guessed colour
+  // (found green-first by mutation: index -1 fell through to a real slot).
+  eq(secBox.sectionDotHtml('nowhere'), '', 'a domain the host did not index carries no identity dot, never a guessed one');
+  ok(/cur-sb-dot-1/.test(secBox.sectionDotHtml('research')), '(control) …while an indexed one does');
   const E = at({}, 'shared-gone');
   ok(/This is a Shared Brain mirror with no connection on this install, so Pull can’t refresh it\./.test(E) && !/isn’t part of/.test(E),
     'E: an orphaned shared-* mirror says so — never "not part of any Shared Brain" (D20)');
