@@ -729,6 +729,11 @@ async function readState(store, domain, project, opts) {
  */
 const FOUNDATION_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}\.md$/;
 
+/** The three per-document start states on the wire (v3.67.0) — the store's
+ *  FOUNDATION_START_STATES, restated for the same reason the slug rule is:
+ *  a route-boundary check must not depend on the store being present. */
+const START_STATES = Object.freeze(['read-first', 'on-request', 'not-at-start']);
+
 /**
  * The store that answers the tier-0 calls.
  *
@@ -789,6 +794,12 @@ function foundationDocRow(d) {
     // document rather than part of it, which is why it exists on a mirror at
     // all — the manifest moves, the copied bytes do not.
     readFirst: d.readFirst === true,
+    // v3.67.0 — the third state ("not at start"), always present, and the
+    // one-word reading of all three in the wire alphabet. `atStart` is
+    // derived from the two flags here rather than trusted, so a row can never
+    // say one thing in `readFirst`/`hidden` and another in `atStart`.
+    hidden: d.hidden === true && d.readFirst !== true,
+    atStart: d.readFirst === true ? 'read-first' : d.hidden === true ? 'not-at-start' : 'on-request',
   };
 }
 
@@ -846,6 +857,15 @@ function foundationsWire(out) {
     readFirstBytes: Number.isInteger(out.readFirstBytes) ? out.readFirstBytes : 0,
     readFirstBudgetBytes: Number.isInteger(out.readFirstBudgetBytes) ? out.readFirstBudgetBytes : 0,
     readFirstBudgetExceeded: out.readFirstBudgetExceeded === true,
+    // ── THE OWNER'S READING BUDGET (v3.67.0), FORWARDED ─────────────────
+    // `readingBudgetBytes` here is the EFFECTIVE number (the owner's, else
+    // the 120 KB default) and `readingBudgetSource` says whose; `planned` is
+    // "the owner set one". `readFirstBudgetBytes` above now equals it.
+    hiddenCount: Number.isInteger(out.hiddenCount) ? out.hiddenCount : 0,
+    readingBudgetBytes: Number.isInteger(out.readingBudgetBytes) ? out.readingBudgetBytes : 0,
+    readingBudgetSource: out.readingBudgetSource === 'owner' ? 'owner' : 'default',
+    planned: out.planned === true,
+    manifestNotes: Array.isArray(out.manifestNotes) ? out.manifestNotes.filter((n) => typeof n === 'string').slice(0, 20) : [],
     documents: docs.filter(Boolean).map(foundationDocRow),
     // A `.md` file in the directory with no manifest entry. The manifest is
     // written LAST on every save, so a crash leaves a document without an
@@ -924,6 +944,8 @@ const TIER0_WIRE_REASON = new Map([
   ['remote-not-allowed', 'remote_not_allowed'],
   ['root-and-remote', 'root_and_remote'],
   ['invalid-token-source', 'invalid_token_source'],
+  // v3.67.0 — the start-state setter's own refusal.
+  ['invalid-start-state', 'invalid_at_start'],
 ]);
 function tier0Reason(reason) {
   return TIER0_WIRE_REASON.get(String(reason || '')) || reason || 'io';
@@ -1812,6 +1834,301 @@ router.patch('/:domain/:project/knowledge/domains', async (req, res) => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════
+// PATCH /api/memory/:domain/:project/reading/budget — the READING BUDGET (v3.67.0)
+//
+// A HUMAN WRITE on exactly the footing of `knowledge/domains` above: curator
+// metadata ABOUT a project in `state/[<project>/]project.json`, one writer
+// (the owner, here), never tier 1/2/3. FOUR SEGMENTS for the same collision
+// that route records: a three-segment PATCH whose second segment is literally
+// `projects` is swallowed by `PATCH /:domain/projects/:project`.
+//
+// A STRICT ONE-FIELD BODY: `{readingBudgetBytes: int|null}`. 0 is Index only;
+// 8192 … 204800 is a budget; null CLEARS it, and the project reads as
+// unplanned — v3.66.0's behaviour — again.
+// ═════════════════════════════════════════════════════════════════════════
+const READING_BUDGET_STATUS = new Map([
+  ['unknown-state-project', 404],
+  ['locked', 409],
+]);
+const READING_BUDGET_WIRE_REASON = new Map([
+  ['invalid-reading-budget', 'invalid_reading_budget'],
+  ['unknown-state-project', 'project_not_found'],
+  ['invalid-state-project', 'invalid_project'],
+  ['unsafe-path', 'unsafe_path'],
+]);
+const READING_BUDGET_CAP = 204800;
+const READING_BUDGET_MIN = 8192;
+function isReadingBudgetValue(v) {
+  return Number.isInteger(v) && (v === 0 || (v >= READING_BUDGET_MIN && v <= READING_BUDGET_CAP));
+}
+
+router.patch('/:domain/:project/reading/budget', async (req, res) => {
+  try {
+    const { domain, project } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    if (await refuseMirror(res, domain)) return;
+    if (!validProjectName(ws(), project)) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
+      });
+    }
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    const extra = Object.keys(body).filter((k) => k !== 'readingBudgetBytes');
+    if (extra.length) {
+      return res.status(400).json({
+        ok: false, reason: 'unexpected_fields', fields: extra.slice(0, 10),
+        error: `This route accepts only \`readingBudgetBytes\`. It was also sent: ${extra.slice(0, 10).join(', ')}.`,
+      });
+    }
+    const v = body.readingBudgetBytes;
+    if (!Object.prototype.hasOwnProperty.call(body, 'readingBudgetBytes') || (v !== null && !isReadingBudgetValue(v))) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_reading_budget',
+        error: `Send \`{ readingBudgetBytes: <bytes> }\` — 0 for Index only, or a whole number from ${READING_BUDGET_MIN} `
+          + `to ${READING_BUDGET_CAP} — or \`{ readingBudgetBytes: null }\` to go back to the default.`,
+      });
+    }
+    const out = await ws().setReadingBudget(domain, project, v);
+    if (!out || out.ok === false) {
+      const reason = (out && out.reason) || 'io';
+      return res.status(READING_BUDGET_STATUS.get(reason) ?? statusForStoreRefusal({ reason }))
+        .json(withErrorProse({ ...(out || {}), ok: false, domain, project, reason: READING_BUDGET_WIRE_REASON.get(reason) || reason }));
+    }
+    res.json({
+      ok: true, domain, project,
+      readingBudgetBytes: Number.isInteger(out.readingBudgetBytes) ? out.readingBudgetBytes : null,
+      readingBudgetDefaulted: out.readingBudgetDefaulted === true,
+      cleared: out.cleared === true,
+      readFirstBudgetBytes: Number.isInteger(out.readFirstBudgetBytes) ? out.readFirstBudgetBytes : 0,
+      readFirstBudgetExceeded: out.readFirstBudgetExceeded === true,
+    });
+  } catch (err) {
+    console.error('Memory reading-budget error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// GET  /api/memory/:domain/:project/session-start          (v3.67.0)
+// POST /api/memory/:domain/:project/session-start/preview
+//
+// WHAT AN AGENT RECEIVES AT SESSION START, MEASURED — never estimated. The
+// MCP figure is the REAL `get_project_context` handler's serialised size
+// (after its own response bound), called DIRECTLY rather than through the MCP
+// dispatcher, so a preview is never logged as a session in the usage log. The
+// hook figure is the REAL session-start Markdown (`renderFramedContextMarkdown`,
+// moved to src/brain/ so no route imports src/cli/). Both are READS: nothing
+// is written anywhere, including the usage log.
+//
+// Tokens are NEVER on the wire. The view divides by four and says so; a wire
+// field would be an estimate dressed as a measurement.
+//
+// `presets[]` carries all five presets' MCP bytes in ONE answer (a what-if run
+// per preset), so hovering a preset in the picker costs no request at all.
+// The preview POST is for the one what-if that needs a body — a proposed plan
+// of up to 200 documents does not belong in a URL.
+//
+// Read routes are not behind `refuseMirror` (a mirror's start is real).
+// ═════════════════════════════════════════════════════════════════════════
+const SESSION_START_PLAN_MAX = 200;
+const SESSION_BRIEF_CAP = 32768;
+const SESSION_HANDOFF_CAP = 49152;
+const SESSION_REPLY_CAP = 307200;
+const PRESET_BYTES = Object.freeze([
+  ['index-only', 0], ['lean', 32768], ['standard', 65536], ['deep', 122880], ['max', 204800],
+]);
+
+const utf8 = (x) => Buffer.byteLength(typeof x === 'string' ? x : JSON.stringify(x ?? null), 'utf8');
+/** Exactly as mcp/tools/index.js serialises a reply. */
+const mcpSize = (obj) => Buffer.byteLength(JSON.stringify(obj, null, 2), 'utf8');
+
+/**
+ * The session-start report. `whatIf` is the store's internal option
+ * (`{ownerBudgetBytes?, startStates?}`), reached ONLY from this router.
+ * Exported for the suite; not a route of its own.
+ */
+export async function sessionStartReport(domain, project, whatIf = null) {
+  const { getProjectContextHandler } = await import('../../mcp/tools/working-state.js');
+  const { renderFramedContextMarkdown } = await import('../brain/context-markdown.js');
+  const run = (wi) => getProjectContextHandler({ domain, project }, null, wi ? { whatIf: wi } : {});
+  const out = await run(whatIf);
+  if (!out || out.ok !== true) return { ok: false, reason: out?.reason || 'io', error: out?.error || 'unreadable' };
+  const f = out.foundations || {};
+  const mcp = mcpSize(out);
+
+  // THE HOOK DOOR: the store envelope the hook reads (no caller budget, the
+  // store's own journal default), rendered by the real function.
+  const store = workingState;
+  const ctx = await store.getProjectContext(domain, project, whatIf ? { whatIf } : {});
+  const hook = ctx && ctx.ok === true ? utf8(await renderFramedContextMarkdown(ctx)) : 0;
+
+  // Every preset, same plan, one what-if run each — MCP bytes only.
+  const presets = [];
+  for (const [id, bytes] of PRESET_BYTES) {
+    const wi = { ...(whatIf || {}), ownerBudgetBytes: bytes };
+    const p = await run(wi);
+    presets.push({ id, bytes, mcpBytes: p && p.ok === true ? mcpSize(p) : null });
+  }
+
+  // "Not at start" documents are absent from the reply by design; their size
+  // comes from the index, with the what-if plan applied the same way.
+  const list = await store.listFoundations(domain, out.project);
+  const plan = whatIf && whatIf.startStates && typeof whatIf.startStates === 'object' ? whatIf.startStates : null;
+  const hiddenDocs = (list && list.ok !== false && Array.isArray(list.documents) ? list.documents : [])
+    .filter((d) => {
+      const st = plan && Object.prototype.hasOwnProperty.call(plan, d.slug) ? plan[d.slug] : d.atStart;
+      return st === 'not-at-start';
+    });
+
+  const sent = Array.isArray(f.documents) ? f.documents : [];
+  const rows = Array.isArray(f.index) ? f.index : [];
+  const sizeOf = new Map(rows.map((r) => [r.slug, Number.isInteger(r.bytes) ? r.bytes : 0]));
+  const sentSlugs = new Set(sent.map((d) => d.slug));
+  const omittedSlugs = Array.isArray(f.budget?.omitted) ? f.budget.omitted.filter((x) => typeof x === 'string') : [];
+  const omittedSet = new Set(omittedSlugs);
+  const readFirstSent = sent.filter((d) => d.readFirst === true);
+  const otherSent = sent.filter((d) => d.readFirst !== true);
+  const onRequest = rows.filter((r) => !sentSlugs.has(r.slug) && !omittedSet.has(r.slug));
+  const textBytes = (arr) => arr.reduce((n, d) => n + utf8(d.text || ''), 0);
+
+  const tiers = {
+    brief: { bytes: out.brief?.present ? utf8(out.brief.text || '') : 0, present: out.brief?.present === true, capBytes: SESSION_BRIEF_CAP },
+    handoff: { bytes: out.current?.present ? utf8(out.current.text || '') : 0, present: out.current?.present === true, capBytes: SESSION_HANDOFF_CAP },
+    journal: {
+      bytes: Array.isArray(out.journal?.entries) && out.journal.entries.length ? utf8(out.journal.entries) : 0,
+      lines: Array.isArray(out.journal?.entries) ? out.journal.entries.length : 0,
+    },
+    index: { bytes: rows.length ? utf8(rows) : 0, listed: rows.length, hiddenCount: Number.isInteger(f.hiddenCount) ? f.hiddenCount : 0 },
+    readFirst: {
+      bytes: textBytes(readFirstSent), count: readFirstSent.length,
+      budgetBytes: Number.isInteger(f.readFirstBudgetBytes) ? f.readFirstBudgetBytes : 0,
+      exceeded: f.readFirstBudgetExceeded === true,
+    },
+    otherText: { bytes: textBytes(otherSent), count: otherSent.length },
+    onRequest: { bytes: onRequest.reduce((n, r) => n + (sizeOf.get(r.slug) || 0), 0), count: onRequest.length },
+    omitted: { bytes: omittedSlugs.reduce((n, sl) => n + (sizeOf.get(sl) || 0), 0), count: omittedSlugs.length, slugs: omittedSlugs.slice(0, 200) },
+    hidden: { bytes: hiddenDocs.reduce((n, d) => n + (Number.isInteger(d.bytes) ? d.bytes : 0), 0), count: hiddenDocs.length },
+    domainPages: { domains: Array.isArray(out.knowledgeDomains) ? out.knowledgeDomains.slice(0, 12) : [], bytes: 0 },
+    framing: { bytes: 0 },
+  };
+  const counted = tiers.brief.bytes + tiers.handoff.bytes + tiers.journal.bytes + tiers.index.bytes
+    + tiers.readFirst.bytes + tiers.otherText.bytes;
+  // "Framing and structure": labels, the report, the authority note, the
+  // JSON keys and indentation — everything in the reply that is not a tier.
+  tiers.framing.bytes = Math.max(0, mcp - counted);
+
+  const b = f.budget || {};
+  const source = ['owner', 'default', 'whatif', 'caller'].includes(b.source) ? b.source : 'default';
+  const sentText = tiers.readFirst.bytes + tiers.otherText.bytes;
+  const planned = f.planned === true;
+  const notes = [];
+  if (out.readingBudgetError) notes.push(String(out.readingBudgetError).slice(0, 300));
+  if (f.manifestError) notes.push(`the foundations manifest could not be read: ${String(f.manifestError).slice(0, 200)}`);
+  if (typeof b.bounded === 'string') notes.push(b.bounded);
+  return {
+    ok: true, domain: out.domain, project: out.project,
+    budget: {
+      bytes: Number.isInteger(b.maxBytes) ? b.maxBytes : 0,
+      source, defaulted: source === 'default',
+      ownerBytes: Number.isInteger(out.readingBudgetBytes) ? out.readingBudgetBytes : null,
+      cap: READING_BUDGET_CAP, replyCapBytes: SESSION_REPLY_CAP,
+    },
+    planned,
+    presets,
+    tiers,
+    bytes: { mcp, hook },
+    costLine: { applies: !planned && (f.count || 0) > 0 && sentText > 32768, documentTextBytes: sentText },
+    notes,
+  };
+}
+
+async function sessionStartGate(req, res) {
+  const { domain, project } = req.params;
+  if (!await requireDomain(res, domain)) return null;
+  const store = ws();
+  if (!validProjectName(store, project)) {
+    res.status(400).json({ ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.` });
+    return null;
+  }
+  const state = await readState(store, domain, project, {});
+  if (!state.ok) { res.status(statusForStoreRefusal(state)).json(withErrorProse(state)); return null; }
+  if (state.projectExists === false) {
+    res.status(404).json({ ok: false, reason: 'project_not_found', domain, project, error: `"${project}" is not a project in "${domain}".` });
+    return null;
+  }
+  return { domain, project };
+}
+
+function sendSessionStart(res, report) {
+  if (!report || report.ok !== true) {
+    const reason = report?.reason || 'io';
+    return res.status(statusForStoreRefusal({ reason })).json(withErrorProse({ ok: false, reason, error: report?.error }));
+  }
+  return res.json(report);
+}
+
+router.get('/:domain/:project/session-start', async (req, res) => {
+  try {
+    const g = await sessionStartGate(req, res);
+    if (!g) return;
+    sendSessionStart(res, await sessionStartReport(g.domain, g.project, null));
+  } catch (err) {
+    console.error('Memory session-start error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+router.post('/:domain/:project/session-start/preview', async (req, res) => {
+  try {
+    const g = await sessionStartGate(req, res);
+    if (!g) return;
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    const extra = Object.keys(body).filter((k) => k !== 'budgetBytes' && k !== 'plan');
+    if (extra.length) {
+      return res.status(400).json({
+        ok: false, reason: 'unexpected_fields', fields: extra.slice(0, 10),
+        error: `This route accepts only \`budgetBytes\` and \`plan\`. It was also sent: ${extra.slice(0, 10).join(', ')}.`,
+      });
+    }
+    const whatIf = {};
+    if (Object.prototype.hasOwnProperty.call(body, 'budgetBytes')) {
+      if (body.budgetBytes !== null && !isReadingBudgetValue(body.budgetBytes)) {
+        return res.status(400).json({
+          ok: false, reason: 'invalid_reading_budget',
+          error: `\`budgetBytes\` is 0, a whole number from ${READING_BUDGET_MIN} to ${READING_BUDGET_CAP}, or null.`,
+        });
+      }
+      whatIf.ownerBudgetBytes = body.budgetBytes;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'plan')) {
+      const plan = body.plan;
+      if (!plan || typeof plan !== 'object' || Array.isArray(plan)) {
+        return res.status(400).json({ ok: false, reason: 'invalid_plan', error: '`plan` is an object of `{ "<slug>.md": "read-first" | "on-request" | "not-at-start" }`.' });
+      }
+      const entries = Object.entries(plan);
+      if (entries.length > SESSION_START_PLAN_MAX) {
+        return res.status(400).json({ ok: false, reason: 'invalid_plan', error: `\`plan\` names ${entries.length} documents; at most ${SESSION_START_PLAN_MAX}.` });
+      }
+      const startStates = {};
+      for (const [slug, st] of entries) {
+        if (!FOUNDATION_SLUG_RE.test(slug)) {
+          return res.status(400).json({ ok: false, reason: 'invalid_slug', error: `"${String(slug).slice(0, 80)}" is not a usable document name.` });
+        }
+        if (!START_STATES.includes(st)) {
+          return res.status(400).json({ ok: false, reason: 'invalid_at_start', error: `"${slug}": the state must be one of ${START_STATES.join(', ')}.` });
+        }
+        startStates[slug] = st;
+      }
+      whatIf.startStates = startStates;
+    }
+    sendSessionStart(res, await sessionStartReport(g.domain, g.project, whatIf));
+  } catch (err) {
+    console.error('Memory session-start preview error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
 // GET /api/memory/:domain/:project/foundations/:slug — ONE document, verbatim
 //
 // Registered BEFORE the two-segment reads for readability only: four segments
@@ -2088,11 +2405,48 @@ router.patch('/:domain/:project/foundations/:slug', async (req, res) => {
     }
 
     const body = req.body && typeof req.body === 'object' ? req.body : {};
+    // ── v3.67.0: EXACTLY ONE OF `readFirst` OR `atStart` ────────────────
+    // `atStart` is the three-state form (`read-first` · `on-request` ·
+    // `not-at-start`); `readFirst` keeps its v3.62.0 behaviour and reply
+    // byte for byte. Both at once is a 400, like any second key.
+    const hasAtStart = Object.prototype.hasOwnProperty.call(body, 'atStart');
+    if (hasAtStart) {
+      const extraA = Object.keys(body).filter((k) => k !== 'atStart');
+      if (extraA.length) {
+        return res.status(400).json({
+          ok: false, reason: 'unexpected_fields', fields: extraA.slice(0, 10),
+          error: `Send exactly one of \`readFirst\` or \`atStart\`. It was also sent: ${extraA.slice(0, 10).join(', ')}.`,
+        });
+      }
+      if (!START_STATES.includes(body.atStart)) {
+        return res.status(400).json({
+          ok: false, reason: 'invalid_at_start',
+          error: `\`atStart\` must be one of ${START_STATES.join(', ')}. This route changes the reading plan and nothing else.`,
+        });
+      }
+      const outA = await fstore().setFoundationStartState(domain, project, slug, body.atStart);
+      if (!outA || outA.ok === false) return tier0Refusal(res, outA || { reason: 'io' }, { domain, project, slug });
+      return res.json({
+        ok: true, domain, project,
+        slug: outA.slug || slug,
+        atStart: START_STATES.includes(outA.atStart) ? outA.atStart : body.atStart,
+        wasAtStart: START_STATES.includes(outA.wasAtStart) ? outA.wasAtStart : null,
+        changed: outA.changed === true,
+        readFirst: outA.readFirst === true,
+        hidden: outA.hidden === true,
+        readFirstCount: Number.isInteger(outA.readFirstCount) ? outA.readFirstCount : 0,
+        onRequestCount: Number.isInteger(outA.onRequestCount) ? outA.onRequestCount : 0,
+        readFirstBytes: Number.isInteger(outA.readFirstBytes) ? outA.readFirstBytes : 0,
+        readFirstBudgetBytes: Number.isInteger(outA.readFirstBudgetBytes) ? outA.readFirstBudgetBytes : 0,
+        readFirstBudgetExceeded: outA.readFirstBudgetExceeded === true,
+        hiddenCount: Number.isInteger(outA.hiddenCount) ? outA.hiddenCount : 0,
+      });
+    }
     if (typeof body.readFirst !== 'boolean') {
       return res.status(400).json({
         ok: false, reason: 'invalid_read_first',
         error: 'Send `{ readFirst: true }` or `{ readFirst: false }`. This route changes the '
-          + 'reading plan and nothing else.',
+          + 'reading plan and nothing else. (Or `{ atStart: "read-first" | "on-request" | "not-at-start" }`.)',
       });
     }
     const extra = Object.keys(body).filter((k) => k !== 'readFirst');
@@ -2136,6 +2490,11 @@ router.patch('/:domain/:project/foundations/:slug', async (req, res) => {
       // set is what one session is handed, so that is the figure a person
       // flagging a fifth document needs to see.
       readFirstBudgetExceeded: out.readFirstBudgetExceeded === true,
+      // v3.67.0, additive: the three-state reading of the same row, so a
+      // view using either body can repaint from either reply.
+      atStart: START_STATES.includes(out.atStart) ? out.atStart : (out.readFirst === true ? 'read-first' : 'on-request'),
+      hidden: out.hidden === true,
+      hiddenCount: Number.isInteger(out.hiddenCount) ? out.hiddenCount : 0,
     });
   } catch (err) {
     console.error('Memory foundation read-first error:', err);

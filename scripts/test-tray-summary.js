@@ -878,6 +878,23 @@ section('§8e v3.66.0 — documents, capture and per-domain pages: the widget’
   eq(d2 && d2.basis, 'read-first', 'one flagged document → the bar is the READ-FIRST set…');
   eq(d2 && d2.applicableBudgetBytes, wsMod.CONTEXT_MAX_BYTES_DEFAULT, '…against the 120 KB per-session budget (foundationsBudgetWarning’s rule)');
   eq(d2 && d2.amountBytes, d2 && d2.readFirstBytes, '…and its amount is the read-first bytes');
+  // v3.67.0 — THE OWNER'S READING BUDGET reaches the widget with NO tray
+  // change: `listFoundations` fills `readFirstBudgetBytes` with the owner's
+  // number, and the bar's denominator is that field. Set through the real
+  // store, read back through the real summary.
+  const setB = await wsMod.setReadingBudget('workshop', 'lumina', 32768);
+  ok(setB && setB.ok === true, 'PRECONDITION: the owner sets a 32 KB reading budget through the real store', JSON.stringify(setB));
+  const sRb = await getTraySummary({ limit: 20 });
+  const d3 = (sRb.scopes.find((r) => r.project === 'lumina') || {}).documents;
+  eq(d3 && d3.readFirstBudgetBytes, 32768, 'the tray\u2019s readFirstBudgetBytes FOLLOWS the owner\u2019s budget');
+  eq(d3 && d3.applicableBudgetBytes, 32768, '…and so does the read-first bar\u2019s denominator');
+  await wsMod.setReadingBudget('workshop', 'lumina', 0);
+  const d4 = (((await getTraySummary({ limit: 20 })).scopes.find((r) => r.project === 'lumina')) || {}).documents;
+  ok(d4 && d4.readFirstBudgetBytes === 0 && d4.exceeded === true,
+    'Index only (0): the budget reads 0 and a flagged set is over it — the widget says none of that text is handed over', JSON.stringify(d4));
+  await wsMod.setReadingBudget('workshop', 'lumina', null);
+  eq(((((await getTraySummary({ limit: 20 })).scopes.find((r) => r.project === 'lumina')) || {}).documents || {}).readFirstBudgetBytes,
+    wsMod.CONTEXT_MAX_BYTES_DEFAULT, 'cleared: back to the 120 KB default');
   await wsMod.setFoundationReadFirst('workshop', 'lumina', slug, false);
 
   // The pure rule, driven over both arms of an over-run.

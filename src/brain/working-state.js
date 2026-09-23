@@ -242,6 +242,42 @@ export const FOUNDATION_REPLACE_RATIO = 0.10;
  *  the 400 KB guard with margin; `scripts/test-foundations.js` asserts it. */
 export const CONTEXT_MAX_BYTES_DEFAULT = 120 * 1024;
 export const CONTEXT_MAX_BYTES_CAP = 200 * 1024;
+
+// ── THE OWNER'S READING BUDGET (v3.67.0) ─────────────────────────────────
+// `readingBudgetBytes` in `project.json`: how much document TEXT an agent is
+// handed at session start. Absent means today's 120 KB default and nothing
+// else changes (an untouched project's bootstrap is byte-identical to
+// v3.66.0). Present means the project is PLANNED: only documents marked read
+// first arrive with text, within this number. The presets are the view's; the
+// store accepts 0 (index only) or any integer from the minimum to the cap, so
+// a hand-edited file is honoured and bounded rather than refused.
+export const READING_BUDGET_PRESETS = Object.freeze([
+  Object.freeze({ id: 'index-only', bytes: 0 }),
+  Object.freeze({ id: 'lean', bytes: 32768 }),
+  Object.freeze({ id: 'standard', bytes: 65536 }),
+  Object.freeze({ id: 'deep', bytes: 122880 }),
+  Object.freeze({ id: 'max', bytes: 204800 }),
+]);
+export const READING_BUDGET_RECOMMENDED = 'standard';
+/** Below this only 0 is accepted: a budget of a few hundred bytes is not a
+ *  plan, it is a typo that would cut the first document to nothing. */
+export const READING_BUDGET_MIN_BYTES = 8192;
+/** The three per-document states, on the wire. On disk: `readFirst: true`,
+ *  `hidden: true` (mutually exclusive), or neither (on request). */
+export const FOUNDATION_START_STATES = Object.freeze(['read-first', 'on-request', 'not-at-start']);
+
+/** A budget value is usable iff it is 0 or an integer in [MIN, CAP]. */
+export function isValidReadingBudget(v) {
+  return Number.isInteger(v) && (v === 0 || (v >= READING_BUDGET_MIN_BYTES && v <= CONTEXT_MAX_BYTES_CAP));
+}
+
+/** One manifest entry's start state, in the wire alphabet. `readFirst` wins
+ *  over `hidden` — the fail-safe direction (more context, never less). */
+export function foundationStartState(d) {
+  if (d && d.readFirst === true) return 'read-first';
+  if (d && d.hidden === true) return 'not-at-start';
+  return 'on-request';
+}
 export const MAX_FOUNDATION_TITLE_CHARS = 120;
 /** The handoff section that records which foundations a session read. */
 export const FOUNDATIONS_READ_HEADING = 'Foundations read';
@@ -4083,7 +4119,10 @@ export async function readWorkingState(project, opts = {}) {
   // `readFoundation` are the body readers. `manifestError` is forwarded rather
   // than collapsed into `present: false`, because "no foundations" and "a
   // manifest this store cannot read" are different facts.
-  out.foundations = await summariseFoundations(project, inner);
+  // project.json is read ONCE and handed to the foundations summary, whose
+  // read-first readings are measured against the owner's budget (v3.67.0).
+  const meta = await readProjectMeta(project, inner);
+  out.foundations = await summariseFoundations(project, inner, meta);
 
   // WHICH WIKIS THIS PROJECT'S KNOWLEDGE LIVES IN (v3.65.0). One small read,
   // on EVERY read of this envelope including the scope-less one, because an
@@ -4092,10 +4131,15 @@ export async function readWorkingState(project, opts = {}) {
   // is now a value it can read rather than an assumption it makes.
   // `knowledgeDomainsDefaulted` is the second half of that fact: a list and
   // the absence of a choice must never collapse into one value.
-  const meta = await readProjectMeta(project, inner);
   out.knowledgeDomains = meta.knowledgeDomains;
   out.knowledgeDomainsDefaulted = meta.knowledgeDomainsDefaulted;
   if (meta.metaError) out.knowledgeDomainsError = meta.metaError;
+  // THE OWNER'S READING BUDGET (v3.67.0), from the same one read. `null` +
+  // `readingBudgetDefaulted: true` is "the owner has not set one" (120 KB
+  // applies, the project is unplanned); the error rides only when non-null.
+  out.readingBudgetBytes = meta.readingBudgetBytes;
+  out.readingBudgetDefaulted = meta.readingBudgetDefaulted === true;
+  if (meta.readingBudgetError) out.readingBudgetError = meta.readingBudgetError;
 
   const scopeResolution = await resolveScope(project, inner, opts && typeof opts === 'object' ? opts.scope : undefined);
   if (!scopeResolution.ok) return { ok: false, reason: scopeResolution.error, message: scopeResolution.message };
@@ -4429,35 +4473,55 @@ export function normaliseKnowledgeDomains(raw) {
  */
 export async function readProjectMeta(domain, project) {
   const inner = project !== undefined && project !== null && project !== '' ? String(project) : domain;
+  // THE OWNER'S READING BUDGET (v3.67.0) rides on EVERY return below, the
+  // defaults until the file has been parsed. It is a SECOND, INDEPENDENT field:
+  // `fallback` is a function evaluated at return time, so the early return for
+  // an absent `knowledgeDomains` carries whatever budget was parsed before it
+  // — a project.json holding only `readingBudgetBytes` must read its budget.
+  let budget = { readingBudgetBytes: null, readingBudgetDefaulted: true, readingBudgetError: null };
   // The default is ALWAYS the containing domain, whichever project this is.
-  const fallback = {
+  const fallback = () => ({
     ok: true, project: inner, domain,
     knowledgeDomains: isSafeSegment(domain) ? [domain] : [],
     knowledgeDomainsDefaulted: true,
     metaError: null,
-  };
+    ...budget,
+  });
   const abs = projectMetaPath(domain, inner);
-  if (!abs) return fallback;
+  if (!abs) return fallback();
   const r = await readCapped(abs, MAX_PROJECT_META_BYTES);
-  if (!r) return fallback;
+  if (!r) return fallback();
   if (r.truncated) {
-    return { ...fallback, metaError: `${PROJECT_META_FILENAME} is ${r.bytes} bytes, over the ${MAX_PROJECT_META_BYTES}-byte read cap` };
+    return { ...fallback(), metaError: `${PROJECT_META_FILENAME} is ${r.bytes} bytes, over the ${MAX_PROJECT_META_BYTES}-byte read cap` };
   }
   let parsed;
   try { parsed = JSON.parse(r.text); } catch (err) {
-    return { ...fallback, metaError: `${PROJECT_META_FILENAME} is not valid JSON: ${String(err?.message ?? err).slice(0, 120)}` };
+    return { ...fallback(), metaError: `${PROJECT_META_FILENAME} is not valid JSON: ${String(err?.message ?? err).slice(0, 120)}` };
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { ...fallback, metaError: `${PROJECT_META_FILENAME} is not a JSON object` };
+    return { ...fallback(), metaError: `${PROJECT_META_FILENAME} is not a JSON object` };
   }
-  if (parsed.knowledgeDomains === undefined || parsed.knowledgeDomains === null) return fallback;
+  // PARSED BEFORE the knowledgeDomains early return, on purpose (§1.10 of the
+  // v3.67.0 contract): a hand-edited value out of range or not an integer
+  // reads as NOT SET with the defect named — never a refusal of the read.
+  const rb = parsed.readingBudgetBytes;
+  if (rb !== undefined && rb !== null) {
+    budget = isValidReadingBudget(rb)
+      ? { readingBudgetBytes: rb, readingBudgetDefaulted: false, readingBudgetError: null }
+      : {
+        readingBudgetBytes: null, readingBudgetDefaulted: true,
+        readingBudgetError: `readingBudgetBytes ${String(JSON.stringify(rb)).slice(0, 40)} in ${PROJECT_META_FILENAME} is not 0 `
+          + `or an integer from ${READING_BUDGET_MIN_BYTES} to ${CONTEXT_MAX_BYTES_CAP}; the default applies`,
+      };
+  }
+  if (parsed.knowledgeDomains === undefined || parsed.knowledgeDomains === null) return fallback();
   const { domains, dropped } = normaliseKnowledgeDomains(parsed.knowledgeDomains);
   if (!domains.length) {
     // An EMPTY chosen list is not a choice this store can act on — a project
     // that searches nothing has no knowledge at all — so it reads as the
     // default WITH the defect named, rather than as a silent nothing.
     return {
-      ...fallback,
+      ...fallback(),
       metaError: `${PROJECT_META_FILENAME} lists no usable knowledge domain`
         + (dropped.length ? ` (${dropped.slice(0, 5).map((d) => `${d.domain ?? '?'}: ${d.reason}`).join(', ')})` : ''),
     };
@@ -4470,7 +4534,102 @@ export async function readProjectMeta(domain, project) {
       ? `${dropped.length} entr${dropped.length === 1 ? 'y' : 'ies'} in ${PROJECT_META_FILENAME} were dropped `
         + `(${dropped.slice(0, 5).map((d) => `${d.domain ?? '?'}: ${d.reason}`).join(', ')})`
       : null,
+    ...budget,
   };
+}
+
+/**
+ * READ–MODIFY–WRITE of `project.json` under the domain lock — the ONE writer
+ * both `setKnowledgeDomains` and `setReadingBudget` go through, so a field
+ * this release does not know about is never deleted by a release that only
+ * wanted to change one of them. `mutate(next)` edits the object in place.
+ * Nothing left but `version` → the file is removed, so "defaulted" is a
+ * shape on disk too.
+ */
+async function writeProjectMetaField(domain, target, abs, op, mutate, after) {
+  return withFoundationsLock(domain, op, async () => {
+    let existing = {};
+    const r = await readCapped(abs, MAX_PROJECT_META_BYTES);
+    if (r && !r.truncated) {
+      try {
+        const parsed = JSON.parse(r.text);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed;
+      } catch { /* a malformed file is REPLACED, not merged into */ }
+    }
+    const next = { ...existing, version: PROJECT_META_VERSION };
+    mutate(next);
+    const empty = Object.keys(next).every((k) => k === 'version');
+    try {
+      if (empty) { await rm(abs, { force: true }); }
+      else {
+        const dirAbs = prefixDirOf(domain, target.prefix);
+        if (dirAbs) { try { await mkdir(dirAbs, { recursive: true }); } catch { /* it is there, or the write below says why */ } }
+        await writeFileAtomic(abs, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+      }
+    } catch (err) {
+      return { ok: false, reason: 'io', message: `Could not write ${PROJECT_META_FILENAME}: ${scrubPaths(String(err?.message ?? err))}` };
+    }
+    return after();
+  });
+}
+
+/**
+ * Set a project's READING BUDGET (v3.67.0). THE HUMAN'S WRITE, through the
+ * app — like `knowledgeDomains`, curator metadata ABOUT a project, never
+ * state: no agent path reaches it (no MCP tool, no CLI command, no handoff
+ * field), which `scripts/test-reading-budget.js` proves by execution.
+ *
+ * `bytes`: 0 (index only) or an integer from READING_BUDGET_MIN_BYTES to
+ * CONTEXT_MAX_BYTES_CAP; `null` clears it (the project reads as unplanned —
+ * today's behaviour — again). Anything else: `invalid-reading-budget`.
+ * Refusals from `checkProjectTarget` (unknown project, a read-only mirror),
+ * `unsafe-path`, `locked`, `io`.
+ *
+ * The reply carries the read-first readings AGAINST THE NEW BUDGET, so a view
+ * can repaint the Documents monitor from it with no second request.
+ */
+export async function setReadingBudget(domain, project, bytes) {
+  const target = await checkProjectTarget(domain, project);
+  if (!target.ok) return target;
+  const abs = projectMetaPath(domain, target.project);
+  if (!abs) return { ok: false, reason: 'unsafe-path', message: 'That project resolves outside the state folder.' };
+  const clearing = bytes === null;
+  if (!clearing && !isValidReadingBudget(bytes)) {
+    return {
+      ok: false, reason: 'invalid-reading-budget',
+      message: `A reading budget is 0 (index only) or a whole number of bytes from ${READING_BUDGET_MIN_BYTES} to `
+        + `${CONTEXT_MAX_BYTES_CAP}, or null to go back to the default. Got ${String(JSON.stringify(bytes)).slice(0, 40)}. Nothing was changed.`,
+    };
+  }
+  return writeProjectMetaField(domain, target, abs, 'set-reading-budget', (next) => {
+    if (clearing) delete next.readingBudgetBytes;
+    else next.readingBudgetBytes = bytes;
+  }, async () => {
+    const meta = await readProjectMeta(domain, target.project);
+    const eff = effectiveOwnerBudget(meta);
+    let docs = [];
+    const paths = foundationsPaths(domain, target.prefix);
+    const mf = paths ? await readManifest(paths.manifestAbs) : { status: 'absent' };
+    if (mf.status === 'ok') docs = mf.manifest.documents;
+    const rf = readFirstReadings(docs, eff.bytes);
+    return {
+      ok: true, domain, project: target.project,
+      readingBudgetBytes: meta.readingBudgetBytes,
+      readingBudgetDefaulted: meta.readingBudgetDefaulted,
+      cleared: clearing,
+      readFirstBudgetBytes: rf.readFirstBudgetBytes,
+      readFirstBudgetExceeded: rf.readFirstBudgetExceeded,
+    };
+  });
+}
+
+/** The owner's budget or the default, and which. Pure over a meta read. */
+function effectiveOwnerBudget(meta) {
+  const owner = meta && Number.isInteger(meta.readingBudgetBytes) && isValidReadingBudget(meta.readingBudgetBytes)
+    ? meta.readingBudgetBytes : null;
+  return owner === null
+    ? { bytes: CONTEXT_MAX_BYTES_DEFAULT, source: 'default', planned: false, ownerBytes: null }
+    : { bytes: owner, source: 'owner', planned: true, ownerBytes: owner };
 }
 
 /**
@@ -4551,33 +4710,13 @@ export async function setKnowledgeDomains(domain, project, list, opts = {}) {
   // takes it: this file has no machine segment, so the app and the MCP child
   // could target it at once. (The helper is named for the tier that first
   // needed it; the lock it takes is the domain's.)
-  return withFoundationsLock(domain, 'set-knowledge-domains', async () => {
-    // READ–MODIFY–WRITE, so a field this release does not know about is not
-    // deleted by a release that only wanted to change one of them.
-    let existing = {};
-    const r = await readCapped(abs, MAX_PROJECT_META_BYTES);
-    if (r && !r.truncated) {
-      try {
-        const parsed = JSON.parse(r.text);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed;
-      } catch { /* a malformed file is REPLACED, not merged into */ }
-    }
-    const next = { ...existing, version: PROJECT_META_VERSION };
+  // READ–MODIFY–WRITE through the one project.json writer (v3.67.0 extracted
+  // it unchanged from here), so `readingBudgetBytes` — or any field a later
+  // release adds — survives a knowledge-domains write, and vice versa.
+  return writeProjectMetaField(domain, target, abs, 'set-knowledge-domains', (next) => {
     if (clearing) delete next.knowledgeDomains;
     else next.knowledgeDomains = domains;
-    // Nothing left but the version → remove the file rather than leave a
-    // stub that says nothing, so "defaulted" is a shape on disk too.
-    const empty = Object.keys(next).every((k) => k === 'version');
-    try {
-      if (empty) { await rm(abs, { force: true }); }
-      else {
-        const dirAbs = prefixDirOf(domain, target.prefix);
-        if (dirAbs) { try { await mkdir(dirAbs, { recursive: true }); } catch { /* it is there, or the write below says why */ } }
-        await writeFileAtomic(abs, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
-      }
-    } catch (err) {
-      return { ok: false, reason: 'io', message: `Could not write ${PROJECT_META_FILENAME}: ${scrubPaths(String(err?.message ?? err))}` };
-    }
+  }, async () => {
     const after = await readProjectMeta(domain, target.project);
     return {
       ok: true, domain, project: target.project,
@@ -4973,6 +5112,7 @@ function validateManifest(obj) {
   }
   const seen = new Set();
   const documents = [];
+  const notes = [];
   for (let i = 0; i < obj.documents.length; i++) {
     const d = obj.documents[i];
     const where = `documents[${i}]`;
@@ -5020,9 +5160,20 @@ function validateManifest(obj) {
       // few costs a fetch while reading the whole set every session costs the
       // budget the flag exists to spend deliberately.
       readFirst: d.readFirst === true,
+      // v3.67.0, schema STILL v1: the third per-document state, "not at
+      // start". MUTUALLY EXCLUSIVE with `readFirst` and always present on the
+      // parsed entry; only the literal `true` counts. A hand edit carrying
+      // BOTH reads as read first — the fail-safe direction, more context and
+      // never less — and the contradiction is named in `notes` rather than
+      // resolved in silence. Written to disk only when true (`writeManifest`),
+      // so a project nobody routes keeps byte-identical manifests.
+      hidden: d.hidden === true && d.readFirst !== true,
     });
+    if (d.hidden === true && d.readFirst === true) {
+      notes.push(`${where} ("${slug}") is marked both read first and not at start; it reads as read first`);
+    }
   }
-  return { ok: true, manifest: { version: FOUNDATIONS_MANIFEST_VERSION, ownership, repo, budgetBytes, order, documents } };
+  return { ok: true, manifest: { version: FOUNDATIONS_MANIFEST_VERSION, ownership, repo, budgetBytes, order, documents }, notes };
 }
 
 /** Read + validate the manifest. `status` is `absent` | `ok` | `malformed`. */
@@ -5036,12 +5187,24 @@ async function readManifest(manifestAbs) {
     return { status: 'malformed', error: `manifest.json is not valid JSON: ${String(err?.message ?? err).slice(0, 120)}` };
   }
   const v = validateManifest(parsed);
-  return v.ok ? { status: 'ok', manifest: v.manifest, mtime: r.mtime } : { status: 'malformed', error: v.error };
+  return v.ok ? { status: 'ok', manifest: v.manifest, mtime: r.mtime, notes: v.notes || [] } : { status: 'malformed', error: v.error };
 }
 
-/** The manifest is written WHOLE, atomically, and always LAST. */
+/** The manifest is written WHOLE, atomically, and always LAST.
+ *
+ *  `hidden` (v3.67.0) reaches disk ONLY when true: absent means false, and a
+ *  manifest nobody has routed "not at start" is rewritten byte for byte as
+ *  v3.66.0 wrote it — which is also what an older machine expects. A
+ *  contradiction cannot be written: `readFirst` wins here as it does on read. */
 async function writeManifest(manifestAbs, manifest) {
-  await writeFileAtomic(manifestAbs, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  const documents = Array.isArray(manifest.documents)
+    ? manifest.documents.map((d) => {
+      if (!d || typeof d !== 'object') return d;
+      const { hidden, ...rest } = d;
+      return hidden === true && rest.readFirst !== true ? { ...rest, hidden: true } : rest;
+    })
+    : manifest.documents;
+  await writeFileAtomic(manifestAbs, `${JSON.stringify({ ...manifest, documents }, null, 2)}\n`, 'utf8');
 }
 
 /** Both locks, released in reverse order, whatever `fn` does. */
@@ -5279,6 +5442,12 @@ function indexEntry(d, freshness, fileMissing) {
     slug: d.slug, role: d.role, title: d.title, bytes: d.bytes, sha256: d.sha256,
     updatedAt: d.updatedAt, commit: d.commit, source: d.source, authoredBy: d.authoredBy,
     freshness, fileMissing, skeleton: d.skeleton === true, readFirst: d.readFirst === true,
+    // v3.67.0 — the third state, and the one-word reading of all three. Both
+    // always present, so a table needs no absence to interpret. Exclusivity
+    // with `readFirst` is decided ONCE, in `validateManifest`, and trusted
+    // here — one place to get it right, and one place a test can break.
+    hidden: d.hidden === true,
+    atStart: foundationStartState(d),
   };
 }
 
@@ -5292,15 +5461,23 @@ function indexEntry(d, freshness, fileMissing) {
  *  carry. A project can sit comfortably under 200 KB and still flag more than
  *  a bootstrap will send. `budgetBytes`/`budgetExceeded` keep meaning the
  *  project budget; these four are their own reading and are named apart. */
-function readFirstReadings(documents) {
+function readFirstReadings(documents, budgetBytes = CONTEXT_MAX_BYTES_DEFAULT) {
+  // v3.67.0 — the budget is the EFFECTIVE one: the owner's reading budget when
+  // set, else 120 KB. Same names, so the Documents monitor, the budget
+  // warning, the tray and the MCP report follow with no change of their own.
+  const budget = Number.isInteger(budgetBytes) && budgetBytes >= 0 ? budgetBytes : CONTEXT_MAX_BYTES_DEFAULT;
   const flagged = documents.filter((d) => d.readFirst === true);
+  const hiddenCount = documents.filter((d) => d.readFirst !== true && d.hidden === true).length;
   const readFirstBytes = flagged.reduce((n, d) => n + (Number.isInteger(d.bytes) ? d.bytes : 0), 0);
   return {
     readFirstCount: flagged.length,
-    onRequestCount: documents.length - flagged.length,
+    // Neither read first NOR hidden: a "not at start" document is not on
+    // request at session start — it is not even listed.
+    onRequestCount: documents.length - flagged.length - hiddenCount,
     readFirstBytes,
-    readFirstBudgetBytes: CONTEXT_MAX_BYTES_DEFAULT,
-    readFirstBudgetExceeded: readFirstBytes > CONTEXT_MAX_BYTES_DEFAULT,
+    readFirstBudgetBytes: budget,
+    readFirstBudgetExceeded: readFirstBytes > budget,
+    hiddenCount,
   };
 }
 
@@ -5315,14 +5492,27 @@ function readFirstReadings(documents) {
  * this store but not through sync or a hand edit), `freshness` per entry and
  * `repo.reachable`.
  */
-export async function listFoundations(domain, project) {
+export async function listFoundations(domain, project, opts = {}) {
   const view = projectView(domain, project);
   if (!view.ok) return view;
+  // v3.67.0 — the owner's reading budget, read here so every surface built on
+  // this index measures the read-first set against the SAME number the
+  // bootstrap spends. `opts.meta` lets a caller that already read project.json
+  // pass it in rather than read it twice (getProjectContext does).
+  const meta = opts && opts.meta && typeof opts.meta === 'object' ? opts.meta : await readProjectMeta(domain, view.inner);
+  const eff = effectiveOwnerBudget(meta);
   const base = {
     ok: true, domain, project: view.inner, present: false, ownership: null, repo: null,
     budgetBytes: FOUNDATIONS_BUDGET_BYTES, totalBytes: 0, budgetExceeded: false,
     count: 0, staleCount: 0, unreachableCount: 0, missingFileCount: 0, skeletonCount: 0,
-    ...readFirstReadings([]),
+    ...readFirstReadings([], eff.bytes),
+    // v3.67.0 — the EFFECTIVE reading budget (owner ?? 120 KB), whose it is,
+    // and whether the project is PLANNED (the owner set one).
+    readingBudgetBytes: eff.bytes,
+    readingBudgetSource: eff.source,
+    planned: eff.planned,
+    // A hand-edited manifest's contradictions (both flags true), named.
+    manifestNotes: [],
     // ── THE FOUR REMOTE READINGS (v3.63.0) ──────────────────────────────
     //
     // `remoteChecked` IS ALWAYS FALSE HERE, and that is a decision rather
@@ -5390,7 +5580,8 @@ export async function listFoundations(domain, project) {
     unreachableCount: documents.filter((d) => d.freshness === 'unreachable').length,
     missingFileCount: documents.filter((d) => d.fileMissing).length,
     skeletonCount: documents.filter((d) => d.skeleton).length,
-    ...readFirstReadings(documents),
+    ...readFirstReadings(documents, eff.bytes),
+    manifestNotes: Array.isArray(mf.notes) ? mf.notes.slice(0, 20) : [],
     remoteMirror: !!(manifest.ownership === 'repo' && manifest.repo?.remote),
     remoteChecked: false,
     remoteCommit: manifest.repo?.lastRefreshCommit ?? null,
@@ -5414,7 +5605,7 @@ export async function listFoundations(domain, project) {
  *  one call away — carries all three. A ceiling that exists to keep an empty
  *  project's bootstrap small is not worth spending on a fact nobody reads
  *  here. */
-async function summariseFoundations(domain, project) {
+async function summariseFoundations(domain, project, meta) {
   const empty = {
     present: false, count: 0, totalBytes: 0, staleCount: 0, unreachableCount: 0, skeletonCount: 0,
     // v3.62.0 — the read-first readings ride on the SUMMARY too, so a consumer
@@ -5424,15 +5615,27 @@ async function summariseFoundations(domain, project) {
     budgetExceeded: false, orphanFileCount: 0, manifestError: null,
   };
   try {
-    const idx = await listFoundations(domain, project);
+    const idx = await listFoundations(domain, project, meta ? { meta } : {});
     if (!idx.ok) return empty;
-    return {
+    const out = {
       present: idx.present, count: idx.count, totalBytes: idx.totalBytes, staleCount: idx.staleCount,
       unreachableCount: idx.unreachableCount, skeletonCount: idx.skeletonCount,
       readFirstCount: idx.readFirstCount, onRequestCount: idx.onRequestCount,
       budgetExceeded: idx.budgetExceeded,
       orphanFileCount: idx.orphanFiles.length, manifestError: idx.manifestError,
     };
+    // v3.67.0 — the reading budget and the "not at start" count, CONDITIONAL
+    // on there being something for them to govern: documents, or a budget the
+    // owner set. An empty, untouched project's summary stays byte for byte
+    // what it was, for the ceiling `test-mcp-working-state.js` D3 keeps on a
+    // cold start (1,100 B, measured 1,068 before this release) — a reading
+    // budget with no documents and no plan is a fact about nothing.
+    if (idx.present || idx.planned) {
+      out.readingBudgetBytes = idx.readingBudgetBytes;
+      out.readingBudgetDefaulted = idx.readingBudgetSource !== 'owner';
+      out.hiddenCount = idx.hiddenCount;
+    }
+    return out;
   } catch (err) {
     return { ...empty, manifestError: `could not read the foundations: ${scrubPaths(String(err?.message ?? err)).slice(0, 160)}` };
   }
@@ -5655,6 +5858,11 @@ export async function saveFoundation(domain, project, input = {}) {
         ? (prior ? prior.readFirst === true : false)
         : inp.readFirst === true,
     };
+    // v3.67.0 — `hidden` ("not at start") is the owner's routing too, so a
+    // save PRESERVES it exactly as it preserves `readFirst`; an explicit
+    // `readFirst: true` clears it (the two are mutually exclusive), and an
+    // explicit `false` leaves it where it was.
+    entry.hidden = entry.readFirst === true ? false : (prior ? prior.hidden === true : false);
     const documents = prior
       ? manifest.documents.map((d) => (d.slug === slug ? entry : d))
       : [...manifest.documents, entry];
@@ -5682,6 +5890,7 @@ export async function saveFoundation(domain, project, input = {}) {
       ownership: next.ownership, authoredBy, source: entry.source,
       skeleton: entry.skeleton, wasSkeleton: prior ? prior.skeleton === true : false,
       readFirst: entry.readFirst, wasReadFirst: prior ? prior.readFirst === true : false,
+      hidden: entry.hidden === true,
       totalBytes, budgetBytes: next.budgetBytes, budgetExceeded, documentCount: documents.length,
       notes: finaliseNotes(notes),
     };
@@ -5728,14 +5937,68 @@ export async function saveFoundation(domain, project, input = {}) {
  *   (an unknown domain or project, a read-only Shared Brain mirror).
  */
 export async function setFoundationReadFirst(domain, project, slug, readFirst) {
+  const want = readFirst === true;
+  // `readFirst: true` also clears `hidden` (the two are mutually exclusive in
+  // ONE manifest write); `false` leaves `hidden` exactly where it was.
+  const out = await rewriteFoundationRouting(domain, project, slug, 'set-foundation-read-first',
+    (prior) => ({ readFirst: want, hidden: want ? false : prior.hidden === true }),
+    'flag');
+  if (!out.ok) return out;
+  const { prior, documents, changed, target, s, eff } = out;
+  const now = documents.find((d) => d.slug === s);
+  return {
+    ok: true, domain, project: target.project, slug: s,
+    readFirst: want, wasReadFirst: prior.readFirst === true, changed,
+    // v3.67.0, additive: `readFirst: false` leaves "not at start" in place,
+    // so the caller is told the resulting state rather than left to assume.
+    hidden: now.hidden === true, atStart: foundationStartState(now),
+    ...readFirstReadings(documents, eff.bytes),
+  };
+}
+
+/**
+ * Set ONE document's START STATE (v3.67.0): `read-first` · `on-request` ·
+ * `not-at-start`. MANIFEST ONLY, on EITHER ownership, for the reason
+ * `setFoundationReadFirst` records — the state is curator metadata ABOUT a
+ * document, never part of it, so a mirrored document's bytes and sha are
+ * untouched. `readFirst` and `hidden` move together in ONE manifest write, so
+ * no reader can ever see the contradiction; a no-op write when unchanged.
+ *
+ * Refusals: `invalid-start-state` (not one of FOUNDATION_START_STATES), and
+ * everything `setFoundationReadFirst` refuses.
+ */
+export async function setFoundationStartState(domain, project, slug, atStart) {
+  if (typeof atStart !== 'string' || !FOUNDATION_START_STATES.includes(atStart)) {
+    return {
+      ok: false, reason: 'invalid-start-state',
+      message: `"${String(atStart).slice(0, 40)}" is not a start state. One of: ${FOUNDATION_START_STATES.join(', ')}. Nothing was changed.`,
+    };
+  }
+  const out = await rewriteFoundationRouting(domain, project, slug, 'set-foundation-start-state',
+    () => ({ readFirst: atStart === 'read-first', hidden: atStart === 'not-at-start' }),
+    'route');
+  if (!out.ok) return out;
+  const { prior, documents, changed, target, s, eff } = out;
+  const now = documents.find((d) => d.slug === s);
+  return {
+    ok: true, domain, project: target.project, slug: s,
+    atStart, wasAtStart: foundationStartState(prior), changed,
+    readFirst: now.readFirst === true, hidden: now.hidden === true,
+    ...readFirstReadings(documents, eff.bytes),
+  };
+}
+
+/** The one routing writer both setters share: lock, read, refuse what this
+ *  store cannot read, compute the entry's `{readFirst, hidden}`, write the
+ *  manifest only when something moved. */
+async function rewriteFoundationRouting(domain, project, slug, op, decide, verb) {
   const target = await checkProjectTarget(domain, project);
   if (!target.ok) return target;
   const s = normaliseFoundationSlug(slug);
   if (!s) return { ok: false, reason: 'invalid-slug', message: `"${String(slug).slice(0, 80)}" is not a usable document slug.` };
-  const want = readFirst === true;
   const paths = foundationsPaths(domain, target.prefix);
   if (!paths) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
-  return withFoundationsLock(domain, 'set-foundation-read-first', async () => {
+  return withFoundationsLock(domain, op, async () => {
     const mf = await readManifest(paths.manifestAbs);
     if (mf.status === 'malformed') {
       return {
@@ -5747,7 +6010,7 @@ export async function setFoundationReadFirst(domain, project, slug, readFirst) {
     if (mf.status === 'absent') {
       return {
         ok: false, reason: 'no-manifest',
-        message: `Project "${target.project}" has no foundations yet, so there is no document to flag.`,
+        message: `Project "${target.project}" has no foundations yet, so there is no document to ${verb}.`,
       };
     }
     const manifest = mf.manifest;
@@ -5755,21 +6018,21 @@ export async function setFoundationReadFirst(domain, project, slug, readFirst) {
     if (!prior) {
       return { ok: false, reason: 'not-found', message: `No foundation document "${s}" in project "${target.project}".` };
     }
-    const wasReadFirst = prior.readFirst === true;
-    const documents = wasReadFirst === want
-      ? manifest.documents
-      : manifest.documents.map((d) => (d.slug === s ? { ...d, readFirst: want } : d));
-    if (wasReadFirst !== want) {
+    const want = decide(prior);
+    const nextReadFirst = want.readFirst === true;
+    const nextHidden = !nextReadFirst && want.hidden === true;
+    const changed = (prior.readFirst === true) !== nextReadFirst || (prior.hidden === true) !== nextHidden;
+    const documents = changed
+      ? manifest.documents.map((d) => (d.slug === s ? { ...d, readFirst: nextReadFirst, hidden: nextHidden } : d))
+      : manifest.documents;
+    if (changed) {
       const manifestAbs2 = resolveInsideState(domain, `${paths.dirRel}/${FOUNDATIONS_MANIFEST_FILENAME}`);
       if (!manifestAbs2) return { ok: false, reason: 'unsafe-path', message: 'The manifest path resolves outside the state folder.' };
       try { await writeManifest(manifestAbs2, { ...manifest, documents }); }
       catch (err) { return { ok: false, reason: 'io', message: `Could not rewrite the manifest: ${scrubPaths(String(err?.message ?? err))}. Nothing was changed.` }; }
     }
-    return {
-      ok: true, domain, project: target.project, slug: s,
-      readFirst: want, wasReadFirst, changed: wasReadFirst !== want,
-      ...readFirstReadings(documents),
-    };
+    const eff = effectiveOwnerBudget(await readProjectMeta(domain, target.project));
+    return { ok: true, prior, documents, changed, target, s, eff };
   });
 }
 
@@ -6014,6 +6277,8 @@ async function refreshCore(domain, target, paths, realRoot, files) {
         // the moment somebody edited it in the checkout — exactly when it
         // most needs reading. A newly added document starts unflagged.
         readFirst: w.entry ? w.entry.readFirst === true : false,
+        // v3.67.0 — and so is `hidden`, by slug, for the same reason.
+        hidden: w.entry ? w.entry.hidden === true : false,
       };
       documents = w.entry ? documents.map((d) => (d.slug === slug ? entry : d)) : [...documents, entry];
       (w.entry ? refreshed : added).push(slug);
@@ -6337,6 +6602,7 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
       // PRESERVED, exactly as on the local arm (v3.62.0): the repository owns
       // the BYTES, the owner owns the ROUTING.
       readFirst: w.entry ? w.entry.readFirst === true : false,
+      hidden: w.entry ? w.entry.hidden === true : false,
     };
     documents = w.entry ? documents.map((d) => (d.slug === slug ? next : d)) : [...documents, next];
     (w.entry ? refreshed : added).push(slug);
@@ -7327,8 +7593,37 @@ export async function getProjectContext(domain, project, opts = {}) {
   const state = await readWorkingState(domain, { project, scope, journalLimit: o.journalLimit });
   if (!state.ok) return state;
   const inner = state.project;
-  const index = await listFoundations(domain, inner);
+
+  // ── THE READING BUDGET (v3.67.0): whose, and whether the project is PLANNED
+  // Precedence: a caller's `maxBytes` (clamped) → an INTERNAL what-if (the
+  // app's preview route only; never reachable from an MCP argument) → the
+  // owner's `readingBudgetBytes` → the 120 KB default. Then an optional
+  // CEILING (Chat's per-turn cap) takes the smaller number and keeps the
+  // source. PLANNED means the owner set a budget, or a what-if supplies one.
+  const wi = o.whatIf && typeof o.whatIf === 'object' && !Array.isArray(o.whatIf) ? o.whatIf : null;
+  const ownerBytes = isValidReadingBudget(state.readingBudgetBytes) ? state.readingBudgetBytes : null;
+  const whatIfHasBudget = !!wi && Object.prototype.hasOwnProperty.call(wi, 'ownerBudgetBytes');
+  const whatIfBudget = whatIfHasBudget && isValidReadingBudget(wi.ownerBudgetBytes) ? wi.ownerBudgetBytes : null;
+  // A what-if of `null` simulates "no budget set": unplanned, the default.
+  const planOwner = whatIfHasBudget ? whatIfBudget : ownerBytes;
+  const planned = planOwner !== null;
+  const index = await listFoundations(domain, inner, { meta: { readingBudgetBytes: planOwner } });
   if (!index.ok) return index;
+
+  // A what-if of per-document start states re-routes the rows IN MEMORY only.
+  let routedDocs = index.documents;
+  let readings = index;
+  const wiStates = wi && wi.startStates && typeof wi.startStates === 'object' && !Array.isArray(wi.startStates)
+    ? wi.startStates : null;
+  if (wiStates) {
+    routedDocs = index.documents.map((d) => {
+      if (!Object.prototype.hasOwnProperty.call(wiStates, d.slug)) return d;
+      const st = wiStates[d.slug];
+      if (!FOUNDATION_START_STATES.includes(st)) return d;
+      return { ...d, readFirst: st === 'read-first', hidden: st === 'not-at-start', atStart: st };
+    });
+    readings = readFirstReadings(routedDocs, index.readFirstBudgetBytes);
+  }
 
   let seenHashes = null, seenSource = 'none';
   const callerSeen = normaliseSeen(o.seenHashes);
@@ -7336,25 +7631,41 @@ export async function getProjectContext(domain, project, opts = {}) {
   else if (state.current?.present && state.current.foundationsRead) {
     seenHashes = state.current.foundationsRead; seenSource = 'handoff';
   }
+  const rawMax = Number(o.maxBytes);
+  const callerMax = Number.isFinite(rawMax) && rawMax > 0;
+  let maxBytes = callerMax
+    ? Math.max(1024, Math.min(Math.floor(rawMax), CONTEXT_MAX_BYTES_CAP))
+    : planned ? planOwner : CONTEXT_MAX_BYTES_DEFAULT;
+  const budgetSource = callerMax ? 'caller' : planned ? (whatIfHasBudget ? 'whatif' : 'owner') : 'default';
+  const rawCeil = Number(o.maxBytesCeiling);
+  const ceilingBytes = Number.isFinite(rawCeil) && rawCeil >= 0 ? Math.floor(rawCeil) : null;
+  if (ceilingBytes !== null) maxBytes = Math.min(maxBytes, ceilingBytes);
+
   // The owner's routing flag changes the DEFAULT as well as the selection:
   // with a flag in play, 'all' on a first session would send every body and
   // contradict the whole point of flagging. With no flag it is untouched.
-  const anyReadFirst = index.documents.some((d) => d.readFirst === true);
-  const includeMode = o.include === 'index' || o.include === 'changed' || o.include === 'all'
-    ? o.include : (seenHashes || anyReadFirst ? 'changed' : 'all');
+  // PLANNED (v3.67.0) is one more row of the same table: the plan wins, so
+  // 'changed' selects the read-first set even with NOTHING flagged — and an
+  // effective budget of 0 (Index only) resolves to 'index'.
+  const anyReadFirst = routedDocs.some((d) => d.readFirst === true);
+  const routeByFlag = anyReadFirst || planned;
+  let includeMode = o.include === 'index' || o.include === 'changed' || o.include === 'all'
+    ? o.include : (seenHashes || routeByFlag ? 'changed' : 'all');
+  if (planned && maxBytes === 0) includeMode = 'index';
   const bodySelection = includeMode === 'index' ? 'index'
     : includeMode === 'all' ? 'all'
-      : anyReadFirst ? 'read-first' : 'changed';
-  const rawMax = Number(o.maxBytes);
-  const maxBytes = Number.isFinite(rawMax) && rawMax > 0
-    ? Math.max(1024, Math.min(Math.floor(rawMax), CONTEXT_MAX_BYTES_CAP))
-    : CONTEXT_MAX_BYTES_DEFAULT;
+      : routeByFlag ? 'read-first' : 'changed';
 
-  const bySlug = new Map(index.documents.map((d) => [d.slug, d]));
-  const indexRows = index.readingOrder.map((slug) => {
+  // `not at start` documents (v3.67.0) are absent from the index, from 'all',
+  // from the budgeted set and from `seen` — but a caller that NAMES one still
+  // gets it: hiding a document from the start is not denying it.
+  const bySlug = new Map(routedDocs.map((d) => [d.slug, d]));
+  const allRows = index.readingOrder.map((slug) => {
     const d = bySlug.get(slug);
     return { ...d, changedSinceSeen: !seenHashes || seenHashes[slug] !== d.sha256 };
   });
+  const indexRows = allRows.filter((d) => d.hidden !== true);
+  const hiddenCount = allRows.length - indexRows.length;
   // ── `slugs`, resolved FIRST: every refusal named, order preserved ──────
   const view = projectView(domain, inner);
   const requestedRefused = [];
@@ -7367,7 +7678,7 @@ export async function getProjectContext(domain, project, opts = {}) {
       const s = normaliseFoundationSlug(entry);
       if (!s) { requestedRefused.push({ slug: label, reason: 'invalid-slug' }); continue; }
       if (taken.has(s)) { requestedRefused.push({ slug: s, reason: 'duplicate' }); continue; }
-      const row = indexRows.find((d) => d.slug === s);
+      const row = allRows.find((d) => d.slug === s);
       if (!row) { requestedRefused.push({ slug: s, reason: 'not-found' }); continue; }
       if (row.fileMissing) { requestedRefused.push({ slug: s, reason: 'file-missing' }); continue; }
       taken.add(s);
@@ -7380,7 +7691,7 @@ export async function getProjectContext(domain, project, opts = {}) {
   // as well — the alternative is paying for the same bytes twice.
   const wanted = includeMode === 'index' ? []
     : indexRows.filter((d) => !requestedSet.has(d.slug)
-      && (includeMode === 'all' || (anyReadFirst ? d.readFirst === true : d.changedSinceSeen)));
+      && (includeMode === 'all' || (routeByFlag ? d.readFirst === true : d.changedSinceSeen)));
 
   const documents = [];
   const requested = [];
@@ -7394,7 +7705,7 @@ export async function getProjectContext(domain, project, opts = {}) {
     if (!r.ok) { requestedRefused.push({ slug, reason: r.reason || 'unreadable' }); continue; }
     seen[slug] = r.sha256;
     requestedBytes += Buffer.byteLength(r.text, 'utf8');
-    const row = indexRows.find((d) => d.slug === slug);
+    const row = allRows.find((d) => d.slug === slug);
     requested.push({
       slug: r.slug, role: r.role, title: r.title, text: r.text, sha256: r.sha256, bytes: r.bytes,
       truncated: r.truncated, shaMismatch: r.shaMismatch, source: r.source, commit: r.commit,
@@ -7412,7 +7723,9 @@ export async function getProjectContext(domain, project, opts = {}) {
     let size = Buffer.byteLength(text, 'utf8');
     let cut = r.truncated;
     if (usedBytes + size > maxBytes) {
-      if (documents.length > 0) { omitted.push(row.slug); continue; }
+      // The first-document exception does NOT apply at a budget of 0: Index
+      // only is a plan, and a cut document is not what the owner planned.
+      if (documents.length > 0 || maxBytes === 0) { omitted.push(row.slug); continue; }
       text = sliceToBytes(text, Math.max(0, maxBytes - 64)) + '\n\n_(document cut at the reading budget)_\n';
       size = Buffer.byteLength(text, 'utf8');
       cut = true;
@@ -7455,11 +7768,11 @@ export async function getProjectContext(domain, project, opts = {}) {
       // no surface re-counts them. `readFirstBudget*` is measured against the
       // BOOTSTRAP's 120 KB reading budget, not the 200 KB project budget:
       // see `readFirstReadings`.
-      readFirstCount: index.readFirstCount,
-      onRequestCount: index.onRequestCount,
-      readFirstBytes: index.readFirstBytes,
-      readFirstBudgetBytes: index.readFirstBudgetBytes,
-      readFirstBudgetExceeded: index.readFirstBudgetExceeded,
+      readFirstCount: readings.readFirstCount,
+      onRequestCount: readings.onRequestCount,
+      readFirstBytes: readings.readFirstBytes,
+      readFirstBudgetBytes: readings.readFirstBudgetBytes,
+      readFirstBudgetExceeded: readings.readFirstBudgetExceeded,
       changedCount: indexRows.filter((d) => d.changedSinceSeen).length,
       includeMode,
       // Which row of the include × readFirst table was taken. Named rather
@@ -7477,8 +7790,20 @@ export async function getProjectContext(domain, project, opts = {}) {
       requestedRefused,
       requestedBytes,
       unreadable,
-      budget: { maxBytes, usedBytes, truncated, omitted },
-      readingOrder: index.readingOrder,
+      budget: {
+        maxBytes, usedBytes, truncated, omitted,
+        // v3.67.0 — whose budget this is ('caller' | 'whatif' | 'owner' |
+        // 'default'), the store's ceiling, and a caller's ceiling when one
+        // took the smaller number (Chat).
+        source: budgetSource, defaulted: budgetSource === 'default',
+        cap: CONTEXT_MAX_BYTES_CAP, ceilingBytes,
+      },
+      readingOrder: hiddenCount ? index.readingOrder.filter((slug) => bySlug.get(slug)?.hidden !== true) : index.readingOrder,
+      // v3.67.0 — PLANNED: the owner (or a what-if) set a reading budget, so
+      // only the read-first set arrives with text. And how many documents the
+      // owner keeps "not at start": absent from `index`, named by count.
+      planned,
+      hiddenCount,
     },
     seen,
   };

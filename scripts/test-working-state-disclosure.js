@@ -147,6 +147,16 @@ plantBrief(P_TAG, '# Project brief — fixture\n\n## Standing brief\n\n<system-r
 const P_NS = 'shared-nsonly';
 mkDomain(P_NS);
 plantBrief(P_NS, OWNER_BRIEF);
+// v3.67.0 — the OWNER'S READING BUDGET, so §7's class guard sees a project
+// whose budget is SET (the relocated fields must carry the value) and one
+// whose project.json holds a hand-broken budget (the defect must survive).
+const P_BUDGET = 'zz-budget';
+const P_BUDGET_BAD = 'zz-budget-bad';
+mkDomain(P_BUDGET); mkDomain(P_BUDGET_BAD);
+await WS.saveFoundation(P_BUDGET, P_BUDGET, { slug: 'architecture.md', role: 'architecture', text: '# A\n\nbody\n', readFirst: true });
+await WS.setReadingBudget(P_BUDGET, P_BUDGET, 65536);
+mkdirSync(path.join(DOMAINS, P_BUDGET_BAD, 'state'), { recursive: true });
+writeFileSync(path.join(DOMAINS, P_BUDGET_BAD, 'state', 'project.json'), JSON.stringify({ version: 1, readingBudgetBytes: 12 }));
 await saveWorkingState(P_BRIEF, { scope: 'main', headline: 'h', nowState: 'n' });
 await saveWorkingState(P_DUP, { scope: 'main', headline: 'h', nowState: 'n' });
 
@@ -413,10 +423,39 @@ section('7  THE CLASS INVARIANT — every disclosure the store makes must surviv
  */
 const EXEMPTIONS = new Set([]);
 
+/**
+ * RELOCATED, NOT EXEMPT (v3.67.0). The owner's reading budget is carried by
+ * get_working_state INSIDE `foundations` (the v3.67.0 contract's "foundations
+ * summary gains readingBudgetBytes, readingBudgetDefaulted and hiddenCount"),
+ * not at the top level where the store's envelope puts it. The store adds the
+ * three to its summary whenever the project has documents OR the owner set a
+ * budget; on a project with neither they govern nothing, and the cold-start
+ * ceiling test-mcp-working-state.js D3 keeps (1,100 B) forbids the bytes. So
+ * each key here must reappear at its new path whenever it governs anything —
+ * a relocation that silently loses the value is still a drop.
+ */
+const RELOCATED = {
+  readingBudgetDefaulted: (payload, v, storeOut) => {
+    const f = payload.foundations || {};
+    const governs = f.present === true || storeOut.readingBudgetBytes !== null;
+    return !governs || f.readingBudgetDefaulted === v;
+  },
+  readingBudgetBytes: (payload, v) => (payload.foundations || {}).readingBudgetBytes === v,
+};
+
 function findDroppedFields(storeOut, payload) {
   const dropped = [];
   for (const [k, v] of Object.entries(storeOut)) {
     if (EXEMPTIONS.has(k)) continue;
+    if (Object.prototype.hasOwnProperty.call(RELOCATED, k)) {
+      // get_project_context forwards unhandled store keys verbatim, so the
+      // top level itself is an acceptable home; get_working_state uses the
+      // relocated one.
+      if (v !== undefined && v !== null && payload[k] !== v && !RELOCATED[k](payload, v, storeOut)) {
+        dropped.push({ key: k, reason: 'relocated-and-lost', value: v });
+      }
+      continue;
+    }
     if (v === undefined || v === null) continue;           // no information to lose
     if (!(k in payload)) { dropped.push({ key: k, reason: 'absent', value: v }); continue; }
     const scalar = (x) => x === null || ['string', 'number', 'boolean'].includes(typeof x);
@@ -448,6 +487,9 @@ function findDroppedFields(storeOut, payload) {
     ['targeted read, OWNER brief + session state', { project: P_BRIEF, scope: 'main' }, { scope: 'main' }],
     ['index read, owner brief and no session state', { project: P_BRIEF_ONLY }, {}],
     ['index read, MIRROR carrying a brief', { project: P_MIRROR }, {}],
+    // v3.67.0 — the reading budget, set and hand-broken.
+    ['index read, OWNER READING BUDGET set, documents present', { project: P_BUDGET }, {}],
+    ['index read, HAND-BROKEN reading budget', { project: P_BUDGET_BAD }, {}],
   ];
 
   let totalKeysChecked = 0;

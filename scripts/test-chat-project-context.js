@@ -31,7 +31,8 @@
  *     order, must make §2's own predicates FAIL. Without it a green §2 is a
  *     tautology about a string that happens to contain some substrings.
  *
- * §4  THE BUDGET, stated and separate: 40 KB reaches the store as `maxBytes`,
+ * §4  THE BUDGET, stated and separate: 40 KB reaches the store as the ceiling
+ *     `maxBytesCeiling` (v3.67.0; it was `maxBytes`),
  *     the wiki's three constants are not touched, and every omission the
  *     store discloses reaches the PROMPT as a line.
  *
@@ -397,7 +398,10 @@ section('§4 — TWO BUDGETS, STATED, AND EVERY OMISSION DISCLOSED');
   });
   ok(out.ok, 'a well-shaped envelope loads');
   eq(store.calls.length, 1, 'ONE store call when nothing is flagged read-first — today\'s shape for every existing project');
-  eq(store.calls[0].opts.maxBytes, PROJECT_CONTEXT_BUDGET_CHARS, 'the budget reaches the store as `maxBytes`');
+  // v3.67.0 — a CEILING, not a caller's budget: `maxBytes` would read as
+  // `budget.source: 'caller'` and clamp an owner's Index only (0) up to 1024.
+  eq(store.calls[0].opts.maxBytesCeiling, PROJECT_CONTEXT_BUDGET_CHARS, 'the budget reaches the store as the ceiling `maxBytesCeiling`');
+  eq(store.calls[0].opts.maxBytes, undefined, '…and NOT as `maxBytes`, so the owner\'s budget still decides under it');
   eq(store.calls[0].opts.include, 'changed', '…with the bootstrap\'s own default include mode');
   eq(store.calls[0].domain, 'articles', '…for the right domain');
   eq(store.calls[0].project, 'curator', '…and the right project');
@@ -412,6 +416,20 @@ section('§4 — TWO BUDGETS, STATED, AND EVERY OMISSION DISCLOSED');
   const s3 = fakeStore([envelope()]);
   await loadProjectContext('articles', 'curator', { queryContext: 'x', getProjectContext: s3 });
   eq(s3.calls[0].opts.scope, undefined, 'no scope ⇒ undefined, so the STORE decides what "latest" means');
+
+  // v3.67.0 — THE EFFECTIVE BUDGET IS THE STORE'S, and a zero is obeyed even
+  // when the selection still reads 'read-first' (a store that planned the
+  // project but whose reply is at Index only must not be second-guessed by a
+  // keyword match). The query names decisions and conventions, which WOULD be
+  // fetched by name at any budget above zero — the control two lines down.
+  const z = fakeStore([envelope({ foundations: { documents: [], budget: { maxBytes: 0, usedBytes: 0, truncated: false, omitted: [], source: 'owner' } } })]);
+  const zOut = await loadProjectContext('articles', 'curator', { queryContext: 'the decision log and the conventions', getProjectContext: z });
+  eq(z.calls.length, 1, 'a zero effective budget: ONE store call — the keyword-matched second call is skipped');
+  eq(zOut.summary.budgetChars, 0, '…and budgetChars reports the store\'s 0, not the 40,000 ceiling');
+  const nz = fakeStore([envelope({ foundations: { budget: { maxBytes: 32768, usedBytes: 9, truncated: false, omitted: [], source: 'owner' } } }), envelope()]);
+  const nzOut = await loadProjectContext('articles', 'curator', { queryContext: 'the decision log and the conventions', getProjectContext: nz });
+  eq(nz.calls.length, 2, 'CONTROL: the same query at 32 KB does make the second call');
+  eq(nzOut.summary.budgetChars, 32768, '…and budgetChars follows the owner\'s number under the ceiling');
 
   // EVERY DISCLOSURE REACHES THE PROMPT. Dropping a field the store computed
   // honestly is this repo's most-repeated defect class.

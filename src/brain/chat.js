@@ -88,8 +88,13 @@ const HEAD_SCAN_CHARS         = 600;      // chars from page head used in scorin
 // spent before, and `buildPrompt` returns a byte-identical string on that
 // path (pinned by scripts/test-chat-project-context.js §1).
 //
-// This one is SEPARATE and ADDITIVE. It is passed to `getProjectContext` as
-// `maxBytes`, whose own clamp is [1024, CONTEXT_MAX_BYTES_CAP].
+// This one is SEPARATE and ADDITIVE. Since v3.67.0 it is passed to
+// `getProjectContext` as a CEILING (`maxBytesCeiling`), not as `maxBytes`: the
+// effective budget is min(the owner's reading budget or the 120 KB default,
+// this), and its source stays 'owner'/'default'. An untouched project gets
+// min(120 KB, 40,000) = 40,000 — byte-identical to v3.66.0 — and an owner who
+// chose Index only (0) gets no document text here either; passing it as
+// `maxBytes` would have read as a caller's ask and clamped 0 up to 1024.
 //
 // 40 KB is CHOSEN, not inherited. The bootstrap's own default is 120 KB
 // (`CONTEXT_MAX_BYTES_DEFAULT`), which is sized for an agent whose entire
@@ -958,7 +963,7 @@ export async function loadProjectContext(domain, project, opts = {}) {
   const base = {
     scope,
     include: 'changed',
-    maxBytes: PROJECT_CONTEXT_BUDGET_CHARS,
+    maxBytesCeiling: PROJECT_CONTEXT_BUDGET_CHARS,
     journalLimit: PROJECT_JOURNAL_LIMIT,
   };
   const ctx = await get(domain, project, base);
@@ -973,8 +978,18 @@ export async function loadProjectContext(domain, project, opts = {}) {
   const queryTokens = new Set(tokenize(opts.queryContext || ''));
   const docs = [...(ctx.foundations?.documents || [])];
   let extraCalls = 0;
+  // THE EFFECTIVE BUDGET (v3.67.0): what the store actually spent against —
+  // min(owner-or-default, the ceiling) — used for the second call's loop and
+  // reported as `budgetChars`, so the footer bar follows the owner's number
+  // with no view arithmetic. A fake store that predates the field reads as
+  // the ceiling, which is what it was.
+  const eff = ctx.foundations?.budget && Number.isInteger(ctx.foundations.budget.maxBytes)
+    ? Math.min(ctx.foundations.budget.maxBytes, PROJECT_CONTEXT_BUDGET_CHARS)
+    : PROJECT_CONTEXT_BUDGET_CHARS;
 
-  if (ctx.foundations?.bodySelection === 'read-first') {
+  // At 0 (the owner chose Index only) nothing is keyword-matched either:
+  // Chat's match is automatic, not "by name", so it must obey the plan.
+  if (ctx.foundations?.bodySelection === 'read-first' && eff > 0) {
     const extra = selectExtraFoundationSlugs(ctx, queryTokens);
     if (extra.length) {
       extraCalls = 1;
@@ -988,7 +1003,7 @@ export async function loadProjectContext(domain, project, opts = {}) {
         let used = docs.reduce((n, d) => n + (d.text ? d.text.length : 0), 0);
         for (const d of (more.foundations?.requested || [])) {
           const size = d.text ? d.text.length : 0;
-          if (used + size > PROJECT_CONTEXT_BUDGET_CHARS) {
+          if (used + size > eff) {
             ctx.foundations.budget = ctx.foundations.budget || {};
             ctx.foundations.budget.omitted = [...(ctx.foundations.budget.omitted || []), d.slug];
             continue;
@@ -1040,7 +1055,7 @@ export async function loadProjectContext(domain, project, opts = {}) {
       // and the second call is capped in chars above — so a bar drawn from
       // it cannot show an over-run that did not happen.
       documentChars: docs.reduce((n, d) => n + (d && typeof d.text === 'string' ? d.text.length : 0), 0),
-      budgetChars: PROJECT_CONTEXT_BUDGET_CHARS,
+      budgetChars: eff,
       extraStoreCalls: extraCalls,
       notes: projectOmissionNotes(ctx, journalEntries),
     },

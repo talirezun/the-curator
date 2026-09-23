@@ -818,14 +818,19 @@ section('12. readFirst — the owner\'s routing flag, and fetch by name (v3.62.0
     'readFirstCount', 'onRequestCount', 'readFirstBytes', 'readFirstBudgetBytes',
     'readFirstBudgetExceeded', 'bodySelection', 'requested', 'requestedRefused', 'requestedBytes',
   ];
+  // v3.67.0 — exactly TWO more, deliberately: `planned` (the owner set a
+  // reading budget, so only the read-first set arrives with text) and
+  // `hiddenCount` (documents kept "not at start", absent from `index`). The
+  // budget's own new keys live INSIDE `budget`, which already existed.
+  const V3670_ADDED_FIELDS = ['planned', 'hiddenCount'];
   const plain = await getProjectContext('frf', 'frf', {});
   const keys = Object.keys(plain.foundations);
   assert(V3611_FOUNDATIONS_FIELDS.every((k) => keys.includes(k)),
     'every field the v3.61.1 foundations envelope carried is still there',
     V3611_FOUNDATIONS_FIELDS.filter((k) => !keys.includes(k)).join());
   assert(JSON.stringify(keys.filter((k) => !V3611_FOUNDATIONS_FIELDS.includes(k)).sort())
-    === JSON.stringify([...V3620_ADDED_FIELDS].sort()),
-    'and the ONLY new fields are the nine v3.62.0 ones — a tenth is a deliberate decision, not a drift',
+    === JSON.stringify([...V3620_ADDED_FIELDS, ...V3670_ADDED_FIELDS].sort()),
+    'and the ONLY new fields are the nine v3.62.0 ones plus v3.67.0\'s `planned` and `hiddenCount` — another is a deliberate decision, not a drift',
     keys.filter((k) => !V3611_FOUNDATIONS_FIELDS.includes(k)).join());
   // The selection and the budget arithmetic, unflagged, across §8's scenarios.
   const unflagged = [

@@ -517,6 +517,14 @@ const EXPECTED = [
   // about a project called `knowledge`. Measured with a stand-in router
   // before this route was written.
   ['patch', '/:domain/:project/knowledge/domains'],
+  // v3.67.0 (package S) — THE READING BUDGET and SESSION START. The budget
+  // PATCH is FOUR segments for the collision the row above records; the two
+  // session-start routes carry a literal third segment, the same shape as
+  // `capture`, and the preview is a POST because a proposed plan of up to 200
+  // documents does not belong in a URL. Neither session-start route writes.
+  ['patch', '/:domain/:project/reading/budget'],
+  ['get', '/:domain/:project/session-start'],
+  ['post', '/:domain/:project/session-start/preview'],
   // TIER 0 (v3.59.0; the write rows v3.61.0). Four segments, so none can
   // shadow — or be shadowed by — the two-segment reads below; the ordering
   // WITHIN this group is readability, not correctness, and no `:slug` row
