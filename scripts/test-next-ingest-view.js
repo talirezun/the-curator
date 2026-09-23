@@ -83,6 +83,8 @@ function ok(cond, label) {
 /** Extract `function NAME(...) { ... }` by brace-matching, ignoring braces
  *  inside strings, template literals and comments. Returns null when the
  *  function cannot be found — §0 turns that into a loud failure. */
+function eq(a, b, label) { ok(a === b, label + ' (got ' + JSON.stringify(a) + ', expected ' + JSON.stringify(b) + ')'); }
+
 function extractFunction(src, name) {
   const re = new RegExp('^(?:async\\s+)?function\\s+' + name + '\\s*\\(', 'm');
   const m = re.exec(src);
@@ -1135,8 +1137,8 @@ console.log('\n§13  Server-backed activity — a run survives navigating away')
         '§13i and takes its percentage from ringAria — the same function that stamps aria-valuenow, so the number a sighted user reads and the one announced are ONE derivation (the v3.18.0 three-figure defect)');
       ok(/center: 'none'/.test(rp),
         '§13i and suppresses the centre glyph, so the stage is stated once');
-      ok(/r\.waiting \? 'attention'/.test(rp),
-        '§13i a retry/backoff still shows amber and still does not advance the ring');
+      ok(/r\.waiting \? 'warn' : 'busy'/.test(rp),
+        '§13i a retry/backoff still shows amber (the kit\'s tone word "warn", v3.66.0) and still does not advance the ring');
       ok(/filename/.test(rp),
         '§13i it names the FILE — "an ingest is running" is not the question a returning user has; "is THIS article in?" is');
       ok(/ing-remote-elapsed/.test(rp),
@@ -2765,6 +2767,107 @@ console.log('\n§ 18  The v3.64.0 host seam — additive by rule, not by intenti
       '§18 …and it calls NOTHING else — three functions and the method that ' +
       'holds them (found: ' + called.join(', ') + ')');
   }
+}
+
+// ── §21  P5 (v3.66.0): BATCH SPEND vs THE budgetUsd CAP ─────────────────
+// EXECUTED, through the real panel and done summary, the REAL depth bar, the
+// real status block, the real honest USD formatter and the real byte-pinned
+// spend label. Only the collaborators this section is not about are stubs
+// (the item rows, the in-flight controls, the paused banner).
+{
+  console.log('\n§21 P5 — batch spend vs the budgetUsd cap');
+  const { renderDepthCell } = await import('../src/public/next/shared/depth-bar.js');
+  const { renderStatus } = await import('../src/public/next/shared/text.js');
+  const { formatUsdHonest } = await import('../src/public/next/shared/format-usd.js');
+  const { progressRingHtml } = await import('../src/public/next/shared/progress-ring.js');
+  const logic = await import('../src/public/next/shared/ingest-queue-logic.js');
+  const esc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const names = ['queueBudgetFacts', 'queueBudgetSpendHtml', 'queueOverrunHtml', 'renderQueuePanel',
+    'renderQueueDoneSummary', 'isQueueTerminal'];
+  const bodies = names.map((n) => extractFunction(js, n));
+  ok(bodies.every(Boolean), '§21-pre every lifted function was found (' + names.join(', ') + ')');
+  const api = new Function(
+    'state', 'escapeHtml', 'renderDepthCell', 'renderStatus', 'formatUsdHonest', 'progressRingHtml',
+    'computeQueueSpentLabel', 'computeQueueStatusCounts', 'formatHealthCounts',
+    'renderQueuePausedBanner', 'computeQueueInFlight', 'renderQueueItemRow',
+    bodies.join('\n') + '\nreturn { queueBudgetFacts, renderQueuePanel, renderQueueDoneSummary };',
+  )(
+    { queueStreamError: null, queueDropIgnored: false, queueCancelConfirmOpen: false, queueActionBusy: null },
+    esc, renderDepthCell, renderStatus, formatUsdHonest, progressRingHtml,
+    logic.computeQueueSpentLabel, logic.computeQueueStatusCounts, logic.formatHealthCounts,
+    () => '<PAUSED/>', () => ({ noticeHtml: '', controlsHtml: '' }), () => '',
+  );
+  const job = (over) => Object.assign({
+    status: 'running', domain: 'research', items: [{ status: 'done' }, { status: 'running' }],
+    spentUsd: 0.041, budgetUsd: 0.05, spendIsEstimated: false, spendIsLowerBound: false,
+  }, over);
+  const head = (html) => (html.match(/<div class="ing-queue-panel-sub">[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/) || [''])[0];
+  const width = (html) => { const m = /cur-depth-bar[^"]*" style="width:([\d.]+)%"/.exec(html || ''); return m ? Number(m[1]) : null; };
+
+  // ── UNDER THE CAP ───────────────────────────────────────────────────
+  const under = api.renderQueuePanel(job());
+  const uh = head(under);
+  eq(width(uh), 82, '§21a the head line draws spend ÷ cap: $0.041 of $0.05 = 82%');
+  ok(/class="cur-depth-value">\$0\.04</.test(uh), '§21a …the figure through the honest formatter');
+  ok(/spent of the <span class="ing-num">\$0\.05<\/span> cap/.test(uh), '§21a …and the cap NAMED in words');
+  ok(!/cur-depth-danger/.test(uh), '§21a under the cap the bar is NEUTRAL');
+  ok(!/Over the spending cap/.test(under), '§21a …and there is no over-run sentence');
+  eq((under.match(/cur-depth-bar/g) || []).length, 1, '§21a ONE bar on the panel');
+
+  // ── OVER THE CAP: danger, AND the fact in words, unfolded ────────────
+  const over = api.renderQueuePanel(job({ status: 'paused', pausedReason: 'budget', spentUsd: 0.063 }));
+  const oh = head(over);
+  eq(width(oh), 100, '§21b an over-run fills the cell (clamped), never overflows it');
+  ok(/cur-depth-danger/.test(oh), '★ §21b spent > cap turns the bar DANGER');
+  ok(/Over the spending cap/.test(over) && /\$0\.06 spent, \$0\.01 over the \$0\.05 cap\./.test(over),
+    '★ §21b …and the SAME fact is a sentence: "$0.06 spent, $0.01 over the $0.05 cap."');
+  ok(!/<details/.test(over), '§21b …never behind a chevron (v3.16.1)');
+  ok(over.indexOf('Over the spending cap') < over.indexOf('<PAUSED/>'),
+    '§21b …directly under the head line, above the paused banner');
+  ok(/class="tx-status tx-status-danger"/.test(over),
+    '§21b …through the kit status block\'s DANGER rail (a mark), not coloured text');
+  const exact = api.renderQueuePanel(job({ status: 'paused', pausedReason: 'budget', spentUsd: 0.05 }));
+  ok(!/cur-depth-danger/.test(head(exact)) && !/Over the spending cap/.test(exact),
+    '§21b CONTROL: spend EQUAL to the cap is not an over-run — full bar, neutral, no sentence');
+
+  // ── THE QUALIFIERS STAY IN THE WORDS, OUTSIDE THE CELL ───────────────
+  const est = api.renderQueuePanel(job({ spentUsd: 0.063, spendIsEstimated: true, spendIsLowerBound: true }));
+  ok(/approx\. <span class="ing-queue-spend">/.test(head(est)), '★ §21c spendIsEstimated → "approx." as prose BEFORE the cell');
+  ok(/approx\. \$0\.06 spent, approx\. \$0\.01 over/.test(est), '§21c …and in the over-run sentence (estimated WINS over lower-bound)');
+  const lb = api.renderQueuePanel(job({ spentUsd: 0.063, spendIsLowerBound: true }));
+  ok(/at least <span class="ing-queue-spend">/.test(head(lb)), '★ §21c spendIsLowerBound → "at least" before the cell');
+  ok(/at least \$0\.06 spent, at least \$0\.01 over/.test(lb), '§21c …and in the sentence');
+  ok(!/class="cur-depth-value">(approx|at least)/.test(est + lb), '§21c the qualifier is NEVER inside the mono figure');
+  ok(/cur-depth-danger/.test(head(est)), '§21c an ESTIMATED over-run still draws danger (the bar still draws, the words keep "approx.")');
+
+  // ── NO CAP → NO BAR; FIRST FILE PENDING → NO BAR ─────────────────────
+  const nocap = api.renderQueuePanel(job({ budgetUsd: null }));
+  ok(!/cur-depth/.test(nocap), '★ §21d no cap set → NO bar anywhere (no denominator)');
+  ok(/\$0\.0410 spent/.test(head(nocap)), '§21d …and the head line is the shipped spend label, unchanged');
+  const pending = api.renderQueuePanel(job({ spentUsd: 0, items: [{ status: 'running' }] }));
+  ok(!/cur-depth/.test(pending), '★ §21d before the first file charges anything → NO bar (v3.3.1: an empty bar would read as a measured zero)');
+  ok(/pending first file/.test(head(pending)) && /\$0\.05<\/span> cap/.test(head(pending)),
+    '§21d …"pending first file" stays, and the cap is still named');
+  const bad = api.queueBudgetFacts(job({ budgetUsd: 0 }));
+  eq(bad, null, '§21d a zero cap is no cap (no denominator)');
+  eq(api.queueBudgetFacts(job({ budgetUsd: 'lots' })), null, '§21d …nor is a non-number');
+
+  // ── THE DONE SUMMARY: the cap in words, the bar drawn ONCE ───────────
+  const done = api.renderQueuePanel(job({ status: 'done', items: [{ status: 'done' }, { status: 'done' }], spentUsd: 0.063 }));
+  const summary = (done.match(/<div class="ing-queue-done-summary">[\s\S]*$/) || [''])[0];
+  ok(/of the <span class="ing-num">\$0\.05<\/span> cap/.test(summary), '§21e the terminal summary names the cap in words');
+  eq((done.match(/cur-depth-bar/g) || []).length, 1, '★ §21e ONE bar on a finished panel — the head line\'s; the summary does not draw a second');
+  ok(/Over the spending cap/.test(done), '§21e a finished over-run batch still says so, unfolded');
+  const doneNoCap = api.renderQueueDoneSummary(job({ status: 'done', budgetUsd: null }));
+  ok(!/ cap</.test(doneNoCap), '§21e CONTROL: no cap → the summary says nothing about one');
+}
+
+// ── §21f  TONE WORDS for the ring callers are the kit's own (v3.66.0) ──
+{
+  const calls = [...js.matchAll(/tone:\s*([^,\n]+),/g)].map((m) => m[1]);
+  ok(calls.length >= 3, '§21f CONTROL — the three ring tone expressions were found (' + calls.length + ')');
+  ok(calls.every((c) => !/'(success|attention|accent)'/.test(c)),
+    '§21f no ring caller uses a legacy tone word (success/attention/accent) — ok/warn/busy only');
 }
 
 // ── Summary ─────────────────────────────────────────────────────────────

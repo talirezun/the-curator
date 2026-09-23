@@ -178,6 +178,10 @@ import { formatDayAge, freshnessDotHtml, clockGlyph } from '../shared/age.js';
 // kit's own glyph and the kit's own colour, so a destination row and that
 // domain's row on the Domains rail cannot disagree.
 import { identityDotClass } from '../shared/sidebar.js';
+// THE DEPTH BAR (design rule 6, v3.66.0). The batch panel is one of the four
+// hosts OUTSIDE a monitor, so it imports the bar from its public address. See
+// `queueBudgetFacts` for the one reading it draws: spend against the cap.
+import { renderDepthCell } from '../shared/depth-bar.js';
 
 const ALLOWED_EXT = ['.txt', '.md', '.pdf'];
 const QUEUE_API = '/api/ingest-queue';
@@ -2323,7 +2327,7 @@ function renderProgress() {
         center: 'none',
         // waiting === a retry/backoff sub-event, which re-sends the SAME
         // pct — so the ring correctly does not advance, and amber says why.
-        tone: pct >= 100 ? 'success' : (p.waiting ? 'attention' : 'accent'),
+        tone: pct >= 100 ? 'ok' : (p.waiting ? 'warn' : 'busy'),
         labelHtml: labelContent,
         sublabelHtml,
         className: 'ing-progress-ring',
@@ -2425,7 +2429,7 @@ function renderRemoteProgress() {
         center: 'none',
         // waiting === a retry/backoff sub-event, which re-sends the SAME pct —
         // so the ring correctly does not advance, and amber says why.
-        tone: r.waiting ? 'attention' : 'accent',
+        tone: r.waiting ? 'warn' : 'busy',
         labelHtml: escapeHtml(r.message || 'Working…'),
         sublabelHtml,
         className: 'ing-progress-ring',
@@ -4305,6 +4309,86 @@ function renderQueueRejectedItem(entry) {
  * WHICH provider, and it is the one part a user can act on. Absent is not
  * zero — when the server sent none, nothing extra is rendered.
  */
+// ── SPEND vs THE CAP (P5, v3.66.0) ─────────────────────────────────────
+// The batch's one real budget: `budgetUsd`, the cap the user typed, forwarded
+// by toWire (src/brain/ingest-queue.js). `createJob` REFUSES a cap it cannot
+// price, so a non-null budget is always a real number — and a null one means
+// there is NO denominator, so no bar (design rule 6: a bar against nothing is
+// decoration).
+//
+// OVER-RUN IS REACHABLE. The cap is tested BETWEEN items, never mid-item, so
+// the item that crosses it finishes and is charged. `spent > budget` is
+// therefore a real outcome, and it is the ONLY one that turns the bar danger
+// (renderDepthCell's own rule) — and then the same fact is said in words,
+// unfolded, by `queueOverrunHtml` (v3.16.1).
+//
+// THE QUALIFIERS ARE THE DONE SUMMARY'S, WORD FOR WORD: `spendIsEstimated`
+// renders "approx. " and wins over `spendIsLowerBound`'s "at least " (an
+// estimate share can read ABOVE real spend, so it is never a floor). They sit
+// OUTSIDE the depth cell as prose — this view's rule that the NUMBER is mono,
+// not the sentence around it.
+//
+// Returns null when there is no cap, so every caller has one test for "no
+// denominator".
+function queueBudgetFacts(job) {
+  const budget = (job && typeof job.budgetUsd === 'number' && Number.isFinite(job.budgetUsd) && job.budgetUsd > 0)
+    ? job.budgetUsd : null;
+  if (budget === null) return null;
+  const spent = (job && typeof job.spentUsd === 'number' && Number.isFinite(job.spentUsd)) ? job.spentUsd : null;
+  const qualifier = spent === null ? ''
+    : (job.spendIsEstimated === true) ? 'approx. '
+    : (job.spendIsLowerBound === true) ? 'at least '
+    : '';
+  return {
+    budget,
+    spent,
+    qualifier,
+    capText: formatUsdHonest(budget),
+    spentText: spent === null ? null : formatUsdHonest(spent),
+    over: spent !== null && spent > budget,
+  };
+}
+
+// The head line's spend reading when a cap is set: qualifier (prose), the
+// figure in a depth cell against the cap, then "spent of the $X cap". Before
+// the first item has charged anything on a running batch, the bar is REFUSED
+// (v3.3.1's "pending first file" stays — an empty bar there would read as a
+// measured zero) and the cap is still named, so the denominator is never a
+// secret.
+function queueBudgetSpendHtml(facts, isTerminal, pendingLabel) {
+  const cap = '<span class="ing-num">' + escapeHtml(facts.capText) + '</span>';
+  const charged = facts.spent !== null && (facts.spent > 0 || isTerminal);
+  if (!charged) {
+    return '<span class="ing-num">' + escapeHtml(pendingLabel) + '</span> · ' + cap + ' cap';
+  }
+  return escapeHtml(facts.qualifier) +
+    '<span class="ing-queue-spend">' + renderDepthCell({
+      value: facts.spentText,
+      amount: facts.spent,
+      budget: facts.budget,
+      label: facts.qualifier + facts.spentText + ' spent of the ' + facts.capText + ' cap',
+    }) + '</span>' +
+    ' spent of the ' + cap + ' cap';
+}
+
+// THE OVER-RUN, IN WORDS. A danger-toned bar is never the only carrier: the
+// same fact is a sentence, unfolded, directly under the head line, through the
+// kit's own status block (its tone is a RAIL — a mark — and its words are
+// --text, design rule 7). '' when there is no cap or no over-run.
+function queueOverrunHtml(facts) {
+  if (!facts || !facts.over) return '';
+  const q = facts.qualifier;
+  const overText = formatUsdHonest(facts.spent - facts.budget);
+  return '<div class="ing-status-block">' +
+    renderStatus({
+      state: 'danger',
+      title: 'Over the spending cap',
+      detail: q + facts.spentText + ' spent, ' + q + overText + ' over the ' + facts.capText + ' cap.' +
+        ' The cap is checked between files, so the file that crossed it finished and was charged.',
+    }) +
+  '</div>';
+}
+
 function renderQueuePausedBanner(job) {
   const copy = pausedReasonCopy(job && job.pausedReason);
   const extra = (job && typeof job.pausedMessage === 'string' && job.pausedMessage.trim())
@@ -4382,6 +4466,8 @@ function renderQueueDoneSummary(job) {
     : (job && job.spendIsEstimated === true) ? 'approx. '
     : (job && job.spendIsLowerBound === true) ? 'at least '
     : '';
+  const capFacts = queueBudgetFacts(job);
+  const capSpan = capFacts ? '<span>of the <span class="ing-num">' + escapeHtml(capFacts.capText) + '</span> cap</span>' : '';
   const healthStr = formatHealthCounts(job && job.health && job.health.counts);
   const healthLine = (job && job.health)
     ? '<div class="ing-queue-done-health">Health scan: ' + (healthStr ? escapeHtml(healthStr) : 'no issues found') + ' — see Health inside the <strong>Domains</strong> view.</div>'
@@ -4410,6 +4496,9 @@ function renderQueueDoneSummary(job) {
         '<span><span class="ing-num">' + pages + '</span> page' + (pages === 1 ? '' : 's') + ' written</span>' +
         '<span><span class="ing-num">' + warningsN + '</span> warning' + (warningsN === 1 ? '' : 's') + '</span>' +
         '<span>' + spentQualifier + '<span class="ing-num">' + spent + '</span> spent</span>' +
+        // The cap, in WORDS, when one was set (P5). The BAR is drawn once, on
+        // the panel's head line above this summary — one fact, one bar.
+        capSpan +
       '</div>' +
       healthLine +
     '</div>'
@@ -4531,6 +4620,7 @@ function renderQueuePanel(job) {
   const items = Array.isArray(job.items) ? job.items : [];
   const settledCount = items.filter((i) => i && (i.status === 'done' || i.status === 'failed' || i.status === 'skipped' || i.status === 'cancelled')).length;
   const spentLabel = computeQueueSpentLabel(job.spentUsd, isTerminal);
+  const budgetFacts = queueBudgetFacts(job);
 
   const itemProgressText = isTerminal
     ? 'Finished'
@@ -4557,7 +4647,7 @@ function renderQueuePanel(job) {
         // is told the job ended.
         complete: isTerminal,
         size: 32,
-        tone: isTerminal ? 'success' : 'accent',
+        tone: isTerminal ? 'ok' : 'busy',
         center: 'none',
         className: 'ing-queue-panel-ring',
       }) +
@@ -4565,7 +4655,9 @@ function renderQueuePanel(job) {
         '<div class="ing-queue-panel-title">Batch ingest — <span class="ing-name">' + escapeHtml(job.domain || '') + '</span></div>' +
         '<div class="ing-queue-panel-sub">' +
           itemProgressText +
-          ' · <span class="ing-num">' + escapeHtml(spentLabel) + '</span>' +
+          ' · ' + (budgetFacts
+            ? queueBudgetSpendHtml(budgetFacts, isTerminal, spentLabel)
+            : '<span class="ing-num">' + escapeHtml(spentLabel) + '</span>') +
         '</div>' +
       '</div>' +
     '</div>';
@@ -4610,7 +4702,7 @@ function renderQueuePanel(job) {
 
   const listHtml = '<ul class="ing-queue-item-list">' + items.map((item) => renderQueueItemRow(item, { jobTerminal: isTerminal })).join('') + '</ul>';
 
-  return headerHtml + streamErrorHtml + dropIgnoredHtml + pausedHtml + noticeHtml + doneHtml + dismissHtml + cancelConfirmHtml + listHtml;
+  return headerHtml + queueOverrunHtml(budgetFacts) + streamErrorHtml + dropIgnoredHtml + pausedHtml + noticeHtml + doneHtml + dismissHtml + cancelConfirmHtml + listHtml;
 }
 
 // ── Listeners ─────────────────────────────────────────────────────────

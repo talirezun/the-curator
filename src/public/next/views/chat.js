@@ -88,6 +88,11 @@ import { formatAge, freshnessTier } from '../shared/age.js';
 // same colour as that domain's row on the Domains rail, its project rows on
 // the Context rail, and its destination row in Ingest.
 import { identityDotClass } from '../shared/sidebar.js';
+// THE DEPTH BAR (design rule 6, v3.66.0). The project picker's footer is one
+// of the four hosts that sit OUTSIDE a monitor, so it imports the bar from its
+// public address rather than from shared/monitor.js. See
+// `projectDocumentsReadout` for the one reading it draws.
+import { renderDepthCell } from '../shared/depth-bar.js';
 
 // ── Markdown rendering ──────────────────────────────────────────────────
 // The renderer now lives in next/shared/markdown.js so the wiki-browse
@@ -1445,7 +1450,7 @@ async function sendCurrentMessage() {
   const requestedModelAtSend = state.chatModel;
   // Captured for the same reason as the three above, and for one more: the
   // pill can be changed while the turn is in flight, and the reading this
-  // turn reports back ("12 KB read") belongs to the project that was pinned
+  // turn reports back ("12k characters read") belongs to the project that was pinned
   // when it was SENT. Applying it to whatever is pinned when it lands would
   // be a measurement about the wrong project.
   const projectAtSend = state.activeProject;
@@ -3418,8 +3423,96 @@ function projectFootHtml() {
       // took. Same refusal the node in the bar carried.
       provenance: projectFigureText(state.projectLastUsed),
     },
+    projectDocumentsReadout(state.projectLastUsed),
     projectKnowledgeReadout(),
   ]);
+}
+
+/**
+ * A character count, short: `18.4k`, `40k`, `812`. Mono is the readout's own
+ * face, so the figure stays narrow enough for a picker footer.
+ *
+ * ONE formatter for both of the footer's character figures (the documents
+ * cell and the whole-block provenance), so the two cannot disagree about what
+ * "k" means — thousands of CHARACTERS, never kilobytes (v3.66.0: the old
+ * `chars / 1024 + ' KB'` called thousands of characters kilobytes).
+ */
+function formatCharsShort(n) {
+  if (!Number.isFinite(n) || n < 0) return null;
+  if (n < 1000) return String(Math.round(n));
+  const k = Math.round(n / 100) / 10;
+  return (Number.isInteger(k) ? String(k) : k.toFixed(1)) + 'k';
+}
+
+/**
+ * How many documents the LAST TURN's project read had to leave out, parsed
+ * from the server's own disclosure notes (`projectOmissionNotes` in
+ * src/brain/chat.js). Only the two sentences that are about the DOCUMENT
+ * budget count: "N … did not fit the reading budget…" and "A … was cut at the
+ * reading budget." Anything else in
+ * `notes` (a stale mirror, a trimmed handoff) is not about this bar.
+ *
+ * Returns `{ omitted, cut }`, both zero when nothing was left out.
+ */
+function projectDocumentOmissions(notes) {
+  let omitted = 0;
+  let cut = 0;
+  for (const n of (Array.isArray(notes) ? notes : [])) {
+    if (typeof n !== 'string') continue;
+    // Keyed on the budget clause, not on the server's noun for a document —
+    // that noun is the store's, and this view's copy never repeats it.
+    const m = n.match(/^(\d+) [^.]*? did not fit the reading budget/);
+    if (m) omitted += Number(m[1]);
+    else if (/^A [^.]*? was cut at the reading budget/.test(n)) cut += 1;
+  }
+  return { omitted, cut };
+}
+
+/**
+ * DOCUMENTS READ vs THE 40,000-CHARACTER PROJECT BUDGET (P4, v3.66.0).
+ *
+ * THE NUMERATOR IS `documentChars`, NOT `chars`. `chars` is the WHOLE project
+ * block (framing, brief, handoff, journal AND documents); the budget
+ * (`budgetChars`, PROJECT_CONTEXT_BUDGET_CHARS server-side) governs DOCUMENT
+ * BODIES ONLY. A bar of `chars ÷ budgetChars` would pass 100% with nothing
+ * cut — a false denominator. `documentChars` is what the budget is about.
+ *
+ * NEVER DANGER: the server enforces the budget by OMISSION, so the numerator
+ * cannot exceed it; `renderDepthCell` only turns danger on `amount > budget`,
+ * which this reading cannot produce. What CAN happen — a document left out —
+ * is said in WORDS in the provenance line, never as a tone.
+ *
+ * ABSENT IS NOT ZERO: a server that did not send `documentChars` (an older
+ * build, or no project read) renders NO readout, never a "0". A real zero —
+ * the project was read and held no documents — is a measured 0 and renders.
+ *
+ * The depth cell rides in `renderReadout`'s ONE trusted slot (`markHtml`),
+ * which the kit escapes nothing into on our behalf: `renderDepthCell` escapes
+ * its own value and label. The readout's escaped `value` then carries the
+ * denominator in words, "of 40k characters", so the reading is complete for
+ * a screen reader and for anyone who cannot see the bar.
+ */
+function projectDocumentsReadout(used) {
+  if (!used || !Number.isFinite(used.documentChars) || !Number.isFinite(used.budgetChars) || used.budgetChars <= 0) {
+    return { value: null };
+  }
+  const amount = used.documentChars;
+  const budget = used.budgetChars;
+  const { omitted, cut } = projectDocumentOmissions(used.notes);
+  const words = [];
+  if (omitted > 0) words.push(omitted + (omitted === 1 ? ' document' : ' documents') + ' left out');
+  if (cut > 0) words.push(cut === 1 ? '1 document cut short' : cut + ' documents cut short');
+  return {
+    label: 'Documents',
+    markHtml: renderDepthCell({
+      value: formatCharsShort(amount),
+      amount,
+      budget,
+      label: amount.toLocaleString('en-US') + ' of ' + budget.toLocaleString('en-US') + ' characters of documents',
+    }),
+    value: 'of ' + formatCharsShort(budget) + ' characters',
+    provenance: words.join(' \u00b7 '),
+  };
 }
 
 /**
@@ -3429,7 +3522,7 @@ function projectFootHtml() {
  * TWO READOUTS RATHER THAN ONE, and the reason is this file's own most
  * expensive recorded defect: `[Compile to Wiki] 1,406 pages in scope` read as
  * one phrase because two unrelated facts were adjacent, and a user did not
- * press the button because of it. "saved 4 min ago · 5 KB read last turn" is
+ * press the button because of it. "saved 4 min ago · 5k characters read last turn" is
  * about THIS CONVERSATION's last turn; "research · business" is about the
  * PROJECT, and is true whether or not anyone ever asks a question. Joined by a
  * middot in one line they would read as one sentence about the turn.
@@ -3495,7 +3588,8 @@ function patchProjectFooter() {
 }
 
 /**
- * The "12 KB read last turn" phrase, or '' when nothing was measured.
+ * The "whole block 12.3k characters read last turn" phrase, or '' when
+ * nothing was measured. (It said "12 KB" through v3.65.3 — see the body.)
  *
  * ONE producer, called from the footer builder AND — through it — from the
  * post-turn update, so the figure a menu build prints and the figure a live
@@ -3518,7 +3612,11 @@ function patchProjectFooter() {
  */
 function projectFigureText(used) {
   if (!used || !Number.isFinite(used.chars)) return '';
-  return Math.round(used.chars / 1024) + ' KB read last turn';
+  // CHARACTERS, never KB (v3.66.0). `chars` is a UTF-16 length; dividing it by
+  // 1024 and printing "KB" called thousands of characters kilobytes. It is the
+  // WHOLE project block, so it says so — the documents share of it, against
+  // its own budget, is the `Documents` readout beside it.
+  return 'whole block ' + formatCharsShort(used.chars) + ' characters read last turn';
 }
 
 /**
