@@ -248,6 +248,15 @@
      the whole `cur-depth-` prefix and declares no `.fresh-` rule. -->
 <link rel="stylesheet" href="/next/shared/depth-bar.css">
 
+<!-- shared/ai-run.css — the RUN LINE (v3.67.0): one line under every AI action
+     naming the model that runs it, roughly what it takes and — after the run —
+     what it cost. Rendered by shared/ai-run.js on Context, Domains, Chat,
+     Ingest and Settings, so its rules can live in none of their stylesheets.
+     It owns the whole `ai-run` prefix and carries no tone colour. Linked here
+     because scripts/test-css-tokens.js §5 discovers /next stylesheets only
+     from this file's <link> tags. -->
+<link rel="stylesheet" href="/next/shared/ai-run.css">
+
 <!-- One CSS file per view (views/README.md) — linked here so the views/
      directory never has to touch this file to add view-specific styling.
      All seven exist even where a view currently has no rules of its own,

@@ -1,0 +1,70 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   shared/ai-run.css — THE RUN LINE (v3.67.0)
+
+   One line under every AI action: which model runs it, roughly what it takes,
+   and — after the run — what it actually cost. Rendered by shared/ai-run.js
+   (renderRunsOn / renderSpent) on Context, Domains, Chat, Ingest and Settings,
+   so its rules can live in none of their stylesheets. It owns the whole
+   `ai-run` prefix.
+
+   ── NO TONE ON THIS LINE ────────────────────────────────────────────────
+   A price is a fact, not a warning. The words are --text-2 and the figures
+   --text; no `color:` here names a tone token (--success-text,
+   --attention-text, --danger-text), and scripts/test-next-ai-run-kit.js pins
+   that. A budget over-run is said by its own loud line, never by this one.
+
+   ── FIGURES ARE MONO AND TABULAR ────────────────────────────────────────
+   So two lines stacked (before, then after the run) line their digits up and
+   a changing figure does not jitter the line. NOT `nowrap`: measured at 568 px
+   with the sidebar docked, a nowrap "≈$0.0020–$0.0040" overflowed a ~120 px
+   column; the parent's `overflow-wrap: anywhere` breaks it instead.
+
+   ── THE DOOR ────────────────────────────────────────────────────────────
+   "Change model" / "Add one in Providers & keys" is a button styled as the
+   app's inline accent link: no fill, no frame, underlined, --accent-text,
+   the global :focus-visible ring (tokens/base.css). It wraps with the line
+   rather than overflowing it at 568 px. */
+
+.ai-run {
+  margin: var(--space-3) 0 0;
+  font: var(--type-body);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.ai-run-main { display: inline; }
+
+/* A second line directly under the first (Compile's "not the model this chat
+   is on" clause). Same voice, same colour: it qualifies the run, it does not
+   warn about it. */
+.ai-run-extra {
+  display: block;
+  margin-top: var(--space-1);
+}
+
+.ai-run-model { color: var(--text-2); }
+
+.ai-run-fig {
+  font-family: var(--font-mono);
+  font-variant-numeric: var(--numeric-tabular);
+  color: var(--text);
+}
+
+.ai-run-sep { color: var(--text-3); }
+
+.ai-run-door {
+  display: inline;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: var(--weight-medium);
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ai-run-door:hover { text-decoration-thickness: 2px; }
