@@ -137,6 +137,8 @@ An administrator running cohort-scale Shared Brain synthesis weekly is more like
 
 The app does not rank models and will not tell you which is best. Rows carry price, output ceiling, context window and what the measurement found. The one comparative label anywhere is *cheapest measured*, which is a fact. The word *verified* is never used about a model, because nine clean runs are still consistent with a meaningful failure rate.
 
+**Since version 3.67.0, one model runs every AI job** — ingest, compile, wiki health, Shared Brain and reading plans — and every button that spends money shows what it will cost before it runs and what it actually cost after: "Runs on Flash Lite 2.5 · ≈6k tokens · ≈$0.0012 · Change model", then, once it has run, "Ran on Flash Lite 2.5 · 5,812 in / 640 out · $0.0008". A model with no published price still runs, and the line says so instead of guessing a figure. With no provider key, the same buttons stay visible but disabled, with a link to add one. Chat keeps its own per-message model picker, separate from the one model everything else runs on.
+
 ## What costs nothing?
 
 Reading pages, managing domains, syncing to your own GitHub repository, structural Wiki Health scans, and the MCP bridge itself. None of those call a model.
@@ -167,6 +169,8 @@ Yes — that is the third layer, called working state, shown on the Project cont
 Since version 3.63.0 there is also a command, `my-curator`, that reads and writes the same files from a shell with the app closed; hook configuration for the harnesses that have a usable hook, where a hook may only ask and never writes a handoff itself; a reading on the Project context screen saying how many recent sessions started with the context and how many saved before stopping; and a published specification of the on-disk format, so a tool that is not The Curator can read and write it. Version 3.64.0 then ran the measurement for the first time, against one harness: with the hooks installed, Claude Code received the project's context in 4 of 4 runs and saved in 4 of 4, while its stop hook never fired at all in that mode. Thirteen of the fourteen harness rows still read "not measured", and the product says so rather than implying reach.
 
 There is a dedicated file in this knowledge base covering how it is structured, what belongs in it, how it is set up and what it measurably does.
+
+**Since version 3.67.0 each project also has a reading budget** — the governing rule, in the maintainer's own words, is "the right context, not all of it." At the start of a session an agent is meant to get its foundations, the last state and the standing brief; everything else is on demand. Until you set a budget, nothing changes: every session still gets up to 120 KB of document text, as before. Choose one of five presets — Index only, Lean (32 KB), Standard (64 KB, recommended), Deep (120 KB) or Max (200 KB) — and the project becomes *planned*: only documents marked **read first** arrive with their text at the start; everything else is listed by name and opened on request, or, marked **not at start**, kept off the list entirely. A free, no-key helper — **Suggest a reading plan** — proposes a start state for every document from your brief and each document's size and role; an AI arm can propose the same thing by reading titles, roles and opening lines only, never a whole document, showing its cost first. Neither changes anything until you apply it.
 
 ## Do my agents actually save, and how would I know?
 
@@ -239,7 +243,7 @@ This list is deliberate. Every item is a limit, a refusal or a known gap the pro
 
 ## What version is it, and is the project active?
 
-Version **3.65.0**, as of 21 September 2026. The project is open source, active, and developed in the open at https://github.com/talirezun/the-curator, with releases published on GitHub. It had 85 stars and 14 forks on 14 September 2026; the live count is on the repository page.
+Version **3.67.1**, as of 23 September 2026. The project is open source, active, and developed in the open at https://github.com/talirezun/the-curator, with releases published on GitHub. It had 95 stars and 15 forks on 23 September 2026; the live count is on the repository page.
 
 Most of the recent work comes from the maintainer using the product for real and reporting what broke. The project keeps a long, unedited changelog as its memory, and treats a false claim in a document as a first-class defect, because several of its documents are read by AI models and a wrong sentence changes what an agent tells a user.
 
