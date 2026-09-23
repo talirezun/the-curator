@@ -5443,8 +5443,10 @@ function indexEntry(d, freshness, fileMissing) {
     updatedAt: d.updatedAt, commit: d.commit, source: d.source, authoredBy: d.authoredBy,
     freshness, fileMissing, skeleton: d.skeleton === true, readFirst: d.readFirst === true,
     // v3.67.0 — the third state, and the one-word reading of all three. Both
-    // always present, so a table needs no absence to interpret.
-    hidden: d.hidden === true && d.readFirst !== true,
+    // always present, so a table needs no absence to interpret. Exclusivity
+    // with `readFirst` is decided ONCE, in `validateManifest`, and trusted
+    // here — one place to get it right, and one place a test can break.
+    hidden: d.hidden === true,
     atStart: foundationStartState(d),
   };
 }
@@ -6276,7 +6278,7 @@ async function refreshCore(domain, target, paths, realRoot, files) {
         // most needs reading. A newly added document starts unflagged.
         readFirst: w.entry ? w.entry.readFirst === true : false,
         // v3.67.0 — and so is `hidden`, by slug, for the same reason.
-        hidden: w.entry ? w.entry.hidden === true && w.entry.readFirst !== true : false,
+        hidden: w.entry ? w.entry.hidden === true : false,
       };
       documents = w.entry ? documents.map((d) => (d.slug === slug ? entry : d)) : [...documents, entry];
       (w.entry ? refreshed : added).push(slug);
@@ -6600,7 +6602,7 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
       // PRESERVED, exactly as on the local arm (v3.62.0): the repository owns
       // the BYTES, the owner owns the ROUTING.
       readFirst: w.entry ? w.entry.readFirst === true : false,
-      hidden: w.entry ? w.entry.hidden === true && w.entry.readFirst !== true : false,
+      hidden: w.entry ? w.entry.hidden === true : false,
     };
     documents = w.entry ? documents.map((d) => (d.slug === slug ? next : d)) : [...documents, next];
     (w.entry ? refreshed : added).push(slug);

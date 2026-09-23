@@ -417,6 +417,20 @@ section('§4 — TWO BUDGETS, STATED, AND EVERY OMISSION DISCLOSED');
   await loadProjectContext('articles', 'curator', { queryContext: 'x', getProjectContext: s3 });
   eq(s3.calls[0].opts.scope, undefined, 'no scope ⇒ undefined, so the STORE decides what "latest" means');
 
+  // v3.67.0 — THE EFFECTIVE BUDGET IS THE STORE'S, and a zero is obeyed even
+  // when the selection still reads 'read-first' (a store that planned the
+  // project but whose reply is at Index only must not be second-guessed by a
+  // keyword match). The query names decisions and conventions, which WOULD be
+  // fetched by name at any budget above zero — the control two lines down.
+  const z = fakeStore([envelope({ foundations: { documents: [], budget: { maxBytes: 0, usedBytes: 0, truncated: false, omitted: [], source: 'owner' } } })]);
+  const zOut = await loadProjectContext('articles', 'curator', { queryContext: 'the decision log and the conventions', getProjectContext: z });
+  eq(z.calls.length, 1, 'a zero effective budget: ONE store call — the keyword-matched second call is skipped');
+  eq(zOut.summary.budgetChars, 0, '…and budgetChars reports the store\'s 0, not the 40,000 ceiling');
+  const nz = fakeStore([envelope({ foundations: { budget: { maxBytes: 32768, usedBytes: 9, truncated: false, omitted: [], source: 'owner' } } }), envelope()]);
+  const nzOut = await loadProjectContext('articles', 'curator', { queryContext: 'the decision log and the conventions', getProjectContext: nz });
+  eq(nz.calls.length, 2, 'CONTROL: the same query at 32 KB does make the second call');
+  eq(nzOut.summary.budgetChars, 32768, '…and budgetChars follows the owner\'s number under the ceiling');
+
   // EVERY DISCLOSURE REACHES THE PROMPT. Dropping a field the store computed
   // honestly is this repo's most-repeated defect class.
   const noisy = envelope({

@@ -645,8 +645,19 @@ section('13. THE ROUTES — reading/budget, {atStart}, session-start and its pre
       && Number.isInteger(r.body.hiddenCount), '{atStart} writes the state and replies with atStart / hidden / hiddenCount', JSON.stringify(r.body));
     r = await req('PATCH', '/alpha/alpha/foundations/roadmap.md', { atStart: 'not-at-start' });
     assert(r.status === 200 && r.body.hidden === true && r.body.hiddenCount === 1, '…not at start');
+    // THE BOUNDARY REFUSES BEFORE THE STORE: a spy store counts the setter's
+    // calls, so a route that forwarded a bad state and relied on the store's
+    // own refusal (same reason word) is caught.
+    let setterCalls = 0;
+    routerMod.__setWorkingStateStoreForTest(new Proxy(WS, {
+      get(t, k) { return k === 'setFoundationStartState' ? (...a) => { setterCalls++; return t[k](...a); } : t[k]; },
+    }));
     r = await req('PATCH', '/alpha/alpha/foundations/roadmap.md', { atStart: 'nope' });
-    assert(r.status === 400 && r.body.reason === 'invalid_at_start', 'a state outside the alphabet is 400 invalid_at_start');
+    assert(r.status === 400 && r.body.reason === 'invalid_at_start' && setterCalls === 0,
+      'a state outside the alphabet is 400 invalid_at_start, refused at the ROUTE (the store is never called)', JSON.stringify({ s: r.status, calls: setterCalls }));
+    r = await req('PATCH', '/alpha/alpha/foundations/roadmap.md', { atStart: 'not-at-start' });
+    assert(r.status === 200 && setterCalls === 1, 'CONTROL: a valid state reaches the store exactly once');
+    routerMod.__setWorkingStateStoreForTest(null);
     r = await req('PATCH', '/alpha/alpha/foundations/roadmap.md', { atStart: 'read-first', readFirst: true });
     assert(r.status === 400 && r.body.reason === 'unexpected_fields', 'both keys at once is 400 unexpected_fields');
     r = await req('PATCH', '/alpha/alpha/foundations/roadmap.md', { readFirst: false });
