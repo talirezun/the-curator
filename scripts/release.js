@@ -52,6 +52,11 @@
  *   2. Write the release's row into CLAUDE.md's full-row changelog table.
  *      Leave `- **Version:** X.Y.Z` ALONE — this script moves it, together
  *      with package.json and package-lock.json, so the three cannot disagree.
+ *      If the table is already AT the leanness cap (3 since 2026-09-23, read
+ *      from scripts/test-changelog-completeness.js), first move its OLDEST row
+ *      to the top of CHANGELOG-ARCHIVE.md's table byte-for-byte, add that
+ *      row's one-line entry at the top of docs/dev/release-index.md, and update
+ *      the kept/archived counts in CLAUDE.md and the archive's header.
  *   3. `node scripts/release.js 3.29.0 --dry-run`   ← every check, no writes
  *   4. `node scripts/release.js 3.29.0 --yes`       ← the release
  *
@@ -123,15 +128,18 @@ export const CI_WORKFLOW = 'test.yml';
  * starts. Anything else modified or untracked means unfinished work is about
  * to be swept into a release commit, which is a refusal.
  *
- * CHANGELOG-ARCHIVE.md and CONTRIBUTING.md are here because a release that
- * archives an old row, or that adjusts the suite count, legitimately touches
- * them in the same change.
+ * CHANGELOG-ARCHIVE.md, docs/dev/release-index.md and CONTRIBUTING.md are here
+ * because a release that archives an old row (the row moves to the archive,
+ * its one-line index entry goes into docs/dev/release-index.md — the index
+ * left CLAUDE.md on 2026-09-23), or that adjusts the suite count, legitimately
+ * touches them in the same change.
  */
 export const RELEASE_FILES = Object.freeze([
   'package.json',
   'package-lock.json',
   'CLAUDE.md',
   'CHANGELOG-ARCHIVE.md',
+  'docs/dev/release-index.md',
   'CONTRIBUTING.md',
 ]);
 
@@ -790,7 +798,7 @@ export async function release(argv, deps = null) {
     return refuse('leanness-cap-exceeded',
       `CLAUDE.md carries ${rows.length} full changelog rows against a cap of ${capInfo.cap}`,
       'Move the oldest row to CHANGELOG-ARCHIVE.md BYTE-FOR-BYTE and add one\n' +
-      'index line for it in CLAUDE.md. npm test would red on this anyway —\n' +
+      'index line for it in docs/dev/release-index.md. npm test would red on this anyway —\n' +
       'this refusal just tells you now instead of two minutes from now.');
   }
   if (rows.length === capInfo.cap) {
