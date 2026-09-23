@@ -1940,6 +1940,10 @@ section('§10 — THE BINDER: wire() grows no new identifier');
     // because that component emits its ⓘ INSIDE a lede and emits nothing at
     // all without one — and there is no lede on this page any more.
     'memStep',
+    // ── v3.67.0: the fold binder left wire() unchanged, and the release's
+    // own controls are bound in one place — both are in the stub set
+    // test-agent-instructions.js needs (PATCH-v367-view-test-agent-instructions.diff).
+    'bindFoldToggles', 'bindSessionAndPlan',
   ]);
   // COMMENTS STRIPPED FIRST. Proven necessary by running it: the docblocks in
   // `wire()` contain prose like "BOTH, because…" and "(the v3.11.0 shape)",
@@ -2015,7 +2019,8 @@ section('§10 — THE BINDER: wire() grows no new identifier');
   eq('FOLD_KEYS carries the foundations fold the editor reuses, beside the '
     + 'other six, and no key of the editor\'s own',
   foldKeys && foldKeys[1].replace(/\s+/g, ''),
-  "['brief','journal','foundations','streams','capture','saved','knowledge']");
+  // v3.67.0: step ④'s three rows (none of them the editor's).
+  "['brief','journal','foundations','streams','capture','saved','knowledge','receives','window','reach']");
   ok('...and the localStorage key itself is unmoved, which is the registry that '
     + 'matters', /const FOLDS_KEY = 'curator-memory-folds-v1';/.test(viewSrc));
 }

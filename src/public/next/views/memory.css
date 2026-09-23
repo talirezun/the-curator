@@ -2130,6 +2130,13 @@
    agent would start with under it, and the preset's meaning. Words in
    `--text-2`, figures mono and tabular, no tone — a figure here is a reading. */
 .mem-budget-btn { min-width: 18ch; }
+.mem-bp {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .mem-bp-row {
   display: flex;
   justify-content: space-between;

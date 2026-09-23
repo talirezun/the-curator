@@ -1446,9 +1446,10 @@ const FOLDS_KEY = 'curator-memory-folds-v1';
 // and dropping the name would make that value unreadable rather than harmless.
 // `knowledge` stays in the list although step ③ no longer uses it, for exactly
 // that reason.
+// v3.67.0: step ④'s three rows joined the list. `receives` is the one row on
+// this page that is OPEN by default, so it is the one key whose stored `false`
+// is kept too (below).
 const FOLD_KEYS = ['brief', 'journal', 'foundations', 'streams', 'capture', 'saved', 'knowledge',
-  // v3.67.0, step ④'s three rows. `receives` is the one row on this page that
-  // is OPEN by default, so it is the one key whose stored `false` is kept too.
   'receives', 'window', 'reach'];
 // The per-domain form step ③ writes since v3.65.0, and the ONLY dynamic key
 // this map accepts. The alphabet is the domain-name one and the length bound
@@ -10591,7 +10592,14 @@ function fndStartCfg(d, busy) {
     ariaLabel: 'At session start: ' + title,
     disabled: busy === true,
     triggerClass: 'fnd-start-btn',
-    options: START_STATES.map((o) => ({ value: o.value, label: o.label, detail: o.hint })),
+    minWidth: 300,
+    // The hint is PROSE, so it is the row's second line in the body face (the
+    // budget picker's anatomy), not a mono `detail` column squeezed beside it.
+    options: START_STATES.map((o) => ({
+      value: o.value, label: o.label, detail: o.hint,
+      html: '<span class="mem-bp"><span class="mem-bp-name">' + escapeHtml(o.label) + '</span>'
+        + '<span class="mem-bp-hint">' + escapeHtml(o.hint) + '</span></span>',
+    })),
   };
 }
 
@@ -10771,15 +10779,16 @@ function budgetPickerCfg(read, data, busy) {
       return {
         value: p.id,
         label: p.bytes === 0 ? 'Index only' : p.label.replace(' · recommended', '') + ' · ' + ssSize(p.bytes),
-        action: untouched && p.id === 'standard',
+        ...(untouched && p.id === 'standard' ? { action: true } : {}),
         typeahead: p.label,
-        html: '<span class="mem-bp-row"><span class="mem-bp-name">' + escapeHtml(p.label) + '</span>'
-          + '<span class="mem-bp-bytes">' + escapeHtml(budgetWord(p.bytes)) + '</span></span>'
+        html: '<span class="mem-bp"><span class="mem-bp-row"><span class="mem-bp-name">'
+          + escapeHtml(p.label) + '</span>'
+          + '<span class="mem-bp-bytes">' + escapeHtml(ssSize(p.bytes)) + '</span></span>'
           + (Number.isInteger(mcp)
             ? '<span class="mem-bp-start">an agent starts with ≈' + escapeHtml(ssSize(mcp)) + ' · '
               + escapeHtml(ssTokens(mcp)) + ' tokens</span>'
             : '')
-          + '<span class="mem-bp-hint">' + escapeHtml(p.hint) + '</span>',
+          + '<span class="mem-bp-hint">' + escapeHtml(p.hint) + '</span></span>',
       };
     }),
   };

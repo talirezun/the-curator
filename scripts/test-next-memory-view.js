@@ -11227,7 +11227,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       JSON.stringify(ws.READING_BUDGET_PRESETS.map((p) => p.id)));
     ok('...and every one names the store\'s own bytes in its row',
       untouched.options.every((o, i) => o.html.includes(ws.READING_BUDGET_PRESETS[i].bytes === 0
-        ? 'Index only' : (ws.READING_BUDGET_PRESETS[i].bytes / 1024) + ' KB')));
+        ? '>0 KB<' : (ws.READING_BUDGET_PRESETS[i].bytes / 1024) + ' KB')));
     eq('untouched: the trigger says what is TRUE — the default applies', untouched.triggerText,
       'Default · 120 KB');
     ok('...Standard is PRESELECTED, and is an action row so choosing it still writes',
