@@ -2659,6 +2659,12 @@
   min-width: 180px;
 }
 .settings-block-storage-github-token .gh-token-test-row > .btn { flex: none; }
+/* The status well carries a SENTENCE here ("Saved · ends in …ab12 ·
+   fine-grained", 36 characters), not a masked key, so the provider row's
+   260px cap — sized for a row of bullets — clipped the one word that says
+   which kind of token is saved. Measured in the browser at 1370px: the text
+   needs ~300px in the mono face at --text-sm. */
+.settings-block-storage-github-token .provider-key-field { max-width: 340px; }
 .settings-note-row-warn svg { color: var(--attention-text); }
 .settings-gh-steps {
   margin: var(--space-3) 0 var(--space-4);

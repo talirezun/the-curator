@@ -9598,9 +9598,12 @@ function renderGithubReadToken() {
   const kindWord = st && st.kind ? st.kind : null;
 
   const lede = 'Lets a project\u2019s Documents mirror from a GitHub repository, read-only.';
+  // Each run of prose is its own <p>: the ⓘ panel lays its CHILDREN out on a
+  // grid track, so a bare text node beside an <ol> and a <code> becomes three
+  // grid items and the <code> lands on a line of its own (seen in the browser).
   const info =
-    'A fine-grained personal access token with read-only access to the repositories you want to ' +
-    'mirror. Not a classic one. In GitHub:' +
+    '<p>A fine-grained personal access token with read-only access to the repositories you want to ' +
+    'mirror. Not a classic one. In GitHub:</p>' +
     '<ol class="settings-gh-steps">' +
       '<li><strong>Settings \u2192 Developer settings \u2192 Personal access tokens \u2192 Fine-grained tokens ' +
         '\u2192 Generate new token.</strong></li>' +
@@ -9611,11 +9614,11 @@ function renderGithubReadToken() {
         'read-only is added automatically. Nothing else.</li>' +
       '<li><strong>Expiry:</strong> fine-grained tokens require one, up to a year. Set a reminder to renew it.</li>' +
     '</ol>' +
-    'A classic token only works with the <code class="mono">repo</code> scope, which reads every ' +
+    '<p>A classic token only works with the <code class="mono">repo</code> scope, which reads every ' +
     'repository the account owns \u2014 which is why a fine-grained one is recommended, and why ' +
     'Personal Sync\u2019s token is never the default. The token is kept in ' +
     '<code class="mono">.curator-config.json</code> on this computer, readable only by you, and is ' +
-    'never shown again after you save it.';
+    'never shown again after you save it.</p>';
 
   let bodyHtml;
   if (state.ghTokenLoadError && !st) {
