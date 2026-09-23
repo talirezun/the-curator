@@ -357,6 +357,14 @@ section('§8 (2) domains — largest first, the KIT\'S identity mapping, the cap
     'each bar wears identityHex(its install index) — the app\'s ONE mapping, not a second one');
   const light = build(summary()).domains;
   eq(light.rows.map((r) => r.ink), [0, 2, 1].map((i) => PALETTE.identityHex(i, 'light')), '… in the light ramp on a light menu');
+  // Past the old six slots: domain 8 and domain 12 must wear slots 8 and 12,
+  // not a wrapped copy of slots 2 and 6 (a second, six-slot mapping).
+  const high = build(summary({ domains: [
+    { domain: 'h', index: 7, pageCount: 9 }, { domain: 'l', index: 11, pageCount: 3 }] }), { dark: true }).domains;
+  eq(high.rows.map((r) => r.ink), [PALETTE.identityHex(7, 'dark'), PALETTE.identityHex(11, 'dark')],
+    'indices 7 and 11 wear slots 8 and 12 — the widget wraps where the kit wraps, at IDENTITY_SLOTS, never earlier');
+  ok(high.rows[0].ink !== PALETTE.identityHex(1, 'dark') && high.rows[1].ink !== PALETTE.identityHex(5, 'dark'),
+    'CONTROL — those slots differ from the ones a six-slot wrap would pick, so the check above can fail');
   eq(d.rows[0].label, 'posts · 687 pages', 'the label is the figure');
   ok(/largest domain, posts \(687 pages\)/.test(d.rows[1].toolTip), 'the tooltip NAMES the denominator');
   // The cap: > 4 domains → 3 rows + "…and N more", largest over ALL of them.
