@@ -674,6 +674,74 @@ try {
       clearLog();
     }
   }
+
+  // ═════════════════════════════════════════════════════════════════════
+  section('§12  v3.66.0 — the meter reads the UNION of this machine’s usage logs');
+  // ═════════════════════════════════════════════════════════════════════
+  //
+  // A checkout's server and the installed .app's bridge write two different
+  // logs (the v3.64.0 measurement). The meter used to read only its own, so
+  // it could say "no session" about sessions the other one logged — and the
+  // menubar widget and the MCP bridge page (which read the union) would then
+  // disagree with it about one project. The TEST-ONLY seam
+  // CURATOR_TEST_BUNDLE_LOG_DIR plays the second log.
+  {
+    makeProject('alpha', 'union');
+    const BUNDLE = join(TMP, 'bundle-log');
+    mkdirSync(BUNDLE, { recursive: true });
+    const BLOG = join(BUNDLE, LOG.split('/').pop());
+    writeLog([{ ts: T(10), tool: 'save_working_state', domain: 'alpha', project: 'union', ok: true, refused: false, ms: 1, sid: '0a0a0a0a0a0a' }]);
+    writeFileSync(BLOG, `${JSON.stringify({ ts: T(20), tool: 'save_working_state', domain: 'alpha', project: 'union', ok: true, refused: false, ms: 1, sid: '0b0b0b0b0b0b' })}\n`);
+    const alone = await GET('/alpha/union/capture');
+    eq(alone.body.totals.sessions, 1, 'CONTROL: with no second log on the machine, one session');
+    process.env.CURATOR_TEST_BUNDLE_LOG_DIR = BUNDLE;
+    try {
+      usage.__clearUsageCache();
+      const both = await GET('/alpha/union/capture');
+      eq(both.body.totals.sessions, 2, 'with a second log, the meter counts BOTH Curators’ sessions');
+      eq(both.body.totals.sessionsSaved, 2, '…and both saves');
+      eqKeys(both.body, TOP_KEYS, 'the envelope is still EXACTLY the pinned key set (no path, no new field)');
+      ok(!JSON.stringify(both.body).includes(BUNDLE), 'no on-disk path of either log reaches the envelope');
+    } finally {
+      delete process.env.CURATOR_TEST_BUNDLE_LOG_DIR;
+      usage.__clearUsageCache();
+    }
+    clearLog();
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
+  section('§13  v3.66.0 — stateBudgetBytes on the project detail envelope');
+  // ═════════════════════════════════════════════════════════════════════
+  //
+  // The handoff budget a save is trimmed at (MAX_STATE_BYTES, 48 KB), sent so
+  // a view can draw each handoff's `bytes` against it. It is a CEILING, never
+  // an over-run: an over-budget save is trimmed and disclosed, not refused.
+  {
+    const store = await import('../src/brain/working-state.js');
+    makeProject('alpha', 'budget');
+    const big = 'lorem ipsum dolor sit amet '.repeat(4000);          // ~108 KB of prose
+    const saved = await store.saveWorkingState('alpha', {
+      project: 'budget', scope: 'big', headline: 'an oversized handoff', now: big, next: big,
+    });
+    ok(saved && saved.ok === true, 'CONTROL: an over-budget handoff is SAVED (trimmed), not refused',
+      JSON.stringify(saved && (saved.error || saved.reason)));
+    const idx = await GET('/alpha/budget');
+    eq(idx.body.stateBudgetBytes, store.MAX_STATE_BYTES, 'the detail envelope carries stateBudgetBytes = MAX_STATE_BYTES');
+    eq(idx.body.stateBudgetBytes, 48 * 1024, '…which is 48 KB');
+    const rows = Array.isArray(idx.body.scopes) ? idx.body.scopes : [];
+    ok(rows.length > 0 && rows.every((r) => Number.isInteger(r.bytes) && r.bytes <= idx.body.stateBudgetBytes),
+      'every handoff’s bytes sits at or under it — the ceiling cannot be overrun, so no bar here may turn danger',
+      JSON.stringify(rows.map((r) => r.bytes)));
+    const opened = await GET('/alpha/budget?open=newest');
+    eq(opened.body.open && opened.body.open.stateBudgetBytes, store.MAX_STATE_BYTES,
+      '`open` carries it too — it is byte-for-byte the scoped answer, which carries it');
+    const scoped = await GET('/alpha/budget?scope=big');
+    eq(scoped.body.stateBudgetBytes, store.MAX_STATE_BYTES, 'the scoped request carries it');
+    const own = await GET('/alpha/alpha');
+    eq(own.body.stateBudgetBytes, store.MAX_STATE_BYTES, 'a project with NO handoff still states its budget (a constant, never null)');
+    const meter = await GET('/alpha/budget/capture');
+    ok(!('stateBudgetBytes' in meter.body), 'the capture meter’s pinned envelope does NOT gain it');
+  }
 } finally {
   await new Promise((r) => server.close(r));
   rmSync(TMP, { recursive: true, force: true });
