@@ -2957,8 +2957,10 @@ function ruleFor(css, selector) {
   // view's breadcrumb and Knowledge rows are two of the surfaces that break if
   // either half moves.
   const kitCss = readFileSync(join(NEXT, 'shared/sidebar.css'), 'utf8');
-  const kitSlots = [...kitCss.matchAll(/\.cur-sb-dot-(\d)\s*\{\s*background:\s*([^;]+);/g)];
-  eq('the KIT paints all six slots, and the light theme too', kitSlots.length, 12);
+  // v3.66.0: twelve slots, ONE rule each, painting `var(--id-N)` — the light
+  // theme is the token's business now (tokens/identity.css), not a second rule.
+  const kitSlots = [...kitCss.matchAll(/\.cur-sb-dot-(\d+)\s*\{\s*background:\s*var\(--id-\1\);/g)];
+  eq('the KIT paints all twelve slots, each from its own themed --id-N token', kitSlots.length, 12);
   const dot = ruleFor(kitCss, '.cur-sb-dot');
   ok('the kit\'s identity dot is ROUND, and it owns the colour as well as the shape',
     !!dot && /border-radius:\s*50%/.test(dot));

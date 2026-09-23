@@ -161,13 +161,28 @@ export function ringCenterText(opts) {
   return null;
 }
 
+/** THE RING'S TONE WORDS (v3.66.0) — the app's ONE outcome alphabet, which
+ *  shared/monitor.js exports as TONE_WORDS (`ok | warn | danger | quiet`),
+ *  plus the ring's own `busy`, which is NOT a tone: it is the neutral "work in
+ *  progress" state, painted in the accent. A ring has no danger outcome (a
+ *  failed ingest does not stay on screen as a ring) and no quiet one, so it
+ *  takes exactly three words.
+ *
+ *  The pre-v3.66.0 words are still ACCEPTED so a caller migrates on its own
+ *  schedule — `success` is `ok`, `attention` is `warn`, `accent` is `busy` —
+ *  and each maps to the SAME class as its new word, so the two cannot drift. */
+export const RING_TONES = Object.freeze(['ok', 'warn', 'busy']);
+const RING_TONE_ALIASES = Object.freeze({ success: 'ok', attention: 'warn', accent: 'busy' });
+
 /** Tone -> modifier class. The class re-points the `--pring-color` custom
  *  property; no colour literal appears anywhere in this module or its
- *  stylesheet. Anything unrecognised falls back to accent. */
+ *  stylesheet. Anything unrecognised falls back to `busy`, never to no class. */
 export function ringToneClass(tone) {
-  if (tone === 'success') return 'pring-tone-success';
-  if (tone === 'attention') return 'pring-tone-attention';
-  return 'pring-tone-accent';
+  const word = typeof tone === 'string' && Object.prototype.hasOwnProperty.call(RING_TONE_ALIASES, tone)
+    ? RING_TONE_ALIASES[tone] : tone;
+  if (word === 'ok') return 'pring-tone-ok';
+  if (word === 'warn') return 'pring-tone-warn';
+  return 'pring-tone-busy';
 }
 
 /** ARIA values. `valueNow` is null for the indeterminate case — a
@@ -287,7 +302,7 @@ function attr(name, value) {
  *   stageProgress number         — 0–1 inside the current stage; 0 when it reports nothing
  *   value         number|null    — plain 0–100 when unstaged; null = activity only
  *   size          number         — 20 row · 32 compact · 48 readout · 72 empty state · 16 in a button
- *   tone          'accent'|'success'|'attention'
+ *   tone          'busy'|'ok'|'warn' (legacy 'accent'|'success'|'attention' accepted)
  *   label         string         — plain text (escaped here); present participle reads best
  *   labelHtml     string         — pre-built, ALREADY-ESCAPED markup; wins over `label`
  *   sublabel      string         — monospace second line: elapsed, counts, provider

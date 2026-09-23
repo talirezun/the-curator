@@ -8,8 +8,8 @@
    already used by `obp-` (onboarding) and `mcpw-` (MCP wizard).
 
    COLOUR: not one literal. `--pring-color` is DEFINED on `.pring` and
-   re-pointed by the three tone modifiers, so every stroke resolves to a
-   real token. An undefined custom property fails SILENTLY at
+   re-pointed by the three tone modifiers (busy · ok · warn), so every
+   stroke resolves to a real token. An undefined custom property fails SILENTLY at
    computed-value time (the whole reason scripts/test-css-tokens.js exists),
    so the definition sits at the top of this file where it cannot be missed.
 
@@ -30,9 +30,13 @@
   min-width: 0;
 }
 
-.pring-tone-accent    { --pring-color: var(--accent); }
-.pring-tone-success   { --pring-color: var(--success); }
-.pring-tone-attention { --pring-color: var(--attention); }
+/* THE TONE ALPHABET (v3.66.0): ok · warn from the app's one outcome
+   alphabet, plus the ring's own `busy` (work in progress, not an outcome).
+   The TONE IS THE STROKE — a non-text mark, 3:1 floor — and never the
+   label's ink; see the note at `.pring-label` below. */
+.pring-tone-busy { --pring-color: var(--accent); }
+.pring-tone-ok   { --pring-color: var(--success); }
+.pring-tone-warn { --pring-color: var(--attention); }
 
 .pring-svg {
   flex: none;
@@ -100,11 +104,15 @@
    needs it: every `pring-` rule belongs to the file that owns the prefix. */
 .pring-sm .pring-label { font-size: var(--text-xs); }
 
-/* An attention-toned ring is a retry/backoff, so the label follows the
-   tone rather than staying neutral — the same signal the shipping app's
-   amber `.ing-progress-label-waiting` carries today. */
-.pring-tone-attention .pring-label { color: var(--attention-text); }
-.pring-tone-success .pring-label { color: var(--success-text); }
+/* THE LABEL NO LONGER FOLLOWS THE TONE (v3.66.0, design rule 7: tone is a
+   MARK, never text colour). Until v3.66.0 a warn ring painted its label in
+   --attention-text and an ok ring in --success-text. On the light theme those
+   inks measure 3.35 / 3.79 on --surface-inset and 3.58 / 4.05 on --surface —
+   every one under the 4.5:1 text floor — so the one word that said WHY the
+   ring was amber was the least legible thing on it. The ring's own stroke
+   already carries the tone (a non-text mark, where both inks clear 3:1), and
+   the label says the outcome in words ("waiting 20 s — rate limited"), so
+   the label stays at --text-2 in every tone. */
 
 /* ── Reduced motion ───────────────────────────────────────────────────────
    Rotation is removed entirely. Liveness is NOT removed with it: a slow

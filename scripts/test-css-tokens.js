@@ -1897,6 +1897,10 @@ section('11. every TOKEN FILE defines every THEMED name in BOTH themes');
   const TOKEN_FILES = [
     { rel: 'src/public/next/tokens/material.css', themed: true },
     { rel: 'src/public/next/tokens/color.css', themed: true },
+    // v3.66.0: the identity palette and the page-TYPE inks. Every --id-N is a
+    // themed hex, so a slot missing from the light block would paint its DARK
+    // hue on the light theme — the exact defect v3.65.1 measured at 1.85:1.
+    { rel: 'src/public/next/tokens/identity.css', themed: true },
     { rel: 'src/public/next/shared/freshness.css', themed: false },
   ];
   const materialRel = TOKEN_FILES[0].rel;

@@ -63,7 +63,12 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { renderMonitor, renderDepthCell } from '../src/public/next/shared/monitor.js';
+import {
+  renderMonitor, renderDepthCell, TONES, TONE_WORDS, normalizeTone,
+} from '../src/public/next/shared/monitor.js';
+import * as DEPTH from '../src/public/next/shared/depth-bar.js';
+import { identityDotClass } from '../src/public/next/shared/sidebar.js';
+import { IDENTITY_SLOTS } from '../src/public/next/shared/identity-palette.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -692,6 +697,83 @@ section('§8 — THE DEPTH BAR: a length is a measurement, not a decoration');
       + 'because a commented-out <link> still matches a bare filename scan and '
       + 'that mutation was green');
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§9 — TONE: ONE ALPHABET, AND A LINE CARRIES A MARK OR A TONE, NEVER BOTH (v3.66.0)');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  eq('the alphabet is exactly ok · warn · danger · quiet', TONE_WORDS.join(','), 'ok,warn,danger,quiet');
+  eq('TONES is exported and keyed by exactly those words', Object.keys(TONES).join(','), TONE_WORDS.join(','));
+  ok(Object.isFrozen(TONES) && Object.isFrozen(TONE_WORDS), '...and neither table can be mutated by a caller');
+  for (const w of TONE_WORDS) eq(`normalizeTone("${w}") is itself`, normalizeTone(w), w);
+  for (const [legacy, w] of [['success', 'ok'], ['attention', 'warn'], ['error', 'danger'],
+    ['neutral', 'quiet'], ['info', 'quiet'], ['default', 'quiet']]) {
+    eq(`the older spelling "${legacy}" normalises to "${w}"`, normalizeTone(legacy), w);
+  }
+  for (const not of ['busy', 'accent', 'red', '', '__proto__', 'constructor', 'toString']) {
+    eq(`"${not}" is NOT an outcome — null, never a guess`, normalizeTone(not), null);
+  }
+  eq('a non-string is not a tone', normalizeTone({ tone: 'ok' }), null);
+
+  // THE RENDERER STAYS STRICT: an older spelling passed straight to a line is
+  // NOT honoured (the caller normalises first), so one table decides.
+  const legacy = renderMonitor({ lines: [{ key: 'k', value: 'v', tone: 'success' }] });
+  ok(!/cur-mon-ok/.test(legacy), 'renderMonitor does not silently accept "success" — callers pass normalizeTone(...)', legacy);
+
+  // MARK OR TONE, NEVER BOTH. Tone and time share inks (ok = fresh-hot's
+  // teal, warn = fresh-mid's amber) and are told apart by POSITION alone.
+  const dot = '<span class="fresh-dot fresh-recent" aria-hidden="true"></span>';
+  const both = renderMonitor({ lines: [{ key: 'saved', value: '12 min ago', markHtml: dot, tone: 'warn' }] });
+  ok(both.includes('fresh-dot'), 'a line given both keeps its freshness mark', both);
+  ok(!/cur-mon-line[^"]*cur-mon-warn/.test(both), '...and DROPS the tone, so no teal dot sits beside a teal rule', both);
+  const toneOnly = renderMonitor({ lines: [{ key: 'open issues', value: 4, tone: 'warn' }] });
+  ok(/class="cur-mon-line cur-mon-warn"/.test(toneOnly), 'CONTROL — a line with a tone and no mark keeps its gutter rule', toneOnly);
+  const emptyMark = renderMonitor({ lines: [{ key: 'k', value: 1, markHtml: '', tone: 'danger' }] });
+  ok(/cur-mon-danger/.test(emptyMark), 'CONTROL — an EMPTY markHtml is no mark, so the tone survives', emptyMark);
+  // A loud entry is a rule by construction and may carry any tone.
+  const loud = renderMonitor({ lines: [{ key: 'k', value: 1, markHtml: dot }], loud: [{ tone: 'danger', text: 'over budget' }] });
+  ok(/cur-mon-loud cur-mon-danger/.test(loud), 'a loud entry keeps its tone beside a marked line', loud);
+
+  // THE STYLESHEET: the tone is a MARK (dot or rule) and never a word's ink.
+  const toneColourOnText = [...BARE_CSS.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+    .filter((m) => /(^|[;\s])color\s*:\s*var\(--(success|attention|danger)(-text)?\)/.test(m[2]))
+    .map((m) => m[1].trim());
+  eq('monitor.css colours NO text with a tone ink', toneColourOnText.join(' | '), '');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§10 — shared/depth-bar.js IS THE BAR\'S ADDRESS, AND ITS IDENTITY TONE IS THE ONE PALETTE (v3.66.0)');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  ok(DEPTH.renderDepthCell === renderDepthCell,
+    'depth-bar.js re-exports THE SAME function object — one implementation, two addresses');
+  eq('depth-bar.js exports exactly the cell and the identity tone',
+    Object.keys(DEPTH).sort().join(','), 'depthIdentityClass,renderDepthCell');
+  // The identity tone and the dot are ONE mapping.
+  let agree = true;
+  for (let i = 0; i < 40; i++) {
+    if (DEPTH.depthIdentityClass(i).replace('cur-depth-id-', '') !== identityDotClass(i).replace('cur-sb-dot-', '')) agree = false;
+  }
+  ok(agree, 'depthIdentityClass(i) names the SAME slot as identityDotClass(i) for 40 indices, wrap included');
+  eq('index 0 is id-1', DEPTH.depthIdentityClass(0), 'cur-depth-id-1');
+  eq('a non-number is id-1, never NaN', DEPTH.depthIdentityClass(undefined), 'cur-depth-id-1');
+  // The class it returns survives renderDepthCell's class filter and REPLACES
+  // the neutral fill rather than adding danger.
+  const cell = renderDepthCell({ value: 687, amount: 687, max: 900, toneClass: DEPTH.depthIdentityClass(2) });
+  ok(/class="cur-depth-bar cur-depth-id-3"/.test(cell), 'the identity tone reaches the bar', cell);
+  // CSS: one rule per slot, each reading ITS OWN token — no second palette.
+  const depthCss = readFileSync(path.join(NEXT, 'shared/depth-bar.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const idRules = [...depthCss.matchAll(/\.cur-depth-id-(\d+)\s*\{([^}]*)\}/g)];
+  eq('depth-bar.css declares one identity tone per palette slot', idRules.length, 12);
+  ok(idRules.every((m) => new RegExp('var\\(--id-' + m[1] + '\\)').test(m[2])),
+    '...and each reads its OWN --id-N, so the bar and the dot cannot drift', idRules.map((m) => m[0]).join(' '));
+  ok(!/#[0-9a-fA-F]{3,8}\b/.test(depthCss), '...with no colour literal anywhere in the file');
+  ok(IDENTITY_SLOTS <= idRules.length, 'the slot count never exceeds the declared tones (lowering it to 8 stays valid)');
+  // depth-bar.js takes ONLY the palette and the monitor — both DOM-free.
+  const djs = readFileSync(path.join(NEXT, 'shared/depth-bar.js'), 'utf8');
+  const froms = [...djs.matchAll(/^(?:import|export)\s[^\n]*from '([^']+)';$/gm)].map((m) => m[1]).sort();
+  eq('depth-bar.js reaches exactly ./identity-palette.js and ./monitor.js', froms.join(','), './identity-palette.js,./monitor.js');
 }
 
 console.log('\n  ' + '─'.repeat(60));

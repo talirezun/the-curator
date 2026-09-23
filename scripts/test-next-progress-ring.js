@@ -202,7 +202,7 @@ const PURE_FNS = [
   'orbitDelaySeconds', 'mapIngestPctToStage', 'ringValueFromCounts',
   'esc', 'attr', 'progressRingHtml',
 ];
-const PURE_CONSTS = ['PRING_ORBIT_PERIOD_S', 'INGEST_STAGES'];
+const PURE_CONSTS = ['PRING_ORBIT_PERIOD_S', 'INGEST_STAGES', 'RING_TONES', 'RING_TONE_ALIASES'];
 
 const sandbox = new Function(
   PURE_CONSTS.map((c) => extractConst(ring, c)).join('\n') + '\n' +
@@ -214,7 +214,7 @@ const {
   ringGeometry, isSegmented, isRingComplete, ringSegments, ringValueArc,
   ringCenterText, ringToneClass, ringAria, orbitDelaySeconds,
   mapIngestPctToStage, ringValueFromCounts, progressRingHtml,
-  PRING_ORBIT_PERIOD_S, INGEST_STAGES,
+  PRING_ORBIT_PERIOD_S, INGEST_STAGES, RING_TONES,
 } = sandbox;
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -394,7 +394,9 @@ section('§5  The finished state — the orbit stops and the ring settles');
   ok(!done.includes('pring-orbit'), 'the finished ring contains NO orbit — nothing is still moving');
   ok(done.includes('pring-settled'), 'the finished ring carries the settled inner circle instead');
   ok(done.includes('pring-complete'), 'the finished ring is class-marked so a caller can style the settle frame');
-  ok(done.includes('pring-tone-success'), 'tone="success" reaches the markup');
+  ok(done.includes('pring-tone-ok'), 'tone="success" (the legacy word) reaches the markup as the ok class');
+  ok(progressRingHtml({ stages, stage: 5, size: 32, tone: 'ok' }).includes('pring-tone-ok'),
+    '...and tone="ok" (the v3.66.0 word) reaches the SAME class');
 
   const live = progressRingHtml({ stages, stage: 3, stageProgress: 0.2, size: 32 });
   ok(live.includes('pring-orbit'), 'an unfinished ring still orbits');
@@ -423,11 +425,32 @@ section('§6  Centre text, tone, ARIA and the orbit phase offset');
   eq(ringCenterText({ stages: null, size: 48, center: 'stage' }), null, 'center "stage" with no stages prints nothing');
   eq(ringCenterText({ value: null, size: 48, center: 'value' }), null, 'center "value" with no value prints nothing');
 
-  eq(ringToneClass('accent'), 'pring-tone-accent', 'tone accent');
-  eq(ringToneClass('success'), 'pring-tone-success', 'tone success');
-  eq(ringToneClass('attention'), 'pring-tone-attention', 'tone attention');
-  eq(ringToneClass(undefined), 'pring-tone-accent', 'an absent tone falls back to accent');
-  eq(ringToneClass('danger'), 'pring-tone-accent', 'an unrecognised tone falls back to accent, never to no class');
+  // v3.66.0 — ONE TONE ALPHABET. The ring speaks the monitor's words (ok,
+  // warn) plus its own neutral `busy`, and the three pre-v3.66.0 words are
+  // ALIASES that must land on the SAME class, so a caller migrates without a
+  // flag day and the two spellings can never paint differently.
+  eq(RING_TONES.join(','), 'ok,warn,busy', 'the ring takes exactly ok · warn · busy');
+  eq(ringToneClass('busy'), 'pring-tone-busy', 'tone busy');
+  eq(ringToneClass('ok'), 'pring-tone-ok', 'tone ok');
+  eq(ringToneClass('warn'), 'pring-tone-warn', 'tone warn');
+  eq(ringToneClass('accent'), ringToneClass('busy'), 'legacy accent === busy');
+  eq(ringToneClass('success'), ringToneClass('ok'), 'legacy success === ok');
+  eq(ringToneClass('attention'), ringToneClass('warn'), 'legacy attention === warn');
+  eq(ringToneClass(undefined), 'pring-tone-busy', 'an absent tone falls back to busy');
+  eq(ringToneClass('danger'), 'pring-tone-busy', 'an unrecognised tone falls back to busy, never to no class');
+  eq(ringToneClass('__proto__'), 'pring-tone-busy', 'an inherited key is not an alias (own-property lookup)');
+  {
+    // Every class the function can return is declared, and the retired three are not.
+    const bare = ringCss.replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const t of RING_TONES) {
+      ok(new RegExp('\\.pring-tone-' + t + '\\s*\\{[^}]*--pring-color').test(bare),
+        `.pring-tone-${t} is declared and re-points --pring-color`);
+    }
+    ok(!/\.pring-tone-(accent|success|attention)\b/.test(bare), 'the three retired class names are gone from the stylesheet');
+    // RULE 7 — TONE IS A MARK, NEVER TEXT. The label stays neutral in every tone.
+    ok(!/\.pring-tone-[a-z]+\s+\.pring-label\s*\{[^}]*\bcolor\s*:/.test(bare),
+      'no tone modifier re-colours .pring-label — the stroke carries the tone, the words stay --text-2');
+  }
 
   const ar = ringAria({ stages, stage: 2, stageProgress: 0.5, size: 48 });
   ok(ar.determinate, 'a staged ring is determinate');
@@ -701,8 +724,8 @@ section('§11  Adoption — ingest.js');
     'the #ing-elapsed id survives — the v3.0.17 clock tick patches it by textContent and would silently no-op without it');
   ok(ingestCode.includes("getElementById('ing-elapsed')"),
     'and the tick that patches it is still there');
-  ok(rp.includes("p.waiting ? 'attention'"),
-    'a retry/backoff `wait` event still renders amber — now as tone="attention"');
+  ok(rp.includes("p.waiting ? 'attention'") || rp.includes("p.waiting ? 'warn'"),
+    'a retry/backoff `wait` event still renders amber — as tone="attention" or its v3.66.0 word "warn"');
   ok(rp.includes('isn’t stuck'),
     'the "large documents take a minute per phase / it isn\'t stuck" note is still rendered');
   // ── §11b  ONE QUANTITY, ONE NUMBER ────────────────────────────────────

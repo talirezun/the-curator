@@ -91,15 +91,65 @@ function escapeHtml(s) {
   ));
 }
 
-/** The four tones the KIT owns. A caller's `tone` is looked up here rather
- *  than interpolated: an unknown word yields NO class, so the line renders in
- *  the default ink instead of carrying an attribute the caller composed. */
-const TONES = Object.freeze({
+// ═══════════════════════════════════════════════════════════════════════════
+//  TONE — the app's FOURTH visual channel, and its ONE alphabet (v3.66.0)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// TONE says how an OUTCOME went — ok · warn · danger · quiet — and it is drawn
+// only as a MARK: a state dot beside a word, a gutter rule on a line or a loud
+// entry, a glyph, a 1px border, or a depth bar's danger fill. The words stay
+// in --text / --text-2. Tone never names a domain (that is the identity dot),
+// never encodes time (the freshness dot), and is never the only carrier: the
+// outcome is always also in words. The one carve-out is a DESTRUCTIVE
+// CONTROL's label (`.btn-danger` and its kin), which is an action affordance,
+// not a reading. scripts/test-tone-channel.js is the census that holds it.
+//
+// Until v3.66.0 the app had five tone vocabularies — this component's four
+// words, the progress ring's success/attention/accent, renderStatus's
+// `state`, confirm's `tone:'danger'` and Shared Brain's outcomes. These are
+// now the words; `normalizeTone` maps the older spellings onto them so a
+// caller migrates without a flag day, and a word it does not know is NOT a
+// tone (null), never a guess.
+
+/** The one outcome alphabet, in order of severity. */
+export const TONE_WORDS = Object.freeze(['ok', 'warn', 'danger', 'quiet']);
+
+/** The four tones the KIT owns, word -> this component's class. A caller's
+ *  `tone` is looked up here rather than interpolated: an unknown word yields
+ *  NO class, so the line renders in the default ink instead of carrying an
+ *  attribute the caller composed. Exported so every other surface that
+ *  paints an outcome reads ONE table. */
+export const TONES = Object.freeze({
   ok: 'cur-mon-ok',
   warn: 'cur-mon-warn',
   danger: 'cur-mon-danger',
   quiet: 'cur-mon-quiet',
 });
+
+/** Older spellings of the same four outcomes, as the app's other surfaces
+ *  wrote them before v3.66.0. Own-property lookup only, so `__proto__` and
+ *  `constructor` are not tones. */
+const TONE_ALIASES = Object.freeze({
+  success: 'ok',
+  attention: 'warn',
+  error: 'danger',
+  neutral: 'quiet',
+  info: 'quiet',
+  default: 'quiet',
+});
+
+/**
+ * Any tone spelling -> one of TONE_WORDS, or null when the word is not an
+ * outcome at all (e.g. the ring's `busy`/`accent`, which are "in progress").
+ * @param {unknown} t
+ * @returns {'ok'|'warn'|'danger'|'quiet'|null}
+ */
+export function normalizeTone(t) {
+  if (typeof t !== 'string') return null;
+  if (Object.prototype.hasOwnProperty.call(TONES, t)) return t;
+  if (Object.prototype.hasOwnProperty.call(TONE_ALIASES, t)) return TONE_ALIASES[t];
+  return null;
+}
 
 function toneClass(t) {
   return typeof t === 'string' && Object.prototype.hasOwnProperty.call(TONES, t)
@@ -152,15 +202,19 @@ function scalar(v) {
 // · A COST IS NEVER ONLY A COLOUR (v3.16.1). Wherever a bar takes the danger
 //   tone, the same fact is also on screen in words, unfolded.
 //
-// ── WHY IT LIVES HERE AND NOT IN A MODULE OF ITS OWN ──────────────────────
-// The monitor is the only shared component that hosts it in v3.65.1 and
-// already owns the escaping discipline and the trusted-field contract; a bar
-// is a CELL decoration, which is what `renderMonitor`'s own line already is;
-// and a third new shared module in one release means a third census entry and
-// a third stylesheet link. A separate module is correct the moment a third
-// host outside a monitor appears — recorded, not pre-built. (The stylesheet
-// IS separate, `shared/depth-bar.css`, because the Documents TABLE uses it
-// without using the monitor.)
+// ── ITS PUBLIC ADDRESS IS shared/depth-bar.js (v3.66.0) ───────────────────
+// v3.65.1 recorded that a module of its own is correct "the moment a third
+// host outside a monitor appears". v3.66.0 has four (the Documents table, the
+// Handoffs table, the Chat footer, the Ingest panel), so hosts import
+// `renderDepthCell` — and the identity tone, `depthIdentityClass` — from
+// shared/depth-bar.js. The FUNCTION still lives here, and that is a measured
+// constraint, not a preference: scripts/test-next-foundations-editor.js pins
+// this file to ZERO import statements (the proof that the add panel's second
+// allowed import stays DOM-free), and `renderMonitor` below calls
+// `renderDepthCell` for a line's `depth`, which it could not do through an
+// import. So depth-bar.js re-exports from here. Flipping the direction is a
+// one-line move of that pin (allow `./depth-bar.js`, itself import-free
+// apart from the palette), and every caller keeps its address either way.
 
 /** The class alphabet a tone may use. A NAME is filtered, never escaped and
  *  hoped — shared/overview.js's rule, and the reason is that an escaped class
@@ -232,7 +286,7 @@ export function renderDepthCell(o) {
  *     key: string,                   // the mono caption, left
  *     value: string|number,          // the reading, right
  *     markHtml?: string,             // TRUSTED — a .fresh-dot, before the value
- *     tone?: 'ok'|'warn'|'danger'|'quiet',
+ *     tone?: 'ok'|'warn'|'danger'|'quiet',  // IGNORED when markHtml is set
  *     sub?: string,                  // one qualifying clause under the value
  *     depth?: {                      // DATA, never markup — the SHARE behind
  *       amount?: number, max?: number, budget?: number,
@@ -285,7 +339,15 @@ export function renderMonitor(o) {
 
   const lineHtml = lines.length
     ? '<div class="cur-mon-lines">' + lines.map((l) => {
-        const tone = toneClass(l.tone);
+        // A LINE CARRIES A FRESHNESS MARK OR A TONE, NEVER BOTH (v3.66.0).
+        // Tone and time share inks — ok is teal like fresh-hot, warn is amber
+        // like fresh-mid — and they are told apart by POSITION: the freshness
+        // dot sits before an age, the tone is the line's gutter rule. A line
+        // with both would put a teal dot beside a teal rule and ask the reader
+        // which one is the time. The mark wins because it is the reading's own
+        // qualifier; a caller that needs an outcome says it in a `loud` entry.
+        const mark = trusted(l.markHtml);
+        const tone = mark ? '' : toneClass(l.tone);
         const sub = typeof l.sub === 'string' ? l.sub.trim() : '';
         // ── A LINE MAY CARRY ITS SHARE (v3.65.1) ──────────────────────
         // `depth` is DATA — `{amount, max, budget, label, toneClass}` — and
@@ -305,7 +367,7 @@ export function renderMonitor(o) {
           // The mark rides INSIDE the value, before the figure, so the dot
           // sits beside the reading it qualifies rather than floating in a
           // column of its own — the placement `renderReadout` already uses.
-          '<span class="cur-mon-value">' + trusted(l.markHtml) + figure + '</span>' +
+          '<span class="cur-mon-value">' + mark + figure + '</span>' +
           (sub ? '<span class="cur-mon-sub">' + escapeHtml(sub) + '</span>' : '') +
         '</div>';
       }).join('') + '</div>'
