@@ -673,6 +673,13 @@ section('7. The gate — cancel spends nothing, and a refusal never opens a dial
       }
       let compileRuns = 0;
       async function runCompile() { compileRuns++; fetches.push('POST /api/compile/conversation'); }
+      // v3.67.0 (package CI): startCompile queues the confirm's run line with
+      // queueMicrotask(compileConfirmLead(est, title)). Recorded, not run —
+      // the line's placement and words are executed for real in
+      // test-next-chat-compile.js §11; here it must merely never stand
+      // between a click and the gate, nor spend anything.
+      const leads = [];
+      function compileConfirmLead(est, title) { leads.push({ est, title }); return () => false; }
       const warns = [];
       const console = { warn: (m) => warns.push(m) };
 
@@ -683,7 +690,7 @@ section('7. The gate — cancel spends nothing, and a refusal never opens a dial
       ${extractFunction(chatCode, 'buildCompileConfirmCopy')}
       ${'async ' + extractFunction(chatCode, 'startCompile')}
 
-      return { state, startCompile, dialogs, fetches, warns,
+      return { state, startCompile, dialogs, fetches, warns, leads,
                getCompileRuns: () => compileRuns, buildCompileConfirmCopy,
                getPrepping: () => compilePrepping };
     `;
@@ -715,6 +722,9 @@ section('7. The gate — cancel spends nothing, and a refusal never opens a dial
       'carrying the domain and conversation the user was looking at');
     eq(g.state.thread.length, 0, 'and nothing was written into the thread');
     eq(g.getPrepping(), false, 'the prep flag is released even though the user cancelled');
+    eq(g.leads.length, 1, 'v3.67.0: the run line is queued once, for the one dialog');
+    ok(g.leads[0] && g.leads[0].title === g.dialogs[0].title,
+      'v3.67.0: …for THIS dialog (its title), so it can never land in another one');
   }
 
   // ── POSITIVE CONTROL: confirming DOES spend ──────────────────────────────
