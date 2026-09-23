@@ -1474,7 +1474,12 @@
    hairlines and the horizontal scroll are the same declarations rather than a
    second opinion about them. Six columns at the Largest text scale in a narrow
    window will overflow; a table that scrolls beats a page that does. */
-.fnd-wrap { overflow-x: auto; }
+.fnd-wrap { overflow-x: auto; position: relative; }
+/* `position: relative` (v3.67.0) makes this scroll box the containing block of
+   the table's visually-hidden labels (absolutely positioned by the kit). Without
+   it they escaped the horizontal clip: at a 568px window, with the Suggested
+   column added, they pushed the whole main column's scroll width out by 639px
+   while every visible cell was correctly clipped. */
 .fnd-table { width: 100%; border-collapse: collapse; }
 .fnd-table th {
   text-align: left;
@@ -2252,3 +2257,12 @@
   #mem-ss-monitor .cur-mon-key,
   #mem-ss-reach .cur-mon-key { white-space: normal; overflow-wrap: anywhere; }
 }
+/* On the SELECTED row the listbox paints an accent fill with its own ink, and
+   shared/listbox.css hands its own detail column `currentColor` for exactly
+   this reason (a secondary ink over the accent measured under 3:1). The rows
+   the two pickers on this page compose take the same rule: measured before it,
+   the selected preset's hint read 2.45:1 dark / 1.42:1 light. */
+.lb-opt.is-selected .mem-bp-name,
+.lb-opt.is-selected .mem-bp-bytes,
+.lb-opt.is-selected .mem-bp-start,
+.lb-opt.is-selected .mem-bp-hint { color: currentColor; }
