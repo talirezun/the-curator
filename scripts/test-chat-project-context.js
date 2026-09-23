@@ -804,6 +804,60 @@ section('§9 — SOURCE GUARDS');
     'the seam defaults to the real store call — null in production, exactly like compile.js\'s generateText seam');
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+section('§10 — documentChars (v3.66.0): the numerator the 40,000-character budget is about');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  // ONE DOCUMENT: its body only — not the brief, the handoff or the framing.
+  const s1 = fakeStore([envelope({ foundations: { bodySelection: 'all' } })]);
+  const o1 = await loadProjectContext('articles', 'curator', { queryContext: 'x', getProjectContext: s1 });
+  eq(o1.summary.documentChars, 'ARCH BODY'.length, 'documentChars is the document body’s length alone (9)');
+  ok(o1.summary.chars > o1.summary.documentChars + 'BRIEF BODY'.length + 'HANDOFF BODY'.length,
+    '…while `chars` stays the WHOLE block — brief, handoff, journal and framing included — and keeps its meaning');
+
+  // TWO DOCUMENTS, one from the second call: both bodies, nothing else.
+  const s2 = fakeStore([
+    envelope(),
+    envelope({ foundations: { documents: [], requested: [{ slug: 'decisions.md', role: 'decisions', title: 'Decision log', text: 'DECISION BODY', sha256: 'b', bytes: 13 }] } }),
+  ]);
+  const o2 = await loadProjectContext('articles', 'curator', { queryContext: 'what did we decide about decisions', getProjectContext: s2 });
+  eq(o2.summary.documentChars, 'ARCH BODY'.length + 'DECISION BODY'.length,
+    'a document the keyword match opened is counted too (9 + 13)');
+
+  // AN OMITTED DOCUMENT IS NOT COUNTED — it never reached the prompt.
+  const huge = 'x'.repeat(PROJECT_CONTEXT_BUDGET_CHARS + 10);
+  const s3 = fakeStore([
+    envelope(),
+    envelope({ foundations: { documents: [], requested: [{ slug: 'decisions.md', role: 'decisions', title: 'Decision log', text: huge, sha256: 'b', bytes: huge.length }] } }),
+  ]);
+  const o3 = await loadProjectContext('articles', 'curator', { queryContext: 'decisions decision log', getProjectContext: s3 });
+  eq(o3.summary.documentChars, 'ARCH BODY'.length, 'a document the budget left out is NOT in documentChars');
+  ok(o3.summary.documentChars <= o3.summary.budgetChars,
+    'documentChars never exceeds budgetChars — a bar drawn from it cannot show an over-run that did not happen');
+
+  // A DOCUMENT FILLING THE BUDGET reads at (not over) it.
+  const full = 'y'.repeat(PROJECT_CONTEXT_BUDGET_CHARS);
+  const s4 = fakeStore([envelope({ foundations: { bodySelection: 'all', documents: [{ slug: 'architecture.md', role: 'architecture', title: 'Architecture', text: full, sha256: 'a', bytes: full.length, readFirst: true, skeleton: false }] } })]);
+  const o4 = await loadProjectContext('articles', 'curator', { queryContext: 'x', getProjectContext: s4 });
+  eq(o4.summary.documentChars, PROJECT_CONTEXT_BUDGET_CHARS, 'a budget-filling document reads exactly 40,000');
+  ok(o4.summary.chars > PROJECT_CONTEXT_BUDGET_CHARS,
+    '…while `chars` passes the budget with nothing cut — why `chars ÷ budgetChars` was a false bar');
+
+  // NO DOCUMENTS → a measured 0, not absent.
+  const s5 = fakeStore([envelope({ foundations: { bodySelection: 'all', documents: [] } })]);
+  const o5 = await loadProjectContext('articles', 'curator', { queryContext: 'x', getProjectContext: s5 });
+  eq(o5.summary.documentChars, 0, 'no documents read → documentChars 0 (the project context WAS read; it held none)');
+  eq(o5.summary.documents, 0, '…consistent with documents: 0');
+
+  // THE SHAPE: every earlier key is still there, byte-compatible, plus the one.
+  const keys = Object.keys(o1.summary);
+  for (const k of ['project', 'domain', 'scope', 'chars', 'briefPresent', 'briefAuthority', 'handoffPresent',
+    'journalEntries', 'documents', 'budgetChars', 'extraStoreCalls', 'notes', 'documentChars']) {
+    ok(keys.includes(k), `summary still carries \`${k}\``);
+  }
+  eq(keys.length, 13, 'the summary carries exactly the twelve earlier keys plus documentChars');
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) { console.log('❌ FAILURES'); process.exit(1); }

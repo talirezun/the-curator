@@ -1109,6 +1109,45 @@ function findDroppedDeep(storeObj, payloadObj, prefix = '') {
     'CONTROL: …and reports nothing on a faithful copy');
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+section('12  v3.66.0 — the tray’s `documents` reading drops none of the store’s budget readings');
+// ═════════════════════════════════════════════════════════════════════════
+// `documentsReading` in tray-summary.js reduces `listFoundations` by EXPLICIT
+// assignment — the construction this suite exists for. Every budget reading
+// the store computes under the same name must arrive unchanged, on the row
+// AND on `lastSave` (the widget's "open project"), or the widget's third bar
+// is drawn from a figure the store never said.
+{
+  const { getTraySummary } = await import('../src/brain/tray-summary.js');
+  const { saveFoundation, setFoundationReadFirst, listFoundations } = WS;
+  const P_DOCS = 'zz-tray-docs';
+  mkDomain(P_DOCS);
+  const who = { kind: 'agent', harness: 'h', model: 'm', instructedBy: 'user' };
+  await saveFoundation(P_DOCS, P_DOCS, { slug: 'architecture', role: 'architecture', text: '# Architecture\n\n' + 'x'.repeat(3000) + '\n', authoredBy: who });
+  await saveFoundation(P_DOCS, P_DOCS, { slug: 'decisions', role: 'decisions', text: '# Decisions\n\n' + 'y'.repeat(2000) + '\n', authoredBy: who });
+  await setFoundationReadFirst(P_DOCS, P_DOCS, 'architecture', true);
+  await saveWorkingState(P_DOCS, { scope: 'main', headline: 'newest save in the fixture', nowState: 'n', harness: 'h', model: 'm' });
+  const store = await listFoundations(P_DOCS, P_DOCS);
+  ok(store.ok === true && store.readFirstCount === 1, 'PRECONDITION: two documents, one flagged, through the real store', JSON.stringify(store.readFirstCount));
+  const tray = await getTraySummary({ limit: 40 });
+  const row = tray.scopes.find((r) => r.domain === P_DOCS);
+  const docs = row ? row.documents : null;
+  const NAMED = ['count', 'totalBytes', 'budgetBytes', 'budgetExceeded', 'readFirstCount', 'readFirstBytes',
+    'readFirstBudgetBytes', 'readFirstBudgetExceeded'];
+  const dropped = NAMED.filter((k) => !docs || !(k in docs) || docs[k] !== store[k]);
+  ok(dropped.length === 0, 'every budget reading listFoundations computed arrives on the row, unchanged', JSON.stringify(dropped));
+  ok(docs && docs.basis === 'read-first' && docs.amountBytes === store.readFirstBytes
+    && docs.applicableBudgetBytes === store.readFirstBudgetBytes,
+    'the bar’s basis/amount/denominator are the store’s read-first figures (one flagged → the 120 KB rule)');
+  const tp = (tray.projects || []).find((p) => p.domain === P_DOCS) || {};
+  ok(tp.documents === docs, 'projects[] carries the SAME object the rows do');
+  if (tray.lastSave && tray.lastSave.domain === P_DOCS) {
+    ok(tray.lastSave.documents === docs, 'lastSave carries it too (explicit projection, not dropped)');
+  } else {
+    ok(false, 'CONTROL: the fixture’s newest save must be this project for the lastSave check to mean anything', JSON.stringify(tray.lastSave && tray.lastSave.domain));
+  }
+}
+
 console.log(`\n${'═'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed) {

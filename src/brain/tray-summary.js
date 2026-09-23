@@ -80,7 +80,12 @@
  */
 
 import { stat } from 'fs/promises';
-import { listDomains } from './files.js';
+import { listDomains, getDomainStats } from './files.js';
+// v3.66.0 — the usage log, for the per-project capture reading. Pure reads of
+// content-free lines; this module reaches neither `sync.js` nor
+// `child_process` (`paths.js`, `mcp-clients.js` and Node's `fs`/`crypto`
+// only), and test-tray-summary.js §6 re-walks the graph with it included.
+import { readUsageLinesUnion, summariseSessionsByProject } from './mcp-usage.js';
 import {
   resolveInsideState,
   machineId,
@@ -152,6 +157,175 @@ export const REMOTE_OBSERVATION_MAX_AGE_MS = 5 * 60 * 1000;
  * is; this cap exists only so a pathological store cannot flood the payload.
  */
 const MAX_LISTED_COLLISIONS = 10;
+
+// ─────────────────────────────────────────────────────────────────────────
+// v3.66.0 — the three readings the widget draws as bars
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * The capture window: THIRTY DAYS, the same default the Context view's capture
+ * meter asks for (`GET /api/memory/:domain/:project/capture`, `since` default).
+ * A widget bar and the app's meter for one project must be the same reading,
+ * so the window is the same number; the suite pins the two against each other.
+ */
+export const TRAY_CAPTURE_WINDOW_DAYS = 30;
+export const TRAY_CAPTURE_WINDOW_MS = TRAY_CAPTURE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+/**
+ * A project's documents, reduced to the ONE budget reading that applies.
+ *
+ * THE APP'S RULE, restated rather than invented (`foundationsBudgetWarning`
+ * in the Context view): once ANY document is flagged read-first, the reading
+ * that matters is the read-first set against the BOOTSTRAP's reading budget
+ * (CONTEXT_MAX_BYTES_DEFAULT, 120 KB — what one session is handed); with
+ * nothing flagged it is everything stored against the PROJECT budget
+ * (FOUNDATIONS_BUDGET_BYTES, 200 KB). A bar against 200 KB while the app warns
+ * about 120 KB would be the widget and the app disagreeing about which budget
+ * is exceeded — so both numbers ride here NAMED APART and `basis` says which
+ * one the bar is drawn against.
+ *
+ * `null` when the index could not be read honestly: the store refused
+ * (`ok: false`), the manifest is unreadable (its zeros are defaults, not a
+ * measurement), or the input is not an index at all. A project with no
+ * documents is a measured zero, not null.
+ */
+export function documentsReading(f) {
+  if (!f || typeof f !== 'object' || f.ok !== true || f.manifestError) return null;
+  const int = (v) => (Number.isInteger(v) && v >= 0 ? v : null);
+  const totalBytes = int(f.totalBytes);
+  const budgetBytes = int(f.budgetBytes);
+  const readFirstCount = int(f.readFirstCount);
+  const readFirstBytes = int(f.readFirstBytes);
+  const readFirstBudgetBytes = int(f.readFirstBudgetBytes);
+  if (totalBytes === null || budgetBytes === null || readFirstCount === null
+      || readFirstBytes === null || readFirstBudgetBytes === null) return null;
+  const flagged = readFirstCount > 0;
+  const amountBytes = flagged ? readFirstBytes : totalBytes;
+  const applicableBudgetBytes = flagged ? readFirstBudgetBytes : budgetBytes;
+  return {
+    count: int(f.count) ?? (Array.isArray(f.documents) ? f.documents.length : null),
+    totalBytes,
+    budgetBytes,
+    budgetExceeded: totalBytes > budgetBytes,
+    readFirstCount,
+    readFirstBytes,
+    readFirstBudgetBytes,
+    readFirstBudgetExceeded: readFirstBytes > readFirstBudgetBytes,
+    // THE BAR: which reading, its amount, its denominator, and whether it is
+    // over. `exceeded` is the only thing that may turn a bar danger-toned.
+    basis: flagged ? 'read-first' : 'stored',
+    amountBytes,
+    applicableBudgetBytes,
+    exceeded: amountBytes > applicableBudgetBytes,
+  };
+}
+
+/**
+ * One project's capture reading, out of `summariseSessionsByProject`'s rows.
+ *
+ * ABSENT IS NOT ZERO. `logPresent: false` (no usage log on this machine, or it
+ * could not be read) answers `null` — "not measured" — so the widget draws no
+ * bar and says so. With a log, a project that has no row in the window is a
+ * MEASURED zero: sessions 0, saved 0.
+ *
+ * Joined BY PROJECT NAME, exactly as the capture route filters. When the log
+ * attributes that name to domains and none of them is this row's domain, the
+ * reading is still the name's (it is what the app's meter shows for this
+ * project) and `domainMismatch` says so rather than hiding it.
+ */
+export function captureFor(byName, logPresent, domain, project) {
+  if (!logPresent) return null;
+  const row = byName instanceof Map ? byName.get(project) : null;
+  if (!row) {
+    return { sessions: 0, sessionsRead: 0, sessionsSaved: 0, lastSessionAt: null, domainMismatch: false };
+  }
+  const domains = Array.isArray(row.domains) ? row.domains : [];
+  return {
+    sessions: row.sessions,
+    sessionsRead: row.sessionsRead,
+    sessionsSaved: row.sessionsSaved,
+    lastSessionAt: row.lastSessionAt,
+    domainMismatch: domains.length > 0 && !domains.includes(domain),
+  };
+}
+
+/**
+ * Read the union of usage logs and reduce it per project, never throwing.
+ * `usage` is a TEST-ONLY seam: `{present, files, records}` in place of a read.
+ */
+async function readCapture(now, usage) {
+  const since = now - TRAY_CAPTURE_WINDOW_MS;
+  const meta = {
+    logPresent: false, logFiles: 0,
+    since: new Date(since).toISOString(), windowDays: TRAY_CAPTURE_WINDOW_DAYS,
+    busiestSaved: null, legacyLines: null, selfTestLines: null, error: null,
+  };
+  let byName = new Map();
+  try {
+    const u = usage && typeof usage === 'object' ? usage : await readUsageLinesUnion();
+    meta.logPresent = u.present === true;
+    meta.logFiles = Number.isInteger(u.files) ? u.files : (meta.logPresent ? 1 : 0);
+    if (meta.logPresent) {
+      const sum = summariseSessionsByProject(u.records || [], { since });
+      byName = new Map(sum.projects.map((r) => [r.project, r]));
+      meta.legacyLines = sum.totals.legacyLines;
+      meta.selfTestLines = sum.totals.selfTestLines;
+    }
+  } catch (err) {
+    // A log that cannot be read is reported as NOT MEASURED, never as zero.
+    meta.logPresent = false;
+    meta.error = err && err.message ? String(err.message).slice(0, 200) : 'usage log unavailable';
+    byName = new Map();
+  }
+  return { meta, byName };
+}
+
+/**
+ * Every domain's page count, in `listDomains()` order — the install's own
+ * domain index, which is what `identityDotClass(i)` in the app keys its colour
+ * on, so `index` here is the slot the widget colours the bar with.
+ *
+ * THE SAME FUNCTION THE APP READS. `getDomainStats` is what
+ * `GET /api/domains/stats` answers with, so the widget's "687 pages" and the
+ * app's are one count by construction (entities + concepts + summaries +
+ * other, index.md/log.md excluded). It costs a small CLAUDE.md read and a
+ * conversations readdir per domain beyond the page walk; a separate
+ * dirent-only counter would be cheaper and would be a second definition of
+ * "a page" — the parity rule forbids the widget a fact the app states
+ * differently.
+ *
+ * `null` for the whole list when the domains folder cannot be listed; a
+ * domain whose stats threw keeps its row with `pageCount: null`.
+ */
+async function readDomainPages(warnings, statsFn = getDomainStats) {
+  let names;
+  try { names = await listDomains(); } catch (err) {
+    warnings.push({
+      code: 'domains-pages-unreadable',
+      message: 'Could not list the domains, so no page counts are shown.',
+      detail: err && err.code ? String(err.code) : null,
+    });
+    return null;
+  }
+  const out = [];
+  for (let i = 0; i < names.length; i++) {
+    const domain = names[i];
+    let st = null;
+    try { st = await statsFn(domain); } catch { st = null; }
+    const int = (v) => (st && Number.isInteger(v) && v >= 0 ? v : null);
+    out.push({
+      domain,
+      index: i,
+      displayName: st && typeof st.displayName === 'string' ? st.displayName : domain,
+      pageCount: int(st && st.pageCount),
+      entities: int(st && st.pageCounts && st.pageCounts.entities),
+      concepts: int(st && st.pageCounts && st.pageCounts.concepts),
+      summaries: int(st && st.pageCounts && st.pageCounts.summaries),
+      readonly: st ? st.readonly === true : null,
+    });
+  }
+  return out;
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // The pulse — an aggregate heartbeat over the memory layer
@@ -845,6 +1019,9 @@ export async function getTraySummary(opts = {}) {
       // this week, made by a call that could not open the folder.
       pulse: null,
       remote: readRemoteObservation(now),
+      // v3.66.0 — nothing was enumerated, so there is no per-project, capture
+      // or per-domain reading either: absent, never an empty "measured" list.
+      projects: null, capture: null, domains: null,
       warnings: [{
         code: 'domains-unreadable',
         message: 'Could not read the knowledge folder, so no project context can be listed.',
@@ -912,6 +1089,18 @@ export async function getTraySummary(opts = {}) {
   // move `events`.
   const pulseInput = [];
 
+  // ── v3.66.0: THE PER-PROJECT CAPTURE READING, READ ONCE FOR THE WHOLE CALL ─
+  //
+  // The union of every usage log this machine may be writing (the CLI and the
+  // installed .app keep separate ones — v3.64.0), reduced per project by the
+  // same function the MCP bridge page's "Across projects" reading calls.
+  // `opts.usage` is a TEST-ONLY seam, null in production.
+  const cap = await readCapture(now, opts && opts.usage ? opts.usage : null);
+  // One entry per SCANNED project — every project, not only those with a row
+  // that survived `limit`, so a bar's denominator (the busiest project) is a
+  // fact about the store rather than about the display cap.
+  const projectsOut = [];
+
   for (const entry of scanned) {
     const domain = entry.domain;
     const project = entry.project;
@@ -924,6 +1113,8 @@ export async function getTraySummary(opts = {}) {
     const isDefaultProject = entry.isDefaultProject === true;
     const projectsInDomain = perDomain.get(domain) || 1;
     const label = projectLabel(domain, project, projectsInDomain);
+    const capture = captureFor(cap.byName, cap.meta.logPresent, domain, project);
+    const projectBase = { domain, project, projectLabel: label, isDefaultProject, capture };
     let idx;
     try {
       // THE ONLY CALLER THAT ASKS FOR SAVE TIMES. `src/routes/memory.js` and
@@ -931,9 +1122,13 @@ export async function getTraySummary(opts = {}) {
       // index — which is under a 400 KB response budget — is unchanged.
       idx = await store.listScopes(domain, project, { withSaveTimes: true });
     } catch {
+      projectsOut.push({ ...projectBase, documents: null });
       continue;                       // listWorkingScopes does not throw; belt.
     }
-    if (!idx || !idx.ok || !Array.isArray(idx.scopes)) continue;
+    if (!idx || !idx.ok || !Array.isArray(idx.scopes)) {
+      projectsOut.push({ ...projectBase, documents: null });
+      continue;
+    }
 
     pairTotal += Number.isInteger(idx.total) ? idx.total : idx.scopes.length;
     unlisted += Number.isInteger(idx.unlistedEntries) ? idx.unlistedEntries : 0;
@@ -952,8 +1147,13 @@ export async function getTraySummary(opts = {}) {
     // tool's business, not the tray's.
     let foundations = { staleCount: 0, unreachableCount: 0 };
     let foundationsError = null;
+    // v3.66.0 — the SAME `listFoundations` answer, reduced a second way: the
+    // byte totals and the read-first readings it already carried and this
+    // pass used to throw away. Zero new I/O. Null when not honestly known.
+    let documents = null;
     try {
       const f = await store.foundations(domain, project);
+      documents = documentsReading(f);
       // `f.ok === false` is an ORDINARY absence (no such project, or a
       // read the store itself declined) rather than a bug — the zeros above
       // already say "nothing known to be stale", and nothing is disclosed
@@ -1050,6 +1250,11 @@ export async function getTraySummary(opts = {}) {
         // Non-null only when the pass above THREW; a project with no
         // foundations tier is not an error and leaves this null.
         foundationsError,
+        // v3.66.0 — the same two objects on every row of this project, like
+        // `foundations`: the documents reading (one budget, named) and the
+        // 30-day capture reading (null = no usage log, never a zero).
+        documents,
+        capture,
         ...clock,
         ...ident,
         _order: orderKey(clock),
@@ -1061,7 +1266,19 @@ export async function getTraySummary(opts = {}) {
         });
       }
     }
+    projectsOut.push({ ...projectBase, documents });
   }
+
+  // THE CAPTURE BAR'S DENOMINATOR: the busiest project's sessions-that-saved,
+  // over EVERY scanned project (never the rows left after `limit`). Null when
+  // there is no log, because a denominator of a reading that was not taken
+  // is not 0.
+  cap.meta.busiestSaved = cap.meta.logPresent
+    ? projectsOut.reduce((m, p) => Math.max(m, p.capture ? p.capture.sessionsSaved : 0), 0)
+    : null;
+
+  // Per-domain page counts, in the install's own domain order (§4.4 (2)).
+  const domains = await readDomainPages(warnings);
 
   // ── `scopes` ARRIVES ORDERED. A consumer must not re-sort it. ────────────
   //
@@ -1172,6 +1389,10 @@ export async function getTraySummary(opts = {}) {
     // explicitly for the same reason every field above is.
     foundations: shown[0].foundations,
     foundationsError: shown[0].foundationsError,
+    // v3.66.0 — the open project's documents reading (the widget's third bar)
+    // and its capture reading, projected explicitly like every field above.
+    documents: shown[0].documents,
+    capture: shown[0].capture,
   } : null;
 
   return {
@@ -1203,7 +1424,79 @@ export async function getTraySummary(opts = {}) {
     pulse: safePulse(pulseInput, now, warnings),
     brief: lastSave ? await briefFor(lastSave, projectMeta.get(groupKey(lastSave)) || null, now) : null,
     remote: readRemoteObservation(now),
+    // ── v3.66.0 ──────────────────────────────────────────────────────────
+    // `projects`: one entry per scanned project — {domain, project,
+    //   projectLabel, isDefaultProject, capture, documents}.
+    // `capture`: the reading's own facts — {logPresent, logFiles, since,
+    //   windowDays, busiestSaved, legacyLines, selfTestLines, error}.
+    // `domains`: per-domain page counts in listDomains() order, or null.
+    projects: projectsOut,
+    capture: cap.meta,
+    domains,
     warnings,
+  };
+}
+
+/**
+ * The store half of the MCP bridge page's "Across projects" reading
+ * (v3.66.0): every project, and the SAME save pulse the widget draws.
+ *
+ *   getStoreActivity({now, store}) → {ok, projects, total, truncated, pulse}
+ *
+ * The widget's pulse strip is a FORM; its FACT — how many saves landed in the
+ * last seven days — must also be readable in the app (the parity rule: no
+ * widget-only fact). This walks exactly what `getTraySummary` walks to build
+ * `pulse` — `listAllProjects`, then `listWorkingScopes({withSaveTimes})` per
+ * project, the same validated pairs, `computePulse` over them — and nothing
+ * else: no `listFoundations` (it stats and may hash repo sources, which a
+ * route the Settings view polls must not pay for), no identity resolution, no
+ * rows. The suite pins `pulse` here equal to `getTraySummary().pulse` on the
+ * same fixture, so the two readings cannot drift.
+ *
+ * Never throws: an unreadable domains folder answers `ok: false` with
+ * `pulse: null` and `projects: null` — not measured, not empty.
+ */
+export async function getStoreActivity(opts = {}) {
+  const now = Number.isFinite(opts && opts.now) ? opts.now : Date.now();
+  const store = storeAdapter(opts && opts.store ? opts.store : workingStore);
+  let enumerated;
+  try {
+    enumerated = await store.listProjects();
+  } catch {
+    return { ok: false, projects: null, total: null, truncated: false, pulse: null };
+  }
+  const scanned = enumerated.projects.slice(0, TRAY_MAX_PROJECTS);
+  const perDomain = new Map();
+  for (const p of scanned) perDomain.set(p.domain, (perDomain.get(p.domain) || 0) + 1);
+  const projects = [];
+  const pulseInput = [];
+  for (const entry of scanned) {
+    projects.push({
+      domain: entry.domain,
+      project: entry.project,
+      projectLabel: projectLabel(entry.domain, entry.project, perDomain.get(entry.domain) || 1),
+      isDefaultProject: entry.isDefaultProject === true,
+    });
+    let idx;
+    try { idx = await store.listScopes(entry.domain, entry.project, { withSaveTimes: true }); } catch { continue; }
+    if (!idx || !idx.ok || !Array.isArray(idx.scopes)) continue;
+    for (const p of idx.scopes) {
+      if (!p || typeof p.scope !== 'string' || typeof p.machine !== 'string') continue;
+      pulseInput.push({
+        saveTimes: Array.isArray(p.saveTimes) ? p.saveTimes : null,
+        saveHarnesses: Array.isArray(p.saveHarnesses) ? p.saveHarnesses : null,
+        journalTailTruncated: p.journalTailTruncated === true,
+      });
+    }
+  }
+  const trueTotal = Number.isInteger(enumerated.total)
+    ? Math.max(enumerated.total, enumerated.projects.length) : null;
+  return {
+    ok: true,
+    projects,
+    total: trueTotal,
+    truncated: enumerated.projects.length > scanned.length || enumerated.truncated === true,
+    pulse: safePulse(pulseInput, now, []),
   };
 }
 

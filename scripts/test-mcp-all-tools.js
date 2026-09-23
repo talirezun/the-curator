@@ -373,9 +373,11 @@ eq(agg.sessions.lastSaveAt, null,
   eq(body.present, true, 'present is true over a real log');
   const row = (n) => body.tools.find((t) => t.name === n) || {};
   eq(JSON.stringify(Object.keys(row('get_node')).sort()),
-    JSON.stringify(['count7d', 'countTotal', 'group', 'lastOk', 'lastUsedAt', 'lastVia',
+    JSON.stringify(['count7d', 'count7dAgent', 'countTotal', 'group', 'lastOk', 'lastUsedAt', 'lastVia',
       'mutates', 'name', 'purpose', 'refusedTotal', 'selfTestTotal'].sort()),
-    'every row carries exactly the eleven contracted fields (nine, plus lastVia and selfTestTotal)');
+    'every row carries exactly the twelve contracted fields (nine, plus lastVia and selfTestTotal, plus v3.66.0 count7dAgent)');
+  ok(body.tools.every((t) => t.count7d === 1 && t.count7dAgent === 0),
+    'v3.66.0: a whole "Test all tools" run lights count7d on every tool and leaves count7dAgent at 0 — a busiest-tools bar cannot be drawn from it');
   ok(body.tools.every((t) => typeof t.lastUsedAt === 'string'),
     'EVERY tile now has a reading — the thing a user could not previously cause');
   ok(body.tools.every((t) => t.lastVia === 'self-test'),

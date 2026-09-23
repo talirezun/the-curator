@@ -34,7 +34,12 @@ import { appPath } from '../brain/paths.js';
 import { getCapabilities } from '../brain/install-mode.js';
 import { getMcpLauncherPath } from '../brain/mcp-launcher.js';
 import { writeFileAtomicSync } from '../brain/atomic-write.js';
-import { readUsage, VIA_SELF_TEST } from '../brain/mcp-usage.js';
+import {
+  readUsage, readUsageLinesUnion, summariseSessionsByProject, VIA_SELF_TEST,
+} from '../brain/mcp-usage.js';
+import {
+  getStoreActivity, captureFor, TRAY_CAPTURE_WINDOW_MS, TRAY_CAPTURE_WINDOW_DAYS,
+} from '../brain/tray-summary.js';
 import { detectBridgeProcesses, STALE_REMEDY } from '../brain/mcp-bridge-status.js';
 import { exerciseAllTools } from '../brain/mcp-exercise.js';
 import { TOOL_CATALOGUE } from '../../mcp/tools/catalogue.js';
@@ -669,7 +674,7 @@ router.post('/self-test', selfTestHandler);
  * Exported for the suite: the router is mounted in server.js, and driving the
  * handler directly is how the envelope is pinned without a socket.
  */
-export async function usageHandler(_req, res) {
+export async function usageHandler(req, res) {
   let usage;
   try {
     usage = await readUsage();
@@ -696,9 +701,14 @@ export async function usageHandler(_req, res) {
       // which client called, and the view's marker says only what this says.
       lastVia: agg ? agg.lastVia : null,
       selfTestTotal: agg ? agg.selfTestTotal : 0,
+      // v3.66.0 — calls in the same 7-day window as `count7d`, with the app's
+      // own self-test lines EXCLUDED. The number a "busiest tools this week"
+      // comparison is drawn from: one "Test all N tools" press would otherwise
+      // put a call on every tool for seven days. `count7d` keeps its meaning.
+      count7dAgent: agg && Number.isInteger(agg.count7dAgent) ? agg.count7dAgent : 0,
     };
   });
-  res.json({
+  const body = {
     present: usage.present === true,
     logStartedAt: usage.logStartedAt ?? null,
     logBytes: usage.logBytes || 0,
@@ -707,7 +717,128 @@ export async function usageHandler(_req, res) {
       lastBootstrapAt: usage.sessions?.lastBootstrapAt ?? null,
       lastSaveAt: usage.sessions?.lastSaveAt ?? null,
     },
-  });
+  };
+  // ── `?include=projects` (v3.66.0): THE "ACROSS PROJECTS" READING ─────────
+  //
+  // OPT-IN, because this route is polled every 30 s by the tool map and read
+  // by onboarding, and this half walks the working-state store and reads the
+  // union of usage logs. Without the parameter the envelope above is exactly
+  // what it was (plus `count7dAgent` per tool). Any other `include` value is
+  // ignored, the way `?open=` treats a word it does not know.
+  if (includesProjects(req && req.query ? req.query.include : null)) {
+    Object.assign(body, await acrossProjects());
+  }
+  res.json(body);
+}
+
+function includesProjects(raw) {
+  if (typeof raw !== 'string' || !raw) return false;
+  return raw.split(',').map((x) => x.trim()).includes('projects');
+}
+
+/**
+ * The app twin of the menubar widget's per-project bars and its save pulse
+ * (the parity rule: no widget-only fact). Three fields:
+ *
+ *   byProject       — one row per project, sessions and sessions-that-saved
+ *                     in the last 30 days, from the SAME function and the SAME
+ *                     union of usage logs the widget reads
+ *   byProjectWindow — the reading's own facts (window, whether a log exists,
+ *                     the busiest project's saved count = the bars' named
+ *                     denominator)
+ *   savePulse       — the widget pulse strip's FACT: saves in the last 7 days
+ *
+ * Never throws: each half degrades to its own "not measured" (null) value.
+ */
+async function acrossProjects() {
+  const now = Date.now();
+  const since = now - TRAY_CAPTURE_WINDOW_MS;
+  let logPresent = false, logFiles = 0, sum = null, logError = null;
+  try {
+    const u = await readUsageLinesUnion();
+    logPresent = u.present === true;
+    logFiles = Number.isInteger(u.files) ? u.files : 0;
+    if (logPresent) sum = summariseSessionsByProject(u.records || [], { since });
+  } catch (err) {
+    logPresent = false; logError = err && err.message ? String(err.message).slice(0, 200) : 'unreadable';
+  }
+  let activity = { ok: false, projects: null, total: null, truncated: false, pulse: null };
+  try { activity = await getStoreActivity({ now }); } catch { /* stays not-measured */ }
+
+  const byName = new Map(sum ? sum.projects.map((r) => [r.project, r]) : []);
+  const storeProjects = Array.isArray(activity.projects) ? activity.projects : [];
+  const nameCount = new Map();
+  for (const p of storeProjects) nameCount.set(p.project, (nameCount.get(p.project) || 0) + 1);
+  const rows = [];
+  const seenNames = new Set();
+  for (const p of storeProjects) {
+    seenNames.add(p.project);
+    const c = captureFor(byName, logPresent, p.domain, p.project);
+    rows.push({
+      domain: p.domain,
+      project: p.project,
+      projectLabel: p.projectLabel,
+      inStore: true,
+      sessions: c ? c.sessions : null,
+      sessionsRead: c ? c.sessionsRead : null,
+      sessionsSaved: c ? c.sessionsSaved : null,
+      lastSessionAt: c ? c.lastSessionAt : null,
+      domainMismatch: c ? c.domainMismatch : false,
+      // The log is keyed by project NAME (as the capture meter filters), so
+      // two store projects sharing one name share one reading. Said, not hidden.
+      sharedName: (nameCount.get(p.project) || 0) > 1,
+    });
+  }
+  // A project the log names that this store does not hold (deleted, renamed,
+  // or on another machine's store): kept, marked, never silently dropped.
+  if (sum) {
+    for (const r of sum.projects) {
+      if (seenNames.has(r.project)) continue;
+      rows.push({
+        domain: r.domains.length ? r.domains[0] : null,
+        project: r.project,
+        projectLabel: r.project,
+        inStore: false,
+        sessions: r.sessions,
+        sessionsRead: r.sessionsRead,
+        sessionsSaved: r.sessionsSaved,
+        lastSessionAt: r.lastSessionAt,
+        domainMismatch: false,
+        sharedName: false,
+      });
+    }
+  }
+  const num = (v) => (Number.isInteger(v) ? v : -1);
+  rows.sort((a, b) => (num(b.sessionsSaved) - num(a.sessionsSaved))
+    || (num(b.sessions) - num(a.sessions))
+    || (a.projectLabel < b.projectLabel ? -1 : a.projectLabel > b.projectLabel ? 1 : 0));
+
+  const pulse = activity.pulse;
+  return {
+    byProject: rows,
+    byProjectWindow: {
+      since: new Date(since).toISOString(),
+      windowDays: TRAY_CAPTURE_WINDOW_DAYS,
+      logPresent,
+      logFiles,
+      // The bars' NAMED denominator: the busiest project's sessions-that-saved.
+      // Null when no log was read — a denominator of an untaken reading is not 0.
+      busiestSaved: logPresent ? rows.reduce((m, r) => Math.max(m, Number.isInteger(r.sessionsSaved) ? r.sessionsSaved : 0), 0) : null,
+      totals: sum ? { sessions: sum.totals.sessions, sessionsSaved: sum.totals.sessionsSaved } : null,
+      legacyLines: sum ? sum.totals.legacyLines : null,
+      selfTestLines: sum ? sum.totals.selfTestLines : null,
+      storeProjects: activity.ok ? storeProjects.length : null,
+      storeTruncated: activity.truncated === true,
+      error: logError,
+    },
+    savePulse: pulse ? {
+      events: pulse.events,
+      windowSeconds: pulse.windowSeconds,
+      // A lower bound when any work-stream's journal ran past the 16 KB tail.
+      lowerBound: pulse.pairsTruncated > 0,
+      coversWholeWindow: pulse.coversWholeWindow,
+    } : null,
+  };
 }
 
 router.get('/usage', usageHandler);

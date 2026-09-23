@@ -1027,6 +1027,19 @@ export async function loadProjectContext(domain, project, opts = {}) {
       handoffPresent: ctx.current?.present === true,
       journalEntries: journalEntries.length,
       documents: docs.length,
+      // ── documentChars (v3.66.0): THE NUMERATOR `budgetChars` IS ABOUT ──
+      //
+      // `chars` above is the WHOLE block — framing, brief (≤32 KB), handoff
+      // (≤48 KB), journal AND documents — while PROJECT_CONTEXT_BUDGET_CHARS
+      // governs DOCUMENT BODIES ONLY (it is the store's `maxBytes` on the
+      // first call and the loop above's ceiling on the second). So
+      // `chars ÷ budgetChars` is a ratio of two different quantities and can
+      // pass 100% with nothing cut. This is the one it is a ratio of: the
+      // character length of every document body that reached the block.
+      // It never exceeds `budgetChars` — the store cuts in BYTES (≥ chars)
+      // and the second call is capped in chars above — so a bar drawn from
+      // it cannot show an over-run that did not happen.
+      documentChars: docs.reduce((n, d) => n + (d && typeof d.text === 'string' ? d.text.length : 0), 0),
       budgetChars: PROJECT_CONTEXT_BUDGET_CHARS,
       extraStoreCalls: extraCalls,
       notes: projectOmissionNotes(ctx, journalEntries),

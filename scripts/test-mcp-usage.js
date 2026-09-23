@@ -468,9 +468,9 @@ eq(body.sessions.lastSaveAt, ago(60 * 1000), 'the two session readings are forwa
 // below, not throw a TypeError and take §6 and §7 down with it.
 const rowFor = (n) => body.tools.find(t => t.name === n) ?? {};
 eq(JSON.stringify(Object.keys(rowFor('search_wiki')).sort()),
-  JSON.stringify(['count7d', 'countTotal', 'group', 'lastOk', 'lastUsedAt', 'lastVia',
+  JSON.stringify(['count7d', 'count7dAgent', 'countTotal', 'group', 'lastOk', 'lastUsedAt', 'lastVia',
     'mutates', 'name', 'purpose', 'refusedTotal', 'selfTestTotal'].sort()),
-  'every row carries exactly the eleven contracted fields (v3.61.0 added lastVia + selfTestTotal)');
+  'every row carries exactly the twelve contracted fields (v3.61.0 added lastVia + selfTestTotal, v3.66.0 count7dAgent)');
 eq(rowFor('search_wiki').countTotal, 4, 'a used tool carries its counts');
 eq(rowFor('get_node').lastUsedAt, null, 'an unused tool reports lastUsedAt: null…');
 eq(rowFor('get_node').countTotal, 0, '…with zero counts — never omitted from the map');
@@ -1483,6 +1483,176 @@ section('§13  A bridge that is OPENED and never used is still a session');
     mh.bucketLines(four.map((l) => JSON.stringify(l)), 0), 'claude-code', { minSessions: 4 });
   eq(fourRow.sessions, 4, '…and four such sessions are four');
   eq(fourRow.verdict, mh.VERDICTS.NO, '…still `measured-no`, which is the reading arm B actually earned');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§14  v3.66.0 — count7dAgent, summariseSessionsByProject, the union reader');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  // The real credential files, fingerprinted (sha256 + size + existence only —
+  // an mtime guard false-alarms on the maintainer's live app, v3.0.16).
+  const { createHash } = await import('node:crypto');
+  const REAL = ['.curator-config.json', '.sync-config.json', '.sharedbrain-config.json']
+    .map((f) => path.join(ROOT, f));
+  const fp = () => REAL.map((f) => (existsSync(f)
+    ? `${f}:${statSync(f).size}:${createHash('sha256').update(readFileSync(f)).digest('hex')}`
+    : `${f}:absent`)).join('|');
+  const fpBefore = fp();
+
+  // ── (a) count7dAgent: the same window, self-test lines excluded ─────────
+  clearLog();
+  const N = Date.parse('2026-09-18T12:00:00.000Z');
+  const ago14 = (ms) => new Date(N - ms).toISOString();
+  const D = 24 * 60 * 60 * 1000;
+  const SID = 'a1a1a1a1a1a1';
+  const lines = [
+    { ts: ago14(10 * D), tool: 'search_wiki', domain: DOM, ok: true, refused: false, ms: 1, sid: SID },           // outside 7 d
+    { ts: ago14(2 * D), tool: 'search_wiki', domain: DOM, ok: true, refused: false, ms: 1, sid: SID },            // agent
+    { ts: ago14(1 * D), tool: 'search_wiki', domain: DOM, ok: false, refused: true, ms: 1, sid: SID },            // agent, refused
+    { ts: ago14(60e3), tool: 'search_wiki', domain: DOM, ok: true, refused: false, ms: 1, sid: 'b2b2b2b2b2b2', via: 'self-test' },
+    { ts: ago14(50e3), tool: 'get_node', domain: DOM, ok: true, refused: false, ms: 1, sid: 'b2b2b2b2b2b2', via: 'self-test' },
+  ];
+  writeFileSync(LOG, `${lines.map((o) => JSON.stringify(o)).join('\n')}\n`, 'utf8');
+  usage.__clearUsageCache();
+  const a = await usage.readUsage({ now: N, noCache: true });
+  eq(a.byTool.search_wiki.count7d, 3, 'count7d is UNCHANGED — it still counts the self-test line in the window');
+  eq(a.byTool.search_wiki.count7dAgent, 2,
+    'count7dAgent counts the two agent calls in the window (the refusal included), not the self-test one, not the 10-day-old one');
+  eq(a.byTool.get_node.count7d, 1, 'a tool touched ONLY by a self-test run still shows count7d 1…');
+  eq(a.byTool.get_node.count7dAgent, 0, '…and count7dAgent 0 — one "Test all tools" press does not make it busy');
+  const r14 = await import(path.join(ROOT, 'src/routes/mcp.js'));
+  let b14 = null;
+  await r14.usageHandler({ query: {} }, { json: (o) => { b14 = o; } });
+  const sw14 = b14.tools.find((t) => t.name === 'search_wiki') ?? {};
+  eq(sw14.count7dAgent, 2, 'the route forwards count7dAgent per tool');
+  eq(sw14.count7d, 3, '…beside count7d, which keeps its shipped value');
+  eq((b14.tools.find((t) => t.name === 'get_tags') ?? {}).count7dAgent, 0, 'an unused tool reads count7dAgent 0 (a present log, a measured zero)');
+  ok(!('byProject' in b14) && !('savePulse' in b14) && !('byProjectWindow' in b14),
+    'WITHOUT ?include=projects the envelope gains no project fields (the 30 s poll and onboarding stay cheap)');
+  let b14x = null;
+  await r14.usageHandler({ query: { include: 'nonsense' } }, { json: (o) => { b14x = o; } });
+  ok(!('byProject' in b14x), 'an unrecognised include value is ignored, not honoured');
+
+  // ── (b) summariseSessionsByProject IS summariseSessions, per project ─────
+  const S1 = 'c1c1c1c1c1c1', S2 = 'c2c2c2c2c2c2', S3 = 'c3c3c3c3c3c3', S4 = 'c4c4c4c4c4c4';
+  const since = N - 30 * D;
+  const recs = [
+    // S1 bootstraps BEFORE the window and saves inside it: read AND saved.
+    { ts: ago14(40 * D), tool: 'get_project_context', domain: 'projects', project: 'alpha', ok: true, sid: S1 },
+    { ts: ago14(1 * D), tool: 'save_working_state', domain: 'projects', project: 'alpha', ok: true, sid: S1 },
+    // S2 touches alpha AND beta: saved alpha, read beta.
+    { ts: ago14(2 * D), tool: 'get_working_state', domain: 'projects', project: 'alpha', ok: true, sid: S2 },
+    { ts: ago14(2 * D - 1000), tool: 'save_working_state', domain: 'projects', project: 'alpha', ok: true, sid: S2 },
+    { ts: ago14(2 * D - 2000), tool: 'get_working_state', domain: 'other', project: 'beta', ok: true, sid: S2 },
+    // S3: beta, a REFUSED save is not a save.
+    { ts: ago14(3 * D), tool: 'save_working_state', domain: 'other', project: 'beta', ok: false, refused: true, sid: S3 },
+    // A self-test save on alpha must count nowhere.
+    { ts: ago14(1000), tool: 'save_working_state', domain: 'projects', project: 'alpha', ok: true, sid: S4, via: 'self-test' },
+    // A legacy line (no sid) is never a session.
+    { ts: ago14(1000), tool: 'save_working_state', domain: 'projects', project: 'alpha', ok: true },
+    // gamma, entirely outside the window: no row.
+    { ts: ago14(45 * D), tool: 'save_working_state', domain: 'projects', project: 'gamma', ok: true, sid: 'c5c5c5c5c5c5' },
+    // A session line (no project) must not create a row.
+    { ts: ago14(1 * D), ev: 'session', sid: S1, client: 'codex' },
+  ];
+  const by = usage.summariseSessionsByProject(recs, { since });
+  const rowOf = (p) => by.projects.find((r) => r.project === p);
+  for (const p of ['alpha', 'beta']) {
+    const ref = usage.summariseSessions(recs, { project: p, since }).totals;
+    const r = rowOf(p) ?? {};
+    ok(r.sessions === ref.sessions && r.sessionsRead === ref.sessionsRead && r.sessionsSaved === ref.sessionsSaved,
+      `the ${p} row equals summariseSessions(records, {project: '${p}'}) — the capture meter's own reading `
+      + `(${r.sessions}/${r.sessionsRead}/${r.sessionsSaved} vs ${ref.sessions}/${ref.sessionsRead}/${ref.sessionsSaved})`);
+  }
+  eq(rowOf('alpha')?.sessions, 2, 'alpha: two sessions (S1 and S2), the self-test and legacy lines excluded');
+  eq(rowOf('alpha')?.sessionsSaved, 2, 'alpha: both saved');
+  eq(rowOf('alpha')?.sessionsRead, 2, 'alpha: S1 read before the window and still counts as read (whole-session reading)');
+  eq(rowOf('beta')?.sessions, 2, 'beta: S2 and S3');
+  eq(rowOf('beta')?.sessionsSaved, 0, 'beta: a REFUSED save is not a save');
+  eq(rowOf('gamma'), undefined, 'a project with no line in the window has NO row (absent, not a fabricated zero)');
+  eq(by.projects.map((r) => r.project).join(','), 'alpha,beta', 'rows are ordered by sessions-that-saved, busiest first');
+  eq(JSON.stringify(rowOf('alpha')?.domains), '["projects"]', 'each row names the domains its lines carried');
+  eq(by.totals.sessions, 3, 'totals count DISTINCT sessions — S2 touched two projects and is one session');
+  eq(by.totals.sessionsSaved, 2, 'totals.sessionsSaved: S1 and S2');
+  eq(by.totals.selfTestLines, 1, 'the self-test line is counted as excluded');
+  eq(by.totals.legacyLines, 1, 'the legacy line is counted as excluded');
+  eq(JSON.stringify(Object.keys(rowOf('alpha') ?? {}).sort()),
+    JSON.stringify(['domains', 'lastSessionAt', 'project', 'sessions', 'sessionsRead', 'sessionsSaved']),
+    'a row carries exactly its six fields — no sid, no client, no content');
+  eq(rowOf('alpha')?.lastSessionAt, ago14(1 * D), 'lastSessionAt is the newest session’s last line');
+  eq(usage.summariseSessionsByProject([], {}).projects.length, 0, 'an empty log answers no rows and does not throw');
+
+  // ── (c) the union reader: both logs, when the machine keeps two ──────────
+  clearLog();
+  writeFileSync(LOG, `${JSON.stringify({ ts: ago14(D), tool: 'save_working_state', domain: DOM, project: 'alpha', ok: true, refused: false, ms: 1, sid: 'd1d1d1d1d1d1' })}\n`, 'utf8');
+  const BUNDLE = path.join(TMP, 'bundle-log');
+  mkdirSync(BUNDLE, { recursive: true });
+  const BLOG = path.join(BUNDLE, path.basename(LOG));
+  writeFileSync(BLOG, `${JSON.stringify({ ts: ago14(D), tool: 'save_working_state', domain: DOM, project: 'alpha', ok: true, refused: false, ms: 1, sid: 'd2d2d2d2d2d2' })}\n`, 'utf8');
+  const one = await usage.readUsageLinesUnion({ noCache: true });
+  eq(one.files, 1, 'isolated, with no seam: ONE file (the suite never reaches a real bundle log)');
+  process.env.CURATOR_TEST_BUNDLE_LOG_DIR = BUNDLE;
+  try {
+    const both = await usage.readUsageLinesUnion({ noCache: true });
+    eq(both.files, 2, 'with a second log on the machine the union reads BOTH files');
+    eq(both.records.length, 2, '…and both files’ lines');
+    const single = await usage.readUsageLines({ noCache: true });
+    eq(single.records.length, 1, '(control) the single-file reader sees only its own — the union is what differs');
+    const sum2 = usage.summariseSessionsByProject(both.records, {});
+    eq(sum2.projects[0]?.sessionsSaved, 2, 'a project saved through both Curators counts both sessions');
+    // Cache keyed on EVERY file: growing the second must be seen.
+    writeFileSync(BLOG, `${readFileSync(BLOG, 'utf8')}${JSON.stringify({ ts: ago14(D / 2), tool: 'get_node', domain: DOM, ok: true, refused: false, ms: 1, sid: 'd2d2d2d2d2d2' })}\n`, 'utf8');
+    const grown = await usage.readUsageLinesUnion();
+    eq(grown.records.length, 3, 'the union cache is keyed on the SECOND file too — its growth is re-read');
+    // THE CAPTURE ROUTE READS THE SAME UNION (routes/memory.js) — pinned there;
+    // here: reading never writes. Both files are byte-identical after the reads.
+    const sizes = [statSync(LOG).size, statSync(BLOG).size];
+    await usage.readUsageLinesUnion({ noCache: true });
+    ok(statSync(LOG).size === sizes[0] && statSync(BLOG).size === sizes[1], 'the union reader writes nothing to either log');
+  } finally {
+    delete process.env.CURATOR_TEST_BUNDLE_LOG_DIR;
+    usage.__clearUsageCache();
+  }
+
+  // ── (d) the route's ?include=projects half ──────────────────────────────
+  // The fixture domain gets a standing brief, so the store lists its own project.
+  mkdirSync(path.join(DOMAINS, DOM, 'state'), { recursive: true });
+  writeFileSync(path.join(DOMAINS, DOM, 'state', 'project.md'), '# Brief\n\nFixture.\n');
+  mkdirSync(path.join(DOMAINS, DOM, 'state', 'quiet'), { recursive: true });
+  writeFileSync(path.join(DOMAINS, DOM, 'state', 'quiet', 'project.md'), '# Quiet\n\nFixture.\n');
+  clearLog();
+  let noLog = null;
+  await r14.usageHandler({ query: { include: 'projects' } }, { json: (o) => { noLog = o; } });
+  ok(Array.isArray(noLog.byProject), 'with ?include=projects the envelope carries byProject[]');
+  eq(noLog.byProjectWindow?.logPresent, false, 'no usage log: logPresent false');
+  eq(noLog.byProjectWindow?.busiestSaved, null, '…the bars’ denominator is null, not 0');
+  ok(noLog.byProject.every((r) => r.sessions === null && r.sessionsSaved === null),
+    '…and every store project reads sessions null — NOT MEASURED, never a fabricated 0');
+  ok(noLog.byProject.some((r) => r.project === DOM && r.inStore === true),
+    'the store’s projects are listed even with no log (the domain’s own project here)');
+  writeFileSync(LOG, [
+    { ts: new Date(Date.now() - D).toISOString(), tool: 'save_working_state', domain: DOM, project: DOM, ok: true, refused: false, ms: 1, sid: 'e1e1e1e1e1e1' },
+    { ts: new Date(Date.now() - D).toISOString(), tool: 'save_working_state', domain: 'gone', project: 'retired', ok: true, refused: false, ms: 1, sid: 'e2e2e2e2e2e2' },
+  ].map((o) => JSON.stringify(o)).join('\n') + '\n', 'utf8');
+  usage.__clearUsageCache();
+  let withLog = null;
+  await r14.usageHandler({ query: { include: 'projects' } }, { json: (o) => { withLog = o; } });
+  const own = withLog.byProject.find((r) => r.project === DOM) ?? {};
+  eq(own.sessionsSaved, 1, 'a store project with a saving session in the log reads sessionsSaved 1');
+  eq(own.inStore, true, '…and it is the STORE’s row, joined — not a log-only one');
+  const quiet = withLog.byProject.find((r) => r.project === 'quiet') ?? {};
+  ok(quiet.inStore === true && quiet.sessions === 0 && quiet.sessionsSaved === 0,
+    'a store project the PRESENT log never names reads a MEASURED 0 (not null)', JSON.stringify(quiet));
+  const gone = withLog.byProject.find((r) => r.project === 'retired') ?? {};
+  eq(gone.inStore, false, 'a project the log names and the store does not hold is KEPT, marked inStore:false');
+  eq(gone.domain, 'gone', '…with the domain its lines named');
+  eq(withLog.byProjectWindow?.busiestSaved, 1, 'busiestSaved is the named denominator (max sessionsSaved)');
+  eq(withLog.byProjectWindow?.windowDays, 30, 'the window is 30 days, the capture meter’s own default');
+  ok(withLog.savePulse === null || Number.isInteger(withLog.savePulse.events),
+    'savePulse is the store pulse’s event count, or null when no journal exists');
+  ok(withLog.tools.length === registry.length, 'the tool rows are still all there beside the project half');
+
+  eq(fp(), fpBefore, 'real credential files unchanged (sha256 + size + existence)');
 }
 
 // ── Cleanup ────────────────────────────────────────────────────────────────
