@@ -36,7 +36,7 @@ import { makeUsageAccumulator } from './ingest.js';
 // into that subtree; ingest-queue.js reads ingest.js's `__testing` while
 // evaluating, so every process whose first import is ingest.js would crash
 // ("Cannot access 'ingestTesting' before initialization") — measured on this
-// branch before the fix. test-next-compile-estimate §10 pins it by loading
+// branch before the fix. test-next-compile-estimate §11 pins it by loading
 // each module on the cycle as the first import of a fresh process.
 let aiRunModule = null;
 async function aiRun() {

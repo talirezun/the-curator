@@ -32,7 +32,7 @@ import { writeFileAtomic } from './atomic-write.js';
 import { getLogFilePath, getLogFileStats, logWarn } from './logger.js';
 // v3.67.0: the live check's estimate in the one shape every AI job uses. A
 // static import is safe here: nothing on ai-run.js's own import graph reaches
-// back to this module (test-next-compile-estimate §10 loads it first).
+// back to this module (test-next-compile-estimate §11 loads it first).
 import { describeRun } from './ai-run.js';
 
 // Files that should be owner-only (0600). getCredentialFiles() in paths.js is
@@ -292,9 +292,13 @@ export async function runQuickDiagnostics() {
  * provider is responding. The route only invokes this on an explicit,
  * cost-confirmed request. Returns a structured result; never throws.
  */
-// The live check's prompt, named ONCE so the call and its estimate
-// (describeLiveCheck) describe the same bytes. The strings are the ones the
-// check always sent; changing them moves the estimate with them.
+// The live check's prompt, restated for its ESTIMATE (describeLiveCheck).
+// runLiveApiCheck keeps its literals BYTE-IDENTICAL rather than reading these
+// names: scripts/test-diagnostics.js lifts runLiveApiCheck into a sandbox with
+// a fixed list of injected collaborators, and a new free identifier inside it
+// is a ReferenceError that the function's own catch would report as a failed
+// provider (the rule-10 trap). test-diagnostics pins these three constants to
+// the literals in runLiveApiCheck's source, so the two cannot drift.
 export const LIVE_CHECK_SYSTEM_PROMPT = 'You are a connectivity test. Reply with exactly the word OK and nothing else.';
 export const LIVE_CHECK_USER_PROMPT = 'Reply now.';
 export const LIVE_CHECK_MAX_TOKENS = 16;
@@ -332,9 +336,9 @@ export async function runLiveApiCheck() {
   const started = Date.now();
   try {
     const reply = await generateText(
-      LIVE_CHECK_SYSTEM_PROMPT,
-      LIVE_CHECK_USER_PROMPT,
-      LIVE_CHECK_MAX_TOKENS,
+      'You are a connectivity test. Reply with exactly the word OK and nothing else.',
+      'Reply now.',
+      16,
       'text',
     );
     const latencyMs = Date.now() - started;

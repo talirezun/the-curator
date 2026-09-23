@@ -29,7 +29,7 @@ import { parseJSON, isOutputTokenLimit, makeUsageAccumulator } from './ingest.js
 // — would then evaluate ingest-queue.js while ingest.js is still mid-flight
 // and die with "Cannot access 'ingestTesting' before initialization".
 // MEASURED on this branch before the fix: test-health-ai-pricing crashed at
-// load. test-next-compile-estimate §10 loads every module on the cycle as
+// load. test-next-compile-estimate §11 loads every module on the cycle as
 // the FIRST import of a fresh process, so a static import back here reds.
 import {
   readSchema,
