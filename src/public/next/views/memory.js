@@ -11271,7 +11271,10 @@ async function runPlan(arm, token) {
     const data = await res.json();
     out = res.ok && data && data.ok ? { data, error: null }
       : { data: null, error: (data && (data.message || data.error)) || 'HTTP ' + res.status,
-        runsOn: data && data.runsOn };
+        runsOn: data && data.runsOn,
+        // A failed AI run that BILLED still says what it cost (H's 502s carry
+        // `spent`; v3.16.1: a cost is never dropped because the outcome was bad).
+        spent: data && data.spent && typeof data.spent === 'object' ? data.spent : null };
   } catch (err) {
     out = { data: null, error: err.message };
   }
@@ -11279,6 +11282,7 @@ async function runPlan(arm, token) {
   p.running = null;
   if (!out.data) {
     p.error = out.error;
+    p.failedSpent = out.spent || null;
     if (out.runsOn && typeof out.runsOn === 'object') {
       p.estimate = Object.assign({}, p.estimate || {}, { runsOn: out.runsOn });
     }
@@ -11286,6 +11290,7 @@ async function runPlan(arm, token) {
     return;
   }
   p.result = out.data;
+  p.failedSpent = null;
   p.ticks = {};
   for (const x of (Array.isArray(out.data.proposals) ? out.data.proposals : [])) {
     if (x && typeof x.slug === 'string' && x.differs === true) p.ticks[x.slug] = true;
@@ -11458,8 +11463,13 @@ function bindSessionAndPlan(root, token) {
   const one = (sel) => (typeof root.querySelector === 'function' ? root.querySelector(sel) : null);
 
   // The run line's door — "Change model" / "Add one in Providers & keys".
-  if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
-    wireAiRunDoors(document.querySelector('#view-root .main-inner'), { requestSettingsSection, navigate });
+  // ON `#view-root`, THE ROOT CHAT, INGEST AND SETTINGS WIRE, and on nothing
+  // else: the kit wires a root once (a WeakSet), so every view sharing the one
+  // stable root shares ONE delegated listener. Wiring a second, inner root here
+  // put two listeners under a door in Context once another view had wired
+  // `#view-root`, and a press went to Settings twice (found by package CI).
+  if (typeof document !== 'undefined' && typeof document.getElementById === 'function') {
+    wireAiRunDoors(document.getElementById('view-root'), { requestSettingsSection, navigate });
   }
 
   // ① the start-state cells: ONE cfg per row, the same function the markup used.
@@ -11640,7 +11650,7 @@ function renderPlanPanel(facts, p) {
       + '</div>'
     + '</div>'
     + runLine
-    + (r && r.spent ? renderSpent(r.spent) : '')
+    + (r && r.spent ? renderSpent(r.spent) : (!r && p.failedSpent ? renderSpent(p.failedSpent) : ''))
     + (p.error ? renderStatus({ state: 'danger', title: 'No suggestion was made', detail: p.error }) : '')
     + result
   + '</div>';

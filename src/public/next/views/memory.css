@@ -2227,3 +2227,26 @@
   white-space: normal;
   max-width: 34ch;
 }
+
+/* ── STEP ④'s HEAD WRAPS RATHER THAN CLIPS (measured at 568) ──────────────
+   At a 568px window this view's column is ~220px, and the numeral, the title,
+   the ⓘ and the Reading budget picker cannot share one line: the picker was
+   clipped at the column's edge. Scoped to THIS step's head, so the shared
+   head rule shell.css owns is unchanged everywhere else; the picker takes the
+   next line, right-aligned by its own `margin-left: auto`. At 1370 it fits on
+   the title's line and nothing moves. */
+.settings-block-context-session > .settings-block-hd { flex-wrap: wrap; row-gap: var(--space-3); }
+/* The cost line's sentence keeps a readable measure and its action drops
+   under it on a narrow column, instead of the sentence being squeezed into a
+   column one word wide beside the button. */
+.mem-ss-stack > .tx-note { flex-wrap: wrap; }
+.mem-ss-stack > .tx-note > span { flex: 1 1 220px; }
+/* Step ④'s two monitors carry the longest keys on the page ("MCP
+   get_project_context", "left out, by name"). The kit stacks a monitor into one
+   column below 640px but keeps its key on one line, so at a 568px window those
+   two keys ran past the column (measured: 2px and 29px). Settings' session
+   strip took the same one-declaration exception for the same reason. */
+@media (max-width: 639px) {
+  #mem-ss-monitor .cur-mon-key,
+  #mem-ss-reach .cur-mon-key { white-space: normal; overflow-wrap: anywhere; }
+}

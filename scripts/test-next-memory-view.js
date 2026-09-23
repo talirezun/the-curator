@@ -11543,6 +11543,50 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       '32768,65536');
   }
 
+  // ── §25g2 — ONE door listener per root, shared with every other view ──
+  // Chat, Ingest and Settings wire J's door on `#view-root`. If Context wired
+  // a different (inner) root, a press on a door inside Context would reach
+  // TWO delegated listeners and navigate twice. Driven with the REAL kit
+  // function, after "another view" has already wired the same root.
+  {
+    const { wireAiRunDoors: realWire } = await import('../src/public/next/shared/ai-run.js');
+    const listeners = [];
+    const viewRoot = { id: 'view-root', addEventListener: (t, fn) => listeners.push([t, fn]) };
+    const calls = { section: [], nav: [] };
+    const deps = { requestSettingsSection: (x) => calls.section.push(x), navigate: (x) => calls.nav.push(x) };
+    realWire(viewRoot, deps);                       // Chat / Ingest / Settings, first
+    const root = { querySelectorAll: () => [], querySelector: () => null };
+    const api = new Function('state', 'document', 'mountListbox', 'wireAiRunDoors', 'requestSettingsSection',
+      'navigate', 'setStartState', 'setReadingBudget', 'reportAsyncMountFailure', 'patchSessionStart',
+      'render', 'loadPlanEstimate', 'runPlan', 'pressPlanAi', 'applyPlan', 'loadPlanPreview', 'localStorage',
+      'escapeHtml', 'icon', 'renderMonitor', 'renderListboxHtml', 'renderRunsOn', 'renderSpent',
+      'aiActionDisabledAttrs', 'renderDescription', 'renderStatus', 'memStep', 'foundationsFacts',
+      v367Lift() + extractFunction(viewSrc, 'bindSessionAndPlan', 'memory.js') + '\nreturn { bindSessionAndPlan };')(
+      baseSt({ projectRead: null }),
+      // The inner column is a DIFFERENT element whose listeners also hear a
+      // press (it is inside #view-root), so wiring it as well is the defect.
+      { getElementById: (id) => (id === 'view-root' ? viewRoot : null),
+        querySelector: (sel) => (sel === '#view-root .main-inner'
+          ? { addEventListener: (t, fn) => listeners.push([t, fn]) } : null) },
+      () => {}, realWire, deps.requestSettingsSection, deps.navigate,
+      async () => {}, async () => {}, () => {}, () => {}, () => {},
+      async () => {}, async () => {}, () => {}, async () => {}, async () => {}, { setItem() {} },
+      escapeHtml, () => '', renderMonitor, () => '', renderRunsOn, renderSpent, aiActionDisabledAttrs,
+      () => '', () => '', () => '', () => ({}));
+    api.bindSessionAndPlan(root, 1);
+    api.bindSessionAndPlan(root, 1);                // a second paint re-binds
+    const clicks = listeners.filter(([t]) => t === 'click');
+    eq('Context wires the SAME root the other views do, so there is ONE door listener, not two',
+      clicks.length, 1);
+    const door = { dataset: { aiRunDoor: 'providers' } };
+    for (const [, fn] of clicks) {
+      fn({ target: { closest: (sel) => (sel === '[data-ai-run-door]' ? door : null) }, preventDefault() {} });
+    }
+    ok('...so a door press in Context goes to Providers & keys exactly ONCE',
+      calls.section.join() === 'providers' && calls.nav.join() === 'settings',
+      JSON.stringify(calls));
+  }
+
   // ── §25h — the teaching copy, verbatim (CONTRACT §5.1) ────────────────
   {
     const R = makeRenderers(baseSt());
