@@ -816,6 +816,56 @@ section('v3.65.3  The Vault folder ⓘ is one paragraph, not four rows  (EXECUTE
     '…and nothing but the trailing docs link sits outside it (no stray text row)', pm ? pm[2] : inner);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// V1 (v3.66.0, P8) — KNOWLEDGE BASE › VAULT FOLDER › DOMAINS IN THIS FOLDER
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The app twin of the menubar widget's per-domain page bars. Executed REAL:
+// renderVaultDomains through the real renderMonitor and the kit's real
+// identity mappings, then handed to the real renderStorage, which must place
+// it INSIDE the Vault folder block's body.
+{
+  const { identityDotClass } = await import('../src/public/next/shared/sidebar.js');
+  const { depthIdentityClass } = await import('../src/public/next/shared/depth-bar.js');
+  const state = { ...baseState(), vaultDomainsError: null, vaultDomains: [
+    { slug: 'business', displayName: 'Business', pageCount: 50, index: 0 },
+    { slug: 'posts', displayName: 'Posts', pageCount: 687, index: 1 },
+    { slug: 'research', displayName: 'Research', pageCount: 0, index: 2 },
+    { slug: 'broken', displayName: null, pageCount: null, index: 3 },
+  ] };
+  const extra = { identityDotClass, depthIdentityClass };
+  const mon = lift('renderVaultDomains', state, extra)();
+  const lines = [...mon.matchAll(/<div class="cur-mon-line[^"]*"><span class="cur-mon-key">([^<]+)<\/span><span class="cur-mon-value">([^]*?)<\/span>(?:<span class="cur-mon-sub">([^<]*)<\/span>)?<\/div>/g)]
+    .map((m) => ({ key: m[1], val: m[2], sub: m[3] || '' }));
+  ok(lines.map((l) => l.key).join(',') === 'posts,business,research,broken',
+    'one line per domain, largest first, an unreadable one last', lines.map((l) => l.key).join(','));
+  const bar = (v) => { const m = /class="cur-depth-bar([^"]*)" style="width:([\d.]+)%"/.exec(v || ''); return m ? { cls: m[1].trim(), w: Number(m[2]) } : null; };
+  const b0 = bar(lines[0] && lines[0].val), b1 = bar(lines[1] && lines[1].val);
+  ok(!!b0 && b0.w === 100 && !!b1 && b1.w === 7.3,
+    'pages against the LARGEST domain in the folder (687 → 100%, 50 → 7.3%)', JSON.stringify([b0, b1]));
+  ok(!!b0 && b0.cls === depthIdentityClass(1) && !!b1 && b1.cls === depthIdentityClass(0),
+    'each bar wears ITS OWN domain’s identity tone — the depth bar’s identity channel', JSON.stringify([b0, b1]));
+  ok(/cur-sb-dot cur-sb-dot-2"/.test(lines[0] ? lines[0].val : '') && /cur-sb-dot cur-sb-dot-1"/.test(lines[1] ? lines[1].val : ''),
+    '...and the dot beside it is the SAME slot (identityDotClass, keyed on the install’s domain index, not the sorted row)');
+  ok(identityDotClass(1).endsWith('-2') && depthIdentityClass(1).endsWith('-2'), 'CONTROL: the two mappings agree on slot 2');
+  ok(lines[2] && lines[2].sub === 'pages' && bar(lines[2].val) === null && /^0$|>0$/.test(lines[2].val.replace(/<[^>]*>/g, '')),
+    'a domain with 0 pages prints 0 and draws no bar');
+  ok(lines[3] && /not read/.test(lines[3].val) && bar(lines[3].val) === null && lines[3].sub === '',
+    'a domain whose stats could not be read SAYS so, with no bar — an untaken reading is not 0');
+  ok(!/cur-depth-danger/.test(mon), 'NEVER red: the largest domain is not a fault');
+  ok(/visually-hidden"> 50 of 687 pages, the largest domain in this folder</.test(mon), 'every bar names its denominator in words');
+
+  const html = lift('renderStorage', state)(mon);
+  const bodyAt = html.indexOf('<div class="settings-block-body">');
+  ok(bodyAt > 0 && html.indexOf('settings-vault-domains') > bodyAt
+     && html.indexOf('settings-vault-domains') > html.indexOf('storage-path-row'),
+    'the monitor sits INSIDE the Vault folder block’s body, under the path row');
+  ok(!/settings-vault-domains/.test(run('renderStorage', state)),
+    'CONTROL: called with nothing, renderStorage adds nothing (its lifted-alone callers are unchanged)');
+  const err = lift('renderVaultDomains', { ...state, vaultDomains: null, vaultDomainsError: 'Could not read the domains in this folder.' }, extra)();
+  ok(/settings-vault-note">Could not read the domains in this folder\.</.test(err), 'a failed read is said, not blank');
+}
+
 console.log('\n────────────────────────────────────────────────────────────');
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) { console.log('❌ /next Settings-section assertions FAILED'); process.exit(1); }

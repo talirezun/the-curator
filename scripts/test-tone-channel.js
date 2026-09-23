@@ -152,7 +152,7 @@ section('§2 — THE CENSUS: text coloured by tone may only SHRINK, per file');
 const BASELINE = {
   'shell.css':            { okwarn: 1, danger: 2 },
   'views/chat.css':       { okwarn: 4, danger: 4 },
-  'views/domains.css':    { okwarn: 5, danger: 5 },
+  'views/domains.css':    { okwarn: 0, danger: 5 },   // v3.66.0 E: all five success/attention TEXT rules converted
   'views/ingest.css':     { okwarn: 0, danger: 5 },
   'views/mcp-wizard.css': { okwarn: 0, danger: 1 },
   'views/memory.css':     { okwarn: 0, danger: 1 },
