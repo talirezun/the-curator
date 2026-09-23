@@ -10131,6 +10131,9 @@ function realListbox() {
       const meta = mkNode();
       const warn = mkNode();
       warn._span = mkNode();
+      // v3.66.0: the Documents monitor is patched in place too.
+      const mon = mkNode();
+      mon.outerHTML = '<div class="cur-mon" id="mem-fnd-monitor">STALE</div>';
       const st = {
         activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null, projects: [],
         projectRead: fndRead(fndPayload([fndDoc({ bytes: 200 * 1024 })])), detail: null,
@@ -10139,20 +10142,22 @@ function realListbox() {
       const calls = { renders: 0, urls: [], bodies: [] };
       const api = new Function('state', 'isCurrentMount', 'render', 'fetch', 'document',
         'encodeURIComponent', 'screenSignature', 'foundationsFacts',
-        'foundationsSummaryMeta', 'foundationsBudgetWarning',
+        'foundationsSummaryMeta', 'foundationsBudgetWarning', 'foundationsMonitor',
         'let renderedSignature = null;\n'
         + extractFunction(viewSrc, 'toggleReadFirst', 'memory.js')
         + '\nreturn { toggleReadFirst, sig: () => renderedSignature };')(
         st, () => true, () => { calls.renders++; },
         async (url, init) => { calls.urls.push(url); calls.bodies.push(init.body); return responder(); },
         { querySelector: (sel) => (sel.includes('mem-fold-foundations') ? meta : null),
-          getElementById: (id) => (id === 'mem-fnd-budget' ? warn : null) },
+          getElementById: (id) => (id === 'mem-fnd-budget' ? warn
+            : id === 'mem-fnd-monitor' ? mon : null) },
         encodeURIComponent, () => 'SIG',
         (read) => makeRenderers(st).foundationsFacts(read),
         (f) => makeRenderers(st).foundationsSummaryMeta(f),
-        (f) => makeRenderers(st).foundationsBudgetWarning(f));
+        (f) => makeRenderers(st).foundationsBudgetWarning(f),
+        (f) => makeRenderers(st).foundationsMonitor(f));
       await api.toggleReadFirst(btn, 1);
-      return { btn, meta, warn, calls, st, api };
+      return { btn, meta, warn, mon, calls, st, api };
     };
 
     const okAnswer = () => ({ ok: true, json: async () => ({ ok: true, slug: 'architecture.md',
@@ -10173,6 +10178,15 @@ function realListbox() {
     ok('...and the budget warning appears, naming the set and the consequence',
       r.warn.hidden === false && /flagged “read first”/.test(r.warn._span.textContent),
       r.warn._span.textContent);
+    // v3.66.0 (P1): the monitor moves with the tick, in place — the read-first
+    // line appears, against the ROUTE's reading budget, in the danger tone the
+    // answer's own `readFirstBudgetExceeded` calls for. No render.
+    ok('...and the Documents monitor is rewritten in place: the read-first line appears, '
+      + 'over its budget, from the ROUTE\'s answer',
+    !/STALE/.test(r.mon.outerHTML) && /id="mem-fnd-monitor"/.test(r.mon.outerHTML)
+      && /cur-mon-key">read first</.test(r.mon.outerHTML)
+      && /of 120 KB per session/.test(r.mon.outerHTML)
+      && /cur-depth-bar cur-depth-danger/.test(r.mon.outerHTML), r.mon.outerHTML);
     eq('...and the signature is re-taken, so the next poll neither repaints '
       + 'needlessly nor skips a repaint it owes', r.api.sig(), 'SIG');
 
@@ -11235,6 +11249,211 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
   ok('...but both still offer the two doors, because a domain\'s wiki does not '
     + 'stop existing because a stats read did',
   /mem-k-doors/.test(knLoading) && /mem-k-doors/.test(knFailed));
+}
+
+
+// ── §23 — v3.66.0: THE THREE DEPTH-BAR PLACEMENTS ON THIS SCREEN ─────────
+// ═════════════════════════════════════════════════════════════════════════
+//
+// P1 Documents (a two-budget monitor above the table), P2 Handoffs (a Size
+// column against the 48 KB ceiling a save is trimmed at), P3 Capture (the two
+// outcome counts as a share of all sessions). Every one EXECUTES the shipped
+// renderer through the real monitor and the real depth cell (both injected by
+// makeRenderers). What is pinned is what only this view can get wrong: WHICH
+// denominator, WHERE it comes from, WHEN a bar may turn danger, and that a
+// warning is never behind the chevron.
+{
+  const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+    domainList: ['acme'] });
+  const KB = 1024;
+  const monOf = (h) => {
+    const i = h.indexOf('id="mem-fnd-monitor"');
+    if (i === -1) return '';
+    const start = h.lastIndexOf('<div class="cur-mon"', i);
+    const end = h.indexOf('<div class="fnd-wrap">', i);
+    return h.slice(start, end === -1 ? undefined : end);
+  };
+  const lineOf = (h, key) => {
+    const at = h.indexOf('<span class="cur-mon-key">' + key + '</span>');
+    if (at === -1) return '';
+    const start = h.lastIndexOf('<div class="cur-mon-line', at);
+    const next = h.indexOf('<div class="cur-mon-line', at);
+    return h.slice(start, next === -1 ? undefined : next);
+  };
+  const widthOf = (h) => {
+    const m = /style="width:([\d.]+)%"/.exec(h);
+    return m ? Number(m[1]) : null;
+  };
+
+  // ── P1 (a): something is flagged, and the flagged set is over its budget ──
+  const flaggedOver = F.renderFoundations(fndRead(fndPayload([
+    fndDoc({ slug: 'a.md', bytes: 40 * KB, readFirst: true }),
+    fndDoc({ slug: 'b.md', bytes: 100 * KB, readFirst: true }),
+    fndDoc({ slug: 'c.md', bytes: 80 * KB }),
+  ], { budgetBytes: 200 * KB, readFirstCount: 2, onRequestCount: 1, readFirstBytes: 140 * KB,
+    readFirstBudgetBytes: 120 * KB, readFirstBudgetExceeded: true })));
+  const m1 = monOf(flaggedOver);
+  ok('P1: the Documents row body OPENS with a monitor, above the table',
+    m1.length > 0 && flaggedOver.indexOf('id="mem-fnd-monitor"') > flaggedOver.indexOf('mem-fold-body')
+    && flaggedOver.indexOf('id="mem-fnd-monitor"') < flaggedOver.indexOf('<table class="fnd-table">'),
+    flaggedOver.slice(0, 600));
+  const stored1 = lineOf(m1, 'stored');
+  const read1 = lineOf(m1, 'read first');
+  ok('P1: "stored" reads the total against the PROJECT budget, in words',
+    /cur-mon-value">[\s\S]*?220 KB/.test(stored1) && /cur-mon-sub">of 200 KB project</.test(stored1),
+    stored1);
+  ok('P1: "read first" reads the flagged set against the per-session READING budget, in words',
+    /140 KB/.test(read1) && /cur-mon-sub">of 120 KB per session</.test(read1), read1);
+  eq('P1: the read-first bar is 140 of 120 — full', widthOf(read1), 100);
+  ok('P1: an over-run of the READING budget takes the danger tone, on the bar AND the line\'s rule',
+    /cur-depth-bar cur-depth-danger/.test(read1) && /cur-mon-line cur-mon-danger/.test(read1), read1);
+  ok('P1: with something flagged, a stored total over 200 KB is NOT danger — the read-first set '
+    + 'is the one handed over, and the one sentence under the row talks about it',
+  !/cur-depth-danger|cur-mon-danger/.test(stored1) && widthOf(stored1) === 100, stored1);
+  ok('P1: every bar names its denominator in a hidden sentence',
+    /visually-hidden"> 220 KB of a 200 KB project budget/.test(stored1)
+    && /visually-hidden"> 140 KB of a 120 KB per-session reading budget/.test(read1),
+    stored1 + ' || ' + read1);
+  ok('P1: the danger is ALSO said in words, OUTSIDE the chevron (v3.16.1) — the existing '
+    + 'budget sentence, unfolded, after </details>',
+  flaggedOver.indexOf('id="mem-fnd-budget"') > flaggedOver.indexOf('</details>')
+    && !/id="mem-fnd-budget"[^>]*hidden/.test(flaggedOver)
+    && /over the 120 KB reading budget/.test(flaggedOver),
+  flaggedOver.slice(flaggedOver.indexOf('</details>'), flaggedOver.indexOf('</details>') + 400));
+  ok('P1: ...and it is ONE sentence — the monitor carries no loud entry of its own, which '
+    + 'inside a <details> would be a warning behind a chevron',
+  !/cur-mon-loud/.test(m1), m1);
+
+  // ── P1 (b): nothing flagged ──────────────────────────────────────────────
+  const unflaggedOver = F.renderFoundations(fndRead(fndPayload([
+    fndDoc({ slug: 'a.md', bytes: 150 * KB }), fndDoc({ slug: 'b.md', bytes: 90 * KB }),
+  ], { budgetBytes: 200 * KB, readFirstCount: 0, onRequestCount: 2, readFirstBytes: 0,
+    readFirstBudgetBytes: 120 * KB, readFirstBudgetExceeded: false })));
+  const m2 = monOf(unflaggedOver);
+  ok('P1: with nothing flagged there is NO read-first line — "0 read first" would report the '
+    + 'absence of a decision as a decision', !/cur-mon-key">read first</.test(m2) && m2.length > 0, m2);
+  ok('P1: ...and then the STORED set is what is handed over, so ITS over-run is danger',
+    /cur-depth-bar cur-depth-danger/.test(lineOf(m2, 'stored'))
+    && /cur-mon-line cur-mon-danger/.test(lineOf(m2, 'stored')), lineOf(m2, 'stored'));
+  const unflaggedUnder = F.renderFoundations(fndRead(fndPayload([
+    fndDoc({ slug: 'a.md', bytes: 50 * KB }),
+  ], { budgetBytes: 200 * KB, readFirstBudgetBytes: 120 * KB })));
+  const m3 = monOf(unflaggedUnder);
+  ok('P1: under budget, nothing is danger and the bar is the true share (25%)',
+    !/danger/.test(m3) && widthOf(lineOf(m3, 'stored')) === 25, m3);
+
+  // ── P1 (c): THE ONE LINE — the reading budget comes from the PAYLOAD ─────
+  // The approved context-budget plan's bridge: when the store starts sending a
+  // project's own reading budget in `readFirstBudgetBytes`, the bar, its sub
+  // and the sentence must follow with no view change. A hard-coded 120 KB
+  // anywhere on this path reds here.
+  const own = fndPayload([
+    fndDoc({ slug: 'a.md', bytes: 48 * KB, readFirst: true }), fndDoc({ slug: 'b.md', bytes: 30 * KB }),
+  ], { budgetBytes: 200 * KB, readFirstCount: 1, onRequestCount: 1, readFirstBytes: 48 * KB,
+    readFirstBudgetBytes: 64 * KB, readFirstBudgetExceeded: false });
+  const m4 = monOf(F.renderFoundations(fndRead(own)));
+  const read4 = lineOf(m4, 'read first');
+  ok('P1: the "of N per session" figure is the payload\'s readFirstBudgetBytes (64 KB here), '
+    + 'never the 120 KB view constant',
+  /of 64 KB per session/.test(read4) && !/120 KB/.test(m4), m4);
+  eq('P1: ...and the bar is drawn against it (48 of 64 = 75%)', widthOf(read4), 75);
+  ok('P1: ...and so is the unflagged budget sentence\'s "handed up to" figure',
+    /handed up to 64 KB of document text/.test(F.foundationsBudgetWarning(F.foundationsFacts(fndRead(
+      fndPayload([fndDoc({ bytes: 250 * KB })], { budgetBytes: 200 * KB, readFirstBudgetBytes: 64 * KB }))))),
+    F.foundationsBudgetWarning(F.foundationsFacts(fndRead(
+      fndPayload([fndDoc({ bytes: 250 * KB })], { budgetBytes: 200 * KB, readFirstBudgetBytes: 64 * KB })))));
+  {
+    // An older server that sent no reading budget: the flag's fallback is
+    // computed against the SAME denominator the figure falls back to.
+    const legacy = fndPayload([fndDoc({ bytes: 130 * KB, readFirst: true })], { budgetBytes: 200 * KB });
+    delete legacy.readFirstBudgetBytes; delete legacy.readFirstBudgetExceeded;
+    const lf = F.foundationsFacts(fndRead(legacy));
+    ok('P1: a build that sends no reading budget falls back to 120 KB for figure AND flag together',
+      lf.readFirstBudgetBytes === 120 * KB && lf.readFirstBudgetExceeded === true, JSON.stringify(lf));
+    const own2 = fndPayload([fndDoc({ bytes: 100 * KB, readFirst: true })],
+      { budgetBytes: 200 * KB, readFirstBudgetBytes: 64 * KB });
+    delete own2.readFirstBudgetExceeded;
+    ok('P1: ...and a build that sends the budget but not the flag derives the flag against THAT '
+      + 'budget (100 KB > 64 KB), not the constant',
+    F.foundationsFacts(fndRead(own2)).readFirstBudgetExceeded === true);
+  }
+
+  // ── P1 (d): where the monitor is NOT ─────────────────────────────────────
+  ok('P1: no documents, no monitor (nothing to measure is not a zero bar)',
+    !/mem-fnd-monitor/.test(F.renderFoundations(fndRead(fndPayload([], { ownership: 'curator' })))));
+  ok('P1: the summary line stays bar-free — a depth bar never sits in a <summary>',
+    !/cur-depth/.test(flaggedOver.slice(flaggedOver.indexOf('<summary'),
+      flaggedOver.indexOf('</summary>'))));
+
+  // ── P2: the Handoffs Size column ─────────────────────────────────────────
+  const rowsP2 = [
+    { scope: 'session-a', machine: 'boxa', headline: 'x', writtenAgeSeconds: 60, bytes: 31 * KB },
+    { scope: 'session-b', machine: 'boxa', headline: 'y', writtenAgeSeconds: 600, bytes: 46 * KB },
+    { scope: 'session-c', machine: 'boxa', headline: 'z', writtenAgeSeconds: 900, bytes: 60 * KB },
+    { scope: 'session-d', machine: 'boxa', headline: 'w', writtenAgeSeconds: 1200 },
+  ];
+  const ws = F.renderWorkStreams(rowsP2, null, 10, 48 * KB);
+  const cellOf = (h, scope) => {
+    const i = h.indexOf('data-mem-scope="' + scope + '"');
+    const tr = h.slice(h.lastIndexOf('<tr', i), h.indexOf('</tr>', i));
+    return tr.slice(tr.indexOf('mem-ws-cell-size'));
+  };
+  ok('P2: the table gains a Size column after Harness',
+    /<th scope="col">Harness<\/th><th scope="col">Size<\/th><\/tr>/.test(ws), ws.slice(0, 500));
+  eq('P2: ...and every row carries exactly as many cells as the head has columns',
+    (ws.match(/<tr class="mem-ws-row/g) || []).length * 6,
+    (ws.match(/<td class="mem-ws-cell-/g) || []).length);
+  ok('P2: a handoff\'s size is printed and drawn against the 48 KB budget, with the denominator named',
+    /31 KB/.test(cellOf(ws, 'session-a')) && widthOf(cellOf(ws, 'session-a')) === 64.6
+    && /visually-hidden"> 31 KB of a 48 KB handoff budget/.test(cellOf(ws, 'session-a')),
+    cellOf(ws, 'session-a'));
+  ok('P2: a handoff NEVER turns red — the store trims, it never overruns — even a file over the '
+    + 'ceiling fills the bar, neutral, and keeps its true figure',
+  !/cur-depth-danger/.test(ws) && widthOf(cellOf(ws, 'session-c')) === 100
+    && /60 KB/.test(cellOf(ws, 'session-c')), cellOf(ws, 'session-c'));
+  ok('P2: a pair with no `bytes` says so with a dash, never a zero',
+    /mem-ws-cell-size">—</.test(cellOf(ws, 'session-d')), cellOf(ws, 'session-d'));
+  const wsNoBudget = F.renderWorkStreams(rowsP2, null, 10);
+  ok('P2: with no stateBudgetBytes on the wire the figure stands ALONE — no bar against a '
+    + 'number this view would have to make up',
+  /31 KB/.test(cellOf(wsNoBudget, 'session-a')) && !/cur-depth-bar/.test(wsNoBudget), cellOf(wsNoBudget, 'session-a'));
+  const foldP2 = F.renderWorkStreamsFold({ scopes: rowsP2, brief: { present: true },
+    distinctScopeCount: 4, savedCopies: 4, stateBudgetBytes: 48 * KB }, null);
+  ok('P2: the fold hands the ROUTE\'s stateBudgetBytes to the table',
+    /31 KB of a 48 KB handoff budget/.test(foldP2), foldP2.slice(0, 400));
+  const foldP2b = F.renderWorkStreamsFold({ scopes: rowsP2, brief: { present: true },
+    distinctScopeCount: 4, savedCopies: 4, stateBudgetBytes: 64 * KB }, null);
+  ok('P2: ...its value, not a constant (64 KB here)',
+    /31 KB of a 64 KB handoff budget/.test(foldP2b) && !/48 KB handoff budget/.test(foldP2b));
+
+  // ── P3: Capture — a share of a named whole, never a target ───────────────
+  const cap = (totals) => makeRenderers({
+    activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+    capture: { domain: 'acme', project: 'lumina', error: null, data: {
+      logPresent: true, windowDays: 30, sessionsShown: 0, sessionsTruncated: false,
+      totals: { legacyLines: 0, selfTestLines: 0, ...totals }, sessions: [] } },
+  }).renderCaptureMeter();
+  const c6 = cap({ sessions: 6, sessionsRead: 4, sessionsSaved: 3, sessionsReadNotSaved: 2 });
+  const saved6 = lineOf(c6, 'saved before stopping');
+  const read6 = lineOf(c6, 'started with the context');
+  ok('P3: "saved before stopping" is drawn as a share of all sessions, and says so ("of 6")',
+    widthOf(saved6) === 50 && /cur-mon-sub">of 6</.test(saved6)
+    && /visually-hidden"> 3 of the 6 sessions in the last 30 days/.test(saved6), saved6);
+  ok('P3: ...and so is "started with the context" (4 of 6)',
+    widthOf(read6) === 66.7 && /cur-mon-sub">of 6</.test(read6), read6);
+  ok('P3: a share is never danger — there is no target, so there is no over-run',
+    !/cur-depth-danger/.test(c6));
+  ok('P3: "read and did not save" keeps its own warn rule and gets no bar',
+    /cur-mon-line cur-mon-warn/.test(lineOf(c6, 'read and did not save'))
+    && !/cur-depth-bar/.test(lineOf(c6, 'read and did not save')), lineOf(c6, 'read and did not save'));
+  ok('P3: the closed summary carries no ratio, no percentage and no bar',
+    !/%|cur-depth/.test(c6.slice(c6.indexOf('<summary'), c6.indexOf('</summary>'))));
+  const c0 = cap({ sessions: 0, sessionsRead: 0, sessionsSaved: 0, sessionsReadNotSaved: 0 });
+  ok('P3: zero sessions draws no bar and no "of 0" — a share of nothing is not a reading',
+    !/cur-depth-bar/.test(c0) && !/of 0/.test(c0), c0.slice(0, 400));
+  const cNull = cap({ sessionsRead: 2, sessionsSaved: 1 });
+  ok('P3: sessions NOT MEASURED (null) draws no bar either — absent is not zero',
+    !/cur-depth-bar/.test(cNull) && /saved before stopping/.test(cNull), cNull.slice(0, 400));
 }
 
 
