@@ -43,10 +43,13 @@
    share its class and differ only by a colour modifier. */
 .dm-quick-footnote { margin-top: 10px; }
 
-/* The no-key variant is a flex row (prose + Open Settings button); the prose
-   must be allowed to shrink. The role's own max-width still caps its line
-   length. */
-.dm-quick-empty-text { flex: 1 1 auto; min-width: 0; }
+/* v3.67.0: the no-key variant (prose + an "Open Settings" button that landed
+   on General) is gone — the AI actions stay visible and disabled, and the run
+   line below the bar carries the no-key sentence and its door.
+   `.dm-quick-empty-text` and `.dm-quick-settings-btn` went with it
+   (`.dm-quick-empty` stays, as a reference — see its own note). The run line itself sits directly under the action bar it prices,
+   with the after-line under it when a run has finished. */
+.dm-quick-run { margin-top: 4px; }
 
 /* Browse card: replaces `.dm-browse-empty`'s 10px bottom margin for the
    pre-load blurb and the listing error. The no-matches line sits inside
@@ -691,6 +694,12 @@
   background: var(--accent-tint);
   margin-bottom: 16px;
 }
+/* `.dm-quick-empty` has had no markup since v3.67.0 (the no-key row it drew
+   is gone — see `.dm-quick-run` at the top of this file). The rule is KEPT
+   because it is a named reference: Ingest's verbatim-note callout copies this
+   anatomy property for property, and scripts/test-next-ingest-view.js §16e3
+   reads its three declarations from HERE to prove the two still match.
+   Deleting it would orphan that comparison, not simplify anything. */
 .dm-quick-empty {
   display: flex;
   align-items: center;
@@ -777,7 +786,6 @@
   color: var(--text);
 }
 .dm-quick-note-busy svg { color: var(--attention-text); }
-.dm-quick-settings-btn { flex: none; }
 
 /* ── Confirm card (inline, generic) ──────────────────────────────────── */
 
