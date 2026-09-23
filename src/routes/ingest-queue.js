@@ -29,8 +29,45 @@ import {
   scrubPaths,
 } from '../brain/ingest-queue.js';
 import { listDomains } from '../brain/files.js';
+import { describeRun } from '../brain/ai-run.js';
 
 const router = Router();
+
+/**
+ * The run line for an ingest estimate, batch or one file (v3.67.0, ADDITIVE:
+ * every existing field of the estimate body is unchanged).
+ *
+ * Tokens are the estimate's OWN sums. Money, when both are known, is the
+ * estimate's OWN usdLow/usdHigh, not describeRun's recomputation: the queue's
+ * low end credits prompt caching across a multi-phase document's calls
+ * (cachingSavingsFraction in src/brain/ingest-queue.js), and describeRun
+ * prices tokens flat, so recomputing would put a SECOND, different range on
+ * the same screen as the batch panel's. Two numbers for one batch is the
+ * defect the one shape exists to end.
+ *
+ * What the estimate does not carry stays ABSENT: the batch estimate leaves
+ * its token sums null when the model is unpriced or free, so the run line
+ * then names the model and its price state with no token figures, and a
+ * batch with no accepted file carries no figures at all.
+ */
+export function ingestRunsOn(result) {
+  const E = (result && result.estimate && typeof result.estimate === 'object') ? result.estimate : {};
+  const accepted = result && result.files && Number.isFinite(result.files.count) ? result.files.count : 0;
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+  if (accepted === 0) return describeRun({ job: 'ingest' });
+  const runsOn = describeRun({
+    job: 'ingest',
+    inputTokensLow: num(E.inputTokensLow),
+    inputTokensHigh: num(E.inputTokensHigh),
+    outputTokensLow: num(E.outputTokensLow),
+    outputTokensHigh: num(E.outputTokensHigh),
+  });
+  if (runsOn.costNote === 'priced' && num(E.usdLow) !== undefined && num(E.usdHigh) !== undefined) {
+    runsOn.usdLow = E.usdLow;
+    runsOn.usdHigh = E.usdHigh;
+  }
+  return runsOn;
+}
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;         // matches routes/ingest.js's single-file cap
 const MAX_FILES_PER_BATCH = 100;
@@ -125,7 +162,7 @@ router.post('/estimate', async (req, res) => {
     if (!Array.isArray(files)) return res.status(400).json({ error: 'files must be an array of {name, size}' });
 
     const result = await estimateIngestQueueCost(domain, files);
-    res.json(result);
+    res.json({ ...result, runsOn: ingestRunsOn(result) });
   } catch (err) {
     console.error('[ingest-queue] estimate error:', err);
     sendError(res, err, 'Failed to estimate cost.');
