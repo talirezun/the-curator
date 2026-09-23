@@ -2216,7 +2216,11 @@ ok(/state\.file \? renderSelectedFileHtml\(state\.file\) : ''/.test(js),
   const html = bodies.verbatimPointerHtml;
   ok(!!html, '§16e CONTROL — verbatimPointerHtml extracted');
   // eslint-disable-next-line no-new-func
-  const pointer = new Function('icon', html + '\nreturn verbatimPointerHtml;')(() => '<svg></svg>');
+  // v3.65.2: the callout leads with a module-level glyph constant, lifted
+  // from the SAME source rather than restated here.
+  const glyphDecl = (/const VERBATIM_INFO_GLYPH =[^;]+;/.exec(js) || [''])[0];
+  ok(!!glyphDecl, '§16e CONTROL — VERBATIM_INFO_GLYPH extracted');
+  const pointer = new Function('icon', glyphDecl + '\n' + html + '\nreturn verbatimPointerHtml;')(() => '<svg></svg>');
 
   for (const name of ['architecture.md', 'NOTES.MD', 'decisions.txt', 'a.TXT']) {
     ok(pointer({ name }).length > 0, '§16e a ' + name + ' offers the pointer');
@@ -2232,20 +2236,37 @@ ok(/state\.file \? renderSelectedFileHtml\(state\.file\) : ''/.test(js),
   ok(pointer({}) === '', '§16e …and neither does a file object with no name');
 
   const note = pointer({ name: 'architecture.md' });
-  ok(/class="tx-note ing-verbatim-note"/.test(note),
-    '§16e it is a `.tx-note`, the shared one-line role, and NOT a second '
-    + 'independently-styled hint');
-  ok(!/<details|hidden/.test(note),
+  // ── ONE DESIGNED CALLOUT (v3.65.2, I2) ───────────────────────────────
+  // It WAS a `.tx-note` (a one-line, prose-measure role) with a ghost `btn-xs`,
+  // and the maintainer barely noticed the button. It is now one full-width
+  // block on Wiki health's Quick-maintenance anatomy: glyph + sentence in one
+  // left group, a real secondary button right.
+  ok(/^<div class="ing-verbatim-note" role="note"><div class="ing-verbatim-text"><svg[^]*<\/svg><span>/.test(note),
+    '§16e it is ONE callout: an aside (`role="note"`) whose left group leads with the glyph, '
+    + 'then the sentence', note.slice(0, 160));
+  ok(!/tx-note/.test(note),
+    '§16e …and no longer the one-line `.tx-note`, whose prose measure is what left the '
+    + 'button floating');
+  ok(/<circle cx="12" cy="12" r="9"\/><path d="M12 11v5M12 8h\.01"\/>/.test(note),
+    '§16e …the glyph is the ⓘ (dot ABOVE the stem), not `alertCircle`\u2019s "!" (dot below), '
+    + 'because this is information, not a warning');
+  ok(/<\/div><button type="button" class="btn btn-secondary ing-verbatim-go" id="ing-open-memory">Add as a project document<\/button><\/div>$/.test(note),
+    '§16e …and the button is the LAST child, OUTSIDE the text group, so the row puts it '
+    + 'on the right', note.slice(-200));
+  ok(!/<details|\shidden[\s>=]/.test(note), // (`\s` so the glyph's aria-hidden is not read as the attribute)
     '§16e …never folded — the consequence of ignoring it is a CHARGE, and a cost '
     + 'behind a chevron is not a cost that was disclosed');
   ok(/Wanted this kept word for word\?/.test(note),
     '§16e …asking the question in the reader\u2019s own words');
   ok(/Add it as a project document instead/.test(note),
     '§16e …and naming the other way in');
-  ok((note.match(/<button/g) || []).length === 1 && /btn-ghost btn-xs/.test(note)
-    && !/btn-ai|btn-primary/.test(note),
-  '§16e …with ONE control, at the quietest tier — it is a pointer, not a write '
-    + 'path, and certainly not a second paid action');
+  ok((note.match(/<button/g) || []).length === 1 && /class="btn btn-secondary /.test(note)
+    && !/btn-ai|btn-primary|btn-ghost|btn-xs|btn-sm/.test(note),
+  '§16e …with ONE control, a real SECONDARY button at the ordinary (md) rung — '
+    + 'visible as a button, still not the page\u2019s primary action, and certainly not a '
+    + 'second paid action');
+  ok(/>Add as a project document</.test(note) && !/Open Project context/.test(note),
+    '§16e …whose label names the act the sentence recommends, not a place');
   ok(!/sparkles/.test(note), '§16e …and it carries no sparkle, because it spends nothing');
   ok(/id="ing-open-memory"/.test(note), '§16e …at a stable id the wiring can find');
 }
@@ -2260,6 +2281,14 @@ ok(/state\.file \? renderSelectedFileHtml\(state\.file\) : ''/.test(js),
   ok(/navigate\('memory'\)/.test(wireBody2),
     '§16e2 …to navigate(\'memory\'), the shell\u2019s single navigation chokepoint — '
     + 'never a second fetch and never a write from this view');
+  // v3.65.2: it LANDS on this domain's own project, through Context's existing
+  // one-shot request, recorded BEFORE the navigation (the destination consumes
+  // it during the mount navigate starts synchronously).
+  ok(/requestProject\(state\.domain, state\.domain\);\s*navigate\('memory'\)/.test(wireBody2),
+    '§16e2 …after recording requestProject(domain, domain) — this domain\u2019s OWN project, '
+    + 'whose step ① is Documents — and before navigating');
+  ok(/import \{ requestProject \} from '\.\/memory\.js';/.test(js),
+    '§16e2 …imported from views/memory.js, the one writer Context consumes (no second hook)');
 }
 
 // ── 16b  wireListeners wires the control to clearSelectedFile ───────────
