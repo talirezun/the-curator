@@ -2894,6 +2894,228 @@ console.log('\n§ 18  The v3.64.0 host seam — additive by rule, not by intenti
     '§21f no ring caller uses a legacy tone word (success/attention/accent) — ok/warn/busy only');
 }
 
+
+// ── §22 — v3.67.0: THE RUN LINE ON INGEST (package CI) ──────────────────
+// Executed against the REAL shared/ai-run.js kit. Single-file ingest gains its
+// first cost-before (the one-file estimate's `runsOn`, one line directly under
+// the button it prices) and its first cost-after (the done event's `spent`);
+// the batch estimate gains the line beside its readouts; with no key both
+// buttons are DISABLED with the no-key line and its door — never hidden.
+console.log('\n§22  v3.67.0 — the run line on Ingest');
+{
+  const aiRun = await import('../src/public/next/shared/ai-run.js');
+  const textOf = (h) => String(h).replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#39;/g, "'");
+  const code = (t) => (t || '').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  const PRICED = {
+    job: 'ingest', jobLabel: 'Ingest', needsKey: false, provider: 'gemini', providerLabel: 'Gemini',
+    model: 'gemini-2.5-flash-lite', modelLabel: 'Flash Lite 2.5',
+    inputTokens: 12000, inputTokensLow: 10000, inputTokensHigh: 14000, outputTokensLow: 4000, outputTokensHigh: 9000,
+    usdLow: 0.0026, usdHigh: 0.0050, priceKnown: true, free: false, costNote: 'priced',
+  };
+  const NO_KEY = { job: 'ingest', jobLabel: 'Ingest', needsKey: true };
+
+  // ── refreshSingleEstimate, driven for real ──────────────────────────────
+  const rseBody = extractFunction(js, 'refreshSingleEstimate');
+  const clrBody = extractFunction(js, 'clearSingleRunLine');
+  ok(!!rseBody && !!clrBody, '§22a extracted refreshSingleEstimate() and clearSingleRunLine()');
+  function buildEstimateSandbox(fetchImpl, initialState) {
+    const calls = { fetch: [], render: 0, wired: 0 };
+    const sb = new Function('fetchImpl', 'calls', 'renderRunsOn', 'aiActionDisabledAttrs', 'initialState', `
+      let state = initialState;
+      const QUEUE_API = '/api/ingest-queue';
+      const SINGLE_RUNLINE_ID = 'ing-runline';
+      function fetch(url, opts) { calls.fetch.push({ url, opts }); return fetchImpl(url, opts); }
+      function isCurrentMount() { return true; }
+      function render() { calls.render++; }
+      function ensureAiRunDoors() { calls.wired++; }
+      ${clrBody}
+      ${/^async /.test(rseBody) ? rseBody : 'async ' + rseBody}
+      return { refreshSingleEstimate, getState: () => state, setState: (s) => { state = s; } };
+    `)(fetchImpl, calls, aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs, initialState);
+    sb.calls = calls;
+    return sb;
+  }
+  const FILE = { name: 'paper.pdf', size: 123456 };
+  const okJson = (body) => () => Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+  {
+    const sb = buildEstimateSandbox(okJson({ ok: true, runsOn: PRICED }), { file: FILE, domain: 'articles', singleRunsOnKey: null, singleRunLineHtml: '', singleKeyAttrs: '' });
+    await sb.refreshSingleEstimate(1);
+    eq(sb.calls.fetch.length, 1, '§22a picking a file asks the estimate ONCE');
+    eq(sb.calls.fetch[0] && sb.calls.fetch[0].url, '/api/ingest-queue/estimate', '§22a …on the batch gate\'s own free route');
+    const sent = JSON.parse((sb.calls.fetch[0] && sb.calls.fetch[0].opts.body) || '{}');
+    ok(sent.domain === 'articles' && Array.isArray(sent.files) && sent.files.length === 1 &&
+       sent.files[0].name === 'paper.pdf' && sent.files[0].size === 123456,
+      '§22a …with ONE file\'s metadata only — name and size, no bytes (got ' + JSON.stringify(sent) + ')');
+    eq(sb.calls.fetch[0] && sb.calls.fetch[0].opts.method, 'POST', '§22a …as a POST');
+    ok(textOf(sb.getState().singleRunLineHtml).startsWith('Runs on Flash Lite 2.5 · ≈14k–23k tokens · ≈$0.0026–$0.0050 · Change model'),
+      '§22a the answer becomes the kit\'s run line — got ' + textOf(sb.getState().singleRunLineHtml).slice(0, 90));
+    eq(sb.getState().singleKeyAttrs, '', '§22a a priced model leaves the button\'s attributes alone');
+    eq(sb.calls.render, 1, '§22a and the form repaints once to show it');
+    eq(sb.calls.wired, 1, '§22a with the line\'s door wired before it paints');
+    await sb.refreshSingleEstimate(1);
+    eq(sb.calls.fetch.length, 1, '§22a the SAME file into the SAME domain asks nothing more (keyed on domain + name + size)');
+    sb.getState().domain = 'research';
+    await sb.refreshSingleEstimate(1);
+    eq(sb.calls.fetch.length, 2, '§22a a different DESTINATION asks again (the estimate reads that domain\'s index)');
+  }
+  {
+    const sb = buildEstimateSandbox(okJson({ ok: true, runsOn: NO_KEY }), { file: FILE, domain: 'articles', singleRunsOnKey: null, singleRunLineHtml: '', singleKeyAttrs: '' });
+    await sb.refreshSingleEstimate(1);
+    ok(/ disabled aria-disabled="true" aria-describedby="ing-runline"/.test(sb.getState().singleKeyAttrs),
+      '§22b no key → the kit\'s disabled attributes, described by the line');
+    ok(textOf(sb.getState().singleRunLineHtml).startsWith('Needs an AI provider key · Add one in Providers & keys'),
+      '§22b …and the no-key line with its door');
+  }
+  {
+    // A stale answer: the user picked another file while the first estimate was out.
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const sb = buildEstimateSandbox(() => gate.then(() => ({ ok: true, json: () => Promise.resolve({ ok: true, runsOn: PRICED }) })),
+      { file: FILE, domain: 'articles', singleRunsOnKey: null, singleRunLineHtml: '', singleKeyAttrs: '' });
+    const p = sb.refreshSingleEstimate(1);
+    sb.getState().singleRunsOnKey = 'articles\nother.md\n5';
+    release();
+    await p;
+    eq(sb.getState().singleRunLineHtml, '', '§22c an answer for a file that is no longer on the form is DROPPED');
+    eq(sb.calls.render, 0, '§22c …and repaints nothing');
+  }
+  {
+    const sb = buildEstimateSandbox(() => Promise.reject(new Error('network down')),
+      { file: FILE, domain: 'articles', singleRunsOnKey: null, singleRunLineHtml: '', singleKeyAttrs: '' });
+    await sb.refreshSingleEstimate(1);
+    eq(sb.getState().singleKeyAttrs, '', '§22d a failed request is NOT "no key" — the button is left as its own rules have it');
+    eq(sb.getState().singleRunsOnKey, null, '§22d …and the key is cleared, so picking the file again retries');
+    const older = buildEstimateSandbox(okJson({ ok: true, estimate: {} }),
+      { file: FILE, domain: 'articles', singleRunsOnKey: null, singleRunLineHtml: '', singleKeyAttrs: '' });
+    await older.refreshSingleEstimate(1);
+    eq(older.getState().singleRunLineHtml, '', '§22d a server that sends no runsOn adds no line');
+    const nofile = buildEstimateSandbox(okJson({ ok: true, runsOn: PRICED }),
+      { file: null, domain: 'articles', singleRunsOnKey: 'x', singleRunLineHtml: '<p>old</p>', singleKeyAttrs: ' disabled' });
+    await nofile.refreshSingleEstimate(1);
+    eq(nofile.calls.fetch.length, 0, '§22d no file → no request');
+    eq(nofile.getState().singleRunLineHtml, '', '§22d …and a line for a file that left is cleared');
+  }
+
+  // ── The form: the line directly under the button; disabled, never hidden ─
+  const b22 = { grid: extractFunction(js, 'renderConfirmGrid'), form: extractFunction(js, 'renderIngestForm') };
+  const form = new Function('state', `
+    const escapeHtml = (s) => String(s == null ? '' : s);
+    const icon = () => '<svg></svg>';
+    const renderListboxHtml = () => '<div data-stub="listbox"></div>';
+    const domainListboxCfg = () => ({});
+    const renderDropZoneHtml = () => '<div data-stub="dropzone"></div>';
+    const renderSelectedFileHtml = () => '<div data-stub="selected"></div>';
+    const verbatimPointerHtml = () => '';
+    const renderStatus = (o) => '<div data-stub="status">' + o.title + '</div>';
+    const isRemoteIngestRunning = () => false;
+    const isDomainWriteBusy = () => false;
+    const getDomainWriteLabel = () => 'ingest';
+    const renderProgress = () => '';
+    const renderRemoteProgress = () => '';
+    const renderRemoteOutcome = () => '';
+    const renderDuplicate = () => '';
+    const renderIngestFailure = () => '';
+    const renderResult = () => '';
+    ${b22.grid}
+    ${b22.form}
+    return renderIngestForm();
+  `);
+  const base = { domain: 'articles', domains: [{ slug: 'articles' }], submitting: false, file: FILE, fileError: null, errorMessage: null, errorCode: null };
+  const lineHtml = aiRun.renderRunsOn(PRICED, { id: 'ing-runline' });
+  {
+    const out = form({ ...base, singleRunLineHtml: lineHtml, singleKeyAttrs: '' });
+    const btnEnd = out.indexOf('</button>', out.indexOf('id="ing-submit-btn"')) + '</button>'.length;
+    ok(out.indexOf('<p class="ai-run" role="note" id="ing-runline">') === btnEnd,
+      '§22e the run line is the element DIRECTLY after the Ingest button — one line under the action it prices');
+    ok(!/id="ing-submit-btn"[^>]*disabled/.test(out), '§22e a priced model: the button stays enabled');
+    const noKey = form({ ...base, singleRunLineHtml: aiRun.renderRunsOn(NO_KEY, { id: 'ing-runline' }),
+      singleKeyAttrs: aiRun.aiActionDisabledAttrs(NO_KEY, 'ing-runline') });
+    ok(/id="ing-submit-btn" disabled aria-disabled="true" aria-describedby="ing-runline"/.test(noKey),
+      '§22f NO KEY: the Ingest button is still there — DISABLED, never hidden — described by the line');
+    ok(textOf(noKey).includes('Needs an AI provider key · Add one in Providers & keys'), '§22f …which says why and opens Providers & keys');
+    eq((noKey.match(/id="ing-submit-btn"[^>]*/)[0].match(/ disabled/g) || []).length, 1, '§22f …with one `disabled`, never two');
+    const running = form({ ...base, submitting: true, singleRunLineHtml: lineHtml, singleKeyAttrs: '' });
+    ok(!/class="ai-run"/.test(running), '§22g while the ingest runs, the before-line is gone (the ring owns the right-hand cell)');
+    const nofile = form({ ...base, file: null, singleRunLineHtml: lineHtml, singleKeyAttrs: aiRun.aiActionDisabledAttrs(NO_KEY, 'ing-runline') });
+    ok(!/class="ai-run"/.test(nofile), '§22g no file on the form → no line (it described a file that left)');
+    ok(!/aria-describedby="ing-runline"/.test(nofile), '§22g …and the button is not described by a line that is not there');
+  }
+
+  // ── After the run: spent, and the token readout loses its duplicates ────
+  const b22r = ['renderResultBodyHtml', 'formatTokenUsageHtml'].map((n) => extractFunction(js, n));
+  const result = new Function('renderSpent', `
+    const escapeHtml = (s) => String(s == null ? '' : s);
+    const renderWarningsHtml = () => '';
+    const renderChangeRecordsHtml = () => '<div data-stub="changes"></div>';
+    ${b22r.join('\n')}
+    return { renderResultBodyHtml, formatTokenUsageHtml };
+  `)(aiRun.renderSpent);
+  const SPENT = { provider: 'gemini', providerLabel: 'Gemini', model: 'gemini-2.5-flash-lite', modelLabel: 'Flash Lite 2.5',
+    inputTokens: 40000, outputTokens: 6000, cachedReadTokens: 2000, cacheWriteTokens: 0, calls: 4, usd: 0.0064, estimated: false, fallbackFrom: null };
+  const USAGE = { provider: 'gemini', model: 'gemini-2.5-flash-lite', calls: 4, inputTokens: 40000, outputTokens: 6000, cachedReadTokens: 2000, cacheWriteTokens: 0 };
+  {
+    const out = result.renderResultBodyHtml({ title: 'T', changes: [{ status: 'created' }], tokenUsage: USAGE, spent: SPENT }, false, 't');
+    ok(textOf(out).includes('Ran on Flash Lite 2.5 · 42,000 in / 6,000 out · $0.0064'),
+      '§22h a single ingest now ends with what it COST — the kit\'s after-line (its "in" counts the cached read too)');
+    ok(out.indexOf('class="ai-run"') < out.indexOf('ing-token-usage'), '§22h …above the token readout');
+    ok(!/ing-token-model/.test(out) && !/40,000 in \/ 6,000 out/.test(out),
+      '§22h …which no longer repeats the model or a SECOND "in/out" pair in another format');
+    ok(/4 calls/.test(out) && /2,000 cached read/.test(out), '§22h …but keeps what the line does not say: calls and the cache split');
+    const legacy = result.renderResultBodyHtml({ title: 'T', changes: [{ status: 'created' }], tokenUsage: USAGE }, false, 't');
+    ok(!/class="ai-run"/.test(legacy) && /ing-token-model/.test(legacy) && /40,000 in \/ 6,000 out/.test(legacy),
+      '§22h no `spent` (an older server, or a restored record) → no line, and the token readout exactly as before');
+    const unpriced = result.renderResultBodyHtml({ title: 'T', changes: [{ status: 'created' }], tokenUsage: USAGE, spent: { ...SPENT, usd: null } }, false, 't');
+    ok(textOf(unpriced).includes('price not published') && !/\$0\.00/.test(unpriced),
+      '§22h an unpriced model says "price not published", never $0.00');
+  }
+
+  // ── The batch estimate: the line beside the readouts; Start disabled with no key
+  const b22b = ['renderConfirmGrid', 'renderQueueEstimate'].map((n) => extractFunction(js, n));
+  const batch = new Function('state', 'renderRunsOn', 'aiActionDisabledAttrs', `
+    const escapeHtml = (s) => String(s == null ? '' : s);
+    const icon = () => '<svg></svg>';
+    const renderStatus = (o) => '<div data-stub="status">' + o.title + '</div>';
+    const renderReadoutGroup = () => '<div class="tx-readout-group" data-stub="readout"></div>';
+    const renderInfoMark = (id) => ({ btn: '', panel: '' });
+    const resolveEstimateFileList = (e, sel) => sel;
+    const renderQueueRejectedItem = () => '';
+    const renderQueueFileListItem = () => '<li></li>';
+    const formatQueueBytes = (b) => b + ' B';
+    const formatUsdRange = (lo, hi) => '$' + lo + '-$' + hi;
+    const formatTokenRange = (lo, hi) => lo + '-' + hi;
+    ${b22b.join('\n')}
+    return renderQueueEstimate;
+  `);
+  const qs = { selectedFiles: [{ name: 'a.md' }], queueBudgetInput: '', queueOverwriteInput: false, queueSubmitting: false };
+  const EST = { ok: true, files: { count: 1, totalBytes: 10, rejected: [] }, provider: 'gemini', model: 'gemini-2.5-flash-lite',
+    estimate: { usdLow: 0.01, usdHigh: 0.02, inputTokensLow: 1, inputTokensHigh: 2, outputTokensLow: 3, outputTokensHigh: 4 }, warnings: [] };
+  {
+    const out = batch(qs, aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs)({ ...EST, runsOn: { ...PRICED, usdLow: 0.01, usdHigh: 0.02 } });
+    const est = out.indexOf('class="ing-queue-estimate"');
+    const readout = out.indexOf('data-stub="readout"');
+    const line = out.indexOf('id="ing-queue-runline"');
+    ok(est >= 0 && readout > est && line > readout && line < out.indexOf('ing-queue-budget-row'),
+      '§22i the batch estimate carries the run line INSIDE the estimate card, right after its two readouts');
+    ok(/data-stub="readout"/.test(out), '§22i …and the readout group itself is untouched (the cap and banner figures key on it)');
+    ok(!/id="ing-queue-start-btn"[^>]*disabled/.test(out), '§22i a priced model leaves Start batch enabled');
+    const nk = batch(qs, aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs)({ ...EST, runsOn: NO_KEY });
+    ok(/id="ing-queue-start-btn" disabled aria-disabled="true" aria-describedby="ing-queue-runline"/.test(nk),
+      '§22j NO KEY: Start batch is DISABLED (never hidden), described by the no-key line');
+    const sub = batch({ ...qs, queueSubmitting: true }, aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs)({ ...EST, runsOn: NO_KEY });
+    eq((sub.match(/id="ing-queue-start-btn"[^>]*/)[0].match(/ disabled/g) || []).length, 1, '§22j uploading AND no key → one `disabled`');
+    const old = batch(qs, aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs)(EST);
+    ok(!/class="ai-run"/.test(old) && !/id="ing-queue-start-btn"[^>]*disabled/.test(old),
+      '§22k an estimate with no runsOn (an older server) renders exactly as before');
+  }
+
+  // ── Wiring: every place that produces a line wires the door; #view-root ─
+  const ens = extractFunction(js, 'ensureAiRunDoors') || '';
+  ok(/wireAiRunDoors\(document\.getElementById\('view-root'\), \{ requestSettingsSection, navigate \}\)/.test(code(ens)),
+    '§22l the door is wired on #view-root (the shell\'s stable container) with the shell\'s two functions INJECTED');
+  ok(/import \{[^}]*requestSettingsSection[^}]*\} from '\.\.\/app\.js'/.test(js),
+    '§22l …requestSettingsSection comes from the shell, like navigate');
+}
+
 // ── Summary ─────────────────────────────────────────────────────────────
 console.log('\n' + '─'.repeat(60));
 console.log('Passed: ' + passed + '   Failed: ' + failed);

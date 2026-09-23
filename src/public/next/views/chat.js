@@ -2559,6 +2559,13 @@ async function runCompile() {
     return shown;
   };
 
+  // A compile that was BILLED and then failed (a later rung's parse, a write
+  // error) still cost money: the route's `error` event carries `spent` exactly
+  // when a call was billed (v3.67.0). Held outside the try so the catch below,
+  // which renders the error card, can say what the failed run cost — an
+  // outcome, and a cost, is never dropped because the run did not succeed.
+  let spentOnError = null;
+
   try {
     // The actual claim — both statements, inside the try, so a throw from
     // either (neither can throw today: a plain assignment, then a function
@@ -2611,6 +2618,7 @@ async function runCompile() {
           refused = event.reason;
         } else if (event.type === 'error') {
           errored = event.message;
+          if (event.spent && typeof event.spent === 'object') spentOnError = event.spent;
         }
       }
     }
@@ -2654,7 +2662,8 @@ async function runCompile() {
       if (isCurrentMount(mountToken) && Array.isArray(domainsData.domains)) state.domains = domainsData.domains;
     } catch { /* best-effort, see above */ }
   } catch (err) {
-    renderCompileOutcome('<div class="chat-compile-error">' + icon('alertCircle', 14) + ' ' + escapeHtml(err.message) + '</div>');
+    renderCompileOutcome('<div class="chat-compile-error">' + icon('alertCircle', 14) + ' ' + escapeHtml(err.message) + '</div>' +
+      renderSpent(spentOnError));
   } finally {
     // Releases the lock. Runs unconditionally — not isCurrentMount-gated,
     // and the fetch above is never aborted on teardown — which is exactly
