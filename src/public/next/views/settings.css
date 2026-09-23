@@ -3068,5 +3068,22 @@
   font-size: var(--text-sm);
   color: var(--text-2);
 }
+/* NARROW: at 568px the Settings column is ~136px (the recorded sidebar
+   squeeze), and a three-column table scrolled sideways inside it (measured:
+   252px of table in a 134px body). Below 640px each job becomes a short
+   stack — its name, then where it starts, then what it shows — and the
+   column heads leave the screen (they stay in the table for a screen
+   reader: `.visually-hidden`'s own clip, restated here for the thead). */
+@media (max-width: 640px) {
+  .settings-usedby-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .settings-usedby-table,
+  .settings-usedby-table tbody,
+  .settings-usedby-table tr,
+  .settings-usedby-table tbody th,
+  .settings-usedby-table td { display: block; width: auto; }
+  .settings-usedby-table tr { padding: var(--space-4) 0; border-bottom: var(--hairline-w) solid var(--hairline); }
+  .settings-usedby-table tbody th,
+  .settings-usedby-table td { padding: 0; border-bottom: 0; overflow-wrap: anywhere; }
+}
 /* The System check's run line sits directly under its buttons (v3.67.0). */
 .settings-verify-runs-on { margin-top: var(--space-4); }

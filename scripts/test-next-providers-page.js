@@ -1317,7 +1317,9 @@ section('§12  BLOCK 2 IS "YOUR AI MODEL" — every AI job, derived from AI_JOBS
 
   // THE STYLESHEET: tokens only, no tone on a description.
   const css = fs.readFileSync(path.join(ROOT, 'src/public/next/views/settings.css'), 'utf8');
-  const usedCss = css.slice(css.indexOf('/* ── BLOCK 2 · "Used by'), css.indexOf('/* The System check’s run line'));
+  const cssFrom = css.indexOf('/* ── BLOCK 2 · "Used by'), cssTo = css.indexOf("/* The System check's run line");
+  ok(cssFrom !== -1 && cssTo > cssFrom, 'PRECONDITION: both ends of the Used by rules are found in settings.css');
+  const usedCss = css.slice(cssFrom, cssTo);
   ok(usedCss.length > 200 && /\.settings-usedby\s*\{/.test(usedCss), 'settings.css styles the Used by row');
   ok(!/--(success|attention|danger|warn|error)[a-z-]*/.test(usedCss) && !/#[0-9a-f]{3,6}\b|rgba?\(/i.test(usedCss),
     '…with no tone token and no colour literal');
