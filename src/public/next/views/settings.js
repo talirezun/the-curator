@@ -5173,7 +5173,12 @@ function renderBuildBlock(k, crossBusy) {
             '<tr data-ai-job="' + escapeHtml(String(j.id)) + '">' +
               '<th scope="row">' + escapeHtml(String(j.label)) + '</th>' +
               '<td>' + escapeHtml(String(j.startedFrom)) + '</td>' +
-              '<td class="mono">' + escapeHtml(String(j.costShown)) + '</td>' +
+              // A future version is not something the app shows today: a
+              // `costShown` that is annotated with one ("after (v3.67.1)",
+              // Shared Brain's row in AI_JOBS) reads what is TRUE today —
+              // "not yet". View-level only; the registry's copy is J's.
+              '<td class="mono">' + escapeHtml(/\(v\d+\.\d+(\.\d+)?\)/.test(String(j.costShown))
+                ? 'not yet' : String(j.costShown)) + '</td>' +
             '</tr>').join('') +
           '</tbody>' +
         '</table>' +
