@@ -30,6 +30,10 @@ import { getProviderInfo, generateText, getFallbackStatus } from './llm.js';
 import { isConfigured as syncConfigured, getStatus as syncGetStatus } from './sync.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { getLogFilePath, getLogFileStats, logWarn } from './logger.js';
+// v3.67.0: the live check's estimate in the one shape every AI job uses. A
+// static import is safe here: nothing on ai-run.js's own import graph reaches
+// back to this module (test-next-compile-estimate §11 loads it first).
+import { describeRun } from './ai-run.js';
 
 // Files that should be owner-only (0600). getCredentialFiles() in paths.js is
 // the SINGLE source of truth, shared with the startup chmod sweep in
@@ -288,6 +292,34 @@ export async function runQuickDiagnostics() {
  * provider is responding. The route only invokes this on an explicit,
  * cost-confirmed request. Returns a structured result; never throws.
  */
+// The live check's prompt, restated for its ESTIMATE (describeLiveCheck).
+// runLiveApiCheck keeps its literals BYTE-IDENTICAL rather than reading these
+// names: scripts/test-diagnostics.js lifts runLiveApiCheck into a sandbox with
+// a fixed list of injected collaborators, and a new free identifier inside it
+// is a ReferenceError that the function's own catch would report as a failed
+// provider (the rule-10 trap). test-diagnostics pins these three constants to
+// the literals in runLiveApiCheck's source, so the two cannot drift.
+export const LIVE_CHECK_SYSTEM_PROMPT = 'You are a connectivity test. Reply with exactly the word OK and nothing else.';
+export const LIVE_CHECK_USER_PROMPT = 'Reply now.';
+export const LIVE_CHECK_MAX_TOKENS = 16;
+
+/**
+ * What the opt-in live check will cost, BEFORE it runs (v3.67.0). Replaces
+ * the view's hardcoded "$0.0001" at its source: the input is the real
+ * prompt's size through the app's one tokenizer model, the output is a
+ * range from one token ("OK") to the call's own `maxTokens` cap. No network,
+ * no key read beyond getProviderInfo(); with no key it is
+ * `{job, jobLabel, needsKey: true}`.
+ */
+export function describeLiveCheck() {
+  return describeRun({
+    job: 'system-check',
+    inputChars: LIVE_CHECK_SYSTEM_PROMPT.length + LIVE_CHECK_USER_PROMPT.length,
+    outputTokensLow: 1,
+    outputTokensHigh: LIVE_CHECK_MAX_TOKENS,
+  });
+}
+
 export async function runLiveApiCheck() {
   let provider, model;
   try {

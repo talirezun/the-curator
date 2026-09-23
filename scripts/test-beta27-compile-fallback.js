@@ -27,6 +27,11 @@ process.on('exit', () => { try { rmSync(DOMAINS_TMP, { recursive: true, force: t
 const compileMod = await import('../src/brain/compile.js');
 const files = await import('../src/brain/files.js');
 const { buildCompilePrompt, compileConversation } = compileMod;
+// v3.67.0: `spent` is priced by the one actual shape. Imported AFTER compile.js
+// on purpose — compile.js reaches ai-run.js only at call time, and this order
+// is the one that crashed when it was a static import (see compile.js).
+const { spentFromUsage } = await import('../src/brain/ai-run.js');
+const { makeUsageAccumulator } = await import('../src/brain/ingest.js');
 
 let passed = 0, failed = 0;
 const failures = [];
@@ -185,6 +190,108 @@ try {
     ok(calls.join(',') === 'full,concise', `escalated on parse failure (calls: ${calls.join(',')})`);
   }
 } finally {
+  try { await files.deleteDomain(domain); } catch {}
+}
+
+// ── 8. v3.67.0 — `spent`: what the WHOLE ladder cost ───────────────────────────
+// Every provider call of every rung reports usage (generateText fires onUsage
+// once per completed call, an overflowing one included — it billed). A compile
+// that escalated full → concise → summary-only paid three times, and a `spent`
+// naming only the last rung would under-report the bill by the two that
+// overflowed. Distinct token counts per rung make "the sum" and "the last" and
+// "the first" three different numbers, so no partial accounting can pass.
+section('8. spent — summed across every ladder rung (v3.67.0)');
+{
+  const USAGE = {
+    full:           { inputTokens: 11000, outputTokens: 65536, cachedReadTokens: 0, cacheWriteTokens: 0 },
+    concise:        { inputTokens: 11300, outputTokens: 65536, cachedReadTokens: 0, cacheWriteTokens: 0 },
+    'summary-only': { inputTokens: 11700, outputTokens:   900, cachedReadTokens: 0, cacheWriteTokens: 0 },
+  };
+  const MODEL = { provider: 'gemini', model: 'gemini-2.5-flash-lite' };
+  // A fake that REPORTS usage the way generateText does (6th argument's
+  // onUsage), then behaves per mode.
+  function billingLLM(behaviors) {
+    const calls = [];
+    const fn = async (_sys, userPrompt, _max, _fmt, _onWait, opts = {}) => {
+      const mode = /Produce ONLY a single summary page/.test(userPrompt) ? 'summary-only'
+        : /RETRY — the previous attempt/.test(userPrompt) ? 'concise' : 'full';
+      calls.push(mode);
+      const b = behaviors[mode];
+      if (b !== 'nousage' && opts && typeof opts.onUsage === 'function') opts.onUsage({ ...USAGE[mode], ...MODEL });
+      if (b === 'token') throw new Error(TOKEN_ERR);
+      if (b === '503' || b === 'nousage') throw new Error(ERR_503);
+      return b;
+    };
+    fn.calls = calls;
+    return fn;
+  }
+  async function compileBilled(behaviors, extraOpts = {}) {
+    convSeq += 1;
+    const convId = `00000000-0000-4000-8000-0000000027${String(convSeq).padStart(2, '0')}`;
+    await files.writeConversation(domain, {
+      id: convId, title: `Billed ${convSeq}`, createdAt: '2026-06-29T00:00:00.000Z', domain,
+      messages: [
+        { role: 'user', content: `Billed ${convSeq}: explain compiling vs RAG, mention OpenAI.` },
+        { role: 'assistant', content: `Billed ${convSeq}: compiling pre-builds the graph; OpenAI builds models.` },
+      ],
+    });
+    const llm = billingLLM(behaviors);
+    const res = await compileConversation(domain, convId, () => {}, { generateText: llm, ...extraOpts });
+    return { res, calls: llm.calls };
+  }
+  const expectedFor = (modes) => {
+    const acc = makeUsageAccumulator();
+    for (const m of modes) acc.onUsage({ ...USAGE[m], ...MODEL });
+    return spentFromUsage(acc.totals);
+  };
+  const sameSpent = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  try { await files.createDomain(domain, 'ZZ beta27', 'Throwaway beta27 fallback test', 'generic'); } catch {}
+
+  // (a) three rungs: the named mutation's target.
+  {
+    const forwarded = [];
+    const { res, calls } = await compileBilled(
+      { full: 'token', concise: 'token', 'summary-only': SUMMARY_JSON },
+      { onUsage: (u) => forwarded.push(u) });
+    ok(res.ok === true && calls.length === 3, `precondition: the compile escalated through three rungs (${calls.join(',')})`);
+    const sp = res.spent || {};
+    ok(sp.calls === 3, `spent sums every rung: calls 3 (got ${sp.calls})`);
+    ok(sp.inputTokens === 11000 + 11300 + 11700,
+      `spent sums every rung: inputTokens 34000 (got ${sp.inputTokens}; the last rung alone is 11700, the first 11000)`);
+    ok(sp.outputTokens === 65536 + 65536 + 900, `spent sums every rung: outputTokens 131972 (got ${sp.outputTokens})`);
+    ok(sameSpent(res.spent, expectedFor(['full', 'concise', 'summary-only'])),
+      'spent equals spentFromUsage of the accumulated totals of all three calls, field for field');
+    ok(typeof sp.usd === 'number' && sp.usd > expectedFor(['summary-only']).usd * 10,
+      'and its dollar figure is the three-call bill, many times the last rung\'s alone');
+    ok(sp.model === 'gemini-2.5-flash-lite' && sp.modelLabel && sp.estimated === false,
+      'spent names the model that billed, with its human label, not estimated');
+    ok(forwarded.length === 3, `opts.onUsage is forwarded once per billed call (got ${forwarded.length})`);
+  }
+  // (b) one rung.
+  {
+    const { res } = await compileBilled({ full: FULL_JSON });
+    ok(res.ok === true && sameSpent(res.spent, expectedFor(['full'])),
+      'a clean one-call compile: spent is that one call');
+  }
+  // (c) a failure that BILLED still says what it cost.
+  {
+    const { res } = await compileBilled({ full: 'token', concise: 'token', 'summary-only': 'token' });
+    ok(res.ok === false && /too large or complex/i.test(res.error || ''), 'precondition: all three rungs overflowed');
+    ok(sameSpent(res.spent, expectedFor(['full', 'concise', 'summary-only'])),
+      'an exhausted ladder carries spent for all three billed calls — a failure that cost money says so');
+  }
+  // (d) nothing billed → no spent at all (absent, never a zero-filled object).
+  {
+    const { res } = await compileBilled({ full: 'nousage' });
+    ok(res.ok === false && !('spent' in res),
+      'a call that reported no usage (it failed before billing) leaves spent ABSENT');
+    const missing = await compileConversation(domain, '00000000-0000-4000-8000-00000000ffff', () => {}, {
+      generateText: () => { throw new Error('THE COMPILE MADE AN LLM CALL ON A MISSING CONVERSATION'); },
+    });
+    ok(missing.ok === false && missing.reason && !('spent' in missing),
+      'a refusal before any call carries no spent');
+  }
   try { await files.deleteDomain(domain); } catch {}
 }
 

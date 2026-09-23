@@ -21,7 +21,9 @@ import {
   planBrokenLinkFixes,
   estimateOrphanRescue,
   planOrphanRescue,
+  describeHealthRun,
 } from '../brain/health-ai.js';
+import { describeRun } from '../brain/ai-run.js';
 import { previewSemanticDuplicateMerge, fixSemanticDuplicatesBatch, applyBrokenLinkFixes, applyOrphanRescue, fixAllSafe } from '../brain/health.js';
 import { getProviderInfo } from '../brain/llm.js';
 import { getAiHealthSettings, setAiHealthSettings } from '../brain/config.js';
@@ -47,12 +49,18 @@ router.get('/', (_req, res) => res.json({ ok: true, version }));
 // "✨ Ask AI" button. No network call; purely a local check for a configured
 // API key. Returns { available, provider, model } when ready, otherwise
 // { available: false, reason }.
+//
+// v3.67.0, ADDITIVE: both shapes gain `runsOn` — describeRun({job:
+// 'wiki-health'}) with no token figures. It is the RESTING-STATE source of the
+// no-key signal (contract §1.13): a button that has no estimate yet reads
+// `runsOn.needsKey` from here rather than from a 400 it has not asked for.
 router.get('/ai-available', (_req, res) => {
+  const runsOn = describeRun({ job: 'wiki-health' });
   try {
     const info = getProviderInfo();
-    res.json({ available: true, provider: info.provider, model: info.model });
+    res.json({ available: true, provider: info.provider, model: info.model, runsOn });
   } catch (err) {
-    res.json({ available: false, reason: err.message });
+    res.json({ available: false, reason: err.message, runsOn });
   }
 });
 
@@ -208,7 +216,11 @@ router.get('/:domain/semantic-dupes/estimate', async (req, res) => {
     catch (err) { return res.status(400).json({ error: err.message }); }
     const settings = getAiHealthSettings();
     const estimate = await estimateSemanticDuplicateScan(domain, settings.semanticDupeMaxPairs);
-    res.json({ ok: true, ...estimate, costCeilingTokens: settings.costCeilingTokens });
+    res.json({
+      ok: true, ...estimate, costCeilingTokens: settings.costCeilingTokens,
+      // v3.67.0, additive: the run line, priced on the estimate's own split.
+      runsOn: await describeHealthRun('semanticDupes', estimate.estimatedTokens),
+    });
   } catch (err) {
     if (err.code === 'DOMAIN_TOO_LARGE') return res.status(400).json({ error: err.message, code: err.code });
     console.error('[semantic-dupes estimate]', err);
@@ -298,7 +310,7 @@ router.get('/:domain/broken-links/estimate', async (req, res) => {
     try { getProviderInfo(); }
     catch (err) { return res.status(400).json({ error: err.message }); }
     const est = await estimateBrokenLinkFix(domain);
-    res.json({ ok: true, ...est });
+    res.json({ ok: true, ...est, runsOn: await describeHealthRun('brokenLinks', est.estimatedTokens) });
   } catch (err) {
     console.error('[broken-links estimate]', err);
     res.status(err.status || 500).json({ error: err.message });
@@ -398,7 +410,7 @@ router.get('/:domain/orphans/estimate', async (req, res) => {
     await assertDomain(domain);
     try { getProviderInfo(); } catch (err) { return res.status(400).json({ error: err.message }); }
     const est = await estimateOrphanRescue(domain);
-    res.json({ ok: true, ...est });
+    res.json({ ok: true, ...est, runsOn: await describeHealthRun('orphans', est.estimatedTokens) });
   } catch (err) {
     console.error('[orphans estimate]', err);
     res.status(err.status || 500).json({ error: err.message });
