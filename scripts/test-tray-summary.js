@@ -849,6 +849,8 @@ section('§8e v3.66.0 — documents, capture and per-domain pages: the widget’
   fs.mkdirSync(path.join(PROJ3, 'workshop', 'wiki', 'entities'), { recursive: true });
   fs.writeFileSync(path.join(PROJ3, 'workshop', 'wiki', 'entities', 'alpha.md'), '# Alpha\n');
   fs.writeFileSync(path.join(PROJ3, 'workshop', 'wiki', 'entities', 'beta.md'), '# Beta\n');
+  fs.mkdirSync(path.join(PROJ3, 'workshop', 'wiki', 'summaries'), { recursive: true });
+  fs.writeFileSync(path.join(PROJ3, 'workshop', 'wiki', 'summaries', 'source-one.md'), '# Source one\n');
 
   // ── (1) DOCUMENTS: the same listFoundations answer, one budget named ─────
   usageMod.__clearUsageCache();
@@ -960,8 +962,8 @@ section('§8e v3.66.0 — documents, capture and per-domain pages: the widget’
   const ws0 = s5.domains.find((x) => x.domain === 'workshop') || {};
   const stats = await filesMod.getDomainStats('workshop');
   eq(ws0.pageCount, stats.pageCount, 'pageCount IS getDomainStats’ (what GET /api/domains/stats answers) — one count, two surfaces');
-  eq(ws0.pageCount, 2, '…and it counted the two fixture pages');
-  eq(ws0.entities, 2, 'the per-type split rides beside it');
+  eq(ws0.pageCount, 3, '…and it counted the three fixture pages (two entities, one summary)');
+  ok(ws0.entities === 2 && ws0.concepts === 0 && ws0.summaries === 1, 'the per-type split rides beside it', JSON.stringify(ws0));
   eq(ws0.index, names.indexOf('workshop'), 'index is the install’s own domain index');
 }
 
