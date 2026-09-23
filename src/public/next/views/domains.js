@@ -279,12 +279,14 @@ function domainLastEventText(d) {
 }
 
 // ── Health category definitions ───────────────────────────────────────────
-// Order matches the design's chip row. `violet: true` marks the one
-// exception to "non-zero chips are amber" — the spec calls out orphans
-// specifically getting a violet tint when non-zero.
+// The order the issue ROWS below the scan take. The per-category monitor in
+// the Scan row sorts its own lines largest-first (ties in this order), since
+// it is a column of peers compared by size. The old `violet: true` flag went
+// with the chip row it coloured (v3.66.0): a category is neither an outcome
+// (tone) nor a selection (accent), so it takes neither colour.
 const HEALTH_CATEGORIES = [
   { key: 'brokenLinks', label: 'Broken links' },
-  { key: 'orphans', label: 'Orphan pages', violet: true },
+  { key: 'orphans', label: 'Orphan pages' },
   { key: 'crossFolderDupes', label: 'Cross-folder duplicates' },
   { key: 'hyphenVariants', label: 'Hyphen variants' },
   { key: 'folderPrefixLinks', label: 'Folder-prefix links' },
@@ -6724,11 +6726,40 @@ function renderHealthPanel(domain, readonly) {
   // this one tracks the real backend operation and survives remounts.
   const crossMountBusy = inFlightWriteSlugs.has(domain.slug);
 
-  const chips = HEALTH_CATEGORIES.map((cat) => {
-    const count = (report[cat.key] || []).length;
-    const cls = count === 0 ? 'dm-chip-zero' : (cat.violet ? 'dm-chip-violet' : 'dm-chip-amber');
-    return '<span class="dm-chip ' + cls + '">' + escapeHtml(cat.label) + ' <span class="dm-chip-count">' + count + '</span></span>';
-  }).join('');
+  // ── ISSUES PER CATEGORY, AS A COLUMN OF PEERS (v3.66.0, placement P6) ──
+  // This was a row of amber/violet chips: the same six counts drawn a second
+  // way beside the monitor, with a TONE (amber) and the ACCENT (violet, on
+  // orphans) painted onto categories — neither an outcome nor a selection.
+  // It is now a second monitor, one line per category, each figure with a
+  // DEPTH BAR against the LARGEST category (design rule 6: a column of peers
+  // is a named denominator, and the ⓘ-free label on every cell names it).
+  //
+  // NEVER RED, by construction: `max`, not `budget`, is what renderDepthCell
+  // gets, and only a budget over-run may set the danger tone. Being the
+  // largest category is not a fault. A ZERO line prints `0` and carries no
+  // `depth` at all, so it draws no bar rather than a zero-width one; when
+  // every category is zero the largest is 0 and no line gets a bar.
+  //
+  // Sorted largest-first, ties in HEALTH_CATEGORIES' order, so the bars read
+  // as a ranked column the way the acceptance picture draws them.
+  const categoryCounts = HEALTH_CATEGORIES.map((cat, order) =>
+    ({ cat, order, count: (report[cat.key] || []).length }));
+  const largestCategory = categoryCounts.reduce((m, c) => Math.max(m, c.count), 0);
+  const categoryMonitor = renderMonitor({
+    label: 'Issues per category',
+    lines: categoryCounts.slice()
+      .sort((a, b) => (b.count - a.count) || (a.order - b.order))
+      .map((c) => ({
+        key: c.cat.label.toLowerCase(),
+        value: c.count,
+        depth: c.count > 0 && largestCategory > 0
+          ? { amount: c.count, max: largestCategory,
+              label: c.count === largestCategory
+                ? c.count + ' — the largest category'
+                : c.count + ' of ' + largestCategory + ', the largest category' }
+          : undefined,
+      })),
+  });
 
   // ── THE READOUT ──────────────────────────────────────────────────────────
   // This is the block the maintainer reported: it "doesn't look like a report
@@ -6789,7 +6820,8 @@ function renderHealthPanel(domain, readonly) {
   // THE STEP-BODY RULE (v3.64.2), applied to the remainder v3.64.2 listed and
   // did not ship. Wiki health's body was a head row, then a bare readout
   // block, then a bare chip row, then an action bar, then folds — five
-  // treatments. The counts and the chips are ONE fold row now, whose summary
+  // treatments. The counts and the per-category bars (v3.66.0; they were a
+  // chip row) are ONE fold row now, whose summary
   // carries the reading that decides whether to open it, and the issue lists
   // below it were already rows.
   //
@@ -6817,7 +6849,7 @@ function renderHealthPanel(domain, readonly) {
       '</summary>' +
       '<div class="dm-group-body dm-scan-body">' +
         healthMonitor +
-        '<div class="dm-chip-row">' + chips + '</div>' +
+        categoryMonitor +
       '</div>' +
     '</details>';
 
