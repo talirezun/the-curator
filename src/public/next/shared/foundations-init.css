@@ -241,13 +241,56 @@
    Domains create card and the Context step, both under 700px) a flex row
    would break them apart unpredictably. `auto-fit` with a 150px floor gives
    three tracks where there is room and one where there is not.            */
+/* ── v3.65.2 (C1): ONE WRAPPER PER FIELD, LABEL ABOVE INPUT, THREE COLUMNS ─
+   The label and the input were SIBLINGS in this grid with `align-items: end`,
+   so six items flowed into five 159px tracks at 829px: the labels were laid
+   out as fields, bottom-aligned 21px below their inputs, and the third input
+   wrapped alone to a second row. Each field is now `.fnd-init-field` (label
+   over input), the grid is three equal tracks, and `start` alignment puts
+   every label on one line. One column under 640px. */
 .fnd-init-remote-fields {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: var(--space-3) var(--space-4);
-  align-items: end;
-  margin-bottom: var(--space-5);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4) var(--space-6);
+  align-items: start;
 }
+@media (max-width: 640px) {
+  .fnd-init-remote-fields { grid-template-columns: minmax(0, 1fr); }
+}
+.fnd-init-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+/* ── THE ARM WITHOUT ITS FRAME, IN A HOST THAT ALREADY DRAWS ONE (v3.65.2) ──
+   The Context host draws ONE panel around the chooser; the arm's own tint,
+   rule and padding inside it were a box in a box — two tints and two left
+   edges (436 and 454). The create form keeps the framed arm, where it ties
+   the controls to the pressed option card above them. */
+.fnd-init-arm.fnd-init-arm-flat {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+/* READ WITH and its ⓘ, on one line — the eyebrow is the label of the radio
+   group below it, and the mark explains how to make the token it names. */
+.fnd-init-readwith {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+/* A radio and, where the token is not saved yet, the door to Settings beside
+   it — outside the <label>, so pressing the door never toggles the radio. */
+.fnd-init-token-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+.fnd-init-token-line > .fnd-init-token-opt { flex: 1 1 auto; min-width: 0; }
+.fnd-init-token-opt input[disabled] + span { color: var(--text-2); }
 /* The field takes the whole track here — `flex: 1 1 260px` means nothing to a
    grid item, and a 260px basis in a 150px track is what would overflow. */
 .fnd-init-remote-fields .fnd-init-path { width: 100%; }
@@ -406,6 +449,27 @@
   color: var(--text-2);
   font-variant-numeric: var(--numeric-tabular);
 }
+/* ── THE HOST PANELS' COUNT: WORDS LEFT, THE DEPTH BAR RIGHT (v3.65.2) ────
+   The total is the kit's depth cell (shared/depth-bar.css), so its tones,
+   alpha and contrast are the kit's; this rule only lays the two halves out. */
+.fnd-init-count.fnd-init-count-rich {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4) var(--space-8);
+}
+.fnd-init-count-total {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-left: auto;
+}
+.fnd-init-count-key { font-size: var(--text-2xs); color: var(--text-2); }
+/* ALREADY MIRRORED: listed in place, quieter, with no checkbox. */
+.fnd-init-cand.is-mirrored .fnd-init-cand-path { color: var(--text-2); }
+/* THE LIST'S LAST ROW — "+ A file that isn't listed", and its field when open. */
+.fnd-init-extra-field { flex: 1 1 100%; }
+
 /* THE OVER-BUDGET WARNING. Emitted always and `hidden` under the budget, for
    the same reason the reason-notes are — the tick that crosses the line
    patches this node rather than re-rendering the list. `.fnd-init-note` sets

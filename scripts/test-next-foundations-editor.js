@@ -157,7 +157,10 @@ function extractFunction(source, name) {
 // fourth hand-kept copy here would have needed a fourth pin.
 {
   const lines = initSrc.match(/^import\s[^\n]*/gm) || [];
-  const bad = lines.filter((line) => !/from '\.\/age\.js'/.test(line));
+  // v3.65.2: `./monitor.js` joins the allow-list. It has NO imports and
+  // touches no DOM (asserted just below, off its own source), and the add
+  // panel needs its depth cell and monitor line rather than a hand-built copy.
+  const bad = lines.filter((line) => !/from '\.\/(age|monitor)\.js'/.test(line));
   if (bad.length) {
     console.log('  ✗ shared/foundations-init.js imports something outside the DOM-free kit — '
       + JSON.stringify(bad));
@@ -168,7 +171,17 @@ function extractFunction(source, name) {
 }
 
 // The REAL shared module. Nothing DOM-bound on its import graph, so it runs in Node.
+{
+  // THE SECOND ALLOWED IMPORT MUST STAY DOM-FREE, or the allow-list above is
+  // a door rather than a wall: shared/monitor.js may import nothing at all.
+  const monSrc = readFileSync(join(NEXT, 'shared/monitor.js'), 'utf8');
+  if ((monSrc.match(/^import\s/gm) || []).length) {
+    console.log('  ✗ shared/monitor.js grew an import, so foundations-init.js may no longer take it');
+    process.exit(1);
+  }
+}
 const FI = await import('../src/public/next/shared/foundations-init.js');
+const { renderInfoMark: realRenderInfoMark } = await import('../src/public/next/shared/text.js');
 
 const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -246,9 +259,9 @@ section('§1 — THE FOUR STORE MIRRORS ARE THE STORE\'S');
   // Asserted as an ALLOW-LIST rather than as an absence, so the property that
   // matters is the one measured: every import line, if there is one, names
   // `./age.js`. An import of a view, the shell or the listbox reddens this.
-  ok('shared/foundations-init.js imports ONLY from the DOM-free kit (./age.js)',
+  ok('shared/foundations-init.js imports ONLY from the DOM-free kit (./age.js, ./monitor.js)',
     initSrc.match(/^import\s[^\n]*/gm) === null
-      || initSrc.match(/^import\s[^\n]*/gm).every((line) => /from '\.\/age\.js'/.test(line)),
+      || initSrc.match(/^import\s[^\n]*/gm).every((line) => /from '\.\/(age|monitor)\.js'/.test(line)),
     JSON.stringify(initSrc.match(/^import\s[^\n]*/gm)));
   // Its local escapeHtml is byte-compared against the shell's, so the two
   // cannot drift into escaping different characters.
@@ -1149,6 +1162,11 @@ const renderers = (() => {
     // stubbed: a stub returning '' would leave the button armed in exactly the
     // state the sentence exists for, with every assertion here green.
     'commitBlockedReason', 'READ_FIRST_BUDGET_BYTES',
+    // ── v3.65.2: THE ONE REASON LINE AND THE PRIMARY'S COUNT ─────────────
+    // `renderFoundationsInit` reads the first unmet step through the shared
+    // `nextStepReason`, counts the primary with `pickedFiles`, and composes
+    // two ⓘ marks. All REAL, appended LAST for the positional reason above.
+    'nextStepReason', 'pickedFiles', 'READ_WITH_INFO_HTML', 'renderInfoMark',
     body)(
     stateBox, escapeHtml, () => '<svg></svg>', (t) => '<md>' + escapeHtml(t) + '</md>',
     (o) => '<div class="tx-status tx-status-' + o.state + '"><b>' + escapeHtml(o.title)
@@ -1161,7 +1179,8 @@ const renderers = (() => {
     // Off LIVE SOURCE, for the reason every other mirror here is: a copy typed
     // in this file could agree with every assertion while the shipped block
     // warned at another number.
-    READ_FIRST_BUDGET_SRC);
+    READ_FIRST_BUDGET_SRC,
+    FI.nextStepReason, FI.pickedFiles, FI.READ_WITH_INFO_HTML, realRenderInfoMark);
 })();
 // The sandbox's `state` is a fixed OBJECT the shipped functions read through,
 // so fields are assigned onto it rather than the binding being replaced.
@@ -1579,7 +1598,8 @@ function writeRig(responder) {
     async () => { calls.reloaded++; },
     async () => {},
     () => {},
-    async (t, files) => { calls.refreshed++; calls.refreshFiles = files; },
+    async (t, files, repoRoot) => { calls.refreshed++; calls.refreshFiles = files;
+      calls.refreshRoot = repoRoot; },
     async () => ({ data: { scopes: [], brief: { present: false } } }),
     { getItem: () => null, setItem: () => {} },
     FI.FOUNDATION_ROLES, FI.FOUNDATION_SLUG_RE, FI.MAX_FOUNDATION_BYTES,
@@ -2349,9 +2369,14 @@ section('§12 — v3.61.1: THE RHYTHM, THE PICKER, THE DEFAULT TICKS, THE AGE');
     /data-fnd-role-open="docs\/a\.md"/.test(scanned2));
 
   // ── (8) THE LIST IS THE ARM'S MAIN CONTENT, UNDER ONE INSTRUCTION ────
-  ok('the candidate list is introduced by what a tick MEANS',
-    /<p class="fnd-init-listhd">Tick the documents an agent must read first\.<\/p>/
+  // v3.65.2: the heading TELLS THE TRUTH. It said "Tick the documents an agent
+  // must read first." — but a tick COPIES; "read first" is a separate flag set
+  // per row in the documents table afterwards, and `pickedFiles` sends none.
+  ok('the candidate list is introduced by what a tick MEANS — a copy',
+    /<p class="fnd-init-listhd">Tick the files to copy into this project\.<\/p>/
       .test(scanned2), scanned2.slice(0, 1400));
+  ok('...and nothing on the arm says a tick means "read first" any more',
+    !/an agent must read first/.test(scanned2));
   ok('...above the list itself', scanned2.indexOf('fnd-init-listhd') < scanned2.indexOf('fnd-init-cands'));
 
   // ── (9) THE SOURCE FILE'S AGE, ON THE SHARED SCALE ───────────────────
@@ -2855,6 +2880,216 @@ section('§17 — v3.65.1 D1: the chooser says "Documents", not "Foundations"');
     !/Foundations/.test(later), (later.match(/.{0,60}Foundations.{0,60}/) || [''])[0]);
   ok('CONTROL: the "decide later" card was really rendered (the scan is not vacuous)',
     /data-fnd-own="later"/.test(later), later.slice(0, 200));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§18 — v3.65.2: THE HOST-OWNED REASON, THE DOOR, AND ADD MODE, DRIVEN');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// The binder half of C1 and C2. Every behaviour below is the SHIPPED
+// `bindFoundationsChooser` running against a DOM model — the same harness §5
+// and §15 use — because every one of these defects was green in markup and
+// wrong in behaviour: two nodes sharing one id rendered correctly and the
+// patch reached the wrong one.
+{
+  // ── (1) ONE REASON, REPORTED TO THE HOST ──────────────────────────────
+  const choice = { ...FI.freshChooser({}), ownership: 'remote' };
+  const remote = node({ value: '' });
+  const scan = node({ disabled: true });
+  const chooserWhy = node({ hidden: true, querySelector: () => node({}) });
+  const reasons = [];
+  const doc = docModel({ 'x-remote': remote, 'x-scan': scan, 'x-why': chooserWhy,
+    'x-remote-ref': node({}), 'x-remote-path': node({}) }, {});
+  FI.bindFoundationsChooser({ doc, id: 'x', choice, reasons: 'host', onChange: () => {},
+    onSelect: (r) => reasons.push(r) });
+  remote.value = 'o/r';
+  remote.fire('input');
+  eq('with `reasons: host`, a keystroke hands the host the FIRST UNMET STEP',
+    reasons[reasons.length - 1], 'Find the documents first.');
+  eq('...arms the scan on the live node', scan.disabled, false);
+  eq('...and never writes a chooser `-why` node (there is none in this host)',
+    chooserWhy.hidden, true);
+  choice.hasReadToken = false;
+  remote.fire('input');
+  eq('a missing read-only token is the next step before the scan',
+    reasons[reasons.length - 1], 'No read-only token yet — add one in Settings, or read with Personal Sync’s token.');
+  eq('...and it disables the scan with it', scan.disabled, true);
+  remote.value = '';
+  remote.fire('input');
+  eq('an emptied repository field is the first step again', reasons[reasons.length - 1],
+    'Name the repository first.');
+
+  // CONTROL — THE CREATE FORM KEEPS ITS OWN NODE. No `reasons: host`, so the
+  // chooser's `-why` is patched and the host hook is not the channel.
+  const c2 = { ...FI.freshChooser({}), ownership: 'remote' };
+  const r2 = node({ value: '' });
+  const whySpan = node({ textContent: '' });
+  const why2 = node({ hidden: true, querySelector: () => whySpan });
+  FI.bindFoundationsChooser({ doc: docModel({ 'x-remote': r2, 'x-scan': node({}), 'x-why': why2 }, {}),
+    id: 'x', choice: c2, onChange: () => {} });
+  r2.value = '';
+  r2.fire('input');
+  ok('CONTROL: without `reasons: host` the chooser still patches its own reason node',
+    why2.hidden === false && whySpan.textContent === 'Name the repository first.', whySpan.textContent);
+}
+{
+  // ── (2) THE DOOR TO SETTINGS IS THE HOST'S ────────────────────────────
+  const door = node({});
+  let opened = 0;
+  FI.bindFoundationsChooser({ doc: docModel({ 'x-token-door': door }, {}), id: 'x',
+    choice: { ...FI.freshChooser({}), ownership: 'remote', hasReadToken: false },
+    onChange: () => {}, onOpenTokenSettings: () => { opened++; } });
+  door.fire('click');
+  eq('"Add one in Settings" calls the host\'s door, once', opened, 1);
+  // The markup half: a host that cannot open Settings gets no door at all.
+  const noDoor = FI.renderFoundationsChooser({ id: 'x', optionsHidden: true,
+    choice: { ...FI.freshChooser({}), ownership: 'remote', hasReadToken: false } });
+  ok('...and a host that passes no `tokenDoor` renders no door — a button that goes nowhere is worse than none',
+    !/fnd-init-token-door/.test(noDoor) && /No read-only token yet/.test(noDoor));
+  const create = FI.renderFoundationsChooser({ id: 'x',
+    choice: { ...FI.freshChooser({}), ownership: 'remote' } });
+  ok('the CREATE FORM is unchanged where it has no ⓘ: its framed arm and its in-flow token note stay',
+    /class="fnd-init-arm">/.test(create) && /<p class="fnd-init-note"><span>The token is never typed here/.test(create)
+    && /id="x-why"/.test(create));
+}
+{
+  // ── (3) ADD MODE: THE SCAN RUNS ON OPEN, AGAINST THE RECORDED FOLDER ───
+  const mk = (responder, over) => {
+    const choice = { ...FI.freshChooser({}), ownership: 'repo', addMode: true,
+      fixedRoot: '/rec/root', mirrored: ['docs/a.md'], projectBytes: 1000, ...over };
+    const urls = [];
+    let renders = 0;
+    FI.bindFoundationsChooser({ doc: docModel({}, {}), id: 'x', choice, autoScan: true,
+      onChange: () => { renders++; },
+      fetchImpl: async (url) => { urls.push(url); return responder(url); } });
+    return { choice, urls, renders: () => renders };
+  };
+  const ok200 = () => ({ ok: true, json: async () => ({ ok: true, root: '/rec/root', truncated: false,
+    candidates: [
+      { path: 'docs/a.md', bytes: 10, suggestedRole: 'architecture' },
+      { path: 'docs/b.md', bytes: 20, suggestedRole: 'architecture' },
+    ] }) });
+  const a = mk(ok200);
+  await new Promise((r) => setTimeout(r, 0));
+  eq('opening the panel scans the RECORDED folder, once, with no press',
+    a.urls.join(' '), '/api/memory/repo-scan?root=%2Frec%2Froot');
+  ok('...and NOTHING is ticked by default — not even a canonical role',
+    Object.keys(a.choice.picks).length === 0, JSON.stringify(a.choice.picks));
+  eq('...so the ONE reason is "Tick at least one file."', FI.nextStepReason(a.choice),
+    'Tick at least one file.');
+  // A REPAINT BINDS AGAIN — and must never scan again by itself.
+  FI.bindFoundationsChooser({ doc: docModel({}, {}), id: 'x', choice: a.choice, autoScan: true,
+    onChange: () => {}, fetchImpl: async (url) => { a.urls.push(url); return ok200(); } });
+  await new Promise((r) => setTimeout(r, 0));
+  eq('...and a second bind (a repaint) does NOT scan again', a.urls.length, 1);
+
+  const b = mk(() => ({ ok: false, status: 400, json: async () => ({ ok: false,
+    reason: 'unreachable-root', error: 'That folder is not on this computer.' }) }));
+  await new Promise((r) => setTimeout(r, 0));
+  eq('a recorded folder that is NOT here brings the field back', b.choice.rootEditable, true);
+  eq('...prefilled with the recorded path, so it can be corrected rather than retyped',
+    b.choice.repoRoot, '/rec/root');
+  eq('...and the one reason names the one thing to do', FI.nextStepReason(b.choice),
+    'That folder is not on this computer. Point at your copy of it.');
+  const field = FI.renderFoundationsChooser({ id: 'x', choice: b.choice, optionsHidden: true,
+    flat: true, reasons: 'host' });
+  ok('...the field is rendered, prefilled', /id="x-root" type="text"[^>]*value="\/rec\/root"/.test(field),
+    (field.match(/id="x-root"[^>]*>/) || [''])[0]);
+  const noScan = mk(ok200, { rootEditable: true, repoRoot: '/typed' });
+  await new Promise((r) => setTimeout(r, 0));
+  eq('CONTROL: once the field is shown nothing scans by itself — the person presses Find',
+    noScan.urls.length, 0);
+}
+{
+  // ── (4) "+ A FILE THAT ISN'T LISTED" — PATCHED IN PLACE ────────────────
+  const choice = { ...FI.freshChooser({}), ownership: 'repo', addMode: true, fixedRoot: '/r',
+    mirrored: ['docs/a.md'], projectBytes: 0, picks: {},
+    candidates: [{ path: 'docs/a.md', bytes: 10, suggestedRole: 'architecture' },
+      { path: 'docs/b.md', bytes: 20, suggestedRole: 'decisions' }] };
+  const inserted = [];
+  const extraRow = node({ innerHTML: FI.extraRowHtml('x', choice, false),
+    insertAdjacentHTML(where, html) { inserted.push([where, html]); } });
+  const input = node({ dataset: { fndExtraField: '1' }, value: '', focus() { this.focused = true; } });
+  const addBtn = node({ dataset: { fndExtraAdd: '1' }, disabled: true });
+  const countNode = node({ dataset: { fndCountRich: '1' }, innerHTML: '' });
+  const openBtn = node({ dataset: { fndExtraOpen: '1' } });
+  const box = node({ checked: false });
+  const rowB = node({ querySelector: (sel) => (sel === '[data-fnd-cand]' ? box : null) });
+  const scope = node({
+    querySelector: (sel) => (sel === '[data-fnd-cand-row="docs/b.md"]' ? rowB : null),
+    querySelectorAll: () => [],
+  });
+  const reasons = [];
+  let renders = 0;
+  FI.bindFoundationsChooser({
+    doc: docModel({ 'x-extra-row': extraRow, 'x-extra': input, 'x-extra-add': addBtn,
+      'x-count': countNode }, { '[data-fnd-init="x"]': [scope] }),
+    id: 'x', choice, reasons: 'host', onChange: () => { renders++; },
+    onSelect: (r) => reasons.push(r) });
+  scope.fire('click', { target: openBtn });
+  ok('pressing the row OPENS it in place — a labelled field and "Add to list"',
+    /Path inside this folder<\/label>/.test(extraRow.innerHTML) && /Add to list<\/button>/.test(extraRow.innerHTML),
+    extraRow.innerHTML);
+  eq('...without a repaint of the list (which would throw a reader back to the top)', renders, 0);
+  ok('...and focus goes to the field it opened', input.focused === true);
+  input.value = 'notes/architecture.md';
+  scope.fire('input', { target: input });
+  eq('typing arms "Add to list" on the live node', addBtn.disabled, false);
+  scope.fire('click', { target: addBtn });
+  eq('the added path is ONE ordinary row, inserted above the extra row',
+    inserted.length + ':' + (inserted[0] && inserted[0][0]), '1:beforebegin');
+  ok('...ticked, with the same role control as its neighbours, and marked as added by path',
+    /data-fnd-cand="notes\/architecture\.md" checked/.test(inserted[0][1])
+    && /data-fnd-role-open="notes\/architecture\.md"/.test(inserted[0][1])
+    && /added by path/.test(inserted[0][1]) && /size not known/.test(inserted[0][1]), inserted[0][1]);
+  ok('...it is on the wire with the role its name suggests',
+    JSON.stringify(FI.pickedFiles(choice)) === JSON.stringify([{ path: 'notes/architecture.md', role: 'architecture' }]),
+    JSON.stringify(FI.pickedFiles(choice)));
+  ok('...the count says its size is not known yet rather than counting it as zero',
+    /size of 1 added by path not known yet/.test(countNode.innerHTML), countNode.innerHTML);
+  eq('...the host is told the copy is now possible', reasons[reasons.length - 1], '');
+  ok('...and the row closes again', /data-fnd-extra-open="1"/.test(extraRow.innerHTML));
+  // THE SAME PATH AS A LISTED CANDIDATE IS A TICK, NOT A SECOND ROW.
+  scope.fire('click', { target: openBtn });
+  input.value = 'docs/b.md';
+  scope.fire('input', { target: input });
+  scope.fire('click', { target: addBtn });
+  eq('adding a path already in the list ticks it — no second row', inserted.length, 1);
+  eq('...on the live checkbox', box.checked, true);
+  // AN ALREADY-MIRRORED PATH IS NEVER ADDED.
+  scope.fire('click', { target: openBtn });
+  input.value = 'docs/a.md';
+  scope.fire('input', { target: input });
+  scope.fire('click', { target: addBtn });
+  ok('adding a path that is already mirrored changes nothing',
+    inserted.length === 1 && !FI.pickedFiles(choice).some((f) => f.path === 'docs/a.md'));
+}
+{
+  // ── (5) scanRemote KEYS ON `reason` (the route's CODE), NOT ON PROSE ────
+  const got = await FI.scanRemote({ remote: 'o/r', tokenSource: 'config' },
+    async () => ({ ok: false, status: 409, json: async () => ({ ok: false, reason: 'no-token',
+      error: 'No token in .curator-config.json.' }) }));
+  ok('a refusal whose CODE is in `reason` and whose PROSE is in `error` becomes the sentence '
+    + 'for the code — the wire\'s real shape', /no token to read with/.test(got.error), got.error);
+}
+{
+  // ── (6) THE COPY IS SENT AGAINST THE FOLDER THAT WAS SCANNED ─────────────
+  const run = async (over) => {
+    const { api, st, calls } = writeRig(() => ({ ok: true, json: async () => ({ ok: true }) }));
+    const choice = { ...FI.freshChooser({}), ownership: 'repo', addMode: true, fixedRoot: '/rec',
+      repoRoot: '/rec', candidates: [{ path: 'docs/b.md', bytes: 1, suggestedRole: 'other' }],
+      picks: { 'docs/b.md': true }, ...over };
+    st.fndInit = { domain: 'acme', project: 'lumina', choice, busy: false, adding: true };
+    await api.initFoundations(1, { present: true, ownership: 'repo' });
+    return calls;
+  };
+  const fixed = await run({});
+  eq('the recorded folder: the refresh carries the files and NO repoRoot — the route reads the manifest\'s',
+    JSON.stringify([fixed.refreshFiles, fixed.refreshRoot]),
+    JSON.stringify([[{ path: 'docs/b.md', role: 'other' }], undefined]));
+  const typed = await run({ rootEditable: true, repoRoot: '/my/copy' });
+  eq('a folder TYPED because the recorded one is missing is SENT — the path scanned is the path copied from',
+    typed.refreshRoot, '/my/copy');
 }
 
 // ── Done ─────────────────────────────────────────────────────────────────

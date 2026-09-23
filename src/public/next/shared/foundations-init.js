@@ -41,6 +41,13 @@
 // shell's by the suite — because the shell's lives in `app.js`, which IS
 // DOM-bound at import time.
 import { formatAge, freshnessTier } from './age.js';
+// ── AND THE MONITOR KIT (v3.65.2) ───────────────────────────────────────
+// shared/monitor.js has no imports and touches no DOM, so it clears the same
+// bar age.js does. It is taken for two readings the add panel needs and must
+// not draw by hand: the recorded folder as a monitor line, and the running
+// total as a DEPTH BAR against the project budget (design rule 6) — a second
+// hand-built bar here is the shape rule 6 exists to prevent.
+import { renderMonitor, renderDepthCell } from './monitor.js';
 //
 // ── NO NATIVE <select>, AND NO LISTBOX EITHER ────────────────────────────
 // /next purged the native `<select>` in v3.18.0 (shell.css records why: the
@@ -286,6 +293,36 @@ export function freshChooser(opts) {
     extras: [],                // [{ path, role }]
     extraPath: '',             // the draft in the field
     extraRole: 'other',        // the role the draft will carry
+    // ── ADDING TO A MIRROR THAT ALREADY HAS DOCUMENTS (v3.65.2, C2) ──────
+    // Set by the Context host when "Add from folder" opens on a populated
+    // mirror. The maintainer called the old flow "rusty": the folder the app
+    // already knew had to be typed again, a path typed there was scanned but
+    // then IGNORED by the copy, eight rows arrived ticked, the one already
+    // mirrored among them, and a second path field sat beside the list with
+    // no word on what it was for. So in this mode:
+    //   · `fixedRoot` is the manifest's recorded folder — shown as a fact and
+    //     scanned on open, never a field, unless it is not on this computer;
+    //   · `rootEditable` flips on when the scan of it fails, bringing the
+    //     field back PREFILLED, and then the path scanned is the path sent;
+    //   · `mirrored` are the source paths already copied — listed, never
+    //     tickable; `projectBytes` is what they weigh, so the running total
+    //     is the PROJECT's, against the project budget;
+    //   · nothing is ticked by default, and a file the scan missed is added
+    //     INTO the list (`extraOpen` is its row, open or closed).
+    addMode: false,
+    fixedRoot: null,
+    rootEditable: false,
+    mirrored: [],
+    projectBytes: null,
+    extraOpen: false,
+    // THE TOKEN FACTS (v3.65.2, C1). Read by the Context host once per open
+    // of the GitHub panel — `hasReadToken`/`readTokenLast4` from
+    // `GET /api/config/github-read-token` (presence and four characters,
+    // never the value), `hasSyncToken` from `GET /api/sync/status`. Unknown
+    // is `undefined`, and unknown is never rendered as "available".
+    hasReadToken: undefined,
+    readTokenLast4: null,
+    hasSyncToken: undefined,
     // Files the owner picked off disk (D18). Curator arm only. Each becomes
     // ONE document via one PUT after the project exists; nothing is uploaded.
     //   { name, size, slug, role, title, text, error }
@@ -400,10 +437,14 @@ export function pickedFiles(choice) {
   const list = c && Array.isArray(c.candidates) ? c.candidates : [];
   const out = [];
   const seen = new Set();
+  const mirrored = new Set(c && Array.isArray(c.mirrored) ? c.mirrored : []);
   for (const cand of list) {
     if (!cand || cand.tooLarge) continue;
     const p = String(cand.path || '');
     if (!p || c.picks[p] !== true) continue;
+    // ALREADY MIRRORED IS NEVER RE-SENT as an "add" — it has no checkbox, and
+    // a stale pick from before it was mirrored must not reach the wire.
+    if (mirrored.has(p)) continue;
     const role = c.roles[p] || cand.suggestedRole || 'other';
     seen.add(p);
     out.push({ path: p, role: FOUNDATION_ROLES.includes(role) ? role : 'other' });
@@ -585,14 +626,57 @@ export function defaultPicks(candidates) {
 export function tickedBytes(choice) {
   const c = choice && typeof choice === 'object' ? choice : null;
   const list = c && Array.isArray(c.candidates) ? c.candidates : [];
+  const mirrored = new Set(c && Array.isArray(c.mirrored) ? c.mirrored : []);
   let total = 0;
   for (const cand of list) {
     if (!cand || cand.tooLarge) continue;
     const p = String(cand.path || '');
-    if (!p || !c.picks || c.picks[p] !== true) continue;
+    if (!p || !c.picks || c.picks[p] !== true || mirrored.has(p)) continue;
     total += Number.isFinite(cand.bytes) && cand.bytes > 0 ? cand.bytes : 0;
   }
   return total;
+}
+
+/**
+ * THE RUNNING TOTAL, AS A DEPTH BAR (v3.65.2, C1 + C2) — the host panels'.
+ *
+ * Two clauses and one bar. In ADD mode: "2 ticked · 99 KB", then the PROJECT
+ * total — what is already mirrored plus what is ticked — against the 200 KB
+ * project budget, drawn by the kit's `renderDepthCell`, which turns danger by
+ * itself when the total is over (rule 6; the loud budget sentence stays
+ * unfolded under it, so the fact is also in words). On the GitHub panel:
+ * "1 of 31 ticked · 395 KB" with the ticked set against the same budget.
+ *
+ * Returns MARKUP: every string in it is either escaped here or passed to the
+ * kit, which escapes. The create form keeps `countLineText`, unchanged.
+ */
+export function countLineHtml(choice) {
+  const c = choice && typeof choice === 'object' ? choice : null;
+  const list = c && Array.isArray(c.candidates) ? c.candidates : [];
+  const mirrored = new Set(c && Array.isArray(c.mirrored) ? c.mirrored : []);
+  const usable = list.filter((cand) => cand && cand.path && !cand.tooLarge
+    && !mirrored.has(cand.path)).length;
+  const picked = pickedFiles(c || {});
+  const ticked = picked.filter((f) => list.some((cand) => cand && cand.path === f.path)).length;
+  const bytes = tickedBytes(c);
+  const unknownSize = list.filter((cand) => cand && cand.addedByPath && c.picks[cand.path] === true).length;
+  const add = !!(c && c.addMode);
+  const base = add && Number.isFinite(c.projectBytes) && c.projectBytes > 0 ? c.projectBytes : 0;
+  const total = base + bytes;
+  let words = add
+    ? ticked + ' ticked · ' + formatBytes(bytes)
+    : ticked + ' of ' + usable + ' ticked · ' + formatBytes(bytes);
+  if (unknownSize) words += ' · size of ' + unknownSize + ' added by path not known yet';
+  return '<span class="fnd-init-count-words">' + escapeHtml(words) + '</span>' +
+    '<span class="fnd-init-count-total">' +
+      (add ? '<span class="fnd-init-count-key">project total</span>' : '') +
+      renderDepthCell({
+        value: formatBytes(total) + ' of ' + formatBytes(FOUNDATIONS_BUDGET_BYTES),
+        amount: total, budget: FOUNDATIONS_BUDGET_BYTES,
+        label: add ? 'mirrored and ticked, against the project budget'
+          : 'ticked, against the project budget',
+      }) +
+    '</span>';
 }
 
 /**
@@ -633,7 +717,11 @@ export function countLineText(choice) {
  * the caller can concatenate it unconditionally.
  */
 export function budgetWarning(choice) {
-  const bytes = tickedBytes(choice);
+  // In ADD mode the budget is the PROJECT's, so what is already mirrored
+  // counts — the same total the depth bar above it draws.
+  const base = choice && choice.addMode && Number.isFinite(choice.projectBytes)
+    && choice.projectBytes > 0 ? choice.projectBytes : 0;
+  const bytes = tickedBytes(choice) + base;
   if (bytes <= FOUNDATIONS_BUDGET_BYTES) return '';
   return 'Over the ' + formatBytes(FOUNDATIONS_BUDGET_BYTES) + ' budget: agents receive '
     + formatBytes(120 * 1024) + ' per session and the rest is dropped, last in reading order first.';
@@ -664,12 +752,21 @@ export function scanBlockedReason(choice) {
   if (c.ownership === 'remote') {
     if (!String(c.remote || '').trim()) return 'Name the repository first.';
     if (tokenSourceOf(c) === 'config' && c.hasReadToken === false) {
-      return 'No read-only token is set — add one in Settings, or read with Personal Sync’s token.';
+      return 'No read-only token yet — add one in Settings, or read with Personal Sync’s token.';
     }
     if (tokenSourceOf(c) === 'sync' && c.hasSyncToken === false) {
       return 'Personal Sync is not connected, so there is no token to read with.';
     }
     return '';
+  }
+  // ── ADD MODE, THE RECORDED FOLDER (v3.65.2, C2) ──────────────────────
+  // Shown as a fact and scanned on open, so there is nothing to wait for —
+  // unless that scan failed, in which case the field is back, prefilled, and
+  // the reason names the one thing to do while it still holds that path.
+  if (c.addMode && c.fixedRoot && !c.rootEditable) return '';
+  if (c.addMode && c.rootEditable && c.fixedRoot
+      && String(c.repoRoot || '').trim() === String(c.fixedRoot).trim()) {
+    return 'That folder is not on this computer. Point at your copy of it.';
   }
   if (!String(c.repoRoot || '').trim()) return 'Type or choose the folder first.';
   return '';
@@ -702,10 +799,65 @@ export function commitBlockedReason(choice) {
     return '';
   }
   if (c.ownership !== 'repo') return '';
+  // ── ADD MODE: A BARE FOLDER NEVER ARMS THE COPY (v3.65.2, C2) ────────
+  // Through v3.65.1 the add panel's primary was live the moment a folder was
+  // typed — before a scan, with nothing ticked — and pressing it posted `{}`:
+  // a plain refresh presented as an "add". Here there is nothing to add until
+  // a file is ticked, so both states have a reason.
+  if (c.addMode) {
+    if (c.scanning === true) return '';
+    if (!Array.isArray(c.candidates)) return 'Find the documents first.';
+    if (!pickedFiles(c).length) return 'Tick at least one file.';
+    return '';
+  }
   if (!Array.isArray(c.candidates) || !c.candidates.length) return '';
   if (pickedFiles(c).length) return '';
   return 'Tick at least one document.';
 }
+
+/**
+ * THE FIRST UNMET STEP, AS ONE SENTENCE (v3.65.2, C1).
+ *
+ * The host-owned reason line reads THIS — one node, one sentence — where the
+ * GitHub panel used to print "Name the repository first." twice, from two
+ * nodes sharing one id (the chooser's scan note and the host's commit note),
+ * with the host's never patched after its first paint because
+ * `getElementById` reaches the first. Precedence is the order the steps
+ * happen in: what to type, what to read with, what to find, what to tick.
+ */
+export function nextStepReason(choice) {
+  const own = choice && typeof choice === 'object' ? choice.ownership : null;
+  // Only the two arms that SCAN have a scan step; the curator arm has none,
+  // and `scanBlockedReason` would answer its folder question for it.
+  if (own !== 'repo' && own !== 'remote') return commitBlockedReason(choice);
+  return scanBlockedReason(choice) || commitBlockedReason(choice);
+}
+
+/**
+ * THE READ-WITH ⓘ — how to create the token this form reads with (v3.65.2).
+ *
+ * The maintainer's five steps, verbatim, then why not a classic token, then
+ * where the token is saved. Static markup, nothing interpolated, exported so a
+ * host renders it through the kit's `renderInfoMark` rather than this module
+ * growing a second ⓘ of its own.
+ */
+export const READ_WITH_INFO_HTML =
+  '<p>A <b>fine-grained personal access token</b> with read-only access to the repositories you '
+  + 'want to mirror. Not a classic one. In GitHub:</p>'
+  + '<ol>'
+  + '<li>Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate '
+  + 'new token.</li>'
+  + '<li>Resource owner: the account or organisation that owns the repository.</li>'
+  + '<li>Repository access: Only select repositories, then pick the repository or repositories '
+  + 'whose documentation you want to mirror. You can pick several with one token.</li>'
+  + '<li>Permissions → Repository permissions → Contents: Read-only. Metadata read-only is added '
+  + 'automatically. Nothing else.</li>'
+  + '<li>Expiry: fine-grained tokens require one, up to a year. Set a reminder to renew it.</li>'
+  + '</ol>'
+  + '<p><b>Why not a classic token:</b> a classic token reads every repository your account can '
+  + 'see. A fine-grained one reads only the repositories you pick, and only their contents.</p>'
+  + '<p>The token is never typed here. This chooses which saved token to read with; you save it '
+  + 'once in Settings → Knowledge base.</p>';
 
 /**
  * HOW OLD THE SOURCE FILE IS — the shared dot, and the word beside it.
@@ -826,11 +978,26 @@ export function renderFoundationsChooser(cfg) {
         : '') +
     '</div>';
 
+  // ── THE HOST'S OPTIONS (v3.65.2) ────────────────────────────────────
+  // `flat` drops the arm's own frame — the Context host already draws ONE
+  // panel around this, and a tinted arm inside a tinted panel was two left
+  // edges and two tints (the "box in a box"); the create form keeps its
+  // framed arm, because there it ties the arm to the pressed option card.
+  // `reasons: 'host'` means the host owns the ONE reason line and this module
+  // emits none — two nodes sharing `<id>-why` was the duplicate-id defect.
+  // `readWithInfo` is the host's ⓘ for the READ WITH row, and `tokenDoor` says
+  // the host can open Settings, so "Add one in Settings" is a real door.
+  const host = {
+    flat: c.flat === true,
+    hostReasons: c.reasons === 'host',
+    readWithInfo: c.readWithInfo && typeof c.readWithInfo === 'object' ? c.readWithInfo : null,
+    tokenDoor: c.tokenDoor === true,
+  };
   return (
     '<div class="fnd-init" data-fnd-init="' + escapeHtml(id) + '">' +
       options +
-      (own === 'repo' ? repoArm(id, choice, busy) : '') +
-      (own === 'remote' ? remoteArm(id, choice, busy) : '') +
+      (own === 'repo' ? repoArm(id, choice, busy, host) : '') +
+      (own === 'remote' ? remoteArm(id, choice, busy, host) : '') +
       (own === 'curator' ? curatorArm(id, choice, busy, c.existingProject === true) : '') +
     '</div>'
   );
@@ -876,7 +1043,8 @@ export function renderFoundationsChooser(cfg) {
  * place to SET one is Settings, and this form points at it rather than
  * becoming a second credential path into the app.
  */
-function remoteArm(id, choice, busy) {
+function remoteArm(id, choice, busy, hostOpts) {
+  const host = hostOpts && typeof hostOpts === 'object' ? hostOpts : {};
   const dis = busy ? ' disabled' : '';
   const scanning = choice.scanning === true;
   const cands = Array.isArray(choice.candidates) ? choice.candidates : null;
@@ -884,39 +1052,76 @@ function remoteArm(id, choice, busy) {
   const armLede =
     '<p class="fnd-init-armhd">Name the repository, then tick the documents to copy.</p>';
 
+  // ── EACH FIELD IS ONE WRAPPER, LABEL ABOVE INPUT (v3.65.2, C1) ─────────
+  // Through v3.65.1 the label and the input were SIBLINGS in an auto-fit grid
+  // with `align-items: end`, so six items flowed into five tracks: labels laid
+  // out as if they were fields, bottom-aligned 21px BELOW their inputs, and the
+  // third input wrapped alone to a second row — the "labels below their
+  // inputs, huge gaps" in the maintainer's screenshot. One wrapper per field,
+  // three columns.
   const text = (name, label, placeholder, value) =>
-    '<label class="fnd-init-label cur-eyebrow" for="' + escapeHtml(id) + '-' + name + '">' +
-      escapeHtml(label) + '</label>' +
-    '<input class="fnd-init-path" id="' + escapeHtml(id) + '-' + name + '" type="text"' +
-      ' autocomplete="off" spellcheck="false" placeholder="' + escapeHtml(placeholder) + '"' +
-      ' value="' + escapeHtml(value || '') + '"' + dis + ' />';
+    '<div class="fnd-init-field">' +
+      '<label class="fnd-init-label cur-eyebrow" for="' + escapeHtml(id) + '-' + name + '">' +
+        escapeHtml(label) + '</label>' +
+      '<input class="fnd-init-path" id="' + escapeHtml(id) + '-' + name + '" type="text"' +
+        ' autocomplete="off" spellcheck="false" placeholder="' + escapeHtml(placeholder) + '"' +
+        ' value="' + escapeHtml(value || '') + '"' + dis + ' />' +
+    '</div>';
 
-  // THE TOKEN SOURCE, AS TWO RADIOS. Each one says whether it is AVAILABLE,
-  // because a source that is not set up is a choice that cannot work and a
-  // person has to be told which before they press anything (v3.61.1: every
-  // disabled control states its reason).
+  // ── READ WITH, TRUE IN EVERY STATE (v3.65.2, C1) ───────────────────────
+  // THE REPORT: "I cannot enter the token here, I don't have an option." Both
+  // state words were blank because no host ever set the facts, and the note
+  // pointed at a Settings field that did not exist. Now the host reads
+  // presence and four characters once per open, and the row says what is
+  // true: the token's last four when it is saved; "No read-only token yet"
+  // with a door to Settings when it is not; the old words when nobody looked.
+  // `sync` is never made the default — a classic sync token reads every
+  // repository the account owns.
   const src = tokenSourceOf(choice);
-  const tokenOpt = (value, label, state) =>
-    '<label class="fnd-init-token-opt">' +
-      '<input type="radio" name="' + escapeHtml(id) + '-token" value="' + escapeHtml(value) + '"' +
-        ' data-fnd-token="' + escapeHtml(value) + '"' +
-        (src === value ? ' checked' : '') + dis + ' />' +
-      '<span>' + escapeHtml(label) + '</span>' +
-      '<span class="fnd-init-token-state">' + escapeHtml(state) + '</span>' +
-    '</label>';
+  const last4 = typeof choice.readTokenLast4 === 'string'
+    && /^[A-Za-z0-9_]{1,4}$/.test(choice.readTokenLast4) ? choice.readTokenLast4 : '';
+  const configLabel = choice.hasReadToken === true
+    ? 'The read-only token in Settings' + (last4 ? ' · ends in …' + last4 : '')
+    : choice.hasReadToken === false ? 'No read-only token yet'
+      : 'The read-only token in Settings';
+  const door = choice.hasReadToken === false && host.tokenDoor
+    ? '<button type="button" class="btn btn-secondary btn-xs fnd-init-token-door"' +
+      ' id="' + escapeHtml(id) + '-token-door"' + dis + '>Add one in Settings</button>'
+    : '';
+  // A SOURCE THAT CANNOT WORK IS DISABLED, AND ITS STATE WORD IS THE REASON
+  // (v3.61.1: every disabled control states its reason). Never when the
+  // source is the checked one — a checked-and-disabled radio could not be
+  // moved off by pressing it.
+  const syncOff = choice.hasSyncToken === false && src !== 'sync';
+  const tokenOpt = (value, label, state, off, after) =>
+    '<div class="fnd-init-token-line">' +
+      '<label class="fnd-init-token-opt">' +
+        '<input type="radio" name="' + escapeHtml(id) + '-token" value="' + escapeHtml(value) + '"' +
+          ' data-fnd-token="' + escapeHtml(value) + '"' +
+          (src === value ? ' checked' : '') + (busy || off ? ' disabled' : '') + ' />' +
+        '<span>' + escapeHtml(label) + '</span>' +
+        '<span class="fnd-init-token-state">' + escapeHtml(state) + '</span>' +
+      '</label>' + (after || '') +
+    '</div>';
+  const info = host.readWithInfo;
   const tokens =
-    '<div class="fnd-init-label cur-eyebrow">Read with</div>' +
+    '<div class="fnd-init-readwith">' +
+      '<span class="fnd-init-label cur-eyebrow">Read with</span>' +
+      (info && typeof info.btn === 'string' ? info.btn : '') +
+    '</div>' +
+    (info && typeof info.panel === 'string' ? info.panel : '') +
     '<div class="fnd-init-tokens" role="radiogroup"' +
       ' aria-label="Which stored token to read the repository with">' +
-      tokenOpt('config', 'The read-only token in Settings',
-        choice.hasReadToken === false ? 'not set'
-          : choice.hasReadToken === true ? 'available' : '') +
+      tokenOpt('config', configLabel, '', false, door) +
       tokenOpt('sync', 'Personal Sync’s token',
         choice.hasSyncToken === false ? 'not connected'
-          : choice.hasSyncToken === true ? 'available' : '') +
+          : choice.hasSyncToken === true ? 'connected' : '', syncOff, '') +
     '</div>' +
-    '<p class="fnd-init-note"><span>The token is never typed here — this chooses which '
-      + 'stored one to read with. Add a read-only token in Settings.</span></p>';
+    // THE IN-FLOW NOTE IS THE ⓘ'S NOW, where a host supplies one: it is an
+    // explanation, and explanations live behind the ⓘ. A host with no ⓘ (the
+    // create form) keeps the sentence, so no host loses it.
+    (info ? '' : '<p class="fnd-init-note"><span>The token is never typed here — this chooses which '
+      + 'stored one to read with. Add a read-only token in Settings.</span></p>');
 
   const fields =
     '<div class="fnd-init-remote-fields">' +
@@ -932,7 +1137,7 @@ function remoteArm(id, choice, busy) {
         (scanning ? 'Looking…' : 'Find documents') +
       '</button>' +
     '</div>' +
-    reasonNote(id + '-why', scanBlockedReason(choice));
+    (host.hostReasons ? '' : reasonNote(id + '-why', scanBlockedReason(choice)));
 
   const err = choice.scanError
     ? '<div class="fnd-init-note fnd-init-note-loud"><span>' +
@@ -946,7 +1151,11 @@ function remoteArm(id, choice, busy) {
       'a different branch.</span></div>';
   } else if (cands) {
     list =
-      '<p class="fnd-init-listhd">Tick the documents an agent must read first.</p>' +
+      // ── A TICK MEANS COPY (v3.65.2) ─────────────────────────────────────
+      // It read "Tick the documents an agent must read first." — false: a
+      // tick copies the file, and "read first" is a separate flag set per row
+      // in the documents table afterwards (`pickedFiles` sends no readFirst).
+      '<p class="fnd-init-listhd">Tick the files to copy into this project.</p>' +
       // ONE LINE, NOT TWENTY-FIVE DASHES. See the docblock.
       '<p class="fnd-init-note"><span>Age is unknown for a remote scan — a git tree carries no ' +
         'timestamps, so nothing here claims one.</span></p>' +
@@ -957,20 +1166,38 @@ function remoteArm(id, choice, busy) {
         ? '<div class="fnd-init-note"><span>Only the first ' + cands.length +
           ' files are listed. Mirror these now and refresh later for the rest.</span></div>'
         : '') +
-      '<div class="fnd-init-count" id="' + escapeHtml(id) + '-count">' +
-        escapeHtml(countLineText(choice)) +
-      '</div>' +
+      countBlock(id, choice, host) +
       '<div class="fnd-init-note fnd-init-note-loud fnd-init-budget"' +
         ' id="' + escapeHtml(id) + '-budget"' + (budgetWarning(choice) ? '' : ' hidden') + '>' +
         '<span>' + escapeHtml(budgetWarning(choice)) + '</span>' +
       '</div>';
   }
 
-  return '<div class="fnd-init-arm">' + armLede + fields + err + list + '</div>';
+  return '<div class="fnd-init-arm' + (host.flat ? ' fnd-init-arm-flat' : '') + '">' +
+    armLede + fields + err + list + '</div>';
 }
 
-function repoArm(id, choice, busy) {
+/**
+ * THE COUNT LINE — text on the create form, a depth bar in a host panel.
+ * One node either way, `<id>-count`, which the binder patches on every tick.
+ */
+function countBlock(id, choice, host) {
+  const rich = !!(host && host.hostReasons);
+  return '<div class="fnd-init-count' + (rich ? ' fnd-init-count-rich' : '') + '"' +
+    ' id="' + escapeHtml(id) + '-count"' + (rich ? ' data-fnd-count-rich="1"' : '') + '>' +
+    (rich ? countLineHtml(choice) : escapeHtml(countLineText(choice))) +
+  '</div>';
+}
+
+function repoArm(id, choice, busy, hostOpts) {
+  const host = hostOpts && typeof hostOpts === 'object' ? hostOpts : {};
   const dis = busy ? ' disabled' : '';
+  // ── THE RECORDED FOLDER IS A FACT, NOT A QUESTION (v3.65.2, C2) ────────
+  // Adding to a mirror that already has documents: the manifest names the
+  // folder, so the panel says it and the host scans it on open. The field
+  // comes back — prefilled with that path — only when the scan of it failed,
+  // and then whatever is in it is what the copy is sent against.
+  const fixed = choice.addMode === true && !!choice.fixedRoot && choice.rootEditable !== true;
   const scanning = choice.scanning === true;
   const picking = choice.picking === true;
   const cands = Array.isArray(choice.candidates) ? choice.candidates : null;
@@ -995,7 +1222,12 @@ function repoArm(id, choice, busy) {
       (picking ? 'Choosing…' : 'Choose folder…') +
     '</button>';
 
-  const field =
+  const field = fixed
+    ? renderMonitor({ label: 'The folder this project mirrors',
+      lines: [{ key: 'from', value: String(choice.fixedRoot) }] }) +
+      (choice.scanning === true
+        ? '<div class="tx-note fnd-init-why"><span>Reading the folder…</span></div>' : '')
+    : '<div class="fnd-init-field">' +
     '<label class="fnd-init-label cur-eyebrow" for="' + escapeHtml(id) + '-root">' +
       'Folder on this Mac</label>' +
     '<div class="fnd-init-row">' +
@@ -1009,6 +1241,7 @@ function repoArm(id, choice, busy) {
         (scanning ? 'Looking…' : 'Find documents') +
       '</button>' +
     '</div>' +
+    '</div>' +
     // ── WHY THE CONTROL IS OFF, UNDER THE CONTROL ───────────────────────
     // Emitted ALWAYS and merely `hidden`, because the path field writes into
     // state WITHOUT a render (a render rebuilds the input and takes the caret
@@ -1016,7 +1249,7 @@ function repoArm(id, choice, busy) {
     // the field fills is for the live node to be toggled. `.fnd-init-why` has
     // its own `[hidden]` counter-rule in the stylesheet: `.tx-note` declares
     // `display: flex`, which defeats the attribute (design-system §9).
-    reasonNote(id + '-why', scanBlockedReason(choice)) +
+    (host.hostReasons ? '' : reasonNote(id + '-why', scanBlockedReason(choice))) +
     // The picker's own two outcomes, both in flow: a build with no dialog, and
     // a dialog that failed.
     (choice.pickUnavailable
@@ -1036,20 +1269,32 @@ function repoArm(id, choice, busy) {
       escapeHtml('Nothing was read: ' + choice.scanError) + '</span></div>'
     : '';
 
+  const addMode = choice.addMode === true;
   let list = '';
-  if (cands && !cands.length) {
+  if (cands && !cands.length && !addMode) {
     list = '<div class="fnd-init-note"><span>Nothing matched in that folder. The scan looks in ' +
       'docs folders and for documents named after a role; a file kept somewhere else can be ' +
       'added by path below.</span></div>';
   } else if (cands) {
     list =
-      // ── WHAT A TICK MEANS, ABOVE THE LIST (8 words) ──────────────────────
-      // The list is the arm's main content once it exists, and the rows carry
-      // a checkbox whose meaning — "an agent reads this first" — is the whole
-      // subject of the tier. One line, in flow, never folded.
-      '<p class="fnd-init-listhd">Tick the documents an agent must read first.</p>' +
-      '<div class="fnd-init-cands">' +
+      // ── WHAT A TICK MEANS, ABOVE THE LIST (v3.65.2) ──────────────────────
+      // It said "Tick the documents an agent must read first." — while the
+      // arm's own lede said "tick the documents to copy". A tick COPIES the
+      // file; "read first" is a separate flag, set per row in the documents
+      // table afterwards, and `pickedFiles` sends none.
+      (cands.length || !addMode
+        ? '<p class="fnd-init-listhd">Tick the files to copy into this project.</p>'
+        : '<div class="fnd-init-note"><span>Nothing matched in that folder. A file kept ' +
+          'somewhere else in it can be added by its path.</span></div>') +
+      '<div class="fnd-init-cands" id="' + escapeHtml(id) + '-cands">' +
         cands.map((cand) => candidateRow(id, choice, cand, busy)).join('') +
+        // ── A FILE THAT ISN'T LISTED IS THE LIST'S LAST ROW (v3.65.2) ─────
+        // It was a second path field BESIDE the list, with seven role chips
+        // floating under it and no word on why it existed — "the second part
+        // I don't understand". Now it is one quiet row at the end of the list
+        // it adds to, and what it adds becomes an ordinary ticked row with
+        // the same role control as its neighbours: one list, one total.
+        (addMode ? extraRowHtml(id, choice, busy) : '') +
       '</div>' +
       (choice.truncated
         ? '<div class="fnd-init-note"><span>Only the first ' + cands.length +
@@ -1059,9 +1304,7 @@ function repoArm(id, choice, busy) {
       // Ticks and BYTES, against the project budget. Patched in place on every
       // tick by the binder — never re-rendered, because a re-render of a
       // 44-row list throws the reader back to the top of it.
-      '<div class="fnd-init-count" id="' + escapeHtml(id) + '-count">' +
-        escapeHtml(countLineText(choice)) +
-      '</div>' +
+      countBlock(id, choice, host) +
       // OVER BUDGET IS A WARNING AND NEVER FOLDS. Emitted always and `hidden`
       // under the budget, for the same reason the scan's reason note is: the
       // tick that crosses the line does not re-render.
@@ -1131,7 +1374,50 @@ function repoArm(id, choice, busy) {
   // instruction is the group's first line; the stylesheet gives the group its
   // own indent and rule so the controls read as belonging to the pressed
   // option rather than floating at the level of the two option cards.
-  return '<div class="fnd-init-arm">' + armLede + field + err + list + extraBlock + '</div>';
+  // IN ADD MODE the lede is the host panel's own description, and the typed
+  // path lives in the list (above) rather than in a block of its own.
+  return '<div class="fnd-init-arm' + (host.flat ? ' fnd-init-arm-flat' : '') + '">' +
+    (addMode ? '' : armLede) + field + err + list + (addMode ? '' : extraBlock) + '</div>';
+}
+
+/**
+ * THE LIST'S LAST ROW: "+ A file that isn't listed" (v3.65.2, C2).
+ *
+ * Closed, a ghost button. Open, IN THE SAME ROW: a labelled path field and
+ * "Add to list". Written by the binder into the live row on open rather than
+ * by re-rendering the list — a re-render rebuilds the scroll container and
+ * throws a reader who scrolled to the bottom back to the top, the defect
+ * v3.61.1 measured on a 44-row list.
+ */
+export function extraRowHtml(id, choice, busy) {
+  return '<div class="fnd-init-cand fnd-init-extra-row" id="' + escapeHtml(id) + '-extra-row">' +
+    extraRowInner(id, choice, busy) + '</div>';
+}
+
+/** The row's contents alone — what the binder writes into the live row. */
+function extraRowInner(id, choice, busy) {
+  const dis = busy ? ' disabled' : '';
+  const open = choice && choice.extraOpen === true;
+  const draft = normaliseRelPath(choice && choice.extraPath);
+  const inner = open
+    ? '<div class="fnd-init-field fnd-init-extra-field">' +
+        '<label class="fnd-init-label cur-eyebrow" for="' + escapeHtml(id) + '-extra">' +
+          'Path inside this folder</label>' +
+        '<div class="fnd-init-row">' +
+          '<input class="fnd-init-path" id="' + escapeHtml(id) + '-extra" type="text"' +
+            ' autocomplete="off" spellcheck="false" placeholder="notes/architecture.md"' +
+            ' data-fnd-extra-field="1"' +
+            ' value="' + escapeHtml((choice && choice.extraPath) || '') + '"' + dis + ' />' +
+          '<button type="button" class="btn btn-secondary btn-xs fnd-init-extra-add"' +
+            ' id="' + escapeHtml(id) + '-extra-add" data-fnd-extra-add="1"' +
+            (busy || !draft ? ' disabled' : '') + '>' +
+            'Add to list</button>' +
+        '</div>' +
+      '</div>'
+    : '<button type="button" class="btn btn-ghost btn-xs fnd-init-extra-open"' +
+        ' id="' + escapeHtml(id) + '-extra-open" data-fnd-extra-open="1"' + dis +
+        '>+ A file that isn’t listed</button>';
+  return inner;
 }
 
 /**
@@ -1183,6 +1469,23 @@ export function renderRefusedList(refused) {
 function candidateRow(id, choice, cand, busy) {
   const path = String(cand && cand.path ? cand.path : '');
   const tooLarge = !!(cand && cand.tooLarge);
+  // ── ALREADY MIRRORED: LISTED IN PLACE, NEVER TICKABLE (v3.65.2, C2) ────
+  // Through v3.65.1 the document this project already mirrors came back from
+  // the scan as a NEW candidate, ticked, its bytes counted a second time in
+  // the running total. It stays in the list — where it is in the folder is
+  // worth seeing — with no checkbox and the table's own quiet badge.
+  const mirrored = Array.isArray(choice.mirrored) && choice.mirrored.includes(path);
+  if (mirrored) {
+    return '<div class="fnd-init-cand is-mirrored" data-fnd-cand-row="' + escapeHtml(path) + '">' +
+      '<span class="fnd-init-cand-main">' +
+        '<span class="fnd-init-cand-path">' + escapeHtml(path) + '</span>' +
+        '<span class="mem-badge mem-badge-quiet fnd-init-mirrored">mirrored</span>' +
+      '</span>' +
+      '<span class="fnd-init-cand-size">' + escapeHtml(formatBytes(cand && cand.bytes)) + '</span>' +
+      '<span class="fnd-init-cand-role-flat">' +
+        escapeHtml((cand && cand.suggestedRole) || 'other') + '</span>' +
+    '</div>';
+  }
   const on = choice.picks[path] === true && !tooLarge;
   const role = choice.roles[path] || (cand && cand.suggestedRole) || 'other';
   const open = choice.roleOpenFor === path;
@@ -1204,9 +1507,13 @@ function candidateRow(id, choice, cand, busy) {
         // them. Absent on a file with no `# ` line, never invented.
         (cand && cand.firstHeading
           ? '<span class="fnd-init-cand-head">' + escapeHtml(String(cand.firstHeading)) + '</span>'
-          : '') +
+          : cand && cand.addedByPath
+            ? '<span class="fnd-init-cand-head">added by path</span>' : '') +
       '</label>' +
-      '<span class="fnd-init-cand-size">' + escapeHtml(formatBytes(cand && cand.bytes)) + '</span>' +
+      // A path added by hand has never been read by this browser, so its size
+      // is said to be unknown rather than printed as "0 bytes".
+      '<span class="fnd-init-cand-size">' + escapeHtml(cand && cand.addedByPath
+        && !Number.isFinite(cand.bytes) ? 'size not known' : formatBytes(cand && cand.bytes)) + '</span>' +
       // ── HOW OLD THE SOURCE FILE IS (v3.61.1) ────────────────────────────
       // The maintainer's fourth finding: a picker listing a repository's
       // documents cannot answer "is this one still maintained", which is the
@@ -1521,9 +1828,14 @@ export async function scanRemote(opts, fetchImpl) {
     let data = null;
     try { data = await res.json(); } catch { /* non-JSON error page */ }
     if (!res.ok || !data || !data.ok) {
-      const code = data && typeof data.error === 'string' ? data.error : null;
-      return { ok: false, error: remoteRefusalText(code, o)
-        || (data && data.message) || ('HTTP ' + res.status) };
+      // THE CODE IS `reason` (v3.65.2) — the same correction v3.65.1 made in
+      // the Context host's commit path and missed here: `error` is the
+      // route's PROSE, so keying on it alone matched none of the nine
+      // sentences. `error` is still tried, as the host does.
+      const code = data && typeof data.reason === 'string' ? data.reason : null;
+      const prose = data && typeof data.error === 'string' ? data.error : null;
+      return { ok: false, error: remoteRefusalText(code, o) || remoteRefusalText(prose, o)
+        || (data && data.message) || prose || ('HTTP ' + res.status) };
     }
     return {
       ok: true,
@@ -1681,6 +1993,14 @@ export function bindFoundationsChooser(cfg) {
   if (!doc || !choice || typeof doc.querySelectorAll !== 'function') return;
   const rerender = typeof c.onChange === 'function' ? c.onChange : () => {};
   const fail = typeof c.onFailure === 'function' ? c.onFailure : () => {};
+  // ── ONE REASON LINE, AND THE HOST OWNS IT (v3.65.2, C1) ────────────────
+  // With `reasons: 'host'` this module renders no `<id>-why` node, so every
+  // place below that used to patch one hands the FIRST UNMET STEP to the host
+  // instead — the one node the host renders, patched from one predicate.
+  const hostReasons = c.reasons === 'host';
+  const report = () => {
+    if (typeof c.onSelect === 'function') c.onSelect(nextStepReason(choice));
+  };
 
   const root = typeof doc.querySelector === 'function'
     ? doc.querySelector('[data-fnd-init="' + id + '"]') : null;
@@ -1719,6 +2039,7 @@ export function bindFoundationsChooser(cfg) {
       // the SAME predicate the renderer used (`scanBlockedReason`), so the
       // control and its reason cannot come apart. A render here would rebuild
       // the field and take the caret with it.
+      if (hostReasons) { report(); return; }
       const why = doc.getElementById(id + '-why');
       if (why) {
         const reason = scanBlockedReason(choice);
@@ -1745,6 +2066,7 @@ export function bindFoundationsChooser(cfg) {
     const scan = doc.getElementById(id + '-scan');
     const reason = scanBlockedReason(choice);
     if (scan) scan.disabled = !!reason || choice.scanning === true;
+    if (hostReasons) { report(); return; }
     const why = doc.getElementById(id + '-why');
     if (why) {
       const span = typeof why.querySelector === 'function' ? why.querySelector('span') : null;
@@ -1776,6 +2098,14 @@ export function bindFoundationsChooser(cfg) {
     });
   });
 
+  // ── THE DOOR TO SETTINGS (v3.65.2, C1) ─────────────────────────────────
+  // Rendered only when the host said it can open Settings, and the press is
+  // the host's: this module does not navigate.
+  const door = typeof doc.getElementById === 'function' ? doc.getElementById(id + '-token-door') : null;
+  if (door && typeof c.onOpenTokenSettings === 'function') {
+    door.addEventListener('click', () => { c.onOpenTokenSettings(); });
+  }
+
   const runScan = () => {
       // ── THE REMOTE ARM READS OVER THE NETWORK (v3.65.0) ──────────────
       // ONE read, and it is the only network call this form makes before the
@@ -1806,7 +2136,7 @@ export function bindFoundationsChooser(cfg) {
             // THE SAME TICK DEFAULT the local arm uses — four canonical
             // roles, not everything — so a 25-document repository does not
             // arrive 1,875 KB over a 200 KB budget.
-            choice.picks = defaultPicks(got.candidates);
+            choice.picks = choice.addMode ? {} : defaultPicks(got.candidates);
           }
           rerender();
         }).catch((err) => fail(err));
@@ -1826,6 +2156,14 @@ export function bindFoundationsChooser(cfg) {
         if (!got.ok) {
           choice.scanError = got.error;
           choice.candidates = null;
+          // ── THE RECORDED FOLDER IS NOT HERE (v3.65.2, C2) ──────────────
+          // The field comes back PREFILLED with it, and from then on the path
+          // in the field is the path scanned AND the path the copy is sent
+          // against (`repoRoot` on the refresh body) — never one scanned and
+          // another copied from.
+          if (choice.addMode && choice.fixedRoot && !choice.rootEditable) {
+            choice.rootEditable = true;
+          }
         } else {
           choice.scanError = null;
           choice.candidates = got.candidates;
@@ -1834,7 +2172,11 @@ export function bindFoundationsChooser(cfg) {
           // v3.61.0 ticked every usable candidate and, on the maintainer's own
           // repository, that came out as 25 documents / 1,875 KB against a
           // 200 KB budget. `defaultPicks` holds the rule and the argument.
-          choice.picks = defaultPicks(got.candidates);
+          // ADDING TO A POPULATED MIRROR TICKS NOTHING (v3.65.2): one click
+          // on an ordinary folder put the maintainer's project 4.5× over its
+          // budget. Default ticks are the point of a first set-up, not of an
+          // add.
+          choice.picks = choice.addMode ? {} : defaultPicks(got.candidates);
         }
         rerender();
       }).catch((err) => fail(err));
@@ -1932,7 +2274,14 @@ export function bindFoundationsChooser(cfg) {
   /** Everything on screen that reads `picks`, and nothing more. */
   const patchSelection = () => {
     const countEl = byId('-count');
-    if (countEl) countEl.textContent = countLineText(choice);
+    if (countEl) {
+      // A HOST PANEL'S COUNT CARRIES A DEPTH BAR, so it is markup — built
+      // from escaped words and the kit's own cell, never from a raw string.
+      const rich = countEl.dataset ? countEl.dataset.fndCountRich === '1'
+        : (typeof countEl.getAttribute === 'function' && countEl.getAttribute('data-fnd-count-rich') === '1');
+      if (rich) countEl.innerHTML = countLineHtml(choice);
+      else countEl.textContent = countLineText(choice);
+    }
     const budgetEl = byId('-budget');
     if (budgetEl) {
       const warn = budgetWarning(choice);
@@ -1943,7 +2292,8 @@ export function bindFoundationsChooser(cfg) {
     }
     // The host owns its own commit control — this module emits none — so the
     // reason is handed over rather than written from here.
-    if (typeof c.onSelect === 'function') c.onSelect(commitBlockedReason(choice));
+    if (hostReasons) report();
+    else if (typeof c.onSelect === 'function') c.onSelect(commitBlockedReason(choice));
   };
 
   /** Fill or empty ONE row's role slot. Never touches another row's DOM. */
@@ -1975,6 +2325,11 @@ export function bindFoundationsChooser(cfg) {
       patchSelection();
     });
     scope.addEventListener('click', (ev) => {
+      // ── "+ A file that isn't listed" AND "Add to list" (v3.65.2, C2) ────
+      if (choice.addMode) {
+        if (hostOf(ev && ev.target, 'fndExtraOpen')) { openExtraRow(); return; }
+        if (hostOf(ev && ev.target, 'fndExtraAdd')) { addToList(); return; }
+      }
       const openBtn = hostOf(ev && ev.target, 'fndRoleOpen');
       if (openBtn) {
         const p = attr(openBtn, 'fndRoleOpen');
@@ -2009,13 +2364,83 @@ export function bindFoundationsChooser(cfg) {
     });
   }
 
+  // ── A FILE THAT ISN'T LISTED, IN ADD MODE (v3.65.2, C2) ────────────────
+  // The row is the list's last; opening it and adding from it are PATCHES of
+  // that row and an insert of one candidate row above it — never a repaint of
+  // the list, which would rebuild the scroll container under a reader who has
+  // just scrolled to its bottom. The field writes into state with no render,
+  // the house rule for every field in this module.
+  const extraRow = () => byId('-extra-row');
+  function paintExtraRow(focus) {
+    const row = extraRow();
+    if (!row) { rerender(); return; }
+    row.innerHTML = extraRowInner(id, choice, false);
+    if (focus) {
+      const input = byId('-extra');
+      if (input && typeof input.focus === 'function') input.focus();
+    }
+  }
+  function openExtraRow() {
+    choice.extraOpen = true;
+    paintExtraRow(true);
+  }
+  function addToList() {
+    const p = normaliseRelPath(choice.extraPath);
+    if (!p) return;
+    if (!Array.isArray(choice.candidates)) choice.candidates = [];
+    const mirrored = Array.isArray(choice.mirrored) && choice.mirrored.includes(p);
+    const have = choice.candidates.find((x) => x && x.path === p);
+    if (!have && !mirrored) {
+      const cand = { path: p, bytes: null, suggestedRole: roleForBasename(p), addedByPath: true };
+      choice.candidates.push(cand);
+      choice.picks[p] = true;
+      const row = extraRow();
+      if (row && typeof row.insertAdjacentHTML === 'function') {
+        row.insertAdjacentHTML('beforebegin', candidateRow(id, choice, cand, false));
+      } else {
+        choice.extraPath = '';
+        choice.extraOpen = false;
+        rerender();
+        return;
+      }
+    } else if (have && !mirrored && !have.tooLarge) {
+      // ALREADY IN THE LIST: adding it again is a tick, never a second row.
+      choice.picks[p] = true;
+      const r = rowFor(p);
+      const box = r && typeof r.querySelector === 'function' ? r.querySelector('[data-fnd-cand]') : null;
+      if (box) box.checked = true;
+    }
+    choice.extraPath = '';
+    choice.extraOpen = false;
+    paintExtraRow(false);
+    patchSelection();
+  }
+  if (choice.addMode && typeof scope.addEventListener === 'function') {
+    scope.addEventListener('input', (ev) => {
+      const el = hostOf(ev && ev.target, 'fndExtraField');
+      if (!el) return;
+      choice.extraPath = el.value;
+      const add = byId('-extra-add');
+      if (add) add.disabled = !normaliseRelPath(choice.extraPath);
+    });
+    scope.addEventListener('keydown', (ev) => {
+      if (!ev || ev.key !== 'Enter' || !hostOf(ev.target, 'fndExtraField')) return;
+      if (typeof ev.preventDefault === 'function') ev.preventDefault();
+      addToList();
+    });
+  }
+
   // ── THE TYPED PATH (D21) ────────────────────────────────────────────────
   // The field writes straight into state with no repaint, for the reason the
   // root field above states; the only thing on screen it changes is the Add
   // button's disabled state, set on the LIVE node with the SAME predicate the
   // renderer uses. The ROLE row beside it does repaint, because a pressed
   // option button has to come back pressed.
-  const extraEl = typeof doc.getElementById === 'function' ? doc.getElementById(id + '-extra') : null;
+  // THE CREATE FORM'S TYPED-PATH BLOCK. In add mode the same ids belong to the
+  // in-list row above and are handled by delegation, so they are not bound
+  // here a second time.
+  const extraEl = !choice.addMode && typeof doc.getElementById === 'function'
+    ? doc.getElementById(id + '-extra') : null;
   const addExtra = () => {
     const p = normaliseRelPath(choice.extraPath);
     if (!p) return;
@@ -2048,7 +2473,8 @@ export function bindFoundationsChooser(cfg) {
       addExtra();
     });
   }
-  const addBtn = typeof doc.getElementById === 'function' ? doc.getElementById(id + '-extra-add') : null;
+  const addBtn = !choice.addMode && typeof doc.getElementById === 'function'
+    ? doc.getElementById(id + '-extra-add') : null;
   if (addBtn) addBtn.addEventListener('click', addExtra);
 
   all('[data-fnd-extra-role]').forEach((btn) => {
@@ -2119,4 +2545,16 @@ export function bindFoundationsChooser(cfg) {
       rerender();
     });
   });
+
+  // ── THE SCAN RUNS ON OPEN, IN ADD MODE (v3.65.2, C2) ────────────────────
+  // The folder is recorded and the scan is a cheap local read, so the panel
+  // opens on the list rather than on a button with nothing to wait for. Once
+  // per chooser: a failed scan brings the field back and waits for a person,
+  // and a repaint must never scan again by itself.
+  if (c.autoScan === true && choice.addMode && choice.fixedRoot && !choice.rootEditable
+      && choice.candidates == null && !choice.scanning && !choice.scanError && !choice.autoScanned) {
+    choice.autoScanned = true;
+    choice.repoRoot = String(choice.fixedRoot);
+    runScan();
+  }
 }

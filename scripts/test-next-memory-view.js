@@ -223,6 +223,8 @@ import {
   // returning '' would leave the button armed in exactly the state the
   // sentence exists for, with every assertion here green.
   commitBlockedReason,
+  // v3.65.2 — the first unmet step, the primary's count and the READ WITH ⓘ.
+  nextStepReason, pickedFiles, READ_WITH_INFO_HTML,
 } from '../src/public/next/shared/foundations-init.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1397,7 +1399,7 @@ function makeRenderers(stateObj) {
     'FOUNDATION_SLUG_RE', 'FOUNDATION_ROLES', 'MAX_FOUNDATION_BYTES',
     'FOUNDATIONS_BUDGET_BYTES', 'freshChooser', 'chooserBody', 'chooserOutcomeWords',
     'renderFoundationsChooser', 'renderRoleOptions', 'renderRefusedList', 'formatBytes',
-    'commitBlockedReason',
+    'commitBlockedReason', 'nextStepReason', 'pickedFiles', 'READ_WITH_INFO_HTML',
     // The real shared text renderers, so §6's escaping battery runs through
     // the component that actually paints these sentences rather than past it.
     'renderDescription', 'renderStatus', 'renderReadout', 'renderReadoutGroup',
@@ -1455,7 +1457,7 @@ function makeRenderers(stateObj) {
     FOUNDATION_SLUG_RE, FOUNDATION_ROLES, MAX_FOUNDATION_BYTES,
     FOUNDATIONS_BUDGET_BYTES, freshChooser, chooserBody, chooserOutcomeWords,
     renderFoundationsChooser, renderRoleOptions, renderRefusedList, formatBytes,
-    commitBlockedReason,
+    commitBlockedReason, nextStepReason, pickedFiles, READ_WITH_INFO_HTML,
     renderDescription, renderStatus, renderReadout, renderReadoutGroup, renderBadge, renderExplainer,
     renderInfoMark,
     COPY_SUCCESS_BANNER,
@@ -2764,7 +2766,13 @@ ok('the view fetches only /api/memory endpoints, the ONE domain-stats read and t
   const built = viewNoComments.includes("fetch('/api/memory/' + encodeURIComponent(domain)");
   const stats = viewNoComments.includes("fetch('/api/domains/' + encodeURIComponent(domain) + '/stats')");
   const list = viewNoComments.includes("fetch('/api/domains')");
-  return urls.every((u) => u.startsWith('/api/memory') || u === '/api/domains/' || u === '/api/domains')
+  // v3.65.2 (C1): TWO more reads, both named here rather than waved through
+  // by a prefix — the GitHub panel asks, once per open, whether a read-only
+  // token is saved (presence + last four, never the value) and whether
+  // Personal Sync is connected.
+  const TOKEN_FACTS = ['/api/config/github-read-token', '/api/sync/status'];
+  return urls.every((u) => u.startsWith('/api/memory') || u === '/api/domains/' || u === '/api/domains'
+    || TOKEN_FACTS.includes(u))
     && built && stats && list;
 })());
 ok('...and the domain LIST is the cheap route, never the stats walk the Domains page pays for',
@@ -7462,8 +7470,22 @@ const fndRead = (payload) => ({
         fndInit: { domain: 'acme', project: 'lumina', adding: true, choice: null, busy: false },
       }).renderFoundations(fndRead(fndPayload([fndDoc()])))),
     'the add arm lost its own word');
-    ok('...and its primary commits the switch rather than the copy',
-      />Mirror from GitHub</.test(switching), (switching.match(/id="mem-fnd-init-go"[\s\S]{0,120}/) || [''])[0]);
+    // v3.65.2: BEFORE A SCAN THERE IS NO PRIMARY — the step it needs has not
+    // happened, and the one reason line says so. After a scan it commits the
+    // switch, with the count.
+    ok('...and before a scan its primary is NOT RENDERED — the reason line says why',
+      !/id="mem-fnd-init-go"/.test(switching) && />Name the repository first\.</.test(switching),
+      (switching.match(/id="mem-fnd-init-why"[\s\S]{0,160}/) || [''])[0]);
+    const scannedSwitch = makeRenderers({
+      activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+      fndInit: { domain: 'acme', project: 'lumina', adding: true, switching: true, busy: false,
+        choice: { ...freshChooser({}), ownership: 'remote', remote: 'o/r', hasReadToken: true,
+          candidates: [{ path: 'docs/architecture.md', bytes: 4096, suggestedRole: 'architecture' }],
+          picks: { 'docs/architecture.md': true } } },
+    }).renderFoundations(fndRead(fndPayload([fndDoc()])));
+    ok('...and after one its primary commits the switch rather than the copy, counted',
+      /id="mem-fnd-init-go">Mirror 1 document from GitHub</.test(scannedSwitch),
+      (scannedSwitch.match(/id="mem-fnd-init-go"[\s\S]{0,120}/) || [''])[0]);
     ok('...with the ownership OPTIONS withheld, because the store settled that '
       + 'question and this call does not move it',
     !/data-fnd-own="curator"/.test(switching), switching.slice(0, 400));
@@ -10367,6 +10389,209 @@ function realListbox() {
   !('domain' in c));
 }
 
+// ── §21m — THE TWO PANELS STEP ① OPENS, AS THE HOST RENDERS THEM (v3.65.2) ──
+// ═════════════════════════════════════════════════════════════════════════
+//
+// C1 — "Mirror from GitHub instead". The maintainer: "this is not finished — I
+// cannot enter the token here, I don't have an option." Measured by the design
+// pass: labels laid out beside and below their inputs, a tinted arm inside the
+// tinted panel, "Name the repository first." printed twice from two nodes
+// sharing one id, and a READ WITH row whose two state words were blank
+// because no host ever set the facts.
+//
+// C2 — "Add from folder". "Kind of rusty": the folder the app already knew had
+// to be typed again, the typed folder was scanned but IGNORED by the copy,
+// eight rows arrived ticked (the one already mirrored among them), and a
+// second path field sat beside the list with no word on what it was for.
+{
+  const panel = (choiceOver, fndInitOver, docs) => makeRenderers({
+    activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+    fndInit: { domain: 'acme', project: 'lumina', adding: true, busy: false,
+      ...fndInitOver,
+      choice: { ...freshChooser({}), ...choiceOver } },
+  }).renderFoundations(fndRead(fndPayload(docs || [fndDoc()])));
+  const count = (html, re) => (html.match(re) || []).length;
+
+  // ── C1: ONE REASON LINE, ONE ID ─────────────────────────────────────────
+  const sw = (over) => panel({ ownership: 'remote', ...over }, { switching: true });
+  for (const [name, over] of [['empty', {}], ['named, no token', { remote: 'o/r', hasReadToken: false }],
+    ['named, token', { remote: 'o/r', hasReadToken: true }]]) {
+    eq('C1 [' + name + ']: exactly ONE node carries id="mem-fnd-init-why" — two was the defect',
+      count(sw(over), /id="mem-fnd-init-why"/g), 1);
+  }
+  eq('...and no chooser reason node at all in this host (`reasons: \'host\'`)',
+    count(sw({}), /class="tx-note fnd-init-why" id="mem-fnd-init-why"/g), 1);
+  ok('...its words are the FIRST unmet step: the repository, then the token, then the scan',
+    />Name the repository first\.</.test(sw({}))
+    && />No read-only token yet — add one in Settings, or read with Personal Sync’s token\.</
+      .test(sw({ remote: 'o/r', hasReadToken: false }))
+    && />Find the documents first\.</.test(sw({ remote: 'o/r', hasReadToken: true })),
+  (sw({ remote: 'o/r', hasReadToken: true }).match(/id="mem-fnd-init-why"[^>]*><span>[^<]*/) || [''])[0]);
+  ok('...and "Name the repository first." is printed ONCE, not twice',
+    count(sw({}), /Name the repository first\./g) === 1);
+
+  // ── C1: LABELS ABOVE INPUTS, ONE BOX ──────────────────────────────────
+  const empty = sw({});
+  eq('each of the three fields is ONE wrapper holding its label then its input',
+    count(empty, /<div class="fnd-init-field"><label class="fnd-init-label cur-eyebrow" for="mem-fnd-init-remote[a-z-]*">[^<]+<\/label><input /g), 3);
+  ok('...and the arm has no frame of its own inside the panel (`fnd-init-arm-flat`)',
+    /class="fnd-init-arm fnd-init-arm-flat"/.test(empty), (empty.match(/class="fnd-init-arm[^"]*"/) || [''])[0]);
+
+  // ── C1: READ WITH IS TRUE ─────────────────────────────────────────────
+  ok('READ WITH carries an ⓘ, and it holds the five fine-grained steps and why not classic',
+    /class="fnd-init-readwith"><span class="fnd-init-label cur-eyebrow">Read with<\/span><button type="button" class="tx-vh-info" id="mem-fnd-readwith-info-btn"/.test(empty)
+    && /Fine-grained tokens → Generate new token/.test(empty)
+    && /Contents: Read-only/.test(empty) && /Why not a classic token/.test(empty), empty.slice(empty.indexOf('fnd-init-readwith'), empty.indexOf('fnd-init-readwith') + 300));
+  ok('...and the in-flow "never typed here" note moved into it (one place, not two)',
+    count(empty, /The token is never typed here/g) === 1
+    && !/<p class="fnd-init-note"><span>The token is never typed here/.test(empty));
+  const absent = sw({ remote: 'o/r', hasReadToken: false, hasSyncToken: false });
+  ok('token ABSENT: the radio says "No read-only token yet" and a door opens Settings',
+    /<span>No read-only token yet<\/span>/.test(absent)
+    && /<button type="button" class="btn btn-secondary btn-xs fnd-init-token-door" id="mem-fnd-init-token-door">Add one in Settings<\/button>/.test(absent),
+    absent.slice(absent.indexOf('fnd-init-tokens'), absent.indexOf('fnd-init-tokens') + 700));
+  ok('...the door sits OUTSIDE the radio\'s <label>, so pressing it never toggles the radio',
+    /<\/label><button type="button" class="btn btn-secondary btn-xs fnd-init-token-door"/.test(absent));
+  ok('...and a Personal Sync that is not connected is DISABLED with its reason as its state word',
+    /value="sync" data-fnd-token="sync" disabled \/><span>Personal Sync’s token<\/span><span class="fnd-init-token-state">not connected</.test(absent),
+    (absent.match(/value="sync"[\s\S]{0,200}/) || [''])[0]);
+  const present = sw({ remote: 'o/r', hasReadToken: true, readTokenLast4: 'ab12', hasSyncToken: true });
+  ok('token PRESENT: the radio names it by its last four, and there is no door',
+    /<span>The read-only token in Settings · ends in …ab12<\/span>/.test(present)
+    && !/fnd-init-token-door/.test(present));
+  ok('...and a connected Personal Sync says "connected", never "available"',
+    /fnd-init-token-state">connected</.test(present) && !/>available</.test(present));
+  const hostile = sw({ remote: 'o/r', hasReadToken: true, readTokenLast4: '<b>x' });
+  ok('a last-four that is not four token characters is NOT printed at all',
+    /<span>The read-only token in Settings<\/span>/.test(hostile) && !/&lt;b&gt;x|<b>x/.test(hostile));
+  ok('UNKNOWN (nobody asked yet) keeps today\'s words, and no door',
+    /<span>The read-only token in Settings<\/span>/.test(empty) && !/fnd-init-token-door/.test(empty));
+
+  // ── C2: THE FOLDER IS A FACT ──────────────────────────────────────────
+  const add = (over, docs) => panel({ ownership: 'repo', addMode: true, fixedRoot: '/somewhere/repo',
+    repoRoot: '/somewhere/repo', mirrored: ['docs/architecture.md'], projectBytes: 118784, ...over },
+  {}, docs);
+  const opened = add({ scanning: true });
+  ok('C2: the recorded folder is a monitor line — "from" → the path — never a field',
+    /<span class="cur-mon-key">from<\/span><span class="cur-mon-value">\/somewhere\/repo<\/span>/.test(opened)
+    && !/id="mem-fnd-init-root"/.test(opened), opened.slice(opened.indexOf('ADD FROM FOLDER'), opened.indexOf('ADD FROM FOLDER') + 900));
+  ok('...there is no "Find documents" while there is nothing to wait for',
+    !/id="mem-fnd-init-scan"/.test(opened));
+  ok('...and the panel carries an ⓘ saying what the scan looks for',
+    /id="mem-fnd-add-info-btn"/.test(opened) && /The scan looks in docs folders and at files named like a role/.test(opened));
+  const cands = [
+    { path: 'docs/architecture.md', bytes: 12345, suggestedRole: 'architecture' },
+    { path: 'docs/decisions.md', bytes: 51200, suggestedRole: 'decisions', firstHeading: 'Decisions' },
+  ];
+  const listed = add({ candidates: cands, picks: {} });
+  ok('the list heading says a tick means COPY',
+    />Tick the files to copy into this project\.</.test(listed));
+  ok('an already-mirrored row is listed WITHOUT a checkbox, badged `mirrored`',
+    /data-fnd-cand-row="docs\/architecture\.md"><span class="fnd-init-cand-main"><span class="fnd-init-cand-path">docs\/architecture\.md<\/span><span class="mem-badge mem-badge-quiet fnd-init-mirrored">mirrored<\/span>/.test(listed)
+    && !/data-fnd-cand="docs\/architecture\.md"/.test(listed),
+    listed.slice(listed.indexOf('fnd-init-cands'), listed.indexOf('fnd-init-cands') + 500));
+  ok('...while a new one has its checkbox, UNticked by default',
+    /<input type="checkbox" class="cur-check" data-fnd-cand="docs\/decisions\.md" \/>/.test(listed));
+  ok('"+ A file that isn’t listed" is the LAST row of the list, and the old second form is gone',
+    /id="mem-fnd-init-extra-row"><button type="button" class="btn btn-ghost btn-xs fnd-init-extra-open" id="mem-fnd-init-extra-open" data-fnd-extra-open="1">\+ A file that isn’t listed<\/button><\/div><\/div>/.test(listed)
+    && !/Add a file the scan missed/.test(listed) && !/fnd-init-extra-as/.test(listed));
+  ok('with nothing ticked the ONE primary is "Copy documents", disabled, and the ONE reason says why',
+    /id="mem-fnd-init-go" disabled>Copy documents</.test(listed)
+    && /id="mem-fnd-init-why"><span>Tick at least one file\.</.test(listed)
+    && /id="mem-fnd-init-cancel">Cancel</.test(listed), (listed.match(/mem-fnd-init-actions[\s\S]{0,420}/) || [''])[0]);
+  const ticked = add({ candidates: cands, picks: { 'docs/decisions.md': true } });
+  ok('one ticked: "Copy 1 document", live, and no reason',
+    /id="mem-fnd-init-go">Copy 1 document</.test(ticked) && /id="mem-fnd-init-why" hidden>/.test(ticked));
+  ok('the total is the PROJECT\'s — mirrored plus ticked — as a depth bar against 200 KB',
+    /<span class="fnd-init-count-words">1 ticked · 50 KB<\/span><span class="fnd-init-count-total"><span class="fnd-init-count-key">project total<\/span><span class="cur-depth"><span class="cur-depth-bar" style="width:83%" aria-hidden="true"><\/span><span class="cur-depth-value">166 KB of 200 KB<\/span>/.test(ticked),
+    (ticked.match(/fnd-init-count[\s\S]{0,500}/) || [''])[0]);
+  const over = add({ candidates: cands.concat([{ path: 'docs/big.md', bytes: 90000, suggestedRole: 'guide' }]),
+    picks: { 'docs/decisions.md': true, 'docs/big.md': true } });
+  ok('...and OVER the budget it turns danger by itself (rule 6) AND says so in words, unfolded',
+    /cur-depth-bar cur-depth-danger" style="width:100%"/.test(over)
+    && /id="mem-fnd-init-budget"><span>Over the 200 KB budget/.test(over),
+    (over.match(/fnd-init-count[\s\S]{0,900}/) || [''])[0]);
+  ok('...a stale pick on an already-mirrored path is never sent',
+    pickedFiles({ ...freshChooser({}), ownership: 'repo', addMode: true, candidates: cands,
+      mirrored: ['docs/architecture.md'], picks: { 'docs/architecture.md': true } }).length === 0);
+  const before = add({ candidates: null });
+  ok('a bare folder never arms the copy: before the scan the reason is "Find the documents first."',
+    /id="mem-fnd-init-go" disabled>/.test(before) && />Find the documents first\.</.test(before));
+  const missing = add({ rootEditable: true, scanError: 'not a directory' });
+  ok('the recorded folder NOT on this computer: the field comes back PREFILLED with it',
+    /id="mem-fnd-init-root" type="text"[^>]*value="\/somewhere\/repo"/.test(missing),
+    (missing.match(/id="mem-fnd-init-root"[^>]*>/) || [''])[0]);
+  ok('...with the one reason naming the one thing to do',
+    />That folder is not on this computer\. Point at your copy of it\.</.test(missing));
+  ok('...and a DIFFERENT folder typed there asks to be scanned, not copied blind',
+    />Find the documents first\.</.test(add({ rootEditable: true, repoRoot: '/elsewhere' })));
+}
+
+// ── §21m2 — THE TOKEN FACTS, READ ONCE PER OPEN (v3.65.2, C1) ──────────
+{
+  const mk = (responses) => {
+    const calls = { urls: [], render: 0 };
+    const st = {};
+    const api = new Function('state', 'fetch', 'isCurrentMount', 'render',
+      extractFunction(viewSrc, 'loadTokenFacts', 'memory.js') + '\nreturn { loadTokenFacts };')(
+      st,
+      async (url) => { calls.urls.push(url); const r = responses[url];
+        if (r instanceof Error) throw r;
+        return { ok: r !== undefined && r !== 500, json: async () => r }; },
+      () => true, () => { calls.render++; });
+    return { api, st, calls };
+  };
+  {
+    const r = mk({ '/api/config/github-read-token': { ok: true, present: true, last4: 'ab12' },
+      '/api/sync/status': { configured: false } });
+    const rec = { choice: freshChooser({}) };
+    r.st.fndInit = rec;
+    await r.api.loadTokenFacts(rec, 1);
+    eq('it reads the two facts, and only those two',
+      r.calls.urls.slice().sort().join(' '), '/api/config/github-read-token /api/sync/status');
+    eq('...presence', rec.choice.hasReadToken, true);
+    eq('...the last four, and never more', rec.choice.readTokenLast4, 'ab12');
+    eq('...Personal Sync', rec.choice.hasSyncToken, false);
+    eq('...and one repaint', r.calls.render, 1);
+  }
+  {
+    const r = mk({ '/api/config/github-read-token': { ok: true, present: false, last4: null },
+      '/api/sync/status': 500 });
+    const rec = { choice: freshChooser({}) };
+    r.st.fndInit = rec;
+    await r.api.loadTokenFacts(rec, 1);
+    eq('absent is FALSE — the state that shows the door', rec.choice.hasReadToken, false);
+    eq('...and a read that FAILED leaves the other fact UNKNOWN, never "not connected"',
+      rec.choice.hasSyncToken, undefined);
+  }
+  {
+    const r = mk({ '/api/config/github-read-token': new Error('offline'),
+      '/api/sync/status': { configured: true } });
+    const rec = { choice: freshChooser({}) };
+    r.st.fndInit = rec;
+    await r.api.loadTokenFacts(rec, 1);
+    eq('a token read that throws leaves presence UNKNOWN — no door in front of a fine token',
+      rec.choice.hasReadToken, undefined);
+  }
+  {
+    const r = mk({ '/api/config/github-read-token': { ok: true, present: true, last4: '<x>' },
+      '/api/sync/status': { configured: true } });
+    const rec = { choice: freshChooser({}) };
+    r.st.fndInit = rec;
+    await r.api.loadTokenFacts(rec, 1);
+    eq('a last-four that is not four token characters is dropped', rec.choice.readTokenLast4, null);
+  }
+  {
+    const r = mk({ '/api/config/github-read-token': { ok: true, present: true, last4: 'ab12' },
+      '/api/sync/status': { configured: true } });
+    const rec = { choice: freshChooser({}) };
+    r.st.fndInit = { choice: freshChooser({}) };   // the panel was closed and reopened
+    await r.api.loadTokenFacts(rec, 1);
+    eq('an answer for a panel that is no longer open is DROPPED', rec.choice.hasReadToken, undefined);
+    eq('...and paints nothing', r.calls.render, 0);
+  }
+}
+
 // ── §21k — the refresh: one busy paint, one result paint, and a re-read ──
 //
 // Driven through the SHIPPED `refreshFoundations` with the SHIPPED `fetchState`
@@ -10422,6 +10647,23 @@ function realListbox() {
     eq('...and carries the four lists the note reads',
       JSON.stringify(Object.keys(r.st.fnd.result).sort()),
       JSON.stringify(['added', 'missing', 'refreshed', 'unchanged']));
+  }
+
+  // ── THE FOLDER TYPED IS THE FOLDER COPIED FROM (v3.65.2, C2) ─────────
+  {
+    const r = mkRig((url, init) => (init
+      ? { ok: true, json: async () => ({ ok: true, refreshed: [], added: ['b.md'], unchanged: [], missing: [] }) }
+      : { ok: true, json: async () => ({ ok: true, scopes: [], foundations: fndPayload([fndDoc()]) }) }));
+    await r.api.refreshFoundations(1, [{ path: 'docs/b.md', role: 'other' }], '  /my/copy ');
+    eq('a typed folder rides the refresh body as `repoRoot`, beside the files — the route '
+      + 'reads `asked || index.repo.root`, so without it a folder scanned was not the one copied from',
+    r.calls.bodies[0], '{"files":[{"path":"docs/b.md","role":"other"}],"repoRoot":"/my/copy"}');
+    const r2 = mkRig((url, init) => (init
+      ? { ok: true, json: async () => ({ ok: true, refreshed: [], added: [], unchanged: [], missing: [] }) }
+      : { ok: true, json: async () => ({ ok: true, scopes: [], foundations: fndPayload([fndDoc()]) }) }));
+    await r2.api.refreshFoundations(1, [{ path: 'docs/b.md', role: 'other' }]);
+    eq('...and is ABSENT when the recorded folder was used', r2.calls.bodies[0],
+      '{"files":[{"path":"docs/b.md","role":"other"}]}');
   }
 
   // ── A REFUSAL ─────────────────────────────────────────────────────────
@@ -10520,6 +10762,9 @@ const EXECUTED = new Set([
   // against the store's refusals.
   'knowledgeDotHtml', 'renderKnowledgeRow', 'renderKnowledgePicker', 'knowledgePickerCfg', 'saveKnowledgeDomains',
   'bindKnowledgeRows',
+  // v3.65.2 — the GitHub panel's two token facts, read once per open;
+  // driven in §21m2 (presence, last four, unknown-on-failure, a stale answer).
+  'loadTokenFacts',
   // v3.65.0 — the install's domain list. One cheap read per mount, with two
   // readers: the rail's identity colour and step ③'s picker. Driven in §16d
   // (the list as an argument, and the fallback when it has not arrived).
