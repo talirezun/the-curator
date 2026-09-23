@@ -2199,6 +2199,61 @@ section('S11 -- THE THREE-LAYER LEGEND ON THE OVERVIEW BLOCK (v3.62.0, P1-14)');
     /aria-label="About these figures"/.test(card), card.slice(0, 900));
 }
 
+// ── v3.65.3 — THE CREATE FORM'S READ WITH NAMES THE SAVED TOKEN ──────────
+// Orchestrator screen review: the create form's GitHub card said "Read-only
+// token — Settings › Knowledge base" with no last four and no state, and
+// "Add a read-only token in Settings" under it, with a token SAVED — this host
+// never read the facts. Driven: the SHIPPED bindProjectListeners, the REAL
+// shared binder, a DOM model, and a spy standing in for the page's fetch.
+{
+  const dom = makeDom();
+  __setState(freshState({
+    projects: { slug: 'alpha', loading: false, error: null, rows: [], truncated: false,
+      canWrite: true, readonly: false },
+    projectLc: { mode: 'create', slug: 'alpha', project: '', name: 'beta', brief: '',
+      confirmText: '', busy: false, refusal: null, error: null,
+      foundations: { ...freshChooser({ allowLater: true }), ownership: 'remote' } },
+  }));
+  const repaint = () => {
+    dom.viewRoot.innerHTML = renderProjectLifecycleCard();
+    bindProjectListeners();
+  };
+  __setDocument(dom.document);
+  __setRenderImpl(repaint);
+  __reset();
+  const urls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u) => {
+    urls.push(String(u));
+    // A MACROTASK per answer, as a real network read is: a binder that asked
+    // again on every repaint would otherwise spin in microtasks and never let
+    // the timer below fire — a hang rather than a failing count.
+    await new Promise((r) => setTimeout(r, 0));
+    const body = String(u).startsWith('/api/config/github-read-token')
+      ? { ok: true, present: true, last4: 'ab12', kind: 'fine-grained' }
+      : String(u).startsWith('/api/sync/status') ? { configured: true } : null;
+    return { ok: !!body, json: async () => body };
+  };
+  try {
+    repaint();
+    await new Promise((r) => setTimeout(r, 5));
+  } finally { globalThis.fetch = realFetch; }
+  const ch = __state().projectLc.foundations;
+  eq('the create form reads the two token facts, once each',
+    JSON.stringify(urls.slice().sort()), JSON.stringify(['/api/config/github-read-token', '/api/sync/status']));
+  ok('...and records what it read: a token saved, ending ab12; Sync connected',
+    ch.hasReadToken === true && ch.readTokenLast4 === 'ab12' && ch.hasSyncToken === true,
+    JSON.stringify([ch.hasReadToken, ch.readTokenLast4, ch.hasSyncToken]));
+  const card = renderProjectLifecycleCard();
+  ok('the repainted READ WITH names the saved token by its last four',
+    /fnd-init-token-state">ends in …ab12</.test(card), (card.match(/fnd-init-tokens[\s\S]{0,400}/) || [''])[0]);
+  ok('...and no longer tells a person with a saved token to go and add one',
+    !/Add a read-only token in Settings/.test(card), (card.match(/fnd-init-note[\s\S]{0,200}/) || [''])[0]);
+  ok('CONTROL: with NO token saved, the create form does still say where to add one',
+    /Add a read-only token in Settings/.test(renderFoundationsChooser({ id: 'x',
+      choice: { ...freshChooser({ allowLater: true }), ownership: 'remote', hasReadToken: false } })));
+}
+
 // ── Done ─────────────────────────────────────────────────────────────────
 
 console.log('\n' + '-'.repeat(60));

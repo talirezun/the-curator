@@ -6084,6 +6084,8 @@ function bindProjectListeners() {
       doc: document,
       id: 'dm-proj-fnd',
       choice: f.foundations,
+      // v3.65.3: READ WITH names the saved token (last four) and its state.
+      loadTokenFacts: true,
       onChange: () => render(myMountToken),
       onFailure: reportAsyncActionFailure,
     });

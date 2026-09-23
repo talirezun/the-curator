@@ -664,6 +664,42 @@ ok('settings.js: `general` has NO entry, so that section renders no mark',
   /const SECTION_INFO = \{[\s\S]*?\n\};/.test(VIEWS['settings.js'])
   && !/^\s{2}general:/m.test(VIEWS['settings.js'].match(/const SECTION_INFO = \{[\s\S]*?\n\};/)[0]));
 
+// ── v3.65.3: AN html ⓘ IS ONE GRID ITEM, NOT A SENTENCE CUT INTO ROWS ─────
+// The ⓘ panel is a one-column grid (shared/text.css), so bare text beside an
+// inline element becomes several rows: Knowledge base's "…open it with
+// <em>Open folder as vault</em>." rendered as a sentence, an italic line and a
+// lone ".". EXECUTED: the SECTION_INFO literal is evaluated and every html
+// entry is checked for text or inline elements sitting OUTSIDE a block.
+{
+  const lit = VIEWS['settings.js'].match(/const SECTION_INFO = (\{[\s\S]*?\n\});/);
+  const INFO = lit ? new Function('return ' + lit[1])() : {};
+  const htmlKeys = Object.keys(INFO).filter((k) => INFO[k] && INFO[k].html === true);
+  ok('CONTROL: the SECTION_INFO literal evaluated, with html entries to check',
+    htmlKeys.length >= 3, htmlKeys.join(','));
+  // Strip every top-level block element; what remains is what the grid would
+  // lay out as rows of its own.
+  const outside = (html) => {
+    let rest = html.trim();
+    for (let guard = 0; guard < 50; guard++) {
+      const m = rest.match(/^<(p|ol|ul|dl|div)\b[^>]*>/);
+      if (!m) break;
+      const close = '</' + m[1] + '>';
+      const end = rest.indexOf(close);
+      if (end < 0) break;
+      rest = rest.slice(end + close.length).trim();
+    }
+    return rest;
+  };
+  for (const k of htmlKeys) {
+    ok('SECTION_INFO.' + k + ': nothing sits outside a block element — one flowing paragraph, not rows',
+      outside(INFO[k].text) === '', JSON.stringify(outside(INFO[k].text).slice(0, 120)));
+  }
+  const kb = INFO.storage ? INFO.storage.text : '';
+  ok('SECTION_INFO.storage describes BOTH blocks on Knowledge base: the vault folder and the GitHub read-only token',
+    /vault folder/i.test(kb) && /Open folder as vault/.test(kb) && /GitHub read-only\s*token/i.test(kb.replace(/<[^>]+>/g, ''))
+      && /Documents/.test(kb), kb);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 section('§9  NO PROSE WHERE THE PARAGRAPH USED TO BE');
 // ═══════════════════════════════════════════════════════════════════════════
