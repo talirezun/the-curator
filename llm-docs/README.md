@@ -1,11 +1,20 @@
-# public-knowledge/ — the Lumina knowledge base
+# llm-docs/ — self-contained markdown written for language models
 
 **This README is for the maintainer. It is not uploaded.** Only the
 `curator-*.md` files in this folder go to Lumina.
 
-Lumina is the enterprise support chat assistant that sits on The Curator's
-website so a visitor can ask questions about the product. These files are
-everything it knows.
+This folder holds the project's documentation written specifically **for a
+language model to read**, not for a person browsing GitHub — each file is
+self-contained (no assumed context from the rest of the repo), compact (every
+byte is paid for on every answer, see below), and answers the questions a
+visitor actually types rather than describing the code. Today the one
+consumer is **Lumina**, the support chat assistant on The Curator's website
+(mycurator.dev): after a release changes these files, the maintainer
+re-uploads the changed `curator-*.md` files to Lumina **by hand** — there is
+no pipeline, webhook or auto-sync (see "Uploading to Lumina" below). The
+folder was renamed from `public-knowledge/` to `llm-docs/` in v3.65.2 to name
+what it is rather than one particular use of it; the on-disk shape, the
+budgets and the upload procedure are unchanged.
 
 ## The constraints that shape every file here
 
@@ -83,31 +92,32 @@ The project brief's rule is that **documentation is current in the same release
 as the behaviour change**. This folder is part of that. The wording for the
 release checklist:
 
-> Update `public-knowledge/` when a user-visible behaviour, price, default
+> Update `llm-docs/` when a user-visible behaviour, price, default
 > model, label or URL changes — **and then re-upload the changed files to
 > Lumina by hand.**
 
-**Outstanding for v3.65.1** (supersedes the v3.65.0 note below, which covered the same three files
-and may or may not have been uploaded — re-upload all three regardless, since v3.65.1 changed them
-again): the Context screen's vocabulary — Foundations/Working state/Work-streams/Recent saves →
-Documents/Memory/Handoffs/Journal, copy only, the store's own names unchanged; the "Last saved" row
-removed (its fact folded into the overview's MEMORY tile and the Handoffs row); Capture's body
-dropping its per-session table for six monitor lines; step 3 Knowledge listing the project's own
-domain as an explicit row and moving its picker and per-row Remove; the new **"Mirror from GitHub
-instead"** control for re-pointing an existing mirror at a repository; and domain identity colours
-now appearing on this screen (previously only on Domains).
-**`curator-user-guide.md`, `curator-agent-memory.md` and `curator-overview.md` changed in v3.65.1**
-(only `curator-agent-memory.md` had a size-relevant edit — 19,067 → 19,437 est. tokens;
-`curator-overview.md` moved by 3 tokens; `curator-user-guide.md` is byte-identical) and need
-re-uploading after this release lands — see **Uploading to Lumina**, below. `curator-links.md` is
-unchanged. Remove this note once all three are done; a stale note left here is
-how this file stops being read.
+**Outstanding for v3.65.2** (supersedes the v3.65.1 note below, which covered the same two files
+and may or may not have been uploaded — re-upload both regardless, since v3.65.2 changed them
+again): a real Settings field for the GitHub read-only token (Settings → Knowledge base → GitHub
+read-only token, with a "Create the read-only token" box), replacing every earlier mention of
+hand-editing `githubReadToken` into `.curator-config.json`; the Mirror-from-GitHub panel's READ WITH
+row now stating the truth (the saved token's last four characters, or a door into Settings) instead
+of a promise nothing could fulfil; the Add-from-folder panel's redesign on an already-mirrored
+project (the recorded folder scanned on open, nothing ticked by default, mirrored rows marked, a
+"+ A file that isn't listed" row); a clipped save's report rewritten as a full-width monitor instead
+of a narrow paragraph; and step 3 Knowledge's "+ Add a domain" picker and per-row Remove actually
+working end to end, which they had not in v3.65.1 despite being on screen.
+**`curator-user-guide.md` and `curator-agent-memory.md` changed in v3.65.2** (measured: 79,139 est.
+19,785 tokens and 79,975 est. 19,994 tokens respectively — see the budget table below for the
+current figures) and need re-uploading after this release lands — see **Uploading to Lumina**,
+below. `curator-overview.md` and `curator-links.md` are unchanged. Remove this note once both are
+done; a stale note left here is how this file stops being read.
 
-*Prior note, v3.65.0* (the one sidebar and one monitor component adopted across Domains,
-Context and Settings; Step 3 Knowledge gaining a picker so a project can choose which wikis it
-draws on; and the step-body rule finishing its work on "Last saved" and "Capture", which are now
-both rows built from the monitor component rather than a card and a separate "Sessions" fold) — the
-same three files, folded into the v3.65.1 note above rather than tracked twice.
+*Prior note, v3.65.1* (the Context screen's vocabulary — Foundations/Working state/Work-streams/
+Recent saves → Documents/Memory/Handoffs/Journal, copy only; the "Last saved" row removed; Capture's
+body dropping its per-session table for six monitor lines; step 3 Knowledge listing the project's
+own domain as an explicit row; the "Mirror from GitHub instead" control; domain identity colours on
+this screen) — the same two files, folded into the v3.65.2 note above rather than tracked twice.
 
 **Editing a file here changes nothing on the website.** There is no pipeline, no
 webhook and no sync: Lumina serves the copy it was given, so a release that

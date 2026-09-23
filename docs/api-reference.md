@@ -4726,6 +4726,111 @@ purpose.
 
 ---
 
+## GET /api/config/github-read-token
+
+**New in v3.65.2.** Status of the read-only GitHub token the Documents "Mirror from GitHub" panel
+reads with under `tokenSource: 'config'`. **Never returns the value** — only whether one is saved,
+its last four characters, and its kind.
+
+**Success response** `200 OK`
+
+```json
+{ "ok": true, "present": true, "last4": "ab12", "kind": "fine-grained" }
+```
+
+`kind` is `"fine-grained" | "classic" | null` (`null` only for a hand-edited value of an
+unrecognised shape — reported as present, not silently treated as absent). With nothing saved:
+`{ "ok": true, "present": false, "last4": null, "kind": null }`.
+
+---
+
+## PUT /api/config/github-read-token
+
+**New in v3.65.2.** Save the read-only token. `guardConcurrent`'d, like every credential write in
+this file.
+
+**Body**
+
+| Parameter | Description |
+|---|---|
+| `token` | Required, a string. Trimmed; must match `github_pat_…` (fine-grained) or `ghp_…` (classic), with no whitespace, within a sane length bound |
+
+**Success response** `200 OK` — same shape as the GET, `present: true`.
+
+**Refusal response** `400 invalid_token` — the value did not trim to a recognised shape.
+
+**Error response** `500 config_unreadable` — `.curator-config.json` exists but does not parse as
+JSON; nothing was written, because writing would have replaced every other setting in it with an
+empty object.
+
+⚠️ The token is never echoed back in any response, log line or thrown error — a redaction pass
+strips it from error messages even on an unexpected failure.
+
+---
+
+## DELETE /api/config/github-read-token
+
+**New in v3.65.2.** Remove the saved token. `guardConcurrent`'d.
+
+**Success response** `200 OK`
+
+```json
+{ "ok": true, "present": false }
+```
+
+Removes only the `githubReadToken` key; every other setting in the file is carried through
+untouched. A config with no token saved is not rewritten at all — Disconnect on a clean install
+creates no file and moves no mtime.
+
+---
+
+## POST /api/config/github-read-token/test
+
+**New in v3.65.2.** Read one repository's ref with the **stored** token, to confirm it can see what
+it is meant to mirror. **Not** `guardConcurrent`'d — it is a read.
+
+**Body**
+
+| Parameter | Description |
+|---|---|
+| `remote` | Required. `owner/repo`, or the `https://` or `git@` address GitHub itself prints |
+| `ref` | Optional. A branch or tag name. Omitted, the client resolves the repository's default branch first (a second GET) |
+
+A `token` field in this body, if sent, is **ignored** — the route always reads with the token
+already saved on this computer, never one supplied over HTTP.
+
+**Success response** `200 OK` — the request ran and GitHub answered
+
+```json
+{ "ok": true, "repo": "owner/repo", "ref": "main", "sha": "a1b2c3d…", "requests": 1 }
+```
+
+`requests` is `1` when `ref` was named, `2` when the default branch had to be resolved first.
+
+**Success response** `200 OK`, `ok: false` — the request ran and GitHub **refused**
+
+```json
+{ "ok": false, "code": "unauthorised", "repo": "owner/repo", "message": "…", "requests": 1 }
+```
+
+`code` is one of `unauthorised` / `not_found` / `rate_limit` / `network` / `malformed` / `http` /
+`failed`. This is a **200**, not an error status — the test *ran*; GitHub's answer is the payload,
+not a failure of this endpoint. Every message names the token's *source*, never its value.
+
+**Refusal response** `400` — the request itself could not be made:
+
+| `code` | When |
+|---|---|
+| `invalid_remote` | `remote` did not parse as `owner/repo` or a recognised GitHub URL |
+| `invalid_ref` | `ref` was sent but is not a string this app will put in a URL |
+| `no_token` | No read-only token is saved in Settings → Knowledge base — nothing to test with |
+
+⚠️ **This is the only HTTP path a GitHub token value ever arrives on** (the `PUT` above) — every
+other response about it (this GET, the Context view's own reads) carries presence and `last4` only,
+never the value.
+
+---
+
 ## GET /api/config/api-keys
 
 Returns masked API key status, the active provider, and the model-picker catalogue. No body.

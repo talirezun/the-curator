@@ -215,6 +215,10 @@ The first time you open The Curator it lands on **Domains**. After that it opens
 
 Four things are not rail destinations. **Reading a wiki page** is an overlay that slides over the main column; close it with Escape, a click outside it, or its cross. **Wiki health**, **Ingest** and **Shared Brain** all live inside a domain, on that domain's page.
 
+## What do the small dots and bars on a row mean?
+
+Four consistent marks, none of them a screen of their own: an **identity dot** — one colour per domain, the same colour wherever that domain is named; a **freshness dot** with a clock glyph and an age — how recent a reading is; a **depth bar** — a tinted bar behind a figure showing how much against a named total, such as a document's size against a project's 200 KB budget, or a domain's page counts; and **tone** — a monitor's outcome colour, always paired with words, never alone. A depth bar only turns danger-toned when its budget is actually exceeded, and that fact is always also stated in words.
+
 ## What is on a domain's page?
 
 At the top: the folder path in monospace, the display name with an information mark beside it, and **Rename**, **Delete** and **Ask this domain**, the last of which jumps to Chat already scoped to it.
@@ -223,7 +227,7 @@ Then an **OVERVIEW** card (the counts, and when the domain was last written to) 
 
 **OVERVIEW** is five figures in one card — PAGES, ENTITIES, CONCEPTS, SUMMARIES and PROJECTS, plus OTHER when pages sit outside the three canonical folders. A figure reads an em dash rather than 0 while it is still loading, because "not known yet" and "none" are different answers. Beside them sit jump buttons — SOURCES, carrying the last ingest, and SHARED when this domain contributes to a Shared Brain — each of which opens the section it names, drawn at the same tile size as the five figures beside them rather than as a separate, smaller row. Since v3.64.2 this is the same card the Project-context page draws its own readings in — one shared component, not two builds of the same idea — and since v3.65.0 the two jump tiles are ordinary tiles in that one grid rather than a second, smaller row.
 
-Ingest and Shared Brain are closed folds that remember whether you opened them — since v3.64.1 as one preference for the whole install, not per domain, so closing one on a domain closes it everywhere. Two exceptions: on a domain with nothing ingested yet, Ingest opens by itself; and on a read-only Shared Brain mirror there is no Ingest section at all, because an ingest into a mirror has never been possible.
+**Ingest is always open, as of version 3.65.2** — it has no chevron and nothing to remember; its one reading, the last-ingest age, sits at the right of its own heading. Pick a `.md` or `.txt` file and a callout appears: "Wanted this kept word for word? Add it as a project document instead," with a button that opens this domain's own project in Context, at step ① Documents. **Shared Brain is still a closed fold** that remembers whether you opened it — one preference for the whole install (v3.64.1), not per domain. On a read-only Shared Brain mirror there is no Ingest section at all, because an ingest into a mirror has never been possible.
 
 The **Pages** lens is new in version 3.64.0. **Wiki** shows entities, concepts and summaries; **Context** shows standing briefs, handoffs and a project's canonical documents; **All** shows both. Every one of them opens in the same right-side reader. Under the lens row are a **Filter by name…** box and the older type facets — **All**, **Entities**, **Concepts**, **Summaries** and **Memory** — which narrow the wiki reading. The two controls cannot contradict each other: pressing **Memory** puts the list into the **Context** lens and the lens row says so. The type facet **All** means wiki pages only, the same number the PAGES figure reports, so the two can never disagree.
 
@@ -628,7 +632,7 @@ handoff before stopping.
 |---|---|
 | **General** | **Software update**, first on the page. Then **Appearance** (Dark / Light), **Text size** (four steps from compact to largest), **Menu bar**. Then **System check**, then **Show setup guide**. |
 | **Providers & keys** | Four numbered steps: connect a provider, choose what builds your wiki, read which model chat starts on, browse the whole catalogue. |
-| **Knowledge base** | Where your `domains/` folder lives, with **Choose folder** and **Copy**; your Obsidian vault folder. |
+| **Knowledge base** | Where your `domains/` folder lives, with **Choose folder** and **Copy**; your Obsidian vault folder; and, since version 3.65.2, a **GitHub read-only token** field — see the next question. |
 | **MCP bridge** | The setup wizard, **Run self-test**, **View config**, **Copy snippet**, the default write domain, the tool map, and a note naming any bridge process still running older code. |
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans. |
 
@@ -637,6 +641,14 @@ Since version 3.65.0 an **Updates** button sits at the TOP of that sidebar, unde
 The theme switch in the rail footer and the **Appearance** control in General are the same setting and stay in step. Text size applies across the whole app, including button and text-box labels, and is remembered in this browser; control heights and icons deliberately stay put so buttons do not grow into each other.
 
 The app honours your operating system's **Reduce motion** setting. Movement is removed and the shade change on a press stays, so every control still confirms your click. Two things keep animating on purpose: the ingest progress ring, because it is the only sign a paid multi-minute write is still running, and the accent bar marking your place in a list, because it is a position marker rather than an animation.
+
+## How do I add a GitHub read-only token, for mirroring documents?
+
+**Settings → Knowledge base → GitHub read-only token.** This is the credential a project's Documents step reads with when you choose "Mirror from GitHub" instead of a local folder. Paste a token and press Save; the field then shows only its last four characters, never the value again. **Test** reads one repository with the saved token, to confirm it can see it, before you rely on it. **Disconnect** removes it.
+
+**Creating the token.** In GitHub: Settings, Developer settings, Personal access tokens, Fine-grained tokens, Generate new token. Resource owner: the account or organisation that owns the repository. Repository access: only the repository or repositories you want to mirror — several can share one token. Permissions, repository permissions: Contents, Read-only; metadata read-only is added automatically, nothing else is needed. Fine-grained tokens require an expiry of up to a year — set a reminder to renew it.
+
+A classic token (`ghp_…`) also works, but it can read every repository your account owns, not just the ones you intend to mirror — which is why a fine-grained token is recommended, and why Personal Sync's own token (used for push, not for a read-only mirror) is never the default.
 
 ## How do I check that everything is working?
 
