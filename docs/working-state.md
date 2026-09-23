@@ -796,10 +796,11 @@ The v3.62.0 plan replaces the economy with **the owner's routing**:
 
 | | What arrives | Decided by |
 |---|---|---|
-| **The index** | **Always, every document, every call** — slug, role, title, bytes, `firstHeading`, freshness, `skeleton`, `readFirst`, and `changedSinceSeen` | the store; nothing suppresses it |
-| **Read-first bodies** | The **text** of every document the owner marked `readFirst`, in reading order, within the 120 KB budget | `manifest.documents[].readFirst` |
-| **Everything else** | An index row and nothing more, **until asked for by name** | the agent, per task |
-| **Named documents** | `slugs: ["decisions.md"]` returns those documents **whole**, in the order given, in `foundations.requested` | the caller |
+| **The index** | **Always, every document, every call** — slug, role, title, bytes, `firstHeading`, freshness, `skeleton`, `readFirst`, `hidden`, and `changedSinceSeen` | the store; nothing suppresses it |
+| **Read-first bodies** | The **text** of every document the owner marked `readFirst`, in reading order, within the reading budget (120 KB unless the owner set one — [below](#budgets)) | `manifest.documents[].readFirst` |
+| **On-request documents** | An index row and nothing more, **until asked for by name** | the agent, per task |
+| **Not-at-start documents (`hidden`, v3.67.0)** | Kept and mirrored, but **absent from the index at session start** — the third state, for a document that should not even be *listed* unless the brief names it | `manifest.documents[].hidden`, mutually exclusive with `readFirst` |
+| **Named documents** | `slugs: ["decisions.md"]` returns those documents **whole**, in the order given, in `foundations.requested` — this works for a `hidden` document too, exactly as it does for an on-request one | the caller |
 
 **The index is always returned, and that is the load-bearing half of the design.** An agent that
 receives an index row with no text has been told a document exists, what it is about and how big it
@@ -968,27 +969,36 @@ read would risk the opposite failure — a document marked "seen" that was never
 |---|---|---|
 | Per document | 512 KB | **Refused** — a canonical document cannot be honestly trimmed, so `saveFoundation` refuses rather than truncating one |
 | Project total | 200 KB | **Accepted and disclosed** (`budgetExceeded: true`, in `notes`) — the same rule a handoff follows: a refused save loses the document outright, so an over-budget save is never refused, only flagged |
-| Bootstrap document text, by default | 120 KB | Applied in reading order; the first document is never cut mid-way except when it is the only one included, in which case it is cut with `truncated: true` disclosed |
-| The **read-first set** (v3.62.0) | the same 120 KB | **Accepted and disclosed**, never refused. `readFirstBudgetExceeded: true` beside `readFirstBytes`, and the documents that do not fit are omitted and named, last in reading order first |
-| Documents named with `slugs` (v3.62.0) | **not** the 120 KB budget | Whole, subject only to the per-document 512 KB cap and the MCP response guard — a caller that named a document asked for that document |
+| Bootstrap document text, by default | 120 KB — **or the owner's own reading budget, once set (v3.67.0)** | Applied in reading order; the first document is never cut mid-way except when it is the only one included, in which case it is cut with `truncated: true` disclosed |
+| The **read-first set** (v3.62.0) | the same effective budget | **Accepted and disclosed**, never refused. `readFirstBudgetExceeded: true` beside `readFirstBytes`, and the documents that do not fit are omitted and named, last in reading order first |
+| Documents named with `slugs` (v3.62.0) | **not** the reading budget | Whole, subject only to the per-document 512 KB cap and the MCP response guard — a caller that named a document asked for that document |
 | MCP response, overall | 400 KB (~100k tokens) | The existing `enforceSizeLimit` guard, unchanged — a bootstrap that would exceed it degrades by dropping document **bodies**, last in reading order first, then the documents `slugs` named, never by collapsing to a bare fallback object |
 
 **Two budgets, and collapsing them would make a surface say "within budget" about the wrong one.**
 `FOUNDATIONS_BUDGET_BYTES` (200 KB, `src/brain/working-state.js:217`) is the **project** budget —
 what tier 0 may hold on disk. `CONTEXT_MAX_BYTES_DEFAULT` (120 KB, `:231`) is the **bootstrap's
-reading** budget — what one session is actually handed. The read-first readings are measured against
-the second, deliberately (`readFirstReadings`, `:4903`), because the flagged set is what a session
-receives every time: a project can sit comfortably under 200 KB on disk and still flag more than one
-read will carry. Every surface that shows them — the store, `GET /api/memory/:domain/:project`, the
-`PATCH`, the bootstrap and the app's step ① — takes the same five figures from that one function
-rather than counting the array again.
+default reading** budget — what one session is handed when the owner has not chosen one. The
+read-first readings are measured against the **effective** one — the owner's `readingBudgetBytes`
+when set, else the 120 KB default — deliberately (`readFirstReadings`, `:4903`), because the
+flagged set is what a session receives every time: a project can sit comfortably under 200 KB on
+disk and still flag more than one read will carry. Every surface that shows them — the store, `GET
+/api/memory/:domain/:project`, the `PATCH`, the bootstrap and the app's step ① — takes the same
+five figures from that one function rather than counting the array again.
 
 | Reading | Means |
 |---|---|
 | `readFirstCount` / `onRequestCount` | how many documents arrive with their text, and how many wait to be asked for |
 | `readFirstBytes` | the flagged set's total size |
-| `readFirstBudgetBytes` | 120 KB — the **bootstrap's** budget, never the project's 200 KB |
+| `readFirstBudgetBytes` | the **effective bootstrap** budget — the owner's `readingBudgetBytes` if set, else 120 KB — never the project's 200 KB |
 | `readFirstBudgetExceeded` | the flagged set is larger than one read can carry. A disclosure, never a wall |
+
+**The reading budget itself (v3.67.0), `manifest`-level, not per-document.** `readingBudgetBytes` is
+`0` (Index only) or `8,192`–`204,800` bytes; absent means **not set**, and the project behaves
+exactly as it always did — every read-first document's text, within the 120 KB default. Once set,
+the project is *planned*: `readingBudgetDefaulted` becomes `false`, and the read-first / on-request
+/ not-at-start split (above) is what a session actually receives. It is written only by the app
+(`PATCH …/reading/budget`); no agent tool or CLI command writes it. A hand-edited invalid value
+reads back as **not set**, with `readingBudgetError` naming the defect, rather than throwing.
 
 ### Sync honesty, for a tier with no machine segment
 
@@ -1131,10 +1141,16 @@ refusal.
   commissioning one on creation, shipped in v3.61.0** — see the two sections below. What the app
   still does not do: edit a **repo-owned** document (mirrored only, on purpose), or select what
   belongs in a project, or summarise anything on the way in or out.
-- **The routing is the owner's, and only the owner's (v3.62.0).** `readFirst` is a hand-set flag and
-  a *"Read before you…"* section a person writes; nothing infers either one. A project with twenty
-  documents and nothing flagged behaves exactly as it did in v3.61.1 — every body, within budget —
-  which is correct but is not a reading plan, and no surface nags about it.
+- **The routing is the owner's, and only the owner's (v3.62.0; a proposer joined in v3.67.0, but it
+  never applies anything on its own).** `readFirst`/`hidden` are hand-set flags and a *"Read
+  before you…"* section a person writes; nothing changes a document's start state by itself. A
+  project with nothing flagged behaves exactly as it did in v3.61.1 — every body, within budget —
+  which is correct but is not a reading plan. **"Suggest a reading plan" (v3.67.0)** is the one
+  thing that *proposes* a plan: a free, deterministic arm (the brief's *"Read before you…"* list,
+  each document's role and size, and the reading budget) and an AI arm (the same inputs plus each
+  document's opening lines, never a whole document, through the one build-lane model). Neither
+  writes anything — the owner reviews the proposal and applies it through the same `PATCH`
+  routes a hand-set flag uses.
 - **A refresh needs a source: a checkout here, or a recorded GitHub repository** (the remote arm
   shipped in v3.63.0 — see [Mirroring from GitHub](#mirroring-from-github-when-the-checkout-is-not-here-v3630)).
   A project with neither is refused on both arms, with a reason for each. What is still not there: a
