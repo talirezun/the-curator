@@ -2116,11 +2116,13 @@
   gap: var(--space-5);
 }
 /* The cost line and its two siblings run the column, like every row under
-   them; the note's reading-width cap is for a sentence under prose, and these
+   them; the note face's reading-width cap is for a sentence under prose (these
+   carry `.mem-ss-note` beside it, because shared/text.css owns every `tx-`
+   selector), and these
    are the step's own first lines. Its one action sits at the right edge. */
-.mem-ss-stack > .tx-note { max-width: none; margin: 0; }
-.mem-ss-stack > .tx-note > span { flex: 1 1 auto; min-width: 0; }
-.mem-ss-stack > .tx-note > .btn { flex: none; margin-left: auto; }
+.mem-ss-stack > .mem-ss-note { max-width: none; margin: 0; }
+.mem-ss-stack > .mem-ss-note > span { flex: 1 1 auto; min-width: 0; }
+.mem-ss-stack > .mem-ss-note > .btn { flex: none; margin-left: auto; }
 .mem-ss-stack > .mem-note { margin: 0; }
 
 /* "Context window": the two denominators, as a pair of pressed buttons. */
@@ -2239,8 +2241,8 @@
 /* The cost line's sentence keeps a readable measure and its action drops
    under it on a narrow column, instead of the sentence being squeezed into a
    column one word wide beside the button. */
-.mem-ss-stack > .tx-note { flex-wrap: wrap; }
-.mem-ss-stack > .tx-note > span { flex: 1 1 220px; }
+.mem-ss-stack > .mem-ss-note { flex-wrap: wrap; }
+.mem-ss-stack > .mem-ss-note > span { flex: 1 1 220px; }
 /* Step ④'s two monitors carry the longest keys on the page ("MCP
    get_project_context", "left out, by name"). The kit stacks a monitor into one
    column below 640px but keeps its key on one line, so at a 568px window those

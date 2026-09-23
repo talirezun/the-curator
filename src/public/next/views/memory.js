@@ -10822,7 +10822,7 @@ function sessionNoticesHtml(data, facts, readonly) {
         + ' did not fit the ' + ssSize(b.bytes) + ' default and ' + (om.count === 1 ? 'is' : 'are')
         + ' listed by name.'
       : '';
-    out += '<div class="tx-note mem-ss-cost" id="mem-ss-cost">' + icon('alertTriangle', 13)
+    out += '<div class="tx-note mem-ss-note mem-ss-cost" id="mem-ss-cost">' + icon('alertTriangle', 13)
       + '<span>' + escapeHtml('Every session is handed ' + ssSize(text) + ' of document text ('
         + ssTokens(text) + ' tokens)' + why + left) + '</span>'
       + (readonly ? '' : '<button type="button" class="btn btn-secondary btn-xs" id="mem-ss-set-budget">'
@@ -10831,13 +10831,13 @@ function sessionNoticesHtml(data, facts, readonly) {
   }
   if (data.planned === true && b.bytes === 0 && facts.readFirstCount > 0) {
     const n = facts.readFirstCount;
-    out += '<div class="tx-note mem-ss-index-only" id="mem-ss-index-only">' + icon('alertCircle', 13)
+    out += '<div class="tx-note mem-ss-note mem-ss-index-only" id="mem-ss-index-only">' + icon('alertCircle', 13)
       + '<span>' + escapeHtml((n === 1 ? 'One document is' : n.toLocaleString('en-US') + ' documents are')
         + ' marked read first, but the reading budget is Index only, so agents are handed none of '
         + (n === 1 ? 'its' : 'their') + ' text. ' + (n === 1 ? 'It is' : 'They are')
         + ' listed and fetched by name.') + '</span></div>';
   } else if (data.planned === true && b.bytes > 0 && rf.exceeded === true) {
-    out += '<div class="tx-note mem-ss-over" id="mem-ss-over">' + icon('alertTriangle', 13)
+    out += '<div class="tx-note mem-ss-note mem-ss-over" id="mem-ss-over">' + icon('alertTriangle', 13)
       + '<span>' + escapeHtml('The read-first set is ' + ssSize(facts.readFirstBytes) + ', over the '
         + ssSize(b.bytes) + ' reading budget. Agents are handed the first ' + ssSize(rf.bytes)
         + ' in reading order; the rest stay listed and are fetched by name.') + '</span></div>';
