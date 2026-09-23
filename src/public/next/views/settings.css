@@ -2639,7 +2639,6 @@
 .settings-block-storage-folder > .settings-block-body > .storage-path-row,
 .settings-block-storage-folder > .settings-block-body > .settings-note-row,
 .settings-block-storage-github-token > .settings-block-body > .provider-row-list,
-.settings-block-storage-github-token > .settings-block-body > .storage-path-row,
 .settings-block-storage-github-token > .settings-block-body > .settings-note-row {
   margin-top: 0;
   margin-bottom: 0;
@@ -2654,11 +2653,12 @@
      on --text-2 — the measured argument at .model-row-derived-warn (amber
      TEXT fails 4.5:1 in light; the glyph clears the 3:1 graphic floor);
    · the ⓘ's five steps are a real ordered list with the panel's own rhythm. */
-.settings-block-storage-github-token .gh-token-test-row > .provider-replace-input {
-  flex: 0 1 320px;
-  min-width: 180px;
+.settings-block-storage-github-token .gh-token-test-row .btn { flex: none; }
+/* The Test outcome sits INSIDE the card, under its row, inset to the rows'
+   own padding (orchestrator's screen review, v3.65.2). */
+.settings-block-storage-github-token .gh-token-test-result {
+  padding: 0 var(--space-6) var(--space-6);
 }
-.settings-block-storage-github-token .gh-token-test-row > .btn { flex: none; }
 /* The status well carries a SENTENCE here ("Saved · ends in …ab12 ·
    fine-grained", 36 characters), not a masked key, so the provider row's
    260px cap — sized for a row of bullets — clipped the one word that says

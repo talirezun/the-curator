@@ -444,6 +444,26 @@ section('§8  The Knowledge base block — rendered for real');
   ok(h.includes('Saved · ends in …ab12 · fine-grained'), 'with a token: "Saved · ends in …ab12 · fine-grained"');
   ok(/id="gh-token-disconnect"/.test(h) && />Replace token</.test(h), '…Disconnect and "Replace token"');
   ok(/id="gh-token-repo"/.test(h) && /id="gh-token-test"/.test(h), '…and a Test with a repository field');
+  // The Test is the CARD'S SECOND ROW, not a bare field under it (the
+  // orchestrator's screen review): measured on the rendered markup by taking
+  // the card's own balanced <div> and looking inside it.
+  const cardOf = (html) => {
+    const start = html.indexOf('<div class="provider-row-list cur-group">');
+    if (start < 0) return '';
+    const re = /<\/?div\b[^>]*>/g; re.lastIndex = start;
+    let depth = 0, m;
+    while ((m = re.exec(html))) {
+      depth += m[0][1] === '/' ? -1 : 1;
+      if (depth === 0) return html.slice(start, re.lastIndex);
+    }
+    return '';
+  };
+  let card = cardOf(h);
+  ok(/class="provider-row gh-token-test-row"/.test(card) && /id="gh-token-repo"/.test(card) && /id="gh-token-test"/.test(card),
+    'the Test row sits INSIDE the card, as a provider-row');
+  ok(/<span class="provider-name">Test<\/span>/.test(card) && /One read of a repository/.test(card), '…labelled on the first row\u2019s anatomy');
+  ok(/class="btn btn-secondary btn-xs" id="gh-token-test"/.test(card), '…with a real secondary button, the Replace token rung');
+  ok(!/id="gh-token-repo"/.test(h.slice(h.indexOf(card) + card.length)), 'nothing of the Test renders below the card');
   ok(!/data-gh-token-caution/.test(h), 'a fine-grained token carries no caution');
 
   st.ghToken.kind = 'classic';
@@ -463,6 +483,8 @@ section('§8  The Knowledge base block — rendered for real');
   h = render(st);
   ok(/cur-mon/.test(h) && /Token reads this repository/.test(h) && /octo\/docs/.test(h) && /abcdef1/.test(h),
     'a passing test renders as a MONITOR: head, repository, ref, short commit');
+  card = cardOf(h);
+  ok(/cur-mon/.test(card) && /Token reads this repository/.test(card), '…and the monitor sits INSIDE the card');
   st.ghTokenTest = { ok: false, code: 'unauthorised', repo: 'octo/docs', message: 'GitHub refused the token from .curator-config.json with 401.' };
   h = render(st);
   ok(/Test failed/.test(h) && /GitHub refused the token from \.curator-config\.json/.test(h), 'a failing test: the route’s message, verbatim, as the monitor’s loud line');

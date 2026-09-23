@@ -9654,6 +9654,30 @@ function renderGithubReadToken() {
             (busy ? ' disabled' : '') + '>' + (present ? 'Replace token' : 'Add token') + '</button>' +
         '</div>';
     }
+    // TEST — only when a token is saved: with none there is nothing to test,
+    // and a disabled control would need a reason sentence the status well
+    // already says. It is the CARD'S SECOND ROW, on the first row's anatomy
+    // (label block left, control right) — not a bare field under the card,
+    // which was a second anatomy beside the card's own (orchestrator's screen
+    // review, v3.65.2). Its outcome is a monitor INSIDE the same card.
+    const testRow = present
+      ? '<div class="provider-row gh-token-test-row" data-gh-token-test-row>' +
+          '<span class="provider-name-block">' +
+            '<span class="provider-name">Test</span>' +
+            '<span class="provider-vendor">One read of a repository</span>' +
+          '</span>' +
+          '<div class="provider-replace-row">' +
+            '<input type="text" class="provider-replace-input mono" id="gh-token-repo"' +
+              ' placeholder="owner/repo" autocomplete="off" spellcheck="false"' +
+              ' aria-label="Repository to test the token against">' +
+            '<button type="button" class="btn btn-secondary btn-xs" id="gh-token-test"' +
+              (state.ghTokenTestBusy ? ' disabled' : '') + '>' +
+              (state.ghTokenTestBusy ? 'Testing\u2026' : 'Test') + '</button>' +
+          '</div>' +
+        '</div>'
+      : '';
+    const testResult = present ? renderGithubTokenTest(state.ghTokenTest) : '';
+
     const row =
       '<div class="provider-row-list cur-group">' +
         '<div class="provider-row" data-gh-token-row>' +
@@ -9663,6 +9687,8 @@ function renderGithubReadToken() {
           '</span>' +
           fieldHtml +
         '</div>' +
+        testRow +
+        (testResult ? '<div class="gh-token-test-result">' + testResult + '</div>' : '') +
       '</div>';
 
     // A CLASSIC token saves — it works — but the caution is a WARNING, so it
@@ -9680,21 +9706,7 @@ function renderGithubReadToken() {
       ? '<div class="settings-inline-error" role="alert">' + escapeHtml(state.ghTokenActionError) + '</div>'
       : '';
 
-    // TEST — only when a token is saved: with none there is nothing to test,
-    // and a disabled control would need a reason sentence the status well
-    // already says.
-    const testRow = present
-      ? '<div class="storage-path-row gh-token-test-row">' +
-          '<input type="text" class="provider-replace-input mono" id="gh-token-repo"' +
-            ' placeholder="owner/repo" autocomplete="off" spellcheck="false"' +
-            ' aria-label="Repository to test the token against">' +
-          '<button type="button" class="btn btn-ghost btn-xs" id="gh-token-test"' +
-            (state.ghTokenTestBusy ? ' disabled' : '') + '>' +
-            (state.ghTokenTestBusy ? 'Testing\u2026' : 'Test') + '</button>' +
-        '</div>'
-      : '';
-
-    bodyHtml = row + caution + actionError + testRow + (present ? renderGithubTokenTest(state.ghTokenTest) : '');
+    bodyHtml = row + caution + actionError;
   }
 
   return settingsBlock(null, 'storage-github-token', 'GitHub read-only token', lede, bodyHtml, info, '', { html: true });
