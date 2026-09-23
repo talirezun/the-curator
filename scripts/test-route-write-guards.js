@@ -1267,7 +1267,12 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
     // bump IS the human look the comment above demands, and the exemption below
     // carries the reason — including the assertion, driven in §17, that the
     // route calls no setter at all.
-    expectedMutatingCount: 17,
+    // 17 -> 20: the GitHub read-only token (v3.65.2) — PUT and DELETE
+    // /github-read-token carry guardConcurrent like every other credential
+    // write here; POST /github-read-token/test is a READ (one GET to GitHub with
+    // the stored token, no setter) and is exempted below on api-keys/validate's
+    // reasoning.
+    expectedMutatingCount: 20,
     guardClasses: [{
       name: 'concurrency',
       // /update guards itself with a direct hasActiveWrites() check (it also
@@ -1284,6 +1289,8 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
           'shows a folder dialog and answers with the chosen path. It is a POST because it has a side effect on the SCREEN (a modal dialog) and takes a body (the prompt KEY, looked up in a frozen table of literals because the repo arm builds a shell command), not because it writes anything: it calls no setter, touches no file and holds no lock — §17 of this file drives it against a fake picker and asserts that setDomainsDir is never reached and that .curator-config.json is byte-identical afterwards. Guarding it would be wrong in the same way /ui-state\'s would be, and worse: the dialog blocks for as long as the person browses, so a 409 raised by an in-flight write would refuse the one control that makes the Foundations chooser usable, in favour of protecting state this route cannot reach. The route it is NOT is /pick-folder, which opens the same dialog and then mutates the knowledge-base path — that one is guarded, twice (middleware plus a re-check after the dialog closes), and this exemption must never be read as covering it.' },
         { method: 'POST', path: '/background-mode', reason:
           'records whether this install shows a menu bar icon, and whether it keeps its Dock icon — a three-value enum read by the desktop shell before it creates the tray or the window, and again when the user flips it. NOTHING on any write path reads it: unlike domainsPath (which getDomainsDir() re-resolves per call, mid-ingest included) and the provider/model fields (which getProviderInfo() and resolveProviderDefault() re-resolve per LLM call), this value is consumed only by desktop/ at startup and on change, so an in-flight ingest, sync or update cannot observe it. Guarding it would be actively HARMFUL for the same reason /ui-state is exempt above: a 409 would fire precisely while a long ingest is running, refusing to let the user turn OFF a menu bar icon because the app is busy doing something the icon has no bearing on. The write itself is bounded to three literal strings by setBackgroundMode()\'s allow-list (src/brain/config.js), which REFUSES rather than coercing, so an unguarded POST cannot put attacker-chosen content into .curator-config.json and cannot leave the UI reporting a mode the file does not hold.' },
+        { method: 'POST', path: '/github-read-token/test', reason:
+          'read-only token check (v3.65.2) — one GET of a repository ref through github-read-client.js with the token ALREADY stored, writes no state and calls no setter; POST only so the cross-origin guard applies and the repository name travels in a body. Exempt on the same reasoning as api-keys/validate: a 409 here would deny the check exactly while a long ingest runs.' },
         { method: 'POST', path: '/api-keys/validate', reason:
           'read-only key check — one zero-token GET to the provider, writes no state; POST only so the cross-origin guard applies. Precedent: sharedbrain /validate-pat, diagnostics /live. Guarding it would be actively HARMFUL, not merely redundant: a 409 here fires precisely while a multi-phase ingest is running, i.e. exactly when a user is asking "is my key the problem?" — it would refuse the diagnostic at the moment it is needed. This is the same reasoning the writability axis on health.js uses for its six read-only POSTs (/ai-suggest, /semantic-dupes/scan, /semantic-dupes/preview, /broken-links/plan, /orphans/plan): the verb says mutate, the body does not.' },
       ],

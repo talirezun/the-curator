@@ -2674,6 +2674,44 @@ export function consumeDomainFoldRequest() {
   return id;
 }
 
+// ── Settings section request (v3.65.2) ───────────────────────────────────
+//
+// The SAME shape as the fold pair above, for the same reasons: a door on
+// another view ("Add one in Settings" beside the Documents GitHub panel) asks
+// Settings to OPEN one of its sections on its next mount, and Settings
+// consumes the request once. SELF-CLEARING, so a request that outlived its
+// consume could not land a later, unrelated visit to Settings on the wrong
+// section an hour after the one click that asked for it.
+//
+// DEGRADATION CONTRACT, inherited: a section id Settings does not recognise
+// leaves the user on Settings' own default section — it can fail to help, it
+// cannot break anything.
+
+/** null = nothing pending; else a section id string. */
+let _pendingSettingsSectionRequest = null;
+
+/**
+ * Ask the Settings view to open one of its sections on its next mount.
+ * The caller navigates; this only records where to land.
+ *
+ * @param {string} sectionId a Settings section id; anything falsy clears
+ * @returns {void}
+ */
+export function requestSettingsSection(sectionId) {
+  const clean = (typeof sectionId === 'string' && sectionId.trim()) ? sectionId.trim() : null;
+  _pendingSettingsSectionRequest = clean;
+}
+
+/**
+ * The pending section request, once.
+ * @returns {string|null}
+ */
+export function consumeSettingsSection() {
+  const id = _pendingSettingsSectionRequest;
+  _pendingSettingsSectionRequest = null;
+  return id;
+}
+
 // ── Cross-view write gate ────────────────────────────────────────────────
 //
 // Shell-level replacement for the shipping app's window.__curatorIngestStart

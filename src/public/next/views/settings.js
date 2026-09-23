@@ -139,6 +139,7 @@ import {
   isAnyWriteBusy, getDomainWriteLabel, onWriteGateChange,
   preserveMainScroll, resetMainScroll, revealInMain,
   currentFontScale, fontScaleOptions, setFontScale,
+  consumeSettingsSection,
 } from '../app.js';
 // Overlay, not a view — same relationship views/shared.js has with
 // views/shared-brain-wizard.js. It is opened from the MCP section's CTA and
@@ -1092,6 +1093,23 @@ function freshState() {
     pickingFolder: false,
     pathCopyFeedback: null,
 
+    // Knowledge base → GitHub read-only token (v3.65.2). `ghToken` is the
+    // route's STATUS — `{present, last4, kind}` — and never a value; the
+    // typed value lives only in `ghTokenValue` while the input row is open,
+    // and is set on the DOM as a live `.value` property, never as a `value=`
+    // attribute (the provider rows' MEDIUM-2 rule). `ghTokenLoadError` means
+    // the status could not be read; `ghTokenActionError` means one save or
+    // disconnect failed and the block stays on screen.
+    ghToken: null,
+    ghTokenLoadError: null,
+    ghTokenEditing: false,
+    ghTokenValue: '',
+    ghTokenBusy: null,        // 'save' | 'disconnect' | null
+    ghTokenActionError: null,
+    ghTokenRepo: '',          // the Test's repository field — not a secret
+    ghTokenTestBusy: false,
+    ghTokenTest: null,        // the test route's answer, verbatim
+
     // General → Menu bar. Kept apart from `configError` on purpose: that
     // field means "the section could not load"; these mean "this one save
     // failed", and the control stays on screen showing the mode still in
@@ -1208,6 +1226,15 @@ registerView('settings', {
   onEnter(mountToken) {
     state = freshState();
     myMountToken = mountToken;
+    // A door on another view asked to land on one section (v3.65.2 — the
+    // Documents GitHub panel's "Add one in Settings"). Consumed ONCE, here,
+    // before the first paint; an id this view does not know is ignored and
+    // the default section stands. The request is self-clearing in app.js, so
+    // the next plain visit to Settings lands where it always has.
+    const askedSection = consumeSettingsSection();
+    if (askedSection && Object.prototype.hasOwnProperty.call(SECTION_TITLES, askedSection)) {
+      state.section = askedSection;
+    }
     // Per-mount caches, cleared HERE rather than in the teardown: a teardown
     // that has to run for the next mount to be correct is a teardown one
     // handleMountFailure away from being skipped. See each declaration.
@@ -1235,6 +1262,13 @@ registerView('settings', {
       // section the user is looking at is never queued behind four it is not.
       // See prefetchOtherSections for the measurement this answers.
       .then(() => { if (isCurrentMount(mountToken)) prefetchOtherSections(mountToken); });
+    // A REQUESTED section other than the default gets its own gated load, so
+    // it does not wait for the idle prefetch. Joined by loader identity in
+    // startSectionLoad, so Knowledge base (which shares General's loadConfig)
+    // makes no second request.
+    if (state.section !== SETTINGS_SECTIONS[0][0]) {
+      ensureSectionData(state.section, myMountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
+    }
 
     // Re-render whenever ANY domain's write-gate state changes — e.g. an
     // ingest starts/finishes on some domain while the user is sitting on
@@ -1254,6 +1288,7 @@ registerView('settings', {
       // the interaction that produced it ends, rather than leaving it
       // sitting in memory for however long the user is on another view.
       state.replaceValue = '';
+      state.ghTokenValue = '';
       // The picker menus are <body> children, so a rail navigation does not
       // remove them with the view. The component self-closes when its trigger
       // leaves the document (setMain replaces #view-root's child on the next
@@ -1782,6 +1817,12 @@ async function loadAiHealth(token) {
 }
 
 async function loadConfig(token) {
+  // The GitHub read-token status rides THIS load rather than a loader of its
+  // own: General and Knowledge base share loadConfig by loader identity (see
+  // startSectionLoad), so a separate storage loader would either re-fetch
+  // /api/config or need a second join rule. The status request is started in
+  // parallel and can never fail this load — its failure is its own state.
+  const tokenLoad = loadGhTokenStatus(token);
   try {
     const res = await fetch('/api/config');
     const data = await res.json();
@@ -1792,7 +1833,28 @@ async function loadConfig(token) {
     if (!isCurrentMount(token)) return;
     state.configError = err.message || 'Could not load the knowledge base path.';
   }
+  await tokenLoad;
   if (isCurrentMount(token)) render(token);
+}
+
+/** GET /api/config/github-read-token → state.ghToken. Never throws. */
+async function loadGhTokenStatus(token) {
+  try {
+    const res = await fetch('/api/config/github-read-token');
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    if (!isCurrentMount(token)) return;
+    if (!res.ok || !data || data.ok !== true) throw new Error('unreadable');
+    state.ghToken = {
+      present: data.present === true,
+      last4: typeof data.last4 === 'string' ? data.last4 : null,
+      kind: data.kind === 'fine-grained' || data.kind === 'classic' ? data.kind : null,
+    };
+    state.ghTokenLoadError = null;
+  } catch {
+    if (!isCurrentMount(token)) return;
+    state.ghTokenLoadError = 'Could not read whether a GitHub token is saved.';
+  }
 }
 
 // ── Theme (General → Appearance) ─────────────────────────────────────────
@@ -2096,7 +2158,11 @@ function renderMain(token, force) {
   else if (state.section === 'providers') body = renderProviders();
   else if (state.section === 'mcp') body = renderMcp();
   else if (state.section === 'health') body = renderHealthLimits();
-  else body = renderStorage();
+  // The GitHub read-only token block (v3.65.2) is composed HERE, at the call
+  // site, rather than inside renderStorage: scripts/test-next-settings-sections
+  // lifts renderStorage alone into a sandbox, and a new free identifier inside
+  // a lifted body is a crash there, not an assertion (the v3.64.0 lesson).
+  else body = renderStorage() + (state.config ? renderGithubReadToken() : '');
 
   const info = SECTION_INFO[state.section];
   const html =
@@ -9508,6 +9574,156 @@ function renderStorage() {
     { html: true });
 }
 
+/**
+ * ── THE GITHUB READ-ONLY TOKEN (v3.65.2) ───────────────────────────────────
+ *
+ * The field the Documents "Mirror from GitHub" panel has pointed at since
+ * v3.63.0 and nobody had built. It is the PROVIDER ROW's anatomy, reused
+ * rather than redrawn — name block, a status well, a pill, the actions at the
+ * right; "Add token"/"Replace token" swaps in the same password row with Save
+ * and Cancel — because a credential is a credential and this screen already
+ * has one way to hold one.
+ *
+ * WHAT NEVER REACHES THE MARKUP: the value. The status well reads the route's
+ * `{present, last4, kind}`; the password input carries no `value=` and gets
+ * the typed text as a live DOM property in wireStorageListeners.
+ *
+ * WHAT NEVER GOES BEHIND THE ⓘ: the classic-token caution (a warning — v3.16.1),
+ * a failed save or disconnect, and the Test's outcome, which is a MONITOR.
+ */
+function renderGithubReadToken() {
+  const st = state.ghToken;
+  const present = !!(st && st.present);
+  const busy = state.ghTokenBusy;
+  const kindWord = st && st.kind ? st.kind : null;
+
+  const lede = 'Lets a project\u2019s Documents mirror from a GitHub repository, read-only.';
+  const info =
+    'A fine-grained personal access token with read-only access to the repositories you want to ' +
+    'mirror. Not a classic one. In GitHub:' +
+    '<ol class="settings-gh-steps">' +
+      '<li><strong>Settings \u2192 Developer settings \u2192 Personal access tokens \u2192 Fine-grained tokens ' +
+        '\u2192 Generate new token.</strong></li>' +
+      '<li><strong>Resource owner:</strong> the account or organisation that owns the repository.</li>' +
+      '<li><strong>Repository access:</strong> Only select repositories, then pick the repository or ' +
+        'repositories whose documentation you want to mirror. You can pick several with one token.</li>' +
+      '<li><strong>Permissions \u2192 Repository permissions \u2192 Contents: Read-only.</strong> Metadata ' +
+        'read-only is added automatically. Nothing else.</li>' +
+      '<li><strong>Expiry:</strong> fine-grained tokens require one, up to a year. Set a reminder to renew it.</li>' +
+    '</ol>' +
+    'A classic token only works with the <code class="mono">repo</code> scope, which reads every ' +
+    'repository the account owns \u2014 which is why a fine-grained one is recommended, and why ' +
+    'Personal Sync\u2019s token is never the default. The token is kept in ' +
+    '<code class="mono">.curator-config.json</code> on this computer, readable only by you, and is ' +
+    'never shown again after you save it.';
+
+  let bodyHtml;
+  if (state.ghTokenLoadError && !st) {
+    bodyHtml = '<div class="settings-inline-error">' + escapeHtml(state.ghTokenLoadError) + '</div>';
+  } else {
+    const statusText = present
+      ? 'Saved \u00b7 ends in \u2026' + (st.last4 || '????') + (kindWord ? ' \u00b7 ' + kindWord : '')
+      : 'No token saved';
+    let fieldHtml;
+    if (state.ghTokenEditing) {
+      fieldHtml =
+        '<div class="provider-replace-row">' +
+          '<input type="password" class="provider-replace-input mono" id="gh-token-input"' +
+            ' placeholder="Paste a github_pat_\u2026 token" autocomplete="off" spellcheck="false"' +
+            ' aria-label="GitHub read-only token">' +
+          '<button type="button" class="btn btn-primary btn-xs" id="gh-token-save"' + (busy ? ' disabled' : '') + '>' +
+            (busy === 'save' ? 'Saving\u2026' : 'Save') + '</button>' +
+          '<button type="button" class="btn btn-ghost btn-xs" id="gh-token-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+        '</div>';
+    } else {
+      fieldHtml =
+        '<code class="provider-key-field mono' + (present ? '' : ' provider-key-empty') + '" id="gh-token-status">' +
+          escapeHtml(statusText) + '</code>' +
+        '<span class="provider-pill ' + (present ? 'provider-pill-on' : 'provider-pill-off') + '">' +
+          (present ? '<span class="provider-state-icon" aria-hidden="true">' + icon('checkAlt', 11) + '</span>Saved' : 'Not saved') +
+        '</span>' +
+        '<div class="provider-row-actions">' +
+          (present
+            ? '<button type="button" class="btn btn-ghost btn-xs" id="gh-token-disconnect"' + (busy ? ' disabled' : '') + '>' +
+                (busy === 'disconnect' ? 'Disconnecting\u2026' : 'Disconnect') + '</button>'
+            : '') +
+          '<button type="button" class="btn btn-' + (present ? 'secondary' : 'primary') + ' btn-xs" id="gh-token-edit"' +
+            (busy ? ' disabled' : '') + '>' + (present ? 'Replace token' : 'Add token') + '</button>' +
+        '</div>';
+    }
+    const row =
+      '<div class="provider-row-list cur-group">' +
+        '<div class="provider-row" data-gh-token-row>' +
+          '<span class="provider-name-block">' +
+            '<span class="provider-name">GitHub</span>' +
+            '<span class="provider-vendor">Read-only token</span>' +
+          '</span>' +
+          fieldHtml +
+        '</div>' +
+      '</div>';
+
+    // A CLASSIC token saves — it works — but the caution is a WARNING, so it
+    // is unfolded, in the body, every time the saved token is one.
+    const caution = present && st.kind === 'classic'
+      ? '<div class="settings-note-row settings-note-row-warn" data-gh-token-caution>' +
+          icon('alertTriangle', 15) +
+          '<span>This is a classic token. With the <code class="mono">repo</code> scope it can read every ' +
+          'repository this account owns, not only the one you mirror. A fine-grained, read-only token ' +
+          'is safer \u2014 the \u24d8 above says how to make one.</span>' +
+        '</div>'
+      : '';
+
+    const actionError = state.ghTokenActionError
+      ? '<div class="settings-inline-error" role="alert">' + escapeHtml(state.ghTokenActionError) + '</div>'
+      : '';
+
+    // TEST — only when a token is saved: with none there is nothing to test,
+    // and a disabled control would need a reason sentence the status well
+    // already says.
+    const testRow = present
+      ? '<div class="storage-path-row gh-token-test-row">' +
+          '<input type="text" class="provider-replace-input mono" id="gh-token-repo"' +
+            ' placeholder="owner/repo" autocomplete="off" spellcheck="false"' +
+            ' aria-label="Repository to test the token against">' +
+          '<button type="button" class="btn btn-ghost btn-xs" id="gh-token-test"' +
+            (state.ghTokenTestBusy ? ' disabled' : '') + '>' +
+            (state.ghTokenTestBusy ? 'Testing\u2026' : 'Test') + '</button>' +
+        '</div>'
+      : '';
+
+    bodyHtml = row + caution + actionError + testRow + (present ? renderGithubTokenTest(state.ghTokenTest) : '');
+  }
+
+  return settingsBlock(null, 'storage-github-token', 'GitHub read-only token', lede, bodyHtml, info, '', { html: true });
+}
+
+/**
+ * The Test's outcome, as a MONITOR (standing rule 4): the outcome of a live
+ * probe is a reading of state, the same instrument the MCP self-test uses.
+ * A failure's own message is `loud` — it is what the user can act on, and it
+ * names the token's SOURCE (the route guarantees it never carries the value).
+ */
+function renderGithubTokenTest(r) {
+  if (!r || typeof r !== 'object') return '';
+  if (r.ok === true) {
+    return renderMonitor({
+      label: 'GitHub token test',
+      head: { stateWord: 'Token reads this repository', tone: 'ok' },
+      lines: [
+        { key: 'repository', value: String(r.repo || '') },
+        { key: 'ref', value: String(r.ref || '') },
+        { key: 'commit', value: String(r.sha || '').slice(0, 7) },
+      ],
+    });
+  }
+  return renderMonitor({
+    label: 'GitHub token test',
+    head: { stateWord: 'Test failed', tone: 'danger' },
+    lines: r.repo ? [{ key: 'repository', value: String(r.repo) }] : [],
+    loud: [{ tone: 'danger', text: String(r.message || 'The test did not complete.') }],
+  });
+}
+
 // ── Listeners ─────────────────────────────────────────────────────────────
 // Re-wired after every render() since setSidebar/setMain replace the DOM
 // wholesale each call (same pattern as every other view in this shell).
@@ -9969,6 +10185,152 @@ function wireStorageListeners() {
   if (chooseBtn) chooseBtn.addEventListener('click', () => onChooseFolder(myMountToken));
   const copyBtn = document.getElementById('btn-copy-path');
   if (copyBtn) copyBtn.addEventListener('click', () => onCopyPath(myMountToken));
+
+  // ── GitHub read-only token ──────────────────────────────────────────────
+  const editBtn = document.getElementById('gh-token-edit');
+  if (editBtn) editBtn.addEventListener('click', () => {
+    state.ghTokenEditing = true;
+    state.ghTokenValue = '';
+    state.ghTokenActionError = null;
+    render(myMountToken);
+    const el = document.getElementById('gh-token-input');
+    if (el && typeof el.focus === 'function') el.focus();
+  });
+  const input = document.getElementById('gh-token-input');
+  if (input) {
+    // A live PROPERTY, never a `value=` attribute — see renderGithubReadToken.
+    input.value = state.ghTokenValue || '';
+    input.addEventListener('input', (e) => { state.ghTokenValue = e.target.value; });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); onSaveGhToken(myMountToken); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancelGhTokenEdit(); }
+    });
+  }
+  const saveBtn = document.getElementById('gh-token-save');
+  if (saveBtn) saveBtn.addEventListener('click', () => onSaveGhToken(myMountToken));
+  const cancelBtn = document.getElementById('gh-token-cancel');
+  if (cancelBtn) cancelBtn.addEventListener('click', () => cancelGhTokenEdit());
+  const discBtn = document.getElementById('gh-token-disconnect');
+  if (discBtn) discBtn.addEventListener('click', () => onDisconnectGhToken(myMountToken));
+  const repo = document.getElementById('gh-token-repo');
+  if (repo) {
+    repo.value = state.ghTokenRepo || '';
+    repo.addEventListener('input', (e) => { state.ghTokenRepo = e.target.value; });
+    repo.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); onTestGhToken(myMountToken); }
+    });
+  }
+  const testBtn = document.getElementById('gh-token-test');
+  if (testBtn) testBtn.addEventListener('click', () => onTestGhToken(myMountToken));
+}
+
+function cancelGhTokenEdit() {
+  state.ghTokenEditing = false;
+  state.ghTokenValue = '';          // a typed-but-cancelled secret does not linger
+  state.ghTokenActionError = null;
+  render(myMountToken);
+}
+
+/** Read a JSON body defensively — a proxy's HTML page must yield a sentence. */
+async function readJsonSafely(res) {
+  try { return await res.json(); } catch { return null; }
+}
+
+async function onSaveGhToken(token) {
+  // The LIVE DOM value first (autofill can set `.value` without an `input`
+  // event), exactly as onSaveKey does.
+  const input = document.getElementById('gh-token-input');
+  const value = ((input ? input.value : state.ghTokenValue) || '').trim();
+  if (!value || state.ghTokenBusy) return;
+  state.ghTokenBusy = 'save';
+  state.ghTokenActionError = null;
+  render(token);
+  try {
+    const res = await fetch('/api/config/github-read-token', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: value }),
+    });
+    const data = await readJsonSafely(res);
+    if (!isCurrentMount(token)) return;
+    if (!res.ok || !data || data.ok !== true) {
+      throw new Error((data && typeof data.message === 'string' && data.message)
+        // A 409 from guardConcurrent carries `error`, not `message`.
+        || (data && typeof data.error === 'string' && data.error) || 'The token could not be saved.');
+    }
+    state.ghToken = { present: data.present === true, last4: data.last4 || null, kind: data.kind || null };
+    state.ghTokenEditing = false;
+    state.ghTokenValue = '';        // never lingers past a successful save
+    state.ghTokenTest = null;       // a verdict about the PREVIOUS token is not about this one
+    state.ghTokenBusy = null;
+    render(token);
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    state.ghTokenBusy = null;
+    state.ghTokenActionError = err.message || 'The token could not be saved.';
+    render(token);
+  }
+}
+
+async function onDisconnectGhToken(token) {
+  if (state.ghTokenBusy) return;
+  state.ghTokenBusy = 'disconnect';
+  state.ghTokenActionError = null;
+  render(token);
+  try {
+    const res = await fetch('/api/config/github-read-token', { method: 'DELETE' });
+    const data = await readJsonSafely(res);
+    if (!isCurrentMount(token)) return;
+    if (!res.ok || !data || data.ok !== true) {
+      throw new Error((data && typeof data.message === 'string' && data.message)
+        // A 409 from guardConcurrent carries `error`, not `message`.
+        || (data && typeof data.error === 'string' && data.error) || 'The token could not be removed.');
+    }
+    state.ghToken = { present: false, last4: null, kind: null };
+    state.ghTokenTest = null;
+    state.ghTokenBusy = null;
+    render(token);
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    state.ghTokenBusy = null;
+    state.ghTokenActionError = err.message || 'The token could not be removed.';
+    render(token);
+  }
+}
+
+async function onTestGhToken(token) {
+  const repoEl = document.getElementById('gh-token-repo');
+  const remote = ((repoEl ? repoEl.value : state.ghTokenRepo) || '').trim();
+  state.ghTokenRepo = remote;
+  if (state.ghTokenTestBusy) return;
+  if (!remote) {
+    state.ghTokenTest = { ok: false, message: 'Name a repository the token can read, as owner/repo.' };
+    render(token);
+    return;
+  }
+  state.ghTokenTestBusy = true;
+  // Cleared BEFORE the request: a stale green under a spinner is a lie for
+  // as long as the request takes (onTestKey's rule).
+  state.ghTokenTest = null;
+  render(token);
+  let result;
+  try {
+    const res = await fetch('/api/config/github-read-token/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remote }),
+    });
+    const data = await readJsonSafely(res);
+    result = data && typeof data === 'object'
+      ? data
+      : { ok: false, message: 'The server returned a response this screen could not read (HTTP ' + res.status + ').' };
+  } catch {
+    result = { ok: false, message: 'Could not reach The Curator\u2019s own server to run the test.' };
+  }
+  if (!isCurrentMount(token)) return;
+  state.ghTokenTestBusy = false;
+  state.ghTokenTest = result;
+  render(token);
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────

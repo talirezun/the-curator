@@ -1984,12 +1984,14 @@ router.post('/api-keys/disconnect', guardConcurrent('disconnect an API key'), (r
 // body. Mutating methods are covered by server.js's cross-origin guard (it
 // matches POST/PUT/DELETE/PATCH) and by the Host-header guard on every method.
 //
-// NOT behind guardConcurrent, deliberately: that gate exists because a config
-// write lands MID-INGEST (the domains path and the provider are re-read per
-// call). This token is read by nothing an ingest, a Health scan or a Compile
-// does — only by a Documents mirror, which reads it once at the START of its
-// own refresh — so blocking a Save behind an unrelated ingest would refuse a
-// harmless write for no reason.
+// PUT and DELETE carry guardConcurrent, like every other credential write in
+// this file (scripts/test-route-write-guards.js audits the set). The token is
+// read by nothing an ingest, a Health scan or a Compile does — a Documents
+// mirror reads it once at the START of its own refresh — so the guard costs a
+// user one "wait for it to finish" during a long write and buys the file's one
+// rule: a config write never lands mid-write. The TEST route is a read and is
+// exempt, on the same reasoning as POST /api-keys/validate: refusing a
+// read-only check mid-ingest would deny it exactly when someone is waiting.
 
 /** A thrown message is sanitised twice before it leaves: once for every known
  *  GitHub credential shape, then for the literal value itself — a proxy or a
@@ -2025,7 +2027,7 @@ router.get('/github-read-token', (_req, res) => {
 
 /** PUT /api/config/github-read-token  body {token}
  *  → {ok, present:true, last4, kind:'fine-grained'|'classic'}; 400 invalid_token. */
-router.put('/github-read-token', (req, res) => {
+router.put('/github-read-token', guardConcurrent('save the GitHub token'), (req, res) => {
   const token = req.body ? req.body.token : undefined;
   // Refused BEFORE the setter, with a fixed sentence: a non-string body field
   // must not reach String() and then a message.
@@ -2041,7 +2043,7 @@ router.put('/github-read-token', (req, res) => {
       return res.status(400).json({ ok: false, code: 'invalid_token', message: err.message });
     }
     if (err && err.code === 'config_unreadable') {
-      return res.status(409).json({ ok: false, code: 'config_unreadable', message: err.message });
+      return res.status(500).json({ ok: false, code: 'config_unreadable', message: err.message });
     }
     // An unexpected failure (a disk error) — its message is a path at worst,
     // but it is still scrubbed of the value rather than trusted.
@@ -2052,13 +2054,13 @@ router.put('/github-read-token', (req, res) => {
 
 /** DELETE /api/config/github-read-token → {ok, present:false}
  *  Removes the one key; every other key in the file is carried through. */
-router.delete('/github-read-token', (_req, res) => {
+router.delete('/github-read-token', guardConcurrent('remove the GitHub token'), (_req, res) => {
   try {
     const st = clearGithubReadToken();
     res.json({ ok: true, present: st.present });
   } catch (err) {
     if (err && err.code === 'config_unreadable') {
-      return res.status(409).json({ ok: false, code: 'config_unreadable', message: err.message });
+      return res.status(500).json({ ok: false, code: 'config_unreadable', message: err.message });
     }
     res.status(500).json({ ok: false, code: 'write_failed',
       message: scrubPaths(err?.message || 'The token could not be removed.') });
