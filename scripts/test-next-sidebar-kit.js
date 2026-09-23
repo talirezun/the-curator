@@ -72,6 +72,7 @@ import {
   identityDotClass, IDENTITY_DOT_SLOTS, ALIASES,
 } from '../src/public/next/shared/sidebar.js';
 import { formatDayAge, freshnessDotHtml, clockGlyph } from '../src/public/next/shared/age.js';
+import { IDENTITY_SLOTS, identitySlot } from '../src/public/next/shared/identity-palette.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -651,10 +652,18 @@ section('§5 — THE ALIAS TABLE, AND THE PALETTE MAPPING');
     '...and not one `mem-` token reaches a `dm` row');
   ok(/mem-row/.test(memRow), 'CONTROL: the `mem` row does carry its own');
 
-  // THE PALETTE MAPPING — six slots, wrapping, and the KIT's own names.
-  eq('six identity slots', IDENTITY_DOT_SLOTS, 6);
+  // THE PALETTE MAPPING — twelve slots (v3.66.0; six before), wrapping, and
+  // the KIT's own names. The count is NOT this module's: it is
+  // IDENTITY_SLOTS from shared/identity-palette.js, which the widget reads.
+  eq('twelve identity slots', IDENTITY_DOT_SLOTS, 12);
+  eq('...and that IS the palette module\'s one constant, not a second copy',
+    IDENTITY_DOT_SLOTS, IDENTITY_SLOTS);
   eq('index 0 is slot 1', identityDotClass(0), 'cur-sb-dot-1');
-  eq('...and it wraps at six', identityDotClass(6), 'cur-sb-dot-1');
+  eq('a 7th domain gets a colour of its own (it wore slot 1 until v3.66.0)',
+    identityDotClass(6), 'cur-sb-dot-7');
+  eq('...and it wraps at twelve', identityDotClass(12), 'cur-sb-dot-1');
+  eq('...and every index agrees with the widget\'s identitySlot',
+    [...Array(30).keys()].every((i) => identityDotClass(i) === 'cur-sb-dot-' + identitySlot(i)), true);
   eq('...and a negative index wraps rather than producing `cur-sb-dot-0`',
     identityDotClass(-1), 'cur-sb-dot-2');
   eq('...and a non-number is slot 1 rather than NaN', identityDotClass('x'), 'cur-sb-dot-1');
@@ -676,19 +685,22 @@ section('§5 — THE ALIAS TABLE, AND THE PALETTE MAPPING');
     const slotRule = (n, light) => rules.find((r) =>
       new RegExp('\\.cur-sb-dot-' + n + '(?![0-9-])').test(r.sel)
       && /\[data-theme="light"\]/.test(r.sel) === light);
-    const slots = [...new Set([...BARE_CSS.matchAll(/\.cur-sb-dot-(\d)(?![0-9-])/g)]
-      .map((m) => m[1]))].sort();
-    eq('the kit declares all six identity slots', slots.join(','), '1,2,3,4,5,6');
-    for (let n = 1; n <= 6; n++) {
+    const slots = [...new Set([...BARE_CSS.matchAll(/\.cur-sb-dot-(\d+)(?![0-9-])/g)]
+      .map((m) => Number(m[1])))].sort((a, b) => a - b);
+    eq('the kit declares all twelve identity slots', slots.join(','), '1,2,3,4,5,6,7,8,9,10,11,12');
+    // v3.66.0: ONE rule per slot, painting its TOKEN; the theme is the token's
+    // business (tokens/identity.css declares `--id-N` in both theme blocks,
+    // which scripts/test-identity-palette.js reads). The v3.65.1 defect this
+    // section was written for — six DARK values painted in light at 1.85:1 —
+    // is now structurally impossible here: a slot has no value of its own to
+    // leak, only a name the theme resolves.
+    for (let n = 1; n <= 12; n++) {
       const dark = slotRule(n, false);
-      ok(!!dark && /background:\s*var\(--/.test(dark.body),
-        `slot ${n} has a DARK rule of its own and takes its colour from a NAMED value`,
+      ok(!!dark && new RegExp('background:\\s*var\\(--id-' + n + '\\)\\s*(;|$)').test(dark.body.trim()),
+        `slot ${n} has ONE rule, and it paints var(--id-${n})`,
         dark ? dark.sel + ' {' + dark.body + '}' : 'no unscoped rule');
-      const light = slotRule(n, true);
-      ok(!!light && /background:\s*var\(--/.test(light.body),
-        `...and slot ${n} has a light-theme value — the defect that started this was six `
-        + 'DARK values painted in light at 1.85:1',
-        light ? light.sel : 'no [data-theme="light"] rule');
+      ok(!slotRule(n, true),
+        `...and slot ${n} has NO theme-scoped override that could out-paint its token`);
     }
     // CONTROL for the classifier: it must tell the two apart on a planted pair.
     ok(/\.cur-sb-dot-3(?![0-9-])/.test('.cur-sb-dot-3')
@@ -800,17 +812,15 @@ section('§6 — THE STYLESHEET, AND WHAT IT MAY NOT DECLARE');
     + 'test-freshness-scale.js §4 forbids a view or kit sheet declaring one');
   ok(!/\.tx-/.test(BARE_CSS),
     'NO `.tx-` rule — shared/text.css owns that prefix');
-  // THREE COLOUR LITERALS, NAMED AND COUNTED. They are the identity palette's
-  // derived light-theme rungs (#16768C / #438126 / #925E13): the design
-  // bundle defines nothing darker than -600 in those three families, and
-  // tokens/color.css is byte-identical to the bundle and must stay so. Every
-  // other colour in this file is a token. A FOURTH is a regression.
+  // NO COLOUR LITERAL AT ALL (v3.66.0). This file carried three — the page
+  // TYPE inks' derived light rungs, misnamed `--id-ink-*` — until they moved
+  // to tokens/identity.css as `--type-ink-*`, where tokens/ may carry a
+  // literal. Every colour in this file is a token. ONE is a regression.
   {
     const lits = (BARE_CSS.match(/#[0-9a-fA-F]{3,8}\b/g) || []);
-    eq('EXACTLY three colour literals, and they are the three derived rungs',
-      lits.sort().join(',').toUpperCase(), '#16768C,#438126,#925E13');
-    ok(new RegExp('\\[data-theme="light"\\]\\s*\\{[^}]*#16768C').test(BARE_CSS),
-      '...and all three are inside the [data-theme="light"] block — DARK moves by no byte');
+    eq('NO colour literal — every colour here is a token', lits.join(','), '');
+    ok(!/--id-ink-|--type-ink-/.test(BARE_CSS),
+      '...and neither the retired `--id-ink-*` names nor the type inks are declared here');
   }
   ok(!/font-size:\s*\d+px/.test(BARE_CSS),
     'NO px font-size — the --font-scale control would not reach it');
@@ -827,7 +837,8 @@ section('§7 — THE COPIED HELPER, PINNED RATHER THAN TRUSTED');
     new Function(extractFunction(KIT_JS, 'escapeHtml', 'kit') + '\nreturn escapeHtml;')()('<&>"\''),
     '&lt;&amp;&gt;&quot;&#39;');
   const imports = [...KIT_JS.matchAll(/^import .*from '([^']+)';$/gm)].map((m) => m[1]);
-  eq('the kit imports exactly one module — the shared clock glyph', imports.join(','), './age.js');
+  eq('the kit imports exactly two modules — the shared clock glyph and the palette\'s slot count',
+    imports.join(','), './age.js,./identity-palette.js');
   ok(!/document|window/.test(KIT_JS.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),
     '...and touches no DOM, so an offline suite can import it');
 }

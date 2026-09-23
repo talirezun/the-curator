@@ -1188,20 +1188,30 @@ section('§8c  THE ROW RULES MOVED — they were not copied');
   // `(?![0-9-])` IS LOAD-BEARING: without it `.cur-sb-dot-33` reads as slot 3
   // with a stray character, so renaming slot 3's dark rule leaves this scan
   // reporting twelve healthy rules over a file with eleven (mutation M5).
-  const dotRules = [...sb.matchAll(/([^{}]*?\.cur-sb-dot-(\d)(?![0-9-])[^{}]*)\{([^}]*)\}/g)];
+  // v3.66.0: TWELVE slots, and the per-theme value moved into TOKENS —
+  // tokens/identity.css declares `--id-1` … `--id-12` once per theme, and the
+  // kit's rule for each slot is written ONCE, reading its token. So the scan
+  // is now "one rule per slot, painting var(--id-N)" plus "each token is
+  // declared in both theme blocks", which is the same one-palette-one-place
+  // property with the theme moved to where themes live.
+  const dotRules = [...sb.matchAll(/([^{}]*?\.cur-sb-dot-(\d+)(?![0-9-])[^{}]*)\{([^}]*)\}/g)];
+  const idCss = stripComments(read('src/public/next/tokens/identity.css'));
+  const idDark = /:root\s*\{([^}]*)\}/.exec(idCss);
+  const idLight = /\[data-theme="light"\]\s*\{([^}]*)\}/.exec(idCss);
   const missing = [];
-  for (let n = 1; n <= 6; n++) {
-    for (const [theme, want] of [['dark', false], ['light', true]]) {
-      const rule = dotRules.find((m) => Number(m[2]) === n
-        && /\[data-theme="light"\]/.test(m[1]) === want);
-      if (!rule) { missing.push(`slot ${n} ${theme}: no rule`); continue; }
-      if (!/background\s*:/.test(rule[3])) missing.push(`slot ${n} ${theme}: declares no background`);
+  for (let n = 1; n <= 12; n++) {
+    const rule = dotRules.find((m) => Number(m[2]) === n && !/\[data-theme/.test(m[1]));
+    if (!rule) { missing.push(`slot ${n}: no rule`); continue; }
+    if (!new RegExp(`background\\s*:\\s*var\\(--id-${n}\\)`).test(rule[3])) missing.push(`slot ${n}: does not paint var(--id-${n})`);
+    for (const [theme, block] of [['dark', idDark], ['light', idLight]]) {
+      if (!block || !new RegExp(`--id-${n}\\s*:\\s*#[0-9A-Fa-f]{6}`).test(block[1])) missing.push(`slot ${n} ${theme}: --id-${n} not declared`);
     }
   }
   ok(missing.length === 0,
-    'all twelve identity COLOUR rules (six slots x two themes) live in shared/sidebar.css, '
-    + 'beside the glyph they paint — so the Domains rail, the Context rail, Chat\'s domain '
-    + 'chips and Ingest\'s destination rows take one colour from one place',
+    'all twelve identity slots are painted by shared/sidebar.css from one token each '
+    + '(tokens/identity.css, both themes), beside the glyph they paint — so the Domains rail, '
+    + 'the Context rail, Chat\'s domain chips and Ingest\'s destination rows take one colour '
+    + 'from one place',
     missing.join(' | '));
   ok(dotRules.length >= 12,
     `CONTROL — the scan really found the twelve rules (${dotRules.length}), so "nothing missing" `

@@ -48,22 +48,16 @@
 // is the one place the transition is enumerated rather than three places
 // discovering each other.
 //
-// ── THE IDENTITY DOT'S COLOUR IS THE HOST'S, AND THAT IS A MEASURED LIMIT ──
+// ── THE IDENTITY DOT'S COLOUR IS A CLASS, AND THE PALETTE IS A TOKEN FILE ──
 // `dotClass` is a class NAME, filtered to the class alphabet exactly as
-// `toneClass` is in shared/overview.js. The six identity colours themselves
-// CANNOT live in shared/sidebar.css: three of the six light-theme values are
-// derived literals (`#16768C` / `#438126` / `#925E13` — there is no
-// `--entity-700`), and scripts/test-next-design-kit.js §10 allows a colour
-// literal in exactly TWO /next stylesheets and asserts that the baseline
-// holds exactly two files. Putting them here would have meant widening an
-// anti-drift ratchet to ship a kit, which is backwards.
-//
-// So the palette stays in views/domains.css, where it is already baselined
-// and already measured (that file's `.dm-row-dot-N` block records the
-// contrast arithmetic), and what moves here is the MAPPING — `identityDotClass`
-// — so a second view can colour a dot without importing from another view.
-// See its own docblock for what the adopting host must add.
-//
+// `toneClass` is in shared/overview.js. The colours themselves are
+// `--id-1` … `--id-12` in tokens/identity.css (v3.66.0; they were six rules
+// with three derived literals in shared/sidebar.css in v3.65.1, and in
+// views/domains.css before that). What lives HERE is the MAPPING —
+// `identityDotClass` — so a second view can colour a dot without importing
+// from another view, and the SLOT COUNT comes from shared/identity-palette.js,
+// the one module the menubar widget reads too.
+
 // ── EVERY CALLER-SUPPLIED STRING IS ESCAPED, EXCEPT THREE NAMED FIELDS ────
 // `markHtml` (a freshness dot the caller has already composed, the same
 // contract `renderReadout` and `renderOverview` carry), `badgesHtml` (a
@@ -76,6 +70,7 @@
 // slot becomes an attribute injection.
 
 import { clockGlyph } from './age.js';
+import { IDENTITY_SLOTS, identitySlot } from './identity-palette.js';
 
 // ── escapeHtml ─────────────────────────────────────────────────────────────
 // A byte-for-byte copy of app.js's, for the reason shared/text.js,
@@ -178,11 +173,11 @@ function aliasSet(alias) {
 //  THE IDENTITY PALETTE'S MAPPING
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** Six slots, because views/domains.css declares six and their pairwise
- *  CIEDE2000 minimum (14.58 light / 16.14 dark, measured) is what keeps them
- *  tellable apart. A seventh would have to be derived and measured, not
- *  invented. */
-export const IDENTITY_DOT_SLOTS = 6;
+/** The slot count, re-exported under its historical name. It is NOT a second
+ *  constant: it IS `IDENTITY_SLOTS` from shared/identity-palette.js, which the
+ *  widget reads too. Twelve since v3.66.0 (six before, so a 7th domain wore
+ *  slot 1's colour); 8 is a one-line change there. */
+export const IDENTITY_DOT_SLOTS = IDENTITY_SLOTS;
 
 /**
  * index -> the class NAME that paints an identity dot.
@@ -191,9 +186,9 @@ export const IDENTITY_DOT_SLOTS = 6;
  * only copy, and a second view may not import from a view. It returns the
  * KIT's name (`cur-sb-dot-N`), so an adopting view emits no foreign token.
  *
- * THE HOST OWES IT NOTHING SINCE v3.65.1. The six COLOURS moved into
- * shared/sidebar.css beside the dot's shape, so this function and the values
- * it selects are one unit in one place — CONTINUITY BY IDENTITY: the same
+ * THE HOST OWES IT NOTHING SINCE v3.65.1. The COLOURS are one block of
+ * rules in shared/sidebar.css reading tokens/identity.css (v3.66.0), so
+ * this function and the values it selects are one unit — CONTINUITY BY IDENTITY: the same
  * domain is the same colour on the Domains rail, the Context rail, the
  * Context breadcrumb, Chat's domain chips and Ingest's destination rows,
  * because every one of them asks THIS function and is painted by THAT block.
@@ -208,8 +203,7 @@ export const IDENTITY_DOT_SLOTS = 6;
  * (`state.domains.findIndex(...)`), never invent one from a hash of the name.
  */
 export function identityDotClass(index) {
-  const n = Number.isFinite(index) ? Math.abs(Math.trunc(index)) : 0;
-  return 'cur-sb-dot-' + ((n % IDENTITY_DOT_SLOTS) + 1);
+  return 'cur-sb-dot-' + identitySlot(index);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

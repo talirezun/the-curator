@@ -700,9 +700,16 @@ section('§6 — THE STYLESHEET, AND THE THREE RULES THAT FAIL SILENTLY');
   // not. v3.65.1 moved the identity palette — six colour rules x two themes
   // plus these three derived light rungs — into shared/sidebar.css beside the
   // glyph it paints, so a domain is one colour on every screen that names it.
-  // `--dm-ink-*` became `--id-ink-1/-2/-3` with them.
-  ok(/\.dm-stat-entity\s*\{[^}]*--id-ink-1/.test(domCss),
-    'CONTROL: the three ink classes stayed, and read the identity palette\'s own rungs');
+  // `--dm-ink-*` became `--id-ink-1/-2/-3` with them — and in v3.66.0 those
+  // were renamed for what they are, the PAGE-TYPE inks
+  // (`--type-ink-entity/-concept/-summary`, tokens/identity.css), so the
+  // domain palette could move without re-colouring these three figures.
+  ok(/\.dm-stat-entity\s*\{[^}]*--type-ink-entity\b/.test(domCss)
+    && /\.dm-stat-concept\s*\{[^}]*--type-ink-concept\b/.test(domCss)
+    && /\.dm-stat-summary\s*\{[^}]*--type-ink-summary\b/.test(domCss),
+    'CONTROL: the three ink classes stayed, and read the page-TYPE inks, not the identity palette');
+  ok(!/--id-ink-/.test(domCss),
+    '...and the retired `--id-ink-*` names are gone from this view too');
   ok(!/--dm-ink-/.test(domCss),
     '...and the retired `--dm-ink-*` names are gone from this view entirely');
 }
