@@ -894,6 +894,138 @@ export function setSharedBrainEnabled(enabled) {
   return getSharedBrainEnabled();
 }
 
+// ── The GitHub READ-ONLY token (v3.65.2) ────────────────────────────────────
+//
+// ── WHY THIS EXISTS AT ALL ──────────────────────────────────────────────────
+// Since v3.63.0 a project's Documents can be mirrored from a GitHub repository,
+// and the read defaults to a token stored under `githubReadToken` in this file
+// (`readGitHubReadToken('config')` in github-read-client.js). Until v3.65.2
+// NOTHING wrote that key: the Documents panel said "add a read-only token in
+// Settings" and there was no such field, so the default arm could only ever
+// refuse. These three functions are that field's writer.
+//
+// ── THE KEY NAME IS TYPED HERE, NOT IMPORTED, AND THAT IS DELIBERATE ────────
+// github-read-client.js exports GITHUB_READ_TOKEN_KEY, but it also holds a
+// fetch site, and this module sits on the static import graph that
+// scripts/test-tray-summary.js walks to prove the menubar widget can reach no
+// network. The store reaches the client by DYNAMIC import for the same reason.
+// scripts/test-github-read-token.js pins the two strings equal, so they cannot
+// drift apart silently.
+//
+// ── WHAT NEVER LEAVES THESE FUNCTIONS ───────────────────────────────────────
+// The value. Not in a return, not in a thrown message, not in a log line. A
+// refusal says what SHAPE was expected; the status says presence, the last
+// four characters and the kind — enough to recognise which token is saved,
+// never enough to use it.
+const GITHUB_READ_TOKEN_FIELD = 'githubReadToken';
+
+/** Fine-grained (`github_pat_…`) and classic (`ghp_…`) PATs — the two shapes
+ *  GitHub issues for a person. Bounded on both sides because the value goes
+ *  into an HTTP header; a real fine-grained token is 93 characters and a
+ *  classic one 40. Anything else — an OAuth `gho_`, a masked display value
+ *  carrying `•` or `…`, a pasted line with a space in it — is refused. */
+const GITHUB_TOKEN_SHAPES = Object.freeze([
+  { kind: 'fine-grained', re: /^github_pat_[A-Za-z0-9_]{20,240}$/ },
+  { kind: 'classic',      re: /^ghp_[A-Za-z0-9]{20,100}$/ },
+]);
+
+/** 'fine-grained' | 'classic' | null — from the PREFIX, which is not secret. */
+export function githubTokenKind(value) {
+  if (typeof value !== 'string') return null;
+  const v = value.trim();
+  for (const s of GITHUB_TOKEN_SHAPES) if (s.re.test(v)) return s.kind;
+  return null;
+}
+
+/**
+ * `{present, last4, kind}` — NEVER the value.
+ *
+ * `present` uses the SAME test `readGitHubReadToken` applies before it will
+ * read with a token (a trimmed string of at least 20 characters), so this
+ * status can never say "saved" about a value the reader would then refuse,
+ * or "none" about one it would use. A hand-edited value of an unrecognised
+ * shape is `present` with `kind: null` — reported, not guessed.
+ */
+export function getGithubReadTokenStatus() {
+  const raw = readRaw()[GITHUB_READ_TOKEN_FIELD];
+  const v = typeof raw === 'string' ? raw.trim() : '';
+  if (v.length < 20) return { present: false, last4: null, kind: null };
+  return { present: true, last4: v.slice(-4), kind: githubTokenKind(v) };
+}
+
+/** A typed refusal. `code` is what a route maps to a status; the message
+ *  names the expected shape and never includes any part of the input. */
+class GithubReadTokenError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'GithubReadTokenError';
+    this.code = code;
+  }
+}
+
+/**
+ * Read the config STRICTLY for a credential write. `readRaw()` answers `{}`
+ * for an unparseable file, and every setter in this module then writes that
+ * `{}` back — which, for a file holding the user's API keys, would erase them
+ * as a side effect of saving an unrelated token. This writer refuses instead.
+ * (The older setters keep their behaviour; changing it is not this release's.)
+ */
+function readRawForCredentialWrite() {
+  const f = configFile();
+  if (!existsSync(f)) return {};
+  let parsed;
+  try { parsed = JSON.parse(readFileSync(f, 'utf8')); }
+  catch {
+    throw new GithubReadTokenError('config_unreadable',
+      '.curator-config.json could not be read as JSON, so nothing was written to it — '
+      + 'saving now would have replaced every setting in it.');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new GithubReadTokenError('config_unreadable',
+      '.curator-config.json does not hold a settings object, so nothing was written to it.');
+  }
+  return parsed;
+}
+
+/**
+ * Save the read-only token. Validates the SHAPE (trimmed; no whitespace;
+ * `github_pat_…` or `ghp_…`; bounded length), writes through the same 0600
+ * atomic writer as the API keys, and returns the status — never the value.
+ * Throws a GithubReadTokenError with `code: 'invalid_token'` on a bad shape.
+ */
+export function setGithubReadToken(token) {
+  const v = typeof token === 'string' ? token.trim() : '';
+  const kind = githubTokenKind(v);
+  if (!kind) {
+    throw new GithubReadTokenError('invalid_token',
+      'That is not a GitHub personal access token. Paste the whole token: a fine-grained one starts '
+      + 'with "github_pat_", a classic one with "ghp_", and neither contains spaces.');
+  }
+  const cfg = readRawForCredentialWrite();
+  cfg[GITHUB_READ_TOKEN_FIELD] = v;
+  writeRaw(cfg);
+  return getGithubReadTokenStatus();
+}
+
+/**
+ * Remove the key entirely (not `''` — an absent key is what the reader has
+ * always treated as "none saved", and the file then says nothing about a
+ * token at all). Every other key is carried through untouched. A config with
+ * no token is NOT rewritten, so a Disconnect on a clean install creates no
+ * file and moves no mtime.
+ */
+export function clearGithubReadToken() {
+  const cfg = readRawForCredentialWrite();
+  if (Object.prototype.hasOwnProperty.call(cfg, GITHUB_READ_TOKEN_FIELD)) {
+    delete cfg[GITHUB_READ_TOKEN_FIELD];
+    writeRaw(cfg);
+  }
+  return getGithubReadTokenStatus();
+}
+
+/** The key name, for the suite that pins it against github-read-client.js. */
+export const __GITHUB_READ_TOKEN_FIELD = GITHUB_READ_TOKEN_FIELD;
+
 // ── Background mode (the menubar widget) ────────────────────────────────────
 //
 // ── WHY THIS IS A TOP-LEVEL FIELD AND NOT A `ui.*` ONE ─────────────────────
