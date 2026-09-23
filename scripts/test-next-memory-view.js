@@ -2644,8 +2644,12 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
   ok('...carrying at most a FILE LIST — a path array, never a document body',
     refresh && /\{\s*files\s*\}/.test(refresh.init) && !/\btext\s*:/.test(refresh.init),
     refresh ? refresh.init.slice(0, 220) : 'none');
+  // v3.65.2: the empty case is `rootPart`, which is a literal `{}` unless the
+  // add panel showed a folder field. §21k drives it: an ordinary refresh's
+  // body is exactly '{}'.
   ok('...and the empty case is still a literal empty object, so the ordinary refresh sends nothing',
-    refresh && /:\s*\{\}\s*\)/.test(refresh.init), refresh ? refresh.init.slice(0, 220) : 'none');
+    refresh && /:\s*rootPart\s*\)/.test(refresh.init)
+    && /const rootPart = [^\n]*: \{\};/.test(viewNoComments), refresh ? refresh.init.slice(0, 220) : 'none');
   // TWO ENDPOINTS, ONE EXPRESSION (v3.65.1). `…/foundations/init` sets an
   // ownership and runs once; `…/foundations/source` moves an already-settled
   // mirror to GitHub, leaving `ownership: 'repo'` where it is. They are

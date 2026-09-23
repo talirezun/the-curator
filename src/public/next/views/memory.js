@@ -8831,6 +8831,7 @@ async function refreshFoundations(token, files, repoRoot) {
   state.fnd = { domain, project, busy: true, error: null, result: null };
   render(token);
 
+  const rootPart = typeof repoRoot === 'string' && repoRoot.trim() ? { repoRoot: repoRoot.trim() } : {};
   let data = null;
   let error = null;
   try {
@@ -8857,10 +8858,10 @@ async function refreshFoundations(token, files, repoRoot) {
       // scanned was not the folder copied from. The field now appears only
       // when the recorded folder is not on this computer, and then the path
       // in it rides here: the path you scan is the path you copy from.
-      body: JSON.stringify({
-        ...(Array.isArray(files) && files.length ? { files } : {}),
-        ...(typeof repoRoot === 'string' && repoRoot.trim() ? { repoRoot: repoRoot.trim() } : {}),
-      }),
+      // Written as one expression over `{ files }` because
+      // scripts/test-next-memory-ingest-text.js pins the refresh body's shape
+      // (a file list or nothing, never a document body) off this line.
+      body: JSON.stringify(Array.isArray(files) && files.length ? Object.assign({ files }, rootPart) : rootPart),
     });
     const body = await res.json();
     if (!res.ok || !body.ok) error = body.error || body.message || ('HTTP ' + res.status);
