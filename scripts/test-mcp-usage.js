@@ -1500,8 +1500,14 @@ section('§14  v3.66.0 — count7dAgent, summariseSessionsByProject, the union r
   const fpBefore = fp();
 
   // ── (a) count7dAgent: the same window, self-test lines excluded ─────────
+  // N anchors to the REAL clock, not a fixed date: this fixture is read both
+  // by the pure `readUsage({ now: N })` call below AND by `r14.usageHandler`,
+  // which has no clock seam and always computes its 7-day window off the
+  // real `Date.now()` (src/routes/mcp.js's usageHandler → readUsage() with
+  // no `now` option). A fixed 2026-09-18 anchor ages out of that window as
+  // wall time moves past it — exactly what happened here.
   clearLog();
-  const N = Date.parse('2026-09-18T12:00:00.000Z');
+  const N = Date.now();
   const ago14 = (ms) => new Date(N - ms).toISOString();
   const D = 24 * 60 * 60 * 1000;
   const SID = 'a1a1a1a1a1a1';
