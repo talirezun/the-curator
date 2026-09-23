@@ -205,7 +205,7 @@ import { listDomains, isDomainReadonly } from '../brain/files.js';
 import * as workingState from '../brain/working-state.js';
 import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
 import {
-  readUsageLines, summariseSessions, MAX_LINE_BYTES, MAX_LINE_BYTES_LABEL,
+  readUsageLinesUnion, summariseSessions, MAX_LINE_BYTES, MAX_LINE_BYTES_LABEL,
 } from '../brain/mcp-usage.js';
 
 const router = Router();
@@ -2699,7 +2699,7 @@ router.post('/:domain/:project/foundations/source', async (req, res) => {
 //
 // "Did this project's sessions start with the bootstrap, and did they save
 // before they stopped?" (the v3.63.0 design's §D). READ-ONLY and NEVER
-// BLOCKS (Decision G): `readUsageLines`/`summariseSessions`
+// BLOCKS (Decision G): `readUsageLinesUnion`/`summariseSessions`
 // (`src/brain/mcp-usage.js`) are pure reads of the local, content-free MCP
 // usage log, joined here to ONE project by the `sid`/`project`/`client`
 // fields package S's usage log added for exactly this route. Nothing here
@@ -2784,7 +2784,15 @@ router.get('/:domain/:project/capture', async (req, res) => {
     const sinceMs = captureSinceMs(req.query.since);
     const limit = captureLimit(req.query.limit);
 
-    const { present, records } = await readUsageLines();
+    // THE UNION OF EVERY USAGE LOG THIS MACHINE MAY BE WRITING (v3.66.0),
+    // not only the one this process would append to. A checkout's server and
+    // the installed `.app`'s bridge write two different files (the v3.64.0
+    // measurement); reading one of them made this meter say "no session"
+    // about sessions the other had logged. It is also what the menubar
+    // widget and the MCP bridge page's per-project reading use, so the three
+    // can never disagree about one project's sessions. In a bundle install
+    // and in every isolated suite the list is ONE file and nothing changes.
+    const { present, records } = await readUsageLinesUnion();
     const summary = summariseSessions(records, { project, since: sinceMs });
     // UNCAPPED totals, THEN the display slice — never the other order.
     const shown = summary.sessions.slice(0, limit).map((s) => ({
@@ -3050,6 +3058,22 @@ async function handleDetail(req, res, domain, project, deprecated) {
     // to place it earlier would move keys that §3b pins byte-identical.
     const foundations = await foundationsIndexFor(domain, project);
 
+    // ── stateBudgetBytes (v3.66.0): THE CEILING A HANDOFF IS TRIMMED AT ──
+    //
+    // `scopes[].bytes` is each (scope, machine) pair's `current.md` size; this
+    // is the number the store renders a save against before writing it
+    // (MAX_STATE_BYTES, 48 KB), sent so a view can draw a handoff's size
+    // against its budget without hard-coding a second copy of the constant.
+    // It is a CEILING, not a target a file can overrun: an over-budget save is
+    // trimmed and disclosed in its notes, never refused, so `bytes` cannot
+    // exceed it and nothing here should ever be drawn as an over-run.
+    // Read off the store actually in use, falling back to the real module's
+    // export for a test double that does not carry the constant. On `open` as
+    // well as the envelope, because `open` is byte-for-byte what the scoped
+    // request answers and that request carries it.
+    const stateBudgetBytes = Number.isInteger(store.MAX_STATE_BYTES)
+      ? store.MAX_STATE_BYTES : workingState.MAX_STATE_BYTES;
+
     let open;
     if (wantOpen) {
       const pick = Array.isArray(state.scopes) ? tableFirstPair(state.scopes) : null;
@@ -3062,7 +3086,7 @@ async function handleDetail(req, res, domain, project, deprecated) {
         if (sub && sub.ok) {
           open = {
             ...((typeof sub.scopeCount === 'number') ? { ...sub, savedCopies: sub.scopeCount } : sub),
-            domain, project, readonly, foundations,
+            domain, project, readonly, foundations, stateBudgetBytes,
           };
         }
       }
@@ -3075,6 +3099,7 @@ async function handleDetail(req, res, domain, project, deprecated) {
       readonly,
       ...(wantOpen ? { open } : {}),
       foundations,
+      stateBudgetBytes,
       ...(deprecated ? deprecationNote(domain, project) : {}),
     });
   } catch (err) {
