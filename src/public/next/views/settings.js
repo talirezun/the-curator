@@ -5580,7 +5580,11 @@ function renderBuildList(cands, k, pickDisabled, crossBusy, busyId, errorAt, err
       '<summary class="build-change-summary">' +
         '<span class="build-change-title">Change\u2026 <span class="build-change-sub">every model that can build your wiki</span></span>' +
         '<span class="mono build-list-count">' + escapeHtml(String(cands.length)) +
-          ' measured for this job</span>' +
+          // v3.67.0: "for the build lane", the card chip's words — the list
+          // is every model measured on the ingest prompt, which every AI job
+          // inherits; "this job" stopped naming one thing when block 2
+          // became "Your AI model".
+          ' measured for the build lane</span>' +
       '</summary>' +
       '<ul class="model-list build-list">' + items + '</ul>' +
     '</details>'
