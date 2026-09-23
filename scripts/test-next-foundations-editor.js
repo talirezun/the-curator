@@ -3165,6 +3165,19 @@ section('§19 — v3.65.3: READ WITH NAMES EACH TOKEN, AND THE DEFAULT IS DERIVE
     && /which is why it is not the default/.test(syn), syn);
   ok('..."connected" sits inside the Personal Sync label, beside its name — not elsewhere',
     /fnd-init-token-state">connected</.test(syn) && !/fnd-init-token-state">connected</.test(cfg), syn);
+  // EXACTLY ONE state word per option, and it is INSIDE that option's own
+  // <label> — a second copy floating after the label (the v3.65.2 shape: a
+  // word a panel's width from its option) is the defect, not a variant of it.
+  const lines = saved.split('<div class="fnd-init-token-line">').slice(1);
+  eq('CONTROL: two option lines rendered', lines.length, 2);
+  for (const ln of lines) {
+    const v = (ln.match(/value="(config|sync)"/) || [, '?'])[1];
+    const inLabel = ln.slice(0, ln.indexOf('</label>'));
+    const total = (ln.match(/class="fnd-init-token-state"/g) || []).length;
+    const inside = (inLabel.match(/class="fnd-init-token-state"/g) || []).length;
+    ok('option ' + v + ': exactly one state word, and it is inside its own label',
+      total === 1 && inside === 1, 'total ' + total + ', inside ' + inside);
+  }
   ok('a last-four that is not token characters is not printed',
     !/ends in/.test(optOf(mk({ hasReadToken: true, readTokenLast4: '<b>' }), 'config')));
 
