@@ -2996,3 +2996,94 @@
   .mcp-across .cur-mon-key,
   .settings-vault-domains .cur-mon-key { white-space: normal; overflow-wrap: anywhere; }
 }
+
+/* ── BLOCK 2 · "Used by · N jobs" (v3.67.0) ───────────────────────────────
+   One fold row under the model card: title left, the count right in mono,
+   the chevron first — the step-body rule's row. Its body is a STATIC table
+   (a description, not live state, so not a monitor), one row per build-lane
+   job from AI_JOBS, then the one sentence about Chat. Tokens only: no tone,
+   no literal; the header ink is --text-2 (the --text-3 rung measured under
+   4.5:1 on this surface in v3.54.0 and is not used for words here). */
+.settings-usedby {
+  margin-top: var(--space-8);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-1);
+  overflow: hidden;
+}
+.settings-usedby-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
+  cursor: pointer;
+  list-style: none;
+}
+.settings-usedby-summary::-webkit-details-marker { display: none; }
+.settings-usedby-summary:hover { background: var(--surface-hover); }
+.settings-usedby-summary:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.settings-usedby-summary svg {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--dur-fast, 0.12s) var(--ease-out, ease);
+}
+.settings-usedby[open] > .settings-usedby-summary svg { transform: rotate(90deg); }
+.settings-usedby-title { font-size: var(--text-md); font-weight: var(--weight-semibold); color: var(--text); }
+.settings-usedby-count {
+  margin-left: auto;
+  font-size: var(--text-sm);
+  font-variant-numeric: var(--numeric-tabular);
+  color: var(--text-2);
+}
+.settings-usedby-body {
+  padding: 0 var(--space-6) var(--space-6);
+  border-top: var(--hairline-w) solid var(--hairline);
+  overflow-x: auto;
+}
+.settings-usedby-table { width: 100%; border-collapse: collapse; }
+.settings-usedby-table thead th {
+  text-align: left;
+  font: var(--type-eyebrow);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-2);
+  padding: var(--space-5) var(--space-5) var(--space-3) 0;
+  border-bottom: var(--hairline-w) solid var(--hairline-strong);
+  white-space: nowrap;
+}
+.settings-usedby-table tbody th,
+.settings-usedby-table td {
+  text-align: left;
+  padding: var(--space-4) var(--space-5) var(--space-4) 0;
+  border-bottom: var(--hairline-w) solid var(--hairline);
+  font-size: var(--text-sm);
+  vertical-align: baseline;
+}
+.settings-usedby-table tbody th { font-weight: var(--weight-medium); color: var(--text); }
+.settings-usedby-table td { color: var(--text-2); }
+.settings-usedby-table td.mono { font-variant-numeric: var(--numeric-tabular); }
+.settings-usedby-foot {
+  margin: var(--space-5) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+/* NARROW: at 568px the Settings column is ~136px (the recorded sidebar
+   squeeze), and a three-column table scrolled sideways inside it (measured:
+   252px of table in a 134px body). Below 640px each job becomes a short
+   stack — its name, then where it starts, then what it shows — and the
+   column heads leave the screen (they stay in the table for a screen
+   reader: `.visually-hidden`'s own clip, restated here for the thead). */
+@media (max-width: 640px) {
+  .settings-usedby-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .settings-usedby-table,
+  .settings-usedby-table tbody,
+  .settings-usedby-table tr,
+  .settings-usedby-table tbody th,
+  .settings-usedby-table td { display: block; width: auto; }
+  .settings-usedby-table tr { padding: var(--space-4) 0; border-bottom: var(--hairline-w) solid var(--hairline); }
+  .settings-usedby-table tbody th,
+  .settings-usedby-table td { padding: 0; border-bottom: 0; overflow-wrap: anywhere; }
+}
+/* The System check's run line sits directly under its buttons (v3.67.0). */
+.settings-verify-runs-on { margin-top: var(--space-4); }

@@ -281,6 +281,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { formatUsdHonest } from '../src/public/next/shared/format-usd.js';
 import { formatModelSummary } from '../src/public/next/shared/model-summary.js';
+// v3.67.0: block 2's lede and "Used by" row read the REAL registry.
+import { buildLaneJobs } from '../src/public/next/shared/ai-jobs.js';
 import {
   OFFERABLE_MODELS,
   // v3.15.2 — the REAL runtime-admission path. §36 below mints its
@@ -697,6 +699,9 @@ const RENDER_INJECTED_VALUES = {
   // and a stub would let this suite go green over a summary that never renders
   // the reason at all.
   formatModelSummary,
+  // v3.67.0 — the REAL registry, so block 2's "Used by · N jobs" and its lede
+  // are the shipped derivation, not a stub's.
+  buildLaneJobs,
   icon: (name, size) => '<svg data-icon="' + name + '" width="' + size + '"></svg>',
   state: stubState,
   crossWriteBusy: () => false,                 // no write in flight
@@ -3791,12 +3796,17 @@ section('§29  THE LANE — the build block says what builds the wiki, once');
     // FOUR-argument and compile.js's is five, while provider/model live in
     // argument SIX, so an override is not merely unused there — it cannot
     // be expressed.
-    ok(/builds your wiki/i.test(block), `${prov}: states plainly what builds the wiki`);
-    ok(/\bingest\b/i.test(block), `${prov}: names ingest`);
-    ok(/health scan/i.test(block), `${prov}: names Health scans (M5)`);
-    ok(/\bcompile\b/i.test(block), `${prov}: names Compile (M5)`);
-    ok(/share/i.test(block) && /nothing separate to set/i.test(block),
-      `${prov}: says the three SHARE one model, so nobody looks for a second knob`);
+    // ── UPDATED DELIBERATELY (v3.67.0) ─────────────────────────────────────
+    // The lede used to name three jobs ("Ingest, Health scans and Compile");
+    // the model runs six. M5's rule is unchanged — the claim must cover the
+    // WHOLE lane — so it is now asserted against the registry itself: every
+    // build-lane job the lede speaks of appears in it, in the lede's words.
+    ok(/Every AI job runs on this one model: /.test(block), `${prov}: states plainly that every AI job runs on this model`);
+    for (const w of ['ingest', 'compile', 'wiki health', 'Shared Brain', 'reading plans']) {
+      ok(block.includes(w), `${prov}: the lede names ${w} (M5, derived from AI_JOBS)`);
+    }
+    ok(/one model/i.test(block) && /nothing separate to set/i.test(block),
+      `${prov}: says every job SHARES one model, so nobody looks for a second knob`);
 
     // It names the provider AND the model in force — the answer to "which
     // model does what", which no catalogue can give.
@@ -6386,7 +6396,11 @@ section('§42  FOUR NUMBERED BLOCKS, read top to bottom, in order');
   // heading at 12,000 — a green-looking measurement of the wrong thing.
   const H = (t) => html.indexOf('<h2 class="settings-job-title">' + t + '</h2>');
   const iConnect = H('Connect a provider');
-  const iBuild = H('What builds your wiki');
+  // ── UPDATED DELIBERATELY (v3.67.0, the maintainer's Q2) ───────────────
+  // Block 2 is "Your AI model": it now runs a reading-plan helper and a
+  // system check, which build nothing. Same id ('build'), same position.
+  const iBuild = H('Your AI model');
+  ok(H('What builds your wiki') === -1, 'the old block-2 title is gone, not rendered beside the new one');
   const iChat = H('Chat');
   const iShelf = H('All models');
   ok(iConnect !== -1, 'block 1 names the thing to connect');

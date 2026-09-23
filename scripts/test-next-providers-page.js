@@ -32,6 +32,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+// v3.67.0: block 2 derives its lede and its "Used by" row from the registry.
+import { buildLaneJobs, AI_JOBS } from '../src/public/next/shared/ai-jobs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -183,15 +185,28 @@ const INJECTED = {
   render: () => {},
   onPickBuildModel: () => {},
   myMountToken: 1,
+  // v3.67.0 — the REAL registry. settings.js reads it through a `typeof`
+  // guard (so the three unowned lifting suites that do not inject it render
+  // the block without the row); this suite injects it and asserts the row.
+  buildLaneJobs,
 };
 
 let R;
+let SANDBOX_BODY = '';
+/** A second sandbox over the SAME extracted bodies, with some collaborators
+ *  replaced — how §12 drives the lede and the row with a different registry. */
+function sandboxWith(over) {
+  const inj = Object.assign({}, INJECTED, over || {});
+  const names = Object.keys(inj);
+  return new Function(...names, SANDBOX_BODY)(...names.map((n) => inj[n]));
+}
 try {
   const names = Object.keys(INJECTED);
   const body =
     CONSTS.map((n) => extractConst(settingsSrc, n)).join('\n') + '\n' +
     FNS.map((n) => extractFunction(settingsSrc, n)).join('\n') + '\n' +
     'return { ' + CONSTS.concat(FNS).join(', ') + ' };';
+  SANDBOX_BODY = body;
   R = new Function(...names, body)(...names.map((n) => INJECTED[n]));
   ok(typeof R.renderProviders === 'function', 'the page renderer extracted and evaluated');
   ok(Array.isArray(R.PROVIDER_ROWS) && R.PROVIDER_ROWS.length >= 3, 'PROVIDER_ROWS extracted');
@@ -321,7 +336,8 @@ for (const [name, keys] of [['state A', stateA()], ['state B', stateB()], ['stat
   const html = renderWith(keys);
   const H = (t) => html.indexOf('<h2 class="settings-job-title">' + t + '</h2>');
   const i1 = H('Connect a provider');
-  const i2 = H('What builds your wiki');
+  // v3.67.0 (Q2): block 2 is "Your AI model"; same id, same position.
+  const i2 = H('Your AI model');
   const i3 = H('Chat');
   const i4 = H('All models');
   ok(i1 !== -1 && i2 !== -1 && i3 !== -1 && i4 !== -1, `${name}: all four blocks are present`);
@@ -457,7 +473,10 @@ section('\u00a73  BLOCK 2 — the four provenance variants, each stating one fac
   // The three fact chips.
   okContains(c, '$0.03 in \u00b7 $0.12 out per 1M tokens', 'the price chip carries both figures');
   okContains(c, 'plans about 23 pages per source', 'the measured finding is shown verbatim');
-  okContains(c, 'measured by The Curator', 'and who measured it');
+  // v3.67.0: on THIS card the claim is "measured for the build lane" — the
+  // evidence is the ingest prompt, which every other AI job inherits (§12).
+  okContains(c, '<span class="build-fact build-fact-measured">measured for the build lane</span>',
+    'and who measured it, for which lane');
   // CONTEXT IS DELIBERATELY ABSENT \u2014 `contextLength` is null on every static
   // entry, i.e. on every model that can be the build model today.
   ok(!/524,288|524288/.test(c.slice(c.indexOf('build-facts'), c.indexOf('build-facts') + 900)),
@@ -1172,6 +1191,140 @@ section('§11  render() KEEPS OPEN WHAT THE USER OPENED');
   ok(unhooked.length === 0,
     'every <details> settings.js emits carries a data- hook, so render() can key it ' +
     `(unhooked: ${unhooked.length})`);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+section('§12  BLOCK 2 IS "YOUR AI MODEL" — every AI job, derived from AI_JOBS (v3.67.0)');
+// ══════════════════════════════════════════════════════════════════════════
+// The maintainer's Q2: one model runs every AI job (Chat alone picks per
+// message), and block 2 now SAYS which jobs — its lede and its "Used by · N
+// jobs" row are derived from the registry, never typed. Everything below runs
+// the REAL renderers with the REAL registry injected.
+{
+  const esc = (t) => escapeHtmlStub(t);
+  const blockOf = (html) => {
+    const a = html.indexOf('<h2 class="settings-job-title">Your AI model</h2>');
+    const b = html.indexOf('<h2 class="settings-job-title">Chat</h2>');
+    return a === -1 || b === -1 ? '' : html.slice(a, b);
+  };
+  const JOBS = buildLaneJobs();
+  ok(JOBS.length === 6 && AI_JOBS.length === 7,
+    `PRECONDITION: the registry holds six build-lane jobs and Chat (got ${JOBS.length}/${AI_JOBS.length})`);
+
+  const b2 = blockOf(renderWith(stateB()));
+  ok(b2.length > 0, 'block 2 is found between its own heading and block 3’s');
+
+  // THE LEDE — the contract's sentence, verbatim, and derived.
+  okContains(b2, 'Every AI job runs on this one model: ingest, compile, wiki health, Shared Brain and reading plans.',
+    'the lede names every AI job the model runs, in the contract’s words');
+  ok(!/Ingest, Health scans and Compile all run on this one model/.test(b2),
+    'and the three-job lede it replaces is gone');
+  // THE ⓘ — ai-jobs P5, verbatim.
+  okContains(b2, esc('There is nothing separate to set for each job: one model keeps one bill to read. ' +
+    'Choosing a model from another provider makes that provider the active one, so the bill moves with it. ' +
+    'Chat is the exception: pick any connected model per message, in the composer.'),
+    'the ⓘ is P5’s three sentences, verbatim');
+
+  // THE CARD — "measured for the build lane", with its own ⓘ.
+  const card = b2.slice(b2.indexOf('build-current'), b2.indexOf('build-change') === -1 ? undefined : b2.indexOf('build-change'));
+  okContains(card, '<span class="build-fact build-fact-measured">measured for the build lane</span>',
+    'the current-model card says "measured for the build lane"');
+  ok(!card.includes('measured by The Curator'),
+    '…and no longer "measured by The Curator" — the evidence is one job’s, which the lane inherits');
+  okContains(card, esc('Measured on the ingest prompt, 9 runs; the other jobs are the same kind of structured-output task.'),
+    'its ⓘ says what "for the build lane" means');
+  // CONTROL: the per-row chips in the Change… list keep their own words.
+  okContains(b2.slice(b2.indexOf('build-change')), 'measured by The Curator',
+    'CONTROL: the list rows below keep MEASUREMENT_CHIPS verbatim — only the card is re-worded');
+  // CONTROL: a user-measured model still reads as the user’s claim on the card.
+  {
+    const k = stateB();
+    k.build.facts.measured = 'user'; k.buildModel.measuredBy = 'user';
+    const u = blockOf(renderWith(k));
+    okContains(u, '<span class="build-fact build-fact-measured">measured on your wiki</span>',
+      'CONTROL: "measured on your wiki" is untouched on the card');
+    ok(!u.includes('>measured for the build lane<'), '…and is not relabelled as the lane’s');
+  }
+
+  // USED BY — a closed fold row, "6 jobs", one row per build-lane job.
+  const fold = b2.slice(b2.indexOf('<details class="settings-usedby"'));
+  ok(b2.includes('<details class="settings-usedby" data-used-by="1">'),
+    'a "Used by" fold row, CLOSED by default, carrying the data- hook render() keys its open state on');
+  ok(b2.indexOf('settings-usedby') > b2.indexOf('build-current'),
+    '…and it sits under the model card, inside block 2');
+  okContains(fold, '<span class="settings-usedby-title">Used by</span>', 'its title reads "Used by"');
+  okContains(fold, '<span class="mono settings-usedby-count">' + JOBS.length + ' jobs</span>',
+    `its summary reads "${JOBS.length} jobs" — N is the registry’s length, right-aligned in mono`);
+  const rows = [...fold.matchAll(/<tr data-ai-job="([^"]+)"><th scope="row">([^<]*)<\/th><td>([^<]*)<\/td><td class="mono">([^<]*)<\/td><\/tr>/g)];
+  ok(rows.length === JOBS.length, `one table row per build-lane job (got ${rows.length})`);
+  ok(rows.every((r, i) => JOBS[i] && r[1] === JOBS[i].id && r[2] === esc(JOBS[i].label)
+      && r[3] === esc(JOBS[i].startedFrom) && r[4] === esc(JOBS[i].costShown)),
+    'each row is its job’s label · started from · cost shown, in registry order');
+  ok(!fold.includes('data-ai-job="chat"'), 'Chat is NOT a row — it is not on this model');
+  okContains(fold, '<th scope="col">Job</th><th scope="col">Started from</th><th scope="col">Cost shown</th>',
+    'the table is headed Job · Started from · Cost shown');
+  okContains(fold, 'Chat is separate: any connected model, per message, in the composer.',
+    'the footer sentence says where Chat’s model is chosen');
+  ok(!/cur-mon|role="status"/.test(fold.slice(0, fold.indexOf('</details>'))),
+    'a static description, not a monitor: no live-state markup inside it');
+
+  // OPEN STATE survives a repaint (state-backed, like the shelf).
+  stubState.usedByOpen = true;
+  ok(renderWith(stateB()).includes('<details class="settings-usedby" data-used-by="1" open>'),
+    'state.usedByOpen reopens it on the next paint');
+  stubState.usedByOpen = false;
+
+  // DERIVED, NOT TYPED — a registry with a seventh job moves both the lede
+  // and the count; one without Shared Brain drops it from both.
+  {
+    const extra = { id: 'zz-tidy', label: 'Tidy tags', startedFrom: 'Domains › ⑤ Wiki health',
+      lane: 'build', mode: 'json', costShown: 'before', modules: [] };
+    const R7 = sandboxWith({ buildLaneJobs: () => [...JOBS, extra] });
+    const h7 = R7.renderBuildBlock(stateB(), false);
+    okContains(h7, '<span class="mono settings-usedby-count">7 jobs</span>', 'a seventh job reads "7 jobs"');
+    okContains(h7, 'Shared Brain, reading plans and tidy tags.',
+      '…and appears in the lede by its own label, with no edit to settings.js');
+    ok(h7.includes('data-ai-job="zz-tidy"'), '…and as a row');
+    const R5 = sandboxWith({ buildLaneJobs: () => JOBS.filter((j) => j.id !== 'shared-brain') });
+    const h5 = R5.renderBuildBlock(stateB(), false);
+    okContains(h5, '<span class="mono settings-usedby-count">5 jobs</span>', 'a registry without Shared Brain reads "5 jobs"');
+    okContains(h5, 'this one model: ingest, compile, wiki health and reading plans.',
+      '…and its lede drops it');
+    const R1 = sandboxWith({ buildLaneJobs: () => [JOBS[0]] });
+    okContains(R1.renderBuildBlock(stateB(), false), '<span class="mono settings-usedby-count">1 job</span>',
+      'one job is "1 job", not "1 jobs"');
+    // THE GUARD: a lifting sandbox that injects no registry still renders the
+    // block (the three unowned suites), with the plain lede and no row.
+    const R0 = sandboxWith({ buildLaneJobs: undefined });
+    let h0 = '', threw = '';
+    try { h0 = R0.renderBuildBlock(stateB(), false); } catch (e) { threw = e.message; }
+    ok(!threw, 'with NO registry bound, rendering block 2 does not throw' + (threw ? ` (threw: ${threw})` : ''));
+    ok(h0.includes('Every AI job runs on this one model.') && !h0.includes('settings-usedby'),
+      'with NO registry bound, the block still renders: the plain lede and no row (the typeof guard)');
+  }
+
+  // THE BROWSER ALWAYS BINDS IT: the import is real, so the guard is always
+  // true in the app. Over comment-stripped source, so a commented-out import
+  // cannot satisfy it.
+  const code = settingsSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok(/import \{ buildLaneJobs \} from '\.\.\/shared\/ai-jobs\.js';/.test(code),
+    'settings.js imports buildLaneJobs from shared/ai-jobs.js');
+  ok(/typeof buildLaneJobs === 'function' \? buildLaneJobs\(\) : \[\]/.test(extractFunction(settingsSrc, 'renderBuildBlock')),
+    'renderBuildBlock reads the registry through the typeof guard, and nowhere else');
+  // No hand list of job names in the renderer: the only nouns it types are
+  // the lede's spoken forms, keyed by the registry's ids.
+  const rbb = extractFunction(settingsSrc, 'renderBuildBlock');
+  ok(!/Compile to wiki|Domains ›|Settings › General|before · after/.test(rbb),
+    'the renderer types no row of the table — labels, origins and costs all come from AI_JOBS');
+
+  // THE STYLESHEET: tokens only, no tone on a description.
+  const css = fs.readFileSync(path.join(ROOT, 'src/public/next/views/settings.css'), 'utf8');
+  const cssFrom = css.indexOf('/* ── BLOCK 2 · "Used by'), cssTo = css.indexOf("/* The System check's run line");
+  ok(cssFrom !== -1 && cssTo > cssFrom, 'PRECONDITION: both ends of the Used by rules are found in settings.css');
+  const usedCss = css.slice(cssFrom, cssTo);
+  ok(usedCss.length > 200 && /\.settings-usedby\s*\{/.test(usedCss), 'settings.css styles the Used by row');
+  ok(!/--(success|attention|danger|warn|error)[a-z-]*/.test(usedCss) && !/#[0-9a-f]{3,6}\b|rgba?\(/i.test(usedCss),
+    '…with no tone token and no colour literal');
 }
 
 console.log(`\n  ${'\u2500'.repeat(46)}`);

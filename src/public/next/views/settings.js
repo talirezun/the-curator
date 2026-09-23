@@ -174,6 +174,22 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // would be a second hand-maintained copy of that rule. See format-usd.js.
 import { formatUsdHonest } from '../shared/format-usd.js';
 import { formatModelSummary } from '../shared/model-summary.js';
+// ── THE AI JOBS, AS DATA (v3.67.0) ────────────────────────────────────────
+// Block 2 ("Your AI model") derives its lede and its "Used by · N jobs" row
+// from the registry, never from a hand list: adding a job to AI_JOBS moves the
+// number on this screen. System check's run line is the shared kit's.
+//
+// WHY renderBuildBlock READS IT THROUGH A `typeof` GUARD. Five suites lift
+// renderBuildBlock by brace-matching and execute it with an explicit list of
+// injected collaborators; a module-level import is not visible inside a lifted
+// body, so a bare `buildLaneJobs()` there would be a ReferenceError in the
+// three that are not this package's (rule 10). `typeof` on an undeclared name
+// does not throw, so those suites render the block without the row, and the
+// two that own this block inject the REAL function and assert the row. In the
+// browser the static import below always binds, so the guard is always true
+// (test-next-providers-page.js pins the import AND drives the real rows).
+import { buildLaneJobs } from '../shared/ai-jobs.js';
+import { renderRunsOn, aiActionDisabledAttrs } from '../shared/ai-run.js';
 // The ONE text system in /next (shared/text.js). This view was the largest
 // carrier of the defect renderViewHeader removes: ~3,620 characters of static
 // prose, a paragraph of it directly under the <h1> of four of the five
@@ -871,6 +887,8 @@ function freshState() {
     // gate fires whenever an ingest starts or finishes anywhere). A shelf that
     // snapped shut mid-read, for no visible reason, would look like a bug.
     modelShelfOpen: false,
+    // Block 2's "Used by" fold (v3.67.0). Closed on every mount.
+    usedByOpen: false,
     // Block 2's `Change…` disclosure — the build-lane list. State-backed for
     // the same reason the shelf is: this section repaints on things the user
     // did not do, so a native <details open> would snap shut mid-read. It is
@@ -2505,10 +2523,21 @@ function renderGeneral() {
         // `.btn-ai` — the shell's own tier-4 "spends money" variant, replacing
         // a settings.css-local look-alike (`.btn-ai-cost`) that painted the
         // same tint under a second name. One taxonomy, one class.
-        '<button type="button" class="btn btn-ai" id="btn-verify-ai">' +
-          icon('star', 13) + ' Verify AI connection · $0.0001' +
+        //
+        // v3.67.0: the price is no longer a literal typed into the label. It
+        // is the shared run line, directly under this row, rendered from the
+        // server's own `liveCheck.runsOn` (the same describeRun() every AI
+        // route answers with) once it has been read — by a system check or by
+        // this button's first press. It rides on `state` as ready HTML, and
+        // the disabled attributes likewise, because renderGeneral is lifted
+        // and executed by two suites with an explicit collaborator list
+        // (rule 10). With no provider key the button is DISABLED, never
+        // hidden, and described by the no-key line.
+        '<button type="button" class="btn btn-ai" id="btn-verify-ai"' + (state.liveVerifyAttrs || '') + '>' +
+          icon('star', 13) + ' Verify AI connection' +
         '</button>' +
       '</div>' +
+      (state.liveRunsOnHtml ? '<div class="settings-verify-runs-on">' + state.liveRunsOnHtml + '</div>' : '') +
 
       (state.liveConfirmOpen ? renderLiveConfirm() : '') +
       (state.live ? renderLiveResult() : '') +
@@ -3103,14 +3132,35 @@ function renderQuickSummary(quick) {
   );
 }
 
+/**
+ * The System check's confirm. v3.67.0: its FIRST line is the shared run line
+ * (the model, the tokens, the cost, from the server), replacing the hardcoded
+ * "$0.0001" — a price typed into the view was a second opinion about a money
+ * fact, and it stayed "$0.0001" whatever model the call actually ran on.
+ *
+ * Until the run line has been read (`state.liveRunsOn === undefined`) the
+ * confirm says so and its button waits: a spend gate whose price is still in
+ * flight is not yet a gate. A server that answers with no run line at all
+ * (`null`, a pre-v3.67.0 backend) leaves the button live with the sentence
+ * that makes no price claim. With no key, the button is disabled.
+ */
 function renderLiveConfirm() {
+  const ro = state.liveRunsOn;
+  const pending = ro === undefined;
+  const line = ro ? renderRunsOn(ro, { inSettings: true, id: 'settings-verify-confirm-runs-on' }) : '';
+  const blocked = !!(ro && ro.needsKey === true);
   return (
     '<div class="cost-confirm" role="group" aria-label="Confirm AI connection test">' +
       icon('alertTriangle', 14) +
-      '<span class="cost-confirm-text">This makes one real API call to your active provider to confirm it responds. ' +
-      'Estimated cost: <strong>$0.0001</strong>. Nothing else is read or written.</span>' +
+      // A <div>, not the <span> it was: the run line is a block (<p>), and a
+      // paragraph inside a span is not valid markup.
+      '<div class="cost-confirm-text">' + line +
+      (pending ? 'Reading which model runs this check… ' : '') +
+      'This makes one real API call to your active provider to confirm it responds. ' +
+      'Nothing else is read or written.</div>' +
       '<div class="cost-confirm-actions">' +
-        '<button type="button" class="btn btn-primary btn-xs" id="btn-verify-ai-confirm"' + (state.liveLoading ? ' disabled' : '') + '>' +
+        '<button type="button" class="btn btn-primary btn-xs" id="btn-verify-ai-confirm"' +
+          (state.liveLoading || pending ? ' disabled' : (blocked ? aiActionDisabledAttrs(ro, 'settings-verify-confirm-runs-on') : '')) + '>' +
           (state.liveLoading ? 'Verifying…' : 'Confirm — run it') +
         '</button>' +
         '<button type="button" class="btn btn-ghost btn-xs" id="btn-verify-ai-cancel"' + (state.liveLoading ? ' disabled' : '') + '>Cancel</button>' +
@@ -5097,32 +5147,80 @@ function renderBuildBlock(k, crossBusy) {
         ownedByRow ? errAt : '', ownedByRow ? errText : '')
     : '';
 
+  // ── USED BY · N JOBS (v3.67.0) ─────────────────────────────────────────
+  // One row per build-lane job, straight from AI_JOBS (buildLaneJobs(); see
+  // the import's comment for the `typeof` guard). A STATIC description, not
+  // live state, so it is a table in a fold row rather than a monitor (rule 4
+  // covers live readings only), and it is closed by default: it answers "what
+  // else does this choice move?", which is worth one click, not a screen.
+  // `data-used-by` is the hook render() keys the open state on, and the
+  // `toggle` listener in wireGlobalListeners writes it back to state.
+  const jobs = typeof buildLaneJobs === 'function' ? buildLaneJobs() : [];
+  const usedByHtml = jobs.length === 0 ? '' : (
+    '<details class="settings-usedby" data-used-by="1"' + (state.usedByOpen === true ? ' open' : '') + '>' +
+      '<summary class="settings-usedby-summary">' +
+        icon('chevronRight', 12) +
+        '<span class="settings-usedby-title">Used by</span>' +
+        '<span class="mono settings-usedby-count">' +
+          escapeHtml(jobs.length + (jobs.length === 1 ? ' job' : ' jobs')) + '</span>' +
+      '</summary>' +
+      '<div class="settings-usedby-body">' +
+        '<table class="settings-usedby-table">' +
+          '<caption class="visually-hidden">The jobs that run on your AI model</caption>' +
+          '<thead><tr><th scope="col">Job</th><th scope="col">Started from</th>' +
+            '<th scope="col">Cost shown</th></tr></thead>' +
+          '<tbody>' + jobs.map((j) =>
+            '<tr data-ai-job="' + escapeHtml(String(j.id)) + '">' +
+              '<th scope="row">' + escapeHtml(String(j.label)) + '</th>' +
+              '<td>' + escapeHtml(String(j.startedFrom)) + '</td>' +
+              '<td class="mono">' + escapeHtml(String(j.costShown)) + '</td>' +
+            '</tr>').join('') +
+          '</tbody>' +
+        '</table>' +
+        '<p class="settings-usedby-foot">Chat is separate: any connected model, per message, in the composer.</p>' +
+      '</div>' +
+    '</details>'
+  );
+
   const body =
     renderBuildCurrent(k, pickDisabled, { popupHtml }) +
     errHtml +
-    listHtml;
+    listHtml +
+    usedByHtml;
 
-  // ── THE LEDE CARRIES THE *WHY ONE MODEL*, AND THE ONE CONSEQUENCE ──────
-  // "They always share one" is not a flourish: without it a reader looks for a
-  // per-feature override, and v3.14.0 recorded that such an override is
-  // INEXPRESSIBLE at four call sites (health-ai.js and compile.js call
-  // `generateText` with four and five arguments; the provider/model pair lives
-  // in argument six). The second sentence names the consequence a cross-
-  // provider choice has — the active provider, and therefore the key being
-  // billed, moves with it — which is the one place the word "active" still
-  // earns its keep now that the connection rows no longer carry it.
-  const lede = '<strong>Ingest, Health scans and Compile all run on this one model.</strong>';
-  // VERBATIM, minus the sentence that is now the lede. Both halves were
-  // load-bearing and neither is deleted: "they always share one" stops a reader
-  // hunting for a per-feature override that is INEXPRESSIBLE in the code
-  // (v3.14.0), and the second names the consequence of picking across
-  // providers. They are an explanation of the sentence above them, which is
-  // exactly what the fold is for.
-  const ledeInfo = 'They always share one, and there is nothing separate to set for each of them — ' +
-    'one model keeps the ingest prompt cache warm and keeps one bill to read. Choosing a model from ' +
-    'another provider makes that provider the active one, so the bill moves with it.';
+  // ── THE LEDE NAMES EVERY JOB THE MODEL RUNS, DERIVED (v3.67.0) ─────────
+  // Through v3.66.x it read "Ingest, Health scans and Compile all run on this
+  // one model" — three of the six jobs that actually do. A user who switched
+  // to a dearer model "to make chat better" was not told that Shared Brain
+  // synthesis now bills it too. The nouns are the registry's rows, spoken:
+  // each id maps to the word a sentence wants, a job with no entry here is
+  // spoken by its own label (so a NEW job appears in the sentence without an
+  // edit), and System check is the one deliberate omission — a one-call
+  // connectivity check builds nothing and is not a thing a user runs "on" a
+  // model; it is still counted and listed under Used by.
+  const LEDE_NOUNS = {
+    'ingest': 'ingest', 'compile': 'compile', 'wiki-health': 'wiki health',
+    'shared-brain': 'Shared Brain', 'reading-plan': 'reading plans', 'system-check': null,
+  };
+  const nouns = jobs.map((j) => (Object.prototype.hasOwnProperty.call(LEDE_NOUNS, j.id)
+    ? LEDE_NOUNS[j.id] : String(j.label).toLowerCase())).filter(Boolean);
+  const spoken = nouns.length > 1
+    ? nouns.slice(0, -1).join(', ') + ' and ' + nouns[nouns.length - 1]
+    : (nouns[0] || '');
+  const lede = spoken
+    ? 'Every AI job runs on this one model: ' + escapeHtml(spoken) + '.'
+    : 'Every AI job runs on this one model.';
+  // ai-jobs P5's ⓘ, verbatim. Both load-bearing clauses of the old fold
+  // survive in it: "nothing separate to set" stops a reader hunting for a
+  // per-job override that is INEXPRESSIBLE in the code (v3.14.0), and the
+  // second sentence names the consequence of picking across providers.
+  const ledeInfo = 'There is nothing separate to set for each job: one model keeps one bill to read. ' +
+    'Choosing a model from another provider makes that provider the active one, so the bill moves with it. ' +
+    'Chat is the exception: pick any connected model per message, in the composer.';
 
-  return settingsBlock(2, 'build', 'What builds your wiki', lede, body, ledeInfo,
+  // The id stays 'build' (anchors, suites and the info-button id key on it);
+  // only the title moved, the maintainer's Q2 (v3.67.0).
+  return settingsBlock(2, 'build', 'Your AI model', lede, body, ledeInfo,
     renderModelGoneBanner(k));
 }
 
@@ -5190,7 +5288,21 @@ function renderBuildCurrent(k, pickDisabled, opts) {
   }
 
   const name = providerLabel(b.provider) || b.provider;
-  const chip = measurementChip({ measuredBy: b.measuredBy }, null);
+  // ── "measured for the build lane", NOT "measured by The Curator" (v3.67.0) ──
+  // The chip on THIS card is the claim about the model every AI job runs on,
+  // and the evidence behind it is one job's: the ingest planning prompt, nine
+  // runs per model. Compile, Wiki health, Shared Brain and the reading plan
+  // inherit that lane measurement — the same kind of structured-output task,
+  // never measured one by one — so the honest words are "for the build lane".
+  // Only the curator arm is re-worded, and only here: the per-row chips in the
+  // list below keep MEASUREMENT_CHIPS verbatim, and "measured on your wiki" /
+  // "not measured" are already exact claims.
+  const chipBase = measurementChip({ measuredBy: b.measuredBy }, null);
+  const chip = chipBase.key === 'curator'
+    ? { key: 'curator', label: 'measured for the build lane', cls: chipBase.cls,
+        title: 'Measured on the ingest prompt, 9 runs; the other jobs are the same kind of ' +
+          'structured-output task.' }
+    : chipBase;
   const modelName = buildModelDisplayName(k, b);
 
   let why;
@@ -5468,7 +5580,11 @@ function renderBuildList(cands, k, pickDisabled, crossBusy, busyId, errorAt, err
       '<summary class="build-change-summary">' +
         '<span class="build-change-title">Change\u2026 <span class="build-change-sub">every model that can build your wiki</span></span>' +
         '<span class="mono build-list-count">' + escapeHtml(String(cands.length)) +
-          ' measured for this job</span>' +
+          // v3.67.0: "for the build lane", the card chip's words — the list
+          // is every model measured on the ingest prompt, which every AI job
+          // inherits; "this job" stopped naming one thing when block 2
+          // became "Your AI model".
+          ' measured for the build lane</span>' +
       '</summary>' +
       '<ul class="model-list build-list">' + items + '</ul>' +
     '</details>'
@@ -10142,7 +10258,7 @@ function wireGeneralListeners() {
   const runBtn = document.getElementById('btn-run-quick-check');
   if (runBtn) runBtn.addEventListener('click', () => onRunQuickCheck(myMountToken));
   const verifyBtn = document.getElementById('btn-verify-ai');
-  if (verifyBtn) verifyBtn.addEventListener('click', () => { state.liveConfirmOpen = true; state.live = null; render(myMountToken); });
+  if (verifyBtn) verifyBtn.addEventListener('click', () => { openLiveConfirm(myMountToken); });
   const confirmBtn = document.getElementById('btn-verify-ai-confirm');
   if (confirmBtn) confirmBtn.addEventListener('click', () => onVerifyAiConfirm(myMountToken));
   const cancelBtn = document.getElementById('btn-verify-ai-cancel');
@@ -10410,6 +10526,11 @@ function wireProviderListeners() {
   // looking at. Same contract as the per-provider pickers and the model rows.
   document.querySelectorAll('[data-model-shelf]').forEach((el) => {
     el.addEventListener('toggle', () => { state.modelShelfOpen = !!el.open; });
+  });
+  // Block 2's "Used by" fold (v3.67.0): state-backed for the modelShelfOpen
+  // reason — this section repaints on things the user did not do.
+  document.querySelectorAll('[data-used-by]').forEach((el) => {
+    el.addEventListener('toggle', () => { state.usedByOpen = !!el.open; });
   });
   // Clearing is the SAME endpoint with an empty model — never a second write
   // path with its own idea of what "no selection" means.
@@ -11130,6 +11251,45 @@ function onRestartOnly(token) {
   });
 }
 
+/**
+ * Record the System check's run line (v3.67.0) from a /api/diagnostics/quick
+ * answer's `liveCheck.runsOn`. `null` means "the server sent none" (an older
+ * backend), which is distinct from `undefined`, "not read yet". The HTML and
+ * the button's attributes are composed HERE, outside renderGeneral, because
+ * that renderer is lifted by two suites (see its button's comment).
+ */
+function setLiveRunsOn(data) {
+  const ro = (data && data.liveCheck && data.liveCheck.runsOn && typeof data.liveCheck.runsOn === 'object')
+    ? data.liveCheck.runsOn : null;
+  state.liveRunsOn = ro;
+  state.liveRunsOnHtml = ro ? renderRunsOn(ro, { inSettings: true, id: 'settings-verify-runs-on' }) : '';
+  state.liveVerifyAttrs = ro ? aiActionDisabledAttrs(ro, 'settings-verify-runs-on') : '';
+}
+
+/**
+ * The Verify button. Opens the confirm at once, and — the first time — reads
+ * the run line from the free, local /api/diagnostics/quick (the same answer a
+ * system check gets), so the confirm states the model and the cost before
+ * anything is spent. The system check's own results are NOT shown by this
+ * read: only its `liveCheck` is kept.
+ */
+async function openLiveConfirm(token) {
+  state.liveConfirmOpen = true;
+  state.live = null;
+  render(token);
+  if (state.liveRunsOn !== undefined) return;
+  try {
+    const res = await fetch('/api/diagnostics/quick');
+    const data = await res.json();
+    if (!isCurrentMount(token)) return;
+    setLiveRunsOn(data);
+  } catch {
+    if (!isCurrentMount(token)) return;
+    setLiveRunsOn(null);
+  }
+  render(token);
+}
+
 async function onRunQuickCheck(token) {
   state.quickLoading = true;
   render(token);
@@ -11138,6 +11298,7 @@ async function onRunQuickCheck(token) {
     const data = await res.json();
     if (!isCurrentMount(token)) return;
     state.quick = data.error ? { error: data.error } : data;
+    if (!data.error) setLiveRunsOn(data);
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.quick = { error: err.message };

@@ -56,6 +56,8 @@ import { formatAge, freshnessTier } from '../src/public/next/shared/age.js';
 import { renderReadout } from '../src/public/next/shared/text.js';
 // The REAL monitor, injected into every lifted renderer below (see run()).
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
+// v3.67.0: System check's run line is the shared kit's, driven REAL below.
+import { renderRunsOn, aiActionDisabledAttrs } from '../src/public/next/shared/ai-run.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -864,6 +866,76 @@ section('v3.65.3  The Vault folder ⓘ is one paragraph, not four rows  (EXECUTE
     'CONTROL: called with nothing, renderStorage adds nothing (its lifted-alone callers are unchanged)');
   const err = lift('renderVaultDomains', { ...state, vaultDomains: null, vaultDomainsError: 'Could not read the domains in this folder.' }, extra)();
   ok(/settings-vault-note">Could not read the domains in this folder\.</.test(err), 'a failed read is said, not blank');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('v3.67.0  System check adopts the run line — no price typed into the view  (EXECUTED)');
+// ═══════════════════════════════════════════════════════════════════════════
+// "Verify AI connection · $0.0001" was a literal: it said $0.0001 whatever
+// model the call actually ran on. The price now comes from the server's own
+// `liveCheck.runsOn` (GET /api/diagnostics/quick), rendered by the shared kit.
+{
+  const kit = { renderRunsOn, aiActionDisabledAttrs };
+  const PRICED = { job: 'system-check', jobLabel: 'System check', needsKey: false, provider: 'gemini',
+    providerLabel: 'Gemini', model: 'gemini-2.5-flash-lite', modelLabel: 'Flash Lite 2.5',
+    inputTokens: 12, outputTokensLow: 16, outputTokensHigh: 16, usdLow: 0.0000076, usdHigh: 0.0000076,
+    priceKnown: true, free: false, costNote: 'priced' };
+  const NOKEY = { job: 'system-check', jobLabel: 'System check', needsKey: true };
+
+  // No "$0.0001" literal survives anywhere in the CODE (comments may record it).
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok(!/\$0\.0001/.test(code), 'settings.js types no "$0.0001" into markup any more');
+
+  // setLiveRunsOn: the ONE writer of the three state fields.
+  const st = {};
+  lift('setLiveRunsOn', st, kit)({ checks: [], liveCheck: { runsOn: PRICED } });
+  ok(st.liveRunsOn === PRICED, 'setLiveRunsOn keeps the server’s runsOn as it came');
+  ok(/class="ai-run"/.test(st.liveRunsOnHtml) && /id="settings-verify-runs-on"/.test(st.liveRunsOnHtml),
+    '…and composes the kit’s line, with the id the button points at');
+  ok(!/data-ai-run-door/.test(st.liveRunsOnHtml), '…with NO door: we are already in Settings');
+  ok(st.liveVerifyAttrs === '', 'a priced model leaves the Verify button enabled');
+  lift('setLiveRunsOn', st, kit)({ liveCheck: { runsOn: NOKEY } });
+  ok(/Needs an AI provider key/.test(st.liveRunsOnHtml), 'no key: the line says so');
+  ok(/ disabled aria-disabled="true" aria-describedby="settings-verify-runs-on"/.test(st.liveVerifyAttrs),
+    '…and the Verify button is DISABLED (never hidden), described by that line');
+  lift('setLiveRunsOn', st, kit)({ checks: [] });
+  ok(st.liveRunsOn === null && st.liveRunsOnHtml === '' && st.liveVerifyAttrs === '',
+    'a server that sends no liveCheck: null ("none sent"), no line, button live');
+
+  // renderGeneral carries them: the line DIRECTLY under the button row.
+  const g = run('renderGeneral', { ...baseState(), liveRunsOnHtml: '<p class="ai-run" id="settings-verify-runs-on">LINE</p>',
+    liveVerifyAttrs: ' disabled aria-disabled="true" aria-describedby="settings-verify-runs-on"' });
+  ok(/id="btn-verify-ai" disabled aria-disabled="true" aria-describedby="settings-verify-runs-on">/.test(g),
+    'renderGeneral puts the attributes on the Verify button');
+  ok(/Verify AI connection\s*<\/button>\s*<\/div><div class="settings-verify-runs-on"><p class="ai-run"/.test(g),
+    '…and the run line directly under its button row');
+  ok(!/Verify AI connection · \$/.test(g), 'the label carries no typed price');
+  ok(!/settings-verify-runs-on"><p/.test(run('renderGeneral', baseState())),
+    'CONTROL: before anything was read, no line is drawn (and no invented price either)');
+
+  // renderLiveConfirm: the run line FIRST, and the gate waits for it.
+  const confirm = (liveRunsOn) => lift('renderLiveConfirm', { ...baseState(), liveRunsOn, liveLoading: false }, kit)();
+  const pend = confirm(undefined);
+  ok(/Reading which model runs this check/.test(pend) && /id="btn-verify-ai-confirm" disabled>/.test(pend),
+    'while the run line is still being read, the confirm says so and its button WAITS');
+  const priced = confirm(PRICED);
+  const text = priced.slice(priced.indexOf('cost-confirm-text'));
+  ok(text.indexOf('class="ai-run"') !== -1 && text.indexOf('class="ai-run"') < text.indexOf('This makes one real API call'),
+    'priced: the run line is the FIRST line of the confirm');
+  ok(/Runs on <span class="ai-run-model" title="Gemini · gemini-2\.5-flash-lite">Flash Lite 2\.5<\/span>/.test(priced),
+    '…naming the model by its label, Provider · id in the title');
+  ok(/≈&lt; \$0\.0001/.test(priced), '…with the honest formatter’s figure, never a typed one');
+  ok(/id="btn-verify-ai-confirm">/.test(priced), '…and the confirm button is live');
+  ok(!/data-ai-run-door/.test(priced), '…and no door inside Settings');
+  const nk = confirm(NOKEY);
+  ok(/Needs an AI provider key/.test(nk) &&
+    /id="btn-verify-ai-confirm" disabled aria-disabled="true" aria-describedby="settings-verify-confirm-runs-on">/.test(nk),
+    'no key: the confirm button is disabled and described by the no-key line');
+  const none = confirm(null);
+  ok(!/class="ai-run"/.test(none) && /id="btn-verify-ai-confirm">/.test(none) && !/\$0\.0001/.test(none),
+    'no run line sent (an older server): no line, no invented price, the button live');
+  ok(!/<span class="cost-confirm-text">/.test(priced) && /<div class="cost-confirm-text">/.test(priced),
+    'the text container is a <div>: the run line is a <p>, which a <span> may not hold');
 }
 
 console.log('\n────────────────────────────────────────────────────────────');

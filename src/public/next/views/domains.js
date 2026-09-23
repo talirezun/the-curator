@@ -28,8 +28,16 @@
 import {
   registerView, setSidebar, setMain as shellSetMain, eyebrow, emptyCard, icon, escapeHtml, navigate, isCurrentMount,
   reportAsyncMountFailure, reportAsyncActionFailure, isCurrentReader, openReader,
-  beginDomainWrite, consumeDomainRequest, NEW_PROJECT_REASON,
+  beginDomainWrite, consumeDomainRequest, NEW_PROJECT_REASON, requestSettingsSection,
 } from '../app.js';
+// ── THE RUN LINE (v3.67.0) ───────────────────────────────────────────────
+// Wiki health's three AI actions describe the model they run on with the ONE
+// line every AI action in the app uses (shared/ai-run.js): under the action
+// bar before a run, as the first line of each confirm, and — after a plan or a
+// scan — what actually ran and what it cost. With no provider key the three
+// buttons stay VISIBLE and disabled, described by the no-key line, whose door
+// lands on Settings › Providers & keys (it used to land on General).
+import { renderRunsOn, renderSpent, aiActionDisabledAttrs, wireAiRunDoors } from '../shared/ai-run.js';
 
 // Second import of the SAME module, as a namespace. It was added for one
 // thing — the chat-scope handoff — and the reason it is a NAMESPACE import is
@@ -409,6 +417,14 @@ const state = {
   aiAvailable: false,
   aiProvider: null,
   aiModel: null,
+  // v3.67.0: the model Wiki health's AI actions run on, as the server's own
+  // `runsOn` (describeRun, from GET /api/health/ai-available). `{needsKey:true}`
+  // is the no-key state; null until the probe lands.
+  aiRunsOn: null,
+  // v3.67.0: what the last AI plan or scan on a domain actually ran on and
+  // cost — `{slug, spent}` from the run's own done frame. Keyed by slug so a
+  // domain switch never shows another domain's bill.
+  aiSpent: null,
   estimates: {},          // 'brokenLinks' | 'orphans' | 'semanticDupes' -> result object | 'loading' | 'error'
 
   expandedGroups: new Set(),   // category keys (+ 'dismissed') currently expanded
@@ -1574,8 +1590,15 @@ async function loadDomainsList(token) {
       state.aiAvailable = !!info.available;
       state.aiProvider = info.provider || null;
       state.aiModel = info.model || null;
+      // v3.67.0: the run line's source. The route's own `runsOn` when it
+      // sends one; otherwise (a backend without it) the same fact rebuilt
+      // from the two fields it always sent — `available: false` is exactly
+      // getProviderInfo() throwing, which is exactly describeRun's needsKey.
+      state.aiRunsOn = (info.runsOn && typeof info.runsOn === 'object') ? info.runsOn
+        : (info.available ? { job: 'wiki-health', needsKey: false, provider: info.provider || null,
+            model: info.model || null } : { job: 'wiki-health', needsKey: true });
     })
-    .catch(() => { if (isCurrentMount(token)) state.aiAvailable = false; });
+    .catch(() => { if (isCurrentMount(token)) { state.aiAvailable = false; state.aiRunsOn = null; } });
 
   // The state commit is captured rather than applied, so `state.loaded`
   // flips at the moment we PAINT rather than the moment the response
@@ -7042,43 +7065,45 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
     );
   }
 
-  if (state.aiAvailable) {
-    const brokenCount = (report.brokenLinks || []).length;
-    if (brokenCount > 0) items.push(quickAiButton('brokenLinks', 'Fix ' + pluralize(brokenCount, 'broken link'), busy, crossMountBusy));
-    const orphanCount = (report.orphans || []).length;
-    if (orphanCount > 0) items.push(quickAiButton('orphans', 'Rescue ' + pluralize(orphanCount, 'orphan'), busy, crossMountBusy));
-    // H4 fix: always offered, unlike the two above — there's no free,
-    // already-known count to gate this on (see the file-header comment on
-    // loadEstimates). The button shows no cost until the user opens it;
-    // confirmSemanticScan() fetches the (slow, but token-free) estimate at
-    // that point and shows a "no likely duplicates" banner instead of a
-    // confirm dialog if candidatePairs turns out to be 0.
-    items.push(quickAiButton('semanticDupes', 'Find duplicate pages', busy, crossMountBusy));
-  }
+  // ── THE AI ACTIONS ARE NEVER HIDDEN (v3.67.0) ──────────────────────────
+  // Through v3.66.x, with no provider key, the three ✨ buttons were simply
+  // not rendered, and the only trace of them was a sentence — shown ONLY when
+  // there was nothing structural to fix — with a door to Settings › General,
+  // the wrong section. A user with a key-less install and a broken wiki saw
+  // one "Fix N safe issues" button and no sign the AI actions existed. Now the
+  // three render in every state; with no key they are DISABLED with the kit's
+  // attributes, described by the no-key run line under the bar, whose door is
+  // the shared one to Providers & keys.
+  //
+  // The model: the server's own runsOn when the probe has landed; with no
+  // probe answer at all, "no key" is the fail-safe reading (the AI actions
+  // stay disabled), which is the direction the old code took by hiding them.
+  const runsOn = state.aiRunsOn || (state.aiAvailable ? null : { job: 'wiki-health', needsKey: true });
+  const brokenCount = (report.brokenLinks || []).length;
+  if (brokenCount > 0) items.push(quickAiButton('brokenLinks', 'Fix ' + pluralize(brokenCount, 'broken link'), busy, crossMountBusy, runsOn));
+  const orphanCount = (report.orphans || []).length;
+  if (orphanCount > 0) items.push(quickAiButton('orphans', 'Rescue ' + pluralize(orphanCount, 'orphan'), busy, crossMountBusy, runsOn));
+  // H4 fix: always offered, unlike the two above — there's no free,
+  // already-known count to gate this on (see the file-header comment on
+  // loadEstimates). The button shows no cost until the user opens it;
+  // confirmSemanticScan() fetches the (slow, but token-free) estimate at
+  // that point and shows a "no likely duplicates" banner instead of a
+  // confirm dialog if candidatePairs turns out to be 0.
+  items.push(quickAiButton('semanticDupes', 'Find duplicate pages', busy, crossMountBusy, runsOn));
 
-  if (items.length === 0) {
-    if (!state.aiAvailable) {
-      return (
-        // Static prose, identical for every user without a key — the
-        // DESCRIPTION role. The bare <span> inherited a font-size set on the
-        // flex container, which is the untracked-treatment shape the module
-        // replaces; .tx-desc is a flex item here and keeps its own type.
-        '<div class="dm-quick dm-quick-empty">' +
-          '<div class="dm-quick-empty-text">' +
-            renderDescription('No structural issues to fix right now. Add an AI provider key in Settings to unlock ' +
-              'broken-link resolution, orphan rescue and duplicate-page detection.') +
-          '</div>' +
-          '<button class="btn btn-secondary dm-quick-settings-btn" id="dm-open-settings-btn">Open Settings</button>' +
-        '</div>'
-      );
-    }
-    return '';
-  }
+  // ONE line under the whole bar, not one per button: each button already
+  // carries its own compact cost badge (costReadout), so the line names the
+  // model and says so — the kit's `figuresNote` form. After a plan or a scan
+  // on THIS domain, the after-line follows it: what ran, what it cost.
+  const runLine = renderRunsOn(runsOn, { id: 'dm-quick-runs-on', figuresNote: 'each action shows its cost' });
+  const spent = state.aiSpent && domain && state.aiSpent.slug === domain.slug
+    ? renderSpent(state.aiSpent.spent, { id: 'dm-quick-spent' }) : '';
 
   return (
     '<div class="dm-quick">' +
       '<div class="dm-quick-eyebrow cur-eyebrow">' + icon('sparkles', 12) + ' QUICK MAINTENANCE</div>' +
       '<div class="dm-quick-actions">' + items.join('') + '</div>' +
+      (runLine || spent ? '<div class="dm-quick-run">' + runLine + spent + '</div>' : '') +
       // Wording nit found during live verification: `crossMountBusy` is
       // true for BOTH "some earlier, abandoned mount's write is still
       // running" AND "this exact mount's own action, which it just
@@ -7117,7 +7142,7 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
   );
 }
 
-function quickAiButton(key, label, busy, crossMountBusy) {
+function quickAiButton(key, label, busy, crossMountBusy, runsOn) {
   const est = state.estimates[key];
   let costText = null;
   if (est === 'loading') costText = '…';
@@ -7125,8 +7150,13 @@ function quickAiButton(key, label, busy, crossMountBusy) {
   const disabled = busy || crossMountBusy || est === 'loading' || (est && est.error);
   const running = (busy === key + 'Plan' || busy === key + 'Scan' || busy === key + 'Estimate');
   const label2 = running ? label + '…' : label;
+  // No key: disabled, never hidden, described by the no-key run line (v3.67.0).
+  // `aiActionDisabledAttrs` is '' whenever a run is possible, so the ordinary
+  // busy/estimate reasons keep their own plain `disabled`.
+  const noKeyAttrs = aiActionDisabledAttrs(runsOn, 'dm-quick-runs-on');
   return (
-    '<button class="btn btn-ai btn-xs dm-quick-btn" data-action="' + key + '"' + (disabled ? ' disabled' : '') + '>' +
+    '<button class="btn btn-ai btn-xs dm-quick-btn" data-action="' + key + '"' +
+      (noKeyAttrs || (disabled ? ' disabled' : '')) + '>' +
       // The sparkles mark (token spend) gives way to the ring only while
       // THIS action is the one running — the spend has already happened by
       // then, and liveness is the useful signal. Every other button keeps
@@ -7143,6 +7173,11 @@ function renderConfirmCard() {
   return (
     '<div class="dm-confirm-card">' +
       '<div class="dm-confirm-title">' + escapeHtml(c.title) + '</div>' +
+      // v3.67.0: an AI action's confirm opens with the shared run line —
+      // composed by the confirm's builder (renderRunsOn's own escaping), so
+      // this lifted body gains no free identifier (rule 10). Absent on every
+      // confirm that spends nothing.
+      (typeof c.runLineHtml === 'string' ? c.runLineHtml : '') +
       '<div class="dm-confirm-body">' + escapeHtml(c.body) + '</div>' +
       '<div class="dm-confirm-actions">' +
         '<button class="btn btn-primary" id="dm-confirm-yes">' + escapeHtml(c.confirmLabel || 'Confirm') + '</button>' +
@@ -7477,7 +7512,9 @@ function bindHealthListeners(domain, readonly) {
     boundScope.__dmBound = true;
   }
   document.getElementById('dm-rescan-btn')?.addEventListener('click', () => rescan(domain.slug));
-  document.getElementById('dm-open-settings-btn')?.addEventListener('click', () => navigate('settings'));
+  // (v3.67.0: the no-key "Open Settings" button — which landed on General —
+  // is gone. Its successor is the run line's own door, wired once per mount
+  // by wireAiRunDoors in onEnter, and it lands on Providers & keys.)
 
   // LOW-3 fix (re-audit, third round): these 5 dispatch sites are the
   // DESTRUCTIVE ones (fix/rescue/merge/apply) — exactly what
@@ -7627,8 +7664,8 @@ const AI_DISCLOSURE_KEY = 'curator-ai-health-disclosure-seen-v1';
 const AI_DISCLOSURE_COPY =
   'The ✨ AI actions in Quick maintenance — fixing broken links, rescuing orphan pages, and finding duplicate ' +
   'pages — send excerpts of the relevant wiki pages, and usually a list of your other page names (slugs only, ' +
-  'never full page contents beyond what’s excerpted), to your configured AI provider (Google Gemini or ' +
-  'Anthropic — whichever you set in Settings). The next step always shows exactly what that specific action ' +
+  'never full page contents beyond what’s excerpted), to your configured AI provider (Google Gemini, ' +
+  'Anthropic or OpenRouter — whichever you set in Settings). The next step always shows exactly what that specific action ' +
   'sends and its estimated cost before anything runs. The provider’s own privacy policy applies to what it ' +
   'receives. To turn this off entirely, remove your API key in Settings.';
 
@@ -7896,6 +7933,9 @@ function confirmBrokenLinksPlan(slug) {
       (est && est.needAi === 1 ? '' : 's') + ' that need AI (' + (est && !est.error ? est.resolveFree : 0) + ' resolve for free locally). ' +
       'This only builds a plan — nothing is written yet.',
     confirmLabel: 'Build plan',
+    // The run line first (v3.67.0): the estimate route's own runsOn when it
+    // sent one, else the resting model from the ai-available probe.
+    runLineHtml: renderRunsOn((est && est.runsOn) || state.aiRunsOn, { id: 'dm-confirm-runs-on' }),
     run: () => runBrokenLinksPlan(slug),
   };
   render(myMountToken);
@@ -7952,6 +7992,7 @@ function emptyPlanNotice(kind, summary, batchErrors) {
 async function runBrokenLinksPlan(slug) {
   const token = myMountToken;
   state.busyKey = 'brokenLinksPlan';
+  state.aiSpent = null; // v3.67.0: the after-line belongs to THIS run once it lands
   state.progressText = 'Planning…';
   state.aiProgress = null;
   render(token);
@@ -7965,6 +8006,9 @@ async function runBrokenLinksPlan(slug) {
       if (type === 'error') throw new Error(ev.error || 'Plan failed');
     });
     if (!result) throw new Error('No plan returned');
+    // What the plan actually ran on and cost (v3.67.0) — recorded BEFORE the
+    // empty/non-empty split, because an empty plan was still paid for.
+    if (isCurrentMount(token) && result.spent) state.aiSpent = { slug, spent: result.spent };
     // Deliberately NOT `!result.plan.length` on a bare read: a done frame whose
     // `plan` is absent or not an array is also "nothing to apply", and must take
     // the same branch rather than throwing on `.length` of undefined.
@@ -8003,6 +8047,7 @@ function confirmOrphansPlan(slug) {
       (est && !est.error ? ' (' + est.inventorySize + ' entries)' : '') + ' to ' + provider + (model ? '/' + model : '') +
       '. Estimated cost ' + (cost || 'unknown') + '. This only builds a plan — nothing is written yet.',
     confirmLabel: 'Build plan',
+    runLineHtml: renderRunsOn((est && est.runsOn) || state.aiRunsOn, { id: 'dm-confirm-runs-on' }),
     run: () => runOrphansPlan(slug),
   };
   render(myMountToken);
@@ -8011,6 +8056,7 @@ function confirmOrphansPlan(slug) {
 async function runOrphansPlan(slug) {
   const token = myMountToken;
   state.busyKey = 'orphansPlan';
+  state.aiSpent = null; // v3.67.0: the after-line belongs to THIS run once it lands
   state.aiProgress = null;
   render(token);
   try {
@@ -8023,6 +8069,7 @@ async function runOrphansPlan(slug) {
       if (type === 'error') throw new Error(ev.error || 'Plan failed');
     });
     if (!result) throw new Error('No plan returned');
+    if (isCurrentMount(token) && result.spent) state.aiSpent = { slug, spent: result.spent };
     // v3.9.1 — see runBrokenLinksPlan above for the whole reasoning. This is the
     // flow the maintainer actually hit: "Rescue 3 orphans $0.0026" → three
     // orphans with no genuine home → red "Could not apply the plan — Missing
@@ -8207,6 +8254,7 @@ async function confirmSemanticScan(slug) {
       ' using ' + provider + (model ? '/' + model : '') + '. Estimated cost ' + (cost || 'unknown') +
       '. This only finds pairs — nothing is merged yet.',
     confirmLabel: 'Scan now',
+    runLineHtml: renderRunsOn((est && est.runsOn) || state.aiRunsOn, { id: 'dm-confirm-runs-on' }),
     run: () => runSemanticScan(slug),
   };
   render(token);
@@ -8215,6 +8263,7 @@ async function confirmSemanticScan(slug) {
 async function runSemanticScan(slug) {
   const token = myMountToken;
   state.busyKey = 'semanticDupesScan';
+  state.aiSpent = null; // v3.67.0: the after-line belongs to THIS run once it lands
   state.aiProgress = null;
   render(token);
   try {
@@ -8225,6 +8274,7 @@ async function runSemanticScan(slug) {
       if (type === 'error') throw new Error(ev.error || 'Scan failed');
     });
     if (!result) throw new Error('No scan result returned');
+    if (isCurrentMount(token) && result.spent) state.aiSpent = { slug, spent: result.spent };
     if (isCurrentMount(token)) {
       // A NEW SCAN GETS A NEW OBJECT, so the previewed set is empty by
       // construction — there is no set from the previous scan to forget to
@@ -8776,6 +8826,15 @@ registerView('domains', {
     // what carries the request across that await.
     arrivalRequest = consumeDomainRequest();
     if (arrivalRequest && arrivalRequest.slug) state.activeSlug = arrivalRequest.slug;
+
+    // The run line's door (v3.67.0): "Change model" / "Add one in Providers &
+    // keys" under Wiki health's AI actions. Delegated on the shell's view root
+    // and idempotent per root (the kit keeps a WeakSet), so a re-mount adds no
+    // second listener; the shell's own functions are INJECTED, never imported
+    // into the kit.
+    if (typeof document !== 'undefined') {
+      wireAiRunDoors(document.getElementById('view-root'), { requestSettingsSection, navigate });
+    }
 
     loadGate = createLoadingGate({
       onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
