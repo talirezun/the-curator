@@ -4112,8 +4112,14 @@ function resolveProviderDefault(preferProvider) {
   if (getEffectiveKey('openrouter')) {
     return { provider: 'openrouter', model: defaultModelFor('openrouter', process.env.LLM_MODEL) };
   }
+  // v3.67.0: names Settings' section and all three providers — the sentence
+  // omitted OpenRouter, a first-class provider since v3.15.0. The PREFIX
+  // "No LLM API key found." is load-bearing and unchanged: diagnostics, the
+  // batch queue and beta15's classifier key on it (test-ai-run.js drives this
+  // throw for real and pins both halves).
   throw new Error(
-    'No LLM API key found. Add one in Settings, or set GEMINI_API_KEY / ANTHROPIC_API_KEY in .env.'
+    'No LLM API key found. Add one in Settings › Providers & keys (Gemini, Anthropic or OpenRouter), ' +
+    'or set GEMINI_API_KEY / ANTHROPIC_API_KEY in .env.'
   );
 }
 
