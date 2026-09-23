@@ -46,8 +46,15 @@ import {
   estimateBrokenLinkFix,
   estimateOrphanRescue,
   estimateSemanticDuplicateScan,
+  planBrokenLinkFixes,
+  planOrphanRescue,
+  scanSemanticDuplicates,
+  describeHealthRun,
   __testing as healthAiTesting,
 } from '../src/brain/health-ai.js';
+import healthRouter from '../src/routes/health.js';
+import { spentFromUsage } from '../src/brain/ai-run.js';
+import { makeUsageAccumulator } from '../src/brain/ingest.js';
 
 const { estimateUsdCost, costFields } = healthAiTesting;
 const { DEFAULTS, FALLBACK_CHAINS, MODEL_PRICES_USD_PER_MTOK } = llmTesting;
@@ -365,6 +372,183 @@ section('9. Doc-drift guard — costNote consumers exist and stale "not wired" c
   // exactly the same defect class as one that underclaims.
   ok(/compact.*cost unknown|cost unknown.*compact/is.test(doc),
     'ai-health.md documents the deliberate /next compact-badge "cost unknown" exception');
+}
+
+// ── 10–12. v3.67.0 — the run line and the actual cost (ADDITIVE ONLY) ─────
+// Every Health estimate route gains `runsOn` (describeRun's shape), and every
+// plan/scan's `done` event gains `spent` (spentFromUsage's). Nothing existing
+// moves: each route's body minus `runsOn` must equal what the route sent
+// before — `{ok:true, ...estimate}` — key for key and value for value.
+{
+  const tmpUserData = mkdtempSync(path.join(tmpdir(), 'curator-test-hai-run-userdata-'));
+  const tmpDomains = mkdtempSync(path.join(tmpdir(), 'curator-test-hai-run-domains-'));
+  const saved = {};
+  for (const k of ['LLM_MODEL', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY']) { saved[k] = process.env[k]; delete process.env[k]; }
+  __setUserDataDirOverride(tmpUserData);
+  __setDomainsDirOverride(tmpDomains);
+  const CFG = path.join(tmpUserData, '.curator-config.json');
+  const withKey = () => writeFileSync(CFG, JSON.stringify({ geminiApiKey: 'zz-test-dummy-key-not-a-real-credential', activeProvider: 'gemini' }));
+  const withoutKey = () => writeFileSync(CFG, JSON.stringify({}));
+  const route = (method, p) => {
+    const layer = healthRouter.stack.find(l => l.route && l.route.path === p && l.route.methods[method]);
+    return layer ? layer.route.stack[0].handle : null;
+  };
+  const call = async (method, p, params = {}) => {
+    const h = route(method, p);
+    const sent = [];
+    const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { sent.push({ status: this.statusCode, body: b }); return this; } };
+    if (!h) return { status: 0, body: {} };
+    await h({ params, query: {}, body: {} }, res);
+    return sent[0] || { status: 0, body: {} };
+  };
+  const without = (o, k) => { const c = { ...o }; delete c[k]; return c; };
+  const close = (a, b) => typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < 1e-6;
+  try {
+    withKey();
+    const domain = 'zztest-health-ai-run';
+    const wikiDir = path.join(tmpDomains, domain, 'wiki');
+    for (const sub of ['entities', 'concepts', 'summaries']) mkdirSync(path.join(wikiDir, sub), { recursive: true });
+    writeFileSync(path.join(tmpDomains, domain, 'CLAUDE.md'), '# test domain\n');
+    writeFileSync(path.join(wikiDir, 'entities', 'alice.md'), '# Alice\n\nSees [[zz-quantum-flux-capacitor]], never written.\n');
+    // 13 orphans → TWO orphan-rescue batches (batch size 12), so `spent` must SUM.
+    for (let i = 0; i < 13; i++) writeFileSync(path.join(wikiDir, 'entities', `lonely-${i}.md`), `# Lonely ${i}\n\nNobody links here.\n`);
+    writeFileSync(path.join(wikiDir, 'concepts', 'machine-learning.md'), '# Machine learning\n\nLearning from data.\n');
+    writeFileSync(path.join(wikiDir, 'concepts', 'machine-learning-systems.md'), '# Machine learning systems\n\nSystems that learn.\n');
+
+    section('10. v3.67.0 — every Health estimate route carries runsOn, and nothing else changed');
+    const cases = [
+      { p: '/:domain/broken-links/estimate', kind: 'brokenLinks', direct: () => estimateBrokenLinkFix(domain), extra: {} },
+      { p: '/:domain/orphans/estimate', kind: 'orphans', direct: () => estimateOrphanRescue(domain), extra: {} },
+      { p: '/:domain/semantic-dupes/estimate', kind: 'semanticDupes', direct: () => estimateSemanticDuplicateScan(domain, 500), extra: { costCeilingTokens: 50_000 } },
+    ];
+    const SPLIT = healthAiTesting.HEALTH_TOKEN_SPLIT || {};
+    for (const c of cases) {
+      const r = await call('get', c.p, { domain });
+      const est = await c.direct();
+      const expectedOld = { ok: true, ...est, ...c.extra };
+      eq(r.status, 200, `${c.p}: 200, unchanged`);
+      ok(JSON.stringify(without(r.body, 'runsOn')) === JSON.stringify(expectedOld),
+        `${c.p}: the body minus runsOn is BYTE-identical to {ok:true, ...estimate${c.extra.costCeilingTokens ? ', costCeilingTokens' : ''}} — no existing field changed`);
+      const R = r.body.runsOn || {};
+      ok(R.job === 'wiki-health' && R.jobLabel === 'Wiki health' && R.needsKey === false, `${c.p}: runsOn is the wiki-health run line`);
+      const split = SPLIT[c.kind] || {};
+      eq(R.inputTokensLow, Math.round(est.estimatedTokens * split.input), `${c.p}: runsOn input is the estimate's own ${split.input} share`);
+      eq(R.inputTokensLow, R.inputTokensHigh, `${c.p}: a POINT, as Health estimates always were`);
+      eq(R.outputTokensLow, Math.round(est.estimatedTokens * split.output), `${c.p}: runsOn output is the estimate's own ${split.output} share`);
+      ok(close(R.usdHigh, est.estimatedUsd) && close(R.usdLow, est.estimatedUsd),
+        `${c.p}: runsOn's dollar figure is the confirm's estimatedUsd (${R.usdHigh} vs ${est.estimatedUsd})`);
+    }
+    // The split is ONE table, read by the estimates too (a second copy would drift).
+    const src = readFileSync(HEALTH_AI_SRC, 'utf8');
+    ok(!/estimatedTokens \* 0\.(6|85|9)\b/.test(src), 'no estimate keeps its own literal split — HEALTH_TOKEN_SPLIT is the one table');
+
+    // Unpriced: runs, says so, carries no dollar field.
+    process.env.LLM_MODEL = 'zz-genuinely-unpriced-model-id';
+    const ru = (await call('get', '/:domain/broken-links/estimate', { domain })).body.runsOn || {};
+    eq(ru.costNote, 'price-not-published', 'unpriced model: runsOn.costNote price-not-published');
+    ok(!('usdLow' in ru) && !('usdHigh' in ru), 'unpriced model: runsOn has no usd fields — absent, never $0');
+    delete process.env.LLM_MODEL;
+
+    // ai-available: the resting-state no-key source (contract §1.13).
+    const av = await call('get', '/ai-available');
+    eq(Object.keys(av.body).join(','), 'available,provider,model,runsOn', 'ai-available with a key: the old keys, plus runsOn');
+    ok(av.body.available === true && av.body.runsOn.needsKey === false && av.body.runsOn.model === av.body.model,
+      'ai-available with a key: runsOn names the same model');
+    ok(!('inputTokens' in av.body.runsOn) && !('usdHigh' in av.body.runsOn), 'ai-available: runsOn carries no token or dollar figures');
+    withoutKey();
+    const av2 = await call('get', '/ai-available');
+    eq(Object.keys(av2.body).join(','), 'available,reason,runsOn', 'ai-available with NO key: the old keys, plus runsOn');
+    eq(av2.body.available, false, 'with no key: available false, unchanged');
+    ok(/^No LLM API key found\./.test(av2.body.reason || ''), 'with no key: reason is the real no-key throw, unchanged');
+    eq(JSON.stringify(av2.body.runsOn), JSON.stringify({ job: 'wiki-health', jobLabel: 'Wiki health', needsKey: true }),
+      'with no key: runsOn is exactly {job, jobLabel, needsKey:true}');
+    const noKeyEst = await call('get', '/:domain/broken-links/estimate', { domain });
+    eq(noKeyEst.status, 400, 'with no key: the estimate route still answers 400 — status codes unchanged');
+    ok(!('runsOn' in noKeyEst.body), 'and its 400 body is unchanged (no runsOn grafted onto an error)');
+    withKey();
+
+    section('11. v3.67.0 — every Health plan and scan reports what it actually cost (spent)');
+    const MODEL = { provider: 'gemini', model: 'gemini-2.5-flash-lite' };
+    const fakeLLM = (reply, usagePerCall, { throwAfter = false } = {}) => {
+      const seen = [];
+      const fn = async (_s, _u, _m, _f, _w, opts = {}) => {
+        const u = { ...usagePerCall[seen.length % usagePerCall.length], ...MODEL };
+        seen.push(u);
+        if (opts && typeof opts.onUsage === 'function') opts.onUsage(u);
+        if (throwAfter) throw new Error('simulated parse-level failure after billing');
+        return reply;
+      };
+      fn.seen = seen;
+      return fn;
+    };
+    const expectedSpent = (usages) => { const acc = makeUsageAccumulator(); for (const u of usages) acc.onUsage(u); return spentFromUsage(acc.totals); };
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+    // (a) orphan rescue: two batches, two different usages → spent is the SUM.
+    {
+      const events = [];
+      const llm = fakeLLM('{"results":[]}', [{ inputTokens: 4000, outputTokens: 120 }, { inputTokens: 700, outputTokens: 30 }]);
+      const out = await planOrphanRescue(domain, { generateText: llm }, (e) => events.push(e));
+      const done = events.find(e => e.type === 'done') || {};
+      eq(llm.seen.length, 2, 'orphan rescue: precondition — 13 orphans make TWO LLM calls');
+      ok(same(done.spent, expectedSpent(llm.seen)), 'orphan rescue: done.spent equals spentFromUsage of BOTH calls accumulated');
+      eq(done.spent && done.spent.inputTokens, 4700, 'orphan rescue: spent sums the batches (4000 + 700), not the last one alone');
+      ok(same(out.spent, done.spent), 'orphan rescue: the return value carries the same spent');
+      eq(Object.keys(done).join(','), 'type,plan,summary,cost,spent', 'orphan rescue: done keeps plan/summary/cost, plus spent');
+      eq(Object.keys(done.cost || {}).join(','), 'provider,model,inputTokens,outputTokens,estimatedUsd,priceKnown,costNote',
+        'orphan rescue: the pre-existing cost object is unchanged');
+    }
+    // (b) broken links: a call that BILLED and then failed still counts.
+    {
+      const events = [];
+      const llm = fakeLLM('not json', [{ inputTokens: 2500, outputTokens: 60 }], { throwAfter: true });
+      await planBrokenLinkFixes(domain, { generateText: llm }, (e) => events.push(e));
+      const done = events.find(e => e.type === 'done') || {};
+      ok(events.some(e => e.type === 'batch-error'), 'broken links: precondition — the batch errored');
+      ok(same(done.spent, expectedSpent(llm.seen)) && done.spent.calls === 1,
+        'broken links: a batch that billed and then failed is still in spent — money spent is money spent');
+      eq(Object.keys(done).join(','), 'type,plan,summary,cost,spent', 'broken links: done keeps plan/summary/cost, plus spent');
+    }
+    // (c) semantic scan.
+    {
+      const events = [];
+      const llm = fakeLLM('{"results":[]}', [{ inputTokens: 1800, outputTokens: 90, cachedReadTokens: 0, cacheWriteTokens: 0 }]);
+      await scanSemanticDuplicates(domain, { maxPairs: 500, costCeilingTokens: 1_000_000, generateText: llm }, (e) => events.push(e));
+      const done = events.find(e => e.type === 'done') || {};
+      ok(llm.seen.length >= 1, `semantic scan: precondition — it made ${llm.seen.length} call(s)`);
+      ok(same(done.spent, expectedSpent(llm.seen)), 'semantic scan: done.spent equals spentFromUsage of its calls');
+      eq(Object.keys(done).join(','), 'type,pairs,cost,spent', 'semantic scan: done keeps pairs/cost, plus spent');
+      ok(typeof done.spent.usd === 'number' && done.spent.model === 'gemini-2.5-flash-lite', 'semantic scan: spent is priced on the model that billed');
+    }
+    // (d) no call at all → spent is the nothing-ran shape, usd null (never $0).
+    {
+      const emptyDomain = 'zztest-health-ai-run-empty';
+      for (const sub of ['entities', 'concepts', 'summaries']) mkdirSync(path.join(tmpDomains, emptyDomain, 'wiki', sub), { recursive: true });
+      writeFileSync(path.join(tmpDomains, emptyDomain, 'CLAUDE.md'), '# empty\n');
+      const llm = fakeLLM('{"results":[]}', [{ inputTokens: 1, outputTokens: 1 }]);
+      const out = await planOrphanRescue(emptyDomain, { generateText: llm }, () => {});
+      ok(llm.seen.length === 0 && out.spent && out.spent.calls === 0 && out.spent.usd === null && out.spent.model === null,
+        'no orphans → no call → spent.calls 0, model null, usd null (the renderer prints nothing, never "$0.00")');
+    }
+
+    section('12. v3.67.0 — the production routes pass NO seam (the plan/scan routes still call the real LLM)');
+    {
+      const rsrc = readFileSync(path.join(ROOT, 'src', 'routes', 'health.js'), 'utf8');
+      ok(/planBrokenLinkFixes\(req\.params\.domain, \{\}, send\)/.test(rsrc), 'the broken-links plan route passes {} — no generateText seam reaches production');
+      ok(/planOrphanRescue\(req\.params\.domain, \{\}, send\)/.test(rsrc), 'the orphan plan route passes {}');
+      ok(!/generateText\s*:/.test(rsrc), 'routes/health.js names no generateText option anywhere');
+      const d = await describeHealthRun('not-a-kind', 1000);
+      ok(d.job === 'wiki-health' && !('inputTokens' in d), 'describeHealthRun: an unknown kind describes the model with no figures');
+      const p = await describeHealthRun('__proto__', 1000);
+      ok(!('inputTokens' in p), 'describeHealthRun: an inherited key is not a kind (own-property check)');
+    }
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    __setUserDataDirOverride(null);
+    __setDomainsDirOverride(null);
+    rmSync(tmpUserData, { recursive: true, force: true });
+    rmSync(tmpDomains, { recursive: true, force: true });
+  }
 }
 
 console.log(`\n${'─'.repeat(60)}`);

@@ -8,14 +8,18 @@
  * Request body: { domain, conversationId }
  * Stream events:
  *   { type: 'progress', pct, message }
- *   { type: 'done', title, pagesWritten, changes }
- *   { type: 'error', message }
+ *   { type: 'done', title, pagesWritten, changes, warnings, spent }
+ *   { type: 'error', message, spent? } — `spent` only when a call was billed
+ *
+ * `spent` (v3.67.0) is src/brain/ai-run.js's spentFromUsage shape, summed
+ * across every rung of the compile's fallback ladder.
  *   { type: 'refused', reason }        — short conversation, missing data, etc.
  */
 
 import { Router } from 'express';
 import { compileConversation } from '../brain/compile.js';
 import { estimateCompileCost } from '../brain/compile-estimate.js';
+import { describeRun } from '../brain/ai-run.js';
 import { listDomains, domainPath, isDomainReadonly } from '../brain/files.js';
 import {
   registerWrite,
@@ -30,6 +34,55 @@ const router = Router();
 // anything that doesn't match the canonical 8-4-4-4-12 hex shape — defends
 // against path-traversal via crafted IDs reaching readConversation().
 const CONVERSATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The run line's shape for a compile estimate (v3.67.0, ADDITIVE: every
+ * existing field of the estimate body is unchanged). Built from the
+ * estimate's OWN token range, so the line under the button and the confirm's
+ * figures describe the same arithmetic: describeRun prices low+low and
+ * high+high exactly as estimateCompileCost does. A body with no estimate (a
+ * refusal, a mirror) still carries `runsOn` — model and key state only — so
+ * the no-key signal has one source (contract §1.13).
+ */
+export function compileRunsOn(body) {
+  const E = body && body.estimate;
+  if (E && typeof E === 'object') {
+    return describeRun({
+      job: 'compile',
+      inputTokensLow: E.inputTokensLow,
+      inputTokensHigh: E.inputTokensHigh,
+      outputTokensLow: E.outputTokensLow,
+      outputTokensHigh: E.outputTokensHigh,
+    });
+  }
+  return describeRun({ job: 'compile' });
+}
+
+/**
+ * The one terminal SSE event for a compileConversation result. Exported so a
+ * suite can drive it with no LLM; the handler below emits exactly this.
+ * Every pre-v3.67.0 field is unchanged; `spent` is additive and appears only
+ * when the result carries it (a success always; a failure only when a call
+ * was billed; a refusal never).
+ */
+export function compileOutcomeEvent(result) {
+  const r = result || {};
+  const spent = (r.spent && typeof r.spent === 'object') ? { spent: r.spent } : {};
+  if (!r.ok) {
+    if (r.reason) return { type: 'refused', reason: r.reason };
+    return { type: 'error', message: r.error || 'Compilation failed', ...spent };
+  }
+  return {
+    type: 'done',
+    title: r.title,
+    pagesWritten: r.pagesWritten,
+    changes: r.changes,
+    // Non-fatal notes (e.g. large conversation → concise/summary-only
+    // fallback). Empty on a normal compile (v3.0.1-beta.27).
+    warnings: r.warnings || [],
+    ...spent,
+  };
+}
 
 /**
  * GET /api/compile/estimate?domain=<slug>&conversationId=<uuid>
@@ -60,7 +113,8 @@ const CONVERSATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
  *     domainContext: { entityPages, conceptPages, promptChars },
  *     estimate: { inputTokensLow/High, outputTokensLow/High, usdLow, usdHigh,
  *                 priceKnown, costUnknown, tokenizerFactor, basis },
- *     warnings: [] }
+ *     warnings: [],
+ *     runsOn }          ← v3.67.0, additive: describeRun({job:'compile', …})
  *
  * `usdLow`/`usdHigh` are NULL — never 0 — whenever `priceKnown` is false, and
  * `costUnknown` names WHICH of the three reasons applies
@@ -95,11 +149,13 @@ router.get('/estimate', async (req, res) => {
         `Compile into your personal opted-in domain instead, then push contributions from the Shared Brain view.`,
       provider: null, model: null, conversation: null, domainContext: null,
       estimate: null, warnings: [],
+      runsOn: describeRun({ job: 'compile' }),
     });
   }
 
   try {
-    res.json(await estimateCompileCost(domain, conversationId));
+    const body = await estimateCompileCost(domain, conversationId);
+    res.json({ ...body, runsOn: compileRunsOn(body) });
   } catch (err) {
     console.error('[compile] estimate error:', err);
     res.status(500).json({ error: 'Failed to estimate compile cost.' });
@@ -167,26 +223,9 @@ router.post('/conversation', async (req, res) => {
       emit({ type: 'progress', pct, message });
     });
 
-    if (!result.ok) {
-      // Refusals (too-short conversation, not found) are not errors — they're
-      // the normal "nothing to compile" outcome. Errors come from LLM failures.
-      if (result.reason) {
-        emit({ type: 'refused', reason: result.reason });
-      } else {
-        emit({ type: 'error', message: result.error || 'Compilation failed' });
-      }
-      return;
-    }
-
-    emit({
-      type: 'done',
-      title: result.title,
-      pagesWritten: result.pagesWritten,
-      changes: result.changes,
-      // Non-fatal notes (e.g. large conversation → concise/summary-only
-      // fallback). Empty on a normal compile (v3.0.1-beta.27).
-      warnings: result.warnings || [],
-    });
+    // Refusals (too-short conversation, not found) are not errors — they're
+    // the normal "nothing to compile" outcome. Errors come from LLM failures.
+    emit(compileOutcomeEvent(result));
   } catch (err) {
     console.error('Compile error:', err);
     emit({ type: 'error', message: err.message });

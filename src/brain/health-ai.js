@@ -24,6 +24,25 @@ import { jsonrepair } from 'jsonrepair';
 import { wikiPath } from './files.js';
 import { generateText, getProviderInfo, getModelPrice, isFreeModel } from './llm.js';
 import { findSemanticCandidatePairs, SEMANTIC_DUPE_DEFAULT_CAP, scanWiki } from './health.js';
+// v3.67.0: one estimate shape and one actual shape for every AI job. The
+// accumulator is the ingest pipeline's own (src/brain/ingest.js), so a Health
+// run and an ingest are summed and priced by the same code.
+import { makeUsageAccumulator } from './ingest.js';
+
+// src/brain/ai-run.js is reached at CALL TIME, never by a static import.
+// This module sits inside ingest.js's own import subtree
+// (ingest.js → raw-store.js → wiki-read.js → health.js → health-ai.js), and a
+// static import of ai-run.js would pull compile-estimate.js → ingest-queue.js
+// into that subtree; ingest-queue.js reads ingest.js's `__testing` while
+// evaluating, so every process whose first import is ingest.js would crash
+// ("Cannot access 'ingestTesting' before initialization") — measured on this
+// branch before the fix. test-next-compile-estimate §11 pins it by loading
+// each module on the cycle as the first import of a fresh process.
+let aiRunModule = null;
+async function aiRun() {
+  if (!aiRunModule) aiRunModule = await import('./ai-run.js');
+  return aiRunModule;
+}
 
 // Excerpt window around the broken link — ~4 KB total (≈800 words). Large
 // enough to give the model paragraph-level context, small enough that a
@@ -343,6 +362,41 @@ const FIRST_PARA_MAX = 500;     // per-page content sample sent to the LLM
 const EST_TOKENS_PER_PAIR = 400; // rough input+output budget per pair in a batch
 
 /**
+ * How each Health estimate splits its one token figure into input and output
+ * (v3.67.0: named once, read by the three estimates AND by `describeHealthRun`,
+ * so the run line under a button and the confirm's `estimatedUsd` price the
+ * same split). The values are the ones the three estimates always used.
+ */
+const HEALTH_TOKEN_SPLIT = Object.freeze({
+  semanticDupes: Object.freeze({ input: 0.6, output: 0.4 }),
+  brokenLinks:   Object.freeze({ input: 0.85, output: 0.15 }),
+  orphans:       Object.freeze({ input: 0.9, output: 0.1 }),
+});
+
+/**
+ * The run line for a Health estimate (v3.67.0, ADDITIVE beside the existing
+ * estimatedTokens / estimatedUsd / priceKnown / costNote fields, which keep
+ * their contracts). A POINT, as the Health estimates always were: low = high.
+ * `kind` is a HEALTH_TOKEN_SPLIT key; anything else (or a non-count
+ * `estimatedTokens`) describes the model with no token figures — the
+ * resting-state shape `GET /api/health/ai-available` also returns.
+ */
+export async function describeHealthRun(kind, estimatedTokens) {
+  const { describeRun } = await aiRun();
+  const split = Object.hasOwn(HEALTH_TOKEN_SPLIT, kind) ? HEALTH_TOKEN_SPLIT[kind] : null;
+  if (!split || typeof estimatedTokens !== 'number' || !Number.isFinite(estimatedTokens) || estimatedTokens < 0) {
+    return describeRun({ job: 'wiki-health' });
+  }
+  const input = Math.round(estimatedTokens * split.input);
+  const output = Math.round(estimatedTokens * split.output);
+  return describeRun({
+    job: 'wiki-health',
+    inputTokensLow: input, inputTokensHigh: input,
+    outputTokensLow: output, outputTokensHigh: output,
+  });
+}
+
+/**
  * USD cost for a call, priced from llm.js's `MODEL_PRICES_USD_PER_MTOK` via
  * its exported `getModelPrice()` accessor — the single authoritative price
  * table for the whole app (it also drives the fallback-chain cost-tier
@@ -499,7 +553,7 @@ export async function estimateSemanticDuplicateScan(domain, maxPairs = SEMANTIC_
     totalCandidates,
     truncated,
     estimatedTokens,
-    ...costFields(provider, model, estimatedTokens * 0.6, estimatedTokens * 0.4),
+    ...costFields(provider, model, estimatedTokens * HEALTH_TOKEN_SPLIT.semanticDupes.input, estimatedTokens * HEALTH_TOKEN_SPLIT.semanticDupes.output),
     provider,
     model,
   };
@@ -513,7 +567,7 @@ export async function estimateSemanticDuplicateScan(domain, maxPairs = SEMANTIC_
  *   { type: 'start', candidatePairs, batches }
  *   { type: 'progress', processed, total, found }
  *   { type: 'pair', pair }                       — one accepted duplicate pair
- *   { type: 'done', pairs, cost }                — final summary
+ *   { type: 'done', pairs, cost, spent }         — final summary (`spent` v3.67.0)
  *
  * The LLM is asked, per batch, to judge each pair as duplicate / not-duplicate
  * and pick the canonical slug. Low-confidence and non-duplicate verdicts are
@@ -524,6 +578,12 @@ export async function estimateSemanticDuplicateScan(domain, maxPairs = SEMANTIC_
  */
 export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => {}) {
   const { maxPairs = SEMANTIC_DUPE_DEFAULT_CAP, costCeilingTokens = 50_000 } = opts;
+  // v3.67.0: `opts.generateText` is a TEST-ONLY seam (the compile.js
+  // precedent; null in production, where the routes pass `{}`), and every
+  // provider call reports into one accumulator so the done event can say
+  // what the run actually cost. `opts.onUsage` is forwarded when given.
+  const llm = typeof opts.generateText === 'function' ? opts.generateText : generateText;
+  const usage = makeUsageAccumulator(typeof opts.onUsage === 'function' ? opts.onUsage : null);
 
   const wikiDir = wikiPath(domain);
   if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
@@ -618,7 +678,7 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
 
     let raw, parsed;
     try {
-      raw = await generateText(systemPrompt, userPrompt, 2048, 'json');
+      raw = await llm(systemPrompt, userPrompt, 2048, 'json', null, { onUsage: usage.onUsage });
       totalOutputChars += (raw || '').length;
       parsed = parseJSON(raw);
     } catch (err) {
@@ -668,8 +728,11 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
     outputTokens: approxOutputTokens,
     ...costFields(provider, model, approxInputTokens, approxOutputTokens),
   };
-  onEvent({ type: 'done', pairs: acceptedPairs, cost });
-  return { pairs: acceptedPairs, cost };
+  // `cost` is unchanged (chars ÷ 4, kept for every existing reader); `spent`
+  // (v3.67.0) is the provider-reported figure, in the one actual shape.
+  const spent = (await aiRun()).spentFromUsage(usage.totals);
+  onEvent({ type: 'done', pairs: acceptedPairs, cost, spent });
+  return { pairs: acceptedPairs, cost, spent };
 }
 
 // ── Phase 4 (v3.0.1-beta.16) — Bulk AI broken-link resolution ───────────────
@@ -968,7 +1031,7 @@ export async function estimateBrokenLinkFix(domain) {
     needAi: needAi.length,
     inventorySize: entitySlugs.length + conceptSlugs.length + summarySlugs.length,
     estimatedTokens,
-    ...costFields(provider, model, estimatedTokens * 0.85, estimatedTokens * 0.15),
+    ...costFields(provider, model, estimatedTokens * HEALTH_TOKEN_SPLIT.brokenLinks.input, estimatedTokens * HEALTH_TOKEN_SPLIT.brokenLinks.output),
     provider,
     model,
   };
@@ -981,7 +1044,7 @@ export async function estimateBrokenLinkFix(domain) {
  * Event shapes:
  *   { type: 'start', uniqueTargets, needAi, batches }
  *   { type: 'progress', processed, total }
- *   { type: 'done', plan, summary, cost }
+ *   { type: 'done', plan, summary, cost, spent }   (`spent` v3.67.0: spentFromUsage)
  *
  * Each plan entry:
  *   { linkText, action: 'retarget'|'strip', target: slug|null,
@@ -995,6 +1058,12 @@ export async function planBrokenLinkFixes(domain, opts = {}, onEvent = () => {})
   // only to stop a truly pathological domain (tens of thousands of slugs) from
   // silently running up cost; the user sees the dollar estimate before confirming.
   const { costCeilingTokens = 750_000 } = opts;
+  // v3.67.0: `opts.generateText` is a TEST-ONLY seam (the compile.js
+  // precedent; null in production, where the routes pass `{}`), and every
+  // provider call reports into one accumulator so the done event can say
+  // what the run actually cost. `opts.onUsage` is forwarded when given.
+  const llm = typeof opts.generateText === 'function' ? opts.generateText : generateText;
+  const usage = makeUsageAccumulator(typeof opts.onUsage === 'function' ? opts.onUsage : null);
   const wikiDir = wikiPath(domain);
   if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
 
@@ -1081,7 +1150,7 @@ export async function planBrokenLinkFixes(domain, opts = {}, onEvent = () => {})
     let parsed = null;
     let batchFailed = false;
     try {
-      const raw = await generateText(systemPrompt, userPrompt, 4096, 'json');
+      const raw = await llm(systemPrompt, userPrompt, 4096, 'json', null, { onUsage: usage.onUsage });
       totalOutputChars += (raw || '').length;
       parsed = parseJSON(raw);
     } catch (err) {
@@ -1160,8 +1229,9 @@ export async function planBrokenLinkFixes(domain, opts = {}, onEvent = () => {})
     ...costFields(provider, model, approxInputTokens, approxOutputTokens),
   };
 
-  onEvent({ type: 'done', plan, summary, cost });
-  return { plan, summary, cost };
+  const spent = (await aiRun()).spentFromUsage(usage.totals);   // v3.67.0, additive beside `cost`
+  onEvent({ type: 'done', plan, summary, cost, spent });
+  return { plan, summary, cost, spent };
 }
 
 // ── Phase 5 (v3.0.1-beta.17) — Bulk AI orphan rescue ─────────────────────────
@@ -1197,7 +1267,7 @@ export async function estimateOrphanRescue(domain) {
     orphanCount: orphans.length,
     inventorySize,
     estimatedTokens,
-    ...costFields(provider, model, estimatedTokens * 0.9, estimatedTokens * 0.1),
+    ...costFields(provider, model, estimatedTokens * HEALTH_TOKEN_SPLIT.orphans.input, estimatedTokens * HEALTH_TOKEN_SPLIT.orphans.output),
     provider, model,
   };
 }
@@ -1208,13 +1278,19 @@ export async function estimateOrphanRescue(domain) {
  * Event shapes:
  *   { type: 'start', orphans, batches }
  *   { type: 'progress', processed, total }
- *   { type: 'done', plan, summary, cost }
+ *   { type: 'done', plan, summary, cost, spent }   (`spent` v3.67.0: spentFromUsage)
  *
  * Each plan entry: { orphanSlug, orphanPath, orphanType, target, description, confidence }
  * Orphans the AI finds no genuine home for are NOT in the plan (left for manual review).
  */
 export async function planOrphanRescue(domain, opts = {}, onEvent = () => {}) {
   const { costCeilingTokens = 1_500_000 } = opts;
+  // v3.67.0: `opts.generateText` is a TEST-ONLY seam (the compile.js
+  // precedent; null in production, where the routes pass `{}`), and every
+  // provider call reports into one accumulator so the done event can say
+  // what the run actually cost. `opts.onUsage` is forwarded when given.
+  const llm = typeof opts.generateText === 'function' ? opts.generateText : generateText;
+  const usage = makeUsageAccumulator(typeof opts.onUsage === 'function' ? opts.onUsage : null);
   const wikiDir = wikiPath(domain);
   if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
 
@@ -1287,7 +1363,7 @@ export async function planOrphanRescue(domain, opts = {}, onEvent = () => {}) {
 
     let parsed = null;
     try {
-      const raw = await generateText(systemPrompt, userPrompt, 4096, 'json');
+      const raw = await llm(systemPrompt, userPrompt, 4096, 'json', null, { onUsage: usage.onUsage });
       totalOutputChars += (raw || '').length;
       parsed = parseJSON(raw);
     } catch (err) {
@@ -1336,8 +1412,9 @@ export async function planOrphanRescue(domain, opts = {}, onEvent = () => {}) {
     ...costFields(provider, model, approxInputTokens, approxOutputTokens),
   };
 
-  onEvent({ type: 'done', plan, summary, cost });
-  return { plan, summary, cost };
+  const spent = (await aiRun()).spentFromUsage(usage.totals);   // v3.67.0, additive beside `cost`
+  onEvent({ type: 'done', plan, summary, cost, spent });
+  return { plan, summary, cost, spent };
 }
 
 // Exposed for unit testing the pure broken-link-fix helpers (v3.0.1-beta.16+).
@@ -1348,4 +1425,5 @@ export const __testing = {
   slugifyText,
   estimateUsdCost,
   costFields,
+  HEALTH_TOKEN_SPLIT,
 };

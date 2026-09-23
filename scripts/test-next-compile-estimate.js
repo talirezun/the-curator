@@ -105,7 +105,10 @@ const {
   inputTokenizerFactor, __testing: EST,
 } = await import('../src/brain/compile-estimate.js');
 const { compileConversation, precheckCompile, MIN_USER_MESSAGES } = await import('../src/brain/compile.js');
-const compileRouter = (await import('../src/routes/compile.js')).default;
+const compileRouteMod = await import('../src/routes/compile.js');
+const compileRouter = compileRouteMod.default;
+const { compileOutcomeEvent, compileRunsOn } = compileRouteMod;
+const { spentFromUsage } = await import('../src/brain/ai-run.js');
 
 const chatSrc = readFileSync(path.join(REPO, 'src/public/next/views/chat.js'), 'utf8');
 const chatCode = stripComments(chatSrc);
@@ -922,6 +925,187 @@ section('9. The shipped constants still bracket every real measurement');
   }
   eq(estimateOutputTokens(-5).low > 0, true, 'a negative char count degrades to the floor rather than a negative estimate');
   eq(Number.isFinite(estimateOutputTokens(NaN).high), true, 'and NaN does not poison the arithmetic');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('10. v3.67.0 — the run line on the estimate, spent on the outcome (additive only)');
+// ═══════════════════════════════════════════════════════════════════════════
+// The estimate route gains ONE field, `runsOn` (describeRun's shape), and the
+// compile's terminal SSE event gains ONE field, `spent` (spentFromUsage's).
+// Nothing else moves: every assertion below that compares a body minus the new
+// field against what the route produced before is a key-set AND value pin.
+{
+  const layer = compileRouter.stack.find(l => l.route && l.route.path === '/estimate');
+  const handler = layer ? layer.route.stack[0].handle : async (_req, res) => res.status(599).json({});
+  const call = async (query) => {
+    const sent = [];
+    const res = {
+      statusCode: 200,
+      status(c) { this.statusCode = c; return this; },
+      json(b) { sent.push({ status: this.statusCode, body: b }); return this; },
+    };
+    await handler({ query }, res);
+    return sent[0] || { status: 0, body: {} };
+  };
+  const without = (o, k) => { const c = { ...o }; delete c[k]; return c; };
+  const NO_KEYS = { GEMINI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined, OPENROUTER_API_KEY: undefined, LLM_MODEL: undefined };
+
+  seedDomain('est-runs', { entities: 4, concepts: 3 });
+  const conv = seedConversation('est-runs', { turns: 2, chars: 900 });
+
+  // (a) priced: runsOn is the SAME arithmetic as the estimate.
+  await withEnv({ GEMINI_API_KEY: FAKE_GEMINI_KEY, LLM_MODEL: undefined }, async () => {
+    const r = await call({ domain: 'est-runs', conversationId: conv.id });
+    const direct = await estimateSafely('est-runs', conv.id);
+    const R = r.body.runsOn || {}, E = r.body.estimate || {};
+    eq(r.status, 200, 'priced: 200, unchanged');
+    ok(JSON.stringify(without(r.body, 'runsOn')) === JSON.stringify(direct),
+      'priced: the body minus runsOn is BYTE-identical to estimateCompileCost — no existing field changed');
+    eq(Object.keys(r.body).filter(k => !(k in direct)).join(','), 'runsOn', 'and runsOn is the ONE added key');
+    eq(R.job, 'compile', 'runsOn.job is compile');
+    eq(R.jobLabel, 'Compile to wiki', 'runsOn.jobLabel is the registry\'s binding label');
+    eq(R.needsKey, false, 'runsOn.needsKey false with a key');
+    eq(R.model, r.body.model, 'runsOn names the model the estimate priced');
+    eq(R.inputTokensLow, E.inputTokensLow, 'runsOn.inputTokensLow is the estimate\'s own');
+    eq(R.inputTokensHigh, E.inputTokensHigh, 'runsOn.inputTokensHigh is the estimate\'s own');
+    eq(R.outputTokensLow, E.outputTokensLow, 'runsOn.outputTokensLow is the estimate\'s own');
+    eq(R.outputTokensHigh, E.outputTokensHigh, 'runsOn.outputTokensHigh is the estimate\'s own');
+    eq(R.usdLow, E.usdLow, 'runsOn.usdLow equals the estimate\'s usdLow — one range on screen, not two');
+    eq(R.usdHigh, E.usdHigh, 'runsOn.usdHigh equals the estimate\'s usdHigh');
+    ok(R.usdLow < R.usdHigh, 'and it is a RANGE, as the compile estimate always was');
+    eq(R.costNote, 'priced', 'costNote priced');
+  });
+
+  // (b) unpriced: the run line says so and carries NO dollar field (never $0).
+  await withEnv({ GEMINI_API_KEY: FAKE_GEMINI_KEY, LLM_MODEL: 'zz-unpriced-compile-model' }, async () => {
+    const R = (await call({ domain: 'est-runs', conversationId: conv.id })).body.runsOn || {};
+    eq(R.costNote, 'price-not-published', 'unpriced: costNote price-not-published');
+    ok(!('usdLow' in R) && !('usdHigh' in R), 'unpriced: no usd fields at all — absent, never 0');
+    ok(R.inputTokensLow > 0, 'unpriced: the token figures still describe the work');
+  });
+
+  // (c) no key: ONE source of the no-key signal, and the route still answers 200.
+  await withEnv(NO_KEYS, async () => {
+    const r = await call({ domain: 'est-runs', conversationId: conv.id });
+    eq(r.status, 200, 'no key: still 200 — the estimate route never refused on a missing key, and still does not');
+    eq(JSON.stringify(r.body.runsOn), JSON.stringify({ job: 'compile', jobLabel: 'Compile to wiki', needsKey: true }),
+      'no key: runsOn is exactly {job, jobLabel, needsKey:true}');
+    eq(r.body.estimate && r.body.estimate.costUnknown, 'no-provider', 'and the estimate\'s own no-provider code is unchanged');
+  });
+
+  // (d) a refused conversation and a mirror: runsOn is there, with no figures.
+  await withEnv({ GEMINI_API_KEY: FAKE_GEMINI_KEY, LLM_MODEL: undefined }, async () => {
+    const refused = await call({ domain: 'est-runs', conversationId: crypto.randomUUID() });
+    eq(refused.body.compilable, false, 'precondition: a missing conversation is refused');
+    const R = refused.body.runsOn || {};
+    ok(R.job === 'compile' && R.needsKey === false && !('inputTokens' in R) && !('usdHigh' in R),
+      'refused: runsOn names the model and key state, with no token or dollar figures');
+
+    seedDomain('shared-est-mirror');
+    writeFileSync(path.join(DOMAINS, 'shared-est-mirror', 'CLAUDE.md'), '---\nreadonly: true\n---\n# mirror\n');
+    const mconv = seedConversation('shared-est-mirror', { turns: 1, chars: 200 });
+    const m = await call({ domain: 'shared-est-mirror', conversationId: mconv.id });
+    eq(m.body.compilable, false, 'precondition: a read-only mirror is refused as a refusal, not an error');
+    eq(Object.keys(m.body).join(','),
+      'ok,compilable,refusal,provider,model,conversation,domainContext,estimate,warnings,runsOn',
+      'mirror: the pre-v3.67.0 keys in their order, plus runsOn last');
+    ok(m.body.runsOn && m.body.runsOn.needsKey === false && !('usdHigh' in m.body.runsOn), 'mirror: runsOn without figures');
+  });
+
+  // (e) compileRunsOn is exported and agrees with what the route sends.
+  await withEnv({ GEMINI_API_KEY: FAKE_GEMINI_KEY, LLM_MODEL: undefined }, async () => {
+    const body = await estimateSafely('est-runs', conv.id);
+    const viaRoute = (await call({ domain: 'est-runs', conversationId: conv.id })).body.runsOn;
+    eq(JSON.stringify(compileRunsOn(body)), JSON.stringify(viaRoute), 'the route sends compileRunsOn(estimate), nothing hand-built');
+  });
+
+  // (f) the outcome event: every pre-v3.67.0 key unchanged, `spent` additive.
+  const spent = spentFromUsage({ calls: 3, inputTokens: 34000, outputTokens: 1200, cachedReadTokens: 0, cacheWriteTokens: 0,
+    provider: 'gemini', model: 'gemini-2.5-flash-lite' });
+  const done = compileOutcomeEvent({ ok: true, title: 'T', pagesWritten: ['summaries/x.md'], changes: [], warnings: [], spent });
+  eq(Object.keys(done).join(','), 'type,title,pagesWritten,changes,warnings,spent',
+    'done: the v3.0.1-beta.27 keys in their order, plus spent');
+  ok(done.type === 'done' && done.spent === spent, 'done carries the compile\'s spent object as-is');
+  const doneOld = compileOutcomeEvent({ ok: true, title: 'T', pagesWritten: [], changes: [] });
+  eq(Object.keys(doneOld).join(','), 'type,title,pagesWritten,changes,warnings',
+    'done without spent: exactly the pre-v3.67.0 event — absent, never a zero-filled object');
+  const errBilled = compileOutcomeEvent({ ok: false, error: 'too large', spent });
+  eq(Object.keys(errBilled).join(','), 'type,message,spent', 'error after billing: {type, message, spent}');
+  const errFree = compileOutcomeEvent({ ok: false, error: 'boom' });
+  eq(JSON.stringify(errFree), JSON.stringify({ type: 'error', message: 'boom' }), 'error with nothing billed: exactly {type, message}');
+  eq(JSON.stringify(compileOutcomeEvent({ ok: false })), JSON.stringify({ type: 'error', message: 'Compilation failed' }),
+    'the fallback message is unchanged');
+  eq(JSON.stringify(compileOutcomeEvent({ ok: false, reason: 'too short', spent })), JSON.stringify({ type: 'refused', reason: 'too short' }),
+    'a refusal NEVER carries spent (nothing was billed before a refusal)');
+
+  // (g) the REAL POST handler, driven end to end with no key: the route emits
+  //     compileOutcomeEvent's error shape — nothing billed, so no spent.
+  const postLayer = compileRouter.stack.find(l => l.route && l.route.path === '/conversation' && l.route.methods.post);
+  ok(!!postLayer, 'POST /conversation is registered');
+  await withEnv(NO_KEYS, async () => {
+    const chunks = [];
+    const res = {
+      statusCode: 200, writableEnded: false, headers: {},
+      status(c) { this.statusCode = c; return this; },
+      json(b) { chunks.push(JSON.stringify(b)); return this; },
+      setHeader(k, v) { this.headers[k] = v; }, flushHeaders() {},
+      write(c) { chunks.push(String(c)); return true; },
+      end() { this.writableEnded = true; },
+    };
+    const pconv = seedConversation('est-runs', { turns: 1, chars: 300, title: 'Posted with no key' });
+    await (postLayer ? postLayer.route.stack[0].handle({ body: { domain: 'est-runs', conversationId: pconv.id } }, res) : null);
+    const events = chunks.filter(c => c.startsWith('data: ')).map(c => JSON.parse(c.slice(6)));
+    const last = events[events.length - 1] || {};
+    eq(last.type, 'error', 'no key: the real handler ends on an error event');
+    eq(Object.keys(last).join(','), 'type,message', 'with exactly {type, message} — no spent when nothing was billed');
+    ok(/No LLM API key found/.test(last.message || ''), 'and the message is the real no-key throw');
+    ok(res.writableEnded, 'the stream is closed');
+  });
+  // The success path cannot be driven offline (it needs a real provider), so
+  // the handler is pinned to the ONE event builder driven above: exactly one
+  // emit of compileOutcomeEvent(result), and no hand-built terminal event.
+  const code = stripComments(routeSrc);
+  const postBlock = code.slice(code.indexOf("router.post('/conversation'"));
+  eq((postBlock.match(/emit\(compileOutcomeEvent\(result\)\)/g) || []).length, 1,
+    'the POST handler emits compileOutcomeEvent(result) exactly once');
+  eq((code.match(/type: 'done'/g) || []).length, 1, 'and the route builds a done event in exactly one place (compileOutcomeEvent)');
+  ok(!/type: 'refused'/.test(postBlock), 'the handler builds no refused event of its own either');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('11. v3.67.0 — every module on the ai-run cycle loads as the FIRST import of a fresh process');
+// ═══════════════════════════════════════════════════════════════════════════
+// ai-run.js → compile-estimate.js → ingest-queue.js, and ingest-queue.js reads
+// ingest.js's `__testing` WHILE EVALUATING. ingest.js's own subtree reaches
+// compile.js and (via raw-store → wiki-read → health) health-ai.js. So a STATIC
+// import of ai-run.js in either of those put ingest-queue.js inside ingest.js's
+// evaluation and crashed every process whose first import was ingest.js —
+// measured while building this release ("Cannot access 'ingestTesting' before
+// initialization"). An in-process import cannot see it (the first suite import
+// decides the order once), so each entry is loaded in its own child process.
+{
+  const { execFileSync } = await import('node:child_process');
+  const { pathToFileURL } = await import('node:url');
+  const ENTRIES = [
+    'src/brain/ingest.js', 'src/brain/compile.js', 'src/brain/compile-estimate.js',
+    'src/brain/ai-run.js', 'src/brain/health-ai.js', 'src/brain/health.js', 'src/brain/raw-store.js',
+    'src/brain/wiki-read.js', 'src/brain/ingest-queue.js', 'src/brain/diagnostics.js',
+    'src/routes/ingest.js', 'src/routes/compile.js', 'src/routes/health.js',
+    'src/routes/ingest-queue.js', 'src/routes/diagnostics.js',
+    'mcp/tools/health.js', 'mcp/tools/compile.js',
+  ];
+  const env = { ...process.env };
+  for (const k of ['GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY']) delete env[k];
+  for (const rel of ENTRIES) {
+    const url = pathToFileURL(path.join(REPO, rel)).href;
+    let out = '', threw = null;
+    try {
+      out = execFileSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(url)}); process.stdout.write('LOADED')`],
+        { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 });
+    } catch (err) { threw = (err && (err.stderr || err.message)) || String(err); }
+    ok(out === 'LOADED' && !threw,
+      `${rel} loads first in a fresh process${threw ? ` — ${String(threw).split('\n').find(l => /Error/.test(l)) || 'threw'}` : ''}`);
+  }
 }
 
 // ── Teardown ──────────────────────────────────────────────────────────────
