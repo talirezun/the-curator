@@ -1520,6 +1520,34 @@ The wireframe below is the same shape with the labels called out.
 | ③ | **Knowledge** | *What can an agent look things up in?* | One summary row per domain. Open a fold for its figures and its two doors |
 | ④ | **Session start** *(v3.67.0)* | *What does an agent actually receive when it starts work here, and how much of its context window does that use?* | A head row to pick the reading budget, and one row, **What an agent receives**, showing each part against its own limit |
 
+### How to choose the right context
+
+**The governing idea behind steps ① and ④ is one sentence: the right context, not all of it.** At
+the start of a session an agent needs three things — its **foundations** (a few canonical
+documents marked **read first**: conventions, decisions, architecture — whatever this project is
+actually built against), the **last state** (the latest handoff — where the previous session
+stopped), and the **standing brief** (your instructions). Everything else stays one request away
+— **on request** — or out of the start entirely — **not at start** — and the agent opens it by
+name the moment the task actually needs it. **The wiki is never loaded at session start at all** —
+your compounded knowledge is *searched*, not handed over, whenever an agent needs to look
+something up.
+
+| Start state | Mark it when… | Example |
+|---|---|---|
+| **Read first** | An agent should not start work here without it, every session | `conventions.md`, `decisions.md`, `architecture.md` |
+| **On request** | It matters sometimes, and an agent can ask for it by name when the task touches it | `roadmap.md`, an old design doc, a one-off spec |
+| **Not at start** | It should be kept and mirrored, but never even listed at the start — name it in the brief's *"Read before you…"* if an agent should still find it | reference material, an archived proposal, a large appendix |
+| **Leave in the wiki** | It is compounded knowledge — searchable, cross-linked, growing with every ingest — not a canonical document at all | entities, concepts, summaries from Ingest |
+
+**A short recipe:**
+
+1. **Mark two or three documents read first.** Not twelve — the marked set is what every session
+   pays for, and two or three is a reading plan; a dozen is the old behaviour with extra steps.
+2. **Pick Standard (64 KB)** in step ④, unless you already know you need more or less.
+3. **Check step ④'s "What an agent receives"** and the context-window share underneath it — aim
+   for **well under 10–15% of your agent's context window**. If it is higher, mark fewer documents
+   read first or choose a smaller preset.
+
 ### Step ④ — Session start, and choosing a reading budget
 
 **New in v3.67.0.** Session start is what an agent is handed the moment it starts work on this
