@@ -149,6 +149,12 @@
    the same reason: a control that takes a domain off this project must not be
    one mis-click from a door that merely navigates. */
 .mem-k-drop { margin-left: auto; }
+/* THE REMOVE SLOT HOLDS A CONTROL, A REASON, OR BOTH (v3.65.2, C4). One
+   row that is the default withholds Remove and says why in its place; one
+   chosen row keeps Remove and says, beside it, what pressing it does. The
+   words are a quiet reading, never the loud treatment — neither is a fault. */
+.mem-k-drop { display: inline-flex; align-items: center; gap: var(--space-4); }
+.mem-k-drop-why { font-size: var(--text-xs); color: var(--text-2); }
 /* THE IDENTITY DOT ON A KNOWLEDGE ROW. Shape and colour are the kit's
    (`.cur-sb-dot` plus `cur-sb-dot-N`); this owns only the gap to the name it
    identifies. It sits before the NAME, on the left; the FRESHNESS dot sits
