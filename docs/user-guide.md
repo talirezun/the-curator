@@ -1660,11 +1660,39 @@ source per project**: choosing GitHub re-copies the documents from the repositor
 it, and **clears the folder path** — every machine then reads the same source rather than only the
 one that made the mirror. **Ownership does not move** — the repository is still the author, exactly
 as a folder mirror is — and any document you had marked **read first** stays marked, by name, across
-the switch. As with every mirror, there is **no token field**: you name which file on this computer
-the read-only token is read from (**config** — `.curator-config.json`'s own `githubReadToken` — or
-**sync** — Personal Sync's token), never paste one here. → [the API
-reference](api-reference.md#post-apimemorydomainprojectfoundationssource) for the request this
+the switch. As with every mirror, there is **no token field on this panel**: you name which file on
+this computer the read-only token is read from — **config**, or **sync** (Personal Sync's token) —
+never paste one here.
+
+**READ WITH now tells you the truth, and gives you a door if there is nothing to tell (v3.65.2).**
+Through v3.65.1 the radio's **config** option always claimed *"the read-only token in Settings"* —
+which did not exist yet, so the row was a promise nothing could fulfil. It now reads the real
+status: with a token saved, *"The read-only token in Settings → Knowledge base · ends in
+…ab12"*; with none, *"No read-only token yet"* and a button, **Add one in Settings**, that opens
+Settings on the Knowledge base section directly — the Find and Mirror controls stay disabled until
+one exists, each stating that reason where the control would be. The ⓘ beside READ WITH carries
+the same five steps for creating a fine-grained, read-only token as
+[Settings → Knowledge base](#github-read-only-token-v3652) — see that section for the full box. →
+[the API reference](api-reference.md#post-apimemorydomainprojectfoundationssource) for the request this
 button sends and every way it can refuse.
+
+**"Add from folder" on an already-mirrored project (redesigned v3.65.2).** The maintainer's own
+words on the earlier shape: *"You can add a folder on this Mac or add a file that scan missed — the
+second part I don't understand… check that this goes smoothly, because it's kind of rusty
+experience."* On a project that already mirrors documents from a folder, this panel no longer asks
+you to point at a folder again — **the recorded folder is shown, not asked for**, and it scans that
+folder **the moment the panel opens**, with **nothing ticked by default**. Documents already
+mirrored are listed as **mirrored** and cannot be ticked (there is nothing to add — they are already
+there); only new candidates the scan found start selectable. If the folder itself is not on this
+computer — a mirror set up on another machine — the panel says so and asks for your own copy of it
+instead. The list's **last row is "+ A file that isn't listed"** — type or paste a path and press
+**Add to list** (or Enter) to add a file the scan missed, exactly the gap the maintainer's words
+named; it becomes an ordinary row, tickable like any other. The running total counts what is already
+mirrored **plus** what you have ticked, against the project's 200 KB budget, as a depth bar; the
+button at the foot reads **"Copy N documents"**, counting only the newly ticked files, and copies
+them the moment you press it. Scrolling the list to tick a row near the bottom no longer throws you
+back to the top on the next repaint — a defect found only by using the redesigned panel in a
+browser, now fixed.
 
 **The `read first` control is the one that changes what your agents get** (*new in v3.62.0*). A
 project with four documents can hand an agent all four at the start of every session. A project
@@ -1777,6 +1805,18 @@ a row that says so, rather than silently disappearing — it may simply live on 
 not synced here yet. A reading still in flight, or a failed one, is **not** turned into a row. This
 layer **accumulates**: a new source makes an existing page richer rather than adding a second copy
 of it.
+
+**v3.65.2 fixed the picker itself** — production use of v3.65.1 found the "+ Add a domain" picker
+and every row's Remove *"basically not functioning"*: the picker's pick handler was wired to the
+wrong callback name, so choosing a domain did nothing, and Remove had the same defect. Adding and
+removing now go through the real route end to end. **Remove has three states**, depending on how
+many domains the project currently draws on:
+
+| Rows | Remove | Why |
+|---|---|---|
+| One row, and it is the project's own domain (no explicit choice made) | **Withheld** — *"Default — add another domain to replace it."* | Removing it would send `null` and repaint the same row — a press that looks dead |
+| Two or more rows | **Live on every row**, including the project's own domain | The store allows any non-empty list; a project that should draw only on `research` is a legitimate choice |
+| One row, explicitly chosen | **Live**, and states what pressing it will do — *"Removing it puts `<default>` back as the default."* | An outcome at the moment of acting, stated rather than left to guesswork |
 
 The domain is what the project *reads*, not part of the project, which is why this step is a list of
 summary rows and nothing else until one is opened. There is no page list here and no health report:
@@ -2001,11 +2041,25 @@ That is the acceptance picture, reached by having nothing to say rather than by 
 | Line | When it appears | What to do |
 |---|---|---|
 | *"Part of this handoff did not survive the save — content named in the note below was dropped or cut short…"* | Handoff CONTENT was cut — a section, or items past a list's cap. The app knows because the store recorded it | Ask the agent to save that content again. The handoff you are reading really is **missing** what the note names |
-| *"That save wrote the handoff in full. What got shortened is a label attached to it…"* | Only a LABEL was clipped — most often the one-line headline, which caps at 200 characters. The handoff body is complete | Nothing urgent. The headline is the one thing a future session sees before deciding whether to open this state, so a clipped one is a weaker index entry — worth a shorter re-save, not a rescue |
+| A full-width report headed **"Handoff saved in full"** (v3.65.2 — see below) | Only a LABEL was clipped — most often the one-line headline, which caps at 200 characters. The handoff body is complete | Nothing urgent. The headline is the one thing a future session sees before deciding whether to open this state, so a clipped one is a weaker index entry — worth a shorter re-save, not a rescue |
 | *"That save deliberately replaced a larger handoff…"* | The agent overrode the guard that normally refuses a small save over a much larger one | Nothing was lost from what it sent — but the longer document it overwrote is not recoverable |
 | *"Two tools are writing `<scope>`…"*, with **"Give each tool its own handoff"** | Two agent tools have both saved into the same handoff file and are overwriting each other | Give each tool its own scope — the same collision, and the same remedy, as [§6b Scenario 1](#scenario-1--two-agent-tools-on-one-computer). The journal keeps both trails regardless |
 | *"Newer state in this project: `<scope>`…"* | Some **other** scope in this project holds something more recent than the one on screen | Check it — the [Handoffs table](#the-handoffs-table) above is where. An agent told to *"reuse an existing scope"* can be saving beside you into one you are not watching |
 | *"`<machine>` saved after this computer…"*, with **"Pull before you continue, or that work will be waiting there"** | Another **machine** has saved more recently than this one — the same reading the menu bar gives | **Pull before you continue.** This is a different question from the line above it — that one is about a scope on THIS machine you are not watching, this one is about the same work continuing on another machine |
+
+**A clipped save became a full-width report in v3.65.2, not a narrow paragraph.** The maintainer's
+own reaction to the earlier shape: *"I don't understand what this is. It is not wide enough — why
+not use the full screen real estate, left to right. If this is an active card where information
+changes, like a report, it should be in a format and have visuals, indicators of what is going on."*
+It is now the same recessed, monospace instrument every other live reading on this screen uses, not
+a sentence of prose capped at 68 characters. It says, in plain words: **the handoff was saved in
+full** — nothing was lost — and **only the one-line headline was shortened**, to its 200-character
+limit; the report then states exactly how many characters it held before the cut, with a depth bar
+against that 200-character limit (the SIZE channel — [see "Reading the
+screen"](#reading-the-screen)). If more than one field was clipped in that save, **each gets its own
+line**, in the store's own words rather than only the first note truncated to a summary. The report
+**clears on the next save to that same handoff whose headline fits** — it is not a persistent badge,
+it describes one save, and it stops describing anything the moment a later save makes it moot.
 
 **Two facts that used to be unfolded lines here are gone from this monitor as of v3.65.1 — not
 dropped, moved:** which clock an age came from (the agent's own, or the file's, when no journal
@@ -2152,6 +2206,29 @@ agree. They now do, everywhere: one component per kind of content, not per scree
 that matters most:** a warning, a cost or an outcome never sits behind a chevron. Everything else
 may fold; that never does.
 
+### Reading the screen
+
+Underneath the shared components above, the app draws four small, consistent marks — none of them
+a screen of their own, each one a channel of information layered onto an ordinary row or figure.
+Once you know what each one means, you can read a row without opening it.
+
+| Mark | Answers | Where it appears today |
+|---|---|---|
+| **Identity dot** | *Which domain?* | One colour per domain, the same colour everywhere that domain is named — a sidebar row, a Chat domain chip, a Knowledge row, the Context breadcrumb. Never a second mapping or palette on any screen |
+| **Freshness dot** (with a clock glyph and an age) | *How recent?* | Every time-based reading in the app — a sidebar row's last save, a Handoffs row, a document's last update, the MCP bridge's connection strip |
+| **Depth bar** | *How much, against what total?* | A tinted bar behind a figure, right-anchored, its length a **named** denominator — never a guess. Today: a document's size against the project's 200 KB budget; the running total in Add-from-folder against that same budget; a domain's entity/concept/summary counts against its own page count; a clipped save's character count against its 200-character field limit |
+| **Tone** (colour, never alone) | *What was the outcome?* | A monitor's head word (ok / danger), a `loud` line for a warning or a cost — always paired with words, since colour alone never carries a reading in this app |
+
+**The depth bar turns danger-toned only when its budget is actually exceeded, and the same fact is
+always also stated in words, unfolded** — never only a redder bar. A single document over budget on
+its own fills its whole cell in the warning colour; the table's own warning line beneath it says
+the same thing in a sentence, because v3.16.1's rule holds here too: a warning is never only a
+colour.
+
+**v3.66.0 extends this vocabulary further** — this table describes what ships as of v3.65.2; later
+releases may add more places these four marks appear, or a fifth channel, without changing what the
+four already documented here mean.
+
 ### The domain page, top to bottom
 
 Open **Domains** and pick a domain. Its page opens with an **OVERVIEW** card, then five numbered
@@ -2160,8 +2237,9 @@ title in the same place** — a 20 px numeral at one fixed x position, then a Ti
 the block-title size, above the card it names and never inside it: 1 Ingest, 2 Pages, 3 Projects
 in this domain, 4 Shared Brain, 5 Wiki health. Through v3.64.1 the numerals sat at two different x
 positions depending on which section, and the five titles were rendered in full capitals — both
-fixed this release. Ingest's and Shared Brain's own fold still carries the chevron and the one
-reading that tells you whether to open it — the last ingest, or the connection:
+fixed this release. Shared Brain's own fold still carries the chevron and the one reading that
+tells you whether to open it — the connection. **Ingest (v3.65.2) is no longer a fold at all** —
+see below.
 
 | | Section | What it is |
 |---|---|---|
@@ -2172,12 +2250,26 @@ reading that tells you whether to open it — the last ingest, or the connection
 | 4 | **Shared Brain** | This domain's cohorts, with their Push, Pull and Synthesize controls. |
 | 5 | **Wiki health** | Broken links, orphans, duplicates — a scan of this wiki, and the fixes for it. |
 
-**Ingest opens by itself on a domain you have never ingested into**, and stays closed once you
-close it. **Shared Brain is closed unless you open it.** Through v3.64.0 each fold's open/closed
-state was remembered per domain; **since v3.64.1 it is one preference for the whole install** —
-close Ingest on one domain and it stays closed on every domain you open next, on this computer. A
-domain you have never ingested into still opens Ingest for itself and writes nothing until you
-act, so the one preference never hides the one section a brand-new domain needs.
+**Ingest is always open (v3.65.2) — it has no chevron and nothing to remember.** The maintainer's
+own words on the fold it replaced: *"Ingest is number one but hidden below a drop-down — it's
+important, not long, it should be exposed."* There is no stored open/closed preference for it any
+more, and no "opens by itself on a domain you have never ingested into" special case — it is
+simply always there, first, under OVERVIEW. Its one reading, *last ingest N ago* (or *nothing
+ingested yet*), sits at the right of its own heading row, the same place every other section's
+reading sits. **Shared Brain is still a fold, closed unless you open it**, and its open/closed
+state is still one preference for the whole install (v3.64.1) — close it on one domain and it
+stays closed on every domain you open next, on this computer.
+
+**Pick a `.md` or `.txt` file and a callout appears under the form (redesigned v3.65.2):**
+*"Wanted this kept word for word? Add it as a project document instead."* Through v3.65.1 this was
+a link floating with no visual weight of its own — *"just floating, not designed as a button, I
+barely noticed it,"* in the maintainer's words. It is now one designed callout, full width of the
+form: an info glyph and the sentence on the left, a real secondary button, **Add as a project
+document**, on the right, in the same row. The button opens **this domain's own project** in
+Context, at step ① Documents — where a file is kept verbatim and never run through the model, the
+distinction the sentence itself is making. (It always opens the domain's own project, by name —
+not whichever project you looked at most recently, which is the one thing about it that is not yet
+configurable.)
 
 Two things about a `shared-*` mirror: there is **no Ingest section at all** — absent, not disabled,
 because a mirror is a read-only copy of a cohort's wiki and an ingest into it has never been
@@ -3148,7 +3240,7 @@ is what each section holds:
 | Section | What it is |
 |---|---|
 | **OVERVIEW** | Counts what the domain holds, and jumps to the rest of the page. Five figures in one card: PAGES · ENTITIES · CONCEPTS · SUMMARIES · **PROJECTS** (plus OTHER when any page sits outside the three canonical folders). *Since v3.58.0* the first four are **shortcuts** — press ENTITIES and the page list below selects its Entities tab and scrolls into view; the figure then shows the same selected state the tab does, because they are two controls over one filter. PROJECTS scrolls to the Projects section instead, having no tab of its own. *New in v3.64.0:* two tiles that **jump rather than filter** — **SOURCES** carries the last ingest and opens Ingest, and **SHARED** appears only when this domain has a connection and opens Shared Brain. *Since v3.65.0* the two jump tiles are ordinary cards in the same grid as the five figures — ONE tile, one figure rung, a second row rather than a separate, smaller strip. *Since v3.64.2* this card is the same shared component ([§7b](#one-panel-two-hosts)) the Project-context page draws its own readings in, and as of v3.65.0 Project context's own overview reads at the identical tile size and figure rung |
-| 1 **Ingest** *(v3.64.0)* | Where sources go in, on the page that names where the file will land. It **opens by itself on a domain you have never ingested into** and stays closed once you have. Through v3.64.0 that was remembered per domain; **since v3.64.1 it is one preference for the whole install**. **Absent** on a `shared-*` mirror. See [§8](#8-ingest-a-source) |
+| 1 **Ingest** *(v3.64.0; always open since v3.65.2)* | Where sources go in, on the page that names where the file will land. **As of v3.65.2 it is always open** — no chevron, nothing to remember, its last-ingest reading at the right of its own heading. **Absent** on a `shared-*` mirror. See [§8](#8-ingest-a-source) |
 | 2 **Pages** | Every document in the domain — the list itself, **open**, with its filter box, its All / Entities / Concepts / Summaries tabs and, new in v3.64.0, a **Wiki · Context · All** lens above them, remembered for the whole install since v3.64.1. See [§11](#11-read-a-wiki-page) |
 | 3 **Projects in this domain** | Unchanged. See just below |
 | 4 **Shared Brain** *(v3.64.0)* | This domain's cohorts, with their Push, Pull and Synthesize controls — or, on a mirror, one read-only strip naming the cohort that produced it. **Closed unless you open it**; since v3.64.1 that too is one preference for the whole install rather than per domain. The switch that turns Shared Brain on for the whole install stays on the Shared Brain page, where it has always been; joining a cohort and setting one up happen there too, one press away. See [§15b](#15b-shared-brain) |
@@ -4473,12 +4565,15 @@ listing comes back truncated it refuses loudly *and changes nothing*, because a 
 quietly keep a stale copy while reporting success.
 
 **And it does not borrow your sync token without asking.** The recommended setup is a **second,
-read-only, fine-grained** GitHub token (Contents: **Read**, that repository only), saved as
-`githubReadToken` in `.curator-config.json`. Personal Sync's own token can be used instead, but only
-when explicitly named — because if yours is a *classic* token it can read **every repository you
-own**, and that permission was granted for sync, not for this. Whichever you use, the token is never
-logged, never put in a URL, and never included in an error message; when something fails, the message
-names **which file** the token came from, which is the part you can act on.
+read-only, fine-grained** GitHub token (Contents: **Read**, that repository only), saved in
+**Settings → Knowledge base → GitHub read-only token** ([see the box above](#github-read-only-token-v3652)) —
+as `githubReadToken` in `.curator-config.json` on disk, though as of v3.65.2 that field has a real
+Settings writer and hand-editing the JSON is no longer how you add one. Personal Sync's own token
+can be used instead, but only when explicitly named — because if yours is a *classic* token it can
+read **every repository you own**, and that permission was granted for sync, not for this.
+Whichever you use, the token is never logged, never put in a URL, and never included in an error
+message; when something fails, the message names **which file** the token came from, which is the
+part you can act on.
 
 **What it does not change:** the copies still travel by sync, a mirror refreshed on two machines
 between syncs still converges to whichever saved last, and the repository is still the source of
@@ -5407,6 +5502,68 @@ markdown files — which is the whole point.
 > app** it does not: the app launches the bridge through a small launcher of its own that
 > reads your current setting each time, so the entry has no folder path baked into it to
 > go stale. This is the fourth and last of the four differences.
+
+### GitHub read-only token (v3.65.2)
+
+**Settings → Knowledge base → GitHub read-only token.** Lets a project's
+Documents mirror from a GitHub repository without a checkout on this Mac —
+the credential the Context view's **Mirror from GitHub** panel reads with,
+under `tokenSource: 'config'`.
+
+The block is the same row shape as an API-key provider: a status well, a
+**Saved**/**Not saved** pill, and the row's actions. With nothing saved it
+reads *"No token saved"* and offers **Add token**. Press it and a masked
+field appears (the token is never shown once you've saved it) — paste it and
+**Save**. The status well then reads *"Saved · ends in …ab12 · fine-grained"* —
+only the last four characters, never the value. **Replace token** swaps in
+the same field; **Disconnect** removes it.
+
+Once a token is saved, a second row appears: **Test**. Name a repository
+(`owner/repo`, or paste its `https://` or `git@` address) and press **Test** —
+it makes one read of that repository with the saved token and reports which
+repository, branch and commit it can see, or names what went wrong. No token
+is sent anywhere except to GitHub itself, and never in the test's own
+request — Test always reads with the token already saved on this computer.
+
+A classic token (`ghp_…`) also works, but the screen shows a caution: with
+the `repo` scope, a classic token can read **every** repository your account
+owns, not just the ones you intend to mirror — which is why a fine-grained
+token is recommended, and why Personal Sync's own token is never the
+default read source.
+
+> #### Create the read-only token
+>
+> A fine-grained personal access token with read-only access to the
+> repositories you want to mirror. **Not a classic one.** In GitHub:
+>
+> 1. **Settings → Developer settings → Personal access tokens → Fine-grained
+>    tokens → Generate new token.**
+> 2. **Resource owner:** the account or organisation that owns the repository.
+> 3. **Repository access:** Only select repositories, then pick the
+>    repository or repositories whose documentation you want to mirror. You
+>    can pick several with one token.
+> 4. **Permissions → Repository permissions → Contents: Read-only.**
+>    Metadata read-only is added automatically. Nothing else.
+> 5. **Expiry:** fine-grained tokens require one, up to a year. Set a
+>    reminder to renew it.
+>
+> Copy the `github_pat_…` value once — GitHub shows it only at creation —
+> and paste it into **Settings → Knowledge base → GitHub read-only token →
+> Save**. Test it with `owner/repo`. **Disconnect** removes it from this
+> computer.
+>
+> **Why not a classic token:** a classic token only works with the `repo`
+> scope, which reads every repository the account owns. A fine-grained
+> token can be scoped to only the repositories you name, with read-only
+> access to their contents and nothing else — which is why it is
+> recommended, and why Personal Sync's token (which needs write access, for
+> push) is never the default source for a read-only mirror.
+
+The token is written to `githubReadToken` in `.curator-config.json`, mode
+`0600`, through the same atomic writer the API keys use. There is no field
+to hand-edit the JSON with — every earlier note in this guide or in
+`llm-docs/` describing a hand-edited `githubReadToken` predates this
+Settings field (v3.65.2) and is no longer the way to add one.
 
 ### Health & scan limits
 

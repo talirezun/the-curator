@@ -1,7 +1,7 @@
 /**
- * test-public-knowledge.js — OFFLINE suite guarding public-knowledge/.
+ * test-public-knowledge.js — OFFLINE suite guarding llm-docs/.
  *
- * public-knowledge/ is the knowledge base uploaded to Lumina, the support chat
+ * llm-docs/ is the knowledge base uploaded to Lumina, the support chat
  * assistant on The Curator's website. Lumina has NO SEARCH: every document is
  * sent to the model IN FULL before every answer. That single fact is what this
  * suite exists for, and it produces two failure classes a reviewer will not
@@ -55,7 +55,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, '..');
-const KB_DIR = path.join(REPO, 'public-knowledge');
+const KB_DIR = path.join(REPO, 'llm-docs');
 
 // chars ÷ 4 — the estimate the maintainer budgets with. Lumina's own meter is
 // the authority once a file is uploaded; this is the number to design against.
@@ -275,11 +275,11 @@ function linkReport(text) {
 // Run
 // ───────────────────────────────────────────────────────────────────────────
 
-console.log('test-public-knowledge.js — public-knowledge/ shape, budget and link guard\n');
+console.log('test-public-knowledge.js — llm-docs/ shape, budget and link guard\n');
 
 section('§0 — The folder and the file set');
 
-ok(existsSync(KB_DIR) && statSync(KB_DIR).isDirectory(), 'public-knowledge/ exists');
+ok(existsSync(KB_DIR) && statSync(KB_DIR).isDirectory(), 'llm-docs/ exists');
 
 const onDisk = existsSync(KB_DIR)
   ? readdirSync(KB_DIR).filter((f) => /^curator-.*\.md$/.test(f)).sort()
@@ -489,4 +489,4 @@ console.log('\n' + '─'.repeat(72));
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (skipped.length) console.log(`Skipped (not on disk): ${skipped.join(', ')}`);
 if (failed > 0) { console.log('❌ FAILURES'); process.exit(1); }
-console.log('✅ All public-knowledge assertions green');
+console.log('✅ All llm-docs assertions green');

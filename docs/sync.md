@@ -99,6 +99,12 @@ from, and the default is a *different* one:
 | **`githubReadToken` in `.curator-config.json`** — the default, and the recommended path | A second token, **fine-grained and read-only** (Contents: **Read**, nothing else), scoped to the repository you are mirroring. It can do nothing but read that one repository |
 | **Personal Sync's token** — only when explicitly asked for | It was granted for **sync**. If you created a **classic** token, that grants access to **every repository you own** (see the two-options table above), so using it to read a *different* repository spends a permission you granted for one purpose on another. That is why it is never the default and never happens without being named |
 
+**Where you set the read-only one.** This is a different token from the one you created above for
+Personal Sync — that one needs read *and* write, this one needs read only. As of v3.65.2 it has its
+own field: **Settings → Knowledge base → GitHub read-only token**. Before that release the only way
+to add one was to hand-edit `.curator-config.json`; that is no longer necessary or the recommended
+path.
+
 **A refresh only ever reads.** The client the mirror uses can issue no HTTP verb but `GET` — there
 is no `PUT`, no `DELETE` and no path to one — so a mirror refresh cannot write to the repository it
 is mirroring, whatever token it is holding. The token itself is never written to a log, never put in

@@ -1066,6 +1066,16 @@ default is the safer one:
 | `tokenSource` | Where it is read from | Why you might not want it |
 |---|---|---|
 | **`config`** (the default, and recommended) | `githubReadToken` in `.curator-config.json` | Nothing — this is the path the design recommends: a second, **fine-grained, read-only** (Contents: Read) token scoped to the source repository |
+
+**Where that token is set, as of v3.65.2.** Before this release, nothing in the app wrote
+`githubReadToken` — the only way to add one was to edit `.curator-config.json` by hand, and every
+surface pointing at "config" was describing a field nobody could reach. It is now a real Settings
+field: **Settings → Knowledge base → GitHub read-only token** — Add token / Replace token / Test /
+Disconnect, with the value itself never shown again after it is saved (only its last four
+characters and whether it is fine-grained or classic). See [the user guide's "Create the read-only
+token" box](user-guide.md#github-read-only-token-v3652) for the field and the token-creation steps,
+and [the API reference](api-reference.md#get-apiconfiggithub-read-token) for the four routes behind
+it. Hand-editing the JSON is no longer the way to add one.
 | `sync` | Personal Sync's `.sync-config.json` | It was granted for *sync*. A **classic** `repo` token can read **every repository you own**, and spending a permission granted for one purpose on another is exactly what this arm must not do silently |
 
 **The token is never logged**, never placed in a URL or a query string, never serialised, and never

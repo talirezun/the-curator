@@ -375,7 +375,7 @@ differently — those are named here, not silently rewritten.
 
 | | Shipped | The number that says so |
 |---|---|---|
-| **(a)** | Positioning: *"The Curator — the context engine"* above the unchanged tagline. "Engine" replaces the old noun in every product claim | Zero occurrences of the retired noun in `README.md`, `docs/**` and `public-knowledge/**`; the two surviving occurrences are historical `v3.59.0` changelog rows, kept byte-for-byte |
+| **(a)** | Positioning: *"The Curator — the context engine"* above the unchanged tagline. "Engine" replaces the old noun in every product claim | Zero occurrences of the retired noun in `README.md`, `docs/**` and `llm-docs/**`; the two surviving occurrences are historical `v3.59.0` changelog rows, kept byte-for-byte |
 | **(b)** | The rail is **three** entries — Chat · Domains · Context — with **no divider**. `HOSTED_VIEWS` keeps `ingest` and `shared` registered, navigable and restorable | `NAV_VIEWS.length === 3`, `RAIL_DIVIDER_AFTER === null`, `ALL_VIEWS` still set-equal to `Object.keys(VIEW_META)` (7) |
 | **(c)** | The domain page hosts **six** sections. INGEST and SHARED BRAIN are closed folds, remembered per domain, and each is one panel with two hosts rather than a copy | No function in `views/ingest.js` or `views/shared.js` renamed or moved; the two unowned tripwire suites green, untouched |
 | **(d)** | Chat reads one project in-process, within its own **40,000-character** budget, on top of the wiki's unchanged 60,000 / 12,000 / 50 | Nine sha256 digests of the pre-v3.64.0 prompt reproduced exactly with no project pinned |
@@ -632,7 +632,7 @@ contents is regrouped** under three captions — ASK (chapters 1–7), KNOWLEDGE
 census across both repositories found **33 distinct `user-guide.md` anchors** referenced from the
 website alone and 69 from the app repo, 11 of them pinned `DOCS_LINKS` keys a suite fails on if they
 move, plus a second, independently hand-maintained anchor table in
-`public-knowledge/curator-links.md` — renumbering even one chapter would therefore not be a
+`llm-docs/curator-links.md` — renumbering even one chapter would therefore not be a
 documentation edit, it would be a breaking change to four consumers, two of them outside this
 repository. The one heading that does move is the file's single un-numbered `## Read before you…`
 heading, which breaks the numbered grammar every other chapter follows: it is demoted to a `###`
@@ -642,7 +642,7 @@ the three-write-rules wording aligned with the other three files that carry it, 
 stands" update naming v3.62.0/v3.63.0 under the same honest-reach language as (i)) rather than the
 full reconciliation an eighteen-release-stale, 18,203-word file actually needs — that reconciliation
 is carried forward as its own open question (§F **Q26**). **The Lumina set**
-(`public-knowledge/curator-*.md`) gains the noun change and two new topics in `curator-overview.md`
+(`llm-docs/curator-*.md`) gains the noun change and two new topics in `curator-overview.md`
 only — *"which of the two things is it for me"* and *"do my agents actually save, and how would I
 know"* — per the set's own rule that a fact lives in exactly one file; `curator-agent-memory.md`'s
 one non-question heading is renamed to match the set's own convention. The set has room: even before
@@ -716,7 +716,7 @@ see yet is exactly the same defect as a site that claims a harness nobody has me
 §F **D20** carries the noun, and (i) below carries the reach discipline the sentence borrows from.
 
 **The Lumina copies have already drifted.** `site/lumina-knowledge/curator-*.md` are documented as
-byte-identical reproducibility copies of `public-knowledge/*.md`; a diff taken during the design pass
+byte-identical reproducibility copies of `llm-docs/*.md`; a diff taken during the design pass
 found all four differ, because the site's copy sits at v3.60.0 while the app's is at v3.63.0. The fix
 is a `cp` plus a `shasum -a 256`-verified copy on both sides, never an in-place edit, and the
 maintainer's manual re-upload to Lumina is carried in the release report as an unchecked box — no
@@ -781,7 +781,7 @@ emitted before any project text, the authority note precedes the brief, and the 
 byte-identical to the string the MCP tool holds today, asserted from the new shared module. A stale
 pin: a project pinned in Chat and then deleted answers a 400 with a named reason before the stream
 opens. Positioning: the retired noun has **zero** hits in `README.md`, `docs/**` and
-`public-knowledge/**`, and survives only in the frozen `v3.59.0` changelog row — which, since that
+`llm-docs/**`, and survives only in the frozen `v3.59.0` changelog row — which, since that
 row was archived, now exists in **two** places rather than one (`CHANGELOG-ARCHIVE.md`'s full row
 and `CLAUDE.md`'s one-line index entry for it). Both are evidence of what was said at the time and
 neither is edited; the acceptance is the zero, not a repository-wide count of one.
@@ -801,7 +801,7 @@ usage-log driver moved in the same commit; a foundation is still stored and retu
 summarisation on the way in or out; no `## ` heading in `docs/user-guide.md` changes except the one
 demotion named in (f); the three "context engine" sentences across `README.md`, `docs/README.md` and
 `docs/user-guide.md` stay byte-identical to each other; `node scripts/test-docs-links.js` and
-`node scripts/test-public-knowledge.js` stay green.
+`node scripts/test-llm-docs.js` stay green.
 
 **Risks, ranked.**
 
