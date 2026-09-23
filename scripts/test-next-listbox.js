@@ -443,7 +443,12 @@ ok(selectOffenders.length === 0,
 //                            thing v3.65.0 exists to remove; the menu offers
 //                            only the domains not already chosen, and each
 //                            chosen wiki carries its own Remove on its row.
-const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 3, 'memory.js': 1 };
+//   · v3.67.0, memory.js 1 -> 3: step ①'s per-document START STATE (read
+//     first · on request · not at start — it replaced a two-state toggle in the
+//     same cell) and step ④'s READING BUDGET picker (five presets). Each is
+//     one call site handed a cfg from one builder (`fndStartCfg`,
+//     `budgetPickerCfg`) that `bindSessionAndPlan` mounts from again.
+const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 3, 'memory.js': 3 };
 let total = 0;
 for (const f of ADOPTERS) {
   const src = readFileSync(path.join(VIEWS, f), 'utf8');
@@ -460,7 +465,7 @@ for (const f of ADOPTERS) {
   ok((code.match(/closeAllListboxes\(\)/g) || []).length >= 1,
     `${f} closes any open menu on teardown/repaint (in CODE, not in a comment)`);
 }
-ok(total === 11, `ELEVEN adoptions across four views (found ${total})`);
+ok(total === 13, `THIRTEEN adoptions across four views (found ${total})`);
 
 // ── §5b — memory.js has exactly ONE picker, and it is this one ────────────
 //
@@ -807,8 +812,20 @@ section('§9  ACTION ROWS, ASSERTED OVER THE REAL CALL SITES');
   ok(asks.join(',') === grants.join(','),
     '§9c every view that ASKS for an action row also GRANTS one, and vice versa ' +
     `(asks: ${asks.join(', ') || 'none'} | grants: ${grants.join(', ') || 'none'})`);
-  ok(asks.length === 1 && asks[0] === 'chat.js',
-    '§9c and today that is exactly one view — the composer\'s model menu');
+  // v3.67.0: TWO views. memory.js's reading-budget picker makes Standard an
+  // action row on a project with NO budget set, so choosing the preselected
+  // row still writes it (the listbox commits only a CHANGED value) — and it
+  // grants exactly that one value, and only then.
+  ok(asks.join(',') === 'chat.js,memory.js',
+    '§9c and today that is exactly two views — the composer\'s model menu and Context\'s budget picker');
+  {
+    const memCfg = stripJsComments(nestedFunctionBody(stripJsComments(
+      readFileSync(path.join(VIEWS, 'memory.js'), 'utf8')), 'function budgetPickerCfg(read, data, busy) {', 'memory.js'));
+    ok(/actionValues:\s*untouched \? \['standard'\] : \[\]/.test(memCfg)
+      && (memCfg.match(/action:\s*true/g) || []).length === 1
+      && /untouched && p\.id === 'standard' \? \{ action: true \}/.test(memCfg),
+    '§9c memory.js grants ONE action value, Standard, and only while no budget is set');
+  }
 }
 
 console.log('\n────────────────────────────────────────────────────────────');

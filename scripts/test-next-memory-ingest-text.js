@@ -890,12 +890,21 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
   // choice — CURATOR METADATA about the project, written to `project.json`
   // and nothing else, so tiers 1, 2 and 3 are untouched by it.
   const methods = (memCode.match(/method:\s*'[A-Z]+'/g) || []).sort();
-  ok('memory.js issues exactly EIGHT mutating HTTP method keys, over seven routes',
-    methods.length === 8, methods.join(','));
-  ok('...and they are DELETE, DELETE, PATCH, PATCH, PATCH, POST, POST and PUT, every one a LITERAL',
+  // v3.67.0 (package V): ELEVEN. The start-state write (`{atStart}`, replacing
+  // `{readFirst}` at the same route), the reading budget (`project.json`, the
+  // knowledgeDomains class), and two READS that carry a body: the session-start
+  // PREVIEW and the reading-plan helper's proposal. test-next-memory-view.js §8
+  // names each by URL and body.
+  ok('memory.js issues exactly ELEVEN mutating-shaped HTTP method keys',
+    methods.length === 11, methods.join(','));
+  ok('...and they are DELETE x2, PATCH x4, POST x4 and PUT, every one a LITERAL',
     methods.join(',') === "method: 'DELETE',method: 'DELETE',method: 'PATCH',method: 'PATCH',"
-      + "method: 'PATCH',method: 'POST',method: 'POST',method: 'PUT'",
+      + "method: 'PATCH',method: 'PATCH',method: 'POST',method: 'POST',method: 'POST',method: 'POST',"
+      + "method: 'PUT'",
     methods.join(','));
+  ok('...the reading-budget PATCH sends ONE field, to the four-segment route',
+    /'\/reading\/budget'/.test(memCode)
+    && /body: JSON\.stringify\(\{ readingBudgetBytes: bytes \}\)/.test(memCode));
   // THE THIRD PATCH SENDS ONE KEY TOO, and it is the same rule as the
   // `readFirst` one below: an instruction ABOUT a set of wikis, never a byte
   // of anything an agent wrote.
@@ -910,9 +919,11 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
   // THE OTHER PATCH SENDS ONE KEY. `text` is the document and `readFirst` is
   // metadata about it; a PATCH carrying both would be a write to a mirror's
   // bytes by another name.
-  ok('...the other PATCH aimed at ONE foundation, sending `readFirst` and nothing else',
+  // v3.67.0: the three-state `{atStart}` replaced `{readFirst}` at the same route.
+  ok('...the other PATCH aimed at ONE foundation, sending `atStart` and nothing else',
     /'\/foundations\/' \+ encodeURIComponent\(slug\)/.test(memCode)
-    && /body: JSON\.stringify\(\{ readFirst: want \}\)/.test(memCode));
+    && /body: JSON\.stringify\(\{ atStart \}\)/.test(memCode)
+    && !/body: JSON\.stringify\(\{ readFirst/.test(memCode));
   ok('...one POST aimed at the foundations REFRESH endpoint',
     /'\/foundations\/refresh'/.test(memCode));
   // THE REFRESH CARRIES A FILE LIST OR NOTHING — never a document body. That

@@ -251,9 +251,11 @@ const CTX = contextOverview();
   // supplied (see contextOverview() above), the KNOWLEDGE card the fixture
   // was silently dropping now renders, so the strip carries FOUR cards, not
   // three. Both figures below move the same way.
-  eq('...and four on a project', withClass(CTX, 'cur-ov-card').length, 4);
+  // v3.67.0: FIVE — the SESSION START reading joins the grid (hidden until
+  // measured, rendered all the same, CAPTURE's own rule).
+  eq('...and five on a project', withClass(CTX, 'cur-ov-card').length, 5);
   eq('every figure on both carries a `.cur-ov-value`',
-    withClass(DOM, 'cur-ov-value').length + '/' + withClass(CTX, 'cur-ov-value').length, '7/4');
+    withClass(DOM, 'cur-ov-value').length + '/' + withClass(CTX, 'cur-ov-value').length, '7/5');
   ok(/class="cur-eyebrow">PAGES</.test(DOM) && /class="cur-eyebrow">DOCUMENTS</.test(CTX),
     'and every figure is captioned by the SAME `.cur-eyebrow` the kit uses everywhere');
 
@@ -412,8 +414,9 @@ section('§3 — A FILTER HIGHLIGHT ONLY WHERE THERE IS A FILTER');
   // a second KNOWLEDGE jump.
   const jumps = tags(CTX).filter((t) => t.attrs['data-ov-jump'] !== undefined)
     .map((t) => t.attrs['data-ov-jump']);
-  eq('the four readings open their four steps',
-    jumps.join(','), 'context-canonical,context-state,context-knowledge,capture');
+  // v3.67.0: and SESSION START opens step 4, the sum of the three layers.
+  eq('the five readings open their steps',
+    jumps.join(','), 'context-canonical,context-state,context-knowledge,capture,context-session');
   ok(/aria-label="Documents, 2 documents — go to step 1"/.test(CTX),
     '...each with an accessible name that says where it goes', CTX.slice(0, 900));
   const dj = tags(DOM).filter((t) => t.attrs['data-ov-jump'] !== undefined)

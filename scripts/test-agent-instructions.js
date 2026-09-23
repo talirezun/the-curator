@@ -531,6 +531,13 @@ function loadKnowledge() { return Promise.resolve(); }
 // literal, and one would end it.)
 function renderCaptureMeter() { return '<!--CAPTURE-->'; }
 function loadCapture() { return Promise.resolve(); }
+// v3.67.0: renderProject composes step 4 (Session start) and wire() hands the
+// fold binder and the release's own controls to two named binders. None is
+// exercised here, but a lifted function throws on a free identifier, so each
+// is stubbed -- an undefined collaborator is a crash, not a failing assertion.
+function renderSessionStart() { return '<!--SESSIONSTART-->'; }
+function bindFoldToggles() {}
+function bindSessionAndPlan() {}
 function requestDomain() {}
 function goToChatScoped() {}
 function navigate() {}
