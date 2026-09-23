@@ -2619,7 +2619,8 @@
 .settings-block-mcp-connect > .settings-block-body,
 .settings-block-mcp-domain > .settings-block-body,
 .settings-block-health-limits > .settings-block-body,
-.settings-block-storage-folder > .settings-block-body {
+.settings-block-storage-folder > .settings-block-body,
+.settings-block-storage-github-token > .settings-block-body {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
@@ -2636,10 +2637,40 @@
 .settings-block-health-limits > .settings-block-body > .settings-btn-row,
 .settings-block-mcp-connect > .settings-block-body > .settings-mcp-stale-note,
 .settings-block-storage-folder > .settings-block-body > .storage-path-row,
-.settings-block-storage-folder > .settings-block-body > .settings-note-row {
+.settings-block-storage-folder > .settings-block-body > .settings-note-row,
+.settings-block-storage-github-token > .settings-block-body > .provider-row-list,
+.settings-block-storage-github-token > .settings-block-body > .settings-note-row {
   margin-top: 0;
   margin-bottom: 0;
 }
+
+/* ── THE GITHUB READ-ONLY TOKEN (v3.65.2) ─────────────────────────────────
+   Every rule it needs already exists — the provider row, the password row,
+   the note row, the monitor. Three additions only:
+   · the Test row's repository field is sized like the path well beside it,
+     not stretched across the column;
+   · the classic-token caution paints its GLYPH amber and keeps the sentence
+     on --text-2 — the measured argument at .model-row-derived-warn (amber
+     TEXT fails 4.5:1 in light; the glyph clears the 3:1 graphic floor);
+   · the ⓘ's five steps are a real ordered list with the panel's own rhythm. */
+.settings-block-storage-github-token .gh-token-test-row .btn { flex: none; }
+/* The Test outcome sits INSIDE the card, under its row, inset to the rows'
+   own padding (orchestrator's screen review, v3.65.2). */
+.settings-block-storage-github-token .gh-token-test-result {
+  padding: 0 var(--space-6) var(--space-6);
+}
+/* The status well carries a SENTENCE here ("Saved · ends in …ab12 ·
+   fine-grained", 36 characters), not a masked key, so the provider row's
+   260px cap — sized for a row of bullets — clipped the one word that says
+   which kind of token is saved. Measured in the browser at 1370px: the text
+   needs ~300px in the mono face at --text-sm. */
+.settings-block-storage-github-token .provider-key-field { max-width: 340px; }
+.settings-note-row-warn svg { color: var(--attention-text); }
+.settings-gh-steps {
+  margin: var(--space-3) 0 var(--space-4);
+  padding-left: 1.4em;
+}
+.settings-gh-steps > li + li { margin-top: var(--space-2); }
 /* The path row's own controls. `flex-wrap` is already on the rule; this only
    stops the two buttons stretching to the code block's height when the path
    wraps to two lines, which it does at ~240px. */
