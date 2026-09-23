@@ -27,7 +27,7 @@
 import {
   registerView, setSidebar, setMain, emptyCard, escapeHtml, icon, openReader, navigate, isCurrentMount,
   reportAsyncMountFailure, isCurrentReader, reportAsyncActionFailure,
-  consumeChatScopeRequest,
+  consumeChatScopeRequest, requestSettingsSection,
 } from '../app.js';
 // The ONE view header in /next. `eyebrow()` is no longer imported: both of its
 // call sites here built a header by hand — an eyebrow, then a raw
@@ -46,6 +46,13 @@ import { renderMarkdown } from '../shared/markdown.js';
 import { formatUsdHonest } from '../shared/format-usd.js';
 import { formatModelSummary, formatDurationMs } from '../shared/model-summary.js';
 import { confirmThen, closeConfirmIfOpen } from '../shared/confirm.js';
+// THE RUN LINE (v3.67.0). One line, the same on every AI action in the app:
+// which model runs it, roughly what it costs, and one door to Providers & keys.
+// Compile uses it three ways — first line of its confirm, the after-the-run
+// line in its outcome card, and the no-key state of its button (disabled, never
+// hidden). The shell's two door functions are INJECTED into wireAiRunDoors
+// (shared/ai-run.js's own rule), never imported by the kit.
+import { renderRunsOn, renderSpent, aiActionDisabledAttrs, wireAiRunDoors } from '../shared/ai-run.js';
 // The one dropdown surface in /next. Adopted here for the composer's model and
 // length pickers, which until now were the last hand-rolled menus in the tree
 // and the only ones with no keyboard operation at all.
@@ -538,7 +545,26 @@ const state = {
   compileBusy: false,
   compilePct: 0,
   compileOwner: null,
+
+  // THE NO-KEY STATE OF COMPILE (v3.67.0), CARRIED AS READY MARKUP. Both are
+  // '' whenever a run is possible or nothing has been asked yet — the resting
+  // state must never guess "no key" before the answer is in, because a
+  // disabled Compile on a working install is a false fault.
+  //
+  // Precomputed by `applyCompileRunsOn` (from GET /api/health/ai-available's
+  // `runsOn`, the contract's ONE resting-state source) rather than computed
+  // inside `renderCompileButtonHtml` / `compileControlHtml`: both are lifted by
+  // brace-match into suites whose sandboxes bind `state` and nothing from
+  // shared/ai-run.js, so the markup rides on `state` (the contract's own
+  // mitigation for lifted bodies) and those bodies gain no free identifier.
+  compileKeyAttrs: '',
+  compileKeyLineHtml: '',
 };
+
+// The two run-line ids Compile owns. Distinct, because the button's line and
+// the confirm's line can both exist at once and aria-describedby names ONE.
+const COMPILE_RUNLINE_ID = 'chat-compile-runline';
+const COMPILE_CONFIRM_RUNLINE_ID = 'chat-compile-confirm-runline';
 
 // Monotonic; source of `state.compileOwner`. Module-scoped (not in `state`)
 // because it must never be reset — a reused owner token would let a stale run
@@ -713,6 +739,18 @@ registerView('chat', {
     // below for why (Domains creates domains directly now; there is
     // nothing left to hand off).
     const scopeReq = consumeChatScopeRequest();
+
+    // ── COMPILE'S NO-KEY STATE, ASKED ON EVERY MOUNT (v3.67.0) ────────────
+    // Every mount, not once: the usual way out of "no key" is the door itself —
+    // Settings › Providers & keys, then back here — and a cached answer would
+    // keep Compile disabled after the key was saved. Not awaited and not part
+    // of the boot gate: the thread never waits on a button's resting state.
+    // The door is wired on #view-root, the shell's STABLE container (setMain
+    // replaces its child, never it), so one delegated listener serves every
+    // render of this view; wireAiRunDoors is idempotent per root, so another
+    // view wiring the same element adds nothing.
+    wireAiRunDoors(document.getElementById('view-root'), { requestSettingsSection, navigate });
+    loadCompileAvailability(mountToken).catch(() => {});
 
     bootGate = createLoadingGate({
       onChange: () => { if (isCurrentMount(mountToken)) renderShell(mountToken); },
@@ -1915,7 +1953,16 @@ function formatBytesChat(n) {
 // a static count line rather than a click-to-expand list — a compile's
 // unchanged set is rarely interesting and this avoids wiring a second
 // interactive toggle inside a card that already has none.
-function buildCompileOutcomeHtml(title, changes, warnings) {
+//
+// `spentHtml` (v3.67.0) is shared/ai-run.js's after-the-run line, already
+// rendered by the caller — "Ran on <model> · N in / M out · $x" — and is
+// TRUSTED MARKUP (the kit escapes every field it prints). It sits directly
+// under the card's heading, never below the change lists: a 30-page card is
+// scrolled so its TOP lands in view (scrollCompileCardIntoView), and what the
+// run cost is an outcome that may not end up under the fold of a long list.
+// Absent (a server that sent no `spent`, or nothing ran) is '' — no line, never
+// "$0.00".
+function buildCompileOutcomeHtml(title, changes, warnings, spentHtml) {
   const list = Array.isArray(changes) ? changes : [];
   const created = list.filter((c) => c && c.status === 'created');
   const updated = list.filter((c) => c && c.status === 'updated');
@@ -1963,6 +2010,7 @@ function buildCompileOutcomeHtml(title, changes, warnings) {
     warningsHtml +
     '<div class="chat-compile-change-summary">' +
       '<h3 class="chat-compile-change-title">Compiled to wiki: ' + escapeHtml(title || '') + '</h3>' +
+      (typeof spentHtml === 'string' ? spentHtml : '') +
       createdBlock + updatedBlock + emptyBlock + unchangedNote +
     '</div>'
   );
@@ -1995,7 +2043,10 @@ function updateCompileButtonBusy(owner, busy, pct) {
   if (!busy) state.compileOwner = null;
   const btn = document.getElementById('chat-compile-btn');
   const labelEl = document.getElementById('chat-compile-btn-label');
-  if (btn) btn.disabled = busy;
+  // Released to ENABLED only when a run is possible: a key that went away
+  // while a compile ran (the key removed in Settings mid-run) leaves the
+  // button in its no-key state, whose markup `applyCompileRunsOn` set.
+  if (btn) btn.disabled = busy || !!state.compileKeyAttrs;
   if (labelEl) labelEl.textContent = busy ? ('Compiling… ' + Math.round(pct || 0) + '%') : 'Compile to Wiki';
 }
 
@@ -2132,8 +2183,20 @@ function providerDisplayLabel(provider) {
  *                                   confirmThen's `message`, which sets it with
  *                                   textContent, never innerHTML
  * @param {string|null} estimateError why there is no estimate, if there isn't
+ * @param {{runLine?: boolean}} [opts]  v3.67.0: `runLine: true` when the
+ *                                   dialog also shows the shared run line
+ *                                   (shared/ai-run.js) as its first line. The
+ *                                   line already names the model and the cost,
+ *                                   so the detail stops repeating them: a
+ *                                   figure stated twice in two formats is how
+ *                                   two copies come to disagree. What stays is
+ *                                   what the line cannot say — why a range is
+ *                                   a range, and where the pages land. OMITTED
+ *                                   (every call before v3.67.0, and a server
+ *                                   that sent no `runsOn`) returns the
+ *                                   pre-v3.67.0 copy byte for byte.
  */
-function buildCompileConfirmCopy(est, domain, convTitle, estimateError) {
+function buildCompileConfirmCopy(est, domain, convTitle, estimateError, opts) {
   const title = 'Compile this conversation to your wiki?';
   const message = convTitle || 'Untitled conversation';
   const where = `Pages are written into the "${domain}" wiki, merging into pages that already exist.`;
@@ -2164,7 +2227,7 @@ function buildCompileConfirmCopy(est, domain, convTitle, estimateError) {
   } else if (e.costUnknown === 'free-model') {
     cost = `${model} is free to use, so this compile will not cost anything.`;
   } else if (e.costUnknown === 'no-provider') {
-    cost = 'No AI provider is configured, so there is no cost to estimate — and nothing to compile with. Add an API key in Settings first.';
+    cost = 'No AI provider is configured, so there is no cost to estimate — and nothing to compile with. Add a Gemini, Anthropic or OpenRouter key in Settings › Providers & keys first.';
   } else {
     cost = `No published price is on file for ${model}, so the cost cannot be shown in dollars. Your provider will still bill this compile at their rate.`;
   }
@@ -2176,7 +2239,182 @@ function buildCompileConfirmCopy(est, domain, convTitle, estimateError) {
     ? ' That is a range rather than a price — how many wiki pages the AI decides to write cannot be known before the call, and if the first attempt overruns its output limit The Curator retries, which costs more.'
     : '';
 
+  // THE RUN LINE CARRIES THE MODEL AND THE FIGURE. The no-provider sentence is
+  // NOT dropped with the others: it is the one branch that is about what to DO
+  // (and the line's own no-key form is five words); every other branch's cost
+  // sentence is exactly what the line above it already reads.
+  if (opts && opts.runLine === true && e.costUnknown !== 'no-provider') {
+    const why = ranged
+      ? 'The figure above is a range rather than a price — how many wiki pages the AI decides to write cannot be known before the call, and if the first attempt overruns its output limit The Curator retries, which costs more. '
+      : '';
+    return { title, message, confirmLabel: 'Compile', detail: `${why}${where}` };
+  }
+
   return { title, message, confirmLabel: 'Compile', detail: `${cost}${uncertainty} ${where}` };
+}
+
+/**
+ * The model this chat is on, as far as this view KNOWS it — or null, meaning
+ * "the chat is on your AI model" (nothing picked: a new thread starts on the
+ * build model, and the server answers a model-less turn with it).
+ *
+ * Three arms, and the middle one is deliberately modest. A PICKED model is a
+ * fact: its id, and its catalogue label. A picked PROVIDER with no model named
+ * (the composer's provider mode) is a fact about the provider only — which
+ * default that provider answers with is the server's to resolve — so it is
+ * returned with `id: null`, and `compileModelClause` claims a difference only
+ * when the PROVIDER differs. Claiming "not the model this chat is on" about a
+ * model this view merely inferred would be the false notice this file's
+ * `chatDefaultGone` comment refuses for the same reason.
+ *
+ * @returns {{id: string|null, provider: string|null, label: string}|null}
+ */
+function chatModelOnScreen() {
+  const provider = (typeof state.modelProvider === 'string' && state.modelProvider) ? state.modelProvider : null;
+  if (typeof state.chatModel === 'string' && state.chatModel) {
+    const row = resolveChatModel(state.chatModel, state.offerable, state.availableProviders, provider || undefined);
+    return { id: state.chatModel, provider, label: (row && row.entry && row.entry.label) || state.chatModel };
+  }
+  if (provider) {
+    const def = state.models && Object.hasOwn(state.models, provider) ? state.models[provider] : null;
+    const row = def ? resolveChatModel(def, state.offerable, state.availableProviders, provider) : null;
+    return { id: null, provider, label: (row && row.entry && row.entry.label) || def || providerDisplayLabel(provider) };
+  }
+  return null;
+}
+
+/**
+ * PURE — Compile's added clause (DESIGN-ai-jobs inconsistency 9), or ''.
+ *
+ * A user chatting on Sonnet presses Compile, and Compile runs on the one AI
+ * model — Flash Lite, say. The run line names Flash Lite; this sentence says
+ * the part a reader would not otherwise think to ask: that it is not the model
+ * they have been talking to. It appears ONLY when the two differ; saying it
+ * when they are the same would be a notice about nothing, and a notice about
+ * nothing is how the next real one gets ignored.
+ *
+ * @param {object|null} runsOn  the estimate's `runsOn` (describeRun's shape)
+ * @param {{id: string|null, provider: string|null, label: string}|null} chat
+ *        chatModelOnScreen()'s answer
+ * @returns {string} plain text (renderRunsOn escapes its `extraLine`)
+ */
+function compileModelClause(runsOn, chat) {
+  if (!runsOn || typeof runsOn !== 'object' || runsOn.needsKey === true) return '';
+  if (!chat) return '';
+  const runModel = typeof runsOn.model === 'string' ? runsOn.model : '';
+  let differs = false;
+  if (chat.id) differs = !!runModel && chat.id !== runModel;
+  else differs = !!chat.provider && typeof runsOn.provider === 'string' && !!runsOn.provider && chat.provider !== runsOn.provider;
+  if (!differs) return '';
+  return 'Compile uses your AI model, not the model this chat is on (' + (chat.label || chat.id || chat.provider) + ').';
+}
+
+/**
+ * The Compile confirm's FIRST LINE — the shared run line, plus the clause when
+ * the chat is on another model — as a function that places it.
+ *
+ * WHY A FUNCTION TO QUEUE, AND WHY THE DIALOG'S OWN `#cfd-body`.
+ * shared/confirm.js writes every string with textContent (a conversation title
+ * is user content and reaches it verbatim), so it has no field for markup, and
+ * it is a kit nobody edits this release. The run line is markup — a model span
+ * carrying its `Provider · id` title, mono figures, a real door button — built
+ * by shared/ai-run.js, which escapes every field it prints. So it is placed
+ * into the open dialog, as the first child of the element the dialog itself
+ * names in `aria-describedby="cfd-body"`: that id is the kit's public contract
+ * (a screen reader reads the line as part of the dialog's description because
+ * of it), not a private reach — the same reasoning `patchProjectFooter` gives
+ * for `cfg.id + '-menu'`.
+ *
+ * confirmThen builds its DOM SYNCHRONOUSLY and only then returns its promise,
+ * so startCompile queues this with queueMicrotask immediately before its
+ * `await confirmThen({...})`: the microtask runs once the dialog exists and
+ * before the browser paints it, so no frame shows the dialog without its line.
+ * It refuses to write into a dialog it did not open (confirmThen declines a
+ * second dialog while one is open, and the title check is what tells ours
+ * apart), and it wires the line's door on the dialog's own root, since the
+ * dialog lives on <body>, outside #view-root.
+ *
+ * @param {object|null} est    the estimate body (its `runsOn` is read)
+ * @param {string} title       the dialog title startCompile passes
+ * @returns {() => boolean}    true when a line was placed
+ */
+function compileConfirmLead(est, title) {
+  const runsOn = est && est.runsOn && typeof est.runsOn === 'object' ? est.runsOn : null;
+  const html = runsOn
+    ? renderRunsOn(runsOn, {
+        id: COMPILE_CONFIRM_RUNLINE_ID,
+        extraLine: compileModelClause(runsOn, chatModelOnScreen()) || undefined,
+      })
+    : '';
+  return () => {
+    if (!html) return false;
+    const body = document.getElementById('cfd-body');
+    const titleEl = document.getElementById('cfd-title');
+    if (!body || !titleEl || titleEl.textContent !== title) return false;
+    if (body.querySelector('.ai-run')) return false;
+    body.insertAdjacentHTML('afterbegin', html);
+    const root = body.closest('.cfd-root');
+    if (root) wireAiRunDoors(root, { requestSettingsSection, navigate });
+    return true;
+  };
+}
+
+/**
+ * Compile's RESTING no-key state, read once per mount.
+ *
+ * THE ONE SOURCE (contract §1.13): GET /api/health/ai-available, free and
+ * local, which carries `runsOn: describeRun({job})` — and `runsOn.needsKey` is
+ * the fact. A server from before v3.67.0 sends no `runsOn` but the same fact as
+ * `available: false` (both are "getProviderInfo() threw"), so that is read as
+ * the same answer rather than as silence. Anything else — a failed request, an
+ * unreadable body — leaves the button exactly as it was: enabled. Guessing "no
+ * key" from a network blip would disable a working install.
+ */
+async function loadCompileAvailability(token) {
+  let body = null;
+  try {
+    const res = await fetch('/api/health/ai-available');
+    if (!res.ok) return;
+    body = await res.json();
+  } catch { return; }
+  if (!isCurrentMount(token) || !body || typeof body !== 'object') return;
+  const runsOn = (body.runsOn && typeof body.runsOn === 'object') ? body.runsOn
+    : (body.available === false ? { needsKey: true } : null);
+  applyCompileRunsOn(runsOn);
+}
+
+/**
+ * Publish Compile's no-key state: into `state` (what the next full render
+ * reads) AND onto the live button and its group (so the answer landing after
+ * the first paint shows without a repaint that would tear down the composer).
+ *
+ * DISABLED, NEVER HIDDEN (contract Q3): the button stays where it is, with the
+ * no-key run line under it and `aria-describedby` pointing at that line, so a
+ * keyboard or screen-reader user hears WHY it cannot be pressed — a hidden
+ * button explains nothing. The line's door is the one door to Providers & keys.
+ */
+function applyCompileRunsOn(runsOn) {
+  const needsKey = !!(runsOn && runsOn.needsKey === true);
+  state.compileKeyAttrs = needsKey ? aiActionDisabledAttrs(runsOn, COMPILE_RUNLINE_ID) : '';
+  state.compileKeyLineHtml = needsKey ? renderRunsOn(runsOn, { id: COMPILE_RUNLINE_ID }) : '';
+
+  const btn = document.getElementById('chat-compile-btn');
+  if (!btn) return;
+  const group = btn.closest('.chat-compile-group');
+  const oldLine = document.getElementById(COMPILE_RUNLINE_ID);
+  if (oldLine) oldLine.remove();
+  if (needsKey) {
+    if (group) group.insertAdjacentHTML('beforeend', state.compileKeyLineHtml);
+    btn.disabled = true;
+    btn.setAttribute('aria-disabled', 'true');
+    btn.setAttribute('aria-describedby', COMPILE_RUNLINE_ID);
+  } else {
+    btn.removeAttribute('aria-disabled');
+    btn.removeAttribute('aria-describedby');
+    // A run in flight or an estimate being fetched owns `disabled`; only an
+    // idle button is released here.
+    if (!state.compileBusy && !compilePrepping) btn.disabled = false;
+  }
 }
 
 /**
@@ -2228,7 +2466,12 @@ async function startCompile() {
     return;
   }
 
-  const copy = buildCompileConfirmCopy(est, domain, convTitle, estimateError);
+  const copy = buildCompileConfirmCopy(est, domain, convTitle, estimateError,
+    { runLine: !!(est && est.runsOn && typeof est.runsOn === 'object') });
+  // The run line goes in as the dialog's first line the moment confirmThen has
+  // built it — see compileConfirmLead for why a queued microtask, and why the
+  // dialog's own #cfd-body.
+  queueMicrotask(compileConfirmLead(est, copy.title));
   await confirmThen({
     title: copy.title,
     message: copy.message,
@@ -2382,7 +2625,11 @@ async function runCompile() {
 
     const changes = Array.isArray(final.changes) ? final.changes : [];
     const warnings = Array.isArray(final.warnings) ? final.warnings : [];
-    renderCompileOutcome(buildCompileOutcomeHtml(final.title, changes, warnings));
+    // `final.spent` is the route's spentFromUsage() over EVERY rung of the
+    // full → concise → summary-only ladder (a degraded compile paid for each
+    // attempt, and the line says so by its figure). renderSpent returns ''
+    // for an absent or empty payload, so an older server adds no line.
+    renderCompileOutcome(buildCompileOutcomeHtml(final.title, changes, warnings, renderSpent(final.spent)));
 
     // Best-effort refresh of `state.domains` (pageCount etc.) so the NEXT
     // natural full render (a domain switch, a remount) picks up what this
@@ -3493,6 +3740,16 @@ function projectDocumentOmissions(notes) {
  * a screen reader and for anyone who cannot see the bar.
  */
 function projectDocumentsReadout(used) {
+  // INDEX ONLY (v3.67.0). `budgetChars` is now the EFFECTIVE budget — the
+  // owner's reading budget under Chat's 40,000-character ceiling
+  // (src/brain/chat.js passes `maxBytesCeiling`), so this reading follows the
+  // owner with no arithmetic here. At 0 the owner chose "Index only": Chat
+  // sends no document text at all and does not fetch any by keyword. There is
+  // no denominator to draw a bar against — a bar of 0 ÷ 0 is not a reading —
+  // so the fact is said in words, with the reason, and no bar.
+  if (used && used.budgetChars === 0) {
+    return { label: 'Documents', value: "index only: this project's reading budget" };
+  }
   if (!used || !Number.isFinite(used.documentChars) || !Number.isFinite(used.budgetChars) || used.budgetChars <= 0) {
     return { value: null };
   }
@@ -4001,7 +4258,12 @@ function renderCompileButtonHtml() {
     ? ('Compiling… ' + Math.round(state.compilePct || 0) + '%')
     : 'Compile to Wiki';
   return (
-    '<button type="button" class="btn btn-ai btn-xs chat-compile-pill" id="chat-compile-btn"' + (state.compileBusy ? ' disabled' : '') +
+    // No key: `state.compileKeyAttrs` is aiActionDisabledAttrs' ' disabled
+    // aria-disabled="true" aria-describedby="chat-compile-runline"', read off
+    // state because this body is lifted by two suites (see the field's own
+    // comment); '' whenever a run is possible. Busy wins, and prints ONE
+    // `disabled`, never two.
+    '<button type="button" class="btn btn-ai btn-xs chat-compile-pill" id="chat-compile-btn"' + (state.compileBusy ? ' disabled' : (state.compileKeyAttrs || '')) +
       ' title="Save this conversation as wiki pages">' +
       icon('sparkles', 13) + ' <span id="chat-compile-btn-label">' + escapeHtml(label) + '</span>' +
     '</button>'
@@ -4147,6 +4409,10 @@ function compileControlHtml() {
     '<div class="chat-compile-group">' +
       btn +
       '<span class="chat-compile-caption">' + escapeHtml(compileCaptionText()) + '</span>' +
+      // The no-key run line, directly under the action it explains (its id is
+      // what the button's aria-describedby names). Trusted markup from
+      // shared/ai-run.js via applyCompileRunsOn; '' in every other state.
+      (state.compileKeyLineHtml || '') +
     '</div>'
   );
 }

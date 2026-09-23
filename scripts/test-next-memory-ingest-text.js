@@ -68,6 +68,9 @@ import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
 // Same contract again: shared/monitor.js takes no imports either, precisely
 // so a suite can run the real component rather than a stand-in for it.
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
+// v3.67.0 — the REAL run-line kit, injected into the lifted batch estimate
+// (a module-level import in views/ingest.js is invisible inside a lifted body).
+import { renderRunsOn, aiActionDisabledAttrs } from '../src/public/next/shared/ai-run.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const NEXT = join(__dirname, '..', 'src', 'public', 'next');
@@ -517,14 +520,16 @@ function ingRenderers(stateObj) {
   return new Function('state', 'escapeHtml', 'icon',
     'resolveEstimateFileList', 'renderQueueRejectedItem', 'renderQueueFileListItem',
     'formatQueueBytes', 'formatUsdRange', 'formatTokenRange', 'pausedReasonCopy',
-    'renderStatus', 'renderReadoutGroup', 'renderInfoMark', body)(
+    'renderStatus', 'renderReadoutGroup', 'renderInfoMark',
+    'renderRunsOn', 'aiActionDisabledAttrs', body)(
     stateObj, (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
     () => '<svg></svg>',
     (est, sel) => sel, () => '<li>r</li>', () => '<li>f</li>',
     (b) => b + ' B', (lo, hi) => '$' + lo + ' – $' + hi, (lo, hi) => lo + '–' + hi,
     (r) => ({ title: 'Paused — ' + r, body: 'Recoverable. Resume when ready.' }),
-    renderStatus, renderReadoutGroup, renderInfoMark);
+    renderStatus, renderReadoutGroup, renderInfoMark,
+    renderRunsOn, aiActionDisabledAttrs);
 }
 
 {

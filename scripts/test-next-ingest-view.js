@@ -2508,6 +2508,10 @@ console.log('\n§ 17  Confirm gate — one column measure, two columns');
       const formatQueueBytes = (b) => b + ' B';
       const formatUsdRange = (lo, hi) => '$' + lo + '-$' + hi;
       const formatTokenRange = (lo, hi) => lo + '-' + hi;
+      // v3.67.0 — the run-line kit's two calls, as MARKER stubs like every
+      // other leaf here (§20 drives the real kit through the same body).
+      const renderRunsOn = (r, o) => (r ? '<p class="ai-run" data-stub="runline" id="' + o.id + '"></p>' : '');
+      const aiActionDisabledAttrs = () => '';
       ${b17.renderConfirmGrid}
       ${b17.renderQueueInputFields}
       ${b17.renderQueueEstimate}
