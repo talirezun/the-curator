@@ -178,6 +178,7 @@ function defaultFiles(over = {}) {
     }, null, 2) + '\n',
     'CLAUDE.md': claudeMd(),
     'CHANGELOG-ARCHIVE.md': '# archive\n',
+    'docs/dev/release-index.md': '# index\n',
     'CONTRIBUTING.md': '# contributing\n',
     'scripts/test-changelog-completeness.js': 'section("3. LEANNESS");\n  const CAP = 6;\n',
     '.github/workflows/test.yml': WORKFLOW_OK,
@@ -639,6 +640,17 @@ section('§4  Warnings that are NOT refusals — a release still goes out, loudl
   eq(atCap.result.code, EXIT.OK, 'exactly AT the leanness cap still releases');
   ok(atCap.result.warnings.some((w) => /AT the leanness cap/.test(w)),
     '…and warns that the NEXT release must archive first, rather than letting someone discover it mid-release');
+
+  // A release that archives its oldest row touches THREE changelog files: the
+  // row leaves CLAUDE.md, lands in CHANGELOG-ARCHIVE.md, and its index line
+  // goes into docs/dev/release-index.md (the index left CLAUDE.md on
+  // 2026-09-23). All three must pass the dirty-tree check, or the documented
+  // archive procedure itself would be refused.
+  const archiving = await run([TARGET, '--yes'],
+    { run: { status: () => R(' M CLAUDE.md\n M CHANGELOG-ARCHIVE.md\n M docs/dev/release-index.md\n') } });
+  eq(archiving.result.code, EXIT.OK, 'an archiving release (CLAUDE.md + CHANGELOG-ARCHIVE.md + docs/dev/release-index.md dirty) is NOT refused as a dirty tree');
+  const archAdd = archiving.commands.find((c) => keyFor(c) === 'add') || [];
+  ok(archAdd.includes('docs/dev/release-index.md'), '…and the release commit stages docs/dev/release-index.md with the rest');
 
   const noHooks = await run([TARGET, '--yes'], { run: { hooks: () => R('\n') } });
   eq(noHooks.result.code, EXIT.OK, 'missing git hooks warns rather than refusing (hygiene, not correctness)');

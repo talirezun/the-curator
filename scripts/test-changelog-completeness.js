@@ -25,19 +25,22 @@
  *                  again.
  *
  * ── THE STRUCTURE BEING CHECKED ──────────────────────────────────────────
- * `CLAUDE.md` carries TWO tables:
- *   • the FULL-ROW table (header `| Commit | What it fixed |`) — the newest
- *     few releases, each one a whole long row;
- *   • the INDEX table (header `| Release | Headline …`) — exactly one pointer
- *     line per ARCHIVED release.
+ * The changelog spans THREE files (the index moved out of `CLAUDE.md` into
+ * `docs/dev/release-index.md` on 2026-09-23, when the auto-loaded file was
+ * slimmed from 196 KB to ~32 KB — the index alone was 24 KB of it):
+ *   • `CLAUDE.md` — the FULL-ROW table (header `| Commit | What it fixed |`),
+ *     the newest few releases, each one a whole long row;
+ *   • `docs/dev/release-index.md` — the INDEX table (header
+ *     `| Release | Headline …`), exactly one pointer line per ARCHIVED release,
+ *     reachable from `CLAUDE.md` by a link §1 asserts;
  * `CHANGELOG-ARCHIVE.md` carries one table (header `| Commit | What it fixed |`)
  * holding the archived rows in full.
  *
  * The invariant is therefore a THREE-WAY one, not a two-way one:
  *
- *     index(CLAUDE.md)  ==  rows(CHANGELOG-ARCHIVE.md)      (set equality)
- *     full(CLAUDE.md)   ∩   rows(CHANGELOG-ARCHIVE.md) = ∅  (disjoint)
- *     full(CLAUDE.md)   ∩   index(CLAUDE.md)           = ∅  (disjoint)
+ *     index(release-index.md)  ==  rows(CHANGELOG-ARCHIVE.md)      (set equality)
+ *     full(CLAUDE.md)   ∩   rows(CHANGELOG-ARCHIVE.md)        = ∅  (disjoint)
+ *     full(CLAUDE.md)   ∩   index(release-index.md)           = ∅  (disjoint)
  *
  * ── WHY SET EQUALITY ALONE IS NOT ENOUGH, AND WHAT CLOSES IT ─────────────
  * Set equality catches a row deleted from the archive (its index line is left
@@ -89,8 +92,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const CLAUDE_MD = path.join(ROOT, 'CLAUDE.md');
 const ARCHIVE_MD = path.join(ROOT, 'CHANGELOG-ARCHIVE.md');
+const INDEX_MD = path.join(ROOT, 'docs', 'dev', 'release-index.md');
 
 const claudeSrc = readFileSync(CLAUDE_MD, 'utf8');
+const indexSrc = readFileSync(INDEX_MD, 'utf8');
 const archiveSrc = readFileSync(ARCHIVE_MD, 'utf8');
 const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
@@ -137,7 +142,7 @@ const isFullHeader = (l) => l === '| Commit | What it fixed |';
 const isIndexHeader = (l) => l.startsWith('| Release | Headline');
 
 const fullRows = tableRows(claudeSrc, isFullHeader, 'CLAUDE.md full-row table');
-const indexRows = tableRows(claudeSrc, isIndexHeader, 'CLAUDE.md index table');
+const indexRows = tableRows(indexSrc, isIndexHeader, 'docs/dev/release-index.md index table');
 const archiveRows = tableRows(archiveSrc, isFullHeader, 'CHANGELOG-ARCHIVE.md');
 
 const fullIds = fullRows.map(idOf);
@@ -146,14 +151,17 @@ const archiveIds = archiveRows.map(idOf);
 
 section('0. The parser sees whole tables (anti-vacuity — a parser that stops early reports a loss that never happened, and one that matches nothing reports perfection forever)');
 {
-  ok(fullRows.length >= 3, `CLAUDE.md full-row table parsed: ${fullRows.length} rows (a parser matching 0 or 1 rows would make every later assertion vacuous)`);
-  ok(indexRows.length >= 100, `CLAUDE.md index table parsed: ${indexRows.length} rows`);
+  // Floor 2, not 3, since the cap dropped to 3 (§3): a release that archives
+  // its oldest row before adding its own passes through 2 rows legitimately.
+  ok(fullRows.length >= 2, `CLAUDE.md full-row table parsed: ${fullRows.length} rows (a parser matching 0 or 1 rows would make every later assertion vacuous)`);
+  ok(indexRows.length >= 100, `docs/dev/release-index.md index table parsed: ${indexRows.length} rows`);
+  ok(claudeSrc.split('\n').every((l) => !isIndexHeader(l)), 'CLAUDE.md carries no second index table (the index lives in docs/dev/release-index.md only)');
   ok(archiveRows.length >= 100, `CHANGELOG-ARCHIVE.md parsed: ${archiveRows.length} rows`);
   ok(archiveIds.includes('Phase 1 ✅'), 'the non-backticked "Phase 1 ✅" archive row IS seen by the parser — the row that broke a backtick-anchored loop and made it under-count by 15');
   ok(fullIds.every((id) => id.length > 0) && indexIds.every((id) => id.length > 0) && archiveIds.every((id) => id.length > 0),
     'every parsed row yields a non-empty identifier (an empty id would collapse rows together in the Set comparisons below)');
   ok(new Set(archiveIds).size === archiveIds.length, `no identifier appears twice inside CHANGELOG-ARCHIVE.md (${archiveIds.length} rows, ${new Set(archiveIds).size} distinct)`);
-  ok(new Set(indexIds).size === indexIds.length, `no identifier appears twice inside the CLAUDE.md index (${indexIds.length} lines, ${new Set(indexIds).size} distinct)`);
+  ok(new Set(indexIds).size === indexIds.length, `no identifier appears twice inside docs/dev/release-index.md (${indexIds.length} lines, ${new Set(indexIds).size} distinct)`);
   ok(new Set(fullIds).size === fullIds.length, `no identifier appears twice in the CLAUDE.md full-row table (${fullIds.length} rows)`);
 }
 
@@ -171,8 +179,14 @@ section('1. THE CORE INVARIANT — every archived row has exactly one index line
   const unindexed = archiveIds.filter((id) => !indexSet.has(id));
   ok(unindexed.length === 0,
     unindexed.length === 0
-      ? 'every archived row is reachable from the index in the auto-loaded CLAUDE.md'
-      : `ARCHIVED ROW WITH NO INDEX LINE — ${unindexed.join(', ')} is preserved but unreachable from CLAUDE.md; nobody will know to grep for it. Add its one-line index entry.`);
+      ? 'every archived row is reachable from the index in docs/dev/release-index.md'
+      : `ARCHIVED ROW WITH NO INDEX LINE — ${unindexed.join(', ')} is preserved but unreachable from the index; nobody will know to grep for it. Add its one-line entry to docs/dev/release-index.md.`);
+
+  // The index left the auto-loaded file; what keeps it reachable is a link
+  // FROM that file. Without it an agent starting a session would not know the
+  // index exists, which is the "unreachable" failure above one hop removed.
+  ok(claudeSrc.includes('](docs/dev/release-index.md)'),
+    'CLAUDE.md links to docs/dev/release-index.md, so the index stays one hop from the auto-loaded file');
 
   ok(indexIds.length === archiveIds.length,
     `index line count equals archived row count (${indexIds.length} == ${archiveIds.length})`);
@@ -191,22 +205,25 @@ section('2. DISJOINTNESS — a release lives in exactly ONE place, never both (a
   const alsoIndexed = fullIds.filter((id) => indexSet.has(id));
   ok(alsoIndexed.length === 0,
     alsoIndexed.length === 0
-      ? 'no release has both a full row and an index line in CLAUDE.md'
-      : `DOUBLE-LISTED IN CLAUDE.md — ${alsoIndexed.join(', ')} appears as a full row and as an index line.`);
+      ? 'no release has both a full row in CLAUDE.md and an index line in docs/dev/release-index.md'
+      : `DOUBLE-LISTED — ${alsoIndexed.join(', ')} appears as a full row in CLAUDE.md and as an index line in docs/dev/release-index.md.`);
 }
 
 section('3. LEANNESS RATCHET — CLAUDE.md is auto-loaded into every session, so its row count is a per-session tax and cannot be allowed to drift upward unnoticed');
 {
-  // The intended steady state is FIVE full rows (v3.24.2's decision, argued
-  // there against three and against eight). The cap is SIX, not five, so a
-  // release may add its own row before the trim is performed in the same
-  // change — it is a ratchet against silent accumulation, not a style rule.
-  // It last failed to hold for THREE consecutive releases, reaching nine.
-  const CAP = 6;
+  // v3.24.2 chose FIVE full rows (cap SIX, so a release may add its own row
+  // before the trim), argued there against three and against eight. On
+  // 2026-09-23 the cap dropped to THREE: CLAUDE.md was slimmed from 196 KB to
+  // ~32 KB and six rows alone measured 39,174 bytes — more than the whole
+  // slimmed file's target. Everything else in v3.24.2's reasoning holds: it is
+  // a ratchet against silent accumulation, not a style rule, and it last
+  // failed to hold for THREE consecutive releases, reaching nine.
+  // scripts/release.js reads this declaration (exactly one `const CAP`).
+  const CAP = 3;
   ok(fullRows.length <= CAP,
     fullRows.length <= CAP
-      ? `CLAUDE.md carries ${fullRows.length} full changelog rows (cap ${CAP}, intended steady state 5)`
-      : `TOO MANY FULL ROWS — ${fullRows.length} against a cap of ${CAP}. Move the oldest to CHANGELOG-ARCHIVE.md byte-for-byte and add one index line each. This is exactly the drift that took the file from ~42,792 back to ~58,125 tokens over three releases.`);
+      ? `CLAUDE.md carries ${fullRows.length} full changelog rows (cap ${CAP})`
+      : `TOO MANY FULL ROWS — ${fullRows.length} against a cap of ${CAP}. Move the oldest to CHANGELOG-ARCHIVE.md byte-for-byte and add one index line each to docs/dev/release-index.md. This is exactly the drift that took the file from ~42,792 back to ~58,125 tokens over three releases.`);
 
   // Measured, not asserted from memory: the actual byte cost of the rows kept.
   const fullBytes = fullRows.reduce((n, r) => n + Buffer.byteLength(r, 'utf8'), 0);
