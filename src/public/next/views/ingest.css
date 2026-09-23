@@ -1081,9 +1081,16 @@
   border: 1px solid var(--border-subtle);
   background: var(--surface);
 }
+/* TONE IS A MARK, NEVER TEXT (design rule 7, v3.66.0). The batch's failure
+   is said in WORDS ("Batch failed: …", bold) and its tone is a 3px danger rule
+   at the left, the same mark the monitor's `loud` entry uses — the sentence
+   itself is --text. This summary is the surface P5 touches, so its one tone-
+   coloured line was converted with it. */
 .ing-queue-done-fail-reason {
   margin-bottom: var(--space-4);
-  color: var(--danger-text);
+  padding-left: var(--space-4);
+  border-left: 3px solid var(--danger-text);
+  color: var(--text);
   font-size: var(--text-sm);
 }
 .ing-queue-done-totals {

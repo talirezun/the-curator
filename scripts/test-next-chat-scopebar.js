@@ -65,6 +65,9 @@ import { renderReadout, renderReadoutGroup } from '../src/public/next/shared/tex
 // brace-matching, so the name is a constructor parameter below. The REAL
 // function, so §15's markup assertions stay assertions about what ships.
 import { identityDotClass } from '../src/public/next/shared/sidebar.js';
+// v3.66.0 P4 — the REAL depth bar, from its public address, so the footer's
+// documents reading is asserted as the markup a user is served.
+import { renderDepthCell } from '../src/public/next/shared/depth-bar.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CHAT_JS = path.join(ROOT, 'src/public/next/views/chat.js');
@@ -102,6 +105,13 @@ function extractFunction(src, name) {
   const extracted = src.slice(start, i).replace(/^export\s+/, '');
   if (!/\n\}$/.test(extracted)) throw new Error(`extractFunction: "${name}" extraction desynced`);
   return extracted;
+}
+/* v3.66.0 P4 — the three helpers `projectFootHtml` now calls. Lifted
+   wherever the footer is, so every sandbox builds the REAL footer; a new
+   helper missing here fails as a ReferenceError naming it, never silently. */
+function FOOT_HELPERS() {
+  return ['formatCharsShort', 'projectDocumentOmissions', 'projectDocumentsReadout']
+    .map((n) => extractFunction(chatSrc, n)).join('\n') + '\n';
 }
 function extractConst(src, name) {
   const re = new RegExp(`(?:^|\\n)const ${name} = [^\\n]*\\n`);
@@ -241,6 +251,7 @@ function render(over = {}) {
     extractFunction(chatSrc, 'scopePillAriaFor') + '\n' +
     extractFunction(chatSrc, 'scopePillHtml') + '\n' +
     extractFunction(chatSrc, 'projectKnowledgeReadout') + '\n' +
+    FOOT_HELPERS() +
     extractFunction(chatSrc, 'projectFootHtml') + '\n' +
     extractFunction(chatSrc, 'projectListboxCfg') + '\n' +
     extractFunction(chatSrc, 'projectGroupHtml') + '\n' +
@@ -254,7 +265,7 @@ function render(over = {}) {
     'renderComposerHtml', 'wireComposer', 'renderThreadOnly', 'renderComposerPickers',
     'startCompile', 'switchDomain', 'reportAsyncActionFailure',
     'renderListboxHtml', 'formatAge', 'freshnessTier', 'selectChatProject', 'mountListbox',
-    'renderReadoutGroup', 'identityDotClass',
+    'renderReadoutGroup', 'identityDotClass', 'renderDepthCell',
     src
   )(
     {
@@ -294,7 +305,7 @@ function render(over = {}) {
        WHICH cfgs were handed over, which is §11's subject. */
     (cfg) => { mounted.push(cfg); },
     /* NOT a stub: the real kit function, imported at the top of this file. */
-    renderReadoutGroup, identityDotClass,
+    renderReadoutGroup, identityDotClass, renderDepthCell,
   );
 
   api.renderMain(1);
@@ -844,7 +855,7 @@ section('§8 — THE PROJECT GROUP\'S THREE STATES, told apart rather than merge
       `${label}: no readout in the BAR — the group is an eyebrow and a control`);
     ok(!/id="chat-project-figure"/.test(r.html),
       `${label}: …and no figure node in the bar either`);
-    ok(!/KB read/.test(r.html), `${label}: …nothing in the bar claims a reading`);
+    ok(!/characters read|KB read/.test(r.html), `${label}: …nothing in the bar claims a reading`);
     ok(!/fresh-dot/.test(r.html), `${label}: …and no freshness dot`);
   }
 
@@ -853,8 +864,14 @@ section('§8 — THE PROJECT GROUP\'S THREE STATES, told apart rather than merge
      duplication shape this repo records most often. */
   ok((chatSrc.match(/projectFigureText\(/g) || []).length >= 2,
     'the figure comes from ONE producer');
-  eq((chatSrc.match(/return Math\.round\(used\.chars \/ 1024\)/g) || []).length, 1,
-    '…and the KB arithmetic appears exactly once in the file');
+  eq((chatSrc.match(/formatCharsShort\(used\.chars\)/g) || []).length, 1,
+    '…and the whole-block arithmetic appears exactly once in the file');
+  /* v3.66.0 — THE MISLABEL IS GONE. `chars` is a UTF-16 LENGTH; `/ 1024 + ' KB'`
+     called thousands of characters kilobytes. Neither the division nor the
+     unit may come back anywhere in the view. */
+  eq((chatSrc.match(/used\.chars \/ 1024/g) || []).length, 0,
+    '…and no character count is divided by 1024 and called KB (the v3.65.x mislabel)');
+  ok(!/' KB read/.test(chatSrc), '…and no "KB read" string survives in the view');
   eq((chatSrc.match(/footHtml = projectFootHtml\(\)|footHtml: projectFootHtml\(\)/g) || []).length, 2,
     'the footer has ONE builder, used by the cfg and by the post-turn update — and by nothing else');
   ok(!/patchProjectGroup\(mountToken\)/.test(chatSrc),
@@ -1019,10 +1036,10 @@ section('§11 — THE READING MOVED INTO THE PICKER\'S FOOTER, AND STILL UPDATES
   const never = render({ activeProject: 'lumina' });
   ok(/no saves yet/.test(never.mounted[0].footHtml),
     'A NEVER-SAVED project reads "no saves yet", never an age it does not have');
-  ok(!/KB read/.test(pinned.mounted[0].footHtml),
+  ok(!/characters read|KB read/.test(pinned.mounted[0].footHtml),
     'CONTROL: before any turn the footer claims NO reading — no zero, no placeholder');
   const after = render({ activeProject: 'curator', projectLastUsed: { chars: 12288 } });
-  ok(/12 KB read last turn/.test(after.mounted[0].footHtml),
+  ok(/whole block 12\.3k characters read last turn/.test(after.mounted[0].footHtml),
     'AFTER A TURN: the footer states what the project context actually contributed');
   ok(/tx-readout-prov/.test(after.mounted[0].footHtml),
     '…in the readout\'s provenance slot, which is what that slot is for');
@@ -1078,16 +1095,18 @@ section('§11 — THE READING MOVED INTO THE PICKER\'S FOOTER, AND STILL UPDATES
       extractFunction(chatSrc, 'activeProjectRow') + '\n' +
       extractFunction(chatSrc, 'projectFigureText') + '\n' +
       extractFunction(chatSrc, 'projectKnowledgeReadout') + '\n' +
-      extractFunction(chatSrc, 'projectFootHtml') + '\n' +
+      FOOT_HELPERS() +
+    extractFunction(chatSrc, 'projectFootHtml') + '\n' +
       extractFunction(chatSrc, 'patchProjectFooter') + '\n' +
       'return { patchProjectFooter, projectFootHtml };';
     const make = (doc, cfgHandle) => new Function(
       'document', 'state', 'projectLbCfg', 'formatAge', 'freshnessTier', 'renderReadoutGroup',
+      'renderDepthCell',
       src,
     )(doc, state, cfgHandle,
       (sec) => (sec === null ? 'unknown' : Math.round(sec / 60) + ' min ago'),
       (sec) => (sec === null ? 'unknown' : 'today'),
-      renderReadoutGroup);
+      renderReadoutGroup, renderDepthCell);
 
     /* CONTROL FIRST: with no picker mounted there is nothing to republish and
        nothing may be touched. A `patchProjectFooter` that assumed a cfg would
@@ -1112,7 +1131,7 @@ section('§11 — THE READING MOVED INTO THE PICKER\'S FOOTER, AND STILL UPDATES
     const shutDoc = { getElementById: () => null };
     state.projectLastUsed = { chars: 12288 };
     make(shutDoc, cfgShut).patchProjectFooter();
-    ok(/12 KB read last turn/.test(cfgShut.footHtml),
+    ok(/whole block 12\.3k characters read last turn/.test(cfgShut.footHtml),
       '★ MENU SHUT: the cfg is republished anyway — the next open shows the new figure');
     ok(!/STALE/.test(cfgShut.footHtml), '…and the stale string is gone');
 
@@ -1122,7 +1141,7 @@ section('§11 — THE READING MOVED INTO THE PICKER\'S FOOTER, AND STILL UPDATES
     const openDoc = { getElementById: (id) => (id === 'chat-project-lb-menu' ? menu : null) };
     const cfgOpen = { footHtml: 'STALE' };
     make(openDoc, cfgOpen).patchProjectFooter();
-    ok(/12 KB read last turn/.test(foot.innerHTML),
+    ok(/whole block 12\.3k characters read last turn/.test(foot.innerHTML),
       '★ MENU OPEN: the live footer is rewritten too, so an open picker does not show yesterday\'s figure');
     ok(foot.innerHTML === cfgOpen.footHtml,
       '…with the SAME string the cfg got — one producer, so the two cannot disagree');
@@ -1212,7 +1231,8 @@ section('§12 — AN OPEN ⓘ SURVIVES A BACKGROUND REPAINT OF ITS GROUP (v3.64.
       extractFunction(chatSrc, 'activeProjectRow') + '\n' +
       extractFunction(chatSrc, 'projectFigureText') + '\n' +
       extractFunction(chatSrc, 'projectKnowledgeReadout') + '\n' +
-      extractFunction(chatSrc, 'projectFootHtml') + '\n' +
+      FOOT_HELPERS() +
+    extractFunction(chatSrc, 'projectFootHtml') + '\n' +
       extractFunction(chatSrc, 'projectListboxCfg') + '\n' +
       extractFunction(chatSrc, 'projectInfoPanelHtml') + '\n' +
       extractFunction(chatSrc, 'projectGroupHtml') + '\n' +
@@ -1221,7 +1241,7 @@ section('§12 — AN OPEN ⓘ SURVIVES A BACKGROUND REPAINT OF ITS GROUP (v3.64.
     const api = new Function(
       'document', 'state', 'isCurrentMount', 'escapeHtml', 'closeAllListboxes',
       'renderListboxHtml', 'formatAge', 'freshnessTier', 'selectChatProject', 'mountListbox',
-      'renderReadoutGroup',
+      'renderReadoutGroup', 'renderDepthCell',
       src
     )(
       doc, state, () => true, escapeHtmlStub,
@@ -1231,7 +1251,7 @@ section('§12 — AN OPEN ⓘ SURVIVES A BACKGROUND REPAINT OF ITS GROUP (v3.64.
       (sec) => (sec === null ? 'unknown' : 'today'),
       () => {},
       () => { calls.mounted++; },
-      renderReadoutGroup,
+      renderReadoutGroup, renderDepthCell,
     );
     return { api, calls };
   }
@@ -1963,6 +1983,78 @@ section('§15g — THE SEAM: one server answer, the real loader, the real render
     'the ⓘ names the situation on the CHOSEN arm');
   ok(!/knowledge lives in another domain/.test(defaultPanel),
     '★ …and stays silent on the DEFAULTED one, from the same two domains');
+}
+
+section('§20 — P4 (v3.66.0): documents read vs the 40,000-character project budget');
+// The footer's documents reading, EXECUTED through the real footer builder,
+// the real readout kit and the real depth bar. What a user is served is the
+// cfg's footHtml string (§11a's reason), so that is what every line reads.
+{
+  const foot = (used) => render({ activeProject: 'curator', projectLastUsed: used }).mounted[0].footHtml;
+  // The ONE readout labelled "Documents", cut out of the footer string.
+  const docReadout = (html) => {
+    const m = html.match(/<div class="tx-readout"><span class="tx-readout-label">Documents<\/span>[\s\S]*?<\/div>/);
+    return m ? m[0] : null;
+  };
+  const width = (html) => { const m = /cur-depth-bar[^"]*" style="width:([\d.]+)%"/.exec(html || ''); return m ? Number(m[1]) : null; };
+
+  // ── THE NUMERATOR IS documentChars, NOT chars ────────────────────────
+  // 31,234 characters of WHOLE block, 18,400 of them documents: a bar built
+  // from `chars` would read 78.1%; the honest one reads 46%.
+  const html = foot({ chars: 31234, documentChars: 18400, budgetChars: 40000, notes: [] });
+  const d = docReadout(html);
+  ok(!!d, 'AFTER A TURN with documentChars: the footer carries a "Documents" readout');
+  eq(width(d), 46, '★ the bar is documentChars ÷ budgetChars (18,400 ÷ 40,000 = 46%), never chars ÷ budgetChars (78.1%)');
+  ok(/class="cur-depth-value">18\.4k</.test(d), '…the figure on the bar is 18.4k');
+  ok(/of 40k characters/.test(d), '…and the denominator is NAMED in words beside it — "of 40k characters"');
+  ok(/visually-hidden"> 18,400 of 40,000 characters of documents</.test(d),
+    '…and a screen reader hears the whole sentence, exact figures');
+  ok(/whole block 31\.2k characters read last turn/.test(html),
+    '★ the WHOLE-block figure stays, separate and labelled as the whole block, in characters');
+  ok(!/whole block/.test(d), 'CONTROL: …and it is not inside the Documents readout (two facts, two readouts)');
+  ok(!/cur-depth/.test(html.replace(d, '')), '…and the whole-block figure carries NO bar — it has no denominator');
+
+  // ── NEVER DANGER ─────────────────────────────────────────────────────
+  const full = docReadout(foot({ chars: 60000, documentChars: 40000, budgetChars: 40000, notes: [] }));
+  eq(width(full), 100, 'a budget-filling read draws a full bar');
+  ok(!/cur-depth-danger/.test(full), '★ …and is NOT danger: the server enforces the budget by omission, so full is not over');
+
+  // ── ABSENT IS NOT ZERO ───────────────────────────────────────────────
+  /* THE REAL OLDER SERVER: v3.65.x sends `budgetChars` but no
+     `documentChars`. A fixture without budgetChars could not tell "absent"
+     from "no denominator" — mutation M2' (absent read as a measured 0) stayed
+     green against it, which is why this one carries the budget. */
+  const old = foot({ chars: 12288, budgetChars: 40000, documents: 2, notes: [] });
+  eq(docReadout(old), null, '★ a reading WITHOUT documentChars (a v3.65.x server, budgetChars present) renders NO Documents readout — never a "0"');
+  ok(!/cur-depth/.test(old), '…and no bar anywhere');
+  eq(docReadout(foot({ chars: 900, documentChars: 5000 })), null,
+    '…nor without budgetChars: no denominator, no bar and no half-reading');
+  const zero = docReadout(foot({ chars: 900, documentChars: 0, budgetChars: 40000, notes: [] }));
+  ok(!!zero && /class="cur-depth-value">0</.test(zero), 'a MEASURED zero (read, held no documents) renders "0"');
+  eq(width(zero), 0, '…with a zero-length bar');
+  eq(docReadout(foot(null) || ''), null, 'no turn yet: no Documents readout');
+
+  // ── WHAT WAS LEFT OUT, IN WORDS ──────────────────────────────────────
+  const one = docReadout(foot({ chars: 45000, documentChars: 39000, budgetChars: 40000,
+    notes: ['1 canonical document(s) did not fit the reading budget and were omitted: decisions.'] }));
+  ok(/tx-readout-prov">1 document left out</.test(one), '★ one omitted document is said in words: "1 document left out"');
+  const two = docReadout(foot({ chars: 45000, documentChars: 39000, budgetChars: 40000,
+    notes: ['2 canonical document(s) did not fit the reading budget and were omitted: a, b.',
+            'A canonical document was cut at the reading budget.'] }));
+  ok(/2 documents left out · 1 document cut short/.test(two), '…plurals, and a cut document, each in words');
+  const unrelated = docReadout(foot({ chars: 45000, documentChars: 39000, budgetChars: 40000,
+    notes: ['The handoff was cut at the store\'s size cap.', '3 canonical document(s) are STALE against the repository'] }));
+  ok(!!unrelated && !/tx-readout-prov/.test(unrelated),
+    'CONTROL: notes about OTHER things (a trimmed handoff, stale mirrors) put nothing on the documents readout');
+}
+{
+  // THE FORMATTER, EXECUTED: thousands of CHARACTERS, one decimal, no ".0".
+  const f = new Function(extractFunction(chatSrc, 'formatCharsShort') + '\nreturn formatCharsShort;')();
+  for (const [n, want] of [[0, '0'], [999, '999'], [1000, '1k'], [12288, '12.3k'], [18400, '18.4k'], [40000, '40k'], [31234, '31.2k']]) {
+    eq(f(n), want, `formatCharsShort(${n})`);
+  }
+  eq(f(NaN), null, 'no number, no figure');
+  eq(f(-1), null, 'a negative count is not a figure');
 }
 
 console.log(`\n${'─'.repeat(60)}`);
