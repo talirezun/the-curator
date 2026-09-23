@@ -1061,6 +1061,15 @@ section('10. v3.67.0 — the run line on the estimate, spent on the outcome (add
     ok(/No LLM API key found/.test(last.message || ''), 'and the message is the real no-key throw');
     ok(res.writableEnded, 'the stream is closed');
   });
+  // The success path cannot be driven offline (it needs a real provider), so
+  // the handler is pinned to the ONE event builder driven above: exactly one
+  // emit of compileOutcomeEvent(result), and no hand-built terminal event.
+  const code = stripComments(routeSrc);
+  const postBlock = code.slice(code.indexOf("router.post('/conversation'"));
+  eq((postBlock.match(/emit\(compileOutcomeEvent\(result\)\)/g) || []).length, 1,
+    'the POST handler emits compileOutcomeEvent(result) exactly once');
+  eq((code.match(/type: 'done'/g) || []).length, 1, 'and the route builds a done event in exactly one place (compileOutcomeEvent)');
+  ok(!/type: 'refused'/.test(postBlock), 'the handler builds no refused event of its own either');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
