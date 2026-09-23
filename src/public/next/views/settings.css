@@ -2966,7 +2966,7 @@
 .settings-id-mark .cur-sb-dot {
   position: absolute;
   left: var(--space-4);
-  top: 0.45em;
+  top: 0.48em; /* measured: dot centre within 1.05px of the key's text centre, with and without a bar on the line */
 }
 /* A project with no session in 30 days: its figure in the quiet ink, the
    kit's own `quiet` value colour (--text-2, 8.72 light / 8.34 dark). Not a
@@ -2987,4 +2987,12 @@
   margin: var(--space-6) 0 0;
   font-size: var(--text-sm);
   color: var(--text-2);
+}
+/* NARROW: the kit keeps a key on one line; a project or tool NAME can be
+   longer than a 224px column, so below 640px it wraps (the session strip's
+   own measured fix above, extended to these three hosts). */
+@media (max-width: 640px) {
+  .mcp-busiest .cur-mon-key,
+  .mcp-across .cur-mon-key,
+  .settings-vault-domains .cur-mon-key { white-space: normal; overflow-wrap: anywhere; }
 }

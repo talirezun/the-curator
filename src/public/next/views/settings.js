@@ -9411,7 +9411,12 @@ function renderToolMapBody(now) {
     const noteParts = [];
     if (moreCalled > 0) noteParts.push(moreCalled + ' more ' + (moreCalled === 1 ? 'tool' : 'tools') + ' called less');
     if (notCalled > 0) noteParts.push(notCalled + ' ' + (notCalled === 1 ? 'tool' : 'tools') + ' not called by an agent this week');
-    busiestHtml = '<div class="mcp-busiest">' + renderMonitor({
+    // Captioned like the READ / WRITE groups below it, because the caption
+    // is what says whose calls these are: a tile's "18 uses · 7 days" counts
+    // a test run, this column does not, and the two must not read as a
+    // disagreement.
+    busiestHtml = '<div class="mcp-busiest">' +
+      '<div class="mcp-group-eyebrow">BUSIEST · 7 DAYS · AGENTS ONLY</div>' + renderMonitor({
       label: 'Busiest tools, last 7 days, agents only',
       lines: shown.map((t) => ({
         key: String(t.name),
@@ -9608,7 +9613,7 @@ function renderVaultDomains() {
     ((Number.isInteger(b.pageCount) ? b.pageCount : -1) - (Number.isInteger(a.pageCount) ? a.pageCount : -1))
     || (a.index - b.index));
   return '<div class="settings-vault-domains">' +
-    '<div class="settings-vault-eyebrow">Domains in this folder</div>' +
+    '<div class="settings-vault-eyebrow">DOMAINS IN THIS FOLDER</div>' +
     renderMonitor({
       label: 'Domains in this folder, pages each',
       lines: ordered.map((d) => {
