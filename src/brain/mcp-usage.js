@@ -722,7 +722,7 @@ function parseLines(text) {
  *   {
  *     present, path, logBytes, logStartedAt, lineCount, malformedLines,
  *     byTool: { <name>: {lastUsedAt, lastOk, lastVia, count7d, countTotal,
- *                        refusedTotal, selfTestTotal} },
+ *                        refusedTotal, selfTestTotal, count7dAgent} },
  *     sessions: { lastBootstrapAt, lastSaveAt },   // self-test lines EXCLUDED
  *   }
  *
@@ -787,12 +787,22 @@ export async function readUsage(opts = {}) {
       agg = byTool[r.tool] = {
         lastUsedAt: null, lastOk: null, lastVia: null,
         count7d: 0, countTotal: 0, refusedTotal: 0, selfTestTotal: 0,
+        count7dAgent: 0,
       };
     }
     agg.countTotal++;
     if (r.refused) agg.refusedTotal++;
     if (r.via === VIA_SELF_TEST) agg.selfTestTotal++;
     if (r.at >= since) agg.count7d++;
+    // ── count7dAgent (v3.66.0): THE SAME WINDOW, SELF-TEST LINES EXCLUDED ──
+    //
+    // `count7d` counts EVERY line in the window, including the app's own
+    // "Test all N tools" run — one press puts a call on every tool, and a
+    // "busiest tools this week" bar drawn from it would say, for seven days,
+    // that every tool was used by an agent. `count7d` keeps its shipped
+    // meaning (the tile pins it); this is the number a PEER COMPARISON may be
+    // drawn from. Refusals stay in: a refused call is still an agent's call.
+    if (r.at >= since && r.via !== VIA_SELF_TEST) agg.count7dAgent++;
     if (agg.lastUsedAt === null || r.at >= Date.parse(agg.lastUsedAt)) {
       agg.lastUsedAt = r.ts;
       agg.lastOk = r.ok;
@@ -1085,7 +1095,166 @@ export function summariseSessions(records, opts = {}) {
   };
 }
 
+/**
+ * The parsed lines of EVERY usage log this machine may be writing
+ * (v3.66.0) — `candidateUsageLogPaths()`'s list, each file's `.1` generation
+ * first, parsed by the same `parseLines` every other reader here uses.
+ *
+ *   readUsageLinesUnion() → {present, files, records, malformedLines}
+ *
+ * `files` is how many of the candidate paths (a generation pair counts once)
+ * actually had a file on disk — a COUNT, never a path: the capture route's
+ * envelope deliberately carries no on-disk path (see its docblock), and the
+ * menubar summary is the same kind of surface.
+ *
+ * WHY A READER OF ITS OWN rather than a flag on `readUsageLines`: that one's
+ * cache is keyed on ONE file pair and shared with `readUsage` (the tool map),
+ * whose `path` field names exactly one file. A union read through the same
+ * cache would let a tool-map poll and a union read evict each other on every
+ * call, and a union answer under a single-file key would be a stale answer
+ * the moment the second file grew. Its own key, over every file it read.
+ *
+ * In a bundle install and in every isolated suite the list has ONE entry, so
+ * this answers exactly what `readUsageLines` answers — the union only differs
+ * on a machine that runs both a checkout and the installed `.app`, which is
+ * where the single-file reading was measured to be wrong (v3.64.0).
+ *
+ * `deps.paths` is a TEST-ONLY seam naming the candidate list directly.
+ */
+let _unionCache = null;   // { key, records, malformed, files }
+export async function readUsageLinesUnion(opts = {}, deps = {}) {
+  let bases;
+  try {
+    bases = Array.isArray(deps.paths) && deps.paths.length ? deps.paths : candidateUsageLogPaths();
+  } catch { bases = [getMcpUsageLogPath()]; }
+  const pairs = [];
+  for (const base of bases) {
+    const [stPrev, stMain] = await Promise.all([statOrNull(`${base}.1`), statOrNull(base)]);
+    pairs.push({ base, stPrev, stMain });
+  }
+  const key = pairs.map((p) => `${p.base}=${fileKeyPart(p.stPrev)}|${fileKeyPart(p.stMain)}`).join('\n');
+  const files = pairs.filter((p) => p.stPrev || p.stMain).length;
+  if (!opts.noCache && _unionCache && _unionCache.key === key) {
+    return { present: files > 0, files, records: _unionCache.records, malformedLines: _unionCache.malformed };
+  }
+  const records = [];
+  let malformed = 0;
+  for (const p of pairs) {
+    for (const f of [p.stPrev ? `${p.base}.1` : null, p.stMain ? p.base : null]) {
+      if (!f) continue;
+      let text;
+      try { text = await readFile(f, 'utf8'); } catch { continue; }
+      const parsed = parseLines(text);
+      records.push(...parsed.records);
+      malformed += parsed.malformed;
+    }
+  }
+  _unionCache = { key, records, malformed };
+  return { present: files > 0, files, records, malformedLines: malformed };
+}
+
+/**
+ * The honesty meter, ONE ROW PER PROJECT (v3.66.0).
+ *
+ *   summariseSessionsByProject(records, {since}) →
+ *     {
+ *       projects: [{project, domains, sessions, sessionsRead, sessionsSaved,
+ *                   lastSessionAt}],
+ *       totals:   {sessions, sessionsSaved, projects, legacyLines,
+ *                  selfTestLines},
+ *     }
+ *
+ * ── ONE DEFINITION, NOT A SECOND ONE ────────────────────────────────────────
+ *
+ * Every row is `summariseSessions(records, {project, since})` — the SAME call
+ * `GET /api/memory/:domain/:project/capture` makes for that project — run once
+ * per distinct project name found on a tool line. So a row here and the
+ * Context view's capture meter for the same project can never disagree about
+ * what "read" or "saved" means, about self-test exclusion, about legacy lines,
+ * or about a session that bootstrapped before the window and saved inside it.
+ * The per-project work is bucketed first so the whole pass stays O(lines).
+ *
+ * ── KEYED BY PROJECT NAME, EXACTLY AS THE CAPTURE ROUTE FILTERS ─────────────
+ *
+ * The capture route filters on `project` alone, so this does too. `domains`
+ * lists every non-null domain a line for that project named (sorted), so a
+ * caller joining rows to the store can see when one name was used in two
+ * domains and say so rather than attribute both to one — a limit of the
+ * capture meter's own filter, inherited knowingly rather than split here into
+ * a second reading that would disagree with it.
+ *
+ * ── ABSENT IS NOT ZERO ──────────────────────────────────────────────────────
+ *
+ * A project with no line in the window has NO ROW. A caller that knows the
+ * log exists (`readUsageLinesUnion().present`) may read a missing row as a
+ * measured 0; a caller with no log must read it as unknown. This function
+ * cannot tell those apart from records alone, so it does not pretend to.
+ *
+ * `totals.sessions` / `totals.sessionsSaved` count DISTINCT sids across rows:
+ * a session that touched two projects appears on both rows and once here.
+ * Rows are ordered by sessionsSaved, then sessions, descending, then name.
+ * `since` defaults to none (every line), exactly like `summariseSessions`.
+ */
+export function summariseSessionsByProject(records, opts = {}) {
+  const list = Array.isArray(records) ? records : (records && records.records) || [];
+  const byName = new Map();          // project → records for that project
+  const domainsByName = new Map();   // project → Set(domain)
+  let legacyLines = 0;
+  let selfTestLines = 0;
+  for (const raw of list) {
+    if (!raw || typeof raw !== 'object') continue;
+    const at = Number.isFinite(raw.at) ? raw.at : Date.parse(raw.ts);
+    if (!Number.isFinite(at)) continue;
+    if (normaliseVia(raw.via) === VIA_SELF_TEST) { selfTestLines++; continue; }
+    if (raw.ev === SESSION_EV) continue;           // carries no project
+    const sid = typeof raw.sid === 'string' && SID_RE.test(raw.sid) ? raw.sid : null;
+    if (!sid) { legacyLines++; continue; }
+    const project = typeof raw.project === 'string' && PROJECT_SLUG_RE.test(raw.project) ? raw.project : null;
+    if (!project) continue;
+    let bucket = byName.get(project);
+    if (!bucket) { bucket = []; byName.set(project, bucket); domainsByName.set(project, new Set()); }
+    bucket.push(raw);
+    const domain = typeof raw.domain === 'string' && DOMAIN_SLUG_RE.test(raw.domain) ? raw.domain : null;
+    if (domain) domainsByName.get(project).add(domain);
+  }
+
+  const projects = [];
+  const allSids = new Set();
+  const savedSids = new Set();
+  for (const [project, bucket] of byName) {
+    const one = summariseSessions(bucket, { project, since: opts.since });
+    if (one.totals.sessions === 0) continue;       // nothing in the window
+    for (const s of one.sessions) {
+      allSids.add(s.sid);
+      if (s.saved) savedSids.add(s.sid);
+    }
+    projects.push({
+      project,
+      domains: [...domainsByName.get(project)].sort(),
+      sessions: one.totals.sessions,
+      sessionsRead: one.totals.sessionsRead,
+      sessionsSaved: one.totals.sessionsSaved,
+      // Sessions arrive newest first, so [0] is the newest.
+      lastSessionAt: one.sessions.length ? one.sessions[0].endedAt : null,
+    });
+  }
+  projects.sort((a, b) => (b.sessionsSaved - a.sessionsSaved)
+    || (b.sessions - a.sessions)
+    || (a.project < b.project ? -1 : a.project > b.project ? 1 : 0));
+  return {
+    projects,
+    totals: {
+      sessions: allSids.size,
+      sessionsSaved: savedSids.size,
+      projects: projects.length,
+      legacyLines,
+      selfTestLines,
+    },
+  };
+}
+
 /** TEST-ONLY: drop the parsed-line cache. */
 export function __clearUsageCache() {
   _cache = null;
+  _unionCache = null;
 }
