@@ -2291,6 +2291,38 @@ ok(/state\.file \? renderSelectedFileHtml\(state\.file\) : ''/.test(js),
     '§16e2 …imported from views/memory.js, the one writer Context consumes (no second hook)');
 }
 
+// ── 16e3  THE CALLOUT'S ANATOMY IS QUICK MAINTENANCE'S, AND STAYS SO ───
+// v3.65.2 (I2) copies Wiki health's Quick-maintenance empty state BY VALUE
+// (this stylesheet may not name `.dm-`), so the copy is compared, not
+// trusted: the day Quick maintenance is retuned, this reds until the
+// callout follows. And the one narrow-width rule is pinned: at a 568px
+// window the form is 127px wide and a `nowrap` 32px `.btn` overflowed 35px.
+{
+  const domCss = readFileSync(path.join(ROOT, 'src/public/next/views/domains.css'), 'utf8');
+  const declOf = (src, sel, prop) => {
+    const m = new RegExp('\\n' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}').exec(src);
+    if (!m) return null;
+    const d = new RegExp('(?:^|[;\\s])' + prop + ':\\s*([^;]+);').exec(m[1]);
+    return d ? d[1].trim() : null;
+  };
+  for (const [prop, from] of [['padding', '.dm-quick'], ['border-radius', '.dm-quick'],
+    ['border', '.dm-quick'], ['background', '.dm-quick'],
+    ['justify-content', '.dm-quick-empty'], ['gap', '.dm-quick-empty'], ['flex-wrap', '.dm-quick-empty']]) {
+    const theirs = declOf(domCss, from, prop);
+    const mine = declOf(css, '.ing-verbatim-note', prop);
+    ok(theirs !== null && mine === theirs,
+      '§16e3 the callout’s `' + prop + '` is Quick maintenance’s (' + from + ': ' + theirs
+      + ') — found ' + mine);
+  }
+  ok(declOf(css, '.ing-verbatim-go', 'white-space') === 'normal'
+    && declOf(css, '.ing-verbatim-go', 'min-height') === 'var(--control-md)'
+    && declOf(css, '.ing-verbatim-go', 'height') === 'auto'
+    && declOf(css, '.ing-verbatim-go', 'max-width') === '100%',
+  '§16e3 the button may wrap its label at a narrow width and never drops below the md rung');
+  ok(declOf(css, '.ing-verbatim-text', 'flex') === '1 1 240px',
+    '§16e3 the sentence takes the flexible share, so the button sits right on one row when it fits');
+}
+
 // ── 16b  wireListeners wires the control to clearSelectedFile ───────────
 {
   const wireBody = extractFunction(js, 'wireListeners');

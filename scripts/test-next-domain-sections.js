@@ -506,6 +506,14 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
   'rule not found in views/domains.css');
   eq('CONTROL -- and that IS the gap the one rule uses',
     decl(CSS, '.dm-section + .dm-section', 'margin-top'), 'var(--space-12)');
+  // ── ① WITHOUT A SUMMARY (v3.65.2) ─────────────────────────────────────
+  // No summary row means the body's missing top padding must come back, and
+  // ①'s head row (and only ①'s) wraps, so its reading drops under the title
+  // at a 568px window instead of overflowing the 213px column (measured).
+  eq('① gets its top padding back, the --space-7 of its sides',
+    decl(CSS, '.dm-sources > .dm-fold-body', 'padding-top'), 'var(--space-7)');
+  eq('①\'s head row wraps', decl(CSS, '.dm-sources-hd .dm-section-head-row', 'flex-wrap'), 'wrap');
+  eq('CONTROL -- and no other head row does', decl(CSS, '.dm-section-head-row', 'flex-wrap'), null);
   const titleRule = /\n\.dm-section-hd \.dm-section-eyebrow,\n\.dm-section-hd \.dm-fold-title\s*\{([^}]*)\}/.exec(CSS);
   ok('CONTROL -- one rule paints every section title', !!titleRule, String(titleRule));
   const titleProp = (p2) => {
