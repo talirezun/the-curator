@@ -54,7 +54,11 @@ anyone else's server.
 Since v3.62.0 you also choose **which** foundations an agent is handed automatically: mark a
 document **read first** and its text reaches every session, and everything else arrives as an index
 an agent opens by name when the work calls for it. A project's standing brief carries a
-*"Read before you…"* section for saying which document suits which kind of work.
+*"Read before you…"* section for saying which document suits which kind of work. Since v3.67.0
+each document has a third state too, **not at start**, and each project has its own reading
+budget — five presets from Index only to Max 200 KB — under the governing rule **"the right
+context, not all of it": an agent gets its foundations, the last state and the standing brief at
+the start; everything else is on demand.**
 
 Knowledge accumulates, state supersedes, a canonical document is replaced whole and read verbatim.
 Which of the three a thing belongs in is the most useful distinction in the product, and the one
@@ -170,7 +174,9 @@ every test run, so it cannot quietly drift from the code.
 **One more thing for people with two computers:** a project's mirrored canonical documents can now
 be refreshed from the **GitHub repository** itself, not only from a checkout on the one machine that
 has it. Read-only by construction, with a separate read-only token recommended rather than reusing
-your sync credential.
+your sync credential — set it once in **Settings → Knowledge base → GitHub read-only token** (v3.65.2),
+which shows only its last four characters back and offers a one-click **Test** against a named
+repository before you rely on it.
 
 ---
 
@@ -232,7 +238,7 @@ at 18–20 outline pages per source and the catalogue spans 5 to 27 on the same 
 
 <p align="center">
   <img src="docs/images/curator-domains.png" alt="The Curator’s Domains view for the &quot;projects&quot; domain: an OVERVIEW strip of five buttons that double as page-list filters — Pages 767, Entities 161, Concepts 553, Summaries 53, Projects 4 — with Pages shown pressed for the default &quot;All&quot; view; below it a PAGES · THE WIKI list filtered by All / Entities / Concepts / Summaries / Memory with a Show 150 more row; below that PROJECTS IN THIS DOMAIN, its heading carrying an ⓘ mark and no loose sentence beneath it, with Copy marker line and Copy agent instructions actions, each now with its own ⓘ mark beside it" width="800"><br>
-  <em>One domain is one compounding wiki. Every page is a file on disk you can open in any editor. Photographed before v3.64.0, which added the Ingest and Shared Brain folds, shortened the <code>PAGES · THE WIKI</code> eyebrow to <strong>Pages</strong>, and put a Wiki · Context · All lens row above the list; before v3.64.1 numbered the five sections and set their titles in Title case; and before v3.65.0 folded the jump row into the OVERVIEW card, so SOURCES and SHARED are now ordinary tiles in the same grid.</em>
+  <em>One domain is one compounding wiki. Every page is a file on disk you can open in any editor. Photographed before v3.64.0, which added the Ingest and Shared Brain sections, shortened the <code>PAGES · THE WIKI</code> eyebrow to <strong>Pages</strong>, and put a Wiki · Context · All lens row above the list; before v3.64.1 numbered the five sections and set their titles in Title case; before v3.65.0 folded the jump row into the OVERVIEW card, so SOURCES and SHARED are now ordinary tiles in the same grid; and before v3.65.2–v3.65.3, which removed the last two folds on this page — Ingest and Shared Brain are now always open, with no chevron and no remembered state.</em>
 </p>
 
 → The technical deep dive on step 2 — every safeguard, every failure mode, the quality contract —
@@ -471,6 +477,12 @@ Gemini default ($0.09 in · $0.36 out per 1M tokens, measured against a billed c
 2026). Across the measured Gemini and Anthropic models the span is roughly
 **50× on input and 62× on output**, so changing model rescales the rows above. An admin running
 cohort-scale Shared Brain synthesis weekly is more like €10–20/month.
+
+**Since v3.67.0, one model runs every AI job** — ingest, compile, wiki health, Shared Brain and
+reading plans — and every button that spends money says so first: *"Runs on Flash Lite 2.5 · ≈6k
+tokens · ≈$0.0012 · Change model"*, then, once it has run, *"Ran on Flash Lite 2.5 · 5,812 in / 640
+out · $0.0008."* With no key the same buttons stay visible but disabled. Chat keeps its own
+per-message model picker, separate from the one model everything else runs on.
 
 <p align="center">
   <img src="docs/images/curator-providers-keys.png" alt="The Curator's Providers &amp; keys settings: step 1 Connect a provider lists Gemini connected, Anthropic with no key, and OpenRouter connected, with a note that local models do not exist yet; step 2 What builds your wiki shows Flash Lite 2.5 selected with chips reading &quot;$0.10 in · $0.40 out per 1M tokens&quot;, &quot;plans 18-20 pages per source&quot; and &quot;measured by The Curator&quot;, and a CHEAPEST MEASURED line offering MiniMax M3 (free)" width="800"><br>

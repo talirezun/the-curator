@@ -217,7 +217,17 @@ Four things are not rail destinations. **Reading a wiki page** is an overlay tha
 
 ## What do the small dots and bars on a row mean?
 
-Four consistent marks, none of them a screen of their own: an **identity dot** — one colour per domain, the same colour wherever that domain is named; a **freshness dot** with a clock glyph and an age — how recent a reading is; a **depth bar** — a tinted bar behind a figure showing how much against a named total, such as a document's size against a project's 200 KB budget, or a domain's page counts; and **tone** — a monitor's outcome colour, always paired with words, never alone. A depth bar only turns danger-toned when its budget is actually exceeded, and that fact is always also stated in words.
+Five consistent visual channels, none of them a screen of their own, and — since version 3.66.0 — the same five everywhere the app has a reading, including the Mac menu bar widget, because a Windows or Linux user has no widget and must see the same fact in the app.
+
+| Channel | What it shows | Example |
+|---|---|---|
+| **Identity dot** | Which domain — one of twelve colours, fixed by the domain's position in your list, the same colour wherever that domain is named | A domain's dot in the sidebar, a Chat domain chip, a row in "Domains in this folder" |
+| **Freshness dot** | How recent a reading is, as a tier | The dot beside "saved 41 min ago" |
+| **Clock + age** | How recent, in words | "saved 41 min ago" itself |
+| **Depth bar** | Size or share against a named total — never an unnamed one | A document's size against a project's 200 KB budget, issues per category in Wiki health, a project's saved sessions against the busiest project |
+| **Tone** | An outcome — ok, warn, danger or quiet — shown only as a mark (a border, a rule, an icon), never as coloured text | A monitor's status line |
+
+None of the twelve identity colours is also used for freshness, danger or a warning, so a domain's dot can never be mistaken for one of those. A depth bar only turns danger-toned when its named budget is actually exceeded, and that fact is always also stated in words, never colour alone.
 
 ## What is on a domain's page?
 
@@ -227,7 +237,11 @@ Then an **OVERVIEW** card (the counts, and when the domain was last written to) 
 
 **OVERVIEW** is five figures in one card — PAGES, ENTITIES, CONCEPTS, SUMMARIES and PROJECTS, plus OTHER when pages sit outside the three canonical folders. A figure reads an em dash rather than 0 while it is still loading, because "not known yet" and "none" are different answers. Beside them sit jump buttons — SOURCES, carrying the last ingest, and SHARED when this domain contributes to a Shared Brain — each of which opens the section it names, drawn at the same tile size as the five figures beside them rather than as a separate, smaller row. Since v3.64.2 this is the same card the Project-context page draws its own readings in — one shared component, not two builds of the same idea — and since v3.65.0 the two jump tiles are ordinary tiles in that one grid rather than a second, smaller row.
 
-**Ingest is always open, as of version 3.65.2** — it has no chevron and nothing to remember; its one reading, the last-ingest age, sits at the right of its own heading. Pick a `.md` or `.txt` file and a callout appears: "Wanted this kept word for word? Add it as a project document instead," with a button that opens this domain's own project in Context, at step ① Documents. **Shared Brain is still a closed fold** that remembers whether you opened it — one preference for the whole install (v3.64.1), not per domain. On a read-only Shared Brain mirror there is no Ingest section at all, because an ingest into a mirror has never been possible.
+**Ingest is always open, as of version 3.65.2, and Shared Brain is always open too, as of version 3.65.3.** Neither has a chevron or a remembered open/closed state any more. Ingest's one reading, the last-ingest age, sits at the right of its own heading; pick a `.md` or `.txt` file and a callout appears: "Wanted this kept word for word? Add it as a project document instead," with a button that opens this domain's own project in Context, at step ① Documents. On a read-only Shared Brain mirror there is no Ingest section at all, because an ingest into a mirror has never been possible.
+
+Shared Brain's heading now carries one reading of its own — *contributes to …*, *mirror of …*, *not part of any*, *off on this install* or *no connection* — and, on a contributing domain, one monitor (pushed, pulled, synthesis, pending, mirror, contributes), one row of actions (**Push contributions**, **Pull updates**, and **Run synthesis** when this computer holds the brain's admin token), and folds underneath for the access token, cohort and sharing, skipped pages, admin controls and leaving. A `shared-*` mirror domain has its own **Pull updates**.
+
+**Wiki health's Scan row, since version 3.66.0, opens to two readings**: the scan's totals, and **issues per category** — one line per kind of issue, largest first, each drawn as a depth bar against the largest category. A category with no issues reads 0 with no bar; the largest bar is simply the biggest pile, never itself a warning.
 
 The **Pages** lens is new in version 3.64.0. **Wiki** shows entities, concepts and summaries; **Context** shows standing briefs, handoffs and a project's canonical documents; **All** shows both. Every one of them opens in the same right-side reader. Under the lens row are a **Filter by name…** box and the older type facets — **All**, **Entities**, **Concepts**, **Summaries** and **Memory** — which narrow the wiki reading. The two controls cannot contradict each other: pressing **Memory** puts the list into the **Context** lens and the lens row says so. The type facet **All** means wiki pages only, the same number the PAGES figure reports, so the two can never disagree.
 
@@ -286,9 +300,9 @@ Only text-based PDFs work. A scanned PDF is an image of a page and has no extrac
 1. Click **Domains** in the rail, pick your destination domain, and open its **Ingest** section. (The full-page Ingest view is still there, one press from the section, and opens on its own if it is where you last left off.)
 2. Confirm the destination domain. In the section it is the domain whose page you are on; in the full-page view it comes from the picker above the drop zone or from the destination list in the panel beside it. That list shows one row per domain with its page count and when it was last written to — "last write" rather than "last ingest", because compiling a conversation writes to a domain too.
 3. Drag your file onto the drop zone, which reads **"Drop a source here"**, **"or browse your files"**, **"Accepts .txt · .md · .pdf"**, with **"2 or more files at once starts a batch"** underneath. Or click **browse your files**. A cross beside the file name removes it before you ingest.
-4. Click **Ingest**.
+4. Click **Ingest**. Since version 3.67.0, once a file is picked, a line under Ingest says what it will run on and roughly what it will cost — nothing is uploaded until you press Ingest.
 5. A progress bar names the current step with a percentage and a running timer. This usually takes 15 to 60 seconds. Do not close the browser or refresh.
-6. You get a specific result — for example "Wrote 7 new pages · updated 4 existing · +6.1 KB" — followed by the full list of pages created or updated.
+6. You get a specific result — for example "Wrote 7 new pages · updated 4 existing · +6.1 KB" — followed by the full list of pages created or updated. Since version 3.67.0 the result also says what actually ran and what it cost, beside the call count.
 
 Dragging from Finder works anywhere in the full-page Ingest view, not only on the drop zone exactly. In the **Ingest** section of a domain's page the target is the section itself: a file dropped elsewhere on that page is refused rather than opened, because dropping a file on a web page normally navigates away from the app. Dropping two or more files at once starts a batch, exactly as picking several from the file browser does.
 
@@ -312,6 +326,8 @@ You see a confirm screen first and nothing is spent until you press **Start batc
 | **Dismiss** | Clears a finished, cancelled or failed batch from the screen. It deletes nothing, and is unavailable while a batch is live. |
 | Budget cap | A dollar ceiling. The batch pauses when the running total reaches it. If the model in use has no published price, a cap is refused rather than accepted unenforceably; the batch itself still runs. |
 | Already-ingested files | Marked **Skipped** the moment you create the batch, before anything is uploaded or any AI call is made. The Overwrite checkbox re-includes them. |
+
+**Since version 3.66.0**, with a cap set, spend is drawn as a depth bar against it — "$0.04 spent of the $0.05 cap" — appearing once the first file has been charged (before that the line reads "pending first file"). The cap is checked between files, so the file that crosses it finishes and is charged; the bar then turns red and a line states the overshoot in words: "$0.06 spent, $0.01 over the $0.05 cap." Without a cap there is no bar. The estimate carries the same run line — what it runs on and roughly what it costs — beside its existing figures.
 
 The batch can pause itself. The reasons it gives: the AI provider rate-limited us, the AI provider is temporarily unavailable, budget cap reached, 3 files failed in a row, the app restarted mid-batch, or this domain is locked by another process. In the first two cases The Curator has already retried with backoff and nothing was lost — wait a few minutes and click Resume.
 
@@ -445,6 +461,8 @@ The number that surprises people here too: it is your wiki's size, not your chat
 
 The dialog never renders an unknown cost as $0.00. It says one of four things: a normal range; that the model is genuinely free; that no published price is on file so the cost cannot be shown in dollars while your provider will still bill you; or that no AI provider is configured.
 
+**Since version 3.67.0** the dialog leads with the same "Runs on …" line every AI action shows, and — Compile always runs on your one AI model (Settings → Providers & keys), never the model this particular chat happens to be on — a second line appears whenever those two differ, saying so plainly. The result card, after the compile, adds a "Ran on … · $…" line with what it actually cost, even when a compile that already called the model then failed.
+
 What gets written: one summary page under `summaries/` named `<conversation-title>-<YYYY-MM-DD>-<short-hash>.md`, entity and concept pages for anything central to the discussion, cross-links between them all, and an entry in the domain's log. Compiling the same conversation twice with nothing changed is refused with a clear message — send another message in the conversation and compile again to extend it. The conversation itself stays in the sidebar after a compile.
 
 ## How do I see my knowledge graph in Obsidian?
@@ -494,7 +512,7 @@ A **QUICK MAINTENANCE** block holds one button per batch tool, each with a live 
 | **Rescue N orphans** — the AI finds the page that should most naturally link to each orphan and writes a short relationship note into it | Yes | Shown on the button |
 | **Find duplicate pages** — the semantic-duplicate scan | Yes | Shown when you open it |
 
-The pattern is always the same: click, a confirm card names exactly what will happen and what it costs, you confirm, the AI plans with a progress bar, you see a preview, you click **Apply**, and the wiki re-scans so you watch the counts drop. Without an API key you still get **Fix N safe issues**. The first time you use any AI action, a one-time notice explains what leaves your machine.
+The pattern is always the same: click, a confirm card names exactly what will happen and what it costs, you confirm, the AI plans with a progress bar, you see a preview, you click **Apply**, and the wiki re-scans so you watch the counts drop. Without an API key you still get **Fix N safe issues**; **since version 3.67.0** the three AI buttons stay visible with no key too, disabled rather than hidden, with a line underneath linking to Providers & keys, and a second line naming the one model they all run on. The first time you use any AI action, a one-time notice explains what leaves your machine, and it now names all three supported providers — Google Gemini, Anthropic or OpenRouter.
 
 Run it after a large batch of ingests, when a wiki starts to feel messy, or about once a month on an active domain. A scan is always safe and idempotent, and never touches your source files or conversations.
 
@@ -624,6 +642,8 @@ Two readings above the tiles speak to your agent's habits: **Last session start*
 a session opened by reading where things stood, and **Last save** is the last time one wrote a
 handoff before stopping.
 
+**Since version 3.66.0** the tool map also shows **Busiest · 7 days · agents only** — up to eight tools your agents called most this week, each drawn as a depth bar against the busiest one (a run of *Test all N tools* is excluded from this count, though it still counts in a tile's own *uses · 7 days*) — and a fourth block, **Across projects**: one line per project, the dot in that domain's own colour, the figure how many agent sessions in the last 30 days saved a handoff, against the busiest project, with the total sessions underneath and the last line counting every save in the last 7 days (the same number the menu bar widget's pulse shows). With no usage log on this computer, the block says so instead of drawing zeros.
+
 ## What is in Settings?
 
 **Settings** is the gear icon at the bottom of the rail. Its sections are listed in the panel beside it, ordered by how often you come back to them.
@@ -636,7 +656,9 @@ handoff before stopping.
 | **MCP bridge** | The setup wizard, **Run self-test**, **View config**, **Copy snippet**, the default write domain, the tool map, and a note naming any bridge process still running older code. |
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans. |
 
-Since version 3.65.0 an **Updates** button sits at the TOP of that sidebar, under the title, and switches to General and runs the check; the version — for example `The Curator v3.65.0` — sits alone at the foot of the list, because a version string is a reading and not an action.
+Since version 3.65.0 an **Updates** button sits at the TOP of that sidebar, under the title, and switches to General and runs the check; the version — for example `The Curator v3.67.1` — sits alone at the foot of the list, because a version string is a reading and not an action.
+
+**Since version 3.67.0, Providers & keys' second block is "Your AI model"** — the one model every AI job runs on: ingest, compile, wiki health, Shared Brain and reading plans. Its **Used by** row lists each of those jobs, where you start it, and whether its cost is shown yet (a job whose cost reporting has not shipped reads "not yet"). Chat is separate — you still pick any connected model per message, in the composer.
 
 The theme switch in the rail footer and the **Appearance** control in General are the same setting and stay in step. Text size applies across the whole app, including button and text-box labels, and is remembered in this browser; control heights and icons deliberately stay put so buttons do not grow into each other.
 
@@ -650,13 +672,15 @@ The app honours your operating system's **Reduce motion** setting. Movement is r
 
 A classic token (`ghp_…`) also works, but it can read every repository your account owns, not just the ones you intend to mirror — which is why a fine-grained token is recommended, and why Personal Sync's own token (used for push, not for a read-only mirror) is never the default.
 
+**Choosing which saved token to read with, since version 3.65.3.** When a project's Documents step opens "Mirror from GitHub," a **READ WITH** control offers up to two saved tokens, each named by where it lives: the read-only token above (shown by its last four characters) and Personal Sync's own token (which, if it is a classic token, can read every repository its account can see — which is why it is never the default). Whichever a read-only token is saved, it is selected automatically; when none is saved, nothing is selected and **Add one in Settings** takes you to this field. Nothing ever falls back to Personal Sync's token without you pressing it.
+
 ## How do I check that everything is working?
 
 **Settings → General → System check**.
 
 **Run system check** is free and instant. It makes no network call, costs nothing, and never touches your wiki content. It checks your installed version; which install you are running and how updates reach it; whether an AI key is configured; that your knowledge folder is writable; that your credential files are locked down at `0600`; whether `git` is available; your sync status; and your application log file. Each row reads OK, needs attention, failed or info.
 
-**Verify AI connection · $0.0001** makes one tiny real request to your provider. It asks first and you click **Confirm — run it** or **Cancel**. On success it reports the provider, the model and the response time; on failure it reports the exact error, so you can tell a bad key from a provider outage in one click.
+**Verify AI connection** makes one tiny real request to your provider. Since version 3.67.0 its confirm no longer shows a fixed placeholder price — it names the model that will run and the estimated real cost before anything runs, the same "Runs on … · ≈cost" line every other AI action shows. With no provider key the button is disabled and says why. On success it reports the provider, the model and the response time; on failure it reports the exact error, so you can tell a bad key from a provider outage in one click.
 
 One gap worth knowing: in the Mac app the **Git** row reports "Not required by this build" and does not warn you if `git` is missing — but Personal Sync still needs `git`.
 
@@ -667,6 +691,8 @@ System check answers "is the app working?". A domain's **Wiki health** panel ans
 **Settings → General → Menu bar**, with three choices: **Off**, which is the default; **On**, which puts a small icon in the macOS menu bar alongside your Dock icon; and **On, and hide the Dock icon**. It takes effect immediately with nothing to restart. It applies to the Mac app only, and the control says so in a browser install rather than hiding itself.
 
 The icon answers one question in about a second without leaving what you are doing: whether your agent has actually written its handoff, and how long ago. What each row in its menu means belongs to the agent memory material, not here.
+
+**Since version 3.66.1 the menu also draws three small depth bars**, each one the widget's own twin of an app reading so a fact is never widget-only: each **project** header shows sessions that saved a handoff in the last 30 days against the busiest project (its app twin is MCP bridge's Across projects); a **Domains · pages** section shows each domain's page count against the largest domain, in that domain's own colour (its twin is Knowledge base's "Domains in this folder"); and the open project's **documents** line, under its own header, shows document size against whichever budget applies — 120 KB once anything is marked read first, otherwise the 200 KB a project may store (its twin is the Context view's documents monitor). A bar turns red, and says "over," only on an actual over-run; with no usage log on this computer a project line reads "no logged sessions · 30 d" instead of a bar drawn at zero.
 
 **"On, and hide the Dock icon" does not hide the Dock icon yet.** The setting is remembered and the app deliberately does the safe half of it, because the macOS call that hides a Dock icon has a return path that is reported broken and could not be tested.
 

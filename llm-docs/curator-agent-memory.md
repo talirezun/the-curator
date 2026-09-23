@@ -122,21 +122,53 @@ What it sends of the foundations is the part you control, since v3.62.0. The **i
 
 An index row with no text means a document waiting to be asked for. It never means a document that does not exist, and the tool says so in as many words, because an agent that reported "this project has no decision log" while `decisions.md` sat in the index would have told you something false about your own project.
 
-If you have marked nothing, the older behaviour is unchanged: a first session gets every document up to a budget, and a returning session sends back the sha256 of each document it already read — recorded on its previous save, in a `Foundations read` section of the handoff — and gets only what changed since.
+If you have marked nothing, the older behaviour is unchanged: a first session gets every document up to a budget, and a returning session sends back the sha256 of each document it already read — recorded on its previous save, in a `Foundations read` section of the handoff — and gets only what changed since. That budget is 120 KB by default, and, since version 3.67.0, it is the project's own reading budget once you set one — see the next two sections for the tri-state per-document control and the presets.
 
 Reads never write. The bootstrap does not mark anything as seen on your behalf; the agent records what it read on its next save. A session that reads a document and then crashes has recorded nothing, so the next start correctly treats that document as unseen.
 
 ## How do I choose which documents an agent gets automatically?
 
-Mark them **read first**, from the row's own control in step 1 of the Project context screen.
+Since version 3.67.0 each document has one of three **start states**, set from its own row's control in step ① Documents:
 
-A project with four documents can hand an agent all four at the start of every session. A project with twenty cannot — the session then opens with twenty documents most of which have nothing to do with the work in front of it, and the reading budget starts dropping documents nobody chose to drop. Marking is how you choose instead.
+- **Read first** — its text arrives with every session, within the reading budget.
+- **On request** — listed at the start; the agent opens it by name when the task needs it.
+- **Not at start** — kept and mirrored, but not listed at the start at all; name it in the standing brief under "Read before you…" if an agent should still find it. (An agent that asks for a not-at-start document by name still receives it — this state only changes what is offered unprompted.)
 
-Mark sparingly. The marked set is the one that is sent every session, so it is the one that costs; two or three documents is a reading plan, twelve is the old behaviour with extra steps. The block's summary line counts both — "2 read first · 4 on request" — and tells you when the marked set has grown past what one session's reading can carry.
+A project with four documents can hand an agent all four at the start of every session. A project with twenty cannot — the session then opens with twenty documents most of which have nothing to do with the work in front of it. Marking is how you choose which ones do.
+
+Mark sparingly. The read-first set is the one sent every session, so it is the one that costs; two or three documents is a reading plan, twelve is the old behaviour with extra steps. The block's summary line counts read-first and on-request together — "2 read first · 4 on request" — and tells you when the marked set has grown past what one session's reading can carry.
 
 Marking works on a mirrored document too. The mark lives in The Curator's own index rather than in the document, so the file in your checkout is untouched, a refresh still compares the two byte for byte, and the mark survives that refresh: the repository owns the text, you own the reading order.
 
-You can also ask an agent to set it, through `save_foundation`'s optional `read_first`. Leaving it out is the safe default and the intended one — an ordinary save then keeps whatever you chose.
+You can also ask an agent to set read-first, through `save_foundation`'s optional `read_first`. Leaving it out is the safe default and the intended one — an ordinary save then keeps whatever you chose.
+
+## What is a project's reading budget?
+
+Since version 3.67.0 each project has a reading budget: how much document text an agent is handed at the start of a session. The governing rule, in the maintainer's own words, is *"the right context, not all of it"* — an agent needs its foundations, the last state and the standing brief at the start; everything else is on demand.
+
+Until you set one, nothing changes — every session still receives up to 120 KB of document text, in reading order, exactly as before v3.67.0. Choose a budget and the project becomes **planned**: from then on, only the **read-first** set arrives as text; everything else is listed by name and opened on request.
+
+Five presets, all owner-written only — no MCP tool, no CLI flag and no hook ever sets one:
+
+| Preset | Size |
+|---|---|
+| Index only | 0 — the list only; no document text at all |
+| Lean | 32 KB |
+| Standard | 64 KB — the recommended default |
+| Deep | 120 KB |
+| Max | 200 KB |
+
+The **Session start** step of the Project context screen (step ④, new in version 3.67.0) shows a **"what an agent receives"** monitor — the standing brief, the latest handoff, a few journal lines, the document index, and the read-first text, each measured against its own limit, with the total drawn as a share of your agent's own context window (a per-browser setting: 200k or 1M tokens; tokens are estimated at four characters each). When every session is handed more than 32 KB of documents, a line says so, with **Set a reading budget** beside it.
+
+## Can The Curator suggest which documents to mark?
+
+Yes — **Suggest a reading plan**, in step ①'s head row, since version 3.67.0. It proposes a start state for every document without changing anything; you review the **Suggested** column and press **Apply suggestion** for the rows you want, or **Dismiss**.
+
+**Suggest (free)** needs no AI key. It follows your standing brief's "Read before you…" list (those stay on request, since you have already said when to open them), each document's role and size, and your reading budget: conventions, decisions and architecture documents are proposed read first while they fit the budget and never when one alone is larger than half of it; skeletons stay on request; a stale roadmap over 64 KB may be proposed not at start; a document you already keep not at start stays there.
+
+**Suggest with AI** asks your one AI model to read each document's title, role, size and the first 600 characters of its opening — never a whole document — framed as untrusted data to check, never instructions to follow. Every slug and state it returns is checked against your actual document index; anything it does not recognise is dropped and named, never applied silently. It shows what it will cost before it runs (a run of a cent or more asks you to confirm first) and what it cost after. With no provider key the button is disabled and links to adding one; the free suggestion always works.
+
+Neither arm writes anything to your project. Applying is its own separate step, and you can untick any row you disagree with first.
 
 ## How do I tell an agent which document to open for which kind of work?
 
@@ -396,6 +428,10 @@ Three things are worth knowing. It is a reading and never a save: chat writes no
 
 The pin is remembered on that computer, per domain, and clears itself if the project is deleted. Pinning a project the domain does not have is refused with a plain reason before the answer starts, rather than quietly answering from the wiki alone.
 
+After a turn, the project picker's footer shows two readings. **Documents** is how many characters of the project's documents actually reached the prompt, drawn as a depth bar against a 40,000-character ceiling — "18.4k of 40k characters" — a figure that had been mislabelled "KB" since it shipped and was corrected to characters in version 3.66.0; if a document did not fit, the footer says so in words. **Whole block** is the size of everything the project added — brief, handoff, journal and documents together — in characters, with no bar of its own, because the budget governs documents only.
+
+**Since version 3.67.0**, Chat also honours a project's own reading budget when one is set: the 40,000-character ceiling above is a cap, not a floor, so a smaller project budget shrinks it further, and at **Index only** chat reads no document text at all and does not fetch documents by keyword.
+
 ## Can another tool read and write this format?
 
 Yes, and that is now a published contract rather than an inference from the files. `docs/spec/working-state-v1.md` in the repository is the on-disk format, versioned `working-state/1`: the file layout, the machine-name rule and the merge hazard it exists to prevent, the handoff's section grammar heading by heading, the sanitisation a reader re-applies, the journal line, the foundations manifest field by field, the size budgets with the behaviour attached to each, and the bootstrap contract.
@@ -416,7 +452,7 @@ What it does not change: the copies still travel by sync, a mirror refreshed on 
 
 ## Can I switch a mirrored project from a folder to GitHub?
 
-Yes, since version 3.65.1 — **"Mirror from GitHub instead"**, in the Documents block's own controls. It re-copies the project's documents from a repository you name, records that repository, and clears the folder path the mirror used to read from, so every machine reads the same source afterwards instead of only the one that made the mirror. Ownership does not move — the repository is still the source of truth, exactly as it was before the switch — and any document you had marked read first stays marked, by name. As with any mirror action, there is no token field: you name which file on this computer the read-only token comes from. As of version 3.65.2, the panel's READ WITH row states the truth rather than a promise: with a token saved it names the token by its last four characters, and with none it offers a door straight into Settings → Knowledge base to add one.
+Yes, since version 3.65.1 — **"Mirror from GitHub instead"**, in the Documents block's own controls. It re-copies the project's documents from a repository you name, records that repository, and clears the folder path the mirror used to read from, so every machine reads the same source afterwards instead of only the one that made the mirror. Ownership does not move — the repository is still the source of truth, exactly as it was before the switch — and any document you had marked read first stays marked, by name. As with any mirror action, there is no token field: you name which file on this computer the read-only token comes from. **As of version 3.65.3**, the panel's READ WITH row offers up to two saved tokens, each named by where it lives — the read-only token (Settings → Knowledge base, by its last four characters) and Personal Sync's own token (never the default, because a classic Personal Sync token can read every repository its account can see). Whichever is a read-only token is saved, it is selected automatically; with none saved, nothing is selected and the row offers a door straight into Settings → Knowledge base to add one. This same chooser, with the same reasons, appears everywhere a mirror is set up: a new project's own "Mirror from GitHub" step and the Domains "New project" form read it too.
 
 ## What is "Copy agent instructions", and what does it give me?
 
@@ -539,15 +575,16 @@ The standing brief is the one file two machines can genuinely conflict on, becau
 
 ## Where do I see this inside the app?
 
-The **Context** item on the rail — one of three, since version 3.64.0 — opens **Project context**, which shows everything one project gives an agent. Since v3.62.0 it is three numbered steps under an overview card, read top to bottom, in the order a session start reads them: step 1 **Documents**, step 2 **Memory**, step 3 **Knowledge** — renamed from *Foundations*/*Working state* in v3.65.1, copy only; the store still says `foundations` and `working state`. Since version 3.64.2 that overview card is the same component the Domains page draws its own OVERVIEW figures in — one shared component, not two builds of the same idea. Since v3.65.1, a domain named anywhere on this screen — the breadcrumb, a sidebar row, a Knowledge row — carries that domain's own colour, the same one it has on the Domains page.
+The **Context** item on the rail — one of three, since version 3.64.0 — opens **Project context**, which shows everything one project gives an agent. Since v3.62.0 it is numbered steps under an overview card, read top to bottom, in the order a session start reads them: step ① **Documents**, step ② **Memory**, step ③ **Knowledge** — renamed from *Foundations*/*Working state* in v3.65.1, copy only; the store still says `foundations` and `working state` — and, new in version 3.67.0, step ④ **Session start**, described below. Since version 3.64.2 that overview card is the same component the Domains page draws its own OVERVIEW figures in — one shared component, not two builds of the same idea. Since v3.65.1, a domain named anywhere on this screen — the breadcrumb, a sidebar row, a Knowledge row — carries that domain's own colour, the same one it has on the Domains page.
 
-- **The sidebar lists your projects, grouped by domain**, each with its work-stream count and how long ago it was last written to. A project with a brief but no save yet is listed, dimmed, reading "no state saved yet", because that is a real answer rather than a broken row. The screen opens on whichever project was written to most recently and remembers the last project you looked at in each domain.
+- **The sidebar lists your projects, grouped by domain**, each with its work-stream count and how long ago it was last written to. A project with a brief but no save yet is listed, dimmed, reading "no state saved yet", because that is a real answer rather than a broken row. The screen opens on whichever project was written to most recently and remembers the last project you looked at in each domain; since version 3.67.0 it also keeps the project you explicitly selected across a view change, rather than falling back to the most recently touched one.
 - **The header carries Copy agent instructions**, beside a breadcrumb naming the domain and project.
-- **The overview card** answers the question people actually arrive with: where does this project stand? One reading per layer — DOCUMENTS, MEMORY, KNOWLEDGE, plus CAPTURE — each with its figure, a qualifier under it, and a freshness dot and the word beside it, because colour never carries a reading on its own. Press one and the page jumps to the step it names; unlike the same card on a domain page, nothing here filters — these are readings, not a filter. An unknown age is drawn as a dashed ring and the words, never as age zero.
-- **Step 1, Documents** holds the canonical documents, or — before ownership is chosen — the question that chooses it. Its head row carries Refresh from repo, Add from folder and, since v3.65.1, Mirror from GitHub instead. Its table's SIZE column carries a small tinted bar behind each figure, showing that document's share of the 200 KB project budget.
+- **The overview card** answers the question people actually arrive with: where does this project stand? One reading per layer — DOCUMENTS, MEMORY, KNOWLEDGE, CAPTURE and, since version 3.67.0, **SESSION START** (the same total step ④ shows: what an agent is handed at the start) — each with its figure, a qualifier under it, and a freshness dot and the word beside it, because colour never carries a reading on its own. Press one and the page jumps to the step it names; unlike the same card on a domain page, nothing here filters — these are readings, not a filter. An unknown age is drawn as a dashed ring and the words, never as age zero.
+- **Step ①, Documents** holds the canonical documents, or — before ownership is chosen — the question that chooses it. Its head row carries Refresh from repo, Add from folder, Mirror from GitHub instead (since v3.65.1), and, since version 3.67.0, **Suggest a reading plan** / **Suggest with AI**. Its table's SIZE column carries a small tinted bar behind each figure, showing that document's share of the 200 KB project budget, and its **At session start** column, since v3.67.0, is a real tri-state control — read first, on request, or not at start — see "How do I choose which documents an agent gets automatically?" above.
 - **Step 2, Memory** holds four collapsed rows, in this order: Capture (the honesty meter, below), Handoffs (your agents'; one right-aligned summary line — handoff count and the newest one's age, nothing under the title while closed; press a row to read that handoff in the reader, where its own headline lives), The brief (yours, with a pencil beside it), and Journal — the session journal, with an inline "Show N more". Only genuinely loud outcomes about one specific save sit above the four rows, unfolded, and only when they fire: content that had to be trimmed, a label that was shortened, a deliberately replaced handoff, two tools sharing one file, newer state elsewhere, another machine that saved after this one. **There is no "Last saved" row as of v3.65.1**, and — also new in v3.65.1 — no unfolded line naming which clock an age came from or which machine wrote the open handoff either: the first is explained once in the overview's own info panel, the second is the Handoffs table's own MACHINE column per row. A healthy save renders nothing above the four rows at all.
 - **Step 3, Knowledge** is one row per domain the project draws on — the project's own domain is always listed, since v3.65.1 — each reading "domain · N pages · last ingest age" with that domain's own colour dot, and opening to five figures (entity/concept/summary each with a small bar against that domain's page count) and two doors: Open in Domains, and Ask this domain, plus its own Remove. A **"+ Add a domain"** picker in the step's head row lets you add up to twelve domains a project draws on, including a read-only Shared Brain mirror. A small **default** badge marks a row only while nothing has been explicitly chosen yet, and disappears the moment you add one — curator metadata about the project (`project.json`), written by the app, never by an agent. Version 3.65.2 fixed the picker and Remove themselves, which had not actually worked in v3.65.1 despite being on screen: adding and removing a domain now go through the real route end to end. Remove is withheld with a reason on a single default row, live on every row once there are two or more, and live with a stated outcome on a single explicitly-chosen row.
-- **Every fold starts closed and remembers whether you left it open.** Each summary line carries the figure that decides whether to open it.
+- **Step ④, Session start (new in version 3.67.0)** is what an agent is actually handed when it starts work on this project: the standing brief, the latest handoff, a few journal lines, the document index, and the text of every document marked read first — up to the reading budget. Its head row holds the budget picker (Index only, Lean, Standard, Deep, Max — see "What is a project's reading budget?" above); until you choose, it reads "Default · 120 KB." Below that, the **"what an agent receives"** monitor breaks the total down part by part, each against its own limit, with the whole drawn as a share of your agent's context window (a per-browser Context window setting: 200k or 1M tokens). When the total is large, the line carries a **Set a reading budget** action.
+- **Every fold starts closed and remembers whether you left it open.** Each summary line carries the figure that decides whether to open it. Step ④'s "what an agent receives" monitor is the one exception — it opens by default.
 
 The qualifying lines that can appear above the Memory step's rows — as of v3.65.1, only outcomes about one specific save, never which clock or which machine (both moved to the overview's info panel and the Handoffs table respectively):
 
@@ -576,14 +613,16 @@ The menu shows, in this order:
 
 - **Working on** — which project, and how long ago, with the harness and model that wrote it.
 - **A save pulse** — a small chart of saves over the last seven days, with how many days are known, how many saves, and how many tools.
-- **Up to five recent work-streams**, grouped under a project header, newest first, each with a recency dot and a submenu. At most two rows per project group, so one busy project cannot fill the menu.
+- **The open project's documents line (since version 3.66.1)** — its own group's first line, under the project's header, before its work-stream rows: document size drawn as a depth bar against whichever budget applies (the 120 KB an agent reads in one call once anything is marked read first, otherwise the 200 KB a project may store), red and the word "over" only on an actual over-run.
+- **Up to five recent work-streams**, grouped under a project header, newest first, each with a recency dot and a submenu. At most two rows per project group, so one busy project cannot fill the menu. **Since version 3.66.0 each project header is itself an enabled, clickable item**, drawn with its own depth bar — sessions that saved a handoff in the last 30 days, against the busiest project — so it reads sessions the same way "Across projects" does in Settings → MCP bridge. With no usage log on this computer a project header reads "no sessions logged"; with a log but nothing in the last 30 days it reads "no logged sessions · 30 d" (a measured zero, not a missing measurement — the two are worded apart on purpose).
+- **A Domains · pages section (since version 3.66.1)**, at most four lines (a fifth collapses to "…and N more"): each domain's page count against the largest domain, drawn in that domain's own identity colour — the same colour it carries everywhere else it is named. Clicking a domain line opens Settings, where Knowledge base's "Domains in this folder" is its full app twin.
 - **More in Project Context…**, carrying the number not shown.
 - **Notices, only when true** — handoffs waiting on GitHub, another machine having saved after this one, two agent tools writing one work-stream.
 - **Open Project Context…**, **Open The Curator**, **Settings…**, the time of the reading, and **Quit**.
 
-Each row's submenu offers Open in The Curator, Copy resume prompt, Copy handoff as Markdown, and Reveal the handoff file in Finder.
+Each work-stream row's submenu offers Open in The Curator, Copy resume prompt, Copy handoff as Markdown, and Reveal the handoff file in Finder.
 
-It reads the same files as everything else and it never writes. It is also deliberately not a second reader of the handoff document: it shows rows, ages and the agent's own one-line headline, and clicking a row opens the app. The document itself is rendered in one place only. Nothing leaves your machine.
+It reads the same files as everything else and it never writes. It is also deliberately not a second reader of the handoff document: it shows rows, ages and the agent's own one-line headline, and clicking a row opens the app. The document itself is rendered in one place only. Nothing leaves your machine. Nothing the widget can show is widget-only, by standing rule since version 3.66.0 — every bar above has a full-sized twin inside the app itself, for the Windows and Linux users who have no widget at all.
 
 ## What does "· docs stale" mean in the menu bar?
 
