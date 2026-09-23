@@ -4320,7 +4320,7 @@ function renderQueueRejectedItem(entry) {
 // the item that crosses it finishes and is charged. `spent > budget` is
 // therefore a real outcome, and it is the ONLY one that turns the bar danger
 // (renderDepthCell's own rule) — and then the same fact is said in words,
-// unfolded, by `queueOverrunHtml` (v3.16.1).
+// unfolded, by `renderQueueOutcomeBanner` (v3.16.1).
 //
 // THE QUALIFIERS ARE THE DONE SUMMARY'S, WORD FOR WORD: `spendIsEstimated`
 // renders "approx. " and wins over `spendIsLowerBound`'s "at least " (an
@@ -4371,22 +4371,46 @@ function queueBudgetSpendHtml(facts, isTerminal, pendingLabel) {
     ' spent of the ' + cap + ' cap';
 }
 
-// THE OVER-RUN, IN WORDS. A danger-toned bar is never the only carrier: the
-// same fact is a sentence, unfolded, directly under the head line, through the
-// kit's own status block (its tone is a RAIL — a mark — and its words are
-// --text, design rule 7). '' when there is no cap or no over-run.
-function queueOverrunHtml(facts) {
-  if (!facts || !facts.over) return '';
+// THE OUTCOME, ONE BLOCK (v3.66.0, orchestrator screen review). A batch
+// that stopped at its cap has ONE outcome block, not two: through the first
+// cut of P5 an over-run painted a red "Over the spending cap" block AND the
+// amber "Paused — budget cap reached" banner beneath it, carrying the same
+// fact in two number formats (the server's 4-dp `pausedMessage` beside the
+// honest formatter's 2-dp). Now:
+//   · paused for the BUDGET, with a cap in hand -> this block REPLACES the
+//     generic banner: danger when spend EXCEEDED the cap (an over-run, said in
+//     words), attention when it merely reached it. Every figure goes through
+//     `formatUsdHonest`; the server's 4-dp `pausedMessage` is not repeated.
+//   · paused for any other reason -> the unchanged `renderQueuePausedBanner`
+//     (every other pause is recoverable and stays attention).
+//   · NOT paused but over (a finished batch whose last file crossed the cap)
+//     -> the same sentence, danger, as the only outcome block.
+// Full panel width in every arm: renderStatus is emitted bare, exactly as the
+// paused banner always was, never inside the narrower `.ing-status-block`.
+function queueCapSentence(facts) {
   const q = facts.qualifier;
-  const overText = formatUsdHonest(facts.spent - facts.budget);
-  return '<div class="ing-status-block">' +
-    renderStatus({
-      state: 'danger',
-      title: 'Over the spending cap',
-      detail: q + facts.spentText + ' spent, ' + q + overText + ' over the ' + facts.capText + ' cap.' +
-        ' The cap is checked between files, so the file that crossed it finished and was charged.',
-    }) +
-  '</div>';
+  if (facts.over) {
+    return q + facts.spentText + ' spent, ' + q + formatUsdHonest(facts.spent - facts.budget) +
+      ' over the ' + facts.capText + ' cap. The cap is checked between files, so the file that crossed it finished and was charged.';
+  }
+  return q + (facts.spentText || '$0.00') + ' spent of the ' + facts.capText + ' cap.';
+}
+
+function renderQueueOutcomeBanner(job, facts) {
+  const paused = job && job.status === 'paused';
+  if (paused && job.pausedReason === 'budget' && facts) {
+    const copy = pausedReasonCopy('budget');
+    return renderStatus({
+      state: facts.over ? 'danger' : 'attention',
+      title: facts.over ? 'Paused — over the spending cap' : copy.title,
+      detail: queueCapSentence(facts) + ' ' + copy.body,
+    });
+  }
+  if (paused) return renderQueuePausedBanner(job);
+  if (facts && facts.over) {
+    return renderStatus({ state: 'danger', title: 'Over the spending cap', detail: queueCapSentence(facts) });
+  }
+  return '';
 }
 
 function renderQueuePausedBanner(job) {
@@ -4682,7 +4706,7 @@ function renderQueuePanel(job) {
         }) +
       '</div>'
     : '';
-  const pausedHtml = job.status === 'paused' ? renderQueuePausedBanner(job) : '';
+  const pausedHtml = renderQueueOutcomeBanner(job, budgetFacts);
   const doneHtml = isTerminal ? renderQueueDoneSummary(job) : '';
   const { noticeHtml, controlsHtml } = computeQueueInFlight(job);
 
@@ -4702,7 +4726,7 @@ function renderQueuePanel(job) {
 
   const listHtml = '<ul class="ing-queue-item-list">' + items.map((item) => renderQueueItemRow(item, { jobTerminal: isTerminal })).join('') + '</ul>';
 
-  return headerHtml + queueOverrunHtml(budgetFacts) + streamErrorHtml + dropIgnoredHtml + pausedHtml + noticeHtml + doneHtml + dismissHtml + cancelConfirmHtml + listHtml;
+  return headerHtml + streamErrorHtml + dropIgnoredHtml + pausedHtml + noticeHtml + doneHtml + dismissHtml + cancelConfirmHtml + listHtml;
 }
 
 // ── Listeners ─────────────────────────────────────────────────────────

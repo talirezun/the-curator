@@ -2782,20 +2782,20 @@ console.log('\n§ 18  The v3.64.0 host seam — additive by rule, not by intenti
   const { progressRingHtml } = await import('../src/public/next/shared/progress-ring.js');
   const logic = await import('../src/public/next/shared/ingest-queue-logic.js');
   const esc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const names = ['queueBudgetFacts', 'queueBudgetSpendHtml', 'queueOverrunHtml', 'renderQueuePanel',
-    'renderQueueDoneSummary', 'isQueueTerminal'];
+  const names = ['queueBudgetFacts', 'queueBudgetSpendHtml', 'queueCapSentence', 'renderQueueOutcomeBanner',
+    'renderQueuePausedBanner', 'renderQueuePanel', 'renderQueueDoneSummary', 'isQueueTerminal'];
   const bodies = names.map((n) => extractFunction(js, n));
   ok(bodies.every(Boolean), '§21-pre every lifted function was found (' + names.join(', ') + ')');
   const api = new Function(
     'state', 'escapeHtml', 'renderDepthCell', 'renderStatus', 'formatUsdHonest', 'progressRingHtml',
     'computeQueueSpentLabel', 'computeQueueStatusCounts', 'formatHealthCounts',
-    'renderQueuePausedBanner', 'computeQueueInFlight', 'renderQueueItemRow',
+    'pausedReasonCopy', 'computeQueueInFlight', 'renderQueueItemRow',
     bodies.join('\n') + '\nreturn { queueBudgetFacts, renderQueuePanel, renderQueueDoneSummary };',
   )(
     { queueStreamError: null, queueDropIgnored: false, queueCancelConfirmOpen: false, queueActionBusy: null },
     esc, renderDepthCell, renderStatus, formatUsdHonest, progressRingHtml,
     logic.computeQueueSpentLabel, logic.computeQueueStatusCounts, logic.formatHealthCounts,
-    () => '<PAUSED/>', () => ({ noticeHtml: '', controlsHtml: '' }), () => '',
+    logic.pausedReasonCopy, () => ({ noticeHtml: '', controlsHtml: '' }), () => '',
   );
   const job = (over) => Object.assign({
     status: 'running', domain: 'research', items: [{ status: 'done' }, { status: 'running' }],
@@ -2819,16 +2819,35 @@ console.log('\n§ 18  The v3.64.0 host seam — additive by rule, not by intenti
   const oh = head(over);
   eq(width(oh), 100, '§21b an over-run fills the cell (clamped), never overflows it');
   ok(/cur-depth-danger/.test(oh), '★ §21b spent > cap turns the bar DANGER');
-  ok(/Over the spending cap/.test(over) && /\$0\.06 spent, \$0\.01 over the \$0\.05 cap\./.test(over),
+  ok(/Paused — over the spending cap/.test(over) && /\$0\.06 spent, \$0\.01 over the \$0\.05 cap\./.test(over),
     '★ §21b …and the SAME fact is a sentence: "$0.06 spent, $0.01 over the $0.05 cap."');
+  ok(/finished and was charged/.test(over) && /Raise the cap or resume without one/.test(over),
+    '§21b …with the between-files explanation AND the paused banner\'s own next step, in the one block');
   ok(!/<details/.test(over), '§21b …never behind a chevron (v3.16.1)');
-  ok(over.indexOf('Over the spending cap') < over.indexOf('<PAUSED/>'),
-    '§21b …directly under the head line, above the paused banner');
+  // ONE FACT, ONE BLOCK (orchestrator screen review): the first cut painted a
+  // red over-run block AND the amber budget-paused banner for the same fact.
+  eq((over.match(/class="tx-status /g) || []).length, 1,
+    '★ §21b an over-run shows EXACTLY ONE outcome block (the paused banner and the over-run are one)');
   ok(/class="tx-status tx-status-danger"/.test(over),
-    '§21b …through the kit status block\'s DANGER rail (a mark), not coloured text');
-  const exact = api.renderQueuePanel(job({ status: 'paused', pausedReason: 'budget', spentUsd: 0.05 }));
-  ok(!/cur-depth-danger/.test(head(exact)) && !/Over the spending cap/.test(exact),
-    '§21b CONTROL: spend EQUAL to the cap is not an over-run — full bar, neutral, no sentence');
+    '§21b …toned DANGER through the kit status block\'s rail (a mark), not coloured text');
+  ok(!/ing-status-block">\s*<div class="tx-status tx-status-danger/.test(over),
+    '§21b …emitted bare like the paused banner (full panel width), not inside the narrower .ing-status-block');
+  const overPausedMsg = api.renderQueuePanel(job({ status: 'paused', pausedReason: 'budget', spentUsd: 0.063,
+    pausedMessage: 'Paused — spent $0.0630 of the $0.0500 budget.' }));
+  ok(!/\$\d+\.\d{4}\b/.test(overPausedMsg),
+    '★ §21b ONE number format: no 4-decimal figure (the server\'s $0.0630) beside the honest 2-decimal ones');
+  const exact = api.renderQueuePanel(job({ status: 'paused', pausedReason: 'budget', spentUsd: 0.05,
+    pausedMessage: 'Paused — spent $0.0500 of the $0.0500 budget.' }));
+  ok(!/cur-depth-danger/.test(head(exact)) && !/over the spending cap/.test(exact),
+    '§21b CONTROL: spend EQUAL to the cap is not an over-run — full bar, neutral, no over-run words');
+  ok(/class="tx-status tx-status-attention"/.test(exact) && /Paused — budget cap reached/.test(exact) &&
+     /\$0\.05 spent of the \$0\.05 cap\./.test(exact) && (exact.match(/class="tx-status /g) || []).length === 1,
+    '§21b …merely paused AT the cap: one ATTENTION block, same honest format');
+  ok(!/\$\d+\.\d{4}\b/.test(exact), '§21b …and no 4-decimal figure there either');
+  const userPause = api.renderQueuePanel(job({ status: 'paused', pausedReason: 'user', pausedMessage: 'Paused by user request.' }));
+  ok(/tx-status-attention/.test(userPause) && /Paused by user request\./.test(userPause) &&
+     (userPause.match(/class="tx-status /g) || []).length === 1,
+    '§21b CONTROL: any OTHER pause keeps the unchanged generic banner (attention, server message)');
 
   // ── THE QUALIFIERS STAY IN THE WORDS, OUTSIDE THE CELL ───────────────
   const est = api.renderQueuePanel(job({ spentUsd: 0.063, spendIsEstimated: true, spendIsLowerBound: true }));
@@ -2858,6 +2877,7 @@ console.log('\n§ 18  The v3.64.0 host seam — additive by rule, not by intenti
   ok(/of the <span class="ing-num">\$0\.05<\/span> cap/.test(summary), '§21e the terminal summary names the cap in words');
   eq((done.match(/cur-depth-bar/g) || []).length, 1, '★ §21e ONE bar on a finished panel — the head line\'s; the summary does not draw a second');
   ok(/Over the spending cap/.test(done), '§21e a finished over-run batch still says so, unfolded');
+  eq((done.match(/class="tx-status /g) || []).length, 1, '§21e …in exactly one outcome block');
   const doneNoCap = api.renderQueueDoneSummary(job({ status: 'done', budgetUsd: null }));
   ok(!/ cap</.test(doneNoCap), '§21e CONTROL: no cap → the summary says nothing about one');
 }
