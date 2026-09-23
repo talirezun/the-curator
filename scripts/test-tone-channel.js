@@ -155,7 +155,7 @@ const BASELINE = {
   'views/domains.css':    { okwarn: 0, danger: 5 },   // v3.66.0 E: all five success/attention TEXT rules converted
   'views/ingest.css':     { okwarn: 0, danger: 5 },
   'views/mcp-wizard.css': { okwarn: 0, danger: 1 },
-  'views/memory.css':     { okwarn: 0, danger: 1 },
+  'views/memory.css':     { okwarn: 0, danger: 0 },
   'views/settings.css':   { okwarn: 0, danger: 5 },
   'views/shared.css':     { okwarn: 6, danger: 10 },
 };

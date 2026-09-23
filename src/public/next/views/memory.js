@@ -217,7 +217,16 @@ import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
 // It is in shared/monitor.js because a bar is a CELL decoration, which is what
 // a monitor line already is; its CSS is separate because the table below uses
 // the bar without rendering a monitor.
-import { renderMonitor, renderDepthCell } from '../shared/monitor.js';
+// ── v3.66.0: THE BAR'S PUBLIC ADDRESS IS shared/depth-bar.js ───────────────
+// The Documents and Handoffs tables are hosts OUTSIDE a monitor, and the kit
+// names depth-bar.js as the one address such a host imports the cell from (it
+// re-exports the same function object monitor.js defines). Three placements on
+// this screen now: Documents (the monitor above the table, stored vs the
+// project budget and read-first vs the per-session READING budget, plus each
+// row's SIZE), Handoffs (each handoff's size vs the 48 KB ceiling the store
+// trims at) and Capture (sessions that saved, as a share of all sessions).
+import { renderMonitor } from '../shared/monitor.js';
+import { renderDepthCell } from '../shared/depth-bar.js';
 // ── THE ONE PICKER ON THIS SCREEN (v3.65.0, P10) ───────────────────────────
 // Step ③'s "+ Add a wiki". The shared listbox, ADD ONE AT A TIME: the
 // component implements no multi-select and says so in its own header, and
@@ -2738,7 +2747,8 @@ function patchOpenPair(token) {
   const openMachine = (d && d.machine) || null;
   const mineMachine = d && d.machineIsThisMachine === true ? d.machine : null;
   tbody.innerHTML = ordered.slice(0, shown)
-    .map((row) => wsRowHtml(row, openScope, openMachine, mineMachine)).join('');
+    .map((row) => wsRowHtml(row, openScope, openMachine, mineMachine,
+      state.projectRead && state.projectRead.stateBudgetBytes)).join('');
   // The rows are new elements, so their listeners are too. Scoped to the
   // tbody, the same way the "Show more" append scopes its own binding.
   bindWorkStreamRows(tbody, token);
@@ -3983,7 +3993,7 @@ function renderWorkStreamsFold(read, d) {
         + '<span class="mem-fold-meta">' + escapeHtml(meta) + '</span>'
       + '</summary>'
       + '<div class="mem-fold-body">'
-        + renderWorkStreams(scopes, d, state.wsWindow)
+        + renderWorkStreams(scopes, d, state.wsWindow, read && read.stateBudgetBytes)
         + workStreamCounts(read, scopes.length, shown)
       + '</div>'
     + '</details>'
@@ -4679,6 +4689,10 @@ function captureFacts(payload) {
  * `67%` reads as a grade, `2 read and did not save` reads as two sessions
  * whose work is not in the store. The clause is dropped only when the route
  * did not send the figure — never printed as zero.
+ * (v3.66.0: the SUMMARY line still carries no ratio. Inside the row, the
+ * approved channels map draws `started` and `saved` as a share of `sessions`
+ * with the count and its whole in words — "4 of 6" — which is a named
+ * denominator beside a count, not a grade; see the monitor below.)
  *
  * ── THE DOT IS AN AGE, NOT A RATIO, AND THAT IS A CORRECTION ───────────
  * The design record says the mark's tier comes "from the ratio". The shared
@@ -4920,13 +4934,38 @@ function renderCaptureMeter() {
   const callsTotal = f.rows.reduce(
     (n, r) => n + (Number.isInteger(r && r.calls) && r.calls >= 0 ? r.calls : 0), 0);
   const hasCalls = f.rows.some((r) => Number.isInteger(r && r.calls));
+  // ── A SHARE OF A NAMED WHOLE, NEVER A TARGET (v3.66.0, P3) ──────────────
+  //
+  // The two outcome lines draw their figure against `sessions` — the whole
+  // they are a part of — and say it in words ("of 6"). The approved channels
+  // map puts a bar here; it is not the percentage this function's own header
+  // refuses, because the figure is still the COUNT and the denominator is
+  // printed beside it: "4 of 6", never "67%", never a grade. The
+  // uncomfortable number keeps its own line and its warn rule underneath.
+  //
+  // NEVER DANGER: there is no target, so there is no over-run. `max`, not
+  // `budget`, is what makes that structural — `renderDepthCell` takes the
+  // danger tone by itself only for an amount over a BUDGET. And no bar at all
+  // when `sessions` is null (not measured) or 0: absent is not zero, and a
+  // share of nothing is not a reading.
+  const shareOf = (n) => (f.sessions !== null && f.sessions > 0 && n !== null
+    ? { amount: n, max: f.sessions,
+      label: n.toLocaleString('en-US') + ' of the ' + f.sessions.toLocaleString('en-US')
+        + ' sessions in the last ' + win }
+    : undefined);
+  const ofSessions = f.sessions !== null && f.sessions > 0
+    ? 'of ' + f.sessions.toLocaleString('en-US') : undefined;
   const monitor = renderMonitor({
     label: 'The capture reading',
     lines: [
       f.sessions === null ? null
         : { key: 'sessions', value: f.sessions, sub: 'in the last ' + win },
-      f.read === null ? null : { key: 'started with the context', value: f.read },
-      f.saved === null ? null : { key: 'saved before stopping', value: f.saved },
+      f.read === null ? null
+        : { key: 'started with the context', value: f.read,
+          sub: ofSessions, depth: shareOf(f.read) },
+      f.saved === null ? null
+        : { key: 'saved before stopping', value: f.saved,
+          sub: ofSessions, depth: shareOf(f.saved) },
       f.readNotSaved === null ? null
         : { key: 'read and did not save', value: f.readNotSaved,
           tone: f.readNotSaved ? 'warn' : undefined },
@@ -6185,7 +6224,7 @@ function wsMoreHtml(shown, total) {
   );
 }
 
-function renderWorkStreams(scopes, open, windowSize = WS_WINDOW) {
+function renderWorkStreams(scopes, open, windowSize = WS_WINDOW, budgetBytes = null) {
   const ordered = workStreamOrder(scopes);
   if (!ordered.length) return '';
   const shown = wsShownCount(ordered, open, windowSize);
@@ -6206,7 +6245,8 @@ function renderWorkStreams(scopes, open, windowSize = WS_WINDOW) {
   // a different installation).
   const mineMachine = open && open.machineIsThisMachine === true ? open.machine : null;
 
-  const body = rows.map((s) => wsRowHtml(s, openScope, openMachine, mineMachine)).join('');
+  const body = rows.map(
+    (s) => wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes)).join('');
 
   return (
     '<div class="mem-ws-wrap">' +
@@ -6217,6 +6257,9 @@ function renderWorkStreams(scopes, open, windowSize = WS_WINDOW) {
           '<th scope="col">Last saved</th>' +
           '<th scope="col">Machine</th>' +
           '<th scope="col">Harness</th>' +
+          // v3.66.0 (P2): each handoff's size against the ceiling the store
+          // trims a save at — see `wsRowHtml`'s last cell.
+          '<th scope="col">Size</th>' +
         '</tr></thead>' +
         '<tbody id="mem-ws-body">' + body + '</tbody>' +
       '</table>' +
@@ -6232,7 +6275,7 @@ function renderWorkStreams(scopes, open, windowSize = WS_WINDOW) {
  * and two hand-maintained copies is how the appended rows quietly stop matching
  * the painted ones.
  */
-function wsRowHtml(s, openScope, openMachine, mineMachine) {
+function wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes) {
   {
     const eff = effectiveSave(s);
     const tier = freshnessTier(eff.seconds);
@@ -6240,6 +6283,12 @@ function wsRowHtml(s, openScope, openMachine, mineMachine) {
     const isOpen = s.scope === openScope && (s.machine || null) === (openMachine || null);
     const mine = !!(mineMachine && s.machine === mineMachine);
     const who = [s.harness, s.model].filter(Boolean).map((x) => escapeHtml(x)).join(' · ');
+    // THE SIZE CELL'S TWO INPUTS (v3.66.0, P2) — see the cell itself.
+    const sizeText = Number.isInteger(s.bytes) && s.bytes >= 0
+      ? (s.bytes < 1024 ? s.bytes + ' bytes'
+        : Math.round(s.bytes / 1024).toLocaleString('en-US') + ' KB')
+      : null;
+    const budget = Number.isInteger(budgetBytes) && budgetBytes > 0 ? budgetBytes : null;
     return (
       '<tr class="mem-ws-row' + (isOpen ? ' mem-ws-row-open' : '') + '"' +
         (isOpen ? ' aria-current="true"' : '') + '>' +
@@ -6282,6 +6331,33 @@ function wsRowHtml(s, openScope, openMachine, mineMachine) {
           (mine ? '<span class="mem-ws-mine">this machine</span>' : '') +
         '</td>' +
         '<td class="mem-ws-cell-who">' + (who || '—') + '</td>' +
+        // ── THE HANDOFF'S SIZE, AGAINST ITS BUDGET (v3.66.0, P2) ───────
+        //
+        // THE DENOMINATOR IS THE ROUTE'S `stateBudgetBytes` (the store's
+        // `MAX_STATE_BYTES`, 48 KB) — the size a save is rendered against
+        // before it is written. There is NO view copy of the constant: a
+        // build that sends none gets the figure alone and no bar, because a
+        // bar against a number this file made up is decoration.
+        //
+        // IT NEVER TURNS RED, and that is arithmetic, not taste: an
+        // over-budget save is TRIMMED and disclosed in its notes, never
+        // refused, so the file on disk cannot exceed the ceiling. The amount
+        // is clamped to the budget anyway, so a hand-edited `current.md` that
+        // somehow does fills the bar rather than raising an alarm about an
+        // over-run the store says cannot happen — its true size is still the
+        // printed figure. A trimmed save's own words (`lastSaveNotes`) are the
+        // Handoff reader's, unchanged.
+        //
+        // `bytes` is present only on pairs the store listed; a row without it
+        // says so with a dash rather than a zero.
+        '<td class="mem-ws-cell-size">' + (sizeText === null ? '—' : renderDepthCell({
+          value: sizeText,
+          amount: budget === null ? s.bytes : Math.min(s.bytes, budget),
+          budget: budget === null ? undefined : budget,
+          label: budget === null ? undefined
+            : sizeText + ' of a ' + Math.round(budget / 1024).toLocaleString('en-US')
+              + ' KB handoff budget',
+        })) + '</td>' +
       '</tr>'
     );
   }
@@ -7031,9 +7107,13 @@ function foundationsFacts(read) {
     readFirstBytes: f && Number.isInteger(f.readFirstBytes) ? f.readFirstBytes : readFirstBytes,
     readFirstBudgetBytes: f && Number.isInteger(f.readFirstBudgetBytes) && f.readFirstBudgetBytes > 0
       ? f.readFirstBudgetBytes : READ_FIRST_BUDGET_BYTES,
+    // The fallback compares against the SAME denominator the line above
+    // settled on — the server's reading budget where it sent one — so the
+    // flag and the figure it is drawn against can never be two budgets.
     readFirstBudgetExceeded: f && typeof f.readFirstBudgetExceeded === 'boolean'
       ? f.readFirstBudgetExceeded
-      : (readFirst > 0 && readFirstBytes > READ_FIRST_BUDGET_BYTES),
+      : (readFirst > 0 && readFirstBytes > (f && Number.isInteger(f.readFirstBudgetBytes)
+        && f.readFirstBudgetBytes > 0 ? f.readFirstBudgetBytes : READ_FIRST_BUDGET_BYTES)),
     // The project budget is a DISCLOSURE, never a wall (D6): the store accepts
     // a save that crosses it and says so, and a UI that refused what the store
     // accepts would be the only thing standing between the owner and their
@@ -7159,10 +7239,99 @@ function foundationsBudgetWarning(facts) {
       + ' at session start; the rest stay listed and are fetched by name when needed.';
   }
   if (facts.bytes <= facts.budgetBytes) return '';
+  // ── THE READING BUDGET COMES FROM THE PAYLOAD (v3.66.0) ─────────────
+  // `facts.readFirstBudgetBytes` is the server's `CONTEXT_MAX_BYTES_DEFAULT`
+  // (the view constant only when a build sent none), for the reason the
+  // Documents monitor reads it: the day the store fills that field with a
+  // project's OWN reading budget, this sentence and the bar above it follow
+  // with no change here — a hard-coded "120 KB" would be false that day.
   return 'Over the ' + fndSize(facts.budgetBytes) + ' project budget. Agents are handed up to '
-    + fndSize(READ_FIRST_BUDGET_BYTES)
+    + fndSize(facts.readFirstBudgetBytes)
     + ' of document text at session start, in reading order; every other document stays listed'
     + ' and is fetched by name when needed.';
+}
+
+/**
+ * THE DOCUMENTS MONITOR (v3.66.0, placement P1) — two budgets, two bars.
+ *
+ * Above the table, inside the documents row's body: the instrument for the
+ * two questions the table cannot answer at a glance, each drawn against the
+ * budget it is ABOUT, never the other one (the invariant CLAUDE.md states for
+ * the store: `FOUNDATIONS_BUDGET_BYTES` and `CONTEXT_MAX_BYTES_DEFAULT` are
+ * named apart and must stay so).
+ *
+ *   stored      184 KB ▕████████▏  of 200 KB project
+ *   read first  151 KB ▕██████████▏ of 120 KB per session   (only when flagged)
+ *
+ * ── BOTH DENOMINATORS COME OFF THE PAYLOAD ──────────────────────────────
+ * `facts.budgetBytes` and `facts.readFirstBudgetBytes` are the server's own
+ * figures (the view constants only when a build sent none). The second is the
+ * one that matters for what comes next: when the store starts filling it with
+ * a project's own reading budget, the bar, its sub-clause and its hidden
+ * sentence all follow with no change in this file.
+ *
+ * ── THE READ-FIRST LINE IS WITHHELD WHEN NOTHING IS FLAGGED ─────────────
+ * The summary line's own rule (`foundationsSummaryMeta`): "0 read first"
+ * would report the ABSENCE of a decision as a decision.
+ *
+ * ── DANGER FOLLOWS `foundationsBudgetWarning`'s APPLICABILITY RULE ──────
+ * Once anything is flagged, the read-first set is what an agent is handed, so
+ * it is the only set whose over-run is the reader's problem and the only line
+ * that may turn danger. The stored line may turn danger only when NOTHING is
+ * flagged — then the stored set IS what is handed over. When something is
+ * flagged, a stored total over 200 KB still prints its true figure against
+ * its true budget, but the bar is drawn full rather than red: the one
+ * unfolded sentence below the row (`#mem-fnd-budget`) talks about the set
+ * that applies, and a red bar with no sentence behind it is a colour-only
+ * alarm (v3.16.1). Every danger here is therefore always ALSO said in words,
+ * unfolded, by that sentence.
+ *
+ * ── WHY THE SENTENCE IS NOT A `loud` ENTRY HERE ─────────────────────────
+ * The design put it inside this monitor. This monitor is inside the row's
+ * `<details>`, and a loud entry inside a closed fold is a warning behind a
+ * chevron — the one thing v3.16.1 forbids. So the sentence stays where it
+ * already was, OUTSIDE the fold and unfolded, with its "Choose documents"
+ * door; there is still ONE sentence, not two.
+ *
+ * Pure over `facts`; `id` is the patch target `toggleReadFirst` replaces in
+ * place so a tick moves the bar without a render.
+ */
+function foundationsMonitor(facts) {
+  if (!facts || !facts.count) return '';
+  const flagged = facts.readFirstCount > 0;
+  const storedOver = facts.bytes > facts.budgetBytes;
+  const readOver = flagged && facts.readFirstBudgetExceeded === true;
+  return renderMonitor({
+    id: 'mem-fnd-monitor',
+    label: 'Document budgets',
+    lines: [
+      {
+        key: 'stored',
+        value: fndSize(facts.bytes),
+        sub: 'of ' + fndSize(facts.budgetBytes) + ' project',
+        tone: (!flagged && storedOver) ? 'danger' : undefined,
+        depth: {
+          // Clamped when something is flagged, so the bar fills but cannot
+          // take the danger tone: see the applicability note above.
+          amount: flagged ? Math.min(facts.bytes, facts.budgetBytes) : facts.bytes,
+          budget: facts.budgetBytes,
+          label: fndSize(facts.bytes) + ' of a ' + fndSize(facts.budgetBytes) + ' project budget',
+        },
+      },
+      flagged ? {
+        key: 'read first',
+        value: fndSize(facts.readFirstBytes),
+        sub: 'of ' + fndSize(facts.readFirstBudgetBytes) + ' per session',
+        tone: readOver ? 'danger' : undefined,
+        depth: {
+          amount: facts.readFirstBytes,
+          budget: facts.readFirstBudgetBytes,
+          label: fndSize(facts.readFirstBytes) + ' of a ' + fndSize(facts.readFirstBudgetBytes)
+            + ' per-session reading budget',
+        },
+      } : null,
+    ].filter(Boolean),
+  });
 }
 
 /** Bytes, in the two units this block quotes them in. One derivation. */
@@ -7914,9 +8083,12 @@ function renderFoundations(read) {
   // the head control, so the ordinary paint is unaffected.
   const adding = !!(state.fndInit && state.fndInit.domain === state.activeDomain
     && state.fndInit.project === state.activeProject && state.fndInit.adding);
+  // ── THE MONITOR ABOVE THE TABLE (v3.66.0, P1) ────────────────────────
+  // The two budget readings, first thing in the row's body — see
+  // `foundationsMonitor` for why each line is drawn against the budget it is.
   const body = editing
     ? renderFoundationEditor(facts)
-    : '<div class="fnd-wrap"><table class="fnd-table">' +
+    : foundationsMonitor(facts) + '<div class="fnd-wrap"><table class="fnd-table">' +
         '<thead><tr>' +
           '<th scope="col">Role</th>' +
           '<th scope="col">Document</th>' +
@@ -8403,12 +8575,21 @@ function renderFoundationEditor(facts) {
     // THE BUDGET IS SAID, NEVER ENFORCED. The store accepts the save and
     // discloses the overrun; refusing here would be the app standing between
     // the owner and a write the server would have taken.
+    // ── v3.66.0: IT NAMED THE WRONG BUDGET ───────────────────────────────
+    // It said the 200 KB was what "an agent reads in one call" and that the
+    // read is "trimmed, oldest-listed last". Both false: 200 KB is what a
+    // project may STORE, an agent is handed up to the READING budget
+    // (`facts.readFirstBudgetBytes`, 120 KB by default) in reading order, and
+    // a document that does not fit is named and fetched by name, not trimmed.
+    // Now the same true sentence `foundationsBudgetWarning` says under the row.
     (projected > budget
       ? '<div class="mem-note">' + icon('alertCircle', 13) +
         '<span>Saving this takes the project to about ' + escapeHtml(formatBytes(projected)) +
-        ' of canonical documents, over the ' + escapeHtml(formatBytes(budget)) +
-        ' an agent reads in one call. It will still be saved — the read is what gets ' +
-        'trimmed, oldest-listed last.</span></div>'
+        ' of documents, over the ' + escapeHtml(formatBytes(budget)) +
+        ' project budget. It will still be saved — agents are handed up to ' +
+        escapeHtml(formatBytes(facts.readFirstBudgetBytes)) +
+        ' of document text at session start, in reading order; every other document ' +
+        'stays listed and is fetched by name when needed.</span></div>'
       : '');
 
   const discardBar = e.confirmDiscard
@@ -8630,6 +8811,12 @@ async function toggleReadFirst(btn, token) {
   const facts = foundationsFacts(state.projectRead);
   const meta = document.querySelector('#mem-fold-foundations .mem-fold-meta');
   if (meta) meta.textContent = foundationsSummaryMeta(facts);
+  // THE MONITOR MOVES WITH THE TICK (v3.66.0): the read-first line appears,
+  // disappears or changes length, in place — the same no-render rule as the
+  // two patches around it. Replaced whole because a line may be added or
+  // removed, and the node carries no listener to lose.
+  const mon = document.getElementById('mem-fnd-monitor');
+  if (mon) mon.outerHTML = foundationsMonitor(facts);
   const warn = document.getElementById('mem-fnd-budget');
   if (warn) {
     const sentence = foundationsBudgetWarning(facts);
@@ -10387,7 +10574,8 @@ function showMoreWorkStreams(token) {
 
   const before = tbody.children.length;
   tbody.insertAdjacentHTML('beforeend', ordered.slice(from, to)
-    .map((row) => wsRowHtml(row, openScope, openMachine, mineMachine)).join(''));
+    .map((row) => wsRowHtml(row, openScope, openMachine, mineMachine,
+      pr && pr.stateBudgetBytes)).join(''));
   // `wsWindow` records what was ASKED for, which `wsShownCount` may still
   // stretch to reach an open row further down. Storing the stretched figure
   // would silently make the open row's position part of the user's request.

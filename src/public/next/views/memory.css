@@ -756,6 +756,11 @@
   white-space: nowrap;
 }
 .mem-ws-cell-who { white-space: nowrap; }
+/* ── EACH HANDOFF'S SIZE (v3.66.0, P2) ───────────────────────────────────
+   A figure with its share of the 48 KB handoff ceiling drawn behind it
+   (shared/depth-bar.css owns the bar). Never wraps, tabular figures, like the
+   Documents table's own Size column. */
+.mem-ws-cell-size { white-space: nowrap; font-variant-numeric: var(--numeric-tabular); }
 /* The two counts under the table. Tabular for the same reason the age is. */
 /* ── "SHOW N MORE" — THE TABLE'S OWN LAST ROW ────────────────────────────
 
@@ -1544,6 +1549,11 @@
    it (scripts/test-freshness-scale.js fails one that does). */
 .fnd-fresh { display: inline-flex; align-items: center; gap: var(--space-3); }
 .fnd-cell-size, .fnd-cell-age { white-space: nowrap; font-variant-numeric: var(--numeric-tabular); }
+/* ── THE DOCUMENTS MONITOR ABOVE THE TABLE (v3.66.0, P1) ─────────────────
+   The monitor is the row body's first child; the table keeps its own rhythm
+   under it. One gap, from the kit's spacing scale — the same distance
+   `.fnd-wrap + .mem-fnd-delete-bar` uses below the table. */
+.cur-mon + .fnd-wrap { margin-top: var(--space-6); }
 .fnd-table th:first-child,
 .fnd-table td:first-child { padding-left: 10px; }
 
@@ -1775,14 +1785,20 @@
 }
 .mem-fnd-delete-bar > span { flex: 1; min-width: 0; }
 /* The row-Remove strip reuses the bar above (same question, same face) and
-   adds one thing: a refusal, in flow, keeping the strip open. It takes the
-   family's own ink rather than a colour of its own — `--danger-text` on the
-   tint the bar already carries — and the words carry it too ("could not"), so
-   colour is never the only signal. It is a whole-row item so a long server
-   sentence does not squeeze the two controls it sits beside (v3.61.1). */
+   adds one thing: a refusal, in flow, keeping the strip open. The words carry
+   it ("could not"), so colour is never the only signal. It is a whole-row item
+   so a long server sentence does not squeeze the two controls it sits beside
+   (v3.61.1).
+   ── v3.66.0: TONE IS A MARK, NEVER TEXT COLOUR ──────────────────────────
+   Through v3.65.x the sentence itself was painted `--danger-text`. Tone is now
+   a named channel drawn only as a mark (scripts/test-tone-channel.js), so the
+   words are `--text` and the outcome is the 3px left rule in the danger ink —
+   the monitor's own `loud` gutter, one shape for one meaning. */
 .mem-fnd-stop-error {
   flex: 1 1 100%;
-  color: var(--danger-text);
+  color: var(--text);
+  border-left: 3px solid var(--danger-text);
+  padding-left: var(--space-3);
 }
 /* The strip belongs to the table above it, not to the card's edge. */
 .fnd-wrap + .mem-fnd-delete-bar { margin-top: var(--space-6); }
