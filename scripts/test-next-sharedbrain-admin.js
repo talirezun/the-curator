@@ -167,6 +167,9 @@ const PURE_FNS = [
   'renderInvite',
   'renderRevoke',
   'renderAdmin',
+  // v3.65.3: renderAdmin's body moved into renderAdminBody so the domain
+  // page's section can wrap the SAME body in its own fold row.
+  'renderAdminBody',
 ];
 
 // The sandbox supplies the REAL escapeHtml (extracted from app.js — the

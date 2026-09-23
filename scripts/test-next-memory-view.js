@@ -10002,12 +10002,16 @@ function realListbox() {
     + 'behaviour, because the store then sends every body it can. Quoted from '
     + 'the facts\' own figure rather than from a literal here, so a server that '
     + 'sends its own budget is followed rather than contradicted',
-  projectWarn.startsWith('Over the ' + F.fndSize(overProject.budgetBytes) + ' budget:'), projectWarn);
-  ok('...and it names the 120 KB a SESSION receives, which is the other budget '
-    + 'and the one the dropping happens against',
-  projectWarn.includes('agents receive 120 KB per session'), projectWarn);
-  ok('...and it names the consequence rather than the condition',
-    /the rest is dropped, last in reading order first/.test(projectWarn), projectWarn);
+  projectWarn.startsWith('Over the ' + F.fndSize(overProject.budgetBytes) + ' project budget.'), projectWarn);
+  // v3.65.3: "and the rest is dropped" was FALSE (getProjectContext omits a
+  // document from the session-start reading, names it, keeps it in the index,
+  // and hands it over whole when asked for by name). The sentence says so.
+  ok('...and it names the 120 KB of text handed over at SESSION START, the other budget',
+  projectWarn.includes('Agents are handed up to 120 KB of document text at session start, in reading order'),
+  projectWarn);
+  ok('...and what really happens to the rest: listed, fetched by name — never "dropped"',
+    /every other document stays listed and is fetched by name when needed\.$/.test(projectWarn)
+    && !/dropped/i.test(projectWarn), projectWarn);
 
   const overSession = F.foundationsFacts(fndRead(fndPayload([
     big(100, { readFirst: true }), big(100, { slug: 'b.md', readFirst: true }),
@@ -10015,10 +10019,11 @@ function realListbox() {
   const sessionWarn = F.foundationsBudgetWarning(overSession);
   ok('once something IS flagged the warning is about the READ-FIRST set and the '
     + '120 KB an agent receives — the stored total is not the figure anyone can act on',
-  /flagged “read first”/.test(sessionWarn) && /120 KB budget/.test(sessionWarn), sessionWarn);
+  /flagged “read first”/.test(sessionWarn) && /120 KB reading budget/.test(sessionWarn), sessionWarn);
   ok('...naming how many documents are in that set', /^The 2 documents/.test(sessionWarn), sessionWarn);
-  ok('...and the consequence, in the same words the chooser uses',
-    /the rest is dropped, last in reading order first/.test(sessionWarn), sessionWarn);
+  ok('...and the true consequence: handed over in reading order up to the budget, the rest listed and fetched by name',
+    /Agents are handed them in reading order up to 120 KB at session start; the rest stay listed and are fetched by name when needed\.$/
+      .test(sessionWarn) && !/dropped/i.test(sessionWarn), sessionWarn);
   eq('a read-first set INSIDE its budget warns about nothing, even when the '
     + 'project total is over',
   F.foundationsBudgetWarning(F.foundationsFacts(fndRead(fndPayload([
@@ -10455,26 +10460,28 @@ function realListbox() {
     count(empty, /The token is never typed here/g) === 1
     && !/<p class="fnd-init-note"><span>The token is never typed here/.test(empty));
   const absent = sw({ remote: 'o/r', hasReadToken: false, hasSyncToken: false });
-  ok('token ABSENT: the radio says "No read-only token yet" and a door opens Settings',
-    /<span>No read-only token yet<\/span>/.test(absent)
+  ok('token ABSENT: the read-only option says "not saved yet", nothing is checked, and a door opens Settings',
+    /fnd-init-token-name">Read-only token<\/span><span class="fnd-init-token-where">— Settings › Knowledge base<\/span><span class="fnd-init-token-sep" aria-hidden="true">·<\/span><span class="fnd-init-token-state">not saved yet</.test(absent)
+    && !/data-fnd-token="(?:config|sync)"[^>]*\bchecked\b/.test(absent)
     && /<button type="button" class="btn btn-secondary btn-xs fnd-init-token-door" id="mem-fnd-init-token-door">Add one in Settings<\/button>/.test(absent),
     absent.slice(absent.indexOf('fnd-init-tokens'), absent.indexOf('fnd-init-tokens') + 700));
   ok('...the door sits OUTSIDE the radio\'s <label>, so pressing it never toggles the radio',
     /<\/label><button type="button" class="btn btn-secondary btn-xs fnd-init-token-door"/.test(absent));
   ok('...and a Personal Sync that is not connected is DISABLED with its reason as its state word',
-    /value="sync" data-fnd-token="sync" disabled \/><span>Personal Sync’s token<\/span><span class="fnd-init-token-state">not connected</.test(absent),
+    /value="sync" data-fnd-token="sync" disabled \/><span class="fnd-init-token-text"><span class="fnd-init-token-head"><span class="fnd-init-token-name">Personal Sync’s token<\/span><span class="fnd-init-token-where">— the one that syncs your knowledge base<\/span><span class="fnd-init-token-sep" aria-hidden="true">·<\/span><span class="fnd-init-token-state">not connected</.test(absent),
     (absent.match(/value="sync"[\s\S]{0,200}/) || [''])[0]);
   const present = sw({ remote: 'o/r', hasReadToken: true, readTokenLast4: 'ab12', hasSyncToken: true });
-  ok('token PRESENT: the radio names it by its last four, and there is no door',
-    /<span>The read-only token in Settings · ends in …ab12<\/span>/.test(present)
+  ok('token PRESENT: the read-only option names it by its last four, is CHECKED, and there is no door',
+    /value="config" data-fnd-token="config" checked \/>[\s\S]{0,200}fnd-init-token-name">Read-only token<[\s\S]{0,200}fnd-init-token-state">ends in …ab12</.test(present)
     && !/fnd-init-token-door/.test(present));
   ok('...and a connected Personal Sync says "connected", never "available"',
     /fnd-init-token-state">connected</.test(present) && !/>available</.test(present));
   const hostile = sw({ remote: 'o/r', hasReadToken: true, readTokenLast4: '<b>x' });
   ok('a last-four that is not four token characters is NOT printed at all',
-    /<span>The read-only token in Settings<\/span>/.test(hostile) && !/&lt;b&gt;x|<b>x/.test(hostile));
-  ok('UNKNOWN (nobody asked yet) keeps today\'s words, and no door',
-    /<span>The read-only token in Settings<\/span>/.test(empty) && !/fnd-init-token-door/.test(empty));
+    /fnd-init-token-state">saved</.test(hostile) && !/&lt;b&gt;x|<b>x/.test(hostile));
+  ok('UNKNOWN (nobody asked yet): the read-only option is checked with NO state word, and no door',
+    /value="config" data-fnd-token="config" checked \/>[\s\S]{0,200}fnd-init-token-where">— Settings › Knowledge base<\/span><\/span>/.test(empty)
+    && !/fnd-init-token-door/.test(empty));
 
   // ── C2: THE FOLDER IS A FACT ──────────────────────────────────────────
   const add = (over, docs) => panel({ ownership: 'repo', addMode: true, fixedRoot: '/somewhere/repo',
@@ -10518,7 +10525,7 @@ function realListbox() {
     picks: { 'docs/decisions.md': true, 'docs/big.md': true } });
   ok('...and OVER the budget it turns danger by itself (rule 6) AND says so in words, unfolded',
     /cur-depth-bar cur-depth-danger" style="width:100%"/.test(over)
-    && /id="mem-fnd-init-budget"><span>Over the 200 KB budget/.test(over),
+    && /id="mem-fnd-init-budget"><span>Over the 200 KB project budget\. Agents are handed up to 120 KB/.test(over),
     (over.match(/fnd-init-count[\s\S]{0,900}/) || [''])[0]);
   ok('...a stale pick on an already-mirrored path is never sent',
     pickedFiles({ ...freshChooser({}), ownership: 'repo', addMode: true, candidates: cands,
@@ -10534,6 +10541,70 @@ function realListbox() {
     />That folder is not on this computer\. Point at your copy of it\.</.test(missing));
   ok('...and a DIFFERENT folder typed there asks to be scanned, not copied blind',
     />Find the documents first\.</.test(add({ rootEditable: true, repoRoot: '/elsewhere' })));
+}
+
+// ── §21m3 — THE FIRST-TIME CHOOSER READS THE TOKEN TOO (v3.65.3) ───────
+// Orchestrator screen review: a project with no documents → "Mirror a GitHub
+// repository" showed "Read-only token — Settings › Knowledge base" with no
+// last four and no state, and the note "Add a read-only token in Settings"
+// under it, with a token SAVED. The render half and the binder half.
+{
+  const first = (choiceOver) => makeRenderers({
+    activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+    fndInit: { domain: 'acme', project: 'lumina', busy: false,
+      choice: { ...freshChooser({ allowLater: false }), ownership: 'remote', remote: 'o/r', ...choiceOver } },
+  }).renderFoundations(fndRead(fndPayload([], { present: false, ownership: null })));
+  const saved = first({ hasReadToken: true, readTokenLast4: 'ab12', hasSyncToken: true });
+  ok('CONTROL: this is the FIRST-TIME chooser (ownership cards), not the switch panel',
+    /data-fnd-own="remote"/.test(saved) && !/MIRROR FROM GITHUB/.test(saved));
+  ok('first-time, token saved: the read-only option carries its last four and is checked',
+    /value="config" data-fnd-token="config" checked \/>(?:(?!<\/label>)[\s\S]){0,600}fnd-init-token-state">ends in …ab12</.test(saved),
+    (saved.match(/fnd-init-tokens[\s\S]{0,500}/) || [''])[0]);
+  ok('...Personal Sync carries its own state word', /fnd-init-token-state">connected</.test(saved));
+  ok('...and NO "Add a read-only token in Settings" and no door — the false promise is gone',
+    !/Add a read-only token in Settings/.test(saved) && !/fnd-init-token-door/.test(saved));
+  ok('...and the READ WITH ⓘ is there, as on the switch panel',
+    /id="mem-fnd-readwith-info-btn"/.test(saved));
+  const none = first({ hasReadToken: false, hasSyncToken: false });
+  ok('first-time, NO token: the door to Settings is offered, and nothing is checked',
+    /id="mem-fnd-init-token-door">Add one in Settings</.test(none)
+      && !/data-fnd-token="(?:config|sync)"[^>]*\bchecked\b/.test(none));
+
+  // THE BINDER: the SHIPPED `bindFoundationRows`, with the chooser mounted.
+  const calls = { facts: [], bound: 0 };
+  const initBox = {};
+  const doc = { querySelector: (sel) => (sel === '[data-fnd-init="mem-fnd-init"]' ? initBox : null),
+    querySelectorAll: () => [] };
+  const st = { activeDomain: 'acme', activeProject: 'lumina', fndInit: null };
+  const api = new Function(
+    'state', 'render', 'reportAsyncMountFailure', 'openReader', 'isCurrentReader', 'isCurrentMount',
+    'fetch', 'escapeHtml', 'icon', 'renderMarkdown', 'renderReadout',
+    'foundationsFacts', 'freshChooser', 'bindFoundationsChooser', 'initFoundations',
+    'loadFoundationDraft', 'readPickedFile', 'saveFoundation', 'deleteFoundation',
+    'fndShrinkWarn', 'fndStats', 'briefDismissDecision',
+    'copyDraftingAsk', 'navigate',
+    'MAX_FOUNDATION_BYTES', 'FOUNDATION_ROLES', 'localStorage',
+    'loadTokenFacts', 'requestSettingsSection', 'pickedFiles',
+    extractFunction(viewSrc, 'bindFoundationRows', 'memory.js') + '\nreturn { bindFoundationRows };')(
+    st, () => {}, () => {}, () => 0, () => false, () => true,
+    async () => ({ ok: false }), escapeHtml, () => '', renderMarkdown, renderReadout,
+    () => ({ present: false, ownership: null, docs: [], count: 0 }),
+    freshChooser, () => { calls.bound++; }, async () => {},
+    async () => {}, async () => {}, async () => {}, async () => {},
+    () => null, () => ({ bytes: 0, words: 0, over: false }), () => 'close',
+    async () => {}, () => {},
+    MAX_FOUNDATION_BYTES, FOUNDATION_ROLES, { getItem: () => null, setItem: () => {} },
+    async (rec) => { calls.facts.push(rec); }, () => {}, () => []);
+  api.bindFoundationRows(doc, 1);
+  eq('SETUP: the chooser was bound', calls.bound, 1);
+  eq('the default (curator) card asks for NO token facts — nothing on screen needs them',
+    calls.facts.length, 0);
+  st.fndInit.choice.ownership = 'remote';
+  api.bindFoundationRows(doc, 1);
+  eq('choosing the GitHub card reads the token facts, for THIS panel record',
+    calls.facts.length === 1 && calls.facts[0] === st.fndInit, true);
+  api.bindFoundationRows(doc, 1);
+  eq('...ONCE: the repaint that answer causes does not ask again', calls.facts.length, 1);
 }
 
 // ── §21m2 — THE TOKEN FACTS, READ ONCE PER OPEN (v3.65.2, C1) ──────────

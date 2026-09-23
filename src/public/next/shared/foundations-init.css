@@ -293,7 +293,12 @@
   flex-wrap: wrap;
   gap: var(--space-4);
 }
-.fnd-init-token-line > .fnd-init-token-opt { flex: 1 1 auto; min-width: 0; }
+/* The option HUGS its text (v3.65.3). It was `flex: 1 1 auto`, so the <label>
+   ran the width of the panel with its state word at the far edge: "connected"
+   floated ~1,600px from the option it described, and a press anywhere on that
+   row checked the radio — the likeliest way the maintainer's panel came to
+   show Personal Sync selected. */
+.fnd-init-token-line > .fnd-init-token-opt { flex: 0 1 auto; min-width: 0; }
 .fnd-init-token-opt input[disabled] + span { color: var(--text-2); }
 /* The field takes the whole track here — `flex: 1 1 260px` means nothing to a
    grid item, and a 260px basis in a 150px track is what would overflow. */
@@ -313,19 +318,43 @@
 }
 .fnd-init-token-opt {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-3);
   font-size: var(--text-xs);
   color: var(--text);
 }
+/* The radio sits on the first line of the text beside it, not centred on a
+   two-line block. */
+.fnd-init-token-opt > input[type="radio"] { flex: none; margin-top: 0.2em; }
+.fnd-init-token-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+/* Name, where it lives, and its state — one line that wraps as a sentence. */
+.fnd-init-token-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-2);
+}
+.fnd-init-token-name { color: var(--text); font-weight: var(--weight-medium); }
+.fnd-init-token-where,
+.fnd-init-token-sep { color: var(--text-2); }
 /* --text-2, not --text-3: this is the clause that decides whether the choice
    beside it can work, and this file's standing rule is that a caution is
-   never the hardest thing on the screen to read. */
+   never the hardest thing on the screen to read. It sits BESIDE its own
+   option now, never at the panel's far edge. */
 .fnd-init-token-state {
-  margin-left: auto;
   font-size: var(--text-2xs);
   color: var(--text-2);
 }
+.fnd-init-token-sub {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+}
+.fnd-init-token-opt input[disabled] ~ .fnd-init-token-text .fnd-init-token-name { color: var(--text-2); }
 
 /* ── A NOTE, AND A LOUD ONE ───────────────────────────────────────────────
    Both are in FLOW and neither is ever inside a fold: a scan that refused a

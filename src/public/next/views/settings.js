@@ -270,7 +270,7 @@ import {
 const SETTINGS_SECTIONS = [
   ['general',   'General',              'Software update, appearance'],
   ['providers', 'Providers & keys',     'Gemini, Anthropic, OpenRouter, local'],
-  ['storage',   'Knowledge base',       'Vault folder, Obsidian'],
+  ['storage',   'Knowledge base',       'Vault folder, GitHub token'],
   ['mcp',       'MCP bridge',           'My Curator, default write domain'],
   ['health',    'Health & scan limits', 'Cost ceilings, candidate pairs'],
 ];
@@ -296,34 +296,49 @@ const SECTION_TITLES = Object.fromEntries(SETTINGS_SECTIONS.map(([id, label]) =>
  * inline error stay in the body, unfolded, exactly where they were.
  */
 const SECTION_INFO = {
+  // ── EVERY html: true ENTRY IS ONE <p> (v3.65.3) ──────────────────────────
+  // The ⓘ panel (`.tx-vh-panel`, shared/text.css) is a ONE-COLUMN GRID, and a
+  // grid makes every child — and every contiguous run of bare text — its own
+  // row. So "…open it with <em>Open folder as vault</em>." rendered as THREE
+  // rows: the sentence, the italic phrase, and a lone "." — the maintainer's
+  // screenshot of Knowledge base. Providers' three <strong>s and the bridge's
+  // <code> split the same way. One <p> is one grid item, and prose flows in
+  // it. A block-level ⓘ below that mixes prose with an inline element is
+  // wrapped in its own <p> at its source for the same reason (`infoMark`
+  // itself is pinned byte-equal to shared/block.js and does not change).
   providers: {
     html: true,
     // UPDATED with the four-block page: the old text said "there are two jobs
     // here", which was true of the previous layout and is now one number short
     // of what the reader sees numbered down the page in front of them.
-    text: 'Four steps, in order. <strong>Connect a provider</strong>, then choose the <strong>one '
+    text: '<p>Four steps, in order. <strong>Connect a provider</strong>, then choose the <strong>one '
         + 'model that builds your wiki</strong> — ingest, Health scans and Compile all share it, '
         + 'and it has to be one somebody has measured doing that job. <strong>Chat</strong> can '
         + 'use anything you have connected and you pick it per message, in the composer. The last '
-        + 'block is the whole catalogue, for looking things up.',
+        + 'block is the whole catalogue, for looking things up.</p>',
   },
   mcp: {
     html: true,
-    text: 'Exposes your graph to any MCP client — twenty-four tools: seventeen that read your wiki, '
+    text: '<p>Exposes your graph to any MCP client — twenty-four tools: seventeen that read your wiki, '
         + 'and seven that write to it (compiling a conversation into pages, saving an agent\u2019s '
         + 'working state or a project\u2019s standing brief, and fixing health issues) without leaving Claude. Write tools refuse '
         + 'on <code class="mono">shared-*</code> mirrors by design. The Curator does not need '
-        + 'to be running: the bridge is a separate process the client launches on demand.',
+        + 'to be running: the bridge is a separate process the client launches on demand.</p>',
   },
   health: {
     text: 'Cost ceilings for the AI scans that run from a domain\u2019s health panel. A scan '
         + 'refuses to start when its estimate exceeds the ceiling — raise it if a scan will '
         + 'not run on a large wiki.',
   },
+  // v3.65.3: this page holds TWO blocks since the GitHub read-only token moved
+  // here (v3.65.2), and the ⓘ described only the first.
   storage: {
     html: true,
-    text: 'Every domain is a folder of plain markdown here. This folder is also your Obsidian '
-        + 'vault — open it with <em>Open folder as vault</em>.',
+    text: '<p>Two things live here. The <strong>vault folder</strong> is where every domain is kept '
+        + 'as plain markdown — open the same folder in Obsidian with <em>Open folder as vault</em> '
+        + 'and the links between your pages become the graph. The <strong>GitHub read-only '
+        + 'token</strong> lets a project\u2019s Documents mirror from a GitHub repository with no '
+        + 'copy on this Mac; it can only read, and it stays on this computer.</p>',
   },
 };
 
@@ -9544,12 +9559,16 @@ function renderStorage() {
     : '';
 
   const lede = 'The folder every domain lives in. Point Obsidian at it as a vault.';
+  // The prose is ONE <p> (v3.65.3): the ⓘ panel is a one-column grid, so bare
+  // text around the <em> rendered as four rows — "…in Obsidian with", the
+  // italic phrase, the rest of the sentence, then the link. The link stays its
+  // own trailing row, as on every other block's ⓘ that ends with one.
   const info =
-    'Every domain is a folder of plain markdown under this path — no database, no index, ' +
+    '<p>Every domain is a folder of plain markdown under this path — no database, no index, ' +
     'nothing the app has to be running to read. Open this same folder in Obsidian with ' +
     '<em>Open folder as vault</em> and the wikilinks between your pages render as the graph. ' +
     'Choosing a new folder points The Curator at it; it does not copy or move anything, so the ' +
-    'move itself is yours to make in Finder. ' +
+    'move itself is yours to make in Finder.</p>' +
     docsLinkHtml('settings.knowledge-base', 'Read more in the guide');
 
   const body =

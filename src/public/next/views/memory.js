@@ -7138,10 +7138,14 @@ function foundationsSummaryMeta(facts) {
  * on the never-fold list. Returns '' when there is nothing to warn about, so
  * the caller concatenates it unconditionally.
  *
- * The consequence is named rather than the condition: a person who reads
- * "over budget" and shrugs is right to, and a person who reads "and the rest
- * is dropped, last in reading order first" un-flags a document. The sentence
- * is shared_with `shared/foundations-init.js`'s `budgetWarning`, which says the
+ * ── v3.65.3: "AND THE REST IS DROPPED" WAS FALSE ──────────────────────────
+ * Checked against `getProjectContext` in src/brain/working-state.js: the 200 KB
+ * project budget is disclosed, never enforced; the 120 KB reading budget bounds
+ * only the document text handed over at session start, in reading order (the
+ * read-first set when anything is flagged); and a document that does not fit is
+ * omitted from that one reading and NAMED — it stays in the index and an agent
+ * fetches it whole by name (`slugs`). Nothing is dropped. The sentence is
+ * shared with `shared/foundations-init.js`'s `budgetWarning`, which says the
  * same thing about the same limit on the chooser — one wording, two hosts.
  */
 function foundationsBudgetWarning(facts) {
@@ -7150,13 +7154,15 @@ function foundationsBudgetWarning(facts) {
     if (!facts.readFirstBudgetExceeded) return '';
     return 'The ' + facts.readFirstCount + ' documents flagged “read first” come to '
       + fndSize(facts.readFirstBytes) + ', over the ' + fndSize(facts.readFirstBudgetBytes)
-      + ' budget: agents receive ' + fndSize(facts.readFirstBudgetBytes)
-      + ' per session and the rest is dropped, last in reading order first.';
+      + ' reading budget. Agents are handed them in reading order up to '
+      + fndSize(facts.readFirstBudgetBytes)
+      + ' at session start; the rest stay listed and are fetched by name when needed.';
   }
   if (facts.bytes <= facts.budgetBytes) return '';
-  return 'Over the ' + fndSize(facts.budgetBytes) + ' budget: agents receive '
+  return 'Over the ' + fndSize(facts.budgetBytes) + ' project budget. Agents are handed up to '
     + fndSize(READ_FIRST_BUDGET_BYTES)
-    + ' per session and the rest is dropped, last in reading order first.';
+    + ' of document text at session start, in reading order; every other document stays listed'
+    + ' and is fetched by name when needed.';
 }
 
 /** Bytes, in the two units this block quotes them in. One derivation. */
@@ -8178,7 +8184,11 @@ function renderFoundationsInit(facts) {
       + '<p>A tick <b>copies</b> the file into this project. Whether an agent reads it first is '
       + 'set afterwards, per document, in the table’s READ column.</p>', { html: true })
     : { btn: '', panel: '' };
-  const readWithInfo = switching
+  // v3.65.3: the FIRST-TIME chooser's GitHub card reads the same token
+  // facts, carries the same ⓘ and the same door as the switch panel — it
+  // printed "Add a read-only token in Settings" to somebody with one saved.
+  const githubArm = switching || !repoOnly;
+  const readWithInfo = githubArm
     ? renderInfoMark('mem-fnd-readwith-info', 'How to create a read-only token',
       READ_WITH_INFO_HTML, { html: true })
     : null;
@@ -8222,7 +8232,7 @@ function renderFoundationsInit(facts) {
           existingProject: true,
           // v3.65.2: one panel (no framed arm inside it), one host-owned
           // reason line, the READ WITH ⓘ, and a real door to Settings.
-          flat: true, reasons: 'host', readWithInfo, tokenDoor: switching,
+          flat: true, reasons: 'host', readWithInfo, tokenDoor: githubArm,
         }) +
         ((showGo || closable)
           ? '<div class="mem-fnd-init-actions">' +
@@ -9460,6 +9470,14 @@ function bindFoundationRows(root, token) {
     // repository. Two writers of one field, and this one is the copy.
     if (state.fndInit.switching) state.fndInit.choice.ownership = 'remote';
     else if (facts.ownership === 'repo') state.fndInit.choice.ownership = 'repo';
+    // ── THE FIRST-TIME CHOOSER READS THE TOKEN FACTS TOO (v3.65.3) ──────
+    // Once the GitHub card is chosen, the same `loadTokenFacts` the switch
+    // panel calls on open — once per panel record, so its own re-render does
+    // not ask again. The switch panel's record is born with the flag set.
+    if (state.fndInit.choice.ownership === 'remote' && !state.fndInit.tokenFactsAsked) {
+      state.fndInit.tokenFactsAsked = true;
+      loadTokenFacts(state.fndInit, token).catch((err) => reportAsyncMountFailure(token, err));
+    }
     bindFoundationsChooser({
       doc: root,
       id: 'mem-fnd-init',
@@ -9595,7 +9613,7 @@ function bindFoundationRows(root, token) {
       state.fndInit = {
         domain: state.activeDomain, project: state.activeProject,
         choice: freshChooser({ allowLater: false }), busy: false, error: null, refused: [],
-        adding: true, switching: true,
+        adding: true, switching: true, tokenFactsAsked: true,
       };
       state.fndInit.choice.ownership = 'remote';
       state.fndForceOpen = true;

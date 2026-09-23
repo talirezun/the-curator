@@ -173,6 +173,10 @@ import {
   navigate,
 } from '../app.js';
 import { openSharedBrainWizard, closeSharedBrainWizardIfOpen, isSharedBrainWizardOpen } from './shared-brain-wizard.js';
+// The app's own confirm dialog — never a native window.confirm (the /next
+// rule test-next-confirm-dialog enforces). Used by the shown-once admin
+// token's leave guard, below.
+import { confirmThen } from '../shared/confirm.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 // The ONE text system in /next (shared/text.js). The view header owns the
 // eyebrow, the title and the info mark; it has NO parameter that renders a
@@ -181,6 +185,13 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // off-state's two CTA cards used a private `.sb-cta-desc` at 12px, four px
 // under every other description in the app.
 import { renderViewHeader, renderStatus, renderDescription, renderInfoMark } from '../shared/text.js';
+// The section body's three kit parts (v3.65.3): the MONITOR for every live
+// reading (design rule 4), the freshness TIER for its time lines, and the
+// IDENTITY dot for every domain it names (rule 5). Imported, never copied —
+// shared/sidebar.js is the kit's file and is not edited here.
+import { renderMonitor } from '../shared/monitor.js';
+import { freshnessTier } from '../shared/age.js';
+import { identityDotClass } from '../shared/sidebar.js';
 
 function freshState() {
   return {
@@ -197,6 +208,12 @@ function freshState() {
     expandedSkips: new Set(),
     expandedCohort: new Set(),
     expandedAdmin: new Set(),
+    // The section's fold rows (v3.65.3), keyed `<connId>:<row>`. In memory
+    // only and never persisted — "closed by default, not remembered" — but
+    // held across a RENDER, because this view re-renders on every SSE frame
+    // and a row that snapped shut under a press would be a row nobody could
+    // use.
+    expandedSecRows: new Set(),
   };
 }
 
@@ -244,7 +261,7 @@ let unsubscribeWriteGate = null;
 // painted the Shared Brain view over the domain page. The flag says what
 // isCurrentMount() cannot: whether the shell is actually showing THIS view.
 const SHELL_HOST = Object.freeze({
-  mode: 'view', el: null, domain: null, onBusyChange: null, onLensChange: null,
+  mode: 'view', el: null, domain: null, onBusyChange: null, onLensChange: null, describeDomain: null,
 });
 let hostCtx = SHELL_HOST;
 // True only between registerView('shared')'s onEnter and its teardown.
@@ -320,14 +337,24 @@ export function sharedLensFor(connections, domainSlug) {
   return { kind, contributing, mirrors };
 }
 
-/** The summary the host is told about — counts, never connection objects. */
+/** The summary the host is told about — counts and one label, never
+ *  connection objects. `label` (v3.65.3) is the first connection's own name,
+ *  so the head reading can say WHICH brain ("contributes to Research_Group
+ *  2026"); `error` says the flag or the list could not be read, so the host
+ *  never renders "off" for "could not tell"; `orphan` is a `shared-*` domain
+ *  no connection on this install produces (state E). */
 function lensSummary() {
-  const lens = sharedLensFor(state.connections, sectionDomain());
+  const slug = sectionDomain();
+  const lens = sharedLensFor(state.connections, slug);
+  const first = lens.contributing[0] || lens.mirrors[0] || null;
   return {
     enabled: !!state.enabled,
     kind: lens.kind,
     contributingCount: lens.contributing.length,
     mirrorCount: lens.mirrors.length,
+    label: first && typeof first.label === 'string' ? first.label : '',
+    error: !!(state.flagError || state.listError),
+    orphan: !!(state.enabled && lens.kind === 'none' && slug.startsWith('shared-')),
   };
 }
 
@@ -349,6 +376,13 @@ function notifyHost() {
       try { hostCtx.onBusyChange(busy); } catch { /* a host callback must never break a render */ }
     }
   }
+  // ── NO LENS WHILE LOADING (v3.65.3, D6) ──────────────────────────────
+  // The first paint of every mount runs before the flag and the list have
+  // arrived, and lensSummary() then reads `enabled: false` — which the host
+  // rendered as "not connected" beside a card showing the connection. The
+  // busy half above stays live (a load is never a reason to hide a held
+  // operation); only the READING waits for something true to report.
+  if (state.loading) return;
   const summary = lensSummary();
   const key = JSON.stringify(summary);
   if (key !== lastReportedLens) {
@@ -421,9 +455,24 @@ export function mountSharedSection(el, opts) {
     domain: typeof o.domain === 'string' ? o.domain : null,
     onBusyChange: typeof o.onBusyChange === 'function' ? o.onBusyChange : null,
     onLensChange: typeof o.onLensChange === 'function' ? o.onLensChange : null,
+    // ADDITIVE (v3.65.3): `describeDomain(slug) → {index, pages}`, read at
+    // RENDER time so a domain switch or a pull is never stale. `index` is the
+    // install's own domain index — the identity dot's key (rule 5); the
+    // section has no domain list of its own and must not invent an order.
+    describeDomain: typeof o.describeDomain === 'function' ? o.describeDomain : null,
   };
   const sameElement = inSection() && hostCtx.el === el;
-  if (sameElement) {
+  // ── THE SAME MOUNT ON A NEW ELEMENT IS A RE-POINT TOO (v3.65.3) ────────
+  // Found in the browser, driving ④ now that it is always mounted: a COLD
+  // domain switch paints the page's loading branch (a different column
+  // shape, so the shell replaces #view-root) and then the real column, with
+  // a NEW host element — and a new element used to mean startShared(),
+  // i.e. freshState(), which wiped a shown-once admin token off the screen
+  // for good. The domain page's MOUNT TOKEN is what says whether this is
+  // still the same page: while it is, the panel keeps its state and simply
+  // paints into the element it is handed now. A new token is a real remount.
+  const sameMount = inSection() && typeof o.token === 'number' && o.token === myMountToken;
+  if (sameElement || sameMount) {
     hostCtx = next;
     // Re-report from scratch: the host may be a different caller with
     // different callbacks, and a cached "unchanged" would leave it blind.
@@ -454,6 +503,74 @@ export function unmountSharedSection() {
   // The host is about to reuse or discard this node; leaving a dead panel
   // painted in it would outlive every listener that made it work.
   if (el) el.innerHTML = '';
+}
+
+// ── The leave-page guard for a SHOWN-ONCE admin token (v3.65.3) ──────────
+//
+// A rotate shows the new admin token ONCE (v3.0.5) and it is displayed in a
+// card box, in either host. Three gestures destroyed it with no word: a
+// reload or a window close, and a rail click — navigate() tears this panel
+// down, and the box with it. The in-panel paths (a repaint, a domain switch,
+// a facet press) already keep it (preserveMainScroll, D-J's patch); this
+// covers the two that leave the panel entirely.
+//
+// INSTALLED ONCE, AT MODULE LEVEL, and asked on every gesture, rather than
+// added and removed per mount: startShared/stopShared are lifted by a suite
+// that injects every identifier they touch, and the guard's own question —
+// is a shown-once token on screen RIGHT NOW — already answers false whenever
+// this panel is not mounted. The wizard guards its OWN token (it holds it,
+// see shared-brain-wizard.js's onWizardBeforeUnload); this is the card's.
+function shownOnceTokenOnScreen() {
+  if (!viewMounted && !inSection()) return false;
+  for (const id of Object.keys(state.cards)) {
+    const c = state.cards[id];
+    if (c && c.shownAdminToken) return true;
+  }
+  return false;
+}
+
+/** The browser shows its own generic prompt and ignores a page's text, so
+ *  nothing about the token rides this event. */
+function onSharedBeforeUnload(e) {
+  if (!shownOnceTokenOnScreen()) return undefined;
+  e.preventDefault();
+  e.returnValue = '';
+  return '';
+}
+
+const SHOWN_TOKEN_LEAVE_QUESTION =
+  'A new admin token is on screen, and it can never be shown again. ' +
+  'Copy it into your password manager first.';
+
+/** Capture phase on the document, so it runs BEFORE the rail button's own
+ *  navigate() listener and can stop it. Only a rail destination is asked
+ *  about; every other click passes untouched. The question is the app's own
+ *  dialog, which is asynchronous — so the click is ALWAYS stopped here, and
+ *  a "Leave" performs the navigation it stopped. */
+function onSharedRailClick(e) {
+  if (!shownOnceTokenOnScreen()) return;
+  const t = e && e.target && typeof e.target.closest === 'function' ? e.target.closest('#rail [data-view]') : null;
+  if (!t) return;
+  const view = t.dataset && typeof t.dataset.view === 'string' ? t.dataset.view : '';
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  // RETURNED, never dropped (the confirm module's own rule): a caller that
+  // wants to know the dialog settled can wait on it.
+  return confirmThen({
+    title: 'Leave with an admin token on screen?',
+    message: SHOWN_TOKEN_LEAVE_QUESTION,
+    confirmLabel: 'Leave',
+    cancelLabel: 'Stay',
+    tone: 'danger',
+    onConfirm: () => { if (view) navigate(view); },
+  });
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('beforeunload', onSharedBeforeUnload);
+}
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('click', onSharedRailClick, true);
 }
 
 // ── Lifecycle, shared by both hosts ──────────────────────────────────────
@@ -883,76 +1000,140 @@ function renderSection() {
   // reach the install-wide view would be a gate with nothing behind it.
   if (state.loading) {
     return '<div class="sb-sec">' + gatedLoader(loadGate, 'Loading Shared Brain status…') +
-      renderSectionDoor() + '</div>';
+      '<div class="sb-sec-door">' + renderSectionDoor('secondary') + '</div></div>';
   }
   if (state.flagError) {
     return '<div class="sb-sec">' +
       '<div class="settings-inline-error">Could not reach the Shared Brain feature flag: ' + escapeHtml(state.flagError) + '</div>' +
-      renderSectionDoor() +
+      '<div class="sb-sec-door">' + renderSectionDoor('secondary') + '</div>' +
     '</div>';
   }
+  // ── A · FLAG OFF (v3.65.3) ─────────────────────────────────────────────
+  // Quick maintenance's empty anatomy: the one sentence left, the one door
+  // right. Still NO enable control (D-G) — the toggle is install-level and
+  // lives on the full view only.
   if (!state.enabled) {
-    return '<div class="sb-sec">' +
-      '<p class="sb-sec-line">Shared Brain is off on this install.</p>' +
-      renderSectionDoor() +
-    '</div>';
+    return '<div class="sb-sec">' + renderSectionEmpty(
+      'Shared Brain is off on this install. Turning it on connects you to nothing — it lets you join a cohort or set one up.'
+    ) + '</div>';
   }
   if (state.listError) {
     return '<div class="sb-sec">' +
       '<div class="settings-inline-error">Could not load your Shared Brain connections: ' + escapeHtml(state.listError) + '</div>' +
-      '<button type="button" class="btn btn-secondary btn-xs" id="btn-sb-retry-list">Try again</button>' +
-      renderSectionDoor() +
+      '<div class="sb-sec-door">' +
+        '<button type="button" class="btn btn-secondary" id="btn-sb-retry-list">Try again</button>' +
+        renderSectionDoor('ghost') +
+      '</div>' +
     '</div>';
   }
-  const lens = sharedLensFor(state.connections, sectionDomain());
+  const slug = sectionDomain();
+  const lens = sharedLensFor(state.connections, slug);
   if (lens.kind === 'none') {
-    return '<div class="sb-sec">' +
-      '<p class="sb-sec-line">This domain is not part of any Shared Brain.</p>' +
-      renderSectionDoor() +
-    '</div>';
+    // ── E · AN ORPHANED MIRROR (v3.65.3, D20) ────────────────────────────
+    // A `shared-*` domain whose connection was removed lenses as NONE, and
+    // used to read "not part of any Shared Brain" — false: it IS one's
+    // mirror, it just has nothing left on this install to refresh it.
+    if (slug.startsWith('shared-')) {
+      return '<div class="sb-sec">' + renderSectionEmpty(
+        'This is a Shared Brain mirror with no connection on this install, so Pull can’t refresh it. ' +
+        'Join the brain again to resume, or delete this domain.'
+      ) + '</div>';
+    }
+    // ── B · ENABLED, THIS DOMAIN IN NONE ─────────────────────────────────
+    // Names which domains this install's brains DO draw on, each with its
+    // identity dot, and the one fact a reader needs about changing that.
+    // No "Contribute this domain" button: the store cannot add a domain to
+    // an existing connection (POST /save is full-replace and a masked PAT is
+    // refused — the header's "STRUCTURALLY BLOCKED"), so a button here would
+    // promise what the backend cannot do.
+    const drawn = [];
+    for (const c of state.connections) {
+      for (const d of (Array.isArray(c && c.local_domains) ? c.local_domains : [])) {
+        if (typeof d === 'string' && d && !drawn.includes(d)) drawn.push(d);
+      }
+    }
+    const n = state.connections.length;
+    const sentence = n === 0 || drawn.length === 0
+      ? escapeHtml('This domain isn’t part of a Shared Brain.')
+      : escapeHtml('This domain isn’t part of a Shared Brain. Your ' + n + ' Shared Brain' + (n === 1 ? '' : 's') +
+          ' draw' + (n === 1 ? 's' : '') + ' on ') +
+        drawn.map((d) => '<span class="sb-sec-dom">' + sectionDotHtml(d) + escapeHtml(d) + '</span>').join(', ') +
+        escapeHtml(' — a connection’s domains are fixed when you join.');
+    return '<div class="sb-sec">' + renderSectionEmpty(sentence, true) + '</div>';
   }
+  // ── C · CONTRIBUTING, D · MIRROR ──────────────────────────────────────
+  // One block per connection, NO card inside the card, the door the last
+  // control of the last block (one door per state — D-G's census).
+  const blocks = [
+    ...lens.contributing.map((c) => ['c', c]),
+    ...lens.mirrors.map((c) => ['m', c]),
+  ];
   return '<div class="sb-sec">' +
-    (lens.contributing.length
-      ? '<div class="sb-cards">' + lens.contributing.map(renderCard).join('') + '</div>'
-      : '') +
-    lens.mirrors.map(renderMirrorStrip).join('') +
-    renderSectionDoor() +
+    blocks.map(([kind, c], i) => (kind === 'c'
+      ? renderSectionConnection(c, i === blocks.length - 1)
+      : renderMirrorStrip(c, i === blocks.length - 1))).join('') +
   '</div>';
 }
 
-/** The one door out of the section and into the install-wide view. */
-function renderSectionDoor() {
-  return '<div class="sb-sec-door">' +
-    '<button type="button" class="btn btn-secondary btn-xs" id="btn-sb-open-view">Open Shared Brain</button>' +
-  '</div>';
+/** The one door out of the section and into the install-wide view. A
+ *  SECONDARY where it is the state's only action (A, B, E), a GHOST where it
+ *  follows the state's own actions (C, D) — always md, never xs: every other
+ *  section's action on this page is md. */
+function renderSectionDoor(tier) {
+  // Two LITERAL class lists, never an interpolated one: the button-chrome
+  // census resolves a button's border from the classes it can READ.
+  return tier === 'ghost'
+    ? '<button type="button" class="btn btn-ghost sb-sec-door-btn" id="btn-sb-open-view">Open Shared Brain</button>'
+    : '<button type="button" class="btn btn-secondary sb-sec-door-btn" id="btn-sb-open-view">Open Shared Brain</button>';
 }
 
 /**
- * A `shared-*` mirror domain's read-only strip (D-H).
+ * D · A `shared-*` MIRROR DOMAIN (v3.65.3).
  *
- * This page IS the mirror: the local copy Pull writes, named after the
- * connection's own slug. It carries no Push, no Pull and no Synthesize —
- * those belong to the connection, which the CONTRIBUTING domain's section
- * (and the full view) already offers, and offering them twice would give
- * one operation two homes. What the reader needs here is which cohort
- * produced this domain and how current it is.
+ * This page IS the mirror: the local copy Pull writes. It used to carry no
+ * Pull at all ("one operation, two homes"), and that left a READ-ONLY member
+ * — who has no contributing domain, so no contributing card on any page —
+ * with Pull only in the full view. Pull writes THIS domain, so this is its
+ * natural home; it is the SAME `data-sb-action="pull"` inside the SAME
+ * `.sb-card[data-conn-id]` root the full view uses, so there is one
+ * mechanism, not a second. No Push and no Synthesize: those act on the
+ * contributing side. MIRROR_WARNING already renders unfolded at the top of
+ * the page, so the monitor carries no loud entry for it.
  */
-function renderMirrorStrip(conn) {
+function renderMirrorStrip(conn, last) {
+  const card = ensureCard(conn.id);
+  const busy = !!card.acting;
+  const here = sectionDomain() || mirrorDomainFor(conn) || '';
+  const mirrorBusy = !busy && !!here && isDomainWriteBusy(here);
+  const facts = sectionDomainFacts(here);
+  const locals = Array.isArray(conn.local_domains) ? conn.local_domains.filter((d) => typeof d === 'string' && d) : [];
+  const lines = [
+    sectionAgeLine('synthesis', conn.last_synthesis_at),
+    sectionAgeLine('pulled', conn.last_pull_at),
+  ];
+  if (facts.pages !== null) lines.push({ key: 'pages', value: String(facts.pages) });
+  if (conn.shared_domain) lines.push({ key: 'folder', value: 'collective/' + conn.shared_domain + '/wiki/' });
+  if (locals.length) {
+    lines.push({ key: 'fed by', value: locals.join(', '), markHtml: locals.length === 1 ? sectionDotHtml(locals[0]) : '' });
+  }
+  const loud = [];
+  if (mirrorBusy) {
+    loud.push({ tone: 'warn', text: 'Another write (' + (getDomainWriteLabel(here) || 'write') + ') is already running for ' +
+      here + '. Pull comes back on its own when it finishes.' });
+  }
+  if (card.message) loud.push({ tone: card.error ? 'danger' : 'quiet', text: card.message });
   return (
-    '<div class="sb-sec-mirror" data-sb-mirror="' + escapeHtml(conn.id) + '">' +
-      '<div class="sb-sec-mirror-head">' +
-        '<span class="sb-name">' + escapeHtml(conn.label || '(unnamed)') + '</span>' +
+    '<div class="sb-card sb-sec-conn sb-sec-mirror" data-conn-id="' + escapeHtml(conn.id) + '" data-sb-mirror="' + escapeHtml(conn.id) + '">' +
+      '<div class="sb-sec-id">' +
+        '<span class="sb-sec-id-name">' + sectionDotHtml(here) + '<span class="sb-name">' + escapeHtml(conn.label || '(unnamed)') + '</span></span>' +
         '<span class="sb-pill-readonly">' + icon('lock', 11) + ' read-only mirror</span>' +
+        sectionRepoCell(conn) +
       '</div>' +
-      '<p class="sb-sec-line">This domain is the local mirror of that Shared Brain. Pull writes it; ' +
-      'edits made here are not kept.</p>' +
-      '<div class="sb-card-stats">' +
-        '<span><span class="sb-card-stat-label">Last synthesis</span><span class="sb-num">' +
-          escapeHtml(formatRelativeTime(conn.last_synthesis_at, 'never — ask your admin to run synthesis')) +
-        '</span></span>' +
-        '<span><span class="sb-card-stat-label">Last pulled</span><span class="sb-num">' +
-          escapeHtml(formatRelativeTime(conn.last_pull_at, 'never')) +
-        '</span></span>' +
+      renderMonitor({ label: 'Shared Brain mirror', lines, loud }) +
+      '<div class="sb-sec-actions">' +
+        '<button type="button" class="btn btn-secondary" data-sb-action="pull"' + ((busy || mirrorBusy) ? ' disabled' : '') + '>' +
+          icon('refresh', 14) + ' ' + (card.acting === 'pull' ? 'Pulling…' : 'Pull updates') + '</button>' +
+        (last ? renderSectionDoor('ghost') : '') +
       '</div>' +
     '</div>'
   );
@@ -973,6 +1154,236 @@ function formatRelativeTime(iso, neverLabel) {
   return then.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+
+// ── The section's parts (v3.65.3) ────────────────────────────────────────
+
+/** What the host knows about one domain: its identity index and page count,
+ *  or -1 / null when the host did not say (the full view, a suite). Total. */
+function sectionDomainFacts(slug) {
+  const fn = hostCtx && typeof hostCtx.describeDomain === 'function' ? hostCtx.describeDomain : null;
+  let facts = null;
+  if (fn && slug) { try { facts = fn(slug); } catch { facts = null; } }
+  const index = facts && Number.isFinite(facts.index) && facts.index >= 0 ? facts.index : -1;
+  const pages = facts && Number.isFinite(facts.pages) ? facts.pages : null;
+  return { index, pages };
+}
+
+/** The kit's identity dot for a domain (design rule 5) — '' when the host
+ *  did not give an index, never a guessed colour. */
+function sectionDotHtml(slug) {
+  const { index } = sectionDomainFacts(slug);
+  if (index < 0) return '';
+  return '<span class="cur-sb-dot ' + identityDotClass(index) + '" aria-hidden="true"></span>';
+}
+
+/** A monitor line for a time: the age in words with the app's `.fresh-dot`
+ *  (rule 4), or `never` with NO dot — a dot on a time that never happened
+ *  would be a reading of nothing. */
+function sectionAgeLine(key, iso, sub) {
+  const t = iso ? new Date(iso).getTime() : NaN;
+  const line = { key, value: 'never' };
+  if (Number.isFinite(t)) {
+    line.value = formatRelativeTime(iso, 'never');
+    line.markHtml = '<span class="fresh-dot fresh-' + freshnessTier(Math.max(0, (Date.now() - t) / 1000)) +
+      '" aria-hidden="true"></span>';
+  }
+  if (sub) line.sub = sub;
+  return line;
+}
+
+/** The repository cell — a link only for a real GitHub repo; local/other
+ *  storage types show a plain (non-clickable) label. ONE function for both
+ *  hosts (v3.65.3): renderCard calls it too. */
+function sectionRepoCell(conn) {
+  if (conn.storage_type === 'github' && conn.github_repo_owner && conn.github_repo_name) {
+    const label = conn.github_repo_owner + '/' + conn.github_repo_name;
+    return '<a class="sb-card-repo mono" href="' + escapeHtml('https://github.com/' + label) +
+      '" target="_blank" rel="noopener">' + escapeHtml(label) + '</a>';
+  }
+  const label = conn.storage_type === 'github'
+    ? conn.github_repo_owner + '/' + conn.github_repo_name
+    : conn.storage_type === 'local' ? 'local: ' + (conn.local_storage_path || '') : (conn.storage_type || 'unknown storage');
+  return '<span class="sb-card-repo mono">' + escapeHtml(label) + '</span>';
+}
+
+/** States A, B and E: Quick maintenance's empty anatomy — the sentence left,
+ *  the door right, one tinted panel. `trusted` marks a sentence the caller
+ *  has already escaped (B carries identity-dot markup). */
+function renderSectionEmpty(sentence, trusted) {
+  return '<div class="sb-sec-empty">' +
+    '<p class="sb-sec-line sb-sec-empty-text">' + (trusted ? sentence : escapeHtml(sentence)) + '</p>' +
+    renderSectionDoor('secondary') +
+  '</div>';
+}
+
+/** One fold row — the `.dm-group` anatomy (title left, one-line reading
+ *  right, chevron), closed by default, held open across a render by
+ *  `state.expandedSecRows`. `forceOpen` covers a row an ACTION opened (the
+ *  revoke panel). */
+function sectionFoldRow(connId, key, title, reading, bodyHtml, forceOpen) {
+  const k = connId + ':' + key;
+  const open = state.expandedSecRows.has(k) || !!forceOpen;
+  return '<details class="sb-sec-row" data-sb-sec-row="' + escapeHtml(k) + '"' + (open ? ' open' : '') + '>' +
+    '<summary class="sb-sec-row-summary">' + icon('chevronRight', 13) +
+      '<span class="sb-sec-row-label">' + escapeHtml(title) + '</span>' +
+      '<span class="sb-sec-row-meta">' + escapeHtml(reading) + '</span>' +
+    '</summary>' +
+    '<div class="sb-sec-row-body">' + bodyHtml + '</div>' +
+  '</details>';
+}
+
+const TOKEN_CHECK_READING = Object.freeze({
+  ok: 'works', unknown: 'not conclusive', rejected: 'rejected', unreachable: 'check failed',
+});
+
+/**
+ * C · A CONTRIBUTING DOMAIN'S CONNECTION (v3.65.3).
+ *
+ * The section's own body for one connection — NOT renderCard(), which the
+ * full view keeps and four suites lift. The anatomy is the design's: an
+ * identity line, ONE monitor for everything live (its `loud` entries for the
+ * cost, the skips, a held write, a dead token and the last outcome — never
+ * behind a chevron, v3.16.1), ONE action row with Push as the one primary
+ * (sparkles: it spends), and fold rows for what a person opens occasionally.
+ *
+ * The root keeps `.sb-card[data-conn-id]`, because wireListeners,
+ * revealInCard and updateRevokeGateUi all find a connection by it — every
+ * button below is the SAME `data-sb-action` the full view uses, so there is
+ * one mechanism behind two hosts, not a second.
+ *
+ * RUN SYNTHESIS ONLY WITH `has_admin_token` (D10). The route has no admin
+ * gate (POST /:id/synthesize checks read_only only), so this is a statement
+ * about who USUALLY runs it, not a permission — the full view keeps the
+ * button for every write member and says so in its confirm.
+ */
+function renderSectionConnection(conn, last) {
+  const card = ensureCard(conn.id);
+  const busy = !!card.acting;
+  const readOnly = conn.read_only === true;
+  const mirrorDomain = mirrorDomainFor(conn);
+  const pushBusyDomain = !busy ? domainsForAction(conn, 'push').find((d) => isDomainWriteBusy(d)) : null;
+  const mirrorBusy = !busy && !!mirrorDomain && isDomainWriteBusy(mirrorDomain);
+  const pushDisabled = busy || !!pushBusyDomain;
+  const pullSynthDisabled = busy || mirrorBusy;
+  const pending = typeof conn.pending_pages === 'number' ? conn.pending_pages : 0;
+  const retry = conn.pending_retry && typeof conn.pending_retry === 'object' ? Object.keys(conn.pending_retry).length : 0;
+  const skips = Array.isArray(conn.permanent_skip) ? conn.permanent_skip.filter((p) => typeof p === 'string') : [];
+  const locals = Array.isArray(conn.local_domains) ? conn.local_domains.filter((d) => typeof d === 'string' && d) : [];
+  const isAdmin = conn.has_admin_token === true;
+  const role = isAdmin ? 'admin' : (readOnly ? 'read-only member' : 'contributor');
+  const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+
+  const lines = [
+    sectionAgeLine('pushed', conn.last_push_at),
+    sectionAgeLine('pulled', conn.last_pull_at),
+    sectionAgeLine('synthesis', conn.last_synthesis_at, 'run by the cohort admin'),
+  ];
+  if (!readOnly) lines.push({ key: 'pending', value: plural(pending, 'page'), sub: 'ready to push', ...(pending > 0 ? { tone: 'warn' } : {}) });
+  if (retry > 0) lines.push({ key: 'retrying', value: plural(retry, 'page') });
+  if (mirrorDomain) lines.push({ key: 'mirror', value: mirrorDomain, markHtml: sectionDotHtml(mirrorDomain) });
+  lines.push({
+    key: 'contributes',
+    value: locals.length ? locals.join(', ') : '(none)',
+    markHtml: locals.length === 1 ? sectionDotHtml(locals[0]) : '',
+  });
+
+  // ── LOUD: always rendered, never folded (v3.16.1) ─────────────────────
+  const loud = [];
+  if (!readOnly && pending > 0) {
+    loud.push({ tone: 'warn', text: plural(pending, 'page') + ' ready to push — Push summarises each with your AI provider, ' +
+      'which spends API credits; there is no cost estimate yet.' });
+  }
+  if (skips.length) {
+    loud.push({ tone: 'warn', text: plural(skips.length, 'page') + ' skipped after repeated failures.',
+      strongText: 'Retry them from Skipped pages below.' });
+  }
+  const blocked = [];
+  if (pushBusyDomain && !readOnly) blocked.push(pushBusyDomain);
+  if (mirrorBusy) blocked.push(mirrorDomain);
+  if (blocked.length) {
+    loud.push({ tone: 'warn', text: 'Another write is already running for ' + blocked.join(' and ') +
+      '. The buttons below come back on their own when it finishes.' });
+  }
+  const verdict = card.tokenCheck;
+  if (verdict && (verdict.kind === 'rejected' || verdict.kind === 'unreachable')) {
+    loud.push({ tone: verdict.kind === 'rejected' ? 'danger' : 'warn', text: verdict.message });
+  }
+  if (card.message) loud.push({ tone: card.error ? 'danger' : 'quiet', text: card.message });
+
+  // ── ONE ACTION ROW ────────────────────────────────────────────────────
+  let actions = '';
+  if (!readOnly) {
+    actions += card.pushConfirmOpen
+      ? renderPushConfirm(conn, pushDisabled)
+      : '<button type="button" class="btn btn-ai" data-sb-action="push-open"' + (pushDisabled ? ' disabled' : '') + '>' +
+          icon('sparkles', 14) + ' ' + (card.acting === 'push' ? 'Pushing…' : 'Push contributions') + '</button>';
+  }
+  actions += '<button type="button" class="btn btn-secondary" data-sb-action="pull"' + (pullSynthDisabled ? ' disabled' : '') + '>' +
+    icon('refresh', 14) + ' ' + (card.acting === 'pull' ? 'Pulling…' : 'Pull updates') + '</button>';
+  if (!readOnly && isAdmin) {
+    actions += card.synthesizeConfirmOpen
+      ? renderSynthesizeConfirm(pullSynthDisabled)
+      : '<button type="button" class="btn btn-ai" data-sb-action="synthesize-open"' + (pullSynthDisabled ? ' disabled' : '') + '>' +
+          icon('sparkles', 14) + ' ' + (card.acting === 'synthesize' ? 'Synthesizing…' : 'Run synthesis') + '</button>';
+  }
+  if (last) actions += renderSectionDoor('ghost');
+
+  // ── FOLD ROWS ─────────────────────────────────────────────────────────
+  let rows = '';
+  if (tokenCheckApplies(conn)) {
+    const why = renderInfoMark('sb-sec-token-info-' + conn.id, 'Why check the token',
+      'The GitHub token you pasted when you joined. Fine-grained tokens expire on the date you chose when you created ' +
+      'one — when that day comes, Push and Pull stop working and GitHub sends no warning. This reads the cohort’s ' +
+      'contribution records with the stored token; it costs no AI credits.');
+    rows += sectionFoldRow(conn.id, 'token', 'Access token',
+      card.tokenChecking ? 'checking…' : (verdict ? (TOKEN_CHECK_READING[verdict.kind] || 'checked') : 'not checked'),
+      '<div class="sb-sec-row-line">' +
+        '<button type="button" class="btn btn-secondary" data-sb-action="token-check"' + (card.tokenChecking ? ' disabled' : '') + '>' +
+          (card.tokenChecking ? 'Checking…' : 'Check now') + '</button>' + why.btn +
+      '</div>' + why.panel +
+      (verdict
+        ? '<p class="sb-token-check-verdict sb-token-check-' + escapeHtml(verdict.kind) + '">' + escapeHtml(verdict.message) + '</p>'
+        : ''));
+  }
+  rows += sectionFoldRow(conn.id, 'cohort', 'Cohort & sharing',
+    conn.data_handling_terms === 'organisational' ? 'organisation owns output' : 'you keep copyright',
+    renderCohortBody(conn, card));
+  if (skips.length) {
+    rows += sectionFoldRow(conn.id, 'skips', 'Skipped pages', plural(skips.length, 'page'),
+      '<ul class="sb-card-skips-list">' + skips.map((p) => '<li>' + escapeHtml(p) + '</li>').join('') + '</ul>' +
+      '<div class="sb-sec-row-line"><button type="button" class="btn btn-secondary" data-sb-action="unskip"' + (busy ? ' disabled' : '') + '>' +
+        (card.acting === 'unskip' ? 'Re-queuing…' : 'Retry these pages on next push') + '</button></div>');
+  }
+  if (isAdmin) {
+    const aff = adminAffordances(conn, card);
+    if (aff.show) {
+      rows += sectionFoldRow(conn.id, 'admin', 'Admin controls', 'admin token held here',
+        renderAdminBody(conn, card, aff, busy, mirrorBusy),
+        state.expandedAdmin.has(conn.id) || card.revokeOpen || !!card.shownAdminToken);
+    }
+  }
+  rows += sectionFoldRow(conn.id, 'leave', 'Leave this Shared Brain', 'fellow ' + (conn.fellow_id || '').slice(0, 8) + '…',
+    '<p class="sb-sec-line">Your local wiki files stay exactly as they are, including the read-only ' +
+      (mirrorDomain ? '<span class="sb-name">' + escapeHtml(mirrorDomain) + '</span> mirror' : 'mirror domain') +
+      ' — only the sync connection is removed from this machine. This does not remove you as a GitHub collaborator ' +
+      'on the repo; ask the admin for that. You can rejoin any time with a new invite token.</p>' +
+    '<div class="sb-sec-row-line"><button type="button" class="btn btn-secondary" data-sb-action="leave-confirm"' + (busy ? ' disabled' : '') + '>' +
+      (card.acting === 'leave' ? 'Leaving…' : 'Leave') + '</button></div>');
+
+  return (
+    '<div class="sb-card sb-sec-conn" data-conn-id="' + escapeHtml(conn.id) + '">' +
+      '<div class="sb-sec-id">' +
+        '<span class="sb-sec-id-name">' + (mirrorDomain ? sectionDotHtml(mirrorDomain) : '') +
+          '<span class="sb-name">' + escapeHtml(conn.label || '(unnamed)') + '</span></span>' +
+        '<span class="sb-sec-role' + (readOnly ? ' sb-pill-readonly' : '') + '">' + escapeHtml(role) + '</span>' +
+        sectionRepoCell(conn) +
+      '</div>' +
+      renderMonitor({ label: 'Shared Brain connection', lines, loud }) +
+      '<div class="sb-sec-actions">' + actions + '</div>' +
+      '<div class="sb-sec-rows">' + rows + '</div>' +
+    '</div>'
+  );
+}
 
 // ── Is the stored access token still good? ───────────────────────────────
 //
@@ -1083,17 +1494,9 @@ function renderCard(conn) {
 
   // Repo cell — link only for a real GitHub repo; local/other storage
   // types show a plain (non-clickable) label, matching the shipping app.
-  const repoUrl = conn.storage_type === 'github' && conn.github_repo_owner && conn.github_repo_name
-    ? 'https://github.com/' + conn.github_repo_owner + '/' + conn.github_repo_name
-    : null;
-  const repoLabel = conn.storage_type === 'github'
-    ? conn.github_repo_owner + '/' + conn.github_repo_name
-    : conn.storage_type === 'local'
-    ? 'local: ' + (conn.local_storage_path || '')
-    : (conn.storage_type || 'unknown storage');
-  const repoCell = repoUrl
-    ? '<a class="sb-card-repo mono" href="' + escapeHtml(repoUrl) + '" target="_blank" rel="noopener">' + escapeHtml(repoLabel) + '</a>'
-    : '<span class="sb-card-repo mono">' + escapeHtml(repoLabel) + '</span>';
+  // ONE function for both hosts since v3.65.3 (sectionRepoCell), so the
+  // full card and the domain page's section cannot draw it two ways.
+  const repoCell = sectionRepoCell(conn);
 
   const domainsLabel = Array.isArray(conn.local_domains) && conn.local_domains.length
     ? conn.local_domains.join(', ')
@@ -1161,7 +1564,8 @@ function renderCard(conn) {
 
       (card.message ? '<div class="sb-card-status' + (card.error ? ' error' : '') + '" aria-live="polite">' + escapeHtml(card.message) + '</div>' : '') +
 
-      (mirrorDomain ? '<p class="sb-card-note">Pulled content appears as the read-only domain <span class="sb-name">' + escapeHtml(mirrorDomain) + '</span> in the Domains tab.</p>' : '') +
+      // D11: there has been no "Domains tab" since v3.64.0.
+      (mirrorDomain ? '<p class="sb-card-note">Pulled pages land in the read-only domain <span class="sb-name">' + escapeHtml(mirrorDomain) + '</span>.</p>' : '') +
 
       '<div class="sb-card-footer">' +
         '<span class="sb-fellow-pill mono">fellow ' + escapeHtml(fellowShort) + '…</span>' +
@@ -1243,7 +1647,10 @@ function renderActions(conn, card, busy, readOnly, pushBusyDomain, mirrorBusy) {
       html += renderSynthesizeConfirm(pullSynthDisabled);
     } else {
       html += '<button type="button" class="btn btn-ai" data-sb-action="synthesize-open"' + (pullSynthDisabled ? ' disabled' : '') + '>' +
-        icon('sparkles', 14) + ' ' + (card.acting === 'synthesize' ? 'Synthesizing…' : 'Run synthesis (admin)') + '</button>';
+        // "(admin)" was a false label (D10): POST /:id/synthesize has no admin
+        // gate, and every write member reaches it. The confirm says who
+        // usually runs it instead.
+        icon('sparkles', 14) + ' ' + (card.acting === 'synthesize' ? 'Synthesizing…' : 'Run synthesis') + '</button>';
     }
   }
 
@@ -1271,7 +1678,7 @@ function renderPushConfirm(conn, busy) {
 function renderSynthesizeConfirm(busy) {
   return (
     '<div class="sb-confirm-inline sb-confirm-block">' +
-      '<span>Synthesis merges every pending contributor submission into the collective wiki, using your AI provider to ' +
+      '<span>Usually the admin runs this. Synthesis merges every pending contributor submission into the collective wiki, using your AI provider to ' +
       'resolve any conflicting facts — this spends API credits, and Shared Brain synthesis doesn’t have a cost estimate ' +
       'yet. It’s usually run by the brain admin, weekly or after a batch of pushes. Nothing has been written yet.</span>' +
       '<div class="sb-confirm-actions">' +
@@ -1299,6 +1706,18 @@ function renderSkips(conn, card) {
 
 function renderCohort(conn, card) {
   const open = state.expandedCohort.has(conn.id);
+  return (
+    '<details class="sb-card-cohort"' + (open ? ' open' : '') + ' data-sb-cohort="' + escapeHtml(conn.id) + '">' +
+      '<summary>Cohort &amp; sharing details</summary>' +
+      '<div class="sb-card-cohort-body">' + renderCohortBody(conn, card) + '</div>' +
+    '</details>'
+  );
+}
+
+/** The cohort panel's BODY, shared by the full view's `<details>` above and
+ *  the section's "Cohort & sharing" fold row (v3.65.3) — one body, two
+ *  wrappers, so the two hosts cannot drift. */
+function renderCohortBody(conn, card) {
   const c = card.cohort;
 
   let networkBody;
@@ -1335,9 +1754,6 @@ function renderCohort(conn, card) {
   }
 
   return (
-    '<details class="sb-card-cohort"' + (open ? ' open' : '') + ' data-sb-cohort="' + escapeHtml(conn.id) + '">' +
-      '<summary>Cohort &amp; sharing details</summary>' +
-      '<div class="sb-card-cohort-body">' +
         networkBody +
         '<div class="sb-card-cohort-row sb-card-cohort-note">Which domains contribute is read-only here — changing it means re-entering your access token, which only the setup wizard asks for. Use <b>Leave this Shared Brain</b> at the bottom of this card, then re-join with a fresh invite, to change the selection.</div>' +
         '<div class="sb-card-cohort-row sb-card-cohort-note">No automatic synthesis schedule — it’s triggered manually, usually by the brain admin.</div>' +
@@ -1345,9 +1761,7 @@ function renderCohort(conn, card) {
         // promises to know better, and the honest answer is more useful
         // than the promise: both halves of the data are already ordinary
         // markdown on this computer.
-        '<div class="sb-card-cohort-row sb-card-cohort-note">There is no export button. There is also nothing locked up: what you contributed is the markdown in your own domains, and the collective wiki is the read-only mirror domain — both are plain files in your knowledge folder.</div>' +
-      '</div>' +
-    '</details>'
+        '<div class="sb-card-cohort-row sb-card-cohort-note">There is no export button. There is also nothing locked up: what you contributed is the markdown in your own domains, and the collective wiki is the read-only mirror domain — both are plain files in your knowledge folder.</div>'
   );
 }
 
@@ -1935,17 +2349,24 @@ function renderAdmin(conn, card, busy, mirrorBusy) {
   return (
     '<details class="sb-card-admin"' + (open ? ' open' : '') + ' data-sb-admin="' + escapeHtml(conn.id) + '">' +
       '<summary>' + icon('lock', 13) + ' Admin controls — admin token &amp; contributor revocation</summary>' +
-      '<div class="sb-admin-body">' +
-        renderAdminToken(card, aff, busy, conn.id) +
-        renderInvite(conn, card, busy) +
-        (aff.showRevoke
-          ? renderRevoke(conn, card, busy, mirrorBusy)
-          : '<div class="sb-admin-note">' + icon('alertCircle', 13) +
-            '<span>Revoking a contributor needs an admin token, and this connection has none stored. ' +
-            'Only the cohort admin’s own connection stores one. If you are the admin here, re-run the ' +
-            'brain-setup wizard — it issues an admin token and saves it to this connection.</span></div>') +
-      '</div>' +
+      '<div class="sb-admin-body">' + renderAdminBody(conn, card, aff, busy, mirrorBusy) + '</div>' +
     '</details>'
+  );
+}
+
+/** The admin panel's BODY, shared by the full view's `<details>` above and
+ *  the section's "Admin controls" fold row (v3.65.3) — one body, two
+ *  wrappers. Rule 4 is decided by the caller's `aff`, never here. */
+function renderAdminBody(conn, card, aff, busy, mirrorBusy) {
+  return (
+    renderAdminToken(card, aff, busy, conn.id) +
+    renderInvite(conn, card, busy) +
+    (aff.showRevoke
+      ? renderRevoke(conn, card, busy, mirrorBusy)
+      : '<div class="sb-admin-note">' + icon('alertCircle', 13) +
+        '<span>Revoking a contributor needs an admin token, and this connection has none stored. ' +
+        'Only the cohort admin’s own connection stores one. If you are the admin here, re-run the ' +
+        'brain-setup wizard — it issues an admin token and saves it to this connection.</span></div>')
   );
 }
 
@@ -2685,6 +3106,29 @@ function wireListeners(token) {
         selectRevokeMember(card, radio.dataset.sbMember);
         render(token);
       });
+    });
+  });
+
+  // The section's fold rows (v3.65.3). Held open across a render; the
+  // Cohort row loads its details lazily on first open, exactly as the full
+  // view's panel does; closing the Admin row also forgets the full view's
+  // admin-open mark, so the two hosts agree about it.
+  document.querySelectorAll('details[data-sb-sec-row]').forEach((el) => {
+    el.addEventListener('toggle', () => {
+      const k = el.dataset.sbSecRow || '';
+      const cut = k.lastIndexOf(':');
+      const id = cut > 0 ? k.slice(0, cut) : '';
+      const row = cut > 0 ? k.slice(cut + 1) : '';
+      if (el.open) {
+        state.expandedSecRows.add(k);
+        if (row === 'cohort' && id) {
+          const card = ensureCard(id);
+          if (card.cohort === null) loadCohortDetails(token, id).catch(reportAsyncActionFailure);
+        }
+      } else {
+        state.expandedSecRows.delete(k);
+        if (row === 'admin') state.expandedAdmin.delete(id);
+      }
     });
   });
 
