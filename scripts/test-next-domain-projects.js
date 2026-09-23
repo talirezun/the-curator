@@ -2225,6 +2225,10 @@ section('S11 -- THE THREE-LAYER LEGEND ON THE OVERVIEW BLOCK (v3.62.0, P1-14)');
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (u) => {
     urls.push(String(u));
+    // A MACROTASK per answer, as a real network read is: a binder that asked
+    // again on every repaint would otherwise spin in microtasks and never let
+    // the timer below fire — a hang rather than a failing count.
+    await new Promise((r) => setTimeout(r, 0));
     const body = String(u).startsWith('/api/config/github-read-token')
       ? { ok: true, present: true, last4: 'ab12', kind: 'fine-grained' }
       : String(u).startsWith('/api/sync/status') ? { configured: true } : null;
