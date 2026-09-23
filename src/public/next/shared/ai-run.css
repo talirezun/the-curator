@@ -15,7 +15,9 @@
 
    ── FIGURES ARE MONO AND TABULAR ────────────────────────────────────────
    So two lines stacked (before, then after the run) line their digits up and
-   a changing figure does not jitter the line.
+   a changing figure does not jitter the line. NOT `nowrap`: measured at 568 px
+   with the sidebar docked, a nowrap "≈$0.0020–$0.0040" overflowed a ~120 px
+   column; the parent's `overflow-wrap: anywhere` breaks it instead.
 
    ── THE DOOR ────────────────────────────────────────────────────────────
    "Change model" / "Add one in Providers & keys" is a button styled as the
@@ -48,7 +50,6 @@
   font-family: var(--font-mono);
   font-variant-numeric: var(--numeric-tabular);
   color: var(--text);
-  white-space: nowrap;
 }
 
 .ai-run-sep { color: var(--text-3); }
