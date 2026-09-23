@@ -1350,7 +1350,23 @@
 /* The glyph is a GRAPHIC (3:1), in the ⓘ's own ink, and nudged to sit on the
    first line's x-height rather than its top. */
 .ing-verbatim-text > svg { flex: none; margin-top: 1px; color: var(--accent-text); }
-.ing-verbatim-go { flex: none; }
+/* THE BUTTON KEEPS ITS RUNG AND MAY WRAP ITS LABEL. At every ordinary width
+   it is a plain 32px `.btn`: `min-height` holds --control-md and one line
+   of 13px type plus the padding below comes to less. MEASURED at a 568px
+   window, where this form is 127px wide: `.btn`'s own `white-space: nowrap`
+   and fixed height put "Add as a project document" 35px past the column.
+   So the label may wrap and the box grows with it — the one width where a
+   two-line button is better than a clipped or overflowing one. */
+.ing-verbatim-go {
+  flex: 0 1 auto;
+  max-width: 100%;
+  height: auto;
+  min-height: var(--control-md);
+  padding-block: var(--space-2);
+  white-space: normal;
+  line-height: 1.25;
+  text-align: center;
+}
 
 /* ── Reduced motion ───────────────────────────────────────────────────────
    Press travel off; the background steps stay.

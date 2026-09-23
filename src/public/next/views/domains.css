@@ -448,11 +448,13 @@
    here — the same --space-7 as its sides and bottom. */
 .dm-sources > .dm-fold-body { padding-top: var(--space-7); }
 /* Its one reading — "last ingest 3 days ago" — sits right-aligned in the
-   section's HEAD ROW, in `.dm-fold-meta`'s face (it carries both classes).
-   Only what differs in a head row is stated: the row's own flex gap already
-   separates it from the ⓘ, and the head row does not wrap, so the reading
-   takes the space it needs and the title keeps its own. */
-.dm-section-head-row .dm-section-meta { white-space: nowrap; }
+   section's HEAD ROW, in `.dm-fold-meta`'s face (it carries both classes:
+   margin-left auto, --text-2xs, --text-2, tabular). ①'s head row WRAPS, and
+   only ①'s: MEASURED at a 568px window, where the main column is 213px wide,
+   a non-wrapping row pushed the reading 1px past the column. Wrapping drops
+   it under the title, still right-aligned, exactly as `.dm-fold-meta` does
+   inside a fold summary at the same width. */
+.dm-sources-hd .dm-section-head-row { flex-wrap: wrap; row-gap: var(--space-1); }
 /* The title takes programmatic focus when the onboarding deep link or the
    SOURCES tile lands on it (`tabindex="-1"` in the markup, never in the tab
    order). The ring is the app's own and shows only for keyboard-driven
