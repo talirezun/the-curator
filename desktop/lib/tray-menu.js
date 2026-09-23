@@ -22,13 +22,20 @@
  *
  *   1  the headline answer          "Working on: lumina · 12 min ago"
  *   2  who wrote it                 "claude-code · opus-4"
+ *   2a the open project's documents "Read first · 64 of 120 KB" + a depth bar
+ *                                   (v3.66.0; only when the data layer read them)
  *   -  header                       "Save pulse"
  *   2b the save pulse               a drawn strip + "5 days known · 79 saves · 2 tools"
- *   -  project header               "articles / lumina · 12 min ago · claude-code"
+ *   -  project header               "articles / lumina · 9 of 11 saved · 12 min ago"
+ *                                   ENABLED since v3.66.0, carrying the capture
+ *                                   depth bar; a click opens Context on it
  *   3  up to TWO rows               newest scope first, each with a recency mark
  *                                   in its icon gutter and a four-item submenu
  *   -  … up to THREE such groups, five rows in total
  *   3b the overflow                 "More in Project Context… (6)" — clickable
+ *   -  header                       "Domains · pages" (v3.66.0)
+ *   3c up to FOUR domain rows       "posts · 687 pages" + a bar in the domain's
+ *                                   identity colour; the fourth is "…and N more"
  *   -  separator
  *   4  notices, only when true      waiting handoffs; a machine that saved
  *                                   after this one; harness collisions
@@ -163,6 +170,9 @@ export const ID_UPDATED_STAMP = 'tray-updated-stamp';
 export const ID_TRUNCATED = 'tray-truncated';
 export const ID_EMPTY = 'tray-empty';
 export const ID_QUIT = 'tray-quit';
+export const ID_DOCUMENTS = 'tray-documents';
+export const ID_HEADER_DOMAINS = 'tray-header-domains';
+export const ID_DOMAINS_MORE = 'tray-domains-more';
 
 /** The empty state is the first thing a new user sees, and it must not read
  *  like an error. It says what the surface is for and how something gets into
@@ -339,6 +349,31 @@ export function buildTrayMenuTemplate(model, o = {}) {
     });
   }
 
+  // ── 2a. The open project's documents (v3.66.0) ──────────────────────────
+  //
+  // One ENABLED item carrying the depth bar: the headline project's documents
+  // against the budget the APP applies — read-first bytes against 120 KB once
+  // any document is flagged, stored bytes against 200 KB otherwise (the data
+  // layer's `documents.basis`). Enabled for the pulse's own reason: a disabled
+  // item's icon is tinted to the disabled grey, and a bar that exists to be
+  // read must not be drawn in the dimmest style macOS has. The click opens
+  // Context on that project, where the Documents monitor is its app twin.
+  //
+  // Absent when the data layer returned no reading: an unread budget is not an
+  // empty one, so nothing is drawn rather than a zero.
+  const documents = m && m.documents ? m.documents : null;
+  if (documents && documents.label) {
+    const icon = image(makeIcon, documents.bar);
+    template.push({
+      id: documents.id || ID_DOCUMENTS,
+      label: documents.label,
+      enabled: true,
+      click: () => onOpenScope(documents),
+      ...(icon ? { icon } : {}),
+      ...(documents.toolTip ? { toolTip: documents.toolTip } : {}),
+    });
+  }
+
   // ── 2b. The save pulse ──────────────────────────────────────────────────
   //
   // ONE item under its own section header, carrying a drawn strip in its icon
@@ -432,13 +467,37 @@ export function buildTrayMenuTemplate(model, o = {}) {
     for (const group of groups) {
       const gRows = Array.isArray(group.rows) ? group.rows : [];
       if (!gRows.length) continue;
-      template.push({
-        ...header(group.id || ID_HEADER_ROWS, group.label || HEADER_ROWS),
-        // NOTHING A BUDGET REMOVED BECOMES UNREACHABLE. A header clipped to fit
-        // carries its whole reading — the fully-qualified `domain / project`,
-        // the age and the harness — here.
-        ...(group.toolTip && group.toolTip !== group.label ? { toolTip: group.toolTip } : {}),
-      });
+      // ── A PROJECT HEADER IS AN ENABLED ITEM NOW (v3.66.0) ──────────────
+      //
+      // It carries the capture depth bar — sessions that saved in 30 days
+      // against the busiest project. A `type: 'header'` item is DISABLED, and
+      // macOS tints a disabled item's icon to the disabled-text grey (the pulse
+      // strip's measured defect); an icon on a header has also never been
+      // rendered anywhere. So the header becomes the least risky thing that can
+      // carry a picture: an ordinary ENABLED item with no submenu, whose click
+      // opens Context on that project (`group.route`) — the same reasoning that
+      // made the headline and the pulse enabled. The section styling is the
+      // price; the grouping survives because the rows beneath keep their dots
+      // and indent past this line's text start.
+      //
+      // A group built without `route` (a model that predates it) is kept as
+      // the old disabled header: a click with nowhere to go is worse than none.
+      const bar = image(makeIcon, group.bar);
+      const tip = group.toolTip && group.toolTip !== group.label ? { toolTip: group.toolTip } : {};
+      if (group.route) {
+        template.push({
+          id: group.id || ID_HEADER_ROWS,
+          label: group.label || HEADER_ROWS,
+          enabled: true,
+          click: () => onOpenScope(group),
+          ...(bar ? { icon: bar } : {}),
+          // NOTHING A BUDGET REMOVED BECOMES UNREACHABLE: the fully-qualified
+          // `domain / project`, the age, the harness and the capture reading.
+          ...tip,
+        });
+      } else {
+        template.push({ ...header(group.id || ID_HEADER_ROWS, group.label || HEADER_ROWS), ...tip });
+      }
       for (const row of gRows) {
         const dot = image(makeIcon, row.dot);
         template.push({
@@ -476,6 +535,39 @@ export function buildTrayMenuTemplate(model, o = {}) {
       label: (m && m.ok === false) ? UNREADABLE_HINT : EMPTY_HINT,
       enabled: false,
     });
+  }
+
+  // ── 3c. Domains · pages (v3.66.0) ────────────────────────────────────────
+  //
+  // Each domain's page count against the LARGEST domain's, the bar in that
+  // domain's identity colour — the first time this widget carries design rule
+  // 5, one domain one colour. The header stays a real `header` (it has no
+  // picture to grey); the rows are ENABLED so their bars are drawn at full
+  // colour, and a click opens Settings, where the Vault folder monitor lists
+  // every domain against the same denominator (the app twin). The widget has
+  // no route to the Domains view: main.js reaches views only through the two
+  // rail selectors it already carries, and a third is a new process-boundary
+  // coupling this release does not add.
+  const domains = m && m.domains && Array.isArray(m.domains.rows) && m.domains.rows.length
+    ? m.domains : null;
+  if (domains) {
+    template.push(header(ID_HEADER_DOMAINS, domains.header || 'Domains'));
+    for (const d of domains.rows) {
+      const icon = image(makeIcon, d.bar);
+      template.push({
+        id: d.id,
+        label: d.label,
+        enabled: true,
+        click: onOpenSettings,
+        ...(icon ? { icon } : {}),
+        ...(d.toolTip ? { toolTip: d.toolTip } : {}),
+      });
+    }
+    if (domains.moreLabel) {
+      template.push({
+        id: ID_DOMAINS_MORE, label: domains.moreLabel, enabled: true, click: onOpenSettings,
+      });
+    }
   }
 
   // ── 4. Notices — only when they have something to say ───────────────────

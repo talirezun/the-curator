@@ -606,8 +606,12 @@ section('§4 what a header says, and what its tooltip keeps');
 
 {
   const g = twoInOne.model.groups[0];
-  eq(g.toolTip, 'workshop / lumina · 12 min ago · claude-code',
+  ok(g.toolTip.startsWith('workshop / lumina · 12 min ago · claude-code'),
     'the header reads `<project> · <age> · <harness>` — the identity, when it was last touched, and by what');
+  // v3.66.0: this fixture carries NO usage log, so the capture reading is the
+  // ABSENCE, said once, last — never an invented zero and never a bar.
+  ok(g.toolTip.endsWith('Agent sessions: no usage log on this computer') && g.bar === null && g.capture === null,
+    'with no usage log the header draws NO bar and says so in words — absent is not zero (v3.66.0)');
   eq(g.ageText, '12 min ago', '…and the age is the group\'s NEWEST save, which is the one the reader is asking about');
   eq(g.harness, 'claude-code', '…and the harness is that save\'s');
   // ── A MEASURED COST, RECORDED RATHER THAN HIDDEN ─────────────────────
@@ -628,20 +632,24 @@ section('§4 what a header says, and what its tooltip keeps');
       projects: [{ domain: 'w', project: 'app',
         scopes: [{ scope: 'main', machine: 'm-a1b2c3', age: 720, harness: 'zed', headline: 'h' }] }],
     });
-    eq(short.model.groups[0].label, 'app · 12 min ago · zed',
-      'a header that fits carries all three clauses on the label itself');
+    ok(short.model.groups[0].label.startsWith('app · 12 min ago · zed'),
+      'a header that fits carries all three clauses on the label itself — the no-log clause, LAST, is the one a budget takes');
   }
   eq(g.projectFull, 'workshop / lumina', 'the fully-qualified identity is carried beside the label');
 
-  // The menu renders it as a section header: inert, no click, and its tooltip
-  // only when it adds something.
-  const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(twoInOne.model, NOOPS));
+  // v3.66.0: the header is an ENABLED item — it carries the capture depth bar,
+  // and a disabled item's icon is tinted grey by macOS — whose click opens
+  // Context on that project. Never a submenu parent, never a `header` type.
+  const opened = [];
+  const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(twoInOne.model,
+    { ...NOOPS, onOpenScope: (r) => opened.push(r && r.route) }));
   const headers = flat.filter((i) => i.id && String(i.id).startsWith('tray-group-'));
   eq(headers.length, 2, 'both group headers reach the menu');
-  ok(headers.every((h) => h.type === MENU.MENU_HEADER_TYPE),
-    '…as header items, which is what makes them read as sections rather than as entries');
-  ok(headers.every((h) => h.enabled === false && !h.click),
-    '…inert and with no click handler, so on macOS below 14 the worst case is a dimmed caption rather than a live item that does nothing');
+  ok(headers.every((h) => h.type !== MENU.MENU_HEADER_TYPE && h.enabled === true && !h.submenu),
+    '…as ENABLED ordinary items (v3.66.0) — a disabled header would grey the depth bar it carries');
+  headers.forEach((h) => h.click());
+  eq(opened, twoInOne.model.groups.map((g) => g.route),
+    '…and each click opens Context on ITS OWN project (the group\'s route), never another\'s');
   const ids = flat.filter((i) => i.type !== 'separator').map((i) => i.id);
   ok(ids.indexOf('tray-group-0') < ids.indexOf('tray-row-0'),
     'the header comes BEFORE the rows it heads');

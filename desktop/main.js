@@ -166,6 +166,11 @@ let getTraySummary = null;
  *  actions. Null on a build whose store does not export one. */
 let getHandoffMarkdown = null;
 let traySummaryError = null;
+/** The kit's `identityHex(index, theme)` from src/brain/identity-palette.js —
+ *  the ONE palette and mapping the app's identity dots use — handed to
+ *  buildTrayModel so the widget's per-domain bars wear the same colour as the
+ *  domain everywhere else (design rule 5). Null: the bars are drawn neutral. */
+let identityHex = null;
 /** The two halves of the multi-machine signal, resolved once in boot():
  *  `getRemoteStatus` from brain/sync.js (the check) and `noteRemoteStatus`
  *  from brain/tray-summary.js (where the answer is parked for the next read).
@@ -352,6 +357,7 @@ async function boot() {
     getHandoffMarkdown = resolved.handoff;
     traySummaryError = resolved.error;
     await resolveRemoteCheck();
+    await resolveIdentityPalette();
     startConfigWatch(configFile);
     applyBackgroundMode(await readBackgroundMode());
   } catch { /* the app runs; the menu bar icon simply does not appear */ }
@@ -997,6 +1003,19 @@ async function resolveRemoteCheck() {
   }
 }
 
+/** Resolve the identity palette's mapping (v3.66.0). Same realm, same
+ *  APP_ROOT-derived specifier as everything above; pure data, so it cannot
+ *  fail for any reason but a missing file, and then the bars go neutral. */
+async function resolveIdentityPalette() {
+  try {
+    const mod = await import(
+      pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'identity-palette.js')).href);
+    identityHex = typeof mod.identityHex === 'function' ? mod.identityHex : null;
+  } catch {
+    identityHex = null;
+  }
+}
+
 /**
  * Ask GitHub whether another machine has pushed — ON A MENU OPEN AND NOWHERE
  * ELSE.
@@ -1124,6 +1143,7 @@ function renderTrayFromSnapshot() {
   // this call the FETCH limit is what put 23 rows on the menu in v3.50.0.
   const model = buildTrayModel(traySnapshot, {
     dark: menuAppearanceIsDark(),
+    identityHex,
   });
 
   if (model.glyph !== trayGlyph) {

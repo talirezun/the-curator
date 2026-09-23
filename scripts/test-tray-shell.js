@@ -1768,14 +1768,20 @@ section('§17 sections, the two pictures, and the items that are now reachable')
   // PROPERTIES asserted here — header type, inert, no click — are the ones that
   // matter, so they are asserted over whichever header this menu actually has.
   const rowsHeader = flat.find((i) => i.id === 'tray-group-0');
-  for (const [id, label] of [[menu.ID_HEADER_PULSE, menu.HEADER_PULSE],
-    [rowsHeader ? rowsHeader.id : menu.ID_HEADER_ROWS, 'first project']]) {
+  for (const [id, label] of [[menu.ID_HEADER_PULSE, menu.HEADER_PULSE]]) {
     const h = byId(id) || {};
     ok(byId(id), `the ${label} section header is in the menu`);
     eq(h.type, menu.MENU_HEADER_TYPE, '…as a header type, which is what makes it read as a section');
     eq(h.enabled, false, '…drawn inert, so on macOS below 14 its worst case is a dimmed caption rather than a live item that does nothing');
     ok(!h.click, '…and carrying no click handler at all, so no macOS version can make it actionable');
   }
+  // v3.66.0: a PROJECT header carries the capture depth bar, so it is an
+  // ENABLED ordinary item (a disabled one greys its icon) with a click that
+  // opens Context on that project — never a header type, never a submenu.
+  ok(rowsHeader, 'the first project header is in the menu');
+  ok(rowsHeader && rowsHeader.type !== menu.MENU_HEADER_TYPE && rowsHeader.enabled === true
+    && typeof rowsHeader.click === 'function' && !rowsHeader.submenu,
+    '…as an ENABLED item with a click and no submenu (v3.66.0) — the least risky shape that can carry a picture');
   eq(menu.MENU_HEADER_TYPE, 'header', 'the type is the one verified present in Electron 43.5.0\'s accepted union');
 
   // The pulse row is now an ACTION at full contrast.

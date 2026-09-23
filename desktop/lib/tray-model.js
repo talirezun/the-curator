@@ -108,6 +108,14 @@ try {
   if (dots && typeof dots.renderRecencyDot === 'function') _renderRecencyDot = dots.renderRecencyDot;
 } catch { _renderRecencyDot = null; }
 
+/** The depth-bar renderer (v3.66.0), or null — read the same guarded way, for
+ *  the same reason: a missing picture must cost a bar, never the menu. */
+let _renderGutterBar = null;
+try {
+  const bars = await import('./menu-bars.js');
+  if (bars && typeof bars.renderGutterBar === 'function') _renderGutterBar = bars.renderGutterBar;
+} catch { _renderGutterBar = null; }
+
 /** Read off the namespace for the same reason: the strip renderer may not have
  *  grown its `{dark}` option yet, and an older single-argument version simply
  *  ignores the second argument rather than failing. */
@@ -464,6 +472,149 @@ export const MAX_HEADLINE_CHARS = labelBudgetChars(ROW_ICON_POINTS, MENU_SUBLABE
 /** Tier B lines: shown only when they have something to say, and bounded so a
  *  pathological warning list cannot become the whole menu. */
 export const MAX_NOTICES = 4;
+
+// ── THE DEPTH BARS (v3.66.0) ─────────────────────────────────────────────────
+//
+// The app's third visual channel — SIZE/SHARE against a NAMED denominator —
+// reaches the menu as a drawn bar in an item's icon gutter (`menu-bars.js`).
+// Three placements, each with an app twin (DESIGN-visual-channels-v3.66.0 §4):
+//
+//   (1) each project header   sessions that SAVED in 30 days ÷ the busiest
+//                             project's (`summary.capture.busiestSaved`)
+//   (2) a "Domains · pages"   pages ÷ the largest domain's, in that domain's
+//       section               identity colour
+//   (3) the open project's    read-first bytes ÷ 120 KB once any document is
+//       documents             flagged, else stored bytes ÷ 200 KB — the app's
+//                             own `foundationsBudgetWarning` rule, carried by the
+//                             data layer as `documents.basis` /
+//                             `applicableBudgetBytes`; danger only when
+//                             `documents.exceeded`, and then "over" in words
+//
+// REFUSED: a bar for age (the recency dot and the pulse strip own time), and a
+// bar on the headline or the commands.
+
+/**
+ * The gutter a bar occupies — RESERVED, not measured off the renderer, for the
+ * reason `ROW_ICON_POINTS` gives: a label's width must not depend on whether a
+ * drawing module happened to load. Pinned equal to `menu-bars.js`'s
+ * `BAR_CANVAS_POINTS` by the menu-bars suite in scripts/.
+ */
+export const BAR_ICON_POINTS = 28;
+
+/**
+ * The title budget of an item carrying a bar: 38 at the measured constants
+ * (−2 against a 13pt-dot row, −4 against a plain item). Kept to, the menu does
+ * not widen — its widest item is still a scope row's 46-character sublabel.
+ */
+export const BAR_LABEL_CHARS = labelBudgetChars(BAR_ICON_POINTS);
+
+/** The fewest characters a project or domain name is clipped to so that the
+ *  reading beside it (the figure the bar is drawn from) survives. */
+export const BAR_NAME_MIN_CHARS = 12;
+
+/** The domains section: at most this many ITEMS. With more domains than that,
+ *  the last item is `…and N more`, so the section never exceeds it. */
+export const MAX_DOMAIN_ROWS = 4;
+export const HEADER_DOMAINS = 'Domains · pages';
+
+/** Said once per project header when there is no usage log to read: ABSENT is
+ *  not zero, so no bar is drawn and no count is invented. */
+export const CAPTURE_NOT_LOGGED = 'no sessions logged';
+
+/**
+ * A byte count as the app prints it inside `N of M KB` (`Math.round(b/1024)`,
+ * en-US grouping — `shared/foundations-init.js` `formatBytes`). Below 1 KB a
+ * non-zero amount is `<1`, never `0`: rounding a real 300 bytes down to
+ * "0 of 120 KB" would print a measured nothing that is not one.
+ */
+export function kbFigure(bytes) {
+  if (!(typeof bytes === 'number' && Number.isFinite(bytes) && bytes >= 0)) return null;
+  if (bytes === 0) return '0';
+  if (bytes < 1024) return '<1';
+  return Math.round(bytes / 1024).toLocaleString('en-US');
+}
+
+/**
+ * `name · reading` fitted to `budget` WITHOUT losing the reading — the name is
+ * what gets shortened (down to `BAR_NAME_MIN_CHARS`), because the reading is
+ * the figure the bar beside it is drawn from, and a bar whose number has been
+ * clipped away is a picture with no caption. `extras` follow and are dropped
+ * whole, clause by clause, from the end. Everything cut is in the tooltip.
+ */
+export function composeBarLabel(name, reading, extras, budget) {
+  const n = typeof name === 'string' ? name.replace(/\s+/g, ' ').trim() : '';
+  const r = typeof reading === 'string' ? reading.trim() : '';
+  if (!r) return clipClauses([n, ...(extras || [])].filter(Boolean).join(' · '), budget);
+  const tail = ' · ' + r;
+  const room = Math.max(BAR_NAME_MIN_CHARS, budget - tail.length);
+  const head = (n.length > room ? clip(n, room) : n) + tail;
+  if (head.length > budget) return clip(head, budget);
+  const rest = (extras || []).filter(Boolean);
+  let out = head;
+  for (const e of rest) {
+    const next = out + ' · ' + e;
+    if (next.length > budget) break;
+    out = next;
+  }
+  return out;
+}
+
+/** A project's capture reading in words, or null when there is none to state. */
+export function captureText(capture) {
+  if (!capture || typeof capture !== 'object') return null;
+  const saved = Number.isInteger(capture.sessionsSaved) && capture.sessionsSaved >= 0
+    ? capture.sessionsSaved : null;
+  const sessions = Number.isInteger(capture.sessions) && capture.sessions >= 0
+    ? capture.sessions : null;
+  if (saved === null || sessions === null) return null;
+  if (sessions === 0) return 'no sessions';
+  return saved + ' of ' + sessions + ' saved';
+}
+
+/**
+ * The open project's documents as a label and a tooltip, from the data layer's
+ * `documents` reading (`documentsReading` in src/brain/tray-summary.js). Null
+ * when there is no reading — the item is then not drawn at all rather than
+ * drawn as zero.
+ */
+export function documentsText(d) {
+  if (!d || typeof d !== 'object') return null;
+  const amount = kbFigure(d.amountBytes);
+  const budget = kbFigure(d.applicableBudgetBytes);
+  if (amount === null || budget === null) return null;
+  const readFirst = d.basis === 'read-first';
+  const over = d.exceeded === true;
+  let label;
+  if (Number.isInteger(d.count) && d.count === 0) {
+    label = 'Documents · none';
+  } else {
+    // THE NOUN CARRIES THE BASIS, and "over" comes BEFORE the figures so that
+    // no clip can ever remove it — the over-run is said in words on the label,
+    // unfolded, not only in the bar's colour.
+    label = (readFirst ? 'Read first' : 'Documents') + (over ? ' · over' : '')
+      + ' · ' + amount + ' of ' + budget + ' KB';
+  }
+  const parts = [];
+  const count = Number.isInteger(d.count) ? d.count : null;
+  const stored = kbFigure(d.totalBytes);
+  const storeBudget = kbFigure(d.budgetBytes);
+  if (stored !== null && storeBudget !== null) {
+    parts.push('Documents: ' + (count === null ? '' : count + ' · ') + stored + ' KB stored of the '
+      + storeBudget + ' KB a project may keep' + (d.budgetExceeded === true ? ' (over)' : ''));
+  }
+  const rfBytes = kbFigure(d.readFirstBytes);
+  const rfBudget = kbFigure(d.readFirstBudgetBytes);
+  if (Number.isInteger(d.readFirstCount) && d.readFirstCount > 0 && rfBytes !== null && rfBudget !== null) {
+    parts.push(d.readFirstCount + ' read first · ' + rfBytes + ' KB of the ' + rfBudget
+      + ' KB an agent reads in one call' + (d.readFirstBudgetExceeded === true ? ' (over)' : ''));
+  }
+  parts.push('Bar: ' + (readFirst ? 'read-first' : 'stored') + ' bytes against the '
+    + budget + ' KB ' + (readFirst ? 'read-first budget' : 'project budget'));
+  return {
+    label, toolTip: parts.join(' · '), over,
+    frac: d.applicableBudgetBytes > 0 ? d.amountBytes / d.applicableBudgetBytes : null,
+  };
+}
 
 /** "Live" — an agent has written in this scope within this many seconds.
  *  Two minutes, from the recency table in docs/roadmap-menubar-widget.md.
@@ -1489,6 +1640,27 @@ export function buildTrayModel(summary, opts = {}) {
   const renderStrip = (raw, isDark) => {
     if (!stripFn) return null;
     try { return stripFn(raw, { dark: isDark }) || null; } catch { return null; }
+  };
+  // The depth-bar renderer, injectable on the same terms (v3.66.0).
+  const barFn = typeof opts.renderBar === 'function' ? opts.renderBar : _renderGutterBar;
+  const renderBar = (o) => {
+    if (!barFn) return null;
+    try { return barFn({ ...o, dark }) || null; } catch { return null; }
+  };
+  // ── THE IDENTITY COLOUR IS THE KIT'S, HANDED IN ──────────────────────────
+  //
+  // `identityHex(index, theme)` from src/brain/identity-palette.js — the ONE
+  // palette and the ONE mapping the app's `identityDotClass` uses. This module
+  // imports nothing from `src/` (see the header), so main.js resolves it by
+  // APP_ROOT and passes it in, exactly as it passes `dark`. Absent, a domain's
+  // bar is drawn in the neutral ink: a missing colour is never a guessed one.
+  const identityHexFn = typeof opts.identityHex === 'function' ? opts.identityHex : null;
+  const identityInk = (index) => {
+    if (!identityHexFn || !Number.isInteger(index) || index < 0) return null;
+    try {
+      const h = identityHexFn(index, dark ? 'dark' : 'light');
+      return typeof h === 'string' && /^#[0-9a-fA-F]{6}$/.test(h) ? h : null;
+    } catch { return null; }
   };
 
   const nowMs = now.getTime();
@@ -2699,12 +2871,164 @@ export function buildTrayModel(summary, opts = {}) {
     };
   }).filter((g) => g.rows.length > 0);
 
+  // ── THE DEPTH BARS (v3.66.0) ──────────────────────────────────────────
+  //
+  // Every reading below comes from the data layer as a MEASUREMENT or as null,
+  // and null is carried through as "no bar", never as an empty one.
+  const projectsIn = summary && Array.isArray(summary.projects) ? summary.projects : null;
+  const projectKey = (d, p) => String(d || '') + '\u0000' + String(p || '');
+  const projectIndex = new Map();
+  for (const p of projectsIn || []) {
+    if (p && typeof p === 'object' && str(p.project)) projectIndex.set(projectKey(str(p.domain), str(p.project)), p);
+  }
+  /** One project's per-project fields: the summary's `projects[]` first (one
+   *  entry per scanned project whatever the row limit), then any record of
+   *  that project the model already holds. */
+  const projectField = (domain, project, field, fallbacks) => {
+    const hit = projectIndex.get(projectKey(domain, project));
+    if (hit && Object.prototype.hasOwnProperty.call(hit, field)) return hit[field];
+    for (const f of fallbacks || []) {
+      if (f && typeof f === 'object' && str(f.project) === project
+        && (str(f.domain) || null) === (domain || null)
+        && Object.prototype.hasOwnProperty.call(f, field)) return f[field];
+    }
+    return undefined;
+  };
+  const capMeta = summary && summary.capture && typeof summary.capture === 'object'
+    ? summary.capture : null;
+  const busiestSaved = capMeta && Number.isInteger(capMeta.busiestSaved) && capMeta.busiestSaved >= 0
+    ? capMeta.busiestSaved : null;
+  const windowDays = capMeta && Number.isInteger(capMeta.windowDays) && capMeta.windowDays > 0
+    ? capMeta.windowDays : 30;
+
+  // (3) The open project's documents, under the headline.
+  let documents = null;
+  if (headline && headline.project) {
+    const d = projectField(headline.domain, headline.project, 'documents',
+      [summary && summary.lastSave, ...all]);
+    const t = documentsText(d);
+    if (t) {
+      const b = renderBar({ frac: t.frac, danger: t.over });
+      documents = {
+        id: 'tray-documents',
+        label: clip(t.label, BAR_LABEL_CHARS),
+        toolTip: t.toolTip,
+        over: t.over,
+        basis: d.basis === 'read-first' ? 'read-first' : 'stored',
+        frac: t.frac,
+        bar: b,
+        route: headline.route,
+        domain: headline.domain,
+        project: headline.project,
+      };
+    }
+  }
+
+  // (1) Each project header: sessions that saved ÷ the busiest project's.
+  for (const g of groups) {
+    const cap = projectField(g.domain, g.project, 'capture', [summary && summary.lastSave, ...all]);
+    const capture = cap && typeof cap === 'object' ? cap : null;
+    const reading = captureText(capture);
+    const lead = g.rows[0] || null;
+    const age = lead ? lead.ageText : null;
+    const saved = capture && Number.isInteger(capture.sessionsSaved) ? capture.sessionsSaved : null;
+    const frac = reading !== null && saved !== null && busiestSaved !== null
+      ? (busiestSaved === 0 ? 0 : saved / busiestSaved) : null;
+    const b = frac === null ? null : renderBar({ frac });
+    g.capture = capture;
+    g.bar = b;
+    g.captureFrac = frac;
+    if (reading !== null) {
+      g.label = composeBarLabel(g.projectLabel, reading, [age, g.harness],
+        b ? BAR_LABEL_CHARS : PLAIN_LABEL_CHARS);
+      g.toolTip = [g.projectFull, age, g.harness].filter(Boolean).join(' · ')
+        + ' · Agent sessions, last ' + windowDays + ' days: ' + capture.sessionsSaved + ' of '
+        + capture.sessions + ' saved a handoff'
+        + (busiestSaved !== null ? ' · Bar: against the busiest project (' + busiestSaved + ' saved)' : '')
+        + (capture.domainMismatch === true ? ' · The usage log names this project only in another domain' : '');
+    } else {
+      // No log: no bar, no invented zero — the fact is stated, LAST, so the
+      // identity and the age keep their places and nothing is dropped unsaid.
+      g.label = clipClauses([g.projectLabel, age, g.harness, CAPTURE_NOT_LOGGED]
+        .filter(Boolean).join(' · '), PLAIN_LABEL_CHARS);
+      g.toolTip = [g.projectFull, age, g.harness].filter(Boolean).join(' · ')
+        + ' · Agent sessions: no usage log on this computer';
+    }
+  }
+
+  // (2) Domains · pages — largest first, in each domain's identity colour.
+  let domainsSection = null;
+  const domainsIn = summary && Array.isArray(summary.domains) ? summary.domains : null;
+  if (domainsIn && domainsIn.length) {
+    const list = domainsIn
+      .filter((d) => d && typeof d === 'object' && str(d.domain))
+      .map((d, i) => ({
+        domain: str(d.domain),
+        name: str(d.displayName) || str(d.domain),
+        index: Number.isInteger(d.index) && d.index >= 0 ? d.index : null,
+        pageCount: Number.isInteger(d.pageCount) && d.pageCount >= 0 ? d.pageCount : null,
+        entities: Number.isInteger(d.entities) ? d.entities : null,
+        concepts: Number.isInteger(d.concepts) ? d.concepts : null,
+        summaries: Number.isInteger(d.summaries) ? d.summaries : null,
+        order: i,
+      }));
+    // The denominator is the largest over EVERY domain, never over the rows
+    // left after the cap — the same rule the data layer holds `busiestSaved` to.
+    const counted = list.filter((d) => d.pageCount !== null);
+    const largest = counted.length ? Math.max(...counted.map((d) => d.pageCount)) : null;
+    const largestName = counted.find((d) => d.pageCount === largest);
+    list.sort((a, b) => {
+      if (a.pageCount === null && b.pageCount === null) return a.order - b.order;
+      if (a.pageCount === null) return 1;
+      if (b.pageCount === null) return -1;
+      if (a.pageCount !== b.pageCount) return b.pageCount - a.pageCount;
+      return a.order - b.order;
+    });
+    const showN = list.length > MAX_DOMAIN_ROWS ? MAX_DOMAIN_ROWS - 1 : list.length;
+    const rowsOut = list.slice(0, showN).map((d) => {
+      const pages = d.pageCount === null ? null
+        : d.pageCount.toLocaleString('en-US') + (d.pageCount === 1 ? ' page' : ' pages');
+      const frac = d.pageCount === null || largest === null ? null
+        : (largest === 0 ? 0 : d.pageCount / largest);
+      const ink = identityInk(d.index);
+      const b = frac === null ? null : renderBar({ frac, ...(ink ? { ink } : {}) });
+      const split = [d.entities, d.concepts, d.summaries].every((v) => v !== null)
+        ? d.entities + ' entities · ' + d.concepts + ' concepts · ' + d.summaries + ' summaries' : null;
+      return {
+        id: 'tray-domain-' + (d.index !== null ? d.index : 'x' + d.order),
+        domain: d.domain,
+        index: d.index,
+        pageCount: d.pageCount,
+        frac,
+        ink,
+        bar: b,
+        label: composeBarLabel(d.name, pages || 'pages unknown', [], b ? BAR_LABEL_CHARS : PLAIN_LABEL_CHARS),
+        toolTip: [d.name !== d.domain ? d.name + ' (' + d.domain + ')' : d.domain,
+          pages || 'page count could not be read', split,
+          largestName && largest !== null
+            ? 'Bar: against the largest domain, ' + largestName.name + ' (' + largest.toLocaleString('en-US') + ' pages)'
+            : null].filter(Boolean).join(' · '),
+      };
+    });
+    const hidden = list.length - rowsOut.length;
+    domainsSection = {
+      header: HEADER_DOMAINS,
+      rows: rowsOut,
+      hidden,
+      moreLabel: hidden > 0 ? '…and ' + hidden + ' more' : null,
+      total: list.length,
+      largest,
+    };
+  }
+
   return {
     ok,
     empty: rows.length === 0,
     headline,
+    documents,
     pulse,
     rows,
+    domains: domainsSection,
     // The rows again, as the menu draws them: under a header, newest project
     // first, newest scope first inside each.
     groups,
