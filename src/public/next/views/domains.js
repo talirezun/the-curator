@@ -1286,7 +1286,13 @@ function mountHostedSections(token) {
   // domain switch on the same element re-points without reloading.
   const shWanted = !!(shFold && shHost);
   if (!shWanted) {
-    if (mountedSharedEl && !(mountedSharedEl === shHost && sharedSectionBusy())) {
+    // A BUSY panel is not taken down by a paint that merely lacks ④ (the
+    // loading branch of a cold domain switch): it holds something a paint
+    // must not destroy — a shown-once admin token, a typed revoke, a running
+    // push — and the NEXT paint, which has ④ again, re-points it onto the
+    // new host with its state intact (mountSharedSection's same-mount arm).
+    // The view's own teardown still takes it down unconditionally.
+    if (mountedSharedEl && !sharedSectionBusy()) {
       unmountSharedSection();
       mountedSharedEl = null;
       mountedSharedDomain = null;

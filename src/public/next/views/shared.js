@@ -462,7 +462,17 @@ export function mountSharedSection(el, opts) {
     describeDomain: typeof o.describeDomain === 'function' ? o.describeDomain : null,
   };
   const sameElement = inSection() && hostCtx.el === el;
-  if (sameElement) {
+  // ── THE SAME MOUNT ON A NEW ELEMENT IS A RE-POINT TOO (v3.65.3) ────────
+  // Found in the browser, driving ④ now that it is always mounted: a COLD
+  // domain switch paints the page's loading branch (a different column
+  // shape, so the shell replaces #view-root) and then the real column, with
+  // a NEW host element — and a new element used to mean startShared(),
+  // i.e. freshState(), which wiped a shown-once admin token off the screen
+  // for good. The domain page's MOUNT TOKEN is what says whether this is
+  // still the same page: while it is, the panel keeps its state and simply
+  // paints into the element it is handed now. A new token is a real remount.
+  const sameMount = inSection() && typeof o.token === 'number' && o.token === myMountToken;
+  if (sameElement || sameMount) {
     hostCtx = next;
     // Re-report from scratch: the host may be a different caller with
     // different callbacks, and a cached "unchanged" would leave it blind.

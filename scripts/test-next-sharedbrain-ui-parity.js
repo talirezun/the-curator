@@ -1080,13 +1080,28 @@ const secBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass'
     ok(during.includes('render') && !during.includes('gate.cancel') && !during.includes('wizard.close'),
       '…and re-renders WITHOUT tearing down — which is what lets a running push survive a domain switch');
 
-    // A different element IS a remount.
+    // v3.65.3: a different element under the SAME mount token is a
+    // RE-POINT, not a remount — a cold domain switch hands the panel a new
+    // host after a loading-branch paint, and a remount there wiped a
+    // shown-once admin token (found in the browser).
+    const elSame = { innerHTML: '' };
+    const beforeS = log.length;
+    const stateBefore = box.__state();
+    box.mountSharedSection(elSame, { domain: 'lab', token: 7 });
+    const duringS = log.slice(beforeS);
+    ok(box.__host().el === elSame && box.__host().domain === 'lab',
+      'mountSharedSection on a NEW element with the SAME mount token re-points onto it');
+    ok(duringS.includes('render') && !duringS.includes('gate.cancel') && !duringS.includes('wizard.close')
+      && !duringS.includes('gate.create') && box.__state() === stateBefore,
+      '…WITHOUT a teardown or a fresh state — so a shown-once token survives a cold domain switch');
+
+    // A different element under a NEW token IS a remount.
     const el2 = { innerHTML: '' };
     const before2 = log.length;
-    box.mountSharedSection(el2, { domain: 'lab', token: 7 });
+    box.mountSharedSection(el2, { domain: 'lab', token: 8 });
     const during2 = log.slice(before2);
     ok(during2.includes('gate.cancel') && during2.includes('unsubscribe') && during2.includes('wizard.close'),
-      'mountSharedSection on a DIFFERENT element tears the old mount down first, wizard included');
+      'mountSharedSection under a NEW mount token tears the old mount down first, wizard included');
     ok(during2.includes('gate.create') && box.__host().el === el2,
       '…and starts a fresh one on the new element');
 
@@ -1429,6 +1444,37 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
   ok(/window\.addEventListener\('beforeunload', onSharedBeforeUnload\)/.test(sharedCode)
     && /document\.addEventListener\('click', onSharedRailClick, true\)/.test(sharedCode),
     'both are installed — the click in the CAPTURE phase, so it runs before the rail\'s own navigate()');
+}
+{
+  // The section's two anatomies are COPIED BY VALUE from views/domains.css
+  // (a view stylesheet may not name another view's prefix). Pinned property
+  // by property against the source, so neither can drift silently.
+  const sCss = stripComments(R('src/public/next/views/shared.css'));
+  const dCss = stripComments(R('src/public/next/views/domains.css'));
+  const decls = (css, sel) => {
+    const re = new RegExp('(^|\\})\\s*' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}', 'g');
+    const out = {};
+    for (const m of css.matchAll(re)) for (const d of m[2].split(';')) {
+      const i = d.indexOf(':'); if (i > 0) out[d.slice(0, i).trim()] = d.slice(i + 1).trim();
+    }
+    return out;
+  };
+  const pairs = [
+    ['.sb-sec-empty', ['.dm-quick', ['padding', 'border-radius', 'border', 'background']]],
+    ['.sb-sec-empty', ['.dm-quick-empty', ['display', 'align-items', 'justify-content', 'gap', 'flex-wrap']]],
+    ['.sb-sec-row-summary', ['.dm-group-summary', ['display', 'align-items', 'gap', 'padding', 'list-style']]],
+    ['.sb-sec-row-meta', ['.dm-group-meta', ['margin-left', 'min-width', 'font-size', 'color', 'text-align']]],
+    ['.sb-sec-row-body', ['.dm-group-body', ['padding']]],
+    ['.sb-sec-row', ['.dm-group', ['border-top']]],
+  ];
+  for (const [mine, [theirs, props]] of pairs) {
+    const a = decls(sCss, mine), b = decls(dCss, theirs);
+    for (const prop of props) {
+      ok(a[prop] !== undefined && a[prop] === b[prop],
+        `${mine} { ${prop} } equals ${theirs}'s (${a[prop]} vs ${b[prop]})`);
+    }
+  }
+  ok(!/\.dm-/.test(sCss), 'views/shared.css names no .dm- selector — the anatomy is copied, not borrowed');
 }
 {
   // The full view's two false labels (D10, D11), fixed there too.

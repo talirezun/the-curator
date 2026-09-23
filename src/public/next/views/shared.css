@@ -240,6 +240,10 @@
 /* The identity line: dot + brain name, the role chip, the repository right. */
 .sb-sec-id { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
 .sb-sec-id-name { display: inline-flex; align-items: center; gap: var(--space-3); min-width: 0; }
+/* The repo cell keeps the full card's face but NOT its 200px floor: in the
+   section's identity line that floor pushed the link 19px past the column at
+   a 568px window (measured). It shrinks and wraps like the path it is. */
+.sb-sec-id .sb-card-repo { min-width: 0; flex: 1 1 12ch; }
 .sb-sec-role {
   font-size: var(--text-2xs);
   color: var(--text-2);

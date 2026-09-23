@@ -1611,6 +1611,23 @@ function stage(sourcesOpen, sharedOpen, ids) {
   mountBox.__reset();
   mountBox.mountHostedSections(1);
   eq('CONTROL -- a paint with NO ④ section takes its panel down', mountBox.__calls().unmountShared, 1);
+  // …UNLESS THE PANEL IS BUSY (v3.65.3, found in the browser): a cold domain
+  // switch paints a loading branch with no ④ while a shown-once admin token
+  // is on screen, and taking the panel down there wiped the token. The next
+  // paint re-points it (views/shared.js's same-mount arm).
+  const b2 = stage(true, true);
+  mountBox.__reset();
+  mountBox.mountHostedSections(1);
+  const gone2 = foldDom();
+  gone2.doc.__set('dm-sources-fold', b2.src);
+  gone2.doc.__set('dm-sources-host', { __host: 'srcHost-1' });
+  mountBox.__setDocument(gone2.doc);
+  mountBox.__setBusy(false, true);
+  mountBox.__reset();
+  mountBox.mountHostedSections(1);
+  eq('a BUSY ④ panel survives a paint that lacks ④ — it holds what a paint must not destroy',
+    mountBox.__calls().unmountShared, 0);
+  mountBox.__setBusy(false, false);
 }
 {
   // ...UNLESS THE PANEL IS BUSY. A fold can only be closed by a click, and a
