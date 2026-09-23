@@ -441,6 +441,27 @@
   font-variant-numeric: var(--numeric-tabular);
 }
 .dm-fold-body { padding: 0 var(--space-7) var(--space-7); }
+/* ── ① INGEST IS NOT A FOLD ANY MORE (v3.65.2, I1) ────────────────────────
+   It keeps `.dm-fold`'s card chrome and both adjacency rules above (the head
+   block's zero gap into it, the --space-12 it hands the section after it),
+   but it has no summary row, so the body's missing top padding comes back
+   here — the same --space-7 as its sides and bottom. */
+.dm-sources > .dm-fold-body { padding-top: var(--space-7); }
+/* Its one reading — "last ingest 3 days ago" — sits right-aligned in the
+   section's HEAD ROW, in `.dm-fold-meta`'s face (it carries both classes).
+   Only what differs in a head row is stated: the row's own flex gap already
+   separates it from the ⓘ, and the head row does not wrap, so the reading
+   takes the space it needs and the title keeps its own. */
+.dm-section-head-row .dm-section-meta { white-space: nowrap; }
+/* The title takes programmatic focus when the onboarding deep link or the
+   SOURCES tile lands on it (`tabindex="-1"` in the markup, never in the tab
+   order). The ring is the app's own and shows only for keyboard-driven
+   focus, which is when a landing needs to be visible. */
+.dm-sources-hd .dm-section-eyebrow:focus { outline: none; }
+.dm-sources-hd .dm-section-eyebrow:focus-visible {
+  box-shadow: var(--ring-focus);
+  border-radius: var(--radius-xs);
+}
 /* The element a hosted panel OWNS. This page writes it once, empty, and never
    touches it again — see views/domains.js's host-seam header for why that is
    a rule and not a preference. No padding of its own: the panel brings its

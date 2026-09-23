@@ -756,11 +756,11 @@ const inFlightWriteSlugs = new Set();
  *  than discarded: a stored file written by v3.64.0 is folded into the one row
  *  on the next read and superseded by the next write.
  *
- *  WHAT DID NOT BECOME A PREFERENCE: the INGEST fold's DEFAULT. With nothing
- *  stored, it still opens on a domain that has never been ingested into and is
- *  closed once it has — an absent preference is the designed default, not a
- *  fallback. An explicit close is honoured on every domain, which is the other
- *  half of what the maintainer asked for.
+ *  ① INGEST LEFT THIS KEY IN v3.65.2. It is no longer a fold — always open,
+ *  no chevron — so there is nothing to remember about it, and the derived
+ *  "open on a never-ingested domain" default went with the fold. The row is
+ *  now `{shared?, lens?}`; a stored `sources` from an older copy is ignored
+ *  on read and falls out of the file on the next write.
  *
  *  THE WRITE IS DUPLICATED AS A LITERAL in selectBrowseFacet, and that is
  *  deliberate, for the reason views/memory.js records for its own fold key:
@@ -813,7 +813,12 @@ function readSectionPrefs() {
     for (const key of Object.keys(parsed)) {
       const v = parsed[key];
       if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
-      if (v.sources === true || v.sources === false) row.sources = v.sources;
+      // `sources` IS NO LONGER READ (v3.65.2, I1). ① Ingest stopped being a
+      // fold, so a stored `sources: true|false` from v3.64.x–v3.65.1 means
+      // nothing any more. It is dropped HERE, on read, rather than carried:
+      // the row this returns is what the next write stores, so the retired
+      // field leaves the file on the next toggle of anything else, and until
+      // then it is simply never consulted. No migration write — see below.
       if (v.shared === true || v.shared === false) row.shared = v.shared;
       if (SECTION_LENSES.includes(v.lens)) row.lens = v.lens;
     }
@@ -1040,7 +1045,12 @@ function patchMainAroundHosts(html, token) {
       // derived default as the user's explicit choice, which is the shape of
       // the self-reopening fold defect found on the Context view the same
       // day.
-      if (typeof after.hasAttribute === 'function'
+      // ONLY A REAL `<details>` HAS AN `open` TO CARRY (v3.65.2). ① Ingest
+      // is a `<section>` now: its `before.open` is `undefined`, which is never
+      // equal to `hasAttribute('open')`'s `false`, so without this check every
+      // idle paint would push a phantom 'sources' echo onto the queue and set
+      // an expando on the section — harmless today only by luck.
+      if (before.tagName === 'DETAILS' && typeof after.hasAttribute === 'function'
         && before.open !== after.hasAttribute('open')) {
         const key = before.id === SOURCES_FOLD_ID ? 'sources' : 'shared';
         programmaticFolds.push(key);
@@ -1144,10 +1154,18 @@ function sectionFoldEl(key) {
 }
 
 /** Open one fold, remember it, and bring it to the top of the column — what
- *  an OVERVIEW jump tile does, and what the onboarding deep link asks for. */
+ *  an OVERVIEW jump tile does, and what the onboarding deep link asks for.
+ *
+ *  ① INGEST HAS NOTHING TO OPEN (v3.65.2): it is always open, so for
+ *  `sources` this only LANDS — scrolls its head into view and moves focus to
+ *  its title — and writes no preference. ④ Shared Brain is unchanged. */
 function openSectionFold(key, opts) {
   const el = sectionFoldEl(key);
   if (!el) return;
+  if (key === 'sources') {
+    if (!opts || opts.scroll !== false) landOnSection('.dm-sources-hd', 'dm-sources-title');
+    return;
+  }
   if (!el.open) {
     el.open = true;
     sectionPrefsFor(state.activeSlug)[key] = true;
@@ -1170,6 +1188,8 @@ function openSectionFold(key, opts) {
  *     without tearing it down (its mount is idempotent on one element, so a
  *     push in flight and a shown-once admin token both survive), and remounts
  *     Ingest, whose destination is what changed.
+ *   · ① INGEST IS ALWAYS WANTED when its section exists (v3.65.2 — it is
+ *     no longer a fold). What follows about a CLOSED fold is ④'s alone.
  *   · A CLOSED fold takes its panel down — the same contract as leaving the
  *     view: a live batch is server-backed and is re-adopted, paused, when the
  *     fold is opened again. It is NOT taken down while the panel is busy,
@@ -1198,17 +1218,23 @@ function mountHostedSections(token) {
   // contract covers the miss — "it can fail to help; it cannot break
   // anything": an unread request leaves the user on Domains with the section
   // in front of them, which is where the request was trying to put them.
+  //
+  // ① IS ALWAYS OPEN SINCE v3.65.2, so the request no longer OPENS anything:
+  // it LANDS the user on the section — its head scrolled into view and focus
+  // on its title, so a keyboard or screen-reader user arrives where a
+  // sighted one does. Still consumed only once the section exists (a
+  // loading-branch paint leaves it pending for the next paint), and still
+  // self-clearing, so it fires once.
   if (srcFold && typeof shell.consumeDomainFoldRequest === 'function') {
     const asked = shell.consumeDomainFoldRequest();
-    if (asked && asked === (shell.ADD_SOURCES_FOLD || 'add-sources') && !srcFold.open) {
-      srcFold.open = true;
-      sectionPrefsFor(slug).sources = true;
-      writeSectionPrefs();
+    if (asked && asked === (shell.ADD_SOURCES_FOLD || 'add-sources')) {
+      landOnSection('.dm-sources-hd', 'dm-sources-title');
     }
   }
 
   // ── INGEST ────────────────────────────────────────────────────────────
-  const srcWanted = !!(srcFold && srcFold.open && srcHost);
+  // Wanted whenever the section exists: there is no closed state to honour.
+  const srcWanted = !!(srcFold && srcHost);
   if (!srcWanted) {
     if (mountedSourcesEl && !(mountedSourcesEl === srcHost && ingestSectionBusy())) {
       unmountIngestSection();
@@ -3419,14 +3445,10 @@ function renderMain(token) {
     // rail slot 2 in v3.49.0 and why losing that slot had to be paid for
     // here.
     //
-    // OPEN ON A DOMAIN THAT HAS NEVER BEEN INGESTED INTO, closed once it has,
-    // and — SINCE v3.64.1 — remembered INSTALL-WIDE from then on rather than
-    // per domain. An absent preference is the DESIGNED DEFAULT, not a
-    // fallback: a domain with no summaries and no last-ingest date has
-    // nothing below this section worth reading yet. Once the user has said,
-    // by opening or closing this fold, what they want to see on a domain
-    // page, that answer travels with them — v3.64.0 asked them again on every
-    // domain, which is the thing the maintainer reported on the first day.
+    // (v3.64.0–v3.65.1 derived an OPEN/CLOSED default here — open on a
+    // domain never ingested into — and remembered the user's choice
+    // install-wide. v3.65.2 retires both: the section is simply always open.
+    // See "① IS NO LONGER A FOLD" below.)
     // ── ONE HEADING RULE FOR ALL FIVE SECTIONS (v3.64.2) ─────────────────
     //
     // THE REPORTED DEFECT, from the maintainer's screenshot of v3.64.1: the
@@ -3452,9 +3474,10 @@ function renderMain(token) {
     // hosted panel on every paint, and destroying the drop target under a
     // held drag, which is the v3.46.0 shape D-J exists to prevent.
     //
-    // THE SUMMARY CARRIES `aria-label`, because a disclosure control whose
+    // ④'s SUMMARY CARRIES `aria-label`, because a disclosure control whose
     // only content is a chevron and a date has no accessible name. The name
-    // is the section's, so a screen reader hears what it opens.
+    // is the section's, so a screen reader hears what it opens. (① has no
+    // summary since v3.65.2; its `<section>` is labelled by its own title.)
     // ── R4: THE EXPLANATION SITS IN THE ⓘ, NOT IN THE BODY (v3.65.0) ─────
     // The maintainer's own words about the same shape on the Context view:
     // *"below the Foundations title we have 'Add the documents an agent must
@@ -3473,31 +3496,48 @@ function renderMain(token) {
     // verbatim — `.dm-section-head-row` holding `.dm-section-hd` and the
     // mark at --space-2, then the panel — so the numeral keeps its one x
     // position and the mark sits where OVERVIEW's already does.
+    // ── ① IS NO LONGER A FOLD (v3.65.2, I1) ─────────────────────────────
+    // The maintainer, on v3.65.1: *"Ingest is number one but hidden below a
+    // drop-down. Get rid of it — it's important, not long, it should be
+    // exposed."* So the `<details>` became a plain `<section>`: always open,
+    // no chevron, and NO stored open/closed preference (readSectionPrefs no
+    // longer reads `sources`, so an old stored value is dropped on the next
+    // write rather than consulted). ④ Shared Brain stays a fold.
+    //
+    // THE ID DID NOT MOVE, and that is the D-J constraint again:
+    // `patchMainAroundHosts` recognises the host by `id="dm-sources-fold"`
+    // among the column's TOP-LEVEL children and never replaces it, so the
+    // drop target keeps its node identity through every repaint exactly as
+    // it did while this was a `<details>`. The id is a name, not a promise
+    // that the element folds.
+    //
+    // THE READING MOVED UP INTO THE HEAD ROW. "last ingest 3 days ago" lived
+    // in the fold's summary row, right-aligned; with no summary left, a row
+    // holding nothing but that reading would be a bar of empty card. It sits
+    // right-aligned in the section's own head row instead, in the fold
+    // meta's face — the same place and the same type the eye already reads
+    // for a section's one reading — and because the head block is an
+    // ordinary child it is patched like one when the domain changes.
     (readonly ? '' :
-      '<div class="dm-section dm-section-hd-block">' +
+      '<div class="dm-section dm-section-hd-block dm-sources-hd">' +
         '<div class="dm-section-head-row">' +
           '<div class="dm-section-hd">' +
             '<span class="dm-section-num" aria-hidden="true">1</span>' +
-            '<div class="cur-group-title dm-section-eyebrow">Ingest</div>' +
+            '<div class="cur-group-title dm-section-eyebrow" id="dm-sources-title" tabindex="-1">Ingest</div>' +
           '</div>' +
           infoMark('dm-ingest-info', 'About ingest', INGEST_INFO).btn +
-        '</div>' +
-        infoMark('dm-ingest-info', 'About ingest', INGEST_INFO).panel +
-      '</div>' +
-      '<details class="dm-fold dm-sources" id="dm-sources-fold" data-dm-fold="sources"' +
-        ((state.sectionPrefs && typeof state.sectionPrefs.sources === 'boolean')
-          ? (state.sectionPrefs.sources ? ' open' : '')
-          : ((domain.lastIngestDate || (counts.summaries || 0) > 0) ? '' : ' open')) + '>' +
-        '<summary class="dm-fold-summary" aria-label="Ingest">' + icon('chevronRight', 14) +
-          '<span class="dm-fold-meta">' +
+          '<span class="dm-fold-meta dm-section-meta">' +
             (domain.lastIngestDate ? 'last ingest ' + escapeHtml(relTime(domain.lastIngestDate))
                                    : 'nothing ingested yet') +
           '</span>' +
-        '</summary>' +
+        '</div>' +
+        infoMark('dm-ingest-info', 'About ingest', INGEST_INFO).panel +
+      '</div>' +
+      '<section class="dm-fold dm-sources" id="dm-sources-fold" aria-labelledby="dm-sources-title">' +
         '<div class="dm-fold-body">' +
           '<div class="dm-host" id="dm-sources-host"></div>' +
         '</div>' +
-      '</details>') +
+      '</section>') +
     // ── THE WIKI COMES FIRST (v3.49.0) ───────────────────────────────────
     // Reported by a power user who could not find "the wiki" at all: the
     // page browser was the LAST thing on this card, behind a "Browse pages"
@@ -6284,6 +6324,22 @@ function selectBrowseFacet(key, opts) {
  * scripted animation, not a CSS one, so tokens/motion.css's zeroed `--dur-*`
  * cannot reach it.
  */
+/**
+ * Bring a section's head into view AND move focus to its title (v3.65.2) —
+ * what the onboarding deep link and the SOURCES jump tile do for ① Ingest,
+ * now that there is no fold to open. The title carries `tabindex="-1"` so it
+ * can take focus without joining the tab order; `preventScroll` because the
+ * smooth scroll above is the one movement the reader should see.
+ */
+function landOnSection(selector, titleId) {
+  scrollSectionIntoView(selector);
+  if (typeof document === 'undefined' || !document.getElementById) return;
+  const t = document.getElementById(titleId);
+  if (t && typeof t.focus === 'function') {
+    try { t.focus({ preventScroll: true }); } catch { /* an old engine without the option */ }
+  }
+}
+
 function scrollSectionIntoView(selector) {
   const el = document.querySelector(selector);
   if (!el || typeof el.scrollIntoView !== 'function') return;
