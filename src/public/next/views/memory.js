@@ -7138,10 +7138,14 @@ function foundationsSummaryMeta(facts) {
  * on the never-fold list. Returns '' when there is nothing to warn about, so
  * the caller concatenates it unconditionally.
  *
- * The consequence is named rather than the condition: a person who reads
- * "over budget" and shrugs is right to, and a person who reads "and the rest
- * is dropped, last in reading order first" un-flags a document. The sentence
- * is shared_with `shared/foundations-init.js`'s `budgetWarning`, which says the
+ * ── v3.65.3: "AND THE REST IS DROPPED" WAS FALSE ──────────────────────────
+ * Checked against `getProjectContext` in src/brain/working-state.js: the 200 KB
+ * project budget is disclosed, never enforced; the 120 KB reading budget bounds
+ * only the document text handed over at session start, in reading order (the
+ * read-first set when anything is flagged); and a document that does not fit is
+ * omitted from that one reading and NAMED — it stays in the index and an agent
+ * fetches it whole by name (`slugs`). Nothing is dropped. The sentence is
+ * shared with `shared/foundations-init.js`'s `budgetWarning`, which says the
  * same thing about the same limit on the chooser — one wording, two hosts.
  */
 function foundationsBudgetWarning(facts) {
@@ -7150,13 +7154,15 @@ function foundationsBudgetWarning(facts) {
     if (!facts.readFirstBudgetExceeded) return '';
     return 'The ' + facts.readFirstCount + ' documents flagged “read first” come to '
       + fndSize(facts.readFirstBytes) + ', over the ' + fndSize(facts.readFirstBudgetBytes)
-      + ' budget: agents receive ' + fndSize(facts.readFirstBudgetBytes)
-      + ' per session and the rest is dropped, last in reading order first.';
+      + ' reading budget. Agents are handed them in reading order up to '
+      + fndSize(facts.readFirstBudgetBytes)
+      + ' at session start; the rest stay listed and are fetched by name when needed.';
   }
   if (facts.bytes <= facts.budgetBytes) return '';
-  return 'Over the ' + fndSize(facts.budgetBytes) + ' budget: agents receive '
+  return 'Over the ' + fndSize(facts.budgetBytes) + ' project budget. Agents are handed up to '
     + fndSize(READ_FIRST_BUDGET_BYTES)
-    + ' per session and the rest is dropped, last in reading order first.';
+    + ' of document text at session start, in reading order; every other document stays listed'
+    + ' and is fetched by name when needed.';
 }
 
 /** Bytes, in the two units this block quotes them in. One derivation. */

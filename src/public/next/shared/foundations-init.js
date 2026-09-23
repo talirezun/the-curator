@@ -250,10 +250,17 @@ export function freshChooser(opts) {
     // store's own rule is that a token in an argument neither authorises a
     // read nor appears in an answer. This form may not become the first
     // credential path into the app.
+    //
+    // ── `null` IS "NOBODY HAS CHOSEN" (v3.65.3) ──────────────────────────
+    // Not `'config'`. The radio that is checked is DERIVED from the token
+    // facts until the owner presses one — `selectedTokenSource` below — so a
+    // saved read-only token is checked, and with no read-only token NOTHING
+    // is, rather than a radio for a token that does not exist, or silently
+    // Personal Sync's. Only the owner's own press writes a word here.
     remote: '',
     remoteRef: '',
     remotePath: '',
-    tokenSource: 'config',
+    tokenSource: null,
     // Seed the four skeletons. Curator arm only; the owner may untick it.
     seed: true,
     // The scan (GET /api/memory/repo-scan), and its three states.
@@ -373,7 +380,7 @@ export function chooserBody(choice) {
     if (!remote) return null;
     const ref = String(c.remoteRef || '').trim();
     const path = String(c.remotePath || '').trim();
-    const out = { ownership: 'repo', tokenSource: tokenSourceOf(c) };
+    const out = { ownership: 'repo', tokenSource: selectedTokenSource(c) || 'config' };
     out.remote = (ref || path) ? remoteObject(remote, ref, path) : remote;
     const files = pickedFiles(c);
     if (files.length) out.files = files;
@@ -399,6 +406,33 @@ export function chooserBody(choice) {
 export function tokenSourceOf(choice) {
   const v = choice && typeof choice === 'object' ? choice.tokenSource : null;
   return v === 'sync' ? 'sync' : 'config';
+}
+
+/**
+ * THE RADIO THAT IS CHECKED — 'config', 'sync', or null for none (v3.65.3).
+ *
+ * ── THE REPORT ────────────────────────────────────────────────────────────
+ * The maintainer, with a read-only token saved and tested: READ WITH showed
+ * Personal Sync's token selected. Nothing in the code selects it — a fresh
+ * panel starts on the read-only token and `state = freshState()` runs on every
+ * entry to the view — but each option's <label> was `flex: 1 1 auto`, the full
+ * width of the panel, with its state word pushed to the far right, so a press
+ * ANYWHERE on that ~1,700px row checked Sync. The rows now hug their text; and
+ * the default is derived here, so it can never be a leftover:
+ *
+ *   · the owner pressed one        → that one, whatever the facts say;
+ *   · a read-only token is saved   → the read-only token;
+ *   · none is saved (a FACT)       → nothing — the door to Settings is beside
+ *                                    it, and Personal Sync's token, which reads
+ *                                    every repository its account can see, is
+ *                                    never the silent answer;
+ *   · nobody looked (unknown)      → the read-only token, as before: a failed
+ *                                    read must not look like "no token".
+ */
+export function selectedTokenSource(choice) {
+  const c = choice && typeof choice === 'object' ? choice : {};
+  if (c.tokenSource === 'sync' || c.tokenSource === 'config') return c.tokenSource;
+  return c.hasReadToken === false ? null : 'config';
 }
 
 /**
@@ -576,43 +610,26 @@ export function renderRoleOptions(cfg) {
 // ═════════════════════════════════════════════════════════════════════════
 
 /**
- * THE ROLES A SCAN TICKS BY ITSELF (v3.61.1).
+ * WHAT A FRESH SCAN TICKS: NOTHING (v3.65.3).
  *
- * ── THE DEFECT THIS CLOSES, MEASURED ON THE MAINTAINER'S OWN REPOSITORY ──
- * v3.61.0 ticked EVERY usable candidate, on the argument that somebody who
- * pressed "Find documents" wants what is there. On a real repository that
- * came out as **25 documents · 1,875 KB** mirrored against a 200 KB project
- * budget — nine times over it — including `README (6).md` out of a gitignored
- * source folder. The argument was right about the gesture and wrong about the
- * set: what the person wants is the documents an agent must not act without,
- * and the scan already knows which those are, because it assigns every
- * candidate a role.
+ * ── THREE RULES, THE LAST ONE THE MAINTAINER'S ────────────────────────────
+ * v3.61.0 ticked EVERY usable candidate; on his own repository that came out
+ * as 25 documents / 1,875 KB against a 200 KB budget. v3.61.1 narrowed it to
+ * the four canonical roles (architecture, decisions, conventions, roadmap),
+ * and v3.65.2 ticked nothing when ADDING to a populated mirror. The remote arm
+ * kept the role rule, and a real repository whose files all sit under
+ * `documentation/architecture/` arrived 22 of 32 ticked, 2,351 KB against the
+ * same 200 KB: *"it comes with all documents ticked — default should be
+ * unticked, then you select what you need."*
  *
- * So the default is the FOUR canonical roles and nothing else. `api`, `guide`
- * and `other` — the roles a README, a changelog and a handbook land on — are
- * listed, sized, aged and one tick away, and they start unticked. The count
- * line says "4 of 25 ticked" so the untouched twenty-one are a visible
- * decision rather than an omission.
- *
- * The first four of `FOUNDATION_ROLES` by definition, sliced from it rather
- * than re-typed: the store's order IS the reading order, and a second literal
- * list here would be free to disagree with it.
+ * A role is a guess from a path, and a guess that ticks for the owner is
+ * a guess the owner has to find and undo. So every scan — local or remote,
+ * first set-up or add, on the Domains create form or on Context — starts with
+ * nothing ticked; the list is sized so the choice is informed, and the commit
+ * says "Tick at least one document." until one is.
  */
-export const DEFAULT_TICK_ROLES = Object.freeze(FOUNDATION_ROLES.slice(0, 4));
-
-/** Would the scan tick this candidate by itself? Pure, and the only rule. */
-export function ticksByDefault(cand) {
-  if (!cand || cand.tooLarge) return false;
-  if (!cand.path) return false;
-  return DEFAULT_TICK_ROLES.includes(cand.suggestedRole);
-}
-
-/** The `picks` map a fresh scan result starts with. */
-export function defaultPicks(candidates) {
-  const out = {};
-  const list = Array.isArray(candidates) ? candidates : [];
-  for (const cand of list) if (ticksByDefault(cand)) out[String(cand.path)] = true;
-  return out;
+export function untickedPicks() {
+  return {};
 }
 
 /**
@@ -704,17 +721,26 @@ export function countLineText(choice) {
 }
 
 /**
- * OVER THE BUDGET — a WARNING, and it names the consequence.
+ * OVER THE BUDGET — a WARNING, and it names what actually happens.
  *
- * The 200 KB project budget is a DISCLOSURE and never a wall (D6): the store
- * accepts the write. What it does not accept is sending all of it — the
- * session bootstrap has its own 120 KB budget and drops document BODIES
- * last-first when it is exceeded. So the sentence says what happens rather
- * than "too big": a person who reads "over budget" and shrugs is right to,
- * and a person who reads "and the rest is dropped" ticks fewer boxes.
+ * ── v3.65.3: THE SENTENCE WAS FALSE ────────────────────────────────────────
+ * It read "agents receive 120 KB per session and the rest is dropped, last in
+ * reading order first." Checked against `src/brain/working-state.js`:
+ *   · the 200 KB project budget (`FOUNDATIONS_BUDGET_BYTES`) is DISCLOSED and
+ *     never enforced — the store accepts every write;
+ *   · 120 KB (`CONTEXT_MAX_BYTES_DEFAULT`) bounds only the document TEXT
+ *     `getProjectContext` hands over at session start, in reading order — the
+ *     read-first documents when any are flagged, otherwise all of them (or the
+ *     ones that changed since the last session);
+ *   · a document that does not fit is OMITTED FROM THAT ONE READING and named,
+ *     never dropped: it stays in the index, and an agent fetches it whole by
+ *     name (`slugs`), outside the 120 KB.
+ * Nothing is dropped. The sentence says so, because a person who reads "the
+ * rest is dropped" un-ticks documents their agents could have opened.
  *
- * Never folded (v3.16.1). Returns '' when there is nothing to warn about, so
- * the caller can concatenate it unconditionally.
+ * The chooser cannot know which documents will be flagged "read first", so it
+ * names both cases in one clause. Never folded (v3.16.1). Returns '' when there
+ * is nothing to warn about, so the caller can concatenate it unconditionally.
  */
 export function budgetWarning(choice) {
   // In ADD mode the budget is the PROJECT's, so what is already mirrored
@@ -723,8 +749,9 @@ export function budgetWarning(choice) {
     && choice.projectBytes > 0 ? choice.projectBytes : 0;
   const bytes = tickedBytes(choice) + base;
   if (bytes <= FOUNDATIONS_BUDGET_BYTES) return '';
-  return 'Over the ' + formatBytes(FOUNDATIONS_BUDGET_BYTES) + ' budget: agents receive '
-    + formatBytes(120 * 1024) + ' per session and the rest is dropped, last in reading order first.';
+  return 'Over the ' + formatBytes(FOUNDATIONS_BUDGET_BYTES) + ' project budget. Agents are handed '
+    + 'up to ' + formatBytes(120 * 1024) + ' of document text at session start (only the read-first '
+    + 'ones, if any are flagged); every other document stays listed and is fetched by name when needed.';
 }
 
 /**
@@ -751,10 +778,13 @@ export function scanBlockedReason(choice) {
   // something to type here, the other is something to set in Settings.
   if (c.ownership === 'remote') {
     if (!String(c.remote || '').trim()) return 'Name the repository first.';
-    if (tokenSourceOf(c) === 'config' && c.hasReadToken === false) {
+    // Nothing selected happens only when no read-only token is saved, so it
+    // carries the same sentence as pressing the read-only token then.
+    const sel = selectedTokenSource(c);
+    if ((sel === null || sel === 'config') && c.hasReadToken === false) {
       return 'No read-only token yet — add one in Settings, or read with Personal Sync’s token.';
     }
-    if (tokenSourceOf(c) === 'sync' && c.hasSyncToken === false) {
+    if (sel === 'sync' && c.hasSyncToken === false) {
       return 'Personal Sync is not connected, so there is no token to read with.';
     }
     return '';
@@ -794,6 +824,7 @@ export function commitBlockedReason(choice) {
   // one that was never attempted.
   if (c.ownership === 'remote') {
     if (!String(c.remote || '').trim()) return 'Name the repository first.';
+    if (selectedTokenSource(c) === null) return 'Choose which token to read with.';
     if (!Array.isArray(c.candidates) || !c.candidates.length) return 'Find the documents first.';
     if (!pickedFiles(c).length) return 'Tick at least one document.';
     return '';
@@ -1073,17 +1104,23 @@ function remoteArm(id, choice, busy, hostOpts) {
   // state words were blank because no host ever set the facts, and the note
   // pointed at a Settings field that did not exist. Now the host reads
   // presence and four characters once per open, and the row says what is
-  // true: the token's last four when it is saved; "No read-only token yet"
-  // with a door to Settings when it is not; the old words when nobody looked.
-  // `sync` is never made the default — a classic sync token reads every
-  // repository the account owns.
-  const src = tokenSourceOf(choice);
+  // true: the token's last four when it is saved; "not saved yet" with a door
+  // to Settings when it is not; no state word at all when nobody looked.
+  //
+  // ── EACH OPTION SAYS WHAT IT IS AND WHERE IT LIVES (v3.65.3) ─────────────
+  // The maintainer: "two options … not clear which is which — we have two
+  // GitHub tokens." So each option carries its name, where that token is kept,
+  // and its own state word BESIDE it — no longer pushed to the far right edge,
+  // where "connected" floated a panel's width away from the option it belonged
+  // to (and where the full-width <label> it sat in made the whole row a press
+  // target — see `selectedTokenSource`). Personal Sync's option also says
+  // plainly why it is not the default.
+  const src = selectedTokenSource(choice);
   const last4 = typeof choice.readTokenLast4 === 'string'
     && /^[A-Za-z0-9_]{1,4}$/.test(choice.readTokenLast4) ? choice.readTokenLast4 : '';
-  const configLabel = choice.hasReadToken === true
-    ? 'The read-only token in Settings' + (last4 ? ' · ends in …' + last4 : '')
-    : choice.hasReadToken === false ? 'No read-only token yet'
-      : 'The read-only token in Settings';
+  const configState = choice.hasReadToken === true
+    ? (last4 ? 'ends in …' + last4 : 'saved')
+    : choice.hasReadToken === false ? 'not saved yet' : '';
   const door = choice.hasReadToken === false && host.tokenDoor
     ? '<button type="button" class="btn btn-secondary btn-xs fnd-init-token-door"' +
       ' id="' + escapeHtml(id) + '-token-door"' + dis + '>Add one in Settings</button>'
@@ -1093,14 +1130,23 @@ function remoteArm(id, choice, busy, hostOpts) {
   // source is the checked one — a checked-and-disabled radio could not be
   // moved off by pressing it.
   const syncOff = choice.hasSyncToken === false && src !== 'sync';
-  const tokenOpt = (value, label, state, off, after) =>
+  const tokenOpt = (value, name, where, state, sub, off, after) =>
     '<div class="fnd-init-token-line">' +
       '<label class="fnd-init-token-opt">' +
         '<input type="radio" name="' + escapeHtml(id) + '-token" value="' + escapeHtml(value) + '"' +
           ' data-fnd-token="' + escapeHtml(value) + '"' +
           (src === value ? ' checked' : '') + (busy || off ? ' disabled' : '') + ' />' +
-        '<span>' + escapeHtml(label) + '</span>' +
-        '<span class="fnd-init-token-state">' + escapeHtml(state) + '</span>' +
+        '<span class="fnd-init-token-text">' +
+          '<span class="fnd-init-token-head">' +
+            '<span class="fnd-init-token-name">' + escapeHtml(name) + '</span>' +
+            '<span class="fnd-init-token-where">' + escapeHtml(where) + '</span>' +
+            (state
+              ? '<span class="fnd-init-token-sep" aria-hidden="true">·</span>'
+                + '<span class="fnd-init-token-state">' + escapeHtml(state) + '</span>'
+              : '') +
+          '</span>' +
+          (sub ? '<span class="fnd-init-token-sub">' + escapeHtml(sub) + '</span>' : '') +
+        '</span>' +
       '</label>' + (after || '') +
     '</div>';
   const info = host.readWithInfo;
@@ -1112,10 +1158,16 @@ function remoteArm(id, choice, busy, hostOpts) {
     (info && typeof info.panel === 'string' ? info.panel : '') +
     '<div class="fnd-init-tokens" role="radiogroup"' +
       ' aria-label="Which stored token to read the repository with">' +
-      tokenOpt('config', configLabel, '', false, door) +
-      tokenOpt('sync', 'Personal Sync’s token',
+      tokenOpt('config', 'Read-only token', '— Settings › Knowledge base', configState,
+        '', false, door) +
+      tokenOpt('sync', 'Personal Sync’s token', '— the one that syncs your knowledge base',
         choice.hasSyncToken === false ? 'not connected'
-          : choice.hasSyncToken === true ? 'connected' : '', syncOff, '') +
+          : choice.hasSyncToken === true ? 'connected' : '',
+        // "every repository" is true of a CLASSIC token only (docs/sync.md:
+        // a fine-grained sync token reaches its own repository and no other),
+        // so the sentence says which, rather than over-claiming either way.
+        'Granted for sync. If it is a classic token it can read every repository its account '
+          + 'can see — which is why it is not the default.', syncOff, '') +
     '</div>' +
     // THE IN-FLOW NOTE IS THE ⓘ'S NOW, where a host supplies one: it is an
     // explanation, and explanations live behind the ⓘ. A host with no ⓘ (the
@@ -2122,7 +2174,7 @@ export function bindFoundationsChooser(cfg) {
         choice.scanError = null;
         rerender();
         scanRemote({ remote: want, ref: choice.remoteRef, path: choice.remotePath,
-          tokenSource: tokenSourceOf(choice) }, c.fetchImpl).then((got) => {
+          tokenSource: selectedTokenSource(choice) || 'config' }, c.fetchImpl).then((got) => {
           // The reply belongs to the repository it was asked for. Somebody who
           // corrects the name and scans again must not have the first answer
           // land on top of the second.
@@ -2135,10 +2187,9 @@ export function bindFoundationsChooser(cfg) {
             choice.scanError = null;
             choice.candidates = got.candidates;
             choice.truncated = got.truncated;
-            // THE SAME TICK DEFAULT the local arm uses — four canonical
-            // roles, not everything — so a 25-document repository does not
-            // arrive 1,875 KB over a 200 KB budget.
-            choice.picks = choice.addMode ? {} : defaultPicks(got.candidates);
+            // NOTHING IS TICKED (v3.65.3) — the same rule as every scan in
+            // this module; `untickedPicks` holds the argument.
+            choice.picks = untickedPicks();
           }
           rerender();
         }).catch((err) => fail(err));
@@ -2170,15 +2221,9 @@ export function bindFoundationsChooser(cfg) {
           choice.scanError = null;
           choice.candidates = got.candidates;
           choice.truncated = got.truncated;
-          // ── THE FOUR CANONICAL ROLES ARE TICKED, NOT EVERYTHING ────────
-          // v3.61.0 ticked every usable candidate and, on the maintainer's own
-          // repository, that came out as 25 documents / 1,875 KB against a
-          // 200 KB budget. `defaultPicks` holds the rule and the argument.
-          // ADDING TO A POPULATED MIRROR TICKS NOTHING (v3.65.2): one click
-          // on an ordinary folder put the maintainer's project 4.5× over its
-          // budget. Default ticks are the point of a first set-up, not of an
-          // add.
-          choice.picks = choice.addMode ? {} : defaultPicks(got.candidates);
+          // NOTHING IS TICKED — on a first set-up, on an add, and on the
+          // remote arm alike (v3.65.3). `untickedPicks` holds the history.
+          choice.picks = untickedPicks();
         }
         rerender();
       }).catch((err) => fail(err));
