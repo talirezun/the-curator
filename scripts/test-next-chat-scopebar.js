@@ -2020,8 +2020,12 @@ section('§20 — P4 (v3.66.0): documents read vs the 40,000-character project b
   ok(!/cur-depth-danger/.test(full), '★ …and is NOT danger: the server enforces the budget by omission, so full is not over');
 
   // ── ABSENT IS NOT ZERO ───────────────────────────────────────────────
-  const old = foot({ chars: 12288 });
-  eq(docReadout(old), null, '★ a reading WITHOUT documentChars (an older server) renders NO Documents readout — never a "0"');
+  /* THE REAL OLDER SERVER: v3.65.x sends `budgetChars` but no
+     `documentChars`. A fixture without budgetChars could not tell "absent"
+     from "no denominator" — mutation M2' (absent read as a measured 0) stayed
+     green against it, which is why this one carries the budget. */
+  const old = foot({ chars: 12288, budgetChars: 40000, documents: 2, notes: [] });
+  eq(docReadout(old), null, '★ a reading WITHOUT documentChars (a v3.65.x server, budgetChars present) renders NO Documents readout — never a "0"');
   ok(!/cur-depth/.test(old), '…and no bar anywhere');
   eq(docReadout(foot({ chars: 900, documentChars: 5000 })), null,
     '…nor without budgetChars: no denominator, no bar and no half-reading');
