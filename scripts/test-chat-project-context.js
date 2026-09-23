@@ -31,7 +31,8 @@
  *     order, must make §2's own predicates FAIL. Without it a green §2 is a
  *     tautology about a string that happens to contain some substrings.
  *
- * §4  THE BUDGET, stated and separate: 40 KB reaches the store as `maxBytes`,
+ * §4  THE BUDGET, stated and separate: 40 KB reaches the store as the ceiling
+ *     `maxBytesCeiling` (v3.67.0; it was `maxBytes`),
  *     the wiki's three constants are not touched, and every omission the
  *     store discloses reaches the PROMPT as a line.
  *
@@ -397,7 +398,10 @@ section('§4 — TWO BUDGETS, STATED, AND EVERY OMISSION DISCLOSED');
   });
   ok(out.ok, 'a well-shaped envelope loads');
   eq(store.calls.length, 1, 'ONE store call when nothing is flagged read-first — today\'s shape for every existing project');
-  eq(store.calls[0].opts.maxBytes, PROJECT_CONTEXT_BUDGET_CHARS, 'the budget reaches the store as `maxBytes`');
+  // v3.67.0 — a CEILING, not a caller's budget: `maxBytes` would read as
+  // `budget.source: 'caller'` and clamp an owner's Index only (0) up to 1024.
+  eq(store.calls[0].opts.maxBytesCeiling, PROJECT_CONTEXT_BUDGET_CHARS, 'the budget reaches the store as the ceiling `maxBytesCeiling`');
+  eq(store.calls[0].opts.maxBytes, undefined, '…and NOT as `maxBytes`, so the owner\'s budget still decides under it');
   eq(store.calls[0].opts.include, 'changed', '…with the bootstrap\'s own default include mode');
   eq(store.calls[0].domain, 'articles', '…for the right domain');
   eq(store.calls[0].project, 'curator', '…and the right project');

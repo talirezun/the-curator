@@ -5943,9 +5943,13 @@ export async function setFoundationReadFirst(domain, project, slug, readFirst) {
     'flag');
   if (!out.ok) return out;
   const { prior, documents, changed, target, s, eff } = out;
+  const now = documents.find((d) => d.slug === s);
   return {
     ok: true, domain, project: target.project, slug: s,
     readFirst: want, wasReadFirst: prior.readFirst === true, changed,
+    // v3.67.0, additive: `readFirst: false` leaves "not at start" in place,
+    // so the caller is told the resulting state rather than left to assume.
+    hidden: now.hidden === true, atStart: foundationStartState(now),
     ...readFirstReadings(documents, eff.bytes),
   };
 }

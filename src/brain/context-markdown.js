@@ -169,6 +169,13 @@ export function renderContextMarkdown(ctx, opts = {}) {
   if (f?.present && f.count) {
     L.push(`## Foundations — ${f.count} document${f.count === 1 ? '' : 's'}`);
     L.push('');
+    // v3.67.0 — WHOSE reading budget decided which texts follow, in one line.
+    const rb = readingBudgetLine(f.budget);
+    if (rb) { L.push(rb); L.push(''); }
+    if (f.hiddenCount > 0) {
+      L.push(`_${f.hiddenCount} more document${f.hiddenCount === 1 ? ' is' : 's are'} kept but not listed at session start; the owner can name them._`);
+      L.push('');
+    }
     if (f.manifestError) L.push(`**The manifest could not be read: ${f.manifestError}. No documents were returned.**`);
     for (const d of f.index || []) {
       const marks = [
@@ -197,6 +204,20 @@ export function renderContextMarkdown(ctx, opts = {}) {
       L.push(`_Not returned, and why: ${f.requestedRefused.map((r) => `${r.slug} (${r.reason})`).join(', ')}._`);
       L.push('');
     }
+    // v3.67.0 — WHAT WAS READ, as the map to record. Without it an agent
+    // bootstrapped by this rendering (a session-start hook) had no hashes to
+    // save as `foundations_read`, so every later session counted every
+    // document as new. Only documents whose text is here, and whole.
+    const read = {};
+    for (const d of bodies) if (d && d.slug && d.sha256 && !d.truncated) read[d.slug] = d.sha256;
+    if (Object.keys(read).length) {
+      L.push('_Record this as `foundations_read` on your next save:_');
+      L.push('');
+      L.push('```json foundations_read');
+      L.push(JSON.stringify(read));
+      L.push('```');
+      L.push('');
+    }
   } else {
     L.push('## Foundations');
     L.push('');
@@ -204,4 +225,16 @@ export function renderContextMarkdown(ctx, opts = {}) {
     L.push('');
   }
   return L.join('\n');
+}
+
+/** `Reading budget: 64 KB — the owner's` / `120 KB — the default` /
+ *  `Index only — the owner's`. Null when the envelope carries no budget. */
+export function readingBudgetLine(budget) {
+  if (!budget || !Number.isInteger(budget.maxBytes)) return null;
+  const size = budget.maxBytes === 0 ? 'Index only' : `${Math.round(budget.maxBytes / 1024)} KB`;
+  const whose = budget.source === 'owner' ? "the owner's"
+    : budget.source === 'caller' ? 'asked for with --budget'
+      : budget.source === 'whatif' ? 'a preview'
+        : 'the default';
+  return `Reading budget: ${size} — ${whose}`;
 }
