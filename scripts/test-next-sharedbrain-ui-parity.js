@@ -571,7 +571,9 @@ section('3. Phase 4 — the ten admin properties of the third deleted block');
     'wizard: freshState() carries a slot for the generated admin token');
   ok(fresh.generatedAdminToken === null,
     '…and it starts empty, so closing the wizard cannot leak the previous cohort\'s token');
-  const adminStep1 = bodyOf(wizardCode, 'bindAdminStep1');
+  // v3.65.3 (D4): the invite — and with it the admin token — is minted by
+  // the TOKEN step's Continue (mintInvite), no longer by admin step 1.
+  const adminStep1 = bodyOf(wizardCode, 'mintInvite');
   ok(/if \(!state\.generatedAdminToken/.test(adminStep1),
     '…and a regenerate after a Back keeps the FIRST token — the one the user was told to save');
 

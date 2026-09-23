@@ -976,6 +976,11 @@ a.sb-card-repo:hover { color: var(--text-link); }
   gap: 7px;
 }
 .sbw-note-block svg { flex: none; margin-top: 2px; color: var(--text-3); }
+/* D12 (v3.65.3): the note's text is ONE flex item. Before this every bare
+   text node and every <strong> inside a note was its own flex column —
+   measured six columns on one sentence of create step 2. The row is now two
+   children, the icon and this span, and the span wraps like prose. */
+.sbw-note-text { flex: 1 1 auto; min-width: 0; }
 
 /* ── Form fields ──────────────────────────────────────────────────────── */
 
@@ -1003,7 +1008,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
    input to nothing before the row wraps. */
 .sbw-input-row .sbw-input { flex: 1 1 200px; min-width: 0; }
 .sbw-input-row .btn { flex: none; }
-.sbw-toggle-vis { width: 34px; height: 34px; flex: none; display: flex; align-items: center; justify-content: center; padding: 0; }
+.sbw-toggle-vis { min-width: 58px; height: 34px; flex: none; display: flex; align-items: center; justify-content: center; padding: 0 var(--space-4); }
 
 /* The box inside these labels is shared/checkbox.css's `.cur-check`; this
    rule owns the label row only. `flex: none` left with it (the component
@@ -1036,7 +1041,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
 /* ── Outbound link buttons ────────────────────────────────────────────── */
 
 .sbw-link-btn { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; margin-bottom: 6px; }
-.sbw-link-btn-primary { width: 100%; justify-content: center; }
+.sbw-link-btn-wide { width: 100%; justify-content: center; }
 
 /* ── Step 1: invite preview ──────────────────────────────────────────── */
 
@@ -1139,6 +1144,9 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: var(--surface-inset);
 }
 .sbw-domain-checkboxes .sbw-checkbox-label { padding: 4px 4px; border-radius: 5px; }
+/* D16 (v3.65.3): each domain carries its identity dot — the kit's glyph and
+   colour (shared/sidebar.css), never restyled here. */
+.sbw-domain-name { display: inline-flex; align-items: center; gap: var(--space-3); min-width: 0; }
 .sbw-domain-checkboxes .sbw-checkbox-label:hover { background: var(--mat-row-hover); }
 
 /* ── Step 5: review + consent ────────────────────────────────────────── */

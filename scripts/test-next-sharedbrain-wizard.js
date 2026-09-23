@@ -159,6 +159,8 @@ const PURE_FNS = [
   'stepCountLabel', 'repoOwnerOf', 'resourceOwnerSentence', 'patCheckRequest',
   'patVerdict', 'patVerdictAccepts', 'inviteEditResetNotice', 'plainInviteError',
   'isDirty', 'dismissDecision', 'discardConfirmText', 'primaryButtonId', 'enterTargetId',
+  // v3.65.3
+  'mirrorSlugForName', 'clashCheckRequest', 'clashMessage',
 ];
 
 const pure = new Function(
@@ -200,6 +202,18 @@ function makeEl(id, attrs) {
     click() { this.clicks++; this.fire('click', {}); },
     focus() { this.focused++; },
     scrollIntoView() { this.scrolled++; },
+    attrs: {},
+    setAttribute(k, v) { this.attrs[k] = String(v); },
+    getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
+    // `[data-field="x"]` children, created on first ask — the preview and
+    // the review address their cells this way.
+    children: {},
+    querySelector(sel) {
+      const m = /^\[data-field="([^"]+)"\]$/.exec(sel);
+      if (!m) return null;
+      if (!this.children[m[1]]) this.children[m[1]] = makeEl(m[1], { tagName: 'DD' });
+      return this.children[m[1]];
+    },
   };
   return el;
 }
@@ -214,6 +228,9 @@ const DOM_FNS = [
   'isSaveBlocking', 'requestDismiss', 'dirtySignals', 'showDiscardConfirm', 'hideDiscardConfirm',
   'goToStep', 'refreshStep2Links', 'refreshPatCreateLink', 'refreshPatStepCopy',
   'hasPatToClear', 'onInviteTokenEdited', 'bindStep1', 'bindStep3',
+  // v3.65.3: the early clash check and the create-mode invite mint are
+  // REAL here, so a driven step 1 exercises them rather than a stub.
+  'checkClash', 'mintInvite', 'isReadOnlyVerdict',
 ];
 const DOM_CONSTS = ['STEP_PANELS', 'STEP_LABELS', 'ALL_PANEL_IDS', ...WIZ_CONSTS];
 
@@ -261,7 +278,7 @@ function makeBox(opts) {
     { get activeElement() { return rec.activeElement; } },
     async (url, init) => {
       rec.fetches.push({ url, init });
-      const answer = o.response || { ok: true, body: { valid: true, hasWriteAccess: true, repoFullName: 'org/cohort' } };
+      const answer = (o.responses && o.responses[url]) || o.response || { ok: true, body: { valid: true, hasWriteAccess: true, repoFullName: 'org/cohort' } };
       return { ok: answer.ok !== false, json: async () => answer.body };
     },
     (fn) => { rec.timers.push(fn); return rec.timers.length; },
@@ -688,7 +705,10 @@ section('§8  Enter advances the step — and knows when not to');
 {
   eq(pure.primaryButtonId('join', 1), 'sbw-step1-next', 'join step 1');
   eq(pure.primaryButtonId('create', 1), 'sbw-admin-step1-next', 'create step 1 is a DIFFERENT button');
-  eq(pure.primaryButtonId('create', 2), 'sbw-admin-step2-next', 'create step 2 likewise');
+  // v3.65.3 (D4): create is setup → TOKEN → invite → domains → save, so its
+  // step 2 is the shared token panel's Continue and step 3 the invite's.
+  eq(pure.primaryButtonId('create', 2), 'sbw-step3-next', 'create step 2 is the TOKEN step (moved before the invite)');
+  eq(pure.primaryButtonId('create', 3), 'sbw-admin-step2-next', 'create step 3 is the invite');
   eq(pure.primaryButtonId('join', 5), 'sbw-step5-save', 'the last step is the save');
   eq(pure.primaryButtonId('create', 5), 'sbw-step5-save', '…shared by both modes, as the panels are');
   eq(pure.primaryButtonId('join', 6), null, 'there is no sixth step');
@@ -956,6 +976,207 @@ const cardBox = new Function(
     'every render in this view goes through preserveMainScroll — one chokepoint, ~30 call sites');
   ok(/revealShownAdminToken\(connId\)/.test(extractFunction(shared, 'onRotateAdminToken', 'shared.js')),
     '…and the shown-once token is additionally scrolled into view, because "where you were" may be nowhere near it');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§13  v3.65.3 — the mirror name, the early refusal, the order, the notes, the leave guard');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  // D1 — ONE rule, byte-identical to the one every existing member used.
+  // The reference below is the v3.65.2 inline expression, copied verbatim;
+  // if mirrorSlugForName ever drifts from it, a cohort forks its mirror.
+  const legacy = (name) => name.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'cohort';
+  const cases = ['Research_Group 2026', 'a  b', 'ÄÖ', 'x'.repeat(30) + ' ' + 'y'.repeat(29), '--Mixed--Case--', 'Spring 2026 ML Cohort'];
+  for (const c of cases) eq(pure.mirrorSlugForName(c), legacy(c), `mirrorSlugForName(${JSON.stringify(c.slice(0, 24))}) is the v3.65.2 rule`);
+  eq(pure.mirrorSlugForName('Research_Group 2026'), 'research-group-2026', 'the measured case: NOT the folder field\u2019s research_group-2026');
+  eq(pure.mirrorSlugForName('ÄÖ'), 'cohort', 'a name with nothing slug-able falls back to "cohort"');
+  eq(pure.mirrorSlugForName('x'.repeat(60)).length, 40, 'a 60-character name is cut to 40');
+
+  // …and it is the ONLY derivation: the save, the admin line, the preview
+  // and the review all call it, and no second inline copy survives.
+  const code = stripComments(wizard);
+  eq((code.match(/\.replace\(\/\[\^a-z0-9-\]\+\/g, '-'\)/g) || []).length, 1,
+    'the rule is written exactly ONCE in the wizard (inside mirrorSlugForName)');
+  ok(/const brainSlug = mirrorSlugForName\(meta\.name\)/.test(stripComments(bodyOf(wizard, 'bindStep5'))),
+    'the SAVE derives shared_brain_slug through mirrorSlugForName');
+  ok(/mirrorSlugForName\(/.test(stripComments(bodyOf(wizard, 'bindAdminStep1'))), 'admin step 1\u2019s live line calls it');
+  ok(/mirrorSlugForName\(/.test(stripComments(bodyOf(wizard, 'bindStep1'))), 'the join preview calls it');
+  ok(/mirrorSlugForName\(/.test(stripComments(bodyOf(wizard, 'populateReview'))), 'the review calls it');
+  ok(/shared_brain_slug: mirrorSlugForName\(meta\.name\)/.test(stripComments(bodyOf(wizard, 'clashCheckRequest'))),
+    'and the early clash check asks about THAT name, not a second derivation');
+}
+{
+  // The false promise, gone; the true one, present.
+  const a1 = markup.panelAdminStep1();
+  ok(!/Each contributor sees this as <code>shared-&lt;this&gt;<\/code>/.test(a1), 'the folder help no longer promises shared-<folder>');
+  ok(/Where wiki pages live in the repository: <code>collective\/&lt;this&gt;\/wiki\/<\/code>/.test(a1), 'it says what the folder is');
+  ok(/id="sbw-admin-mirror"[^>]*>On every member’s computer this brain appears as <code data-field="mirror">/.test(a1),
+    'and a live line names the mirror every member will get');
+  const p1 = markup.panelStep1();
+  ok(/<dt>On this computer<\/dt><dd class="mono" data-field="mirror">/.test(p1), 'the join preview has an "On this computer" row');
+  ok(!/Token verified/.test(p1) && /Invite read/.test(p1), 'D9: the preview says "Invite read" — nothing was verified');
+  const p5 = markup.panelStep5();
+  ok(/data-field="mirror"/.test(p5) && /data-field="folder"/.test(p5) && /data-field="admin-token"/.test(p5),
+    'D18: the review names the mirror, the folder and branch, and the admin token line');
+}
+{
+  // D2/D3 — the refusal happens where it is first knowable.
+  const req = pure.clashCheckRequest({ repo: 'acme/cohort-brain', name: 'Research_Group 2026', shared_domain: 'mkt' });
+  eq(JSON.stringify(Object.keys(req).sort()),
+    JSON.stringify(['github_repo_name', 'github_repo_owner', 'shared_brain_slug', 'shared_domain', 'storage_type']),
+    'the clash request carries exactly the five public fields — no credential');
+  eq(req.shared_brain_slug, 'research-group-2026', '…asking about the mirror the save would write');
+  eq(pure.clashCheckRequest({ repo: 'nope', name: 'x' }), null, 'metadata that names no repo asks nothing');
+  eq(pure.clashMessage({ ok: true }, 'join'), null, 'no clash, no sentence');
+  const mirror = { ok: false, kind: 'mirror', label: 'Reading Group', mirror: 'shared-reading-group', error: 'SharedBrain connection: …' };
+  ok(/already uses the local domain shared-reading-group/.test(pure.clashMessage(mirror, 'join')) &&
+     /ask this brain’s admin to rename it, or leave “Reading Group” first/.test(pure.clashMessage(mirror, 'join')),
+    'a member meeting a mirror clash is told the two ways out');
+  ok(/choose a different brain name/.test(pure.clashMessage(mirror, 'create')) && !/admin/.test(pure.clashMessage(mirror, 'create')),
+    'an admin still NAMING the brain is told to name it differently — not to ask themselves');
+  const dup = { ok: false, kind: 'identity', label: 'X', error: 'SharedBrain connection: this machine is already connected to that shared brain (“X”).' };
+  ok(/^This machine is already connected/.test(pure.clashMessage(dup, 'join')),
+    'the same-brain refusal keeps the server\u2019s sentence, minus its API prefix');
+  // Pinned against the route: the check the wizard calls exists and runs the store's function.
+  ok(/router\.post\('\/check-clash'/.test(routes) && /connectionClash\(candidate/.test(routes),
+    'control: POST /check-clash exists and runs connectionClash — the same function /save runs');
+}
+{
+  // DRIVEN: join step 1 with a clashing brain keeps Continue grey and says why.
+  const answer = { valid: true, metadata: { repo: 'carol/books', name: 'Reading Group', branch: 'main', shared_domain: 'club' } };
+  const mk = (clash) => makeBox({
+    responses: {
+      '/api/sharedbrain/parse-invite': { ok: true, body: answer },
+      '/api/sharedbrain/check-clash': { ok: true, body: clash },
+    },
+    elements: {
+      'sbw-invite-token': { tagName: 'INPUT', value: 'sbi_x' },
+      'sbw-invite-preview': { tagName: 'DIV', className: 'sbw-preview sbw-hidden' },
+      'sbw-step1-next': { tagName: 'BUTTON', disabled: true },
+      'sbw-step1-status': { tagName: 'DIV', className: 'sbw-status sbw-hidden' },
+    },
+  });
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const refused = mk({ ok: false, kind: 'mirror', label: 'Reading Group', mirror: 'shared-reading-group', error: 'x' });
+  refused.api.bindStep1();
+  refused.els.get('sbw-invite-token').fire('input');
+  refused.rec.flush();
+  for (let i = 0; i < 6; i++) await settle();
+  ok(refused.rec.fetches.some((f) => f.url === '/api/sharedbrain/check-clash'), 'step 1 asks check-clash once the invite is read');
+  const sent = JSON.parse((refused.rec.fetches.find((f) => f.url === '/api/sharedbrain/check-clash') || { init: { body: '{}' } }).init.body);
+  eq(sent.shared_brain_slug, 'reading-group', '…about the mirror mirrorSlugForName derives');
+  eq(refused.els.get('sbw-step1-next').disabled, true, 'a clash keeps Continue grey on STEP 1 — not a refusal at step 5');
+  ok(/Two brains can’t share one mirror/.test(refused.els.get('sbw-step1-status').textContent), '…and says why, on the step');
+  eq(refused.els.get('sbw-invite-preview').children.mirror.textContent, 'shared-reading-group',
+    'the preview names the mirror this computer would get');
+
+  const clear = mk({ ok: true });
+  clear.api.bindStep1();
+  clear.els.get('sbw-invite-token').fire('input');
+  clear.rec.flush();
+  for (let i = 0; i < 6; i++) await settle();
+  eq(clear.els.get('sbw-step1-next').disabled, false, 'ACCEPTANCE: no clash, Continue enables');
+
+  const down = makeBox({
+    responses: { '/api/sharedbrain/parse-invite': { ok: true, body: answer }, '/api/sharedbrain/check-clash': { ok: false, body: {} } },
+    elements: {
+      'sbw-invite-token': { tagName: 'INPUT', value: 'sbi_x' },
+      'sbw-invite-preview': { tagName: 'DIV', className: 'sbw-preview sbw-hidden' },
+      'sbw-step1-next': { tagName: 'BUTTON', disabled: true },
+      'sbw-step1-status': { tagName: 'DIV', className: 'sbw-status sbw-hidden' },
+    },
+  });
+  down.api.bindStep1();
+  down.els.get('sbw-invite-token').fire('input');
+  down.rec.flush();
+  for (let i = 0; i < 6; i++) await settle();
+  eq(down.els.get('sbw-step1-next').disabled, false, 'a check that could not RUN does not block — /save still refuses late');
+}
+{
+  // D4 — the order, in both tables that must agree.
+  const panels = extractConst(wizard, 'STEP_PANELS', 'wizard');
+  ok(/create:\s*\['admin-step-1', 'step-3', 'admin-step-2', 'step-4', 'step-5'\]/.test(panels),
+    'create is setup → token → invite → domains → save');
+  ok(/join:\s*\['step-1', 'step-2', 'step-3', 'step-4', 'step-5'\]/.test(panels), 'join is unchanged');
+  const labels = extractConst(wizard, 'STEP_LABELS', 'wizard');
+  ok(/create:\s*\['Setup', 'Your token', 'Invite', 'Domains', 'Save'\]/.test(labels), 'and the pips say so');
+  const a1 = stripComments(bodyOf(wizard, 'bindAdminStep1'));
+  ok(!/generate-invite/.test(a1), 'admin step 1 no longer mints an invite for an unchecked repository');
+  ok(/checkClash\(meta\)/.test(a1) && /setInviteMetadata\(meta\)/.test(a1), '…it records the metadata the token step checks, after the clash check');
+  const s3 = stripComments(bodyOf(wizard, 'bindStep3'));
+  ok(/state\.mode === 'create'[\s\S]*mintInvite\(/.test(s3), 'the token step\u2019s Continue mints the invite in create mode');
+  ok(/populateDomains\(\)/.test(stripComments(bodyOf(wizard, 'bindAdminStep2'))),
+    'the invite\u2019s Continue populates the domains (rule 2 moved with the step)');
+
+  // DRIVEN: mintInvite keeps the FIRST admin token (rule 7) and lands on step 3.
+  const box = makeBox({
+    state: { mode: 'create', step: 2, inviteMetadata: { repo: 'acme/cohort-brain', name: 'R', shared_domain: 'r', branch: 'main' },
+      pat: 'github_pat_x', patValidation: { valid: true, hasWriteAccess: true }, patValidatedRepo: 'acme/cohort-brain',
+      generatedAdminToken: 'sbat_FIRST' },
+    responses: { '/api/sharedbrain/generate-invite': { ok: true, body: { token: 'sbi_NEW', admin_token: 'sbat_SECOND' } } },
+    elements: {
+      'sbw-admin-invite-token': { tagName: 'CODE' }, 'sbw-admin-admin-token': { tagName: 'CODE' },
+      'sbw-admin-collab-link': { tagName: 'A' }, 'sbw-step3-status': { tagName: 'DIV' },
+      'sbw-step3-next': { tagName: 'BUTTON' }, 'sbw-stepcount': { tagName: 'P' },
+    },
+  });
+  await box.api.mintInvite(1, box.els.get('sbw-step3-next'));
+  eq(box.state.generatedAdminToken, 'sbat_FIRST', 'rule 7 survives the move: the FIRST admin token is kept');
+  eq(box.els.get('sbw-admin-admin-token').textContent, 'sbat_FIRST', '…and it is the one displayed');
+  eq(box.els.get('sbw-admin-invite-token').textContent, 'sbi_NEW', 'the invite (deterministic) is re-shown');
+  eq(box.state.step, 3, 'and the wizard lands on the invite, step 3');
+  eq(box.els.get('sbw-step3-next').disabled, false, 'Continue stays live for a standing verdict');
+}
+{
+  // D12 — every note is icon + ONE text span; no bare text node in the flex row.
+  const all = [markup.panelStep2(), markup.panelAdminStep2()].join('');
+  const notes = all.match(/<p class="sbw-hint sbw-note-block">[\s\S]*?<\/p>/g) || [];
+  ok(notes.length === 3, `three note blocks on the two panels that carry them (found ${notes.length})`);
+  for (const n of notes) {
+    const inner = n.replace(/^<p[^>]*>/, '').replace(/<\/p>$/, '');
+    const rest = inner.replace(/^<svg[^>]*><\/svg>/, '');
+    ok(/^<span class="sbw-note-text">[\s\S]*<\/span>$/.test(rest),
+      'a note is [icon][one .sbw-note-text span] — nothing else in the flex row: ' + rest.slice(24, 64));
+  }
+  ok(/\.sbw-note-text\s*\{[^}]*flex:\s*1 1 auto/.test(stripComments(sharedCss)), 'the span takes the row as one flex item');
+}
+{
+  // D5 — the leave guard: added on open, removed on close, gated on isDirty.
+  const open = stripComments(bodyOf(wizard, 'openSharedBrainWizard'));
+  const close = stripComments(bodyOf(wizard, 'closeWizard'));
+  ok(/window\.addEventListener\('beforeunload', onWizardBeforeUnload\)/.test(open), 'opening the wizard adds the beforeunload guard');
+  ok(/window\.removeEventListener\('beforeunload', onWizardBeforeUnload\)/.test(close), '…closing it removes the SAME listener');
+  const guard = new Function('isDirty', 'dirtySignals', 'ROOT',
+    'let root = ROOT;\n' + extractFunction(wizard, 'onWizardBeforeUnload', 'wizard') + '\nreturn onWizardBeforeUnload;');
+  const ev = () => ({ prevented: 0, returnValue: undefined, preventDefault() { this.prevented++; } });
+  const dirtyEv = ev();
+  guard(pure.isDirty, () => ({ generatedInvite: true }), {})(dirtyEv);
+  eq(dirtyEv.prevented, 1, 'a wizard holding a minted admin token asks before the page unloads');
+  eq(dirtyEv.returnValue, '', '…with no text of its own (the browser supplies the prompt; no credential rides it)');
+  const cleanEv = ev();
+  guard(pure.isDirty, () => ({}), {})(cleanEv);
+  eq(cleanEv.prevented, 0, 'an untouched wizard never prompts');
+  const closedEv = ev();
+  guard(pure.isDirty, () => ({ generatedInvite: true }), null)(closedEv);
+  eq(closedEv.prevented, 0, 'and a closed wizard never prompts');
+}
+{
+  // D8, D13, D14, D15 and rule 3 inside the sheet.
+  const code = stripComments(wizard);
+  ok(!/You can change this later/.test(code), 'D8: the false "(You can change this later.)" is gone');
+  ok(/This is fixed when you join — to change it later you leave and join again/.test(code), '…replaced by what is true');
+  const p3 = markup.panelStep3();
+  ok(!/btn-primary sbw-link-btn/.test(p3) && /btn btn-secondary sbw-link-btn/.test(p3), 'D13: the GitHub door is secondary');
+  eq((p3.match(/btn-primary/g) || []).length, 1, '…leaving step 3 exactly ONE primary (Continue)');
+  ok(/class="btn btn-ghost sbw-toggle-vis"[^>]*aria-pressed="false"[^>]*>Show<\/button>/.test(p3), 'D14: the toggle says "Show", with aria-pressed');
+  ok(!/The admin never sees it/.test(p3), 'the sentence that read as nonsense to an admin is gone');
+  const p4 = markup.panelStep4();
+  ok(/Leave empty to appear as “Anonymous Fellow”/.test(p4), 'D15: the substitution is said at the field');
+  ok(/class="tx-vh-panel"[^>]*hidden>[\s\S]*contribution records every collaborator/.test(p4),
+    'rule 3: the attribution mechanism lives in a closed ⓘ, not inline');
+  ok(/import \{ identityDotClass \} from '\.\.\/shared\/sidebar\.js'/.test(wizard), 'D16: the domain list imports the kit\u2019s identity mapping');
+  ok(/identityDotClass\(allNames\.indexOf\(name\)\)/.test(stripComments(bodyOf(wizard, 'populateDomains'))),
+    '…keyed on the install\u2019s own domain order, not the filtered list');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
