@@ -879,6 +879,13 @@ export async function getWorkingStateHandler(args, storage) {
     out.knowledgeDomainsDefaulted = state.knowledgeDomainsDefaulted === true;
     if (state.knowledgeDomainsError) out.knowledgeDomainsError = state.knowledgeDomainsError;
   }
+  // v3.67.0 — the OWNER'S READING BUDGET reaches this tool inside
+  // `foundations` (`readingBudgetBytes` — the effective number —
+  // `readingBudgetDefaulted` and `hiddenCount`), which the store adds whenever
+  // the project has documents or a budget: the summary above is forwarded
+  // whole. Only a hand-broken value's defect rides at the top level, in the
+  // store's own spelling, because a defect is never conditional.
+  if (state.readingBudgetError) out.readingBudgetError = state.readingBudgetError;
   if (state.current) out.current = state.current;
 
   if (state.journal) {

@@ -413,10 +413,39 @@ section('7  THE CLASS INVARIANT — every disclosure the store makes must surviv
  */
 const EXEMPTIONS = new Set([]);
 
+/**
+ * RELOCATED, NOT EXEMPT (v3.67.0). The owner's reading budget is carried by
+ * get_working_state INSIDE `foundations` (the v3.67.0 contract's "foundations
+ * summary gains readingBudgetBytes, readingBudgetDefaulted and hiddenCount"),
+ * not at the top level where the store's envelope puts it. The store adds the
+ * three to its summary whenever the project has documents OR the owner set a
+ * budget; on a project with neither they govern nothing, and the cold-start
+ * ceiling test-mcp-working-state.js D3 keeps (1,100 B) forbids the bytes. So
+ * each key here must reappear at its new path whenever it governs anything —
+ * a relocation that silently loses the value is still a drop.
+ */
+const RELOCATED = {
+  readingBudgetDefaulted: (payload, v, storeOut) => {
+    const f = payload.foundations || {};
+    const governs = f.present === true || storeOut.readingBudgetBytes !== null;
+    return !governs || f.readingBudgetDefaulted === v;
+  },
+  readingBudgetBytes: (payload, v) => (payload.foundations || {}).readingBudgetBytes === v,
+};
+
 function findDroppedFields(storeOut, payload) {
   const dropped = [];
   for (const [k, v] of Object.entries(storeOut)) {
     if (EXEMPTIONS.has(k)) continue;
+    if (Object.prototype.hasOwnProperty.call(RELOCATED, k)) {
+      // get_project_context forwards unhandled store keys verbatim, so the
+      // top level itself is an acceptable home; get_working_state uses the
+      // relocated one.
+      if (v !== undefined && v !== null && payload[k] !== v && !RELOCATED[k](payload, v, storeOut)) {
+        dropped.push({ key: k, reason: 'relocated-and-lost', value: v });
+      }
+      continue;
+    }
     if (v === undefined || v === null) continue;           // no information to lose
     if (!(k in payload)) { dropped.push({ key: k, reason: 'absent', value: v }); continue; }
     const scalar = (x) => x === null || ['string', 'number', 'boolean'].includes(typeof x);
