@@ -49,6 +49,11 @@ const ROOT = path.join(__dirname, '..');
 // shared/text.js takes no imports by design, precisely so a suite can EXECUTE
 // it rather than scan it (see its own "WHY IT HAS NO IMPORTS" header).
 import { renderDescription, renderInfoMark } from '../src/public/next/shared/text.js';
+// v3.65.3: the section body is built from three kit parts, and they are the
+// REAL ones here — a stub monitor would test a monitor this suite invented.
+import { renderMonitor } from '../src/public/next/shared/monitor.js';
+import { freshnessTier } from '../src/public/next/shared/age.js';
+import { identityDotClass } from '../src/public/next/shared/sidebar.js';
 
 const R = (rel) => readFileSync(path.join(ROOT, rel), 'utf8');
 const shared = R('src/public/next/views/shared.js');
@@ -777,18 +782,28 @@ section('5. The HOST SEAM and the LENS (v3.64.0)');
 const SEC_FNS = [
   'inSection', 'sectionDomain', 'mirrorDomainFor', 'sharedLensFor',
   'renderSection', 'renderSectionDoor', 'renderMirrorStrip', 'formatRelativeTime',
+  // v3.65.3 — the section body's own parts, all REAL.
+  'renderSectionEmpty', 'sectionDomainFacts', 'sectionDotHtml', 'sectionAgeLine', 'sectionRepoCell',
 ];
-const secBox = new Function(
+const secBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass',
   'let state = {};\n' +
   'let loadGate = null;\n' +
-  'let hostCtx = { mode: "section", el: {}, domain: "" };\n' +
+  'let busyDomains = new Set();\n' +
+  'let hostCtx = { mode: "section", el: {}, domain: "", describeDomain: (s) => ({ index: ["research", "notes", "shared-cohort"].indexOf(s), pages: s === "shared-cohort" ? 42 : null }) };\n' +
   extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' +
   ICON_STUB +
   'function gatedLoader() { return "<div class=\\"STUB-loader\\"></div>"; }\n' +
   'function renderCard(c) { return "<div class=\\"STUB-card\\" data-conn-id=\\"" + escapeHtml(c.id) + "\\"></div>"; }\n' +
+  // The contributing block is driven on its own below (§S-C); here it is a
+  // marker, so the D-G census stays about the SECTION's decisions.
+  'function renderSectionConnection(c, last) { return "<div class=\\"STUB-card\\" data-conn-id=\\"" + escapeHtml(c.id) + "\\"></div>" + (last ? renderSectionDoor("ghost") : ""); }\n' +
+  'function ensureCard(id) { state.cards = state.cards || {}; return state.cards[id] || (state.cards[id] = { acting: null, message: null, error: false }); }\n' +
+  'function isDomainWriteBusy(d) { return busyDomains.has(d); }\n' +
+  'function getDomainWriteLabel() { return "pull"; }\n' +
   SEC_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
-  `return { ${SEC_FNS.join(', ')}, __setState: (s) => { state = s; }, __setDomain: (d) => { hostCtx.domain = d; } };`
-)();
+  `return { ${SEC_FNS.join(', ')}, __setState: (s) => { state = s; }, __setDomain: (d) => { hostCtx.domain = d; },
+     __setBusy: (list) => { busyDomains = new Set(list); }, __setDescribe: (fn) => { hostCtx.describeDomain = fn; } };`
+)(renderMonitor, freshnessTier, identityDotClass);
 
 {
   // ── D-H: the lens, EXECUTED over every shape the wire can send ────────
@@ -903,13 +918,19 @@ const secBox = new Function(
     'section mirror: a shared-* mirror domain gets the read-only strip and NOT the operating card');
   ok(/Cohort/.test(rendered.mirror),
     '…naming the connection that produced it');
-  ok(/never — ask your admin to run synthesis/.test(rendered.mirror),
-    '…and its last synthesis, in the same honest never-label the card uses');
-  ok(!/data-sb-action="push|data-sb-action="pull|data-sb-action="synthesize/.test(rendered.mirror),
-    '…with no push, pull or synthesize control anywhere in it — the strip reports, it does not operate');
+  ok(/class="cur-mon-key">synthesis<\/span><span class="cur-mon-value">never</.test(rendered.mirror),
+    '…and its last synthesis, as a MONITOR line reading "never" (no fresh-dot on a time that never happened)');
+  // v3.65.3 — the maintainer's decision: PULL LIVES WHERE IT WRITES. A
+  // read-only member has no contributing domain, so this is the only domain
+  // page their one operation can appear on. The SAME data-sb-action inside
+  // the SAME .sb-card[data-conn-id] root: one mechanism, two hosts.
+  ok(/data-sb-action="pull"/.test(rendered.mirror) && /class="sb-card sb-sec-conn sb-sec-mirror" data-conn-id="a"/.test(rendered.mirror),
+    '…and it carries Pull, inside the .sb-card[data-conn-id] root every listener finds a connection by');
+  ok(!/data-sb-action="push|data-sb-action="synthesize/.test(rendered.mirror),
+    '…but NO push and NO synthesize — those act on the contributing side');
 
   ok(!/STUB-card/.test(rendered.none) && !/sb-sec-mirror/.test(rendered.none) &&
-     /not part of any Shared Brain/.test(rendered.none),
+     /isn’t part of a Shared Brain/.test(rendered.none),
     'section none: a domain in neither list says so, rather than rendering an install-wide list');
 
   // Anti-vacuity: seven states, seven different strings. Without this every
@@ -1202,6 +1223,220 @@ const secBox = new Function(
       'hostSetMain refuses to write when the host\'s mount token is no longer current — a late SSE frame paints nothing');
     ok(box.__host().mode === 'view', '(control) the other harness is untouched by this one');
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+section('S. v3.65.3 — ④ always open: the section body, states A–E, the reading');
+// ═══════════════════════════════════════════════════════════════════════
+// This suite's ok() takes the CONDITION first; eq() is (actual, expected,
+// label), and prints what it got — written once here, used below.
+const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
+{
+  // The contributing block, EXECUTED with the real kit parts and the REAL
+  // decisions it leans on (adminAffordances, tokenCheckApplies, the two
+  // confirms, the fold row). renderCohortBody / renderAdminBody are markers:
+  // their contents are the full view's, pinned elsewhere.
+  const C_FNS = [
+    'inSection', 'sectionDomain', 'mirrorDomainFor', 'domainsForAction', 'formatRelativeTime',
+    'sectionDomainFacts', 'sectionDotHtml', 'sectionAgeLine', 'sectionRepoCell', 'sectionFoldRow',
+    'renderSectionDoor', 'renderSectionConnection', 'renderPushConfirm', 'renderSynthesizeConfirm',
+    'tokenCheckApplies', 'adminAffordances',
+  ];
+  const cBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass', 'renderInfoMark',
+    'let state = { cards: {}, expandedSecRows: new Set(), expandedAdmin: new Set() };\n' +
+    'let busyDomains = new Set();\n' +
+    'let hostCtx = { mode: "section", el: {}, domain: "research", describeDomain: (s) => ({ index: ["research", "notes", "shared-cohort"].indexOf(s), pages: null }) };\n' +
+    extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' + ICON_STUB +
+    extractConst(shared, 'TOKEN_CHECK_READING', 'shared.js') + '\n' +
+    'function ensureCard(id) { return state.cards[id] || (state.cards[id] = { acting: null, message: null, error: false, tokenCheck: null, tokenChecking: false, pushConfirmOpen: false, synthesizeConfirmOpen: false, revokeOpen: false, shownAdminToken: null, adminTokenProvisioned: false }); }\n' +
+    'function isDomainWriteBusy(d) { return busyDomains.has(d); }\n' +
+    'function getDomainWriteLabel() { return "pull"; }\n' +
+    'function renderCohortBody() { return "<div class=\\"STUB-cohort\\"></div>"; }\n' +
+    'function renderAdminBody() { return "<div class=\\"STUB-admin\\"></div>"; }\n' +
+    C_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
+    `return { ${C_FNS.join(', ')}, __card: (id) => ensureCard(id), __state: () => state,
+       __setBusy: (l) => { busyDomains = new Set(l); } };`
+  )(renderMonitor, freshnessTier, identityDotClass, renderInfoMark);
+
+  const recent = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+  const c = conn({ id: 'c1', label: 'Research_Group 2026', shared_brain_slug: 'cohort', local_domains: ['research'],
+    storage_type: 'github', github_repo_owner: 'acme', github_repo_name: 'cohort-brain',
+    pending_pages: 50, permanent_skip: ['a.md', 'b.md', 'c.md'], last_pull_at: recent, last_push_at: null,
+    has_admin_token: true, fellow_id: 'c77a791a-0000-4000-8000-000000000000' });
+  const html = cBox.renderSectionConnection(c, true);
+
+  ok(/^<div class="sb-card sb-sec-conn" data-conn-id="c1">/.test(html),
+    'C: the root keeps .sb-card[data-conn-id] — wireListeners, revealInCard and the revoke gate find it');
+  ok(!/sb-card-stats|sb-card-footer|sb-card-pending"/.test(html),
+    'C: NO card inside the card — none of the full card\'s stat grid, pending box or footer');
+  eq((html.match(/class="cur-mon"/g) || []).length, 1, 'C: ONE monitor carries every live reading');
+  ok(/cur-mon-key">pulled<\/span><span class="cur-mon-value"><span class="fresh-dot fresh-[a-z]+" aria-hidden="true"><\/span>2 hr ago/.test(html),
+    'C: a time line carries the app\'s fresh-dot with the age in words');
+  ok(/cur-mon-key">pushed<\/span><span class="cur-mon-value">never</.test(html),
+    'C: a time that never happened reads "never" with NO dot');
+  ok(/cur-mon-key">mirror<\/span><span class="cur-mon-value"><span class="cur-sb-dot cur-sb-dot-3" aria-hidden="true"><\/span>shared-cohort/.test(html),
+    'C: the mirror domain is named WITH its identity dot, keyed on the install\'s own index (rule 5)');
+  ok(/cur-mon-key">contributes<\/span><span class="cur-mon-value"><span class="cur-sb-dot cur-sb-dot-1"/.test(html),
+    '…and so is the contributing domain');
+  // LOUD: the cost and the skips — always rendered, never behind a chevron.
+  const loudPart = html.split('<div class="sb-sec-rows">')[0];
+  ok(/cur-mon-loud[^"]*" role="status">50 pages ready to push — Push summarises each with your AI provider, which spends API credits/.test(loudPart),
+    'C: the pending COST is a loud entry, above every fold row (v3.16.1)');
+  ok(/role="status">3 pages skipped after repeated failures\. <strong>Retry them from Skipped pages below\.<\/strong>/.test(loudPart),
+    'C: the skips are a loud entry too, pointing at the row that fixes them');
+  // ONE action row: Push primary-ish (btn-ai, sparkles), Pull, Synthesis for an admin, the ghost door last.
+  const actions = (/<div class="sb-sec-actions">([\s\S]*?)<\/div><div class="sb-sec-rows">/.exec(html) || [, ''])[1];
+  ok(/^<button type="button" class="btn btn-ai" data-sb-action="push-open">/.test(actions), 'C: Push comes first, btn-ai with the sparkles (it spends)');
+  ok(/data-sb-action="pull"/.test(actions) && /data-sb-action="synthesize-open"[^>]*>[^<]*<svg[^>]*><\/svg> Run synthesis</.test(actions),
+    'C: then Pull, then "Run synthesis" — for an admin');
+  ok(/id="btn-sb-open-view">Open Shared Brain<\/button>$/.test(actions) && /class="btn btn-ghost sb-sec-door-btn"/.test(actions),
+    'C: and the door LAST, ghost, md (never xs)');
+  eq((html.match(/btn-primary/g) || []).length, 0, 'C: no btn-primary competes with Push');
+  // Fold rows, closed, in the design's order.
+  const rows = [...html.matchAll(/<details class="sb-sec-row" data-sb-sec-row="c1:([a-z]+)"( open)?>[\s\S]*?class="sb-sec-row-label">([^<]+)<\/span><span class="sb-sec-row-meta">([^<]*)</g)]
+    .map((m) => [m[1], !!m[2], m[3], m[4]]);
+  eq(JSON.stringify(rows.map((r) => r[0])), JSON.stringify(['token', 'cohort', 'skips', 'admin', 'leave']),
+    'C: fold rows — Access token, Cohort & sharing, Skipped pages, Admin controls, Leave');
+  ok(rows.every((r) => !r[1]), 'C: every row ships CLOSED');
+  eq(rows[0][3], 'not checked', 'C: the token row reads "not checked" before any check');
+  eq(rows[1][3], 'you keep copyright', 'C: the cohort row reads the data-handling terms');
+  eq(rows[2][3], '3 pages', 'C: the skipped row counts');
+  eq(rows[4][3], 'fellow c77a791a…', 'C: the leave row names the fellow id');
+  ok(/data-sb-action="leave-confirm"/.test(html) && /Your local wiki files stay exactly as they are/.test(html),
+    'C: Leave keeps its sentence, and opening the row IS the confirm step');
+  ok(/tx-vh-panel[^>]*hidden>The GitHub token you pasted when you joined/.test(html),
+    'C: the token explanation lives in the row\'s ⓘ, not inline (rule 3, D19)');
+
+  // A plain contributor: no synthesis, no admin row. The route has no admin
+  // gate (D10) — this is who USUALLY runs it, and the full view keeps it.
+  const plain = cBox.renderSectionConnection({ ...c, id: 'c2', has_admin_token: false, permanent_skip: [], pending_pages: 0 }, false);
+  ok(!/synthesize-open/.test(plain), 'C: a contributor without the admin token sees no Run synthesis here');
+  ok(!/data-sb-sec-row="c2:admin"/.test(plain), '…and no Admin controls row');
+  ok(!/btn-sb-open-view/.test(plain), '…and a block that is not the LAST carries no door (one door per section)');
+  ok(!/ready to push/.test(plain.split('cur-mon-lines')[0]) && !/cur-mon-loud/.test(plain),
+    '…and with nothing pending and nothing skipped there is no loud entry at all');
+  ok(/cur-mon-key">pending<\/span><span class="cur-mon-value">0 pages</.test(plain), '…while the pending LINE still reads 0');
+
+  // A held row stays open across a render; a row opened by an ACTION too.
+  cBox.__state().expandedSecRows.add('c1:cohort');
+  ok(/data-sb-sec-row="c1:cohort" open>/.test(cBox.renderSectionConnection(c, true)),
+    'C: a row the user opened stays open across the next render (this view re-renders on every SSE frame)');
+  cBox.__card('c1').shownAdminToken = 'sbat_x';
+  ok(/data-sb-sec-row="c1:admin" open>/.test(cBox.renderSectionConnection(c, true)),
+    'C: a shown-once admin token forces its row open — it can never render hidden behind a chevron');
+  cBox.__card('c1').shownAdminToken = null;
+
+  // A dead token and a held write are LOUD, never folded.
+  cBox.__card('c1').tokenCheck = { kind: 'rejected', message: 'GitHub rejected the stored token.' };
+  cBox.__setBusy(['shared-cohort']);
+  const hurt = cBox.renderSectionConnection(c, true).split('<div class="sb-sec-rows">')[0];
+  ok(/cur-mon-loud cur-mon-danger" role="status">GitHub rejected the stored token\./.test(hurt) || /role="status">GitHub rejected the stored token\./.test(hurt),
+    'C: a rejected token is a loud (danger) entry above the rows');
+  ok(/Another write is already running for shared-cohort/.test(hurt), 'C: a held write is loud too');
+  ok(/data-sb-action="pull" disabled/.test(hurt), '…and Pull is disabled while it holds the mirror');
+  cBox.__setBusy([]);
+  cBox.__card('c1').tokenCheck = null;
+}
+{
+  // States A, B, E and D, through the REAL renderSection (secBox above).
+  const cA = conn({ id: 'a', label: 'Cohort', shared_brain_slug: 'cohort', local_domains: ['research', 'notes'],
+    storage_type: 'github', github_repo_owner: 'acme', github_repo_name: 'cohort-brain', shared_domain: 'mkt' });
+  const at = (over, domain) => {
+    secBox.__setState(Object.assign({ loading: false, enabled: true, flagError: null, listError: null, connections: [cA], cards: {} }, over || {}));
+    secBox.__setDomain(domain);
+    return secBox.renderSection();
+  };
+  const A = at({ enabled: false }, 'research');
+  ok(/<div class="sb-sec-empty"><p class="sb-sec-line sb-sec-empty-text">Shared Brain is off on this install\. Turning it on connects you to nothing — it lets you join a cohort or set one up\.<\/p><button type="button" class="btn btn-secondary sb-sec-door-btn" id="btn-sb-open-view">/.test(A),
+    'A: Quick-maintenance empty anatomy — the sentence left, the door right, secondary md');
+  const B = at({}, 'lectures');
+  ok(/This domain isn’t part of a Shared Brain\. Your 1 Shared Brain draws on <span class="sb-sec-dom"><span class="cur-sb-dot cur-sb-dot-1"[^>]*><\/span>research<\/span>, <span class="sb-sec-dom"><span class="cur-sb-dot cur-sb-dot-2"/.test(B),
+    'B: names the domains this install\'s brains draw on, each with its identity dot');
+  ok(/fixed when you join/.test(B) && !/Contribute this domain/.test(B),
+    'B: says contributing domains are fixed at join — and offers no button the store cannot honour');
+  const E = at({}, 'shared-gone');
+  ok(/This is a Shared Brain mirror with no connection on this install, so Pull can’t refresh it\./.test(E) && !/isn’t part of/.test(E),
+    'E: an orphaned shared-* mirror says so — never "not part of any Shared Brain" (D20)');
+  const D = at({}, 'shared-cohort');
+  ok(/cur-mon-key">pages<\/span><span class="cur-mon-value">42</.test(D), 'D: the mirror\'s monitor reads its local page count from the host');
+  ok(/cur-mon-key">folder<\/span><span class="cur-mon-value">collective\/mkt\/wiki\//.test(D), 'D: …the repository folder');
+  ok(/cur-mon-key">fed by<\/span><span class="cur-mon-value">research, notes/.test(D), 'D: …and what feeds it from this install');
+  ok(/sb-sec-id-name"><span class="cur-sb-dot cur-sb-dot-3"/.test(D), 'D: the identity line carries THIS domain\'s own dot');
+  secBox.__setBusy(['shared-cohort']);
+  const Dbusy = at({}, 'shared-cohort');
+  ok(/data-sb-action="pull" disabled/.test(Dbusy) && /role="status">Another write \(pull\) is already running for shared-cohort/.test(Dbusy),
+    'D: a held write disables Pull and says why, loud');
+  secBox.__setBusy([]);
+}
+{
+  // The READING the host shows, and the silence while loading (D6).
+  const L_FNS = ['inSection', 'sectionDomain', 'mirrorDomainFor', 'sharedLensFor', 'lensSummary', 'notifyHost', 'sharedSectionBusy'];
+  const lBox = new Function('isSharedBrainWizardOpen',
+    'let state = { loading: true, enabled: false, connections: [], cards: {} };\n' +
+    'const seen = [];\n' +
+    'let hostCtx = { mode: "section", el: {}, domain: "research", onBusyChange: null, onLensChange: (s) => seen.push(s) };\n' +
+    'let lastReportedBusy = false; let lastReportedLens = "";\n' +
+    L_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
+    `return { notifyHost, lensSummary, seen, __setState: (s) => { state = s; }, __setDomain: (d) => { hostCtx.domain = d; } };`
+  )(() => false);
+  lBox.notifyHost();
+  eq(lBox.seen.length, 0, 'D6: while the panel is LOADING it reports no lens at all — never enabled:false as a reading');
+  lBox.__setState({ loading: false, enabled: true, connections: [conn({ id: 'z', label: 'Cohort', local_domains: ['research'] })], cards: {} });
+  lBox.notifyHost();
+  eq(lBox.seen.length, 1, '…and once it has loaded it reports, once');
+  eq(lBox.seen[0].label, 'Cohort', '…naming the brain, so the head can say WHICH');
+  eq(lBox.seen[0].kind, 'contributing', '…as contributing');
+  lBox.__setState({ loading: false, enabled: false, flagError: 'boom', connections: [], cards: {} });
+  lBox.notifyHost();
+  eq(lBox.seen[1] && lBox.seen[1].error, true, 'a flag that could not be read is reported as an ERROR, so the host never says "off"');
+  lBox.__setState({ loading: false, enabled: true, connections: [], cards: {} });
+  lBox.__setDomain('shared-gone');
+  eq(lBox.lensSummary().orphan, true, 'an orphaned shared-* domain is reported as such (state E)');
+}
+{
+  // The card's shown-once admin token: the leave guard, EXECUTED.
+  const G_FNS = ['inSection', 'shownOnceTokenOnScreen', 'onSharedBeforeUnload', 'onSharedRailClick'];
+  const asked = []; const navs = [];
+  const gBox = new Function('confirmThen', 'navigate',
+    'let state = { cards: {} }; let viewMounted = true; let hostCtx = { mode: "view" };\n' +
+    extractConst(shared, 'SHOWN_TOKEN_LEAVE_QUESTION', 'shared.js') + '\n' +
+    G_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
+    `return { ${G_FNS.join(', ')}, __setState: (s) => { state = s; }, __setMounted: (m) => { viewMounted = m; } };`
+  )((o) => { asked.push(o); return Promise.resolve(); }, (v) => navs.push(v));
+  const g = gBox;
+  const ev = (railView) => ({ prevented: 0, stopped: 0, returnValue: undefined,
+    target: { closest: (sel) => (railView && sel === '#rail [data-view]' ? { dataset: { view: railView } } : null) },
+    preventDefault() { this.prevented++; }, stopImmediatePropagation() { this.stopped++; } });
+  const e0 = ev('chat'); g.onSharedRailClick(e0);
+  ok(asked.length === 0 && e0.stopped === 0, 'no token on screen: a rail click passes untouched, nobody is asked');
+  g.__setState({ cards: { a: { shownAdminToken: 'sbat_x' } } });
+  const e1 = ev('chat'); g.onSharedRailClick(e1);
+  ok(asked.length === 1 && e1.stopped === 1 && e1.prevented === 1 && navs.length === 0,
+    'a token on screen: a rail click is STOPPED and the app\'s own dialog asks (no native confirm)');
+  ok(/can never be shown again/.test(asked[0].message) && asked[0].confirmLabel === 'Leave' && asked[0].cancelLabel === 'Stay',
+    '…saying why, with Leave / Stay');
+  asked[0].onConfirm();
+  eq(navs.join(','), 'chat', '…and "Leave" performs the very navigation it stopped');
+  const e3 = ev(null); g.onSharedRailClick(e3);
+  ok(e3.stopped === 0 && asked.length === 1, 'a click that is not a rail destination is never asked about');
+  const u1 = ev(null); g.onSharedBeforeUnload(u1);
+  ok(u1.prevented === 1 && u1.returnValue === '', 'a reload with a token on screen asks the browser to confirm — with no text of its own');
+  g.__setMounted(false);
+  const u2 = ev(null); g.onSharedBeforeUnload(u2);
+  ok(u2.prevented === 0, 'once the panel is not mounted, a stale token in memory prompts nothing');
+  const e4 = ev('chat'); g.onSharedRailClick(e4);
+  ok(e4.stopped === 0, '…and a rail click is not stopped either');
+  ok(/window\.addEventListener\('beforeunload', onSharedBeforeUnload\)/.test(sharedCode)
+    && /document\.addEventListener\('click', onSharedRailClick, true\)/.test(sharedCode),
+    'both are installed — the click in the CAPTURE phase, so it runs before the rail\'s own navigate()');
+}
+{
+  // The full view's two false labels (D10, D11), fixed there too.
+  ok(!/Run synthesis \(admin\)/.test(sharedCode), 'D10: "Run synthesis (admin)" is gone — the route has no admin gate');
+  ok(/Usually the admin runs this\./.test(sharedCode), '…and the confirm says who usually runs it instead');
+  ok(!/in the Domains tab/.test(sharedCode), 'D11: no "Domains tab" — there has been none since v3.64.0');
+  ok(/router\.post\('\/:id\/synthesize', gate, async/.test(R('src/routes/sharedbrain.js')),
+    '(control) the synthesize route is where D10 was checked');
 }
 
 // ═══════════════════════════════════════════════════════════════════════

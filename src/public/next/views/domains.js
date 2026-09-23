@@ -583,6 +583,12 @@ const state = {
   // markup and the no-repaint reveal both read THIS, so the tile the paint
   // draws and the tile the panel reveals cannot disagree.
   sharedJump: null,
+
+  // ④'s head reading (v3.65.3), derived once by sharedHeadReading() from the
+  // same report — '' until the panel has reported, and never a guess. The
+  // markup reads THIS and the no-repaint write in onSharedLensChange() writes
+  // the same string, so the next patch finds the two byte-equal.
+  sharedReading: '',
 };
 
 
@@ -819,7 +825,9 @@ function readSectionPrefs() {
       // the row this returns is what the next write stores, so the retired
       // field leaves the file on the next toggle of anything else, and until
       // then it is simply never consulted. No migration write — see below.
-      if (v.shared === true || v.shared === false) row.shared = v.shared;
+      // `shared` IS NO LONGER READ EITHER (v3.65.3). ④ Shared Brain went
+      // the way ① did: always open, no fold, nothing to remember. Dropped on
+      // read, gone from the file on the next write, no migration write.
       if (SECTION_LENSES.includes(v.lens)) row.lens = v.lens;
     }
     // THE MIGRATED FILE IS NOT WRITTEN HERE. This runs at module load, before
@@ -1135,7 +1143,13 @@ function sharedJumpReading(summary) {
 function onSharedLensChange(summary) {
   state.sharedLens = summary && typeof summary === 'object' ? summary : null;
   state.sharedJump = sharedJumpReading(state.sharedLens);
+  state.sharedReading = sharedHeadReading(state.sharedLens);
   if (typeof document === 'undefined' || !document.querySelector) return;
+  // ④'s head reading, written the same way the tile is revealed — one text
+  // write, no repaint (a repaint would remount the panel, which reports
+  // again: the loop the tile's own comment names).
+  const reading = document.getElementById('dm-shared-reading');
+  if (reading) reading.textContent = state.sharedReading;
   // `.dm-stat-card`, not `.dm-jump-card`: since v3.65.0 a jump IS an ordinary
   // tile in the same grid, so the reveal addresses the tile class every other
   // figure carries and finds it by its `data-stat-jump` hook.
@@ -1144,6 +1158,30 @@ function onSharedLensChange(summary) {
   tile.hidden = !state.sharedJump.show;
   const value = tile.querySelector('.dm-stat-value');
   if (value) value.textContent = state.sharedJump.value;
+}
+
+/**
+ * ④'s head reading, from the panel's report (v3.65.3).
+ *
+ * '' while nothing has been reported, and '' when the flag or the list could
+ * not be read — "could not tell" must never render as "off" or "not part of
+ * any". That was the v3.65.2 defect (D6): the section read "not connected"
+ * beside a card showing the connection, because the panel reported its
+ * loading state as `enabled: false`.
+ */
+function sharedHeadReading(summary) {
+  if (!summary || typeof summary !== 'object' || summary.error) return '';
+  if (summary.enabled !== true) return 'off on this install';
+  const label = typeof summary.label === 'string' ? summary.label : '';
+  const contributing = summary.contributingCount || 0;
+  if (summary.kind === 'contributing' && contributing > 0) {
+    return contributing === 1 && label ? 'contributes to ' + label : 'contributes to ' + contributing;
+  }
+  if (summary.kind === 'mirror' && (summary.mirrorCount || 0) > 0) {
+    return label ? 'mirror of ' + label : 'mirror';
+  }
+  if (summary.orphan) return 'no connection';
+  return 'not part of any';
 }
 
 /** The fold's `<details>` element, or null when this branch of the page does
@@ -1162,18 +1200,12 @@ function sectionFoldEl(key) {
 function openSectionFold(key, opts) {
   const el = sectionFoldEl(key);
   if (!el) return;
-  if (key === 'sources') {
-    if (!opts || opts.scroll !== false) landOnSection('.dm-sources-hd', 'dm-sources-title');
-    return;
-  }
-  if (!el.open) {
-    el.open = true;
-    sectionPrefsFor(state.activeSlug)[key] = true;
-    writeSectionPrefs();
-    mountHostedSections(myMountToken);
-  }
+  // BOTH SECTIONS ONLY LAND NOW (v3.65.3): ④ Shared Brain went the way ①
+  // did — always open — so the SHARED tile, like SOURCES, scrolls the head
+  // into view and focuses the title, and writes no preference.
   if (!opts || opts.scroll !== false) {
-    scrollSectionIntoView(key === 'sources' ? '.dm-sources' : '.dm-shared');
+    if (key === 'sources') landOnSection('.dm-sources-hd', 'dm-sources-title');
+    else landOnSection('.dm-shared-hd', 'dm-shared-title');
   }
 }
 
@@ -1248,7 +1280,11 @@ function mountHostedSections(token) {
   }
 
   // ── SHARED BRAIN ──────────────────────────────────────────────────────
-  const shWanted = !!(shFold && shFold.open && shHost);
+  // Wanted whenever the section exists (v3.65.3): like ①, ④ has no closed
+  // state to honour. The cost is GET /feature-flag + GET /list once per
+  // mount — /list is an mtime scan, no LLM, no network (v3.0.4), and a
+  // domain switch on the same element re-points without reloading.
+  const shWanted = !!(shFold && shHost);
   if (!shWanted) {
     if (mountedSharedEl && !(mountedSharedEl === shHost && sharedSectionBusy())) {
       unmountSharedSection();
@@ -1260,10 +1296,22 @@ function mountHostedSections(token) {
       domain: slug, token,
       onBusyChange: onHostedBusyChange,
       onLensChange: onSharedLensChange,
+      describeDomain: describeDomainForShared,
     });
     mountedSharedEl = shHost;
     mountedSharedDomain = slug;
   }
+}
+
+/** What ④ needs to know about a domain it names (v3.65.3): the install's
+ *  own domain index — the identity dot's key (design rule 5), the SAME order
+ *  the sidebar rows are painted in — and its page count. Read at render
+ *  time, so it is never stale after a switch or a pull. */
+function describeDomainForShared(slug) {
+  const list = Array.isArray(state.domains) ? state.domains : [];
+  const index = list.findIndex((d) => d && d.slug === slug);
+  const d = index >= 0 ? list[index] : null;
+  return { index, pages: d && typeof d.pageCount === 'number' ? d.pageCount : null };
 }
 
 /** The fold toggles. Bound per element and marked, because this runs on every
@@ -3398,6 +3446,19 @@ function renderMain(token) {
   // mono`. It is a PATH, and typography.css gives paths to IBM Plex Mono;
   // routing it through the header's eyebrow slot would render it in the sans
   // face. It is a location, not prose, so it is not what this change is about.
+  //
+  // ④'s ⓘ (v3.65.3) — ONE paragraph, the same in every state; the
+  // explanations its states used to carry inline moved here (rule 3).
+  // WRITTEN INLINE, not as a module const, and composed once: three suites
+  // lift renderMain by brace-matching and execute it against a fixed stub
+  // list, so a new module-level name here is a suite that CRASHES — infoMark
+  // is already on every one of those lists.
+  const sharedInfo = infoMark('dm-shared-info', 'About Shared Brain',
+    'A Shared Brain is a wiki a cohort writes together. A domain takes part in one of two ways: it contributes — ' +
+    'Push summarises the pages you changed with your AI provider and sends them to the cohort’s GitHub repository — ' +
+    'or it is a mirror, the read-only copy of the merged wiki that Pull writes onto this computer. Which domains ' +
+    'contribute is chosen when you join; to change it, leave and join again. Turning the feature on, joining and ' +
+    'setting one up happen in the Shared Brain view.');
   const html =
     // A SUCCESSFUL switch lands here, not on the empty card — the whole point
     // is that the list is no longer empty. If the confirmation only rendered
@@ -3565,34 +3626,40 @@ function renderMain(token) {
     // ── SHARED BRAIN, BETWEEN THE PROJECTS AND THE HOUSEKEEPING ──────────
     //
     // A fact ABOUT the domain, like Projects, and above the maintenance
-    // report for the same reason Projects is. CLOSED by default on every
-    // domain: most installs have no Shared Brain at all, and the panel's own
-    // off-state is one line and a door.
+    // report for the same reason Projects is.
     //
-    // The eyebrow names the block and carries no prose (the design system's
-    // rule), so the full view's "your team's brain" positioning line does
-    // NOT follow the panel down here — that sentence is taught once, in the
-    // OVERVIEW ⓘ's three-layer legend directly above.
-    '<div class="dm-section dm-section-hd">' +
-      '<span class="dm-section-num" aria-hidden="true">4</span>' +
-      '<div class="cur-group-title dm-section-eyebrow">Shared Brain</div>' +
+    // ── ④ IS NO LONGER A FOLD (v3.65.3) ─────────────────────────────────
+    // The maintainer, on v3.65.2: *"let's do the same like we did with
+    // Ingest — no drop-down, this is an important section, show it without
+    // a drop-down."* The same move as ①: the `<details>` became a plain
+    // `<section>` (always open, no chevron, no stored preference —
+    // readSectionPrefs no longer reads `shared`), the head gained ①'s
+    // anatomy (numeral, title, ⓘ, and the one reading right-aligned), and
+    // the panel now mounts on EVERY domain page, which is also what makes
+    // the OVERVIEW's SHARED tile appear at all (D7).
+    //
+    // THE ID DID NOT MOVE — `patchMainAroundHosts` recognises the host by
+    // `id="dm-shared-fold"` among the column's top-level children and never
+    // replaces it, so a push in flight, a shown-once admin token and a typed
+    // revoke keep their nodes through every repaint.
+    //
+    // THE READING is `state.sharedReading`, which onSharedLensChange() also
+    // writes straight into `#dm-shared-reading` with no repaint; '' until
+    // the panel has reported, never a guess (D6).
+    '<div class="dm-section dm-section-hd-block dm-shared-hd">' +
+      '<div class="dm-section-head-row">' +
+        '<div class="dm-section-hd">' +
+          '<span class="dm-section-num" aria-hidden="true">4</span>' +
+          '<div class="cur-group-title dm-section-eyebrow" id="dm-shared-title" tabindex="-1">Shared Brain</div>' +
+        '</div>' +
+        sharedInfo.btn +
+        '<span class="dm-fold-meta dm-section-meta" id="dm-shared-reading">' + escapeHtml(state.sharedReading || '') + '</span>' +
+      '</div>' +
+      sharedInfo.panel +
     '</div>' +
-    '<details class="dm-fold dm-shared" id="dm-shared-fold" data-dm-fold="shared"' +
-      ((state.sectionPrefs && state.sectionPrefs.shared === true) ? ' open' : '') + '>' +
-      '<summary class="dm-fold-summary" aria-label="Shared Brain">' + icon('chevronRight', 14) +
-        // THE ROW STILL READS. With the title lifted out, a summary with no
-        // connection would be a bare chevron, so the ABSENCE of a connection
-        // becomes the reading — but only once the panel has reported one.
-        // `state.sharedJump` is null until then, and "not connected" while
-        // the answer is in flight is a claim this page cannot make.
-        '<span class="dm-fold-meta">' +
-          (state.sharedJump
-            ? (state.sharedJump.show ? escapeHtml(state.sharedJump.value) : 'not connected')
-            : '') +
-        '</span>' +
-      '</summary>' +
+    '<section class="dm-fold dm-shared" id="dm-shared-fold" aria-labelledby="dm-shared-title">' +
       '<div class="dm-fold-body"><div class="dm-host" id="dm-shared-host"></div></div>' +
-    '</details>' +
+    '</section>' +
     renderHealthPanel(domain, readonly);
 
   setMain(html, token);

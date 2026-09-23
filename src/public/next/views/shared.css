@@ -181,9 +181,9 @@
    already measures. */
 .sb-sec { display: flex; flex-direction: column; gap: var(--space-7); }
 
-/* The one sentence each empty/off/mirror state gets. Same role, same size as
-   every other description in the app (13px, --text-2) — not a private
-   smaller size, which is the defect v3.58.0 removed from the CTA cards. */
+/* The one sentence each empty/off state gets. Same role, same size as every
+   other description in the app (13px, --text-2) — not a private smaller
+   size, which is the defect v3.58.0 removed from the CTA cards. */
 .sb-sec-line {
   margin: 0;
   font-size: var(--text-sm);
@@ -191,25 +191,111 @@
   max-width: 68ch;
 }
 
-/* The door row. Left-aligned under whatever it follows: it is a route out,
-   not the section's primary action — the section has none. */
+/* The door row for the loading and error states. */
 .sb-sec-door { display: flex; gap: var(--space-5); flex-wrap: wrap; }
 
-/* A `shared-*` mirror domain's read-only strip. Inset rather than raised:
-   it reports, it does not act. */
-.sb-sec-mirror {
+/* ── v3.65.3: THE SECTION BODY, KIT ANATOMY ONLY ───────────────────────────
+   ④ is always open now (the same move as ① Ingest in v3.65.2), so what is
+   inside it is on screen on every domain page and has to read as the page
+   does. Two anatomies are COPIED BY VALUE from views/domains.css, because a
+   view stylesheet may not name another view's prefix (the ingest precedent,
+   v3.65.2 I2); scripts/test-next-sharedbrain-ui-parity.js pins each copied
+   property against its source, so they cannot drift silently.
+
+   (1) States A, B, E — Quick maintenance's EMPTY anatomy (`.dm-quick` +
+       `.dm-quick-empty`): the one sentence left, the one door right, one
+       tinted panel. */
+.sb-sec-empty {
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-tint);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.sb-sec-empty-text { flex: 1 1 auto; min-width: 0; }
+/* A domain named in state B's sentence carries its identity dot inline. */
+.sb-sec-dom { display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
+.sb-sec-dom .cur-sb-dot { align-self: center; }
+
+/* States C and D — one connection. The root keeps `.sb-card` (every
+   listener finds a connection by it) and SHEDS its chrome here: the section
+   is already the page's card, and a card inside it is the box-in-a-box the
+   design removed (638px of it, measured). */
+.sb-card.sb-sec-conn {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  padding: var(--space-7) var(--space-8);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--hairline);
-  background: var(--surface-inset);
 }
-.sb-sec-mirror-head { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-/* The strip's stats row is the card's, minus the card's bottom gap — this is
-   the last thing in the strip and the strip supplies its own padding. */
-.sb-sec-mirror .sb-card-stats { margin-bottom: 0; }
+.sb-sec-conn + .sb-sec-conn { padding-top: var(--space-7); border-top: 1px solid var(--border-subtle); }
+
+/* The identity line: dot + brain name, the role chip, the repository right. */
+.sb-sec-id { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+.sb-sec-id-name { display: inline-flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.sb-sec-role {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  background: var(--surface-inset);
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+}
+
+/* ONE action row, left-aligned like Quick maintenance's `.dm-quick-actions`.
+   The push/synthesis confirm takes the row's whole width when it opens. */
+.sb-sec-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sb-sec-actions .sb-confirm-block { flex-basis: 100%; }
+
+/* (2) The fold rows — `.dm-group`'s anatomy: title left, one-line reading
+       right, chevron; a hairline between rows. */
+.sb-sec-rows { display: flex; flex-direction: column; }
+.sb-sec-row { border-top: 1px solid var(--border-subtle); }
+.sb-sec-row-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 2px;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  list-style: none;
+  flex-wrap: wrap;
+}
+.sb-sec-row-summary::-webkit-details-marker { display: none; }
+.sb-sec-row-summary svg {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--t-state);
+}
+.sb-sec-row[open] > .sb-sec-row-summary svg { transform: rotate(90deg); }
+.sb-sec-row-label { font-size: var(--text-sm); color: var(--text); }
+.sb-sec-row-meta {
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 12ch;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  text-align: right;
+  font-variant-numeric: var(--numeric-tabular);
+}
+.sb-sec-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: 2px 2px 10px 21px;
+}
+.sb-sec-row-line { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+.sb-sec-row-body .sb-card-skips-list { margin: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .sb-sec-row-summary svg { transition: none; }
+}
 
 /* ── Cards container ──────────────────────────────────────────────────── */
 
