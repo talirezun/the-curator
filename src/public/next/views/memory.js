@@ -11316,12 +11316,11 @@ function runLineText(runsOn) {
 function pressPlanAi(token) {
   const p = planFor();
   const runsOn = p && p.estimate ? p.estimate.runsOn : null;
-  if (!p || !runsOn || runsOn.needsKey === true) return;
-  if (!planAiNeedsConfirm(runsOn)) {
-    runPlan('ai', token).catch((err) => reportAsyncMountFailure(token, err));
-    return;
-  }
-  confirmThen({
+  if (!p || !runsOn || runsOn.needsKey === true) return Promise.resolve();
+  if (!planAiNeedsConfirm(runsOn)) return runPlan('ai', token);
+  // RETURNED, never dropped: the caller owns the rejection path
+  // (scripts/test-next-confirm-dialog.js holds every call site to that).
+  return confirmThen({
     title: 'Suggest a reading plan with AI?',
     message: runLineText(runsOn),
     detail: 'It reads titles, roles, sizes and each document’s opening lines, and proposes a plan. '
@@ -11329,7 +11328,7 @@ function pressPlanAi(token) {
     confirmLabel: 'Suggest with AI',
     tone: 'default',
     onConfirm: () => runPlan('ai', token),
-  }).catch((err) => reportAsyncMountFailure(token, err));
+  });
 }
 
 /** The `if applied` read. POSTs the ticked plan to the preview route, which
@@ -11531,7 +11530,11 @@ function bindSessionAndPlan(root, token) {
     });
   }
   const ai = one('#mem-plan-ai');
-  if (once(ai)) ai.addEventListener('click', () => pressPlanAi(token));
+  if (once(ai)) {
+    ai.addEventListener('click', () => {
+      pressPlanAi(token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  }
   const apply = one('#mem-plan-apply');
   if (once(apply)) {
     apply.addEventListener('click', () => {
