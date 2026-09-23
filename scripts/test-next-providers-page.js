@@ -1257,9 +1257,20 @@ section('§12  BLOCK 2 IS "YOUR AI MODEL" — every AI job, derived from AI_JOBS
     `its summary reads "${JOBS.length} jobs" — N is the registry’s length, right-aligned in mono`);
   const rows = [...fold.matchAll(/<tr data-ai-job="([^"]+)"><th scope="row">([^<]*)<\/th><td>([^<]*)<\/td><td class="mono">([^<]*)<\/td><\/tr>/g)];
   ok(rows.length === JOBS.length, `one table row per build-lane job (got ${rows.length})`);
+  // "Cost shown" states what is true TODAY: a registry entry annotated with a
+  // future version ("after (v3.67.1)") renders "not yet" — the screen never
+  // promises a release number (orchestrator's screen review, v3.67.0).
+  const shownToday = (c) => (/\(v\d+\.\d+(\.\d+)?\)/.test(c) ? 'not yet' : c);
   ok(rows.every((r, i) => JOBS[i] && r[1] === JOBS[i].id && r[2] === esc(JOBS[i].label)
-      && r[3] === esc(JOBS[i].startedFrom) && r[4] === esc(JOBS[i].costShown)),
+      && r[3] === esc(JOBS[i].startedFrom) && r[4] === esc(shownToday(JOBS[i].costShown))),
     'each row is its job’s label · started from · cost shown, in registry order');
+  const sbRow = rows.find((r) => r[1] === 'shared-brain');
+  ok(sbRow && sbRow[4] === 'not yet',
+    `the Shared Brain row’s cost reads "not yet" (got ${sbRow ? JSON.stringify(sbRow[4]) : 'no row'})`);
+  ok(!/\(v\d+\.\d+/.test(fold.slice(0, fold.indexOf('</details>'))),
+    'no future version number anywhere in the Used by row');
+  ok(rows.some((r) => r[4] === 'before · after') && rows.some((r) => r[4] === 'before (batch) · after'),
+    'CONTROL: every other row keeps its registry copy verbatim');
   ok(!fold.includes('data-ai-job="chat"'), 'Chat is NOT a row — it is not on this model');
   okContains(fold, '<th scope="col">Job</th><th scope="col">Started from</th><th scope="col">Cost shown</th>',
     'the table is headed Job · Started from · Cost shown');
