@@ -149,7 +149,11 @@ function baseConn(over) {
     fellow_id: randomUUID(),
     fellow_display_name: 'Tester',
     shared_domain: 'workai',
-    shared_brain_slug: 'cohort',
+    // UNIQUE per call since v3.65.3: saveSharedBrain now also refuses a
+    // DIFFERENT brain that would share another's local mirror domain
+    // (connectionClash's `mirror` arm, §2b). A fixed slug here would make
+    // every "a different brain is allowed" acceptance below a mirror clash.
+    shared_brain_slug: 'cohort-' + randomUUID().slice(0, 8),
     local_domains: [],
     enabled: true,
     read_only: false,
@@ -298,6 +302,82 @@ section('2. F-15 — joining the same (repo, shared_domain) twice is refused');
   // Clean up so §5's log check and the isolation fingerprint stay readable.
   await req('DELETE', `/api/sharedbrain/${otherDomain.id}`);
   await req('DELETE', `/api/sharedbrain/${otherRepo.id}`);
+}
+
+// ═══ §2b — v3.65.3: two different brains may not share one local mirror ═══
+section('2b. v3.65.3 — a different brain with the same mirror name is refused, early and late');
+{
+  const { connectionClash } = cfgT;
+  const first = baseConn({ label: 'Reading Group', github_repo_owner: 'bob', github_repo_name: 'reading',
+    shared_domain: 'reading', shared_brain_slug: 'reading-group' });
+  eq((await req('POST', '/api/sharedbrain/save', { connection: first })).status, 200,
+    'control: the first "Reading Group" connects');
+
+  // THE LATE REFUSAL — /save, a genuinely different brain (other owner, other
+  // repo, other folder) whose NAME derives the same mirror.
+  const second = baseConn({ label: 'Reading Group', github_repo_owner: 'carol', github_repo_name: 'books',
+    shared_domain: 'club', shared_brain_slug: 'reading-group' });
+  const rSecond = await req('POST', '/api/sharedbrain/save', { connection: second });
+  eq(rSecond.status, 400, 'a different brain with the same mirror name is refused at /save');
+  ok(/already\s+uses the local domain shared-reading-group/i.test(rSecond.body.error || ''),
+    'the refusal names the mirror domain both would share');
+  ok(/can't share one\s+mirror/i.test(rSecond.body.error || ''), 'and says why');
+  ok(!getSharedBrains().some(c => c.id === second.id), 'the clashing connection was not written');
+  const rCase = await req('POST', '/api/sharedbrain/save',
+    { connection: { ...second, id: randomUUID(), fellow_id: randomUUID(), shared_brain_slug: 'Reading-Group' } });
+  eq(rCase.status, 400, 'a case-different slug is the same folder on a case-insensitive volume — refused');
+
+  // THE EARLY REFUSAL — the wizard's check, same function, no credential.
+  const early = await req('POST', '/api/sharedbrain/check-clash', {
+    storage_type: 'github', github_repo_owner: 'carol', github_repo_name: 'books',
+    shared_domain: 'club', shared_brain_slug: 'reading-group',
+  });
+  eq(early.status, 200, 'check-clash answers 200 — a clash is an answer, not a failure');
+  eq(early.body.ok, false, 'check-clash reports the clash');
+  eq(early.body.kind, 'mirror', 'as a MIRROR clash');
+  eq(early.body.label, 'Reading Group', 'naming the brain already here');
+  eq(early.body.mirror, 'shared-reading-group', 'and the local domain');
+  eq(early.body.error, rSecond.body.error, 'with the SAME sentence /save refuses with — one function');
+
+  const earlyDup = await req('POST', '/api/sharedbrain/check-clash', {
+    storage_type: 'github', github_repo_owner: 'BOB', github_repo_name: 'Reading',
+    shared_domain: 'reading', shared_brain_slug: 'anything-else',
+  });
+  eq(earlyDup.body.kind, 'identity', 'the SAME brain again is the identity refusal, early');
+  ok(/already connected to that shared brain/i.test(earlyDup.body.error || ''), 'with the v3.43.0 sentence');
+
+  // ACCEPTANCE — the check is not a wall.
+  const clear = await req('POST', '/api/sharedbrain/check-clash', {
+    storage_type: 'github', github_repo_owner: 'carol', github_repo_name: 'books',
+    shared_domain: 'club', shared_brain_slug: 'book-club',
+  });
+  eq(clear.status, 200, 'an unrelated brain: 200');
+  eq(clear.body.ok, true, 'and ok:true');
+  const renamed = { ...second, id: randomUUID(), fellow_id: randomUUID(), shared_brain_slug: 'book-club' };
+  eq((await req('POST', '/api/sharedbrain/save', { connection: renamed })).status, 200,
+    'the same different brain under a different name connects');
+  eq((await req('POST', '/api/sharedbrain/check-clash', {})).status, 400,
+    'a body naming no brain is a 400');
+  const leak = await req('POST', '/api/sharedbrain/check-clash', {
+    storage_type: 'github', github_repo_owner: 'bob', github_repo_name: 'reading', shared_domain: 'reading',
+  });
+  ok(!/github_pat|TESTONLY/.test(JSON.stringify(leak.body)), 'check-clash never echoes a stored credential');
+
+  // RE-SAVING an existing pair written before this refusal must keep working
+  // (a rotate on either would otherwise be stranded).
+  const legacy = [
+    { id: 'a', label: 'Old A', shared_brain_slug: 'twin', storage_type: 'github', github_repo_owner: 'x', github_repo_name: 'y', shared_domain: 'p' },
+    { id: 'b', label: 'Old B', shared_brain_slug: 'twin', storage_type: 'github', github_repo_owner: 'x', github_repo_name: 'z', shared_domain: 'q' },
+  ];
+  eq(connectionClash({ ...legacy[1] }, legacy, { skipMirrorFor: legacy[1] }), null,
+    'a re-save of a legacy twin with its slug UNCHANGED is not refused');
+  eq(connectionClash({ ...legacy[1], shared_brain_slug: 'Twin' }, legacy, { skipMirrorFor: { ...legacy[1], shared_brain_slug: 'other' } }).kind,
+    'mirror', 'but CHANGING a slug onto another brain\'s mirror is');
+  eq(connectionClash({ ...legacy[1], id: 'c', shared_domain: 'r' }, legacy, null).kind, 'mirror',
+    'and a NEW connection onto a taken mirror is');
+
+  await req('DELETE', `/api/sharedbrain/${first.id}`);
+  await req('DELETE', `/api/sharedbrain/${renamed.id}`);
 }
 
 // ═══ §3 — F-03 (naming half): the shared- namespace is reserved ════════════

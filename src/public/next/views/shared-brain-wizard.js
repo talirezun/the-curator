@@ -141,6 +141,10 @@ import { createLoadingGate, loaderHtml } from '../shared/loading-gate.js';
 // markup AND the single delegated toggle listener, which it installs on
 // import, so a panel rendered here behaves exactly as one in Settings.
 import { renderInfoMark } from '../shared/text.js';
+// The identity dot (v3.65.1, design rule 5): one domain, one colour,
+// everywhere it is named — step 4's domain list names domains, so it carries
+// them. Imported, never re-implemented; shared/sidebar.js is the kit's.
+import { identityDotClass } from '../shared/sidebar.js';
 
 // ── State ────────────────────────────────────────────────────────────────
 
@@ -260,9 +264,16 @@ function currentValidatedPat() {
 
 // ── Panel / label tables (mirrors SB_STEP_PANELS / SB_STEP_LABELS) ────────
 
+// ── CREATE: THE TOKEN COMES BEFORE THE INVITE (v3.65.3, D4) ──────────────
+// It used to be setup → invite → token: the admin was handed an invite and a
+// shown-once admin token for a repository nothing had checked, and a typo'd
+// `owner/name` became an invite to nothing, already sent. Checking the
+// admin's own token first is the check that the repository EXISTS and this
+// person can write to it (POST /validate-pat is repo-bound, H1), so the
+// invite is minted only once there is something real for it to name.
 const STEP_PANELS = {
   join:   ['step-1', 'step-2', 'step-3', 'step-4', 'step-5'],
-  create: ['admin-step-1', 'admin-step-2', 'step-3', 'step-4', 'step-5'],
+  create: ['admin-step-1', 'step-3', 'admin-step-2', 'step-4', 'step-5'],
 };
 // STEP 3 IS "Your token", NOT "PAT". Three letters of GitHub jargon labelled
 // the step that decides who can and cannot join, and nothing on screen said
@@ -272,7 +283,7 @@ const STEP_PANELS = {
 // one word apart in the labels and are told apart by the headings.
 const STEP_LABELS = {
   join:   ['Token', 'Access', 'Your token', 'Domains', 'Save'],
-  create: ['Setup', 'Invite', 'Your token', 'Domains', 'Save'],
+  create: ['Setup', 'Your token', 'Invite', 'Domains', 'Save'],
 };
 
 const STEP_TOTAL = 5;
@@ -308,6 +319,65 @@ function repoOwnerOf(meta) {
   const repo = meta && typeof meta.repo === 'string' ? meta.repo : '';
   const owner = repo.split('/')[0] || '';
   return owner.trim();
+}
+
+/** THE LOCAL MIRROR'S NAME — ONE FUNCTION, USED BY THE SAVE AND BY EVERY
+ *  PLACE THE WIZARD SHOWS IT (v3.65.3, D1).
+ *
+ *  The rule is BYTE-IDENTICAL to the one the save handler has always inlined
+ *  (lowercase, every run of anything but a-z 0-9 and "-" becomes one "-",
+ *  trimmed, 40 characters, "cohort" when nothing survives). It is NOT the
+ *  folder field's slugify, and it must not be "cleaned up" into it: every
+ *  member of every existing brain derived their mirror with THIS rule, so
+ *  changing it would give two members of one cohort two different local
+ *  domains for the same brain.
+ *
+ *  What was wrong was not the rule but the promise: admin step 1 told the
+ *  admin each member sees `shared-<folder>`, when the save has always used
+ *  the brain NAME. So the name is now shown, live, from this function, and
+ *  the save calls the same function — the screen and the disk cannot differ. */
+function mirrorSlugForName(name) {
+  return String(name || '').toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || 'cohort';
+}
+
+/** The body of POST /api/sharedbrain/check-clash for one invite's metadata —
+ *  the five PUBLIC fields a clash is decided on, never a credential. Null
+ *  when the metadata cannot name a brain (nothing to ask about). */
+function clashCheckRequest(meta) {
+  if (!meta || typeof meta.repo !== 'string' || typeof meta.name !== 'string') return null;
+  const [owner, name] = meta.repo.split('/');
+  if (!owner || !name) return null;
+  return {
+    storage_type: meta.storage_type || 'github',
+    github_repo_owner: owner,
+    github_repo_name: name,
+    shared_domain: typeof meta.shared_domain === 'string' ? meta.shared_domain : '',
+    shared_brain_slug: mirrorSlugForName(meta.name),
+  };
+}
+
+/** The server's clash answer, as the sentence a person on THIS step can act
+ *  on — null when there is no clash. The server's sentence is the one /save
+ *  would refuse with (one function, connectionClash); only its API prefix is
+ *  dropped, and a MIRROR clash met by an admin who is still NAMING the brain
+ *  gets the one action open to them, since "ask this brain's admin" would be
+ *  asking themselves. */
+function clashMessage(answer, mode) {
+  if (!answer || answer.ok !== false) return null;
+  const text = String(answer.error || '').replace(/^SharedBrain connection:\s*/, '');
+  if (answer.kind === 'mirror') {
+    const label = String(answer.label || 'another brain');
+    const mirror = String(answer.mirror || 'that mirror');
+    return 'Another Shared Brain on this computer, “' + label + '”, already uses the local domain ' +
+      mirror + '. Two brains can’t share one mirror — ' +
+      (mode === 'create'
+        ? 'choose a different brain name.'
+        : 'ask this brain’s admin to rename it, or leave “' + label + '” first.');
+  }
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : 'This Shared Brain is already connected on this computer.';
 }
 
 /** THE COHORT-KILLER, IN ONE SENTENCE.
@@ -510,7 +580,7 @@ function discardConfirmText(sig) {
  *     thing already on screen. */
 const PRIMARY_BUTTON_IDS = {
   join:   ['sbw-step1-next', 'sbw-step2-next', 'sbw-step3-next', 'sbw-step4-next', 'sbw-step5-save'],
-  create: ['sbw-admin-step1-next', 'sbw-admin-step2-next', 'sbw-step3-next', 'sbw-step4-next', 'sbw-step5-save'],
+  create: ['sbw-admin-step1-next', 'sbw-step3-next', 'sbw-admin-step2-next', 'sbw-step4-next', 'sbw-step5-save'],
 };
 
 function primaryButtonId(mode, step) {
@@ -545,6 +615,10 @@ export function openSharedBrainWizard(mode, opts) {
   state = freshState();
   state.mode = mode === 'create' ? 'create' : 'join';
   state.onSaved = (opts && typeof opts.onSaved === 'function') ? opts.onSaved : null;
+  // D16: opened from a domain page, that domain is the obvious contributor —
+  // pre-ticked, still un-tickable. populateDomains() prunes it if it is a
+  // mirror or no longer exists, like any other stale selection (rule 2).
+  if (opts && typeof opts.domain === 'string' && opts.domain) state.selectedDomains.add(opts.domain);
   state.prevFocus = document.activeElement;
 
   root = document.createElement('div');
@@ -552,6 +626,12 @@ export function openSharedBrainWizard(mode, opts) {
   document.body.appendChild(root);
 
   document.addEventListener('keydown', onWizardKeydown, true);
+  // D5 (v3.65.3): a reload or a window close used to destroy a half-typed
+  // wizard — and, in create mode, a shown-once admin token — with no word.
+  // Removed in closeWizard(), symmetric; gated on the same isDirty() every
+  // dismiss gesture asks. It carries no credential: the browser shows its own
+  // generic prompt and ignores any text a page supplies.
+  window.addEventListener('beforeunload', onWizardBeforeUnload);
 
   bindChrome();
   bindStep1();
@@ -662,6 +742,7 @@ function closeWizard() {
   if (patInput) patInput.value = '';
 
   document.removeEventListener('keydown', onWizardKeydown, true);
+  window.removeEventListener('beforeunload', onWizardBeforeUnload);
   const prevFocus = state.prevFocus;
   root.remove();
   root = null;
@@ -669,6 +750,17 @@ function closeWizard() {
   if (prevFocus && typeof prevFocus.focus === 'function') {
     try { prevFocus.focus(); } catch { /* element may be gone */ }
   }
+}
+
+/** The leave-page guard (D5). Asks the dismiss guard's own question — "would
+ *  closing now lose something typed?" — and, when it would, asks the browser
+ *  to confirm. Never while nothing is typed: a prompt on an empty wizard
+ *  trains people to click through it. */
+function onWizardBeforeUnload(e) {
+  if (!root || !isDirty(dirtySignals())) return undefined;
+  e.preventDefault();
+  e.returnValue = '';
+  return '';
 }
 
 // M3 fix: the single check every dismiss path (Escape, backdrop click, the
@@ -913,12 +1005,16 @@ function panelStep1() {
         '<input type="text" id="sbw-invite-token" class="sbw-input mono" placeholder="sbi_..." autocomplete="off" spellcheck="false">' +
       '</div>' +
       '<div id="sbw-invite-preview" class="sbw-preview sbw-hidden">' +
-        '<h4>' + icon('check', 13) + ' Token verified</h4>' +
+        // "Invite read", not "Token verified" (D9): the invite is unsigned
+        // base64, decoded locally, and nothing about it was VERIFIED — the
+        // repository is checked on step 3, with your own token.
+        '<h4>' + icon('check', 13) + ' Invite read</h4>' +
         '<dl>' +
           '<dt>Brain name</dt><dd data-field="name"></dd>' +
           '<dt>GitHub repo</dt><dd class="mono" data-field="repo"></dd>' +
           '<dt>Branch</dt><dd class="mono" data-field="branch"></dd>' +
           '<dt>Folder in the repo</dt><dd class="mono" data-field="shared_domain"></dd>' +
+          '<dt>On this computer</dt><dd class="mono" data-field="mirror"></dd>' +
         '</dl>' +
       '</div>' +
       '<div id="sbw-step1-status" class="sbw-status sbw-hidden" aria-live="polite"></div>' +
@@ -944,7 +1040,11 @@ function panelStep2() {
         '</div>' +
       '</div>' +
       '<a id="sbw-repo-link" href="" target="_blank" rel="noopener" class="btn btn-secondary sbw-link-btn">' + icon('folder', 14) + ' Open the repo on GitHub</a>' +
-      '<p class="sbw-hint sbw-note-block">' + icon('alertCircle', 12) + ' Don’t see the invitation in your inbox? Check your spam folder, or ask the admin to resend it from the repo’s <strong>Settings → Collaborators</strong> page.</p>' +
+      // ONE text span per note (D12): `.sbw-note-block` is a flex row, so a
+      // bare text node and every <strong> inside it became their own flex
+      // COLUMN — measured six columns on one sentence. The row is now exactly
+      // two children, the icon and the text.
+      '<p class="sbw-hint sbw-note-block">' + icon('alertCircle', 12) + '<span class="sbw-note-text">Don’t see the invitation in your inbox? Check your spam folder, or ask the admin to resend it from the repo’s <strong>Settings → Collaborators</strong> page.</span></p>' +
       '<div class="sbw-actions">' +
         '<button type="button" class="btn btn-secondary" data-sbw-action="back">← Back</button>' +
         '<button type="button" class="btn btn-primary" id="sbw-step2-next">I’ve accepted — continue →</button>' +
@@ -957,7 +1057,8 @@ function panelAdminStep1() {
   const repoWhy = renderInfoMark('sbw-admin-repo-info', 'What a repository and a collaborator are',
     'A <strong>repository</strong> is a folder GitHub stores for you, with a history of every change. ' +
     'Any name works; you’ll paste its full name below. Adding someone as a <strong>collaborator</strong> ' +
-    'is how GitHub grants them the right to write to it.', { html: true });
+    'is how GitHub grants them the right to write to it. The <strong>brain name</strong> is a friendly ' +
+    'label every member sees — for example “Spring 2026 ML Cohort” or “PhD Reading Group”.', { html: true });
   return (
     '<div id="sbw-panel-admin-step-1" class="sbw-panel sbw-hidden">' +
       '<h3>Name your Shared Brain and its repository</h3>' +
@@ -980,13 +1081,18 @@ function panelAdminStep1() {
       '<div class="sbw-field">' +
         '<label class="sbw-label" for="sbw-admin-name">Brain name <span class="sbw-label-note">(a friendly label, not a URL)</span></label>' +
         '<input type="text" id="sbw-admin-name" class="sbw-input" placeholder="Spring 2026 ML Cohort">' +
-        '<span class="sbw-help">Examples: “Spring 2026 ML Cohort”, “Marketing Research Team”, “PhD Reading Group”. Contributors see this in their Curator app.</span>' +
+        // THE ONE LIVE LINE (D1): what the name becomes on every member's
+        // computer, from mirrorSlugForName() — the function the save calls.
+        '<span class="sbw-help" id="sbw-admin-mirror">On every member’s computer this brain appears as <code data-field="mirror">shared-cohort</code>.</span>' +
       '</div>' +
       '<div class="sbw-field-row">' +
         '<div class="sbw-field">' +
           '<label class="sbw-label" for="sbw-admin-shared-domain">Folder inside the repo <span class="sbw-label-note">(filled in from the brain name — you can change it)</span></label>' +
           '<input type="text" id="sbw-admin-shared-domain" class="sbw-input mono" placeholder="spring-2026-ml-cohort" autocomplete="off" spellcheck="false">' +
-          '<span class="sbw-help">Where wiki pages live: <code>collective/&lt;this&gt;/wiki/</code>. Each contributor sees this as <code>shared-&lt;this&gt;</code> in their domain list.</span>' +
+          // FALSE until v3.65.3 (D1): it promised `shared-<folder>`, and the
+          // save has always named the mirror from the brain NAME. The mirror
+          // line above says what is true; this says what the folder is.
+          '<span class="sbw-help">Where wiki pages live in the repository: <code>collective/&lt;this&gt;/wiki/</code>.</span>' +
         '</div>' +
         '<div class="sbw-field">' +
           '<label class="sbw-label" for="sbw-admin-branch">Branch</label>' +
@@ -1019,7 +1125,7 @@ function panelAdminStep1() {
 function panelAdminStep2() {
   return (
     '<div id="sbw-panel-admin-step-2" class="sbw-panel sbw-hidden">' +
-      '<h3>Share this invite token with your cohort</h3>' +
+      '<h3>Share this invite with your cohort</h3>' +
       '<p class="sbw-hint">Send the token below to each contributor by email or chat. They paste it in their own Curator wizard — it’s metadata only and contains no credentials.</p>' +
       '<div class="sbw-token-box">' +
         '<code id="sbw-admin-invite-token" class="sbw-token-display mono">sbi_…</code>' +
@@ -1040,23 +1146,33 @@ function panelAdminStep2() {
           '<li>Click <strong>Add people</strong>, type each contributor’s GitHub username or email, send.</li>' +
           '<li>Send them the invite token above. They run the Shared Brain wizard with the <strong>“I have an invite token”</strong> option.</li>' +
         '</ol>' +
-        '<p class="sbw-hint sbw-note-block">' + icon('alertTriangle', 12) + ' If you go <strong>Back</strong> and change any setting, a <strong>new</strong> invite token is generated — make sure contributors get the latest one.</p>' +
-        '<p class="sbw-hint sbw-note-block">Now we’ll set up <strong>your own</strong> contribution to this brain — your PAT, your domains, your consent. Same as any other contributor.</p>' +
+        '<p class="sbw-hint sbw-note-block">' + icon('alertTriangle', 12) + '<span class="sbw-note-text">If you go <strong>Back</strong> and change any setting, a <strong>new</strong> invite token is generated — make sure contributors get the latest one.</span></p>' +
+        // Rewritten for the new order: the token is already checked, so the
+        // two steps left are domains and consent — and the one fact that
+        // matters about the admin token is WHEN it is stored.
+        '<p class="sbw-hint sbw-note-block">' + icon('lockAlt', 12) + '<span class="sbw-note-text">Next: pick which of <strong>your own</strong> domains contribute, then review and save. Your admin token is stored on this computer when you press <strong>Save &amp; Connect</strong>.</span></p>' +
       '</div>' +
       '<div class="sbw-actions">' +
         '<button type="button" class="btn btn-secondary" data-sbw-action="back">← Back</button>' +
-        '<button type="button" class="btn btn-primary" id="sbw-admin-step2-next">Set up my contribution →</button>' +
+        '<button type="button" class="btn btn-primary" id="sbw-admin-step2-next">Continue →</button>' +
       '</div>' +
     '</div>'
   );
 }
 
 function panelStep3() {
+  // Rule 3 (v3.65.3): the gloss moves into the ⓘ; the visible line is the
+  // instruction. "The admin never sees it" is gone from both — in create mode
+  // the reader IS the admin, and the sentence read as nonsense there.
+  const tokenWhy = renderInfoMark('sbw-pat-info', 'What this token is',
+    'A <strong>token</strong> is a password-like string GitHub gives you so The Curator can read and write the cohort’s repository on your behalf. ' +
+    'This one is <strong>yours</strong> — it identifies your contributions, and nobody else in the cohort ever sees it. ' +
+    'Checking it also proves the repository exists and that you can write to it.', { html: true });
   return (
     '<div id="sbw-panel-step-3" class="sbw-panel sbw-hidden">' +
       '<h3>Create your GitHub access token</h3>' +
-      '<p class="sbw-hint">A <strong>token</strong> is a password-like string GitHub gives you so The Curator can read and write the cohort’s repository on your behalf. ' +
-        'This one is <strong>yours</strong> — it identifies your contributions. The admin never sees it. Other contributors never see it.</p>' +
+      '<p class="sbw-hint">Follow these steps on GitHub, then paste the token below. ' + tokenWhy.btn + '</p>' +
+      tokenWhy.panel +
       '<ol class="sbw-steps">' +
         '<li>Click the button below. It opens GitHub’s <strong>fine-grained token</strong> page with the name already filled in.</li>' +
         // THE TWO STEPS THAT DECIDED WHETHER A COHORT WORKED, AND WERE NOT
@@ -1068,12 +1184,18 @@ function panelStep3() {
         '<li><strong>Permissions</strong> — click <strong>+ Add permissions</strong>, add <strong>Contents</strong>, and set it to <strong>Read and write</strong>.</li>' +
         '<li>Scroll down, click <strong>Generate token</strong>, and copy it — it starts with <code>github_pat_</code> and GitHub shows it only once.</li>' +
       '</ol>' +
-      '<a id="sbw-pat-create-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener" class="btn btn-primary sbw-link-btn sbw-link-btn-primary">Open GitHub to create my token →</a>' +
+      // SECONDARY (D13): a door out to GitHub commits nothing, and this panel
+      // already has its one primary — Continue.
+      '<a id="sbw-pat-create-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener" class="btn btn-secondary sbw-link-btn sbw-link-btn-wide">Open GitHub to create my token →</a>' +
       '<div class="sbw-field" style="margin-top:16px">' +
         '<label class="sbw-label" for="sbw-pat-input">Paste your token here</label>' +
         '<div class="sbw-input-row">' +
           '<input type="password" id="sbw-pat-input" class="sbw-input mono" placeholder="github_pat_..." autocomplete="off" spellcheck="false">' +
-          '<button type="button" class="btn btn-ghost sbw-toggle-vis" data-target="sbw-pat-input" title="Show/hide" aria-label="Show or hide the token">' + icon('dotRing', 14) + '</button>' +
+          // A WORD, not a bare glyph (D14): "Show"/"Hide" says what a press
+          // does, and aria-pressed says which state it is in. The title and
+          // accessible name are kept verbatim — the name CONTAINS the visible
+          // word (WCAG 2.5.3), and test-next-header-adoption pins the pair.
+          '<button type="button" class="btn btn-ghost sbw-toggle-vis" data-target="sbw-pat-input" title="Show/hide" aria-label="Show or hide the token" aria-pressed="false">Show</button>' +
           // A CHECK THE USER CAN ASK FOR. The debounced check behind the
           // field is silent about itself: paste something wrong and the
           // only signal is a grey Continue. This button issues the same
@@ -1082,6 +1204,7 @@ function panelStep3() {
         '</div>' +
         '<div id="sbw-pat-validation" class="sbw-status sbw-hidden" aria-live="polite"></div>' +
       '</div>' +
+      '<div id="sbw-step3-status" class="sbw-status sbw-hidden" aria-live="polite"></div>' +
       '<div class="sbw-actions">' +
         '<button type="button" class="btn btn-secondary" data-sbw-action="back">← Back</button>' +
         '<button type="button" class="btn btn-primary" id="sbw-step3-next" disabled>Continue →</button>' +
@@ -1091,6 +1214,12 @@ function panelStep3() {
 }
 
 function panelStep4() {
+  // Rule 3 (v3.65.3): 58 words of mechanism moved into the ⓘ.
+  const attrWhy = renderInfoMark('sbw-attribution-info', 'What name attribution changes',
+    'Off by default. Wiki pages always credit a short UUID either way; this controls only whether your name is ' +
+    'stored in the contribution records every collaborator on the repo can read. It is set here, when you join — ' +
+    'changing it later means disconnecting and re-joining. It applies only to future pushes and cannot remove a ' +
+    'name already published.');
   return (
     '<div id="sbw-panel-step-4" class="sbw-panel sbw-hidden">' +
       '<h3>What to contribute</h3>' +
@@ -1102,11 +1231,13 @@ function panelStep4() {
       '<div class="sbw-field">' +
         '<label class="sbw-label" for="sbw-display-name">Your display name</label>' +
         '<input type="text" id="sbw-display-name" class="sbw-input" placeholder="Your name">' +
-        '<span class="sbw-help">Stored locally on your machine. Only shared as a UUID by default — see attribution below.</span>' +
+        // D15: the substitution is said where the field is, not discovered
+        // on the review.
+        '<span class="sbw-help">Stored on this computer. Leave empty to appear as “Anonymous Fellow”.</span>' +
       '</div>' +
       '<div class="sbw-field">' +
         '<label class="sbw-checkbox-label"><input type="checkbox" class="cur-check" id="sbw-attribute-name"><span>Show my name in my contribution records (default: anonymous UUID)</span></label>' +
-        '<span class="sbw-help">Off by default. Wiki pages always credit a short UUID either way; this controls only whether your name is stored in the contribution records every collaborator on the repo can read. It is set here, when you join — changing it later means disconnecting and re-joining. It applies only to future pushes and cannot remove a name already published.</span>' +
+        '<span class="sbw-help">Fixed when you join. ' + attrWhy.btn + '</span>' + attrWhy.panel +
       '</div>' +
       '<div id="sbw-step4-status" class="sbw-status sbw-hidden" aria-live="polite"></div>' +
       '<div class="sbw-actions">' +
@@ -1125,9 +1256,14 @@ function panelStep5() {
         '<dl>' +
           '<dt>Connecting to</dt><dd data-field="name"></dd>' +
           '<dt>Repo</dt><dd class="mono" data-field="repo"></dd>' +
+          // D18: everything the save will write that the admin set on step 1
+          // — including the mirror name, from the save's own function.
+          '<dt>Folder · branch</dt><dd class="mono" data-field="folder"></dd>' +
+          '<dt>On this computer</dt><dd class="mono" data-field="mirror"></dd>' +
           '<dt>Contributing domains</dt><dd data-field="domains"></dd>' +
           '<dt>Display name</dt><dd data-field="display-name"></dd>' +
           '<dt>Name attribution</dt><dd data-field="attribution"></dd>' +
+          '<dt class="sbw-hidden" data-field="admin-token-dt">Admin token</dt><dd class="sbw-hidden" data-field="admin-token"></dd>' +
         '</dl>' +
       '</div>' +
       '<div class="sbw-consent">' +
@@ -1185,8 +1321,33 @@ function bindChrome() {
       const input = byId(btn.dataset.target);
       if (!input) return;
       input.type = input.type === 'password' ? 'text' : 'password';
+      const shown = input.type === 'text';
+      btn.textContent = shown ? 'Hide' : 'Show';
+      btn.setAttribute('aria-pressed', shown ? 'true' : 'false');
     });
   });
+}
+
+// ── The early clash check (v3.65.3) ───────────────────────────────────────
+/** Ask the server whether this brain can join the ones already here. Returns
+ *  the sentence to show, or null to carry on — including when the check
+ *  itself could not run, because /save still refuses late with the same
+ *  function, and a wizard that stopped on a failed PRE-check would be a gate
+ *  with nothing behind it. */
+async function checkClash(meta) {
+  const body = clashCheckRequest(meta);
+  if (!body) return null;
+  try {
+    const r = await fetch('/api/sharedbrain/check-clash', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) return null;
+    return clashMessage(await r.json(), state.mode);
+  } catch {
+    return null;
+  }
 }
 
 // ── Step 1: invite token paste + decode ───────────────────────────────────
@@ -1240,7 +1401,26 @@ function bindStep1() {
         preview.querySelector('[data-field="repo"]').textContent = j.metadata.repo;
         preview.querySelector('[data-field="branch"]').textContent = j.metadata.branch || 'main';
         preview.querySelector('[data-field="shared_domain"]').textContent = j.metadata.shared_domain;
+        const mirrorDd = preview.querySelector('[data-field="mirror"]');
+        if (mirrorDd) mirrorDd.textContent = 'shared-' + mirrorSlugForName(j.metadata.name);
         preview.classList.remove('sbw-hidden');
+
+        // ── REFUSED HERE, NOT ON STEP 5 (v3.65.3, D2/D3) ─────────────────
+        // The first moment the wizard knows which brain this is, it asks
+        // whether this computer can take it: the same brain again (a second
+        // membership) or a different brain on the same local mirror. Before
+        // this, both were found only by /save, after a token, a domain list
+        // and a consent. Same function server-side, so the answers agree.
+        // Same sequence guard as the parse above (rule 3). A check that
+        // could not RUN does not block: /save still refuses, as it always did.
+        const refusal = await checkClash(j.metadata);
+        if (mySeq !== state.step1Seq || !isFresh(myGen)) return;
+        if (refusal) {
+          statusEl.textContent = refusal;
+          statusEl.className = 'sbw-status sbw-status-error';
+          statusEl.classList.remove('sbw-hidden');
+          return;
+        }
         nextBtn.disabled = false;
       } catch (err) {
         if (mySeq !== state.step1Seq || !isFresh(myGen)) return;
@@ -1429,7 +1609,13 @@ function bindStep3() {
     runPatCheck('button');
   });
 
-  nextBtn.addEventListener('click', () => {
+  nextBtn.addEventListener('click', async () => {
+    // CREATE: the token step comes BEFORE the invite (D4), so its Continue is
+    // what mints the invite — for a repository the token has just reached.
+    if (state.mode === 'create') {
+      await mintInvite(wizardGen, nextBtn);
+      return;
+    }
     goToStep(4, wizardGen);
     populateDomains();
   });
@@ -1483,6 +1669,10 @@ async function populateDomains() {
     }
 
     container.innerHTML = '';
+    // The install's own domain order is the identity index (rule 5): the
+    // position in the FULL list, never in the filtered one, so a domain is
+    // the same colour here as on its sidebar row.
+    const allNames = domains.map((d) => (typeof d === 'string' ? d : d && d.name));
     for (const d of eligible) {
       const name = typeof d === 'string' ? d : d.name;
       const label = document.createElement('label');
@@ -1498,7 +1688,14 @@ async function populateDomains() {
       cb.value = name;
       cb.checked = state.selectedDomains.has(name); // rule 2
       const span = document.createElement('span');
-      span.textContent = name;
+      span.className = 'sbw-domain-name';
+      const dot = document.createElement('span');
+      dot.className = 'cur-sb-dot ' + identityDotClass(allNames.indexOf(name));
+      dot.setAttribute('aria-hidden', 'true');
+      const text = document.createElement('span');
+      text.textContent = (d && typeof d === 'object' && d.displayName) ? d.displayName : name;
+      span.appendChild(dot);
+      span.appendChild(text);
       label.appendChild(cb);
       label.appendChild(span);
       cb.addEventListener('change', () => {
@@ -1549,7 +1746,9 @@ function bindStep4() {
     status?.classList.add('sbw-hidden');
     if (state.selectedDomains.size === 0 && !isReadOnlyVerdict()) {
       if (status) {
-        status.textContent = 'Please select at least one personal domain to contribute. (You can change this later.)';
+        // D8: "(You can change this later.)" was false — a connection's
+        // domains are fixed at join; changing them means leave and re-join.
+        status.textContent = 'Pick at least one domain to contribute. This is fixed when you join — to change it later you leave and join again.';
         status.className = 'sbw-status sbw-status-error';
         status.classList.remove('sbw-hidden');
       }
@@ -1572,6 +1771,17 @@ function populateReview() {
   const box = byId('sbw-panel-step-5')?.querySelector('.sbw-review');
   if (!box || !meta) return;
   box.querySelector('[data-field="name"]').textContent = meta.name;
+  const set = (field, text) => { const el = box.querySelector('[data-field="' + field + '"]'); if (el) el.textContent = text; };
+  set('folder', 'collective/' + (meta.shared_domain || '') + '/wiki/ · ' + (meta.branch || 'main'));
+  set('mirror', 'shared-' + mirrorSlugForName(meta.name));
+  const adminDt = box.querySelector('[data-field="admin-token-dt"]');
+  const adminDd = box.querySelector('[data-field="admin-token"]');
+  const holdsAdmin = state.mode === 'create' && !!state.generatedAdminToken;
+  if (adminDt) adminDt.classList.toggle('sbw-hidden', !holdsAdmin);
+  if (adminDd) {
+    adminDd.classList.toggle('sbw-hidden', !holdsAdmin);
+    adminDd.textContent = holdsAdmin ? 'stored on this computer when you press Save & Connect' : '';
+  }
   box.querySelector('[data-field="repo"]').textContent =
     meta.repo + (isReadOnlyVerdict() ? ' (read-only member — Pull only)' : '');
   box.querySelector('[data-field="domains"]').textContent =
@@ -1621,15 +1831,11 @@ function bindStep5() {
       const meta = state.inviteMetadata;
       if (!meta) throw new Error('Lost the connection details — go back to step 1 and try again.');
 
-      // Verbatim from the shipping app — a DIFFERENT slugify than the admin
-      // step-1 "folder inside the repo" field (that one allows underscores
-      // and collapses hyphen runs; this one doesn't, and falls back to
-      // "cohort"). Both are ported unchanged, on purpose — see the file
-      // header: this is a credential/data path, not a place to "clean up".
-      const brainSlug = meta.name.toLowerCase()
-        .replace(/[^a-z0-9-]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 40) || 'cohort';
+      // ONE function (v3.65.3, D1): the rule is unchanged, byte for byte,
+      // and it is now the SAME function every step shows the mirror name
+      // from — see mirrorSlugForName(). A DIFFERENT slugify than the admin
+      // step-1 "folder inside the repo" field, on purpose.
+      const brainSlug = mirrorSlugForName(meta.name);
 
       const connection = {
         label: meta.name,
@@ -1715,9 +1921,15 @@ function bindAdminStep1() {
   const nameEl = byId('sbw-admin-name');
   const slugEl = byId('sbw-admin-shared-domain');
 
+  const mirrorEl = byId('sbw-admin-mirror');
+  const paintMirror = () => {
+    const code = mirrorEl && mirrorEl.querySelector ? mirrorEl.querySelector('[data-field="mirror"]') : null;
+    if (code) code.textContent = 'shared-' + mirrorSlugForName(nameEl ? nameEl.value.trim() : '');
+  };
   if (nameEl && slugEl) {
     nameEl.addEventListener('input', () => {
       if (!state.slugManuallyEdited) slugEl.value = slugifyForSharedDomain(nameEl.value);
+      paintMirror();
     });
     slugEl.addEventListener('input', () => {
       state.slugManuallyEdited = slugEl.value.length > 0;
@@ -1764,38 +1976,76 @@ function bindAdminStep1() {
       return;
     }
 
+    // ── NO INVITE YET (v3.65.3, D4) ────────────────────────────────────
+    // This step used to mint the invite and the admin token here, before
+    // anything had checked the repository. It now records the metadata —
+    // which is what the token step checks against — asks whether this
+    // computer can take the brain (D2: a mirror name another brain here
+    // already uses), and moves on. The invite is minted by the token step's
+    // Continue, once the token has reached the repository.
+    const meta = { v: 1, repo, name, shared_domain: sharedDomain, branch, data_handling_terms: dht, storage_type: 'github' };
     next.disabled = true;
-    next.textContent = 'Generating…';
+    next.textContent = 'Checking…';
     try {
-      const r = await fetch('/api/sharedbrain/generate-invite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo, name, shared_domain: sharedDomain, branch, data_handling_terms: dht, storage_type: 'github' }),
-      });
-      const j = await r.json();
+      const refusal = await checkClash(meta);
       if (!isFresh(myGen)) return;
-      if (!r.ok) throw new Error(j.error || 'generate-invite failed');
-
-      setInviteMetadata({ v: 1, repo, name, shared_domain: sharedDomain, branch, data_handling_terms: dht, storage_type: 'github' }); // H1 fix
-      state.generatedInviteToken = j.token;
-      // Rule 7: keep the FIRST generated admin token across a Back+regenerate.
-      if (!state.generatedAdminToken && j.admin_token) state.generatedAdminToken = j.admin_token;
-
-      const inviteTokEl = byId('sbw-admin-invite-token');
-      if (inviteTokEl) inviteTokEl.textContent = j.token;
-      const adminTokEl = byId('sbw-admin-admin-token');
-      if (adminTokEl && state.generatedAdminToken) adminTokEl.textContent = state.generatedAdminToken;
-      const collabLink = byId('sbw-admin-collab-link');
-      if (collabLink) collabLink.href = 'https://github.com/' + repo + '/settings/access';
-
+      if (refusal) { fail(refusal); return; }
+      setInviteMetadata(meta); // H1 fix — a changed repo clears the token verdict
       goToStep(2, myGen);
-    } catch (err) {
-      if (!isFresh(myGen)) return;
-      fail('Could not generate invite token: ' + err.message);
     } finally {
       if (isFresh(myGen)) { next.disabled = false; next.textContent = 'Continue →'; }
     }
   });
+  paintMirror();
+}
+
+/** Create mode's token-step Continue: mint the invite (and, once, the admin
+ *  token) for the metadata step 1 recorded, then show it (v3.65.3, D4).
+ *  POST /generate-invite is a pure local encode; what makes this the right
+ *  moment is that the token beside it has just reached the repository. */
+async function mintInvite(myGen, btn) {
+  const meta = state.inviteMetadata;
+  const status = byId('sbw-step3-status');
+  if (status) { status.classList.add('sbw-hidden'); status.textContent = ''; }
+  if (!meta || !isFresh(myGen)) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  try {
+    const r = await fetch('/api/sharedbrain/generate-invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        repo: meta.repo, name: meta.name, shared_domain: meta.shared_domain, branch: meta.branch,
+        data_handling_terms: meta.data_handling_terms, storage_type: 'github',
+      }),
+    });
+    const j = await r.json();
+    if (!isFresh(myGen)) return;
+    if (!r.ok) throw new Error(j.error || 'generate-invite failed');
+
+    state.generatedInviteToken = j.token;
+    // Rule 7: keep the FIRST generated admin token across a Back+regenerate.
+    if (!state.generatedAdminToken && j.admin_token) state.generatedAdminToken = j.admin_token;
+
+    const inviteTokEl = byId('sbw-admin-invite-token');
+    if (inviteTokEl) inviteTokEl.textContent = j.token;
+    const adminTokEl = byId('sbw-admin-admin-token');
+    if (adminTokEl && state.generatedAdminToken) adminTokEl.textContent = state.generatedAdminToken;
+    const collabLink = byId('sbw-admin-collab-link');
+    if (collabLink) collabLink.href = 'https://github.com/' + meta.repo + '/settings/access';
+
+    goToStep(3, myGen);
+  } catch (err) {
+    if (!isFresh(myGen)) return;
+    if (status) {
+      status.textContent = 'Could not generate the invite: ' + err.message;
+      status.className = 'sbw-status sbw-status-error';
+      status.classList.remove('sbw-hidden');
+    }
+  } finally {
+    // Re-enabled only while a verdict still stands: a Back-and-edit in the
+    // meantime (H1) clears the verdict and must leave Continue grey.
+    if (isFresh(myGen) && btn) { btn.textContent = 'Continue →'; btn.disabled = !currentValidatedPat(); }
+  }
 }
 
 // ── Admin step 2: copy invite/admin token, advance to PAT step ───────────
@@ -1826,5 +2076,10 @@ function bindCopyButton(btnId, getText) {
 function bindAdminStep2() {
   bindCopyButton('sbw-admin-copy-invite', () => state.generatedInviteToken);
   bindCopyButton('sbw-admin-copy-admin-token', () => state.generatedAdminToken);
-  byId('sbw-admin-step2-next')?.addEventListener('click', () => goToStep(3, wizardGen));
+  // The invite is step 3 in create mode now (D4); its Continue goes on to
+  // the domains, and is therefore what populates them (rule 2's call site).
+  byId('sbw-admin-step2-next')?.addEventListener('click', () => {
+    goToStep(4, wizardGen);
+    populateDomains();
+  });
 }

@@ -304,13 +304,28 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
     // chevron-and-a-date row would otherwise lack.
     ok('the Ingest section is labelled Ingest',
       /dm-section-eyebrow" id="dm-sources-title" tabindex="-1">Ingest</.test(html), html.slice(0, 900));
-    ok('the Shared Brain fold is labelled Shared Brain',
-      /dm-section-eyebrow">Shared Brain</.test(html), html.slice(0, 900));
+    ok('the Shared Brain section is labelled Shared Brain, by a focusable-on-landing title',
+      /dm-section-eyebrow" id="dm-shared-title" tabindex="-1">Shared Brain</.test(html), html.slice(0, 900));
     ok('...and neither section says "ADD SOURCES"', !/ADD SOURCES/.test(html));
-    ok('the Shared Brain fold\'s summary carries an accessible name, because a '
-      + 'chevron and a date is not a label',
-    /<summary class="dm-fold-summary" aria-label="Shared Brain">/.test(html),
-    html.slice(0, 900));
+    // ── ④ IS NOT A FOLD EITHER (v3.65.3) ───────────────────────────────
+    // The same move as ①: a <section> keeping the host id, the title in a
+    // head row with an ⓘ, and the one reading right-aligned beside it.
+    {
+      const top = parseHtmlToChildren(html).children;
+      const sh = top.find((n) => n.attrs.id === 'dm-shared-fold');
+      ok('④ is a plain <section>, never a <details>', !!sh && sh.tagName === 'SECTION', sh ? sh.tagName : '(none)');
+      ok('...carrying no `open` attribute and no fold-preference hook',
+        !!sh && !('open' in sh.attrs) && !('data-dm-fold' in sh.attrs), sh ? JSON.stringify(sh.attrs) : '(none)');
+      ok('...labelled by its own title', !!sh && sh.attrs['aria-labelledby'] === 'dm-shared-title');
+      ok('...with nothing inside it a <summary> or a chevron',
+        !!sh && !flatten(sh).some((n) => n.tagName === 'SUMMARY' || n.tagName === 'SVG'));
+      ok('④\'s head carries an ⓘ, and the reading slot right after it',
+        /id="dm-shared-info-btn"[^]*?<\/button><span class="dm-fold-meta dm-section-meta" id="dm-shared-reading">/.test(html));
+      ok('...whose panel explains contribute vs mirror in ONE paragraph',
+        /id="dm-shared-info"[^>]*hidden><p>A Shared Brain is a wiki a cohort writes together\.[^<]*contributes[^<]*mirror[^<]*<\/p>/.test(html)
+        || /id="dm-shared-info"[^>]*hidden>A Shared Brain is a wiki a cohort writes together\./.test(html),
+        (/id="dm-shared-info"[^>]*>[^]{0,120}/.exec(html) || ['(none)'])[0]);
+    }
     // ── ① IS NOT A FOLD (v3.65.2, I1) ───────────────────────────────────
     // The maintainer: "Ingest is number one but hidden below a drop-down. Get
     // rid of it." No `<details>`, no `<summary>`, no chevron, no preference
@@ -328,8 +343,8 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
         !!src && src.attrs['aria-labelledby'] === 'dm-sources-title');
       ok('...and nothing inside it is a <summary> or a chevron',
         !!src && !flatten(src).some((n) => n.tagName === 'SUMMARY' || n.tagName === 'SVG'));
-      ok('there is exactly ONE <summary> on the page now — Shared Brain\'s',
-        (html.match(/<summary /g) || []).length === 1, String((html.match(/<summary /g) || []).length));
+      ok('there is NO <summary> on the page now — ④ followed ① out of the fold (v3.65.3)',
+        (html.match(/<summary /g) || []).length === 0, String((html.match(/<summary /g) || []).length));
       ok('the reading moved into ①\'s HEAD ROW, right after the ⓘ, in the fold-meta face',
         /id="dm-ingest-info-btn"[^]*?<\/button><span class="dm-fold-meta dm-section-meta">(last ingest |nothing ingested yet)/
           .test(html), (/<span class="dm-fold-meta dm-section-meta">[^<]*/.exec(html) || ['(none)'])[0]);
@@ -532,7 +547,7 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('S2 -- ① IS ALWAYS OPEN; ④ KEEPS ITS REMEMBERED FOLD');
+section('S2 -- ① AND ④ ARE ALWAYS OPEN (④ since v3.65.3)');
 // ═════════════════════════════════════════════════════════════════════════
 // v3.65.2 (I1): ① Ingest stopped being a fold. Through v3.65.1 it opened on a
 // never-ingested domain, closed on a mature one, and remembered the user's
@@ -559,8 +574,14 @@ const hostPresent = (html) =>
     /<span class="dm-fold-meta dm-section-meta">nothing ingested yet<\/span>/.test(fresh));
   ok('...and the mature one "last ingest …"',
     /<span class="dm-fold-meta dm-section-meta">last ingest [^<]+<\/span>/.test(mature));
-  eq('SHARED BRAIN is closed on a domain that has never been shared',
+  eq('④ is not a fold that happens to be closed: it has no `open` at all',
     foldOpen(mature, 'dm-shared-fold'), false);
+  ok('...and its host renders on every domain page',
+    flatten(parseHtmlToChildren(mature)).some((x) => x.attrs.id === 'dm-shared-host'));
+  ok('its head reading is EMPTY before the panel has reported — never a guess (D6)',
+    /<span class="dm-fold-meta dm-section-meta" id="dm-shared-reading"><\/span>/.test(mature));
+  ok('...and is the recorded reading once it has',
+    /id="dm-shared-reading">contributes to Cohort<\/span>/.test(renderCard({ sharedReading: 'contributes to Cohort' })));
 }
 {
   // A STORED `sources` FROM v3.64.x–v3.65.1 CANNOT HIDE ①. Driven with the
@@ -573,25 +594,20 @@ const hostPresent = (html) =>
                                     : { sectionPrefs: { sources: false } });
     ok('a stored `sources: false` does not hide ① on ' + what, hostPresent(html));
   }
-  // ④ IS UNCHANGED: the remembered choice still wins, and it is install-wide.
-  const openShared = renderCard({ sectionPrefs: { shared: true } });
-  eq('a remembered OPEN still opens Shared Brain', foldOpen(openShared, 'dm-shared-fold'), true);
-  const anyDomain = renderCard({
-    domains: [{ slug: 'beta', displayName: 'Beta', pageCount: 9, lastIngestDate: '2026-09-02',
-      pageCounts: { entities: 3, concepts: 3, summaries: 3, other: 0 } }],
-    activeSlug: 'beta',
-    browse: { slug: 'beta', loading: false, error: null, filter: '', folder: 'all', lens: 'wiki',
-      truncated: false, memory: [], entries: [ENTRY()] },
-    sectionPrefs: { shared: true },
-  });
-  eq('...and the choice travels to a domain this page has never been opened for',
-    foldOpen(anyDomain, 'dm-shared-fold'), true);
+  // ④ FOLLOWED ① (v3.65.3): a stored `shared` from an older copy — open OR
+  // closed — changes nothing about it. Driven with both values.
+  for (const v of [true, false]) {
+    const html = renderCard({ sectionPrefs: { shared: v } });
+    ok('a stored `shared: ' + v + '` neither opens nor hides ④ — it has no fold state',
+      foldOpen(html, 'dm-shared-fold') === false
+      && flatten(parseHtmlToChildren(html)).some((x) => x.attrs.id === 'dm-shared-host'));
+  }
   // A HOSTILE OR BROKEN RECORD DEGRADES TO THE DEFAULT, never to a throw.
   const junk = callOrFail('a junk preference record still renders',
     () => renderCard({ sectionPrefs: { sources: 'yes-please', shared: 'no' } }));
   if (junk) {
     ok('...with ① on the page', hostPresent(junk));
-    eq('...and Shared Brain at its closed default', foldOpen(junk, 'dm-shared-fold'), false);
+    ok('...and Shared Brain on the page', flatten(parseHtmlToChildren(junk)).some((x) => x.attrs.id === 'dm-shared-host'));
   }
 }
 {
@@ -639,25 +655,33 @@ const hostPresent = (html) =>
   // preference stopped being per domain. The old per-domain file is still
   // READ, and folded rather than discarded: a release that makes a preference
   // stick must not begin by forgetting it.
-  prefsBox.__set(JSON.stringify({ '*': { shared: false, lens: 'context' } }));
+  prefsBox.__set(JSON.stringify({ '*': { lens: 'context' } }));
   eq('a well-formed record round-trips',
     JSON.stringify(prefsBox.readSectionPrefs()),
-    JSON.stringify({ shared: false, lens: 'context' }));
+    JSON.stringify({ lens: 'context' }));
+  // ── `shared` IS RETIRED ON READ TOO (v3.65.3) ─────────────────────────
+  // ④ followed ① out of the fold; a stored value of EITHER polarity is
+  // dropped here and falls out of the file on the next write.
+  for (const v of [true, false]) {
+    prefsBox.__set(JSON.stringify({ '*': { shared: v, lens: 'context' } }));
+    eq('a stored `shared: ' + v + '` from an older copy is DROPPED, the lens kept',
+      JSON.stringify(prefsBox.readSectionPrefs()), JSON.stringify({ lens: 'context' }));
+  }
   // ── `sources` IS RETIRED ON READ (v3.65.2, I1) ────────────────────────
   // ① is not a fold, so a stored value from an older copy is dropped here
   // and falls out of the file on the next write — never consulted.
   prefsBox.__set(JSON.stringify({ '*': { sources: true, shared: true, lens: 'all' } }));
   eq('a stored `sources` from an older copy is DROPPED, its siblings kept',
-    JSON.stringify(prefsBox.readSectionPrefs()), JSON.stringify({ shared: true, lens: 'all' }));
+    JSON.stringify(prefsBox.readSectionPrefs()), JSON.stringify({ lens: 'all' }));
   prefsBox.__set(JSON.stringify({ '*': { lens: 'everything' } }));
   eq('a lens this view does not understand is DROPPED, not carried',
     JSON.stringify(prefsBox.readSectionPrefs()), '{}');
   prefsBox.__set(JSON.stringify({ '*': { shared: 'yes' } }));
   eq('a fold flag that is not a boolean is dropped too',
     JSON.stringify(prefsBox.readSectionPrefs()), '{}');
-  prefsBox.__set(JSON.stringify({ '*': { shared: true, evil: '<script>' } }));
+  prefsBox.__set(JSON.stringify({ '*': { lens: 'wiki', evil: '<script>' } }));
   eq('...and an unknown field never survives the read',
-    JSON.stringify(prefsBox.readSectionPrefs()), JSON.stringify({ shared: true }));
+    JSON.stringify(prefsBox.readSectionPrefs()), JSON.stringify({ lens: 'wiki' }));
   for (const [what, raw] of [['an array', '[1,2,3]'], ['a string', '"nope"'],
                              ['a number', '7'], ['broken JSON', '{{{'], ['nothing', null]]) {
     eq('CONTROL -- ' + what + ' degrades to no memory at all',
@@ -692,8 +716,8 @@ const hostPresent = (html) =>
       iInit > iKey && iInit > iLens, iKey + '/' + iLens + ' -> ' + iInit);
   }
   eq('a row that is not an object is skipped, and its siblings are not',
-    (prefsBox.__set(JSON.stringify({ alpha: 5, beta: { shared: true } })),
-      JSON.stringify(prefsBox.readSectionPrefs())), JSON.stringify({ shared: true }));
+    (prefsBox.__set(JSON.stringify({ alpha: 5, beta: { lens: 'all' } })),
+      JSON.stringify(prefsBox.readSectionPrefs())), JSON.stringify({ lens: 'all' }));
 
   // ── THE MIGRATION, DRIVEN (v3.64.1) ───────────────────────────────────
   // Every installed copy of v3.64.0 wrote one row per domain. The fold takes
@@ -709,7 +733,7 @@ const hostPresent = (html) =>
   }));
   eq('a v3.64.0 per-domain file is FOLDED into one row, last value per field',
     JSON.stringify(prefsBox.readSectionPrefs()),
-    JSON.stringify({ lens: 'all', shared: true }));
+    JSON.stringify({ lens: 'all' }));
   // (v3.65.2: the rows above also carry `sources`, and it is dropped from the
   // fold exactly as it is from a one-row file — the retired field survives no
   // shape of the read.)
@@ -766,9 +790,9 @@ const hostPresent = (html) =>
     eq('the helper and the lifted literal write the SAME bytes', rig.__stored(), viaHelper);
     ok('...and the file really is one row under the row key',
       /^\{"\*":\{/.test(String(viaHelper)), String(viaHelper));
-    eq('...which the read understands, round trip',
+    eq('...which the read understands, round trip (the retired `shared` dropped, v3.65.3)',
       JSON.stringify(rig.readSectionPrefs()),
-      JSON.stringify({ shared: false, lens: 'context' }));
+      JSON.stringify({ lens: 'context' }));
   }
 }
 
@@ -1292,6 +1316,62 @@ const COLUMN = (healthLabel) =>
   patchBox.__setSharedBusy(false);
 }
 {
+  // ── ④ AS IT REALLY IS SINCE v3.65.3: a head block + a <section> ──────
+  // The fixtures above keep ④ as a `<details>` because they exercise the
+  // patch's DETAILS arm (the open carry), which no longer has a producer on
+  // this page. THIS is the real shape: ④'s head block is an ordinary child
+  // carrying the reading, and the section keeps `id="dm-shared-fold"`. Both
+  // hosts hold their panel's own markup (LIVE), as in the browser — a
+  // shown-once admin token in ④'s case — so an outerHTML compare would
+  // replace them. Asserted idle AND busy.
+  const REAL = (reading, healthLabel) =>
+    '<div class="dm-path-eyebrow">domains/alpha/</div>' +
+    '<section class="dm-overview"><div class="dm-stats-grid"></div></section>' +
+    '<div class="dm-section dm-section-hd-block dm-sources-hd"><span class="dm-fold-meta dm-section-meta">last ingest 3 days ago</span></div>' +
+    '<section class="dm-fold dm-sources" id="dm-sources-fold"><div class="dm-fold-body"><div id="dm-sources-host"></div></div></section>' +
+    '<section class="dm-pages"><div class="dm-browse-card"></div></section>' +
+    '<section class="dm-projects"></section>' +
+    '<div class="dm-section dm-section-hd-block dm-shared-hd"><span class="dm-fold-meta dm-section-meta" id="dm-shared-reading">' + reading + '</span></div>' +
+    '<section class="dm-fold dm-shared" id="dm-shared-fold" aria-labelledby="dm-shared-title"><div class="dm-fold-body"><div class="dm-host" id="dm-shared-host"></div></div></section>' +
+    '<section class="dm-health">' + healthLabel + '</section>';
+  const LIVE2 = (html) => LIVE(html).replace('<div class="dm-host" id="dm-shared-host"></div>',
+    '<div class="dm-host" id="dm-shared-host"><div class="sb-admin-token-box"><code>sbat_SHOWN_ONCE</code></div></div>');
+  for (const busy of [false, true]) {
+    const { inner } = mountColumn(LIVE2(REAL('contributes to Cohort', 'scanning')));
+    const shSection = inner.children[7];
+    const shHost = shSection.children[0].children[0];
+    const shHead = inner.children[6];
+    patchBox.__reset();
+    patchBox.__echoes().length = 0;
+    patchBox.__setBusy(busy);
+    patchBox.__setSharedBusy(busy);
+    patchBox.setMain(REAL('contributes to Cohort', '3 issues'), 1);
+    const tag = busy ? ' (busy)' : ' (idle)';
+    eq('CONTROL -- ④ is a <section> at its own index' + tag, shSection.tagName, 'SECTION');
+    ok('④\'s section is the SAME node after a paint' + tag, inner.children[7] === shSection);
+    ok('...and so is its host, still holding the shown-once token' + tag,
+      inner.children[7].children[0].children[0] === shHost && /sbat_SHOWN_ONCE/.test(shHost.innerHTML || shHost.outerHTML || ''));
+    eq('...with no full column replacement' + tag, patchBox.__calls().shellSetMain, 0);
+    eq('...and no phantom `shared` echo from a <section>' + tag, patchBox.__echoes().length, 0);
+    eq('...and no `open` expando written onto it' + tag, inner.children[7].open, undefined);
+    ok('the head block with an UNCHANGED reading is left alone too' + tag, inner.children[6] === shHead);
+    patchBox.__setBusy(false);
+    patchBox.__setSharedBusy(false);
+  }
+  {
+    // A CHANGED READING (a domain switch) replaces the HEAD — an ordinary
+    // child — and never the section.
+    const { inner } = mountColumn(LIVE2(REAL('contributes to Cohort', 'x')));
+    const shSection = inner.children[7];
+    const shHead = inner.children[6];
+    patchBox.__reset();
+    patchBox.setMain(REAL('mirror of Cohort', 'x'), 1);
+    ok('a changed ④ reading replaces its head block', inner.children[6] !== shHead
+      && /mirror of Cohort/.test(inner.children[6].outerHTML));
+    ok('...and leaves the section and its host alone', inner.children[7] === shSection);
+  }
+}
+{
   // ── THE SHAPE MOVED. A knowledge notice appears, a branch changes, the
   // domain vanishes. A positional patch would put a section in the wrong
   // place, so it refuses -- and the FULL repaint happens, because a dropped
@@ -1391,7 +1471,8 @@ function foldDom() {
     // ① carries NO `data-dm-fold` since v3.65.2 (it is not a fold), so its
     // dataset is empty and `[data-dm-fold]` never returns it — exactly as the
     // real markup. Its `open` is kept only so a test can prove it is ignored.
-    id, open: !!open, dataset: id === 'dm-sources-fold' ? {} : { dmFold: 'shared' },
+    // ④ joined it in v3.65.3 — no `data-dm-fold` on either section now.
+    id, open: !!open, dataset: {},
     listeners: [], addEventListener(_e, fn) { this.listeners.push(fn); },
     fire() { for (const fn of this.listeners.slice()) fn(); },
   });
@@ -1415,7 +1496,10 @@ function ingestSectionBusy() { return ingestBusy; }
 function sharedSectionBusy() { return sharedBusy; }
 function mountIngestSection(el, o) { calls.mountIngest.push({ el, domain: o.domain }); }
 function unmountIngestSection() { calls.unmountIngest++; }
-function mountSharedSection(el, o) { calls.mountShared.push({ el, domain: o.domain }); }
+function mountSharedSection(el, o) { calls.mountShared.push({ el, domain: o.domain, describeDomain: o.describeDomain }); }
+// v3.65.3: the identity/page-count reader ④ is handed. A recorder here; the
+// REAL one is driven on its own in S5c.
+function describeDomainForShared(slug) { return { index: -1, pages: null, slug }; }
 function unmountSharedSection() { calls.unmountShared++; }
 function onHostedBusyChange() {}
 function onSharedLensChange() {}
@@ -1475,14 +1559,16 @@ function stage(sourcesOpen, sharedOpen, ids) {
   mountBox.mountHostedSections(1);
   eq('① mounts its panel with no `open` anywhere — there is no fold to open',
     mountBox.__calls().mountIngest.length, 1);
-  eq('...while a CLOSED Shared Brain fold still mounts nothing',
-    mountBox.__calls().mountShared.length, 0);
+  eq('...and ④ mounts its panel the same way (v3.65.3) — no fold, no closed state',
+    mountBox.__calls().mountShared.length, 1);
+  eq('...handed the host\'s domain reader, so its dots and page count are the page\'s own',
+    typeof mountBox.__calls().mountShared[0].describeDomain, 'function');
   const st = stage(true, true);
   mountBox.__reset();
   mountBox.mountHostedSections(1);
   eq('a new ① element is a real remount', mountBox.__calls().mountIngest.length, 1);
   eq('...pointed at the domain on screen', mountBox.__calls().mountIngest[0].domain, 'alpha');
-  eq('an OPEN SHARED fold mounts its panel too', mountBox.__calls().mountShared.length, 1);
+  eq('a new ④ element is a real remount too', mountBox.__calls().mountShared.length, 1);
   // IDEMPOTENT: setMain runs this after EVERY paint, and this page repaints on
   // a keystroke in the filter box.
   mountBox.__reset();
@@ -1515,7 +1601,33 @@ function stage(sourcesOpen, sharedOpen, ids) {
   mountBox.__reset();
   mountBox.mountHostedSections(1);
   eq('① stays mounted whatever its element\'s `open` reads', mountBox.__calls().unmountIngest, 0);
-  eq('closing SHARED BRAIN unmounts its panel', mountBox.__calls().unmountShared, 1);
+  eq('...and so does ④ (v3.65.3) — an `open` of false is not a closed section', mountBox.__calls().unmountShared, 0);
+  // THE TAKE-DOWN IS STILL REAL, for the one case left: the section is GONE
+  // (a loading-branch paint has no ④ at all).
+  const gone = foldDom();
+  gone.doc.__set('dm-sources-fold', a.src);
+  gone.doc.__set('dm-sources-host', { __host: 'srcHost-1' });
+  mountBox.__setDocument(gone.doc);
+  mountBox.__reset();
+  mountBox.mountHostedSections(1);
+  eq('CONTROL -- a paint with NO ④ section takes its panel down', mountBox.__calls().unmountShared, 1);
+  // …UNLESS THE PANEL IS BUSY (v3.65.3, found in the browser): a cold domain
+  // switch paints a loading branch with no ④ while a shown-once admin token
+  // is on screen, and taking the panel down there wiped the token. The next
+  // paint re-points it (views/shared.js's same-mount arm).
+  const b2 = stage(true, true);
+  mountBox.__reset();
+  mountBox.mountHostedSections(1);
+  const gone2 = foldDom();
+  gone2.doc.__set('dm-sources-fold', b2.src);
+  gone2.doc.__set('dm-sources-host', { __host: 'srcHost-1' });
+  mountBox.__setDocument(gone2.doc);
+  mountBox.__setBusy(false, true);
+  mountBox.__reset();
+  mountBox.mountHostedSections(1);
+  eq('a BUSY ④ panel survives a paint that lacks ④ — it holds what a paint must not destroy',
+    mountBox.__calls().unmountShared, 0);
+  mountBox.__setBusy(false, false);
 }
 {
   // ...UNLESS THE PANEL IS BUSY. A fold can only be closed by a click, and a
@@ -1604,72 +1716,26 @@ function stage(sourcesOpen, sharedOpen, ids) {
   mountBox.__setShell('consumeDomainFoldRequest', undefined);
 }
 {
-  // THE FOLD TOGGLE — Shared Brain's alone now. It remembers, persists, and
-  // moves the panel WITHOUT a render. ① has no toggle to bind.
+  // THERE IS NO FOLD TOGGLE LEFT (v3.65.3). ④ followed ① out of the fold, so
+  // bindSectionFolds finds nothing to bind, nothing is remembered, and an
+  // `open` flipped on either element (the shape a stale reading would take)
+  // neither mounts nor unmounts anything.
   mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
   const e = stage(false, false);
   mountBox.__reset();
   mountBox.mountHostedSections(1);
   eq('① gets NO toggle listener — it is not a fold', e.src.listeners.length, 0);
-  ok('CONTROL -- the Shared Brain toggle is bound', e.sh.listeners.length === 1, String(e.sh.listeners.length));
+  eq('④ gets none either', e.sh.listeners.length, 0);
+  e.sh.open = true;
   mountBox.__reset();
   mountBox.mountHostedSections(1);
-  eq('...once per element, however many times the page repaints', e.sh.listeners.length, 1);
-  e.sh.open = true;
-  e.sh.fire();
-  eq('opening a fold remembers it', mountBox.__state().sectionPrefs.shared, true);
-  ok('...persists it', mountBox.__calls().written > 0);
-  eq('...and mounts the panel', mountBox.__calls().mountShared.length, 1);
-  e.sh.open = false;
-  mountBox.__reset();
-  e.sh.fire();
-  eq('closing it remembers that too', mountBox.__state().sectionPrefs.shared, false);
-  eq('...and takes the panel down', mountBox.__calls().unmountShared, 1);
-
-  // ── A TOGGLE THIS PAGE CAUSED ITSELF IS NOT A PREFERENCE (v3.64.1) ────
-  mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
-  mountBox.__reset();
-  mountBox.__echoes().length = 0;
-  mountBox.__echoes().push('shared');
-  e.sh.open = true;
-  e.sh.fire();
-  eq('a queued echo writes NO preference at all',
-    mountBox.__state().sectionPrefs.shared, undefined);
+  eq('an `open` flipped on ④ mounts nothing twice', mountBox.__calls().mountShared.length, 0);
+  eq('...and remembers nothing', mountBox.__state().sectionPrefs.shared, undefined);
   eq('...and persists nothing', mountBox.__calls().written, 0);
-  eq('...and the entry is consumed, so the NEXT toggle is the user\'s',
-    mountBox.__echoes().length, 0);
   e.sh.open = false;
-  e.sh.fire();
-  eq('CONTROL -- the very next toggle IS recorded',
-    mountBox.__state().sectionPrefs.shared, false);
-  // AN ECHO FOR ANOTHER KEY DOES NOT SWALLOW THIS FOLD'S CLICK. A single
-  // boolean would have; the queue is keyed.
-  mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
-  mountBox.__echoes().length = 0;
-  mountBox.__echoes().push('sources');
-  e.sh.open = true;
-  e.sh.fire();
-  eq('an echo queued under another key does not swallow this fold\'s click',
-    mountBox.__state().sectionPrefs.shared, true);
-  eq('...and leaves the other entry where it was',
-    mountBox.__echoes().join(','), 'sources');
-  mountBox.__echoes().length = 0;
-
-  // ── THE PAINT'S OWN ECHO IS NOT A PRESS EITHER (v3.64.1) ─────────────
-  {
-    mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
-    const g = stage(false, true);
-    mountBox.__reset();
-    mountBox.mountHostedSections(1);
-    g.sh.fire();
-    eq('a toggle that did not change the fold writes NO preference',
-      mountBox.__state().sectionPrefs.shared, undefined);
-    eq('...and persists nothing', mountBox.__calls().written, 0);
-    g.sh.open = false;
-    g.sh.fire();
-    eq('CONTROL -- a press that closes it IS recorded',
-      mountBox.__state().sectionPrefs.shared, false);
-  }
+  mountBox.__reset();
+  mountBox.mountHostedSections(1);
+  eq('closing nothing unmounts nothing: ④ stays mounted', mountBox.__calls().unmountShared, 0);
 }
 {
   // A JUMP TILE. SHARED opens the fold it jumps to; SOURCES LANDS on ①,
@@ -1690,12 +1756,14 @@ function stage(sourcesOpen, sharedOpen, ids) {
   eq('with `scroll: false` it does not move the reader at all', mountBox.__calls().landed.length, 0);
   mountBox.__reset();
   mountBox.openSectionFold('shared');
-  eq('the SHARED jump opens the Shared Brain fold', f.sh.open, true);
-  eq('...and remembers the choice', mountBox.__state().sectionPrefs.shared, true);
-  // An ALREADY-OPEN fold is not re-mounted: a jump is a scroll.
+  eq('the SHARED jump LANDS on ④\'s head and title (v3.65.3), as SOURCES does on ①',
+    JSON.stringify(mountBox.__calls().landed), JSON.stringify([['.dm-shared-hd', 'dm-shared-title']]));
+  eq('...remembers nothing', mountBox.__state().sectionPrefs.shared, undefined);
+  eq('...persists nothing', mountBox.__calls().written, 0);
+  eq('...and remounts nothing — the panel is already there', mountBox.__calls().mountShared.length, 0);
   mountBox.__reset();
-  mountBox.openSectionFold('shared');
-  eq('jumping to an already-open fold remounts nothing', mountBox.__calls().mountShared.length, 0);
+  mountBox.openSectionFold('shared', { scroll: false });
+  eq('with `scroll: false` the SHARED jump does not move the reader either', mountBox.__calls().landed.length, 0);
 }
 {
   // ── S5b: THE REAL landOnSection ──────────────────────────────────────
@@ -2303,11 +2371,12 @@ section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
     ok('no row in section 5 carries `data-dm-fold`, the attribute the PREFERENCE '
       + 'writer keys on -- so a paint-time toggle echo here cannot write one',
       !/<details[^>]*data-dm-fold/.test(fresh), fresh.slice(0, 200));
-    // v3.65.2: ONE section fold carries it now — ① Ingest is not a fold.
-    ok('CONTROL -- the detector is not blind: the Shared Brain fold DOES carry it, '
-      + 'and it is the one with the echo guard',
-      (SRC.match(/data-dm-fold="(sources|shared)"/g) || []).length === 1
-      && /data-dm-fold="shared"/.test(SRC));
+    // v3.65.3: NO section fold carries it now — ① (v3.65.2) and ④ (v3.65.3)
+    // are both plain sections. The control is that the detector still FIRES
+    // on the attribute it looks for.
+    ok('CONTROL -- no section fold carries it any more, and the detector is not blind',
+      (SRC.match(/data-dm-fold="(sources|shared)"/g) || []).length === 0
+      && /<details[^>]*data-dm-fold/.test('<details class="x" data-dm-fold="shared">'));
   }
   // ...and the storage VALIDATOR would drop such a key even if one arrived.
   // `readSectionPrefs` accepts the literal true/false under two known fold
@@ -2320,12 +2389,61 @@ section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
       { getItem: () => JSON.stringify({ '*': { shared: true, scan: true, brokenLinks: true, lens: 'wiki' } }) },
       'curator-domain-sections-v1', ['wiki', 'memory', 'all']);
     const row = rsp();
-    ok('CONTROL -- the real readSectionPrefs keeps the one fold name and the lens',
-      row.shared === true && row.lens === 'wiki', JSON.stringify(row));
+    ok('CONTROL -- the real readSectionPrefs keeps the lens (and, since v3.65.3, no fold name at all)',
+      !('shared' in row) && row.lens === 'wiki', JSON.stringify(row));
     ok('...and DROPS a health row name outright, so no amount of echoing could make '
       + 'section 5 remember itself across a reload',
       !('scan' in row) && !('brokenLinks' in row), JSON.stringify(row));
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('S5c -- ④\'S HEAD READING AND ITS DOMAIN READER (v3.65.3)');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  const box = new Function(`
+    let state = { domains: [{ slug: 'alpha', pageCount: 12 }, { slug: 'beta' }, { slug: 'shared-x', pageCount: 3 }],
+      sharedLens: null, sharedJump: null, sharedReading: '' };
+    let document = null;
+    ${extractFunction(SRC, 'sharedJumpReading')}
+    ${extractFunction(SRC, 'sharedHeadReading')}
+    ${extractFunction(SRC, 'onSharedLensChange')}
+    ${extractFunction(SRC, 'describeDomainForShared')}
+    return { sharedHeadReading, onSharedLensChange, describeDomainForShared,
+      __state: () => state, __setDocument: (d) => { document = d; } };
+  `)();
+  const R = box.sharedHeadReading;
+  const base = { enabled: true, kind: 'none', contributingCount: 0, mirrorCount: 0, label: '', error: false, orphan: false };
+  eq('nothing reported yet reads EMPTY — never a guess', R(null), '');
+  eq('a flag or list that could not be read reads EMPTY, never "off"', R({ ...base, enabled: false, error: true }), '');
+  eq('flag off', R({ ...base, enabled: false }), 'off on this install');
+  eq('enabled, this domain in none', R(base), 'not part of any');
+  eq('contributing to one names it', R({ ...base, kind: 'contributing', contributingCount: 1, label: 'Research_Group 2026' }),
+    'contributes to Research_Group 2026');
+  eq('contributing to several counts them', R({ ...base, kind: 'contributing', contributingCount: 3, label: 'A' }), 'contributes to 3');
+  eq('a mirror names its brain', R({ ...base, kind: 'mirror', mirrorCount: 1, label: 'Cohort' }), 'mirror of Cohort');
+  eq('an orphaned mirror says so', R({ ...base, orphan: true }), 'no connection');
+  ok('the D6 lie cannot come back: no answer ever reads "not connected"',
+    ![null, base, { ...base, enabled: false }, { ...base, error: true }].some((x) => R(x) === 'not connected'));
+
+  // THE NO-REPAINT WRITE: the reading lands in the head's own span and in
+  // state, the SAME string, so the next patch finds the two byte-equal.
+  const reading = { textContent: 'stale' };
+  const tile = { hidden: true, querySelector: () => ({ textContent: '' }) };
+  box.__setDocument({
+    getElementById: (id) => (id === 'dm-shared-reading' ? reading : null),
+    querySelector: (sel) => (/data-stat-jump="shared"/.test(sel) ? tile : null),
+  });
+  box.onSharedLensChange({ ...base, kind: 'contributing', contributingCount: 1, label: 'Cohort' });
+  eq('onSharedLensChange writes the reading into #dm-shared-reading', reading.textContent, 'contributes to Cohort');
+  eq('...and records the same string for the next paint', box.__state().sharedReading, 'contributes to Cohort');
+  eq('...and still reveals the SHARED tile (D7: it can now, the panel always mounts)', tile.hidden, false);
+
+  const D = box.describeDomainForShared;
+  eq('the domain reader gives the INSTALL\'s index — the identity dot\'s key', D('beta').index, 1);
+  eq('...and the page count when the list has one', D('alpha').pages, 12);
+  eq('...null, not 0, when it does not', D('beta').pages, null);
+  eq('...and -1 for a domain the list does not hold, so no colour is guessed', D('nope').index, -1);
 }
 
 // ═════════════════════════════════════════════════════════════════════════

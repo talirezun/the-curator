@@ -58,6 +58,7 @@ import {
   removeSharedBrain,
   patchSharedBrain,
   newUuid,
+  connectionClash,
 } from '../brain/sharedbrain-config.js';
 
 import { pushDomain, pullCollective, computePendingPages, listMembers } from '../brain/sharedbrain.js';
@@ -779,6 +780,46 @@ router.post('/parse-invite', gate, (req, res) => {
     res.json({ valid: true, metadata });
   } catch (err) {
     res.status(400).json({ valid: false, error: err.message });
+  }
+});
+
+// ── The early clash check (v3.65.3) ──────────────────────────────────────
+//
+// The wizard asks this at the FIRST step where the answer is knowable — join
+// step 1 once the invite is read, create step 1 on Continue — instead of
+// letting the person paste a token, pick domains and consent before /save
+// refuses. It runs the SAME connectionClash() saveSharedBrain() runs, so the
+// early answer and the late one cannot disagree.
+//
+// Reads ONLY the five public fields a clash is decided on; the body carries no
+// credential and none is read. Local, cheap, no network. Answers 200 either
+// way — a clash is an answer, not a failure — and 400 only for a body that
+// does not name a brain at all.
+router.post('/check-clash', gate, (req, res) => {
+  try {
+    const b = req.body || {};
+    const str = (v) => (typeof v === 'string' ? v : '');
+    const candidate = {
+      storage_type: str(b.storage_type) || 'github',
+      github_repo_owner: str(b.github_repo_owner),
+      github_repo_name: str(b.github_repo_name),
+      shared_domain: str(b.shared_domain),
+      shared_brain_slug: str(b.shared_brain_slug),
+    };
+    if (!candidate.shared_domain && !candidate.shared_brain_slug) {
+      return res.status(400).json({ error: 'shared_domain or shared_brain_slug is required' });
+    }
+    const refusal = connectionClash(candidate, getSharedBrains(), null);
+    if (!refusal) return res.json({ ok: true });
+    res.json({
+      ok: false,
+      kind: refusal.kind,
+      label: typeof refusal.clash.label === 'string' ? refusal.clash.label : '',
+      mirror: typeof refusal.clash.shared_brain_slug === 'string' ? 'shared-' + refusal.clash.shared_brain_slug : '',
+      error: refusal.message,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
