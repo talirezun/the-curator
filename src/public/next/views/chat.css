@@ -553,6 +553,26 @@
      nothing in the unwrapped one (the spacer has already consumed the slack). */
   margin-left: auto;
 }
+/* THE NO-KEY RUN LINE UNDER COMPILE (v3.67.0). With no provider key the
+   button stays — disabled, never hidden — and shared/ai-run.js's no-key line
+   ("Needs an AI provider key · Add one in Providers & keys") says why. It is a
+   LINE UNDER the action, the one anatomy every AI action uses, so it takes a
+   row of its own: the group wraps only while the line is there, so the
+   caption's nowrap-and-ellipsis rule below is untouched in every other state.
+   Right-aligned, because the group itself is right-aligned on its row. */
+.chat-compile-group:has(> .ai-run) { flex-wrap: wrap; justify-content: flex-end; }
+.chat-compile-group > .ai-run { flex: 1 0 100%; margin: 0; text-align: right; }
+
+/* COMPILE'S CONFIRM LEADS WITH THE RUN LINE (v3.67.0, the picture's region C).
+   The line is placed as the first child of the dialog's own #cfd-body (see
+   compileConfirmLead in chat.js); measured in the dialog, the kit's default
+   top margin left it 0px above the conversation title under it. It takes the
+   body's opening edge instead, and a --space-4 (8px) step down to the
+   subject — one step more than the detail's 7px, because the run line and the
+   subject are two different kinds of thing, where the subject and its detail
+   are one. Scoped to the one dialog body that can hold a run line. */
+.cfd-body > .ai-run:first-child { margin: 0 0 var(--space-4); }
+
 /* The caption is SECONDARY TEXT — --text-3 at --text-xs, the same rung the
    scope readout takes — because it explains a control rather than competing
    with it. Tabular figures for the same reason section 6 of

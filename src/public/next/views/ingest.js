@@ -108,7 +108,7 @@ import {
   registerView, setSidebar, setMain, eyebrow, emptyCard, escapeHtml, icon,
   isCurrentMount, reportAsyncMountFailure, reportAsyncActionFailure,
   beginDomainWrite, isDomainWriteBusy, getDomainWriteLabel, onWriteGateChange,
-  reportPossibleActiveJob, navigate,
+  reportPossibleActiveJob, navigate, requestSettingsSection,
 } from '../app.js';
 
 // The 13 pure data helpers — byte-identical copies of src/public/app.js's
@@ -182,6 +182,13 @@ import { identityDotClass } from '../shared/sidebar.js';
 // hosts OUTSIDE a monitor, so it imports the bar from its public address. See
 // `queueBudgetFacts` for the one reading it draws: spend against the cap.
 import { renderDepthCell } from '../shared/depth-bar.js';
+// THE RUN LINE (v3.67.0) — the one line every AI action in the app carries:
+// which model runs it, what it should cost, and one door to Providers & keys;
+// after a run, what ran and what it cost. Ingest uses it three times: under the
+// single-file Ingest button, beside the batch estimate's readouts, and in the
+// single-file outcome. See shared/ai-run.js for its rules (human model label,
+// `formatUsdHonest` only, no tone colour, disabled-never-hidden with no key).
+import { renderRunsOn, renderSpent, aiActionDisabledAttrs, wireAiRunDoors } from '../shared/ai-run.js';
 
 const ALLOWED_EXT = ['.txt', '.md', '.pdf'];
 const QUEUE_API = '/api/ingest-queue';
@@ -205,6 +212,17 @@ function freshState() {
     // decides which block renders it, and collapsing the two is what made
     // every ingest failure land on one generic red wall with no action.
     errorCode: null,
+
+    // ── The single-file run line (v3.67.0) ────────────────────────────
+    // POST /api/ingest-queue/estimate with ONE file answers `runsOn` for the
+    // file on the form. Held as READY MARKUP, like Chat's compile state:
+    // renderIngestForm runs on every render and is executed by suites that
+    // bind `state` but nothing from shared/ai-run.js, so it gains no free
+    // identifier. All '' / null until an answer for THIS file and THIS
+    // destination lands (`singleRunsOnKey` says which one it is for).
+    singleRunsOnKey: null,
+    singleRunLineHtml: '',
+    singleKeyAttrs: '',
 
     // ── Server-backed activity (v3.24.0) ─────────────────────────────
     // The record GET /api/ingest/activity holds for the SELECTED domain,
@@ -1488,6 +1506,8 @@ function selectDomain(slug) {
   // one surface whose entire job is telling the user something happened.
   stopRemoteElapsedTimer();
   refreshActivity(myMountToken).catch(() => {});
+  // The single-file run line is per destination; ask again for this one.
+  if (state.file) refreshSingleEstimate(myMountToken).catch(() => {});
   if (state.queueModeActive && !state.queueJob) {
     startQueueSelection(myMountToken);
   } else {
@@ -1977,11 +1997,10 @@ function renderIngestForm() {
       verbatimPointerHtml(state.file) +
     '</div>' +
     // sparkles marks a token-spending action (design rule) — ingest always
-    // calls an LLM. The design pairs sparkles with a cost figure in the
-    // label; single-file has no estimate today (only the batch confirm
-    // gate calls POST /api/ingest-queue/estimate), so the mark is present
-    // here without one — a known, deliberate gap, not an oversight, while
-    // whether to add a single-file estimate is decided separately.
+    // calls an LLM. Since v3.67.0 the figure it pairs with is the run line
+    // directly under the button (POST /api/ingest-queue/estimate with this one
+    // file — see refreshSingleEstimate), not a figure in the label: one line,
+    // the same words as every other AI action in the app.
     //
     // `btn-ai`, NOT `btn-primary`. This was an accent-FILLED button carrying
     // a sparkle, i.e. the one control on the screen that spends real money
@@ -1992,10 +2011,19 @@ function renderIngestForm() {
     // The size stays --control-md: it stands directly in the section body,
     // not in a card or a row, and the container is what picks the size.
     crossBusyNote +
+    // NO KEY: disabled with aria-describedby naming the run line below it —
+    // never hidden (contract Q3). The key attributes already carry `disabled`,
+    // so they replace the plain one rather than doubling it.
     '<button type="button" class="btn btn-ai" id="ing-submit-btn"' +
-      (btnDisabled ? ' disabled' : '') + '>' +
+      ((state.file && !state.submitting && state.singleKeyAttrs) ? state.singleKeyAttrs : (btnDisabled ? ' disabled' : '')) + '>' +
       icon('sparkles', 14) + ' ' + (state.submitting ? 'Ingesting…' : 'Ingest') +
-    '</button>',
+    '</button>' +
+    // ONE LINE DIRECTLY UNDER THE ACTION IT PRICES (Wiki health's anatomy, the
+    // picture's region B): the model, ≈tokens and ≈cost of THIS file into THIS
+    // domain — the single-file path's first cost-before, where v3.66.0 had
+    // only the ✨. Shown while a file is chosen and nothing is running;
+    // unfolded, because a cost never sits behind a chevron (v3.16.1).
+    ((state.file && !state.submitting) ? (state.singleRunLineHtml || '') : ''),
     // RIGHT — what the form produced. Every one of these self-suppresses when
     // there is nothing to say, so the cell is empty until a run exists.
     renderProgress() +
@@ -2607,7 +2635,13 @@ function renderResultBodyHtml(r, unchangedExpanded, toggleId) {
   const fallbackHtml = (!r.changes || !r.changes.length)
     ? '<ul class="ing-change-list-flat">' + (r.pagesWritten || []).map((p) => '<li class="ing-name">' + escapeHtml(p) + '</li>').join('') + '</ul>'
     : '';
-  const tokenHtml = formatTokenUsageHtml(r.tokenUsage);
+  // AFTER THE RUN (v3.67.0): "Ran on <model> · N in / M out · $x" — the
+  // single-file path's first dollar figure. When it is there it carries the
+  // model and the in/out totals, so the token readout under it keeps only
+  // what the line does not say (calls, and the cache split); without it the
+  // readout is exactly what it was.
+  const spentHtml = renderSpent(r.spent);
+  const tokenHtml = formatTokenUsageHtml(r.tokenUsage, { spentShown: !!spentHtml });
   const shownChanges = Array.isArray(r.changes) ? r.changes.length : 0;
   const truncNote = (Number.isFinite(r.changesTotal) && r.changesTotal > shownChanges)
     ? '<div class="ing-change-empty">Showing <span class="ing-num">' + shownChanges +
@@ -2618,6 +2652,7 @@ function renderResultBodyHtml(r, unchangedExpanded, toggleId) {
       warningsHtml +
       (r.changes && r.changes.length ? changesHtml : ('<h3 class="ing-result-title">' + escapeHtml(titlePrefix + ' ' + (r.title || '')) + '</h3>' + fallbackHtml)) +
       truncNote +
+      spentHtml +
       tokenHtml +
     '</div>'
   );
@@ -2782,8 +2817,14 @@ function renderWarningsHtml(warnings) {
 // Ported from src/public/app.js's formatTokenUsage — same defensive
 // per-field contract (every field individually optional; renders nothing,
 // never NaN/undefined text, on an absent/partial/empty payload).
-function formatTokenUsageHtml(u) {
+//
+// `opts.spentShown` (v3.67.0): the run line above already names the model and
+// the in/out totals, so they are not printed a second time — and not in a
+// second format, since the line's "in" counts cached tokens and this one does
+// not. Calls and the cache split stay: the line says neither.
+function formatTokenUsageHtml(u, opts) {
   if (!u || typeof u !== 'object') return '';
+  const spentShown = !!(opts && opts.spentShown);
   const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
   const calls = isNum(u.calls) ? u.calls : null;
   const inputTokens = isNum(u.inputTokens) ? u.inputTokens : null;
@@ -2796,12 +2837,12 @@ function formatTokenUsageHtml(u) {
   if (calls == null && inputTokens == null && outputTokens == null && !provider && !model) return '';
 
   const parts = [];
-  if (provider || model) {
+  if ((provider || model) && !spentShown) {
     const label = [provider, model].filter(Boolean).join(' · ');
     parts.push('<span class="ing-token-model">' + escapeHtml(label) + '</span>');
   }
   if (calls != null) parts.push('<span>' + calls + ' call' + (calls === 1 ? '' : 's') + '</span>');
-  if (inputTokens != null || outputTokens != null) {
+  if ((inputTokens != null || outputTokens != null) && !spentShown) {
     const inStr = inputTokens != null ? inputTokens.toLocaleString() : '—';
     const outStr = outputTokens != null ? outputTokens.toLocaleString() : '—';
     parts.push('<span>' + inStr + ' in / ' + outStr + ' out</span>');
@@ -3259,6 +3300,7 @@ function pickSingleFile(token, fileList) {
   state.file = file;
   state.fileError = null;
   render(token);
+  refreshSingleEstimate(token).catch(() => {});
 }
 
 // The single-file counterpart to removeQueueFile — same effect (clear the
@@ -3279,9 +3321,76 @@ function clearSelectedFile(token) {
   if (state.submitting) return;
   state.file = null;
   state.fileError = null;
+  // The run line described the file that just left the form. Inline rather
+  // than through clearSingleRunLine: this body is lifted by
+  // test-next-ingest-view, whose sandbox binds `state` and not that helper.
+  state.singleRunsOnKey = null;
+  state.singleRunLineHtml = '';
+  state.singleKeyAttrs = '';
   const fileInput = document.getElementById('ing-file-input');
   if (fileInput) fileInput.value = '';
   render(token);
+}
+
+// ── The single-file run line (v3.67.0) ───────────────────────────────────
+const SINGLE_RUNLINE_ID = 'ing-runline';
+
+function clearSingleRunLine() {
+  state.singleRunsOnKey = null;
+  state.singleRunLineHtml = '';
+  state.singleKeyAttrs = '';
+}
+
+// Every run line's door ("Change model" / "Add one in Providers & keys") is
+// ONE door: Settings › Providers & keys. Wired on #view-root — the shell's
+// stable container, which also holds this panel when the Domains page hosts it
+// — with the shell's two functions INJECTED (shared/ai-run.js's rule).
+// Idempotent per root, so calling it from every place a line is produced adds
+// one listener in total, and Chat wiring the same element adds none.
+function ensureAiRunDoors() {
+  wireAiRunDoors(document.getElementById('view-root'), { requestSettingsSection, navigate });
+}
+
+/**
+ * Ask the free estimate what ingesting THIS file into THIS domain runs on.
+ *
+ * The batch gate's own route, with one file: `{domain, files: [{name, size}]}`
+ * — metadata only, no bytes uploaded, no LLM call. Keyed on domain + name +
+ * size, so re-rendering asks nothing and a destination change asks again (the
+ * estimate reads that domain's index, so its figure is per destination).
+ *
+ * ABSENT IS NOT A FAULT. A failed request, a non-OK answer or a server that
+ * sends no `runsOn` leaves the form exactly as it was — no line, button as the
+ * form's own rules have it — rather than guessing "no key" and disabling a
+ * working install. A failure clears the key so picking the file again retries.
+ */
+async function refreshSingleEstimate(token) {
+  const file = state.file;
+  const domain = state.domain;
+  if (!file || !domain) { clearSingleRunLine(); return; }
+  const key = domain + '\n' + file.name + '\n' + file.size;
+  if (state.singleRunsOnKey === key) return;
+  clearSingleRunLine();
+  state.singleRunsOnKey = key;
+  let body = null;
+  try {
+    const res = await fetch(QUEUE_API + '/estimate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain, files: [{ name: file.name, size: file.size }] }),
+    });
+    if (res.ok) body = await res.json();
+  } catch { body = null; }
+  // `state` is replaced wholesale on every mount, so a stale answer finds a
+  // different key (or none) here and is dropped — as is one for a file or a
+  // destination the user has since changed.
+  if (state.singleRunsOnKey !== key) return;
+  const runsOn = (body && body.runsOn && typeof body.runsOn === 'object') ? body.runsOn : null;
+  if (!runsOn) { if (!body) state.singleRunsOnKey = null; return; }
+  state.singleRunLineHtml = renderRunsOn(runsOn, { id: SINGLE_RUNLINE_ID });
+  state.singleKeyAttrs = aiActionDisabledAttrs(runsOn, SINGLE_RUNLINE_ID);
+  ensureAiRunDoors();
+  if (isCurrentMount(token)) render(token);
 }
 
 // ── Ingest submission ──────────────────────────────────────────────────
@@ -3437,6 +3546,9 @@ async function runIngest(token, overwrite) {
         truncated: !!finalData.truncated,
         wasOverwrite: !!overwrite,
         tokenUsage: finalData.tokenUsage,
+        // v3.67.0: what the run cost, from the route's spentFromUsage() over
+        // this ingest's own token totals. Absent on an older server.
+        spent: (finalData.spent && typeof finalData.spent === 'object') ? finalData.spent : null,
         unchangedExpanded: false,
       };
       render(token);
@@ -3612,6 +3724,8 @@ async function startQueueSelection(token) {
     if (!res.ok || !data.ok) throw new Error(data.error || ('Could not estimate cost (HTTP ' + res.status + ')'));
     state.queueEstimate = data;
     state.queueEstimateLoading = false;
+    // The estimate's run line carries a door; wire it before it paints.
+    if (data.runsOn) ensureAiRunDoors();
     render(token);
   } catch (err) {
     if (!isCurrentMount(token)) return;
@@ -4227,6 +4341,13 @@ function renderQueueEstimate(est, opts) {
           { label: 'Estimated cost', value: costRange, provenance },
           { label: 'Estimated tokens', value: tokIn + ' in / ' + tokOut + ' out' },
         ]) +
+        // THE RUN LINE, BESIDE THE READOUTS (v3.67.0). It adds what the two
+        // readouts do not say — the model by its human label, and the one
+        // door to change it — in the same words as every other AI action. The
+        // readouts above stay the batch's decision figures, byte for byte:
+        // the cap, over-run and paused banners key on them, not on this line.
+        // '' for a server that sends no `runsOn`.
+        renderRunsOn(est.runsOn, { id: 'ing-queue-runline' }) +
         (basisMark.btn
           ? '<div class="ing-queue-estimate-more">' +
               '<span class="ing-queue-estimate-more-label">How this range was worked out</span>' +
@@ -4248,7 +4369,10 @@ function renderQueueEstimate(est, opts) {
         // with more force: this one has a priced estimate beside it, so the
         // tint and the figure say the same thing. Its two neighbours stay
         // --control-md so the row reads as one strip of controls.
-        '<button type="button" class="btn btn-ai" id="ing-queue-start-btn"' + (state.queueSubmitting ? ' disabled' : '') + '>' +
+        // No key: disabled — never hidden — and described by the run line
+        // above, which says why and opens Providers & keys.
+        '<button type="button" class="btn btn-ai" id="ing-queue-start-btn"' +
+          (state.queueSubmitting ? ' disabled' : aiActionDisabledAttrs(est.runsOn, 'ing-queue-runline')) + '>' +
           icon('sparkles', 14) + ' ' + (state.queueSubmitting ? 'Uploading…' : 'Start batch') +
         '</button>' +
         '<button type="button" class="btn btn-secondary" id="ing-queue-addmore-btn">Add more files</button>' +

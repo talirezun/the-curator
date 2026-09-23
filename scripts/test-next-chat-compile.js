@@ -1215,8 +1215,8 @@ section('7. Source-level guards — runCompile() event handling (refused vs erro
   ok(erroredIdx > -1 && refusedIdx > -1 && erroredIdx < refusedIdx, '`errored` is checked before `refused`');
 
   ok(/warnings/.test(runCompileSrc), 'the done handler reads warnings[] from the result');
-  ok(/buildCompileOutcomeHtml\(final\.title, changes, warnings\)/.test(runCompileSrc),
-    'warnings are threaded into the outcome card, not silently dropped');
+  ok(/buildCompileOutcomeHtml\(final\.title, changes, warnings, renderSpent\(final\.spent\)\)/.test(runCompileSrc),
+    'warnings are threaded into the outcome card, not silently dropped (and, since v3.67.0, the run\'s `spent` beside them — §11d executes it)');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -1330,6 +1330,9 @@ section('10. Behavioural mutation proof — runCompile()\'s guard+claim (the unt
       function icon() { return ''; }
       function escapeHtml(s) { return String(s == null ? '' : s); }
       function buildCompileOutcomeHtml() { return '<ok>'; }
+      // v3.67.0: the catch path renders the billed-then-failed run's cost.
+      // Not this section's subject (§11d executes the real kit); '' here.
+      function renderSpent() { return ''; }
       ${extractFunction(chatSrc, 'compileStillTargetsActive')}
       ${extractFunction(chatSrc, 'updateCompileButtonBusy')}
       // v3.27.0: the outcome gate moved out of runCompile into a named
@@ -1481,6 +1484,467 @@ section('10. Behavioural mutation proof — runCompile()\'s guard+claim (the unt
 
   eq(goodRunCompileSrc, extractFunction(chat, 'runCompile'),
     'mutation B never touched the source on disk (re-extraction is byte-identical)');
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+// §11 — v3.67.0: THE RUN LINE ON COMPILE (package CI)
+// ═════════════════════════════════════════════════════════════════════════
+// Four surfaces, each EXECUTED against the real shared/ai-run.js kit (never a
+// stand-in for the thing the user reads):
+//   a. the not-this-chat's-model clause — present ONLY when the models differ;
+//   b. the confirm's first line, placed into the open dialog's #cfd-body by the
+//      real compileConfirmLead, and the real startCompile queueing it BEFORE
+//      awaiting the dialog;
+//   c. no key → Compile DISABLED (never hidden) with the no-key line and door;
+//   d. after the run, the real runCompile puts renderSpent's line in the card;
+//   e. the project footer at an Index-only reading budget.
+const aiRun = await import('../src/public/next/shared/ai-run.js');
+// Visible text of a fragment: tags out, the kit's entities back to characters.
+const textOf = (h) => String(h).replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+section('11. v3.67.0 — the run line on Compile, and the footer at Index only');
+
+const PRICED_RUNS_ON = {
+  job: 'compile', jobLabel: 'Compile to wiki', needsKey: false,
+  provider: 'gemini', providerLabel: 'Gemini', model: 'gemini-2.5-flash-lite', modelLabel: 'Flash Lite 2.5',
+  inputTokens: 20000, inputTokensLow: 17000, inputTokensHigh: 23000,
+  outputTokensLow: 1000, outputTokensHigh: 3000,
+  usdLow: 0.0021, usdHigh: 0.0035, priceKnown: true, free: false, costNote: 'priced',
+};
+const NO_KEY_RUNS_ON = { job: 'compile', jobLabel: 'Compile to wiki', needsKey: true };
+
+// ── a. the clause ─────────────────────────────────────────────────────────
+function buildClauseSandbox() {
+  return new Function(`
+    const state = { chatModel: null, modelProvider: null, models: {}, offerable: {}, availableProviders: [] };
+    function resolveChatModel(id) {
+      const LABELS = { 'claude-sonnet-5': 'Claude Sonnet 5', 'gemini-2.5-flash-lite': 'Flash Lite 2.5', 'claude-haiku-4-5': 'Claude Haiku 4.5' };
+      return Object.hasOwn(LABELS, id) ? { entry: { id, label: LABELS[id] } } : null;
+    }
+    ${extractFunction(chat, 'providerDisplayLabel')}
+    ${extractFunction(chat, 'chatModelOnScreen')}
+    ${extractFunction(chat, 'compileModelClause')}
+    return { state, chatModelOnScreen, compileModelClause };
+  `)();
+}
+{
+  const c = buildClauseSandbox();
+  const clause = () => c.compileModelClause(PRICED_RUNS_ON, c.chatModelOnScreen());
+
+  eq(clause(), '', 'nothing picked (a new thread is on your AI model) → NO clause');
+  c.state.chatModel = 'claude-sonnet-5'; c.state.modelProvider = 'anthropic';
+  eq(clause(), 'Compile uses your AI model, not the model this chat is on (Claude Sonnet 5).',
+    'a chat on another model → the clause, word for word, naming the chat model by its HUMAN label');
+  c.state.chatModel = 'gemini-2.5-flash-lite'; c.state.modelProvider = 'gemini';
+  eq(clause(), '', 'THE NAMED MUTATION\'S GUARD: a chat on the SAME model → NO clause (a notice about nothing)');
+  c.state.chatModel = 'zz-not-in-the-catalogue'; c.state.modelProvider = 'openrouter';
+  eq(clause(), 'Compile uses your AI model, not the model this chat is on (zz-not-in-the-catalogue).',
+    'a model outside the catalogue is named by its id, never left blank');
+  // Provider mode: a provider picked with no model named. Which default it
+  // answers with is the server's to resolve, so a difference is claimed only
+  // when the PROVIDER differs.
+  c.state.chatModel = null; c.state.modelProvider = 'gemini'; c.state.models = { gemini: 'gemini-2.5-flash-lite', anthropic: 'claude-haiku-4-5' };
+  eq(clause(), '', 'provider mode on the SAME provider → NO clause (the view would be inferring the model)');
+  c.state.modelProvider = 'anthropic';
+  eq(clause(), 'Compile uses your AI model, not the model this chat is on (Claude Haiku 4.5).',
+    'provider mode on ANOTHER provider → the clause, labelled from that provider\'s default');
+  eq(c.compileModelClause(NO_KEY_RUNS_ON, { id: 'claude-sonnet-5', provider: 'anthropic', label: 'x' }), '',
+    'no key → no clause (there is no model to compare against)');
+  eq(c.compileModelClause(null, { id: 'claude-sonnet-5', provider: 'anthropic', label: 'x' }), '',
+    'no runsOn (an older server) → no clause');
+}
+
+// ── b. the confirm's first line ───────────────────────────────────────────
+// A fake dialog with exactly the parts compileConfirmLead touches: the title,
+// the body the dialog names in aria-describedby, and the root it wires.
+function fakeDialog(title) {
+  const root = { wired: 0, closest: null };
+  const body = {
+    html: '<p class="cfd-message">My chat</p><p class="cfd-detail">D</p>',
+    insertAdjacentHTML(pos, h) { this.html = pos === 'afterbegin' ? h + this.html : this.html + h; },
+    querySelector(sel) { return sel === '.ai-run' && this.html.includes('class="ai-run"') ? {} : null; },
+    closest(sel) { return sel === '.cfd-root' ? root : null; },
+  };
+  const titleEl = { textContent: title };
+  const document = { getElementById: (id) => (id === 'cfd-body' ? body : id === 'cfd-title' ? titleEl : null) };
+  return { root, body, titleEl, document };
+}
+function buildLeadSandbox(dlg, chatState) {
+  const wires = [];
+  const sb = new Function('document', 'renderRunsOn', 'wireAiRunDoors', 'wires', `
+    const state = ${JSON.stringify(chatState || { chatModel: null, modelProvider: null, models: {}, offerable: {}, availableProviders: [] })};
+    const COMPILE_CONFIRM_RUNLINE_ID = 'chat-compile-confirm-runline';
+    function requestSettingsSection() {}
+    function navigate() {}
+    function resolveChatModel(id) { return id === 'claude-sonnet-5' ? { entry: { id, label: 'Claude Sonnet 5' } } : null; }
+    ${extractFunction(chat, 'providerDisplayLabel')}
+    ${extractFunction(chat, 'chatModelOnScreen')}
+    ${extractFunction(chat, 'compileModelClause')}
+    ${extractFunction(chat, 'compileConfirmLead')}
+    return { compileConfirmLead };
+  `)(dlg.document, aiRun.renderRunsOn, (root, deps) => {
+    wires.push({ root, hasDeps: typeof deps.requestSettingsSection === 'function' && typeof deps.navigate === 'function' });
+    return true;
+  }, wires);
+  sb.wires = wires;
+  return sb;
+}
+const TITLE = 'Compile this conversation to your wiki?';
+{
+  const dlg = fakeDialog(TITLE);
+  const sb = buildLeadSandbox(dlg, { chatModel: 'claude-sonnet-5', modelProvider: 'anthropic', models: {}, offerable: {}, availableProviders: [] });
+  const placed = sb.compileConfirmLead({ runsOn: PRICED_RUNS_ON }, TITLE)();
+  eq(placed, true, 'the run line is placed into the dialog the startCompile call opened');
+  ok(dlg.body.html.startsWith('<p class="ai-run" role="note" id="chat-compile-confirm-runline">'),
+    'it is the FIRST line of the dialog body — above the conversation title and the detail (region C: run line first)');
+  const text = textOf(dlg.body.html);
+  ok(/^Runs on Flash Lite 2\.5 · ≈18k–26k tokens · ≈\$0\.0021–\$0\.0035 · Change model/.test(text),
+    'the line reads the shared kit\'s words: Runs on <label> · ≈tokens · ≈$range · Change model — got ' + text.slice(0, 110));
+  ok(text.includes('Compile uses your AI model, not the model this chat is on (Claude Sonnet 5).'),
+    'and the clause follows it, as the kit\'s second line, when the chat is on another model');
+  ok(dlg.body.html.indexOf('ai-run-extra') < dlg.body.html.indexOf('cfd-message'),
+    'the clause sits between the run line and the existing body, never after it');
+  ok(/data-ai-run-door="providers"/.test(dlg.body.html), 'the line carries the ONE door, to Providers & keys');
+  eq(sb.wires.length, 1, 'the door is wired once, on the dialog\'s own root (the dialog lives on <body>, outside #view-root)');
+  ok(sb.wires[0] && sb.wires[0].root === dlg.root && sb.wires[0].hasDeps,
+    'with the shell\'s two functions injected, never imported by the kit');
+
+  // Run twice: idempotent, never a second line.
+  eq(sb.compileConfirmLead({ runsOn: PRICED_RUNS_ON }, TITLE)(), false, 'a second placement is refused — one run line per dialog');
+  eq((dlg.body.html.match(/class="ai-run"/g) || []).length, 1, 'still exactly one run line in the dialog');
+}
+{
+  const dlg = fakeDialog(TITLE);
+  const sb = buildLeadSandbox(dlg, { chatModel: 'gemini-2.5-flash-lite', modelProvider: 'gemini', models: {}, offerable: {}, availableProviders: [] });
+  sb.compileConfirmLead({ runsOn: PRICED_RUNS_ON }, TITLE)();
+  ok(dlg.body.html.includes('Runs on') && !dlg.body.html.includes('ai-run-extra'),
+    'same model → the run line and NO clause line at all (not an empty one)');
+}
+{
+  const dlg = fakeDialog('Delete this conversation?');
+  const sb = buildLeadSandbox(dlg);
+  eq(sb.compileConfirmLead({ runsOn: PRICED_RUNS_ON }, TITLE)(), false,
+    'ANOTHER dialog is open (confirmThen declined ours) → nothing is written into it');
+  ok(!dlg.body.html.includes('ai-run'), 'and that dialog\'s body is untouched');
+}
+{
+  const dlg = fakeDialog(TITLE);
+  const sb = buildLeadSandbox(dlg);
+  eq(sb.compileConfirmLead({ estimate: {} }, TITLE)(), false, 'an estimate with no runsOn (an older server) places nothing');
+  eq(sb.compileConfirmLead(null, TITLE)(), false, 'and a failed estimate places nothing — the detail already says the cost is unknown');
+  eq(sb.wires.length, 0, 'and wires nothing');
+}
+{
+  const dlg = fakeDialog(TITLE);
+  const sb = buildLeadSandbox(dlg);
+  sb.compileConfirmLead({ runsOn: NO_KEY_RUNS_ON }, TITLE)();
+  const text = textOf(dlg.body.html);
+  ok(text.startsWith('Needs an AI provider key · Add one in Providers & keys'),
+    'no key at confirm time → the no-key line leads the dialog, with its door');
+}
+
+// The REAL startCompile: the lead is queued BEFORE the dialog is awaited, and
+// lands inside the dialog confirmThen built — driven end to end.
+{
+  const dlg = fakeDialog(TITLE);
+  const run = new Function('dialogDoc', 'renderRunsOn', `
+    let compilePrepping = false;
+    const state = {
+      compileBusy: false, compileOwner: null, activeConversationId: 'conv-1', activeDomain: 'articles',
+      conversations: [{ id: 'conv-1', title: 'My chat' }], thread: [],
+      chatModel: 'claude-sonnet-5', modelProvider: 'anthropic', models: {}, offerable: {}, availableProviders: [],
+    };
+    const document = dialogDoc;
+    const COMPILE_CONFIRM_RUNLINE_ID = 'chat-compile-confirm-runline';
+    function requestSettingsSection() {}
+    function navigate() {}
+    function wireAiRunDoors() { return true; }
+    function resolveChatModel(id) { return id === 'claude-sonnet-5' ? { entry: { id, label: 'Claude Sonnet 5' } } : null; }
+    function icon() { return ''; }
+    function escapeHtml(s) { return String(s == null ? '' : s); }
+    function formatUsdHonest(n) { return typeof n === 'number' ? '$' + n.toFixed(4) : null; }
+    function setCompilePrepUi() {}
+    function pushCompileCard() { return true; }
+    function compileStillTargetsActive() { return true; }
+    function fetch() {
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(${JSON.stringify({
+        ok: true, compilable: true, provider: 'gemini', model: 'gemini-2.5-flash-lite',
+        estimate: { usdLow: 0.0021, usdHigh: 0.0035, priceKnown: true, costUnknown: null },
+        runsOn: PRICED_RUNS_ON,
+      })}) });
+    }
+    const seen = { lineAtOpen: null, detail: null, dialogs: 0 };
+    function confirmThen(opts) {
+      seen.dialogs++;
+      seen.detail = opts.detail;
+      // confirmThen builds its DOM synchronously, then returns; the lead is a
+      // microtask, so at THIS instant it has not run yet...
+      seen.lineAtOpen = dialogDoc.getElementById('cfd-body').html.includes('ai-run');
+      // ...and settles only after a later tick, like a user reading the dialog.
+      return new Promise((r) => setTimeout(r, 0));
+    }
+    ${extractFunction(chat, 'providerDisplayLabel')}
+    ${extractFunction(chat, 'buildCompileConfirmCopy')}
+    ${extractFunction(chat, 'chatModelOnScreen')}
+    ${extractFunction(chat, 'compileModelClause')}
+    ${extractFunction(chat, 'compileConfirmLead')}
+    ${'async ' + extractFunction(chat, 'startCompile')}
+    return { startCompile, seen };
+  `)(dlg.document, aiRun.renderRunsOn);
+  await run.startCompile();
+  eq(run.seen.dialogs, 1, 'the real startCompile opens one dialog');
+  eq(run.seen.lineAtOpen, false, 'precondition: the line is not in the dialog at the synchronous instant confirmThen returns');
+  ok(dlg.body.html.startsWith('<p class="ai-run"'),
+    'and by the time the dialog settles, the queued lead has made the run line its FIRST line');
+  ok(dlg.body.html.includes('not the model this chat is on (Claude Sonnet 5)'),
+    'with the clause, because this chat is on Claude Sonnet 5 and Compile runs on Flash Lite 2.5');
+  ok(!/\$0\.0021/.test(run.seen.detail || ''),
+    'the detail no longer repeats the figure the run line states (one figure, one format) — got ' + (run.seen.detail || '').slice(0, 80));
+  ok(/range rather than a price/.test(run.seen.detail || '') && /"articles" wiki/.test(run.seen.detail || ''),
+    'but keeps what the line cannot say: why a range is a range, and where the pages land');
+}
+
+// The copy: with the line vs without it.
+{
+  const build = new Function(`
+    function formatUsdHonest(n) { return typeof n === 'number' ? '$' + n.toFixed(4) : null; }
+    ${extractFunction(chat, 'providerDisplayLabel')}
+    ${extractFunction(chat, 'buildCompileConfirmCopy')}
+    return buildCompileConfirmCopy;
+  `)();
+  const est = (e) => ({ provider: 'gemini', model: 'gemini-2.5-flash-lite', estimate: e });
+  const pricedE = { usdLow: 0.0021, usdHigh: 0.0035, priceKnown: true, costUnknown: null };
+  const legacy = build(est(pricedE), 'articles', 'My chat', null);
+  ok(/Estimated cost \$0\.0021 – \$0\.0035 on Gemini "gemini-2\.5-flash-lite"\./.test(legacy.detail),
+    'WITHOUT the run line (an older server, no runsOn) the detail is the pre-v3.67.0 copy — its figure stays');
+  const withLine = build(est(pricedE), 'articles', 'My chat', null, { runLine: true });
+  ok(!/\$/.test(withLine.detail), 'WITH the run line the detail states no dollar figure — the line above it does');
+  ok(/^The figure above is a range rather than a price/.test(withLine.detail),
+    'and the range caveat now points at the line ("the figure above"), not at a sentence that is gone');
+  const freeLine = build(est({ priceKnown: false, costUnknown: 'free-model' }), 'articles', 'My chat', null, { runLine: true });
+  ok(!/free to use/.test(freeLine.detail) && /"articles" wiki/.test(freeLine.detail),
+    'a free model with the line: the line says "free"; the detail keeps only where the pages land');
+  const noProv = build(est({ priceKnown: false, costUnknown: 'no-provider' }), 'articles', 'My chat', null, { runLine: true });
+  ok(/No AI provider is configured/.test(noProv.detail),
+    'no provider: the sentence about what to DO stays, even with the line');
+  ok(/Gemini, Anthropic or OpenRouter/.test(noProv.detail) && /Providers & keys/.test(noProv.detail),
+    'and it now names OpenRouter and the Providers & keys section (the stale "Add an API key in Settings" is gone)');
+  const noProvLegacy = build(est({ priceKnown: false, costUnknown: 'no-provider' }), 'articles', 'My chat', null);
+  ok(/OpenRouter/.test(noProvLegacy.detail), 'the same sentence without the line names OpenRouter too');
+}
+
+// ── c. no key → disabled, never hidden ────────────────────────────────────
+function buildButtonSandbox(stateExtra) {
+  return new Function('stateExtra', `
+    const COMPILE_MIN_USER_MESSAGES = 1;
+    const state = Object.assign({
+      activeConversationId: 'conv-1', compileBusy: false, compilePct: 0,
+      thread: [{ role: 'user', content: 'q' }, { role: 'assistant', content: 'a' }],
+    }, stateExtra);
+    function icon() { return '<svg></svg>'; }
+    function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    ${extractFunction(chat, 'renderCompileButtonHtml')}
+    ${extractFunction(chat, 'compileTurnCounts')}
+    ${extractFunction(chat, 'compileCaptionText')}
+    ${extractFunction(chat, 'compileControlHtml')}
+    return { state, renderCompileButtonHtml, compileControlHtml };
+  `)(stateExtra || {});
+}
+{
+  const attrs = aiRun.aiActionDisabledAttrs(NO_KEY_RUNS_ON, 'chat-compile-runline');
+  const line = aiRun.renderRunsOn(NO_KEY_RUNS_ON, { id: 'chat-compile-runline' });
+  const sb = buildButtonSandbox({ compileKeyAttrs: attrs, compileKeyLineHtml: line });
+  const btn = sb.renderCompileButtonHtml();
+  ok(btn.includes('id="chat-compile-btn"'), 'NO KEY: the Compile button is still rendered — disabled, NEVER hidden');
+  ok(/ disabled aria-disabled="true" aria-describedby="chat-compile-runline"/.test(btn),
+    'and it carries the kit\'s disabled attributes, described by the no-key line');
+  eq((btn.match(/ disabled/g) || []).length, 1, 'with exactly one `disabled`');
+  const group = sb.compileControlHtml();
+  ok(/<p class="ai-run" role="note" id="chat-compile-runline">/.test(group),
+    'the no-key line sits in the Compile group, under the action, with the id the button names');
+  ok(textOf(group).includes('Needs an AI provider key · Add one in Providers & keys'),
+    'reading the kit\'s no-key words');
+  ok(/data-ai-run-door="providers"/.test(group), 'and carrying the one door');
+  // busy wins, one `disabled`
+  sb.state.compileBusy = true;
+  eq((sb.renderCompileButtonHtml().match(/ disabled/g) || []).length, 1, 'busy AND no key still prints ONE `disabled`');
+
+  const fine = buildButtonSandbox({});
+  ok(!/disabled/.test(fine.renderCompileButtonHtml()), 'a key present (or not yet asked) → an ENABLED button — never a guessed fault');
+  ok(!/ai-run/.test(fine.compileControlHtml()), 'and no run line under it at rest');
+}
+// loadCompileAvailability + applyCompileRunsOn, driven for real.
+async function driveAvailability(fetchImpl) {
+  const btnAttrs = {};
+  const group = { html: '', insertAdjacentHTML(pos, h) { this.html += h; } };
+  const btn = {
+    disabled: false,
+    closest: () => group,
+    setAttribute(k, v) { btnAttrs[k] = v; },
+    removeAttribute(k) { delete btnAttrs[k]; },
+  };
+  let lineEl = null;
+  const document = {
+    getElementById(id) {
+      if (id === 'chat-compile-btn') return btn;
+      if (id === 'chat-compile-runline') return group.html.includes('id="chat-compile-runline"') ? (lineEl = { remove() { group.html = ''; } }) : null;
+      return null;
+    },
+  };
+  const sb = new Function('document', 'fetch', 'renderRunsOn', 'aiActionDisabledAttrs', `
+    const state = { compileKeyAttrs: '', compileKeyLineHtml: '', compileBusy: false };
+    let compilePrepping = false;
+    const COMPILE_RUNLINE_ID = 'chat-compile-runline';
+    function isCurrentMount() { return true; }
+    ${extractFunction(chat, 'applyCompileRunsOn')}
+    ${'async ' + extractFunction(chat, 'loadCompileAvailability')}
+    return { state, loadCompileAvailability, applyCompileRunsOn };
+  `)(document, fetchImpl, aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs);
+  await sb.loadCompileAvailability(1);
+  return { sb, btn, btnAttrs, group };
+}
+{
+  const r = await driveAvailability(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ available: false, reason: 'No LLM API key found.', runsOn: NO_KEY_RUNS_ON }) }));
+  eq(r.btn.disabled, true, 'ai-available says runsOn.needsKey → the LIVE button is disabled in place (no repaint)');
+  eq(r.btnAttrs['aria-describedby'], 'chat-compile-runline', 'described by the no-key line');
+  ok(r.group.html.includes('Needs an AI provider key'), 'and the line is inserted under it');
+  ok(/ disabled aria-disabled/.test(r.sb.state.compileKeyAttrs), 'state carries the markup the next full render reads');
+
+  const legacy = await driveAvailability(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ available: false, reason: 'No LLM API key found.' }) }));
+  eq(legacy.btn.disabled, true, 'a pre-v3.67.0 answer (`available:false`, no runsOn) is the SAME fact and reads the same');
+
+  const keyed = await driveAvailability(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ available: true, provider: 'gemini', model: 'gemini-2.5-flash-lite', runsOn: { ...PRICED_RUNS_ON, inputTokens: undefined } }) }));
+  eq(keyed.btn.disabled, false, 'a key present → enabled');
+  eq(keyed.sb.state.compileKeyLineHtml, '', 'and no resting line (the run line lives in the confirm, where the estimate is)');
+
+  const blip = await driveAvailability(() => Promise.reject(new Error('network down')));
+  eq(blip.btn.disabled, false, 'a failed request leaves Compile ENABLED — a network blip is not "no key"');
+  eq(blip.sb.state.compileKeyAttrs, '', 'and publishes nothing');
+
+  const http500 = await driveAvailability(() => Promise.resolve({ ok: false, json: () => Promise.resolve({}) }));
+  eq(http500.btn.disabled, false, 'a non-OK answer is not "no key" either');
+
+  // key added later (Settings, then back): the state lifts in place.
+  keyed.sb.applyCompileRunsOn(NO_KEY_RUNS_ON);
+  eq(keyed.btn.disabled, true, 'CONTROL: the same sandbox does disable on a no-key answer');
+  keyed.sb.applyCompileRunsOn(PRICED_RUNS_ON);
+  eq(keyed.btn.disabled, false, 'and re-enables once a key exists — no stale disabled state');
+  ok(!('aria-describedby' in keyed.btnAttrs), 'with the no-key description removed');
+}
+// updateCompileButtonBusy releases to the no-key state, not to enabled.
+{
+  const btn = { disabled: true };
+  const sb = new Function('btn', `
+    const state = { compileOwner: 7, compileBusy: true, compilePct: 50, compileKeyAttrs: ' disabled aria-disabled="true"' };
+    const document = { getElementById: (id) => (id === 'chat-compile-btn' ? btn : null) };
+    ${extractFunction(chat, 'updateCompileButtonBusy')}
+    return { updateCompileButtonBusy };
+  `)(btn);
+  sb.updateCompileButtonBusy(7, false, 0);
+  eq(btn.disabled, true, 'a run ending while no key exists leaves Compile disabled rather than re-enabling it');
+}
+
+// ── d. after the run: the spent line in the card ──────────────────────────
+{
+  const SPENT = { provider: 'gemini', providerLabel: 'Gemini', model: 'gemini-2.5-flash-lite', modelLabel: 'Flash Lite 2.5',
+    inputTokens: 5812, outputTokens: 640, cachedReadTokens: 0, cacheWriteTokens: 0, calls: 3,
+    usd: 0.0008372, estimated: false, fallbackFrom: null };
+  const card = new Function('escapeHtml', 'icon', `
+    function formatBytesChat(n) { return n + ' B'; }
+    ${extractFunction(chat, 'buildCompileOutcomeHtml')}
+    return buildCompileOutcomeHtml;
+  `)((s) => String(s == null ? '' : s), () => '');
+  const html = card('T', [{ canonPath: 'entities/a.md', status: 'created', bytesAfter: 10 }], [], aiRun.renderSpent(SPENT));
+  const titleEnd = html.indexOf('</h3>');
+  const runAt = html.indexOf('class="ai-run"');
+  ok(runAt > titleEnd && runAt < html.indexOf('chat-compile-change-created'),
+    'the after-the-run line sits directly under the card\'s heading, above the change lists');
+  ok(textOf(html).includes('Ran on Flash Lite 2.5 · 5,812 in / 640 out · $0.0008'),
+    'reading "Ran on <label> · in / out · $" in the kit\'s words');
+  ok(!/ai-run/.test(card('T', [], [], '')), 'no spent → no line (never "$0.00")');
+
+  // The REAL runCompile, driven through a done event carrying `spent`.
+  const enc = new TextEncoder();
+  const frames = [
+    'data: ' + JSON.stringify({ type: 'progress', pct: 40 }) + '\n\n',
+    'data: ' + JSON.stringify({ type: 'done', title: 'T', changes: [], warnings: [], spent: SPENT }) + '\n\n',
+  ];
+  const pushed = [];
+  const run = new Function('renderSpent', 'pushed', 'framesBytes', `
+    let compileRunSeq = 0;
+    const state = { compileBusy: false, compilePct: 0, compileOwner: null, activeConversationId: 'conv-1', activeDomain: 'articles', thread: [], domains: [] };
+    let myMountToken = 1;
+    function isCurrentMount(t) { return t === myMountToken; }
+    const document = { getElementById: () => null };
+    function icon() { return ''; }
+    function escapeHtml(s) { return String(s == null ? '' : s); }
+    function formatBytesChat(n) { return n + ' B'; }
+    function pushCompileCard(html) { pushed.push(html); return true; }
+    ${extractFunction(chat, 'updateCompileButtonBusy')}
+    ${extractFunction(chat, 'buildCompileOutcomeHtml')}
+    function fetch(url) {
+      if (String(url).includes('/api/domains/stats')) return Promise.resolve({ json: () => Promise.resolve({ domains: [] }) });
+      let i = 0;
+      return Promise.resolve({ ok: true, status: 200, body: { getReader: () => ({
+        read: () => Promise.resolve(i < framesBytes.length ? { value: framesBytes[i++], done: false } : { value: undefined, done: true }),
+      }) } });
+    }
+    ${'async ' + extractFunction(chat, 'runCompile')}
+    return { runCompile };
+  `)(aiRun.renderSpent, pushed, frames.map((f) => enc.encode(f)));
+  await run.runCompile();
+  eq(pushed.length, 1, 'the real runCompile pushes one outcome card');
+  ok(textOf(pushed[0] || '').includes('Ran on Flash Lite 2.5 · 5,812 in / 640 out · $0.0008'),
+    'and that card carries the done event\'s `spent` as the after-the-run line');
+
+  // A run that was BILLED and then failed: the route's `error` event carries
+  // `spent`, and the error card says what the failed run cost.
+  const errFrames = ['data: ' + JSON.stringify({ type: 'error', message: 'The model returned unparseable output.', spent: SPENT }) + '\n\n'];
+  const pushedErr = [];
+  const runErr = new Function('renderSpent', 'pushed', 'framesBytes', `
+    let compileRunSeq = 0;
+    const state = { compileBusy: false, compilePct: 0, compileOwner: null, activeConversationId: 'conv-1', activeDomain: 'articles', thread: [], domains: [] };
+    let myMountToken = 1;
+    function isCurrentMount(t) { return t === myMountToken; }
+    const document = { getElementById: () => null };
+    function icon() { return ''; }
+    function escapeHtml(s) { return String(s == null ? '' : s); }
+    function buildCompileOutcomeHtml() { return '<unexpected-done>'; }
+    function pushCompileCard(html) { pushed.push(html); return true; }
+    ${extractFunction(chat, 'updateCompileButtonBusy')}
+    function fetch() {
+      let i = 0;
+      return Promise.resolve({ ok: true, status: 200, body: { getReader: () => ({
+        read: () => Promise.resolve(i < framesBytes.length ? { value: framesBytes[i++], done: false } : { value: undefined, done: true }),
+      }) } });
+    }
+    ${'async ' + extractFunction(chat, 'runCompile')}
+    return { runCompile };
+  `)(aiRun.renderSpent, pushedErr, errFrames.map((f) => enc.encode(f)));
+  await runErr.runCompile();
+  ok(/chat-compile-error/.test(pushedErr[0] || '') && textOf(pushedErr[0] || '').includes('Ran on Flash Lite 2.5 · 5,812 in / 640 out · $0.0008'),
+    'a compile that was billed and then FAILED shows the error AND what it cost — the money is never dropped with the result');
+}
+
+// ── e. the project footer at an Index-only reading budget ─────────────────
+{
+  const foot = new Function('renderDepthCell', `
+    ${extractFunction(chat, 'formatCharsShort')}
+    ${extractFunction(chat, 'projectDocumentOmissions')}
+    ${extractFunction(chat, 'projectDocumentsReadout')}
+    return projectDocumentsReadout;
+  `)((o) => '<span class="depth" data-budget="' + o.budget + '">' + o.value + '</span>');
+  const zero = foot({ chars: 3000, documentChars: 0, budgetChars: 0, notes: [] });
+  eq(zero.value, "index only: this project's reading budget",
+    'budgetChars 0 (the owner chose Index only) → the footer says so, in words');
+  ok(!zero.markHtml, 'and draws NO bar — 0 of 0 is not a reading');
+  eq(zero.label, 'Documents', 'under the same Documents label as the bar it replaces');
+  const owner = foot({ chars: 30000, documentChars: 20000, budgetChars: 32768, notes: [] });
+  ok(/data-budget="32768"/.test(owner.markHtml || ''),
+    'a smaller owner budget → the bar\'s denominator IS that effective budget, with no view arithmetic');
+  ok(/of 32\.8k characters/.test(owner.value), 'and the words name it');
+  const none = foot(null);
+  eq(none.value, null, 'no turn measured yet → no reading (absent is not zero)');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
