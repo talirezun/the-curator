@@ -10541,6 +10541,70 @@ function realListbox() {
     />Find the documents first\.</.test(add({ rootEditable: true, repoRoot: '/elsewhere' })));
 }
 
+// ── §21m3 — THE FIRST-TIME CHOOSER READS THE TOKEN TOO (v3.65.3) ───────
+// Orchestrator screen review: a project with no documents → "Mirror a GitHub
+// repository" showed "Read-only token — Settings › Knowledge base" with no
+// last four and no state, and the note "Add a read-only token in Settings"
+// under it, with a token SAVED. The render half and the binder half.
+{
+  const first = (choiceOver) => makeRenderers({
+    activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+    fndInit: { domain: 'acme', project: 'lumina', busy: false,
+      choice: { ...freshChooser({ allowLater: false }), ownership: 'remote', remote: 'o/r', ...choiceOver } },
+  }).renderFoundations(fndRead(fndPayload([], { present: false, ownership: null })));
+  const saved = first({ hasReadToken: true, readTokenLast4: 'ab12', hasSyncToken: true });
+  ok('CONTROL: this is the FIRST-TIME chooser (ownership cards), not the switch panel',
+    /data-fnd-own="remote"/.test(saved) && !/MIRROR FROM GITHUB/.test(saved));
+  ok('first-time, token saved: the read-only option carries its last four and is checked',
+    /value="config" data-fnd-token="config" checked \/>(?:(?!<\/label>)[\s\S]){0,600}fnd-init-token-state">ends in …ab12</.test(saved),
+    (saved.match(/fnd-init-tokens[\s\S]{0,500}/) || [''])[0]);
+  ok('...Personal Sync carries its own state word', /fnd-init-token-state">connected</.test(saved));
+  ok('...and NO "Add a read-only token in Settings" and no door — the false promise is gone',
+    !/Add a read-only token in Settings/.test(saved) && !/fnd-init-token-door/.test(saved));
+  ok('...and the READ WITH ⓘ is there, as on the switch panel',
+    /id="mem-fnd-readwith-info-btn"/.test(saved));
+  const none = first({ hasReadToken: false, hasSyncToken: false });
+  ok('first-time, NO token: the door to Settings is offered, and nothing is checked',
+    /id="mem-fnd-init-token-door">Add one in Settings</.test(none)
+      && !/data-fnd-token="(?:config|sync)"[^>]*\bchecked\b/.test(none));
+
+  // THE BINDER: the SHIPPED `bindFoundationRows`, with the chooser mounted.
+  const calls = { facts: [], bound: 0 };
+  const initBox = {};
+  const doc = { querySelector: (sel) => (sel === '[data-fnd-init="mem-fnd-init"]' ? initBox : null),
+    querySelectorAll: () => [] };
+  const st = { activeDomain: 'acme', activeProject: 'lumina', fndInit: null };
+  const api = new Function(
+    'state', 'render', 'reportAsyncMountFailure', 'openReader', 'isCurrentReader', 'isCurrentMount',
+    'fetch', 'escapeHtml', 'icon', 'renderMarkdown', 'renderReadout',
+    'foundationsFacts', 'freshChooser', 'bindFoundationsChooser', 'initFoundations',
+    'loadFoundationDraft', 'readPickedFile', 'saveFoundation', 'deleteFoundation',
+    'fndShrinkWarn', 'fndStats', 'briefDismissDecision',
+    'copyDraftingAsk', 'navigate',
+    'MAX_FOUNDATION_BYTES', 'FOUNDATION_ROLES', 'localStorage',
+    'loadTokenFacts', 'requestSettingsSection', 'pickedFiles',
+    extractFunction(viewSrc, 'bindFoundationRows', 'memory.js') + '\nreturn { bindFoundationRows };')(
+    st, () => {}, () => {}, () => 0, () => false, () => true,
+    async () => ({ ok: false }), escapeHtml, () => '', renderMarkdown, renderReadout,
+    () => ({ present: false, ownership: null, docs: [], count: 0 }),
+    freshChooser, () => { calls.bound++; }, async () => {},
+    async () => {}, async () => {}, async () => {}, async () => {},
+    () => null, () => ({ bytes: 0, words: 0, over: false }), () => 'close',
+    async () => {}, () => {},
+    MAX_FOUNDATION_BYTES, FOUNDATION_ROLES, { getItem: () => null, setItem: () => {} },
+    async (rec) => { calls.facts.push(rec); }, () => {}, () => []);
+  api.bindFoundationRows(doc, 1);
+  eq('SETUP: the chooser was bound', calls.bound, 1);
+  eq('the default (curator) card asks for NO token facts — nothing on screen needs them',
+    calls.facts.length, 0);
+  st.fndInit.choice.ownership = 'remote';
+  api.bindFoundationRows(doc, 1);
+  eq('choosing the GitHub card reads the token facts, for THIS panel record',
+    calls.facts.length === 1 && calls.facts[0] === st.fndInit, true);
+  api.bindFoundationRows(doc, 1);
+  eq('...ONCE: the repaint that answer causes does not ask again', calls.facts.length, 1);
+}
+
 // ── §21m2 — THE TOKEN FACTS, READ ONCE PER OPEN (v3.65.2, C1) ──────────
 {
   const mk = (responses) => {

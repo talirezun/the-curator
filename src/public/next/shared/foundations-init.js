@@ -1172,8 +1172,11 @@ function remoteArm(id, choice, busy, hostOpts) {
     // THE IN-FLOW NOTE IS THE ⓘ'S NOW, where a host supplies one: it is an
     // explanation, and explanations live behind the ⓘ. A host with no ⓘ (the
     // create form) keeps the sentence, so no host loses it.
+    // v3.65.3: "Add a read-only token in Settings." only when NONE is saved —
+    // said to somebody whose token is saved, it is a false instruction.
     (info ? '' : '<p class="fnd-init-note"><span>The token is never typed here — this chooses which '
-      + 'stored one to read with. Add a read-only token in Settings.</span></p>');
+      + 'stored one to read with.' + (choice.hasReadToken === false
+        ? ' Add a read-only token in Settings.' : '') + '</span></p>');
 
   const fields =
     '<div class="fnd-init-remote-fields">' +
@@ -2055,6 +2058,38 @@ export function bindFoundationsChooser(cfg) {
   const report = () => {
     if (typeof c.onSelect === 'function') c.onSelect(nextStepReason(choice));
   };
+
+  // ── WHICH TOKENS ARE SAVED, FOR A HOST THAT HAS NO READER OF ITS OWN ──
+  // (v3.65.3). The Context view reads these facts itself (`loadTokenFacts`
+  // in views/memory.js, stamped to its panel record); the Domains create form
+  // has no such reader, so its READ WITH said "the read-only token in
+  // Settings" with no last four and told a person with a saved token to go
+  // and add one. `loadTokenFacts: true` makes the binder do the SAME two
+  // local reads, with the SAME rules: presence and four characters, never
+  // the value; a failed read leaves the fact UNKNOWN, never "not saved".
+  // Lazily — only once the GitHub arm is on screen — and once per choice.
+  if (c.loadTokenFacts === true && choice.ownership === 'remote' && !choice.tokenFactsAsked) {
+    choice.tokenFactsAsked = true;
+    const f = typeof c.fetchImpl === 'function' ? c.fetchImpl
+      : (typeof fetch === 'function' ? fetch : null);
+    const get = (url) => (f ? Promise.resolve().then(() => f(url))
+      .then((r) => (r && r.ok ? r.json() : null)).catch(() => null) : Promise.resolve(null));
+    Promise.all([get('/api/config/github-read-token'), get('/api/sync/status')])
+      .then(([readTok, sync]) => {
+        let moved = false;
+        if (readTok && readTok.ok === true && typeof readTok.present === 'boolean') {
+          choice.hasReadToken = readTok.present;
+          choice.readTokenLast4 = readTok.present && typeof readTok.last4 === 'string'
+            && /^[A-Za-z0-9_]{1,4}$/.test(readTok.last4) ? readTok.last4 : null;
+          moved = true;
+        }
+        if (sync && typeof sync.configured === 'boolean') {
+          choice.hasSyncToken = sync.configured;
+          moved = true;
+        }
+        if (moved) rerender();
+      }).catch((err) => fail(err));
+  }
 
   const root = typeof doc.querySelector === 'function'
     ? doc.querySelector('[data-fnd-init="' + id + '"]') : null;

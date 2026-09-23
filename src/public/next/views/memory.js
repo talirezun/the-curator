@@ -8184,7 +8184,11 @@ function renderFoundationsInit(facts) {
       + '<p>A tick <b>copies</b> the file into this project. Whether an agent reads it first is '
       + 'set afterwards, per document, in the table’s READ column.</p>', { html: true })
     : { btn: '', panel: '' };
-  const readWithInfo = switching
+  // v3.65.3: the FIRST-TIME chooser's GitHub card reads the same token
+  // facts, carries the same ⓘ and the same door as the switch panel — it
+  // printed "Add a read-only token in Settings" to somebody with one saved.
+  const githubArm = switching || !repoOnly;
+  const readWithInfo = githubArm
     ? renderInfoMark('mem-fnd-readwith-info', 'How to create a read-only token',
       READ_WITH_INFO_HTML, { html: true })
     : null;
@@ -8228,7 +8232,7 @@ function renderFoundationsInit(facts) {
           existingProject: true,
           // v3.65.2: one panel (no framed arm inside it), one host-owned
           // reason line, the READ WITH ⓘ, and a real door to Settings.
-          flat: true, reasons: 'host', readWithInfo, tokenDoor: switching,
+          flat: true, reasons: 'host', readWithInfo, tokenDoor: githubArm,
         }) +
         ((showGo || closable)
           ? '<div class="mem-fnd-init-actions">' +
@@ -9466,6 +9470,14 @@ function bindFoundationRows(root, token) {
     // repository. Two writers of one field, and this one is the copy.
     if (state.fndInit.switching) state.fndInit.choice.ownership = 'remote';
     else if (facts.ownership === 'repo') state.fndInit.choice.ownership = 'repo';
+    // ── THE FIRST-TIME CHOOSER READS THE TOKEN FACTS TOO (v3.65.3) ──────
+    // Once the GitHub card is chosen, the same `loadTokenFacts` the switch
+    // panel calls on open — once per panel record, so its own re-render does
+    // not ask again. The switch panel's record is born with the flag set.
+    if (state.fndInit.choice.ownership === 'remote' && !state.fndInit.tokenFactsAsked) {
+      state.fndInit.tokenFactsAsked = true;
+      loadTokenFacts(state.fndInit, token).catch((err) => reportAsyncMountFailure(token, err));
+    }
     bindFoundationsChooser({
       doc: root,
       id: 'mem-fnd-init',
@@ -9601,7 +9613,7 @@ function bindFoundationRows(root, token) {
       state.fndInit = {
         domain: state.activeDomain, project: state.activeProject,
         choice: freshChooser({ allowLater: false }), busy: false, error: null, refused: [],
-        adding: true, switching: true,
+        adding: true, switching: true, tokenFactsAsked: true,
       };
       state.fndInit.choice.ownership = 'remote';
       state.fndForceOpen = true;
