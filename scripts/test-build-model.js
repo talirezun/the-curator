@@ -230,9 +230,20 @@ const SHAPES = [
     { geminiApiKey: GK, anthropicApiKey: AK, openrouterApiKey: OK_, activeProvider: 'openrouter', selectedModels: { gemini: 'gemini-2.5-flash' } }, {}],
 ];
 
+// ── THE ONE PERMITTED DIFFERENCE (v3.67.0) ────────────────────────────────
+// CONTRACT-v3.67.0 §3.2 names one copy change in this resolver: the no-key
+// throw now names Settings' section and all three providers. It is matched as
+// an EXACT old→new pair, so any other change to any string — including a
+// second edit to this one — still reds, and the prefix "No LLM API key found."
+// that three suites key on is asserted unchanged below.
+const NO_KEY_OLD = 'THROW:No LLM API key found. Add one in Settings, or set GEMINI_API_KEY / ANTHROPIC_API_KEY in .env.';
+const NO_KEY_NEW = 'THROW:No LLM API key found. Add one in Settings › Providers & keys (Gemini, Anthropic or OpenRouter), ' +
+  'or set GEMINI_API_KEY / ANTHROPIC_API_KEY in .env.';
+
 /** Run the whole matrix through two modules and return every disagreement. */
 function runMatrix(a, b) {
   const diffs = [];
+  const permitted = [];
   let comparisons = 0;
   for (const [shapeLabel, cfg, env] of SHAPES) {
     writeConfig(cfg);
@@ -242,17 +253,22 @@ function runMatrix(a, b) {
       comparisons++;
       const ra = probe(a, fn);
       const rb = probe(b, fn);
-      if (ra !== rb) diffs.push(`${shapeLabel} :: ${callLabel} :: baseline=${ra} current=${rb}`);
+      if (ra === NO_KEY_OLD && rb === NO_KEY_NEW) permitted.push(`${shapeLabel} :: ${callLabel}`);
+      else if (ra !== rb) diffs.push(`${shapeLabel} :: ${callLabel} :: baseline=${ra} current=${rb}`);
     }
     for (const [k, v] of Object.entries(restore)) {
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
     }
   }
-  return { diffs, comparisons };
+  return { diffs, comparisons, permitted };
 }
 
 if (OLD) {
-  const { diffs, comparisons } = runMatrix(OLD, NEW);
+  const { diffs, comparisons, permitted } = runMatrix(OLD, NEW);
+  ok(permitted.length === 7 && permitted.every((p) => p.startsWith('no keys at all (the throwing branch) :: getProviderInfo')),
+    `the ONLY difference is the contract-named no-key sentence, on the no-keys shape's 7 getProviderInfo calls (${permitted.length})`);
+  ok(NO_KEY_NEW.startsWith('THROW:No LLM API key found.') && NO_KEY_OLD.startsWith('THROW:No LLM API key found.'),
+    'the no-key prefix three suites key on is unchanged');
   ok(comparisons === SHAPES.length * CALLS.length,
     `the matrix actually ran: ${comparisons} comparisons (${SHAPES.length} config shapes × ${CALLS.length} call shapes)`);
   ok(comparisons >= 200, `the matrix is large enough to be worth trusting (${comparisons} >= 200)`);
