@@ -961,12 +961,16 @@ function docModel(byId, bySel) {
   eq('the scan asks the repo-scan route, with the root ESCAPED',
     scanned, '/api/memory/repo-scan?root=%2FUsers%2Fx%2Fp');
   eq('what it found is recorded', choice.candidates.length, 2);
-  // EVERYTHING USABLE IS TICKED: the person pressed "Find documents" in order
-  // to mirror what is there, and making them tick eight boxes afterwards is
-  // the friction, not the safety.
-  eq('every usable candidate is ticked', choice.picks['docs/a.md'], true);
-  ok('...and the one over the cap is NOT', !('docs/big.md' in choice.picks),
+  // NOTHING IS TICKED (v3.65.3). v3.61.0 ticked everything, v3.61.1 the four
+  // canonical roles; the maintainer: "default should be unticked, then you
+  // select what you need." A first set-up is no exception — `docs/a.md` is an
+  // `architecture` candidate, exactly the kind the old rule pre-ticked.
+  eq('a first-set-up scan ticks NOTHING, not even a canonical-role candidate',
+    JSON.stringify(choice.picks), '{}');
+  ok('...and the one over the cap is not ticked either', !('docs/big.md' in choice.picks),
     JSON.stringify(choice.picks));
+  // Tick it by hand so the patch assertions below run against a real tick.
+  choice.picks['docs/a.md'] = true;
   eq('the scan cleared any earlier error', choice.scanError, null);
 
   // A LATE SCAN REPLY FOR A ROOT THE PERSON HAS SINCE CORRECTED IS DROPPED.
@@ -1052,8 +1056,16 @@ function docModel(byId, bySel) {
     fat.ownership = 'repo';
     fat.candidates = [{ path: 'docs/a.md', bytes: 300 * 1024, suggestedRole: 'architecture' }];
     fat.picks = { 'docs/a.md': true };
-    ok('over the 200 KB budget, the warning names the CONSEQUENCE rather than the size',
-      /agents receive 120 KB per session and the rest is dropped/.test(FI.budgetWarning(fat)),
+    // v3.65.3: "the rest is dropped" was FALSE — the store omits a document
+    // from the session-start reading and keeps it in the index, fetched by
+    // name. The sentence names the two budgets and what really happens.
+    ok('over the 200 KB budget, the warning names what REALLY happens: 120 KB of text at '
+      + 'session start, everything else listed and fetched by name',
+      FI.budgetWarning(fat) === 'Over the 200 KB project budget. Agents are handed up to 120 KB '
+        + 'of document text at session start (only the read-first ones, if any are flagged); '
+        + 'every other document stays listed and is fetched by name when needed.',
+      FI.budgetWarning(fat));
+    ok('...and never again claims anything is dropped', !/dropped/i.test(FI.budgetWarning(fat)),
       FI.budgetWarning(fat));
     fat.picks = {};
     eq('...and says nothing at all under the budget', FI.budgetWarning(fat), '');
@@ -2260,36 +2272,19 @@ section('§12 — v3.61.1: THE RHYTHM, THE PICKER, THE DEFAULT TICKS, THE AGE');
     eq('pickFolder: a throwing fetch never escapes', f.reason, 'failed');
   }
 
-  // ── (4) THE DEFAULT TICKS ────────────────────────────────────────────
+  // ── (4) THE DEFAULT TICKS: NONE (v3.65.3) ────────────────────────────
   //
-  // MEASURED ON THE MAINTAINER'S OWN REPOSITORY: v3.61.0 ticked all 25
-  // candidates and mirrored 1,875 KB against a 200 KB budget, README (6).md
-  // included. The four canonical roles are the default now; everything else
-  // is listed, sized, aged and one tick away.
-  eq('the default-tick set is the FIRST FOUR of the store’s own role order, sliced from '
-    + 'it rather than re-typed', FI.DEFAULT_TICK_ROLES.join(','),
-  'architecture,decisions,conventions,roadmap');
-  const CANDS = [
-    { path: 'docs/architecture.md', bytes: 100, suggestedRole: 'architecture' },
-    { path: 'docs/decisions.md', bytes: 100, suggestedRole: 'decisions' },
-    { path: 'CONTRIBUTING.md', bytes: 100, suggestedRole: 'conventions' },
-    { path: 'docs/roadmap.md', bytes: 100, suggestedRole: 'roadmap' },
-    { path: 'docs/api.md', bytes: 100, suggestedRole: 'api' },
-    { path: 'README.md', bytes: 100, suggestedRole: 'guide' },
-    { path: 'raw/README (6).md', bytes: 100, suggestedRole: 'guide' },
-    { path: 'notes/misc.md', bytes: 100, suggestedRole: 'other' },
-    { path: 'docs/huge.md', bytes: 900000, suggestedRole: 'architecture', tooLarge: true },
-  ];
-  const picks = FI.defaultPicks(CANDS);
-  eq('four of nine candidates are ticked by default', Object.keys(picks).length, 4);
-  ok('...the four canonical roles', picks['docs/architecture.md'] && picks['docs/decisions.md']
-    && picks['CONTRIBUTING.md'] && picks['docs/roadmap.md'], JSON.stringify(picks));
-  ok('...and NOT api, guide, other, or the README out of a source folder — the rows that made '
-    + 'a real repository mirror nine times its budget',
-  !picks['docs/api.md'] && !picks['README.md'] && !picks['raw/README (6).md']
-    && !picks['notes/misc.md'], JSON.stringify(picks));
-  ok('...and never one over the per-document cap, whatever its role',
-    !picks['docs/huge.md'], JSON.stringify(picks));
+  // v3.61.0 ticked all 25 candidates on the maintainer's repository (1,875 KB
+  // against 200 KB); v3.61.1 ticked the four canonical roles; the remote arm
+  // kept that rule and a real repository whose files all sit under
+  // documentation/architecture/ arrived 22 of 32 ticked, 2,351 KB. Now every
+  // scan starts with nothing ticked. `untickedPicks` is the one rule.
+  eq('a fresh scan\u2019s picks are EMPTY', JSON.stringify(FI.untickedPicks()), '{}');
+  ok('...a new object each time, so one chooser\u2019s ticks never leak into another\u2019s',
+    FI.untickedPicks() !== FI.untickedPicks());
+  ok('the role-based tick rule is gone from the module, not merely unused',
+    FI.defaultPicks === undefined && FI.DEFAULT_TICK_ROLES === undefined
+      && FI.ticksByDefault === undefined);
 
   // ── (5) THE RUNNING TOTAL AND THE BUDGET ─────────────────────────────
   {
@@ -2306,8 +2301,8 @@ section('§12 — v3.61.1: THE RHYTHM, THE PICKER, THE DEFAULT TICKS, THE AGE');
     c.picks['b.md'] = true;
     eq('a second tick crosses the budget', FI.tickedBytes(c), 210 * 1024);
     ok('...and the warning names what an agent will actually receive',
-      /Over the 200 KB budget: agents receive 120 KB per session/.test(FI.budgetWarning(c)),
-      FI.budgetWarning(c));
+      /^Over the 200 KB project budget\. Agents are handed up to 120 KB of document text at session start/
+        .test(FI.budgetWarning(c)), FI.budgetWarning(c));
     // A TYPED EXTRA HAS NO SIZE, so it is disclosed rather than counted as 0 —
     // the figure would otherwise read as a measurement when it is a floor.
     c.extras = [{ path: 'notes/x.md', role: 'other' }];
@@ -2472,8 +2467,8 @@ section('§13 — v3.61.1: THE PICK BUTTON, WIRED (fill the field, then scan)');
   ok('...and runs the scan in the same gesture',
     urls.some((u) => String(u).indexOf('/api/memory/repo-scan') === 0), JSON.stringify(urls));
   eq('...finding what is there', (choice.candidates || []).length, 2);
-  ok('...with only the canonical role ticked', choice.picks['docs/architecture.md'] === true
-    && !choice.picks['README.md'], JSON.stringify(choice.picks));
+  ok('...with NOTHING ticked, not even the canonical-role candidate (v3.65.3)',
+    JSON.stringify(choice.picks) === '{}', JSON.stringify(choice.picks));
 
   // NO DIALOG: the fact is recorded so the renderer can withhold the control.
   const c2 = FI.freshChooser({});
@@ -2769,7 +2764,11 @@ section('§15 — v3.65.0: THE GITHUB ARM (record §D.7)');
       'name the repository first');
   }
 
-  // ── THE BINDER: THE SAME TICK DEFAULT AS THE LOCAL ARM ────────────────
+  // ── THE BINDER: THE SAME TICK DEFAULT AS THE LOCAL ARM — NONE ─────────
+  // The maintainer's screenshot 4 (v3.65.2): a repository whose documents all
+  // sit under documentation/architecture/ arrived 22 of 32 ticked, because
+  // the remote arm still ticked by role. It is DRIVEN here through the shipped
+  // binder and a scan press, not read off a helper.
   {
     const choice = remoteChoice({ remote: 'o/r' });
     const scan = node({});
@@ -2786,11 +2785,11 @@ section('§15 — v3.65.0: THE GITHUB ARM (record §D.7)');
     scan.fire('click');
     await new Promise((r) => setTimeout(r, 0));
     eq('the scan landed', Array.isArray(choice.candidates) ? choice.candidates.length : -1, 2);
-    ok('...and only the CANONICAL roles are ticked, exactly as the local arm '
-      + 'does — v3.61.0 ticked everything and came out 1,875 KB over a 200 KB '
-      + 'budget on the maintainer\'s own repository',
-    choice.picks['docs/architecture.md'] === true && !choice.picks['docs/notes.md'],
-    JSON.stringify(choice.picks));
+    ok('...and NOTHING is ticked — not the architecture candidate either, exactly as the '
+      + 'local arm — "default should be unticked, then you select what you need"',
+    JSON.stringify(choice.picks) === '{}', JSON.stringify(choice.picks));
+    eq('...so the commit is off with its reason until the owner ticks one',
+      FI.commitBlockedReason(choice), 'Tick at least one document.');
   }
 }
 
@@ -2945,7 +2944,7 @@ section('§18 — v3.65.2: THE HOST-OWNED REASON, THE DOOR, AND ADD MODE, DRIVEN
   const noDoor = FI.renderFoundationsChooser({ id: 'x', optionsHidden: true,
     choice: { ...FI.freshChooser({}), ownership: 'remote', hasReadToken: false } });
   ok('...and a host that passes no `tokenDoor` renders no door — a button that goes nowhere is worse than none',
-    !/fnd-init-token-door/.test(noDoor) && /No read-only token yet/.test(noDoor));
+    !/fnd-init-token-door/.test(noDoor) && /fnd-init-token-state">not saved yet</.test(noDoor));
   const create = FI.renderFoundationsChooser({ id: 'x',
     choice: { ...FI.freshChooser({}), ownership: 'remote' } });
   ok('the CREATE FORM is unchanged where it has no ⓘ: its framed arm and its in-flow token note stay',
@@ -3108,6 +3107,114 @@ section('§18 — v3.65.2: THE HOST-OWNED REASON, THE DOOR, AND ADD MODE, DRIVEN
   const typed = await run({ rootEditable: true, repoRoot: '/my/copy' });
   eq('a folder TYPED because the recorded one is missing is SENT — the path scanned is the path copied from',
     typed.refreshRoot, '/my/copy');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§19 — v3.65.3: READ WITH NAMES EACH TOKEN, AND THE DEFAULT IS DERIVED');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// The maintainer, with a read-only token saved and tested: "two options … not
+// clear which is which", Personal Sync's token shown SELECTED, and "connected"
+// floating at the panel's far right edge. Each option now says what it is and
+// where it lives, carries its state beside it, and the checked radio is
+// derived from the facts until the owner presses one.
+{
+  const base = () => ({ ...FI.freshChooser({}), ownership: 'remote' });
+  eq('a fresh chooser has NOT chosen a token (null), so the facts decide',
+    FI.freshChooser({}).tokenSource, null);
+  eq('a saved read-only token → the read-only token is selected',
+    FI.selectedTokenSource({ ...base(), hasReadToken: true, hasSyncToken: true }), 'config');
+  eq('NO read-only token (a fact) → NOTHING is selected, never Personal Sync silently',
+    FI.selectedTokenSource({ ...base(), hasReadToken: false, hasSyncToken: true }), null);
+  eq('unknown (nobody looked, or the read failed) → the read-only token, as before',
+    FI.selectedTokenSource(base()), 'config');
+  eq('the owner’s own press wins over the facts: Sync stays Sync',
+    FI.selectedTokenSource({ ...base(), tokenSource: 'sync', hasReadToken: true }), 'sync');
+  eq('...and an explicit read-only press stays, even with no token saved (the reason says why)',
+    FI.selectedTokenSource({ ...base(), tokenSource: 'config', hasReadToken: false }), 'config');
+
+  const mk = (over) => FI.renderFoundationsChooser({ id: 'x', optionsHidden: true,
+    choice: { ...base(), remote: 'o/r', ...over }, tokenDoor: true });
+  const checkedOf = (html) => {
+    const m = html.match(/value="(config|sync)" data-fnd-token="\1"[^>]*\bchecked\b/g) || [];
+    return m.map((x) => x.match(/value="(config|sync)"/)[1]);
+  };
+  const saved = mk({ hasReadToken: true, readTokenLast4: 'rxRQ', hasSyncToken: true });
+  eq('RENDERED: with a saved read-only token exactly ONE radio is checked, the read-only one',
+    JSON.stringify(checkedOf(saved)), '["config"]');
+  const none = mk({ hasReadToken: false, hasSyncToken: true });
+  eq('RENDERED: with no read-only token NO radio is checked', JSON.stringify(checkedOf(none)), '[]');
+  ok('...and the door to Settings is there instead',
+    /<\/label><button type="button" class="btn btn-secondary btn-xs fnd-init-token-door"/.test(none));
+
+  // Each option names WHAT and WHERE, and its state sits INSIDE its own label.
+  const optOf = (html, v) => {
+    const i = html.indexOf('value="' + v + '"');
+    return i < 0 ? '' : html.slice(i, html.indexOf('</label>', i));
+  };
+  const cfg = optOf(saved, 'config');
+  const syn = optOf(saved, 'sync');
+  ok('the read-only option says what it is and where it lives',
+    /fnd-init-token-name">Read-only token</.test(cfg)
+      && /fnd-init-token-where">— Settings › Knowledge base</.test(cfg), cfg);
+  ok('...and its last four sit in ITS OWN label', /fnd-init-token-state">ends in …rxRQ</.test(cfg), cfg);
+  ok('the Personal Sync option says which token that is',
+    /fnd-init-token-name">Personal Sync’s token</.test(syn)
+      && /fnd-init-token-where">— the one that syncs your knowledge base</.test(syn), syn);
+  ok('...and plainly why it is not the default', /every repository its account can see/.test(syn)
+    && /which is why it is not the default/.test(syn), syn);
+  ok('..."connected" sits inside the Personal Sync label, beside its name — not elsewhere',
+    /fnd-init-token-state">connected</.test(syn) && !/fnd-init-token-state">connected</.test(cfg), syn);
+  ok('a last-four that is not token characters is not printed',
+    !/ends in/.test(optOf(mk({ hasReadToken: true, readTokenLast4: '<b>' }), 'config')));
+
+  // THE LAYOUT HALF: the label hugs its text and the state word is not pushed
+  // to the far edge. Read from the comment-stripped stylesheet.
+  const css = readFileSync(join(NEXT, 'shared/foundations-init.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const ruleOf = (sel) => {
+    const re = new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}', 'g');
+    let out = ''; let m; while ((m = re.exec(css))) out += m[1];
+    return out;
+  };
+  ok('the option label no longer stretches across the panel (no flex-grow)',
+    /flex:\s*0 1 auto/.test(ruleOf('.fnd-init-token-line > .fnd-init-token-opt'))
+      && !/flex:\s*1/.test(ruleOf('.fnd-init-token-line > .fnd-init-token-opt')),
+    ruleOf('.fnd-init-token-line > .fnd-init-token-opt'));
+  ok('the state word is not pushed to the far edge (no margin-left:auto)',
+    !/margin-left:\s*auto/.test(ruleOf('.fnd-init-token-state')), ruleOf('.fnd-init-token-state'));
+}
+{
+  // ── DRIVEN: NOTHING SELECTED MEANS NO REQUEST; A PRESS DECIDES ─────────
+  const choice = { ...FI.freshChooser({}), ownership: 'remote', remote: 'o/r',
+    hasReadToken: false, hasSyncToken: true };
+  const scan = node({});
+  const syncRadio = node({ dataset: { fndToken: 'sync' } });
+  const urls = [];
+  const reasons = [];
+  const doc = docModel({ 'x-scan': scan, 'x-remote': node({ value: 'o/r' }),
+    'x-remote-ref': node({ value: '' }), 'x-remote-path': node({ value: '' }) },
+  { '[data-fnd-token]': [syncRadio] });
+  FI.bindFoundationsChooser({ doc, id: 'x', choice, reasons: 'host', onChange: () => {},
+    onSelect: (r) => reasons.push(r),
+    fetchImpl: async (u) => { urls.push(String(u)); return { ok: true, json: async () => ({ ok: true,
+      candidates: [{ path: 'a.md', bytes: 1, suggestedRole: 'architecture' }], truncated: false }) }; } });
+  scan.fire('click');
+  await new Promise((r) => setTimeout(r, 0));
+  eq('with nothing selected, a scan press sends NO request', urls.length, 0);
+  eq('...and the reason names the missing token', FI.nextStepReason(choice),
+    'No read-only token yet — add one in Settings, or read with Personal Sync’s token.');
+  syncRadio.fire('change');
+  eq('pressing Personal Sync records THE OWNER’s choice', choice.tokenSource, 'sync');
+  scan.fire('click');
+  await new Promise((r) => setTimeout(r, 0));
+  ok('...and the scan then reads with Personal Sync’s token, named on the URL',
+    urls.length === 1 && /[?&]tokenSource=sync\b/.test(urls[0]), JSON.stringify(urls));
+  ok('...and the body a commit would send names the chosen source',
+    FI.chooserBody(choice).tokenSource === 'sync', JSON.stringify(FI.chooserBody(choice)));
+  const saved = { ...FI.freshChooser({}), ownership: 'remote', remote: 'o/r', hasReadToken: true };
+  eq('with a saved read-only token and no press, the commit body reads with it',
+    FI.chooserBody(saved).tokenSource, 'config');
 }
 
 // ── Done ─────────────────────────────────────────────────────────────────

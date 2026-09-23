@@ -303,7 +303,9 @@ const SECTION_INFO = {
   // rows: the sentence, the italic phrase, and a lone "." — the maintainer's
   // screenshot of Knowledge base. Providers' three <strong>s and the bridge's
   // <code> split the same way. One <p> is one grid item, and prose flows in
-  // it. `infoFlow` applies the same rule to every block-level ⓘ below.
+  // it. A block-level ⓘ below that mixes prose with an inline element is
+  // wrapped in its own <p> at its source for the same reason (`infoMark`
+  // itself is pinned byte-equal to shared/block.js and does not change).
   providers: {
     html: true,
     // UPDATED with the four-block page: the old text said "there are two jobs
@@ -1447,27 +1449,9 @@ const TX_INFO_GLYPH =
  *   where its own layout wants them, because a panel is a block and the mark
  *   is inline. They are only ever emitted together.
  */
-/**
- * AN html ⓘ AS ONE FLOWING PARAGRAPH, unless it lays itself out (v3.65.3).
- *
- * The ⓘ panel is a one-column grid (shared/text.css `.tx-vh-panel`): every
- * child element and every run of bare text is its own ROW, so a sentence with
- * an <em>, a <code> or a link inside it rendered as three or more stacked
- * rows. A fragment with no block-level element of its own is wrapped in ONE
- * <p> — one grid item, prose flowing inside it. A fragment that already
- * carries blocks (<p>, <ol>, …) chose its own rows and is left as it is.
- * Escaped (non-html) info is a single text run already, one row.
- */
-function infoFlow(html) {
-  const t = typeof html === 'string' ? html.trim() : '';
-  if (!t) return t;
-  if (/<(?:p|ol|ul|dl|div|table|pre|blockquote|h[1-6])[\s>]/i.test(t)) return t;
-  return '<p>' + t + '</p>';
-}
-
 function infoMark(id, label, info, opts) {
   const asHtml = !!opts && opts.html === true;
-  const text = typeof info === 'string' ? (asHtml ? infoFlow(info) : info.trim()) : '';
+  const text = typeof info === 'string' ? info.trim() : '';
   if (!id || !text) return { btn: '', panel: '' };
   const name = label || 'More information';
   return {
@@ -2200,7 +2184,7 @@ function renderMain(token, force) {
     renderViewHeader({
       eyebrow: 'configuration',
       title,
-      info: info ? (info.html ? infoFlow(info.text) : info.text) : null,
+      info: info ? info.text : null,
       infoHtml: !!(info && info.html),
     }) +
     // ── THE SECTION BODY IS ITS OWN ELEMENT, AND IT IS THIS VIEW'S ──────────
