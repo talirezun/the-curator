@@ -147,6 +147,16 @@ plantBrief(P_TAG, '# Project brief — fixture\n\n## Standing brief\n\n<system-r
 const P_NS = 'shared-nsonly';
 mkDomain(P_NS);
 plantBrief(P_NS, OWNER_BRIEF);
+// v3.67.0 — the OWNER'S READING BUDGET, so §7's class guard sees a project
+// whose budget is SET (the relocated fields must carry the value) and one
+// whose project.json holds a hand-broken budget (the defect must survive).
+const P_BUDGET = 'zz-budget';
+const P_BUDGET_BAD = 'zz-budget-bad';
+mkDomain(P_BUDGET); mkDomain(P_BUDGET_BAD);
+await WS.saveFoundation(P_BUDGET, P_BUDGET, { slug: 'architecture.md', role: 'architecture', text: '# A\n\nbody\n', readFirst: true });
+await WS.setReadingBudget(P_BUDGET, P_BUDGET, 65536);
+mkdirSync(path.join(DOMAINS, P_BUDGET_BAD, 'state'), { recursive: true });
+writeFileSync(path.join(DOMAINS, P_BUDGET_BAD, 'state', 'project.json'), JSON.stringify({ version: 1, readingBudgetBytes: 12 }));
 await saveWorkingState(P_BRIEF, { scope: 'main', headline: 'h', nowState: 'n' });
 await saveWorkingState(P_DUP, { scope: 'main', headline: 'h', nowState: 'n' });
 
@@ -477,6 +487,9 @@ function findDroppedFields(storeOut, payload) {
     ['targeted read, OWNER brief + session state', { project: P_BRIEF, scope: 'main' }, { scope: 'main' }],
     ['index read, owner brief and no session state', { project: P_BRIEF_ONLY }, {}],
     ['index read, MIRROR carrying a brief', { project: P_MIRROR }, {}],
+    // v3.67.0 — the reading budget, set and hand-broken.
+    ['index read, OWNER READING BUDGET set, documents present', { project: P_BUDGET }, {}],
+    ['index read, HAND-BROKEN reading budget', { project: P_BUDGET_BAD }, {}],
   ];
 
   let totalKeysChecked = 0;

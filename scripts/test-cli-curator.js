@@ -746,6 +746,24 @@ section('§7  The pipe — a large bootstrap arrives whole');
   ok(doc && Buffer.byteLength(doc.text) === bytes,
     '…and the document is WHOLE, byte for byte, not cut at 64 KB');
   ok(r.stdout.length > 128 * 1024, `…on ${Math.round(r.stdout.length / 1024)} KB of stdout`);
+
+  // v3.67.0 — THE OWNER'S READING BUDGET, through the real binary. The
+  // Markdown says whose budget chose the texts, and a caller's --budget is
+  // still the override and says so.
+  const md0 = run(['context', '--project', `${D1}/lumina`]);
+  ok(md0.code === 0 && md0.stdout.includes('Reading budget: 120 KB — the default'),
+    '`my-curator context` prints "Reading budget: 120 KB — the default" on an untouched project');
+  const setB = await store.setReadingBudget(D1, 'lumina', 65536);
+  ok(setB.ok === true, 'PRECONDITION: the owner sets 64 KB (the app\u2019s store call)');
+  const md1 = run(['context', '--project', `${D1}/lumina`]);
+  ok(md1.stdout.includes("Reading budget: 64 KB — the owner's"), '…and "Reading budget: 64 KB — the owner\'s" once one is set');
+  const j1 = parseOut(run(['context', '--project', `${D1}/lumina`, '--json']));
+  ok(j1?.foundations?.budget?.source === 'owner' && j1?.foundations?.planned === true && j1?.readingBudgetBytes === 65536,
+    '--json is the store envelope: budget.source "owner", planned, readingBudgetBytes 65536');
+  const j2 = parseOut(run(['context', '--project', `${D1}/lumina`, '--json', '--budget', '150000']));
+  ok(j2?.foundations?.budget?.source === 'caller' && j2?.foundations?.budget?.maxBytes === 150000,
+    '--budget stays the caller override, and is reported as `caller`');
+  await store.setReadingBudget(D1, 'lumina', null);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
