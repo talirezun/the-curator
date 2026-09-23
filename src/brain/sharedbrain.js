@@ -910,6 +910,50 @@ export function isSharedBrainMirrorClaudeMd(content) {
 }
 
 /**
+ * The repository a mirror belongs to, as one stable string — `github:owner/name`
+ * case-folded (GitHub names are case-insensitive). Null for any other storage
+ * type: a local-folder path can carry characters a one-line frontmatter value
+ * should not, and nothing in the mismatch check needs it to be complete.
+ */
+export function mirrorRepoKey(connection) {
+  if (!connection || connection.storage_type !== 'github') return null;
+  const owner = typeof connection.github_repo_owner === 'string' ? connection.github_repo_owner.toLowerCase() : '';
+  const name = typeof connection.github_repo_name === 'string' ? connection.github_repo_name.toLowerCase() : '';
+  if (!/^[a-z0-9][a-z0-9-]{0,38}$/.test(owner) || !/^[a-z0-9._-]{1,100}$/.test(name)) return null;
+  return `github:${owner}/${name}`;
+}
+
+/**
+ * Does a mirror's CLAUDE.md name a DIFFERENT brain than `connection`?
+ * Returns a short human description of the first field that disagrees, or
+ * null. A field the marker does not carry (or carries as `unknown`, which
+ * ensureSharedDomainExists writes when the connection lacked it) is skipped:
+ * absent means "cannot tell", and refusing on it would lock every mirror
+ * written before the field existed.
+ */
+export function mirrorOwnerMismatch(content, connection) {
+  if (typeof content !== 'string' || !connection) return null;
+  const fm = content.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/);
+  if (!fm) return null;
+  const read = (key) => {
+    const m = fm[1].match(new RegExp('^[ \\t]*' + key + '[ \\t]*:[ \\t]*["\']?([^"\'\\r\\n]*?)["\']?[ \\t]*$', 'mi'));
+    const v = m ? m[1].trim() : '';
+    return v && v !== 'unknown' ? v : '';
+  };
+  const folder = read('shared_domain');
+  if (folder && typeof connection.shared_domain === 'string' && connection.shared_domain
+      && folder.toLowerCase() !== connection.shared_domain.toLowerCase()) {
+    return `the repository folder "${folder}", not "${connection.shared_domain}"`;
+  }
+  const repo = read('shared_repo');
+  const mine = mirrorRepoKey(connection);
+  if (repo && mine && repo.toLowerCase() !== mine) {
+    return `the repository ${repo.replace(/^github:/, '')}, not ${mine.replace(/^github:/, '')}`;
+  }
+  return null;
+}
+
+/**
  * Ensure the local shared-brain mirror domain exists on disk.
  *
  * Creates the standard Curator domain layout (entities/, concepts/, summaries/,
@@ -972,7 +1016,27 @@ export async function ensureSharedDomainExists(localDomain, connection, domainsD
         `collide with it.`
       );
     }
-    return; // a genuine mirror — already initialised
+    // ── A MIRROR, BUT WHOSE? (v3.65.3) ─────────────────────────────────
+    // The marker proves the folder is SOME Shared Brain's mirror, not that
+    // it is THIS one's. The mirror name comes from the brain's NAME, so two
+    // unrelated cohorts with the same name land on the same folder, and
+    // every Pull of one would prune the other's pages and relabel the domain.
+    // saveSharedBrain now refuses a second connection with the same slug
+    // (connectionClash); this is the other half, for a folder left behind by
+    // a brain this install has since left and a different one it joined.
+    // Compared ONLY on the fields the marker actually carries — a mirror
+    // written before v3.65.3 has no `shared_repo`, and a missing field is
+    // "cannot tell", never "mismatch".
+    const mismatch = mirrorOwnerMismatch(head, connection);
+    if (mismatch) {
+      throw new Error(
+        `Refusing to pull into "${localDomain}": that domain is the mirror of a DIFFERENT Shared Brain ` +
+        `(its CLAUDE.md names ${mismatch}). Pulling would replace that brain's pages with this one's. ` +
+        `Leave the other brain and delete its mirror domain first, or ask this brain's admin for an ` +
+        `invite with a different name.`
+      );
+    }
+    return; // a genuine mirror of THIS brain — already initialised
   }
 
   await mkdir(path.join(base, 'wiki', 'entities'),  { recursive: true });
@@ -995,6 +1059,9 @@ export async function ensureSharedDomainExists(localDomain, connection, domainsD
     'source: shared-brain',
     `shared_brain_slug: ${connection.shared_brain_slug || 'unknown'}`,
     `shared_domain: ${connection.shared_domain || 'unknown'}`,
+    // v3.65.3: which repository this mirror belongs to, so a later Pull can
+    // tell this brain's mirror from another brain's (mirrorOwnerMismatch).
+    ...(mirrorRepoKey(connection) ? [`shared_repo: ${mirrorRepoKey(connection)}`] : []),
     '---',
     '',
     `# Shared Brain Mirror: ${labelText}`,

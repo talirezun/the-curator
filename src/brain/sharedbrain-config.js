@@ -282,6 +282,84 @@ export function connectionIdentity(conn) {
   return null;
 }
 
+/**
+ * THE ONE ANSWER TO "MAY THIS CONNECTION JOIN THE ONES ALREADY HERE?" (v3.65.3)
+ *
+ * Two refusals, in this order, and nothing else:
+ *
+ *  · `identity` — the SAME brain again (connectionIdentity equal). The
+ *    v3.43.0 refusal, unchanged in substance: a second membership mints a
+ *    second fellow_id, and an erasure of one then removes half a person.
+ *
+ *  · `mirror` — a DIFFERENT brain whose local mirror would be the SAME domain
+ *    (`shared-<shared_brain_slug>`, compared case-folded because the domains
+ *    folder usually sits on a case-insensitive volume). The mirror name is
+ *    derived from the brain's NAME, so two unrelated cohorts that both call
+ *    themselves "Reading Group" would pull into one folder: each Pull prunes
+ *    every page the other collective did not send, and the domain carries one
+ *    cohort's pages under the other's label. Nothing personal is lost — a
+ *    mirror is re-pullable — but the reading is false and the thrash is
+ *    endless, so it is refused rather than reconciled.
+ *
+ * `existing` is the stored list; the candidate's own id (when it has one) is
+ * skipped, so a RE-SAVE of a connection never clashes with itself.
+ *
+ * `opts.skipMirrorFor` — the stored record of the connection being re-saved,
+ * or null. A mirror clash is refused only when the candidate is NEW or its
+ * slug CHANGED: an install that already holds two connections sharing a slug
+ * (written before this refusal existed) must still be able to rotate a token
+ * or update a credential on either, and refusing that would strand them.
+ *
+ * Pure: reads no file, writes none. saveSharedBrain() and the wizard's early
+ * check (POST /api/sharedbrain/check-clash) both call it, so the step that
+ * refuses early and the write that refuses late cannot disagree.
+ *
+ * @returns {null | {kind: 'identity'|'mirror', clash: object, message: string}}
+ */
+export function connectionClash(candidate, existing, opts) {
+  if (!candidate || typeof candidate !== 'object') return null;
+  const list = Array.isArray(existing) ? existing : [];
+  const others = list.filter((c) => c && typeof c === 'object' && (!candidate.id || c.id !== candidate.id));
+
+  const identity = connectionIdentity(candidate);
+  if (identity) {
+    const clash = others.find((c) => connectionIdentity(c) === identity);
+    if (clash) {
+      return {
+        kind: 'identity',
+        clash,
+        message:
+          `SharedBrain connection: this machine is already connected to that shared brain ` +
+          `(“${clash.label}”). Joining it twice would give you two contributor identities, ` +
+          `so half your contributions would survive an erasure request. Use the existing ` +
+          `connection, or remove it first if you need to re-join with new credentials.`,
+      };
+    }
+  }
+
+  const slug = typeof candidate.shared_brain_slug === 'string' ? candidate.shared_brain_slug.toLowerCase() : '';
+  if (slug) {
+    const prior = opts && opts.skipMirrorFor;
+    const unchanged = !!(prior && typeof prior.shared_brain_slug === 'string'
+      && prior.shared_brain_slug.toLowerCase() === slug);
+    if (!unchanged) {
+      const clash = others.find((c) => typeof c.shared_brain_slug === 'string'
+        && c.shared_brain_slug.toLowerCase() === slug);
+      if (clash) {
+        return {
+          kind: 'mirror',
+          clash,
+          message:
+            `SharedBrain connection: another Shared Brain on this computer, “${clash.label}”, already ` +
+            `uses the local domain shared-${clash.shared_brain_slug}. Two brains can't share one ` +
+            `mirror — ask this brain's admin to rename it, or leave “${clash.label}” first.`,
+        };
+      }
+    }
+  }
+  return null;
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -327,20 +405,15 @@ export function saveSharedBrain(conn) {
   // Scoped to a DIFFERENT connection id: re-saving the same connection (the
   // wizard's own last step, every credential update, every rotate) must keep
   // working, and that is asserted alongside the refusal.
-  const identity = connectionIdentity(conn);
-  if (identity) {
-    const clash = raw.connections.find(c => c.id !== conn.id && connectionIdentity(c) === identity);
-    if (clash) {
-      throw new Error(
-        `SharedBrain connection: this machine is already connected to that shared brain ` +
-        `(“${clash.label}”). Joining it twice would give you two contributor identities, ` +
-        `so half your contributions would survive an erasure request. Use the existing ` +
-        `connection, or remove it first if you need to re-join with new credentials.`
-      );
-    }
-  }
-
+  //
+  // v3.65.3: the refusal moved into connectionClash() (same sentence, same
+  // scope), which also refuses a DIFFERENT brain that would share this one's
+  // local mirror domain — see its own comment. One function, so the wizard's
+  // early check and this write cannot disagree.
   const idx = raw.connections.findIndex(c => c.id === conn.id);
+  const refusal = connectionClash(conn, raw.connections, { skipMirrorFor: idx === -1 ? null : raw.connections[idx] });
+  if (refusal) throw new Error(refusal.message);
+
   if (idx === -1) {
     raw.connections.push(conn);
   } else {
@@ -393,4 +466,4 @@ export function newUuid() {
 }
 
 // Test surface — internal validation helpers exposed for the battle-test script.
-export const __testing = { isUuid, maskTokens, validateConnection, TOKEN_FIELDS, connectionIdentity };
+export const __testing = { isUuid, maskTokens, validateConnection, TOKEN_FIELDS, connectionIdentity, connectionClash };

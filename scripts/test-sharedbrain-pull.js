@@ -154,6 +154,59 @@ try {
   assert(/invalid local domain slug/.test(err.message), 'rejects traversal slug with clear error');
 }
 
+// ── 3b. v3.65.3 — a mirror folder of a DIFFERENT brain is refused ─────
+section('ensureSharedDomainExists — whose mirror is it? (v3.65.3)');
+{
+  const dir = makeFellowWorkspace('fellow-mirror-owner');
+  // A GitHub-backed brain writes `shared_repo:` into the marker.
+  const ghA = makeConnection('Reading Group', 'Ann', {
+    storage_type: 'github', github_repo_owner: 'Bob', github_repo_name: 'Reading',
+    shared_domain: 'reading', shared_brain_slug: 'reading-group',
+  });
+  await ensureSharedDomainExists('shared-reading-group', ghA, dir);
+  const cm = readFileSync(path.join(dir, 'shared-reading-group', 'CLAUDE.md'), 'utf-8');
+  assert(/^shared_repo: github:bob\/reading$/m.test(cm), 'a new GitHub mirror records shared_repo (case-folded)');
+
+  // The SAME brain again — idempotent, as before.
+  let sameErr = null;
+  try { await ensureSharedDomainExists('shared-reading-group', { ...ghA, github_repo_owner: 'BOB' }, dir); }
+  catch (e) { sameErr = e; }
+  assert(sameErr === null, 'the same brain (case-different owner) re-uses its own mirror');
+
+  // A DIFFERENT brain whose name derives the same mirror — refused, and the
+  // folder is untouched.
+  const ghB = makeConnection('Reading Group', 'Cat', {
+    storage_type: 'github', github_repo_owner: 'carol', github_repo_name: 'books',
+    shared_domain: 'club', shared_brain_slug: 'reading-group',
+  });
+  let diffErr = null;
+  try { await ensureSharedDomainExists('shared-reading-group', ghB, dir); } catch (e) { diffErr = e; }
+  assert(diffErr && /mirror of a DIFFERENT Shared Brain/.test(diffErr.message),
+    'a different brain on the same mirror folder is refused');
+  assert(diffErr && /repository folder "reading"/.test(diffErr.message), 'naming the field that disagrees');
+  assertEq(readFileSync(path.join(dir, 'shared-reading-group', 'CLAUDE.md'), 'utf-8'), cm,
+    'and the mirror marker was not rewritten');
+
+  // Same folder name, different repository — caught by shared_repo alone.
+  let repoErr = null;
+  try {
+    await ensureSharedDomainExists('shared-reading-group',
+      { ...ghB, shared_domain: 'reading' }, dir);
+  } catch (e) { repoErr = e; }
+  assert(repoErr && /repository carol\/books, not|repository bob\/reading, not/.test(repoErr.message),
+    'a different REPOSITORY with the same folder name is refused too');
+
+  // A mirror written BEFORE v3.65.3 carries no shared_repo — never a refusal
+  // on the missing field alone (it would lock every existing mirror).
+  const legacyDir = makeFellowWorkspace('fellow-mirror-legacy');
+  mkdirSync(path.join(legacyDir, 'shared-reading-group'), { recursive: true });
+  writeFileSync(path.join(legacyDir, 'shared-reading-group', 'CLAUDE.md'),
+    '---\nreadonly: true\nsource: shared-brain\nshared_brain_slug: reading-group\nshared_domain: reading\n---\n\n# old\n');
+  let legacyErr = null;
+  try { await ensureSharedDomainExists('shared-reading-group', ghA, legacyDir); } catch (e) { legacyErr = e; }
+  assert(legacyErr === null, 'a pre-v3.65.3 mirror (no shared_repo) of the same folder is still adopted');
+}
+
 // ── 4. pullCollective happy path ─────────────────────────────────────────
 
 section('pullCollective — happy path (Fellow A)');
