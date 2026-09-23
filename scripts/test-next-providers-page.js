@@ -1296,7 +1296,9 @@ section('§12  BLOCK 2 IS "YOUR AI MODEL" — every AI job, derived from AI_JOBS
     // THE GUARD: a lifting sandbox that injects no registry still renders the
     // block (the three unowned suites), with the plain lede and no row.
     const R0 = sandboxWith({ buildLaneJobs: undefined });
-    const h0 = R0.renderBuildBlock(stateB(), false);
+    let h0 = '', threw = '';
+    try { h0 = R0.renderBuildBlock(stateB(), false); } catch (e) { threw = e.message; }
+    ok(!threw, 'with NO registry bound, rendering block 2 does not throw' + (threw ? ` (threw: ${threw})` : ''));
     ok(h0.includes('Every AI job runs on this one model.') && !h0.includes('settings-usedby'),
       'with NO registry bound, the block still renders: the plain lede and no row (the typeof guard)');
   }
