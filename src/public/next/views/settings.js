@@ -198,7 +198,13 @@ import { renderViewHeader } from '../shared/text.js';
 // `alias: 'settings'` keeps `settings-nav-list` / `settings-nav-row` /
 // `row-label` / `row-hint` on the SAME elements, because this file's own click
 // binder (`wireGlobalListeners`) and four suites address them by name.
-import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../shared/sidebar.js';
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass } from '../shared/sidebar.js';
+// ── THE DEPTH BAR'S IDENTITY TONE (v3.66.0) ───────────────────────────────
+// The Vault folder's per-domain page bars take each domain's OWN colour, from
+// the same palette and the same mapping as the identity dot beside them
+// (design rule 5) — `depthIdentityClass(i)` and `identityDotClass(i)` both
+// call `identitySlot(i)`, so there is no second mapping to drift.
+import { depthIdentityClass } from '../shared/depth-bar.js';
 // ── THE MONITOR, for every LIVE-STATE reading on this screen ─────────────
 // The bridge's connection strip, its stale-bridge warning, the self-test
 // outcome and the two session readings were four hand-built treatments of one
@@ -1087,6 +1093,14 @@ function freshState() {
     // the markup would vanish at the next tick — which is the one tick that
     // is certain to fire right after a run, since the run moved the payload.
     mcpExercise: null,       // { ok, ranAt, durationMs, results, covered, missing }
+    // ── ④ Across projects (v3.66.0) ──────────────────────────────────────
+    // GET /api/mcp/usage?include=projects → `{byProject, byProjectWindow,
+    // savePulse}`. Its OWN field, and read ONCE per section load, never by the
+    // 30 s revalidate: the `include=projects` half walks the working-state
+    // store and every usage log, which is why the route makes it opt-in, and a
+    // 30-day reading does not move in 30 seconds.
+    mcpProjects: null,
+    mcpProjectsError: null,
     mcpExerciseBusy: false,
     mcpExerciseError: null,
 
@@ -1105,6 +1119,11 @@ function freshState() {
     // cache, so the two sections cannot render different values for it.
     config: null,            // { domainsPath, domainsPathSource, backgroundMode, backgroundModes }
     configError: null,
+    // Knowledge base → Vault folder → "Domains in this folder" (v3.66.0).
+    // GET /api/domains/stats, in listDomains() order — which IS the install's
+    // domain index the identity dot keys on. Rides loadConfig like ghToken.
+    vaultDomains: null,      // [{slug, displayName, pageCount, index}]
+    vaultDomainsError: null,
     pickingFolder: false,
     pathCopyFeedback: null,
 
@@ -1754,6 +1773,10 @@ async function loadMcp(token) {
     // array) would put the whole section behind `state.mcpError` the first
     // time the route 404s, which is the v3.0.17 "one consumer drops the
     // section" shape with the blast radius pointed at the wrong block.
+    // ④'s reading is started here and NOT awaited: it walks the store and
+    // every usage log, and blocks ①–③ must not wait for it. It renders itself
+    // when it lands, and a failure is its own state (never state.mcpError).
+    loadAcrossProjects(token);
     const [cfgRes, ddRes, usage] = await Promise.all([
       fetch('/api/mcp/config'),
       fetch('/api/config/default-domain'),
@@ -1815,6 +1838,34 @@ function applyUsageVerdict(verdict) {
   return false;
 }
 
+/**
+ * ④ ACROSS PROJECTS — GET /api/mcp/usage?include=projects, once per load.
+ *
+ * Never throws. The payload's shape is CHECKED: an older server ignores the
+ * parameter and answers without `byProject`, which is "this server cannot say",
+ * never "no projects" — so an absent array is an error state, not an empty list.
+ */
+async function loadAcrossProjects(token) {
+  let next = null, err = null;
+  try {
+    const res = await fetch('/api/mcp/usage?include=projects');
+    const data = res.ok ? await res.json() : null;
+    if (data && Array.isArray(data.byProject) && data.byProjectWindow
+        && typeof data.byProjectWindow === 'object') {
+      next = { byProject: data.byProject, window: data.byProjectWindow,
+        savePulse: data.savePulse && typeof data.savePulse === 'object' ? data.savePulse : null };
+    } else {
+      err = 'This server does not report sessions per project.';
+    }
+  } catch (e) {
+    err = (e && e.message) || 'Could not read the sessions per project.';
+  }
+  if (!isCurrentMount(token)) return;
+  state.mcpProjects = next;
+  state.mcpProjectsError = next ? null : err;
+  render(token);
+}
+
 async function loadAiHealth(token) {
   try {
     const res = await fetch('/api/health/ai-settings');
@@ -1838,6 +1889,9 @@ async function loadConfig(token) {
   // /api/config or need a second join rule. The status request is started in
   // parallel and can never fail this load — its failure is its own state.
   const tokenLoad = loadGhTokenStatus(token);
+  // The Vault folder's "Domains in this folder" monitor (v3.66.0) rides this
+  // load the same way and for the same reason; its failure is its own state.
+  const domainsLoad = loadVaultDomains(token);
   try {
     const res = await fetch('/api/config');
     const data = await res.json();
@@ -1849,7 +1903,40 @@ async function loadConfig(token) {
     state.configError = err.message || 'Could not load the knowledge base path.';
   }
   await tokenLoad;
+  await domainsLoad;
   if (isCurrentMount(token)) render(token);
+}
+
+/**
+ * GET /api/domains/stats → state.vaultDomains. Never throws.
+ *
+ * THE INDEX IS THE ROUTE'S ORDER, which is `listDomains()` — the order every
+ * other surface's `identityDotClass(i)` keys on — so it is recorded BEFORE any
+ * sort. A domain whose stats failed keeps its row with `pageCount: null`
+ * (the route returns `{slug, error}`), because a reading that could not be
+ * taken is not a zero.
+ */
+async function loadVaultDomains(token) {
+  let rows = null, err = null;
+  try {
+    const res = await fetch('/api/domains/stats');
+    const data = res.ok ? await res.json() : null;
+    if (data && Array.isArray(data.domains)) {
+      rows = data.domains.map((d, index) => ({
+        slug: d && typeof d.slug === 'string' ? d.slug : null,
+        displayName: d && typeof d.displayName === 'string' && d.displayName ? d.displayName : null,
+        pageCount: d && Number.isInteger(d.pageCount) && d.pageCount >= 0 ? d.pageCount : null,
+        index,
+      })).filter((d) => d.slug);
+    } else {
+      err = 'Could not read the domains in this folder.';
+    }
+  } catch (e) {
+    err = (e && e.message) || 'Could not read the domains in this folder.';
+  }
+  if (!isCurrentMount(token)) return;
+  state.vaultDomains = rows;
+  state.vaultDomainsError = rows ? null : err;
 }
 
 /** GET /api/config/github-read-token → state.ghToken. Never throws. */
@@ -2171,13 +2258,19 @@ function renderMain(token, force) {
   let body;
   if (state.section === 'general') body = renderGeneral();
   else if (state.section === 'providers') body = renderProviders();
-  else if (state.section === 'mcp') body = renderMcp();
+  // Block ④ Across projects (v3.66.0) is composed HERE, beside renderMcp, for
+  // the reason the token block below is: suites lift renderMcp into sandboxes,
+  // and a new free identifier inside a lifted body is a crash there.
+  else if (state.section === 'mcp') body = renderMcp() + (state.mcp ? renderAcrossProjects() : '');
   else if (state.section === 'health') body = renderHealthLimits();
   // The GitHub read-only token block (v3.65.2) is composed HERE, at the call
   // site, rather than inside renderStorage: scripts/test-next-settings-sections
   // lifts renderStorage alone into a sandbox, and a new free identifier inside
   // a lifted body is a crash there, not an assertion (the v3.64.0 lesson).
-  else body = renderStorage() + (state.config ? renderGithubReadToken() : '');
+  // The Vault folder's "Domains in this folder" monitor (v3.66.0) is passed IN
+  // as an argument for the same reason: it belongs inside that block's body.
+  else body = renderStorage(state.config ? renderVaultDomains() : '') +
+    (state.config ? renderGithubReadToken() : '');
 
   const info = SECTION_INFO[state.section];
   const html =
@@ -9006,6 +9099,9 @@ function usageSignature(data) {
     tools.map((t) => [t && t.name, t && t.group, t && t.mutates === true,
       t && t.purpose, t && t.lastUsedAt, t && t.lastOk,
       t && t.count7d, t && t.countTotal, t && t.refusedTotal,
+      // v3.66.0 — PAINTED (the busiest-tools monitor is drawn from it), so it
+      // belongs here: a week of agent calls that moved only this must repaint.
+      t && t.count7dAgent,
       // v3.61.0 — PAINTED (it is the tile's marker), so it belongs here: a
       // run that only changed whose reading a tile shows must still repaint.
       // `selfTestTotal` is deliberately NOT here: the envelope carries it and
@@ -9286,9 +9382,54 @@ function renderToolMapBody(now) {
   }
   const reads = tools.filter((t) => t.group !== 'write');
   const writes = tools.filter((t) => t.group === 'write');
+
+  // ── THE BUSIEST TOOLS THIS WEEK (v3.66.0, placement P7) ─────────────────
+  // A monitor of the tools AGENTS called most in 7 days, each count with a
+  // depth bar against the busiest one — a column of peers, the named
+  // denominator (design rule 6). The tiles below stay as they are: a grid of
+  // cards has no numeric column to anchor a bar to (v3.65.1's own refusal).
+  //
+  // `count7dAgent`, never `count7d`: the latter counts this page's own "Test
+  // all N tools" run, one call on every tool, so a bar drawn from it would
+  // show a tie across all twenty-four for a week after one press. A server
+  // that does not send the field (older than v3.66.0) gets NO monitor — an
+  // absent reading is not a column of zeros. Inlined rather than a helper:
+  // suites lift this function into sandboxes, and a new free identifier in a
+  // lifted body is a crash there.
+  //
+  // NEVER RED (max, not budget). Tools at 0 are omitted and counted in words.
+  const agentCounted = tools.filter((t) => Number.isInteger(t && t.count7dAgent) && t.count7dAgent >= 0);
+  let busiestHtml = '';
+  if (tools.length && agentCounted.length === tools.length) {
+    const called = agentCounted.filter((t) => t.count7dAgent > 0)
+      .sort((a, b) => (b.count7dAgent - a.count7dAgent)
+        || String(a.name).localeCompare(String(b.name)));
+    const shown = called.slice(0, 8);
+    const busiest = shown.length ? shown[0].count7dAgent : 0;
+    const notCalled = tools.length - called.length;
+    const moreCalled = called.length - shown.length;
+    const noteParts = [];
+    if (moreCalled > 0) noteParts.push(moreCalled + ' more ' + (moreCalled === 1 ? 'tool' : 'tools') + ' called less');
+    if (notCalled > 0) noteParts.push(notCalled + ' ' + (notCalled === 1 ? 'tool' : 'tools') + ' not called by an agent this week');
+    busiestHtml = '<div class="mcp-busiest">' + renderMonitor({
+      label: 'Busiest tools, last 7 days, agents only',
+      lines: shown.map((t) => ({
+        key: String(t.name),
+        value: t.count7dAgent,
+        depth: { amount: t.count7dAgent, max: busiest,
+          label: t.count7dAgent === busiest
+            ? t.count7dAgent + ' calls — the busiest tool this week'
+            : t.count7dAgent + ' of ' + busiest + ' calls, the busiest tool this week' },
+      })),
+      note: shown.length
+        ? (noteParts.length ? noteParts.join(' · ') + '.' : '')
+        : 'No agent called a tool in the last 7 days. Test runs from this page are not counted.',
+    }) + '</div>';
+  }
   return (
     runner +
     renderSessionStrip(u.sessions, at) +
+    busiestHtml +
     renderToolGroup('READ', reads, u.logStartedAt, at) +
     renderToolGroup('WRITE', writes, u.logStartedAt, at)
   );
@@ -9337,6 +9478,155 @@ function renderToolMap() {
     'rotates at 1 MB keeping one previous copy, and deleting it only restarts the map. ' +
     docsLinkHtml('settings.mcp-tool-map', 'Read more in the guide');
   return settingsBlock(3, 'mcp-tool-map', 'Tool map', lede, renderToolMapBody(), info, '', { html: true });
+}
+
+/**
+ * ── BLOCK ④ · ACROSS PROJECTS (v3.66.0, placement P8) ─────────────────────
+ *
+ * THE APP TWIN OF THE MENUBAR WIDGET'S PER-PROJECT BARS (the parity rule: no
+ * widget-only fact — a Windows or Linux user has no widget). One monitor line
+ * per project: the project's DOMAIN identity dot, `domain / project`, the
+ * sessions that SAVED a handoff in 30 days with a depth bar against the
+ * busiest project (a column of peers — `byProjectWindow.busiestSaved`, the
+ * named denominator), and how many sessions there were under it. Then the
+ * widget pulse strip's fact: saves in the last 7 days.
+ *
+ * ZERO-SESSION PROJECTS ARE SHOWN, AS 0, DIMMED — a project whose agents never
+ * saved is the one a reader most needs to find, and hiding it would make the
+ * list read as "every project saves". They sort last (the route's own order)
+ * and their figure takes --text-2 via `.settings-id-idle`.
+ *
+ * ABSENT IS NOT ZERO: with no usage log on this computer the route sends
+ * `sessions: null` on every row, and this block draws no row at all and says
+ * so, rather than a column of zeros.
+ *
+ * NEVER RED: `max`, never `budget` — being the busiest project is not a fault.
+ *
+ * The identity index is `state.defaultDomainInfo.domains` (the route answers
+ * `listDomains()`, the order every other surface keys `identityDotClass` on).
+ * A row whose domain this install does not hold gets NO dot — never a guessed
+ * one (v3.65.3's own rule for an unindexed domain).
+ */
+const ACROSS_PROJECTS_MAX_ROWS = 12;
+function renderAcrossProjects() {
+  const lede = 'Which projects’ agent sessions saved a handoff, last 30 days.';
+  const info =
+    '<p>One line per project: the number of agent sessions that saved a handoff in the last ' +
+    '30 days, drawn as a bar against the busiest project, with all its sessions under it. A ' +
+    'session is one run of the bridge; a test run from this page is never one. The counts come ' +
+    'from every usage log on this computer, the same reading the menu bar widget draws, and a ' +
+    'project with no session reads 0 so you can see which ones never save. The last line is ' +
+    'every save in the last 7 days, the widget’s pulse strip as a number.</p>' +
+    docsLinkHtml('settings.mcp-tool-map', 'Read more in the guide');
+  let body;
+  const P = state.mcpProjects;
+  if (!P) {
+    body = '<p class="mcp-map-empty">' + escapeHtml(state.mcpProjectsError || 'Reading the usage logs…') + '</p>';
+  } else {
+    const w = P.window || {};
+    const domains = state.defaultDomainInfo && Array.isArray(state.defaultDomainInfo.domains)
+      ? state.defaultDomainInfo.domains : [];
+    const busiest = Number.isInteger(w.busiestSaved) && w.busiestSaved > 0 ? w.busiestSaved : 0;
+    const measured = w.logPresent === true
+      ? P.byProject.filter((r) => r && Number.isInteger(r.sessions) && Number.isInteger(r.sessionsSaved))
+      : [];
+    const shown = measured.slice(0, ACROSS_PROJECTS_MAX_ROWS);
+    const lines = shown.map((r) => {
+      const idx = typeof r.domain === 'string' ? domains.indexOf(r.domain) : -1;
+      const name = typeof r.project === 'string' && r.project ? r.project : '(unnamed)';
+      const key = typeof r.domain === 'string' && r.domain && r.domain !== name
+        ? r.domain + ' / ' + name : name;
+      const idle = r.sessions === 0;
+      const sub = (idle ? 'no session in 30 days'
+        : r.sessions + (r.sessions === 1 ? ' session' : ' sessions')) +
+        (r.inStore === false ? ' · not in this folder' : '');
+      return {
+        key,
+        value: r.sessionsSaved,
+        markHtml: '<span class="settings-id-mark' + (idle ? ' settings-id-idle' : '') + '">' +
+          (idx >= 0 ? '<span class="cur-sb-dot ' + identityDotClass(idx) + '" aria-hidden="true"></span>' : '') +
+          '</span>',
+        sub,
+        depth: r.sessionsSaved > 0 && busiest > 0
+          ? { amount: r.sessionsSaved, max: busiest,
+              label: r.sessionsSaved === busiest
+                ? r.sessionsSaved + ' sessions saved — the busiest project'
+                : r.sessionsSaved + ' of ' + busiest + ' sessions saved, the busiest project' }
+          : undefined,
+      };
+    });
+    const pulse = P.savePulse;
+    if (pulse && Number.isInteger(pulse.events)) {
+      lines.push({ key: 'saves, last 7 days',
+        value: (pulse.lowerBound ? 'at least ' : '') + pulse.events });
+    }
+    const notes = [];
+    if (w.logPresent !== true) {
+      notes.push('No usage log on this computer yet — sessions appear here once an agent uses the bridge.');
+    } else if (!measured.length) {
+      notes.push('No project in this folder has a saved handoff yet.');
+    }
+    if (measured.length > shown.length) {
+      const more = measured.length - shown.length;
+      notes.push(more + ' more ' + (more === 1 ? 'project' : 'projects') + ' with fewer saves.');
+    }
+    if (shown.some((r) => r.sharedName)) {
+      notes.push('Projects that share a name share one reading.');
+    }
+    body = '<div class="mcp-across">' + renderMonitor({
+      label: 'Sessions that saved, per project, last 30 days',
+      lines,
+      note: notes.join(' '),
+    }) + '</div>';
+  }
+  return settingsBlock(4, 'mcp-across', 'Across projects', lede, body, info, '', { html: true });
+}
+
+/**
+ * ── KNOWLEDGE BASE › VAULT FOLDER › DOMAINS IN THIS FOLDER (v3.66.0, P8) ──
+ *
+ * The app twin of the widget's per-domain page bars. One line per domain: its
+ * identity dot, its folder name, its page count with a bar against the
+ * LARGEST domain in the folder — and the bar takes the domain's OWN colour
+ * (`depthIdentityClass`), the one place a depth bar wears identity, because
+ * here each row IS a domain (design rule 6's identity tone).
+ *
+ * `pageCount` is getDomainStats' own figure — the same function the widget's
+ * `domains[]` reads — so the two can never state a different number. A domain
+ * whose stats could not be read says so in words and draws no bar; a domain
+ * with 0 pages prints 0 and draws no bar.
+ */
+function renderVaultDomains() {
+  const rows = state.vaultDomains;
+  if (!Array.isArray(rows)) {
+    return state.vaultDomainsError
+      ? '<p class="settings-vault-note">' + escapeHtml(state.vaultDomainsError) + '</p>' : '';
+  }
+  if (!rows.length) return '';
+  const largest = rows.reduce((m, d) => Math.max(m, Number.isInteger(d.pageCount) ? d.pageCount : 0), 0);
+  const ordered = rows.slice().sort((a, b) =>
+    ((Number.isInteger(b.pageCount) ? b.pageCount : -1) - (Number.isInteger(a.pageCount) ? a.pageCount : -1))
+    || (a.index - b.index));
+  return '<div class="settings-vault-domains">' +
+    '<div class="settings-vault-eyebrow">Domains in this folder</div>' +
+    renderMonitor({
+      label: 'Domains in this folder, pages each',
+      lines: ordered.map((d) => {
+        const n = d.pageCount;
+        return {
+          key: d.slug,
+          markHtml: '<span class="settings-id-mark"><span class="cur-sb-dot ' + identityDotClass(d.index) +
+            '" aria-hidden="true"></span></span>',
+          value: Number.isInteger(n) ? n : 'not read',
+          sub: Number.isInteger(n) ? (n === 1 ? 'page' : 'pages') : '',
+          depth: Number.isInteger(n) && n > 0 && largest > 0
+            ? { amount: n, max: largest, toneClass: depthIdentityClass(d.index),
+                label: n === largest ? n + ' pages — the largest domain in this folder'
+                  : n + ' of ' + largest + ' pages, the largest domain in this folder' }
+            : undefined,
+        };
+      }),
+    }) + '</div>';
 }
 
 /**
@@ -9542,7 +9832,7 @@ function renderHealthLimits() {
  * reassurance that makes the primary button safe to press, so it stays
  * visible, one line, directly under the thing it is about.
  */
-function renderStorage() {
+function renderStorage(domainsMonitorHtml) {
   if (state.configError) {
     return '<div class="settings-inline-error">' + escapeHtml(state.configError) + '</div>';
   }
@@ -9586,7 +9876,9 @@ function renderStorage() {
     '<div class="settings-note-row">' +
       icon('folder', 15) +
       '<span>Moving this folder loses nothing; the graph is picked up as-is.</span>' +
-    '</div>';
+    '</div>' +
+    // v3.66.0: "Domains in this folder", composed by the caller (see renderMain).
+    (typeof domainsMonitorHtml === 'string' ? domainsMonitorHtml : '');
 
   return settingsBlock(null, 'storage-folder', 'Vault folder', lede, body, info,
     renderCrossWriteBanner('wait for it to finish before changing the knowledge base folder.'),

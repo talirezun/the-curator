@@ -2926,3 +2926,65 @@
   font-size: var(--text-md);
   color: var(--text-2);
 }
+
+/* ── v3.66.0 — THE DEPTH-BAR MONITORS ON THIS SCREEN ─────────────────────
+   Three monitors whose KEYS are names a user typed or a tool carries — a tool
+   name (`get_project_context`), a `domain / project`, a domain folder — rather
+   than the kit's captions ("last save", "open issues"). The kit sets its
+   captions in eyebrow capitals; a NAME keeps its own case, because
+   `GET_PROJECT_CONTEXT` is not the tool's name and a reader copying it back
+   into a prompt would be copying the wrong string. Host placement, scoped to
+   these three wrappers — shared/monitor.css is linked first precisely so a
+   host can place what it owns. */
+.mcp-busiest,
+.mcp-across,
+.settings-vault-domains { min-width: 0; }
+.mcp-busiest .cur-mon-key,
+.mcp-across .cur-mon-key,
+.settings-vault-domains .cur-mon-key {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: var(--text-xs);
+}
+/* ③'s busiest-tools monitor sits between the session strip and the tiles,
+   at the strip's own gap. */
+.mcp-busiest { margin-bottom: var(--space-10); }
+
+/* THE IDENTITY DOT BEFORE THE NAME. The monitor's one trusted slot
+   (`markHtml`) renders INSIDE the value, beside the figure; on these two
+   per-domain monitors the dot names the ROW, so it is placed at the line's
+   leading edge, before the key, where every other surface puts a domain's dot
+   (the sidebar row, the Knowledge row, a Chat chip). The key is indented by
+   the dot's width plus the sidebar row's own 8px gap. The glyph itself is the
+   kit's `.cur-sb-dot` untouched — 8px, round, `--id-N` — only its PLACE is
+   this host's. */
+.mcp-across .cur-mon-line,
+.settings-vault-domains .cur-mon-line { position: relative; }
+.mcp-across .cur-mon-key,
+.settings-vault-domains .cur-mon-key { padding-left: 16px; }
+.settings-id-mark { display: contents; }
+.settings-id-mark .cur-sb-dot {
+  position: absolute;
+  left: var(--space-4);
+  top: 0.45em;
+}
+/* A project with no session in 30 days: its figure in the quiet ink, the
+   kit's own `quiet` value colour (--text-2, 8.72 light / 8.34 dark). Not a
+   tone — being idle is not an outcome — and never an opacity, which would
+   take the words under the 4.5 floor. */
+.mcp-across .cur-mon-line:has(.settings-id-idle) .cur-mon-value { color: var(--text-2); }
+
+/* "Domains in this folder": the Vault folder block's second reading, under
+   the path row and its note, captioned like the tool map's groups. */
+.settings-vault-domains { margin-top: var(--space-8); }
+.settings-vault-eyebrow {
+  font: var(--type-eyebrow);
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text-2);
+  margin-bottom: var(--space-4);
+}
+.settings-vault-note {
+  margin: var(--space-6) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
