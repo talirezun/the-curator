@@ -25,15 +25,19 @@ import express from 'express';
 import { execFile } from 'child_process';
 import { existsSync } from 'fs';
 import path from 'path';
-import { runQuickDiagnostics, runLiveApiCheck } from '../brain/diagnostics.js';
+import { runQuickDiagnostics, runLiveApiCheck, describeLiveCheck } from '../brain/diagnostics.js';
 import { getLogFilePath } from '../brain/logger.js';
 
 const router = express.Router();
 
+// v3.67.0, ADDITIVE: `liveCheck: {runsOn}` — the opt-in live check's run
+// line, so the Settings panel stops carrying a hardcoded "$0.0001". Every
+// field runQuickDiagnostics returns is unchanged. Still free: describeRun
+// makes no network call.
 router.get('/quick', async (_req, res) => {
   try {
     const result = await runQuickDiagnostics();
-    res.json(result);
+    res.json({ ...result, liveCheck: { runsOn: describeLiveCheck() } });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

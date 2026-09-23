@@ -1706,6 +1706,106 @@ async function testEstimateShape() {
   assert(cachingSavingsFraction(2) > 0 && cachingSavingsFraction(2) < cachingSavingsFraction(4), 'interpolates smoothly between 1 and 4 calls');
 }
 
+// ── v3.67.0: the run line on the estimate, the actual cost on a single ingest ─
+// ADDITIVE ONLY. POST /api/ingest-queue/estimate gains `runsOn`; POST
+// /api/ingest's `done` event gains `spent`. Each body minus its new field must
+// equal what the route sent before, key for key and value for value.
+async function driveEstimateRoute(domain, files) {
+  const router = (await import('../src/routes/ingest-queue.js')).default;
+  const layer = router.stack.find(l => l.route && l.route.path === '/estimate' && l.route.methods.post);
+  const sent = [];
+  const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { sent.push({ status: this.statusCode, body: b }); return this; } };
+  if (layer) await layer.route.stack[0].handle({ body: { domain, files } }, res);
+  return sent[0] || { status: 0, body: {} };
+}
+const withoutKey = (o, k) => { const c = { ...o }; delete c[k]; return c; };
+
+async function testRunsOnOnTheEstimateRoute() {
+  await freshEnv({ withProviderKey: true });
+  const domain = await makeDomain();
+
+  // Batch: one single-pass file and one multi-phase file, so the queue's own
+  // caching-aware low end differs from its high end.
+  const batch = [{ name: 'note.md', size: 4000 }, { name: 'big.pdf', size: 60000 }];
+  const r = await driveEstimateRoute(domain, batch);
+  const direct = await estimateIngestQueueCost(domain, batch);
+  assertEq(r.status, 200, 'estimate route: 200, unchanged');
+  assert(JSON.stringify(withoutKey(r.body, 'runsOn')) === JSON.stringify(direct),
+    'estimate route: the body minus runsOn is BYTE-identical to estimateIngestQueueCost — no existing field changed');
+  assertEq(Object.keys(r.body).filter(k => !(k in direct)).join(','), 'runsOn', 'estimate route: runsOn is the ONE added key');
+  const R = r.body.runsOn || {}, E = direct.estimate;
+  assertEq(R.job, 'ingest', 'runsOn.job is ingest');
+  assertEq(R.jobLabel, 'Ingest', 'runsOn.jobLabel is the registry\'s binding label');
+  assertEq(R.needsKey, false, 'runsOn.needsKey false with a key');
+  assertEq(R.inputTokensLow, E.inputTokensLow, 'runsOn input tokens are the estimate\'s own sum');
+  assertEq(R.outputTokensHigh, E.outputTokensHigh, 'runsOn output tokens are the estimate\'s own sum');
+  assertEq(R.usdLow, E.usdLow, 'runsOn.usdLow is the QUEUE\'S caching-aware low end — one range on screen, not two');
+  assertEq(R.usdHigh, E.usdHigh, 'runsOn.usdHigh is the queue\'s own high end');
+  assert(R.usdLow < R.usdHigh, `and the multi-phase file makes it a real range (${R.usdLow}–${R.usdHigh})`);
+
+  // One file: the same route, the same rule (the single-ingest run line).
+  const one = await driveEstimateRoute(domain, [{ name: 'note.md', size: 4000 }]);
+  const oneDirect = await estimateIngestQueueCost(domain, [{ name: 'note.md', size: 4000 }]);
+  assertEq(one.body.runsOn && one.body.runsOn.usdHigh, oneDirect.estimate.usdHigh, 'one file: runsOn carries that file\'s own usdHigh');
+  assertEq(one.body.runsOn && one.body.runsOn.usdLow, oneDirect.estimate.usdLow,
+    'one file (single-pass, no caching credit): usdLow is the queue\'s own figure too');
+
+  // Nothing accepted: runsOn names the model, with no figures at all.
+  const none = await driveEstimateRoute(domain, [{ name: 'bad.exe', size: 10 }]);
+  const RN = none.body.runsOn || {};
+  assert(RN.job === 'ingest' && RN.needsKey === false && !('inputTokens' in RN) && !('usdHigh' in RN),
+    'no accepted file: runsOn carries no token or dollar figure (a $0 batch estimate is not a measurement)');
+
+  // Invalid input keeps its 400 and its body.
+  const bad = await driveEstimateRoute(domain, 'not-an-array');
+  assertEq(bad.status, 400, 'a non-array files list is still a 400');
+  assert(!('runsOn' in bad.body), 'and its error body is unchanged (no runsOn on an error)');
+
+  // Unpriced: the queue leaves its sums null, so the run line names the model
+  // and says "price not published", with no invented figure.
+  await freshEnv({ withProviderKey: true, model: 'zz-unpriced-queue-model' });
+  const d2 = await makeDomain();
+  const RU = (await driveEstimateRoute(d2, batch)).body.runsOn || {};
+  assertEq(RU.costNote, 'price-not-published', 'unpriced: runsOn.costNote price-not-published');
+  assert(!('usdLow' in RU) && !('usdHigh' in RU), 'unpriced: no usd fields — absent, never $0');
+
+  // No key: the one no-key shape, 200 unchanged.
+  await freshEnv({ withProviderKey: false });
+  const d3 = await makeDomain();
+  const nk = await driveEstimateRoute(d3, batch);
+  assertEq(nk.status, 200, 'no key: the estimate route still answers 200');
+  assertEq(JSON.stringify(nk.body.runsOn), JSON.stringify({ job: 'ingest', jobLabel: 'Ingest', needsKey: true }),
+    'no key: runsOn is exactly {job, jobLabel, needsKey:true}');
+}
+
+async function testSpentOnTheSingleIngestDoneEvent() {
+  await freshEnv({ withProviderKey: true });
+  const { ingestDoneEvent } = await import('../src/routes/ingest.js');
+  const { spentFromUsage } = await import('../src/brain/ai-run.js');
+  const tokenUsage = { calls: 2, inputTokens: 9000, outputTokens: 1400, cachedReadTokens: 3000, cacheWriteTokens: 500,
+    provider: 'gemini', model: 'gemini-2.5-flash-lite' };
+  const base = { title: 'T', pagesWritten: ['summaries/t.md'], changes: [], warnings: ['w'], truncated: false };
+  const PRE_V367 = 'type,title,pagesWritten,changes,warnings,truncated,wasOverwrite,tokenUsage';
+
+  const ev = ingestDoneEvent({ ...base, tokenUsage }, 'true');
+  assertEq(Object.keys(ev).join(','), `${PRE_V367},spent`, 'done: the pre-v3.67.0 keys in order, plus spent');
+  assertEq(ev.tokenUsage, tokenUsage, 'tokenUsage is still passed through as-is (same object)');
+  assertEq(ev.wasOverwrite, true, 'wasOverwrite unchanged');
+  assertEq(JSON.stringify(ev.spent), JSON.stringify(spentFromUsage(tokenUsage)),
+    'spent is spentFromUsage(result.tokenUsage) — the same totals, priced by the batch queue\'s rule');
+  assert(typeof ev.spent.usd === 'number' && ev.spent.usd > 0, 'a priced single ingest now says what it cost in dollars');
+
+  const old = ingestDoneEvent({ ...base }, 'false');
+  assertEq(Object.keys(old).join(','), PRE_V367, 'no tokenUsage: exactly the pre-v3.67.0 event — spent ABSENT, never zero-filled');
+  const odd = ingestDoneEvent({ ...base, tokenUsage: 'garbage' }, 'false');
+  assert(!('spent' in odd), 'a non-object tokenUsage yields no spent');
+
+  // The handler emits exactly this function's event.
+  const src = await readFile(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'src', 'routes', 'ingest.js'), 'utf8');
+  assert(/emit\(ingestDoneEvent\(result, overwrite\)\);/.test(src), 'POST /api/ingest emits ingestDoneEvent(result, overwrite) — no second, hand-built done event');
+  assertEq((src.match(/type: 'done'/g) || []).length, 1, 'and the route builds a done event in exactly one place');
+}
+
 async function testEstimateValidation() {
   await freshEnv({ withProviderKey: true });
   const domain = await makeDomain();
@@ -2227,6 +2327,8 @@ async function testAccountingUnderRandomSequences() {
   await section('13. Path-traversal defenses and staged-name hygiene (L2)', testPathTraversal);
   await section('14. estimateIngestQueueCost — caching-savings interpolation', testEstimateShape);
   await section('14b. estimate input validation and an honest basis (L1/L3)', testEstimateValidation);
+  await section('14c. v3.67.0 — runsOn on the estimate route (additive only)', testRunsOnOnTheEstimateRoute);
+  await section('14d. v3.67.0 — spent on the single-file ingest done event (additive only)', testSpentOnTheSingleIngestDoneEvent);
   await section('15. Two files sharing a name do not collapse into one page (M5)', testInBatchDuplicateNames);
   await section('16. Staged files and job directories are collected (M6)', testGarbageCollection);
   await section('17. createJob is serialised (H2)', testConcurrentCreates);

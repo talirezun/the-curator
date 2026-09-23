@@ -8,8 +8,9 @@
  *
  * Public API:
  *   compileConversation(domain, conversationId, onProgress?)
- *     → { ok: true,  title, pagesWritten, changes }
- *     → { ok: false, reason | error }
+ *     → { ok: true,  title, pagesWritten, changes, warnings, spent }
+ *     → { ok: false, reason }            (refused before any LLM call — no `spent`)
+ *     → { ok: false, error, spent? }     (`spent` whenever a call was billed)
  */
 
 import { readdir } from 'fs/promises';
@@ -17,7 +18,19 @@ import { existsSync } from 'fs';
 import path from 'path';
 import crypto from 'node:crypto';
 import { generateText } from './llm.js';
-import { parseJSON, isOutputTokenLimit } from './ingest.js';
+import { parseJSON, isOutputTokenLimit, makeUsageAccumulator } from './ingest.js';
+// v3.67.0: the actual cost of a compile comes from src/brain/ai-run.js's
+// spentFromUsage — loaded with a CALL-TIME dynamic import (see spentOf below),
+// NEVER a static import. A static one closes this cycle:
+//   ingest.js → compile.js → ai-run.js → compile-estimate.js → ingest-queue.js
+// and ingest-queue.js reads ingest.js's `__testing` AT MODULE EVALUATION
+// (`const { buildPrompt, … } = ingestTesting`). Any process whose first
+// import is ingest.js — routes/ingest.js, health-ai.js via makeUsageAccumulator
+// — would then evaluate ingest-queue.js while ingest.js is still mid-flight
+// and die with "Cannot access 'ingestTesting' before initialization".
+// MEASURED on this branch before the fix: test-health-ai-pricing crashed at
+// load. test-next-compile-estimate §11 loads every module on the cycle as
+// the FIRST import of a fresh process, so a static import back here reds.
 import {
   readSchema,
   readIndex,
@@ -377,11 +390,26 @@ export function mergeIntoIndex(existingIndex, pages, writeRecords) {
   return existingIndex.trimEnd() + `\n\n## New pages\n\n| Page | Type | Summary |\n|---|---|---|\n${newRows.join('\n')}\n`;
 }
 
+/** spentFromUsage, reached at call time — see the import note at the top. */
+async function spentOf(totals) {
+  const { spentFromUsage } = await import('./ai-run.js');
+  return spentFromUsage(totals);
+}
+
 export async function compileConversation(domain, conversationId, onProgress = () => {}, opts = {}) {
   const progress = (pct, message) => onProgress({ pct, message });
   // Test seam (v3.0.1-beta.27): allow injecting a fake LLM to exercise the
   // fallback ladder deterministically offline. Defaults to the real generateText.
   const llm = opts.generateText || generateText;
+  // v3.67.0: every provider call of every rung reports into ONE accumulator,
+  // so `spent` is what the whole ladder cost — a compile that escalated
+  // full → concise → summary-only paid for three calls, and naming only the
+  // last would under-report the bill by the two that overflowed. `opts.onUsage`
+  // is forwarded (test seam and future callers), never required.
+  const usage = makeUsageAccumulator(typeof opts.onUsage === 'function' ? opts.onUsage : null);
+  // Attached to a failure only when something was actually billed: a compile
+  // refused before its first call spent nothing and carries no `spent`.
+  const withSpent = async (r) => (usage.totals.calls > 0 ? { ...r, spent: await spentOf(usage.totals) } : r);
 
   // 1-4a. Load the conversation and take every pre-spend decision — not
   //        found, too short, already compiled — through the SAME function the
@@ -445,6 +473,7 @@ export async function compileConversation(domain, conversationId, onProgress = (
         65536,
         'json',
         (msg) => progress(attempt.pct, msg),
+        { onUsage: usage.onUsage },
       )).trim();
     } catch (err) {
       lastErr = err;
@@ -482,14 +511,14 @@ export async function compileConversation(domain, conversationId, onProgress = (
     // All attempts exhausted. Give COMPILE-SPECIFIC guidance — never ingest's
     // "split the PDF by chapter" (the user compiled a CONVERSATION, not a file).
     if (lastErr && isOutputTokenLimit(lastErr)) {
-      return {
+      return await withSpent({
         ok: false,
         error: `This conversation is too large or complex to compile — the AI kept exceeding its output limit even after retrying with a shorter extraction. ` +
                `What to do: compile a shorter conversation (fewer or shorter messages), or split this discussion into separate conversations by topic and compile each one. ` +
                `(This is an AI output-size limit, not a problem with The Curator or your data.)`,
-      };
+      });
     }
-    return { ok: false, error: `LLM call failed: ${lastErr ? lastErr.message : 'unknown error'}` };
+    return await withSpent({ ok: false, error: `LLM call failed: ${lastErr ? lastErr.message : 'unknown error'}` });
   }
 
   // 6. Deduplicate pages by path (LLM occasionally returns the same path twice)
@@ -512,7 +541,7 @@ export async function compileConversation(domain, conversationId, onProgress = (
     }
   }
   if (!summaryFound) {
-    return { ok: false, error: 'AI did not produce a summary page' };
+    return await withSpent({ ok: false, error: 'AI did not produce a summary page' });
   }
 
   // 8. Write all pages — collect canonical paths and change records.
@@ -568,5 +597,8 @@ export async function compileConversation(domain, conversationId, onProgress = (
     // Non-fatal notes (e.g. the conversation was large → concise/summary-only
     // fallback). Empty on a normal full compile. Surfaced in the result panel.
     warnings,
+    // v3.67.0: what the compile actually cost, summed across every ladder
+    // rung (spentFromUsage in src/brain/ai-run.js). Always present on success.
+    spent: await spentOf(usage.totals),
   };
 }

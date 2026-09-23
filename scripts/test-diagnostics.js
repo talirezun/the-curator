@@ -55,7 +55,12 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { __setDomainsDirOverride } from '../src/brain/config.js';
 import { __setUserDataDirOverride, __setLogDirOverride } from '../src/brain/paths.js';
-import { runQuickDiagnostics, runLiveApiCheck, checkGit } from '../src/brain/diagnostics.js';
+import {
+  runQuickDiagnostics, runLiveApiCheck, checkGit,
+  describeLiveCheck, LIVE_CHECK_SYSTEM_PROMPT, LIVE_CHECK_USER_PROMPT, LIVE_CHECK_MAX_TOKENS,
+} from '../src/brain/diagnostics.js';
+import diagnosticsRouter from '../src/routes/diagnostics.js';
+import { estimateInputTokens } from '../src/brain/compile-estimate.js';
 
 let passed = 0, failed = 0;
 const fails = [];
@@ -790,6 +795,64 @@ try {
     const defaulted = await checkGit();
     assert(defaulted.detail !== SKIP_DETAIL,
       'CONTROL: checkGit() with NO argument resolves real capabilities (repo here) and probes');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  section('v3.67.0 — GET /quick carries liveCheck.runsOn; every existing field is unchanged');
+  {
+    const layer = diagnosticsRouter.stack.find(l => l.route && l.route.path === '/quick' && l.route.methods.get);
+    assert(!!layer, 'GET /quick is registered');
+    const quick = async () => {
+      const sent = [];
+      const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { sent.push({ status: this.statusCode, body: b }); return this; } };
+      if (layer) await layer.route.stack[0].handle({}, res);
+      return sent[0] || { status: 0, body: {} };
+    };
+
+    const keyed = freshUserDataDir(work, 'v367-livecheck-keyed');
+    writeCuratorConfig(keyed, { geminiApiKey: 'fake-test-gemini-key-not-real', activeProvider: 'gemini' });
+    __setUserDataDirOverride(keyed);
+    __setDomainsDirOverride(freshUserDataDir(work, 'v367-livecheck-domains'));
+    const r = await quick();
+    const direct = await runQuickDiagnostics();
+    assert(r.status === 200, `200, unchanged (got ${r.status})`);
+    assert(Object.keys(r.body).join(',') === [...Object.keys(direct), 'liveCheck'].join(','),
+      `the body is runQuickDiagnostics()'s keys in order, plus liveCheck (got ${Object.keys(r.body).join(',')})`);
+    assert(JSON.stringify(r.body.checks.map(c => [c.id, c.label, c.status])) === JSON.stringify(direct.checks.map(c => [c.id, c.label, c.status])),
+      'the checks list is the same rows with the same verdicts — nothing existing changed');
+    assert(Object.keys(r.body.liveCheck || {}).join(',') === 'runsOn', 'liveCheck carries exactly {runsOn}');
+    const R = (r.body.liveCheck || {}).runsOn || {};
+    assert(R.job === 'system-check' && R.jobLabel === 'System check' && R.needsKey === false,
+      `runsOn is the system-check run line (got ${JSON.stringify(R).slice(0, 120)})`);
+    const band = estimateInputTokens(LIVE_CHECK_SYSTEM_PROMPT.length + LIVE_CHECK_USER_PROMPT.length, R.provider, R.model);
+    assert(R.inputTokensLow === band.low && R.inputTokensHigh === band.high,
+      `the input half is the REAL prompt through the one tokenizer model (${R.inputTokensLow}–${R.inputTokensHigh} vs ${band.low}–${band.high})`);
+    assert(R.outputTokensLow === 1 && R.outputTokensHigh === LIVE_CHECK_MAX_TOKENS,
+      `the output half runs from one token ("OK") to the call's own cap (got ${R.outputTokensLow}–${R.outputTokensHigh})`);
+    assert(typeof R.usdHigh === 'number' && R.usdHigh > 0 && R.usdHigh < 0.001,
+      `a priced model yields a real, tiny dollar figure (got ${R.usdHigh}) — computed, not the old hardcoded "$0.0001"`);
+
+    // The estimate describes the bytes the call actually sends: the three
+    // constants are pinned to the LITERALS inside runLiveApiCheck's own source.
+    const live = extractFunctionSource(readDiagnosticsSource(), 'runLiveApiCheck');
+    assert(live.includes(`'${LIVE_CHECK_SYSTEM_PROMPT}'`), 'LIVE_CHECK_SYSTEM_PROMPT is the literal runLiveApiCheck sends');
+    assert(live.includes(`'${LIVE_CHECK_USER_PROMPT}'`), 'LIVE_CHECK_USER_PROMPT is the literal runLiveApiCheck sends');
+    assert(new RegExp(`\\n\\s*${LIVE_CHECK_MAX_TOKENS},\\n`).test(live), 'LIVE_CHECK_MAX_TOKENS is the maxTokens runLiveApiCheck passes');
+    assert(!/LIVE_CHECK_/.test(live), 'runLiveApiCheck reads NO new free identifier (its sandbox harness injects a fixed list)');
+
+    // Unpriced: runs, says so, no dollar field.
+    process.env.LLM_MODEL = 'zz-unpriced-live-check-model';
+    const u = describeLiveCheck();
+    assert(u.costNote === 'price-not-published' && !('usdHigh' in u) && !('usdLow' in u),
+      'an unpriced model: price-not-published, no usd fields (absent, never $0)');
+    delete process.env.LLM_MODEL;
+
+    // No key: the one no-key shape, and the route still answers 200.
+    __setUserDataDirOverride(freshUserDataDir(work, 'v367-livecheck-nokey'));
+    const n = await quick();
+    assert(n.status === 200, 'no key: /quick still answers 200');
+    assert(JSON.stringify(n.body.liveCheck) === JSON.stringify({ runsOn: { job: 'system-check', jobLabel: 'System check', needsKey: true } }),
+      `no key: liveCheck is exactly {runsOn:{job, jobLabel, needsKey:true}} (got ${JSON.stringify(n.body.liveCheck)})`);
   }
 } catch (err) {
   bad('unexpected throw aborted the suite', `${err.message}\n${err.stack || ''}`);
