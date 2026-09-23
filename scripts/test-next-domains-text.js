@@ -109,6 +109,10 @@ function ok(cond, label) {
   if (cond) { passed++; }
   else { failed++; console.log(`  ✗ ${label}`); }
 }
+// v3.66.0: an equality helper that prints what it got, for the P6 figures.
+function eq(label, got, want) {
+  ok(got === want, `${label} (got ${JSON.stringify(got)}, wanted ${JSON.stringify(want)})`);
+}
 function section(t) { console.log(`\n${t}`); }
 
 // ── Comment stripping ────────────────────────────────────────────────────
@@ -393,9 +397,13 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
     // saved card and asked why one idea had three designs. Same five
     // measurements, same provenance, one instrument — catalogue entry M6.
     ok(settled.includes('class="cur-mon"'), 'the counts render as a MONITOR, not a prose sentence');
-    ok((settled.match(/class="cur-mon-line[ "]/g) || []).length === 6,
+    // v3.66.0: the Scan row carries TWO monitors (the totals, then issues per
+    // category), so the six lines are counted inside the FIRST one only.
+    const firstMon = settled.slice(settled.indexOf('class="cur-mon"'),
+      settled.indexOf('class="cur-mon"', settled.indexOf('class="cur-mon"') + 1) >>> 0);
+    ok((firstMon.match(/class="cur-mon-line[ "]/g) || []).length === 6,
        'six lines — open issues, the four scan counts, and when the scan happened ' +
-       `(got ${(settled.match(/class="cur-mon-line[ "]/g) || []).length})`);
+       `(got ${(firstMon.match(/class="cur-mon-line[ "]/g) || []).length})`);
     ok(/cur-mon-value">3</.test(settled) && /cur-mon-value">41</.test(settled) &&
        /cur-mon-value">331</.test(settled) && /cur-mon-value">7</.test(settled),
        'every figure is in a monitor VALUE — mono, --text, tabular, the design system\'s own rule for counts');
@@ -412,12 +420,72 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
        '…whose summary reads the headline and the age, so a closed row still answers the '
        + 'question the section is for',
        (/<span class="dm-group-meta">[^<]*/.exec(settled) || ['(none)'])[0]);
-    // THE CHIPS CAME WITH IT. They are the same scan's per-category counts
-    // and were a SECOND bare block under the readouts; folding one and
-    // leaving the other would have left the defect half-fixed.
-    ok(settled.indexOf('dm-chip-row') > settled.indexOf('class="cur-mon"')
-       && settled.indexOf('dm-chip-row') < settled.indexOf('</details>'),
-       'the category chips moved INTO the same row\'s body, under the monitor');
+    // THE PER-CATEGORY COUNTS CAME WITH IT (v3.65.0), and since v3.66.0
+    // they are no longer chips: a SECOND monitor, in the same row's body,
+    // under the first. The chip row is gone — one fact, one treatment.
+    const monIdx = [...settled.matchAll(/class="cur-mon"/g)].map((m) => m.index);
+    eq('the Scan row carries exactly TWO monitors — totals, then issues per category',
+      monIdx.length, 2);
+    ok(monIdx.length === 2 && monIdx[1] > monIdx[0] && monIdx[1] < settled.indexOf('</details>')
+       && /aria-label="Issues per category"/.test(settled),
+       'the per-category monitor is INSIDE the same row\'s body, under the totals');
+    ok(!/dm-chip/.test(settled),
+       'no category CHIP survives — the amber/violet row was a second way of showing the same counts');
+
+    // ── P6 (v3.66.0): ISSUES PER CATEGORY vs THE LARGEST CATEGORY ─────────
+    // Driven with the REAL renderMonitor through the REAL renderHealthPanel,
+    // over three categories: one large, one small, one zero.
+    {
+      const cats = [
+        { key: 'brokenLinks', label: 'Broken links' },
+        { key: 'orphans', label: 'Orphan pages' },
+        { key: 'hyphenVariants', label: 'Hyphen variants' },
+      ];
+      const rep6 = { ...REPORT,
+        brokenLinks: Array.from({ length: 4 }, (_, i) => ({ i })),
+        orphans: Array.from({ length: 16 }, (_, i) => ({ i })),
+        hyphenVariants: [] };
+      const d6 = { ...deps, HEALTH_CATEGORIES: cats,
+        totalOpenIssues: (r) => r.brokenLinks.length + r.orphans.length };
+      const names6 = Object.keys(d6);
+      const html = callOrFail('the P6 panel renders', () => makeCallable(
+        ['state', ...names6],
+        extractFunction(domainsSrc, 'shouldKeepHealthOnReload') + '\n' +
+        extractFunction(domainsSrc, 'healthScanLabel') + '\n' +
+        extractFunction(domainsSrc, 'healthSection') + '\n' +
+        extractFunction(domainsSrc, 'renderHealthPanel'),
+        'renderHealthPanel')({ ...base, health: rep6 }, ...names6.map((n) => d6[n]))({ slug: 'articles' }, false));
+      if (html) {
+        const catMon = html.slice(html.indexOf('aria-label="Issues per category"'));
+        const lines = [...catMon.matchAll(/<div class="cur-mon-line[^"]*"><span class="cur-mon-key">([^<]+)<\/span><span class="cur-mon-value">([^]*?)<\/span><\/div>/g)]
+          .map((m) => ({ key: m[1], val: m[2] }));
+        eq('one line per category', lines.length, 3);
+        eq('...largest first, ties in the category order — a ranked column of peers',
+          lines.map((l) => l.key).join(','), 'orphan pages,broken links,hyphen variants');
+        const width = (v) => { const m = /cur-depth-bar[^"]*" style="width:([\d.]+)%"/.exec(v); return m ? Number(m[1]) : null; };
+        eq('the LARGEST category fills its cell (16 of 16)', width(lines[0] && lines[0].val), 100);
+        eq('a smaller one is its share OF THE LARGEST (4 of 16 = 25%)', width(lines[1] && lines[1].val), 25);
+        eq('a ZERO category prints 0 and draws NO bar at all', width(lines[2] && lines[2].val), null);
+        ok(lines[2] && lines[2].val === '0', '...but its 0 is still printed — a measured zero', lines[2] && lines[2].val);
+        ok(!/cur-depth-danger/.test(catMon),
+          'NEVER red: being the largest category is not a fault (max, never budget)');
+        ok(/visually-hidden"> 4 of 16, the largest category</.test(catMon),
+          'every bar NAMES its denominator in words for a screen reader', catMon.slice(0, 400));
+        ok(!/cur-mon-line cur-mon-(ok|warn|danger)/.test(catMon),
+          'no category line carries a TONE — a count of issues is a size, the outcome is the "open issues" line');
+      }
+      // ALL ZERO — the denominator is 0, so no line gets a bar.
+      const zero = callOrFail('an all-zero scan renders', () => makeCallable(
+        ['state', ...names6],
+        extractFunction(domainsSrc, 'shouldKeepHealthOnReload') + '\n' +
+        extractFunction(domainsSrc, 'healthScanLabel') + '\n' +
+        extractFunction(domainsSrc, 'healthSection') + '\n' +
+        extractFunction(domainsSrc, 'renderHealthPanel'),
+        'renderHealthPanel')({ ...base, health: { ...REPORT, brokenLinks: [], orphans: [], hyphenVariants: [] } },
+        ...names6.map((n) => ({ ...d6, totalOpenIssues: () => 0 })[n]))({ slug: 'articles' }, false));
+      if (zero) ok(!/cur-depth-bar/.test(zero) && /aria-label="Issues per category"/.test(zero),
+        'an all-zero scan still lists its categories, and draws no bar against a zero denominator');
+    }
 
     // THE WELD IS GONE. This is the maintainer's own report: three roles in
     // one <div>, which is why it read as a clarification and not a report.

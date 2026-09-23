@@ -1977,10 +1977,15 @@
   color: var(--text-3);
   white-space: nowrap;
 }
+/* TONE IS A MARK, NEVER TEXT (design rule 7, v3.66.0). The warning lives
+   in the badge's 1px border and its tint; the WORDS are --text, because
+   --attention-text as text measured 3.35:1 in light, under the 4.5 AA floor.
+   The label already says what is wrong ("out-performed", a suitability word),
+   so colour is never the only carrier. */
 .chat-mm-badge.is-warn {
   border-color: var(--attention);
   background: var(--attention-tint);
-  color: var(--attention-text);
+  color: var(--text);
 }
 /* ── THE PRICE IS A COLUMN, SO IT IS RIGHT-ALIGNED AND MONOSPACED ────────
    It used to be a full-width line of its own under the id, where tabular
@@ -2007,7 +2012,11 @@
   font-variant-numeric: var(--numeric-tabular);
   white-space: nowrap;
 }
-.chat-mm-rise { font-size: var(--text-2xs); color: var(--attention-text); }
+/* A price-rise note ("rises to $1.50 …", formatPromotionRise's own words).
+   The amber was a tone painted on TEXT — 3.35:1 in light, under AA (design
+   rule 7, v3.66.0). It is a COST warning, so it keeps full --text rather than
+   stepping back to --text-2: the words carry the warning, at full contrast. */
+.chat-mm-rise { font-size: var(--text-2xs); color: var(--text); }
 /* The DERIVED one-line summary (next/shared/model-summary.js) — no longer the
    model's whole measured `note`, which is now shown in full behind Settings'
    per-model expand. Class name kept so the composer and its suite do not churn
@@ -2196,7 +2205,13 @@
   align-items: center;
   gap: 6px;
 }
-.chat-compile-change-created .chat-compile-change-header { color: var(--success-text); }
+/* "N new pages". The outcome's TONE rides on the plus glyph, a non-text
+   mark (3:1 floor); the words are --text-2 like the "updated" header's
+   neutral step, because --success-text as text measured 3.79:1 in light,
+   under AA (design rule 7, v3.66.0). --text-2 rather than the base rule's
+   --text-3, which is itself under 4.5 (flagged above). */
+.chat-compile-change-created .chat-compile-change-header { color: var(--text-2); }
+.chat-compile-change-created .chat-compile-change-header svg { color: var(--success-text); }
 .chat-compile-change-updated .chat-compile-change-header { color: var(--accent-text); }
 .chat-compile-change-list { list-style: none; padding: 0; margin: 0; }
 /* The list of pages a compile wrote. Was set in code type end to end; it is
@@ -2259,11 +2274,15 @@
   gap: 8px;
   background: var(--attention-tint);
   border: 1px solid var(--attention);
-  color: var(--attention-text);
+  /* The sentence in --text; the tone is the border, the tint and the glyph
+     below (design rule 7, v3.66.0 — --attention-text as text was 3.35:1 in
+     light). */
+  color: var(--text);
   border-radius: var(--radius-md);
   padding: 10px 14px;
   font-size: var(--text-sm);
 }
+.chat-compile-refused svg { color: var(--attention-text); }
 .chat-compile-error {
   display: flex;
   align-items: flex-start;

@@ -143,8 +143,10 @@
    for byte, and said so in its own comment; CSS has no per-view scope, so
    each copy painted BOTH rails. One domain is now one colour from one place.
 
-   `--id-ink-1/-concept/-summary` moved with them and are `--id-ink-1/-2/-3`
-   there: `.dm-stat-value` below still reads those three values, by name.   */
+   The three PAGE-TYPE inks that lived beside them are
+   `--type-ink-entity/-concept/-summary` in tokens/identity.css (v3.66.0):
+   `.dm-stat-entity/-concept/-summary` below read them by name, and they are
+   not identity colours — a domain's colour is `--id-N`.                    */
 
 /* `.dm-row-main`, `.dm-row-name`, `.dm-row-meta`, `.dm-row-figure`,
    `.dm-row-sep`, `.dm-row-age`, `.dm-row-meta svg` and `.dm-row-event` moved
@@ -494,7 +496,6 @@
 /* `.dm-row-meta` left this list with the row itself (v3.65.0): `.cur-sb-meta`
    in shared/sidebar.css declares the same property, on the same element, and
    restating it here would be the duplication the move removes. */
-.dm-chip-count,
 .dm-browse-tab-count,
 .dm-quick-cost,
 .dm-plan-detail,
@@ -565,7 +566,9 @@
   gap: 8px;
   flex: 1;
   min-width: 240px;
-  color: var(--attention);
+  /* No tone ink here (v3.66.0, the tone channel): a title's words stay in
+     the ordinary ink. The rule itself has no emitter in views/domains.js any
+     more — kept for its layout only until a sweep retires it. */
 }
 /* CARD TITLE, so it takes the card-title rung — `--type-h3`, 16/600, the
    same one `.sb-card-title`, `.sync-setup-title`, `.ing-queue-panel-title`,
@@ -620,49 +623,15 @@
    clears it with room. The token is not banned; it is simply wrong for text in
    this palette, at every backdrop, in both themes. */
 
-/* ── Category chips ───────────────────────────────────────────────────── */
-
-.dm-chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-/* A health readout, NOT a control: it is a <span> with no handler, which is
-   why its 25px height is not a hit-target finding. It loses the code face for
-   the same reason everything else here did — `Broken links 0` is a sentence
-   with a number in it — and keeps tabular digits on the number itself. */
-.dm-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 25px;
-  padding: 0 10px;
-  border-radius: var(--radius-full);
-  font: var(--type-body-sm);
-  font-size: var(--text-2xs);
-  border: 1px solid transparent;
-}
-.dm-chip-count { opacity: 0.75; }
-.dm-chip-zero {
-  background: transparent;
-  border-color: var(--border);
-  color: var(--text-2);
-}
-/* .dm-chip inherits `border: 1px solid transparent`, so colouring the border here
-   costs no layout. That matters: --attention-text as the chip's TEXT measures
-   3.21:1 over its own tint in the light theme, under the 4.5 AA floor, while the
-   same colour as a 1px border is a non-text component at a 3:1 floor and clears
-   it. Tone on the rail, label in --text (16.39 light / 13.81 dark over the tint). */
-.dm-chip-amber {
-  background: var(--attention-tint);
-  border-color: var(--attention-text);
-  color: var(--text);
-}
-.dm-chip-violet {
-  background: var(--accent-tint);
-  color: var(--accent-text);
-}
+/* ── Category chips: RETIRED (v3.66.0) ──────────────────────────────────
+   The row of amber/violet pills under the scan monitor is gone. It said the
+   same six counts a second way (the continuity rule forbids a second way of
+   showing one fact), and it painted a TONE (amber) and the ACCENT (violet,
+   on "orphans") onto categories, which is neither an outcome nor a selection.
+   The six counts are now lines of a second monitor inside the Scan row, each
+   with a depth bar against the LARGEST category — a column of peers, never a
+   fault, so never red (design rule 6). See `healthCategoryMonitor` in
+   views/domains.js. */
 
 /* ── Result / status banner ──────────────────────────────────────────── */
 
@@ -692,7 +661,16 @@
   font-size: var(--text-xs);
   opacity: 0.85;
 }
-.dm-banner-success { background: var(--success-tint); color: var(--success-text); }
+.dm-banner-success {
+  /* TONE IS A MARK, NEVER THE WORDS (v3.66.0): --success-text as text is
+     3.44–4.05:1 in the light theme, under AA. The outcome rides the 3px rule
+     and the tint; the sentence stays in --text. The check glyph keeps the
+     tone (a glyph is a mark, 3:1 floor). */
+  background: var(--success-tint);
+  color: var(--text);
+  box-shadow: inset 3px 0 0 var(--success-text);
+}
+.dm-banner-success svg { color: var(--success-text); }
 .dm-banner-error    { background: var(--danger-tint);  color: var(--danger-text); }
 .dm-banner-info     { background: var(--info-tint);    color: var(--accent-text); }
 
@@ -918,15 +896,11 @@
   flex-direction: column;
   padding: 2px 2px 10px 21px;
 }
-/* ── THE SCAN ROW'S BODY (v3.65.0) ────────────────────────────────────────
-   The monitor and the category chips, which are the same scan's readings at
-   two grains. `gap` rather than a margin on the chip row, because the chip
-   row is shared with nothing here and a margin on it would have to be
-   cancelled somewhere else the day a third thing joins this body. The chip
-   row's own 14px bottom margin IS cancelled — it was spacing against the
-   card, and inside a fold body the body's own padding is the spacing. */
+/* ── THE SCAN ROW'S BODY (v3.65.0; v3.66.0) ─────────────────────────────
+   Two monitors — the scan's totals, then its issues per category with a
+   depth bar each — which are the same scan's readings at two grains. `gap`
+   spaces them; neither carries a margin of its own. */
 .dm-scan-body { gap: var(--space-5); }
-.dm-scan-body .dm-chip-row { margin-bottom: 0; }
 /* The summary's own row wraps, so a long meta line goes under the label
    instead of squeezing it — see `.dm-group-meta`. */
 .dm-group-summary { flex-wrap: wrap; }
@@ -1356,7 +1330,7 @@
 .dm-lc-refusal,
 .dm-sem-refusal {
   background: var(--attention-tint);
-  /* Rail + tint carry the tone; the words are --text. See .dm-chip-amber. */
+  /* Rail + tint carry the tone; the words are --text (the tone channel). */
   color: var(--text);
   border: 1px solid var(--attention);
 }
@@ -1403,7 +1377,11 @@
   font-size: var(--text-2xs);
 }
 .dm-sem-remove { color: var(--danger-text); overflow-wrap: anywhere; }
-.dm-sem-keep { color: var(--success-text); overflow-wrap: anywhere; }
+/* The page that SURVIVES a merge is named in the ordinary ink (v3.66.0): it
+   is not an outcome, and green words fail AA in the light theme. The arrow
+   and the sentence under the head ("Keeps …, deletes …") say which side is
+   kept. */
+.dm-sem-keep { color: var(--text); font-weight: var(--weight-medium); overflow-wrap: anywhere; }
 .dm-sem-arrow { color: var(--text-2); }
 .dm-sem-conf {
   margin-left: auto;
@@ -1411,7 +1389,7 @@
   border-radius: var(--radius-full);
   /* Reserved so the -high variant can colour a border to carry its amber
      without standing 2px taller than -med and -low down a list of cards.
-     Same device as .dm-chip. */
+     (A 1px reserved border, so a toned variant costs no layout.) */
   border: 1px solid transparent;
   font-size: var(--text-2xs);
   white-space: nowrap;
@@ -1453,8 +1431,11 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--success-text);
+  /* The words stay --text-2 like the refusal beside them; the check GLYPH
+     carries the tone (a mark, 3:1) — v3.66.0's tone channel. */
+  color: var(--text-2);
 }
+.dm-sem-gate-ok svg { color: var(--success-text); }
 
 .dm-sem-preview {
   margin-top: 10px;
@@ -1904,7 +1885,20 @@
   font-size: var(--text-2xs);
   color: var(--text-2);
 }
-.reader-source-status.is-ok { color: var(--success-text); }
+/* The outcome is in WORDS ("Revealed in Finder"); the tone is a dot before
+   them, never the words' ink (v3.66.0) — --success-text as text fails AA in
+   the light theme. */
+.reader-source-status.is-ok { color: var(--text); }
+.reader-source-status.is-ok::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: var(--success-text);
+}
 .reader-source-status.is-error { color: var(--danger-text); }
 
 /* ── Reduced motion ───────────────────────────────────────────────────────

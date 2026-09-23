@@ -890,6 +890,123 @@ section('12. The runner’s stylesheet: no new colour, no frozen px size');
     'the failure arm uses the danger pair `.settings-inline-error` already uses on this surface');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+section('13. The busiest tools this week (v3.66.0, P7): agents only, bars against the busiest');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  // Agent calls differ from all calls on purpose: a "Test all" run put one
+  // call on EVERY tool (count7d), and none of those is an agent's.
+  const withAgent = (over) => payload({ tools: USED.map((t) => ({ ...t,
+    count7dAgent: ({ get_project_context: 41, save_working_state: 37, search_wiki: 12, compile_to_wiki: 0 })[t.name],
+    count7d: 50 })).concat(UNUSED_READ, UNUSED_WRITE).map((t) => ('count7dAgent' in t) ? t : { ...t, count7dAgent: 0, count7d: 1 }), ...(over || {}) });
+  const P = withAgent();
+  const html = build(null, { state: { mcpUsage: P, mcpUsageError: null } }).renderToolMapBody(NOW);
+  const mon = html.slice(html.indexOf('class="mcp-busiest"'), html.indexOf('class="mcp-tool-group"'));
+  ok(html.indexOf('class="mcp-busiest"') > html.indexOf('class="mcp-session-strip"')
+     && html.indexOf('class="mcp-busiest"') < html.indexOf('class="mcp-tool-group"'),
+    'the monitor sits AFTER the session strip and BEFORE the READ/WRITE tiles');
+  const lines = [...mon.matchAll(/<span class="cur-mon-key">([^<]+)<\/span><span class="cur-mon-value">([^]*?)<\/span><\/div>/g)]
+    .map((m) => ({ key: m[1], val: m[2] }));
+  ok(lines.map((l) => l.key).join(',') === 'get_project_context,save_working_state,search_wiki',
+    'one line per tool AGENTS called, busiest first; a tool at 0 agent calls is omitted (got ' + lines.map((l) => l.key).join(',') + ')');
+  const w = (v) => { const m = /cur-depth-bar[^"]*" style="width:([\d.]+)%"/.exec(v || ''); return m ? Number(m[1]) : null; };
+  ok(w(lines[0] && lines[0].val) === 100 && w(lines[2] && lines[2].val) === 29.3,
+    'the busiest fills its cell, 12 of 41 draws 29.3% — the denominator is the busiest tool (' +
+    w(lines[0] && lines[0].val) + ', ' + w(lines[2] && lines[2].val) + ')');
+  ok(/>41<\/span>/.test(lines[0] ? lines[0].val : ''),
+    'the figure printed is count7dAgent (41), NOT count7d (50) — a self-test call is never an agent’s');
+  ok(!/cur-depth-danger/.test(mon), 'NEVER red: the busiest tool is not a fault');
+  ok(/visually-hidden"> 12 of 41 calls, the busiest tool this week</.test(mon),
+    'every bar names its denominator in words');
+  ok(/21 tools not called by an agent this week\./.test(mon),
+    'the tools left out are COUNTED in words, not silently dropped');
+
+  // Eight at most, and the rest are said.
+  const many = payload({ tools: Array.from({ length: 11 }, (_, i) => ({ name: 't' + String(i).padStart(2, '0'),
+    group: 'read', mutates: false, purpose: 'x', lastUsedAt: ago(60), lastOk: true,
+    count7d: 20 - i, count7dAgent: 20 - i, countTotal: 1, refusedTotal: 0 })) });
+  const mh = build(null, { state: { mcpUsage: many, mcpUsageError: null } }).renderToolMapBody(NOW);
+  const mm = mh.slice(mh.indexOf('class="mcp-busiest"'), mh.indexOf('class="mcp-tool-group"'));
+  ok((mm.match(/class="cur-mon-line[ "]/g) || []).length === 8, 'at most eight lines');
+  ok(/3 more tools called less\./.test(mm), '...and the three past the cap are said in words');
+
+  // A self-test-only week: every count7dAgent 0 → no bar at all, one sentence.
+  const selfOnly = payload({ tools: USED.concat(UNUSED_READ, UNUSED_WRITE).map((t) => ({ ...t, count7d: 1, count7dAgent: 0 })) });
+  const sh = build(null, { state: { mcpUsage: selfOnly, mcpUsageError: null } }).renderToolMapBody(NOW);
+  ok(/No agent called a tool in the last 7 days\. Test runs from this page are not counted\./.test(sh)
+     && !/class="mcp-busiest"[^]*cur-depth-bar[^]*class="mcp-tool-group"/.test(sh),
+    'a week with only test runs draws NO bar and says why');
+
+  // ABSENT IS NOT ZERO: an older server sends no count7dAgent → no monitor at all.
+  const old = build(null, { state: { mcpUsage: FIXTURE, mcpUsageError: null } }).renderToolMapBody(NOW);
+  ok(!/mcp-busiest/.test(old), 'a payload WITHOUT count7dAgent (an older server) gets no busiest-tools monitor — never a column of zeros');
+
+  // The revalidate repaints when ONLY count7dAgent moved: it is painted.
+  const api = build(null, {});
+  const a = api.usageSignature(P);
+  const b = api.usageSignature(withAgent({ tools: P.tools.map((t) => t.name === 'search_wiki' ? { ...t, count7dAgent: 13 } : t) }));
+  ok(a !== b, 'usageSignature moves when only count7dAgent moved — a painted field must be able to repaint');
+
+  // Names keep their case.
+  ok(/\.mcp-busiest \.cur-mon-key[^{]*\{[^}]*text-transform:\s*none/.test(css.replace(/\/\*[^]*?\*\//g, '')),
+    'a tool NAME keeps its own case in the monitor key (get_project_context, never GET_PROJECT_CONTEXT)');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('14. ④ Across projects (v3.66.0, P8): the widget’s per-project bars, in the app');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const { identityDotClass } = await import('../src/public/next/shared/sidebar.js');
+  const across = (projects) => build([extractFunction(src, 'renderAcrossProjects')], {
+    state: { mcpProjects: projects, mcpProjectsError: null,
+      defaultDomainInfo: { domains: ['business', 'posts', 'research'] } },
+    identityDotClass, ACROSS_PROJECTS_MAX_ROWS: 12,
+  }, ['renderAcrossProjects']).renderAcrossProjects();
+  const row = (domain, project, sessions, saved, extra) => ({ domain, project, projectLabel: project,
+    inStore: true, sessions, sessionsRead: sessions, sessionsSaved: saved, lastSessionAt: null,
+    domainMismatch: false, sharedName: false, ...(extra || {}) });
+  const P = { byProject: [row('business', 'alpha', 11, 9), row('posts', 'curator', 6, 4), row('research', 'quiet', 0, 0),
+      row('gone', 'old', 2, 1, { inStore: false })],
+    window: { logPresent: true, busiestSaved: 9, windowDays: 30 },
+    savePulse: { events: 79, lowerBound: false } };
+  const html = across(P);
+  ok(/settings-block-mcp-across/.test(html) && /settings-block-num" aria-hidden="true">4</.test(html)
+     && /<h2 class="settings-job-title">Across projects<\/h2>/.test(html),
+    'block ④ "Across projects", numbered after the tool map');
+  const lines = [...html.matchAll(/<div class="cur-mon-line[^"]*"><span class="cur-mon-key">([^<]+)<\/span><span class="cur-mon-value">([^]*?)<\/span>(?:<span class="cur-mon-sub">([^<]*)<\/span>)?<\/div>/g)]
+    .map((m) => ({ key: m[1], val: m[2], sub: m[3] || '' }));
+  ok(lines.map((l) => l.key).join('|') === 'business / alpha|posts / curator|research / quiet|gone / old|saves, last 7 days',
+    'one line per project in the route’s order, then the save pulse (got ' + lines.map((l) => l.key).join('|') + ')');
+  const w = (v) => { const m = /cur-depth-bar[^"]*" style="width:([\d.]+)%"/.exec(v || ''); return m ? Number(m[1]) : null; };
+  ok(w(lines[0].val) === 100 && w(lines[1].val) === 44.4,
+    'sessions that SAVED, against the busiest project (9 → 100%, 4 of 9 → 44.4%)');
+  ok(lines[0].sub === '11 sessions' && lines[1].sub === '6 sessions', 'all sessions under the figure');
+  ok(/cur-sb-dot cur-sb-dot-1"/.test(lines[0].val) && /cur-sb-dot cur-sb-dot-2"/.test(lines[1].val)
+     && /cur-sb-dot cur-sb-dot-3"/.test(lines[2].val),
+    'each line carries its DOMAIN’s identity dot, keyed on the install’s domain index (the one mapping)');
+  ok(identityDotClass(0) === 'cur-sb-dot-1', 'CONTROL: that is the kit’s own mapping');
+  ok(!/cur-sb-dot/.test(lines[3].val) && lines[3].sub === '2 sessions · not in this folder',
+    'a project whose domain this install does not hold gets NO dot — never a guessed one — and says it is not here');
+  ok(/settings-id-idle/.test(lines[2].val) && w(lines[2].val) === null && /^.*>0$/.test(lines[2].val.replace(/<[^>]+>/g, '>').replace(/>+/g, '>'))
+     && lines[2].sub === 'no session in 30 days',
+    'a project with NO session is shown, as 0, marked idle, with no bar — so a reader can see which never save');
+  ok(/\.mcp-across \.cur-mon-line:has\(\.settings-id-idle\) \.cur-mon-value\s*\{[^}]*color:\s*var\(--text-2\)/.test(css),
+    '...and the idle figure takes the quiet ink, never an opacity');
+  ok(lines[4].val === '79' && w(lines[4].val) === null, 'the save pulse is a number with no bar (no denominator)');
+  ok(!/cur-depth-danger/.test(html), 'NEVER red');
+
+  // ABSENT IS NOT ZERO: no usage log → no project row at all, and said.
+  const none = across({ byProject: [row('business', 'alpha', null, null)],
+    window: { logPresent: false, busiestSaved: null }, savePulse: null });
+  ok(!/cur-mon-line[ "]/.test(none) && /No usage log on this computer yet/.test(none),
+    'with no usage log every row reads null — the block draws NO row and says so, never a column of zeros');
+  // lowerBound pulse.
+  const lb = across({ ...P, savePulse: { events: 23, lowerBound: true } });
+  ok(/cur-mon-value">at least 23</.test(lb), 'a pulse past the journal tail reads "at least N"');
+  // Loading and a server that cannot say.
+  ok(/Reading the usage logs…/.test(across(null)), 'before the reading lands the block says so');
+}
+
 console.log('\n────────────────────────────────────────────────────────────');
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed) { console.log('❌ tool-map assertions failed'); process.exit(1); }

@@ -1004,6 +1004,31 @@ section('§11 — SAVES WITH NO SESSION TO ACCOUNT FOR THEM (v3.64.1)');
     'screenSignature moves when the stale-bridge flag does');
 }
 
+section('§12 — v3.66.0 (P3): TWO OUTCOMES AS A SHARE OF A NAMED WHOLE');
+{
+  // The approved channels map puts a depth bar on "saved before stopping"
+  // (and, symmetrically, "started with the context"): the COUNT stays the
+  // figure, the whole is printed beside it ("of 6"), and the bar is `max`,
+  // never `budget` — so it can never be an over-run and never a grade.
+  const html = makeMeter(stFor()).renderCaptureMeter();
+  const line = (key) => {
+    const at = html.indexOf('<span class="cur-mon-key">' + key + '</span>');
+    const start = html.lastIndexOf('<div class="cur-mon-line', at);
+    const next = html.indexOf('<div class="cur-mon-line', at);
+    return at === -1 ? '' : html.slice(start, next === -1 ? undefined : next);
+  };
+  const saved = line('saved before stopping');
+  ok(/cur-depth-bar" style="width:66\.7%"/.test(saved) && /cur-mon-sub">of 6</.test(saved),
+    'saved before stopping draws 4 of 6 as a share, the whole said in words', saved);
+  ok(/cur-depth-bar" style="width:66\.7%"/.test(line('started with the context')),
+    '...and started with the context the same way', line('started with the context'));
+  ok(!/cur-depth-danger/.test(html), 'no share is ever danger — there is no target');
+  const summary = html.slice(html.indexOf('<summary'), html.indexOf('</summary>'));
+  ok(!/cur-depth|%/.test(summary), 'the closed summary line carries no bar and no percentage', summary);
+  ok(!/cur-depth-bar/.test(line('sessions')) && !/cur-depth-bar/.test(line('read and did not save')),
+    'the whole itself and the uncomfortable number get no bar');
+}
+
 console.log('\n  ' + '─'.repeat(60));
 console.log('  Passed: ' + passed + '   Failed: ' + failed);
 if (failed) {

@@ -473,8 +473,9 @@ const NAMED = [
    '.dm-quick-note-busy words are --text (14.78 / 16.15). It was --attention-text at 3.16 light over --accent-tint.'],
   ['domains', /\.dm-quick-note-busy svg\s*\{[^}]*color:\s*var\(--attention-text\)/,
    '...and the amber survives on its ICON, which is a non-text component at a 3:1 floor (9.75 / 3.16)'],
-  ['domains', /\.dm-chip-amber\s*\{[^}]*border-color:\s*var\(--attention-text\)/,
-   '.dm-chip-amber puts the amber on the border — .dm-chip already reserves 1px, so this costs no layout'],
+  // `.dm-chip-amber` left this table in v3.66.0 WITH the chip row itself: the
+  // six category counts are a monitor with depth bars now (placement P6), and
+  // a category is not an outcome, so no tone is painted on it at all.
   ['sync',    /\.sync-sidebar-busy svg\s*\{[^}]*color:\s*var\(--attention-text\)/,
    '.sync-sidebar-busy keeps its amber icon while the sentence goes --text'],
   ['shared',  /\.upd-warning\s*\{[\s\S]*?border-top:\s*1px solid var\(--attention-text\)/,
@@ -543,9 +544,15 @@ const successAsText = OWNED.reduce((n, f) => n + colorDecls(['--success-text'], 
 // decision for the same measured reason: on the monitor's own surface
 // --success-text measures 3.79 in light, so the component carries its state on
 // a DOT and a RULE at the 3:1 floor and keeps every word at --text.
-ok(successAsText === 11,
+// TIGHTENED 11 -> 9 IN v3.66.0 (package E, the tone channel): the four
+// success-coloured WORDS in views/domains.css (.dm-banner-success,
+// .dm-sem-keep, .dm-sem-gate-ok, .reader-source-status.is-ok) went to --text /
+// --text-2. Two of the four keep the tone on their check GLYPH
+// (`.dm-banner-success svg`, `.dm-sem-gate-ok svg`), a non-text mark at the
+// 3:1 floor, which this count still sees — so domains reads 2, both glyphs.
+ok(successAsText === 9,
    `RATCHETED: exactly ${successAsText} declarations across the three owned files paint --success-text as TEXT. ` +
-   'Expected 11 (domains 4, sync 0, shared 7). It may fall; it must not rise. This is a KNOWN, UNFIXED failure in the light theme ' +
+   'Expected 9 (domains 2 — both check glyphs — sync 0, shared 7). It may fall; it must not rise. This is a KNOWN, UNFIXED failure in the light theme ' +
    '(4.05 on --surface, 3.59 on --success-tint) reported rather than repaired, because a fourth colour family ' +
    'was outside this wave\'s brief. The fix is the same one applied to amber: tone on the rail, words in --text.');
 

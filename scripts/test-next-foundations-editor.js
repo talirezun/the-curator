@@ -1325,8 +1325,29 @@ const anEdit = (over) => ({ domain: 'acme', project: 'lumina', slug: 'architectu
   ok('crossing the project budget is DISCLOSED with the figure',
     /over the 200 KB/.test(budg), budg.slice(0, 200));
   ok('...and Save is NOT disabled for it', !/id="mem-fnd-save" disabled/.test(budg));
-  ok('...and it says what actually happens: the READ gets trimmed, not the save',
-    /the read is what gets\s+trimmed/.test(budg.replace(/\s+/g, ' ')) || /read is what gets/.test(budg));
+  // v3.66.0 (design §0.8): it used to say the 200 KB was what "an agent reads
+  // in one call" and that "the read is what gets trimmed" — both false. It now
+  // names the PROJECT budget, and says what an agent is handed, against the
+  // READING budget the payload carries (never the constant), in the same true
+  // words `foundationsBudgetWarning` uses under the row.
+  const budgFlat = budg.replace(/\s+/g, ' ');
+  ok('...and it names the budget it crossed: the 200 KB PROJECT budget',
+    /over the 200 KB project budget/.test(budgFlat), budgFlat.slice(0, 400));
+  ok('...and says what actually happens: saved, and agents are handed up to the READING budget '
+    + 'in reading order, the rest listed and fetched by name',
+    /It will still be saved — agents are handed up to 120 KB of document text at session start, in reading order; every other document stays listed and is fetched by name when needed\./
+      .test(budgFlat), budgFlat.slice(0, 600));
+  ok('...and none of the three false claims survives: "reads in one call", "gets trimmed", "oldest-listed"',
+    !/reads in one call|gets trimmed|oldest-listed/.test(budgFlat));
+  // The reading budget is the PAYLOAD's: a project whose store reports 64 KB
+  // is told 64 KB, so the day the store sends a project's own budget this
+  // sentence follows with no view change.
+  const ownBudget = factsOf([aDoc({ bytes: FI.FOUNDATIONS_BUDGET_BYTES })]);
+  ownBudget.readFirstBudgetBytes = 64 * 1024;
+  const budg64 = renderers.renderFoundationEditor(ownBudget).replace(/\s+/g, ' ');
+  ok('...its reading-budget figure comes from the facts, not the view constant (64 KB here)',
+    /handed up to 64 KB of document text/.test(budg64) && !/handed up to 120 KB/.test(budg64),
+    budg64.slice(0, 600));
 
   // ── THE SHRINK STRIP ──────────────────────────────────────────────────
   setState({ activeDomain: 'acme', activeProject: 'lumina',
