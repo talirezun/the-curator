@@ -203,6 +203,9 @@ import { COPY_SUCCESS_BANNER } from '../src/public/next/shared/agent-instruction
 // draw their share through it, and a stub would let every assertion about a
 // bar's denominator run past the function that computes the width.
 import { renderMonitor, renderDepthCell } from '../src/public/next/shared/monitor.js';
+// v3.67.0: the run line kit, REAL — it imports only the honest formatter, so
+// it loads in Node, and the helper's panel is under test through it.
+import { renderRunsOn, renderSpent, aiActionDisabledAttrs } from '../src/public/next/shared/ai-run.js';
 import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
   identityDotClass } from '../src/public/next/shared/sidebar.js';
 // ── THE OWNERSHIP CHOOSER, THE REAL ONE (v3.61.0) ─────────────────────────
@@ -1155,6 +1158,77 @@ function handoffHtml(R) {
   return c ? (c.bodyHtml || '') : '';
 }
 
+// ── v3.67.0: STEP ④, THE START CELL AND THE HELPER, OFF LIVE SOURCE ───────
+// Every one is LIFTED rather than stubbed, for the reason this harness exists:
+// `renderProject` composes step ④, `fndRowHtml` composes the start cell and
+// `renderFoundations` the helper's panel, and a stub anywhere in that chain
+// would let every assertion below run past the shipped markup. The constants
+// travel with them as declarations read off the file, not retyped here.
+function constDecl(src, name) {
+  const at = src.indexOf('\nconst ' + name + ' =');
+  if (at < 0) throw new Error(name + ' not found in memory.js');
+  let i = at + 1;
+  let depth = 0;
+  let quote = null;
+  for (; i < src.length; i++) {
+    const c = src[i];
+    if (quote) {
+      if (c === '\\') { i++; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth--;
+    else if (c === ';' && depth === 0) break;
+  }
+  return src.slice(at + 1, i + 1);
+}
+const V367_CONSTS = ['READING_BUDGET_PRESETS', 'READING_BUDGET_STANDARD', 'START_STATES',
+  'CONTEXT_WINDOW_KEY', 'CONTEXT_WINDOWS', 'SESSION_START_INFO_HTML'];
+const V367_FNS = ['fndStartOf', 'fndStartCfg', 'planRowFor', 'fndSuggestCellHtml', 'planFor',
+  'planChangeCount', 'planHeadHtml', 'ssSize', 'ssTokens', 'budgetWord', 'readContextWindow',
+  'contextWindowNow', 'ssPct', 'ssTotalWords', 'sessionStartFor', 'budgetPickerCfg',
+  'sessionNoticesHtml', 'ssDocs', 'sessionReceivesMonitor', 'presetName', 'previewFor',
+  'planPreviewBody', 'planPreviewKey', 'renderSessionStart', 'renderPlanPanel', 'planAiNeedsConfirm'];
+function v367Lift() {
+  return V367_CONSTS.map((n) => constDecl(viewSrc, n)).join('\n') + '\n'
+    // Named one by one rather than mapped over V367_FNS, for §17's census: it
+    // reads this file for real extractFunction calls, so a name in a list is
+    // not proof that the function was lifted.
+    + extractFunction(viewSrc, 'fndStartOf', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'fndStartCfg', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'planRowFor', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'fndSuggestCellHtml', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'planFor', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'planChangeCount', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'planHeadHtml', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'ssSize', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'ssTokens', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'budgetWord', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'readContextWindow', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'contextWindowNow', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'ssPct', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'ssTotalWords', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'sessionStartFor', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'budgetPickerCfg', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'sessionNoticesHtml', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'ssDocs', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'sessionReceivesMonitor', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'presetName', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'previewFor', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'planPreviewBody', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'planPreviewKey', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'renderSessionStart', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'renderPlanPanel', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'planAiNeedsConfirm', 'memory.js') + '\n';
+}
+// The list and the calls above must agree, or a function is lifted and not
+// returned (or the reverse).
+if (V367_FNS.some((n) => !v367Lift.toString().includes("'" + n + "'"))) {
+  throw new Error('v367Lift and V367_FNS disagree');
+}
+
 function makeRenderers(stateObj) {
   // Every collaborator the render functions close over is injected, so this
   // executes the shipped code rather than a paraphrase of it.
@@ -1370,6 +1444,7 @@ function makeRenderers(stateObj) {
     extractFunction(viewSrc, 'renderUnlistedNote', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderBriefOnlyNotice', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderCopyOutcome', 'memory.js') + '\n' +
+    v367Lift() +
     extractFunction(viewSrc, 'renderProject', 'memory.js') + '\n' +
     // LIFTED HERE TOO, although test-next-memory-switch.js §9 is where its own
     // arithmetic is driven. §16e2 renders BOTH it and renderProject through
@@ -1399,7 +1474,8 @@ function makeRenderers(stateObj) {
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
     'unlistedCount, renderCopyOutcome, renderProject, renderProjectSkeleton, renderSaveStatus, freshnessStep, freshnessTier, ' +
     'effectiveSave, briefStats, briefDismissDecision, ' +
-    'renderBriefEditor, renderProjectGroups, renderNoProjects };';
+    'renderBriefEditor, renderProjectGroups, renderNoProjects, '
+    + V367_FNS.join(', ') + ' };';
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
     'JOURNAL_PAGE', 'JOURNAL_MORE', 'renderBlock',
     // ── THE STORE MIRRORS AND THE SHARED CHOOSER (v3.61.0) ─────────────
@@ -1458,6 +1534,8 @@ function makeRenderers(stateObj) {
     // the stub echoes the cfg it was handed and every assertion below reads
     // that back.
     'renderListboxHtml',
+    // v3.67.0: the run line kit, real (see the import).
+    'renderRunsOn', 'renderSpent', 'aiActionDisabledAttrs',
     'renderOverview', body)(
     stateObj, escapeHtml, () => '<svg></svg>', renderMarkdown, () => '<div class="loader"></div>', null, 10, 50,
     // The REAL shared block, imported rather than stubbed: renderProject
@@ -1478,7 +1556,12 @@ function makeRenderers(stateObj) {
     renderMonitor, renderDepthCell,
     (cfg) => '<button type="button" id="' + cfg.id + '" data-lb-stub="'
       + escapeHtml(JSON.stringify({ options: cfg.options.map((o) => o.value),
-        disabled: cfg.disabled === true, placeholder: cfg.placeholder })) + '"></button>',
+        disabled: cfg.disabled === true, placeholder: cfg.placeholder,
+        // v3.67.0: the value and the accessible name, so the start cell and
+        // the budget picker can be read back as the control they describe.
+        value: cfg.value === undefined ? null : cfg.value,
+        label: cfg.ariaLabel || null })) + '"></button>',
+    renderRunsOn, renderSpent, aiActionDisabledAttrs,
     realRenderOverview);
 }
 
@@ -2592,9 +2675,23 @@ const withInit = fetchArgLists.filter((a) => topLevelArgs(a).length > 1);
 // 2 and 3, agent-only over MCP) and every foundation's bytes are untouched.
 // The single-writer rule is "one writer per FILE, with provenance that
 // matches", and this file has exactly one writer for exactly one fact.
-eq('EXACTLY EIGHT fetches in the view carry a request init', withInit.length, 8);
+// ── ELEVEN SINCE v3.67.0, AND ONLY ONE OF THE THREE NEW ONES IS A WRITE THE
+// v3.66.0 SET DID NOT HAVE ──────────────────────────────────────────────────
+// · `PATCH …/foundations/:slug {atStart}` REPLACES `{readFirst}` at the same
+//   route, from ONE call site (`writeStartState`), shared by the row's control
+//   and by "Apply suggestion" — so the route is declared once, not twice.
+// · `PATCH …/reading/budget {readingBudgetBytes}` is the new write: curator
+//   metadata ABOUT the project (`project.json`), the same class as
+//   `knowledgeDomains` above it — one writer, one fact, one field.
+// · `POST …/session-start/preview` is a READ with a body (a plan of up to 200
+//   slugs does not belong in a URL — CONTRACT §1.18); the route writes nothing,
+//   which the store suite proves by fingerprint.
+// · `POST /api/reading-plan/…/suggest {arm}` is a READ too: the helper
+//   proposes and never writes (H's suite fingerprints it). It is the one fetch
+//   outside /api/memory, named below rather than admitted by a prefix.
+eq('EXACTLY ELEVEN fetches in the view carry a request init', withInit.length, 11);
 ok('every other fetch is single-argument — structurally a GET, whatever a method string is spelled like',
-  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 8,
+  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 11,
   JSON.stringify(fetchArgLists.map((a) => topLevelArgs(a).length)));
 {
   const inits = withInit.map((a) => ({ url: topLevelArgs(a)[0], init: topLevelArgs(a)[1] }));
@@ -2605,8 +2702,16 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
   const posts = withMethod('POST');
   const put = withMethod('PUT')[0];
   const del = withMethod('DELETE')[0];
-  eq('exactly THREE writes use a LITERAL PATCH — never a variable or a concatenation',
-    patches.length, 3, JSON.stringify(inits.map((x) => x.init.slice(0, 60))));
+  eq('exactly FOUR writes use a LITERAL PATCH — never a variable or a concatenation',
+    patches.length, 4, JSON.stringify(inits.map((x) => x.init.slice(0, 60))));
+  // ── THE FOURTH: THE READING BUDGET (v3.67.0) ─────────────────────────
+  const budget = patches.find((x) => x.url.includes("'/reading/budget'"));
+  ok('the fourth PATCH targets the four-segment reading/budget endpoint under this project',
+    budget && budget.url.includes('/api/memory/'), budget ? budget.url.slice(0, 200) : 'none');
+  ok('...and sends ONLY `readingBudgetBytes` — never a brief, a handoff field or a document',
+    budget && /body:\s*JSON\.stringify\(\{\s*readingBudgetBytes:\s*bytes\s*\}\)/.test(budget.init)
+    && !/brief|text:|nowState|nextSteps|readFirst|atStart/.test(budget.init),
+    budget ? budget.init.slice(0, 200) : 'none');
   // ── THE THIRD: WHICH WIKIS (v3.65.0, P10) ────────────────────────────
   // Named rather than counted, like its two siblings. It sends the WHOLE
   // list and nothing else — a strict one-field body at the route — and
@@ -2634,10 +2739,25 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
   ok('the second PATCH targets ONE foundation on tier 0',
     first && first.url.includes("'/foundations/'") && first.url.includes('/api/memory/'),
     first ? first.url.slice(0, 200) : 'none');
-  ok('...and sends `readFirst` and NOTHING else — never the document\'s text',
-    first && /body:\s*JSON.stringify\(\{\s*readFirst:\s*want\s*\}\)/.test(first.init)
-    && !/text:/.test(first.init), first ? first.init.slice(0, 200) : 'none');
-  eq('exactly TWO writes use a LITERAL POST', posts.length, 2);
+  // v3.67.0: the three-state `{atStart}` replaced the two-state `{readFirst}`
+  // at the same route — one key, the start state, and NOTHING else.
+  ok('...and sends `atStart` and NOTHING else — never the document\'s text',
+    first && /body:\s*JSON.stringify\(\{\s*atStart\s*\}\)/.test(first.init)
+    && !/text:|readFirst/.test(first.init), first ? first.init.slice(0, 200) : 'none');
+  eq('...from exactly ONE call site, shared by the row and by Apply',
+    patches.filter((x) => x.url.includes("'/foundations/'")).length, 1);
+  // v3.67.0: two READS carry a body. Named, with their bodies, so neither can
+  // grow a write-shaped field.
+  eq('exactly FOUR fetches use a LITERAL POST', posts.length, 4);
+  const preview = posts.find((x) => x.url.includes("'/session-start/preview'"));
+  ok('one POST is the session-start PREVIEW under this project — a read with a plan in its body',
+    preview && preview.url.includes('/api/memory/') && /body:\s*JSON\.stringify\(body\)/.test(preview.init),
+    preview ? preview.url.slice(0, 200) + preview.init.slice(0, 120) : 'none');
+  const suggest = posts.find((x) => x.url.includes("'/suggest'"));
+  ok('one POST asks the reading-plan helper for a proposal, sending the ARM and nothing else',
+    suggest && suggest.url.includes("'/api/reading-plan/'")
+    && /body:\s*JSON\.stringify\(\{\s*arm\s*\}\)/.test(suggest.init),
+    suggest ? suggest.url.slice(0, 200) + suggest.init.slice(0, 120) : 'none');
   const refresh = posts.find((x) => x.url.includes("'/foundations/refresh'"));
   // TWO ENDPOINTS IN ONE EXPRESSION SINCE v3.65.1 — see the assertion below.
   const init = posts.find((x) => x.url.includes("'init'"));
@@ -2715,8 +2835,11 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
   ok('...and none of them naming anything but a slug — no ownership, no force, no path',
     dels.every((d) => !/ownership|force|repoRoot|path/.test(d.init)),
     JSON.stringify(dels.map((d) => d.init.slice(0, 160))));
-  ok('every one of the six URLs is under /api/memory and escapes its segments',
-    inits.every((x) => x.url.includes("'/api/memory/'") && x.url.includes('encodeURIComponent')),
+  ok('every one of them is under /api/memory — the helper\'s one proposal read under '
+    + '/api/reading-plan — and escapes its segments',
+    inits.every((x) => (x.url.includes("'/api/memory/'")
+      || (x === suggest && x.url.includes("'/api/reading-plan/'")))
+      && x.url.includes('encodeURIComponent')),
     JSON.stringify(inits.map((x) => x.url.slice(0, 90))));
   // NONE of the five can reach a work-stream handoff or a journal: neither
   // path fragment appears in any of their URLs.
@@ -2737,10 +2860,11 @@ ok('self-test: the argument-count scan does NOT fire on a plain read',
 // transport exists at all.
 {
   const methods = [...viewNoComments.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g)].map((m) => m[1]).sort();
-  ok('exactly EIGHT `method:` property keys appear in the view\'s real code, and every one of them '
+  ok('exactly ELEVEN `method:` property keys appear in the view\'s real code, and every one of them '
     + 'is a LITERAL — so the `\'PO\' + \'ST\'` evasion is refused by construction',
   JSON.stringify(methods) === JSON.stringify(
-    ["'DELETE'", "'DELETE'", "'PATCH'", "'PATCH'", "'PATCH'", "'POST'", "'POST'", "'PUT'"]),
+    ["'DELETE'", "'DELETE'", "'PATCH'", "'PATCH'", "'PATCH'", "'PATCH'",
+      "'POST'", "'POST'", "'POST'", "'POST'", "'PUT'"]),
   JSON.stringify(methods));
 }
 for (const transport of ['XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource', 'FormData', 'Request(']) {
@@ -2786,9 +2910,13 @@ ok('the view fetches only /api/memory endpoints, the ONE domain-stats read and t
   // token is saved (presence + last four, never the value) and whether
   // Personal Sync is connected.
   const TOKEN_FACTS = ['/api/config/github-read-token', '/api/sync/status'];
+  // v3.67.0: the reading-plan helper's two reads (estimate, proposal), both
+  // under their own prefix and both built the same escaped way.
+  const plan = (viewNoComments.match(/fetch\('\/api\/reading-plan\/' \+ encodeURIComponent\(domain\)/g)
+    || []).length === 2;
   return urls.every((u) => u.startsWith('/api/memory') || u === '/api/domains/' || u === '/api/domains'
-    || TOKEN_FACTS.includes(u))
-    && built && stats && list;
+    || u === '/api/reading-plan/' || TOKEN_FACTS.includes(u))
+    && built && stats && list && plan;
 })());
 ok('...and the domain LIST is the cheap route, never the stats walk the Domains page pays for',
   !/fetch\(\s*'\/api\/domains\/stats'/.test(viewNoComments));
@@ -3157,6 +3285,9 @@ function makeRevalidator(stateObj, responder, opts = {}) {
     'let pendingFocusId = null;\n' +
     // THE SHIPPED render(), not a paraphrase of it — with its two focus
     // helpers, which it calls unconditionally.
+    // v3.67.0: render() asks for step ④'s measurement after it paints; that
+    // path is driven in §25, so here it is a named no-op.
+    'function maybeLoadSessionStart() {}\n' +
     extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
@@ -3743,7 +3874,9 @@ function mountView({ hidden = false, mounted = true, noIntervals = false } = {})
     'freshState', 'createLoadingGate', 'isCurrentMount', 'render', 'loadIndex',
     'reportAsyncMountFailure', 'refreshIndex', 'schedulePoll', 'stopPoll',
     'closeAllListboxes', 'window', 'document',
-    'tickAges', 'AGE_TICK_MS', 'setInterval', 'clearInterval', body)(
+    'tickAges', 'AGE_TICK_MS', 'setInterval', 'clearInterval',
+    // v3.67.0: the helper's cost gate is a view-owned overlay, closed on teardown.
+    'closeConfirmIfOpen', body)(
     () => ({ loading: true }),
     () => ({ begin: () => {}, cancel: () => { log.gateCancelled++; } }),
     () => mounted,
@@ -3761,7 +3894,8 @@ function mountView({ hidden = false, mounted = true, noIntervals = false } = {})
     // headless rig) that has none. onEnter guards on `typeof setInterval ===
     // 'function'`, so this arm proves the guard is real rather than decorative.
     noIntervals ? undefined : ((fn, ms) => { log.intervalsArmed.push({ fn, ms, id: nextHandle }); return nextHandle++; }),
-    (id) => { log.intervalsCleared.push(id); });
+    (id) => { log.intervalsCleared.push(id); },
+    () => { log.closedConfirms = (log.closedConfirms || 0) + 1; });
 
   return { ...api, log, listeners, tickSpy,
     setMounted: (v) => { mounted = v; }, setHidden: (v) => { doc.hidden = v; } };
@@ -3874,6 +4008,9 @@ function makeFocusRig({ activeId = null, presentIds = [], detailLoading = false 
   const st = { detailLoading };
   const body =
     'let pendingFocusId = null;\n' +
+    // v3.67.0: render() asks for step ④'s measurement after it paints; that
+    // path is driven in §25, so here it is a named no-op.
+    'function maybeLoadSessionStart() {}\n' +
     extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
@@ -3908,6 +4045,9 @@ ok('FOCUS_FALLBACK was lifted from real source',
   const body =
     'let pendingFocusId = null;\nlet renderedSignature = null;\n' +
     'function screenSignature() { return "SIG"; }\n' +
+    // v3.67.0: render() asks for step ④'s measurement after it paints; that
+    // path is driven in §25, so here it is a named no-op.
+    'function maybeLoadSessionStart() {}\n' +
     extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
@@ -4981,6 +5121,10 @@ section('§16 — Projects inside a domain (v3.48.0)');
       'bindFoundationRows', 'refreshFoundations', 'bindKnowledgeRows',
       extractFunction(viewSrc, 'briefStats', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'briefDismissDecision', 'memory.js') + '\n' +
+      // v3.67.0: the fold binder moved out of wire() unchanged (lifted real);
+      // the release's own controls are bound by bindSessionAndPlan, driven in §25.
+      extractFunction(viewSrc, 'bindFoldToggles', 'memory.js') + '\n' +
+      'function bindSessionAndPlan() {}\n' +
       extractFunction(viewSrc, 'wire', 'memory.js') + '\n' +
       'return { wire };')(
       st,
@@ -5239,9 +5383,11 @@ section('§16 — Projects inside a domain (v3.48.0)');
     /<p class="settings-job-lede settings-block-lede">/g) || []).length;
   eq('the filled page emits NO step lede', ledesIn(real), 0);
   eq('...and neither does the skeleton', ledesIn(ghost), 0);
-  // NOT VACUOUS: the page really is composed of three numbered steps.
-  eq('CONTROL: the filled page still paints three numbered heads',
-    (real.match(/<span class="settings-block-num"/g) || []).length, 3);
+  // NOT VACUOUS: the page really is composed of numbered steps — FOUR since
+  // v3.67.0 (④ Session start, the sum of the three layers). The skeleton
+  // keeps three: ④ is a measurement that lands after the project read.
+  eq('CONTROL: the filled page still paints four numbered heads',
+    (real.match(/<span class="settings-block-num"/g) || []).length, 4);
   eq('CONTROL: ...and so does the skeleton',
     (ghost.match(/<span class="settings-block-num"/g) || []).length, 3);
 
@@ -5254,7 +5400,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
   // the mark is INSIDE the div.
   const heads = [...real.matchAll(/<div class="settings-block-hd">([\s\S]*?)<\/div>/g)]
     .map((m) => m[1]);
-  eq('three head rows', heads.length, 3);
+  eq('four head rows', heads.length, 4);
   for (const hd of heads) {
     const num = hd.indexOf('class="settings-block-num"');
     const title = hd.indexOf('<h2 class="settings-job-title">');
@@ -5265,7 +5411,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
   // The panel is the head's SIBLING, not its child: a <div> inside a flex
   // head row would sit beside the title rather than under the step.
   eq('each step carries its own ⓘ panel, outside the head row',
-    (real.match(/<div class="settings-block-info">/g) || []).length, 3);
+    (real.match(/<div class="settings-block-info">/g) || []).length, 4);
 
   // ── THE THREE SENTENCES SURVIVED, BEHIND THE MARKS ───────────────────
   // Moved, not deleted. Each is asserted inside the panel of ITS OWN step,
@@ -5328,7 +5474,11 @@ section('§16 — Projects inside a domain (v3.48.0)');
     // v3.59.0: and for tier 0's rows and its one control, for the same reason.
     'bindFoundationRows', 'refreshFoundations', 'bindKnowledgeRows',
     extractFunction(viewSrc, 'briefDismissDecision', 'memory.js') + '\n' +
-    extractFunction(viewSrc, 'wire', 'memory.js') + '\n' +
+    // v3.67.0: the fold binder moved out of wire() unchanged (lifted real);
+      // the release's own controls are bound by bindSessionAndPlan, driven in §25.
+      extractFunction(viewSrc, 'bindFoldToggles', 'memory.js') + '\n' +
+      'function bindSessionAndPlan() {}\n' +
+      extractFunction(viewSrc, 'wire', 'memory.js') + '\n' +
     'return { wire, pending: () => pendingFocusId };')(
     st,
     { querySelectorAll: () => [], getElementById: (id) => (id === 'mem-brief-text' ? el : null) },
@@ -5393,7 +5543,11 @@ section('§16 — Projects inside a domain (v3.48.0)');
     // v3.59.0: and for tier 0's rows and its one control, for the same reason.
     'bindFoundationRows', 'refreshFoundations', 'bindKnowledgeRows',
     extractFunction(viewSrc, 'briefDismissDecision', 'memory.js') + '\n' +
-    extractFunction(viewSrc, 'wire', 'memory.js') + '\n' +
+    // v3.67.0: the fold binder moved out of wire() unchanged (lifted real);
+      // the release's own controls are bound by bindSessionAndPlan, driven in §25.
+      extractFunction(viewSrc, 'bindFoldToggles', 'memory.js') + '\n' +
+      'function bindSessionAndPlan() {}\n' +
+      extractFunction(viewSrc, 'wire', 'memory.js') + '\n' +
     'return { wire };')(
     st,
     { querySelectorAll: () => [], getElementById: (id) => (id === 'mem-brief-edit' ? btn : null) },
@@ -5747,7 +5901,10 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     const body =
       'let pendingFocusId = null;\nlet renderedSignature = null;\n' +
       'function screenSignature() { return "SIG"; }\n' +
-      extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
+      // v3.67.0: render() asks for step ④'s measurement after it paints; that
+    // path is driven in §25, so here it is a named no-op.
+    'function maybeLoadSessionStart() {}\n' +
+    extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
       'return render;';
@@ -6135,8 +6292,9 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       [...['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'workStreamOrder',
         'wsShownCount', 'wsRowHtml', 'wsMoreHtml', 'workStreamCounts',
         'handoffReaderContent', 'bindWorkStreamRows', 'openWorkStream',
-        'showMoreWorkStreams', 'wire']]
+        'showMoreWorkStreams', 'bindFoldToggles', 'wire']]
         .map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n')
+      + '\nfunction bindSessionAndPlan() {}\n'
       + '\nreturn { wire, pending: () => pendingFocusId };')(
       st, document,
       () => { calls.render++; },
@@ -6971,8 +7129,9 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   //   ③ knowledge  — what the wiki has compounded    (accumulates)
   const ids = [...page.matchAll(/settings-block-(context-[a-z]+)\b/g)].map((m) => m[1]);
   const uniq = [...new Set(ids)];
-  eq('the page is THREE steps, in the order a session start reads in',
-    uniq.join(','), 'context-canonical,context-state,context-knowledge');
+  // v3.67.0: and a FOURTH, their sum — what an agent is handed at the start.
+  eq('the page is FOUR steps: the three layers in the order a session start reads them, then their sum',
+    uniq.join(','), 'context-canonical,context-state,context-knowledge,context-session');
   ok('...and none of the five old block ids survives, by name',
     !/settings-block-memory-(status|streams|brief|foundations|journal)\b/.test(page), page.slice(0, 300));
 
@@ -6987,12 +7146,12 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // reads top to bottom as one is numbered. A numeral is an argument, not
   // decoration, and this page now has the argument to make.
   eq('every one of them is NUMBERED — the page is a sequence of steps',
-    (page.match(/settings-block-num/g) || []).length, 3);
+    (page.match(/settings-block-num/g) || []).length, 4);
   eq('...so nothing on it is unnumbered any more',
     (page.match(/settings-block-unnumbered/g) || []).length, 0);
-  eq('...and the numerals are 1, 2, 3 in document order',
+  eq('...and the numerals are 1, 2, 3, 4 in document order',
     [...page.matchAll(/class="settings-block-num"[^>]*>(\d+)</g)].map((m) => m[1]).join(','),
-    '1,2,3');
+    '1,2,3,4');
 
   // ── ZERO LEDES, AND THE CEILING BECOMES A BAN (v3.65.0, R4) ─────────
   //
@@ -7011,9 +7170,9 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
 
   // ── THE DEPTH IS BEHIND THE MARK, AND IT IS REALLY THERE ────────────
   eq('every step carries an ⓘ with a panel of its own',
-    (page.match(/data-tx-info="settings-block-info-context-/g) || []).length, 3);
+    (page.match(/data-tx-info="settings-block-info-context-/g) || []).length, 4);
   eq('...and every one of those panels is hidden on first paint',
-    (page.match(/class="tx-vh-panel" id="settings-block-info-context-[a-z]+" role="group"[^>]*hidden>/g) || []).length, 3);
+    (page.match(/class="tx-vh-panel" id="settings-block-info-context-[a-z]+" role="group"[^>]*hidden>/g) || []).length, 4);
 
   // ── WHAT MAY NEVER FOLD (v3.16.1) ───────────────────────────────────
   // A warning behind a click is not a warning. The Reload offer, the save
@@ -7032,7 +7191,8 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // explanation now, and a step has ONE mark. The meter's own READING was
   // never among them: it is in step ②'s body, unfolded, because it is an
   // outcome (v3.16.1).
-  eq('CONTROL: the four folds were really found (the scan is not vacuous)', panels.length, 4);
+  // FIVE since v3.67.0: step ④'s own mark joins them.
+  eq('CONTROL: the five folds were really found (the scan is not vacuous)', panels.length, 5);
   const bodies = [...page.matchAll(/<div class="settings-block-body">([\s\S]*)$/g)].map((m) => m[1]);
   ok('CONTROL: at least one block body was found', bodies.length >= 1);
   // `mem-save-line` BECAME `cur-mon-loud` (v3.65.0): the save warnings are
@@ -7939,11 +8099,16 @@ const fndRead = (payload) => ({
     const writes = [];
     // The listener, and only the listener — lifted from wire() by matching
     // the delegated block, so this drives the shipped code rather than a copy.
-    const block = /document\.querySelectorAll\('\[data-mem-fold\]'\)[\s\S]*?\n  \}\);/.exec(viewSrc);
-    ok('CONTROL -- the delegated fold listener was really found in wire()', !!block,
+    // v3.67.0: moved out of wire() UNCHANGED into `bindFoldToggles(root)`, so
+    // step ④ can bind its own rows after an in-place repaint; wire() calls it
+    // with the document, which is what `root` is here.
+    const block = /root\.querySelectorAll\('\[data-mem-fold\]'\)[\s\S]*?\n  \}\);/.exec(viewSrc);
+    ok('CONTROL -- the delegated fold listener was really found in bindFoldToggles()', !!block,
       String(block && block[0].slice(0, 80)));
+    ok('...and wire() hands it the whole document',
+      /bindFoldToggles\(document\);/.test(extractFunction(viewSrc, 'wire', 'memory.js')));
     if (block) {
-      new Function('document', 'state', 'localStorage', block[0])(
+      new Function('root', 'state', 'localStorage', block[0])(
         doc, st2, { setItem: (k, v) => writes.push([k, v]) });
       el.fire();
       eq('a toggle that did not change the fold writes NO preference',
@@ -10103,26 +10268,56 @@ function realListbox() {
       + 'that writes', handler.length > 40 && !/fetch\(/.test(handler), handler.slice(0, 220));
   }
 
-  // ── THE ROW CONTROL ─────────────────────────────────────────────────
+  // ── THE ROW CONTROL — THREE STATES IN THE SAME CELL (v3.67.0) ────────
+  // The two-way toggle became the shared listbox: read first · on request ·
+  // not at start. The cfg is what is under test here (the component's own
+  // keyboard and ARIA behaviour is test-next-listbox.js's), so the stub echoes
+  // the value, the options and the accessible name back.
+  const stubOf = (html) => {
+    const m = /data-lb-stub="([^"]*)"/.exec(html);
+    return m ? JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) : null;
+  };
   const onRow = F.fndRowHtml(fndDoc({ readFirst: true }), true, false);
   const offRow = F.fndRowHtml(fndDoc(), true, false);
-  ok('a flagged row\'s toggle is pressed and says so in WORDS, not by colour '
-    + 'alone', /aria-pressed="true"/.test(onRow) && />read first</.test(onRow), onRow);
-  ok('...and an unflagged one reads "on request" rather than an empty cell',
-    /aria-pressed="false"/.test(offRow) && />on request</.test(offRow), offRow);
+  const hidRow = F.fndRowHtml(fndDoc({ hidden: true, atStart: 'not-at-start' }), true, false);
+  eq('a flagged row\'s cell holds the three-state picker, set to READ FIRST',
+    (stubOf(onRow) || {}).value, 'read-first');
+  eq('...an unflagged one reads ON REQUEST rather than an empty cell',
+    (stubOf(offRow) || {}).value, 'on-request');
+  eq('...and a hidden one NOT AT START', (stubOf(hidRow) || {}).value, 'not-at-start');
+  eq('...with exactly the store\'s three states, in its order',
+    JSON.stringify((stubOf(offRow) || {}).options),
+    JSON.stringify(['read-first', 'on-request', 'not-at-start']));
+  eq('...and those are the store\'s own FOUNDATION_START_STATES, not a copy of them',
+    JSON.stringify((stubOf(offRow) || {}).options), JSON.stringify(ws.FOUNDATION_START_STATES));
   ok('...labelled by the document it is about, with no hover-only title=',
-    /aria-label="Stop reading Architecture first"/.test(onRow) && !/title=/.test(onRow), onRow);
-  ok('a MIRRORED row gets the toggle too — the flag is metadata ABOUT a '
+    (stubOf(onRow) || {}).label === 'At session start: Architecture' && !/title=/.test(onRow), onRow);
+  ok('a hand-edited contradiction reads READ FIRST — the store\'s own rule',
+    (stubOf(F.fndRowHtml(fndDoc({ readFirst: true, hidden: true }), true, false)) || {}).value
+      === 'read-first');
+  {
+    // The option hints ARE the teaching copy (CONTRACT §5.1), verbatim.
+    const cfg = F.fndStartCfg(fndDoc(), false);
+    eq('the three hints are the contract\'s, verbatim',
+      JSON.stringify(cfg.options.map((o) => o.detail)), JSON.stringify([
+        'Handed to the agent at the start of every session.',
+        'Listed; the agent opens it by name when the task needs it.',
+        'Kept and mirrored, but not listed at the start. Name it in the brief if an agent should find it.',
+      ]));
+    ok('...and the cell is disabled while its own write is in flight',
+      F.fndStartCfg(fndDoc(), true).disabled === true && cfg.disabled === false);
+  }
+  ok('a MIRRORED row gets the picker too — the state is metadata ABOUT a '
     + 'document, never part of it, so setting it writes no byte of the copy',
   /data-fnd-first="architecture\.md"/.test(F.fndRowHtml(fndDoc(), false, false)));
   ok('...and a READ-ONLY Shared Brain mirror gets none, because every route it '
-    + 'could reach answers 403', !/fnd-first/.test(F.fndRowHtml(fndDoc(), false, true)));
+    + 'could reach answers 403', !/fnd-first|mem-fnd-start-/.test(F.fndRowHtml(fndDoc(), false, true)));
 
-  // ── THE TICK PATCHES; IT DOES NOT RENDER (v3.61.1's rule) ────────────
+  // ── A CHOICE PATCHES; IT DOES NOT RENDER (v3.61.1's rule) ────────────
   //
-  // Measured one release ago on this very table: a tick that re-rendered took
-  // the fold's scrollTop from 1105 to 0, came back a different node and
-  // dropped focus. Driven against a DOM model rather than argued.
+  // Measured on this table: a tick that re-rendered took the fold's scrollTop
+  // from 1105 to 0, came back a different node and dropped focus. Driven
+  // against a DOM model rather than argued.
   {
     const mkNode = () => ({
       _attrs: {}, _text: '', disabled: false, hidden: false, _cls: [],
@@ -10132,10 +10327,7 @@ function realListbox() {
       classList: { toggle() {} },
       querySelector() { return this._span || null; },
     });
-    const drive = async (responder, overState) => {
-      const btn = mkNode();
-      btn.dataset.fndFirst = 'architecture.md';
-      btn.setAttribute('aria-pressed', 'false');
+    const drive = async (responder, overState, want = 'read-first') => {
       const meta = mkNode();
       const warn = mkNode();
       warn._span = mkNode();
@@ -10145,15 +10337,18 @@ function realListbox() {
       const st = {
         activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null, projects: [],
         projectRead: fndRead(fndPayload([fndDoc({ bytes: 200 * 1024 })])), detail: null,
+        startSaving: null, startError: null,
         ...overState,
       };
-      const calls = { renders: 0, urls: [], bodies: [] };
+      const calls = { renders: 0, urls: [], bodies: [], measured: 0 };
       const api = new Function('state', 'isCurrentMount', 'render', 'fetch', 'document',
         'encodeURIComponent', 'screenSignature', 'foundationsFacts',
         'foundationsSummaryMeta', 'foundationsBudgetWarning', 'foundationsMonitor',
+        'maybeLoadSessionStart', 'START_STATES',
         'let renderedSignature = null;\n'
-        + extractFunction(viewSrc, 'toggleReadFirst', 'memory.js')
-        + '\nreturn { toggleReadFirst, sig: () => renderedSignature };')(
+        + extractFunction(viewSrc, 'writeStartState', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'setStartState', 'memory.js')
+        + '\nreturn { setStartState, sig: () => renderedSignature };')(
         st, () => true, () => { calls.renders++; },
         async (url, init) => { calls.urls.push(url); calls.bodies.push(init.body); return responder(); },
         { querySelector: (sel) => (sel.includes('mem-fold-foundations') ? meta : null),
@@ -10163,32 +10358,35 @@ function realListbox() {
         (read) => makeRenderers(st).foundationsFacts(read),
         (f) => makeRenderers(st).foundationsSummaryMeta(f),
         (f) => makeRenderers(st).foundationsBudgetWarning(f),
-        (f) => makeRenderers(st).foundationsMonitor(f));
-      await api.toggleReadFirst(btn, 1);
-      return { btn, meta, warn, mon, calls, st, api };
+        (f) => makeRenderers(st).foundationsMonitor(f),
+        () => { calls.measured++; },
+        new Function(constDecl(viewSrc, 'START_STATES') + '\nreturn START_STATES;')());
+      await api.setStartState('architecture.md', want, 1);
+      return { meta, warn, mon, calls, st, api };
     };
 
-    const okAnswer = () => ({ ok: true, json: async () => ({ ok: true, slug: 'architecture.md',
-      readFirst: true, wasReadFirst: false, changed: true, readFirstCount: 1, onRequestCount: 0,
-      readFirstBytes: 200 * 1024, readFirstBudgetBytes: 120 * 1024, readFirstBudgetExceeded: true }) });
-    const r = await drive(okAnswer);
-    eq('the toggle PATCHes the one document', r.calls.urls.join(','),
+    const okAnswer = (over = {}) => () => ({ ok: true, json: async () => ({ ok: true,
+      slug: 'architecture.md', atStart: 'read-first', wasAtStart: 'on-request', changed: true,
+      readFirst: true, hidden: false, readFirstCount: 1, onRequestCount: 0,
+      readFirstBytes: 200 * 1024, readFirstBudgetBytes: 120 * 1024, readFirstBudgetExceeded: true,
+      hiddenCount: 0, ...over }) });
+    const r = await drive(okAnswer());
+    eq('the choice PATCHes the one document', r.calls.urls.join(','),
       '/api/memory/acme/lumina/foundations/architecture.md');
-    eq('...sending the flag and nothing else', r.calls.bodies.join(','), '{"readFirst":true}');
-    eq('...and spends NO full render — a tick that re-renders loses the fold\'s '
-      + 'scroll position and the focus of the control being pressed',
+    eq('...sending the START STATE and nothing else', r.calls.bodies.join(','), '{"atStart":"read-first"}');
+    eq('...and spends NO full render — a choice that re-renders loses the fold\'s '
+      + 'scroll position and the focus of the control being used',
     r.calls.renders, 0);
-    eq('the pressed row says what it now is', r.btn.getAttribute('aria-pressed'), 'true');
-    eq('...in words as well as in state', r.btn.textContent, 'read first');
+    const row = r.st.projectRead.foundations.documents[0];
+    ok('the row takes what the ROUTE reported — read first, not hidden',
+      row.readFirst === true && row.hidden === false && row.atStart === 'read-first',
+      JSON.stringify(row));
     ok('the summary line is rewritten in place, with the counts the ROUTE '
       + 'reported rather than a second derivation',
     /1 read first · 0 on request/.test(r.meta.textContent), r.meta.textContent);
     ok('...and the budget warning appears, naming the set and the consequence',
       r.warn.hidden === false && /flagged “read first”/.test(r.warn._span.textContent),
       r.warn._span.textContent);
-    // v3.66.0 (P1): the monitor moves with the tick, in place — the read-first
-    // line appears, against the ROUTE's reading budget, in the danger tone the
-    // answer's own `readFirstBudgetExceeded` calls for. No render.
     ok('...and the Documents monitor is rewritten in place: the read-first line appears, '
       + 'over its budget, from the ROUTE\'s answer',
     !/STALE/.test(r.mon.outerHTML) && /id="mem-fnd-monitor"/.test(r.mon.outerHTML)
@@ -10197,21 +10395,46 @@ function realListbox() {
       && /cur-depth-bar cur-depth-danger/.test(r.mon.outerHTML), r.mon.outerHTML);
     eq('...and the signature is re-taken, so the next poll neither repaints '
       + 'needlessly nor skips a repaint it owes', r.api.sig(), 'SIG');
+    eq('...and step ④ is asked to re-measure — the start just changed', r.calls.measured, 1);
+
+    // NOT AT START — the third state, and the hand mutation's subject.
+    const h = await drive(okAnswer({ atStart: 'not-at-start', readFirst: false, hidden: true,
+      readFirstCount: 0, onRequestCount: 0, readFirstBytes: 0, readFirstBudgetExceeded: false,
+      hiddenCount: 1 }), {}, 'not-at-start');
+    eq('not at start writes atStart', h.calls.bodies.join(','), '{"atStart":"not-at-start"}');
+    ok('...and the summary names the third state from the route\'s own count',
+      /1 not at start/.test(h.meta.textContent), h.meta.textContent);
+    // An unknown state never leaves the view.
+    const junk = await drive(okAnswer(), {}, 'everything');
+    eq('a value outside the alphabet sends nothing at all', junk.calls.urls.length, 0);
 
     // A REFUSAL IS A DISCLOSURE, and it costs the one full render that paints it.
-    const bad = await drive(() => ({ ok: false, json: async () => ({ ok: false, error: 'no_manifest' }) }));
-    eq('a refusal is recorded where the block already paints its outcomes',
-      bad.st.fnd.error, 'no_manifest');
-    eq('...and is painted, which is the one case a tick DOES render for',
-      bad.calls.renders, 1);
-    eq('...and the row is left saying what it was, never what the press intended',
-      bad.btn.getAttribute('aria-pressed'), 'false');
+    const bad = await drive(() => ({ ok: false,
+      json: async () => ({ ok: false, error: 'locked', message: 'Another write is in progress' }) }));
+    ok('a refusal is recorded against the document it was about, in the route\'s own words',
+      bad.st.startError && bad.st.startError.slug === 'architecture.md'
+      && bad.st.startError.error === 'Another write is in progress', JSON.stringify(bad.st.startError));
+    eq('...and is painted, which is the one case a choice DOES render for', bad.calls.renders, 1);
+    eq('...and the row is left saying what it was, never what the choice intended',
+      bad.st.projectRead.foundations.documents[0].readFirst === true, false);
+
+    // THE v3.66.0 STALE NOTE: the next SUCCESS takes it down.
+    const cleared = await drive(okAnswer(), {
+      startError: { domain: 'acme', project: 'lumina', slug: 'architecture.md', error: 'locked' },
+      fnd: { domain: 'acme', project: 'lumina', busy: false, error: 'Another write is in progress' },
+    });
+    eq('a success CLEARS the refusal note it would otherwise leave standing',
+      cleared.st.startError, null);
+    eq('...and the stale refresh error beside it', cleared.st.fnd, null);
+    eq('...and repaints once, because there was a note on screen to take down',
+      cleared.calls.renders, 1);
 
     // STAMPED. An answer for a project the user has left touches nothing.
-    const gone = await drive(okAnswer, {});
+    const gone = await drive(okAnswer(), {});
     ok('CONTROL: the stamped path really did write on the matching project',
-      gone.btn.getAttribute('aria-pressed') === 'true');
+      gone.st.projectRead.foundations.documents[0].readFirst === true);
   }
+
 }
 
 // ── §21g — the skeleton's step ① HEAD is byte-identical (v3.65.0) ───────
@@ -10827,6 +11050,689 @@ function realListbox() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Everything here drives the SHIPPED functions (lifted by `v367Lift`, or by
+// name below) against fixtures shaped like the store's own answers
+// (REPORT-v367-store §1's example, REPORT-v367-jobs §0.2's runsOn objects).
+{
+  // ── The store's session-start answer, as S's report prints it ────────
+  const ssData = (over = {}) => ({
+    ok: true, domain: 'acme', project: 'lumina',
+    budget: { bytes: 122880, source: 'default', defaulted: true, ownerBytes: null, cap: 204800,
+      replyCapBytes: 307200 },
+    planned: false,
+    presets: [{ id: 'index-only', bytes: 0, mcpBytes: 10811 }, { id: 'lean', bytes: 32768, mcpBytes: 10806 },
+      { id: 'standard', bytes: 65536, mcpBytes: 27848 }, { id: 'deep', bytes: 122880, mcpBytes: 52958 },
+      { id: 'max', bytes: 204800, mcpBytes: 52958 }],
+    tiers: { brief: { bytes: 796, present: true, capBytes: 32768 },
+      handoff: { bytes: 255, present: true, capBytes: 49152 },
+      journal: { bytes: 106, lines: 1 }, index: { bytes: 1328, listed: 3, hiddenCount: 0 },
+      readFirst: { bytes: 0, count: 0, budgetBytes: 122880, exceeded: false },
+      otherText: { bytes: 38198, count: 2 }, onRequest: { bytes: 0, count: 0 },
+      omitted: { bytes: 102432, count: 1, slugs: ['roadmap.md'] }, hidden: { bytes: 0, count: 0 },
+      domainPages: { domains: ['acme'], bytes: 0 }, framing: { bytes: 12275 } },
+    bytes: { mcp: 52958, hook: 43130 }, costLine: { applies: true, documentTextBytes: 38198 }, notes: [],
+    ...over,
+  });
+  const baseSt = (over = {}) => ({
+    activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, projects: [], detail: null,
+    detailLoading: false, journalLimit: 10, wsWindow: WS_WINDOW_SRC, fnd: null,
+    projectRead: { scopes: [], brief: { present: false }, readingBudgetBytes: null,
+      foundations: fndPayload([fndDoc()]) },
+    ...over,
+  });
+  const withSS = (data, over = {}) => baseSt({
+    sessionStart: { domain: 'acme', project: 'lumina', sig: 'x', data, error: null }, ...over });
+  const stubOf = (html) => {
+    const m = /data-lb-stub="([^"]*)"/.exec(html);
+    return m ? JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) : null;
+  };
+
+  // ── §25a — the step, before and after its measurement ─────────────────
+  {
+    const R = makeRenderers(baseSt());
+    eq('no project read, no step', R.renderSessionStart(null), '');
+    const waiting = R.renderSessionStart(baseSt().projectRead);
+    ok('it is step ④, "Session start", on the one heading rule',
+      /settings-block-context-session/.test(waiting)
+      && /class="settings-block-num"[^>]*>4</.test(waiting)
+      && /<h2 class="settings-job-title">Session start<\/h2>/.test(waiting), waiting.slice(0, 600));
+    ok('before the measurement lands it SAYS it is measuring — never a figure it does not have',
+      /Measuring what an agent receives…/.test(waiting) && !/KB · ≈/.test(waiting), waiting);
+    const head = /<div class="settings-block-hd">([\s\S]*?)<\/div><div class="settings-block-info">/.exec(waiting);
+    ok('the Reading budget picker sits IN the head row, after the ⓘ',
+      !!head && /class="mem-step-head-end"/.test(head[1]) && /id="mem-budget-lb"/.test(head[1])
+      && head[1].indexOf('tx-vh-info') < head[1].indexOf('mem-budget-lb'), head ? head[1] : waiting);
+    ok('...labelled "Reading budget", and naming the default while nothing is set',
+      /Reading budget<\/span>/.test(waiting)
+      && (stubOf(waiting) || {}).label === 'Reading budget: not set, the default 120 KB applies',
+      JSON.stringify(stubOf(waiting)));
+  }
+  {
+    const st = withSS(ssData());
+    const html = makeRenderers(st).renderSessionStart(st.projectRead);
+    const firstFold = html.indexOf('<details');
+    ok('"What an agent receives" is a fold row, OPEN by default — the one on this page that is',
+      /<details class="mem-fold" data-mem-fold="receives" open>/.test(html), html.slice(0, 300));
+    ok('...its summary is the total in bytes, tokens and share of the window — and carries NO bar',
+      /<summary class="mem-fold-summary" id="mem-fold-receives">[\s\S]*?51\.7 KB · ≈13k tokens · 6\.6% of a 200k window<\/span>\s*<\/summary>/.test(html)
+      && !/cur-depth/.test((/id="mem-fold-receives">([\s\S]*?)<\/summary>/.exec(html) || ['', 'cur-depth'])[1]), html);
+    ok('the two other rows are CLOSED: Context window, How an agent reaches this',
+      /<details class="mem-fold" data-mem-fold="window">/.test(html)
+      && /<details class="mem-fold" data-mem-fold="reach">/.test(html)
+      && /Context window<\/span><span class="mem-fold-meta">200k tokens · per viewer/.test(html)
+      && /How an agent reaches this<\/span><span class="mem-fold-meta">MCP · session-start hook · Chat \(≤ 40,000 characters\)/.test(html));
+    // THE COST LINE — unfolded, before the first chevron, with its one action.
+    const cost = /id="mem-ss-cost"[\s\S]*?<\/div>/.exec(html);
+    ok('an untouched project whose start hands over more than Lean gets the COST LINE',
+      !!cost && /Every session is handed 37\.3 KB of document text \(≈9\.5k tokens\): nothing is marked read first and no reading budget is set\. One more document did not fit the 120 KB default and is listed by name\./.test(cost[0]),
+      cost ? cost[0] : html.slice(0, 800));
+    ok('...UNFOLDED — it sits before the first chevron (v3.16.1: a cost is never behind one)',
+      html.indexOf('id="mem-ss-cost"') >= 0 && html.indexOf('id="mem-ss-cost"') < firstFold);
+    ok('...with its one action, "Set a reading budget"',
+      /id="mem-ss-set-budget">Set a reading budget<\/button>/.test(cost ? cost[0] : ''));
+    // THE MONITOR: every tier, each against a NAMED denominator.
+    const keys = [...html.matchAll(/<span class="cur-mon-key">([^<]*)<\/span>/g)].map((m) => m[1]);
+    eq('the monitor reads every tier that applies, in the order an agent receives them',
+      keys.join('|'), 'standing brief|latest handoff|journal|document list|read-first text|'
+        + 'other document text|left out, by name|domain pages|framing|total|'
+        + 'MCP get_project_context|session-start hook|Chat');
+    ok('the brief\'s bar is against the 32 KB brief budget, NAMED',
+      /cur-depth-bar"[^>]*><\/span><span class="cur-depth-value">796 bytes · ≈0\.2k<\/span><span class="visually-hidden"> 796 bytes of the 32 KB brief budget/.test(html), html);
+    ok('...the handoff\'s against the 48 KB handoff budget, NAMED',
+      /of the 48 KB handoff budget/.test(html));
+    ok('...the untouched project\'s document text against the 120 KB DEFAULT, and says why it is sent',
+      /of the 120 KB default · sent because nothing is planned/.test(html) && /of the 120 KB default<\/span>/.test(html));
+    ok('..."read-first text" says no budget is set rather than drawing a bar against nothing',
+      /read-first text<\/span><span class="cur-mon-value">0 KB<\/span><span class="cur-mon-sub">no reading budget set/.test(html));
+    ok('...the total is drawn against the CONTEXT WINDOW, named',
+      /≈13k tokens of a 200k-token window/.test(html) && /of a 200k-token window<\/span>/.test(html));
+    ok('...and no line is danger-toned on a start that is within every budget',
+      !/cur-depth-danger|cur-mon-tone-danger/.test(html), html);
+    // THE PER-VIEWER WINDOW changes one denominator and nothing else.
+    const one = makeRenderers(withSS(ssData(), { ctxWindow: '1m' }));
+    const big = one.renderSessionStart(st.projectRead);
+    ok('the 1M window changes the share and the words, and nothing the project stores',
+      /51\.7 KB · ≈13k tokens · 1\.3% of a 1M window/.test(big) && /of a 1M-token window/.test(big)
+      && /data-ctx-window="1m" aria-pressed="true"/.test(big));
+    // THE ⓘ — DESIGN-context-budget §2.5's three paragraphs, verbatim (CONTRACT §5.1).
+    const info = /id="settings-block-info-context-session"[^>]*>([\s\S]*?)<\/div>/.exec(html);
+    ok('the step\'s ⓘ is the design\'s three paragraphs, verbatim',
+      !!info && info[1].includes('An agent starting work on this project is handed the standing brief, the latest handoff, a few journal lines, the list of documents, and the text of the documents marked <i>read first</i>, up to the reading budget. Nothing from the domain’s pages is loaded until the agent searches.')
+      && info[1].includes('Start small. Most sessions need the brief, the handoff and one or two documents: conventions, a decision log.')
+      && info[1].includes('Tokens are estimated at four characters each.'), info ? info[1].slice(0, 300) : html.slice(0, 400));
+    // A READ-ONLY MIRROR: the figure, no picker, no action.
+    const ro = makeRenderers(withSS(ssData(), { detail: { readonly: true } }))
+      .renderSessionStart(st.projectRead);
+    ok('a read-only mirror shows the budget as a reading, with no picker and no "Set" action',
+      !/id="mem-budget-lb"/.test(ro) && !/mem-ss-set-budget/.test(ro)
+      && /mem-ss-budget-fixed">Default · 120 KB</.test(ro));
+    const failed = makeRenderers(baseSt({ sessionStart: { domain: 'acme', project: 'lumina', sig: 'x',
+      data: null, error: 'boom' } })).renderSessionStart(st.projectRead);
+    ok('a failed measurement is a disclosure naming the error, never a zero',
+      /could not be measured: boom/.test(failed) && !/0 KB · ≈0k/.test(failed));
+    const other = makeRenderers(baseSt({ sessionStart: { domain: 'other', project: 'lumina', sig: 'x',
+      data: ssData(), error: null } })).renderSessionStart(st.projectRead);
+    ok('a measurement STAMPED for another project is never painted on this one',
+      /Measuring what an agent receives…/.test(other));
+  }
+  {
+    // PLANNED, and INDEX ONLY with documents marked read first (§1.9).
+    const read = { scopes: [], brief: { present: false }, readingBudgetBytes: 0,
+      foundations: fndPayload([fndDoc({ readFirst: true }), fndDoc({ slug: 'b.md', readFirst: true })],
+        { readFirstCount: 2, readFirstBytes: 24690 }) };
+    const data = ssData({ planned: true, costLine: { applies: false, documentTextBytes: 0 },
+      budget: { bytes: 0, source: 'owner', defaulted: false, ownerBytes: 0, cap: 204800, replyCapBytes: 307200 },
+      tiers: { ...ssData().tiers, otherText: { bytes: 0, count: 0 }, omitted: { bytes: 0, count: 0, slugs: [] },
+        readFirst: { bytes: 0, count: 2, budgetBytes: 0, exceeded: true },
+        onRequest: { bytes: 24690, count: 2 } } });
+    const html = makeRenderers(withSS(data, { projectRead: read })).renderSessionStart(read);
+    ok('Index only with two read-first documents says so, in the contract\'s words',
+      /2 documents are marked read first, but the reading budget is Index only, so agents are handed none of their text\. They are listed and fetched by name\./.test(html), html.slice(0, 900));
+    ok('...and a PLANNED project gets no cost line — the plan is the answer to it',
+      !/mem-ss-cost/.test(html));
+    ok('...its read-first line names the Index-only budget rather than a bar against zero',
+      /read-first text<\/span><span class="cur-mon-value">0 KB<\/span><span class="cur-mon-sub">the reading budget is Index only/.test(html));
+    ok('...and the on-request tier names what stays one request away',
+      /on request<\/span><span class="cur-mon-value">2 documents · 24\.1 KB<\/span><span class="cur-mon-sub">listed; fetched by name/.test(html));
+    eq('...and the picker reads Index only', (stubOf(html) || {}).value, 'index-only');
+  }
+  {
+    // PLANNED and OVER the read-first budget.
+    const read = { scopes: [], brief: { present: false }, readingBudgetBytes: 65536,
+      foundations: fndPayload([fndDoc({ readFirst: true, bytes: 154624 })],
+        { readFirstCount: 1, readFirstBytes: 154624 }) };
+    const data = ssData({ planned: true, costLine: { applies: false, documentTextBytes: 0 },
+      budget: { bytes: 65536, source: 'owner', defaulted: false, ownerBytes: 65536, cap: 204800, replyCapBytes: 307200 },
+      tiers: { ...ssData().tiers, otherText: { bytes: 0, count: 0 },
+        readFirst: { bytes: 59392, count: 1, budgetBytes: 65536, exceeded: true } } });
+    const html = makeRenderers(withSS(data, { projectRead: read })).renderSessionStart(read);
+    ok('over budget, the sentence names the set, the budget and what is handed over',
+      /The read-first set is 151 KB, over the 64 KB reading budget\. Agents are handed the first 58 KB in reading order; the rest stay listed and are fetched by name\./.test(html), html.slice(0, 900));
+    ok('...unfolded, before the first chevron',
+      html.indexOf('id="mem-ss-over"') >= 0 && html.indexOf('id="mem-ss-over"') < html.indexOf('<details'));
+    ok('...and the read-first line turns DANGER — the one line on this monitor that may',
+      /cur-depth-bar cur-depth-danger/.test(html) && /of the 64 KB reading budget/.test(html));
+    eq('...and the picker reads Standard', (stubOf(html) || {}).value, 'standard');
+  }
+
+  // ── §25b — the budget picker's cfg ────────────────────────────────────
+  {
+    const R = makeRenderers(baseSt());
+    const untouched = R.budgetPickerCfg({ readingBudgetBytes: null }, ssData(), false);
+    eq('the presets are the STORE\'s, id for id and byte for byte',
+      JSON.stringify(untouched.options.map((o) => o.value)),
+      JSON.stringify(ws.READING_BUDGET_PRESETS.map((p) => p.id)));
+    ok('...and every one names the store\'s own bytes in its row',
+      untouched.options.every((o, i) => o.html.includes(ws.READING_BUDGET_PRESETS[i].bytes === 0
+        ? '>0 KB<' : (ws.READING_BUDGET_PRESETS[i].bytes / 1024) + ' KB')));
+    eq('untouched: the trigger says what is TRUE — the default applies', untouched.triggerText,
+      'Default · 120 KB');
+    ok('...Standard is PRESELECTED, and is an action row so choosing it still writes',
+      untouched.value === 'standard' && JSON.stringify(untouched.actionValues) === '["standard"]'
+      && untouched.options.find((o) => o.value === 'standard').action === true
+      && untouched.options.filter((o) => o.action).length === 1);
+    ok('...and marked "recommended"', /Standard · recommended/.test(
+      untouched.options.find((o) => o.value === 'standard').html));
+    ok('each row carries what an agent would START with under it — no request behind a hover',
+      /an agent starts with ≈27\.2 KB · ≈7k tokens/.test(untouched.options.find((o) => o.value === 'standard').html)
+      && /an agent starts with ≈10\.6 KB/.test(untouched.options[0].html));
+    eq('...and the meaning, verbatim from the design\'s picker column',
+      JSON.stringify(untouched.options.map((o) => /mem-bp-hint">([^<]*)</.exec(o.html)[1])),
+      JSON.stringify([
+        'No document text at start. Agents see the list and open what they need by name.',
+        'One or two short documents: conventions, a decision log.',
+        'A handful of core documents.',
+        'Today’s default.',
+        'The store’s ceiling. The whole reply is still limited to 300 KB, so on a project with a long brief and handoff some text can be left out, and it is named if so.',
+      ]));
+    const set = R.budgetPickerCfg({ readingBudgetBytes: 65536 }, ssData(), false);
+    ok('set to Standard: the value is Standard, the trigger names it, and no row is an action',
+      set.value === 'standard' && set.triggerText === 'Standard · 64 KB'
+      && set.actionValues.length === 0 && !set.options.some((o) => o.action));
+    eq('Index only reads as itself', R.budgetPickerCfg({ readingBudgetBytes: 0 }, null, false).triggerText,
+      'Index only');
+    const custom = R.budgetPickerCfg({ readingBudgetBytes: 50000 }, null, false);
+    ok('a hand-edited budget that is no preset is named as custom, with no preset selected',
+      custom.value === null && custom.triggerText === 'Custom · 48.8 KB', JSON.stringify(custom.triggerText));
+    ok('while a budget write is in flight the picker is disabled and says so',
+      R.budgetPickerCfg({ readingBudgetBytes: null }, null, true).disabled === true
+      && R.budgetPickerCfg({ readingBudgetBytes: null }, null, true).triggerText === 'Saving…');
+  }
+
+  // ── §25c — the SESSION START overview tile ────────────────────────────
+  {
+    const st = withSS(ssData());
+    const strip = makeRenderers(st).renderLayerStrip(st.projectRead);
+    const tile = /<button type="button" class="cur-ov-card"[^>]*data-ov-jump="context-session"[^>]*>([\s\S]*?)<\/button>/.exec(strip);
+    ok('the overview gains a SESSION START reading tile that jumps to step ④',
+      !!tile && /SESSION START/.test(tile[1]) && /52 KB · ≈13k tokens/.test(tile[1]), strip.slice(-900));
+    ok('...a READING: no bar on it (the overview rule)', !!tile && !/cur-depth/.test(tile[0]));
+    ok('...and it is not hidden once measured', !!tile && !/ hidden>/.test(tile[0]));
+    const none = makeRenderers(baseSt()).renderLayerStrip(baseSt().projectRead);
+    ok('before the measurement lands the tile is RENDERED AND HIDDEN — one attribute reveals it',
+      /data-ov-jump="context-session"[^>]*hidden>/.test(none), none.slice(-700));
+    const order = [...strip.matchAll(/data-ov-jump="([a-z-]+)"/g)].map((m) => m[1]);
+    eq('...after CAPTURE, as the picture draws it', order.join(','),
+      'context-canonical,context-state,capture,context-session');
+  }
+
+  // ── §25d — the helper: head control, panel, gate ──────────────────────
+  const priced = { job: 'reading-plan', jobLabel: 'Suggest a reading plan', needsKey: false,
+    provider: 'gemini', providerLabel: 'Gemini', model: 'gemini-2.5-flash-lite', modelLabel: 'Flash Lite 2.5',
+    inputTokens: 6799, inputTokensLow: 5779, inputTokensHigh: 7819, outputTokensLow: 400, outputTokensHigh: 900,
+    usdLow: 0.000738, usdHigh: 0.001142, priceKnown: true, free: false, costNote: 'priced' };
+  const planSt = (plan, over = {}) => baseSt({ plan: { domain: 'acme', project: 'lumina', open: true,
+    estimate: null, estimateError: null, running: null, error: null, result: null, ticks: {},
+    budgetTick: false, applying: false, applyError: null, ...plan }, ...over });
+  {
+    const plain = makeRenderers(baseSt()).renderFoundations(baseSt().projectRead);
+    ok('① carries "Suggest a reading plan" in its head row, collapsed',
+      /mem-fnd-head-controls">[\s\S]*id="mem-plan-open" aria-expanded="false"[^>]*>Suggest a reading plan<\/button>/.test(plain)
+      && !/id="mem-plan-panel"/.test(plain), plain.slice(0, 900));
+    const rs = makeRenderers(baseSt({ detail: { readonly: true } })).renderFoundations(baseSt().projectRead);
+    ok('...never on a read-only mirror, where a proposal could not be applied', !/mem-plan-open/.test(rs));
+    const none = makeRenderers(baseSt()).renderFoundations(fndRead(fndPayload([])));
+    ok('...nor on a project with no documents to plan', !/mem-plan-open/.test(none));
+  }
+  {
+    const st = planSt({ estimate: { ok: true, documentCount: 1, inputChars: 24000, budgetBytes: 65536,
+      budgetSource: 'standard', runsOn: priced } });
+    const html = makeRenderers(st).renderFoundations(st.projectRead);
+    const panel = /id="mem-plan-panel"[\s\S]*$/.exec(html);
+    ok('the panel opens INSIDE the documents row, which is held open while it is there',
+      !!panel && /<details class="mem-fold" data-mem-fold="foundations" open>/.test(html));
+    ok('...on Quick maintenance\'s anatomy, the one this page already uses', /class="mem-fnd-panel mem-plan-panel"/.test(html));
+    ok('...its two lines say what each arm reads, against the Standard 64 KB budget',
+      /Free: from the brief’s “Read before you…” list, each document’s role and size, and the Standard 64 KB reading budget\./.test(html)
+      && /With AI: reads titles, roles, sizes and each document’s opening lines, never whole documents\./.test(html));
+    ok('...the two buttons, named per the contract',
+      /id="mem-plan-free">Suggest \(free\)<\/button>/.test(html) && /id="mem-plan-ai">✨ Suggest with AI<\/button>/.test(html));
+    ok('...and the RUN LINE directly under them, from the kit, unfolded',
+      /<p class="ai-run" role="note" id="mem-plan-runs">/.test(html)
+      && html.indexOf('id="mem-plan-runs"') > html.indexOf('id="mem-plan-ai"')
+      && /Runs on/.test(html) && /Flash Lite 2\.5/.test(html) && /≈\$0\.0007–\$0\.0011/.test(html), html.slice(0, 2000));
+    const noKey = planSt({ estimate: { ok: true, budgetBytes: 65536, budgetSource: 'standard',
+      runsOn: { job: 'reading-plan', jobLabel: 'Suggest a reading plan', needsKey: true } } });
+    const nk = makeRenderers(noKey).renderFoundations(noKey.projectRead);
+    ok('NO KEY: the AI button is DISABLED — never hidden — and described by the no-key line',
+      /id="mem-plan-ai" disabled aria-disabled="true" aria-describedby="mem-plan-runs">✨ Suggest with AI/.test(nk), nk.slice(0, 2500));
+    ok('...the line and its door to Providers & keys',
+      /Needs an AI provider key/.test(nk) && /data-ai-run-door="providers">Add one in Providers &amp; keys/.test(nk));
+    ok('...and the FREE arm still works', /id="mem-plan-free">Suggest \(free\)/.test(nk));
+    const wait = makeRenderers(planSt({})).renderFoundations(planSt({}).projectRead);
+    ok('before the estimate lands the AI arm waits — a run is never offered without its cost',
+      /id="mem-plan-ai" disabled aria-disabled="true">/.test(wait) && /Reading what an AI suggestion would cost…/.test(wait));
+    const F = makeRenderers(baseSt());
+    ok('§1.4: a priced run under a cent needs no confirm', F.planAiNeedsConfirm(priced) === false);
+    ok('...a run whose upper estimate is a cent or more DOES', F.planAiNeedsConfirm({ ...priced, usdHigh: 0.013 }) === true);
+    ok('...an UNPRICED run does (it runs, and says the price is not published — but through the confirm)',
+      F.planAiNeedsConfirm({ ...priced, usdLow: undefined, usdHigh: undefined, priceKnown: false,
+        costNote: 'price-not-published' }) === true);
+    ok('...a FREE run does not', F.planAiNeedsConfirm({ ...priced, free: true, usdLow: 0, usdHigh: 0 }) === false);
+  }
+  const result = {
+    ok: true, arm: 'free', budgetBytes: 65536, budgetSource: 'standard', setBudgetSuggested: true,
+    proposals: [
+      { slug: 'architecture.md', title: 'Architecture', bytes: 12345, current: 'on-request',
+        proposed: 'read-first', reason: 'architecture, fits the budget', differs: true },
+      { slug: 'roadmap.md', title: 'Roadmap', bytes: 119127, current: 'on-request',
+        proposed: 'on-request', reason: 'roadmap, over half the budget', differs: false },
+    ],
+    totals: { readFirstCount: 2, readFirstBytes: 31437, onRequestCount: 1, notAtStartCount: 0 },
+    dropped: [], notes: [], runsOn: priced,
+  };
+  {
+    const docs = [fndDoc(), fndDoc({ slug: 'roadmap.md', title: 'Roadmap', role: 'roadmap', bytes: 119127 })];
+    const st = planSt({ estimate: { ok: true, budgetBytes: 65536, budgetSource: 'standard', runsOn: priced },
+      result: { ...result, arm: 'ai', spent: { provider: 'gemini', providerLabel: 'Gemini',
+        model: 'gemini-2.5-flash-lite', modelLabel: 'Flash Lite 2.5', inputTokens: 5812, outputTokens: 640,
+        cachedReadTokens: 0, cacheWriteTokens: 0, calls: 1, usd: 0.0008372, estimated: false, fallbackFrom: null } },
+      ticks: { 'architecture.md': true }, budgetTick: true },
+    { projectRead: { scopes: [], brief: { present: false }, readingBudgetBytes: null,
+      foundations: fndPayload(docs) } });
+    const html = makeRenderers(st).renderFoundations(st.projectRead);
+    ok('a proposal adds the transient SUGGESTED column', /<th scope="col">At session start<\/th><th scope="col">Suggested<\/th>/.test(html));
+    ok('...a differing row carries a TICK, ticked, the proposed state and its one-line reason',
+      /data-plan-tick="architecture\.md" checked aria-label="Apply the suggestion for Architecture: read first"><span class="fnd-suggest-word fnd-suggest-change">read first<\/span><\/label><span class="fnd-suggest-why">architecture, fits the budget<\/span>/.test(html), html);
+    ok('...a row the plan leaves alone carries no tick and says "as now"',
+      /<span class="fnd-suggest-word">on request · as now<\/span>/.test(html)
+      && !/data-plan-tick="roadmap\.md"/.test(html));
+    ok('the head row swaps the Suggest control for Apply suggestion · Dismiss',
+      /id="mem-plan-apply">Apply suggestion<\/button><button type="button" class="btn btn-ghost btn-xs" id="mem-plan-dismiss">Dismiss<\/button>/.test(html)
+      && !/id="mem-plan-open"/.test(html));
+    ok('the proposal\'s one-line summary, as the picture words it',
+      /Suggested plan · 2 read first · 30\.7 KB of the 64 KB reading budget · 1 on request · nothing applied yet/.test(html), html);
+    ok('...and, with no budget set, the tick that sets the one it was planned against — ticked',
+      /id="mem-plan-budget-tick" checked><span>Also set the reading budget to Standard · 64 KB<\/span>/.test(html));
+    ok('after an AI run, the AFTER line — what ran and what it cost',
+      /Ran on/.test(html) && /5,812 in \/ 640 out/.test(html) && /\$0\.0008/.test(html));
+    const F = makeRenderers(st);
+    eq('Apply would make two writes: the budget and the one ticked row', F.planChangeCount(st.plan), 2);
+    eq('the `if applied` preview asks for exactly the ticked plan and the budget',
+      JSON.stringify(F.planPreviewBody(st.plan)),
+      JSON.stringify({ budgetBytes: 65536, plan: { 'architecture.md': 'read-first' } }));
+    const unticked = { ...st.plan, ticks: {}, budgetTick: false };
+    eq('...and nothing at all when nothing is ticked', F.planPreviewBody(unticked), null);
+    ok('...in which case Apply is disabled — it would write nothing',
+      /id="mem-plan-apply" disabled aria-disabled="true">/.test(makeRenderers(planSt(unticked, { projectRead: st.projectRead })).planHeadHtml()));
+    // THE `if applied` LINE, from the preview the store measured.
+    const withPrev = { ...st, sessionStart: { domain: 'acme', project: 'lumina', sig: 'x', data: ssData(), error: null },
+      sessionPreview: { domain: 'acme', project: 'lumina', key: JSON.stringify(F.planPreviewBody(st.plan)),
+        withBudget: true, data: ssData({ bytes: { mcp: 62464, hook: 50000 },
+          budget: { bytes: 65536, source: 'whatif', defaulted: false, ownerBytes: null, cap: 204800, replyCapBytes: 307200 } }) } };
+    const ss = makeRenderers(withPrev).renderSessionStart(withPrev.projectRead);
+    ok('④ reads the pending proposal as an `if applied` line, measured by the store',
+      /if applied<\/span><span class="cur-mon-value">[\s\S]*?61 KB · ≈16k tokens · 7\.8%[\s\S]*?Standard · 64 KB budget, with the suggestion/.test(ss), ss.slice(-2500));
+    const stale = { ...withPrev, sessionPreview: { ...withPrev.sessionPreview, key: '{"plan":{}}' } };
+    ok('...and never a preview measured for a DIFFERENT set of ticks',
+      !/if applied/.test(makeRenderers(stale).renderSessionStart(stale.projectRead)));
+  }
+
+  // ── §25e — Apply: the budget first, then one PATCH per ticked row ─────
+  {
+    const drive = async (responses, planOver = {}) => {
+      const st = planSt({ result, ticks: { 'architecture.md': true }, budgetTick: true, ...planOver });
+      const calls = { urls: [], bodies: [], reloads: 0, renders: 0 };
+      let n = 0;
+      const api = new Function('state', 'isCurrentMount', 'render', 'fetch', 'encodeURIComponent',
+        'reloadActive',
+        extractFunction(viewSrc, 'planFor', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'planChangeCount', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'writeStartState', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'writeReadingBudget', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'applyBudgetAnswer', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'applyPlan', 'memory.js') + '\nreturn { applyPlan };')(
+        st, () => true, () => { calls.renders++; },
+        async (url, init) => {
+          calls.urls.push(url.replace('/api/memory/acme/lumina/', ''));
+          calls.bodies.push(init.body);
+          const r = responses[n++] || { ok: true, data: { ok: true } };
+          return { ok: r.ok, status: r.ok ? 200 : 409, json: async () => r.data };
+        },
+        encodeURIComponent, async () => { calls.reloads++; });
+      await api.applyPlan(1);
+      return { st, calls };
+    };
+    const a = await drive([{ ok: true, data: { ok: true, readingBudgetBytes: 65536, readingBudgetDefaulted: false,
+      readFirstBudgetBytes: 65536, readFirstBudgetExceeded: false } }]);
+    eq('Apply writes the BUDGET FIRST, then the ticked row — and nothing unticked or unchanged',
+      a.calls.urls.join(' | '), 'reading/budget | foundations/architecture.md');
+    eq('...each with its one field', a.calls.bodies.join(' | '),
+      '{"readingBudgetBytes":65536} | {"atStart":"read-first"}');
+    ok('...then the proposal is gone and the project is re-read from the store',
+      a.st.plan === null && a.calls.reloads === 1);
+    eq('...and the answer\'s budget is folded in from the ROUTE', a.st.projectRead.readingBudgetBytes, 65536);
+    const noBudget = await drive([], { budgetTick: false });
+    eq('an unticked budget line is not written', noBudget.calls.urls.join(' | '), 'foundations/architecture.md');
+    const refused = await drive([{ ok: true, data: { ok: true, readingBudgetBytes: 65536 } },
+      { ok: false, data: { ok: false, error: 'locked', message: 'Another write is in progress' } }]);
+    ok('a refusal STOPS the run and says exactly what landed and what did not',
+      refused.st.plan && refused.st.plan.applying === false
+      && refused.st.plan.applyError === '1 of the changes were applied, then “architecture.md” was not changed: Another write is in progress',
+      JSON.stringify(refused.st.plan && refused.st.plan.applyError));
+    ok('...and keeps the proposal on screen, re-reading what the store now holds',
+      !!refused.st.plan && refused.calls.reloads === 1);
+    const nothing = await drive([], { ticks: {}, budgetTick: false });
+    eq('with nothing ticked, Apply sends nothing', nothing.calls.urls.length, 0);
+  }
+
+  // ── §25f — the measurement follows the read, after the paint ───────────
+  {
+    const mk = (st) => {
+      const calls = { loads: 0 };
+      const api = new Function('state', 'keyOf', 'payloadSignature', 'reportAsyncMountFailure',
+        'loadSessionStart',
+        'let sessionStartInFlight = null;\n'
+        + extractFunction(viewSrc, 'planFor', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'sessionStartFor', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'maybeLoadSessionStart', 'memory.js')
+        + '\nreturn { maybeLoadSessionStart };')(
+        st, (d, p) => d + '/' + p, (r) => JSON.stringify(r), () => {},
+        async () => { calls.loads++; });
+      return { api, calls };
+    };
+    const st = baseSt();
+    const a = mk(st);
+    a.api.maybeLoadSessionStart(1);
+    eq('a project with no measurement asks for one', a.calls.loads, 1);
+    const b = mk({ ...st, sessionStart: { domain: 'acme', project: 'lumina',
+      sig: JSON.stringify(st.projectRead), data: {} } });
+    b.api.maybeLoadSessionStart(1);
+    eq('...an unchanged read does not ask again', b.calls.loads, 0);
+    const c = mk({ ...st, sessionStart: { domain: 'acme', project: 'lumina', sig: 'older', data: {} } });
+    c.api.maybeLoadSessionStart(1);
+    eq('...a CHANGED read (a document re-routed, a budget set) re-measures', c.calls.loads, 1);
+    const d = mk({ ...st, projectRead: null });
+    d.api.maybeLoadSessionStart(1);
+    eq('...and nothing is asked before the project read exists', d.calls.loads, 0);
+    const moved = { ...st, plan: { domain: 'acme', project: 'other', open: true } };
+    mk(moved).api.maybeLoadSessionStart(1);
+    eq('a proposal made on another project is dropped — it belongs to the project it was made on',
+      moved.plan, null);
+    ok('render() asks after it paints — the measurement is never on a switch\'s critical path',
+      /wire\(token\);\s*restoreFocus\(\);[\s\S]{0,300}maybeLoadSessionStart\(token\);\s*\}$/.test(
+        stripComments(extractFunction(viewSrc, 'render', 'memory.js')).trim()));
+    ok('...and selectProject never asks for it at all', !/sessionStart|session-start/.test(
+      extractFunction(viewSrc, 'selectProject', 'memory.js')));
+  }
+  {
+    // loadSessionStart: stamped, and a failed RE-measure keeps the last figures.
+    const run = async (st, respond, active = true) => {
+      const calls = { patches: 0, url: null };
+      const api = new Function('state', 'keyOf', 'isCurrentMount', 'fetch', 'encodeURIComponent',
+        'patchSessionStart',
+        'let sessionStartInFlight = null;\n'
+        + extractFunction(viewSrc, 'sessionStartFor', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'loadSessionStart', 'memory.js') + '\nreturn { loadSessionStart };')(
+        st, (d, p) => d + '/' + p, () => active,
+        async (url) => { calls.url = url; return respond(); }, encodeURIComponent,
+        () => { calls.patches++; });
+      await api.loadSessionStart('acme', 'lumina', 'S1', 1);
+      return calls;
+    };
+    const st = baseSt();
+    const c1 = await run(st, () => ({ ok: true, json: async () => ssData() }));
+    eq('it reads the store\'s session-start route for THIS project', c1.url,
+      '/api/memory/acme/lumina/session-start');
+    ok('...keeps the answer stamped with the read it measured, and patches step ④ in place',
+      st.sessionStart.sig === 'S1' && st.sessionStart.data.bytes.mcp === 52958 && c1.patches === 1);
+    await run(st, () => ({ ok: false, status: 500, json: async () => ({ ok: false, error: 'boom' }) }));
+    ok('a failed RE-measure keeps the last good figures and names the error',
+      st.sessionStart.data && st.sessionStart.data.bytes.mcp === 52958 && st.sessionStart.error === 'boom');
+    const st2 = baseSt({ activeProject: 'elsewhere' });
+    const c3 = await run(st2, () => ({ ok: true, json: async () => ssData() }));
+    ok('an answer for a project the user has LEFT is dropped', !st2.sessionStart && c3.patches === 0);
+  }
+
+  // ── §25g — the start cells and the picker are MOUNTED from the render's cfg ─
+  {
+    const mounted = [];
+    const els = { 'mem-fnd-start-architecture-md': {}, 'mem-budget-lb': {} };
+    const root = { querySelectorAll: () => [], querySelector: (sel) => els[sel.replace('#', '')] || null };
+    const st = baseSt({ sessionStart: { domain: 'acme', project: 'lumina', sig: 'x', data: ssData() } });
+    const calls = { start: [], budget: [] };
+    const api = new Function('state', 'document', 'mountListbox', 'wireAiRunDoors', 'requestSettingsSection',
+      'navigate', 'setStartState', 'setReadingBudget', 'reportAsyncMountFailure', 'patchSessionStart',
+      'render', 'loadPlanEstimate', 'runPlan', 'pressPlanAi', 'applyPlan', 'loadPlanPreview', 'localStorage',
+      'escapeHtml', 'icon', 'renderMonitor', 'renderListboxHtml', 'renderRunsOn', 'renderSpent',
+      'aiActionDisabledAttrs', 'renderDescription', 'renderStatus', 'memStep', 'foundationsFacts',
+      v367Lift() + extractFunction(viewSrc, 'bindSessionAndPlan', 'memory.js') + '\nreturn { bindSessionAndPlan };')(
+      st, { querySelector: () => null, getElementById: () => null },
+      (cfg) => { mounted.push(cfg); }, () => true, () => {}, () => {},
+      async (slug, v) => { calls.start.push(slug + '=' + v); },
+      async (b) => { calls.budget.push(b); }, () => {}, () => {}, () => {},
+      async () => {}, async () => {}, () => {}, async () => {}, async () => {}, { setItem() {} },
+      escapeHtml, () => '', renderMonitor, () => '', renderRunsOn, renderSpent, aiActionDisabledAttrs,
+      () => '', () => '', () => '', (read) => makeRenderers({}).foundationsFacts(read));
+    api.bindSessionAndPlan(root, 1);
+    const cell = mounted.find((c) => c.id === 'mem-fnd-start-architecture-md');
+    ok('each row\'s start cell is mounted from the SAME cfg function the markup used',
+      !!cell && cell.value === 'on-request' && typeof cell.onChange === 'function');
+    cell.onChange('not-at-start');
+    eq('...and a choice writes THAT row\'s state, through setStartState', calls.start.join(','),
+      'architecture.md=not-at-start');
+    const pick = mounted.find((c) => c.id === 'mem-budget-lb');
+    ok('the reading budget picker is mounted too', !!pick && typeof pick.onChange === 'function');
+    pick.onChange('lean');
+    pick.onChange('standard');
+    pick.onChange('nonsense');
+    eq('...and a preset writes ITS bytes — an unknown value writes nothing', calls.budget.join(','),
+      '32768,65536');
+  }
+
+  // ── §25g2 — ONE door listener per root, shared with every other view ──
+  // Chat, Ingest and Settings wire J's door on `#view-root`. If Context wired
+  // a different (inner) root, a press on a door inside Context would reach
+  // TWO delegated listeners and navigate twice. Driven with the REAL kit
+  // function, after "another view" has already wired the same root.
+  {
+    const { wireAiRunDoors: realWire } = await import('../src/public/next/shared/ai-run.js');
+    const listeners = [];
+    const viewRoot = { id: 'view-root', addEventListener: (t, fn) => listeners.push([t, fn]) };
+    const calls = { section: [], nav: [] };
+    const deps = { requestSettingsSection: (x) => calls.section.push(x), navigate: (x) => calls.nav.push(x) };
+    realWire(viewRoot, deps);                       // Chat / Ingest / Settings, first
+    const root = { querySelectorAll: () => [], querySelector: () => null };
+    const api = new Function('state', 'document', 'mountListbox', 'wireAiRunDoors', 'requestSettingsSection',
+      'navigate', 'setStartState', 'setReadingBudget', 'reportAsyncMountFailure', 'patchSessionStart',
+      'render', 'loadPlanEstimate', 'runPlan', 'pressPlanAi', 'applyPlan', 'loadPlanPreview', 'localStorage',
+      'escapeHtml', 'icon', 'renderMonitor', 'renderListboxHtml', 'renderRunsOn', 'renderSpent',
+      'aiActionDisabledAttrs', 'renderDescription', 'renderStatus', 'memStep', 'foundationsFacts',
+      v367Lift() + extractFunction(viewSrc, 'bindSessionAndPlan', 'memory.js') + '\nreturn { bindSessionAndPlan };')(
+      baseSt({ projectRead: null }),
+      // The inner column is a DIFFERENT element whose listeners also hear a
+      // press (it is inside #view-root), so wiring it as well is the defect.
+      { getElementById: (id) => (id === 'view-root' ? viewRoot : null),
+        querySelector: (sel) => (sel === '#view-root .main-inner'
+          ? { addEventListener: (t, fn) => listeners.push([t, fn]) } : null) },
+      () => {}, realWire, deps.requestSettingsSection, deps.navigate,
+      async () => {}, async () => {}, () => {}, () => {}, () => {},
+      async () => {}, async () => {}, () => {}, async () => {}, async () => {}, { setItem() {} },
+      escapeHtml, () => '', renderMonitor, () => '', renderRunsOn, renderSpent, aiActionDisabledAttrs,
+      () => '', () => '', () => '', () => ({}));
+    api.bindSessionAndPlan(root, 1);
+    api.bindSessionAndPlan(root, 1);                // a second paint re-binds
+    const clicks = listeners.filter(([t]) => t === 'click');
+    eq('Context wires the SAME root the other views do, so there is ONE door listener, not two',
+      clicks.length, 1);
+    const door = { dataset: { aiRunDoor: 'providers' } };
+    for (const [, fn] of clicks) {
+      fn({ target: { closest: (sel) => (sel === '[data-ai-run-door]' ? door : null) }, preventDefault() {} });
+    }
+    ok('...so a door press in Context goes to Providers & keys exactly ONCE',
+      calls.section.join() === 'providers' && calls.nav.join() === 'settings',
+      JSON.stringify(calls));
+  }
+
+  // ── §25h — the teaching copy, verbatim (CONTRACT §5.1) ────────────────
+  {
+    const R = makeRenderers(baseSt());
+    ok('the header ⓘ OPENS on the model: instructions, last state, a little foundation',
+      R.aboutInfoHtml().startsWith('<p>An agent starting work on a project needs three things: its instructions (the standing brief), where things stand (the latest handoff), and a little foundational knowledge (the documents you mark <i>read first</i>). Everything else — other documents, the domain’s pages — stays one request away. Give it just enough, and it keeps its window for the work.</p>'),
+      R.aboutInfoHtml().slice(0, 300));
+    const page = makeRenderers(withSS(ssData())).renderProject();
+    const panel = (id) => {
+      const at = page.indexOf('id="settings-block-info-' + id + '"');
+      if (at < 0) return '';
+      const rest = page.slice(at);
+      return rest.slice(rest.indexOf('>') + 1);
+    };
+    ok('① opens on "Foundational knowledge"', panel('context-canonical')
+      .startsWith('<p>Foundational knowledge: choose which documents an agent reads at the start and which it opens only when needed.'));
+    ok('② opens on "The last state and the instructions"', panel('context-state')
+      .startsWith('<p>The last state and the instructions: what every agent is handed at the start.'));
+    ok('③ opens on "Knowledge on demand"', panel('context-knowledge')
+      .startsWith('<p>Knowledge on demand: searched when a task needs it, never loaded at the start.'));
+    ok('④ is the page\'s last step, after ③', page.indexOf('settings-block-context-session')
+      > page.indexOf('settings-block-context-knowledge'));
+  }
+
+  // ── §25j — the helper's reads, the gate and the budget write, driven ───
+  {
+    // `srcs` are LIFTED SOURCES (each a literal extractFunction call at the
+    // call site, which is what §17's census reads for); the names returned are
+    // read back off each source's own `function` line.
+    const lift = (srcs, extraParams, extraArgs, st, fetchImpl) => new Function('state', 'isCurrentMount',
+      'render', 'fetch', 'encodeURIComponent', 'reportAsyncMountFailure', ...extraParams,
+      'let previewInFlight = null;\n'
+      + srcs.join('\n')
+      + '\nreturn { ' + srcs.map((x) => /function\s+([A-Za-z0-9_$]+)/.exec(x)[1]).join(', ') + ' };')(
+      st, () => true, () => { st.__renders = (st.__renders || 0) + 1; }, fetchImpl, encodeURIComponent,
+      () => {}, ...extraArgs);
+    // runPlan: a READ that proposes; every differing row starts ticked.
+    {
+      const st = planSt({});
+      const seen = [];
+      const api = lift([extractFunction(viewSrc, 'planFor', 'memory.js'), extractFunction(viewSrc, 'planPreviewBody', 'memory.js'), extractFunction(viewSrc, 'planPreviewKey', 'memory.js'), extractFunction(viewSrc, 'runPlan', 'memory.js')], ['loadPlanPreview'],
+        [async () => { seen.push('preview'); }], st,
+        async (url, init) => { seen.push(url + ' ' + init.body);
+          return { ok: true, json: async () => result }; });
+      await api.runPlan('free', 1);
+      eq('the free arm POSTs {arm:"free"} to the helper for THIS project', seen[0],
+        '/api/reading-plan/acme/lumina/suggest {"arm":"free"}');
+      ok('...every DIFFERING row starts ticked, and only those',
+        JSON.stringify(st.plan.ticks) === '{"architecture.md":true}', JSON.stringify(st.plan.ticks));
+      ok('...the budget tick starts ticked when the plan was made against Standard for an untouched project',
+        st.plan.budgetTick === true);
+      eq('...and the `if applied` preview is asked for at once', seen[1], 'preview');
+      const nk = planSt({});
+      const apiNk = lift([extractFunction(viewSrc, 'planFor', 'memory.js'), extractFunction(viewSrc, 'runPlan', 'memory.js')], ['loadPlanPreview'], [async () => {}], nk,
+        async () => ({ ok: false, status: 400, json: async () => ({ ok: false, reason: 'needs_key',
+          error: 'needs_key', runsOn: { job: 'reading-plan', needsKey: true } }) }));
+      await apiNk.runPlan('ai', 1);
+      ok('a 400 needs_key is a disclosure, and its runsOn turns the AI button into the no-key state',
+        nk.plan.error === 'needs_key' && nk.plan.estimate.runsOn.needsKey === true && !nk.plan.result);
+    }
+    // pressPlanAi: the gate of §1.4, driven.
+    {
+      const drive = async (runsOn) => {
+        const st = planSt({ estimate: { runsOn } });
+        const calls = { confirms: [], runs: [] };
+        const api = lift([extractFunction(viewSrc, 'planFor', 'memory.js'), extractFunction(viewSrc, 'planAiNeedsConfirm', 'memory.js'), extractFunction(viewSrc, 'pressPlanAi', 'memory.js')],
+          ['runPlan', 'confirmThen', 'runLineText'],
+          [async (arm) => { calls.runs.push(arm); },
+            (o) => { calls.confirms.push(o); return Promise.resolve(); },
+            () => 'Runs on X · ≈7k tokens · ≈$0.0130'], st, async () => ({}));
+        api.pressPlanAi(1);
+        return calls;
+      };
+      const cheap = await drive(priced);
+      ok('under a cent the unfolded line IS the gate: it runs at once, no dialog',
+        cheap.runs.join() === 'ai' && cheap.confirms.length === 0);
+      const dear = await drive({ ...priced, usdHigh: 0.013 });
+      ok('a cent or more opens shared/confirm.js with the RUN LINE as its first line, and does not run',
+        dear.runs.length === 0 && dear.confirms.length === 1
+        && dear.confirms[0].message === 'Runs on X · ≈7k tokens · ≈$0.0130'
+        && dear.confirms[0].tone === 'default' && typeof dear.confirms[0].onConfirm === 'function');
+      const nokey = await drive({ job: 'reading-plan', needsKey: true });
+      ok('with no key a press does nothing at all (the button is disabled; this is the belt)',
+        nokey.runs.length === 0 && nokey.confirms.length === 0);
+    }
+    // setReadingBudget: one write, one field, from the ANSWER.
+    {
+      const st = baseSt();
+      const seen = [];
+      const api = lift([extractFunction(viewSrc, 'writeReadingBudget', 'memory.js'), extractFunction(viewSrc, 'applyBudgetAnswer', 'memory.js'), extractFunction(viewSrc, 'setReadingBudget', 'memory.js')], [], [], st,
+        async (url, init) => { seen.push(url + ' ' + init.body);
+          return { ok: true, json: async () => ({ ok: true, readingBudgetBytes: 32768,
+            readingBudgetDefaulted: false, readFirstBudgetBytes: 32768, readFirstBudgetExceeded: false }) }; });
+      await api.setReadingBudget(32768, 1);
+      eq('choosing a preset PATCHes the four-segment budget route with ONE field', seen.join(),
+        '/api/memory/acme/lumina/reading/budget {"readingBudgetBytes":32768}');
+      ok('...the project read takes the ROUTE\'s answer, and the documents\' budget follows it',
+        st.projectRead.readingBudgetBytes === 32768 && st.projectRead.foundations.readFirstBudgetBytes === 32768
+        && st.budgetSaving === false);
+      const bad = baseSt();
+      const api2 = lift([extractFunction(viewSrc, 'writeReadingBudget', 'memory.js'), extractFunction(viewSrc, 'applyBudgetAnswer', 'memory.js'), extractFunction(viewSrc, 'setReadingBudget', 'memory.js')], [], [], bad,
+        async () => ({ ok: false, status: 400, json: async () => ({ ok: false, error: 'invalid_reading_budget' }) }));
+      await api2.setReadingBudget(5, 1);
+      ok('a refusal is disclosed against THIS project and the read is left as it was',
+        bad.budgetError && bad.budgetError.error === 'invalid_reading_budget'
+        && bad.projectRead.readingBudgetBytes === null);
+      const html = makeRenderers(bad).renderSessionStart(bad.projectRead);
+      ok('...and step ④ says so, unfolded', /The reading budget was not changed: invalid_reading_budget/.test(html));
+    }
+    // loadPlanEstimate + loadPlanPreview: reads, stamped.
+    {
+      const st = planSt({});
+      const api = lift([extractFunction(viewSrc, 'planFor', 'memory.js'), extractFunction(viewSrc, 'loadPlanEstimate', 'memory.js')], [], [], st,
+        async (url) => ({ ok: true, json: async () => ({ ok: true, url, budgetBytes: 65536,
+          budgetSource: 'standard', runsOn: priced }) }));
+      await api.loadPlanEstimate(1);
+      eq('opening the panel reads the helper\'s estimate for THIS project', st.plan.estimate.url,
+        '/api/reading-plan/acme/lumina/estimate');
+      const st2 = planSt({ result, ticks: { 'architecture.md': true }, budgetTick: false });
+      const bodies = [];
+      const api2 = lift([extractFunction(viewSrc, 'planFor', 'memory.js'), extractFunction(viewSrc, 'planPreviewBody', 'memory.js'), extractFunction(viewSrc, 'planPreviewKey', 'memory.js'), extractFunction(viewSrc, 'loadPlanPreview', 'memory.js')],
+        ['patchSessionStart'], [() => {}], st2,
+        async (url, init) => { bodies.push(url + ' ' + init.body);
+          return { ok: true, json: async () => ssData({ bytes: { mcp: 30000, hook: 1 } }) }; });
+      await api2.loadPlanPreview(1);
+      eq('the `if applied` read POSTs the ticked plan to the store\'s PREVIEW route', bodies.join(),
+        '/api/memory/acme/lumina/session-start/preview {"plan":{"architecture.md":"read-first"}}');
+      ok('...and keeps the answer keyed by that exact plan', st2.sessionPreview
+        && st2.sessionPreview.key === '{"plan":{"architecture.md":"read-first"}}'
+        && st2.sessionPreview.withBudget === false);
+    }
+  }
+
+  // ── §25i — the project that was open survives a view change ───────────
+  {
+    const src = stripComments(viewSrc);
+    ok('selectProject records the project it opened, for this tab',
+      /lastOpened = \{ domain, project \};/.test(extractFunction(viewSrc, 'selectProject', 'memory.js')));
+    const li = stripComments(extractFunction(viewSrc, 'loadIndex', 'memory.js'));
+    ok('loadIndex returns to it — after an explicit request, before recency',
+      /const pick = asked \|\| back \|\| initialPick\(/.test(li) && /lastOpened\.domain/.test(li));
+    ok('...and it is module state, not storage — a reload keeps the documented recency rule',
+      /^let lastOpened = null;$/m.test(src) && !/localStorage[^\n]*lastOpened/.test(src));
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 section('§17 — COVERAGE CENSUS — a new function cannot arrive untested in silence');
 // ═════════════════════════════════════════════════════════════════════════
 //
@@ -10926,7 +11832,20 @@ const EXECUTED = new Set([
   // (flagged and not) in §21h, and the toggle over its four outcomes against a
   // DOM model, because a tick that re-renders is the defect v3.61.1 recorded
   // on this very table and only an executed patch can prove it does not.
-  'foundationsBudgetWarning', 'toggleReadFirst',
+  'foundationsBudgetWarning', 'writeStartState', 'setStartState',
+  // v3.67.0 — step ④, the start cell and the helper. Every one below is
+  // LIFTED and driven in §25 (v367Lift, or by name there): the renderers
+  // through the composed page, the writers and readers against a fake fetch,
+  // the gate over its four cases, and the binder against a fake root.
+  'fndStartOf', 'fndStartCfg', 'planRowFor', 'fndSuggestCellHtml', 'planFor', 'planChangeCount',
+  'planHeadHtml', 'ssSize', 'ssTokens', 'budgetWord', 'readContextWindow', 'contextWindowNow',
+  'ssPct', 'ssTotalWords', 'sessionStartFor', 'budgetPickerCfg', 'sessionNoticesHtml', 'ssDocs',
+  'sessionReceivesMonitor', 'presetName', 'previewFor', 'planPreviewBody', 'planPreviewKey',
+  'renderSessionStart', 'renderPlanPanel', 'planAiNeedsConfirm', 'maybeLoadSessionStart',
+  'loadSessionStart', 'loadPlanEstimate', 'runPlan', 'pressPlanAi', 'loadPlanPreview',
+  'writeReadingBudget', 'applyBudgetAnswer', 'setReadingBudget', 'applyPlan', 'bindSessionAndPlan',
+  // Moved out of wire() unchanged; the toggle listener is driven in §21 through it.
+  'bindFoldToggles',
   // v3.66.0 (P1): the Documents monitor — driven over both budgets, the
   // applicability rule for danger and the in-place patch in §23.
   'foundationsMonitor',
@@ -10965,6 +11884,9 @@ const EXECUTED = new Set([
 // NOT executed, each with the reason it is not — so the gap is a decision on
 // the record rather than an omission nobody noticed.
 const NOT_EXECUTED = {
+  // v3.67.0: the two that need a painted page to say anything.
+  patchSessionStart: 'outerHTML replacement of step ④ plus a tile write in a live DOM; its inputs (renderSessionStart, the tile arithmetic) are executed in §25, and the browser pass measured the patch replacing no #view-root child',
+  runLineText: 'innerHTML into a detached element to take the kit line\'s textContent for the confirm; the kit line itself is executed in §25d and the confirm\'s use of it in §25j',
   freshState: 'a literal factory with no branches; every field it returns is exercised through the state fixtures',
   renderSidebar: 'setSidebar/setMain need a real DOM; §12 proves render() calls it, §9 proves the token is passed',
   renderMain: 'same — DOM-bound; its three branches are the render* functions §6/§14 execute directly',
