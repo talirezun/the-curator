@@ -9559,12 +9559,16 @@ function renderStorage() {
     : '';
 
   const lede = 'The folder every domain lives in. Point Obsidian at it as a vault.';
+  // The prose is ONE <p> (v3.65.3): the ⓘ panel is a one-column grid, so bare
+  // text around the <em> rendered as four rows — "…in Obsidian with", the
+  // italic phrase, the rest of the sentence, then the link. The link stays its
+  // own trailing row, as on every other block's ⓘ that ends with one.
   const info =
-    'Every domain is a folder of plain markdown under this path — no database, no index, ' +
+    '<p>Every domain is a folder of plain markdown under this path — no database, no index, ' +
     'nothing the app has to be running to read. Open this same folder in Obsidian with ' +
     '<em>Open folder as vault</em> and the wikilinks between your pages render as the graph. ' +
     'Choosing a new folder points The Curator at it; it does not copy or move anything, so the ' +
-    'move itself is yours to make in Finder. ' +
+    'move itself is yours to make in Finder.</p>' +
     docsLinkHtml('settings.knowledge-base', 'Read more in the guide');
 
   const body =

@@ -795,6 +795,27 @@ function linesBlockOf(html) {
     '\u2026while an absent one says so in words and takes no hook, because there is nothing to recount');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+section('v3.65.3  The Vault folder ⓘ is one paragraph, not four rows  (EXECUTED)');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The ⓘ panel is a one-column GRID (shared/text.css), so bare text beside an
+// inline element becomes rows of its own: "…in Obsidian with" / the italic
+// "Open folder as vault" / the rest / the link. The maintainer's "divided on
+// three rows" on Knowledge base. The panel's CHILDREN are read off the real
+// render: the prose must sit inside ONE <p>, with only a trailing link beside it.
+{
+  const html = run('renderStorage', baseState());
+  const m = html.match(/<div class="tx-vh-panel" id="settings-block-info-storage-folder"[^>]*>([\s\S]*?)<\/div>/);
+  ok(!!m, 'CONTROL: the Vault folder block really emits its ⓘ panel');
+  const inner = m ? m[1] : '';
+  const pm = inner.match(/^<p>([\s\S]*?)<\/p>([\s\S]*)$/);
+  ok(!!pm && /<em>Open folder as vault<\/em>/.test(pm[1]),
+    'the prose, <em> included, is ONE <p> — the grid lays it out as one item', inner.slice(0, 160));
+  ok(!!pm && /^<a [^>]*>[^<]*<\/a>$/.test(pm[2].trim()),
+    '…and nothing but the trailing docs link sits outside it (no stray text row)', pm ? pm[2] : inner);
+}
+
 console.log('\n────────────────────────────────────────────────────────────');
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) { console.log('❌ /next Settings-section assertions FAILED'); process.exit(1); }
