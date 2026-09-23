@@ -449,7 +449,9 @@ export async function runHook(parsed) {
         return EXIT_OK;
       }
       const { getProjectContext } = await import('../brain/working-state.js');
-      const { renderContextMarkdown } = await import('./context.js');
+      // v3.66.0: the FRAMED rendering — the brief's authority classified by the
+      // same classifier the MCP and Chat use, never assumed to be the owner's.
+      const { renderFramedContextMarkdown } = await import('./context.js');
       const budget = flagStr(flags, 'budget');
       const ctx = await getProjectContext(resolved.domain, resolved.project, {
         scope: flagStr(flags, 'scope') || undefined,
@@ -459,7 +461,7 @@ export async function runHook(parsed) {
         note(`my-curator hook session-start: the store refused the read (${ctx.reason}). Nothing was injected.`);
         return EXIT_OK;
       }
-      out(JSON.stringify(arm.emit(renderContextMarkdown(ctx))));
+      out(JSON.stringify(arm.emit(await renderFramedContextMarkdown(ctx))));
     } catch (err) {
       note(`my-curator hook session-start: ${err.message}. Nothing was injected.`);
     }
