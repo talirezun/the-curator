@@ -127,6 +127,12 @@ import {
   computeQueueStatusCounts, computeQueueSpentLabel,
 } from '../shared/ingest-queue-logic.js';
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
+// Context's one-shot "open this project on your next arrival" request (v3.65.2,
+// I2) — the SAME export views/domains.js already imports, for the same reason
+// and under the same constraint: it is a hoisted function declaration, so the
+// import cycle through app.js is safe as long as it is only CALLED from a click
+// handler, never at evaluation time.
+import { requestProject } from './memory.js';
 // The ONE text system in /next (shared/text.js). Imported, never re-implemented.
 // This view rendered its cost ESTIMATE — the figure a user decides to spend on —
 // in a bespoke label/value row, and its static "what this view does" sentence in
@@ -2106,8 +2112,32 @@ function renderSelectedFileHtml(file) {
  * whose only outcome is a refusal, one tier down (v3.16.1). The extension is
  * read off the NAME, which is all this form has before a read.
  *
- * It is a `.tx-note` in flow, never folded: the consequence of ignoring it is
- * a charge, and a cost behind a chevron is not a cost that was disclosed.
+ * It is in flow, never folded: the consequence of ignoring it is a charge,
+ * and a cost behind a chevron is not a cost that was disclosed.
+ *
+ * ── ONE DESIGNED CALLOUT (v3.65.2, I2) ──────────────────────────────────
+ * The maintainer, on v3.65.1's version (a one-line `.tx-note` with a ghost
+ * `btn-xs` beside it): *"'Open Project context' is just floating, not
+ * designed as a button, I barely noticed it. This information plus the
+ * button should be much better designed."* It is now ONE block across the
+ * form's full width: the ⓘ and the sentence on the left, a real SECONDARY
+ * button at the ordinary (md) rung on the right, on one row that wraps
+ * below ~480px. Its anatomy is not new — it is Wiki health's Quick
+ * maintenance empty state (`.dm-quick` + `.dm-quick-empty`: an accent-tint
+ * panel, text left, a `btn btn-secondary` right), copied by value into
+ * ingest.css because this stylesheet may not name another view's prefix.
+ *
+ * THE LABEL SAYS WHAT THE PRESS DOES. "Open Project context" named a place;
+ * "Add as a project document" names the act the sentence recommends, and the
+ * press really does land there: `requestProject` (views/memory.js's existing
+ * one-shot request, the same one the Domains page's "Open in Project
+ * context" uses) opens THIS domain's own project, whose step ① is Documents.
+ * It is still a door and never a second write path — nothing is added until
+ * the owner adds it there.
+ *
+ * `role="note"`: an aside about the control above it, not a live region —
+ * it appears on a file choice the user just made, so announcing it again
+ * would be noise.
  *
  * Pure over the file, so the suite drives both arms without a DOM.
  */
@@ -2115,13 +2145,26 @@ function verbatimPointerHtml(file) {
   const name = file && file.name != null ? String(file.name) : '';
   if (!/\.(md|txt)$/i.test(name)) return '';
   return (
-    '<div class="tx-note ing-verbatim-note">' + icon('alertCircle', 13) +
-      '<span>Wanted this kept word for word? Add it as a project document instead.</span>' +
-      '<button type="button" class="btn btn-ghost btn-xs" id="ing-open-memory">' +
-        'Open Project context</button>' +
+    '<div class="ing-verbatim-note" role="note">' +
+      '<div class="ing-verbatim-text">' + VERBATIM_INFO_GLYPH +
+        '<span>Wanted this kept word for word? Add it as a project document instead.</span>' +
+      '</div>' +
+      '<button type="button" class="btn btn-secondary ing-verbatim-go" id="ing-open-memory">' +
+        'Add as a project document</button>' +
     '</div>'
   );
 }
+
+/** The circled-i the callout above leads with. A COPY BY VALUE of
+ *  shared/text.js's INFO_GLYPH (not exported — that module takes no imports
+ *  and exports none of its glyphs) and of views/domains.js's `infoMark`
+ *  glyph: same 24-unit viewBox, 1.7 stroke, currentColor, aria-hidden. app.js's
+ *  icon() has no `info` entry, and `alertCircle` — what this note used to
+ *  carry — reads as a WARNING ("!"), which this is not. */
+const VERBATIM_INFO_GLYPH =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+  'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>';
 
 // Shared by the single-file idle form AND the batch confirm gate — both
 // need an identically-behaved drop zone / hidden multi-file input; only
@@ -3072,8 +3115,22 @@ function wireListeners() {
   // project document is added, and nothing about the paid path moves. Present
   // only while a `.md`/`.txt` file is chosen, so a plain query-and-wire is
   // right here for the reason the control above states.
+  //
+  // v3.65.2: it LANDS on this domain's own project — the domain's own project
+  // is named after the domain and lives at its state root — through
+  // views/memory.js's existing one-shot `requestProject`, recorded BEFORE the
+  // navigation because the destination consumes it during the mount
+  // `navigate` starts synchronously (the Domains page's "Open in Project
+  // context" does exactly this). Before, it opened whichever project Context
+  // happened to pick by save recency. A domain with no project state yet
+  // spends the request and falls back to that ordinary pick.
   const openMemoryBtn = document.getElementById('ing-open-memory');
-  if (openMemoryBtn) openMemoryBtn.addEventListener('click', () => navigate('memory'));
+  if (openMemoryBtn) {
+    openMemoryBtn.addEventListener('click', () => {
+      if (state.domain) requestProject(state.domain, state.domain);
+      navigate('memory');
+    });
+  }
 
   const submitBtn = document.getElementById('ing-submit-btn');
   if (submitBtn) submitBtn.addEventListener('click', () => runIngest(myMountToken, false));

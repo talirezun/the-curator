@@ -1306,19 +1306,67 @@
   gap: var(--space-3);
 }
 
-/* ── THE VERBATIM POINTER (v3.61.0, P2-7) ─────────────────────────────────
-   `.tx-note` is ONE LINE BY CONTRACT and centres its glyph on that basis, and
-   this note carries a control as well as a sentence — so at the widths this
-   form actually takes (970px down to 477px once a result arrives, and 564px at
-   a 2000px window) the sentence wraps and the button has to fall below it
-   rather than push the row past the field above. Wrapping and a top-aligned
-   glyph are the whole of the override; the type, the colour and the measure
-   stay `.tx-note`'s, because it is one. */
+/* ── THE VERBATIM POINTER, AS ONE CALLOUT (v3.61.0 → v3.65.2, I2) ─────────
+   v3.61.0 shipped it as a `.tx-note` with a ghost `btn-xs` beside it, and the
+   maintainer barely noticed the button: a one-line note is capped at the
+   prose measure and the ghost tier draws no face, so on a 970px form the
+   control floated in the middle of empty space. It is now ONE block across
+   the form's full width — ⓘ and sentence left, a real secondary button right.
+
+   THE ANATOMY IS WIKI HEALTH'S QUICK MAINTENANCE EMPTY STATE, COPIED BY
+   VALUE: views/domains.css's `.dm-quick` (14px padding, --radius-lg, a 1px
+   --accent-border, --accent-tint) plus `.dm-quick-empty` (flex, text left,
+   button right, space-between, 12px gap, wraps). This file may not name that
+   prefix, so the six properties are restated here with their source named —
+   the same deliberate duplicate v3.65.1 made for the GitHub-mirror form. If
+   Quick maintenance changes, this changes with it.
+
+   WRAPS BELOW THE SENTENCE, NEVER PAST THE FIELD. The text takes a 240px
+   basis and the button never shrinks, so at the form's narrow widths (477px
+   once a result arrives) the button drops under the sentence rather than
+   squeezing it into a column. */
 .ing-verbatim-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   flex-wrap: wrap;
-  align-items: flex-start;
+  margin-top: var(--space-4);
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-tint);
 }
-.ing-verbatim-note > span { flex: 1 1 200px; min-width: 0; }
+.ing-verbatim-text {
+  flex: 1 1 240px;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text);
+}
+/* The glyph is a GRAPHIC (3:1), in the ⓘ's own ink, and nudged to sit on the
+   first line's x-height rather than its top. */
+.ing-verbatim-text > svg { flex: none; margin-top: 1px; color: var(--accent-text); }
+/* THE BUTTON KEEPS ITS RUNG AND MAY WRAP ITS LABEL. At every ordinary width
+   it is a plain 32px `.btn`: `min-height` holds --control-md and one line
+   of 13px type plus the padding below comes to less. MEASURED at a 568px
+   window, where this form is 127px wide: `.btn`'s own `white-space: nowrap`
+   and fixed height put "Add as a project document" 35px past the column.
+   So the label may wrap and the box grows with it — the one width where a
+   two-line button is better than a clipped or overflowing one. */
+.ing-verbatim-go {
+  flex: 0 1 auto;
+  max-width: 100%;
+  height: auto;
+  min-height: var(--control-md);
+  padding-block: var(--space-2);
+  white-space: normal;
+  line-height: 1.25;
+  text-align: center;
+}
 
 /* ── Reduced motion ───────────────────────────────────────────────────────
    Press travel off; the background steps stay.

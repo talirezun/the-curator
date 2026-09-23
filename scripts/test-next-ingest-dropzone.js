@@ -164,6 +164,10 @@ function section(t) { console.log('\n' + t); }
 // whole claim and it is only worth anything against a setMain that genuinely
 // destroys things.
 
+// Every door press any mount makes, in order. Module-level so the stubs above
+// (built per mount) all write to one place; §14 clears it before it looks.
+const doorCalls = [];
+
 function makeDom() {
   const docListeners = Object.create(null);
   const winListeners = Object.create(null);
@@ -439,6 +443,14 @@ function loadView(dom) {
     getDomainWriteLabel: () => null,
     onWriteGateChange: () => () => {},
     reportPossibleActiveJob: () => {},
+    // v3.65.2 (I2): the verbatim callout's door, RECORDED in call order so §14
+    // can prove the request is written BEFORE the navigation that consumes it.
+    navigate: (name) => { doorCalls.push(['navigate', name]); },
+  };
+  // views/memory.js's one-shot request — imported by ingest.js, stripped with
+  // every other import, and supplied here as a recorder.
+  const memoryStubs = {
+    requestProject: (d, p) => { doorCalls.push(['requestProject', d, p]); },
   };
   const listboxStubs = {
     renderListboxHtml: () => '<div class="lb-block"></div>',
@@ -447,7 +459,7 @@ function loadView(dom) {
   };
 
   const provided = {
-    ...appStubs, ...listboxStubs,
+    ...appStubs, ...listboxStubs, ...memoryStubs,
     ...logic, ...text, ...usd, ...ring, ...gate, ...age,
     identityDotClass: sidebarKit.identityDotClass,
     document: dom.document,
@@ -1258,6 +1270,33 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
     'a desktop app should not ask for, and the section is the boundary');
 
   view.unmountIngestSection();
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§14  The word-for-word callout\'s door, pressed (v3.65.2, I2)');
+// ═════════════════════════════════════════════════════════════════════════
+// EXECUTED, not scanned: the real render, the real wireListeners, a real
+// click through the model DOM. The press must record Context's one-shot
+// request for THIS domain's own project and only then navigate — the
+// destination consumes the request during the mount navigate starts.
+{
+  const { dom, view, zone } = mount();
+  dom.dispatch(zone(), 'drop', { dataTransfer: fakeTransfer([fakeFile('architecture.md', 512)]) });
+  const btn = dom.document.getElementById('ing-open-memory');
+  ok(!!btn, '§14 setup: a chosen .md shows the callout\'s button');
+  ok(!!btn && /Add as a project document/.test(btn.textContent),
+    '§14 …labelled with the act, not a place');
+  doorCalls.length = 0;
+  if (btn) dom.dispatch(btn, 'click', {});
+  eq(JSON.stringify(doorCalls),
+    JSON.stringify([['requestProject', 'articles', 'articles'], ['navigate', 'memory']]),
+    '§14 the press asks Context for THIS domain\'s own project, THEN navigates');
+
+  // CONTROL — on a PDF there is no callout, so there is nothing to press.
+  const m2 = mount();
+  m2.dom.dispatch(m2.zone(), 'drop', { dataTransfer: fakeTransfer([fakeFile('paper.pdf', 512)]) });
+  ok(!m2.dom.document.getElementById('ing-open-memory'),
+    '§14 CONTROL — a chosen PDF shows no door: tier 0 could not keep it verbatim');
 }
 
 console.log('\n────────────────────────────────────────────────────────────');

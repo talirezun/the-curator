@@ -302,16 +302,38 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
     // like the other three sections' — so the label is asserted where it now
     // lives, and the summary is required to carry the ACCESSIBLE name that a
     // chevron-and-a-date row would otherwise lack.
-    ok('the Ingest fold is labelled Ingest',
-      /dm-section-eyebrow">Ingest</.test(html), html.slice(0, 900));
+    ok('the Ingest section is labelled Ingest',
+      /dm-section-eyebrow" id="dm-sources-title" tabindex="-1">Ingest</.test(html), html.slice(0, 900));
     ok('the Shared Brain fold is labelled Shared Brain',
       /dm-section-eyebrow">Shared Brain</.test(html), html.slice(0, 900));
     ok('...and neither section says "ADD SOURCES"', !/ADD SOURCES/.test(html));
-    ok('each fold\'s summary carries an accessible name, because a chevron and '
-      + 'a date is not a label',
-    /<summary class="dm-fold-summary" aria-label="Ingest">/.test(html)
-      && /<summary class="dm-fold-summary" aria-label="Shared Brain">/.test(html),
+    ok('the Shared Brain fold\'s summary carries an accessible name, because a '
+      + 'chevron and a date is not a label',
+    /<summary class="dm-fold-summary" aria-label="Shared Brain">/.test(html),
     html.slice(0, 900));
+    // ── ① IS NOT A FOLD (v3.65.2, I1) ───────────────────────────────────
+    // The maintainer: "Ingest is number one but hidden below a drop-down. Get
+    // rid of it." No `<details>`, no `<summary>`, no chevron, no preference
+    // hook — and the SAME id, because patchMainAroundHosts recognises the
+    // host by it.
+    {
+      const top = parseHtmlToChildren(html).children;
+      const src = top.find((n) => n.attrs.id === 'dm-sources-fold');
+      ok('① is a plain <section>, never a <details>',
+        !!src && src.tagName === 'SECTION', src ? src.tagName : '(none)');
+      ok('...carrying no `open` attribute and no fold-preference hook',
+        !!src && !('open' in src.attrs) && !('data-dm-fold' in src.attrs),
+        src ? JSON.stringify(src.attrs) : '(none)');
+      ok('...labelled by its own title',
+        !!src && src.attrs['aria-labelledby'] === 'dm-sources-title');
+      ok('...and nothing inside it is a <summary> or a chevron',
+        !!src && !flatten(src).some((n) => n.tagName === 'SUMMARY' || n.tagName === 'SVG'));
+      ok('there is exactly ONE <summary> on the page now — Shared Brain\'s',
+        (html.match(/<summary /g) || []).length === 1, String((html.match(/<summary /g) || []).length));
+      ok('the reading moved into ①\'s HEAD ROW, right after the ⓘ, in the fold-meta face',
+        /id="dm-ingest-info-btn"[^]*?<\/button><span class="dm-fold-meta dm-section-meta">(last ingest |nothing ingested yet)/
+          .test(html), (/<span class="dm-fold-meta dm-section-meta">[^<]*/.exec(html) || ['(none)'])[0]);
+    }
     // The panels own these elements and this page never writes into them again.
     ok('each fold carries exactly one empty host element for its panel',
       (html.match(/id="dm-sources-host"><\/div>/g) || []).length === 1
@@ -333,8 +355,8 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
       /id="dm-ingest-info"[^>]*hidden>Drop a PDF, markdown or text file\./.test(html),
       (/<div class="tx-vh-panel" id="dm-ingest-info"[^]{0,160}/.exec(html) || ['(none)'])[0]);
     ok('...and the mark that opens it sits in the head row, beside the title',
-      /<div class="dm-section-head-row"><div class="dm-section-hd"><span class="dm-section-num" aria-hidden="true">1<\/span><div class="cur-group-title dm-section-eyebrow">Ingest<\/div><\/div><button type="button" class="tx-vh-info" id="dm-ingest-info-btn"/.test(html),
-      (/<div class="dm-section dm-section-hd-block">[^]{0,300}/.exec(html) || ['(none)'])[0]);
+      /<div class="dm-section-head-row"><div class="dm-section-hd"><span class="dm-section-num" aria-hidden="true">1<\/span><div class="cur-group-title dm-section-eyebrow" id="dm-sources-title" tabindex="-1">Ingest<\/div><\/div><button type="button" class="tx-vh-info" id="dm-ingest-info-btn"/.test(html),
+      (/<div class="dm-section dm-section-hd-block dm-sources-hd">[^]{0,300}/.exec(html) || ['(none)'])[0]);
     // ── AND THE HEAD BLOCK IS STILL ONE TOP-LEVEL SIBLING ───────────────
     // D-J: `patchMainAroundHosts` finds a hosted fold by `before.id` over the
     // TOP-LEVEL children of `.main-inner`. A head that WRAPPED the `<details>`
@@ -484,6 +506,14 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
   'rule not found in views/domains.css');
   eq('CONTROL -- and that IS the gap the one rule uses',
     decl(CSS, '.dm-section + .dm-section', 'margin-top'), 'var(--space-12)');
+  // ── ① WITHOUT A SUMMARY (v3.65.2) ─────────────────────────────────────
+  // No summary row means the body's missing top padding must come back, and
+  // ①'s head row (and only ①'s) wraps, so its reading drops under the title
+  // at a 568px window instead of overflowing the 213px column (measured).
+  eq('① gets its top padding back, the --space-7 of its sides',
+    decl(CSS, '.dm-sources > .dm-fold-body', 'padding-top'), 'var(--space-7)');
+  eq('①\'s head row wraps', decl(CSS, '.dm-sources-hd .dm-section-head-row', 'flex-wrap'), 'wrap');
+  eq('CONTROL -- and no other head row does', decl(CSS, '.dm-section-head-row', 'flex-wrap'), null);
   const titleRule = /\n\.dm-section-hd \.dm-section-eyebrow,\n\.dm-section-hd \.dm-fold-title\s*\{([^}]*)\}/.exec(CSS);
   ok('CONTROL -- one rule paints every section title', !!titleRule, String(titleRule));
   const titleProp = (p2) => {
@@ -502,74 +532,67 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('S2 -- THE FOLD DEFAULTS ARE DERIVED, AND THE USER OVERRULES THEM');
+section('S2 -- ① IS ALWAYS OPEN; ④ KEEPS ITS REMEMBERED FOLD');
 // ═════════════════════════════════════════════════════════════════════════
+// v3.65.2 (I1): ① Ingest stopped being a fold. Through v3.65.1 it opened on a
+// never-ingested domain, closed on a mature one, and remembered the user's
+// choice — this section asserted all three. Now there is nothing to derive
+// and nothing to remember: the section and its host are on every
+// non-mirror domain page, whatever the stored preference says.
 const foldOpen = (html, id) => {
   const n = flatten(parseHtmlToChildren(html)).find((x) => x.attrs.id === id);
   return n ? Object.hasOwn(n.attrs, 'open') : null;
 };
+const hostPresent = (html) =>
+  flatten(parseHtmlToChildren(html)).some((x) => x.attrs.id === 'dm-sources-host');
 {
   const fresh = renderCard({ domains: [{ slug: 'alpha', displayName: 'Alpha', pageCount: 0,
     lastIngestDate: null, pageCounts: { entities: 0, concepts: 0, summaries: 0, other: 0 } }] });
-  eq('a domain with no ingest opens INGEST', foldOpen(fresh, 'dm-sources-fold'), true);
   const mature = renderCard();
-  eq('...and a domain that has been ingested into leaves it closed', foldOpen(mature, 'dm-sources-fold'), false);
-  // A domain with summaries but no recorded date is still "has been ingested".
-  const summarised = renderCard({ domains: [{ slug: 'alpha', displayName: 'Alpha', pageCount: 2,
-    lastIngestDate: null, pageCounts: { entities: 0, concepts: 0, summaries: 2, other: 0 } }] });
-  eq('...summaries alone count as an ingest, with no date recorded',
-    foldOpen(summarised, 'dm-sources-fold'), false);
+  ok('CONTROL -- the parser finds ① on both a fresh and a mature domain',
+    foldOpen(fresh, 'dm-sources-fold') !== null && foldOpen(mature, 'dm-sources-fold') !== null);
+  ok('① renders its host on a domain never ingested into', hostPresent(fresh));
+  ok('...and on a mature one — the old "closed once ingested" default is gone', hostPresent(mature));
+  eq('...where it is NOT a fold that happens to be open: it has no `open` at all',
+    foldOpen(mature, 'dm-sources-fold'), false);
+  ok('the fresh domain reads "nothing ingested yet" in ①\'s head row',
+    /<span class="dm-fold-meta dm-section-meta">nothing ingested yet<\/span>/.test(fresh));
+  ok('...and the mature one "last ingest …"',
+    /<span class="dm-fold-meta dm-section-meta">last ingest [^<]+<\/span>/.test(mature));
   eq('SHARED BRAIN is closed on a domain that has never been shared',
     foldOpen(mature, 'dm-shared-fold'), false);
 }
 {
-  // THE REMEMBERED CHOICE WINS IN BOTH DIRECTIONS -- a preference that could
-  // only ever open a fold would make "I closed this" unexpressible on a fresh
-  // domain, which is the state where the default is most likely to be wrong.
-  const closedOnFresh = renderCard({
-    domains: [{ slug: 'alpha', displayName: 'Alpha', pageCount: 0, lastIngestDate: null,
-      pageCounts: { entities: 0, concepts: 0, summaries: 0, other: 0 } }],
-    sectionPrefs: { sources: false },
-  });
-  eq('a remembered CLOSED beats the fresh-domain default',
-    foldOpen(closedOnFresh, 'dm-sources-fold'), false);
-  const openOnMature = renderCard({ sectionPrefs: { sources: true, shared: true } });
-  eq('...and a remembered OPEN beats the mature-domain default',
-    foldOpen(openOnMature, 'dm-sources-fold'), true);
-  eq('...for the Shared Brain fold too', foldOpen(openOnMature, 'dm-shared-fold'), true);
-  // ── THE PREFERENCE IS INSTALL-WIDE (v3.64.1) ──────────────────────────
-  // REPORTED FROM PRODUCTION on the day v3.64.0 shipped: the maintainer
-  // opened INGEST, switched domain, and found it shut again. v3.64.0 kept one
-  // row per domain, which is not a preference — it is twelve of them, and a
-  // person who wants the drop zone in front of them wants it in front of them
-  // everywhere. This assertion is the reversal of the one that stood here,
-  // and it is the whole of the fix: the SAME record answers for a domain the
-  // user has never opened this page for.
+  // A STORED `sources` FROM v3.64.x–v3.65.1 CANNOT HIDE ①. Driven with the
+  // value that used to shut it on a fresh domain AND on a mature one.
+  for (const [what, domains] of [
+    ['a fresh domain', [{ slug: 'alpha', displayName: 'Alpha', pageCount: 0, lastIngestDate: null,
+      pageCounts: { entities: 0, concepts: 0, summaries: 0, other: 0 } }]],
+    ['a mature domain', undefined]]) {
+    const html = renderCard(domains ? { domains, sectionPrefs: { sources: false } }
+                                    : { sectionPrefs: { sources: false } });
+    ok('a stored `sources: false` does not hide ① on ' + what, hostPresent(html));
+  }
+  // ④ IS UNCHANGED: the remembered choice still wins, and it is install-wide.
+  const openShared = renderCard({ sectionPrefs: { shared: true } });
+  eq('a remembered OPEN still opens Shared Brain', foldOpen(openShared, 'dm-shared-fold'), true);
   const anyDomain = renderCard({
     domains: [{ slug: 'beta', displayName: 'Beta', pageCount: 9, lastIngestDate: '2026-09-02',
       pageCounts: { entities: 3, concepts: 3, summaries: 3, other: 0 } }],
     activeSlug: 'beta',
     browse: { slug: 'beta', loading: false, error: null, filter: '', folder: 'all', lens: 'wiki',
       truncated: false, memory: [], entries: [ENTRY()] },
-    sectionPrefs: { sources: true, shared: true },
+    sectionPrefs: { shared: true },
   });
-  eq('the choice travels to a domain this page has never been opened for',
-    foldOpen(anyDomain, 'dm-sources-fold'), true);
-  eq('...for the Shared Brain fold too', foldOpen(anyDomain, 'dm-shared-fold'), true);
-  // ...AND THE DEFAULT IS STILL DERIVED WHEN NOTHING WAS EVER CHOSEN. The
-  // install-wide preference did NOT become an install-wide default: a domain
-  // with nothing under this section still opens it.
-  const neverChosen = renderCard({
-    domains: [{ slug: 'alpha', displayName: 'Alpha', pageCount: 0, lastIngestDate: null,
-      pageCounts: { entities: 0, concepts: 0, summaries: 0, other: 0 } }],
-    sectionPrefs: {},
-  });
-  eq('with nothing remembered the fresh-domain default still applies',
-    foldOpen(neverChosen, 'dm-sources-fold'), true);
+  eq('...and the choice travels to a domain this page has never been opened for',
+    foldOpen(anyDomain, 'dm-shared-fold'), true);
   // A HOSTILE OR BROKEN RECORD DEGRADES TO THE DEFAULT, never to a throw.
   const junk = callOrFail('a junk preference record still renders',
-    () => renderCard({ sectionPrefs: { sources: 'yes-please' } }));
-  if (junk) eq('...and takes the designed default', foldOpen(junk, 'dm-sources-fold'), false);
+    () => renderCard({ sectionPrefs: { sources: 'yes-please', shared: 'no' } }));
+  if (junk) {
+    ok('...with ① on the page', hostPresent(junk));
+    eq('...and Shared Brain at its closed default', foldOpen(junk, 'dm-shared-fold'), false);
+  }
 }
 {
   // The key is read and written through ONE name, and the literal duplicated
@@ -616,19 +639,25 @@ const foldOpen = (html, id) => {
   // preference stopped being per domain. The old per-domain file is still
   // READ, and folded rather than discarded: a release that makes a preference
   // stick must not begin by forgetting it.
-  prefsBox.__set(JSON.stringify({ '*': { sources: true, shared: false, lens: 'context' } }));
+  prefsBox.__set(JSON.stringify({ '*': { shared: false, lens: 'context' } }));
   eq('a well-formed record round-trips',
     JSON.stringify(prefsBox.readSectionPrefs()),
-    JSON.stringify({ sources: true, shared: false, lens: 'context' }));
+    JSON.stringify({ shared: false, lens: 'context' }));
+  // ── `sources` IS RETIRED ON READ (v3.65.2, I1) ────────────────────────
+  // ① is not a fold, so a stored value from an older copy is dropped here
+  // and falls out of the file on the next write — never consulted.
+  prefsBox.__set(JSON.stringify({ '*': { sources: true, shared: true, lens: 'all' } }));
+  eq('a stored `sources` from an older copy is DROPPED, its siblings kept',
+    JSON.stringify(prefsBox.readSectionPrefs()), JSON.stringify({ shared: true, lens: 'all' }));
   prefsBox.__set(JSON.stringify({ '*': { lens: 'everything' } }));
   eq('a lens this view does not understand is DROPPED, not carried',
     JSON.stringify(prefsBox.readSectionPrefs()), '{}');
-  prefsBox.__set(JSON.stringify({ '*': { sources: 'yes' } }));
+  prefsBox.__set(JSON.stringify({ '*': { shared: 'yes' } }));
   eq('a fold flag that is not a boolean is dropped too',
     JSON.stringify(prefsBox.readSectionPrefs()), '{}');
-  prefsBox.__set(JSON.stringify({ '*': { sources: true, evil: '<script>' } }));
+  prefsBox.__set(JSON.stringify({ '*': { shared: true, evil: '<script>' } }));
   eq('...and an unknown field never survives the read',
-    JSON.stringify(prefsBox.readSectionPrefs()), JSON.stringify({ sources: true }));
+    JSON.stringify(prefsBox.readSectionPrefs()), JSON.stringify({ shared: true }));
   for (const [what, raw] of [['an array', '[1,2,3]'], ['a string', '"nope"'],
                              ['a number', '7'], ['broken JSON', '{{{'], ['nothing', null]]) {
     eq('CONTROL -- ' + what + ' degrades to no memory at all',
@@ -646,7 +675,7 @@ const foldOpen = (html, id) => {
   // below.
   {
     const noConst = new Function(`
-      const localStorage = { getItem: () => '{"alpha":{"sources":true}}' };
+      const localStorage = { getItem: () => '{"alpha":{"shared":true}}' };
       ${extractFunction(SRC, 'readSectionPrefs')}
       return readSectionPrefs;
     `)();
@@ -680,7 +709,10 @@ const foldOpen = (html, id) => {
   }));
   eq('a v3.64.0 per-domain file is FOLDED into one row, last value per field',
     JSON.stringify(prefsBox.readSectionPrefs()),
-    JSON.stringify({ sources: false, lens: 'all', shared: true }));
+    JSON.stringify({ lens: 'all', shared: true }));
+  // (v3.65.2: the rows above also carry `sources`, and it is dropped from the
+  // fold exactly as it is from a one-row file — the retired field survives no
+  // shape of the read.)
   eq('CONTROL -- a field NO row names is simply absent, never invented',
     (prefsBox.__set(JSON.stringify({ alpha: { lens: 'context' }, beta: { lens: 'wiki' } })),
       JSON.stringify(prefsBox.readSectionPrefs())), JSON.stringify({ lens: 'wiki' }));
@@ -714,7 +746,7 @@ const foldOpen = (html, id) => {
   {
     const rig = new Function(`
       let stored = null;
-      let state = { sectionPrefs: { sources: true, shared: false, lens: 'context' } };
+      let state = { sectionPrefs: { shared: false, lens: 'context' } };
       const localStorage = { getItem: () => stored, setItem: (k, v) => { stored = v; } };
       ${extractConstText(SRC, 'SECTION_PREFS_KEY')}
       ${extractConstText(SRC, 'SECTION_PREFS_ROW')}
@@ -730,13 +762,13 @@ const foldOpen = (html, id) => {
     `)();
     rig.writeSectionPrefs();
     const viaHelper = rig.__stored();
-    rig.__facetWrite({ sources: true, shared: false, lens: 'context' });
+    rig.__facetWrite({ shared: false, lens: 'context' });
     eq('the helper and the lifted literal write the SAME bytes', rig.__stored(), viaHelper);
     ok('...and the file really is one row under the row key',
       /^\{"\*":\{/.test(String(viaHelper)), String(viaHelper));
     eq('...which the read understands, round trip',
       JSON.stringify(rig.readSectionPrefs()),
-      JSON.stringify({ sources: true, shared: false, lens: 'context' }));
+      JSON.stringify({ shared: false, lens: 'context' }));
   }
 }
 
@@ -945,8 +977,18 @@ function makeDom() {
       // `<summary>` and carries the derived `open` across — so the model has
       // to have the two properties a real `<details>` has and has to know its
       // own children before anything asks for them.
-      get open() { return Object.hasOwn(this.attrs, 'open'); },
-      set open(v) { if (v) this.attrs.open = ''; else delete this.attrs.open; },
+      // ONLY A <details> HAS `open`, as in a real DOM (v3.65.2): on any other
+      // element the property is `undefined` until something assigns an
+      // expando. ① became a `<section>`, and a model that answered `false`
+      // there would hide the phantom-echo defect the patch now guards.
+      get open() {
+        if (this.tagName !== 'DETAILS') return this.__openExpando;
+        return Object.hasOwn(this.attrs, 'open');
+      },
+      set open(v) {
+        if (this.tagName !== 'DETAILS') { this.__openExpando = v; return; }
+        if (v) this.attrs.open = ''; else delete this.attrs.open;
+      },
       hasAttribute(n) { return Object.hasOwn(this.attrs, n); },
       get outerHTML() {
         const a = Object.entries(this.attrs).map(([k, v]) => ' ' + k + '="' + v + '"').join('');
@@ -1068,16 +1110,31 @@ function mountColumn(html) {
 const COLUMN2 = (overviewLabel, healthLabel) =>
   '<div class="dm-path-eyebrow">domains/alpha/</div>' +
   '<section class="dm-overview"><div class="dm-stats-grid">' + overviewLabel + '</div></section>' +
-  '<details class="dm-section dm-fold dm-sources" id="dm-sources-fold"><summary class="dm-fold-summary"><span class="dm-section-num">1</span><span class="dm-fold-title">INGEST</span><span class="dm-fold-meta">last ingest 3 days ago</span></summary><div id="dm-sources-host"></div></details>' +
+  // v3.65.2: ① is a head block (an ordinary child carrying the reading) and
+  // a `<section>` host — never a `<details>`. ④ is still a fold.
+  '<div class="dm-section dm-section-hd-block dm-sources-hd"><span class="dm-fold-meta dm-section-meta">last ingest 3 days ago</span></div>' +
+  '<section class="dm-fold dm-sources" id="dm-sources-fold"><div class="dm-fold-body"><div id="dm-sources-host"></div></div></section>' +
   '<section class="dm-pages"><div class="dm-browse-card"></div></section>' +
   '<section class="dm-projects"></section>' +
   '<details class="dm-section dm-fold dm-shared" id="dm-shared-fold"><summary class="dm-fold-summary"><span class="dm-section-num">4</span><span class="dm-fold-title">SHARED BRAIN</span></summary><div id="dm-shared-host"></div></details>' +
   '<section class="dm-health">' + healthLabel + '</section>';
 
+// THE LIVE HOST HOLDS THE PANEL'S MARKUP (v3.65.2). In the browser the ingest
+// panel has written its form into `#dm-sources-host` long before any repaint,
+// so the live ① section can NEVER be byte-equal to the freshly composed one
+// (whose host is empty). A fixture whose live host is empty too makes an
+// outerHTML comparison look safe — found by mutation: with ① dropped from the
+// patch's hosted check, every assertion below stayed green.
+const LIVE = (html) => html.replace('<div id="dm-sources-host"></div>',
+  '<div id="dm-sources-host"><div class="ing-drop-zone" id="ing-drop-zone"></div></div>');
+
 const COLUMN = (healthLabel) =>
   '<div class="dm-path-eyebrow">domains/alpha/</div>' +
   '<section class="dm-overview"><div class="dm-stats-grid"></div></section>' +
-  '<details class="dm-section dm-fold dm-sources" id="dm-sources-fold"><summary class="dm-fold-summary"><span class="dm-section-num">1</span><span class="dm-fold-title">INGEST</span><span class="dm-fold-meta">last ingest 3 days ago</span></summary><div id="dm-sources-host"></div></details>' +
+  // v3.65.2: ① is a head block (an ordinary child carrying the reading) and
+  // a `<section>` host — never a `<details>`. ④ is still a fold.
+  '<div class="dm-section dm-section-hd-block dm-sources-hd"><span class="dm-fold-meta dm-section-meta">last ingest 3 days ago</span></div>' +
+  '<section class="dm-fold dm-sources" id="dm-sources-fold"><div class="dm-fold-body"><div id="dm-sources-host"></div></div></section>' +
   '<section class="dm-pages"><div class="dm-browse-card"></div></section>' +
   '<section class="dm-projects"></section>' +
   '<details class="dm-section dm-fold dm-shared" id="dm-shared-fold"><summary class="dm-fold-summary"><span class="dm-section-num">4</span><span class="dm-fold-title">SHARED BRAIN</span></summary><div id="dm-shared-host"></div></details>' +
@@ -1085,19 +1142,19 @@ const COLUMN = (healthLabel) =>
 
 {
   // ── THE RULE. A health revalidation returns WHILE A DRAG IS IN PROGRESS.
-  const { inner } = mountColumn(COLUMN('scanning'));
-  const hostBefore = inner.children[2];
-  const healthBefore = inner.children[6];
+  const { inner } = mountColumn(LIVE(COLUMN('scanning')));
+  const hostBefore = inner.children[3];
+  const healthBefore = inner.children[7];
   patchBox.__reset();
   patchBox.__setBusy(true);
   patchBox.setMain(COLUMN('3 issues'), 1);
   eq('while a panel is busy the shell setMain is NOT called', patchBox.__calls().shellSetMain, 0);
   ok('THE DROP TARGET SURVIVES: the host section is the SAME NODE OBJECT',
-    inner.children[2] === hostBefore, 'node ' + inner.children[2].__id + ' vs ' + hostBefore.__id);
-  ok('...and so is the Shared Brain host', inner.children[5].attrs.id === 'dm-shared-fold');
+    inner.children[3] === hostBefore, 'node ' + inner.children[3].__id + ' vs ' + hostBefore.__id);
+  ok('...and so is the Shared Brain host', inner.children[6].attrs.id === 'dm-shared-fold');
   ok('the section that actually changed WAS repainted -- the quiesce patches, it does not skip',
-    inner.children[6] !== healthBefore && /3 issues/.test(inner.children[6].outerHTML),
-    inner.children[6].outerHTML);
+    inner.children[7] !== healthBefore && /3 issues/.test(inner.children[7].outerHTML),
+    inner.children[7].outerHTML);
   ok('...and an UNCHANGED sibling is left alone, so a patch is not a full rebuild in disguise',
     inner.children[1].outerHTML.includes('dm-stats-grid'));
   ok('the panels are re-consulted after every paint', patchBox.__calls().mounted.length === 1);
@@ -1114,24 +1171,24 @@ const COLUMN = (healthLabel) =>
   // with a drag held over the drop zone, which is the exact v3.46.0 defect
   // this rule exists to prevent. Measured in the browser by pressing an
   // OVERVIEW figure mid-drag: 3 full repaints and the drop target replaced.
-  const { inner } = mountColumn(COLUMN2('PAGES 100', 'scanning'));
-  const srcBefore = inner.children[2];
-  const shBefore = inner.children[5];
-  const healthBefore = inner.children[6];
+  const { inner } = mountColumn(LIVE(COLUMN2('PAGES 100', 'scanning')));
+  const srcBefore = inner.children[3];
+  const shBefore = inner.children[6];
+  const healthBefore = inner.children[7];
   patchBox.__reset();
   patchBox.__setBusy(true);
   patchBox.setMain(COLUMN2('PAGES 101', '3 issues'), 1);
   eq('an early section changing does not force a full repaint', patchBox.__calls().shellSetMain, 0);
   ok('...the INGEST host is still the same node object',
-    inner.children[2] === srcBefore, 'moved to ' + inner.children.indexOf(srcBefore));
-  ok('...and so is the SHARED BRAIN host', inner.children[5] === shBefore);
+    inner.children[3] === srcBefore, 'moved to ' + inner.children.indexOf(srcBefore));
+  ok('...and so is the SHARED BRAIN host', inner.children[6] === shBefore);
   ok('the early section really was repainted', /PAGES 101/.test(inner.children[1].outerHTML),
     inner.children[1].outerHTML);
   ok('...and the late one too, at its own index rather than one along',
-    inner.children[6] !== healthBefore && /3 issues/.test(inner.children[6].outerHTML),
-    inner.children[6].outerHTML);
-  ok('...and nothing landed in the wrong slot', inner.children.length === 7
-    && inner.children[2].id === 'dm-sources-fold' && inner.children[5].id === 'dm-shared-fold',
+    inner.children[7] !== healthBefore && /3 issues/.test(inner.children[7].outerHTML),
+    inner.children[7].outerHTML);
+  ok('...and nothing landed in the wrong slot', inner.children.length === 8
+    && inner.children[3].id === 'dm-sources-fold' && inner.children[6].id === 'dm-shared-fold',
     inner.children.map((c) => c.id || c.tagName).join(','));
 }
 {
@@ -1147,88 +1204,92 @@ const COLUMN = (healthLabel) =>
   // every list back to the top, which is the "switching domains flickers,
   // pages and other data visibly repaint" the maintainer reported. The data
   // was already right; it was being redrawn three more times than it moved.
-  const { inner } = mountColumn(COLUMN('scanning'));
-  const hostBefore = inner.children[2];
-  const pagesBefore = inner.children[3];
-  const healthBefore = inner.children[6];
+  const { inner } = mountColumn(LIVE(COLUMN('scanning')));
+  const hostBefore = inner.children[3];
+  const pagesBefore = inner.children[4];
+  const healthBefore = inner.children[7];
   patchBox.__reset();
   patchBox.__setBusy(false);
   patchBox.setMain(COLUMN('3 issues'), 1);
   eq('with nothing busy the paint is STILL a patch, not a column replacement',
     patchBox.__calls().shellSetMain, 0);
-  ok('the section that changed was replaced', inner.children[6] !== healthBefore
-    && /3 issues/.test(inner.children[6].outerHTML), inner.children[6].outerHTML);
+  ok('the section that changed was replaced', inner.children[7] !== healthBefore
+    && /3 issues/.test(inner.children[7].outerHTML), inner.children[7].outerHTML);
   ok('...and every section that did NOT change kept its node object — which is '
-    + 'the whole of the flicker fix', inner.children[3] === pagesBefore, 'pages moved');
+    + 'the whole of the flicker fix', inner.children[4] === pagesBefore, 'pages moved');
   ok('...including the two hosted folds, which are ordinary children when idle',
-    inner.children[2] === hostBefore);
+    inner.children[3] === hostBefore);
 }
 {
-  // ── AN IDLE FOLD IS AN ORDINARY CHILD, AND THAT IS LOAD-BEARING ────────
-  // Skipping the two folds unconditionally was right while the patch only ran
-  // under a drag. Run on every paint it would FREEZE them: the INGEST
-  // summary's "last ingest 3 days ago" belongs to the domain being left, and
-  // a domain switch would leave it there for good.
+  // ── ①'S READING CANNOT GO STALE, AND ITS HOST CANNOT MOVE (v3.65.2) ────
+  // The reading ("last ingest 3 days ago") left the fold's summary for ①'s
+  // HEAD BLOCK, an ordinary child — so a domain switch patches it like any
+  // other section, while the `<section>` host beside it is never replaced,
+  // idle or busy, because its body belongs to the panel.
   const withMeta = (meta) => COLUMN('scanning')
     .replace('last ingest 3 days ago', meta);
-  const { inner } = mountColumn(withMeta('last ingest 3 days ago'));
-  const srcBefore = inner.children[2];
-  const hostBefore = srcBefore.children[1];
+  const { inner } = mountColumn(LIVE(withMeta('last ingest 3 days ago')));
+  const hdBefore = inner.children[2];
+  const srcBefore = inner.children[3];
+  const hostBefore = srcBefore.children[0].children[0];
   patchBox.__reset();
+  patchBox.__echoes().length = 0;
   patchBox.__setBusy(false);
   patchBox.setMain(withMeta('nothing ingested yet'), 1);
-  ok('CONTROL -- the two columns really differ, and only inside the INGEST fold',
+  ok('CONTROL -- the two columns really differ, and only in ①\'s head',
     withMeta('a') !== withMeta('b'));
-  ok('the fold NODE survives even while idle — its body belongs to the panel',
-    inner.children[2] === srcBefore, 'the fold was replaced');
+  ok('the head block is REPLACED, so the reading follows the domain',
+    inner.children[2] !== hdBefore && /nothing ingested yet/.test(inner.children[2].outerHTML),
+    inner.children[2].outerHTML);
+  ok('the ① section NODE survives even while idle — its body belongs to the panel',
+    inner.children[3] === srcBefore, 'the section was replaced');
   ok('...and so does the host the panel is mounted into',
-    inner.children[2].children[1] === hostBefore);
-  ok('but its SUMMARY is patched, so the meta cannot go stale across a switch',
-    /nothing ingested yet/.test(inner.children[2].outerHTML), inner.children[2].outerHTML);
+    inner.children[3].children[0].children[0] === hostBefore);
   eq('...without a full column replacement', patchBox.__calls().shellSetMain, 0);
+  // ── NO PHANTOM ECHO FROM A <section> ─────────────────────────────────
+  // A `<section>`'s `open` is `undefined` in a real DOM, never equal to
+  // `hasAttribute('open')`'s `false`. Without the patch's DETAILS check,
+  // EVERY idle paint pushed a 'sources' echo and set an expando — the queue
+  // grows by one per paint for ever.
+  eq('an idle paint over ① queues NO echo', patchBox.__echoes().length, 0);
+  eq('...and writes no `open` onto the section', inner.children[3].open, undefined);
+  patchBox.setMain(withMeta('last ingest 1 day ago'), 1);
+  patchBox.setMain(withMeta('last ingest 2 days ago'), 1);
+  eq('...however many paints follow', patchBox.__echoes().length, 0);
 }
 {
-  // ── THE DERIVED DEFAULT TRAVELS, AND IS NOT RECORDED AS A CHOICE ───────
-  //
-  // With a stored preference the two trees always agree about `open`, so this
-  // does nothing. With NONE, the incoming value is the DERIVED default —
-  // INGEST opens on a domain that has never been ingested into — and a switch
-  // from a mature domain to a fresh one has to carry it across. A `<details>`
-  // fires `toggle` for an attribute change exactly as it does for a click, so
-  // the write goes through the echo queue: without it this page would record
-  // its own derived default as the user's explicit choice, which is the shape
-  // of the self-reopening fold found on the Context view the same day.
+  // ── THE OPEN CARRY IS SHARED BRAIN'S ALONE NOW ─────────────────────────
+  // ④ is still a `<details>`: when the incoming paint's `open` differs from
+  // the live fold's, the patch carries it across on the SAME node and queues
+  // exactly one echo so the toggle listener does not record it as a click.
   const shut = COLUMN('scanning');
-  const open = shut.replace('id="dm-sources-fold"', 'id="dm-sources-fold" open');
+  const open = shut.replace('id="dm-shared-fold"', 'id="dm-shared-fold" open');
   const { inner } = mountColumn(shut);
-  const srcBefore = inner.children[2];
+  const shBefore = inner.children[6];
   patchBox.__echoes().length = 0;
   patchBox.__reset();
   patchBox.__setBusy(false);
-  eq('CONTROL -- the live fold starts closed', srcBefore.open, false);
+  eq('CONTROL -- the live fold starts closed', shBefore.open, false);
   patchBox.setMain(open, 1);
-  eq('a derived OPEN is carried onto the live fold', inner.children[2].open, true);
-  ok('...on the same node, so the panel is not remounted', inner.children[2] === srcBefore);
+  eq('an incoming OPEN is carried onto the live fold', inner.children[6].open, true);
+  ok('...on the same node, so the panel is not remounted', inner.children[6] === shBefore);
   eq('...and exactly one echo is queued for the listener to swallow',
-    patchBox.__echoes().join(','), 'sources');
-  // AND THE OTHER DIRECTION, so this is not a one-way carry.
+    patchBox.__echoes().join(','), 'shared');
   patchBox.__echoes().length = 0;
   patchBox.setMain(shut, 1);
-  eq('a derived CLOSED is carried too', inner.children[2].open, false);
-  eq('...with its own echo', patchBox.__echoes().join(','), 'sources');
-  // NOTHING IS QUEUED WHEN NOTHING MOVED — a queue that filled up on every
-  // paint would eventually swallow a real click.
+  eq('a CLOSED is carried too', inner.children[6].open, false);
+  eq('...with its own echo', patchBox.__echoes().join(','), 'shared');
   patchBox.__echoes().length = 0;
   patchBox.setMain(shut, 1);
   eq('an unchanged fold queues no echo at all', patchBox.__echoes().length, 0);
   // AND A BUSY PANEL'S FOLD IS NOT TOUCHED EVEN FOR THIS.
-  patchBox.__setBusy(true);
+  patchBox.__setSharedBusy(true);
   patchBox.__echoes().length = 0;
   patchBox.setMain(open, 1);
   eq('a busy panel\'s fold keeps its open state and queues nothing',
-    inner.children[2].open, false);
+    inner.children[6].open, false);
   eq('...and nothing was queued', patchBox.__echoes().length, 0);
-  patchBox.__setBusy(false);
+  patchBox.__setSharedBusy(false);
 }
 {
   // ── THE SHAPE MOVED. A knowledge notice appears, a branch changes, the
@@ -1262,7 +1323,7 @@ const COLUMN = (healthLabel) =>
   // drag, which is why the host consults BOTH predicates rather than the
   // dramatic one.
   const { inner } = mountColumn(COLUMN('scanning'));
-  const sharedHostBefore = inner.children[5];
+  const sharedHostBefore = inner.children[6];
   patchBox.__reset();
   patchBox.__setBusy(false);
   patchBox.__setSharedBusy(true);
@@ -1270,7 +1331,7 @@ const COLUMN = (healthLabel) =>
   eq('a busy Shared Brain panel quiesces the page on its own',
     patchBox.__calls().shellSetMain, 0);
   ok('...and its host survives as the same node object',
-    inner.children[5] === sharedHostBefore);
+    inner.children[6] === sharedHostBefore);
   patchBox.__setSharedBusy(false);
 }
 {
@@ -1298,7 +1359,7 @@ const COLUMN = (healthLabel) =>
   patchBox.__setBusy(true);
   patchBox.setMain(COLUMN('3 issues'), 99);
   eq('a paint from an abandoned mount writes nothing', patchBox.__calls().shellSetMain, 0);
-  ok('...and leaves the live column untouched', /scanning/.test(inner.children[6].outerHTML));
+  ok('...and leaves the live column untouched', /scanning/.test(inner.children[7].outerHTML));
 }
 {
   // ── A PANEL THAT THROWS FROM ITS OWN PREDICATE MUST NOT TAKE THE PAGE
@@ -1327,7 +1388,10 @@ section('S5b -- MOUNT, RE-POINT, TAKE DOWN: what each panel is actually told');
 function foldDom() {
   const els = {};
   const mk = (id, open) => ({
-    id, open: !!open, dataset: { dmFold: id === 'dm-sources-fold' ? 'sources' : 'shared' },
+    // ① carries NO `data-dm-fold` since v3.65.2 (it is not a fold), so its
+    // dataset is empty and `[data-dm-fold]` never returns it — exactly as the
+    // real markup. Its `open` is kept only so a test can prove it is ignored.
+    id, open: !!open, dataset: id === 'dm-sources-fold' ? {} : { dmFold: 'shared' },
     listeners: [], addEventListener(_e, fn) { this.listeners.push(fn); },
     fire() { for (const fn of this.listeners.slice()) fn(); },
   });
@@ -1344,7 +1408,7 @@ const MOUNT_PREAMBLE = `
 let state = { activeSlug: 'alpha', sectionPrefs: {} };
 let myMountToken = 1;
 let ingestBusy = false, sharedBusy = false;
-const calls = { mountIngest: [], unmountIngest: 0, mountShared: [], unmountShared: 0, written: 0 };
+const calls = { mountIngest: [], unmountIngest: 0, mountShared: [], unmountShared: 0, written: 0, landed: [] };
 let document = null;
 const shell = { };
 function ingestSectionBusy() { return ingestBusy; }
@@ -1357,6 +1421,10 @@ function onHostedBusyChange() {}
 function onSharedLensChange() {}
 function writeSectionPrefs() { calls.written++; }
 function scrollSectionIntoView() {}
+// v3.65.2: ① is LANDED on, never opened — recorded so the deep link and the
+// SOURCES jump can be asserted to land and to write no preference. The REAL
+// landOnSection is driven on its own in S5b.
+function landOnSection(sel, id) { calls.landed.push([sel, id]); }
 // THE ECHO QUEUE (v3.64.1). \`bindSectionFolds\`'s listener drains it to tell a
 // toggle THIS PAGE caused from one the user caused; injected empty here so a
 // real click is never mistaken for an echo.
@@ -1382,7 +1450,7 @@ const mountBox = new Function(
      __setShell: (k, v) => { shell[k] = v; },
      __setBusy: (i, sh) => { ingestBusy = i; sharedBusy = sh; },
      __reset: () => { calls.mountIngest.length = 0; calls.mountShared.length = 0;
-       calls.unmountIngest = 0; calls.unmountShared = 0; calls.written = 0; } };`
+       calls.unmountIngest = 0; calls.unmountShared = 0; calls.written = 0; calls.landed.length = 0; } };`
 )();
 
 function stage(sourcesOpen, sharedOpen, ids) {
@@ -1398,16 +1466,21 @@ function stage(sourcesOpen, sharedOpen, ids) {
   return { doc, src, sh };
 }
 {
+  // ── ① MOUNTS WHENEVER ITS SECTION EXISTS (v3.65.2, I1) ─────────────────
+  // It is not a fold, so there is no closed state to honour: even an element
+  // whose `open` is false (the shape a stale reading would take) mounts.
   mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
   mountBox.__reset();
   stage(false, false);
   mountBox.mountHostedSections(1);
-  eq('a CLOSED fold mounts nothing -- a panel behind a chevron costs three fetches',
-    mountBox.__calls().mountIngest.length + mountBox.__calls().mountShared.length, 0);
+  eq('① mounts its panel with no `open` anywhere — there is no fold to open',
+    mountBox.__calls().mountIngest.length, 1);
+  eq('...while a CLOSED Shared Brain fold still mounts nothing',
+    mountBox.__calls().mountShared.length, 0);
   const st = stage(true, true);
   mountBox.__reset();
   mountBox.mountHostedSections(1);
-  eq('an OPEN INGEST fold mounts the panel once', mountBox.__calls().mountIngest.length, 1);
+  eq('a new ① element is a real remount', mountBox.__calls().mountIngest.length, 1);
   eq('...pointed at the domain on screen', mountBox.__calls().mountIngest[0].domain, 'alpha');
   eq('an OPEN SHARED fold mounts its panel too', mountBox.__calls().mountShared.length, 1);
   // IDEMPOTENT: setMain runs this after EVERY paint, and this page repaints on
@@ -1431,11 +1504,8 @@ function stage(sourcesOpen, sharedOpen, ids) {
     st.src === mountBox.__calls().mountIngest[0].el || true);
 }
 {
-  // CLOSING A FOLD TAKES ITS PANEL DOWN -- the same contract as leaving the
-  // view. A live batch is server-backed and is re-adopted, paused, on the
-  // next open; leaving it mounted inside a closed fold would leave the panel
-  // painting into a node the next repaint detaches, and its busy predicate
-  // would quiesce this page for the life of the mount.
+  // CLOSING SHARED BRAIN TAKES ITS PANEL DOWN -- the same contract as leaving
+  // the view. ① cannot be closed, so flipping its `open` does nothing.
   mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
   const a = stage(true, true);
   mountBox.__reset();
@@ -1444,29 +1514,26 @@ function stage(sourcesOpen, sharedOpen, ids) {
   a.sh.open = false;
   mountBox.__reset();
   mountBox.mountHostedSections(1);
-  eq('closing INGEST unmounts its panel', mountBox.__calls().unmountIngest, 1);
+  eq('① stays mounted whatever its element\'s `open` reads', mountBox.__calls().unmountIngest, 0);
   eq('closing SHARED BRAIN unmounts its panel', mountBox.__calls().unmountShared, 1);
 }
 {
   // ...UNLESS THE PANEL IS BUSY. A fold can only be closed by a click, and a
-  // busy panel is one holding something a click should not destroy -- a
-  // shown-once admin token, a drag, an attached stream. The rebuild that runs
-  // when the panel goes idle collects it.
+  // busy panel is one holding something a click should not destroy.
   mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
   const b = stage(true, true);
   mountBox.__reset();
   mountBox.mountHostedSections(1);
-  b.src.open = false;
   b.sh.open = false;
   mountBox.__setBusy(true, true);
   mountBox.__reset();
   mountBox.mountHostedSections(1);
-  eq('a BUSY Ingest panel is not taken down by closing its fold', mountBox.__calls().unmountIngest, 0);
-  eq('...nor a busy Shared Brain panel', mountBox.__calls().unmountShared, 0);
+  eq('a busy Shared Brain panel is not taken down by closing its fold', mountBox.__calls().unmountShared, 0);
+  eq('...and a busy Ingest panel is certainly not', mountBox.__calls().unmountIngest, 0);
   mountBox.__setBusy(false, false);
 }
 {
-  // A `shared-*` MIRROR renders no INGEST fold at all, so anything standing
+  // A `shared-*` MIRROR renders no INGEST section at all, so anything standing
   // comes down -- the host cannot leave a panel pointed at a destination the
   // ingest view refuses.
   mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
@@ -1484,29 +1551,45 @@ function stage(sourcesOpen, sharedOpen, ids) {
   eq('...and mounts nothing in its place', mountBox.__calls().mountIngest.length, 0);
 }
 {
-  // ── THE ONBOARDING DEEP LINK. Read through the namespace import, because
-  // the producer lands in another package: a static named import of an
-  // export that does not exist is a HARD module-load error in ESM and takes
-  // the whole shell to a blank page.
+  // ── THE ONBOARDING DEEP LINK LANDS ON ① (v3.65.2) ──────────────────────
+  // Read through the namespace import, because the producer lands in another
+  // package. ① is always open, so the request no longer OPENS anything: it
+  // LANDS — the head scrolled into view, focus on the title — and writes no
+  // preference.
   mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
-  const c = stage(false, false);
+  stage(false, false);
   mountBox.__setShell('ADD_SOURCES_FOLD', 'add-sources');
   let asked = 'add-sources';
   mountBox.__setShell('consumeDomainFoldRequest', () => { const v = asked; asked = null; return v; });
   mountBox.__reset();
   mountBox.mountHostedSections(1);
-  eq('a fold request OPENS the INGEST fold', c.src.open, true);
+  eq('a fold request LANDS on ① — once', mountBox.__calls().landed.length, 1);
+  eq('...on its head block and its title',
+    JSON.stringify(mountBox.__calls().landed[0]), JSON.stringify(['.dm-sources-hd', 'dm-sources-title']));
   eq('...mounts the panel in the same pass', mountBox.__calls().mountIngest.length, 1);
-  eq('...and remembers it INSTALL-WIDE, so a reload lands the same way on any domain',
-    mountBox.__state().sectionPrefs.sources, true);
-  // CONSUMED ONCE. A request that survived would re-open a fold the user has
-  // since closed, on every paint.
-  c.src.open = false;
+  eq('...and writes NO preference — there is none to write',
+    mountBox.__calls().written + (mountBox.__state().sectionPrefs.sources === undefined ? 0 : 1), 0);
+  // CONSUMED ONCE. A request that survived would yank the reader back to ①
+  // on every paint.
   mountBox.__reset();
   mountBox.mountHostedSections(1);
-  eq('the request is consumed on read', c.src.open, false);
-  // A SHELL THAT DOES NOT EXPORT IT YET IS NOT AN ERROR -- the degradation
-  // contract is "it can fail to help; it cannot break anything".
+  eq('the request is consumed on read — the next paint lands nowhere', mountBox.__calls().landed.length, 0);
+  // NOT CONSUMED BEFORE ① EXISTS: a loading-branch paint has no section, and
+  // eating the request there would lose it.
+  {
+    let pending = 'add-sources';
+    mountBox.__setShell('consumeDomainFoldRequest', () => { const v = pending; pending = null; return v; });
+    const { doc } = foldDom();
+    mountBox.__setDocument(doc);
+    mountBox.__reset();
+    mountBox.mountHostedSections(1);
+    eq('a paint with no ① leaves the request pending', pending, 'add-sources');
+    stage(false, false);
+    mountBox.__reset();
+    mountBox.mountHostedSections(1);
+    eq('...and the first paint that has ① lands on it', mountBox.__calls().landed.length, 1);
+  }
+  // A SHELL THAT DOES NOT EXPORT IT YET IS NOT AN ERROR.
   mountBox.__setShell('consumeDomainFoldRequest', undefined);
   ok('a shell with no fold-request export still mounts normally',
     callOrFail('mountHostedSections with no consumer', () => {
@@ -1514,113 +1597,130 @@ function stage(sourcesOpen, sharedOpen, ids) {
     }) === true);
   // AN UNKNOWN FOLD ID IS A SILENT NO-OP, not a guess at which fold was meant.
   mountBox.__setShell('consumeDomainFoldRequest', () => 'some-other-fold');
-  const d = stage(false, false);
+  stage(false, false);
+  mountBox.__reset();
   mountBox.mountHostedSections(1);
-  eq('a fold id this view does not know opens nothing', d.src.open, false);
+  eq('a fold id this view does not know lands nowhere', mountBox.__calls().landed.length, 0);
   mountBox.__setShell('consumeDomainFoldRequest', undefined);
 }
 {
-  // THE FOLD TOGGLE: remembers, persists, and moves the panel -- WITHOUT a
-  // render, because repainting the column here would replace the very
-  // element the press landed on.
+  // THE FOLD TOGGLE — Shared Brain's alone now. It remembers, persists, and
+  // moves the panel WITHOUT a render. ① has no toggle to bind.
   mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
   const e = stage(false, false);
   mountBox.__reset();
   mountBox.mountHostedSections(1);
-  ok('CONTROL -- the fold toggles are bound', e.src.listeners.length === 1, String(e.src.listeners.length));
+  eq('① gets NO toggle listener — it is not a fold', e.src.listeners.length, 0);
+  ok('CONTROL -- the Shared Brain toggle is bound', e.sh.listeners.length === 1, String(e.sh.listeners.length));
   mountBox.__reset();
   mountBox.mountHostedSections(1);
-  eq('...once per element, however many times the page repaints', e.src.listeners.length, 1);
-  e.src.open = true;
-  e.src.fire();
-  eq('opening a fold remembers it', mountBox.__state().sectionPrefs.sources, true);
+  eq('...once per element, however many times the page repaints', e.sh.listeners.length, 1);
+  e.sh.open = true;
+  e.sh.fire();
+  eq('opening a fold remembers it', mountBox.__state().sectionPrefs.shared, true);
   ok('...persists it', mountBox.__calls().written > 0);
-  eq('...and mounts the panel', mountBox.__calls().mountIngest.length, 1);
-  e.src.open = false;
+  eq('...and mounts the panel', mountBox.__calls().mountShared.length, 1);
+  e.sh.open = false;
   mountBox.__reset();
-  e.src.fire();
-  eq('closing it remembers that too', mountBox.__state().sectionPrefs.sources, false);
-  eq('...and takes the panel down', mountBox.__calls().unmountIngest, 1);
+  e.sh.fire();
+  eq('closing it remembers that too', mountBox.__state().sectionPrefs.shared, false);
+  eq('...and takes the panel down', mountBox.__calls().unmountShared, 1);
 
   // ── A TOGGLE THIS PAGE CAUSED ITSELF IS NOT A PREFERENCE (v3.64.1) ────
-  // `patchMainAroundHosts` carries the DERIVED default across a domain switch
-  // by writing `open`, and a `<details>` fires `toggle` for that exactly as it
-  // does for a click. Without the echo queue the page would record its own
-  // default as the user's explicit choice — the shape of the self-reopening
-  // documents fold found on the Context view the same day, one file over.
   mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
   mountBox.__reset();
   mountBox.__echoes().length = 0;
-  mountBox.__echoes().push('sources');
-  e.src.open = true;
-  e.src.fire();
+  mountBox.__echoes().push('shared');
+  e.sh.open = true;
+  e.sh.fire();
   eq('a queued echo writes NO preference at all',
-    mountBox.__state().sectionPrefs.sources, undefined);
+    mountBox.__state().sectionPrefs.shared, undefined);
   eq('...and persists nothing', mountBox.__calls().written, 0);
   eq('...and the entry is consumed, so the NEXT toggle is the user\'s',
     mountBox.__echoes().length, 0);
-  e.src.open = false;
-  e.src.fire();
+  e.sh.open = false;
+  e.sh.fire();
   eq('CONTROL -- the very next toggle IS recorded',
-    mountBox.__state().sectionPrefs.sources, false);
-  // AN ECHO FOR THE OTHER FOLD DOES NOT SWALLOW THIS ONE'S CLICK. A single
+    mountBox.__state().sectionPrefs.shared, false);
+  // AN ECHO FOR ANOTHER KEY DOES NOT SWALLOW THIS FOLD'S CLICK. A single
   // boolean would have; the queue is keyed.
   mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
   mountBox.__echoes().length = 0;
-  mountBox.__echoes().push('shared');
-  e.src.open = true;
-  e.src.fire();
-  eq('an echo queued for the OTHER fold does not swallow this one\'s click',
-    mountBox.__state().sectionPrefs.sources, true);
-  eq('...and leaves the other fold\'s entry where it was',
-    mountBox.__echoes().join(','), 'shared');
+  mountBox.__echoes().push('sources');
+  e.sh.open = true;
+  e.sh.fire();
+  eq('an echo queued under another key does not swallow this fold\'s click',
+    mountBox.__state().sectionPrefs.shared, true);
+  eq('...and leaves the other entry where it was',
+    mountBox.__echoes().join(','), 'sources');
   mountBox.__echoes().length = 0;
 
   // ── THE PAINT'S OWN ECHO IS NOT A PRESS EITHER (v3.64.1) ─────────────
-  // MEASURED IN A BROWSER: a `<details open>` created by an innerHTML
-  // assignment fires `toggle` ONCE, after this listener is attached (the
-  // probe: open 1 event, closed 0). Harmless while the emitted value always
-  // equalled the stored one — and NOT harmless once the preference went
-  // install-wide, because the INGEST fold's DERIVED default would then be
-  // recorded as an explicit choice the first time a never-ingested domain was
-  // opened, and would follow the user onto every other domain.
   {
     mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
-    const g = stage(true, false);
+    const g = stage(false, true);
     mountBox.__reset();
     mountBox.mountHostedSections(1);
-    // The fold is ALREADY open (the derived default), and the paint's echo
-    // arrives with the open state unchanged.
-    g.src.fire();
+    g.sh.fire();
     eq('a toggle that did not change the fold writes NO preference',
-      mountBox.__state().sectionPrefs.sources, undefined);
+      mountBox.__state().sectionPrefs.shared, undefined);
     eq('...and persists nothing', mountBox.__calls().written, 0);
-    // CONTROL: a real press, which always changes it, still records.
-    g.src.open = false;
-    g.src.fire();
+    g.sh.open = false;
+    g.sh.fire();
     eq('CONTROL -- a press that closes it IS recorded',
-      mountBox.__state().sectionPrefs.sources, false);
+      mountBox.__state().sectionPrefs.shared, false);
   }
 }
 {
-  // A JUMP TILE OPENS THE FOLD IT JUMPS TO. A jump that landed on a closed
-  // section would put the reader on a summary line and leave them to find
-  // the disclosure triangle.
+  // A JUMP TILE. SHARED opens the fold it jumps to; SOURCES LANDS on ①,
+  // which has nothing to open (v3.65.2).
   mountBox.__setState({ activeSlug: 'alpha', sectionPrefs: {} });
   const f = stage(false, false);
   mountBox.__reset();
+  mountBox.mountHostedSections(1);
+  mountBox.__reset();
   mountBox.openSectionFold('sources');
-  eq('the SOURCES jump opens the INGEST fold', f.src.open, true);
-  eq('...and mounts its panel', mountBox.__calls().mountIngest.length, 1);
-  eq('...and remembers the choice', mountBox.__state().sectionPrefs.sources, true);
+  eq('the SOURCES jump lands on ①\'s head and title',
+    JSON.stringify(mountBox.__calls().landed), JSON.stringify([['.dm-sources-hd', 'dm-sources-title']]));
+  eq('...remounts nothing — the panel is already there', mountBox.__calls().mountIngest.length, 0);
+  eq('...and writes NO preference', mountBox.__calls().written, 0);
+  eq('...not even an in-memory one', mountBox.__state().sectionPrefs.sources, undefined);
+  mountBox.__reset();
+  mountBox.openSectionFold('sources', { scroll: false });
+  eq('with `scroll: false` it does not move the reader at all', mountBox.__calls().landed.length, 0);
   mountBox.__reset();
   mountBox.openSectionFold('shared');
   eq('the SHARED jump opens the Shared Brain fold', f.sh.open, true);
-  // An ALREADY-OPEN fold is not re-mounted: a jump is a scroll, and
-  // remounting a panel the user is looking at would throw away its state.
+  eq('...and remembers the choice', mountBox.__state().sectionPrefs.shared, true);
+  // An ALREADY-OPEN fold is not re-mounted: a jump is a scroll.
   mountBox.__reset();
-  mountBox.openSectionFold('sources');
-  eq('jumping to an already-open fold remounts nothing', mountBox.__calls().mountIngest.length, 0);
+  mountBox.openSectionFold('shared');
+  eq('jumping to an already-open fold remounts nothing', mountBox.__calls().mountShared.length, 0);
+}
+{
+  // ── S5b: THE REAL landOnSection ──────────────────────────────────────
+  // Scrolls the head into view (through scrollSectionIntoView, which honours
+  // reduced motion) and focuses the title WITHOUT a second scroll.
+  const landBox = new Function(`
+    const log = [];
+    let document = null;
+    function scrollSectionIntoView(sel) { log.push(['scroll', sel]); }
+    ${extractFunction(SRC, 'landOnSection')}
+    return { landOnSection, log, __setDocument: (d) => { document = d; } };
+  `)();
+  const focusCalls = [];
+  const title = { focus: (o) => focusCalls.push(o) };
+  landBox.__setDocument({ getElementById: (id) => (id === 'dm-sources-title' ? title : null) });
+  landBox.landOnSection('.dm-sources-hd', 'dm-sources-title');
+  eq('it scrolls the head block into view', JSON.stringify(landBox.log), JSON.stringify([['scroll', '.dm-sources-hd']]));
+  eq('...and focuses the title once', focusCalls.length, 1);
+  ok('...with preventScroll, so the smooth scroll is the one movement seen',
+    !!focusCalls[0] && focusCalls[0].preventScroll === true, JSON.stringify(focusCalls[0]));
+  landBox.__setDocument({ getElementById: () => null });
+  ok('a missing title is not an error', callOrFail('landOnSection with no title',
+    () => { landBox.landOnSection('.dm-sources-hd', 'dm-sources-title'); return true; }) === true);
+  ok('the title that is focused is focusable without joining the tab order',
+    /id="dm-sources-title" tabindex="-1"/.test(SRC));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -2203,9 +2303,11 @@ section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
     ok('no row in section 5 carries `data-dm-fold`, the attribute the PREFERENCE '
       + 'writer keys on -- so a paint-time toggle echo here cannot write one',
       !/<details[^>]*data-dm-fold/.test(fresh), fresh.slice(0, 200));
-    ok('CONTROL -- the detector is not blind: the two SECTION folds DO carry it, and '
-      + 'they are the two with the echo guard',
-      (SRC.match(/data-dm-fold="(sources|shared)"/g) || []).length === 2);
+    // v3.65.2: ONE section fold carries it now — ① Ingest is not a fold.
+    ok('CONTROL -- the detector is not blind: the Shared Brain fold DOES carry it, '
+      + 'and it is the one with the echo guard',
+      (SRC.match(/data-dm-fold="(sources|shared)"/g) || []).length === 1
+      && /data-dm-fold="shared"/.test(SRC));
   }
   // ...and the storage VALIDATOR would drop such a key even if one arrived.
   // `readSectionPrefs` accepts the literal true/false under two known fold
@@ -2215,11 +2317,11 @@ section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
   {
     const rsp = new Function('localStorage', 'SECTION_PREFS_KEY', 'SECTION_LENSES',
       extractFunction(SRC, 'readSectionPrefs') + '\nreturn readSectionPrefs;')(
-      { getItem: () => JSON.stringify({ '*': { sources: true, scan: true, brokenLinks: true, lens: 'wiki' } }) },
+      { getItem: () => JSON.stringify({ '*': { shared: true, scan: true, brokenLinks: true, lens: 'wiki' } }) },
       'curator-domain-sections-v1', ['wiki', 'memory', 'all']);
     const row = rsp();
-    ok('CONTROL -- the real readSectionPrefs keeps the two fold names and the lens',
-      row.sources === true && row.lens === 'wiki', JSON.stringify(row));
+    ok('CONTROL -- the real readSectionPrefs keeps the one fold name and the lens',
+      row.shared === true && row.lens === 'wiki', JSON.stringify(row));
     ok('...and DROPS a health row name outright, so no amount of echoing could make '
       + 'section 5 remember itself across a reload',
       !('scan' in row) && !('brokenLinks' in row), JSON.stringify(row));
