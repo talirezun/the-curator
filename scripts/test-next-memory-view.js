@@ -1257,6 +1257,9 @@ function makeRenderers(stateObj) {
     // whole property under test is that they are ABOVE the heading and never
     // inside a fold.
     extractFunction(viewSrc, 'foundationsNotices', 'memory.js') + '\n' +
+    // v3.66.0 (P1): the two-budget monitor above the documents table. Lifted,
+    // with the REAL monitor and depth cell injected, and driven in §23.
+    extractFunction(viewSrc, 'foundationsMonitor', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderFoundations', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationReaderContent', 'memory.js') + '\n' +
     // ── TIER 0's OWN EDITOR (v3.61.0) ───────────────────────────────────
@@ -1379,7 +1382,7 @@ function makeRenderers(stateObj) {
     'foundationsFacts, foundationsWord, foundationsControlOffer, foundationsDraftAsk, '
     + 'foundationsOwnershipWord, foundationsSummaryMeta, foundationsBudgetWarning, ' +
     'fndSize, skeletonOf, fndRowHtml, ' +
-    'renderFoundations, foundationsNotices, foundationReaderContent, ' +
+    'renderFoundations, foundationsNotices, foundationReaderContent, foundationsMonitor, ' +
     'memStep, renderLayerStrip, projectHeadline, renderWorkStreamsFold, renderKnowledge, '
     + 'renderKnowledgeRow, renderKnowledgePicker, knowledgePickerCfg, ' +
     'captureFacts, renderCaptureMeter, ' +
@@ -7542,6 +7545,14 @@ const fndRead = (payload) => ({
     fndDoc({ slug: 'b.md', bytes: 215042 }),
   ])));
   ok('CONTROL: the table really drew bars', /cur-depth-bar/.test(table), table.slice(0, 300));
+  // v3.66.0: the row body now OPENS with the Documents monitor (P1, §23), which
+  // draws bars and hidden sentences of its own. The per-row assertions below
+  // are about the TABLE's cells, so they read the table alone — the monitor's
+  // own bars are §23's to pin.
+  const tbl = table.slice(table.indexOf('<table class="fnd-table">'));
+  ok('CONTROL: the table slice exists and starts AFTER the monitor',
+    table.indexOf('<table class="fnd-table">') > table.indexOf('id="mem-fnd-monitor"')
+    && table.indexOf('id="mem-fnd-monitor"') > 0);
   // THE DENOMINATOR IS THE PROJECT BUDGET the payload carries — the store's own
   // figure where it sent one, which is what `foundationsFacts` already does for
   // the warning under the table, so the bar and the sentence can never disagree.
@@ -7568,15 +7579,15 @@ const fndRead = (payload) => ({
       + Math.round((63488 / FOUNDATIONS_BUDGET_BYTES) * 1000) / 10);
   }
   ok('a document that alone exceeds the budget takes the whole cell, in the '
-    + 'danger tone', /cur-depth-bar cur-depth-danger" style="width:100%"/.test(table),
-  (table.match(/cur-depth-bar[^>]*/g) || []).join(' | '));
+    + 'danger tone', /cur-depth-bar cur-depth-danger" style="width:100%"/.test(tbl),
+  (tbl.match(/cur-depth-bar[^>]*/g) || []).join(' | '));
   ok('...and the one under it does NOT — a bar is not an alarm for being long',
-    (table.match(/cur-depth-danger/g) || []).length === 1,
-    (table.match(/cur-depth-bar[^>]*/g) || []).join(' | '));
+    (tbl.match(/cur-depth-danger/g) || []).length === 1,
+    (tbl.match(/cur-depth-bar[^>]*/g) || []).join(' | '));
   ok('every SIZE cell names its denominator in a sentence a screen reader gets — '
     + 'a bar whose denominator the reader cannot name is decoration',
-  (table.match(/class="visually-hidden"> [^<]*project budget/g) || []).length === 2,
-  (table.match(/class="visually-hidden">[^<]*/g) || []).join(' | '));
+  (tbl.match(/class="visually-hidden"> [^<]*project budget/g) || []).length === 2,
+  (tbl.match(/class="visually-hidden">[^<]*/g) || []).join(' | '));
   // A COST IS NEVER ONLY A COLOUR (v3.16.1): the same fact is in words,
   // unfolded, outside the fold.
   ok('...and the over-budget fact is ALSO in words, outside the chevron',
@@ -10894,6 +10905,9 @@ const EXECUTED = new Set([
   // DOM model, because a tick that re-renders is the defect v3.61.1 recorded
   // on this very table and only an executed patch can prove it does not.
   'foundationsBudgetWarning', 'toggleReadFirst',
+  // v3.66.0 (P1): the Documents monitor — driven over both budgets, the
+  // applicability rule for danger and the in-place patch in §23.
+  'foundationsMonitor',
   'openFoundation', 'refreshFoundations', 'bindFoundationRows',
   // v3.61.0 — tier 0 became editable. Five more LIFTED here and driven in §21:
   // the three pure decisions (the wall, the slug grammar, the shrink) and the
