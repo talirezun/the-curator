@@ -71,6 +71,8 @@ const free = { ...GEMINI, provider: 'openrouter', providerLabel: 'OpenRouter', m
   modelLabel: 'DeepSeek V4 Flash', inputTokens: 6000, inputTokensLow: 5500, inputTokensHigh: 6100,
   outputTokensLow: 300, outputTokensHigh: 300, usdLow: 0, usdHigh: 0, priceKnown: true, free: true, costNote: 'free' };
 eq(text(renderRunsOn(free)), 'Runs on DeepSeek V4 Flash (free) · ≈6k tokens · free · Change model', 'free');
+eq(text(renderRunsOn({ ...free, modelLabel: 'MiniMax M3 (free)' })), 'Runs on MiniMax M3 (free) · ≈6k tokens · free · Change model',
+  'free, and the catalogue label already says so → "(free)" once, never twice');
 
 const unpriced = { ...GEMINI, model: 'zz-model', modelLabel: 'Some Model', inputTokens: 6000, inputTokensLow: 5500,
   inputTokensHigh: 6200, outputTokensLow: 200, outputTokensHigh: 200, priceKnown: false, free: false, costNote: 'price-not-published' };

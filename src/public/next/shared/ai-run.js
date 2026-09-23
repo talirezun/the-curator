@@ -120,8 +120,12 @@ export function renderRunsOn(runsOn, opts) {
   }
   if (!runsOn.model && !runsOn.modelLabel) return '';
 
-  const parts = ['<span class="ai-run-lead">Runs on ' + modelSpan(runsOn)
-    + (runsOn.free === true ? ' (free)' : '') + '</span>'];
+  // " (free)" once: OpenRouter's catalogue already labels its free ids that
+  // way ("MiniMax M3 (free)"), measured on the real describeRun output, and
+  // "(free) (free)" is the result of appending blindly.
+  const label = String(runsOn.modelLabel || runsOn.model || '');
+  const freeMark = runsOn.free === true && !/\(free\)\s*$/i.test(label) ? ' (free)' : '';
+  const parts = ['<span class="ai-run-lead">Runs on ' + modelSpan(runsOn) + freeMark + '</span>'];
 
   if (typeof o.figuresNote === 'string' && o.figuresNote) {
     parts.push(escapeHtml(o.figuresNote));
