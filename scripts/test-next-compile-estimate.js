@@ -61,7 +61,7 @@
  *     Host guard are therefore not exercised here.
  */
 
-import { readFileSync, mkdirSync, writeFileSync, rmSync, mkdtempSync } from 'fs';
+import { readFileSync, mkdirSync, writeFileSync, rmSync, mkdtempSync, existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -1094,6 +1094,11 @@ section('11. v3.67.0 — every module on the ai-run cycle loads as the FIRST imp
     'src/routes/ingest-queue.js', 'src/routes/diagnostics.js',
     'mcp/tools/health.js', 'mcp/tools/compile.js',
   ];
+  // Package H's reading-plan modules import ai-run.js too. They land on a
+  // sibling branch; once merged they are probed like every other entry.
+  for (const rel of ['src/brain/reading-plan.js', 'src/routes/reading-plan.js']) {
+    if (existsSync(path.join(REPO, rel))) ENTRIES.push(rel);
+  }
   const env = { ...process.env };
   for (const k of ['GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY']) delete env[k];
   for (const rel of ENTRIES) {
