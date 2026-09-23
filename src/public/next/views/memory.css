@@ -1925,59 +1925,13 @@
    nowrap` keeps them on one line, so the column takes what the longer word
    needs and no literal has to be kept in step with the copy. */
 .fnd-cell-first { width: 1%; white-space: nowrap; }
-.fnd-first {
-  appearance: none;
-  /* Chrome that must not drag-select: this is a control, and a control whose
-     label highlights under a drag reads as text. The kit's own rule, pinned by
-     scripts/test-next-views-kit.js over every interactive class in the tree. */
-  user-select: none;
-  -webkit-user-select: none;
-  /* `--control-edge`, NOT `--border`. Measured in both themes: the hairline
-     token reads 1.29 (light) / 1.24 (dark) against the card, under the 3:1
-     floor a non-text boundary takes — and the boundary is what says "this is a
-     control" rather than a word in a cell. `.btn-secondary` uses
-     `--control-edge` for that reason and measures 3.58; this takes the same
-     token rather than a value of its own. The STATE is never decoded from the
-     edge: the word in the button is the reading. */
-  border: 1px solid var(--control-edge);
-  border-radius: var(--radius-full);
-  background: var(--surface-raised);
-  color: var(--text-2);
-  font-family: var(--font-sans);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--track-body);
-  padding: 2px 9px;
-  cursor: default;
-  /* The 28px hit floor the kit sets for every control, bought with a
-     transparent outline rather than with height: the row is --text-xs and a
-     28px pill in it would set the table's row height. */
-  min-height: var(--hit-min);
-  transition: border-color var(--t-state), background var(--t-state), color var(--t-state);
-}
-.fnd-first:hover:not([disabled]) { background: var(--surface-hover); color: var(--text); }
-.fnd-first:focus-visible { outline: none; box-shadow: var(--ring-focus); }
-/* ONE DISABLED TREATMENT, from the token. A literal here would be the fifth
-   value the tree had before that pass removed four of them, and the cursor
-   travels with the dimming — a control that looks off and still says "click
-   me" is the half-disabled state scripts/test-next-disabled-state.js exists
-   to prevent. */
-.fnd-first[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
-/* PRESSED. The same accent trio the chooser's selected option card takes, so
-   "this one is on" reads the same way in both places and no new colour enters
-   the view. */
-.fnd-first-on {
-  background: var(--accent-tint);
-  border-color: var(--accent-border);
-  /* `--text`, NOT `--accent-text`, and the shipped control two files over is
-     why: `.fnd-init-opt[aria-pressed="true"]` takes the same accent fill and
-     the same accent edge and keeps its LABEL at full contrast — measured 16.15
-     light / 16.02 dark. `--accent-text` on `--accent-tint` measured 8.08 light
-     and 2.04 dark here, which is under the 4.5 floor on the theme half the
-     app's own users are more likely to be in. The accent belongs to the fill
-     and the edge; the word is the reading and it stays legible. */
-  color: var(--text);
-}
+/* ── v3.67.0: THE CELL HOLDS THREE STATES NOW ─────────────────────────────
+   The `.fnd-first` pill and its pressed face went with the two-way toggle: the
+   cell is the shared listbox (read first · on request · not at start), whose
+   trigger, menu, focus ring and disabled treatment are `shared/listbox.css`'s.
+   This file owns only the trigger's footprint in a table row: the widest
+   label ("not at start") on one line, and no taller than the row. */
+.fnd-start-btn { min-width: 12ch; }
 
 /* The budget warning, UNDER the row and outside the fold (v3.65.1). A cost
    may never sit behind a chevron (v3.16.1), so it is a sibling of the
@@ -2133,3 +2087,136 @@
 .mem-ghost-row { height: 44px; }
 .mem-ghost-line { height: 20px; width: 60%; }
 .mem-ghost-para { height: 72px; }
+
+
+/* ═════════════════════════════════════════════════════════════════════════
+   v3.67.0 — STEP ④ SESSION START, AND THE READING-PLAN HELPER
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* A step's own control at the right end of its head row (step ④'s Reading
+   budget). `.settings-block-hd` is shell.css's baseline flex row; this is one
+   more child of it, pushed right, and it wraps under the title rather than
+   overflowing when the column is narrow. */
+.mem-step-head-end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.mem-ss-budget-label { font-size: var(--text-sm); color: var(--text-2); }
+.mem-ss-budget-fixed { font-size: var(--text-sm); color: var(--text); }
+
+/* The step's body: its unfolded lines, then its rows — the same column and the
+   same 16px rhythm as step ②'s stack, declared once on the wrapper. */
+.mem-ss-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+/* The cost line and its two siblings run the column, like every row under
+   them; the note's reading-width cap is for a sentence under prose, and these
+   are the step's own first lines. Its one action sits at the right edge. */
+.mem-ss-stack > .tx-note { max-width: none; margin: 0; }
+.mem-ss-stack > .tx-note > span { flex: 1 1 auto; min-width: 0; }
+.mem-ss-stack > .tx-note > .btn { flex: none; margin-left: auto; }
+.mem-ss-stack > .mem-note { margin: 0; }
+
+/* "Context window": the two denominators, as a pair of pressed buttons. */
+.mem-ss-window { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+
+/* The budget picker's rows: the preset's name and budget on one line, what an
+   agent would start with under it, and the preset's meaning. Words in
+   `--text-2`, figures mono and tabular, no tone — a figure here is a reading. */
+.mem-budget-btn { min-width: 18ch; }
+.mem-bp-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-8);
+}
+.mem-bp-name { color: var(--text); }
+.mem-bp-bytes {
+  font-family: var(--font-mono);
+  font-variant-numeric: var(--numeric-tabular);
+  color: var(--text);
+}
+.mem-bp-start {
+  display: block;
+  font-family: var(--font-mono);
+  font-variant-numeric: var(--numeric-tabular);
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+}
+.mem-bp-hint {
+  display: block;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  white-space: normal;
+  max-width: 44ch;
+}
+
+/* ── THE HELPER'S PANEL: `.mem-fnd-panel` (Quick maintenance's anatomy) ───
+   Explanation left, the two buttons right, the run line under both; the panel
+   is the one this page already uses for "Add from folder", so the helper adds
+   no second panel face. It sits at the top of the documents row's body, above
+   the monitor, and the row is held open while it is on screen. */
+.mem-plan-panel { margin-bottom: var(--space-6); }
+.mem-plan-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-5) var(--space-8);
+}
+.mem-plan-explain { flex: 1 1 320px; min-width: 0; }
+.mem-plan-line {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.mem-plan-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.mem-plan-actions > .btn { white-space: normal; }
+.mem-plan-panel .ai-run { margin-top: var(--space-5); }
+.mem-plan-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+}
+.mem-plan-summary { margin: 0; font-size: var(--text-sm); color: var(--text); }
+.mem-plan-tick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text);
+}
+.mem-plan-dropped { margin: 0; font-size: var(--text-xs); color: var(--text-2); }
+.mem-plan-result > .mem-note { margin: 0; }
+
+/* ── THE SUGGESTED COLUMN — transient, while a proposal is pending ────────
+   The proposed state and its tick on one line, the one-line reason under it.
+   A CHANGE carries the word at full ink and weight; a row the plan leaves as
+   it is reads "as now" in the secondary ink — the difference is in the word
+   and its weight, never in a colour alone. */
+.fnd-cell-suggest { min-width: 16ch; }
+.fnd-suggest {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+.fnd-suggest-change { color: var(--text); font-weight: var(--weight-medium); }
+.fnd-suggest-why {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  white-space: normal;
+  max-width: 34ch;
+}

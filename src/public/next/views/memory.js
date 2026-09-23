@@ -234,6 +234,16 @@ import { renderDepthCell } from '../shared/depth-bar.js';
 // to remove. `closeAllListboxes` is called on teardown, because navigate()
 // does not reach into view-owned popovers.
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
+// ── v3.67.0: THE RUN LINE AND THE CONFIRM, FOR THE READING-PLAN HELPER ─────
+// `shared/ai-run.js` is the one line every AI action in the app renders under
+// itself (which model, roughly how many tokens, what it should cost, and the
+// door to Providers & keys); `renderSpent` is its after-the-run twin. The
+// helper is an AI action like any other, so it takes the same line rather
+// than a sentence of its own. `shared/confirm.js` is the gate for a run whose
+// upper estimate is a cent or more, or whose price is not published
+// (CONTRACT-v3.67.0 §1.4) — a cheaper run is gated by the unfolded line alone.
+import { renderRunsOn, renderSpent, aiActionDisabledAttrs, wireAiRunDoors } from '../shared/ai-run.js';
+import { confirmThen, closeConfirmIfOpen } from '../shared/confirm.js';
 
 // THE FRESHNESS SCALE, imported rather than declared. `freshnessStep` used to
 // live in this file, beside the first screen that needed it; it is now one
@@ -368,6 +378,56 @@ const BRIEF_MAX_BYTES = 32768;
 // `shared/foundations-init.js` mirrors only the project budget, and a view may
 // not add an export to a module two views share.
 const READ_FIRST_BUDGET_BYTES = 120 * 1024;
+
+// ── THE READING BUDGET'S FIVE PRESETS (v3.67.0) ──────────────────────────
+//
+// The store's `READING_BUDGET_PRESETS`, mirrored for the same reason the line
+// above is: `src/brain` is not served, and a view may not add an export to a
+// module two views share. The bytes are the store's; the WORDS are the view's,
+// verbatim from the design's "meaning in the picker" column
+// (DESIGN-context-budget §2.2), with Standard marked recommended (CONTRACT §5.1).
+// scripts/test-next-memory-view.js pins the ids and bytes against the store.
+//
+// No slider, on purpose: five named options with a figure beside each are a
+// decision, a slider is a tuning task, and the maintainer's brief was "easy to
+// set up and to make choices".
+const READING_BUDGET_PRESETS = [
+  { id: 'index-only', bytes: 0, label: 'Index only',
+    hint: 'No document text at start. Agents see the list and open what they need by name.' },
+  { id: 'lean', bytes: 32768, label: 'Lean',
+    hint: 'One or two short documents: conventions, a decision log.' },
+  { id: 'standard', bytes: 65536, label: 'Standard · recommended',
+    hint: 'A handful of core documents.' },
+  { id: 'deep', bytes: 122880, label: 'Deep', hint: 'Today’s default.' },
+  { id: 'max', bytes: 204800, label: 'Max',
+    hint: 'The store’s ceiling. The whole reply is still limited to 300 KB, so on a project with '
+      + 'a long brief and handoff some text can be left out, and it is named if so.' },
+];
+// What the helper plans against when the owner has set nothing (§1.11), and
+// what "Set a reading budget" opens the picker on.
+const READING_BUDGET_STANDARD = 65536;
+
+// ── THE THREE START STATES (v3.67.0) ─────────────────────────────────────
+// One alphabet, the store's `FOUNDATION_START_STATES`, with the option hints
+// verbatim from CONTRACT §5.1. The hint is the listbox's secondary line, so
+// the model — at start, on demand, or not offered — is taught in the control
+// that sets it rather than in a paragraph above it.
+const START_STATES = [
+  { value: 'read-first', label: 'read first',
+    hint: 'Handed to the agent at the start of every session.' },
+  { value: 'on-request', label: 'on request',
+    hint: 'Listed; the agent opens it by name when the task needs it.' },
+  { value: 'not-at-start', label: 'not at start',
+    hint: 'Kept and mirrored, but not listed at the start. Name it in the brief if an agent '
+      + 'should find it.' },
+];
+
+// ── THE CONTEXT WINDOW THE PERCENTAGE IS OF (v3.67.0) ────────────────────
+// A PER-VIEWER convenience: it changes one denominator on this screen and
+// nothing the project stores or an agent receives. Browser storage, wrapped,
+// because a private window throws rather than returning null.
+const CONTEXT_WINDOW_KEY = 'curator-context-window-v1';
+const CONTEXT_WINDOWS = { '200k': 200000, '1m': 1000000 };
 
 // ── THE HONESTY METER'S WINDOW, AND THE LIST UNDER IT (v3.63.0) ──────────
 //
@@ -716,6 +776,22 @@ function freshState() {
     // `null` means nothing has been asked for yet, which is neither loading
     // nor an error and must not be rendered as either.
     capture: null,
+
+    // ── v3.67.0: step ④ and the reading-plan helper ─────────────────────
+    // `sessionStart` is GET …/session-start for ONE project, stamped with the
+    // project read it was measured against (`sig`), fetched after the paint
+    // and never on a switch's critical path. `plan` is the helper's panel and
+    // its proposal — held here only, never persisted: leaving the view drops
+    // it, which is the contract's rule. `sessionPreview` is the `if applied`
+    // measurement of that proposal.
+    sessionStart: null,
+    sessionPreview: null,
+    plan: null,
+    budgetSaving: false,
+    budgetError: null,
+    startSaving: null,
+    startError: null,
+    ctxWindow: null,
   };
 }
 
@@ -997,6 +1073,21 @@ const captureCache = new Map();
 // back and forth do not issue two requests. Cleared when that read settles.
 let captureInFlight = null;
 
+// ── v3.67.0: STEP ④'s READ, AND WHICH PROJECT WAS LAST OPEN ─────────────
+// The session-start read in flight, keyed by (project, the read it measures),
+// so a burst of renders asks once. Not cached across mounts: the figures are
+// what the store would send RIGHT NOW, and a remembered one is a stale claim.
+let sessionStartInFlight = null;
+// The `if applied` preview in flight, keyed by its request body.
+let previewInFlight = null;
+// THE PROJECT LAST OPEN IN THIS TAB. Coming back to Context from Chat or
+// Domains used to re-derive the project from recency (`initialPick`), so a user
+// reading a quieter project in another domain was dropped onto the freshest
+// one every time they looked away — the "loses the selected project" report.
+// Module state, not storage: it survives a view change, which is the report,
+// and a reload keeps today's recency rule, which is the documented one.
+let lastOpened = null;
+
 // ── THE INSTALL'S DOMAIN LIST (v3.65.0) ────────────────────────────────
 // Read ONCE per mount and held in `state.domainList`, so the in-flight mark
 // is a bare boolean rather than a key: there is one list and it does not
@@ -1122,6 +1213,8 @@ registerView('memory', {
       // popovers, so a menu left open on a rail click is this view's to shut
       // or it outlives the view that opened it.
       closeAllListboxes();
+      // v3.67.0: the helper's cost gate is a view-owned overlay too.
+      closeConfirmIfOpen();
       if (wakeHandler) {
         if (typeof window !== 'undefined') window.removeEventListener('focus', wakeHandler);
         if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wakeHandler);
@@ -1353,7 +1446,10 @@ const FOLDS_KEY = 'curator-memory-folds-v1';
 // and dropping the name would make that value unreadable rather than harmless.
 // `knowledge` stays in the list although step ③ no longer uses it, for exactly
 // that reason.
-const FOLD_KEYS = ['brief', 'journal', 'foundations', 'streams', 'capture', 'saved', 'knowledge'];
+const FOLD_KEYS = ['brief', 'journal', 'foundations', 'streams', 'capture', 'saved', 'knowledge',
+  // v3.67.0, step ④'s three rows. `receives` is the one row on this page that
+  // is OPEN by default, so it is the one key whose stored `false` is kept too.
+  'receives', 'window', 'reach'];
 // The per-domain form step ③ writes since v3.65.0, and the ONLY dynamic key
 // this map accepts. The alphabet is the domain-name one and the length bound
 // is the store's, so a hand-edited value can add at most a bounded number of
@@ -1368,6 +1464,9 @@ export function readRememberedFolds() {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const out = {};
     for (const k of FOLD_KEYS) if (parsed[k] === true) out[k] = true;
+    // A default-open row remembers being CLOSED; every other row remembers
+    // being opened. One key, because only one row is open by default.
+    if (parsed.receives === false) out.receives = false;
     // ── ONE KEY PER KNOWLEDGE DOMAIN (v3.65.0, P10) ───────────────────
     // Step ③ is one row per chosen wiki, so its keys carry the domain:
     // `knowledge-<slug>`. NO NEW localStorage KEY — these live in the same
@@ -1573,6 +1672,8 @@ function screenSignature() {
       (Array.isArray(fnd.documents) ? fnd.documents : []).map((d) => [
         d && d.slug, (d && d.title) || null, (d && d.role) || null,
         (d && d.freshness) || null, (d && d.bytes) || 0,
+        // v3.67.0: the routing, so a change made elsewhere repaints the cell.
+        d && d.readFirst === true, d && d.hidden === true,
         (d && d.commit) || null,
         d && d.updatedAt ? formatAge(effectiveSave({ savedAt: d.updatedAt }).seconds) : null,
       ])]
@@ -1741,6 +1842,25 @@ function screenSignature() {
         : null]
     : null;
 
+  // v3.67.0: step ④ and the helper. The measurement's own figures (not its
+  // stamp), the proposal's shape and ticks, the budget write in flight.
+  const ss = state.sessionStart && state.sessionStart.domain === state.activeDomain
+    && state.sessionStart.project === state.activeProject ? state.sessionStart : null;
+  const sessionMark = ss
+    ? [ss.error || null, ss.data && ss.data.bytes ? [ss.data.bytes.mcp, ss.data.bytes.hook] : null,
+      ss.data && ss.data.budget ? [ss.data.budget.bytes, ss.data.budget.source] : null,
+      ss.data ? ss.data.planned === true : null]
+    : null;
+  const pl = state.plan;
+  const planMark = pl
+    ? [pl.domain, pl.project, !!pl.open, pl.running || null, pl.error || null, !!pl.applying,
+      pl.applyError || null, pl.estimate ? 1 : 0, pl.result ? (pl.result.proposals || []).length : null,
+      pl.ticks ? Object.keys(pl.ticks).filter((k) => pl.ticks[k]).sort() : null, !!pl.budgetTick]
+    : null;
+  const budgetMark = [!!state.budgetSaving, state.budgetError || null,
+    pr ? (pr.readingBudgetBytes === undefined ? null : pr.readingBudgetBytes) : null,
+    state.startError ? [state.startError.slug, state.startError.error] : null];
+
   const editMark = state.briefEdit
     ? [state.briefEdit.domain, state.briefEdit.project, !!state.briefEdit.busy, state.briefEdit.error || null,
       // Preview and the unsaved-draft bar BOTH change what is on screen and
@@ -1770,6 +1890,9 @@ function screenSignature() {
     fndInitMark,
     knowledgeMark,
     captureMark,
+    sessionMark,
+    planMark,
+    budgetMark,
     editMark,
     // The DOMAIN rides in each row, because the rail groups by it: two
     // projects with the same name in two domains are two different rows, and
@@ -2170,7 +2293,13 @@ async function loadIndex(token) {
   const asked = want && Array.isArray(state.projects)
     ? state.projects.find((r) => r && r.domain === want.domain && r.project === want.project)
     : null;
-  const pick = asked || initialPick(state.projects, readRememberedProjects());
+  // THE PROJECT THAT WAS OPEN WHEN THE USER LEFT, if it still exists — before
+  // recency, after an explicit request. See `lastOpened`.
+  const back = !asked && lastOpened && Array.isArray(state.projects)
+    ? state.projects.find((r) => r && r.domain === lastOpened.domain
+      && r.project === lastOpened.project)
+    : null;
+  const pick = asked || back || initialPick(state.projects, readRememberedProjects());
 
   settleGate(gate, () => {
     state.loading = false;
@@ -2271,6 +2400,7 @@ async function selectProject(domain, project, token, opts = {}) {
   const key = keyOf(domain, project);
   state.activeDomain = domain;
   state.activeProject = project;
+  lastOpened = { domain, project };
   // A pending edit belongs to the project it was opened on. Switching
   // project abandons it — silently, because there is nothing to save: the
   // draft was never sent, and carrying it onto another project's brief is
@@ -3031,6 +3161,9 @@ function render(token) {
 
   wire(token);
   restoreFocus();
+  // v3.67.0: step ④'s measurement follows the project read it describes. It
+  // is asked for AFTER the paint, never on a switch's critical path.
+  maybeLoadSessionStart(token);
 }
 
 /**
@@ -3634,6 +3767,10 @@ function memStep(o) {
         '<span class="settings-block-num" aria-hidden="true">' + escapeHtml(String(o.num)) + '</span>' +
         '<h2 class="settings-job-title">' + escapeHtml(o.title) + '</h2>' +
         info.btn +
+        // v3.67.0: a step's OWN control, at the right end of its head row —
+        // step ④'s Reading budget picker. The head stays the card's sibling;
+        // this is one more child of the head row, never a wrapper. TRUSTED.
+        (o.headHtml ? '<div class="mem-step-head-end">' + o.headHtml + '</div>' : '') +
       '</div>' +
       (info.panel ? '<div class="settings-block-info">' + info.panel + '</div>' : '') +
       '<div class="settings-block-body">' + (o.bodyHtml || '') + '</div>' +
@@ -3830,6 +3967,40 @@ function renderLayerStrip(read) {
     name: 'Capture — open the session reading in step 2',
   });
 
+  // ── SESSION START — THE SUM OF THE THREE LAYERS (v3.67.0) ─────────────
+  //
+  // A READING, like the four beside it: what an agent is handed when it
+  // starts work on this project, in bytes and in tokens (bytes ÷ 4, an
+  // estimate the ⓘ of step ④ says is one). NO BAR, and not for want of a
+  // denominator: overview tiles are readings, and the bar is refused on them
+  // by the depth-bar rule — the share lives in step ④'s monitor, one press
+  // away, which is where the tile jumps.
+  //
+  // RENDERED AND HIDDEN until the measurement lands, CAPTURE's own rule and
+  // for its reason: the read is fetched after the paint, and one attribute
+  // write reveals the tile without a repaint.
+  //
+  // NO NEW FREE IDENTIFIER IN THIS BODY, and that is a constraint rather than
+  // a style: this function is LIFTED by brace-matching and executed by two
+  // suites, and a helper named here is a ReferenceError there. The data rides
+  // on `state`, which the body already reads, and the arithmetic is inline.
+  const ssRead = state.sessionStart && state.sessionStart.domain === state.activeDomain
+    && state.sessionStart.project === state.activeProject && state.sessionStart.data
+    && state.sessionStart.data.bytes && Number.isInteger(state.sessionStart.data.bytes.mcp)
+    ? state.sessionStart.data.bytes.mcp : null;
+  const ssValue = ssRead === null ? 'not measured'
+    : Math.round(ssRead / 1024).toLocaleString('en-US') + ' KB · ≈'
+      + (ssRead / 4 < 10000
+        ? (Math.round(ssRead / 400) / 10).toLocaleString('en-US')
+        : Math.round(ssRead / 4000).toLocaleString('en-US')) + 'k tokens';
+  cards.push({
+    label: 'SESSION START',
+    value: ssValue,
+    hidden: ssRead === null,
+    jump: 'context-session',
+    name: 'Session start, ' + ssValue + ' — go to step 4',
+  });
+
   // ── THE ⓘ BELONGS TO THE INSTRUMENT, NOT TO A STEP ────────────────────
   // It explains every age on this page — the two clocks, and what "last
   // saved" does not claim — so it sits on the thing that shows them all, on
@@ -3863,7 +4034,8 @@ function renderLayerStrip(read) {
     infoLabel: 'About the readings on this page',
     infoText:
       '<p>The first three are the project’s three layers of context, and pressing one goes to the '
-      + 'step that owns it; CAPTURE reads whether agents are using them. They are READINGS, not a '
+      + 'step that owns it; CAPTURE reads whether agents are using them, and SESSION START is what '
+      + 'an agent is handed when it starts, all three together. They are READINGS, not a '
       + 'filter — nothing on this page narrows when '
       + 'you press one, unlike the figures on a domain page, which also select what the list '
       + 'below them shows.</p>'
@@ -5155,7 +5327,10 @@ function renderProject() {
       // THE LEDE, MOVED (R4). It was the sentence under the title; it is the
       // first thing behind the mark now, and it keeps the "Start here."
       // prefix that drops the moment one document exists.
-      '<p>' + (fndFacts.count ? '' : '<b>Start here.</b> ')
+      // v3.67.0: the step's place in the model goes first (CONTRACT §5.1).
+      '<p>Foundational knowledge: choose which documents an agent reads at the start and which it '
+      + 'opens only when needed.</p>'
+      + '<p>' + (fndFacts.count ? '' : '<b>Start here.</b> ')
       + 'Add the documents an agent must not act without.</p>'
       + '<p>These are <b>canonical documents</b> — this project carries each one VERBATIM: the '
       + 'architecture, the decisions, the conventions, the roadmap. Not a summary of one: the '
@@ -5243,8 +5418,9 @@ function renderProject() {
     id: 'context-state',
     title: 'Memory',
     infoText:
-      // THE LEDE, MOVED (R4).
-      '<p>You write the brief; agents write handoffs and the journal.</p>'
+      // THE LEDE, MOVED (R4) — after the step's place in the model (v3.67.0).
+      '<p>The last state and the instructions: what every agent is handed at the start.</p>'
+      + '<p>You write the brief; agents write handoffs and the journal.</p>'
       + '<p>State <b>supersedes</b>. Every save REPLACES the last one rather than being merged into '
       + 'it, which is the whole point: state has to be able to say “no longer true”, and a store '
       + 'that only accumulates cannot.</p>'
@@ -5364,8 +5540,9 @@ function renderProject() {
     id: 'context-knowledge',
     title: 'Knowledge',
     infoText:
-      // THE LEDE, MOVED (R4).
-      '<p>The domains this project draws on. Open one in Domains, or ask it in Chat.</p>'
+      // THE LEDE, MOVED (R4) — after the step's place in the model (v3.67.0).
+      '<p>Knowledge on demand: searched when a task needs it, never loaded at the start.</p>'
+      + '<p>The domains this project draws on. Open one in Domains, or ask it in Chat.</p>'
       + '<p>A domain <b>accumulates</b>. A new source deepens the pages that are already there '
       + 'rather than adding a copy beside them — which is the difference between this layer and the '
       + 'two above it, where a save replaces what was there and a document is carried word for '
@@ -5386,7 +5563,10 @@ function renderProject() {
     bodyHtml: renderKnowledge(),
   });
 
-  return header + renderLayerStrip(read) + canonicalBlock + stateBlock + knowledgeBlock;
+  // ④ SESSION START (v3.67.0) — the sum of the three layers above: what an
+  // agent is handed when it starts, and the one number the owner sets for it.
+  return header + renderLayerStrip(read) + canonicalBlock + stateBlock + knowledgeBlock
+    + renderSessionStart(read);
 }
 
 /**
@@ -7058,7 +7238,11 @@ function foundationsFacts(read) {
   // the wrong set — see `foundationsSummaryMeta`.
   let readFirst = 0;
   let readFirstBytes = 0;
+  let hidden = 0;
   for (const d of docs) {
+    // v3.67.0: "not at start". `readFirst` wins a hand-edited contradiction,
+    // the store's own rule (`validateManifest`), so it is counted only here.
+    if (d.hidden === true && d.readFirst !== true) hidden++;
     // `=== true` rather than truthiness, for the reason `skeletonOf` states:
     // a build that sends no flag at all reads FALSE rather than
     // undefined-as-maybe, and a fact and its absence stay apart.
@@ -7122,6 +7306,9 @@ function foundationsFacts(read) {
       ? f.budgetBytes : FOUNDATIONS_BUDGET_BYTES,
     manifestError: (f && f.manifestError) || null,
     orphanFiles: f && Array.isArray(f.orphanFiles) ? f.orphanFiles : [],
+    // v3.67.0: documents kept "not at start" — absent from an agent's index.
+    // The server's own count where it sent one, the rows' otherwise.
+    hiddenCount: f && Number.isInteger(f.hiddenCount) ? f.hiddenCount : hidden,
   };
 }
 
@@ -7207,6 +7394,9 @@ function foundationsSummaryMeta(facts) {
     flagged
       ? facts.readFirstCount + ' read first · ' + facts.onRequestCount + ' on request'
       : null,
+    // v3.67.0: the third state, said only when it applies — "0 not at start"
+    // would report the absence of a decision as a decision.
+    facts.hiddenCount > 0 ? facts.hiddenCount + ' not at start' : null,
     foundationsWord(facts),
   ].filter(Boolean).join(' · ');
 }
@@ -7293,7 +7483,7 @@ function foundationsBudgetWarning(facts) {
  * already was, OUTSIDE the fold and unfolded, with its "Choose documents"
  * door; there is still ONE sentence, not two.
  *
- * Pure over `facts`; `id` is the patch target `toggleReadFirst` replaces in
+ * Pure over `facts`; `id` is the patch target `setStartState` replaces in
  * place so a tick moves the bar without a render.
  */
 function foundationsMonitor(facts) {
@@ -7515,7 +7705,7 @@ function renderFoundationStop(facts) {
   );
 }
 
-function fndRowHtml(d, editable, readonly, budgetBytes) {
+function fndRowHtml(d, editable, readonly, budgetBytes, suggest) {
   const slug = String(d.slug || '');
   const rowId = 'mem-fnd-' + slug.replace(/[^a-z0-9]+/gi, '-');
   // `.fnd-src-path`, NOT the shared `.mono` utility span. The work-stream slug
@@ -7616,14 +7806,22 @@ function fndRowHtml(d, editable, readonly, budgetBytes) {
       // pressed, which is exactly what that attribute means — and unlike the
       // OVERVIEW tiles' case, this one really does stay. The WORD is the
       // reading; the tick is the affordance, and neither carries it alone.
-      (readonly ? '' : '<td class="fnd-cell-first">'
-        + '<button type="button" class="fnd-first' + (d.readFirst === true ? ' fnd-first-on' : '')
-        + '" data-fnd-first="' + escapeHtml(slug) + '"'
-        + ' aria-pressed="' + (d.readFirst === true ? 'true' : 'false') + '"'
-        + ' aria-label="' + escapeHtml((d.readFirst === true ? 'Stop reading ' : 'Read ')
-          + (d.title || slug) + ' first') + '">'
-        + (d.readFirst === true ? 'read first' : 'on request')
-        + '</button></td>') +
+      //
+      // ── v3.67.0: THREE STATES, IN THE SAME CELL ─────────────────────────
+      // The two-way toggle became the shared listbox — read first · on request
+      // · not at start — in this cell and this column, so the one fact a person
+      // changes their mind about is still set in one place. Each option's
+      // secondary line is the model, taught in the control that sets it.
+      // `data-fnd-first` rides on the cell so "Choose documents" still finds
+      // the first one.
+      (readonly ? '' : '<td class="fnd-cell-first" data-fnd-first="' + escapeHtml(slug) + '">'
+        + renderListboxHtml(fndStartCfg(d, state.startSaving === slug))
+        + '</td>') +
+      // ── THE SUGGESTED COLUMN, WHILE A PROPOSAL IS PENDING (v3.67.0) ─────
+      // Transient: it exists only while the helper's proposal does, and a
+      // row the proposal says nothing about gets an empty cell so the columns
+      // still line up. `suggest` undefined means no column at all.
+      (suggest === undefined ? '' : fndSuggestCellHtml(d, suggest)) +
       // THE COLUMN VARIANT (P2-1). `editable` is the curator-owned arm, and it
       // is the same flag that decides whether this row gets a pencil — one
       // condition, so the head and the body cannot disagree about which table
@@ -7882,6 +8080,18 @@ function foundationsNotices(read) {
   // Stamped like every other outcome on this screen, and never folded: a
   // refusal from `…/foundations/init` is the reason nothing happened, and the
   // `refused[]` a mirror comes back with names the files that were NOT copied.
+  // v3.67.0: a refused start-state write says WHICH document and that
+  // nothing changed — and the next successful one clears it (`setStartState`),
+  // which is the v3.66.0 stale-note defect: a read-first refusal used to leave
+  // "Nothing was copied: Another write is in progress" standing under a table
+  // whose every later toggle had succeeded.
+  const se = state.startError && state.startError.domain === state.activeDomain
+    && state.startError.project === state.activeProject ? state.startError : null;
+  if (se) {
+    notes += '<div class="mem-note" id="mem-fnd-start-error">' + icon('alertTriangle', 13) +
+      '<span>' + escapeHtml('“' + se.slug + '” was not changed: ' + se.error) + '</span></div>';
+  }
+
   const ini = state.fndInit && state.fndInit.domain === state.activeDomain
     && state.fndInit.project === state.activeProject ? state.fndInit : null;
   if (ini && ini.error) {
@@ -7962,7 +8172,10 @@ function renderFoundations(read) {
       (busy ? ' disabled aria-disabled="true"' : '') + '>Mirror from GitHub instead</button>'
     : '';
   const askBtn = foundationsDraftAsk(facts, readonly);
-  const action = editing ? '' : (refreshBtn + addBtn + mirrorBtn + askBtn.btn);
+  // v3.67.0: "Suggest a reading plan" — or, while a proposal is pending, the
+  // two controls that settle it. See `planHeadHtml`.
+  const planHead = facts.count && !readonly && !facts.manifestError ? planHeadHtml() : '';
+  const action = editing ? '' : (refreshBtn + addBtn + mirrorBtn + askBtn.btn + planHead);
   // A WITHHELD CONTROL SAYS WHY (v3.17.1). Two reasons can stand here — the
   // folder is not on this computer, or this is a read-only mirror — and both
   // are `.tx-note`, unfolded: a reason behind a chevron is not a reason.
@@ -8063,8 +8276,12 @@ function renderFoundations(read) {
       '</span>' +
     '</summary>';
 
+  // v3.67.0: the helper's proposal, when there is one for THIS project.
+  const plan = readonly ? null : planFor();
+  const proposal = plan && plan.result && Array.isArray(plan.result.proposals) ? plan : null;
   const rows = facts.docs.map(
-    (d) => fndRowHtml(d, curator, readonly, facts.budgetBytes)).join('');
+    (d) => fndRowHtml(d, curator, readonly, facts.budgetBytes,
+      proposal ? planRowFor(proposal, d.slug) : undefined)).join('');
   // ── THE EDITOR REPLACES THE TABLE, IT DOES NOT SIT UNDER IT ────────────
   // The standing brief's own precedent one block up, and the same reason: two
   // views of one set of documents on screen at once, one of them describing a
@@ -8088,7 +8305,8 @@ function renderFoundations(read) {
   // `foundationsMonitor` for why each line is drawn against the budget it is.
   const body = editing
     ? renderFoundationEditor(facts)
-    : foundationsMonitor(facts) + '<div class="fnd-wrap"><table class="fnd-table">' +
+    : (plan && plan.open ? renderPlanPanel(facts, plan) : '')
+      + foundationsMonitor(facts) + '<div class="fnd-wrap"><table class="fnd-table">' +
         '<thead><tr>' +
           '<th scope="col">Role</th>' +
           '<th scope="col">Document</th>' +
@@ -8097,7 +8315,8 @@ function renderFoundations(read) {
           // cell over a column the body does not emit makes the columns
           // quietly stop lining up, which is the class of defect only a
           // rendered look finds (v3.61.0's own note, one column over).
-          (readonly ? '' : '<th scope="col">Read</th>') +
+          (readonly ? '' : '<th scope="col">At session start</th>') +
+          (proposal ? '<th scope="col">Suggested</th>' : '') +
           // ── FIVE COLUMNS OR SIX, BY OWNERSHIP (P2-1) ─────────────────
           // A curator-owned project's `Source` is always "Curator-authored"
           // and its `Copy` is always "—", so the two collapse into one State
@@ -8133,7 +8352,7 @@ function renderFoundations(read) {
       + (adding ? renderFoundationsInit(facts) : '');
   // ── THE BUDGET WARNING — A COST, SO IT NEVER FOLDS ────────────────────
   // Emitted always and `hidden` when there is nothing to say, because
-  // `toggleReadFirst` patches it in place rather than re-rendering: a node
+  // `setStartState` patches it in place rather than re-rendering: a node
   // that has to be CREATED on a tick is a node that tick has to render for.
   const budgetSentence = foundationsBudgetWarning(facts);
   // ── AND IT GAINS SOMETHING TO DO ABOUT IT (v3.65.0, record §D.6) ──────
@@ -8162,7 +8381,11 @@ function renderFoundations(read) {
   // (see wire()'s toggle listener), which is what makes a close final while
   // the editor is still on screen. The brief's twin expression above has
   // always read from one field alone; this one now does too.
-  const open = (state.fndForceOpen === true
+  // v3.67.0: the helper's panel and its proposal live inside this row's body,
+  // so while either is on screen the row is held open — TRANSIENTLY, like the
+  // editor's force, never written to the remembered folds. A cost line and a
+  // pending proposal behind a closed chevron would be v3.16.1 read backwards.
+  const open = (state.fndForceOpen === true || !!(plan && plan.open)
     || (state.openFolds && state.openFolds.foundations)) ? ' open' : '';
   // ── THE CONTROLS ARE A HEAD ROW, ABOVE THE ROWS (v3.65.1) ─────────────
   // Wiki health's `.dm-health-top` anatomy, which is the one shipped instance
@@ -8179,7 +8402,7 @@ function renderFoundations(read) {
   // SIBLING of the fold, not a child of it: v3.16.1's rule is that a cost may
   // never sit behind a chevron, so it stays outside the `<details>` and is read
   // whether the documents are open or not. What changed is its position among
-  // the section's siblings, and nothing else — `toggleReadFirst` still patches
+  // the section's siblings, and nothing else — `setStartState` still patches
   // `#mem-fnd-budget` in place by id.
   return '<div class="mem-fnd-row">' +
       '<div class="mem-fnd-head-controls">' + action + '</div>' +
@@ -8728,93 +8951,92 @@ function renderFoundationEditor(facts) {
 // same claim about the screen that a CSS rule nothing can match is.
 
 /**
- * FLIP ONE DOCUMENT'S "read first" FLAG, IN PLACE.
+ * WRITE ONE DOCUMENT'S START STATE — the ONE fetch that sends `{atStart}`.
  *
- * ── WHY THIS IS A PATCH AND NOT A RENDER (v3.61.1's rule) ───────────────
- * Measured on this very table one release ago: a tick that re-rendered took
- * the fold's `scrollTop` from 1105 to 0, came back as a different node and
- * dropped focus. A person deciding which of twenty documents an agent should
- * read first ticks several in a row, and each tick throwing them to the top is
- * the defect that rule exists to prevent. So this writes the pressed row's own
- * label and state, the summary line's counts, and the block's budget warning —
- * every node checked before it is touched, and nothing else on the page.
- *
- * ── THE STATE IS UPDATED FROM THE ANSWER, NEVER FROM THE GUESS ─────────
- * `state.projectRead` is mutated with what the route REPORTS (`readFirst`, and
- * the five readings), not with what the click intended. The two agree on a
- * success and only the answer is true on a refusal — and the next poll's
- * `screenSignature` must describe what is painted, so it is re-taken here.
- *
- * ── A REFUSAL IS A DISCLOSURE, and it is unfolded ──────────────────────
- * The route answers 400 `no_manifest` before init and 404 for a slug the
- * manifest does not hold. Either way the flag on screen is put BACK where it
- * was and the reason is rendered — a control that silently did nothing is the
- * one outcome a toggle may not have.
+ * Shared by the row's own control and by "Apply suggestion", so the route, the
+ * body and the error mapping exist once. Never throws; `{ok, data}` or
+ * `{ok:false, error}`, the error being the route's own sentence.
  */
-async function toggleReadFirst(btn, token) {
-  if (!btn || !btn.dataset) return;
-  const slug = btn.dataset.fndFirst;
-  const domain = state.activeDomain;
-  const project = state.activeProject;
-  if (!slug || !domain || !project) return;
-  const want = btn.getAttribute('aria-pressed') !== 'true';
-  // Optimistic on the one node the finger is on, because the round trip is
-  // local and a control that waits 30ms to acknowledge a press reads as broken
-  // (v3.27.0). Everything else waits for the answer.
-  btn.disabled = true;
-  let out = null;
-  let error = null;
+async function writeStartState(domain, project, slug, atStart) {
   try {
     const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/'
       + encodeURIComponent(project) + '/foundations/' + encodeURIComponent(slug), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ readFirst: want }),
+      body: JSON.stringify({ atStart }),
     });
     const data = await res.json();
-    if (res.ok && data && data.ok) out = data; else error = (data && data.error) || ('HTTP ' + res.status);
+    if (res.ok && data && data.ok) return { ok: true, data };
+    return { ok: false, error: (data && (data.message || data.error)) || ('HTTP ' + res.status) };
   } catch (err) {
-    error = err.message;
+    return { ok: false, error: err.message };
   }
-  if (!isCurrentMount(token)) return;
-  // STAMPED AT THE POINT OF USE, like every other async result on this screen:
-  // an answer for a project the user has left must not touch this one's rows.
-  if (state.activeDomain !== domain || state.activeProject !== project) return;
-  if (typeof document === 'undefined') return;
-  btn.disabled = false;
+}
 
-  if (error) {
-    state.fnd = { domain, project, busy: false, error, result: null };
+/**
+ * SET ONE DOCUMENT'S START STATE, IN PLACE (v3.67.0; was `toggleReadFirst`).
+ *
+ * ── WHY THIS IS A PATCH AND NOT A RENDER (v3.61.1's rule, kept) ─────────
+ * Measured on this table two releases ago: a tick that re-rendered took the
+ * fold's `scrollTop` from 1105 to 0, came back as a different node and dropped
+ * focus. Somebody deciding which of twenty documents an agent reads first sets
+ * several in a row, so this writes the summary line's counts, the Documents
+ * monitor and the budget sentence — every node checked before it is touched —
+ * and leaves the rest of the page where it is. Step ④ re-measures by itself:
+ * the project read changed, so `maybeLoadSessionStart` asks again and patches
+ * that block alone.
+ *
+ * ── THE STATE IS UPDATED FROM THE ANSWER, NEVER FROM THE GUESS ─────────
+ * `state.projectRead` takes what the route REPORTS (`readFirst`, `hidden`,
+ * `atStart` and the readings), not what the choice intended.
+ *
+ * ── A REFUSAL PUTS THE CONTROL BACK AND SAYS WHY; A SUCCESS CLEARS IT ───
+ * The v3.66.0 defect: a refused toggle left "Another write is in progress"
+ * standing after every later toggle had succeeded, because nothing cleared it.
+ * Now a success clears both the start-state refusal and any stale refresh
+ * error, and repaints once when there was a note to take down.
+ */
+async function setStartState(slug, atStart, token) {
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  if (!slug || !domain || !project) return;
+  if (START_STATES.every((o) => o.value !== atStart)) return;
+  state.startSaving = slug;
+  const out = await writeStartState(domain, project, slug, atStart);
+  if (state.startSaving === slug) state.startSaving = null;
+  if (!isCurrentMount(token)) return;
+  if (state.activeDomain !== domain || state.activeProject !== project) return;
+
+  if (!out.ok) {
+    state.startError = { domain, project, slug, error: out.error };
     render(token);
     return;
   }
-
-  // ── ONE ROW, ONE SUMMARY LINE, ONE WARNING ─────────────────────────────
-  const now = out.readFirst === true;
-  btn.setAttribute('aria-pressed', now ? 'true' : 'false');
-  btn.textContent = now ? 'read first' : 'on request';
-  if (btn.classList) btn.classList.toggle('fnd-first-on', now);
+  const data = out.data;
+  const hadNote = !!(state.startError && state.startError.domain === domain
+    && state.startError.project === project)
+    || !!(state.fnd && state.fnd.domain === domain && state.fnd.project === project && state.fnd.error);
+  state.startError = null;
+  if (state.fnd && state.fnd.error) state.fnd = null;
 
   const f = state.projectRead && state.projectRead.foundations;
   if (f && Array.isArray(f.documents)) {
     const row = f.documents.find((d) => d && d.slug === slug);
-    if (row) row.readFirst = now;
-    // The five readings come off the ANSWER rather than being recomputed here:
-    // the store takes them before any cap of its own, and a second derivation
-    // is a second thing that can disagree with the table.
-    f.readFirstCount = out.readFirstCount;
-    f.onRequestCount = out.onRequestCount;
-    f.readFirstBytes = out.readFirstBytes;
-    f.readFirstBudgetBytes = out.readFirstBudgetBytes;
-    f.readFirstBudgetExceeded = out.readFirstBudgetExceeded;
+    if (row) {
+      row.readFirst = data.readFirst === true;
+      row.hidden = data.hidden === true;
+      row.atStart = typeof data.atStart === 'string' ? data.atStart : atStart;
+    }
+    for (const k of ['readFirstCount', 'onRequestCount', 'readFirstBytes',
+      'readFirstBudgetBytes', 'readFirstBudgetExceeded', 'hiddenCount']) {
+      if (data[k] !== undefined) f[k] = data[k];
+    }
   }
+  if (hadNote || typeof document === 'undefined') { render(token); return; }
+
   const facts = foundationsFacts(state.projectRead);
   const meta = document.querySelector('#mem-fold-foundations .mem-fold-meta');
   if (meta) meta.textContent = foundationsSummaryMeta(facts);
-  // THE MONITOR MOVES WITH THE TICK (v3.66.0): the read-first line appears,
-  // disappears or changes length, in place — the same no-render rule as the
-  // two patches around it. Replaced whole because a line may be added or
-  // removed, and the node carries no listener to lose.
   const mon = document.getElementById('mem-fnd-monitor');
   if (mon) mon.outerHTML = foundationsMonitor(facts);
   const warn = document.getElementById('mem-fnd-budget');
@@ -8824,9 +9046,8 @@ async function toggleReadFirst(btn, token) {
     if (span) span.textContent = sentence;
     warn.hidden = !sentence;
   }
-  // The signature must always describe what is PAINTED: leaving it stale would
-  // make the next poll either repaint needlessly or skip a repaint it owed.
   renderedSignature = screenSignature();
+  maybeLoadSessionStart(token);
 }
 
 /**
@@ -9617,17 +9838,10 @@ function bindFoundationRows(root, token) {
     });
   });
 
-  // ── THE "READ FIRST" TOGGLE — A TICK PATCHES, IT DOES NOT RENDER ──────
-  // v3.61.1's rule, from the maintainer's own hour on a 25-document mirror:
-  // "when I select or deselect a document I'm always thrown at the top". A
-  // render replaces the pane, so the fold's scroll position goes, the node
-  // changes identity and focus is lost. `toggleReadFirst` writes ONE row, the
-  // summary line and the block's warning, and nothing else.
-  root.querySelectorAll('.fnd-first[data-fnd-first]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      toggleReadFirst(btn, token).catch((err) => reportAsyncMountFailure(token, err));
-    });
-  });
+  // The start-state cells (v3.67.0, three states where the read-first toggle
+  // was two) are mounted by `bindSessionAndPlan`, which owns every control
+  // this release added: one binder for one release's controls, so the
+  // lifted binders above do not grow a collaborator each.
 
   // ── THE OWNERSHIP CHOOSER ──────────────────────────────────────────────
   // The shared module owns the markup and the per-control behaviour; this
@@ -10322,6 +10536,1107 @@ function renderJournal() {
   );
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// v3.67.0 — THE RIGHT CONTEXT, NOT ALL OF IT
+// ═════════════════════════════════════════════════════════════════════════
+//
+// The maintainer's governing principle, which every string below answers to:
+// an agent starting work needs its instructions (the standing brief), where
+// things stand (the latest handoff) and a little foundational knowledge (the
+// documents marked read first). Everything else is one request away. The
+// magic is just enough.
+//
+// Three things on this page carry it:
+//   · ① Documents — each document's START STATE (read first · on request ·
+//     not at start), in the cell the read-first toggle used to hold, and the
+//     "Suggest a reading plan" helper, which PROPOSES and never applies;
+//   · ④ Session start — the ONE number the owner sets (the reading budget,
+//     five presets, no slider) and a live monitor of what an agent is handed;
+//   · the SESSION START overview tile — the same total, as a reading.
+//
+// ── WHAT THIS VIEW WRITES, AND WHAT IT NEVER DOES ─────────────────────────
+// Two new writes, both curator METADATA ABOUT the project, never its state:
+//   PATCH …/foundations/:slug {atStart}   → the manifest, and nothing else
+//   PATCH …/reading/budget {readingBudgetBytes} → project.json, and nothing else
+// The helper's two calls are READS (an estimate and a proposal); the preview
+// is a read too. No handoff, no journal, no document byte is reachable from
+// any of them, which is the tier boundary this file's header states.
+
+/** A document's start state, from the ROW — the store's alphabet. `readFirst`
+ *  wins a contradiction, the store's own rule. */
+function fndStartOf(d) {
+  if (!d) return 'on-request';
+  if (d.atStart === 'read-first' || d.atStart === 'on-request' || d.atStart === 'not-at-start') {
+    return d.atStart;
+  }
+  if (d.readFirst === true) return 'read-first';
+  if (d.hidden === true) return 'not-at-start';
+  return 'on-request';
+}
+
+/**
+ * THE START-STATE CELL — ONE cfg for both halves of the shared listbox.
+ *
+ * `renderListboxHtml` (in `fndRowHtml`) and `mountListbox` (in
+ * `bindSessionAndPlan`) are handed an object from this one function, so the
+ * markup and the behaviour cannot describe two different controls. The
+ * option's secondary line is CONTRACT §5.1's hint, verbatim.
+ */
+function fndStartCfg(d, busy) {
+  const slug = String((d && d.slug) || '');
+  const title = String((d && (d.title || d.slug)) || '');
+  return {
+    id: 'mem-fnd-start-' + slug.replace(/[^a-z0-9]+/gi, '-'),
+    value: fndStartOf(d),
+    ariaLabel: 'At session start: ' + title,
+    disabled: busy === true,
+    triggerClass: 'fnd-start-btn',
+    options: START_STATES.map((o) => ({ value: o.value, label: o.label, detail: o.hint })),
+  };
+}
+
+/** The proposal (and its tick) for one row, or `{}` when the plan says nothing
+ *  about it — the column still gets a cell so it lines up. */
+function planRowFor(p, slug) {
+  const list = p && p.result && Array.isArray(p.result.proposals) ? p.result.proposals : [];
+  const proposal = list.find((x) => x && x.slug === slug) || null;
+  if (!proposal) return {};
+  return { proposal, ticked: !!(p.ticks && p.ticks[slug]) };
+}
+
+/**
+ * THE SUGGESTED CELL: the proposed state, a tick, and the one-line reason.
+ *
+ * A row whose proposal matches today's state carries no tick — there is
+ * nothing to apply — and says "as now", so the plan still reads whole. The
+ * reason is the server's, sanitised and capped at 140 there, escaped here.
+ */
+function fndSuggestCellHtml(d, suggest) {
+  const pr = suggest && suggest.proposal ? suggest.proposal : null;
+  if (!pr) return '<td class="fnd-cell-suggest"></td>';
+  const slug = String((d && d.slug) || '');
+  const opt = START_STATES.find((o) => o.value === pr.proposed);
+  const word = opt ? opt.label : String(pr.proposed || '');
+  const differs = pr.differs === true;
+  return '<td class="fnd-cell-suggest">'
+    + '<label class="fnd-suggest">'
+      + (differs
+        ? '<input type="checkbox" class="cur-check cur-check-sm" data-plan-tick="' + escapeHtml(slug) + '"'
+          + (suggest.ticked ? ' checked' : '')
+          + ' aria-label="' + escapeHtml('Apply the suggestion for ' + ((d && d.title) || slug)
+            + ': ' + word) + '">'
+        : '')
+      + '<span class="fnd-suggest-word' + (differs ? ' fnd-suggest-change' : '') + '">'
+        + escapeHtml(word + (differs ? '' : ' · as now')) + '</span>'
+    + '</label>'
+    + (pr.reason ? '<span class="fnd-suggest-why">' + escapeHtml(String(pr.reason)) + '</span>' : '')
+    + '</td>';
+}
+
+/** The helper's state, for the project on screen only. */
+function planFor() {
+  const p = state.plan;
+  return p && p.domain === state.activeDomain && p.project === state.activeProject ? p : null;
+}
+
+/** How many writes Apply would make — the budget tick counts as one. */
+function planChangeCount(p) {
+  if (!p || !p.result) return 0;
+  const rows = (Array.isArray(p.result.proposals) ? p.result.proposals : [])
+    .filter((x) => x && x.differs === true && p.ticks && p.ticks[x.slug]).length;
+  return rows + (p.result.setBudgetSuggested === true && p.budgetTick ? 1 : 0);
+}
+
+/**
+ * ①'s HEAD-ROW CONTROL FOR THE HELPER.
+ *
+ * "Suggest a reading plan" until a proposal exists; then the two controls
+ * that SETTLE it — Apply suggestion · Dismiss — in its place, because a
+ * pending proposal is a decision in front of the owner and the head row is
+ * where this step's decisions live. Nothing is ever applied without Apply.
+ */
+function planHeadHtml() {
+  const p = planFor();
+  if (p && p.result) {
+    const n = planChangeCount(p);
+    return '<button type="button" class="btn btn-primary btn-xs" id="mem-plan-apply"'
+      + (p.applying || !n ? ' disabled aria-disabled="true"' : '') + '>'
+      + escapeHtml(p.applying ? 'Applying…' : 'Apply suggestion') + '</button>'
+      + '<button type="button" class="btn btn-ghost btn-xs" id="mem-plan-dismiss"'
+      + (p.applying ? ' disabled aria-disabled="true"' : '') + '>Dismiss</button>';
+  }
+  return '<button type="button" class="btn btn-secondary btn-xs" id="mem-plan-open"'
+    + ' aria-expanded="' + (p && p.open ? 'true' : 'false') + '" aria-controls="mem-plan-panel">'
+    + 'Suggest a reading plan</button>';
+}
+
+/** Bytes as step ④ and the helper quote them: one decimal under 100 KB. */
+function ssSize(bytes) {
+  const b = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+  if (b === 0) return '0 KB';
+  if (b < 1024) return b.toLocaleString('en-US') + ' bytes';
+  const kb = b / 1024;
+  // A budget is a whole number of KB and reads as one ("64 KB", not "64.0").
+  if (b % 1024 === 0) return kb.toLocaleString('en-US') + ' KB';
+  return (kb < 100 ? (Math.round(kb * 10) / 10).toFixed(1) : Math.round(kb).toLocaleString('en-US'))
+    + ' KB';
+}
+
+/** Tokens, ESTIMATED at four characters each — the ⓘ of ④ says so. */
+function ssTokens(bytes) {
+  const t = Number.isFinite(bytes) && bytes > 0 ? bytes / 4 : 0;
+  return '≈' + (t < 10000
+    ? (Math.round(t / 100) / 10).toLocaleString('en-US')
+    : Math.round(t / 1000).toLocaleString('en-US')) + 'k';
+}
+
+/** The reading budget in words: "Index only", "64 KB". */
+function budgetWord(bytes) {
+  return bytes === 0 ? 'Index only' : ssSize(bytes);
+}
+
+/** The per-viewer context window: '200k' (the default) or '1m'. */
+function readContextWindow() {
+  try {
+    const v = localStorage.getItem(CONTEXT_WINDOW_KEY);
+    return Object.hasOwn(CONTEXT_WINDOWS, v || '') ? v : '200k';
+  } catch {
+    return '200k';
+  }
+}
+
+function contextWindowNow() {
+  if (!state.ctxWindow || !Object.hasOwn(CONTEXT_WINDOWS, state.ctxWindow)) {
+    state.ctxWindow = readContextWindow();
+  }
+  return state.ctxWindow;
+}
+
+/** "18.6%" of the chosen window, from bytes (tokens = bytes ÷ 4). */
+function ssPct(bytes, win) {
+  const tokens = (Number.isFinite(bytes) && bytes > 0 ? bytes : 0) / 4;
+  const pct = (tokens / CONTEXT_WINDOWS[win]) * 100;
+  if (pct > 0 && pct < 0.1) return '<0.1%';
+  return (Math.round(pct * 10) / 10).toFixed(1) + '%';
+}
+
+/** The one line a whole start reads as: "149 KB · ≈37k tokens · 18.6%". */
+function ssTotalWords(bytes, win) {
+  return ssSize(bytes) + ' · ' + ssTokens(bytes) + ' tokens · ' + ssPct(bytes, win);
+}
+
+/** Step ④'s measurement, for the project on screen only. */
+function sessionStartFor() {
+  const ss = state.sessionStart;
+  return ss && ss.domain === state.activeDomain && ss.project === state.activeProject ? ss : null;
+}
+
+/**
+ * THE READING BUDGET PICKER — the shared listbox, ONE cfg for both halves.
+ *
+ * Each preset carries what an agent would be handed under it (`presets[].
+ * mcpBytes`, measured by the store in the same answer), so hovering or
+ * arrowing through the list is a comparison with no request behind it.
+ *
+ * ── STANDARD IS PRESELECTED WHEN NOTHING IS SET, AND STILL CHOOSABLE ────
+ * The listbox commits only a CHANGED value, so "preselected" and "choosable"
+ * would contradict each other on an untouched project. Standard is therefore
+ * the highlighted row AND an action row there: pressing it runs the write
+ * without the trigger pretending a budget is already set. The trigger keeps
+ * saying what is true — `Default · 120 KB` — until the owner chooses.
+ */
+function budgetPickerCfg(read, data, busy) {
+  const owner = read && Number.isInteger(read.readingBudgetBytes) ? read.readingBudgetBytes : null;
+  const measured = new Map();
+  for (const p of (data && Array.isArray(data.presets) ? data.presets : [])) {
+    if (p && typeof p.id === 'string' && Number.isInteger(p.mcpBytes)) measured.set(p.id, p.mcpBytes);
+  }
+  const match = owner === null ? null : READING_BUDGET_PRESETS.find((p) => p.bytes === owner) || null;
+  const untouched = owner === null;
+  return {
+    id: 'mem-budget-lb',
+    value: untouched ? 'standard' : (match ? match.id : null),
+    triggerText: busy === true ? 'Saving…'
+      : untouched ? 'Default · 120 KB'
+        : match ? (match.bytes === 0 ? 'Index only' : match.label.replace(' · recommended', '') + ' · ' + ssSize(match.bytes))
+          : 'Custom · ' + ssSize(owner),
+    ariaLabel: 'Reading budget: ' + (untouched ? 'not set, the default 120 KB applies'
+      : budgetWord(owner)),
+    disabled: busy === true,
+    triggerClass: 'mem-budget-btn',
+    minWidth: 320,
+    actionValues: untouched ? ['standard'] : [],
+    options: READING_BUDGET_PRESETS.map((p) => {
+      const mcp = measured.get(p.id);
+      return {
+        value: p.id,
+        label: p.bytes === 0 ? 'Index only' : p.label.replace(' · recommended', '') + ' · ' + ssSize(p.bytes),
+        action: untouched && p.id === 'standard',
+        typeahead: p.label,
+        html: '<span class="mem-bp-row"><span class="mem-bp-name">' + escapeHtml(p.label) + '</span>'
+          + '<span class="mem-bp-bytes">' + escapeHtml(budgetWord(p.bytes)) + '</span></span>'
+          + (Number.isInteger(mcp)
+            ? '<span class="mem-bp-start">an agent starts with ≈' + escapeHtml(ssSize(mcp)) + ' · '
+              + escapeHtml(ssTokens(mcp)) + ' tokens</span>'
+            : '')
+          + '<span class="mem-bp-hint">' + escapeHtml(p.hint) + '</span>',
+      };
+    }),
+  };
+}
+
+/**
+ * ④'s UNFOLDED LINES — each one only when it applies (v3.16.1: a cost may
+ * never sit behind a chevron).
+ *
+ *   · THE COST LINE, on a project nobody has planned whose next session is
+ *     handed more than the Lean preset: every document's text, every session.
+ *     One action, "Set a reading budget", which opens the picker on Standard.
+ *   · THE OVER-BUDGET SENTENCE, when the read-first set does not fit.
+ *   · THE INDEX-ONLY SENTENCE (§1.9), when documents are marked read first
+ *     but the budget hands over none of their text.
+ */
+function sessionNoticesHtml(data, facts, readonly) {
+  if (!data) return '';
+  const t = data.tiers && typeof data.tiers === 'object' ? data.tiers : {};
+  const b = data.budget && typeof data.budget === 'object' ? data.budget : {};
+  const rf = t.readFirst || {};
+  const om = t.omitted || {};
+  let out = '';
+  if (data.costLine && data.costLine.applies === true && data.planned !== true) {
+    const text = Number.isInteger(data.costLine.documentTextBytes) ? data.costLine.documentTextBytes : 0;
+    const why = (Number.isInteger(rf.count) && rf.count > 0)
+      ? ' because no reading budget is set.'
+      : ': nothing is marked read first and no reading budget is set.';
+    const left = Number.isInteger(om.count) && om.count > 0
+      ? ' ' + (om.count === 1 ? 'One more document' : om.count.toLocaleString('en-US') + ' more documents')
+        + ' did not fit the ' + ssSize(b.bytes) + ' default and ' + (om.count === 1 ? 'is' : 'are')
+        + ' listed by name.'
+      : '';
+    out += '<div class="tx-note mem-ss-cost" id="mem-ss-cost">' + icon('alertTriangle', 13)
+      + '<span>' + escapeHtml('Every session is handed ' + ssSize(text) + ' of document text ('
+        + ssTokens(text) + ' tokens)' + why + left) + '</span>'
+      + (readonly ? '' : '<button type="button" class="btn btn-secondary btn-xs" id="mem-ss-set-budget">'
+        + 'Set a reading budget</button>')
+      + '</div>';
+  }
+  if (data.planned === true && b.bytes === 0 && facts.readFirstCount > 0) {
+    const n = facts.readFirstCount;
+    out += '<div class="tx-note mem-ss-index-only" id="mem-ss-index-only">' + icon('alertCircle', 13)
+      + '<span>' + escapeHtml((n === 1 ? 'One document is' : n.toLocaleString('en-US') + ' documents are')
+        + ' marked read first, but the reading budget is Index only, so agents are handed none of '
+        + (n === 1 ? 'its' : 'their') + ' text. ' + (n === 1 ? 'It is' : 'They are')
+        + ' listed and fetched by name.') + '</span></div>';
+  } else if (data.planned === true && b.bytes > 0 && rf.exceeded === true) {
+    out += '<div class="tx-note mem-ss-over" id="mem-ss-over">' + icon('alertTriangle', 13)
+      + '<span>' + escapeHtml('The read-first set is ' + ssSize(facts.readFirstBytes) + ', over the '
+        + ssSize(b.bytes) + ' reading budget. Agents are handed the first ' + ssSize(rf.bytes)
+        + ' in reading order; the rest stay listed and are fetched by name.') + '</span></div>';
+  }
+  return out;
+}
+
+/** "3 documents · 30.7 KB" — a count and its bytes, for a tier line. */
+function ssDocs(tier) {
+  const n = tier && Number.isInteger(tier.count) ? tier.count : 0;
+  return n.toLocaleString('en-US') + ' document' + (n === 1 ? '' : 's') + ' · '
+    + ssSize(tier && tier.bytes);
+}
+
+/**
+ * "WHAT AN AGENT RECEIVES" — ONE monitor, a line per tier, each depth bar
+ * against a NAMED denominator (rule 6), and never a bar in a summary.
+ *
+ * The denominators, each the one the tier is actually bounded by: the 32 KB
+ * brief budget, the 48 KB handoff budget (the store trims a save there), the
+ * reading budget for document text, and the chosen context window for the
+ * total — which is never danger-toned, because a window is not a budget the
+ * owner set. The read-first line turns danger only when the set is over the
+ * budget, and then ④'s unfolded sentence says so in words.
+ */
+function sessionReceivesMonitor(data, facts, win) {
+  const t = data.tiers && typeof data.tiers === 'object' ? data.tiers : {};
+  const b = data.budget && typeof data.budget === 'object' ? data.budget : {};
+  const planned = data.planned === true;
+  const lines = [];
+  const tier = (x) => (x && typeof x === 'object' ? x : {});
+  const brief = tier(t.brief);
+  lines.push(brief.present === true
+    ? { key: 'standing brief', value: ssSize(brief.bytes) + ' · ' + ssTokens(brief.bytes),
+      sub: 'of ' + ssSize(brief.capBytes) + ' brief budget',
+      depth: { amount: brief.bytes, budget: brief.capBytes,
+        label: ssSize(brief.bytes) + ' of the ' + ssSize(brief.capBytes) + ' brief budget' } }
+    : { key: 'standing brief', value: 'none yet', sub: 'you write it in step 2' });
+  const handoff = tier(t.handoff);
+  lines.push(handoff.present === true
+    ? { key: 'latest handoff', value: ssSize(handoff.bytes) + ' · ' + ssTokens(handoff.bytes),
+      sub: 'of ' + ssSize(handoff.capBytes) + ' handoff budget',
+      depth: { amount: handoff.bytes, budget: handoff.capBytes,
+        label: ssSize(handoff.bytes) + ' of the ' + ssSize(handoff.capBytes) + ' handoff budget' } }
+    : { key: 'latest handoff', value: 'none yet', sub: 'an agent saves one' });
+  const journal = tier(t.journal);
+  const jl = Number.isInteger(journal.lines) ? journal.lines : 0;
+  lines.push({ key: 'journal', value: jl + ' line' + (jl === 1 ? '' : 's') + ' · ' + ssSize(journal.bytes) });
+  const index = tier(t.index);
+  lines.push({ key: 'document list',
+    value: (Number.isInteger(index.listed) ? index.listed : 0) + ' listed · ' + ssSize(index.bytes) });
+  const rf = tier(t.readFirst);
+  const rfCount = Number.isInteger(rf.count) ? rf.count : 0;
+  if (planned || rfCount > 0) {
+    const over = rf.exceeded === true;
+    lines.push({
+      key: 'read-first text',
+      value: ssSize(rf.bytes) + (rf.bytes > 0 ? ' · ' + ssTokens(rf.bytes) : ''),
+      sub: b.bytes === 0 ? 'the reading budget is Index only'
+        : 'of the ' + ssSize(b.bytes) + (planned ? ' reading budget' : ' default'),
+      tone: over ? 'danger' : undefined,
+      depth: b.bytes > 0 ? {
+        amount: over ? Math.max(facts.readFirstBytes, rf.bytes || 0) : rf.bytes,
+        budget: b.bytes,
+        label: ssSize(over ? facts.readFirstBytes : rf.bytes) + ' of the ' + ssSize(b.bytes)
+          + ' reading budget',
+      } : undefined,
+    });
+  } else {
+    lines.push({ key: 'read-first text', value: '0 KB', sub: 'no reading budget set' });
+  }
+  const other = tier(t.otherText);
+  if (Number.isInteger(other.count) && other.count > 0) {
+    lines.push({
+      key: 'other document text',
+      value: ssSize(other.bytes) + ' · ' + ssTokens(other.bytes),
+      sub: 'of the ' + ssSize(b.bytes) + ' default · sent because nothing is planned',
+      depth: { amount: other.bytes, budget: b.bytes,
+        label: ssSize(other.bytes) + ' of the ' + ssSize(b.bytes) + ' default' },
+    });
+  }
+  const omitted = tier(t.omitted);
+  if (Number.isInteger(omitted.count) && omitted.count > 0) {
+    lines.push({ key: 'left out, by name', value: ssDocs(omitted), sub: 'fetched by name when needed' });
+  }
+  const onRequest = tier(t.onRequest);
+  if (Number.isInteger(onRequest.count) && onRequest.count > 0) {
+    lines.push({ key: 'on request', value: ssDocs(onRequest), sub: 'listed; fetched by name' });
+  }
+  const hidden = tier(t.hidden);
+  if (Number.isInteger(hidden.count) && hidden.count > 0) {
+    lines.push({ key: 'not at start', value: ssDocs(hidden), sub: 'kept, not listed at the start' });
+  }
+  const pages = tier(t.domainPages);
+  const doms = Array.isArray(pages.domains) ? pages.domains.filter((x) => typeof x === 'string') : [];
+  lines.push({ key: 'domain pages', value: (doms.length ? doms.join(', ') + ' · ' : '') + '0 KB',
+    sub: 'searched when needed, never at start' });
+  const framing = tier(t.framing);
+  lines.push({ key: 'framing', value: ssSize(framing.bytes), sub: 'labels the data as data' });
+  const mcp = data.bytes && Number.isInteger(data.bytes.mcp) ? data.bytes.mcp : 0;
+  const winTokens = CONTEXT_WINDOWS[win];
+  lines.push({
+    key: 'total',
+    value: ssTotalWords(mcp, win),
+    sub: 'of a ' + (win === '1m' ? '1M' : '200k') + '-token window',
+    depth: { amount: mcp / 4, budget: winTokens,
+      label: ssTokens(mcp) + ' tokens of a ' + (win === '1m' ? '1M' : '200k') + '-token window' },
+  });
+  // ── IF APPLIED — the pending proposal, measured by the store (a read) ──
+  const pv = previewFor();
+  if (pv && pv.data && pv.data.bytes && Number.isInteger(pv.data.bytes.mcp)) {
+    const pb = pv.data.budget && Number.isInteger(pv.data.budget.bytes) ? pv.data.budget.bytes : null;
+    lines.push({
+      key: 'if applied',
+      value: ssTotalWords(pv.data.bytes.mcp, win),
+      sub: pv.withBudget && pb !== null
+        ? presetName(pb) + ' · ' + budgetWord(pb) + ' budget, with the suggestion'
+        : 'with the suggestion applied',
+      depth: { amount: pv.data.bytes.mcp / 4, budget: winTokens,
+        label: ssTokens(pv.data.bytes.mcp) + ' tokens of a ' + (win === '1m' ? '1M' : '200k')
+          + '-token window, if the suggestion is applied' },
+    });
+  }
+  const notes = Array.isArray(data.notes) ? data.notes.filter((n) => typeof n === 'string' && n) : [];
+  return renderMonitor({
+    id: 'mem-ss-monitor',
+    label: 'What an agent receives at the start of a session',
+    lines,
+    note: notes.join(' '),
+  });
+}
+
+/** A preset's short name for a byte figure, or "Custom". */
+function presetName(bytes) {
+  const p = READING_BUDGET_PRESETS.find((x) => x.bytes === bytes);
+  return p ? p.label.replace(' · recommended', '') : 'Custom';
+}
+
+/** The `if applied` measurement, for the proposal on screen only. */
+function previewFor() {
+  const pv = state.sessionPreview;
+  const p = planFor();
+  return pv && p && p.result && pv.domain === state.activeDomain && pv.project === state.activeProject
+    && pv.key === planPreviewKey(p) ? pv : null;
+}
+
+/** The preview request's body, for the ticked proposal — or null when there
+ *  is nothing to measure. */
+function planPreviewBody(p) {
+  if (!p || !p.result) return null;
+  const plan = {};
+  for (const x of (Array.isArray(p.result.proposals) ? p.result.proposals : [])) {
+    if (x && x.differs === true && p.ticks && p.ticks[x.slug]) plan[x.slug] = x.proposed;
+  }
+  const withBudget = p.result.setBudgetSuggested === true && p.budgetTick === true
+    && Number.isInteger(p.result.budgetBytes);
+  if (!withBudget && !Object.keys(plan).length) return null;
+  return withBudget ? { budgetBytes: p.result.budgetBytes, plan } : { plan };
+}
+
+function planPreviewKey(p) {
+  const body = planPreviewBody(p);
+  return body ? JSON.stringify(body) : null;
+}
+
+/** The ⓘ of step ④ — DESIGN-context-budget §2.5's three paragraphs, verbatim. */
+const SESSION_START_INFO_HTML =
+  '<p>An agent starting work on this project is handed the standing brief, the latest handoff, a '
+  + 'few journal lines, the list of documents, and the text of the documents marked <i>read '
+  + 'first</i>, up to the reading budget. Nothing from the domain’s pages is loaded until the agent '
+  + 'searches.</p>'
+  + '<p>Start small. Most sessions need the brief, the handoff and one or two documents: '
+  + 'conventions, a decision log. Everything else stays listed, and the agent opens it by name when '
+  + 'the task calls for it. Lean or Standard is right for most projects; Deep or Max is for a '
+  + 'project whose agents must hold a large design in mind before they touch anything.</p>'
+  + '<p>The figures here are what the store would send right now. Tokens are estimated at four '
+  + 'characters each. Your agent’s tokenizer will differ, and its own system prompt, tools and '
+  + 'project instructions are not counted here.</p>';
+
+/**
+ * ④ SESSION START — the sum of steps ①–③, and the one number the owner sets.
+ *
+ * Head row: the Reading budget picker (step ①'s head-row pattern). Then the
+ * unfolded lines that apply, then three fold rows: "What an agent receives"
+ * (the ONE row on this page that is open by default — it is the step's
+ * answer), "Context window" (a per-viewer denominator) and "How an agent
+ * reaches this" (the harness-neutral promise, said once).
+ *
+ * The measurement arrives after the paint; until it does the step says it is
+ * measuring rather than showing a figure it does not have.
+ */
+function renderSessionStart(read) {
+  if (!read) return '';
+  const readonly = !!(state.detail && state.detail.readonly) || !!read.readonly;
+  const ss = sessionStartFor();
+  const data = ss && ss.data ? ss.data : null;
+  const facts = foundationsFacts(read);
+  const win = contextWindowNow();
+  const owner = Number.isInteger(read.readingBudgetBytes) ? read.readingBudgetBytes : null;
+
+  const headHtml = '<span class="mem-ss-budget-label" id="mem-ss-budget-label">Reading budget</span>'
+    + (readonly
+      ? '<span class="mem-ss-budget-fixed">'
+        + escapeHtml(owner === null ? 'Default · 120 KB' : budgetWord(owner)) + '</span>'
+      : renderListboxHtml(budgetPickerCfg(read, data, state.budgetSaving === true)));
+
+  const budgetErr = state.budgetError && state.budgetError.domain === state.activeDomain
+    && state.budgetError.project === state.activeProject
+    ? '<div class="mem-note" id="mem-ss-budget-error">' + icon('alertTriangle', 13) + '<span>'
+      + escapeHtml('The reading budget was not changed: ' + state.budgetError.error) + '</span></div>'
+    : '';
+
+  let rows;
+  if (!data) {
+    rows = '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">'
+      + renderDescription(ss && ss.error
+        ? 'What an agent receives could not be measured: ' + ss.error
+        : 'Measuring what an agent receives…')
+      + '</div></div>';
+  } else {
+    const mcp = data.bytes && Number.isInteger(data.bytes.mcp) ? data.bytes.mcp : 0;
+    const hook = data.bytes && Number.isInteger(data.bytes.hook) ? data.bytes.hook : 0;
+    const folds = state.openFolds || {};
+    rows =
+      '<details class="mem-fold" data-mem-fold="receives"' + (folds.receives === false ? '' : ' open') + '>'
+        + '<summary class="mem-fold-summary" id="mem-fold-receives">' + icon('chevronRight', 14)
+          + '<span>What an agent receives</span>'
+          + '<span class="mem-fold-meta">' + escapeHtml(ssSize(mcp) + ' · ' + ssTokens(mcp)
+            + ' tokens · ' + ssPct(mcp, win) + ' of a ' + (win === '1m' ? '1M' : '200k') + ' window')
+          + '</span>'
+        + '</summary>'
+        + '<div class="mem-fold-body">' + sessionReceivesMonitor(data, facts, win) + '</div>'
+      + '</details>'
+      + '<details class="mem-fold" data-mem-fold="window"' + (folds.window ? ' open' : '') + '>'
+        + '<summary class="mem-fold-summary" id="mem-fold-window">' + icon('chevronRight', 14)
+          + '<span>Context window</span>'
+          + '<span class="mem-fold-meta">' + (win === '1m' ? '1M' : '200k') + ' tokens · per viewer</span>'
+        + '</summary>'
+        + '<div class="mem-fold-body"><div class="mem-ss-window" role="group" '
+          + 'aria-label="The context window the percentage is of">'
+          + ['200k', '1m'].map((w) => '<button type="button" class="btn btn-secondary btn-xs" '
+            + 'data-ctx-window="' + w + '" aria-pressed="' + (w === win ? 'true' : 'false') + '">'
+            + (w === '1m' ? '1M tokens' : '200k tokens') + '</button>').join('')
+        + '</div></div>'
+      + '</details>'
+      + '<details class="mem-fold" data-mem-fold="reach"' + (folds.reach ? ' open' : '') + '>'
+        + '<summary class="mem-fold-summary" id="mem-fold-reach">' + icon('chevronRight', 14)
+          + '<span>How an agent reaches this</span>'
+          + '<span class="mem-fold-meta">MCP · session-start hook · Chat (≤ 40,000 characters)</span>'
+        + '</summary>'
+        + '<div class="mem-fold-body">' + renderMonitor({
+          id: 'mem-ss-reach',
+          label: 'How an agent reaches this context',
+          lines: [
+            { key: 'MCP get_project_context', value: ssSize(mcp),
+              sub: 'the owner’s budget, unless the agent asks for more' },
+            { key: 'session-start hook', value: ssSize(hook), sub: 'the owner’s budget' },
+            { key: 'Chat', value: '≤ 40,000 characters',
+              sub: 'the smaller of this budget and 40,000 characters' },
+          ],
+        }) + '</div>'
+      + '</details>';
+  }
+
+  return memStep({
+    num: 4,
+    id: 'context-session',
+    title: 'Session start',
+    infoText: SESSION_START_INFO_HTML,
+    headHtml,
+    bodyHtml: '<div class="mem-ss-stack">' + budgetErr
+      + sessionNoticesHtml(data, facts, readonly) + rows + '</div>',
+  });
+}
+
+/**
+ * ASK FOR STEP ④'s MEASUREMENT when the project read it describes changed.
+ *
+ * Called after every paint (`render`) and after an in-place write. Cheap when
+ * nothing changed: one signature compare. The route runs the real handler
+ * seven times (the current start plus the five presets and the hook), measured
+ * at 84–115 ms on curator's copy — so it is never on a switch's critical path,
+ * and a burst of renders asks once.
+ */
+function maybeLoadSessionStart(token) {
+  // A proposal belongs to the project it was made on: a switch drops it.
+  if (state.plan && !planFor()) state.plan = null;
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  const read = state.projectRead;
+  if (!domain || !project || !read) return;
+  const sig = payloadSignature(read);
+  const cur = sessionStartFor();
+  if (cur && cur.sig === sig) return;
+  const key = keyOf(domain, project) + '\n' + sig;
+  if (sessionStartInFlight === key) return;
+  loadSessionStart(domain, project, sig, token).catch((err) => reportAsyncMountFailure(token, err));
+}
+
+async function loadSessionStart(domain, project, sig, token) {
+  const key = keyOf(domain, project) + '\n' + sig;
+  sessionStartInFlight = key;
+  let next;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/'
+      + encodeURIComponent(project) + '/session-start');
+    const data = await res.json();
+    next = res.ok && data && data.ok
+      ? { data, error: null }
+      : { data: null, error: (data && (data.message || data.error)) || 'HTTP ' + res.status };
+  } catch (err) {
+    next = { data: null, error: err.message };
+  }
+  if (sessionStartInFlight === key) sessionStartInFlight = null;
+  if (!isCurrentMount(token)) return;
+  if (state.activeDomain !== domain || state.activeProject !== project) return;
+  const prev = sessionStartFor();
+  // A failed RE-measure keeps the last good figures on screen, with the error.
+  state.sessionStart = { domain, project, sig,
+    data: next.data || (prev && prev.data) || null, error: next.error };
+  patchSessionStart(token);
+}
+
+/**
+ * REPAINT STEP ④ AND THE SESSION START TILE, AND NOTHING ELSE.
+ *
+ * A late measurement must not repaint the page: the Documents table may be
+ * mid-decision, a listbox open, a fold scrolled. So the ④ block is replaced
+ * in place and re-bound, the overview tile's value is written into the tile
+ * that is already there, and focus goes back to the control it was on. When
+ * the block is not on screen (a skeleton, another branch) the ordinary render
+ * is the fallback.
+ */
+function patchSessionStart(token) {
+  if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
+  const block = document.querySelector('.settings-block-context-session');
+  if (!block || !state.projectRead) { render(token); return; }
+  const focusId = document.activeElement && block.contains(document.activeElement)
+    ? document.activeElement.id : null;
+  const openInfo = block.querySelector('[data-tx-info][aria-expanded="true"]') !== null;
+  block.outerHTML = renderSessionStart(state.projectRead);
+  const fresh = document.querySelector('.settings-block-context-session');
+  if (fresh) {
+    if (openInfo) {
+      const mark = fresh.querySelector('[data-tx-info]');
+      const panel = mark ? document.getElementById(mark.getAttribute('data-tx-info')) : null;
+      if (mark && panel) { panel.hidden = false; mark.setAttribute('aria-expanded', 'true'); }
+    }
+    bindFoldToggles(fresh);
+    bindSessionAndPlan(fresh, token);
+    if (focusId) {
+      const el = document.getElementById(focusId);
+      if (el && typeof el.focus === 'function') {
+        try { el.focus({ preventScroll: true }); } catch { el.focus(); }
+      }
+    }
+  }
+  const tile = document.querySelector('[data-ov-jump="context-session"]');
+  const ss = sessionStartFor();
+  const mcp = ss && ss.data && ss.data.bytes && Number.isInteger(ss.data.bytes.mcp) ? ss.data.bytes.mcp : null;
+  if (tile && mcp !== null) {
+    // The tile's own arithmetic (whole KB), which `renderLayerStrip` inlines.
+    const words = Math.round(mcp / 1024).toLocaleString('en-US') + ' KB · ' + ssTokens(mcp) + ' tokens';
+    const value = tile.querySelector('.cur-ov-value');
+    if (value) value.textContent = words;
+    tile.setAttribute('aria-label', 'Session start, ' + words + ' — go to step 4');
+    tile.hidden = false;
+  }
+  renderedSignature = screenSignature();
+}
+
+/** The reading-plan estimate, asked for when the panel opens. Never throws. */
+async function loadPlanEstimate(token) {
+  const p = planFor();
+  if (!p) return;
+  const { domain, project } = p;
+  let next;
+  try {
+    const res = await fetch('/api/reading-plan/' + encodeURIComponent(domain) + '/'
+      + encodeURIComponent(project) + '/estimate');
+    const data = await res.json();
+    next = res.ok && data && data.ok ? { data, error: null }
+      : { data: null, error: (data && (data.message || data.error)) || 'HTTP ' + res.status };
+  } catch (err) {
+    next = { data: null, error: err.message };
+  }
+  if (!isCurrentMount(token)) return;
+  const now = planFor();
+  if (now !== p) return;
+  p.estimate = next.data;
+  p.estimateError = next.error;
+  render(token);
+}
+
+/**
+ * DOES THIS AI RUN NEED THE CONFIRM? (CONTRACT §1.4)
+ *
+ * The unfolded run line is the gate only for a run whose UPPER estimate is
+ * known and under a cent, or a free one; anything else — a cent or more, or a
+ * price nobody published — opens `shared/confirm.js`, with the run line as the
+ * dialog's first line. Pure, over `runsOn`.
+ */
+function planAiNeedsConfirm(runsOn) {
+  if (!runsOn || runsOn.needsKey === true) return true;
+  if (runsOn.free === true) return false;
+  return !(typeof runsOn.usdHigh === 'number' && Number.isFinite(runsOn.usdHigh) && runsOn.usdHigh < 0.01);
+}
+
+/**
+ * RUN ONE ARM OF THE HELPER — a READ. It proposes; nothing is written.
+ *
+ * Every differing row starts ticked, and the budget tick (when the owner has
+ * no budget and the plan was made against Standard) starts ticked too, so
+ * Apply writes the budget the plan was made for (§1.11).
+ */
+async function runPlan(arm, token) {
+  const p = planFor();
+  if (!p || p.running || p.applying) return;
+  p.running = arm;
+  p.error = null;
+  render(token);
+  const { domain, project } = p;
+  let out;
+  try {
+    const res = await fetch('/api/reading-plan/' + encodeURIComponent(domain) + '/'
+      + encodeURIComponent(project) + '/suggest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ arm }),
+    });
+    const data = await res.json();
+    out = res.ok && data && data.ok ? { data, error: null }
+      : { data: null, error: (data && (data.message || data.error)) || 'HTTP ' + res.status,
+        runsOn: data && data.runsOn };
+  } catch (err) {
+    out = { data: null, error: err.message };
+  }
+  if (!isCurrentMount(token) || planFor() !== p) return;
+  p.running = null;
+  if (!out.data) {
+    p.error = out.error;
+    if (out.runsOn && typeof out.runsOn === 'object') {
+      p.estimate = Object.assign({}, p.estimate || {}, { runsOn: out.runsOn });
+    }
+    render(token);
+    return;
+  }
+  p.result = out.data;
+  p.ticks = {};
+  for (const x of (Array.isArray(out.data.proposals) ? out.data.proposals : [])) {
+    if (x && typeof x.slug === 'string' && x.differs === true) p.ticks[x.slug] = true;
+  }
+  p.budgetTick = out.data.setBudgetSuggested === true;
+  state.sessionPreview = null;
+  render(token);
+  loadPlanPreview(token).catch((err) => reportAsyncMountFailure(token, err));
+}
+
+/** The plain words of a run line, for the confirm's first line (textContent
+ *  only — the dialog never takes markup). The line is rendered by the kit, so
+ *  there is no second money formatter here. */
+function runLineText(runsOn) {
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') return '';
+  const box = document.createElement('div');
+  box.innerHTML = renderRunsOn(runsOn, { inSettings: true });
+  return (box.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+/** "✨ Suggest with AI": straight through under a cent, through the confirm
+ *  otherwise. */
+function pressPlanAi(token) {
+  const p = planFor();
+  const runsOn = p && p.estimate ? p.estimate.runsOn : null;
+  if (!p || !runsOn || runsOn.needsKey === true) return;
+  if (!planAiNeedsConfirm(runsOn)) {
+    runPlan('ai', token).catch((err) => reportAsyncMountFailure(token, err));
+    return;
+  }
+  confirmThen({
+    title: 'Suggest a reading plan with AI?',
+    message: runLineText(runsOn),
+    detail: 'It reads titles, roles, sizes and each document’s opening lines, and proposes a plan. '
+      + 'Nothing is written until you apply it.',
+    confirmLabel: 'Suggest with AI',
+    tone: 'default',
+    onConfirm: () => runPlan('ai', token),
+  }).catch((err) => reportAsyncMountFailure(token, err));
+}
+
+/** The `if applied` read. POSTs the ticked plan to the preview route, which
+ *  writes nothing; a stale answer (the ticks moved on) is dropped. */
+async function loadPlanPreview(token) {
+  const p = planFor();
+  const body = planPreviewBody(p);
+  if (!p || !body) { state.sessionPreview = null; patchSessionStart(token); return; }
+  const key = JSON.stringify(body);
+  if (previewInFlight === key) return;
+  previewInFlight = key;
+  let data = null;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(p.domain) + '/'
+      + encodeURIComponent(p.project) + '/session-start/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const got = await res.json();
+    if (res.ok && got && got.ok) data = got;
+  } catch { data = null; }
+  if (previewInFlight === key) previewInFlight = null;
+  if (!isCurrentMount(token) || planFor() !== p || planPreviewKey(p) !== key) return;
+  state.sessionPreview = data
+    ? { domain: p.domain, project: p.project, key, data, withBudget: body.budgetBytes !== undefined }
+    : null;
+  patchSessionStart(token);
+}
+
+/** WRITE THE READING BUDGET — the ONE fetch that sends it, shared by the
+ *  picker and by Apply. Never throws. */
+async function writeReadingBudget(domain, project, bytes) {
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/'
+      + encodeURIComponent(project) + '/reading/budget', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ readingBudgetBytes: bytes }),
+    });
+    const data = await res.json();
+    if (res.ok && data && data.ok) return { ok: true, data };
+    return { ok: false, error: (data && (data.message || data.error)) || ('HTTP ' + res.status) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+/** Fold a budget write's answer into the project read, from the ANSWER. */
+function applyBudgetAnswer(data) {
+  const pr = state.projectRead;
+  if (!pr || !data) return;
+  pr.readingBudgetBytes = Number.isInteger(data.readingBudgetBytes) ? data.readingBudgetBytes : null;
+  pr.readingBudgetDefaulted = data.readingBudgetDefaulted === true;
+  const f = pr.foundations;
+  if (f && typeof f === 'object') {
+    if (Number.isInteger(data.readFirstBudgetBytes)) f.readFirstBudgetBytes = data.readFirstBudgetBytes;
+    if (typeof data.readFirstBudgetExceeded === 'boolean') f.readFirstBudgetExceeded = data.readFirstBudgetExceeded;
+  }
+}
+
+/** Choose a preset: one write, one field, then a render — the budget changes
+ *  what step ①'s monitor measures against as well as step ④. */
+async function setReadingBudget(bytes, token) {
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  if (!domain || !project || state.budgetSaving) return;
+  state.budgetSaving = true;
+  state.budgetError = null;
+  render(token);
+  const out = await writeReadingBudget(domain, project, bytes);
+  state.budgetSaving = false;
+  if (!isCurrentMount(token)) return;
+  if (state.activeDomain !== domain || state.activeProject !== project) return;
+  if (!out.ok) state.budgetError = { domain, project, error: out.error };
+  else applyBudgetAnswer(out.data);
+  render(token);
+}
+
+/**
+ * APPLY THE SUGGESTION — the budget first (when ticked), then one PATCH per
+ * ticked row, through the same two writers the controls use.
+ *
+ * Sequential and stopping at the first refusal: a half-applied plan is
+ * reported as exactly that, naming the document that was refused, and the
+ * proposal stays on screen so the owner can see what did not land.
+ */
+async function applyPlan(token) {
+  const p = planFor();
+  if (!p || !p.result || p.applying || !planChangeCount(p)) return;
+  p.applying = true;
+  p.applyError = null;
+  render(token);
+  const { domain, project } = p;
+  let error = null;
+  let done = 0;
+  if (p.result.setBudgetSuggested === true && p.budgetTick && Number.isInteger(p.result.budgetBytes)) {
+    const out = await writeReadingBudget(domain, project, p.result.budgetBytes);
+    if (!out.ok) error = 'the reading budget was not set: ' + out.error;
+    else { done++; if (state.activeDomain === domain && state.activeProject === project) applyBudgetAnswer(out.data); }
+  }
+  if (!error) {
+    for (const x of (Array.isArray(p.result.proposals) ? p.result.proposals : [])) {
+      if (!x || x.differs !== true || !p.ticks || !p.ticks[x.slug]) continue;
+      const out = await writeStartState(domain, project, x.slug, x.proposed);
+      if (!out.ok) { error = '“' + x.slug + '” was not changed: ' + out.error; break; }
+      done++;
+    }
+  }
+  if (!isCurrentMount(token)) return;
+  if (state.activeDomain !== domain || state.activeProject !== project) return;
+  if (error) {
+    p.applying = false;
+    p.applyError = (done ? done + ' of the changes were applied, then ' : '') + error;
+  } else {
+    state.plan = null;
+    state.sessionPreview = null;
+  }
+  // Re-read the project: the rows, the monitor and step ④ all follow the store.
+  await reloadActive(token);
+}
+
+/**
+ * BIND EVERY CONTROL v3.67.0 ADDED — for the page, or for step ④ alone when
+ * `patchSessionStart` replaced it. Guarded per element, so a second pass over
+ * a node that is still there binds nothing twice.
+ */
+function bindSessionAndPlan(root, token) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  const once = (el) => { if (!el || el.__v367Bound) return false; el.__v367Bound = true; return true; };
+  const one = (sel) => (typeof root.querySelector === 'function' ? root.querySelector(sel) : null);
+
+  // The run line's door — "Change model" / "Add one in Providers & keys".
+  if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+    wireAiRunDoors(document.querySelector('#view-root .main-inner'), { requestSettingsSection, navigate });
+  }
+
+  // ① the start-state cells: ONE cfg per row, the same function the markup used.
+  const f = state.projectRead && state.projectRead.foundations;
+  const docs = f && Array.isArray(f.documents) ? f.documents.filter(Boolean) : [];
+  for (const d of docs) {
+    const cfg = fndStartCfg(d, state.startSaving === d.slug);
+    cfg.onChange = (value) => {
+      setStartState(d.slug, value, token).catch((err) => reportAsyncMountFailure(token, err));
+    };
+    if (one('#' + cfg.id)) mountListbox(cfg);
+  }
+
+  // ④ the reading budget picker.
+  if (one('#mem-budget-lb') && state.projectRead) {
+    const ss = sessionStartFor();
+    const cfg = budgetPickerCfg(state.projectRead, ss && ss.data, state.budgetSaving === true);
+    cfg.onChange = (value) => {
+      const preset = READING_BUDGET_PRESETS.find((x) => x.id === value);
+      if (preset) setReadingBudget(preset.bytes, token).catch((err) => reportAsyncMountFailure(token, err));
+    };
+    mountListbox(cfg);
+  }
+  const setBudget = one('#mem-ss-set-budget');
+  if (once(setBudget)) {
+    setBudget.addEventListener('click', () => {
+      const trigger = document.getElementById('mem-budget-lb');
+      if (trigger && !trigger.disabled) trigger.click();
+    });
+  }
+  root.querySelectorAll('[data-ctx-window]').forEach((btn) => {
+    if (!once(btn)) return;
+    btn.addEventListener('click', () => {
+      const w = btn.dataset.ctxWindow;
+      if (!Object.hasOwn(CONTEXT_WINDOWS, w || '')) return;
+      state.ctxWindow = w;
+      try { localStorage.setItem(CONTEXT_WINDOW_KEY, w); } catch { /* the app forgets */ }
+      patchSessionStart(token);
+    });
+  });
+
+  // ① the helper.
+  const openBtn = one('#mem-plan-open');
+  if (once(openBtn)) {
+    openBtn.addEventListener('click', () => {
+      const cur = planFor();
+      if (cur && cur.open) { state.plan = null; render(token); return; }
+      state.plan = { domain: state.activeDomain, project: state.activeProject, open: true,
+        estimate: null, estimateError: null, running: null, error: null, result: null,
+        ticks: {}, budgetTick: false, applying: false, applyError: null };
+      render(token);
+      loadPlanEstimate(token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  }
+  const free = one('#mem-plan-free');
+  if (once(free)) {
+    free.addEventListener('click', () => {
+      runPlan('free', token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  }
+  const ai = one('#mem-plan-ai');
+  if (once(ai)) ai.addEventListener('click', () => pressPlanAi(token));
+  const apply = one('#mem-plan-apply');
+  if (once(apply)) {
+    apply.addEventListener('click', () => {
+      applyPlan(token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  }
+  const dismiss = one('#mem-plan-dismiss');
+  if (once(dismiss)) {
+    dismiss.addEventListener('click', () => {
+      state.plan = null;
+      state.sessionPreview = null;
+      render(token);
+    });
+  }
+  root.querySelectorAll('[data-plan-tick]').forEach((box) => {
+    if (!once(box)) return;
+    box.addEventListener('change', () => {
+      const p = planFor();
+      if (!p) return;
+      p.ticks[box.dataset.planTick] = !!box.checked;
+      const btn = document.getElementById('mem-plan-apply');
+      if (btn) btn.disabled = !planChangeCount(p) || p.applying;
+      loadPlanPreview(token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  });
+  const budgetTick = one('#mem-plan-budget-tick');
+  if (once(budgetTick)) {
+    budgetTick.addEventListener('change', () => {
+      const p = planFor();
+      if (!p) return;
+      p.budgetTick = !!budgetTick.checked;
+      const btn = document.getElementById('mem-plan-apply');
+      if (btn) btn.disabled = !planChangeCount(p) || p.applying;
+      loadPlanPreview(token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  }
+}
+
+/**
+ * THE HELPER'S PANEL — Quick maintenance's anatomy (`.mem-fnd-panel`), the one
+ * this page already uses for "Add from folder".
+ *
+ * Two lines of explanation (what each arm reads), the two buttons, and the run
+ * line directly under them — unfolded, as every cost is. With no key the AI
+ * button is DISABLED, never hidden, and the run line becomes the no-key line
+ * with its door; the free arm always works. After a run: the after-line, the
+ * proposal's one-line summary, and — when the owner has no budget — the tick
+ * that sets the one the plan was made against.
+ */
+function renderPlanPanel(facts, p) {
+  const read = state.projectRead;
+  const owner = read && Number.isInteger(read.readingBudgetBytes) ? read.readingBudgetBytes : null;
+  const est = p.estimate;
+  const runsOn = est && est.runsOn && typeof est.runsOn === 'object' ? est.runsOn : null;
+  const budget = est && Number.isInteger(est.budgetBytes) ? est.budgetBytes
+    : (owner !== null ? owner : READING_BUDGET_STANDARD);
+  const ownerSet = est ? est.budgetSource === 'owner' : owner !== null;
+  const phrase = (ownerSet ? 'your ' : 'the Standard ') + budgetWord(budget) + ' reading budget';
+  const busy = !!p.running || !!p.applying;
+  const aiAttrs = !runsOn ? ' disabled aria-disabled="true"'
+    : (aiActionDisabledAttrs(runsOn, 'mem-plan-runs') || (busy ? ' disabled aria-disabled="true"' : ''));
+  const runLine = runsOn
+    ? renderRunsOn(runsOn, { id: 'mem-plan-runs' })
+    : (p.estimateError
+      ? renderDescription('The cost of an AI suggestion could not be read: ' + p.estimateError)
+      : renderDescription('Reading what an AI suggestion would cost…'));
+  const r = p.result;
+  let result = '';
+  if (r) {
+    const tt = r.totals && typeof r.totals === 'object' ? r.totals : {};
+    const n = (v) => (Number.isInteger(v) ? v : 0);
+    const clauses = ['Suggested plan',
+      n(tt.readFirstCount) + ' read first',
+      ssSize(tt.readFirstBytes) + ' of the ' + budgetWord(r.budgetBytes) + ' reading budget',
+      n(tt.onRequestCount) + ' on request'];
+    if (n(tt.notAtStartCount)) clauses.push(n(tt.notAtStartCount) + ' not at start');
+    clauses.push(planChangeCount(p) ? 'nothing applied yet' : 'nothing to change');
+    const dropped = Array.isArray(r.dropped) ? r.dropped.filter((x) => x && x.slug) : [];
+    const notes = Array.isArray(r.notes) ? r.notes.filter((x) => typeof x === 'string' && x) : [];
+    result = '<div class="mem-plan-result" id="mem-plan-result" role="status">'
+      + '<p class="mem-plan-summary">' + escapeHtml(clauses.join(' · ')) + '</p>'
+      + (r.setBudgetSuggested === true
+        ? '<label class="mem-plan-tick"><input type="checkbox" class="cur-check cur-check-sm" '
+          + 'id="mem-plan-budget-tick"' + (p.budgetTick ? ' checked' : '') + '>'
+          + '<span>' + escapeHtml('Also set the reading budget to ' + presetName(r.budgetBytes) + ' · '
+            + budgetWord(r.budgetBytes)) + '</span></label>'
+        : '')
+      + (dropped.length
+        ? '<p class="mem-plan-dropped">' + escapeHtml(dropped.length + ' suggestion'
+          + (dropped.length === 1 ? ' was' : 's were') + ' dropped: '
+          + dropped.map((x) => x.slug + (x.reason ? ' (' + x.reason + ')' : '')).join(', ')) + '</p>'
+        : '')
+      + notes.map((x) => '<p class="mem-plan-dropped">' + escapeHtml(x) + '</p>').join('')
+      + (p.applyError
+        ? '<div class="mem-note">' + icon('alertTriangle', 13) + '<span>'
+          + escapeHtml('The suggestion was not fully applied: ' + p.applyError) + '</span></div>'
+        : '')
+      + '</div>';
+  }
+  return '<div class="mem-fnd-panel mem-plan-panel" id="mem-plan-panel" role="group" '
+      + 'aria-labelledby="mem-plan-title">'
+    + '<div class="mem-fnd-panel-eyebrow cur-group-title" id="mem-plan-title">Suggest a reading plan</div>'
+    + '<div class="mem-plan-top">'
+      + '<div class="mem-plan-explain">'
+        + '<p class="mem-plan-line">' + escapeHtml('Free: from the brief’s “Read before you…” list, '
+          + 'each document’s role and size, and ' + phrase + '.') + '</p>'
+        + '<p class="mem-plan-line">With AI: reads titles, roles, sizes and each document’s opening '
+          + 'lines, never whole documents.</p>'
+      + '</div>'
+      + '<div class="mem-plan-actions">'
+        + '<button type="button" class="btn btn-secondary btn-xs" id="mem-plan-free"'
+          + (busy ? ' disabled aria-disabled="true"' : '') + '>'
+          + escapeHtml(p.running === 'free' ? 'Suggesting…' : 'Suggest (free)') + '</button>'
+        + '<button type="button" class="btn btn-secondary btn-xs" id="mem-plan-ai"' + aiAttrs + '>'
+          + escapeHtml(p.running === 'ai' ? 'Suggesting…' : '✨ Suggest with AI') + '</button>'
+      + '</div>'
+    + '</div>'
+    + runLine
+    + (r && r.spent ? renderSpent(r.spent) : '')
+    + (p.error ? renderStatus({ state: 'danger', title: 'No suggestion was made', detail: p.error }) : '')
+    + result
+  + '</div>';
+}
+
 /**
  * THE ONE EXPLANATORY SURFACE — now the header's ⓘ panel, not a card.
  *
@@ -10356,9 +11671,15 @@ function renderJournal() {
  */
 function aboutInfoHtml() {
   return (
-    '<p>A <b>domain</b> is where your knowledge lives — one compounding set of pages. A <b>project</b> ' +
-    'is a thing you build inside it, and a domain can hold several. Project context is kept per project, ' +
-    'in <span class="mono">state/</span> beside that domain’s pages, and synced with it.</p>' +
+    // ── THE MODEL, FIRST (v3.67.0, CONTRACT §5.1) ────────────────────────
+    // The maintainer's governing principle: this screen must TEACH what an
+    // agent needs at the start and what it can ask for later, not only expose
+    // the settings that decide it. This paragraph replaced the domain/project
+    // one, whose substance the rest of the panel still carries.
+    '<p>An agent starting work on a project needs three things: its instructions (the standing ' +
+    'brief), where things stand (the latest handoff), and a little foundational knowledge (the ' +
+    'documents you mark <i>read first</i>). Everything else — other documents, the domain’s pages — ' +
+    'stays one request away. Give it just enough, and it keeps its window for the work.</p>' +
     // ── THE RAIL'S OWN SENTENCE, MOVED HERE (v3.65.0, R2) ─────────────
     // The sidebar had a second ⓘ carrying this line, and the maintainer
     // asked for it to go: *"we have an information icon in the Project
@@ -10608,6 +11929,56 @@ function showMoreWorkStreams(token) {
   }
 }
 
+/**
+ * REMEMBER WHICH FOLDS ARE OPEN — one binder, for the whole page or one block.
+ *
+ * Moved out of `wire` in v3.67.0, UNCHANGED, because step ④ repaints its own
+ * block in place when its measurement lands (`patchSessionStart`) and its three
+ * rows need the same listener without the rest of the page being re-bound. A
+ * second copy of this logic would be two rules for one preference.
+ *
+ * `root` is the document on a full paint, or the replaced block.
+ */
+function bindFoldToggles(root) {
+  root.querySelectorAll('[data-mem-fold]').forEach((el) => {
+    // ── THE PAINT'S OWN ECHO IS NOT A PRESS (v3.64.1) ────────────────────
+    // MEASURED IN A BROWSER: a `<details open>` created by an innerHTML
+    // assignment fires `toggle` ONCE, after this listener is attached — the
+    // probe is one line and the answer is unambiguous (open: 1 event, closed:
+    // 0). So every paint of an OPEN fold arrives here as a toggle nobody
+    // performed. While the emitted value always equalled the stored one that
+    // was harmless noise; it stopped being harmless the moment a fold could
+    // be opened by a TRANSIENT (`state.fndForceOpen`), because the echo then
+    // wrote that transient into `curator-memory-folds-v1` as the user's own
+    // choice and one Edit press marked the documents fold open for good.
+    //
+    // A press always CHANGES `el.open` relative to what the last recorded
+    // state was; an echo never does. The mark is an expando, so it is
+    // invisible to anything that compares markup.
+    el.__memFoldWas = !!el.open;
+    el.addEventListener('toggle', () => {
+      if (!state.openFolds) state.openFolds = {};
+      const key = el.dataset.memFold;
+      if (!key) return;
+      if (!!el.open === el.__memFoldWas) return;
+      el.__memFoldWas = !!el.open;
+      state.openFolds[key] = el.open;
+      // ── AN EXPLICIT CLOSE CLEARS THE FOUNDATIONS FORCE (v3.64.1) ──────
+      // The one line that makes a close FINAL while an editor is still open.
+      // Without it the transient re-forces `open` on the next paint and this
+      // listener then records that forced value as the user's own — the loop
+      // the maintainer reported as "it reopens itself". Written inline for
+      // the reason this block already states twice: `wire` is lifted by
+      // brace-matching and executed against a hand-written set of stubs, so a
+      // module-level helper named here would be a ReferenceError there.
+      if (key === 'foundations' && !el.open) state.fndForceOpen = false;
+      try {
+        localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
+      } catch { /* private window, blocked site data, quota — the app forgets */ }
+    });
+  });
+}
+
 function wire(token) {
   document.querySelectorAll('.mem-row[data-mem-project]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -10675,7 +12046,7 @@ function wire(token) {
     // visibly does nothing. The focus target is the first tick, which is the
     // control the sentence is about.
     const first = typeof document.querySelector === 'function'
-      ? document.querySelector('[data-fnd-first]') : null;
+      ? document.querySelector('[data-fnd-first] [data-lb-trigger]') : null;
     if (first) {
       let reduce = false;
       try {
@@ -11003,43 +12374,11 @@ function wire(token) {
     });
   });
 
-  document.querySelectorAll('[data-mem-fold]').forEach((el) => {
-    // ── THE PAINT'S OWN ECHO IS NOT A PRESS (v3.64.1) ────────────────────
-    // MEASURED IN A BROWSER: a `<details open>` created by an innerHTML
-    // assignment fires `toggle` ONCE, after this listener is attached — the
-    // probe is one line and the answer is unambiguous (open: 1 event, closed:
-    // 0). So every paint of an OPEN fold arrives here as a toggle nobody
-    // performed. While the emitted value always equalled the stored one that
-    // was harmless noise; it stopped being harmless the moment a fold could
-    // be opened by a TRANSIENT (`state.fndForceOpen`), because the echo then
-    // wrote that transient into `curator-memory-folds-v1` as the user's own
-    // choice and one Edit press marked the documents fold open for good.
-    //
-    // A press always CHANGES `el.open` relative to what the last recorded
-    // state was; an echo never does. The mark is an expando, so it is
-    // invisible to anything that compares markup.
-    el.__memFoldWas = !!el.open;
-    el.addEventListener('toggle', () => {
-      if (!state.openFolds) state.openFolds = {};
-      const key = el.dataset.memFold;
-      if (!key) return;
-      if (!!el.open === el.__memFoldWas) return;
-      el.__memFoldWas = !!el.open;
-      state.openFolds[key] = el.open;
-      // ── AN EXPLICIT CLOSE CLEARS THE FOUNDATIONS FORCE (v3.64.1) ──────
-      // The one line that makes a close FINAL while an editor is still open.
-      // Without it the transient re-forces `open` on the next paint and this
-      // listener then records that forced value as the user's own — the loop
-      // the maintainer reported as "it reopens itself". Written inline for
-      // the reason this block already states twice: `wire` is lifted by
-      // brace-matching and executed against a hand-written set of stubs, so a
-      // module-level helper named here would be a ReferenceError there.
-      if (key === 'foundations' && !el.open) state.fndForceOpen = false;
-      try {
-        localStorage.setItem('curator-memory-folds-v1', JSON.stringify(state.openFolds));
-      } catch { /* private window, blocked site data, quota — the app forgets */ }
-    });
-  });
+  bindFoldToggles(document);
+
+  // v3.67.0: step ④, the start-state cells and the reading-plan helper — every
+  // control this release added, bound in one place (see `bindSessionAndPlan`).
+  bindSessionAndPlan(document, token);
 
   const refresh = document.getElementById('mem-refresh');
   if (refresh) {
