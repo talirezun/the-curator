@@ -5,6 +5,10 @@ import { existsSync } from 'fs';
 import { unlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import { ingestFile } from '../brain/ingest.js';
+// v3.67.0: the actual cost of a single-file ingest, in the one shape every AI
+// run reports. Static import is safe: this route is a leaf, and brain/ingest.js
+// (imported just above) is fully evaluated before ai-run.js's graph starts.
+import { spentFromUsage } from '../brain/ai-run.js';
 // NAMESPACE import, the degradation contract this codebase uses for the model
 // layer: a build shipped before the availability layer existed resolves these to
 // `undefined`, the gate below is skipped, and ingest behaves exactly as it did.
@@ -24,6 +28,39 @@ import {
 } from '../brain/ingest-activity.js';
 
 const router = Router();
+
+/**
+ * The `done` SSE event for a finished single-file ingest. Exported so a suite
+ * can assert its shape with no LLM; the handler emits exactly this.
+ *
+ * Every pre-v3.67.0 field is unchanged, including `tokenUsage` passed through
+ * as-is. `spent` (v3.67.0, additive) is spentFromUsage(result.tokenUsage):
+ * the same totals, priced by the batch queue's own rule, so a single ingest
+ * finally says what it cost in dollars. It is OMITTED — never a zero-filled
+ * object — when the result carries no usage (an older/partial result shape).
+ */
+export function ingestDoneEvent(result, overwrite) {
+  const r = result || {};
+  const usage = (r.tokenUsage && typeof r.tokenUsage === 'object') ? r.tokenUsage : null;
+  return {
+    type: 'done',
+    title: r.title,
+    pagesWritten: r.pagesWritten,
+    changes: r.changes,    // structured per-file change records (v2.5.0+)
+    warnings: r.warnings || [],  // non-fatal issues (v3.0.1-beta.1)
+    truncated: !!r.truncated,    // source-text was longer than 80k chars
+    wasOverwrite: overwrite === 'true',
+    // v3.0.16 added real per-call token/cache accounting on the result
+    // ({calls, inputTokens, outputTokens, cachedReadTokens,
+    // cacheWriteTokens, provider, model} — see makeUsageAccumulator in
+    // src/brain/ingest.js), but this route used to pick fields
+    // explicitly and never relayed it, so it never reached the UI.
+    // Passed through as-is (possibly undefined on an older/partial
+    // result shape) — the frontend degrades gracefully when absent.
+    tokenUsage: r.tokenUsage,
+    ...(usage ? { spent: spentFromUsage(usage) } : {}),
+  };
+}
 
 const upload = multer({
   dest: tmpdir(),
@@ -275,23 +312,7 @@ router.post('/', upload.single('file'), async (req, res) => {
         emit  // onProgress callback → emits {type, pct, message} events
       );
 
-      emit({
-        type: 'done',
-        title: result.title,
-        pagesWritten: result.pagesWritten,
-        changes: result.changes,    // structured per-file change records (v2.5.0+)
-        warnings: result.warnings || [],  // non-fatal issues (v3.0.1-beta.1)
-        truncated: !!result.truncated,    // source-text was longer than 80k chars
-        wasOverwrite: overwrite === 'true',
-        // v3.0.16 added real per-call token/cache accounting on the result
-        // ({calls, inputTokens, outputTokens, cachedReadTokens,
-        // cacheWriteTokens, provider, model} — see makeUsageAccumulator in
-        // src/brain/ingest.js), but this route used to pick fields
-        // explicitly and never relayed it, so it never reached the UI.
-        // Passed through as-is (possibly undefined on an older/partial
-        // result shape) — the frontend degrades gracefully when absent.
-        tokenUsage: result.tokenUsage,
-      });
+      emit(ingestDoneEvent(result, overwrite));
     } catch (err) {
       console.error('Ingest error:', err);
       emit({ type: 'error', message: err.message });
