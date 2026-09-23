@@ -1119,6 +1119,15 @@ const COLUMN2 = (overviewLabel, healthLabel) =>
   '<details class="dm-section dm-fold dm-shared" id="dm-shared-fold"><summary class="dm-fold-summary"><span class="dm-section-num">4</span><span class="dm-fold-title">SHARED BRAIN</span></summary><div id="dm-shared-host"></div></details>' +
   '<section class="dm-health">' + healthLabel + '</section>';
 
+// THE LIVE HOST HOLDS THE PANEL'S MARKUP (v3.65.2). In the browser the ingest
+// panel has written its form into `#dm-sources-host` long before any repaint,
+// so the live ① section can NEVER be byte-equal to the freshly composed one
+// (whose host is empty). A fixture whose live host is empty too makes an
+// outerHTML comparison look safe — found by mutation: with ① dropped from the
+// patch's hosted check, every assertion below stayed green.
+const LIVE = (html) => html.replace('<div id="dm-sources-host"></div>',
+  '<div id="dm-sources-host"><div class="ing-drop-zone" id="ing-drop-zone"></div></div>');
+
 const COLUMN = (healthLabel) =>
   '<div class="dm-path-eyebrow">domains/alpha/</div>' +
   '<section class="dm-overview"><div class="dm-stats-grid"></div></section>' +
@@ -1133,7 +1142,7 @@ const COLUMN = (healthLabel) =>
 
 {
   // ── THE RULE. A health revalidation returns WHILE A DRAG IS IN PROGRESS.
-  const { inner } = mountColumn(COLUMN('scanning'));
+  const { inner } = mountColumn(LIVE(COLUMN('scanning')));
   const hostBefore = inner.children[3];
   const healthBefore = inner.children[7];
   patchBox.__reset();
@@ -1162,7 +1171,7 @@ const COLUMN = (healthLabel) =>
   // with a drag held over the drop zone, which is the exact v3.46.0 defect
   // this rule exists to prevent. Measured in the browser by pressing an
   // OVERVIEW figure mid-drag: 3 full repaints and the drop target replaced.
-  const { inner } = mountColumn(COLUMN2('PAGES 100', 'scanning'));
+  const { inner } = mountColumn(LIVE(COLUMN2('PAGES 100', 'scanning')));
   const srcBefore = inner.children[3];
   const shBefore = inner.children[6];
   const healthBefore = inner.children[7];
@@ -1195,7 +1204,7 @@ const COLUMN = (healthLabel) =>
   // every list back to the top, which is the "switching domains flickers,
   // pages and other data visibly repaint" the maintainer reported. The data
   // was already right; it was being redrawn three more times than it moved.
-  const { inner } = mountColumn(COLUMN('scanning'));
+  const { inner } = mountColumn(LIVE(COLUMN('scanning')));
   const hostBefore = inner.children[3];
   const pagesBefore = inner.children[4];
   const healthBefore = inner.children[7];
@@ -1219,7 +1228,7 @@ const COLUMN = (healthLabel) =>
   // idle or busy, because its body belongs to the panel.
   const withMeta = (meta) => COLUMN('scanning')
     .replace('last ingest 3 days ago', meta);
-  const { inner } = mountColumn(withMeta('last ingest 3 days ago'));
+  const { inner } = mountColumn(LIVE(withMeta('last ingest 3 days ago')));
   const hdBefore = inner.children[2];
   const srcBefore = inner.children[3];
   const hostBefore = srcBefore.children[0].children[0];
