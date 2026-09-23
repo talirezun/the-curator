@@ -296,8 +296,34 @@ section('§6 (1) capture per project — numerator, NAMED denominator, absent �
   const idle = build(summary({
     projects: summary().projects.map((p, i) => (i === 0 ? { ...p, capture: { sessions: 0, sessionsRead: 0, sessionsSaved: 0, lastSessionAt: null, domainMismatch: false } } : p)),
   }));
-  ok(idle.groups[0].label.includes('no sessions') && idle.groups[0].bar && idle.groups[0].captureFrac === 0,
-    'a project with a log and no session in 30 days reads "no sessions" over an empty track');
+  ok(idle.groups[0].bar && idle.groups[0].captureFrac === 0 && opaqueRun(idle.groups[0].bar) === 0,
+    'a project with a log and no session in 30 days draws an EMPTY TRACK (a measured zero)');
+  // The clause is the LAST one, so here (name · age · harness is already 34
+  // characters of a 38 budget) it goes whole to the tooltip.
+  eq(idle.groups[0].label, 'curator · 10 min ago · claude-code',
+    '… and the clause "no logged sessions · 30 d" is LAST and cuttable: the identity, the age and the harness come first');
+  eq(M.appendLastClause('ab', M.CAPTURE_NONE_IN_WINDOW, 38), 'ab · no logged sessions · 30 d',
+    'where it fits, the clause is appended whole, as the last one');
+  eq(M.appendLastClause('abcdefghijk', M.CAPTURE_NONE_IN_WINDOW, 38), 'abcdefghijk',
+    '… where it does not, it is dropped WHOLE (never "· no logged sessions · 3…" and never split at its inner " · ")');
+  eq(M.appendLastClause('curator · 10 min…', M.CAPTURE_NONE_IN_WINDOW, 80), 'curator · 10 min…',
+    '… and never appended after a head that was itself clipped');
+  eq(M.CAPTURE_NONE_IN_WINDOW, 'no logged sessions · 30 d', 'the wording the maintainer\'s photo review asked for');
+  ok(!/(^|· )no sessions( ·|$)/.test(idle.groups[0].label) && idle.groups[0].label.startsWith('curator · 10 min ago'),
+    '… never the bare "no sessions" that read as a contradiction beside a saved handoff, and the identity and age come first');
+  ok(/none logged for this project/.test(idle.groups[0].toolTip) && /logged no session line/.test(idle.groups[0].toolTip),
+    '… and the tooltip keeps the full sentence, including why a save can exist with no logged session');
+  // The clause is cuttable and ATOMIC: a long name drops it whole, never "· 30…".
+  const idleLong = build(summary({
+    scopes: [scope('projects', 'a-very-long-project-name-that-fills', 10)],
+    projects: [{ domain: 'projects', project: 'a-very-long-project-name-that-fills', projectLabel: 'x',
+      capture: { sessions: 0, sessionsRead: 0, sessionsSaved: 0, lastSessionAt: null, domainMismatch: false }, documents: null }],
+  }));
+  ok(!idleLong.groups[0].label.includes('logged') && idleLong.groups[0].label.length <= M.BAR_LABEL_CHARS
+    && idleLong.groups[0].toolTip.includes('none logged'),
+    `where it does not fit, the clause goes WHOLE to the tooltip: "${idleLong.groups[0].label}"`);
+  ok(M.CAPTURE_NONE_IN_WINDOW !== M.CAPTURE_NOT_LOGGED,
+    'a measured zero and an absent log never share a wording');
   // A long name gives way; the reading does not.
   const longName = 'an-unreasonably-long-project-name-for-a-menu';
   const lm = build(summary({
@@ -413,9 +439,22 @@ section('§9 the menu template — placement, clicks, and the icon seam');
   ok(doc && doc.enabled === true && doc.icon && doc.icon.from === m.documents.bar,
     'the documents item is ENABLED and carries its bar through makeIcon');
   ok(ids.indexOf(MENU.ID_HEADER_PULSE) > 0, 'CONTROL — the fixture draws a pulse, so the ordering below compares two real positions');
-  ok(ids.indexOf(MENU.ID_HEADLINE) < ids.indexOf(MENU.ID_DOCUMENTS)
-    && ids.indexOf(MENU.ID_DOCUMENTS) < ids.indexOf(MENU.ID_HEADER_PULSE),
-    '… directly under the headline block, above the save pulse');
+  // The top keeps v3.66.0's order exactly: headline, its sub-line, the pulse.
+  const top = flat.filter((i) => i.type !== 'separator').slice(0, 4).map((i) => i.id);
+  eq(top, [MENU.ID_HEADLINE, MENU.ID_HEADLINE_WHERE, MENU.ID_HEADER_PULSE, MENU.ID_PULSE],
+    'the menu opens headline · sub-line · Save pulse header · pulse, with nothing between them');
+  // The documents line is the FIRST line under the OPEN project's header.
+  const g0i = ids.indexOf('tray-group-0');
+  eq(m.groups[0].project, m.headline.project, 'CONTROL — group 0 is the open project in this fixture');
+  eq(ids[g0i + 1], MENU.ID_DOCUMENTS,
+    '… and the documents line sits directly under the open project\'s header, before its scope rows');
+  ok(ids.indexOf(MENU.ID_DOCUMENTS) < ids.indexOf('tray-row-0'), '… before the first scope row');
+  eq(flat.filter((i) => i.id === MENU.ID_DOCUMENTS).length, 1, '… exactly once — only the open project\'s group carries it');
+  // The open project has no group on screen → omitted, never moved to the top.
+  const offscreen = { ...m, groups: m.groups.slice(1) };
+  const offIds = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(offscreen, NOOPS)).map((i) => i.id);
+  ok(!offIds.includes(MENU.ID_DOCUMENTS) && offscreen.groups.length > 0,
+    'with the open project\'s group off screen, the documents line is OMITTED — not moved back under the headline');
   doc.click();
   eq(calls.scope.pop(), 'projects/curator', '… and its click opens Context on the headline project');
   const g0 = byId('tray-group-0');

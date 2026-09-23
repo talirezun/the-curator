@@ -522,6 +522,34 @@ export const HEADER_DOMAINS = 'Domains · pages';
 export const CAPTURE_NOT_LOGGED = 'no sessions logged';
 
 /**
+ * Said when a log EXISTS and holds no session for this project in the window.
+ *
+ * It was `no sessions`, the line's leading reading, and the maintainer's first
+ * photograph showed why that was wrong: `projects / lumina · no sessions`
+ * sat directly above a handoff saved "1 week ago". Those saves came through a
+ * bridge that wrote no session line, so both lines were true and together
+ * they read as a contradiction. The words now say whose count it is (the
+ * LOGGED sessions) and over which window, and the clause is the LAST and
+ * cuttable one, since the saves listed underneath matter more than the empty
+ * count. The tooltip keeps the full sentence. It stays distinct from
+ * `CAPTURE_NOT_LOGGED`: a measured zero and an absent log are two facts and
+ * never share a wording.
+ */
+export const CAPTURE_NONE_IN_WINDOW = 'no logged sessions · 30 d';
+
+/**
+ * Append ONE clause, whole, as the last and cuttable one: added only when all
+ * of it fits and the head was not itself clipped. Never `· 30…`, and never
+ * split at its own inner ` · `.
+ */
+export function appendLastClause(head, clause, budget) {
+  if (typeof head !== 'string' || !head) return head;
+  if (typeof clause !== 'string' || !clause || head.endsWith('…')) return head;
+  const next = head + ' · ' + clause;
+  return next.length <= budget ? next : head;
+}
+
+/**
  * A byte count as the app prints it inside `N of M KB` (`Math.round(b/1024)`,
  * en-US grouping — `shared/foundations-init.js` `formatBytes`). Below 1 KB a
  * non-zero amount is `<1`, never `0`: rounding a real 300 bytes down to
@@ -2938,7 +2966,18 @@ export function buildTrayModel(summary, opts = {}) {
     g.capture = capture;
     g.bar = b;
     g.captureFrac = frac;
-    if (reading !== null) {
+    const noneInWindow = capture !== null && capture.sessions === 0 && reading !== null;
+    if (noneInWindow) {
+      // A MEASURED zero: the empty track is still drawn, and the words go LAST
+      // as one atomic clause, appended only when the whole clause fits.
+      const budget = b ? BAR_LABEL_CHARS : PLAIN_LABEL_CHARS;
+      const head = clipClauses([g.projectLabel, age, g.harness].filter(Boolean).join(' · '), budget);
+      g.label = appendLastClause(head, CAPTURE_NONE_IN_WINDOW, budget);
+      g.toolTip = [g.projectFull, age, g.harness].filter(Boolean).join(' · ')
+        + ' · Agent sessions, last ' + windowDays + ' days: none logged for this project'
+        + ' (saves made through a bridge that logged no session line are not counted)'
+        + (busiestSaved !== null ? ' · Bar: against the busiest project (' + busiestSaved + ' saved)' : '');
+    } else if (reading !== null) {
       g.label = composeBarLabel(g.projectLabel, reading, [age, g.harness],
         b ? BAR_LABEL_CHARS : PLAIN_LABEL_CHARS);
       g.toolTip = [g.projectFull, age, g.harness].filter(Boolean).join(' · ')

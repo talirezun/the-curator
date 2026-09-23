@@ -22,13 +22,14 @@
  *
  *   1  the headline answer          "Working on: lumina · 12 min ago"
  *   2  who wrote it                 "claude-code · opus-4"
- *   2a the open project's documents "Read first · 64 of 120 KB" + a depth bar
- *                                   (v3.66.0; only when the data layer read them)
  *   -  header                       "Save pulse"
  *   2b the save pulse               a drawn strip + "5 days known · 79 saves · 2 tools"
  *   -  project header               "articles / lumina · 9 of 11 saved · 12 min ago"
  *                                   ENABLED since v3.66.0, carrying the capture
  *                                   depth bar; a click opens Context on it
+ *   3a the open project's documents "Documents · 116 of 200 KB" + a depth bar —
+ *                                   the FIRST line of the open project's own
+ *                                   group only (v3.66.0), before its scope rows
  *   3  up to TWO rows               newest scope first, each with a recency mark
  *                                   in its icon gutter and a four-item submenu
  *   -  … up to THREE such groups, five rows in total
@@ -349,31 +350,6 @@ export function buildTrayMenuTemplate(model, o = {}) {
     });
   }
 
-  // ── 2a. The open project's documents (v3.66.0) ──────────────────────────
-  //
-  // One ENABLED item carrying the depth bar: the headline project's documents
-  // against the budget the APP applies — read-first bytes against 120 KB once
-  // any document is flagged, stored bytes against 200 KB otherwise (the data
-  // layer's `documents.basis`). Enabled for the pulse's own reason: a disabled
-  // item's icon is tinted to the disabled grey, and a bar that exists to be
-  // read must not be drawn in the dimmest style macOS has. The click opens
-  // Context on that project, where the Documents monitor is its app twin.
-  //
-  // Absent when the data layer returned no reading: an unread budget is not an
-  // empty one, so nothing is drawn rather than a zero.
-  const documents = m && m.documents ? m.documents : null;
-  if (documents && documents.label) {
-    const icon = image(makeIcon, documents.bar);
-    template.push({
-      id: documents.id || ID_DOCUMENTS,
-      label: documents.label,
-      enabled: true,
-      click: () => onOpenScope(documents),
-      ...(icon ? { icon } : {}),
-      ...(documents.toolTip ? { toolTip: documents.toolTip } : {}),
-    });
-  }
-
   // ── 2b. The save pulse ──────────────────────────────────────────────────
   //
   // ONE item under its own section header, carrying a drawn strip in its icon
@@ -497,6 +473,36 @@ export function buildTrayMenuTemplate(model, o = {}) {
         });
       } else {
         template.push({ ...header(group.id || ID_HEADER_ROWS, group.label || HEADER_ROWS), ...tip });
+      }
+      // ── 3a. The open project's documents, INSIDE ITS OWN GROUP (v3.66.0) ─
+      //
+      // One ENABLED item carrying the depth bar: the headline project's
+      // documents against the budget the APP applies (read-first bytes against
+      // 120 KB once any document is flagged, otherwise stored bytes against
+      // 200 KB: the data layer's `documents.basis`). Enabled for the pulse's
+      // reason: a disabled item's icon is tinted grey.
+      //
+      // WHERE, AND WHY THERE. It first shipped directly under the headline,
+      // and the maintainer's photograph read it as having pushed the Save pulse
+      // out of its place. The top of the menu keeps its v3.66.0 order
+      // (headline, sub-line, Save pulse), and the line is a fact ABOUT one
+      // project, so it sits under that project's header, before its scope
+      // rows. Only the matching group carries it. If the open project has no
+      // group on screen (the row limit), the line is OMITTED, never moved back
+      // to the top.
+      const documents = m && m.documents ? m.documents : null;
+      if (documents && documents.label && documents.project
+        && group.project === documents.project
+        && (group.domain || null) === (documents.domain || null)) {
+        const icon = image(makeIcon, documents.bar);
+        template.push({
+          id: documents.id || ID_DOCUMENTS,
+          label: documents.label,
+          enabled: true,
+          click: () => onOpenScope(documents),
+          ...(icon ? { icon } : {}),
+          ...(documents.toolTip ? { toolTip: documents.toolTip } : {}),
+        });
       }
       for (const row of gRows) {
         const dot = image(makeIcon, row.dot);
