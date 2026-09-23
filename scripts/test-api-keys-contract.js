@@ -342,7 +342,11 @@ section('\u00a72. `facts.measured` names WHO measured it \u2014 three values, ne
   const b = R.buildLaneFacts(wire());
   eq(b.measuredBy, 'curator', 'the view normalises the real payload to `curator`');
   const html = renderWith(wire());
-  okContains(html, measuredChip('measured by The Curator'),
+  // v3.67.0 (package SD): block 2's current-model card words the curator
+  // claim as the LANE's — "measured for the build lane" — because the
+  // evidence is the ingest prompt, which every other AI job inherits. It is
+  // still driven by the same `curator` value off the wire.
+  okContains(html, measuredChip('measured for the build lane'),
     'and BLOCK 2 renders that badge from the value the route sent');
   okMissing(html, measuredChip('measured on your wiki'), '\u2026and not the other one');
 }
@@ -358,7 +362,7 @@ section('\u00a72. `facts.measured` names WHO measured it \u2014 three values, ne
   const html = renderWith(k);
   okContains(html, measuredChip('measured on your wiki'),
     'CONTROL: `user` renders the user badge \u2014 so the page reads the value rather than assuming one');
-  okMissing(html, measuredChip('measured by The Curator'),
+  okMissing(html, measuredChip('measured for the build lane'),
     '\u2026and block 2 drops the Curator claim entirely');
 
   const k2 = wire();

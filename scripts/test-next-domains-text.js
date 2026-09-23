@@ -97,6 +97,8 @@ import {
 } from '../src/public/next/shared/sidebar.js';
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
 import { freshnessTier } from '../src/public/next/shared/age.js';
+// v3.67.0 (package SD): Quick maintenance renders the shared run line.
+import { renderRunsOn, renderSpent, aiActionDisabledAttrs } from '../src/public/next/shared/ai-run.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NEXT = join(ROOT, 'src/public/next');
@@ -332,8 +334,11 @@ section('§2  RETIRED CLASSES — gone, and the survivors are deliberate');
 
   // The wrappers the placement rules hang on must EXIST in the markup, or
   // the spacing silently does nothing.
+  // v3.67.0 (package SD): `dm-quick-empty-text` went with the no-key row it
+  // spaced (the AI actions now stay visible and disabled); `dm-quick-run`,
+  // the run line's wrapper under the action bar, took its place.
   for (const w of ['dm-sidebar-status', 'dm-health-summary', 'dm-quick-footnote',
-                   'dm-quick-empty-text', 'dm-browse-lead']) {
+                   'dm-quick-run', 'dm-browse-lead']) {
     ok(domainsCode.includes(w) && domainsCssCode.includes('.' + w),
        `.${w} exists in BOTH the markup and the stylesheet — a wrapper in one and not the other is dead spacing`);
   }
@@ -650,6 +655,8 @@ section('§5  THE SPEND GATE — the cost promise is never folded, never dyed');
     buttonRingHtml: () => '<RING/>', costReadout: () => null,
     GIT_UNDO_NOTE: 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.',
     renderStatus, renderDescription,
+    // v3.67.0 (package SD): the REAL run-line kit.
+    renderRunsOn, renderSpent, aiActionDisabledAttrs,
   };
   const names = Object.keys(deps);
   const render = (st, crossMountBusy) => makeCallable(
@@ -693,13 +700,20 @@ section('§5  THE SPEND GATE — the cost promise is never folded, never dyed');
        'a user who clicked Fix and never left is NOT told an earlier fix is running (unchanged behaviour)');
   }
 
+  // v3.67.0 (package SD): with no key the AI actions are no longer REPLACED
+  // by a sentence and an "Open Settings" button (which landed on General);
+  // the bar stays, the ✨ actions are disabled, and the shared no-key run line
+  // says why, with its door to Providers & keys. The cost promise is still a
+  // description, and still unfolded.
   const noKey = callOrFail('quick maintenance, no AI key', () =>
-    render({ busyKey: null, aiAvailable: false, estimates: {} }, false));
+    render({ busyKey: null, aiAvailable: false, aiRunsOn: { job: 'wiki-health', needsKey: true }, estimates: {} }, false));
   if (noKey) {
-    ok(noKey.includes('tx-desc') && noKey.includes('Add an AI provider key in Settings'),
-       'the no-key explanation is a description too, not a bare <span> inheriting a container font-size');
-    ok(noKey.includes('dm-quick-empty-text'),
-       'wrapped in this view\'s own flex-item class, so the stylesheet never names the role');
+    ok(noKey.includes('Needs an AI provider key') && noKey.includes('data-ai-run-door="providers"'),
+       'the no-key state is the shared run line, with its door to Providers & keys');
+    ok(noKey.includes('<AIBTN/>') && !noKey.includes('Open Settings'),
+       'the AI actions are still rendered (disabled, never hidden) and the General door is gone');
+    ok(noKey.includes('tx-desc') && !noKey.includes('<details'),
+       'the cost promise is still a description, and still not folded');
   }
 }
 

@@ -323,7 +323,15 @@ section('1. Phase 1 — the four properties the first deleted block guarded');
     'shared: the enable control lives on the Shared Brain view\'s off state');
   ok(/enable-flag/.test(bodyOf(sharedCode, 'onEnableFlag')),
     '…and posts to the feature-flag endpoint');
-  ok(!/sharedbrain|shared-brain|Shared Brain/i.test(settingsCode),
+  // v3.67.0 (package SD): Settings › Providers & keys › "Your AI model" now
+  // NAMES every job its model runs, Shared Brain among them, in a lede noun
+  // keyed by the AI_JOBS id. That one entry is a word in a sentence, not a
+  // control; it is exempted EXACTLY (the control below proves it is there
+  // once and only once), so any other mention still reds this guard.
+  const SB_LEDE_NOUN = "'shared-brain': 'Shared Brain', ";
+  ok(settingsCode.split(SB_LEDE_NOUN).length === 2,
+    '(control) settings.js carries the Shared Brain lede noun exactly once — the only exemption below');
+  ok(!/sharedbrain|shared-brain|Shared Brain/i.test(settingsCode.replace(SB_LEDE_NOUN, '')),
     'settings.js hosts NO Shared Brain control — the toggle moved to the feature\'s own view');
 
   // ── P4b: THE OFF STATE SAYS ONE THING, AND STILL SAYS THE REST (v3.58.0) ──
