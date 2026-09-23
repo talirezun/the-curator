@@ -228,7 +228,7 @@ section('0. Helper controls — nothing below counts until these pass');
 section('1. The theme tables parse and every owned file is on disk');
 // ═════════════════════════════════════════════════════════════════════════
 const { dark: D, light: L } = themeTables(
-  ['tokens/color.css', 'tokens/material.css', 'shared/sidebar.css', ...OWNED]);
+  ['tokens/color.css', 'tokens/material.css', 'tokens/identity.css', 'shared/sidebar.css', ...OWNED]);
 {
   const missing = [...OWNED, ...OWNED_JS].filter((f) => !existsSync(path.join(NEXT, f)));
   ok(missing.length === 0, missing.length === 0
@@ -236,20 +236,28 @@ const { dark: D, light: L } = themeTables(
     : 'missing: ' + missing.join(', '));
   ok(resolve(D, '--type-entity') === '#3FBFD8' && resolve(L, '--type-entity') === '#2596AE',
     'the type triad resolves differently per theme (dark -500, light -600) — so the tables are really two tables');
-  ok(resolve(L, '--id-ink-1') !== resolve(L, '--type-entity'),
-    "the identity palette's light-theme rungs are IN the table (they are declared in "
-    + 'shared/sidebar.css, not in tokens/)');
-  ok(resolve(D, '--id-ink-1') === resolve(D, '--type-entity'),
+  // v3.66.0: the three derived light rungs are the PAGE-TYPE inks and were
+  // renamed `--id-ink-1/-2/-3` -> `--type-ink-entity/-concept/-summary`, and
+  // moved to tokens/identity.css, so the domain palette could change without
+  // re-colouring the Domains OVERVIEW figures. Their VALUES did not move.
+  ok(resolve(L, '--type-ink-entity') !== resolve(L, '--type-entity'),
+    "the type inks' derived light-theme rungs are IN the table (declared in tokens/identity.css)");
+  ok(resolve(D, '--type-ink-entity') === resolve(D, '--type-entity'),
     '…and in DARK they alias the token, so no dark value moved by a byte');
+  {
+    const got = ['--type-ink-entity', '--type-ink-concept', '--type-ink-summary'].map((t) => resolve(L, t)).join(',');
+    ok(got === '#16768C,#438126,#925E13',
+      '…and the three light values are v3.65.1\'s, unchanged by the rename (' + got + ')');
+  }
   // ONE PALETTE: the three rungs are declared ONCE, and the file that
-  // declares them is the kit's. A view re-declaring one is the two-copies
+  // declares them is the token file. A view re-declaring one is the two-copies
   // defect v3.65.1 removed, in its subtlest form — same name, same value,
   // different file, and whichever is linked last silently wins.
-  for (const tok of ['--id-ink-1', '--id-ink-2', '--id-ink-3']) {
-    const declarers = [...OWNED, 'shared/sidebar.css']
+  for (const tok of ['--type-ink-entity', '--type-ink-concept', '--type-ink-summary']) {
+    const declarers = [...OWNED, 'shared/sidebar.css', 'tokens/identity.css']
       .filter((rel) => new RegExp('(?:^|[;{\\s])' + tok + '\\s*:').test(stripComments(read(rel))));
-    ok(declarers.length === 1 && declarers[0] === 'shared/sidebar.css',
-      `${tok} is declared in shared/sidebar.css and NOWHERE else`, declarers.join(', '));
+    ok(declarers.length === 1 && declarers[0] === 'tokens/identity.css',
+      `${tok} is declared in tokens/identity.css and NOWHERE else`, declarers.join(', '));
   }
 }
 
@@ -352,7 +360,7 @@ section('3. The domain stat counts clear AA in the light theme');
   ok(read('shared/overview.js').includes(`class="cur-group ' + cls('cur-ov-group'`),
      '…and the group the component renders really is the kit\'s `.cur-group` — otherwise the two reads ' +
      'above describe a plane nothing paints');
-  for (const [ty, tok] of [['entity', '--id-ink-1'], ['concept', '--id-ink-2'], ['summary', '--id-ink-3']]) {
+  for (const [ty, tok] of [['entity', '--type-ink-entity'], ['concept', '--type-ink-concept'], ['summary', '--type-ink-summary']]) {
     const decl = declFor(dom, `.dm-stat-${ty}`, 'color');
     ok(decl === `var(${tok})`, `.dm-stat-${ty} takes ${tok} (got ${decl})`);
     for (const [name, T] of [['dark', D], ['light', L]]) {

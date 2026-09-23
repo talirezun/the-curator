@@ -1,0 +1,84 @@
+/* ── Identity ────────────────────────────────────────────────────────────
+   TWO COLOUR FAMILIES THAT ARE NOT STATE, AND ARE NOT EACH OTHER (v3.66.0).
+
+     IDENTITY  --id-1 … --id-12        WHICH DOMAIN (design rule 5)
+     TYPE      --type-ink-entity/…     WHICH KIND OF PAGE (entity/concept/summary)
+
+   Both were in shared/sidebar.css until v3.66.0, and the TYPE triad was
+   called `--id-ink-1/-2/-3` there — named as identity although it fed only
+   the Domains OVERVIEW's ENTITIES / CONCEPTS / SUMMARIES figures
+   (views/domains.css `.dm-stat-*`). Moving the identity palette would have
+   re-coloured those figures as a side effect. So the page-type inks have
+   their own names and values below, UNCHANGED, and the identity palette
+   moves without them.
+
+   WHY A TOKEN FILE AND NOT tokens/color.css: color.css is byte-identical to
+   the design-system bundle apart from one recorded block, and a second
+   family of deviations inside it would end that — the argument
+   tokens/material.css made first. WHY A TOKEN FILE AND NOT
+   shared/sidebar.css: the palette is used by the sidebar, Chat's chips,
+   Ingest's destinations, the Context breadcrumb, Knowledge rows, the depth
+   bar's identity tone and (as data) the menubar widget. It is not the
+   sidebar's.
+
+   LINK ORDER: after tokens/color.css and tokens/material.css (index.html).
+   The document-root block and the light-theme block tie on specificity, so
+   every name declared in the first is redeclared in the second —
+   scripts/test-css-tokens.js §11 enforces that parity for this file. (The
+   two selectors are not spelled out in this comment on purpose: several
+   suites find a block by the first occurrence of its selector text.)
+
+   THE HEXES ARE DATA, PINNED BY EXECUTION: src/public/next/shared/
+   identity-palette.js carries the same twelve per theme for the widget, and
+   scripts/test-identity-palette.js asserts equality slot by slot and
+   re-computes every floor from these values — contrast ≥ 3.3:1 on every app
+   surface a dot sits on, ≥ 3:1 on the widget's menu bands, ΔE00 ≥ 20 from
+   every freshness, tone and danger ink, ≥ 10 from the accent and the type
+   triad, and a pairwise minimum of 15 over slots 1–8 and 7.5 over all 12.
+   ─────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* IDENTITY — dark. One OKLCH hue per slot across both themes. */
+  --id-1:  #86CDFF;  /* sky */
+  --id-2:  #8A9513;  /* olive */
+  --id-3:  #EA5202;  /* orange */
+  --id-4:  #289DA9;  /* cyan-teal */
+  --id-5:  #E34CBB;  /* magenta */
+  --id-6:  #DB8AFE;  /* orchid */
+  --id-7:  #B6D431;  /* lime */
+  --id-8:  #4588F7;  /* blue */
+  --id-9:  #BC56E5;  /* purple */
+  --id-10: #089AC3;  /* ocean */
+  --id-11: #FB79E3;  /* pink */
+  --id-12: #5FA1F3;  /* cornflower */
+
+  /* TYPE — dark. The type triad's own -500 rungs clear both floors with room
+     (stat text 8.78–9.37), so the names alias the colour tokens here and no
+     dark value moves by a byte. */
+  --type-ink-entity:  var(--type-entity);
+  --type-ink-concept: var(--type-concept);
+  --type-ink-summary: var(--type-summary);
+}
+
+[data-theme="light"] {
+  --id-1:  #1479B0;
+  --id-2:  #70790E;
+  --id-3:  #7A2A06;
+  --id-4:  #157079;
+  --id-5:  #BD2099;
+  --id-6:  #63287A;
+  --id-7:  #424E15;
+  --id-8:  #03409C;
+  --id-9:  #9F36C7;
+  --id-10: #105E77;
+  --id-11: #910080;
+  --id-12: #026FD7;
+
+  /* TYPE — light. The design bundle's -600 rungs measure 2.95 / 2.74 / 3.04
+     on the selected row and the bundle defines nothing darker in those
+     families, so each takes one derived step (the family's own 500→600
+     channel ratio continued once). Values unchanged since v3.65.1. */
+  --type-ink-entity:  #16768C;
+  --type-ink-concept: #438126;
+  --type-ink-summary: #925E13;
+}

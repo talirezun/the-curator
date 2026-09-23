@@ -505,8 +505,10 @@
    last, so its place in the cascade would be unknowable from there).
 
    These four classes stayed, and the reason is the token they read:
-   `--id-ink-*` is the kit's identity ramp (shared/sidebar.css since v3.65.1), read here beside
-   the row dots that share it. A shared stylesheet reaching into a view's
+   `--type-ink-*` are the PAGE-TYPE inks (tokens/identity.css since v3.66.0;
+   they were `--id-ink-1/-2/-3` in shared/sidebar.css, misnamed as identity,
+   and renamed so the domain palette could move without them). A shared
+   stylesheet reaching into a view's
    token set would be exactly the dependency the move removes. The kit takes
    them as `toneClass`, a class name the HOST owns — so the figure's colour
    stays this file's decision and its geometry stops being. */
@@ -517,14 +519,15 @@
        entity 3.47 · concept 3.22 · summary 3.58   — floor 4.5:1 (1.4.3)
    These are the biggest numerals on the view and the whole reason the card
    exists, rendered under the body-text floor for every light-theme user.
-   The row dots below this view's sidebar had the identical problem and it
-   was solved by stepping one rung darker; the SAME three values fix this,
-   which is why they are now named rather than copied:
+   The row dots had the identical problem in v3.65.1 and it was solved by
+   stepping one rung darker; the SAME three values fix this, which is why
+   they are named rather than copied (the row dots have their own palette
+   since v3.66.0, and these three did not move with it):
        entity 5.24 · concept 4.77 · summary 5.48
    DARK is byte-identical to before (8.95 / 9.37 / 8.78). */
-.dm-stat-entity  { color: var(--id-ink-1); }
-.dm-stat-concept { color: var(--id-ink-2); }
-.dm-stat-summary { color: var(--id-ink-3); }
+.dm-stat-entity  { color: var(--type-ink-entity); }
+.dm-stat-concept { color: var(--type-ink-concept); }
+.dm-stat-summary { color: var(--type-ink-summary); }
 .dm-stat-other   { color: var(--text-2); }
 
 /* ── Health card ──────────────────────────────────────────────────────── */

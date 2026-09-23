@@ -53,6 +53,13 @@
      on specificity: linked BEFORE color.css, every dark value here would
      silently paint the light theme. -->
 <link rel="stylesheet" href="/next/tokens/material.css">
+<!-- tokens/identity.css — the IDENTITY palette (--id-1 … --id-12, which
+     domain) and the page-TYPE inks (--type-ink-entity/-concept/-summary),
+     v3.66.0. A separate file for material.css's reason: color.css stays
+     diffable against the design-system bundle. Linked AFTER color.css and
+     material.css so its [data-theme="light"] block wins the (0,1,0) tie in
+     the right order; scripts/test-css-tokens.js §11 grades its theme parity. -->
+<link rel="stylesheet" href="/next/tokens/identity.css">
 
 <link rel="stylesheet" href="/next/shell.css">
 

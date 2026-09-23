@@ -813,7 +813,13 @@ section('10. No colour literal in a /next VIEW stylesheet');
     // are the two this section is actually about, and BOTH are strictly
     // better after the move: the number of VIEW stylesheets carrying a
     // literal is 1 -> 0, and the app-wide total is 10 -> 5.
-    'shared/sidebar.css': 3,
+    //
+    // v3.66.0: ZERO. Those three were the page-TYPE inks, misnamed as
+    // identity; they are `--type-ink-*` in tokens/identity.css now (tokens/ is
+    // outside this scan by design), and the twelve identity hues are tokens
+    // there too. The app-wide total goes 5 -> 2. Kept at zero, named, for the
+    // same reason as views/domains.css below.
+    'shared/sidebar.css': 0,
     // views/domains.css: ZERO. Kept as an explicit entry, at zero, so the
     // file that carried this debt for five releases is still named — a
     // deleted key would let it silently acquire one again under the
@@ -844,11 +850,12 @@ section('10. No colour literal in a /next VIEW stylesheet');
         + 'until v3.65.1 moved the identity palette into shared/sidebar.css)'
       : 'a VIEW stylesheet carries a colour literal: ' + viewOffenders.join(', '));
   // (2) THE APP-WIDE TOTAL MAY ONLY SHRINK. A move between files leaves it
-  //     flat; a new literal anywhere raises it. 10 before v3.65.1, 5 after.
+  //     flat; a new literal anywhere raises it. 10 before v3.65.1, 5 after,
+  //     2 after v3.66.0 (the checkbox's two data-URI ticks).
   const total = Object.values(BASELINE).reduce((a, b) => a + b, 0);
-  ok(total <= 5,
+  ok(total <= 2,
     `the whole baselined debt is ${total} literals and may only ever SHRINK — `
-    + 'it was 10 before v3.65.1 (8 + 2), and adding a file to make this section pass '
+    + 'it was 10 before v3.65.1 (8 + 2), 5 before v3.66.0, and adding a file to make this section pass '
     + 'raises it, which is the thing this assertion exists to prevent');
   // (3) EVERY ENTRY IS A FILE THAT EXISTS AND IS SCANNED. A baseline keyed on
   //     a path the walker never visits is a licence nobody can see.

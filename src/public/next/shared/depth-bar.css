@@ -24,12 +24,18 @@
    It lives inside MONITORS and TABLES, where there is a numeric column to
    anchor to and a header naming what the column is.
 
-   ── WHY THE STYLESHEET IS SEPARATE WHEN THE FUNCTION IS NOT ─────────────
-   `renderDepthCell` lives in shared/monitor.js: the monitor is its only
-   component host this release, and a bar is a CELL decoration, which is what a
-   monitor line already is. But the Documents TABLE uses the bar WITHOUT using
-   the monitor, so the rules cannot live in monitor.css — a table would then
-   depend on a stylesheet for a component it does not render.
+   ── ITS MODULE AND ITS STYLESHEET ────────────────────────────────────────
+   Hosts import `renderDepthCell` and `depthIdentityClass` from
+   shared/depth-bar.js (v3.66.0; the function body stays in shared/monitor.js
+   for the reason that file records). The rules live HERE, not in monitor.css,
+   because tables, the Chat footer and the Ingest panel use the bar WITHOUT a
+   monitor, and a host may not depend on the stylesheet of a component it
+   does not render.
+
+   ── THREE TONES, AND ONLY ONE OF THEM IS A STATE ─────────────────────────
+     neutral    `.cur-depth-bar`            the default: a share, no judgement
+     identity   `.cur-depth-id-1 … -12`     the bar's row IS a domain (v3.66.0)
+     danger     `.cur-depth-danger`         a BUDGET over-run, also said in words
 
    ── THE GEOMETRY ────────────────────────────────────────────────────────
    The wrapper is `position: relative` and `inline-flex`, so it takes exactly
@@ -95,6 +101,31 @@
 .cur-depth-danger {
   background: color-mix(in srgb, var(--danger) 22%, transparent);
 }
+
+/* ── THE IDENTITY TONE (v3.66.0) ─────────────────────────────────────────
+   Only where a bar's ROW IS A DOMAIN (the per-domain page monitors). The ink
+   is that domain's own `--id-N` from tokens/identity.css — the dot beside it,
+   at bar strength — reached through `depthIdentityClass(i)`, the same mapping
+   as `identityDotClass(i)`. No second palette: these twelve rules are
+   generated from the same twelve names.
+
+   24%, not the neutral bar's 18%: the identity inks are mid-tones where
+   --text-3 is a grey, and at 18% the lighter light-theme slots (olive, sky)
+   read as the neutral bar. The figure printed ON the bar keeps --text, and
+   scripts/test-identity-palette.js holds it at >= 4.5:1 on the worst
+   composite, in both themes, on both surfaces a bar sits on. */
+.cur-depth-id-1  { background: color-mix(in srgb, var(--id-1) 24%, transparent); }
+.cur-depth-id-2  { background: color-mix(in srgb, var(--id-2) 24%, transparent); }
+.cur-depth-id-3  { background: color-mix(in srgb, var(--id-3) 24%, transparent); }
+.cur-depth-id-4  { background: color-mix(in srgb, var(--id-4) 24%, transparent); }
+.cur-depth-id-5  { background: color-mix(in srgb, var(--id-5) 24%, transparent); }
+.cur-depth-id-6  { background: color-mix(in srgb, var(--id-6) 24%, transparent); }
+.cur-depth-id-7  { background: color-mix(in srgb, var(--id-7) 24%, transparent); }
+.cur-depth-id-8  { background: color-mix(in srgb, var(--id-8) 24%, transparent); }
+.cur-depth-id-9  { background: color-mix(in srgb, var(--id-9) 24%, transparent); }
+.cur-depth-id-10 { background: color-mix(in srgb, var(--id-10) 24%, transparent); }
+.cur-depth-id-11 { background: color-mix(in srgb, var(--id-11) 24%, transparent); }
+.cur-depth-id-12 { background: color-mix(in srgb, var(--id-12) 24%, transparent); }
 
 /* ── THE FIGURE ──────────────────────────────────────────────────────────
    Above the bar, at full ink, with tabular numerals so a column of them lines

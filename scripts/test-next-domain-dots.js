@@ -122,6 +122,10 @@ const COLOR_CSS = path.join(ROOT, 'src/public/next/tokens/color.css');
    the reduced-transparency and increased-contrast degradations are excluded:
    grading the shipped design against its fallback would grade the fallback. */
 const MATERIAL_CSS = path.join(ROOT, 'src/public/next/tokens/material.css');
+/* tokens/identity.css (v3.66.0) holds the palette's VALUES now — `--id-1` …
+   `--id-12` per theme — and shared/sidebar.css's slot rules only name them.
+   Linked after material.css in index.html, so concatenated after it here. */
+const IDENTITY_CSS = path.join(ROOT, 'src/public/next/tokens/identity.css');
 
 /** Every stylesheet under /next, relative to ROOT — walked, never listed, so
  *  a new view sheet that re-declares an identity slot is caught on arrival. */
@@ -143,6 +147,7 @@ const shellCss = readFileSync(SHELL_CSS, 'utf8');
 const sidebarCss = readFileSync(SIDEBAR_CSS, 'utf8');
 const colorCss = readFileSync(COLOR_CSS, 'utf8');
 const materialCss = readFileSync(MATERIAL_CSS, 'utf8');
+const identityCss = readFileSync(IDENTITY_CSS, 'utf8');
 /* views/domains.css JOINS THE TOKEN TABLE, and that is a real widening of
    what this suite reads rather than a convenience. The three derived rungs
    this file has always carried as literals (`#16768C`/`#438126`/`#925E13`)
@@ -158,7 +163,7 @@ const materialCss = readFileSync(MATERIAL_CSS, 'utf8');
 // views/domains.css) are declared there now, and a universe without it
 // resolves all three to null — which would make §5 grade nothing while
 // reporting green.
-const tokenCss = `${colorCss}\n${materialCss}\n${sidebarCss}\n${domainsCss}`;
+const tokenCss = `${colorCss}\n${materialCss}\n${identityCss}\n${sidebarCss}\n${domainsCss}`;
 
 let passed = 0, failed = 0;
 const ok = (cond, label) => { if (cond) { passed++; console.log(`  ✓ ${label}`); } else { failed++; console.log(`  ✗ ${label}`); } };
@@ -456,7 +461,7 @@ let slotCount = null;
   ok(typeof identityDotClass === 'function', 'identityDotClass imported from shared/sidebar.js');
   slotCount = IDENTITY_DOT_SLOTS;
   // Pinned to a LITERAL, not read back off the constant the code uses.
-  eq(slotCount, 6, 'six identity slots (the design gives each domain a stable colour by list position)');
+  eq(slotCount, 12, 'twelve identity slots (v3.66.0; six before — the design gives each domain a stable colour by list position)');
   // AND THE SECOND MAPPING IS GONE. Comments are stripped first, so the note
   // views/domains.js leaves behind naming the deleted function cannot satisfy
   // this — the shape that let a sibling suite stay green over a deleted rule.
@@ -485,7 +490,7 @@ if (slotCount) {
   const painted = [];
   for (const rel of ALL_NEXT_CSS) {
     const bare = readFileSync(path.join(ROOT, rel), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-    for (let n = 1; n <= 6; n++) {
+    for (let n = 1; n <= 12; n++) {
       if (new RegExp('\\.dm-row-dot-' + n + '\\b[^{}]*\\{').test(bare)) painted.push(`${rel} .dm-row-dot-${n}`);
     }
   }
@@ -502,7 +507,7 @@ if (slotCount) {
   // would also excuse a new one.
   const declarers = ALL_NEXT_CSS.filter((rel) => {
     const bare = readFileSync(path.join(ROOT, rel), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-    return /\.cur-sb-dot-\d(?![0-9-])[^{}]*\{/.test(bare);
+    return /\.cur-sb-dot-\d+(?![0-9-])[^{}]*\{/.test(bare);
   });
   const unexpected = declarers.filter((rel) =>
     rel !== 'src/public/next/shared/sidebar.css');
@@ -627,10 +632,18 @@ const BACKDROP_TOKENS = [];
 }
 
 const FLOOR_NON_TEXT = 3.0;
+// v3.66.0: ONE rule per slot, reading `--id-N`; the THEME is the token's
+// business (tokens/identity.css). So both themes read the same selector and
+// resolve it through their own token table — and a theme-scoped slot rule is
+// asserted ABSENT below, since one would out-paint the token in one theme only.
 const THEMES = [
   { name: 'dark', selectorFor: (cls) => `.${cls}`, tokens: DARK_TOKENS },
-  { name: 'light', selectorFor: (cls) => `[data-theme="light"] .${cls}`, tokens: LIGHT_TOKENS },
+  { name: 'light', selectorFor: (cls) => `.${cls}`, tokens: LIGHT_TOKENS },
 ];
+for (const cls of SLOT_CLASSES) {
+  ok(declFor(sidebarCss, `[data-theme="light"] .${cls}`, 'background') === null,
+    `.${cls} has NO [data-theme="light"] rule that could out-paint its token in one theme`);
+}
 const resolvedSlots = { dark: [], light: [] };
 for (const theme of THEMES) {
   for (const cls of SLOT_CLASSES) {
@@ -695,10 +708,22 @@ for (const theme of THEMES) {
 
      The floors below are re-derived from the readings above, and they are
      still floors: the ratchet reports drift while it passes, these two fail. */
-  eq(wLight.lo, 3.07, `light: worst dot reads 3.07 (${wLight.at}) — was 3.44 on the opaque --surface-active`);
-  eq(wDark.lo, 5.49, `dark: worst dot reads 5.49 (${wDark.at}) — was 6.77 on the opaque --surface-active`);
-  ok(wDark.lo >= 5.4, `dark: worst dot ${wDark.lo} still clears 5.4`);
-  ok(wLight.lo >= 3.0, `light: worst dot ${wLight.lo} still clears WCAG 1.4.11's 3:1 floor for a non-text indicator`);
+  /* ── v3.66.0: THE PALETTE CHANGED, SO BOTH RATCHETS MOVED AGAIN ──────────
+     Twelve new hues chosen to sit ΔE00 ≥ 20 from every freshness, tone and
+     danger ink (tokens/identity.css records the rule). The selection floor was
+     3.3:1 (3:1 plus margin) on every surface, not "as high as before":
+         light 3.07 -> 3.60   (slot 2 olive; it ROSE — the old worst, teal,
+                              was --fresh-hot itself and is gone)
+         dark  5.49 -> 3.69   (slot 9 purple; it FELL — a saturated mid-tone
+                              on the selected row, the price of twelve hues
+                              that are not green, teal, amber, red or grey)
+     Both clear WCAG 1.4.11's 3:1 floor with the design's 0.3 margin.
+     scripts/test-identity-palette.js grades the same hexes on every surface
+     the design lists, and the widget's menu bands, independently. */
+  eq(wLight.lo, 3.6, `light: worst dot reads 3.60 (${wLight.at}) — was 3.07 with the v3.65.1 palette`);
+  eq(wDark.lo, 3.69, `dark: worst dot reads 3.69 (${wDark.at}) — was 5.49 with the v3.65.1 palette`);
+  ok(wDark.lo >= 3.3, `dark: worst dot ${wDark.lo} still clears the palette's 3.3 selection floor`);
+  ok(wLight.lo >= 3.3, `light: worst dot ${wLight.lo} still clears the palette's 3.3 selection floor (WCAG 1.4.11 is 3:1)`);
 }
 {
   /* AN INDEPENDENT CHECK ON THE COMPOSITE MODEL ITSELF.
@@ -736,11 +761,15 @@ for (const theme of THEMES) {
 }
 
 // ── §6 separability ────────────────────────────────────────────────────────
-section('§6 The six stay tellable apart — contrast fixed by convergence is not fixed');
+section('§6 The slots stay tellable apart — contrast fixed by convergence is not fixed');
+// v3.66.0: NESTED floors. Slots 1–8 are the categorical set (most installs
+// have fewer than 8 domains) and keep a floor at least as strict as the old
+// six's 10; slots 9–12 are the honest remainder, each told from a same-family
+// neighbour by lightness, at 7.5 — recorded in the docs, not hidden.
 const DE_FLOOR = 10;
-for (const name of ['dark', 'light']) {
-  const set = resolvedSlots[name].map((s) => s.hex);
-  eq(new Set(set).size, set.length, `${name}: all six values are distinct`);
+const DE_FLOOR_FIRST8 = 15;
+const DE_FLOOR_ALL12 = 7.5;
+const minPair = (set) => {
   let min = Infinity, pair = '';
   for (let i = 0; i < set.length; i++) {
     for (let j = i + 1; j < set.length; j++) {
@@ -748,7 +777,15 @@ for (const name of ['dark', 'light']) {
       if (d < min) { min = d; pair = `${set[i]} vs ${set[j]}`; }
     }
   }
-  ok(min >= DE_FLOOR, `${name}: minimum pairwise CIEDE2000 is ${r2(min)} (${pair}) >= ${DE_FLOOR} — well over the ~2.3 JND`);
+  return { min, pair };
+};
+for (const name of ['dark', 'light']) {
+  const set = resolvedSlots[name].map((s) => s.hex);
+  eq(new Set(set).size, set.length, `${name}: all ${set.length} values are distinct`);
+  const a = minPair(set.slice(0, 8));
+  ok(a.min >= DE_FLOOR_FIRST8, `${name}: slots 1–8 — minimum pairwise CIEDE2000 is ${r2(a.min)} (${a.pair}) >= ${DE_FLOOR_FIRST8}`);
+  const b = minPair(set);
+  ok(b.min >= DE_FLOOR_ALL12, `${name}: all ${set.length} — minimum pairwise CIEDE2000 is ${r2(b.min)} (${b.pair}) >= ${DE_FLOOR_ALL12} — over the ~2.3 JND`);
 }
 
 // ── §7 health rows: code-shaped text is mono ───────────────────────────────
@@ -947,9 +984,11 @@ section('§8 POSITIVE CONTROLS — every detector is watched failing');
 {
   const cssMissingLight = '.cur-sb-dot-1 { background: var(--entity-500); }';
   ok(declFor(cssMissingLight, '[data-theme="light"] .cur-sb-dot-1', 'background') === null,
-    '§4 detector FIRES when a slot has no [data-theme="light"] rule');
+    '§5 absence detector returns null when a slot has no [data-theme="light"] rule');
   ok(declFor('[data-theme="light"] .cur-sb-dot-1 { background: #16768C; }', '[data-theme="light"] .cur-sb-dot-1', 'background') === '#16768C',
-    '§4 detector reads a present light rule (so its null above is a finding, not blindness)');
+    '§5 absence detector FIRES on a planted theme-scoped slot rule (so its null on the kit is a finding, not blindness)');
+  ok(resolveColor('var(--id-1)', LIGHT_TOKENS, DARK_TOKENS) !== resolveColor('var(--id-1)', DARK_TOKENS, DARK_TOKENS),
+    '§5 the slot TOKEN really is themed — one rule, two values — so grading both themes through it grades two palettes');
   // The comment trap, planted: a rule named only inside a CSS comment must NOT
   // be read as a rule.
   ok(declFor('/* [data-theme="light"] .cur-sb-dot-9 { background: #FFF; } */', '[data-theme="light"] .cur-sb-dot-9', 'background') === null,

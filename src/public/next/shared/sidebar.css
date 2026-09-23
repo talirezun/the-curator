@@ -20,21 +20,13 @@
    and `.mem-row:hover` to `--mat-row-*`).
 
    WHAT IS HERE THAT WAS NOT, AND WHY IT MOVED (v3.65.1):
-   · The six IDENTITY COLOURS, and their three derived light-theme rungs.
-     v3.65.0 left them in views/domains.css on the reading that
-     scripts/test-next-design-kit.js §10 "permits colour literals in exactly
-     two /next VIEW stylesheets". That reading was WRONG and the code is the
-     fact: one of §10's two baselined files is shared/checkbox.css, not a
-     view at all, so the ratchet's two entries were never "two views". After
-     this move the number of VIEW stylesheets carrying a literal goes 1 -> 0,
-     views/domains.css goes 8 -> 0 and this file takes 3 — the app-wide total
-     of baselined literals falls 10 -> 5, which is the ratchet tightening in
-     every direction it measures. The reason to move them is CONTINUITY BY
-     IDENTITY: views/domains.css, views/memory.css, views/chat.css and
-     views/ingest.js all paint the same domain, and a palette that lives in
-     one view's stylesheet is a palette the other three inherit by accident.
-     It was already TWO byte-identical copies (views/memory.css:293-305 said
-     so in its own comment) before this file took it.
+   · The IDENTITY COLOURS' RULES (v3.65.1), now reading `--id-N` tokens
+     from tokens/identity.css (v3.66.0). They moved out of views/domains.css
+     for CONTINUITY BY IDENTITY: views/domains.css, views/memory.css,
+     views/chat.css and views/ingest.js all paint the same domain, and a
+     palette that lives in one view's stylesheet is a palette the other three
+     inherit by accident. It was already TWO byte-identical copies before
+     this file took it.
    · Any `.fresh-*` rule. shared/freshness.css owns that prefix and
      scripts/test-freshness-scale.js §4 forbids a view or kit stylesheet
      declaring one. The mark arrives as the caller's `markHtml`.
@@ -124,11 +116,15 @@
 .cur-sb-row:active { background: var(--mat-row-active); transform: translateX(var(--press-shift)); }
 
 /* ── THE IDENTITY DOT — SHAPE ONLY ────────────────────────────────────────
-   Deliberately NOT the same shape or ink as the freshness mark beside it:
-   this one is the item's IDENTITY and carries no state, that one is the
-   state and carries no identity. Two marks that looked alike would read as
-   one scale. Its COLOUR comes from the host's own class — see the file
-   header, and identityDotClass()'s docblock for what the host adds. */
+   THE SAME SHAPE AS THE FRESHNESS MARK, and this comment used to say it was
+   not. Both are 8px circles (shared/freshness.css `.fresh-dot`). What keeps
+   the two channels apart is therefore (a) the palette — since v3.66.0 no
+   identity hue is within ΔE00 20 of any freshness, tone or danger ink, where
+   until then four of the six slots WERE those inks, pixel for pixel — and
+   (b) the neighbour: a freshness mark always sits before an age in words
+   (plus the clock glyph on a row), an identity dot always before a NAME.
+   (b) is the backstop for a reader with a colour-vision deficiency. Its
+   COLOUR comes from the host's own class — see identityDotClass(). */
 .cur-sb-dot {
   flex: none;
   width: 8px;
@@ -136,96 +132,38 @@
   border-radius: 50%;
 }
 
-/* ── THE IDENTITY PALETTE — SIX SLOTS, ONE COPY, ONE MAPPING ──────────────
+/* ── THE IDENTITY PALETTE — TWELVE SLOTS, ONE COPY, ONE MAPPING ───────────
    `identityDotClass(i)` in shared/sidebar.js is the ONLY function that turns
-   an install's domain index into one of these names; views/domains.js's own
-   `domainDotClass` was a second copy of the same arithmetic under a second
-   family of names and is deleted (v3.65.1). `.dm-row-dot-N` survives in the
-   MARKUP as an alias, emitted beside the kit token by the `dm` entry of the
-   alias table exactly as `.dm-row-name` and the other nine are — it resolves
-   NO background anywhere, which is what "one palette" means and what
-   scripts/test-next-domain-dots.js asserts.
+   an install's domain index into one of these names; the slot count is ONE
+   constant, `IDENTITY_SLOTS` in shared/identity-palette.js. `.dm-row-dot-N`
+   survives in the MARKUP as an alias only and resolves NO background
+   anywhere (scripts/test-next-domain-dots.js).
 
-   These were SIX RAW HEX VALUES in an inline `style="background:#3FBFD8"`
-   in views/domains.js. An inline style is unreachable by every stylesheet
-   and by every [data-theme] block, so the DARK values were painted in LIGHT
-   too. Measured in a real browser against the backdrop each dot actually
-   sits on (the probe's controls returned 1.00 on an identical pair and
-   21.00 on black-on-white):
+   THE COLOURS ARE TOKENS NOW (v3.66.0): `--id-1` … `--id-12`, declared per
+   theme in tokens/identity.css, so each rule below is written once and the
+   theme is the token's business. This file carries no colour literal any
+   more (it carried three), which is the design-kit ratchet tightening again.
+   The measurements, the selection rule and the 7.6 floor for slots 9–12 are
+   recorded there and re-computed by scripts/test-identity-palette.js.
+   Declared for all twelve regardless of IDENTITY_SLOTS, so lowering the
+   constant to 8 is one line and paints nothing new. */
+.cur-sb-dot-1  { background: var(--id-1); }
+.cur-sb-dot-2  { background: var(--id-2); }
+.cur-sb-dot-3  { background: var(--id-3); }
+.cur-sb-dot-4  { background: var(--id-4); }
+.cur-sb-dot-5  { background: var(--id-5); }
+.cur-sb-dot-6  { background: var(--id-6); }
+.cur-sb-dot-7  { background: var(--id-7); }
+.cur-sb-dot-8  { background: var(--id-8); }
+.cur-sb-dot-9  { background: var(--id-9); }
+.cur-sb-dot-10 { background: var(--id-10); }
+.cur-sb-dot-11 { background: var(--id-11); }
+.cur-sb-dot-12 { background: var(--id-12); }
 
-     BEFORE, light theme, on the SELECTED row (--surface-active #ECECF2 —
-     the worst backdrop, and the one offline arithmetic against --surface
-     missed):  1.85 · 1.77 · 1.88 · 2.14 · 2.12 · 1.98.
-     All six under WCAG 1.4.11's 3:1 floor for non-text. On the unselected
-     row (--surface #FFFFFF) they are 2.17 · 2.08 · 2.22 · 2.52 · 2.50 ·
-     2.34 — still all six under the floor.
-
-     AFTER, same backdrops:  4.46 · 4.05 · 4.66 · 3.44 · 4.60 · 4.96 on the
-     selected row; 5.24 · 4.77 · 5.48 · 4.05 · 5.41 · 5.84 on --surface.
-     DARK is BYTE-IDENTICAL to before (7.83 · 8.20 · 7.68 · 6.77 · 6.82 ·
-     7.29 on --surface-active) — it always passed, so it does not move.
-
-   THE RULE THAT PICKED THE LIGHT VALUES, so a future colour is derived and
-   not invented:
-     (a) START from the light counterpart the design system ALREADY defines
-         for that colour's role — tokens/color.css's own [data-theme="light"]
-         block moves --type-entity/-concept/-summary to -600, --success to
-         teal-600 and --danger to red-600. For the neutral there is no such
-         alias, so --ink-400: the same dark->light move the system makes for
-         --text-2, which is #A8A8BC in dark and #55556A in light, taken to
-         the nearest ramp entry so the value stays a token.
-     (b) WHERE THAT STILL MISSES 3:1 on the SELECTED row, continue the
-         family's OWN 500->600 channel ratio one further step. Entity,
-         concept and summary measure 2.95 / 2.74 / 3.04 at -600 and the
-         bundle defines nothing darker in those families, so each gets one
-         derived step, written as a literal here because tokens/color.css is
-         byte-identical to the design bundle and must stay that way. Three of
-         the six are therefore system tokens outright. This is a COMPONENT
-         gap, not palette drift, and no token file is touched.
-
-   SEPARABILITY IS THE OTHER HALF OF THE REQUIREMENT: six domains have to
-   stay tellable apart, not merely legible. Minimum pairwise CIEDE2000 over
-   the six is 16.14 (dark) and 14.58 (light) — both an order of magnitude
-   over the ~2.3 just-noticeable difference.                              */
-.cur-sb-dot-1 { background: var(--entity-500); }
-.cur-sb-dot-2 { background: var(--concept-500); }
-.cur-sb-dot-3 { background: var(--summary-500); }
-.cur-sb-dot-4 { background: var(--teal-500); }
-.cur-sb-dot-5 { background: var(--red-400); }
-.cur-sb-dot-6 { background: var(--ink-200); }
-
-/* ── THE THREE DERIVED RUNGS ARE NAMED, BECAUSE TWO THINGS NEED THEM ──────
-   These literals were written for the ROW DOTS. views/domains.css's
-   `.dm-stat-value` needs the same three values for the same reason, and the
-   answer to "two rules need one colour" is a name, not a second copy of the
-   literal. They were `--dm-ink-*` while they lived in one view's stylesheet;
-   they are `--id-ink-*` here because a shared file may not carry one view's
-   prefix — the name now says IDENTITY, which is what they are.
-
-   Declared under `[data-theme="light"]` only. In DARK the type triad's own
-   -500 rungs already clear both floors with room (dot 6.77-8.20, stat text
-   8.78-9.37), so the names simply alias the tokens there and no dark value
-   moves by a byte. */
-:root {
-  --id-ink-1: var(--type-entity);
-  --id-ink-2: var(--type-concept);
-  --id-ink-3: var(--type-summary);
-}
-[data-theme="light"] {
-  --id-ink-1: #16768C;  /* entity-600 -> one ramp step */
-  --id-ink-2: #438126;  /* concept-600 -> one ramp step */
-  --id-ink-3: #925E13;  /* summary-600 -> one ramp step */
-}
-
-/* The three deprecated `--dm-ink-*` aliases that bridged v3.65.1's palette move lived
-   here until views/memory.css's second copy was deleted in the same release. Gone. */
-
-[data-theme="light"] .cur-sb-dot-1 { background: var(--id-ink-1); }
-[data-theme="light"] .cur-sb-dot-2 { background: var(--id-ink-2); }
-[data-theme="light"] .cur-sb-dot-3 { background: var(--id-ink-3); }
-[data-theme="light"] .cur-sb-dot-4 { background: var(--teal-600); }
-[data-theme="light"] .cur-sb-dot-5 { background: var(--red-600); }
-[data-theme="light"] .cur-sb-dot-6 { background: var(--ink-400); }
+/* The page-TYPE inks that lived here as `--id-ink-1/-2/-3` are
+   `--type-ink-entity/-concept/-summary` in tokens/identity.css since v3.66.0:
+   they were never identity, and naming them so would have moved the Domains
+   OVERVIEW's figures with the palette. */
 
 .cur-sb-main {
   display: flex;
