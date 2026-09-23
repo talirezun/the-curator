@@ -997,6 +997,30 @@ findable without counting.
 
 **Hover the strip** and the tooltip gives you the legend plus everything the sentence had to leave out — how many work-streams were counted, how many older saves fall outside the window entirely, and the timestamp of the oldest save it can see. It is also a live menu item: **clicking the strip opens Project context**, where the saves it counts are listed. It used to be dimmed and unclickable, which put the one picture in the whole widget into the faintest style macOS offers — the opposite of what it was for.
 
+### The three depth bars *(v3.66.0)*
+
+Three short bars sit drawn into the menu's icon column, each a colour PNG in a menu item's icon
+gutter — this is the same [depth-bar channel](#reading-the-screen) the rest of the app uses,
+brought to the one surface that is not a web page:
+
+| Bar | Where | Measured against |
+|---|---|---|
+| **Per-project saved bar** | Each project's group header | How many agent sessions saved a handoff in the last 30 days, against the busiest project |
+| **Domains bar** | The Domains section | Each domain's page count, in that domain's own [identity colour](#reading-the-screen), against the largest domain |
+| **Documents bar** | The first line under the *open* project's own heading | That project's documents against whichever budget the app is applying — the 120 KB an agent reads in one call once any document is flagged read first, or the 200 KB a project may store when none is |
+
+A bar turns red only when its own budget is actually exceeded, and the line then also says *"over"*
+in words — the same rule as everywhere else a depth bar appears. With **no usage log on this
+computer**, project lines show no bar at all and read *"no sessions logged"* — nothing is ever
+drawn as zero that was not actually measured. A project with a usage log but genuinely **no
+session** in the 30-day window reads a real, measured empty bar, and its tooltip says *"none logged
+for this project"* — a different fact from having no log at all, worded differently on purpose so
+the two are never mistaken for each other.
+
+Click a project line or the documents line to open Context on that project; click a domain line to
+open Settings, where **Domains in this folder** ([above](#knowledge-base-folder)) lists every
+domain the same way.
+
 > ### What the darkness is NOT
 >
 > **It is a measure of how often your agents check in. It is not a measure of how much they got done, and it must never be read as one.**
@@ -1436,7 +1460,8 @@ Most of it is **read-only** — agents write the handoffs and the journal over M
 them. Three things are yours to change here: the **standing brief** (a pencil), a **document** you
 keep in The Curator rather than in a repository, and which documents are marked **read first**.
 
-Since v3.62.0 the page is **three numbered steps**, read top to bottom, under an **overview card**.
+Since v3.62.0 the page is numbered steps, read top to bottom, under an **overview card** — three
+through v3.66.0, and **four since v3.67.0**, which adds step ④ **Session start**.
 **Since v3.64.2 that card is the same component the domain page draws its own OVERVIEW figures
 in** ([§7b](#7b-the-three-places--ask-knowledge-context)) — through v3.64.1 this page built its own
 separate three-cell strip. Both places open the same way: a card of readings *about* the screen,
@@ -1493,6 +1518,35 @@ The wireframe below is the same shape with the labels called out.
 | ① | **Documents** | *What is this project built against, and which of it does an agent get automatically?* | A summary line. Open the fold for the table |
 | ② | **Memory** | *Where did the last session stop, and what standing instructions does every agent read?* | Four summary rows, one per fold — Capture, Handoffs, The brief, Journal. Open one to read it |
 | ③ | **Knowledge** | *What can an agent look things up in?* | One summary row per domain. Open a fold for its figures and its two doors |
+| ④ | **Session start** *(v3.67.0)* | *What does an agent actually receive when it starts work here, and how much of its context window does that use?* | A head row to pick the reading budget, and one row, **What an agent receives**, showing each part against its own limit |
+
+### Step ④ — Session start, and choosing a reading budget
+
+**New in v3.67.0.** Session start is what an agent is handed the moment it starts work on this
+project: the standing brief, the latest handoff, a few journal lines, the list of documents, and
+the text of whichever documents are marked **read first** — up to a **reading budget**. Choose the
+budget in the step's own head row, from five presets:
+
+| Preset | Size |
+|---|---|
+| **Index only** | 0 — no document text at all, titles and roles only |
+| **Lean** | 32 KB |
+| **Standard** *(recommended)* | 64 KB |
+| **Deep** | 120 KB |
+| **Max** | 200 KB |
+
+**Until you choose one, nothing changes** — every project keeps behaving exactly as it always
+has, sending read-first documents within the old 120 KB ceiling. Once a project has a reading
+budget it is *planned*: only the marked documents arrive with their text at the start, and
+everything else is listed for the agent to open by name. When every session is being handed more
+than 32 KB of documents and no budget is set yet, a line says so, with **Set a reading budget**
+beside it.
+
+The row **What an agent receives** shows each part of the bootstrap — brief, handoff, journal,
+documents — against its own limit, each with a depth bar, and the whole thing again as one share
+of **your agent's context window**. That window size (200k or 1M tokens) is a setting for this
+browser only, since the app cannot know which model or harness will actually read the bootstrap;
+tokens are estimated at four characters each.
 
 **The overview card is the "am I saved?" answer, in one line each.** It sits above step ① —
 DOCUMENTS, MEMORY and KNOWLEDGE, the same three nouns the steps use, each with its figure,
@@ -2139,6 +2193,15 @@ GitHub instead"** — or, for a document an agent wrote rather than mirrored,
 Full detail — the layout, what goes in state versus what belongs on a wiki page, and the safety
 rules — is in **[working-state.md](working-state.md)**.
 
+**Two more depth-bar readings live inside step ② Memory, each against its own named total —
+never a grade.** The **Handoffs** row's **Size** column shows each handoff's size against the
+48 KB a handoff is trimmed to; it never turns red, because a save over that budget is trimmed and
+the trim is noted in the handoff itself, never refused — there is nothing left to warn about once
+the trim has already happened. Inside the **Capture** row, *started with the context* and *saved
+before stopping* are drawn as a share of every session in the window, e.g. *"4 of 6"* — a share of
+a whole, not a target against which a bar can fail: nothing here is a grade, and neither bar ever
+turns red.
+
 ---
 
 ## 7b. The three places — ask, knowledge, context
@@ -2214,20 +2277,28 @@ Once you know what each one means, you can read a row without opening it.
 
 | Mark | Answers | Where it appears today |
 |---|---|---|
-| **Identity dot** | *Which domain?* | One colour per domain, the same colour everywhere that domain is named — a sidebar row, a Chat domain chip, a Knowledge row, the Context breadcrumb. Never a second mapping or palette on any screen |
+| **Identity dot** | *Which domain?* | One colour per domain, the same colour everywhere that domain is named — a sidebar row, a Chat domain chip, a Knowledge row, the Context breadcrumb, the menubar widget. Never a second mapping or palette on any screen |
 | **Freshness dot** (with a clock glyph and an age) | *How recent?* | Every time-based reading in the app — a sidebar row's last save, a Handoffs row, a document's last update, the MCP bridge's connection strip |
-| **Depth bar** | *How much, against what total?* | A tinted bar behind a figure, right-anchored, its length a **named** denominator — never a guess. Today: a document's size against the project's 200 KB budget; the running total in Add-from-folder against that same budget; a domain's entity/concept/summary counts against its own page count; a clipped save's character count against its 200-character field limit |
+| **Depth bar** | *How much, against what total?* | A tinted bar behind a figure, right-anchored, its length a **named** denominator — never a guess. Today: a document's size against the project's 200 KB budget; the running total in Add-from-folder against that same budget; a domain's entity/concept/summary counts against its own page count; a clipped save's character count against its 200-character field limit; the Context Documents monitor (stored vs 200 KB, read first vs the per-session reading budget); Handoffs' Size column (vs 48 KB); Capture's saved/read share of all sessions in the window; Chat's project footer (documents vs the 40,000-character document budget); an Ingest batch's spend against its cap; Wiki health's issues-per-category row; the MCP bridge's Busiest-tools and Across-projects rows; Settings → Knowledge base's Domains-in-this-folder rows |
 | **Tone** (colour, never alone) | *What was the outcome?* | A monitor's head word (ok / danger), a `loud` line for a warning or a cost — always paired with words, since colour alone never carries a reading in this app |
 
 **The depth bar turns danger-toned only when its budget is actually exceeded, and the same fact is
 always also stated in words, unfolded** — never only a redder bar. A single document over budget on
 its own fills its whole cell in the warning colour; the table's own warning line beneath it says
 the same thing in a sentence, because v3.16.1's rule holds here too: a warning is never only a
-colour.
+colour. Some bars are a plain measurement rather than a budget check — Wiki health's
+issues-per-category, the MCP bridge's Busiest tools, Across projects and Domains-in-this-folder
+compare against the *largest visible row*, not a ceiling, and never turn danger-toned; the largest
+bar there is simply the biggest pile, never a warning.
 
-**v3.66.0 extends this vocabulary further** — this table describes what ships as of v3.65.2; later
-releases may add more places these four marks appear, or a fifth channel, without changing what the
-four already documented here mean.
+**There are twelve identity colours.** Each domain's colour is fixed by its position in your
+domain list — the same position, the same colour, on every screen and in the menubar widget. None
+of the twelve is green, teal, amber, red or grey, so a domain's dot can never be mistaken for a
+freshness dot or a tone. The first eight are fully distinct from one another; the last four are
+each told apart from a same-family neighbour by lightness alone.
+
+This table describes what ships as of v3.67.1; later releases may add more places these four marks
+appear, or a fifth channel, without changing what the four already documented here mean.
 
 ### The domain page, top to bottom
 
@@ -2237,9 +2308,7 @@ title in the same place** — a 20 px numeral at one fixed x position, then a Ti
 the block-title size, above the card it names and never inside it: 1 Ingest, 2 Pages, 3 Projects
 in this domain, 4 Shared Brain, 5 Wiki health. Through v3.64.1 the numerals sat at two different x
 positions depending on which section, and the five titles were rendered in full capitals — both
-fixed this release. Shared Brain's own fold still carries the chevron and the one reading that
-tells you whether to open it — the connection. **Ingest (v3.65.2) is no longer a fold at all** —
-see below.
+fixed this release. **Since v3.65.3, Shared Brain is also always open, like Ingest** — see below.
 
 | | Section | What it is |
 |---|---|---|
@@ -2256,9 +2325,17 @@ important, not long, it should be exposed."* There is no stored open/closed pref
 more, and no "opens by itself on a domain you have never ingested into" special case — it is
 simply always there, first, under OVERVIEW. Its one reading, *last ingest N ago* (or *nothing
 ingested yet*), sits at the right of its own heading row, the same place every other section's
-reading sits. **Shared Brain is still a fold, closed unless you open it**, and its open/closed
-state is still one preference for the whole install (v3.64.1) — close it on one domain and it
-stays closed on every domain you open next, on this computer.
+reading sits.
+
+**Shared Brain is also always open (v3.65.3).** Its heading carries an ⓘ and one reading — *contributes
+to …*, *mirror of …*, *not part of any*, *off on this install* or *no connection*. On a contributing
+domain it shows one monitor (pushed, pulled, synthesis, pending, mirror, contributes), one row of
+actions (**Push contributions**, **Pull updates**, and **Run synthesis** when this computer holds
+the brain's admin token), and folds underneath for the access token, cohort and sharing, skipped
+pages, admin controls and leaving. A `shared-*` mirror domain now has its own **Pull updates**
+button too. A mirror whose connection was removed says so in its one reading. Through v3.65.2 this
+section was still a fold you had to open; there is no stored open/closed preference for it any
+more, on the same reasoning as Ingest.
 
 **Pick a `.md` or `.txt` file and a callout appears under the form (redesigned v3.65.2):**
 *"Wanted this kept word for word? Add it as a project document instead."* Through v3.65.1 this was
@@ -4050,15 +4127,52 @@ second writer of a file your repository owns. A repo-owned project whose reposit
 this machine gets a **Refresh from repo** action on the block itself; where it is not reachable,
 the action is withheld and a short note says why rather than offering a button that would fail.
 
-**What this tier does not do, yet.** Nothing selects which documents belong in a project
-automatically — you, or an agent you asked, decide what is canonical. Nothing summarises a document
-with an LLM on the way in or out — a foundation is stored and returned verbatim. **Nothing infers
-the reading plan either:** *read first* is a flag you set and *"Read before you…"* is a section you
-write, and a project with twenty documents and nothing marked behaves exactly as it did before
-v3.62.0 — every document, up to the budget. And a **Refresh from repo** still needs the checkout on
-the machine that has it; the copies travel everywhere, the comparison does not. *(Before
-v3.61.0 the app had no editor for a curator-owned foundation at all — writing one was an agent
-action, on your instruction, over MCP, and only over MCP. The next section is what changed.)*
+**What this tier does not do.** Nothing selects which documents belong in a project automatically —
+you, or an agent you asked, decide what is canonical. Nothing summarises a document with an LLM on
+the way in or out — a foundation is stored and returned verbatim. **Read first / on request / not at
+start is always a choice you make or apply** — nothing changes a document's start state on its own;
+see *Suggest a reading plan*, below, for the one thing that proposes a plan for you to approve. A
+project with nothing marked behaves exactly as it did before v3.62.0 — every document, up to the
+budget. And a **Refresh from repo** still needs the checkout on the machine that has it; the copies
+travel everywhere, the comparison does not. *(Before v3.61.0 the app had no editor for a
+curator-owned foundation at all — writing one was an agent action, on your instruction, over MCP,
+and only over MCP. The next section is what changed.)*
+
+#### Three start states, and "Suggest a reading plan" *(v3.65.2 → v3.67.0)*
+
+Since v3.65.2, every document in step ① Documents has one of **three** start states, not a
+two-way flag — the column is **At session start**:
+
+| State | What it means |
+|---|---|
+| **Read first** | Its text arrives with every session, within the reading budget (below) |
+| **On request** | Listed in the index; the agent opens it by name when the task needs it |
+| **Not at start** | Kept and mirrored, but not listed at session start at all — name it in the brief's *"Read before you…"* if an agent should still find it |
+
+An agent that asks for a **not at start** document by name still receives it in full — the state
+only controls what is handed out automatically at the start of a session.
+
+**Suggest a reading plan** (v3.67.0) proposes a start state for every document, without changing
+anything until you approve it. Two ways to run it, side by side:
+
+- **Suggest (free)** needs no AI key. It follows your brief's *"Read before you…"* list (those
+  documents stay **on request**, because you have already said when to open them), each document's
+  own role and size, and your reading budget — documents your brief marks as architecture,
+  decisions or conventions are proposed **read first** while they still fit the budget, and never
+  when a single one is larger than half of it; a stale roadmap over 64 KB is proposed **not at
+  start**; a document you already keep **not at start** stays there.
+- **✨ Suggest with AI** asks your [AI model](#ai-jobs-and-the-one-model) to read each document's
+  title, role, size and opening lines — **never whole documents** — and shows what the run will
+  cost before it runs and what it cost after. With no provider key the button is disabled and links
+  to Settings → Providers & keys; the free arm always works regardless.
+
+Either way, the result is a **Suggested** column next to the real one — nothing is written until
+you press **Apply suggestion**, and you can untick any row you disagree with first.
+
+**Mirror from GitHub and Add from folder now start with nothing ticked.** Through v3.65.2 a scan
+pre-ticked the four canonical roles (architecture, decisions, conventions, roadmap); since v3.65.3
+a scan lists what it found, sized, with nothing ticked — you choose what to copy, and the copy
+control stays off until at least one document is ticked.
 
 ### Start a project
 
@@ -4072,7 +4186,7 @@ sets it for good.
 |---|---|---|
 | **Curator keeps them** *(the default)* | Four skeleton documents are seeded immediately — `architecture.md`, `decisions.md`, `conventions.md`, `roadmap.md` — each a **prompt to answer**, not a fact. This project is now `curator`-owned. Optionally, on this same form, **start from files** — pick one or more existing `.md`/`.txt` documents from your computer and each becomes a real document alongside the seeds (untick "seed the four skeletons" if you don't want those too) | You have no repository yet, or the project is not code at all — research, a client engagement, a body of reading |
 | **Mirror from a repository on this Mac** | A path field plus **Find documents** scans that checkout for candidate files and offers them as checkboxes, each with a role you can correct — this project is now `repo`-owned, and the checkout, not the app, is the source of truth from here on | You already have an architecture doc, a decisions log, or similar, checked in — or just sitting in a folder, whether or not that folder is a git repository |
-| **Mirror a GitHub repository** *(new in v3.65.0)* | Give it `owner/repo` — the https:// or git@ URL git itself prints works too — and, optionally, a branch and a folder inside it, then press **Find documents**. The Curator lists what it found over the network, with the same tick-the-canonical-roles default and running budget total as the local arm, and copies the ticked documents the moment you confirm. This project is now `repo`-owned, with no checkout on this computer required | You want a mirror on a machine that has never cloned the repository — a second Mac, a fresh install, a machine set up for agent work only |
+| **Mirror a GitHub repository** *(new in v3.65.0)* | Give it `owner/repo` — the https:// or git@ URL git itself prints works too — and, optionally, a branch and a folder inside it, then press **Find documents**. The Curator lists what it found over the network, sized, with the same running budget total as the local arm and (since v3.65.3) nothing pre-ticked, and copies whichever documents you tick the moment you confirm. This project is now `repo`-owned, with no checkout on this computer required | You want a mirror on a machine that has never cloned the repository — a second Mac, a fresh install, a machine set up for agent work only |
 | **Decide later** | Nothing is written. The same choice reappears the first time you open this project's Foundations block | You are not sure yet, or you are creating several projects at once and do not want to stop for each one |
 
 **Choosing the folder.** Beside the typed-path field sits a **Choose folder…** button — the same
@@ -5343,6 +5457,58 @@ visible line — *"Moving this folder loses nothing; the graph is picked up as-i
 That one stays in the open on purpose: it is the reassurance that makes the button
 safe to press, not an explanation.
 
+Since v3.66.0 the block also shows **Domains in this folder** — one line per
+domain, its page count, largest first, each bar in that domain's own [identity
+colour](#reading-the-screen) and measured against the largest domain. A domain
+whose pages could not be counted reads *not read* instead of a bar. This is the
+app's own twin of the menubar widget's Domains section (below) — the same
+figures, read the same way, so a Mac-tray glance and a Settings visit never
+disagree.
+
+#### GitHub read-only token
+
+Since v3.65.2, **Settings → Knowledge base** also holds a **GitHub read-only
+token** row. It lets a project's Documents (Context, step ① — see
+[Foundations](#foundations--canonical-documents-that-travel)) mirror straight
+from a GitHub repository, with no checkout on this computer. The ⓘ beside the
+block's title covers both halves of the page — the vault folder above, and this
+token.
+
+Press **Add token**, paste a **fine-grained** personal access token and **Save**.
+The field then reads *"Saved · ends in …ab12 · fine-grained"* — the token value
+itself is never shown again, on this screen or anywhere else. **Test** reads one
+branch of a repository you name (`owner/repo`) with the saved token and says
+whether it can see it, without mirroring anything. **Disconnect** removes it.
+
+> **Create the read-only token.** A fine-grained personal access token with
+> read-only access to the repositories you want to mirror — not a classic one.
+> In GitHub:
+> 1. **Settings → Developer settings → Personal access tokens → Fine-grained
+>    tokens → Generate new token.**
+> 2. **Resource owner** — the account or organisation that owns the repository.
+> 3. **Repository access** — *Only select repositories*, then pick the
+>    repository or repositories whose documentation you want to mirror. One
+>    token can cover several.
+> 4. **Permissions → Repository permissions → Contents: Read-only.** Metadata
+>    read-only is added automatically. Nothing else.
+> 5. **Expiry** — fine-grained tokens require one, up to a year. Set a reminder
+>    to renew it.
+>
+> A classic token also works, but the screen warns you before you save one: with
+> the `repo` scope it can read *every* repository your account owns — which is
+> why a fine-grained token is recommended, and why Personal Sync's own token is
+> never used as the default here.
+
+In Context, step ① Documents' **Mirror from GitHub** panel, **READ WITH** offers
+whichever of the two tokens are saved, each named by where it lives: this
+read-only token (shown by its last four characters) and Personal Sync's token
+(the one that syncs your knowledge base — a classic Personal Sync token can read
+every repository its account can see, which is why it is never the default).
+When a read-only token is saved it is selected automatically; when none is
+saved, nothing is selected and *"Add one in Settings"* takes you to this block.
+Nothing ever falls back to Personal Sync's token without you pressing it
+yourself.
+
 The **Choose folder** button greys out while anything is writing to your wiki, and
 an amber banner appears **above** the block's heading saying so. That's deliberate,
 and it is why the banner is not foldable — changing the folder mid-ingest would
@@ -5601,6 +5767,29 @@ For most of its life The Curator ran exactly **two** models — one per provider
 Now there is. A list of **hand-measured models** is on offer across all three providers, and it grows as more are measured — the live list is the one in Settings, so this guide doesn't print a running total. Every model on it was measured by hand against The Curator's real ingest prompt before being offered, and **all but one of them can build your wiki** — the exception is `gemini-3.5-flash-lite`, which was measured and found unfit for ingest specifically, and is offered for chat with that reason on its row. On top of that hand-measured list, an OpenRouter key can fetch a much larger **chat-only** list from OpenRouter's own catalogue; the third provider plays by slightly different rules — see [OpenRouter](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh) below.
 
 > **Nothing changes unless you change it.** The defaults are still `gemini-2.5-flash-lite` and `claude-haiku-4-5`, still the cheapest model on their provider, and a user who picks nothing runs exactly what they ran before — same model, same cost, same behaviour.
+
+### AI jobs and the one model *(v3.67.0)*
+
+**Settings → Providers & keys** block 2, **Your AI model**, is the one model every AI job in the
+app runs on: Ingest, Compile, Wiki Health, Shared Brain and Suggest a reading plan. Its **Used by**
+row lists each of those jobs, where you start it, and when its cost is shown. Chat stays separate
+— you pick any connected model per message, in the composer, as described above. The badge
+**measured for the build lane** means The Curator measured this model by hand against its real
+ingest prompt; the other jobs are the same kind of structured-output task and inherit that
+measurement rather than being measured again separately.
+
+**Under every AI action, one line says which model will run it, roughly how many tokens it takes
+and what it should cost**, with a **Change model** link to Settings → Providers & keys — for
+example *"Runs on Flash Lite 2.5 · ≈6k tokens · ≈$0.0011 · Change model"*. After the run, a second
+line says what actually ran and what it cost — *"Ran on Flash Lite 2.5 · 5,812 in / 640 out ·
+$0.0008"*. A model with no published price still runs; the line says *"price not published"*
+instead of a dollar figure. **With no provider key saved, every AI action stays visible but
+disabled**, and its line links to Providers & keys instead of showing a cost.
+
+This applies wherever an AI action appears: Wiki health's three ✨ Quick-maintenance actions
+(each still shows its own estimate before it runs and what it actually cost after), System
+check's **Verify AI connection**, Chat's **Compile to Wiki**, Ingest's single-file and batch
+estimates, and Context step ①'s **✨ Suggest with AI** reading plan.
 
 ### The principle: two jobs, not one setting with two halves
 

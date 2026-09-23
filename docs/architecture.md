@@ -2792,6 +2792,73 @@ the text it frames.
   `400 reserved_project` / `400 project_not_found` — never a silently wiki-only answer that looks
   like a good one.
 
+### `src/brain/ai-jobs.js` + `src/public/next/shared/ai-jobs.js` (v3.67.0)
+
+`src/brain/ai-jobs.js` re-exports `src/public/next/shared/ai-jobs.js`, the registry of every AI job
+in the app: id, label, where it starts, its lane (build vs chat), its mode, what cost display it
+shows and which modules implement it. `AI_UNROUTED` names the modules that import `generateText`
+but map to no live job — `scripts/test-ai-run.js` walks the code and fails if any module importing
+`generateText` maps to neither a job nor that allow-list, so a new AI call site cannot go
+undocumented by construction.
+
+### `src/brain/ai-run.js` + `src/public/next/shared/ai-run.js` + `ai-run.css` (v3.67.0)
+
+`src/brain/ai-run.js` exports `describeRun()` (the estimate shape every AI route returns as
+`runsOn`) and `spentFromUsage()` (the actual-cost shape returned as `spent`, priced by the batch
+queue's own rule). The shared frontend module renders the run line: `renderRunsOn`, `renderSpent`,
+`aiActionDisabledAttrs` (the disabled-button treatment when no provider key is saved — the action
+stays visible, never hidden) and `wireAiRunDoors` (the door to Providers & keys, injected rather
+than imported from `app.js`).
+
+### `src/brain/reading-plan.js` + `src/routes/reading-plan.js` (v3.67.0)
+
+"Suggest a reading plan": a deterministic **free** arm and an **AI** arm that each propose a start
+state (read first / on request / not at start) for every document in a project. Read-only — it
+imports no store writer, and applying a proposal goes through the existing `PATCH` routes on
+`routes/memory.js`, never through this module. The AI arm reads document **openings only** (never
+whole documents), frames them as untrusted data in the prompt, and validates every slug and every
+proposed state against the on-disk index before returning it. `src/routes/reading-plan.js` mounts
+it at `/api/reading-plan`. Both `compile.js` and `health-ai.js` reach `ai-run.js` with a **call-time
+`import()`**, never a static one, because both sit inside `ingest.js`'s own import graph and a
+static import would evaluate `ingest-queue.js` while `ingest.js` is still loading.
+
+### The identity palette (v3.65.1, extended v3.66.0)
+
+`tokens/identity.css` defines twelve CSS custom properties, `--id-1` … `--id-12`, mirrored as data
+in `src/public/next/shared/identity-palette.js` for every frontend view and in
+`src/brain/identity-palette.js` for the desktop menubar widget (`identityHex`, resolved by
+`desktop/main.js` and passed into `buildTrayModel` — no `desktop/lib` module imports `src/`
+directly). `IDENTITY_SLOTS` is the one slot-count constant. Every slot's contrast and every
+minimum colour-distance (ΔE00) floor is pinned by `scripts/test-identity-palette.js`, executed
+against the live token values rather than trusted from a comment.
+
+### The depth bar (v3.65.1, extended v3.66.0–v3.67.0)
+
+`shared/monitor.js` exports `renderDepthCell()`, the depth-bar cell decoration for a monitor line
+or a table cell; hosts drawing a bar **outside** a monitor (Chat's project footer, the Ingest batch
+panel, Settings → Knowledge base's Domains-in-this-folder rows) import `renderDepthCell` /
+`depthIdentityClass` directly from `shared/depth-bar.js`, with its rules in `shared/depth-bar.css`.
+Every bar's length is a **named** denominator the server sends — never a client-side guess — see
+[the visual-channels table](user-guide.md#reading-the-screen) for the full, current list of where
+one is drawn and what it is measured against.
+
+### `desktop/lib/menu-bars.js` (v3.66.0)
+
+Draws a depth bar as a 28×13pt colour PNG for a menu item's icon gutter on macOS: a 24×5pt track,
+and a fill that leaves the track uncovered on an over-run (a shape change, never only a colour
+change, so the rule that a warning is never colour-alone holds here too). A bar item's title budget
+is `labelBudgetChars(28)` = 38 characters, chosen to keep the measured 363.5pt menu from widening.
+
+### `src/cli/context.js` + `src/brain/context-markdown.js` (v3.67.0)
+
+The session-start Markdown `my-curator context` prints (and every session-start hook injects) is
+built by `src/brain/context-markdown.js`, re-exported by `src/cli/context.js`. It states the
+project's reading budget under Foundations/Documents and ends with a ` ```json foundations_read ` block —
+`{slug: sha256}` of every document whose full text it carried — so a hook-bootstrapped agent can
+record what it actually read on its next save. The brief's authority is classified by the same
+`classifyChatBriefAuthority` function Chat and the MCP use, never assumed by the renderer; a caller
+that skips classification falls back to `unverified` rather than defaulting to trust.
+
 ### `src/routes/config.js`
 
 Settings and configuration endpoints.

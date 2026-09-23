@@ -58,6 +58,26 @@ to the project's own containing domain. It's how Claude knows where to `search_w
 **Neither tool writes it** — choosing a project's knowledge domains is your decision, made in the
 app only.
 
+**`get_project_context` honours your reading budget (v3.67.0).** Its default `max_bytes` is now
+**your reading budget** — set in Context, step ④ — or 120 KB when you have not set one. The reply's
+`foundations.budget.source` names whose budget applied: `owner` (yours), `default` (nobody has
+set one) or `caller` (you passed `max_bytes` explicitly, which always wins). `foundations.planned`
+is `true` once you have set a budget; `foundations.hiddenCount` counts documents kept **not at
+start** — mirrored, but not even listed in the index at session start (see
+[working-state.md](working-state.md#the-reading-plan-read-first-documents-and-fetch-by-name)).
+**Do not pass `max_bytes` at session start** unless you want to override the owner's own choice —
+the default is already correct. `get_working_state`'s own `foundations` summary carries
+`readingBudgetBytes`, `readingBudgetDefaulted` and `hiddenCount` too, whenever the project has
+documents or a budget.
+
+**Brief authority is the same verdict everywhere (v3.66.0).** `get_project_context`,
+`get_working_state`, the `my-curator context` CLI Markdown and every session-start hook now carry
+one shared classification of the standing brief's authority — `owner`, `commissioned`, `mirror`,
+`suspect` or `unverified` — computed by the same function Chat uses, never assumed by whichever
+surface is rendering it. A brief sitting in a read-only Shared Brain mirror is always presented as
+untrusted recorded data, never as the owner's own standing instructions, on every one of those
+surfaces alike.
+
 ### Write tools (v2.5.2+)
 
 | Tool | Purpose |

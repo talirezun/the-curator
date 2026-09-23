@@ -366,6 +366,48 @@ curl http://localhost:3333/api/ingest/activity
 
 ---
 
+## AI runs — `runsOn` and `spent` (v3.67.0)
+
+Every AI action in the app shares one estimate shape and one actual-cost shape, built by
+`src/brain/ai-run.js` (see [architecture.md](architecture.md)) and rendered by the shared frontend
+run line. Both ride on top of whichever route they belong to — they are not a route of their own.
+
+**`runsOn`** — the estimate, present on the resting state of an AI action and on every 200 body of
+its estimate route, including refusals (where it carries only the model and key state):
+
+```
+{
+  job, jobLabel,               // which AI_JOBS entry this is
+  needsKey,                    // true when no provider key is saved — the ONLY field present then
+  provider, providerLabel, model, modelLabel,
+  inputTokens,                 // a point estimate, when the route can give one
+  inputTokensLow, inputTokensHigh, outputTokensLow, outputTokensHigh,
+  usdLow, usdHigh,             // a free model: usdLow = usdHigh = 0
+  priceKnown,                  // false → no usd fields at all; costNote: 'price-not-published'
+  free, costNote, medianLatencyMs
+}
+```
+
+A figure the app does not have is **omitted, never sent as 0** — the caller must not mistake "we
+don't know" for "this costs nothing."
+
+**`spent`** — carried on every AI run's completion event, once it actually finished:
+
+```
+{
+  provider, providerLabel, model, modelLabel,   // the model that ACTUALLY billed
+  inputTokens, outputTokens, cachedReadTokens, cacheWriteTokens, calls,
+  usd,          // null when the billing model's price is not published
+  estimated,    // true when usd is derived rather than provider-reported
+  fallbackFrom  // set when a fallback-chain walk billed a different model than requested
+}
+```
+
+`model`/`provider` on `spent` can differ from `runsOn`'s when a fallback chain walked to a
+different model mid-run — `fallbackFrom` names what was originally requested.
+
+---
+
 ## Batch ingest queue (`/api/ingest-queue`, Track 3)
 
 A server-owned, disk-persisted, strictly sequential job for ingesting many files into one domain as a single resumable operation. See [docs/ingestion-pipeline.md](ingestion-pipeline.md) for the full design rationale (why sequential, why duplicates are decided at creation, why a crash never auto-resumes spend). All endpoints are mounted under `/api/ingest-queue`.
@@ -2343,7 +2385,8 @@ that setter, so its own resolution is unchanged. See
       "countTotal": 41,
       "refusedTotal": 0,
       "lastVia": null,
-      "selfTestTotal": 0
+      "selfTestTotal": 0,
+      "count7dAgent": 11
     },
     {
       "name": "save_working_state",
@@ -2377,6 +2420,34 @@ app's "not used since this log began" tile reads. `sessions.lastBootstrapAt` is 
 timestamp across every logged `get_project_context` **or** `get_working_state` call;
 `sessions.lastSaveAt` is the newest logged `save_working_state` call — neither is a promise that
 the two calls belonged to the same session, only the most recent instance of each.
+
+**`count7dAgent` (v3.66.0).** Calls in the same 7-day window as `count7d`, with the app's own "Test
+all tools" lines (`via: "self-test"`) excluded — the figure a "busiest tools this week" comparison
+draws its bars from. `count7d` itself is unchanged, and still includes self-test calls.
+
+**`?include=projects` (v3.66.0).** Add the query parameter to also receive:
+
+```json
+{
+  "byProject": [
+    { "domain": "projects", "project": "curator", "inStore": true,
+      "sessions": 6, "sessionsRead": 4, "sessionsSaved": 4 }
+  ],
+  "byProjectWindow": { "days": 30, "hasLog": true, "busiestSaved": 6 },
+  "savePulse": { "events": 41 }
+}
+```
+
+`byProject[]` is one row per project the store knows about, read from the **union of every usage
+log on this machine** (a checkout and the installed app can each keep their own — see
+[working-state.md](working-state.md)); `sessions`/`sessionsRead`/`sessionsSaved` are counted over
+the last 30 days. `sessionsSaved` is `null` when there is no usage log at all, and a measured `0`
+when there is a log and genuinely no session — the same "no log" vs "a measured zero" distinction
+the menubar widget and the Context Capture row both make. `byProjectWindow.busiestSaved` is the
+denominator every project row's depth bar is measured against. `savePulse.events` is the count of
+saves in the last 7 days — the same number the [menubar widget's](user-guide.md#reading-the-save-pulse)
+pulse strip reads. The parameter is opt-in because this half walks the whole working-state store,
+which the plain per-tool aggregation above does not need to do.
 
 **`lastVia` and `selfTestTotal` (v3.61.0).** `lastVia` is `"self-test"` when the tool's **newest**
 logged call was written by `POST /api/mcp/exercise`, and `null` otherwise. Null means *an MCP
@@ -3494,6 +3565,18 @@ alias — the fields below replace them.
 `unlistedEntries`/`unlistedReason` carry the same meaning as on the index route above:
 directory entries the store will not address, counted rather than silently skipped.
 
+**`stateBudgetBytes` (v3.66.0)** rides on this envelope (and on `open`, and on a scoped read) —
+`49152`, the size a handoff is trimmed to. Every `scopes[].bytes` is at or under it: an over-budget
+save is trimmed and disclosed in the handoff, never refused, so a handoff can never legitimately
+read as over its own budget.
+
+**`readingBudgetBytes` / `readingBudgetDefaulted` / `readingBudgetError` (v3.67.0)** name the
+project's session-start reading budget: `0` for Index only, or `8192`–`204800`; absent means "not
+set" and the effective 120 KB default applies. `readingBudgetDefaulted` is `true` whenever the
+owner has not chosen one. It is written only by the app (`PATCH …/reading/budget`, above) — no
+agent tool or CLI command writes it. A hand-edited invalid value reads as "not set" rather than
+throwing, with `readingBudgetError` naming the defect found.
+
 **New in v3.59.0: `foundations`.** Both the scope-less and the scope-targeted response gain a
 `foundations` field — the **index only**, never document bodies, matching `listFoundations` through
 this file's own `foundationsWire()` allow-list, which carries exactly `present`, `ownership`,
@@ -3968,6 +4051,60 @@ fetched*, so a failed switch leaves the manifest — `repo.root`, `repo.remote`,
 **byte-identical** to what it was. The clearing of `repo.root` and the writing of the new `repo.remote`
 happen in the **same** manifest write the document copy performs, never a second write, so there is
 no window where a failure could leave a stale root beside a fresh remote.
+
+### PATCH /api/memory/:domain/:project/reading/budget
+
+**New in v3.67.0.** A strict one-field body: `{readingBudgetBytes: int|null}`. `0` means **Index
+only**; otherwise a whole number of bytes from the store's minimum up to its 200 KB cap (the five
+presets the app offers are 0, 32768, 65536, 122880 and 204800 — Index only, Lean, Standard, Deep,
+Max); `null` clears it back to "not set", the pre-v3.67.0 behaviour. Any other key in the body, or
+an out-of-range value, is a 400 naming exactly what was wrong. Writes only `project.json` — curator
+metadata about the project, never a document's own content.
+
+### GET /api/memory/:domain/:project/session-start
+
+**New in v3.67.0.** Reports what an agent is actually handed at the start of a session against
+every named limit: the brief, the latest handoff, journal lines, the document list and the text of
+whichever documents are marked **read first**, up to the effective reading budget (`ownerBytes` —
+the owner's own budget, or the 120 KB default when none is set). Each part carries its own size and
+limit so a client can draw the same depth bars the app does.
+
+### POST /api/memory/:domain/:project/session-start/preview
+
+**New in v3.67.0.** Same report as the `GET` above, but takes a `plan` — a proposed
+`{slug: 'read-first'|'on-request'|'not-at-start'}` map — and answers **as if** that plan were
+applied, without writing anything. This is what powers "Suggest a reading plan"'s live preview
+before you press Apply.
+
+### GET /api/reading-plan/:domain/:project/estimate
+
+**New in v3.67.0 (`src/brain/reading-plan.js`).** `→ {ok, documentCount, inputChars, budgetBytes,
+budgetSource: 'owner'|'standard', runsOn}`. Answers `200` even with no provider key saved, in which
+case `runsOn.needsKey` is `true` — this route is read-only and safe to call to populate the ✨
+Suggest-with-AI button's resting cost line.
+
+### POST /api/reading-plan/:domain/:project/suggest
+
+**New in v3.67.0.** Body is exactly `{arm: 'free'|'ai'}`. `→ {ok, arm, budgetBytes, budgetSource,
+setBudgetSuggested, proposals: [{slug, title, bytes, current, proposed, reason, differs}], totals:
+{readFirstCount, readFirstBytes, onRequestCount, notAtStartCount}, dropped: [{slug, reason}], notes,
+runsOn?, spent?}`. **It never writes** — the caller applies a proposal through the existing `PATCH
+…/foundations/:slug` route, one document at a time or in a batch. Refusals: `400 needs_key` (with
+`runsOn`, on the `ai` arm with no key), `invalid_arm`, `unexpected_fields`, `invalid_project`; `403
+readonly` (a Shared Brain mirror); `404 unknown_domain` / `project_not_found`; `409
+manifest_unreadable`; `502 ai_failed` / `ai_unusable` (with `runsOn`, and `spent` whenever the
+model billed before failing). With no reading budget set yet, the free and AI arms both plan
+against **Standard** (64 KB) and `setBudgetSuggested` is `true`.
+
+### POST /api/sharedbrain/check-clash
+
+**New in v3.65.3.** Body `{storage_type, github_repo_owner, github_repo_name, shared_domain,
+shared_brain_slug}` — no credential in the request. Runs the exact refusal `/save` runs, without
+saving anything, so a clash can be caught on the wizard's first step rather than after a token has
+already been pasted. `→ 200 {ok:true}` when the connection would be accepted, or `200 {ok:false,
+kind:'identity'|'mirror', label, mirror, error}` naming which of the two clashes it is — the same
+brain twice, or a different brain already using this computer's local mirror domain. `400` when the
+body names no brain at all.
 
 ### GET /api/memory/:domain/:project/capture
 
