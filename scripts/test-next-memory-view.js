@@ -9076,32 +9076,44 @@ const fndRead = (payload) => ({
   // only the second can tell a READ number from a TYPED one. `9` is not the
   // shipped cap, so a sentence that hard-codes 12 reds here — which is what a
   // fixture using the real cap could not do, and did not (green first).
+  // ── THE FIXTURES ARE THE WIRE'S SHAPE NOW (v3.65.2, C4) ────────────────
+  // `{reason: <code>, error: <prose>}` — what src/routes/memory.js actually
+  // sends, `withErrorProse` having copied the store's message into `error`.
+  // Through v3.65.1 these fixtures put the CODE in `error`, which is the shape
+  // the view keyed on and the route never sends: every assertion here was
+  // green over a branch no real refusal could reach.
+  const P = 'the store’s own prose';
   ok('the CAP is named with the store\'s own number, not a copy typed here',
-    (await refusal(400, { error: 'too_many_domains', cap: 9 })) === 'A project can draw on at most 9 domains.',
-    await refusal(400, { error: 'too_many_domains', cap: 9 }));
+    (await refusal(400, { reason: 'too_many_domains', error: P, cap: 9 })) === 'A project can draw on at most 9 domains.',
+    await refusal(400, { reason: 'too_many_domains', error: P, cap: 9 }));
   ok('...and a route that sent no cap at all falls back to the shipped one '
     + 'rather than printing "undefined"',
-  (await refusal(400, { error: 'too_many_domains' })) === 'A project can draw on at most 12 domains.',
-  await refusal(400, { error: 'too_many_domains' }));
+  (await refusal(400, { reason: 'too_many_domains', error: P })) === 'A project can draw on at most 12 domains.',
+  await refusal(400, { reason: 'too_many_domains', error: P }));
   ok('an unknown domain is NAMED, because the user has to know which one',
     /Not a domain on this computer: ghost\./.test(
-      await refusal(400, { error: 'unknown_domain', domains: ['ghost'] })));
+      await refusal(400, { reason: 'unknown_domain', error: P, domains: ['ghost'] })));
   ok('an invalid name says so', /not a usable domain name/.test(
-    await refusal(400, { error: 'invalid_domain' })));
+    await refusal(400, { reason: 'invalid_domain', error: P })));
   ok('a Shared Brain MIRROR says why it cannot be changed here', /read-only Shared Brain mirror/.test(
-    await refusal(403, { error: 'readonly' })));
+    await refusal(403, { reason: 'readonly', error: P })));
   ok('a vanished project says so', /no longer exists/.test(
-    await refusal(404, { error: 'project_not_found' })));
+    await refusal(404, { reason: 'project_not_found', error: P })));
   ok('a lock says TRY AGAIN rather than presenting a transient as permanent',
-    /Try again in a moment/.test(await refusal(409, { error: 'locked' })));
-  ok('an unrecognised code is passed through rather than swallowed — silence '
-    + 'about a refusal is the worst of the three options',
-  (await refusal(400, { error: 'something_new' })) === 'something_new');
+    /Try again in a moment/.test(await refusal(409, { reason: 'locked', error: P })));
+  ok('an unrecognised code falls back to the route\'s own PROSE rather than '
+    + 'being swallowed — silence about a refusal is the worst of the three options',
+  (await refusal(400, { reason: 'something_new', error: P })) === P);
+  ok('...and a refusal with no body at all still says something',
+    (await refusal(500, {})) === 'HTTP 500');
+  ok('the CODE is read from `reason`: a code in `error` alone is prose, not a code '
+    + '(the shape through v3.65.1, which no real refusal ever had)',
+  (await refusal(400, { error: 'too_many_domains' })) === 'too_many_domains');
 
   {
     // A REFUSAL CHANGES NOTHING ON SCREEN but the message: the old set stays,
     // so a failed add does not look like a successful one.
-    const r = mk(() => res(400, { error: 'unknown_domain', domains: ['ghost'] }));
+    const r = mk(() => res(400, { reason: 'unknown_domain', error: 'x', domains: ['ghost'] }));
     await r.api.saveKnowledgeDomains(['acme', 'ghost'], 1);
     eq('a refused write leaves the chosen set exactly as it was',
       (r.st.projectRead.knowledgeDomains || []).join(','), 'acme');
@@ -9119,7 +9131,7 @@ const fndRead = (payload) => ({
   }
 }
 
-// ── §21f4 — step ③'s binder, driven ─────────────────────────────────────
+// ── §21f4 — step ③'s binder, driven THROUGH THE REAL LISTBOX (v3.65.2) ──
 // ═════════════════════════════════════════════════════════════════════════
 //
 // ONE BINDER, exactly as tier 0's rows and the work-stream table have, and
@@ -9127,12 +9139,88 @@ const fndRead = (payload) => ({
 // against a hand-written set of stubs, so every name it calls must be one
 // that set supplies — one binder is one stub rather than three.
 //
-// WHAT IT HAS TO GET RIGHT, and every one of these fails silently: the picker
-// must be mounted from the SAME cfg object the markup was rendered from (two
-// literals is the shape the component's own header warns about), a Remove
-// must send the whole list MINUS that one, and an add must send the whole
-// list PLUS it — a delta, or a list built from the wrong source, is how two
-// clients come to disagree about a set.
+// ── WHAT THIS SECTION GOT WRONG THROUGH v3.65.1, AND WHY IT WAS GREEN ────
+// It stubbed `mountListbox`, asserted `typeof cfg.onSelect === 'function'`
+// and then CALLED `onSelect` itself. shared/listbox.js never reads
+// `onSelect` — its only handler is `onChange` — so in the app a pick ran the
+// component's `commit()`, relabelled the trigger "research ▾" and called
+// nothing: 0 requests, 0 console messages (measured by the v3.65.2 design
+// pass; the maintainer's words were "basically not functioning"). The suite
+// pinned the bug because it stood in for the one thing whose join it was
+// supposed to prove.
+//
+// So the picker is mounted here through the REAL `mountListbox`, lifted off
+// shared/listbox.js and executed against a minimal DOM model, and a pick is a
+// click on a menu row the real component rendered. The handler is reached only
+// if the component calls it.
+const LB_SRC = readFileSync(join(NEXT, 'shared/listbox.js'), 'utf8');
+function realListbox() {
+  // The one import (`icon`, `escapeHtml` from ../app.js) is supplied rather
+  // than loaded: app.js touches `document` at module scope. Everything else
+  // is the shipped file, byte for byte.
+  const body = LB_SRC
+    .replace(/^import\s[^\n]*\n/gm, '')
+    .replace(/^export\s+/gm, '')
+    + '\nreturn { renderListboxHtml, mountListbox };';
+  const docListeners = [];
+  const els = new Map();
+  const mkEl = (tag) => {
+    const listeners = {};
+    const el = {
+      tag, dataset: {}, style: {}, attrs: {}, className: '', id: '', disabled: false,
+      textContent: '', _html: '', scrollTop: 0, scrollHeight: 0, offsetWidth: 0, clientHeight: 0,
+      classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+      setAttribute(k, v) { this.attrs[k] = String(v); },
+      getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
+      removeAttribute(k) { delete this.attrs[k]; },
+      addEventListener(t, fn) { (listeners[t] = listeners[t] || []).push(fn); },
+      removeEventListener() {},
+      fire(t, ev) { (listeners[t] || []).forEach((fn) => fn(ev)); },
+      querySelector(sel) { return sel === '[data-lb-text]' ? this.textEl || null : null; },
+      getBoundingClientRect: () => ({ top: 100, left: 404, width: 140, height: 28, bottom: 128 }),
+      // A menu contains the rows it rendered; a trigger contains only itself.
+      contains(x) { return x === this || (tag === 'div' && !!x); },
+      focus() {}, remove() { this.removed = true; },
+    };
+    Object.defineProperty(el, 'innerHTML', { get() { return this._html; }, set(v) { this._html = v; } });
+    return el;
+  };
+  const created = [];
+  const doc = {
+    body: { appendChild(el) { created.push(el); } },
+    activeElement: null,
+    createElement: (t) => mkEl(t),
+    getElementById: (id) => els.get(id) || null,
+    addEventListener: (t, fn) => docListeners.push(t),
+    removeEventListener() {},
+    contains: () => true,
+  };
+  const api = new Function('document', 'window', 'requestAnimationFrame', 'cancelAnimationFrame',
+    'CSS', 'icon', 'escapeHtml', body)(
+    doc, { innerHeight: 900, innerWidth: 1370 }, () => 1, () => {}, { escape: (x) => x },
+    () => '<svg></svg>',
+    (x) => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'));
+  /** Put a trigger into the model, as `renderListboxHtml` would have. */
+  const plant = (id) => {
+    const t = mkEl('button');
+    t.dataset.lbTrigger = id;
+    t.textEl = { textContent: '+ Add a domain' };
+    els.set(id, t);
+    return t;
+  };
+  /** Open the menu with a pointer click and press the row carrying `value`. */
+  const pick = (trigger, value) => {
+    trigger.fire('click', { preventDefault() {} });
+    const menu = created[created.length - 1];
+    if (!menu || !menu.innerHTML.includes('data-lb-value="' + value + '"')) return false;
+    const row = { getAttribute: (k) => (k === 'data-lb-value' ? value : null) };
+    menu.fire('click', { target: { closest: () => row } });
+    return true;
+  };
+  return { api, doc, plant, pick, created };
+}
+
 {
   const mk = (over) => {
     const st = { activeDomain: 'acme', activeProject: 'lumina', knowledgeSaving: false,
@@ -9141,18 +9229,21 @@ const fndRead = (payload) => ({
     const calls = { mounted: [], saved: [] };
     const drops = [{ dataset: { memKDrop: 'acme' }, addEventListener(t, fn) { this._click = fn; } }];
     const root = { querySelectorAll: () => drops };
-    const doc = { getElementById: (id) => (id === 'mem-k-add' ? {} : null) };
+    const lb = realListbox();
+    const trigger = lb.plant('mem-k-add');
     const api = new Function('state', 'document', 'mountListbox', 'saveKnowledgeDomains',
       'reportAsyncMountFailure',
       extractFunction(viewSrc, 'knowledgePickerCfg', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'bindKnowledgeRows', 'memory.js')
-      + '\nreturn { bindKnowledgeRows };')(
-      st, doc,
-      (cfg) => calls.mounted.push(cfg),
+      + '\nreturn { bindKnowledgeRows, knowledgePickerCfg };')(
+      st, lb.doc,
+      // THE REAL COMPONENT, observed rather than replaced: the cfg is recorded
+      // and then handed to the shipped `mountListbox`.
+      (cfg) => { calls.mounted.push(cfg); return lb.api.mountListbox(cfg); },
       async (list) => { calls.saved.push(list.join(',') || '(cleared)'); },
       () => {});
     api.bindKnowledgeRows(root, 1);
-    return { calls, drops, st };
+    return { calls, drops, st, trigger, lb, api };
   };
 
   {
@@ -9162,16 +9253,57 @@ const fndRead = (payload) => ({
       r.calls.mounted[0].id, 'mem-k-add');
     eq('...offering only the domains NOT already chosen',
       r.calls.mounted[0].options.map((o) => o.value).join(','), 'research,business');
-    ok('...and an onSelect that can actually commit', typeof r.calls.mounted[0].onSelect === 'function');
+    ok('...and the REAL component wired itself to the trigger',
+      r.trigger.dataset.lbWired === '1', JSON.stringify(r.trigger.dataset));
 
-    // AN ADD SENDS THE WHOLE LIST PLUS ONE.
-    r.calls.mounted[0].onSelect('research');
-    eq('adding a wiki sends the whole list plus that one, never a delta',
-      r.calls.saved.join(';'), 'acme,research');
-    // AND THE SAME ONE TWICE IS A NO-OP rather than a duplicate in the set.
-    r.calls.saved.length = 0;
-    r.calls.mounted[0].onSelect('acme');
-    eq('choosing a wiki already chosen writes nothing', r.calls.saved.length, 0);
+    // AN ADD, BY A POINTER PRESS ON A ROW THE COMPONENT RENDERED.
+    ok('a pointer click opens the real menu, and it lists `research`', r.lb.pick(r.trigger, 'research'));
+    eq('picking a domain sends the whole list plus that one, never a delta — '
+      + 'through the component, not around it', r.calls.saved.join(';'), 'acme,research');
+    eq('...and the view records WHICH domain is being added, for the busy label',
+      r.st.knowledgeAdding, 'research');
+  }
+
+  {
+    // ── THE CLASS GUARD: every function this view hands the component is a
+    // handler the component actually calls. Read out of shared/listbox.js
+    // itself (comments stripped), so a handler renamed there — or a key typed
+    // here that it has never read — reds this, rather than being called by a
+    // test and never by the app.
+    const lbNoComments = LB_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    const known = new Set([...lbNoComments.matchAll(/cfg\.(on[A-Z]\w*)/g)].map((m) => m[1]));
+    ok('shared/listbox.js reads at least one handler (the scan is not vacuous)', known.has('onChange'),
+      [...known].join(','));
+    const r = mk();
+    const fnKeys = Object.keys(r.calls.mounted[0]).filter((k) => typeof r.calls.mounted[0][k] === 'function');
+    ok('every function-valued key on the knowledge picker cfg is a handler the listbox reads — '
+      + 'an `onSelect` here is a control that does nothing', fnKeys.length > 0
+      && fnKeys.every((k) => known.has(k)), fnKeys.join(',') + ' vs ' + [...known].join(','));
+  }
+
+  {
+    // THE TRIGGER NEVER CARRIES A VALUE. "+ Add a domain" at rest; "Adding
+    // research…" and disabled while the write is in flight — rendered by the
+    // REAL `renderListboxHtml` from the same cfg function the binder mounts.
+    const r = mk();
+    const rest = r.api.knowledgePickerCfg([{ value: 'research', label: 'research' }], false, null);
+    eq('at rest the cfg asks for "+ Add a domain"', rest.triggerText, '+ Add a domain');
+    const idle = r.lb.api.renderListboxHtml(r.api.knowledgePickerCfg(['research'], false, null));
+    ok('...and the real component paints exactly that', /data-lb-text>\+ Add a domain</.test(idle), idle);
+    const busy = r.lb.api.renderListboxHtml(r.api.knowledgePickerCfg(['research'], true, 'research'));
+    ok('while a write is in flight it reads "Adding research…" and is disabled',
+      /data-lb-text>Adding research…</.test(busy) && / disabled>/.test(busy), busy);
+    const busyNoName = r.lb.api.renderListboxHtml(r.api.knowledgePickerCfg(['research'], true, null));
+    ok('...a busy write with no name (a Remove) still never shows a domain as a value',
+      /data-lb-text>\+ Add a domain</.test(busyNoName), busyNoName);
+  }
+
+  {
+    // CHOOSING THE SAME ONE TWICE IS A NO-OP. The component never offers a
+    // chosen domain, so this is reached only through the handler directly.
+    const r = mk();
+    r.calls.mounted[0].onChange('acme');
+    eq('choosing a domain already chosen writes nothing', r.calls.saved.length, 0);
   }
 
   {
@@ -9180,7 +9312,7 @@ const fndRead = (payload) => ({
     // `null` — the project goes back to the domain it lives in.
     const r = mk();
     r.drops[0]._click();
-    eq('removing the only wiki sends an EMPTY list, which the writer clears with',
+    eq('removing the only chosen domain sends an EMPTY list, which the writer clears with',
       r.calls.saved.join(';'), '(cleared)');
   }
 
@@ -9188,8 +9320,8 @@ const fndRead = (payload) => ({
     const r = mk({ projectRead: { knowledgeDomains: ['acme', 'research'],
       knowledgeDomainsDefaulted: false } });
     r.drops[0]._click();
-    eq('removing one of two sends the OTHER, not an empty list',
-      r.calls.saved.join(';'), 'research');
+    eq('removing one of two sends the OTHER, not an empty list — including the domain '
+      + 'the project lives in', r.calls.saved.join(';'), 'research');
   }
 
   {
@@ -9202,10 +9334,45 @@ const fndRead = (payload) => ({
   {
     // A WRITE IN FLIGHT DISABLES THE CONTROL rather than queueing a second
     // full list against one file.
-    const r = mk({ knowledgeSaving: true });
+    const r = mk({ knowledgeSaving: true, knowledgeAdding: 'research' });
     eq('while a write is in flight the picker is mounted DISABLED',
       r.calls.mounted[0].disabled, true);
   }
+}
+
+// ── §21f5 — REMOVE, BY LIST SIZE (v3.65.2, C4) ──────────────────────────
+// The second half of "I am stuck with the project's domain": on the one row
+// that is the default, Remove sent `null`, the store answered "back to the
+// default", and the same row repainted — a press that looked dead. Three
+// states, each rendered by the real `renderKnowledge`.
+{
+  const data = { pageCount: 3, pageCounts: {}, lastIngestDate: '2026-09-16' };
+  const R = (list, defaulted) => makeRenderers({
+    activeDomain: 'acme', activeProject: 'l', openFolds: {}, domainList: ['acme', 'research', 'business'],
+    knowledge: new Map(list.map((d) => [d, { data, error: null }])),
+    projectRead: { knowledgeDomains: list, knowledgeDomainsDefaulted: defaulted },
+  }).renderKnowledge();
+
+  const one = R(['acme'], true);
+  ok('ONE row that is the default: Remove is WITHHELD', !/data-mem-k-drop=/.test(one), one.slice(-600));
+  ok('...and its reason stands where the control would have been',
+    /class="mem-k-drop mem-k-drop-why">Default — add another domain to replace it\.</.test(one), one.slice(-600));
+
+  const two = R(['acme', 'research'], false);
+  eq('TWO chosen rows: Remove on EVERY row, including the domain the project lives in',
+    (two.match(/data-mem-k-drop="(acme|research)"/g) || []).length, 2);
+  ok('...with no default chip and no reason sentence', !/mem-badge-quiet">default</.test(two)
+    && !/mem-k-drop-why/.test(two), two.slice(-400));
+
+  const chosenOther = R(['research'], false);
+  ok('ONE chosen row that is not home: Remove stays live',
+    /data-mem-k-drop="research"/.test(chosenOther), chosenOther.slice(-600));
+  ok('...and says, unfolded beside it, what pressing it does',
+    /mem-k-drop-why">Removing it puts acme back as the default\.</.test(chosenOther), chosenOther.slice(-600));
+  const chosenHome = R(['acme'], false);
+  ok('ONE chosen row that IS home: Remove stays live and says the default remains',
+    /data-mem-k-drop="acme"/.test(chosenHome)
+    && /Removing it leaves acme as the default\./.test(chosenHome), chosenHome.slice(-600));
 }
 
 // ── §21f7 — EVERY `hidden` ELEMENT THIS VIEW EMITS REALLY HIDES ─────────

@@ -4047,7 +4047,7 @@ function renderKnowledge() {
   // `defaulted` rides down to the ROW so the one row that is inherited rather
   // than chosen says so in a word, where the deleted sentence said it in
   // forty. A chip on the row it describes; never a paragraph under the step.
-  const rows = domains.map((domain) => renderKnowledgeRow(domain, defaulted)).join('');
+  const rows = domains.map((domain) => renderKnowledgeRow(domain, defaulted, domains.length)).join('');
   // A malformed `project.json` is the store's own disclosure and is loud: it
   // means the chosen set could not be read, so the rows below are the DEFAULT
   // rather than the choice, and saying nothing would present one as the other.
@@ -4113,7 +4113,7 @@ function knowledgeDotHtml(domain) {
     : '';
 }
 
-function renderKnowledgeRow(domain, defaulted) {
+function renderKnowledgeRow(domain, defaulted, count) {
   // BOTH DOORS ARE OFFERED IN EVERY STATE, including the one where the
   // figures failed to arrive: a domain's wiki does not stop existing because
   // a stats read did, and a door withheld for the duration of a failed fetch
@@ -4132,15 +4132,44 @@ function renderKnowledgeRow(domain, defaulted) {
   // `data-mem-k-drop` is unchanged, so `bindKnowledgeRows`' delegation finds
   // it wherever in the block it sits.
   const dropBusy = !!(state.knowledgeSaving);
+  // ── REMOVE, BY LIST SIZE (v3.65.2, C4) ────────────────────────────────
+  // The store allows any NON-EMPTY list of real domains and refuses `[]`, and
+  // `null` means "back to the default". Three states follow, and the one the
+  // maintainer was stuck in is the first:
+  // · ONE row that is the DEFAULT — Remove would send `null` and repaint the
+  //   same row, a press that looks dead. It is WITHHELD, and the reason sits
+  //   where the control would have been (v3.61.1: every withheld control
+  //   states its reason).
+  // · TWO OR MORE rows — Remove on every one, INCLUDING the domain the
+  //   project lives in: the store does not require it, and a project that
+  //   should draw only on `research` is a legitimate choice.
+  // · ONE row that was CHOSEN — Remove stays live and says what it will do,
+  //   unfolded, because it is an outcome at the moment of acting.
+  const rowCount = Number.isInteger(count) && count > 0 ? count : 1;
+  const home = state.activeDomain || '';
+  let drop;
+  if (rowCount === 1 && defaulted === true) {
+    drop = '<span class="mem-k-drop mem-k-drop-why">'
+      + 'Default — add another domain to replace it.</span>';
+  } else {
+    const dropBtn = '<button type="button" class="btn btn-ghost btn-xs" data-mem-k-drop="'
+      + escapeHtml(domain) + '"' + (dropBusy ? ' disabled' : '')
+      + ' aria-label="' + escapeHtml('Remove ' + domain + ' from this project') + '">Remove</button>';
+    drop = rowCount === 1 && home
+      ? '<span class="mem-k-drop">'
+        + '<span class="mem-k-drop-why">' + escapeHtml(domain === home
+          ? 'Removing it leaves ' + home + ' as the default.'
+          : 'Removing it puts ' + home + ' back as the default.') + '</span>'
+        + dropBtn + '</span>'
+      : '<span class="mem-k-drop">' + dropBtn + '</span>';
+  }
   const doors =
     '<div class="mem-k-doors">'
       + '<button type="button" class="btn btn-secondary btn-xs" data-mem-k-domains="'
         + escapeHtml(domain) + '">Open in Domains</button>'
       + '<button type="button" class="btn btn-secondary btn-xs" data-mem-k-chat="'
         + escapeHtml(domain) + '">Ask this domain</button>'
-      + '<button type="button" class="btn btn-ghost btn-xs mem-k-drop" data-mem-k-drop="'
-        + escapeHtml(domain) + '"' + (dropBusy ? ' disabled' : '')
-        + ' aria-label="' + escapeHtml('Remove ' + domain + ' from this project') + '">Remove</button>'
+      + drop
     + '</div>';
 
   const k = state.knowledge instanceof Map ? state.knowledge.get(domain) : null;
@@ -4308,7 +4337,7 @@ function renderKnowledgePicker(chosen, defaulted) {
   const note = !rest.length
     ? renderDescription('Every domain on this computer is already chosen.')
     : '';
-  const cfg = knowledgePickerCfg(rest, busy);
+  const cfg = knowledgePickerCfg(rest, busy, state.knowledgeAdding);
   // ── THE PICKER IS A HEAD ROW NOW, AND REMOVE HAS LEFT IT (v3.65.1, D5) ─
   //
   // THE REPORTED DEFECT: *"'+ Add a wiki' and 'Remove projects' are two
@@ -4332,11 +4361,22 @@ function renderKnowledgePicker(chosen, defaulted) {
 /** ONE cfg object, used by both `renderListboxHtml` and `mountListbox` — two
  *  literals is the two-hand-maintained-copies shape the component's own
  *  header warns about. */
-function knowledgePickerCfg(options, busy) {
+function knowledgePickerCfg(options, busy, adding) {
   return {
     id: 'mem-k-add',
     value: null,
     placeholder: '+ Add a domain',
+    // ── THE TRIGGER NEVER CARRIES A VALUE (v3.65.2, C4) ──────────────────
+    // This is an ACTION, not a field: "+ Add a domain" always, and while a
+    // write is in flight "Adding research…" with the control disabled. The
+    // listbox's own `commit()` relabels the trigger with the chosen option —
+    // the right behaviour for a field and the wrong one here, where a domain
+    // name on the trigger reads as a value already applied. `triggerText` wins
+    // over the selection on every render (`triggerLabelFor`), and
+    // `saveKnowledgeDomains` repaints before its first await, so the relabel
+    // lives for at most one frame.
+    triggerText: busy === true && typeof adding === 'string' && adding
+      ? 'Adding ' + adding + '…' : '+ Add a domain',
     ariaLabel: 'Add a domain this project draws on',
     disabled: busy === true,
     triggerClass: 'btn btn-secondary btn-xs',
@@ -4514,7 +4554,16 @@ async function saveKnowledgeDomains(next, token) {
     if (res.ok && data && data.ok) {
       applied = data;
     } else {
-      const code = data && data.error ? String(data.error) : 'HTTP ' + res.status;
+      // ── THE CODE IS `reason`, NOT `error` (v3.65.2, C4) ────────────────
+      // The route answers `{reason: 'too_many_domains', error: <prose>}` —
+      // `withErrorProse` copies the store's message into `error` — so keying
+      // on `error` matched none of the six mapped codes and every refusal fell
+      // through to the producer's own words. The same correction v3.65.1 made
+      // for the remote refusals, one step up. An unmapped code still falls
+      // back to the route's prose, never to a bare code word.
+      const code = data && typeof data.reason === 'string' ? data.reason : '';
+      const prose = data && typeof data.error === 'string' && data.error
+        ? data.error : 'HTTP ' + res.status;
       error = code === 'too_many_domains'
         ? 'A project can draw on at most ' + (data.cap || 12) + ' domains.'
         : code === 'unknown_domain'
@@ -4526,13 +4575,14 @@ async function saveKnowledgeDomains(next, token) {
               : code === 'project_not_found' ? 'This project no longer exists.'
                 : code === 'locked'
                   ? 'Another write is in progress on this project. Try again in a moment.'
-                  : code;
+                  : prose;
     }
   } catch (err) {
     error = err.message;
   }
   if (!isCurrentMount(token)) return;
   state.knowledgeSaving = false;
+  state.knowledgeAdding = null;
   state.knowledgeSaveError = error;
   if (applied) {
     // THE ROUTE'S OWN ANSWER, not the list we sent: it carries the normalised
@@ -5201,6 +5251,12 @@ function renderProject() {
       // ReferenceError there, not a failing assertion (BUILDER-RULES rule 10,
       // and the same wall `renderJournal`'s own count line records one
       // function up). There is exactly one copy of these words either way.
+      // ── WHAT A CLIPPED SUMMARY IS (v3.65.2, C3) ─────────────────────
+      // The plain-language half of the clipped-save report, moved out of the
+      // report so the report can be a reading rather than a paragraph.
+      + '<p>Each handoff carries a <b>one-line summary</b>. A future session sees only that line in '
+      + 'the list before deciding whether to open the handoff, so the store caps it at 200 '
+      + 'characters and cuts the rest. A cut summary is a less useful label, not lost work.</p>'
       + '<p>A <b>session</b> is one bridge process — one run of the MCP server, from the moment an '
       + 'agent connects to the moment its window closes. It is identified by a random id the bridge '
       + 'mints for itself, so two sessions are never merged and one session is never split in two.</p>'
@@ -5281,6 +5337,8 @@ function renderProject() {
       + '<p>Nothing has been chosen yet, so this project draws on the domain it lives in — the '
       + 'row marked <b>default</b>. Adding a domain keeps it and adds to it; removing the last '
       + 'one puts the default back.</p>'
+      + '<p>A project draws on at least one domain. Add as many as you like; any of them can be '
+      + 'removed once another is chosen, including the one the project lives in.</p>'
       + '<p>The counts are taken by walking the folder rather than by reading any page, and no '
       + 'model is called to draw them — opening this screen costs nothing.</p>',
     bodyHtml: renderKnowledge(),
@@ -5499,6 +5557,9 @@ function renderSaveStatus(read, d) {
   // one with a flag: a flag is something a later edit can flip, and flipping
   // it would put a warning behind a chevron.
   const lines = [];
+  // THE CLIPPED-SAVE REPORT (v3.65.2, C3) — its own monitor, composed in the
+  // `clipped` arm below and rendered FIRST, above any warning.
+  let clippedReport = '';
 
   // ── "WORKING ON" LEFT THIS FUNCTION (v3.62.0) ───────────────────────────
   //
@@ -5561,25 +5622,89 @@ function renderSaveStatus(read, d) {
           + 'it. Ask the agent to save that content again. ' + firstNote(cur.lastSaveNotes),
       });
     } else if (kind === 'clipped') {
-      // Deliberately NOT the 'loud' tone `trimmed` gets, and deliberately
-      // avoids "missing" / "budget" / "save again" — each was part of the
-      // false alarm this verdict replaces. See the real case recorded on
-      // `classifySaveNotes`: a 244-char headline clipped to 200 chars, body
-      // untouched, badged and worded as if content had been lost.
-      // ── A CLIPPED SAVE IS A LOUD ENTRY IN THE QUIET TONE (v3.65.1) ────
-      // It is an OUTCOME about a specific save — the sibling of `trimmed` one
-      // arm up — and it fires only when a save was actually clipped, which is
-      // what earns it a place outside the chevron. What separates it from
-      // `trimmed` is the TONE, not the kind: nothing about the handoff was
-      // lost, only a label was shortened, and badging that as an alarm is the
-      // exact defect this verdict exists to fix. `quiet` says "read this"
-      // without saying "something is wrong".
-      lines.push({
-        tone: 'quiet',
-        text: 'That save wrote the handoff in full. What got shortened is a label attached to it '
-          + '— most often its one-line summary — not the handoff’s content. That label is the only '
-          + 'thing a future session sees before deciding whether to open this state. '
-          + firstNote(cur.lastSaveNotes),
+      // ── A CLIPPED SAVE IS A REPORT, NOT A PARAGRAPH (v3.65.2, C3) ─────
+      //
+      // THE REPORT: *"I don't understand what this is. It is not wide enough
+      // — why not use the full screen real estate, left to right. If this is
+      // an active card where information changes, like a report, it should
+      // be in a format and have visuals."* It was ONE `loud` entry: three
+      // sentences of explanation and then the store's raw note, capped at
+      // 68ch by the kit's prose rule and showing only the FIRST note.
+      //
+      // Now it is the same monitor, restructured: a head that says the
+      // outcome, one LINE per fact running key-left / value-right across the
+      // whole row, and the app's three channels used honestly — TIME (the
+      // freshness dot on `saved`), SIZE (a depth bar on the clipped field,
+      // against its own limit, which `renderDepthCell` turns danger by itself
+      // because it is over) and OUTCOME (the head's `ok` word and a quiet
+      // loud entry: nothing was lost). The explanation of what a one-line
+      // summary is for moved to step ②'s ⓘ.
+      //
+      // Still an outcome about a specific save and still UNFOLDED (v3.16.1);
+      // still NOT the danger tone `trimmed` gets; still never "missing",
+      // "budget" or "save again" — each was part of the false alarm this
+      // verdict replaced.
+      //
+      // THE NOTES ARE READ IN THE STORE'S OWN GRAMMAR — `<field>: truncated
+      // to <N> chars (was <M>)` (working-state.js) — the same stance
+      // `classifySaveNotes` takes: reading our own output, not guessing.
+      // EVERY note is a line, never only the first; an unparseable one is
+      // kept verbatim rather than dropped. Nested rather than a top-level
+      // helper because this function is LIFTED by brace-matching into four
+      // suites, where a new free identifier is a ReferenceError.
+      const FIELD_NAMES = { headline: 'headline', harness: 'tool name', model: 'model name',
+        scope: 'handoff name' };
+      const notes = Array.isArray(cur.lastSaveNotes)
+        ? cur.lastSaveNotes.filter((x) => typeof x === 'string' && x.trim()) : [];
+      const reportLines = [];
+      if (eff.seconds !== null) {
+        reportLines.push({
+          key: 'saved',
+          value: formatAge(eff.seconds) || 'just now',
+          markHtml: '<span class="fresh-dot fresh-' + freshnessTier(eff.seconds)
+            + '" aria-hidden="true"></span>',
+          sub: [shownScope, shownMachine].filter(Boolean).join(' · ') || undefined,
+        });
+      }
+      reportLines.push({ key: 'handoff', value: 'complete — nothing was cut' });
+      let summaryCut = false;
+      for (const raw of notes) {
+        const note = raw.trim();
+        const cut = /^([A-Za-z]\w*): truncated to (\d+) chars \(was (\d+)\)$/.exec(note);
+        if (cut) {
+          const field = cut[1];
+          const limit = Number(cut[2]);
+          const was = Number(cut[3]);
+          if (field === 'headline') summaryCut = true;
+          reportLines.push({
+            key: FIELD_NAMES[field] || field,
+            value: was + ' of ' + limit + ' characters',
+            depth: { amount: was, budget: limit,
+              label: 'characters against the ' + limit + '-character ' + (FIELD_NAMES[field] || field)
+                + ' limit' },
+            sub: 'shortened to ' + limit + ' — the last ' + Math.max(0, was - limit)
+              + ' characters were cut',
+          });
+          continue;
+        }
+        const other = /^([A-Za-z][\w-]*):\s*(.+)$/.exec(note);
+        reportLines.push(other
+          ? { key: other[1], value: 'adjusted — wording unchanged', sub: other[2] }
+          : { key: 'note', value: note });
+      }
+      clippedReport = renderMonitor({
+        label: 'The last save to this handoff',
+        head: { stateWord: 'Handoff saved in full', tone: 'ok' },
+        lines: reportLines,
+        loud: [{
+          tone: 'quiet',
+          text: summaryCut
+            ? 'Nothing was lost — only the one-line summary was shortened.'
+            : 'Nothing was lost — only a label on the handoff was shortened.',
+        }],
+        note: summaryCut
+          ? 'Clears on the next save to this handoff whose summary fits.'
+          : 'Clears on the next save to this handoff whose labels fit.',
       });
     } else if (kind === 'replaced') {
       lines.push({
@@ -5738,10 +5863,10 @@ function renderSaveStatus(read, d) {
   // component would also return '' for an empty set, but a host that relies on
   // that renders `<section></section>` the moment the component gains a
   // default line, so the decision is made HERE, where the facts are.
-  if (!lines.length) return '';
-  const instrument = renderMonitor({
+  if (!lines.length && !clippedReport) return '';
+  const instrument = clippedReport + (lines.length ? renderMonitor({
     label: 'Warnings about the last save', lines: [], loud: lines,
-  });
+  }) : '');
   // NO `.mem-section`. This is the first thing inside step ②'s body, not a
   // top-level sibling, so the page's 24px block rhythm must not apply to it —
   // `.mem-status-stack` in memory.css owns the spacing inside a block.
@@ -5767,8 +5892,11 @@ function harnessOf(d) {
 
 /** The first of a save's disclosure notes, escaped, or nothing. */
 function firstNote(notes) {
+  // RAW, NOT ESCAPED (v3.65.2). Every caller hands this to `renderMonitor` as
+  // a `loud` entry's `text`, which the component escapes — escaping here as
+  // well printed `&` as `&amp;` and `'` as `&#39;` on screen.
   const n = Array.isArray(notes) ? notes.find((x) => typeof x === 'string' && x) : null;
-  return n ? escapeHtml(String(n)) : '';
+  return n ? String(n) : '';
 }
 
 /**
@@ -9991,9 +10119,19 @@ function bindKnowledgeRows(root, token) {
   const rest = all.filter((d) => !chosen.includes(d));
   if (rest.length && typeof document !== 'undefined'
     && typeof document.getElementById === 'function' && document.getElementById('mem-k-add')) {
-    const cfg = knowledgePickerCfg(rest, state.knowledgeSaving === true);
-    cfg.onSelect = (value) => {
+    const cfg = knowledgePickerCfg(rest, state.knowledgeSaving === true, state.knowledgeAdding);
+    // ── `onChange`, BECAUSE THAT IS THE ONLY HANDLER THE LISTBOX CALLS ──
+    // (v3.65.2, C4). Through v3.65.1 this was `cfg.onSelect`, a key
+    // shared/listbox.js never reads: picking a domain ran the component's
+    // `commit()`, which relabelled the trigger with the chosen name ("research
+    // ▾"), closed the menu and called NOTHING — measured, 0 requests to
+    // `…/knowledge/domains`, 0 console messages. The suite that pinned it
+    // called `onSelect` directly on a stub, so the join between the real
+    // component and this handler was never driven. It is now, against the
+    // real `mountListbox` (test-next-memory-view.js §21f4).
+    cfg.onChange = (value) => {
       if (!value || chosen.includes(value)) return;
+      state.knowledgeAdding = value;
       saveKnowledgeDomains(chosen.concat([value]), token)
         .catch((err) => reportAsyncMountFailure(token, err));
     };

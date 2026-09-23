@@ -445,16 +445,62 @@ ok('the clipped copy does not say the handoff is missing anything',
   !/\bmissing\b/i.test(clippedHtml), clippedHtml);
 ok('the clipped copy does not tell the user to save again',
   !/save (it |that content )?again/i.test(clippedHtml), clippedHtml);
-ok('the clipped copy DOES say the handoff was written/saved in full — the reassurance is present, not just the absence of alarm',
-  // v3.65.0 (M1): the sentence is a monitor LINE now — key "wrote", value "the
-  // handoff in full" — rather than one hand-built sentence containing the words
-  // "written in full". The claim is unchanged; the DOM shape that carries it is
-  // `.cur-mon-value` on the wrote line.
-  /That save wrote the handoff in full\./.test(clippedHtml), clippedHtml);
-ok('the clipped copy names WHY the shortened label matters (a future session decides whether to open this state from it)',
-  /future session/i.test(clippedHtml) && /deciding whether to open this state/i.test(clippedHtml), clippedHtml);
-ok('the store’s own note is quoted, not paraphrased away',
-  clippedHtml.includes('headline: truncated to 200 chars (was 244)'), clippedHtml);
+// ── v3.65.2 (C3): THE CLIPPED SAVE IS A REPORT ────────────────────────────
+// The maintainer, on the v3.65.1 note: "I don't understand what this is. It
+// is not wide enough … it should be in a format and have visuals." The same
+// monitor, restructured: a head that says the outcome, one LINE per note
+// (never only the first), the app's three channels — the freshness dot on
+// `saved`, a depth bar on the clipped field against its own limit, and the
+// quiet loud entry. The plain-language paragraph moved to step ②'s ⓘ.
+ok('the clipped report says the handoff was saved in full — the head word, in the ok tone',
+  /cur-mon-state cur-mon-ok"><span class="cur-mon-state-dot" aria-hidden="true"><\/span>Handoff saved in full</.test(clippedHtml),
+  clippedHtml);
+ok('...and the reassurance is a quiet loud line naming what WAS shortened',
+  /cur-mon-loud cur-mon-quiet" role="status">Nothing was lost — only the one-line summary was shortened\.</.test(clippedHtml),
+  clippedHtml);
+ok('...and it says, in its own last line, when it clears',
+  /cur-mon-note">Clears on the next save to this handoff whose summary fits\.</.test(clippedHtml), clippedHtml);
+ok('the store’s note is READ, not quoted: 244 against the 200-character limit, as a depth bar that is danger because it is over',
+  /<span class="cur-mon-key">headline<\/span><span class="cur-mon-value"><span class="cur-depth"><span class="cur-depth-bar cur-depth-danger" style="width:100%"[^>]*><\/span><span class="cur-depth-value">244 of 200 characters</.test(clippedHtml),
+  clippedHtml);
+ok('...and the same fact is also in words, unfolded (rule 6)',
+  /cur-mon-sub">shortened to 200 — the last 44 characters were cut</.test(clippedHtml), clippedHtml);
+ok('TIME rides the freshness dot on the `saved` line, cut on the shared tier',
+  /<span class="cur-mon-key">saved<\/span><span class="cur-mon-value"><span class="fresh-dot fresh-[a-z]+" aria-hidden="true"><\/span>2 min ago</.test(clippedHtml),
+  clippedHtml);
+ok('...the explanation paragraph is NOT in the report any more (it is the ⓘ’s)',
+  !/future session/i.test(clippedHtml), clippedHtml);
+ok('...and it IS in step ②’s ⓘ, in the view source the page renders',
+  /Each handoff carries a <b>one-line summary<\/b>\. A future session sees only that line/.test(viewSrc));
+{
+  // EVERY NOTE IS A LINE — the v3.65.1 note showed only the first, and two
+  // real clipped pairs carried a second, non-loss note that was invisible.
+  const two = lifted({}).renderSaveStatus(baseRead, baseDetail({
+    current: { lastSaveKind: 'clipped', lastSaveNotes: [
+      'headline: truncated to 200 chars (was 245)',
+      "traps: defanged a URL scheme & a pipe (\"it's safe\")",
+    ] },
+  }));
+  const keys = [...two.matchAll(/<span class="cur-mon-key">([^<]+)<\/span>/g)].map((m) => m[1]);
+  ok('two notes make two lines — the second note is not dropped',
+    keys.includes('headline') && keys.includes('traps'), keys.join(','));
+  ok('...a non-truncation note reads "adjusted — wording unchanged" with the note’s own words beside it',
+    /<span class="cur-mon-key">traps<\/span><span class="cur-mon-value">adjusted — wording unchanged<\/span><span class="cur-mon-sub">defanged a URL scheme &amp; a pipe \(&quot;it&#39;s safe&quot;\)</.test(two),
+    two);
+  ok('...and a note is escaped ONCE — no `&amp;amp;`, the old double-escape through firstNote',
+    !/&amp;amp;|&amp;#39;/.test(two), two);
+  const odd = lifted({}).renderSaveStatus(baseRead, baseDetail({
+    current: { lastSaveKind: 'clipped', lastSaveNotes: ['something the grammar does not know'] },
+  }));
+  ok('an unparseable note is kept VERBATIM as a line, never dropped',
+    /<span class="cur-mon-key">note<\/span><span class="cur-mon-value">something the grammar does not know</.test(odd), odd);
+  const label = lifted({}).renderSaveStatus(baseRead, baseDetail({
+    current: { lastSaveKind: 'clipped', lastSaveNotes: ['harness: truncated to 64 chars (was 80)'] },
+  }));
+  ok('a clipped TOOL NAME is named in words and does not claim the summary was cut',
+    /cur-mon-key">tool name</.test(label) && /only a label on the handoff was shortened/.test(label)
+    && !/one-line summary/.test(label), label);
+}
 
 ok('a TRIMMED save keeps the loud, danger treatment — unchanged',
   /cur-mon-loud cur-mon-danger/.test(trimmedHtml) && !/cur-mon-line\b/.test(trimmedHtml),
