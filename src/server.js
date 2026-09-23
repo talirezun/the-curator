@@ -18,6 +18,7 @@ import sharedbrainRouter from './routes/sharedbrain.js';
 import diagnosticsRouter from './routes/diagnostics.js';
 import ingestQueueRouter from './routes/ingest-queue.js';
 import memoryRouter from './routes/memory.js';
+import readingPlanRouter from './routes/reading-plan.js';
 import writeStatusRouter from './routes/write-status.js';
 import { getProviderInfo } from './brain/llm.js';
 import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
@@ -204,6 +205,7 @@ app.use('/api/sharedbrain', sharedbrainRouter);
 app.use('/api/diagnostics', diagnosticsRouter);
 app.use('/api/ingest-queue', ingestQueueRouter);
 app.use('/api/memory', memoryRouter);
+app.use('/api/reading-plan', readingPlanRouter);
 // READ route. Deliberately not registered as a write and not behind
 // guardConcurrent — see the docblock in src/routes/write-status.js.
 app.use('/api/write-status', writeStatusRouter);
