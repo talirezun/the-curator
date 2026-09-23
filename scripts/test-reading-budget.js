@@ -34,6 +34,24 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import os from 'node:os';
+import { syncBuiltinESMExports } from 'node:module';
+
+// PIN THE HOSTNAME before the store is imported (v3.67.1). The machine
+// segment is `<hostname-slug>-<install-id>`, and the handoff text carries it
+// in its "_Machine: …" line. §1 replaces the name in the TEXT with
+// `<machine>`, but `current.bytes` is a byte count OF that text, so the
+// real hostname's LENGTH leaked into the digest: CI run 35873448897
+// (ubuntu, a 13-character runner hostname) produced b916d0f5… where macOS
+// produced 071e3ebc…, with an identical normalised length (330198) — and
+// v3.66.0 itself reproduced b916d0f5… exactly under the same faked
+// hostname, so the difference was the environment, never the store. A
+// fixed hostname makes every hostname-derived value (the slug, the byte
+// counts) the same on every machine. The store reads `hostname` through a
+// named import from 'os', a live binding that syncBuiltinESMExports updates.
+const BI_HOSTNAME = 'reading-budget-suite-host';
+os.hostname = () => BI_HOSTNAME;
+syncBuiltinESMExports();
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.env.RB_BASELINE_ROOT ? path.resolve(process.env.RB_BASELINE_ROOT) : path.join(HERE, '..');
@@ -139,8 +157,9 @@ async function biDigest() {
   return { digest: sha(json), bytes: json.length };
 }
 // The digest v3.66.0 (main = 1568d2a) produced over this exact fixture,
-// computed with RB_BASELINE_ROOT pointing at that checkout.
-const BI_BASELINE = '071e3ebcae985c7c97c19c4a623ed286b208f2e767ba1da3e2a967edca701284';
+// computed with RB_BASELINE_ROOT pointing at that checkout. Re-derived in
+// v3.67.1 under the pinned BI_HOSTNAME (the macOS-only value was 071e3ebc…).
+const BI_BASELINE = 'de81b9875c281a910e5b4ac96bcc4ee74e74fc6814d5cb217db00008296be2f3';
 if (BASELINE_MODE) {
   const b = await biDigest();
   console.log(`BASELINE ${b.digest} (${b.bytes} normalised bytes) from ${ROOT}`);
