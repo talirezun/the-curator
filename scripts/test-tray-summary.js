@@ -476,6 +476,8 @@ ok(!g.local.has('src/brain/sync.js'),
   'src/brain/sync.js is UNREACHABLE from tray-summary.js — getRemoteStatus() cannot be called, so no git fetch can be triggered');
 ok(!g.external.has('child_process'),
   'child_process is UNREACHABLE — no subprocess, so no `git` of any kind');
+ok(g.local.has('src/brain/mcp-usage.js'),
+  'v3.66.0: mcp-usage.js IS in the walked graph — so the two lines above prove it too reaches no fetch site');
 
 // POSITIVE CONTROL. Without it a green above could mean "the walker sees
 // nothing", which is exactly the shape this repo has been burned by twice.
@@ -834,7 +836,165 @@ const REPO3 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'curator-tra
     eq(brokenAtlas[0].foundationsError, null, '…with no error either');
   }
 }
+// ═══════════════════════════════════════════════════════════════════════════
+section('§8e v3.66.0 — documents, capture and per-domain pages: the widget’s three bars');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const { documentsReading, captureFor, TRAY_CAPTURE_WINDOW_DAYS } = await import('../src/brain/tray-summary.js');
+  const usageMod = await import('../src/brain/mcp-usage.js');
+  const pathsMod = await import('../src/brain/paths.js');
+  const filesMod = await import('../src/brain/files.js');
+
+  // A wiki page so the per-domain count is not trivially zero.
+  fs.mkdirSync(path.join(PROJ3, 'workshop', 'wiki', 'entities'), { recursive: true });
+  fs.writeFileSync(path.join(PROJ3, 'workshop', 'wiki', 'entities', 'alpha.md'), '# Alpha\n');
+  fs.writeFileSync(path.join(PROJ3, 'workshop', 'wiki', 'entities', 'beta.md'), '# Beta\n');
+
+  // ── (1) DOCUMENTS: the same listFoundations answer, one budget named ─────
+  usageMod.__clearUsageCache();
+  const s1 = await getTraySummary({ limit: 20 });
+  const idx = await wsMod.listFoundations('workshop', 'lumina');
+  const lum = s1.scopes.filter((r) => r.project === 'lumina');
+  const d = lum[0] ? lum[0].documents : null;
+  ok(d && d.count === 1, 'lumina rows carry documents with count 1', JSON.stringify(d));
+  eq(d && d.totalBytes, idx.totalBytes, 'totalBytes IS listFoundations’ own figure, not a second derivation');
+  eq(d && d.basis, 'stored', 'nothing flagged read-first → the bar is STORED bytes…');
+  eq(d && d.applicableBudgetBytes, wsMod.FOUNDATIONS_BUDGET_BYTES, '…against the 200 KB PROJECT budget');
+  eq(d && d.readFirstBudgetBytes, wsMod.CONTEXT_MAX_BYTES_DEFAULT, 'the 120 KB reading budget rides beside it, named apart');
+  ok(lum.every((r) => r.documents === lum[0].documents), 'the SAME documents object rides every row of one project');
+  eq(s1.lastSave && s1.lastSave.documents, lum[0] && lum[0].documents, 'lastSave (the widget’s "open project") carries it too');
+  const atl = s1.scopes.find((r) => r.project === 'atlas');
+  ok(atl && atl.documents && atl.documents.count === 0 && atl.documents.totalBytes === 0 && atl.documents.exceeded === false,
+    'a project with NO documents is a MEASURED zero, not null', JSON.stringify(atl && atl.documents));
+
+  // Flag the one document read-first: the basis switches to the app's rule.
+  const slug = idx.documents[0].slug;
+  const flag = await wsMod.setFoundationReadFirst('workshop', 'lumina', slug, true);
+  ok(flag && flag.ok === true, 'PRECONDITION: the document is flagged read-first through the real store');
+  const s2 = await getTraySummary({ limit: 20 });
+  const d2 = (s2.scopes.find((r) => r.project === 'lumina') || {}).documents;
+  eq(d2 && d2.basis, 'read-first', 'one flagged document → the bar is the READ-FIRST set…');
+  eq(d2 && d2.applicableBudgetBytes, wsMod.CONTEXT_MAX_BYTES_DEFAULT, '…against the 120 KB per-session budget (foundationsBudgetWarning’s rule)');
+  eq(d2 && d2.amountBytes, d2 && d2.readFirstBytes, '…and its amount is the read-first bytes');
+  await wsMod.setFoundationReadFirst('workshop', 'lumina', slug, false);
+
+  // The pure rule, driven over both arms of an over-run.
+  const base = { ok: true, totalBytes: 250000, budgetBytes: 204800, readFirstCount: 0, readFirstBytes: 0, readFirstBudgetBytes: 122880, count: 3 };
+  const over1 = documentsReading(base);
+  ok(over1.basis === 'stored' && over1.exceeded === true && over1.budgetExceeded === true, 'stored over 200 KB, nothing flagged → exceeded');
+  const over2 = documentsReading({ ...base, totalBytes: 150000, readFirstCount: 2, readFirstBytes: 130000 });
+  ok(over2.basis === 'read-first' && over2.exceeded === true && over2.budgetExceeded === false,
+    'under 200 KB stored but 130 KB flagged → exceeded against 120 KB (the two budgets never collapse)');
+  const fine = documentsReading({ ...base, totalBytes: 250000, readFirstCount: 1, readFirstBytes: 10000 });
+  ok(fine.basis === 'read-first' && fine.exceeded === false && fine.budgetExceeded === true,
+    'over 200 KB stored but a small flagged set → the BAR is not over (the app warns about the read-first set only)');
+  eq(documentsReading({ ...base, manifestError: 'bad json' }), null, 'an unreadable manifest → null (its zeros are defaults, not a measurement)');
+  eq(documentsReading({ ok: false, reason: 'x' }), null, 'a refused index → null');
+  eq(documentsReading({ ...base, totalBytes: undefined }), null, 'a missing figure → null, never a fabricated 0');
+
+  // ── (2) CAPTURE: no log → null; a log → the capture meter's own numbers ──
+  const LOGF = pathsMod.getMcpUsageLogPath();
+  try { fs.rmSync(LOGF, { force: true }); fs.rmSync(`${LOGF}.1`, { force: true }); } catch { /* absent */ }
+  usageMod.__clearUsageCache();
+  const s3 = await getTraySummary({ limit: 20 });
+  eq(s3.capture && s3.capture.logPresent, false, 'no usage log → capture.logPresent false');
+  eq(s3.capture && s3.capture.busiestSaved, null, '…busiestSaved null (a denominator of an untaken reading is not 0)');
+  ok(s3.scopes.every((r) => r.capture === null), '…and every row’s capture is null — NOT MEASURED, never 0');
+  eq(s3.capture && s3.capture.windowDays, 30, 'the capture window is 30 days');
+  const routeSrc = fs.readFileSync(path.join(ROOT, 'src/routes/memory.js'), 'utf8');
+  ok(/CAPTURE_DEFAULT_SINCE_MS = 30 \* 24 \* 60 \* 60 \* 1000/.test(routeSrc) && TRAY_CAPTURE_WINDOW_DAYS === 30,
+    'the widget’s window is the Context capture meter’s default window (routes/memory.js), pinned');
+
+  const iso = (ms) => new Date(NOW - ms).toISOString();
+  const log = [
+    { ts: iso(3600e3), tool: 'get_project_context', domain: 'workshop', project: 'lumina', ok: true, refused: false, ms: 1, sid: 'f1f1f1f1f1f1' },
+    { ts: iso(3500e3), tool: 'save_working_state', domain: 'workshop', project: 'lumina', ok: true, refused: false, ms: 1, sid: 'f1f1f1f1f1f1' },
+    { ts: iso(7200e3), tool: 'get_project_context', domain: 'workshop', project: 'lumina', ok: true, refused: false, ms: 1, sid: 'f2f2f2f2f2f2' },
+    { ts: iso(100e3), tool: 'save_working_state', domain: 'workshop', project: 'lumina', ok: true, refused: false, ms: 1, sid: 'f3f3f3f3f3f3', via: 'self-test' },
+    { ts: iso(40 * 86400e3), tool: 'save_working_state', domain: 'workshop', project: 'lumina', ok: true, refused: false, ms: 1, sid: 'f4f4f4f4f4f4' },
+  ];
+  fs.writeFileSync(LOGF, log.map((o) => JSON.stringify(o)).join('\n') + '\n');
+  usageMod.__clearUsageCache();
+  const s4 = await getTraySummary({ limit: 20 });
+  const lc = (s4.scopes.find((r) => r.project === 'lumina') || {}).capture;
+  const ref = usageMod.summariseSessions((await usageMod.readUsageLines({ noCache: true })).records,
+    { project: 'lumina', since: NOW - 30 * 86400e3 }).totals;
+  ok(lc && lc.sessions === ref.sessions && lc.sessionsSaved === ref.sessionsSaved && lc.sessionsRead === ref.sessionsRead,
+    `lumina’s capture equals the capture route’s own reading (${lc && lc.sessions}/${lc && lc.sessionsSaved} vs ${ref.sessions}/${ref.sessionsSaved})`);
+  eq(lc && lc.sessions, 2, 'two agent sessions in 30 days (the self-test and the 40-day-old one excluded)');
+  eq(lc && lc.sessionsSaved, 1, 'one of them saved');
+  const ac = (s4.scopes.find((r) => r.project === 'atlas') || {}).capture;
+  ok(ac && ac.sessions === 0 && ac.sessionsSaved === 0, 'atlas, never in the PRESENT log, is a MEASURED 0', JSON.stringify(ac));
+  eq(s4.capture.logPresent, true, 'capture.logPresent true');
+  eq(s4.capture.busiestSaved, 1, 'busiestSaved is the max sessions-that-saved over every scanned project');
+  eq(s4.capture.selfTestLines, 1, 'the self-test line is disclosed as excluded');
+  eq(s4.lastSave && s4.lastSave.capture, (s4.scopes[0] || {}).capture, 'lastSave carries its project’s capture');
+  // Atlas becomes the busiest (two saving sessions), while the ONE row a
+  // limit of 1 keeps is lumina's — so a denominator taken from the shown rows
+  // would read 1 here, and the true one is 2.
+  fs.appendFileSync(LOGF, [
+    { ts: iso(5000e3), tool: 'save_working_state', domain: 'workshop', project: 'atlas', ok: true, refused: false, ms: 1, sid: 'a9a9a9a9a9a9' },
+    { ts: iso(6000e3), tool: 'save_working_state', domain: 'workshop', project: 'atlas', ok: true, refused: false, ms: 1, sid: 'a8a8a8a8a8a8' },
+  ].map((o) => JSON.stringify(o)).join('\n') + '\n');
+  usageMod.__clearUsageCache();
+  const one = await getTraySummary({ limit: 1 });
+  eq(one.scopes.length === 1 ? one.scopes[0].project : null, 'lumina', 'CONTROL: limit 1 keeps only lumina’s row');
+  eq(one.capture.busiestSaved, 2, 'busiestSaved is taken over EVERY scanned project (atlas: 2), never the rows left after limit');
+  ok(Array.isArray(one.projects) && one.projects.length === 2, 'projects[] lists every scanned project, whatever the limit');
+  const pl = one.projects.find((p) => p.project === 'lumina') || {};
+  ok(pl.documents && pl.capture && pl.projectLabel, 'a projects[] entry carries documents, capture and its label');
+  eq(captureFor(new Map(), false, 'x', 'y'), null, 'captureFor with no log → null');
+  const mm = captureFor(new Map([['y', { sessions: 1, sessionsRead: 1, sessionsSaved: 1, lastSessionAt: null, domains: ['other'] }]]), true, 'x', 'y');
+  eq(mm.domainMismatch, true, 'a name the log attributes only to another domain is flagged, not hidden');
+  const sizeBefore = fs.statSync(LOGF).size;
+  await getTraySummary({ limit: 20 });
+  eq(fs.statSync(LOGF).size, sizeBefore, 'the summary writes NOTHING to the usage log');
+  fs.rmSync(LOGF, { force: true });
+  usageMod.__clearUsageCache();
+
+  // ── (3) PER-DOMAIN PAGES: the app's own count, in the install's order ─────
+  const s5 = await getTraySummary({ limit: 20 });
+  const names = await filesMod.listDomains();
+  ok(Array.isArray(s5.domains) && s5.domains.map((x) => x.domain).join(',') === names.join(','),
+    'domains[] is in listDomains() order — the index identityDotClass keys on');
+  const ws0 = s5.domains.find((x) => x.domain === 'workshop') || {};
+  const stats = await filesMod.getDomainStats('workshop');
+  eq(ws0.pageCount, stats.pageCount, 'pageCount IS getDomainStats’ (what GET /api/domains/stats answers) — one count, two surfaces');
+  eq(ws0.pageCount, 2, '…and it counted the two fixture pages');
+  eq(ws0.entities, 2, 'the per-type split rides beside it');
+  eq(ws0.index, names.indexOf('workshop'), 'index is the install’s own domain index');
+}
+
 setDomains(TMP_DOMAINS);
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§8f v3.66.0 — getStoreActivity’s pulse IS the widget’s pulse');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const { getStoreActivity } = await import('../src/brain/tray-summary.js');
+  const at = NOW;
+  const full = await getTraySummary({ limit: 20, now: at });
+  const act = await getStoreActivity({ now: at });
+  ok(full.pulse !== null, 'CONTROL: the main fixture has journals, so the widget draws a pulse');
+  eq(JSON.stringify(act.pulse), JSON.stringify(full.pulse),
+    'getStoreActivity().pulse is byte-identical to getTraySummary().pulse — the app’s "saves, last 7 days" is the widget’s number');
+  eq(act.ok, true, 'ok');
+  ok(Array.isArray(act.projects) && act.projects.length > 0
+    && act.projects.every((p) => typeof p.domain === 'string' && typeof p.project === 'string' && typeof p.projectLabel === 'string'),
+    'it lists every project with its label');
+  const calls = [];
+  const spy = {
+    listAllProjects: (...a) => wsMod.listAllProjects(...a),
+    listWorkingScopes: (...a) => wsMod.listWorkingScopes(...a),
+    readWorkingState: (...a) => { calls.push('read'); return wsMod.readWorkingState(...a); },
+    listFoundations: (...a) => { calls.push('foundations'); return wsMod.listFoundations(...a); },
+  };
+  await getStoreActivity({ store: spy, now: at });
+  eq(calls.length, 0, 'it never calls listFoundations or readWorkingState — the polled route pays for no hashing');
+  const bad = await getStoreActivity({ store: { listAllProjects: () => { throw new Error('gone'); } } });
+  ok(bad.ok === false && bad.pulse === null && bad.projects === null, 'an unreadable store answers not-measured (nulls), never an empty pulse');
+}
+
 try { fs.rmSync(PROJ3, { recursive: true, force: true }); } catch { /* best effort */ }
 try { fs.rmSync(REPO3, { recursive: true, force: true }); } catch { /* best effort */ }
 
