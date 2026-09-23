@@ -317,7 +317,8 @@ project that are neither state nor a document — metadata the app writes on the
 ```json
 {
   "version": 1,
-  "knowledgeDomains": ["research", "business"]
+  "knowledgeDomains": ["research", "business"],
+  "readingBudgetBytes": 65536
 }
 ```
 
@@ -325,6 +326,15 @@ project that are neither state nor a document — metadata the app writes on the
 |---|---|---|
 | `version` | integer | exactly `1` |
 | `knowledgeDomains` | array of names or absent | which **wikis** this project's knowledge lives in, in the owner's order. Each entry is a domain name (§4). Duplicates collapse to their first position; at most `12` |
+| `readingBudgetBytes` | integer or absent (v3.67.0) | the owner's **reading budget**: how much document text an agent is handed at session start (§11). `0` (index only) or an integer from `8192` to `204800` |
+
+**The reading budget is a second, independent field.** A reader must parse it whether or not
+`knowledgeDomains` is present — a file holding only `readingBudgetBytes` carries a budget. Absent
+means *not set*: the bootstrap default of §9 applies and the project is **unplanned** (§11). A value
+out of range or not an integer reads as not set, with the defect named (the reference
+implementation returns `readingBudgetError`); it never refuses the read. The reference
+implementation reports `readingBudgetBytes` (`null` when not set) and `readingBudgetDefaulted`
+beside `knowledgeDomains` on every read of the project.
 
 **Absent is a value, and it is not an empty list.** A reader with no file — or with a file this
 reader cannot parse — reports the **containing domain** as the list *and* reports that it was
@@ -345,8 +355,8 @@ that syncs must not be able to take a project's whole bootstrap down with it.
 **Who writes it.** The owner, through the app — this file is metadata *about* the project, so it is
 not tier 2/3 state and the single-writer rule ("one writer per file, with provenance that matches")
 is satisfied by the app being that one writer. **An agent does not write it**: choosing where a
-project's knowledge lives is the owner's decision, so neither a handoff save nor the CLI's save
-touches this file.
+project's knowledge lives, and how much an agent reads at the start, are the owner's decisions, so
+neither a handoff save nor the CLI's save touches this file.
 
 **A writer must merge, not replace.** Read the file, change the one field, write it back — a field a
 later version adds must survive a write by an earlier one. A file left holding nothing but
@@ -402,6 +412,20 @@ foundations/
       "authoredBy": { "kind": "human" },
       "skeleton": false,
       "readFirst": true
+    },
+    {
+      "slug": "roadmap-2025.md",
+      "role": "roadmap",
+      "title": "Roadmap 2025",
+      "source": { "kind": "repo", "path": "docs/roadmap-2025.md" },
+      "sha256": "…64 hex…",
+      "bytes": 96210,
+      "updatedAt": "2026-09-19T09:12:00.000Z",
+      "commit": "…40 hex…",
+      "authoredBy": { "kind": "human" },
+      "skeleton": false,
+      "readFirst": false,
+      "hidden": true
     }
   ]
 }
@@ -434,9 +458,19 @@ Per document:
 | `authoredBy` | object | `{kind: "human"}` / `{kind: "agent", …}` — the provenance a human write must carry |
 | `skeleton` | boolean (v3.61.0) | `true` = this document is a **prompt to be filled in**, not a fact. Absent = `false`; any save clears it |
 | `readFirst` | boolean (v3.62.0) | `true` = an agent must not start work here without it. Absent = `false` |
+| `hidden` | boolean (v3.67.0) | `true` = **not at start**: kept and mirrored, but absent from the session-start index. Absent = `false`. Never `true` together with `readFirst` |
 
 **`readFirst` is tri-state on write**: omitted leaves an existing value alone, and `absent = false`
 on a new document.
+
+**Three start states, two flags (v3.67.0).** A document is *read first* (`readFirst: true`), *not
+at start* (`hidden: true`), or *on request* (neither). The two flags are **mutually exclusive** and a
+writer sets them in **one** manifest write; a file carrying both reads as read first — the
+direction that hands an agent more, never less — and the contradiction is disclosed. A writer
+should write `hidden` only when it is `true`. Like `readFirst`, `hidden` is the owner's routing, so a
+save of the document's text preserves it, an explicit `readFirst: true` clears it, and a mirror
+refresh preserves it **by slug**. A reader that predates `hidden` drops it on its next rewrite and
+the document reappears at session start: the fail-safe direction.
 
 **One source per project, and it can be RE-CHOSEN (v3.65.1).** A repo-owned mirror records
 `repo.root` (a folder on one machine), `repo.remote` (a GitHub repository), or **both** — and at
@@ -481,8 +515,9 @@ on every page load.
 | One canonical document | 524,288 (512 KB) | `MAX_FOUNDATION_BYTES` | **Refused** — a verbatim document cannot be honestly trimmed |
 | Foundations per project | 204,800 (200 KB) | `FOUNDATIONS_BUDGET_BYTES` | **Accepted and disclosed** — over budget is a reading the owner acts on |
 | Documents per project | 200 | `MAX_FOUNDATIONS_PER_PROJECT` | Refused |
-| A bootstrap read | 122,880 (120 KB) | `CONTEXT_MAX_BYTES_DEFAULT` | Bodies dropped in reverse reading order, omissions disclosed |
-| A bootstrap read, ceiling | 204,800 (200 KB) | `CONTEXT_MAX_BYTES_CAP` | A caller may not ask for more |
+| A bootstrap read, when the owner has set no reading budget | 122,880 (120 KB) | `CONTEXT_MAX_BYTES_DEFAULT` | Bodies dropped in reverse reading order, omissions disclosed |
+| A bootstrap read, ceiling | 204,800 (200 KB) | `CONTEXT_MAX_BYTES_CAP` | A caller may not ask for more, and an owner may not set more |
+| The smallest non-zero reading budget | 8,192 (8 KB) | `READING_BUDGET_MIN_BYTES` | Below it only `0` (index only) is a reading budget; anything else reads as not set (§7b) |
 | The manifest file | 1,048,576 (1 MB) | `MAX_FOUNDATIONS_MANIFEST_BYTES` | Read cap; a larger file is malformed |
 
 A writer is not obliged to implement the trimming — but it **is** obliged not to exceed the
@@ -536,20 +571,30 @@ users do.
    when the caller asks for the latest.
 3. **A bounded journal tail** — the most recent entries, newest first.
 4. **The foundations**: the **index always**, then bodies chosen by the table below, in
-   `manifest.order` order, within the bootstrap budget (§9).
+   `manifest.order` order, within the reading budget: the caller's, else the owner's
+   `readingBudgetBytes` (§7b), else the bootstrap default (§9).
 
 ### Which bodies arrive
 
-`anyReadFirst` means at least one manifest entry carries `readFirst: true`.
+`anyReadFirst` means at least one manifest entry carries `readFirst: true`. A project is
+**planned** when the owner has set a reading budget (§7b).
 
-| `include` | no document flagged | at least one flagged |
+| `include` | no document flagged, unplanned | at least one flagged, or planned |
 |---|---|---|
 | `index` | no bodies | no bodies |
-| `changed` | bodies whose `sha256` differs from the caller's `seen` map | bodies of **all** read-first documents; the `seen` map is **ignored**; everything else is index only |
+| `changed` | bodies whose `sha256` differs from the caller's `seen` map | bodies of **all** read-first documents (none, when nothing is flagged); the `seen` map is **ignored**; everything else is index only |
 | `all` | every body, in reading order | every body |
 
 **The default** is `changed` when hashes are known (passed by the caller, or recorded in the latest
-handoff's `Foundations read` section) **or** when any document is flagged, and `all` otherwise.
+handoff's `Foundations read` section), **or** when any document is flagged, **or** when the project is
+planned, and `all` otherwise. A planned project whose reading budget is `0` reads as `index`.
+
+**So an untouched project is unchanged.** With no reading budget set, nothing about which bodies
+arrive differs from a reader that predates the field.
+
+**Documents *not at start*** (`hidden: true`, §8) are absent from the index, from `all`, from the
+budgeted set and from the `seen` map; the reader reports how many there are. A caller that names
+one by slug still receives it — keeping a document off the start is not denying it.
 
 **So flagging one document changes what every other document costs a session.** That is part of the
 contract, not a user-interface detail.
@@ -569,7 +614,8 @@ served, and the **caller records it on its next save** — which is exactly what
 
 When the budget is exceeded, bodies are **omitted and named**, never cut — with one exception: when
 the very first document alone exceeds the budget it is cut and flagged as truncated, because a
-caller who asked for documents and received none has been told nothing.
+caller who asked for documents and received none has been told nothing. The exception does not
+apply to a reading budget of `0`, which is a plan rather than a shortfall.
 
 ---
 

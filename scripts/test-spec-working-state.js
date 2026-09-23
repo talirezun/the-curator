@@ -164,7 +164,7 @@ section('§4  The budget table, against the live constants');
     .map((r) => ({ label: r[0], value: firstInt(r[1]), constant: tick(r[2]), behaviour: r[3] }))
     .filter((r) => r.constant && /^[A-Z][A-Z0-9_]+$/.test(r.constant));
 
-  const EXPECTED_ROWS = 13;   // every constant the spec promises a number for
+  const EXPECTED_ROWS = 14;   // every constant the spec promises a number for (v3.67.0: + READING_BUDGET_MIN_BYTES)
   ok(parsed.length === EXPECTED_ROWS,
     `the table names ${parsed.length} constants (expected ${EXPECTED_ROWS} — a row that stops parsing must red, not vanish)`);
 
@@ -482,6 +482,60 @@ try {
   ok(/Reads never write/i.test(spec), 'the spec states that reads never mark anything seen');
 } catch (err) {
   ok(false, `the bootstrap section threw: ${err && err.message}`);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§10b EXECUTED: the reading budget (§7b), `hidden` (§8) and the planned row (§11) — v3.67.0');
+// ═════════════════════════════════════════════════════════════════════════
+try {
+  const b7 = sectionText('the project\u2019s own metadata') || sectionText('`project.json`') || '';
+  ok(/`readingBudgetBytes`/.test(b7) && new RegExp(`\`${ws.READING_BUDGET_MIN_BYTES}\``).test(b7)
+    && new RegExp(`\`${ws.CONTEXT_MAX_BYTES_CAP}\``).test(b7),
+  `§7b names readingBudgetBytes with its live bounds (${ws.READING_BUDGET_MIN_BYTES}–${ws.CONTEXT_MAX_BYTES_CAP})`);
+  ok(/second, independent field/i.test(b7), '§7b says the budget is parsed independently of knowledgeDomains');
+  ok(/`hidden`/.test(spec) && /mutually exclusive/i.test(spec), '§8 documents `hidden` and its exclusivity with `readFirst`');
+  ok(/planned/i.test(sectionText('Which bodies arrive') || ''), '§11 has the planned row');
+
+  // EXECUTED (1): a project.json holding ONLY a budget reads its budget.
+  const stateDir = path.join(DOMAINS, DOMAIN, 'state');
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(path.join(stateDir, ws.PROJECT_META_FILENAME), JSON.stringify({ version: 1, readingBudgetBytes: 65536 }));
+  const m1 = await ws.readProjectMeta(DOMAIN, DOMAIN);
+  ok(m1.readingBudgetBytes === 65536 && m1.readingBudgetDefaulted === false && m1.knowledgeDomainsDefaulted === true,
+    'EXECUTED: a file with only readingBudgetBytes reads its budget (and still defaults its knowledge domains)');
+  // EXECUTED (2): out of range reads as NOT SET, named, never a refusal.
+  writeFileSync(path.join(stateDir, ws.PROJECT_META_FILENAME), JSON.stringify({ version: 1, readingBudgetBytes: 100 }));
+  const m2 = await ws.readProjectMeta(DOMAIN, DOMAIN);
+  ok(m2.readingBudgetBytes === null && m2.readingBudgetDefaulted === true && typeof m2.readingBudgetError === 'string',
+    'EXECUTED: 100 bytes (under the minimum, not 0) reads as not set, with the defect named');
+  // EXECUTED (3): the planned row — flag nothing, set a budget, get no bodies.
+  await ws.setFoundationReadFirst(DOMAIN, DOMAIN, 'architecture.md', false);
+  writeFileSync(path.join(stateDir, ws.PROJECT_META_FILENAME), JSON.stringify({ version: 1, readingBudgetBytes: 65536 }));
+  const planned = await ws.getProjectContext(DOMAIN, DOMAIN, {});
+  ok(planned.foundations.planned === true && planned.foundations.bodySelection === 'read-first'
+    && planned.foundations.documents.length === 0,
+  `EXECUTED: planned with nothing flagged → read-first selection, no bodies (${planned.foundations.bodySelection}, ${planned.foundations.documents.length})`);
+  // EXECUTED (4): `hidden` leaves the index and is still honoured by slug.
+  const hid = await ws.setFoundationStartState(DOMAIN, DOMAIN, 'guide.md', 'not-at-start');
+  ok(hid.ok === true && hid.hidden === true, 'EXECUTED: a document can be set not at start');
+  const ctxH = await ws.getProjectContext(DOMAIN, DOMAIN, { slugs: ['guide.md'] });
+  ok(!ctxH.foundations.index.some((r) => r.slug === 'guide.md') && ctxH.foundations.hiddenCount === 1,
+    'EXECUTED: a not-at-start document is absent from the index, and counted');
+  ok(ctxH.foundations.requested.some((d) => d.slug === 'guide.md'),
+    'EXECUTED: …and a caller that NAMES it still receives it');
+  // EXECUTED (5): an untouched project (budget removed) is unplanned again.
+  rmSync(path.join(stateDir, ws.PROJECT_META_FILENAME), { force: true });
+  await ws.setFoundationStartState(DOMAIN, DOMAIN, 'guide.md', 'on-request');
+  const plain = await ws.getProjectContext(DOMAIN, DOMAIN, {});
+  // §9 above recorded a `Foundations read` map in the handoff, so the default
+  // is `changed` — the unplanned column of §11's table — and both documents
+  // differ from that map, so every changed body arrives.
+  ok(plain.foundations.planned === false && plain.foundations.bodySelection === 'changed'
+    && plain.foundations.documents.length > 0
+    && plain.foundations.documents.length === plain.foundations.index.filter((r) => r.changedSinceSeen).length,
+  `EXECUTED: with no budget and nothing flagged, the unplanned column applies again (${plain.foundations.bodySelection}, ${plain.foundations.documents.length} bodies)`);
+} catch (err) {
+  ok(false, `the v3.67.0 section threw: ${err && err.stack}`);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
