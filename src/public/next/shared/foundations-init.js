@@ -1173,8 +1173,10 @@ function remoteArm(id, choice, busy, hostOpts) {
       '</div>';
   }
 
+  // IN A FLAT HOST the panel's own description already says what to do, so
+  // the arm's instruction would be the same sentence twice.
   return '<div class="fnd-init-arm' + (host.flat ? ' fnd-init-arm-flat' : '') + '">' +
-    armLede + fields + err + list + '</div>';
+    (host.flat ? '' : armLede) + fields + err + list + '</div>';
 }
 
 /**
@@ -2549,11 +2551,11 @@ export function bindFoundationsChooser(cfg) {
   // ── THE SCAN RUNS ON OPEN, IN ADD MODE (v3.65.2, C2) ────────────────────
   // The folder is recorded and the scan is a cheap local read, so the panel
   // opens on the list rather than on a button with nothing to wait for. Once
-  // per chooser: a failed scan brings the field back and waits for a person,
-  // and a repaint must never scan again by itself.
+  // per chooser, and the conditions are what make it once: an answer fills
+  // `candidates`, a failure sets `scanError` and brings the field back, and a
+  // scan in flight is `scanning` — so a repaint's re-bind never scans again.
   if (c.autoScan === true && choice.addMode && choice.fixedRoot && !choice.rootEditable
-      && choice.candidates == null && !choice.scanning && !choice.scanError && !choice.autoScanned) {
-    choice.autoScanned = true;
+      && choice.candidates == null && !choice.scanning && !choice.scanError) {
     choice.repoRoot = String(choice.fixedRoot);
     runScan();
   }

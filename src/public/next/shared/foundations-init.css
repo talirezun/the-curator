@@ -263,6 +263,10 @@
   gap: var(--space-3);
   min-width: 0;
 }
+/* `.fnd-init-path` carries `flex: 1 1 260px` for the ROW it sits in beside
+   its buttons; inside this COLUMN that basis became a 260px HEIGHT (measured
+   in the browser on the first cut). A field's input is its natural height. */
+.fnd-init-field > .fnd-init-path { flex: none; width: 100%; }
 /* ── THE ARM WITHOUT ITS FRAME, IN A HOST THAT ALREADY DRAWS ONE (v3.65.2) ──
    The Context host draws ONE panel around the chooser; the arm's own tint,
    rule and padding inside it were a box in a box — two tints and two left

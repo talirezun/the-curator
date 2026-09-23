@@ -9516,6 +9516,18 @@ function bindFoundationRows(root, token) {
       onFailure: (err) => reportAsyncMountFailure(token, err),
     });
   }
+  // ── THE LIST KEEPS ITS PLACE THROUGH A REPAINT (v3.65.2, C2) ───────────
+  // A tick never repaints (v3.61.1), but the view's own 20 s poll does when
+  // its screen signature moves — measured in the browser: an age word ticking
+  // over rebuilt the add panel and threw a reader 1,297px down a 48-row list
+  // back to the top, with their added row and ticks intact. The list's scroll
+  // position is held on the panel's own record and put back after each paint.
+  const candList = root.getElementById ? root.getElementById('mem-fnd-init-cands') : null;
+  if (candList && state.fndInit) {
+    const rec = state.fndInit;
+    if (Number.isFinite(rec.listScroll) && rec.listScroll > 0) candList.scrollTop = rec.listScroll;
+    candList.addEventListener('scroll', () => { rec.listScroll = candList.scrollTop; }, { passive: true });
+  }
   const initGo = root.getElementById ? root.getElementById('mem-fnd-init-go') : null;
   if (initGo) {
     initGo.addEventListener('click', () => {

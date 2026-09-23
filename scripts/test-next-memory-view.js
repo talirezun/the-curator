@@ -9319,6 +9319,9 @@ function realListbox() {
     const busy = r.lb.api.renderListboxHtml(r.api.knowledgePickerCfg(['research'], true, 'research'));
     ok('while a write is in flight it reads "Adding research…" and is disabled',
       /data-lb-text>Adding research…</.test(busy) && / disabled>/.test(busy), busy);
+    const staleName = r.lb.api.renderListboxHtml(r.api.knowledgePickerCfg(['research'], false, 'research'));
+    ok('...and a domain name left over from a finished write is never shown at rest',
+      /data-lb-text>\+ Add a domain</.test(staleName), staleName);
     const busyNoName = r.lb.api.renderListboxHtml(r.api.knowledgePickerCfg(['research'], true, null));
     ok('...a busy write with no name (a Remove) still never shows a domain as a value',
       /data-lb-text>\+ Add a domain</.test(busyNoName), busyNoName);

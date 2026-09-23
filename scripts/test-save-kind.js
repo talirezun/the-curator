@@ -489,6 +489,19 @@ ok('...and it IS in step ②’s ⓘ, in the view source the page renders',
     two);
   ok('...and a note is escaped ONCE — no `&amp;amp;`, the old double-escape through firstNote',
     !/&amp;amp;|&amp;#39;/.test(two), two);
+  const three = lifted({}).renderSaveStatus(baseRead, baseDetail({
+    current: { lastSaveKind: 'clipped', lastSaveNotes: [
+      'traps: defanged a pipe', 'model: truncated to 64 chars (was 70)', 'headline: truncated to 200 chars (was 201)',
+    ] },
+  }));
+  eq('three notes make three lines, in the store\'s order — whatever order they come in',
+    [...three.matchAll(/<span class="cur-mon-key">([^<]+)<\/span>/g)].map((m) => m[1]).join(','),
+    'saved,handoff,traps,model name,headline');
+  const amp = lifted({}).renderSaveStatus(baseRead, baseDetail({
+    current: { lastSaveKind: 'trimmed', lastSaveNotes: ["nextSteps: R&D item's text omitted"] },
+  }));
+  ok('a TRIMMED save\'s note is escaped exactly ONCE — firstNote no longer escapes before the monitor does',
+    /R&amp;D item&#39;s text omitted/.test(amp) && !/&amp;amp;|&amp;#39;/.test(amp), amp);
   const odd = lifted({}).renderSaveStatus(baseRead, baseDetail({
     current: { lastSaveKind: 'clipped', lastSaveNotes: ['something the grammar does not know'] },
   }));

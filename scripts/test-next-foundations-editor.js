@@ -3065,6 +3065,24 @@ section('§18 — v3.65.2: THE HOST-OWNED REASON, THE DOOR, AND ADD MODE, DRIVEN
     inserted.length === 1 && !FI.pickedFiles(choice).some((f) => f.path === 'docs/a.md'));
 }
 {
+  // ── (4b) A FIELD'S INPUT IS ITS NATURAL HEIGHT — FOUND BY LOOKING ─────────
+  // `.fnd-init-path` carries `flex: 1 1 260px` for the ROW it sits in beside
+  // its buttons. Inside `.fnd-init-field`, a flex COLUMN, the first cut
+  // measured each GitHub input at 260px TALL in the browser — every markup
+  // assertion green. The counter-rule is read off the live, comment-stripped
+  // stylesheet.
+  const css = readFileSync(join(NEXT, 'shared/foundations-init.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  ok('`.fnd-init-field` is a flex column (the case the counter-rule exists for)',
+    /\.fnd-init-field\s*\{[^}]*flex-direction:\s*column/.test(css));
+  ok('...and an input inside it gives up the row\'s 260px basis',
+    /\.fnd-init-field\s*>\s*\.fnd-init-path\s*\{[^}]*flex:\s*none/.test(css));
+  ok('the three remote fields are three equal tracks, not an auto-fit that lays labels out as fields',
+    /\.fnd-init-remote-fields\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/.test(css)
+    && /\.fnd-init-remote-fields\s*\{[^}]*align-items:\s*start/.test(css));
+  ok('the flat arm drops its frame — no tint, no rule, no padding',
+    /\.fnd-init-arm\.fnd-init-arm-flat\s*\{[^}]*padding:\s*0;[^}]*border:\s*0;[^}]*background:\s*none/.test(css));
+}
+{
   // ── (5) scanRemote KEYS ON `reason` (the route's CODE), NOT ON PROSE ────
   const got = await FI.scanRemote({ remote: 'o/r', tokenSource: 'config' },
     async () => ({ ok: false, status: 409, json: async () => ({ ok: false, reason: 'no-token',
