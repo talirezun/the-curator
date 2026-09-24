@@ -281,7 +281,14 @@ import { goToChatScoped } from '../shared/chat-scope.js';
 // is frozen. This screen offers it because this screen is where someone ends
 // up when they are wondering why a project has no state: the answer is often
 // that the agent's harness never activated the skill, and this is the fix.
-import { composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER } from '../shared/agent-instructions.js';
+import {
+  composeAgentInstructions, composeAgentInstructionsFull,
+  COPY_SUCCESS_TITLE, COPY_SUCCESS_LINES,
+} from '../shared/agent-instructions.js';
+// v3.67.2: the ONE "message that results from an action". A successful copy
+// is a toast that goes away on its own; a REFUSED copy stays in flow, because
+// it hands over the text to be selected by hand (see renderCopyOutcome).
+import { showToast } from '../shared/toast.js';
 
 // ── THE OWNERSHIP CHOOSER, SHARED WITH THE DOMAINS VIEW ──────────────────
 //
@@ -3565,15 +3572,13 @@ function renderCopyOutcome() {
   // pre-v3.61.0 record shape, so the success and refusal arms it produces stay
   // byte-identical.
   const draft = c.kind === 'draft';
-  if (c.ok) {
-    return '<div class="mem-section">' + renderStatus({
-      state: 'success',
-      title: draft ? 'Drafting request copied' : 'Agent instructions copied',
-      detail: draft
-        ? 'Paste it into any assistant with the my-curator bridge installed.'
-        : COPY_SUCCESS_BANNER,
-    }) + '</div>';
-  }
+  // ── A SUCCESS IS NOT PAINTED HERE ANY MORE (v3.67.2) ───────────────────
+  // It is a toast (shared/toast.js), raised by the copy itself, that goes
+  // away on its own — the in-flow card that used to stand here "never went
+  // away". The copy functions no longer record a success at all; an `ok`
+  // record from anywhere else paints nothing rather than a second, permanent
+  // copy of the toast.
+  if (c.ok) return '';
   // THE TEXT IS PRINTED, not merely lamented. A button that silently did
   // nothing is the worst outcome here, so the refusal hands over exactly what
   // would have been on the clipboard, to be selected by hand.
@@ -3604,7 +3609,20 @@ async function copyAgentInstructions(token) {
     ok = true;
   } catch { ok = false; }
   if (!isCurrentMount(token)) return;
-  state.copied = { domain, project, ok, text };
+  // ── A SUCCESS IS A TOAST; ONLY A REFUSAL STAYS ON THE PAGE (v3.67.2) ───
+  // The maintainer's finding: the in-flow "copied" card never went away. A
+  // confirmation is true for the moment after the press, so it is a toast
+  // (30 s, paused on hover, × to close, and pressing Copy again brings it
+  // back). A REFUSAL is not a confirmation — it prints the block to be copied
+  // by hand, and that text must not vanish on a timer — so only a refusal is
+  // recorded for renderCopyOutcome to paint.
+  if (ok) {
+    state.copied = null;
+    showToast({ key: 'copy-agent-instructions', tone: 'success',
+      title: COPY_SUCCESS_TITLE, lines: COPY_SUCCESS_LINES });
+  } else {
+    state.copied = { domain, project, ok, text };
+  }
   render(token);
 }
 
@@ -3651,7 +3669,15 @@ async function copyDraftingAsk(token) {
     ok = true;
   } catch { ok = false; }
   if (!isCurrentMount(token)) return;
-  state.copied = { domain, project, ok, text, kind: 'draft' };
+  // Same split as copyAgentInstructions: success is a toast, a refusal stays.
+  if (ok) {
+    state.copied = null;
+    showToast({ key: 'copy-drafting-request', tone: 'success',
+      title: 'Drafting request copied',
+      lines: ['Paste it into any assistant with the my-curator bridge installed.'] });
+  } else {
+    state.copied = { domain, project, ok, text, kind: 'draft' };
+  }
   render(token);
 }
 
@@ -7550,7 +7576,9 @@ function foundationsWord(facts) {
   if (facts.manifestError) return 'manifest unreadable';
   if (!facts.count) return 'none yet';
   if (facts.stale) return facts.stale + ' stale';
-  if (facts.unreachable) return 'source unreachable';
+  // v3.67.2: a GitHub mirror records no folder, so its documents read
+  // `unreachable` on every read — "not checked" is what is true of them.
+  if (facts.unreachable) return foundationsRemoteSource(facts.repo) ? 'GitHub · not checked' : 'source unreachable';
   // ── SKELETONS RANK BELOW A BROKEN COMPARISON AND ABOVE "Curator-authored"
   //    (v3.61.0) ───────────────────────────────────────────────────────────
   // A skeleton is not a fault and it is not a document either: it is a set of
@@ -7598,6 +7626,72 @@ function foundationsWord(facts) {
  * | repo-owned, root unreachable              | none; the withheld reason   |
  * | read-only mirror                          | none; the mirror note       |
  */
+/**
+ * IS THIS MIRROR READ FROM GITHUB RATHER THAN FROM A FOLDER? (v3.67.2)
+ *
+ * ── THE SENTENCE THAT WAS FALSE ON THE MAINTAINER'S OWN PROJECT ────────
+ * Every document of a repo-owned mirror reads `unreachable` whenever the
+ * manifest records NO local folder (`repo.root: null`), because the store
+ * only ever re-hashes against that folder and never compares over the
+ * network on a read (working-state.js `computeFreshness`; the memory layer's
+ * "freshness is never compared over the network on a read" invariant). A
+ * mirror whose last refresh ran over the GITHUB arm is written exactly that
+ * way — `refreshRemoteCore` / a source switch clear `root` and set `remote` —
+ * so on the very machine that holds the checkout, this screen told its owner
+ * "the folder these were copied from is not on this computer". It was never
+ * copied from a folder at all.
+ *
+ * So the two cases are told apart HERE, from the manifest the route already
+ * sends, and the store is not touched:
+ *   · no `root` AND a recorded `remote` → mirrored from GitHub; freshness is
+ *     simply not checked until the next refresh (this function's answer);
+ *   · a recorded `root` that is now missing, or neither → the folder really
+ *     is not on this computer (null; the old sentence stands, and is true).
+ *
+ * @returns {{label: string, refreshedAt: string|null, commit: string|null}|null}
+ */
+function foundationsRemoteSource(repo) {
+  if (!repo || typeof repo !== 'object') return null;
+  if (typeof repo.root === 'string' && repo.root) return null;
+  const r = repo.remote;
+  if (!r || typeof r !== 'object') return null;
+  const owner = typeof r.owner === 'string' ? r.owner.trim() : '';
+  const name = typeof r.repo === 'string' ? r.repo.trim() : '';
+  if (!owner || !name) return null;
+  return {
+    label: owner + '/' + name,
+    refreshedAt: typeof repo.lastRefreshAt === 'string' ? repo.lastRefreshAt : null,
+    commit: typeof repo.lastRefreshCommit === 'string' ? repo.lastRefreshCommit.slice(0, 7) : null,
+  };
+}
+
+/**
+ * WHY A DOCUMENT READS "source not here" / "GitHub · not checked" — the one
+ * sentence the toast shows when the owner presses that word, or a folder
+ * control this state withholds (v3.67.2). Through v3.67.1 the first of these
+ * stood permanently under the table as a floating note; the row's own word is
+ * now the persistent indicator and the explanation arrives on the press.
+ */
+function foundationsUncheckedWhy(facts) {
+  const remote = foundationsRemoteSource(facts && facts.repo);
+  if (remote) {
+    return {
+      title: 'Mirrored from GitHub (' + remote.label + ')',
+      lines: [
+        'Freshness is not checked on a read — only when the documents are refreshed.',
+        'Refresh from GitHub to re-copy them, or refresh from this computer\u2019s checkout to compare it live.',
+      ],
+    };
+  }
+  return {
+    title: 'The source folder is not on this computer',
+    lines: [
+      'So these documents can neither be re-copied nor added to here.',
+      'Mirror it from GitHub instead, or open the project on the machine that has the folder.',
+    ],
+  };
+}
+
 function foundationsControlOffer(facts, readonly) {
   // A READ-ONLY SHARED BRAIN MIRROR GETS NOTHING (P1-3). Every route this
   // block can reach answers 403 (`refuseMirror`), and a control whose only
@@ -7618,6 +7712,18 @@ function foundationsControlOffer(facts, readonly) {
   // the store actually measured.
   const reachable = !facts.count
     || facts.docs.some((d) => d.freshness === 'fresh' || d.freshness === 'stale');
+  if (!reachable && foundationsRemoteSource(facts.repo)) {
+    // ── MIRRORED FROM GITHUB, NOT FROM A MISSING FOLDER (v3.67.2) ─────────
+    // See `foundationsRemoteSource`: no local folder is recorded because the
+    // documents came over the GitHub arm. Nothing is withheld — Refresh takes
+    // the store's `auto` arm, which reads GitHub when no checkout is named —
+    // so there is no reason to state, and "Mirror from GitHub instead" would
+    // offer the source the project already has.
+    return {
+      refresh: facts.count > 0, add: false, mirror: false, reason: null,
+      remote: foundationsRemoteSource(facts.repo).label,
+    };
+  }
   if (!reachable) {
     // ── AND THIS IS THE ARM THAT MOST NEEDS THE GITHUB CONTROL ──────────
     // Through v3.65.0 this arm offered NOTHING — and it is exactly the machine
@@ -7628,7 +7734,7 @@ function foundationsControlOffer(facts, readonly) {
     // reason still stands beside it: the FOLDER is not here, and that is why
     // the two folder controls are withheld.
     return {
-      refresh: false, add: false, mirror: true,
+      refresh: false, add: false, mirror: true, sourceMissing: true,
       reason: 'The folder these were copied from is not on this computer, so they can neither '
         + 'be re-copied nor added to here. Mirror it from GitHub instead, or open the '
         + 'project on the machine that has the folder.',
@@ -7706,7 +7812,7 @@ function renderFoundationStop(facts) {
   );
 }
 
-function fndRowHtml(d, editable, readonly, budgetBytes, suggest) {
+function fndRowHtml(d, editable, readonly, budgetBytes, suggest, remoteLabel) {
   const slug = String(d.slug || '');
   const rowId = 'mem-fnd-' + slug.replace(/[^a-z0-9]+/gi, '-');
   // `.fnd-src-path`, NOT the shared `.mono` utility span. The work-stream slug
@@ -7750,7 +7856,10 @@ function fndRowHtml(d, editable, readonly, budgetBytes, suggest) {
   const word = skeleton ? 'skeleton · to fill'
     : d.freshness === 'fresh' ? 'fresh'
       : d.freshness === 'stale' ? 'stale'
-        : d.freshness === 'unreachable' ? 'source not here' : '—';
+        : d.freshness === 'unreachable'
+          // v3.67.2: a GitHub mirror has no local folder to compare against —
+          // that is "not checked", never "not here" (foundationsRemoteSource).
+          ? (remoteLabel ? 'GitHub · not checked' : 'source not here') : '—';
   const ageSecs = d.updatedAt
     ? Math.max(0, Math.round((Date.now() - Date.parse(d.updatedAt)) / 1000)) : null;
   const age = Number.isFinite(ageSecs) ? formatAge(ageSecs) : null;
@@ -7837,7 +7946,14 @@ function fndRowHtml(d, editable, readonly, budgetBytes, suggest) {
       // class of this view's own rather than to a `.fresh-dot` selector here.
       '<td class="fnd-cell-fresh"><span class="fnd-fresh">' +
         (tier ? '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' : '') +
-        '<span class="fnd-fresh-word">' + escapeHtml(word) + '</span>' +
+        // THE PERSISTENT INDICATOR, AND THE DOOR TO ITS REASON (v3.67.2). An
+        // unchecked source's word is a button: pressing it shows why as a
+        // toast (`data-fnd-why`, wired in bindFoundationRows). Every other
+        // word stays plain text — it has nothing more to say.
+        (d.freshness === 'unreachable' && !skeleton
+          ? '<button type="button" class="fnd-fresh-word fnd-fresh-why" data-fnd-why="' + escapeHtml(slug) + '"'
+            + ' aria-label="' + escapeHtml(word + ' — why?') + '">' + escapeHtml(word) + '</button>'
+          : '<span class="fnd-fresh-word">' + escapeHtml(word) + '</span>') +
       '</span></td>') +
       // The same hook every other age on this page carries, so tickAges
       // rewrites it once a second without a render. No stamp, no hook — an
@@ -8143,8 +8259,21 @@ function renderFoundations(read) {
   const refreshBtn = controls.refresh
     ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-refresh" id="mem-fnd-refresh"' +
       (busy ? ' disabled aria-disabled="true"' : '') + '>' +
-      escapeHtml(busy ? 'Refreshing…' : 'Refresh from repo') + '</button>'
-    : '';
+      escapeHtml(busy ? 'Refreshing…' : (controls.remote ? 'Refresh from GitHub' : 'Refresh from repo')) + '</button>'
+    // ── WITHHELD, BUT NOT HIDDEN (v3.67.2) ─────────────────────────────
+    // The folder is not on this computer, so the two folder controls cannot
+    // work. Through v3.67.1 they vanished and a permanent note floated under
+    // the table to say why. Now they stay in the row, DISABLED, and pressing
+    // one answers with the reason as a toast (`data-fnd-blocked`, wired in
+    // bindFoundationRows) — the same "disabled, never hidden" rule the AI
+    // buttons follow. `aria-disabled` rather than `disabled`, so the press
+    // still arrives and can be answered.
+    : controls.sourceMissing && !editing
+      ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-blocked" id="mem-fnd-refresh-blocked"' +
+        ' aria-disabled="true" data-fnd-blocked="1">Refresh from repo</button>' +
+        '<button type="button" class="btn btn-secondary btn-xs mem-fnd-blocked" id="mem-fnd-addrepo-blocked"' +
+        ' aria-disabled="true" data-fnd-blocked="1">Add from folder</button>'
+      : '';
   // "Add from folder" on a MIRROR and "Add document" on a curator-owned
   // project are the same control with the reader's own word for what arrives:
   // one copies a file that is already on disk, the other opens an empty
@@ -8177,10 +8306,15 @@ function renderFoundations(read) {
   // two controls that settle it. See `planHeadHtml`.
   const planHead = facts.count && !readonly && !facts.manifestError ? planHeadHtml() : '';
   const action = editing ? '' : (refreshBtn + addBtn + mirrorBtn + askBtn.btn + planHead);
-  // A WITHHELD CONTROL SAYS WHY (v3.17.1). Two reasons can stand here — the
-  // folder is not on this computer, or this is a read-only mirror — and both
-  // are `.tx-note`, unfolded: a reason behind a chevron is not a reason.
-  const withheld = controls.reason
+  // A WITHHELD CONTROL SAYS WHY (v3.17.1). A read-only mirror's reason is
+  // `.tx-note`, unfolded: every control is gone there and nothing on the page
+  // would say so otherwise. The "folder is not on this computer" reason is
+  // NOT painted here any more (v3.67.2): the maintainer found it floating out
+  // of the layout, permanently. Its state is still on screen, persistently —
+  // every row reads "source not here" and the two folder controls stand
+  // disabled in the head row — and the sentence itself arrives as a toast the
+  // moment the owner presses either (see `foundationsUncheckedWhy`).
+  const withheld = controls.reason && !controls.sourceMissing
     ? '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' + escapeHtml(controls.reason) + '</span></div>'
     : '';
 
@@ -8282,7 +8416,8 @@ function renderFoundations(read) {
   const proposal = plan && plan.result && Array.isArray(plan.result.proposals) ? plan : null;
   const rows = facts.docs.map(
     (d) => fndRowHtml(d, curator, readonly, facts.budgetBytes,
-      proposal ? planRowFor(proposal, d.slug) : undefined)).join('');
+      proposal ? planRowFor(proposal, d.slug) : undefined,
+      (foundationsRemoteSource(facts.repo) || {}).label || null)).join('');
   // ── THE EDITOR REPLACES THE TABLE, IT DOES NOT SIT UNDER IT ────────────
   // The standing brief's own precedent one block up, and the same reason: two
   // views of one set of documents on screen at once, one of them describing a
@@ -9077,7 +9212,7 @@ async function setStartState(slug, atStart, token) {
  * before emitting any markup. These bytes arrive over sync from other machines
  * and, in a shared mirror, from other people; the escaping duty is here.
  */
-function foundationReaderContent(doc, project) {
+function foundationReaderContent(doc, project, remote) {
   if (!doc || !doc.slug) return null;
   const slug = String(doc.slug);
   const readout = doc.updatedAt
@@ -9108,7 +9243,13 @@ function foundationReaderContent(doc, project) {
     notes.push('This copy no longer matches the file it was copied from. Refresh from the '
       + 'folder to bring it up to date — what is below is what your agents currently read.');
   }
-  if (doc.freshness === 'unreachable') {
+  // v3.67.2: a GitHub mirror has no folder to be missing — see
+  // `foundationsRemoteSource`. Saying "not on this computer" there was false.
+  const fromGitHub = !!(remote && typeof remote.label === 'string' && remote.label);
+  if (doc.freshness === 'unreachable' && fromGitHub) {
+    notes.push('Mirrored from GitHub (' + remote.label + '). Freshness is not checked on a read — '
+      + 'refresh from GitHub, or from this computer\u2019s checkout, to compare it.');
+  } else if (doc.freshness === 'unreachable') {
     notes.push('The folder this was copied from is not on this computer, so the copy could '
       + 'not be compared against it. It may or may not still match.');
   }
@@ -9143,14 +9284,15 @@ function foundationReaderContent(doc, project) {
       doc.source && doc.source.kind === 'repo' && doc.source.path
         ? 'source: ' + doc.source.path : 'written for this project',
       doc.commit ? 'commit ' + String(doc.commit).slice(0, 7) : null,
-      curatorOwned ? 'Curator-authored' : 'mirrored from a folder',
+      curatorOwned ? 'Curator-authored' : (fromGitHub ? 'mirrored from GitHub' : 'mirrored from a folder'),
       // THE FIFTH FACT OF THE SAME KIND (P2-4). role · source · commit ·
       // ownership already qualify the text rather than decorating it, and
       // whether it has been WRITTEN is the same kind of fact — arguably the
       // one that most changes how the body should be read.
       skeletonOf(doc) ? 'skeleton' : null,
       doc.freshness === 'stale' ? 'out of date' : null,
-      doc.freshness === 'unreachable' ? 'source not on this computer' : null,
+      doc.freshness === 'unreachable'
+        ? (fromGitHub ? 'freshness not checked' : 'source not on this computer') : null,
     ].filter(Boolean),
     readonly: true,
     // WHICH WRITER OWNS THIS FILE, in one sentence, where the read-only mark
@@ -9161,7 +9303,9 @@ function foundationReaderContent(doc, project) {
     // person actually needs.
     readonlyNote: curatorOwned
       ? 'Edit this in the Documents table behind this panel.'
-      : 'Mirrored from the folder — edit it there, then refresh.',
+      : (fromGitHub
+        ? 'Mirrored from GitHub — edit it in the repository, then refresh.'
+        : 'Mirrored from the folder — edit it there, then refresh.'),
     bodyHtml: meta + noteHtml + '<div class="mem-reader-doc">' +
       renderMarkdown(typeof doc.text === 'string' ? doc.text : '') + '</div>',
     backlinks: [],
@@ -9210,7 +9354,14 @@ async function openFoundation(slug, token) {
   if (!isCurrentMount(token)) return;
   if (!isCurrentReader(epoch)) return;
 
-  const content = data ? foundationReaderContent(data, project) : null;
+  // v3.67.2: whether this mirror is read from GitHub is a MANIFEST fact the
+  // single-document route does not carry, so it is read off the project read
+  // here and passed in — the payload builder stays pure (it is lifted and
+  // executed by scripts/test-next-foundations-editor.js).
+  const content = data
+    ? foundationReaderContent(data, project,
+      foundationsRemoteSource(foundationsFacts(state.projectRead).repo))
+    : null;
   if (content) openReader(content, token);
   else {
     openReader({
@@ -9836,6 +9987,19 @@ function bindFoundationRows(root, token) {
     btn.addEventListener('click', () => {
       openFoundation(btn.dataset.fndSlug, token)
         .catch((err) => reportAsyncMountFailure(token, err));
+    });
+  });
+
+  // ── "WHY?" — ANSWERED AS A TOAST, ON THE PRESS (v3.67.2) ───────────────
+  // A row's "source not here" / "GitHub · not checked" word, and the two
+  // folder controls a missing folder withholds, each answer with the reason.
+  // The reason used to stand permanently under the table; the state itself
+  // stays on screen (the row word, the disabled controls), and the sentence
+  // arrives when the owner asks — and again every time they ask.
+  root.querySelectorAll('[data-fnd-why], [data-fnd-blocked]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const why = foundationsUncheckedWhy(foundationsFacts(state.projectRead));
+      showToast({ key: 'fnd-unchecked-why', tone: 'neutral', title: why.title, lines: why.lines });
     });
   });
 

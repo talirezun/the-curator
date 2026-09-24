@@ -147,6 +147,7 @@ import { requestProject } from './memory.js';
 // renderQueueEstimate for why that split is not negotiable on a money surface.
 import {
   renderStatus, renderReadoutGroup, renderViewHeader, renderInfoMark,
+  captureOpenInfoPanels, restoreOpenInfoPanels,
 } from '../shared/text.js';
 
 // The honest USD renderer. NOT one of the byte-pinned 13 above — it is a
@@ -1453,8 +1454,13 @@ function render(token) {
   // suites lift out of this file by name and execute with their own
   // preamble — see §18 of scripts/test-next-ingest-view.js for why a rename
   // or a new free variable in one of those bodies is not a soft failure.
+  // AN OPEN ⓘ SURVIVES THE REPAINT (v3.67.2). The activity poll re-renders
+  // whenever a job moves, and without this every open explanation on the
+  // page snapped shut under the reader — the sibling of Context's "blink".
+  const openInfo = captureOpenInfoPanels();
   if (!hostCtx) renderSidebar(token);
   renderMain(token);
+  restoreOpenInfoPanels(openInfo);
   wireListeners(token);
   // Every render is a chance for the busy answer to have moved — a batch
   // reached a terminal status, an ingest settled, a stream closed. The DRAG

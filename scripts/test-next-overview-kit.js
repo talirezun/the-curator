@@ -203,7 +203,8 @@ function contextOverview(over) {
   };
   // `freshnessTier` is shared/age.js's, imported by the view — injected REAL
   // here, because the tier a reading paints is the reading.
-  const fns = ['skeletonOf', 'foundationsFacts', 'foundationsWord', 'newestPair',
+  // v3.67.2: `foundationsWord` asks whether a mirror is read from GitHub.
+  const fns = ['skeletonOf', 'foundationsFacts', 'foundationsRemoteSource', 'foundationsWord', 'newestPair',
     'effectiveSave', 'formatAge', 'renderLayerStrip'];
   const box = new Function('docsLinkHtml', 'renderOverview', 'escapeHtml', 'state',
     'formatDayAge', 'freshnessDotHtml', 'freshnessTier',

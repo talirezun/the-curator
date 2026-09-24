@@ -697,7 +697,28 @@
 
      `--dur-mid` because this is a thing that ENTERS, per motion.css's own
      header. The explicit `animation: none` escape is below with the rest of
-     this file's reduced-motion block. */
+     this file's reduced-motion block.
+
+     v3.67.2: THE ENTRANCE MOVED TO `[data-tx-entering]` BELOW. On this rule
+     it replayed on every re-render — see the note there. */
+}
+
+/* ── THE ENTRANCE PLAYS ON A PRESS, NEVER ON A RE-RENDER (v3.67.2) ───────
+   THE "BLINK" THE MAINTAINER SAW ON CONTEXT. A view that re-renders by
+   innerHTML (Context's poll repaints whenever an age crosses a band, about
+   once a minute in a project's first hour; step ④'s late measurement
+   replaces its own block) puts back an open panel as a NEW element and
+   un-hides it — memory.js, domains.js and settings.js each capture and
+   restore it so it stays open. But a new element that goes from
+   display:none to displayed STARTS ITS ANIMATION AGAIN, so every repaint
+   faded the panel out to opacity 0 and back in, under the reader's eyes.
+
+   The fix is at the cause, and by construction rather than per view:
+   shared/text.js's click listener stamps `data-tx-entering` on the ONE
+   panel a press opened, and only that attribute carries the animation. A
+   re-render emits the panel without it, so a restored panel simply stays —
+   in every view, including any that adopts capture/restore later. */
+.tx-vh-panel[data-tx-entering] {
   animation: curator-panel-in var(--dur-mid) var(--ease-out);
 }
 
@@ -736,7 +757,8 @@
 @media (prefers-reduced-motion: reduce) {
   .tx-vh-info { transition: none; }
   .tx-vh-info:active { transform: none; }
-  .tx-vh-panel { animation: none; }
+  .tx-vh-panel,
+  .tx-vh-panel[data-tx-entering] { animation: none; }
 }
 
 /* The sidebar density. Same component, same vocabulary — a <div> title

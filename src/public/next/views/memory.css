@@ -1553,6 +1553,31 @@
    the `.fresh-` prefix outright and no other stylesheet may declare a rule on
    it (scripts/test-freshness-scale.js fails one that does). */
 .fnd-fresh { display: inline-flex; align-items: center; gap: var(--space-3); }
+
+/* ── THE UNCHECKED WORD IS A DOOR TO ITS REASON (v3.67.2) ─────────────────
+   "source not here" / "GitHub · not checked" is a <button> that answers with
+   a toast. It keeps the plain word's look — same face, same colour — with a
+   dotted underline as the only affordance, so the column still reads as a
+   column of readings and not as a column of links. */
+.fnd-fresh-why {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+  user-select: none;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.fnd-fresh-why:hover { color: var(--text); }
+
+/* ── WITHHELD FOLDER CONTROLS, SHOWN DISABLED (v3.67.2) ───────────────────
+   `aria-disabled`, not `disabled`, so the press still arrives and is answered
+   with the reason (a toast). They must LOOK disabled all the same — the same
+   opacity shell.css gives `.btn[disabled]`. */
+.mem-fnd-blocked[aria-disabled="true"] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 .fnd-cell-size, .fnd-cell-age { white-space: nowrap; font-variant-numeric: var(--numeric-tabular); }
 /* ── THE DOCUMENTS MONITOR ABOVE THE TABLE (v3.66.0, P1) ─────────────────
    The monitor is the row body's first child; the table keeps its own rhythm

@@ -59,7 +59,12 @@ import * as shell from '../app.js';
 // measured. The view's job here is the button and the clipboard, nothing else:
 // composing the words in two places is how two model-read instruction sets
 // start disagreeing.
-import { composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER } from '../shared/agent-instructions.js';
+import {
+  composeAgentInstructions, composeAgentInstructionsFull,
+  COPY_SUCCESS_TITLE, COPY_SUCCESS_LINES,
+} from '../shared/agent-instructions.js';
+// v3.67.2: the ONE "message that results from an action" (a copy confirmation).
+import { showToast } from '../shared/toast.js';
 // ── THE HANDOFF INTO PROJECT CONTEXT (P1-10) ─────────────────────────────
 //
 // `navigate()` takes a view name and nothing else, and the memory view's
@@ -3999,21 +4004,10 @@ function renderCopyOutcome() {
   const c = state.copied;
   if (!c) return '';
   const agent = c.kind === 'agent';
-  if (c.ok) {
-    return renderStatus({
-      state: 'success',
-      title: agent ? 'Agent instructions copied' : 'Marker line copied',
-      // The success wording for the agent block is COPY_SUCCESS_BANNER's own
-      // second half: the banner names the four files because the whole point
-      // of the block is that it is harness-neutral, and a confirmation that
-      // said only "copied" would leave the user looking for somewhere to put
-      // it.
-      detail: agent
-        ? COPY_SUCCESS_BANNER
-        : 'Paste it into a file called .curator-project at the root of that project\u2019s repository. '
-          + 'An agent that finds it knows which project to resume without being told.',
-    });
-  }
+  // A SUCCESS IS A TOAST NOW (v3.67.2), raised by copyForProject itself and
+  // gone on its own; nothing records one any more, and an `ok` record from
+  // anywhere else paints nothing rather than a permanent second copy of it.
+  if (c.ok) return '';
   return renderStatus({
     state: 'attention',
     title: 'Could not copy',
@@ -6068,7 +6062,24 @@ async function copyForProject(project, kind) {
     ok = true;
   } catch { ok = false; }
   if (!isCurrentMount(token)) return;
-  state.copied = { kind, project, ok, text };
+  // ── A SUCCESS IS A TOAST; ONLY A REFUSAL STAYS ON THE PAGE (v3.67.2) ───
+  // The one app-wide pattern for a message that results from an action
+  // (shared/toast.js): it goes away on its own after 30 s, pauses while
+  // hovered, and pressing Copy again brings it back. A refusal is not a
+  // confirmation — it prints the text to be copied by hand — so only a
+  // refusal is recorded for renderCopyOutcome to paint in flow.
+  if (ok) {
+    state.copied = null;
+    const agent = kind === 'agent';
+    showToast(agent
+      ? { key: 'copy-agent-instructions', tone: 'success',
+        title: COPY_SUCCESS_TITLE, lines: COPY_SUCCESS_LINES }
+      : { key: 'copy-marker-line', tone: 'success', title: 'Marker line copied',
+        lines: ['Paste it into a file called .curator-project at the root of that project\u2019s repository.',
+          'An agent that finds it knows which project to resume without being told.'] });
+  } else {
+    state.copied = { kind, project, ok, text };
+  }
   render(token);
 }
 

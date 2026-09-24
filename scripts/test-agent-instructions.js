@@ -59,11 +59,15 @@ import { createHash } from 'node:crypto';
 import { functionSource } from './test-helpers/source-scan.js';
 import {
   composeAgentInstructions, COPY_SUCCESS_BANNER, HEADING, TEMPLATE,
+  COPY_SUCCESS_TITLE, COPY_SUCCESS_LINES,
   composeAgentInstructionsFull, TEMPLATE_FOUNDATIONS, TEMPLATE_SEED,
   TEMPLATE_DRAFT_ASK, composeDraftingAsk, TEMPLATE_READ_FIRST,
 } from '../src/public/next/shared/agent-instructions.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+// v3.67.2: a spy for shared/toast.js's `showToast`, injected into both lifted
+// views, so the confirmation a user reads is asserted from the shipped call.
+const toasts = [];
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 
 let passed = 0;
@@ -188,8 +192,30 @@ section('S2 -- Substitution, purity, and the refusal');
   ok('the success banner names all four entry files',
     ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'Cursor'].every((f) => COPY_SUCCESS_BANNER.includes(f)),
     COPY_SUCCESS_BANNER);
-  eq('...and is the exact wording the release specifies', COPY_SUCCESS_BANNER,
-    'Agent instructions copied — paste into CLAUDE.md, AGENTS.md, GEMINI.md or your Cursor rules');
+  // v3.67.2 — the maintainer asked for WHERE in the file (the very top) and
+  // WHICH file for WHICH harness, as a title and at most two short lines.
+  eq('...and is the exact wording the release specifies (title)', COPY_SUCCESS_TITLE,
+    'Agent instructions copied');
+  eq('...(line 1: where in the file)', COPY_SUCCESS_LINES[0],
+    'Paste it at the very top of the file your agent loads every session, so it is read first and no size cap cuts it off.');
+  eq('...(line 2: which file for which harness)', COPY_SUCCESS_LINES[1],
+    'CLAUDE.md for Claude Code · AGENTS.md for Codex and others · GEMINI.md for Gemini CLI · a rule file in .cursor/rules for Cursor.');
+  ok('...and it is a title plus AT MOST two lines', COPY_SUCCESS_LINES.length <= 2);
+  eq('COPY_SUCCESS_BANNER is the two lines joined, for every reader of the one-string form',
+    COPY_SUCCESS_BANNER, COPY_SUCCESS_LINES.join(' '));
+  // CROSS-CHECK against the docs table the harness names come from: every
+  // harness the toast pairs with a file is paired with that SAME file in
+  // docs/working-state.md's "Where it goes" table — a dumb second copy of the
+  // fact, so a rename in one place cannot quietly make the toast false.
+  {
+    const WS_TABLE = read('docs/working-state.md');
+    for (const [harness, file] of [['Claude Code', 'CLAUDE.md'], ['Codex', 'AGENTS.md'],
+      ['Gemini CLI', 'GEMINI.md'], ['Cursor', '.cursor/rules']]) {
+      ok('the docs table pairs ' + harness + ' with ' + file + ', as the toast does',
+        new RegExp('\\| ' + harness + ' \\| `' + file.replace(/[.]/g, '\\.') + '`').test(WS_TABLE)
+        && COPY_SUCCESS_LINES[1].includes(file + ' for ' + harness));
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -260,6 +286,7 @@ const navigator = { clipboard: { writeText: async (t) => {
 `;
   return new Function(
     'composeAgentInstructions', 'composeAgentInstructionsFull', 'COPY_SUCCESS_BANNER',
+    'COPY_SUCCESS_TITLE', 'COPY_SUCCESS_LINES', 'showToast',
     PREAMBLE +
     constSource(DOMAINS_SRC, 'MARKER_INFO_TEXT') + '\n' +
     constSource(DOMAINS_SRC, 'AGENT_INFO_TEXT') + '\n' +
@@ -275,7 +302,8 @@ const navigator = { clipboard: { writeText: async (t) => {
        __setDocument: (d) => { document = d; },
        __setClipboard: (v) => { clipboardOk = v; },
        __setMounted: (v) => { mounted = v; } };`
-  )(composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER);
+  )(composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER,
+    COPY_SUCCESS_TITLE, COPY_SUCCESS_LINES, (o) => { toasts.push(o); return o && o.key; });
 })();
 
 const ROW = (over) => ({
@@ -345,23 +373,24 @@ function btn(datasetKey, value) {
       composeAgentInstructions({ domain: 'alpha', project: 'lumina' })));
   ok('...and carrying the foundations paragraph too',
     domBox.__calls().clipboard[0].includes(TEMPLATE_FOUNDATIONS));
-  eq('...the outcome is recorded as an agent copy', domBox.__state().copied.kind, 'agent');
-  eq('...for the project that was clicked', domBox.__state().copied.project, 'lumina');
-  eq('...and succeeded', domBox.__state().copied.ok, true);
+  // v3.67.2: a success is a TOAST that goes away on its own; nothing is
+  // recorded for the page to keep painting.
+  eq('...a success records NO in-flow outcome', domBox.__state().copied, null);
   ok('...and the view repainted', domBox.__calls().render >= 1);
-
-  const painted = domBox.renderCopyOutcome();
-  ok('the confirmation says the instructions were copied', painted.includes('Agent instructions copied'));
-  ok('...and names where to paste them', painted.includes('CLAUDE.md') && painted.includes('AGENTS.md'));
-  ok('...with no fallback block, because nothing was lost', !painted.includes('dm-proj-copy-fallback'));
+  const t = toasts[toasts.length - 1] || {};
+  eq('the confirmation toast says the instructions were copied', t.title, 'Agent instructions copied');
+  ok('...and names where to paste them — the TOP of the file, and which file',
+    /very top/.test((t.lines || []).join(' '))
+    && (t.lines || []).join(' ').includes('CLAUDE.md') && (t.lines || []).join(' ').includes('AGENTS.md'),
+    JSON.stringify(t));
+  eq('...and the page paints nothing permanent for it', domBox.renderCopyOutcome(), '');
 
   // The marker action still works, unchanged, through the SAME shared body.
   markerBtn.click();
   await new Promise((r) => setTimeout(r, 0));
   eq('the marker action still copies exactly domain/project',
     domBox.__calls().clipboard[1], 'alpha/lumina');
-  eq('...and is recorded as a marker copy', domBox.__state().copied.kind, 'marker');
-  ok('...with its own confirmation', domBox.renderCopyOutcome().includes('Marker line copied'));
+  eq('...with its own confirmation toast', (toasts[toasts.length - 1] || {}).title, 'Marker line copied');
 }
 
 {
@@ -563,6 +592,7 @@ const navigator = { clipboard: { writeText: async (t) => {
 `;
   return new Function(
     'composeAgentInstructions', 'composeAgentInstructionsFull', 'COPY_SUCCESS_BANNER',
+    'COPY_SUCCESS_TITLE', 'COPY_SUCCESS_LINES', 'showToast',
     PREAMBLE +
     MEM_FNS.map((n) => {
       const src = functionSource(MEMORY_SRC, n);
@@ -577,7 +607,8 @@ const navigator = { clipboard: { writeText: async (t) => {
        __main: () => mainHtml,
        __setClipboard: (v) => { clipboardOk = v; },
        __setMounted: (v) => { mounted = v; } };`
-  )(composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER);
+  )(composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER,
+    COPY_SUCCESS_TITLE, COPY_SUCCESS_LINES, (o) => { toasts.push(o); return o && o.key; });
 })();
 
 const memState = (over) => ({
@@ -649,10 +680,14 @@ const memState = (over) => ({
       composeAgentInstructions({ domain: 'acme', project: 'lumina' })));
   ok('...and carrying the foundations paragraph too',
     memBox.__calls().clipboard[0].includes(TEMPLATE_FOUNDATIONS));
-  eq('...stamped with the domain it was pressed on', memBox.__state().copied.domain, 'acme');
-  eq('...and the project', memBox.__state().copied.project, 'lumina');
+  // v3.67.2: the success is the shared toast, under the SAME key the Domains
+  // view uses — so a repeat press anywhere re-shows one toast, not two.
+  eq('...and records NO in-flow outcome', memBox.__state().copied, null);
   ok('...and the view repainted', memBox.__calls().render >= 1);
-  ok('the confirmation paints', memBox.renderCopyOutcome().includes('Agent instructions copied'));
+  const t = toasts[toasts.length - 1] || {};
+  eq('the confirmation is a toast titled as before', t.title, 'Agent instructions copied');
+  eq('...under the shared key', t.key, 'copy-agent-instructions');
+  ok('...saying WHERE: the very top of the file', /very top/.test((t.lines || [])[0] || ''), JSON.stringify(t));
 }
 
 {
@@ -669,11 +704,21 @@ const memState = (over) => ({
   }));
   eq('...nor one from another domain with the same project name',
     memBox.renderCopyOutcome(), '');
+  // v3.67.2: a SUCCESS never paints in flow any more (it is a toast), so the
+  // stamp's CONTROL is taken on the one record that still paints — a refusal.
+  memBox.__setState(memState({
+    copied: { domain: 'acme', project: 'other', ok: false, text: 'x' },
+  }));
+  eq('a REFUSAL from another project does not paint here either', memBox.renderCopyOutcome(), '');
+  memBox.__setState(memState({
+    copied: { domain: 'acme', project: 'lumina', ok: false, text: 'x' },
+  }));
+  ok('CONTROL -- the matching pair DOES paint, so the checks above are not vacuous',
+    memBox.renderCopyOutcome().includes('Could not copy'));
   memBox.__setState(memState({
     copied: { domain: 'acme', project: 'lumina', ok: true, text: 'x' },
   }));
-  ok('CONTROL -- the matching pair DOES paint, so the two checks above are not vacuous',
-    memBox.renderCopyOutcome().includes('Agent instructions copied'));
+  eq('...and an ok record paints NOTHING — no permanent twin of the toast', memBox.renderCopyOutcome(), '');
 }
 
 {
@@ -681,8 +726,11 @@ const memState = (over) => ({
   memBox.__setState(memState());
   memBox.__reset();
   memBox.__setClipboard(false);
+  const before = toasts.length;
   await memBox.copyAgentInstructions(1);
   eq('a refused copy is recorded as a failure', memBox.__state().copied.ok, false);
+  eq('...and raises NO toast: a refusal is not a confirmation, and its text must not vanish',
+    toasts.length, before);
   const painted = memBox.renderCopyOutcome();
   ok('...and the block is printed for the user to select',
     painted.includes('mem-copy-fallback') && painted.includes('save_working_state'));
