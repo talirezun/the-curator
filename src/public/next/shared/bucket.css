@@ -186,7 +186,10 @@
   font: var(--weight-regular) var(--text-xs)/var(--leading-snug) var(--font-mono);
   color: var(--text-2);
 }
-.bk-it { display: inline-flex; align-items: center; gap: var(--space-3); }
+/* max-width: an item is sized to its content, and the longest ("on demand —
+   outside the window · N documents") ran 42px past a 168px host column at a
+   568px window (measured in the Context view); capped, its words wrap. */
+.bk-it { display: inline-flex; align-items: center; gap: var(--space-3); max-width: 100%; }
 .bk-it b { color: var(--text); font-weight: var(--weight-medium); }
 .bk-sw {
   flex: none;
