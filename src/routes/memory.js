@@ -876,7 +876,7 @@ function foundationsWire(out) {
     // only thing that says so.
     orphanFiles: Array.isArray(out.orphanFiles) ? out.orphanFiles.slice(0, 20) : [],
     manifestError: out.manifestError ?? null,
-    // v3.68.2 — only for a manifest a NEWER app wrote ('manifest-newer'); absent otherwise.
+    // v3.68.1 — only for a manifest a NEWER app wrote ('manifest-newer'); absent otherwise.
     ...(out.manifestErrorCode === 'manifest-newer' ? { manifestErrorCode: 'manifest-newer' } : {}),
   };
 }
@@ -1033,7 +1033,7 @@ async function requireCuratorOwned(res, domain, project) {
   }
   if (index && index.ok === false) { tier0Refusal(res, index, { domain, project }); return { ok: false }; }
   if (index && index.manifestError && index.manifestErrorCode === 'manifest-newer') {
-    // v3.68.2 — a newer app's manifest is not broken: never "fix or remove" it.
+    // v3.68.1 — a newer app's manifest is not broken: never "fix or remove" it.
     res.status(400).json({
       ok: false, reason: 'manifest_unreadable', code: 'manifest-newer', domain, project, manifestError: index.manifestError,
       error: `${index.manifestError} Nothing was written.`,
@@ -1100,7 +1100,7 @@ async function requireManifest(res, domain, project) {
   }
   if (index && index.ok === false) { tier0Refusal(res, index, { domain, project }); return { ok: false }; }
   if (index && index.manifestError && index.manifestErrorCode === 'manifest-newer') {
-    // v3.68.2 — a newer app's manifest is not broken: never "fix or remove" it.
+    // v3.68.1 — a newer app's manifest is not broken: never "fix or remove" it.
     res.status(400).json({
       ok: false, reason: 'manifest_unreadable', code: 'manifest-newer', domain, project, manifestError: index.manifestError,
       error: `${index.manifestError} Nothing was changed.`,
@@ -2048,7 +2048,11 @@ export async function sessionStartReport(domain, project, whatIf = null) {
   const planned = f.planned === true;
   const notes = [];
   if (out.readingBudgetError) notes.push(String(out.readingBudgetError).slice(0, 300));
-  if (f.manifestError) notes.push(`the foundations manifest could not be read: ${String(f.manifestError).slice(0, 200)}`);
+  if (f.manifestError) {
+    notes.push(f.manifestErrorCode === 'manifest-newer'   // v3.68.1
+      ? String(f.manifestError).slice(0, 300)
+      : `the foundations manifest could not be read: ${String(f.manifestError).slice(0, 200)}`);
+  }
   if (typeof b.bounded === 'string') notes.push(b.bounded);
   return {
     ok: true, domain: out.domain, project: out.project,
@@ -2880,7 +2884,7 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
     const store = fstore();
     const index = await store.listFoundations(domain, project);
 
-    // v3.68.2 — a manifest a NEWER app wrote: say so before the arm checks
+    // v3.68.1 — a manifest a NEWER app wrote: say so before the arm checks
     // below read its absent `repo` as "nothing recorded". The store refuses
     // the same way under its lock; this is only the honest first answer.
     if (index && index.manifestErrorCode === 'manifest-newer') {

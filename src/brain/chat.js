@@ -847,7 +847,11 @@ function projectOmissionNotes(ctx, journalEntries) {
   if (Array.isArray(f.unreadable) && f.unreadable.length) {
     notes.push(`Unreadable canonical document(s): ${f.unreadable.join(', ')}.`);
   }
-  if (f.manifestError) notes.push(`The foundations manifest could not be read: ${f.manifestError}.`);
+  if (f.manifestError) {
+    notes.push(f.manifestErrorCode === 'manifest-newer'   // v3.68.1: not broken — never "could not be read"
+      ? `${f.manifestError} No project documents were read.`
+      : `The foundations manifest could not be read: ${f.manifestError}.`);
+  }
   if (f.budgetExceeded === true) {
     notes.push(`This project's canonical documents total ${f.totalBytes} bytes, over its ${f.budgetBytes}-byte budget.`);
   }

@@ -1,5 +1,5 @@
 /**
- * Real-shaped v1 foundations manifests (v3.68.2 byte-identity fixtures).
+ * Real-shaped v1 foundations manifests (v3.68.1 byte-identity fixtures).
  *
  * Synthetic data only — no real user data, no home paths (the repo is public).
  * Each case is the manifest on disk plus the store operations run over it;

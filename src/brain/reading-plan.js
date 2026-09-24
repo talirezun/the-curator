@@ -318,6 +318,10 @@ export async function loadPlanInputs(domain, project) {
   if (!idx || idx.ok === false) {
     return { ok: false, reason: idx?.reason || 'io', message: idx?.message || 'The documents could not be read.' };
   }
+  if (idx.manifestError && idx.manifestErrorCode === 'manifest-newer') {
+    // v3.68.1 — not broken: the newer-version message alone, never "could not be read".
+    return { ok: false, reason: 'manifest-unreadable', code: 'manifest-newer', message: String(idx.manifestError).slice(0, 300) };
+  }
   if (idx.manifestError) {
     return { ok: false, reason: 'manifest-unreadable', message: `The documents manifest could not be read: ${String(idx.manifestError).slice(0, 200)}` };
   }

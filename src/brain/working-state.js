@@ -5000,7 +5000,7 @@ function emptyManifest() {
   };
 }
 
-// ── A manifest WRITTEN BY A NEWER VERSION (v3.68.2) ────────────────────────
+// ── A manifest WRITTEN BY A NEWER VERSION (v3.68.1) ────────────────────────
 // A `version` that is an integer ABOVE the one this store reads is not a
 // broken file: it is a newer app's file (v3.69.0 introduces version 2). It is
 // still refused on every write — `readManifest` keeps `status: 'malformed'`
@@ -5023,7 +5023,7 @@ function newerManifestRefusal(mf) {
   };
 }
 
-// ── Fields this store does not understand (v3.68.2, spec §1 rule 2) ────────
+// ── Fields this store does not understand (v3.68.1, spec §1 rule 2) ────────
 // A writer that round-trips a manifest preserves what it does not recognise:
 // unknown top-level keys and unknown per-document keys are KEPT on read and
 // re-emitted by `writeManifest` after the known keys, in the order read. They
@@ -5662,8 +5662,11 @@ export async function listFoundations(domain, project, opts = {}) {
   } catch { names = []; }
   if (mf.status === 'malformed') {
     base.manifestError = mf.error;
-    if (mf.code) base.manifestErrorCode = mf.code;   // v3.68.2: present only for a newer app's manifest
-    base.orphanFiles = names.filter((n) => FOUNDATION_SLUG_RE.test(n)).slice(0, 50);
+    if (mf.code) base.manifestErrorCode = mf.code;   // v3.68.1: present only for a newer app's manifest
+    // A newer app's manifest DOES list these files, in a format this version
+    // cannot read — calling them "no manifest entry" would be false, so none
+    // is reported as an orphan (v3.68.1).
+    base.orphanFiles = mf.code === MANIFEST_NEWER_CODE ? [] : names.filter((n) => FOUNDATION_SLUG_RE.test(n)).slice(0, 50);
     return base;
   }
   if (mf.status === 'absent') {
@@ -5736,7 +5739,7 @@ async function summariseFoundations(domain, project, meta) {
       readFirstCount: idx.readFirstCount, onRequestCount: idx.onRequestCount,
       budgetExceeded: idx.budgetExceeded,
       orphanFileCount: idx.orphanFiles.length, manifestError: idx.manifestError,
-      // v3.68.2 — only for a newer app's manifest, so every other summary keeps its bytes.
+      // v3.68.1 — only for a newer app's manifest, so every other summary keeps its bytes.
       ...(idx.manifestErrorCode ? { manifestErrorCode: idx.manifestErrorCode } : {}),
     };
     // v3.67.0 — the reading budget and the "not at start" count, CONDITIONAL
@@ -5983,7 +5986,7 @@ export async function saveFoundation(domain, project, input = {}) {
     // `readFirst: true` clears it (the two are mutually exclusive), and an
     // explicit `false` leaves it where it was.
     entry.hidden = entry.readFirst === true ? false : (prior ? prior.hidden === true : false);
-    // v3.68.2 — fields this store does not understand survive a save (spec §1 rule 2).
+    // v3.68.1 — fields this store does not understand survive a save (spec §1 rule 2).
     if (prior && prior[MANIFEST_EXTRAS]) entry[MANIFEST_EXTRAS] = prior[MANIFEST_EXTRAS];
     const documents = prior
       ? manifest.documents.map((d) => (d.slug === slug ? entry : d))
@@ -6405,7 +6408,7 @@ async function refreshCore(domain, target, paths, realRoot, files) {
         // v3.67.0 — and so is `hidden`, by slug, for the same reason.
         hidden: w.entry ? w.entry.hidden === true : false,
       };
-      if (w.entry && w.entry[MANIFEST_EXTRAS]) entry[MANIFEST_EXTRAS] = w.entry[MANIFEST_EXTRAS];   // v3.68.2
+      if (w.entry && w.entry[MANIFEST_EXTRAS]) entry[MANIFEST_EXTRAS] = w.entry[MANIFEST_EXTRAS];   // v3.68.1
       documents = w.entry ? documents.map((d) => (d.slug === slug ? entry : d)) : [...documents, entry];
       (w.entry ? refreshed : added).push(slug);
     }
@@ -6734,7 +6737,7 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
       readFirst: w.entry ? w.entry.readFirst === true : false,
       hidden: w.entry ? w.entry.hidden === true : false,
     };
-    if (w.entry && w.entry[MANIFEST_EXTRAS]) next[MANIFEST_EXTRAS] = w.entry[MANIFEST_EXTRAS];   // v3.68.2
+    if (w.entry && w.entry[MANIFEST_EXTRAS]) next[MANIFEST_EXTRAS] = w.entry[MANIFEST_EXTRAS];   // v3.68.1
     documents = w.entry ? documents.map((d) => (d.slug === slug ? next : d)) : [...documents, next];
     (w.entry ? refreshed : added).push(slug);
   }
@@ -8112,7 +8115,7 @@ export async function getProjectContext(domain, project, opts = {}) {
       ownership: index.ownership,
       repo: index.repo,
       manifestError: index.manifestError,
-      // v3.68.2 — only for a newer app's manifest, so every other envelope keeps its bytes.
+      // v3.68.1 — only for a newer app's manifest, so every other envelope keeps its bytes.
       ...(index.manifestErrorCode ? { manifestErrorCode: index.manifestErrorCode } : {}),
       orphanFiles: index.orphanFiles,
       count: index.count,

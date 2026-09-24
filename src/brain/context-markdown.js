@@ -166,6 +166,14 @@ export function renderContextMarkdown(ctx, opts = {}) {
   }
 
   const f = ctx.foundations;
+  // v3.68.1 — a manifest a NEWER app wrote is said plainly, with no "could
+  // not be read" (an agent reading that may try to repair the file).
+  if (f && !f.present && f.manifestErrorCode === 'manifest-newer' && f.manifestError) {
+    L.push('## Foundations');
+    L.push('');
+    L.push(`**${f.manifestError} No documents were returned.**`);
+    L.push('');
+  }
   if (f?.present && f.count) {
     L.push(`## Foundations — ${f.count} document${f.count === 1 ? '' : 's'}`);
     L.push('');
@@ -176,7 +184,11 @@ export function renderContextMarkdown(ctx, opts = {}) {
       L.push(`_${f.hiddenCount} more document${f.hiddenCount === 1 ? ' is' : 's are'} kept but not listed at session start; the owner can name them._`);
       L.push('');
     }
-    if (f.manifestError) L.push(`**The manifest could not be read: ${f.manifestError}. No documents were returned.**`);
+    if (f.manifestError) {
+      L.push(f.manifestErrorCode === 'manifest-newer'   // v3.68.1: not broken, never "could not be read"
+        ? `**${f.manifestError} No documents were returned.**`
+        : `**The manifest could not be read: ${f.manifestError}. No documents were returned.**`);
+    }
     for (const d of f.index || []) {
       const marks = [
         d.readFirst ? 'READ FIRST' : 'on request',

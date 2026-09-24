@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * OFFLINE — v3.68.2, the forward-compatible foundations reader.
+ * OFFLINE — v3.68.1, the forward-compatible foundations reader.
  *
  * v3.69.0 introduces foundations manifest VERSION 2. The maintainer shipped
  * this reader first (contract v3.69.0 §2.4, decision D1) so a machine one
@@ -135,7 +135,8 @@ section('1. Reads say "written by a newer version", never "fix or remove"');
     '…and the message says a newer version wrote it and to update the app', idx.manifestError);
   assert(!NO_REMOVE.test(idx.manifestError) && !NO_FIX.test(idx.manifestError), '…and never says fix or remove', idx.manifestError);
   assert(/version 2/.test(idx.manifestError), '…and names the version it found', idx.manifestError);
-  assert(idx.orphanFiles.length === 3, '…with the documents on disk still listed (nothing hidden)', JSON.stringify(idx.orphanFiles));
+  assert(Array.isArray(idx.orphanFiles) && idx.orphanFiles.length === 0,
+    '…and the listed files are NOT reported as orphans (the newer manifest does list them)', JSON.stringify(idx.orphanFiles));
   const rws = await WS.readWorkingState(p.dom, {});
   assert(rws.foundations && rws.foundations.manifestErrorCode === 'manifest-newer' && rws.foundations.manifestError === idx.manifestError,
     'readWorkingState: the summary carries the same code and message', JSON.stringify(rws.foundations).slice(0, 300));
@@ -369,6 +370,83 @@ section('6. v1 byte identity: every real-shaped fixture, byte for byte as v3.68.
         r && r.ok ? `got sha ${sha(got).slice(0, 12)} want ${sha(golden[k] || '').slice(0, 12)}` : JSON.stringify(r));
     }
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('7. Every other surface: tile, orphan notice, session-start Markdown, chat, reading plan');
+{
+  const { renderContextMarkdown } = await import('../src/brain/context-markdown.js');
+  const { __testing: chatT } = await import('../src/brain/chat.js');
+  const { loadPlanInputs } = await import('../src/brain/reading-plan.js');
+  const newer = v2Project();
+  const mal = makeProject('mal7-');
+  writeFileSync(mal.mfp, '{"version": 1, "documents": "nope"}');
+  writeFileSync(path.join(mal.fdir, 'left.md'), '# left\n');
+  const nIdx = await WS.listFoundations(newer.dom, newer.dom);
+  const mIdx = await WS.listFoundations(mal.dom, mal.dom);
+  assert(nIdx.orphanFiles.length === 0 && mIdx.orphanFiles.includes('left.md'),
+    'orphans: none for a newer manifest; CONTROL: a malformed one still lists its stranded file', JSON.stringify([nIdx.orphanFiles, mIdx.orphanFiles]));
+  const nCtx = await WS.getProjectContext(newer.dom, newer.dom, {});
+  const mCtx = await WS.getProjectContext(mal.dom, mal.dom, {});
+  assert(nCtx.foundations.orphanFiles.length === 0, 'getProjectContext: no orphan files for a newer manifest');
+  const nMcp = JSON.stringify(await getProjectContextHandler({ project: newer.dom }, storage));
+  assert(!/orphan file|no manifest entry|not in the manifest/i.test(nMcp) && JSON.parse(nMcp).foundations.orphanFiles.length === 0,
+    'MCP get_project_context: no orphan files, and nothing calls the files orphans or unlisted', nMcp.slice(0, 300));
+
+  // Session-start Markdown (the CLI and the hook).
+  const nMd = renderContextMarkdown(nCtx);
+  assert(/newer version of The Curator/.test(nMd) && !/could not be read/i.test(nMd) && !NO_REMOVE.test(nMd) && !/orphan file|no manifest entry/i.test(nMd),
+    'context Markdown: the newer message, no "could not be read", no "remove", no orphans', nMd.slice(0, 600));
+  const mMd = renderContextMarkdown({ ...mCtx, foundations: { ...mCtx.foundations, present: true, count: 1, index: [] } });
+  assert(/The manifest could not be read: /.test(mMd), 'CONTROL context Markdown: a malformed manifest keeps "The manifest could not be read:"');
+
+  // Chat's omission notes.
+  const nNotes = chatT.projectOmissionNotes(nCtx, []).join(' ');
+  const mNotes = chatT.projectOmissionNotes(mCtx, []).join(' ');
+  assert(/newer version of The Curator/.test(nNotes) && !/could not be read/i.test(nNotes) && !NO_REMOVE.test(nNotes),
+    'chat: the newer message without "could not be read"', nNotes);
+  assert(/The foundations manifest could not be read: /.test(mNotes), 'CONTROL chat: a malformed manifest keeps its wording', mNotes);
+
+  // Reading plan.
+  const nPlan = await loadPlanInputs(newer.dom, newer.dom);
+  const mPlan = await loadPlanInputs(mal.dom, mal.dom);
+  assert(nPlan.ok === false && nPlan.code === 'manifest-newer' && /newer version/.test(nPlan.message) && !/could not be read/i.test(nPlan.message),
+    'reading plan: refused with the newer message, no "could not be read"', JSON.stringify(nPlan));
+  assert(mPlan.ok === false && /The documents manifest could not be read: /.test(mPlan.message), 'CONTROL reading plan: a malformed manifest keeps its wording', JSON.stringify(mPlan));
+
+  // The view, executed: the notices, the summary words and the DOCUMENTS tile.
+  const view = readFileSync(path.join(REPO, 'src', 'public', 'next', 'views', 'memory.js'), 'utf8');
+  const extract = (name) => {
+    const m = new RegExp('(?:^|\\n)(?:export\\s+)?function ' + name + '\\s*\\(').exec(view);
+    if (!m) throw new Error(`no ${name}`);
+    const start = m.index + (m[0].startsWith('\n') ? 1 : 0);
+    let p = view.indexOf('(', start), pd = 0;
+    for (; p < view.length; p++) { if (view[p] === '(') pd++; else if (view[p] === ')') { pd--; if (pd === 0) { p++; break; } } }
+    let i = view.indexOf('{', p), d = 0;
+    for (; i < view.length; i++) { if (view[i] === '{') d++; else if (view[i] === '}') { d--; if (d === 0) { i++; break; } } }
+    return view.slice(start, i);
+  };
+  const notices = new Function('state', 'icon', 'escapeHtml', 'foundationsFacts',
+    `${extract('foundationsNotices')}\nreturn foundationsNotices;`)({}, () => '', (x) => x, (r) => r);
+  const nHtml = notices({ manifestError: nIdx.manifestError, manifestNewer: true, orphanFiles: ['a.md', 'b.md'] });
+  const mHtml = notices({ manifestError: 'documents is not an array', manifestNewer: false, orphanFiles: ['left.md'] });
+  assert(/newer version/.test(nHtml) && !/no manifest entry|could not be read/.test(nHtml),
+    'view notices (newer): the message only — no orphan-files warning, no "could not be read"', nHtml);
+  assert(/no manifest entry \(left\.md\)/.test(mHtml) && /could not be read/.test(mHtml), 'CONTROL view notices (malformed): both old warnings stay', mHtml);
+  const words = new Function('foundationsOwnershipWord', `${extract('foundationsWord')}\n${extract('foundationsSummaryMeta')}\nreturn { foundationsWord, foundationsSummaryMeta };`)(() => '');
+  assert(words.foundationsWord({ manifestError: 'x', manifestNewer: true }) === 'newer version'
+    && /newer version · update The Curator/.test(words.foundationsSummaryMeta({ manifestError: 'x', manifestNewer: true })),
+  'view summary words (newer): "newer version", "update The Curator"');
+  assert(words.foundationsWord({ manifestError: 'x' }) === 'manifest unreadable' && words.foundationsSummaryMeta({ manifestError: 'x' }) === 'manifest unreadable',
+    'CONTROL view summary words (malformed): "manifest unreadable"');
+  const strip = extract('renderLayerStrip');
+  const a = strip.indexOf('if (facts.manifestError) {');
+  const b = strip.indexOf('} else if (!facts.present)', a);
+  const tile = new Function('facts', `let value = null; let sub = null; let tier = null;\n${strip.slice(a, b)}}\nreturn { value, sub, tier };`);
+  const nt = tile({ manifestError: 'x', manifestNewer: true });
+  const mt = tile({ manifestError: 'x', manifestNewer: false });
+  assert(a > 0 && b > a && nt.value === 'newer version' && nt.sub === 'update The Curator', 'DOCUMENTS tile (newer): "newer version" / "update The Curator"', JSON.stringify(nt));
+  assert(mt.value === 'manifest unreadable' && mt.sub === null, 'CONTROL DOCUMENTS tile (malformed): "manifest unreadable"', JSON.stringify(mt));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

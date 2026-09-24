@@ -3870,7 +3870,7 @@ function renderLayerStrip(read) {
     let value = null;
     let sub = null;
     let tier = null;
-    if (facts.manifestError) { value = 'manifest unreadable'; tier = 'unknown'; } else if (!facts.present) { value = 'not set up yet'; tier = 'unknown'; } else if (!facts.count) { value = 'no documents yet'; tier = 'unknown'; } else {
+    if (facts.manifestError) { value = facts.manifestNewer ? 'newer version' : 'manifest unreadable'; sub = facts.manifestNewer ? 'update The Curator' : null; tier = 'unknown'; } else if (!facts.present) { value = 'not set up yet'; tier = 'unknown'; } else if (!facts.count) { value = 'no documents yet'; tier = 'unknown'; } else {
       // THE FIGURE AND ITS QUALIFIER, ON TWO LINES RATHER THAN ONE. They were
       // "24 documents · 4 stale" in a single mono cell; the card has a second
       // line for exactly this, and the figure is what the eye is looking for.
@@ -7355,7 +7355,7 @@ function foundationsFacts(read) {
     budgetBytes: f && Number.isInteger(f.budgetBytes) && f.budgetBytes > 0
       ? f.budgetBytes : FOUNDATIONS_BUDGET_BYTES,
     manifestError: (f && f.manifestError) || null,
-    manifestNewer: !!(f && f.manifestErrorCode === 'manifest-newer'),   // v3.68.2: a newer app wrote it
+    manifestNewer: !!(f && f.manifestErrorCode === 'manifest-newer'),   // v3.68.1: a newer app wrote it
     orphanFiles: f && Array.isArray(f.orphanFiles) ? f.orphanFiles : [],
     // v3.67.0: documents kept "not at start" — absent from an agent's index.
     // The server's own count where it sent one, the rows' otherwise.
@@ -7404,7 +7404,7 @@ function foundationsOwnershipWord(facts) {
  * one clause, and the only place the condition survives a closed editor.
  */
 function foundationsSummaryMeta(facts) {
-  if (facts.manifestError) return 'manifest unreadable';
+  if (facts.manifestError) return facts.manifestNewer ? 'newer version · update The Curator' : 'manifest unreadable';
   if (!facts.present) return 'not set up · choose how documents arrive';
   const own = foundationsOwnershipWord(facts);
   if (!facts.count) {
@@ -7597,7 +7597,7 @@ function fndSize(bytes) {
  * clause before it already gives.
  */
 function foundationsWord(facts) {
-  if (facts.manifestError) return 'manifest unreadable';
+  if (facts.manifestError) return facts.manifestNewer ? 'newer version' : 'manifest unreadable';
   if (!facts.count) return 'none yet';
   if (facts.stale) return facts.stale + ' stale';
   // v3.67.2: a GitHub mirror records no folder, so its documents read
@@ -8207,7 +8207,7 @@ function foundationsNotices(read) {
       '<span>' + (facts.manifestNewer ? '' : 'This project’s documents manifest could not be read, so nothing below it can be ' +
       'trusted: ') + escapeHtml(String(facts.manifestError)) + '</span></div>';
   }
-  if (facts.orphanFiles.length) {
+  if (facts.orphanFiles.length && !facts.manifestNewer) {
     notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
       '<span>' + escapeHtml(facts.orphanFiles.length + ' file' +
         (facts.orphanFiles.length === 1 ? ' is' : 's are') + ' in the documents folder with no ' +
