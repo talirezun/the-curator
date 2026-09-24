@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.67.0` | "The right context, not all of it" — the maintainer's own principle, and the release's governing rule for every screen and every doc sentence: at the start of a session an agent gets its foundations, the last state and the standing brief; everything else is on demand; the magic is just enough. |
 | `v3.66.1` | The menubar widget gets its own depth bars, held out of v3.66.0 until the maintainer could photograph the real menu. |
 | `v3.66.0` | "Visual channels everywhere" — the maintainer approved a five-channel reading system for the whole app and the widget: identity dot (WHICH DOMAIN), freshness dot (HOW RECENT, tier), clock + age (HOW RECENT, words), depth bar (SIZE/SHARE vs a NAMED denominator), and TONE, newly named as its own channel — outcome only, never text colour. Binding parity rule: no widget-only fact — anything the menubar widget can show, the app must show too, since Windows and Linux users have no widget. |
 | `v3.65.3` | The maintainer's production feedback on v3.65.2 — he saved a real fine-grained token and Test succeeded against a real repository — landed as five findings, answered by `docfix` and `sb` off `main`, with an orchestrator screen review that sent `docfix` back once. |
