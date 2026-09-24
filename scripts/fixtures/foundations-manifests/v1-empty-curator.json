@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "ownership": "curator",
+  "repo": null,
+  "budgetBytes": 204800,
+  "order": [
+    "architecture",
+    "decisions",
+    "conventions",
+    "roadmap",
+    "api",
+    "guide",
+    "other"
+  ],
+  "documents": []
+}

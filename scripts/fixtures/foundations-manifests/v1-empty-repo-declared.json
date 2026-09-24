@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "ownership": "repo",
+  "repo": {
+    "root": null,
+    "remote": {
+      "owner": "acme",
+      "repo": "lumina",
+      "ref": null,
+      "path": null
+    },
+    "lastRefreshAt": null,
+    "lastRefreshCommit": null
+  },
+  "budgetBytes": 204800,
+  "order": [
+    "architecture",
+    "decisions",
+    "conventions",
+    "roadmap",
+    "api",
+    "guide",
+    "other"
+  ],
+  "documents": []
+}

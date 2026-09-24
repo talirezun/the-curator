@@ -221,6 +221,16 @@ export const MAX_KNOWLEDGE_DOMAINS = 12;
 export const FOUNDATIONS_DIRNAME = 'foundations';
 export const FOUNDATIONS_MANIFEST_FILENAME = 'manifest.json';
 export const FOUNDATIONS_MANIFEST_VERSION = 1;
+/** v3.69.0 — the manifest version for what version 1 cannot express: a project
+ *  mixing kept and mirrored documents, or mirroring from more than one source.
+ *  A writer writes the LOWEST version that expresses the manifest
+ *  (`serialiseManifest`), so a project that never mixes keeps its v1 bytes. */
+export const FOUNDATIONS_MANIFEST_V2 = 2;
+/** The highest manifest version this store reads. Above it is a NEWER app's. */
+export const FOUNDATIONS_MANIFEST_MAX_VERSION = FOUNDATIONS_MANIFEST_V2;
+/** v3.69.0 — source groups (folders and GitHub repositories) per project. A
+ *  new group past it is REFUSED at commit, never a disabled door. */
+export const MAX_SOURCES_PER_PROJECT = 8;
 /** Per-document cap. A larger save is REFUSED with the size named: a verbatim
  *  document cannot be trimmed honestly (a handoff can, because it is ours). */
 export const MAX_FOUNDATION_BYTES = 512 * 1024;
@@ -4760,12 +4770,14 @@ function prefixDirOf(domain, prefix) {
 //   1. Foundations are replaced WHOLE; never union-merged; never routed
 //      through `writePage` (the wiki ACCUMULATES; a canonical document
 //      SUPERSEDES, exactly like a handoff).
-//   2. ONE ownership per project, ONE writer per document. `repo`-owned: the
-//      app and the MCP only MIRROR (a byte copy of the checkout, no LLM).
-//      `curator`-owned: only `saveFoundation` — reached over MCP by
-//      `save_foundation`, on the owner's explicit instruction — writes. A
-//      save that would mix the two is REFUSED. The app edits neither in
-//      this release.
+//   2. ONE writer per document (per FILE), checked ON THE DOCUMENT since
+//      v3.69.0 (it was one ownership per project through v3.68). A MIRRORED
+//      document (`source.kind: 'repo'`, in a source group) is written only by
+//      a refresh or an add — a byte copy of a folder or a GitHub repository,
+//      no LLM. A KEPT document (`curator`: written here, or copied in) only
+//      by `saveFoundation` or the copy step. A save to a mirrored slug is
+//      REFUSED. One project may hold both kinds, from up to
+//      MAX_SOURCES_PER_PROJECT sources; the manifest is then version 2.
 //   3. Provenance on every document (`authoredBy`, `source`, `commit`);
 //      `sha256` over the STORED BYTES is the identity; freshness of a mirror
 //      is computed by re-hashing the source when it is reachable, never
@@ -4989,14 +5001,17 @@ function projectView(domain, project) {
   return { ok: true, inner, prefix, paths };
 }
 
-function emptyManifest() {
+/** A fresh, EMPTY model (v3.69.0 shape — see "Source groups" below). A
+ *  caller that is recording a chosen-but-empty project passes the ownership
+ *  it chose, which is what a v1 file then says. */
+function emptyManifest(ownership = null) {
   return {
     version: FOUNDATIONS_MANIFEST_VERSION,
-    ownership: null,
-    repo: null,
+    sources: [],
     budgetBytes: FOUNDATIONS_BUDGET_BYTES,
     order: [...FOUNDATION_ROLES],
     documents: [],
+    ...(ownership ? { v1Header: { ownership, repo: null } } : {}),
   };
 }
 
@@ -5012,7 +5027,7 @@ function emptyManifest() {
 export const MANIFEST_NEWER_CODE = 'manifest-newer';
 export function newerManifestMessage(version) {
   return `These documents were saved by a newer version of The Curator (documents list version ${version}; `
-    + `this app reads version ${FOUNDATIONS_MANIFEST_VERSION}). Update the app to read and change them — `
+    + `this app reads up to version ${FOUNDATIONS_MANIFEST_MAX_VERSION}). Update the app to read and change them — `
     + 'nothing is wrong with the file, so leave it exactly as it is.';
 }
 /** The one refusal every foundations WRITE path gives a newer manifest. */
@@ -5149,22 +5164,287 @@ function normaliseRemote(raw) {
   return { owner, repo, ref, path: prefix };
 }
 
+// ── Source groups (v3.69.0) ───────────────────────────────────────────────
+//
+// ONE PROJECT, MANY SOURCES. Through v3.68 a project had ONE ownership and at
+// most ONE source (`repo`). From v3.69.0 the source is recorded PER DOCUMENT:
+// a kept document (`source.kind: 'curator'`, written here or copied in) has
+// none, and a mirrored one (`source.kind: 'repo'`) names its SOURCE GROUP —
+// one folder or one GitHub repository it is copied from — by `source.group`.
+// The coordinates live ONCE, on the group, so "refresh this repository" is one
+// record and cannot drift across thirty rows.
+//
+// THE IN-MEMORY MODEL is the same whatever the file's version (CONTRACT §1.6):
+//   { version, sources[], budgetBytes, order, documents[], v1Header? }
+// `version` is the version READ (1 or 2; a fresh model says 1). A v1 repo
+// mirror reads as `sources: [{id:'s1', ...repo}]` with every mirrored document
+// in `s1`; a v1 curator project as `sources: []`. `v1Header` keeps the
+// `ownership` a v1 file declared and a `repo` that did NOT become a group (a
+// curator manifest carrying a stale `repo`, a hand edit) — only so a v1 file
+// nobody changed is rewritten byte for byte.
+//
+// THE FILE is written at the LOWEST version that expresses the model
+// (`manifestVersionFor`): v2 only when kept and mirrored documents mix, when
+// there are two or more groups, or when kept documents sit beside a declared
+// (still empty) group. Everything else is v1, exactly as v3.68 wrote it — so a
+// project that never mixes keeps its bytes, and an older machine keeps reading
+// it. An older app REFUSES a v2 file on its first check and so never rewrites
+// it (v3.68.0: "version 2 is not 1"; v3.68.1: "saved by a newer version");
+// `scripts/test-foundations-sources.js` proves it against a frozen copy of the
+// v3.68.0 validator.
+const SOURCE_GROUP_ID_RE = /^s[1-9][0-9]?$/;
+const MANIFEST_KNOWN_TOP_V2 = new Set(['version', 'sources', 'budgetBytes', 'order', 'documents']);
+const MANIFEST_KNOWN_GROUP = new Set(['id', 'root', 'remote', 'lastRefreshAt', 'lastRefreshCommit', 'tokenSource']);
+/** A group made up on READ for a v1 file whose mirrored documents name no
+ *  `repo` (a hand edit): "source not recorded". Written back as `repo: null`. */
+const SYNTHETIC_GROUP = Symbol('curator.manifest.syntheticGroup');
+
+/** A normalised repository path, for comparing two spellings of one file. */
+function normSourcePath(p) {
+  return String(p).replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+/** One group, normalised; `raw` is trusted to be an object. */
+function readGroupFields(raw) {
+  return {
+    root: typeof raw.root === 'string' && raw.root ? raw.root : null,
+    remote: normaliseRemote(raw.remote),
+    lastRefreshAt: isIsoish(raw.lastRefreshAt) ? new Date(raw.lastRefreshAt).toISOString() : null,
+    lastRefreshCommit: typeof raw.lastRefreshCommit === 'string' && GIT_SHA_RE.test(raw.lastRefreshCommit)
+      ? raw.lastRefreshCommit : null,
+    // v3.69.0 (addendum 4) — WHICH TOKEN FILE reads this source over GitHub
+    // ("config" | "sync"), recorded when it was first mirrored. A NAME, never
+    // a token. Present only when recorded, so older files keep their bytes.
+    ...(raw.tokenSource === 'config' || raw.tokenSource === 'sync' ? { tokenSource: raw.tokenSource } : {}),
+  };
+}
+
+/** A group's DERIVED kind — never stored, so nothing stored can contradict
+ *  it: a recorded folder makes it a folder source (which may ALSO be read over
+ *  GitHub when a remote is recorded); no folder and a repository makes it a
+ *  GitHub source. Neither recorded ("source not recorded") reads as a folder
+ *  that is not here, which is the honest word for it. */
+function groupKind(g) {
+  if (g && g.root) return 'folder';
+  if (g && g.remote) return 'github';
+  return 'folder';
+}
+
+/** The display label: the folder's basename, or `owner/repo`. Never a path. */
+function groupLabel(g) {
+  if (!g) return null;
+  if (g.root) return path.basename(g.root) || null;
+  if (g.remote) return `${g.remote.owner}/${g.remote.repo}`;
+  return null;
+}
+
+function groupById(model, id) {
+  return (model && Array.isArray(model.sources) ? model.sources : []).find((g) => g.id === id) || null;
+}
+
+/** The smallest unused id, or null when every id is taken. */
+function nextGroupId(model) {
+  const used = new Set(model.sources.map((g) => g.id));
+  for (let i = 1; i < 100; i++) if (!used.has(`s${i}`)) return `s${i}`;
+  return null;
+}
+
+function docsInGroup(model, id) {
+  return model.documents.filter((d) => d.source.kind === 'repo' && d.source.group === id);
+}
+
+/** Same GitHub repository — owner and name, case-insensitive; ref ignored. */
+function sameRepository(a, b) {
+  return !!(a && b) && String(a.owner).toLowerCase() === String(b.owner).toLowerCase()
+    && String(a.repo).toLowerCase() === String(b.repo).toLowerCase();
+}
+
+/** The document's KIND as the app shows it: written · copied · folder · github. */
+function documentKind(d, model) {
+  if (!d || !d.source) return null;
+  if (d.source.kind !== 'repo') return d.copiedFrom ? 'copied' : 'written';
+  return groupKind(groupById(model, d.source.group)) === 'github' ? 'github' : 'folder';
+}
+
+/** `ownership` from the documents and groups alone (no v1 header). */
+function derivedOwnership(model) {
+  const hasRepo = model.documents.some((d) => d.source.kind === 'repo');
+  const hasKept = model.documents.some((d) => d.source.kind !== 'repo');
+  if (hasRepo && hasKept) return 'mixed';
+  if (hasKept) return 'curator';
+  if (hasRepo || model.sources.length) return 'repo';
+  return null;
+}
+
 /**
- * Validate a parsed manifest. Returns `{ok:true, manifest}` with every field
- * normalised, or `{ok:false, error}` naming the first defect. A manifest that
- * fails here yields `present: false` + `manifestError` on every read — never
- * a crash, never a silent empty — and every WRITER refuses to touch it,
- * because rewriting a manifest we cannot read could drop entries for
- * documents we cannot see.
+ * The `ownership` every ENVELOPE carries — DISPLAY-ONLY from v3.69.0.
+ * A v1 file reports exactly what it declared (so a v1 project's envelopes and
+ * `getProjectContext` stay byte-identical); a v2 file reports the derived
+ * reading, which may be `mixed`. A model with nothing in it falls back to a
+ * declared v1 ownership (an empty project whose source was chosen).
+ */
+function ownershipOf(model) {
+  if (!model) return null;
+  if (model.version === FOUNDATIONS_MANIFEST_VERSION && model.v1Header) return model.v1Header.ownership;
+  const d = derivedOwnership(model);
+  if (d !== null) return d;
+  return model.v1Header ? model.v1Header.ownership : null;
+}
+
+/** The `ownership` the NEXT read of `model` will report, once written. */
+function writtenOwnership(model) {
+  return manifestVersionFor(model) === FOUNDATIONS_MANIFEST_VERSION ? v1OwnershipFor(model) : derivedOwnership(model);
+}
+
+/** The LOWEST manifest version that can express `model` (CONTRACT §1.5). */
+function manifestVersionFor(model) {
+  const hasRepo = model.documents.some((d) => d.source.kind === 'repo');
+  const hasKept = model.documents.some((d) => d.source.kind !== 'repo');
+  if (model.sources.length >= 2) return FOUNDATIONS_MANIFEST_V2;
+  if (hasRepo && hasKept) return FOUNDATIONS_MANIFEST_V2;
+  // Kept documents beside a declared (empty) source: v1 can only say ONE
+  // ownership, and "curator" with a live `repo` is not a thing v1 means.
+  if (hasKept && model.sources.length >= 1) return FOUNDATIONS_MANIFEST_V2;
+  return FOUNDATIONS_MANIFEST_VERSION;
+}
+
+/** A document's `source` for version `v`: v1 carries no `group`. */
+function sourceForVersion(source, v) {
+  if (!source || source.kind !== 'repo') return source;
+  if (v === FOUNDATIONS_MANIFEST_V2) return { kind: 'repo', path: source.path, group: source.group };
+  return { kind: 'repo', path: source.path };
+}
+
+/** One document's validation, shared by both versions. `ctx.version`,
+ *  `ctx.ownership` (v1) and `ctx.groups` (v2: id → Set of paths). */
+function validateDocumentEntry(d, i, ctx, seen, notes) {
+  const where = `documents[${i}]`;
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return { error: `${where} is not an object` };
+  const slug = typeof d.slug === 'string' && FOUNDATION_SLUG_RE.test(d.slug) ? d.slug : null;
+  if (!slug) return { error: `${where}.slug ${JSON.stringify(String(d.slug).slice(0, 80))} is not a valid document slug` };
+  if (seen.has(slug)) return { error: `${where}.slug "${slug}" is listed twice` };
+  seen.add(slug);
+  if (!FOUNDATION_ROLES.includes(d.role)) return { error: `${where}.role ${JSON.stringify(d.role)} is not a known role` };
+  const kind = d.source && typeof d.source === 'object' ? d.source.kind : undefined;
+  if (kind !== 'repo' && kind !== 'curator') return { error: `${where}.source.kind must be "repo" or "curator"` };
+  if (kind === 'repo' && (typeof d.source.path !== 'string' || !d.source.path)) {
+    return { error: `${where}.source.path is required for a repo source` };
+  }
+  if (ctx.version === FOUNDATIONS_MANIFEST_VERSION) {
+    if (ctx.ownership && ((kind === 'repo') !== (ctx.ownership === 'repo'))) {
+      return { error: `${where} is ${kind}-sourced inside a ${ctx.ownership}-owned project` };
+    }
+  }
+  let group = null;
+  const srcPath = kind === 'repo' ? String(d.source.path).slice(0, 512) : null;
+  if (ctx.version === FOUNDATIONS_MANIFEST_V2) {
+    const g = d.source.group;
+    if (kind === 'curator') {
+      if (g !== undefined && g !== null) return { error: `${where} is kept here, so it cannot name a source group` };
+    } else {
+      if (typeof g !== 'string' || !ctx.groups.has(g)) {
+        return { error: `${where}.source.group ${JSON.stringify(g === undefined ? null : g)} names no source in this manifest` };
+      }
+      // ONE path per slug and ONE slug per path, WITHIN a group. The same
+      // path in two different groups is two files (two repositories).
+      const p = normSourcePath(srcPath);
+      const paths = ctx.groups.get(g);
+      if (paths.has(p)) return { error: `${where}.source.path "${p.slice(0, 120)}" is mirrored twice from source ${g}` };
+      paths.add(p);
+      group = g;
+    }
+  }
+  const sha256 = normaliseSha(d.sha256);
+  if (!sha256) return { error: `${where}.sha256 is not a 64-hex digest` };
+  if (!Number.isInteger(d.bytes) || d.bytes < 0) return { error: `${where}.bytes is not a non-negative integer` };
+  const entry = withExtras({
+    slug,
+    role: d.role,
+    title: readTitle(d.title) || slug.replace(/\.md$/, ''),
+    source: kind === 'repo' ? { kind, path: srcPath, ...(group ? { group } : {}) } : { kind },
+    sha256,
+    bytes: d.bytes,
+    updatedAt: isIsoish(d.updatedAt) ? new Date(d.updatedAt).toISOString() : null,
+    commit: typeof d.commit === 'string' && GIT_SHA_RE.test(d.commit) ? d.commit : null,
+    authoredBy: normaliseAuthoredBy(d.authoredBy),
+    // v3.61.0, schema still v1: an ADDITIVE optional boolean. A seeded
+    // document is a PROMPT, not a fact, and every reader needs to know
+    // that. Absent means false, and only the literal `true` counts — a
+    // string from a hand edit is not evidence that a document is unfilled,
+    // and the fail-safe direction is "treat it as written".
+    skeleton: d.skeleton === true,
+    // v3.62.0, schema STILL v1: a second ADDITIVE optional boolean, and the
+    // owner's ROUTING instruction rather than a fact about the document.
+    // `true` means "an agent must not start work here without this one", and
+    // the bootstrap sends its body every session; absent or anything but the
+    // literal `true` means false, i.e. "index only, fetch it by name when
+    // the task calls for it". Same fail-safe direction as `skeleton`, for
+    // the mirror-image reason: a string from a hand edit is not the owner
+    // saying a document is required reading, and reading one document too
+    // few costs a fetch while reading the whole set every session costs the
+    // budget the flag exists to spend deliberately.
+    readFirst: d.readFirst === true,
+    // v3.67.0, schema STILL v1: the third per-document state, "not at
+    // start". MUTUALLY EXCLUSIVE with `readFirst` and always present on the
+    // parsed entry; only the literal `true` counts. A hand edit carrying
+    // BOTH reads as read first — the fail-safe direction, more context and
+    // never less — and the contradiction is named in `notes` rather than
+    // resolved in silence. Written to disk only when true (`writeManifest`),
+    // so a project nobody routes keeps byte-identical manifests.
+    hidden: d.hidden === true && d.readFirst !== true,
+    // v3.68.0, schema STILL v1: an ADDITIVE optional string. The BASENAME of
+    // the folder a curator-kept document was COPIED from by "Add from this
+    // computer" — provenance, so the table can say "copied" rather than
+    // "written by you". A basename only (never a path: the manifest syncs).
+    // Absent (every older manifest) reads as null, i.e. written here. Only
+    // on a curator source; a save of new text clears it (saveFoundation
+    // builds a fresh entry), because the owner then HAS written it.
+    copiedFrom: kind === 'curator' ? readCopiedFrom(d.copiedFrom) : null,
+  }, collectExtras(d, MANIFEST_KNOWN_DOC, where, notes));
+  if (d.hidden === true && d.readFirst === true) {
+    notes.push(`${where} ("${slug}") is marked both read first and not at start; it reads as read first`);
+  }
+  return { entry };
+}
+
+/** budgetBytes + order, shared by both versions. */
+function validateHeaderCommon(obj) {
+  const budgetBytes = Number.isInteger(obj.budgetBytes) && obj.budgetBytes > 0 ? obj.budgetBytes : FOUNDATIONS_BUDGET_BYTES;
+  if (obj.budgetBytes !== undefined && obj.budgetBytes !== budgetBytes) {
+    return { error: 'budgetBytes is not a positive integer' };
+  }
+  const order = Array.isArray(obj.order) && obj.order.every((r) => typeof r === 'string')
+    ? obj.order.filter((r) => FOUNDATION_ROLES.includes(r))
+    : obj.order === undefined ? [...FOUNDATION_ROLES] : null;
+  if (order === null) return { error: 'order is not an array of role names' };
+  for (const r of FOUNDATION_ROLES) if (!order.includes(r)) order.push(r);   // every role has a rank
+  if (!Array.isArray(obj.documents)) return { error: 'documents is not an array' };
+  if (obj.documents.length > MAX_FOUNDATIONS_PER_PROJECT) {
+    return { error: `documents holds ${obj.documents.length} entries, over the ${MAX_FOUNDATIONS_PER_PROJECT} cap` };
+  }
+  return { budgetBytes, order };
+}
+
+/**
+ * Validate a parsed manifest (version 1 or 2) and build the MODEL. Returns
+ * `{ok:true, manifest, notes}` or `{ok:false, error}` naming the first
+ * defect. A manifest that fails here yields `present: false` +
+ * `manifestError` on every read — never a crash, never a silent empty — and
+ * every WRITER refuses to touch it, because rewriting a manifest we cannot
+ * read could drop entries for documents we cannot see.
  */
 function validateManifest(obj) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { ok: false, error: 'manifest is not a JSON object' };
-  if (Number.isInteger(obj.version) && obj.version > FOUNDATIONS_MANIFEST_VERSION) {
+  if (Number.isInteger(obj.version) && obj.version > FOUNDATIONS_MANIFEST_MAX_VERSION) {
     return { ok: false, code: MANIFEST_NEWER_CODE, version: obj.version, error: newerManifestMessage(obj.version) };
   }
-  if (obj.version !== FOUNDATIONS_MANIFEST_VERSION) {
-    return { ok: false, error: `manifest version ${JSON.stringify(obj.version)} is not ${FOUNDATIONS_MANIFEST_VERSION}` };
+  if (obj.version !== FOUNDATIONS_MANIFEST_VERSION && obj.version !== FOUNDATIONS_MANIFEST_V2) {
+    return { ok: false, error: `manifest version ${JSON.stringify(obj.version)} is not ${FOUNDATIONS_MANIFEST_VERSION} or ${FOUNDATIONS_MANIFEST_V2}` };
   }
+  return obj.version === FOUNDATIONS_MANIFEST_V2 ? validateManifestV2(obj) : validateManifestV1(obj);
+}
+
+function validateManifestV1(obj) {
   const ownership = obj.ownership === 'repo' || obj.ownership === 'curator' ? obj.ownership
     : obj.ownership === null || obj.ownership === undefined ? null : undefined;
   if (ownership === undefined) return { ok: false, error: `ownership ${JSON.stringify(obj.ownership)} is not "repo", "curator" or null` };
@@ -5174,110 +5454,177 @@ function validateManifest(obj) {
     if (obj.repo.root !== null && obj.repo.root !== undefined && typeof obj.repo.root !== 'string') {
       return { ok: false, error: 'repo.root is not a string' };
     }
-    repo = {
-      root: typeof obj.repo.root === 'string' && obj.repo.root ? obj.repo.root : null,
-      // ── `repo.remote`, FIRST WRITTEN IN v3.63.0 — still schema v1 ───────
-      // The field has existed since v3.59.0 and was only ever carried through
-      // or defaulted to null, typed as a string nothing populated. It is now
-      // `{owner, repo, ref, path}` — the coordinates the GitHub mirror arm
-      // fetches from — and a legacy STRING is PARSED as a git remote URL
-      // rather than refused. That direction is deliberate: `remote` is
-      // advisory, and a manifest made unreadable by an advisory field takes
-      // the project's whole tier 0 with it (`present: false` on every read).
-      // An unparseable value becomes null, which is exactly today's meaning.
-      remote: normaliseRemote(obj.repo.remote),
-      lastRefreshAt: isIsoish(obj.repo.lastRefreshAt) ? new Date(obj.repo.lastRefreshAt).toISOString() : null,
-      lastRefreshCommit: typeof obj.repo.lastRefreshCommit === 'string' && GIT_SHA_RE.test(obj.repo.lastRefreshCommit)
-        ? obj.repo.lastRefreshCommit : null,
-    };
+    // ── `repo.remote`, FIRST WRITTEN IN v3.63.0 — still schema v1 ───────
+    // The field has existed since v3.59.0 and was only ever carried through
+    // or defaulted to null, typed as a string nothing populated. It is now
+    // `{owner, repo, ref, path}` — the coordinates the GitHub mirror arm
+    // fetches from — and a legacy STRING is PARSED as a git remote URL
+    // rather than refused. That direction is deliberate: `remote` is
+    // advisory, and a manifest made unreadable by an advisory field takes
+    // the project's whole tier 0 with it (`present: false` on every read).
+    // An unparseable value becomes null, which is exactly today's meaning.
+    repo = readGroupFields(obj.repo);
   }
-  const budgetBytes = Number.isInteger(obj.budgetBytes) && obj.budgetBytes > 0 ? obj.budgetBytes : FOUNDATIONS_BUDGET_BYTES;
-  if (obj.budgetBytes !== undefined && obj.budgetBytes !== budgetBytes) {
-    return { ok: false, error: 'budgetBytes is not a positive integer' };
-  }
-  const order = Array.isArray(obj.order) && obj.order.every((r) => typeof r === 'string')
-    ? obj.order.filter((r) => FOUNDATION_ROLES.includes(r))
-    : obj.order === undefined ? [...FOUNDATION_ROLES] : null;
-  if (order === null) return { ok: false, error: 'order is not an array of role names' };
-  for (const r of FOUNDATION_ROLES) if (!order.includes(r)) order.push(r);   // every role has a rank
-  if (!Array.isArray(obj.documents)) return { ok: false, error: 'documents is not an array' };
-  if (obj.documents.length > MAX_FOUNDATIONS_PER_PROJECT) {
-    return { ok: false, error: `documents holds ${obj.documents.length} entries, over the ${MAX_FOUNDATIONS_PER_PROJECT} cap` };
-  }
+  const common = validateHeaderCommon(obj);
+  if (common.error) return { ok: false, error: common.error };
   const seen = new Set();
   const documents = [];
   const notes = [];
+  const ctx = { version: FOUNDATIONS_MANIFEST_VERSION, ownership };
   for (let i = 0; i < obj.documents.length; i++) {
-    const d = obj.documents[i];
-    const where = `documents[${i}]`;
-    if (!d || typeof d !== 'object' || Array.isArray(d)) return { ok: false, error: `${where} is not an object` };
-    const slug = typeof d.slug === 'string' && FOUNDATION_SLUG_RE.test(d.slug) ? d.slug : null;
-    if (!slug) return { ok: false, error: `${where}.slug ${JSON.stringify(String(d.slug).slice(0, 80))} is not a valid document slug` };
-    if (seen.has(slug)) return { ok: false, error: `${where}.slug "${slug}" is listed twice` };
-    seen.add(slug);
-    if (!FOUNDATION_ROLES.includes(d.role)) return { ok: false, error: `${where}.role ${JSON.stringify(d.role)} is not a known role` };
-    const kind = d.source && typeof d.source === 'object' ? d.source.kind : undefined;
-    if (kind !== 'repo' && kind !== 'curator') return { ok: false, error: `${where}.source.kind must be "repo" or "curator"` };
-    if (kind === 'repo' && (typeof d.source.path !== 'string' || !d.source.path)) {
-      return { ok: false, error: `${where}.source.path is required for a repo source` };
-    }
-    if (ownership && ((kind === 'repo') !== (ownership === 'repo'))) {
-      return { ok: false, error: `${where} is ${kind}-sourced inside a ${ownership}-owned project` };
-    }
-    const sha256 = normaliseSha(d.sha256);
-    if (!sha256) return { ok: false, error: `${where}.sha256 is not a 64-hex digest` };
-    if (!Number.isInteger(d.bytes) || d.bytes < 0) return { ok: false, error: `${where}.bytes is not a non-negative integer` };
-    documents.push(withExtras({
-      slug,
-      role: d.role,
-      title: readTitle(d.title) || slug.replace(/\.md$/, ''),
-      source: kind === 'repo' ? { kind, path: String(d.source.path).slice(0, 512) } : { kind },
-      sha256,
-      bytes: d.bytes,
-      updatedAt: isIsoish(d.updatedAt) ? new Date(d.updatedAt).toISOString() : null,
-      commit: typeof d.commit === 'string' && GIT_SHA_RE.test(d.commit) ? d.commit : null,
-      authoredBy: normaliseAuthoredBy(d.authoredBy),
-      // v3.61.0, schema still v1: an ADDITIVE optional boolean. A seeded
-      // document is a PROMPT, not a fact, and every reader needs to know
-      // that. Absent means false, and only the literal `true` counts — a
-      // string from a hand edit is not evidence that a document is unfilled,
-      // and the fail-safe direction is "treat it as written".
-      skeleton: d.skeleton === true,
-      // v3.62.0, schema STILL v1: a second ADDITIVE optional boolean, and the
-      // owner's ROUTING instruction rather than a fact about the document.
-      // `true` means "an agent must not start work here without this one", and
-      // the bootstrap sends its body every session; absent or anything but the
-      // literal `true` means false, i.e. "index only, fetch it by name when
-      // the task calls for it". Same fail-safe direction as `skeleton`, for
-      // the mirror-image reason: a string from a hand edit is not the owner
-      // saying a document is required reading, and reading one document too
-      // few costs a fetch while reading the whole set every session costs the
-      // budget the flag exists to spend deliberately.
-      readFirst: d.readFirst === true,
-      // v3.67.0, schema STILL v1: the third per-document state, "not at
-      // start". MUTUALLY EXCLUSIVE with `readFirst` and always present on the
-      // parsed entry; only the literal `true` counts. A hand edit carrying
-      // BOTH reads as read first — the fail-safe direction, more context and
-      // never less — and the contradiction is named in `notes` rather than
-      // resolved in silence. Written to disk only when true (`writeManifest`),
-      // so a project nobody routes keeps byte-identical manifests.
-      hidden: d.hidden === true && d.readFirst !== true,
-      // v3.68.0, schema STILL v1: an ADDITIVE optional string. The BASENAME of
-      // the folder a curator-kept document was COPIED from by "Add from this
-      // computer" — provenance, so the table can say "copied" rather than
-      // "written by you". A basename only (never a path: the manifest syncs).
-      // Absent (every older manifest) reads as null, i.e. written here. Only
-      // on a curator source; a save of new text clears it (saveFoundation
-      // builds a fresh entry), because the owner then HAS written it.
-      copiedFrom: kind === 'curator' ? readCopiedFrom(d.copiedFrom) : null,
-    }, collectExtras(d, MANIFEST_KNOWN_DOC, where, notes)));
-    if (d.hidden === true && d.readFirst === true) {
-      notes.push(`${where} ("${slug}") is marked both read first and not at start; it reads as read first`);
-    }
+    const r = validateDocumentEntry(obj.documents[i], i, ctx, seen, notes);
+    if (r.error) return { ok: false, error: r.error };
+    documents.push(r.entry);
   }
-  const manifest = withExtras({ version: FOUNDATIONS_MANIFEST_VERSION, ownership, repo, budgetBytes, order, documents },
-    collectExtras(obj, MANIFEST_KNOWN_TOP, '', notes));
+  // ── v1 → the model (CONTRACT §2.2) ──────────────────────────────────────
+  // `repo` becomes group s1 when it is the source of this project's mirrored
+  // documents (or of an empty project that chose to mirror). A `repo` beside
+  // kept documents only (a curator manifest carrying one — legacy or a hand
+  // edit) is NOT a source: it stays in the header and is written back as it
+  // was. Mirrored documents with no `repo` at all go to a synthetic s1,
+  // "source not recorded": it cannot be refreshed, but it can be deleted.
+  const repoDocs = documents.filter((d) => d.source.kind === 'repo');
+  let sources = [];
+  let legacyRepo = null;
+  if (repo && ownership !== 'curator' && (repoDocs.length || documents.length === 0)) {
+    sources = [{ id: 's1', ...repo }];
+  } else if (repo) {
+    legacyRepo = repo;
+  }
+  if (!sources.length && repoDocs.length) {
+    const g = { id: 's1', root: null, remote: null, lastRefreshAt: null, lastRefreshCommit: null };
+    Object.defineProperty(g, SYNTHETIC_GROUP, { value: true, enumerable: false });
+    sources = [g];
+  }
+  for (const d of repoDocs) d.source = { kind: 'repo', path: d.source.path, group: 's1' };
+  const manifest = withExtras({
+    version: FOUNDATIONS_MANIFEST_VERSION, sources, budgetBytes: common.budgetBytes, order: common.order, documents,
+    v1Header: { ownership, repo: legacyRepo },
+  }, collectExtras(obj, MANIFEST_KNOWN_TOP, '', notes));
   return { ok: true, manifest, notes };
+}
+
+function validateManifestV2(obj) {
+  const notes = [];
+  if (!Array.isArray(obj.sources)) return { ok: false, error: 'sources is not an array' };
+  if (obj.sources.length > MAX_SOURCES_PER_PROJECT) {
+    return { ok: false, error: `sources holds ${obj.sources.length} entries, over the ${MAX_SOURCES_PER_PROJECT} cap` };
+  }
+  const sources = [];
+  const groups = new Map();
+  for (let i = 0; i < obj.sources.length; i++) {
+    const g = obj.sources[i];
+    const where = `sources[${i}]`;
+    if (!g || typeof g !== 'object' || Array.isArray(g)) return { ok: false, error: `${where} is not an object` };
+    if (typeof g.id !== 'string' || !SOURCE_GROUP_ID_RE.test(g.id)) {
+      return { ok: false, error: `${where}.id ${JSON.stringify(String(g.id).slice(0, 20))} is not a source id (s1…s99)` };
+    }
+    if (groups.has(g.id)) return { ok: false, error: `${where}.id "${g.id}" is listed twice` };
+    if (g.root !== null && g.root !== undefined && typeof g.root !== 'string') return { ok: false, error: `${where}.root is not a string` };
+    groups.set(g.id, new Set());
+    sources.push(withExtras({ id: g.id, ...readGroupFields(g) }, collectExtras(g, MANIFEST_KNOWN_GROUP, where, notes)));
+  }
+  const common = validateHeaderCommon(obj);
+  if (common.error) return { ok: false, error: common.error };
+  const seen = new Set();
+  const documents = [];
+  const ctx = { version: FOUNDATIONS_MANIFEST_V2, groups };
+  for (let i = 0; i < obj.documents.length; i++) {
+    const r = validateDocumentEntry(obj.documents[i], i, ctx, seen, notes);
+    if (r.error) return { ok: false, error: r.error };
+    documents.push(r.entry);
+  }
+  // v1's two project-level fields do not exist in v2 — they are DERIVED. A
+  // file carrying them (a hand edit) has them dropped and named, never obeyed.
+  for (const k of ['ownership', 'repo']) {
+    if (Object.prototype.hasOwnProperty.call(obj, k)) notes.push(`field "${k}" is version 1 only and was ignored (it is derived in version 2)`);
+  }
+  const extras = collectExtras(obj, new Set([...MANIFEST_KNOWN_TOP_V2, 'ownership', 'repo']), '', notes);
+  const manifest = withExtras({
+    version: FOUNDATIONS_MANIFEST_V2, sources, budgetBytes: common.budgetBytes, order: common.order, documents,
+  }, extras);
+  return { ok: true, manifest, notes };
+}
+
+/** Parse a manifest OBJECT (already JSON-parsed) into the model. Pure. */
+export function parseFoundationsManifest(obj) {
+  return validateManifest(obj);
+}
+
+/** The v1 `ownership` a model is written with. */
+function v1OwnershipFor(model) {
+  const hdr = model.v1Header || null;
+  const derived = derivedOwnership(model);
+  if (derived === null) return hdr ? hdr.ownership : null;
+  // A v1 file that declared NO ownership keeps saying so (v3.68 accepts it
+  // with documents of one kind); anything else is the derived word.
+  if (hdr && hdr.ownership === null) return null;
+  return derived;
+}
+
+/** One document as it is written at version `v` — `hidden` only when true
+ *  and after the known keys (v3.67.0), `group` only in v2, extras last. */
+function documentForDisk(d, v) {
+  if (!d || typeof d !== 'object') return d;
+  const { hidden, ...rest } = d;
+  const out = rest.source ? { ...rest, source: sourceForVersion(rest.source, v) } : rest;
+  if (d[MANIFEST_EXTRAS]) out[MANIFEST_EXTRAS] = d[MANIFEST_EXTRAS];
+  return emitExtras(hidden === true && rest.readFirst !== true ? { ...out, hidden: true } : out);
+}
+
+/** One group as it is written: its five fields, in order, then its extras. */
+function groupForDisk(g) {
+  const out = { id: g.id, root: g.root ?? null, remote: g.remote ?? null, lastRefreshAt: g.lastRefreshAt ?? null, lastRefreshCommit: g.lastRefreshCommit ?? null };
+  if (g.tokenSource === 'config' || g.tokenSource === 'sync') out.tokenSource = g.tokenSource;
+  if (g[MANIFEST_EXTRAS]) out[MANIFEST_EXTRAS] = g[MANIFEST_EXTRAS];
+  return emitExtras(out);
+}
+
+/** The plain object `serialiseManifest` stringifies. */
+function manifestForDisk(model) {
+  const v = manifestVersionFor(model);
+  const documents = model.documents.map((d) => documentForDisk(d, v));
+  let top;
+  if (v === FOUNDATIONS_MANIFEST_VERSION) {
+    let repo = null;
+    if (model.sources.length === 1) {
+      const g = model.sources[0];
+      if (!g[SYNTHETIC_GROUP] || g.root || g.remote || g.lastRefreshAt || g.lastRefreshCommit) {
+        const { id: _id, ...rest } = groupForDisk(g);
+        repo = rest;
+      }
+    } else if (model.v1Header && model.v1Header.repo) {
+      repo = model.v1Header.repo;
+    }
+    top = { version: v, ownership: v1OwnershipFor(model), repo, budgetBytes: model.budgetBytes, order: model.order, documents };
+  } else {
+    top = { version: v, sources: model.sources.map(groupForDisk), budgetBytes: model.budgetBytes, order: model.order, documents };
+  }
+  if (model[MANIFEST_EXTRAS]) top[MANIFEST_EXTRAS] = model[MANIFEST_EXTRAS];
+  return emitExtras(top);
+}
+
+/**
+ * THE ONE PLACE A MANIFEST BECOMES BYTES (CONTRACT §1.5). Pure. Writes the
+ * LOWEST version that can express `model`:
+ *
+ *   only kept documents, no group            → v1, ownership "curator"
+ *   only mirrored documents, ≤ 1 group       → v1, ownership "repo", repo = the group
+ *   no documents, ≤ 1 group                  → v1, the ownership read (or "repo" with a group)
+ *   kept AND mirrored, or ≥ 2 groups, or kept beside a declared group → v2
+ *
+ * Properties the suite pins: a v1 file nobody changed comes back byte for
+ * byte; serialise(parse(serialise(m))) === serialise(m); every model v1
+ * cannot express is written `"version": 2`; and removing the last mirrored
+ * document of a mixed project writes v1 again.
+ */
+export function serialiseManifest(model) {
+  return `${JSON.stringify(manifestForDisk(model), null, 2)}\n`;
+}
+
+/** The version `serialiseManifest(model)` would write. */
+export function manifestVersionOf(model) {
+  return manifestVersionFor(model);
 }
 
 /** Read + validate the manifest. `status` is `absent` | `ok` | `malformed`. */
@@ -5298,22 +5645,23 @@ async function readManifest(manifestAbs) {
   return v.code ? { status: 'malformed', code: v.code, version: v.version, error: v.error } : { status: 'malformed', error: v.error };
 }
 
-/** The manifest is written WHOLE, atomically, and always LAST.
- *
- *  `hidden` (v3.67.0) reaches disk ONLY when true: absent means false, and a
- *  manifest nobody has routed "not at start" is rewritten byte for byte as
- *  v3.66.0 wrote it — which is also what an older machine expects. A
- *  contradiction cannot be written: `readFirst` wins here as it does on read. */
+/** The manifest is written WHOLE, atomically, and always LAST — at the
+ *  lowest version that expresses it (`serialiseManifest`). The bytes are
+ *  READ BACK through the validator before they reach disk: a manifest this
+ *  store could not read would take the project's whole tier 0 with it, so a
+ *  writer bug throws here (every caller reports it as `io`) instead. */
 async function writeManifest(manifestAbs, manifest) {
-  const documents = Array.isArray(manifest.documents)
-    ? manifest.documents.map((d) => {
-      if (!d || typeof d !== 'object') return d;
-      const { hidden, ...rest } = d;
-      return emitExtras(hidden === true && rest.readFirst !== true ? { ...rest, hidden: true } : rest);
-    })
-    : manifest.documents;
-  await writeFileAtomic(manifestAbs, `${JSON.stringify(emitExtras({ ...manifest, documents }), null, 2)}\n`, 'utf8');
+  const text = serialiseManifest(manifest);
+  const back = validateManifest(JSON.parse(text));
+  if (!back.ok) throw new Error(`refusing to write a documents list this app could not read back (${back.error})`);
+  await writeFileAtomic(manifestAbs, text, 'utf8');
+  if (manifestWriteSpy) { try { manifestWriteSpy(manifestAbs, text); } catch { /* a spy never breaks a write */ } }
 }
+
+/** TEST SEAM ONLY: observe every manifest write (the suite proves "written
+ *  ONCE, LAST" for a refresh of every source with it). Null clears it. */
+let manifestWriteSpy = null;
+export function __setManifestWriteSpy(fn) { manifestWriteSpy = typeof fn === 'function' ? fn : null; }
 
 /** Both locks, released in reverse order, whatever `fn` does. */
 async function withFoundationsLock(domain, op, fn) {
@@ -5525,30 +5873,73 @@ function deriveTitle(buf, slug) {
 
 // ── Reads ─────────────────────────────────────────────────────────────────
 
-/** Freshness of every document, reading NO stored bodies. Repo sources are
- *  re-hashed when the root is reachable; `n/a` for curator-owned. */
+/** Freshness of every document, reading NO stored bodies and asking NO
+ *  network (a read never does). PER SOURCE GROUP (v3.69.0): each group's
+ *  folder is resolved on this machine ONCE, and a mirrored document is
+ *  re-hashed against ITS OWN group's folder — never another group's, even
+ *  when two groups hold the same relative path. A document in a group with no
+ *  folder here reads `unreachable`; a kept document `n/a`.
+ *
+ *  `reachable` keeps its v1 meaning (the ONE group's folder is here) for the
+ *  `repo` envelope; `reachableByGroup` is the per-group reading. */
 async function computeFreshness(manifest) {
   const out = new Map();
-  let realRoot = null, reachable = false;
-  if (manifest.ownership === 'repo' && manifest.repo?.root) {
-    const r = await resolveRepoRoot(manifest.repo.root);
-    if (r.ok) { realRoot = r.realRoot; reachable = true; }
+  const roots = new Map();
+  for (const g of manifest.sources) {
+    let realRoot = null;
+    if (g.root) {
+      const r = await resolveRepoRoot(g.root);
+      if (r.ok) realRoot = r.realRoot;
+    }
+    roots.set(g.id, realRoot);
   }
   for (const d of manifest.documents) {
     if (d.source.kind !== 'repo') { out.set(d.slug, 'n/a'); continue; }
-    if (!reachable) { out.set(d.slug, 'unreachable'); continue; }
+    const realRoot = roots.get(d.source.group) || null;
+    if (!realRoot) { out.set(d.slug, 'unreachable'); continue; }
     const src = await sourceDigest(realRoot, d.source.path);
     if (src.status === 'ok') out.set(d.slug, src.sha256 === d.sha256 ? 'fresh' : 'stale');
     else if (src.status === 'too-large') out.set(d.slug, 'stale');
     else out.set(d.slug, 'unreachable');
   }
-  return { freshness: out, reachable };
+  const reachableByGroup = new Map([...roots].map(([id, r]) => [id, !!r]));
+  const reachable = manifest.sources.length === 1 ? reachableByGroup.get(manifest.sources[0].id) === true : false;
+  return { freshness: out, reachable, reachableByGroup };
 }
 
-function indexEntry(d, freshness, fileMissing) {
+/** The `repo` every envelope carries: the ONE group (without its id), or a
+ *  v1 header's stale `repo` for a curator file that carried one, else null. */
+function envelopeRepo(manifest, reachable) {
+  if (manifest.sources.length === 1) {
+    const g = manifest.sources[0];
+    if (g[SYNTHETIC_GROUP] && !g.root && !g.remote) return null;
+    return { root: g.root, remote: g.remote, lastRefreshAt: g.lastRefreshAt, lastRefreshCommit: g.lastRefreshCommit, reachable };
+  }
+  if (!manifest.sources.length && manifest.v1Header && manifest.v1Header.repo) return { ...manifest.v1Header.repo, reachable: false };
+  return null;
+}
+
+/** `sources[]` for an envelope (CONTRACT §3.4). The root PATH is not here —
+ *  only its basename, as `label`. */
+function envelopeSources(manifest, reachableByGroup) {
+  return manifest.sources.map((g) => ({
+    id: g.id,
+    kind: groupKind(g),
+    label: groupLabel(g),
+    reachableHere: reachableByGroup ? reachableByGroup.get(g.id) === true : false,
+    remote: g.remote ? { owner: g.remote.owner, repo: g.remote.repo, ref: g.remote.ref, path: g.remote.path } : null,
+    lastRefreshAt: g.lastRefreshAt,
+    lastRefreshCommit: g.lastRefreshCommit,
+    documentCount: docsInGroup(manifest, g.id).length,
+  }));
+}
+
+function indexEntry(d, freshness, fileMissing, version = FOUNDATIONS_MANIFEST_VERSION) {
   return {
     slug: d.slug, role: d.role, title: d.title, bytes: d.bytes, sha256: d.sha256,
-    updatedAt: d.updatedAt, commit: d.commit, source: d.source, authoredBy: d.authoredBy,
+    // `source.group` ONLY when the file read was v2 (CONTRACT §3.5): a v1
+    // project's index — and so getProjectContext — keeps its bytes.
+    updatedAt: d.updatedAt, commit: d.commit, source: sourceForVersion(d.source, version), authoredBy: d.authoredBy,
     freshness, fileMissing, skeleton: d.skeleton === true, readFirst: d.readFirst === true,
     // v3.68.0 — ONLY when present: an untouched project's index (and so
     // getProjectContext, pinned byte-for-byte by test-reading-budget.js)
@@ -5652,6 +6043,10 @@ export async function listFoundations(domain, project, opts = {}) {
     // continues to mean "not compared here" and not "gone".
     remoteMirror: false, remoteChecked: false, remoteCommit: null, remoteError: null,
     documents: [], readingOrder: [], orphanFiles: [], manifestError: null,
+    // v3.69.0 — the project's SOURCE GROUPS (CONTRACT §3.4), and the manifest
+    // version READ (null when there is none). `getProjectContext` forwards
+    // `sources` only for a v2 file, so a v1 project's context keeps its bytes.
+    sources: [], manifestVersion: null,
   };
   const mf = await readManifest(view.paths.manifestAbs);
   let names = [];
@@ -5674,20 +6069,21 @@ export async function listFoundations(domain, project, opts = {}) {
     return base;
   }
   const manifest = mf.manifest;
-  const { freshness, reachable } = await computeFreshness(manifest);
+  const { freshness, reachable, reachableByGroup } = await computeFreshness(manifest);
   const documents = [];
   for (const d of manifest.documents) {
     const abs = resolveInsideState(domain, `${view.paths.dirRel}/${d.slug}`);
     const fileMissing = !(await isFile(abs));
-    documents.push(indexEntry(d, freshness.get(d.slug), fileMissing));
+    documents.push(indexEntry(d, freshness.get(d.slug), fileMissing, manifest.version));
   }
+  const repoOut = envelopeRepo(manifest, reachable);
   const listed = new Set(manifest.documents.map((d) => d.slug));
   const totalBytes = totalBytesOf(manifest);
   return {
     ...base,
     present: true,
-    ownership: manifest.ownership,
-    repo: manifest.repo ? { ...manifest.repo, reachable } : null,
+    ownership: ownershipOf(manifest),
+    repo: repoOut,
     budgetBytes: manifest.budgetBytes,
     totalBytes,
     budgetExceeded: totalBytes > manifest.budgetBytes,
@@ -5698,13 +6094,15 @@ export async function listFoundations(domain, project, opts = {}) {
     skeletonCount: documents.filter((d) => d.skeleton).length,
     ...readFirstReadings(documents, eff.bytes),
     manifestNotes: Array.isArray(mf.notes) ? mf.notes.slice(0, 20) : [],
-    remoteMirror: !!(manifest.ownership === 'repo' && manifest.repo?.remote),
+    remoteMirror: manifest.sources.some((g) => !!g.remote),
     remoteChecked: false,
-    remoteCommit: manifest.repo?.lastRefreshCommit ?? null,
+    remoteCommit: repoOut ? (repoOut.lastRefreshCommit ?? null) : null,
     remoteError: null,
     documents,
     readingOrder: readingOrderOf(manifest),
     orphanFiles: names.filter((n) => !listed.has(n)).slice(0, 50),
+    sources: envelopeSources(manifest, reachableByGroup),
+    manifestVersion: manifest.version,
   };
 }
 
@@ -5763,7 +6161,7 @@ async function summariseFoundations(domain, project, meta) {
  *  on read. `shaMismatch` says the bytes on disk are not what the manifest
  *  recorded (a hand edit, or a sync merge), and `sha256` is then the on-disk
  *  digest, because that is what the next bootstrap will compare against. */
-async function readStoredDocument(domain, dirRel, d, { raw = false } = {}) {
+async function readStoredDocument(domain, dirRel, d, { raw = false, version = null } = {}) {
   const abs = resolveInsideState(domain, `${dirRel}/${d.slug}`);
   if (!abs) return { ok: false, reason: 'unsafe-path' };
   const r = await readCappedBytes(abs, MAX_FOUNDATION_BYTES);
@@ -5785,7 +6183,10 @@ async function readStoredDocument(domain, dirRel, d, { raw = false } = {}) {
     text: raw ? verbatim : clean,
     raw: raw === true,
     bytes: r.bytes, sha256, manifestSha256: d.sha256, shaMismatch: sha256 !== d.sha256,
-    truncated: r.truncated, updatedAt: d.updatedAt, commit: d.commit, source: d.source, authoredBy: d.authoredBy,
+    truncated: r.truncated, updatedAt: d.updatedAt, commit: d.commit,
+    // A model entry is given its version's wire `source` here; an index row
+    // (getProjectContext) already has it, and `version: null` leaves it be.
+    source: version === null ? d.source : sourceForVersion(d.source, version), authoredBy: d.authoredBy,
     skeleton: d.skeleton === true, readFirst: d.readFirst === true,
     ...(d.copiedFrom ? { copiedFrom: d.copiedFrom } : {}),
     sanitisedOnRead: raw ? false : clean !== verbatim,
@@ -5829,7 +6230,7 @@ export async function readFoundation(domain, project, slug, opts = {}) {
     };
   }
   const idx = await computeFreshness(mf.manifest);
-  const r = await readStoredDocument(domain, view.paths.dirRel, d, { raw: opts?.raw === true });
+  const r = await readStoredDocument(domain, view.paths.dirRel, d, { raw: opts?.raw === true, version: mf.manifest.version });
   if (!r.ok) {
     return { ok: false, reason: r.reason, message: r.reason === 'file-missing'
       ? `"${s}" is in the manifest but its file is missing — remove the entry or refresh from the repository.`
@@ -5843,17 +6244,22 @@ export async function readFoundation(domain, project, slug, opts = {}) {
 /**
  * Save one document WHOLE (replace, never merge) and rewrite the manifest.
  *
- * `source` defaults to `{kind:'curator'}`; a `{kind:'repo', path}` source is
- * how the refresh writes, and it is accepted here so a caller can list a
- * mirror by hand — but the ownership rule holds either way: the first save
- * SETS the project's ownership and every later save must match it.
+ * `source` defaults to `{kind:'curator'}`; a `{kind:'repo', path, group?}`
+ * source is accepted so a caller can list a mirror by hand, into the group
+ * it names (or the project's only one).
+ *
+ * ONE WRITER PER FILE, ON THE DOCUMENT (v3.69.0, decision D4): a save over a
+ * MIRRORED slug is refused `ownership-mismatch` ("<slug> is mirrored from
+ * <label> — edit it there and refresh"), and a mirror cannot be listed over a
+ * kept slug; a NEW kept document may be saved into ANY project, including one
+ * that also mirrors.
  *
  * `readFirst` (v3.62.0) is optional and TRI-STATE: omitted leaves an existing
  * entry's flag where it is (and is `false` on a new document), `true`/`false`
  * set it. It never affects the bytes written — see the entry below.
  *
  * Refusals: an unusable slug or role; text that is not a string, is empty,
- * or is over MAX_FOUNDATION_BYTES (size named); mixed ownership; the
+ * or is over MAX_FOUNDATION_BYTES (size named); a mirrored slug; the
  * destructive-shrink guard (under FOUNDATION_REPLACE_RATIO of the stored
  * file without `replace: true`); a manifest this store cannot read; the lock.
  * Over-BUDGET is accepted and disclosed.
@@ -5889,7 +6295,6 @@ export async function saveFoundation(domain, project, input = {}) {
   if (srcKind === 'repo' && (typeof inp.source.path !== 'string' || !inp.source.path.trim())) {
     return { ok: false, reason: 'invalid-source', message: 'A repo source needs a `path` relative to the repository root.' };
   }
-  const ownershipIn = srcKind;
   const title = readTitle(inp.title) || deriveTitle(buf, slug);
   const authoredBy = normaliseAuthoredBy(inp.authoredBy) || { kind: 'human', harness: null, model: null, commissionedBy: null };
   const commit = typeof inp.commit === 'string' && GIT_SHA_RE.test(inp.commit) ? inp.commit : null;
@@ -5909,15 +6314,51 @@ export async function saveFoundation(domain, project, input = {}) {
       };
     }
     const manifest = mf.status === 'ok' ? mf.manifest : emptyManifest();
-    if (manifest.ownership && manifest.ownership !== ownershipIn) {
+    const prior = manifest.documents.find((d) => d.slug === slug) || null;
+    // ── ONE WRITER PER FILE, CHECKED ON THE DOCUMENT (v3.69.0) ───────────
+    // Through v3.68 this was one ownership per PROJECT. It is now the
+    // document's own kind: a MIRRORED document's bytes come from its source
+    // (a folder or a GitHub repository) and are written only by a refresh or
+    // an add, so a save over one is refused — whoever asks, in any project.
+    // A NEW document may be written into any project, including one that also
+    // mirrors (maintainer decision D4). The reason stays `ownership-mismatch`
+    // so clients matching on the code keep working.
+    if (prior && prior.source.kind === 'repo' && srcKind !== 'repo') {
+      const g = groupById(manifest, prior.source.group);
+      const label = groupLabel(g) || 'its source';
       return {
-        ok: false, reason: 'ownership-mismatch', ownership: manifest.ownership,
-        message: `Project "${target.project}" holds ${manifest.ownership}-owned foundations, and this save is ${ownershipIn}-sourced. `
-          + 'A project holds documents of ONE ownership — repo mirrors are written only by a refresh from the checkout, '
-          + 'curator documents only by a commissioned save — so the two are never mixed. Nothing was written.',
+        ok: false, reason: 'ownership-mismatch', ownership: ownershipOf(manifest),
+        mirrored: { group: prior.source.group, kind: documentKind(prior, manifest), label: groupLabel(g), path: prior.source.path },
+        message: `"${slug}" is mirrored from ${label} — edit it there and refresh. Nothing was written.`,
       };
     }
-    const prior = manifest.documents.find((d) => d.slug === slug) || null;
+    if (prior && prior.source.kind !== 'repo' && srcKind === 'repo') {
+      return {
+        ok: false, reason: 'ownership-mismatch', ownership: ownershipOf(manifest),
+        message: `"${slug}" is kept in this project (written or copied here), so a mirror cannot be listed over it. Nothing was written.`,
+      };
+    }
+    // A hand-listed mirror (a caller passing `source: {kind:'repo', path}`)
+    // joins a group: the one it names, or the project's only one.
+    let repoGroup = null;
+    if (srcKind === 'repo') {
+      const named = typeof inp.source.group === 'string' ? inp.source.group : null;
+      repoGroup = named ? groupById(manifest, named) : (prior ? groupById(manifest, prior.source.group)
+        : manifest.sources.length === 1 ? manifest.sources[0] : null);
+      if (!repoGroup) {
+        return {
+          ok: false, reason: 'invalid-source', ownership: ownershipOf(manifest),
+          message: manifest.sources.length
+            ? 'Name which source this mirrored document comes from (`source.group`). Nothing was written.'
+            : 'This project mirrors nothing, so there is no source a mirrored document could come from — add it from a folder or GitHub instead. Nothing was written.',
+        };
+      }
+      const want = normSourcePath(inp.source.path);
+      const holder = docsInGroup(manifest, repoGroup.id).find((d) => d.slug !== slug && normSourcePath(d.source.path) === want);
+      if (holder) {
+        return { ok: false, reason: 'invalid-source', message: `${want.slice(0, 120)} is already mirrored as "${holder.slug}". Nothing was written.` };
+      }
+    }
     if (!prior && manifest.documents.length >= MAX_FOUNDATIONS_PER_PROJECT) {
       return { ok: false, reason: 'too-many-documents', message: `This project already holds ${MAX_FOUNDATIONS_PER_PROJECT} foundation documents, the cap.` };
     }
@@ -5962,7 +6403,9 @@ export async function saveFoundation(domain, project, input = {}) {
     const updatedAt = new Date().toISOString();
     const entry = {
       slug, role, title,
-      source: srcKind === 'repo' ? { kind: 'repo', path: String(inp.source.path).replace(/\\/g, '/').slice(0, 512) } : { kind: 'curator' },
+      source: srcKind === 'repo'
+        ? { kind: 'repo', path: String(inp.source.path).replace(/\\/g, '/').slice(0, 512), group: repoGroup.id }
+        : { kind: 'curator' },
       sha256: sha256Hex(buf), bytes: buf.length, updatedAt, commit, authoredBy,
       // v3.61.0. ANY save CLEARS the skeleton flag, whoever made it: a
       // document somebody has written is not a prompt any more, and the flag
@@ -5991,7 +6434,7 @@ export async function saveFoundation(domain, project, input = {}) {
     const documents = prior
       ? manifest.documents.map((d) => (d.slug === slug ? entry : d))
       : [...manifest.documents, entry];
-    const next = { ...manifest, ownership: manifest.ownership || ownershipIn, documents };
+    const next = { ...manifest, documents };
     const totalBytes = totalBytesOf(next);
     const budgetExceeded = totalBytes > next.budgetBytes;
     if (budgetExceeded) {
@@ -6012,7 +6455,7 @@ export async function saveFoundation(domain, project, input = {}) {
       ok: true, domain, project: target.project, slug, role, title,
       path: `${STATE_DIRNAME}/${paths.dirRel}/${slug}`,
       bytes: buf.length, sha256: entry.sha256, replaced: !!prior, updatedAt, commit,
-      ownership: next.ownership, authoredBy, source: entry.source,
+      ownership: writtenOwnership(next), authoredBy, source: sourceForVersion(entry.source, manifestVersionFor(next)),
       skeleton: entry.skeleton, wasSkeleton: prior ? prior.skeleton === true : false,
       readFirst: entry.readFirst, wasReadFirst: prior ? prior.readFirst === true : false,
       hidden: entry.hidden === true,
@@ -6166,6 +6609,19 @@ async function rewriteFoundationRouting(domain, project, slug, op, decide, verb)
  * Remove one document and its entry. Manifest FIRST, then the file: a crash
  * between the two leaves an orphan file (disclosed), never an entry pointing
  * at nothing. An unlisted orphan of that name can be removed the same way.
+ *
+ * v3.69.0 — any KIND (written, copied, folder or GitHub mirror). Removing the
+ * LAST document of a source group removes that group IN THE SAME manifest
+ * write, so a mixed project that stops mixing is written at v1 again. NO
+ * TOMBSTONE: a refresh works from the listed documents plus files a caller
+ * NAMES, never by discovering new ones, so a removed mirror stays removed —
+ * re-adding it is a deliberate tick in the checklist (CONTRACT §5.3). A group
+ * declared empty by `initFoundations` is not touched by removing a document
+ * from another group.
+ *
+ * Returns, besides v3.61.1's fields: `origin` (written · copied · folder ·
+ * github, null for an unlisted orphan), `source` (`{label, path}` of a mirror,
+ * else null), `group` (`{id, kind, label}` or null) and `groupRemoved`.
  */
 export async function removeFoundation(domain, project, slug) {
   const target = await checkProjectTarget(domain, project);
@@ -6186,8 +6642,18 @@ export async function removeFoundation(domain, project, slug) {
     const onDisk = await isFile(docAbs);
     if (!listed && !onDisk) return { ok: false, reason: 'not-found', message: `No foundation document "${s}" in project "${target.project}".` };
     let next = null;
+    const entry = listed ? mf.manifest.documents.find((d) => d.slug === s) : null;
+    const origin = entry ? documentKind(entry, mf.manifest) : null;
+    const group = entry && entry.source.kind === 'repo' ? groupById(mf.manifest, entry.source.group) : null;
+    let groupRemoved = false;
     if (listed) {
-      next = { ...mf.manifest, documents: mf.manifest.documents.filter((d) => d.slug !== s) };
+      const documents = mf.manifest.documents.filter((d) => d.slug !== s);
+      let sources = mf.manifest.sources;
+      if (group && !documents.some((d) => d.source.kind === 'repo' && d.source.group === group.id)) {
+        sources = sources.filter((g) => g.id !== group.id);
+        groupRemoved = true;
+      }
+      next = { ...mf.manifest, sources, documents };
       try { await writeManifest(paths.manifestAbs, next); }
       catch (err) { return { ok: false, reason: 'io', message: `Could not rewrite the manifest: ${scrubPaths(String(err?.message ?? err))}. Nothing was removed.` }; }
     }
@@ -6199,6 +6665,13 @@ export async function removeFoundation(domain, project, slug) {
     }
     return {
       ok: true, domain, project: target.project, slug: s, removed: true, wasOrphan: !listed && onDisk,
+      origin,
+      source: group ? { label: groupLabel(group), path: entry.source.path }
+        : origin === 'copied' ? { label: entry.copiedFrom, path: null } : null,
+      // The ORIGINAL survives removal unless the document was written here.
+      sourceKept: origin !== null && origin !== 'written',
+      group: group ? { id: group.id, kind: groupKind(group), label: groupLabel(group) } : null,
+      groupRemoved,
       totalBytes: next ? totalBytesOf(next) : (mf.status === 'ok' ? totalBytesOf(mf.manifest) : 0),
       documentCount: next ? next.documents.length : (mf.status === 'ok' ? mf.manifest.documents.length : 0),
     };
@@ -6206,242 +6679,283 @@ export async function removeFoundation(domain, project, slug) {
 }
 
 /**
- * Mirror a repository's documents into a repo-owned project: for every
- * manifest entry with a repo source, plus any newly listed `files`, read the
- * file at `<repoRoot>/<source.path>`, compare sha256, and COPY THE BYTES when
- * they differ. No LLM, no transformation, no trim. `commit` is stamped from
- * `git rev-parse HEAD` when git and a checkout are there, else null.
+ * REFRESH — copy mirrored documents from their sources again (v3.69.0: PER
+ * SOURCE GROUP). For every mirrored document of a group, plus any newly
+ * listed `files`, read the file from the group's folder (the LOCAL arm) or
+ * its GitHub repository (the REMOTE arm), compare sha256, and COPY THE BYTES
+ * when they differ. No LLM, no transformation, no trim. `commit` is stamped
+ * from `git rev-parse HEAD` (local) or the tree's head sha (remote).
  *
- * NO SHRINK GUARD HERE, deliberately: the repository is the source of truth
- * for a mirror, so a document that shrank in the checkout shrinks in the
- * mirror. The guard belongs to `saveFoundation`, where the caller is an agent
- * whose partial send would destroy a whole document.
+ *   opts.group   refresh that group only — its arm chosen as before: `auto`
+ *                prefers a reachable folder (`repoRoot` when the caller
+ *                names one, else the group's own `root`), then its remote.
+ *   no group     ONE group → that group, exactly as v3.68 refreshed a mirror.
+ *                ≥ 2 groups → EVERY group, each by its own arm, inside ONE
+ *                lock: phase 1 reads every group; a group whose read fails is
+ *                reported in `groups[]` and left EXACTLY as it was; phase 2
+ *                writes the documents of the groups that succeeded; the
+ *                manifest is written ONCE, LAST. `repoRoot` names one folder,
+ *                so it is not applied across several groups (a note says so),
+ *                and `files` is refused `group-required` — which group would
+ *                they join?
+ *   no groups    kept documents never refresh: `no-sources`. An EMPTY project
+ *                with no groups is v3.61's first mirror: a refresh that names
+ *                files founds group s1.
+ *
+ * NO SHRINK GUARD HERE, deliberately: the source is the truth for a mirror,
+ * so a document that shrank there shrinks here. The guard belongs to
+ * `saveFoundation`, where the caller is an agent whose partial send would
+ * destroy a whole document.
  *
  * A source that VANISHED is reported in `missing` and its copy is KEPT — the
  * copy is the last known good text, and deleting it silently would be the
  * false-absence class this module refuses. Every refused path is named in
- * `refused` with its reason.
+ * `refused` with its reason. The result keeps v3.68's top-level fields
+ * (aggregated across groups) and adds `groups: [{ id, kind, label, ok,
+ * source, refreshed, unchanged, missing, added, refused, commit, reason?,
+ * message? }]`.
  */
 export async function refreshFoundationsFromRepo(domain, project, repoRoot, opts = {}) {
+  const o = opts && typeof opts === 'object' ? opts : {};
   const target = await checkProjectTarget(domain, project);
   if (!target.ok) return target;
   const paths = foundationsPaths(domain, target.prefix);
   if (!paths) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
-  const files = Array.isArray(opts?.files) ? opts.files : [];
-  const source = opts?.source === 'remote' ? 'remote' : opts?.source === 'local' ? 'local' : 'auto';
-
-  // ── WHICH ARM (v3.63.0) ────────────────────────────────────────────────
-  // `local` and `auto`-with-a-reachable-checkout are v3.59.0's path,
-  // byte-identical — the checkout is the cheapest and most trustworthy
-  // source there is, it needs no credential and no network, and a machine
-  // that has one should never spend a rate limit to read what is on its own
-  // disk. The remote arm exists for the machine that has no checkout, which
-  // was a permanent "source not on this computer" on every machine but one.
-  let realRoot = null;
-  let localRefusal = null;
-  if (source !== 'remote') {
-    const root = await resolveRepoRoot(repoRoot);
-    if (root.ok) realRoot = root.realRoot; else localRefusal = root;
+  const files = Array.isArray(o.files) ? o.files : [];
+  const source = o.source === 'remote' ? 'remote' : o.source === 'local' ? 'local' : 'auto';
+  const groupAsked = o.group === undefined || o.group === null || o.group === '' ? null : String(o.group);
+  if (groupAsked !== null && !SOURCE_GROUP_ID_RE.test(groupAsked)) {
+    return { ok: false, reason: 'unknown-group', message: `"${groupAsked.slice(0, 20)}" is not a source of this project. Nothing was refreshed.` };
   }
-  if (source === 'local' && !realRoot) return localRefusal;
+  const rootAsked = typeof repoRoot === 'string' && repoRoot.trim() ? repoRoot : null;
 
   return withFoundationsLock(domain, 'refresh-foundations', async () => {
-    if (realRoot) return refreshCore(domain, target, paths, realRoot, files);
-    return refreshRemoteCore(domain, target, paths, files, {
-      source,
-      remote: opts?.remote,
-      tokenSource: opts?.tokenSource,
-      token: opts?.token,
-      fetchImpl: opts?.fetchImpl,
-      sleepImpl: opts?.sleepImpl,
-      onWarn: opts?.onWarn,
-      localRefusal,
-    });
-  });
-}
-
-/**
- * THE MIRROR WORK LIST — one copy, two arms (v3.63.0).
- *
- * Extracted verbatim from `refreshCore` when the GitHub arm arrived: the slug
- * and path collision rules are the whole reason a mirror cannot quietly grow a
- * fourth document for a file it already mirrors, and two copies of them would
- * be two things to keep in step. `refused[]` is returned rather than thrown —
- * every entry a caller named and did not get is a fact the route forwards.
- */
-function buildMirrorWorkList(manifest, files) {
-  // The work list: existing mirrors first, then listed files.
-  const work = new Map();
-  for (const d of manifest.documents) {
-    if (d.source.kind === 'repo') work.set(d.slug, { entry: d, srcPath: d.source.path, role: d.role, title: d.title });
-  }
-  const refused = [];
-  // ONE slug per path and ONE path per slug. The second rule is the one the
-  // first draft lacked: `docs\decisions.md` listed under a new slug landed
-  // as a fourth document mirroring a file already mirrored — found by the
-  // suite, not by reading. `byPath` is rebuilt as `work` grows so a listed
-  // file cannot collide with an earlier listed one either.
-  const byPath = () => new Map([...work].map(([s, w]) => [w.srcPath.replace(/\\/g, '/').replace(/^\.\//, ''), s]));
-  for (const f of files) {
-    if (!f || typeof f !== 'object' || typeof f.path !== 'string') {
-      refused.push({ path: String(f && typeof f === 'object' ? f.path : f).slice(0, 120), reason: 'not a {path} object' });
-      continue;
-    }
-    const slug = f.slug !== undefined && f.slug !== null ? normaliseFoundationSlug(f.slug) : deriveSlugFromPath(f.path);
-    if (!slug) { refused.push({ path: f.path.slice(0, 120), reason: 'no usable slug could be derived — pass `slug`' }); continue; }
-    if (f.role !== undefined && f.role !== null && !FOUNDATION_ROLES.includes(f.role)) {
-      refused.push({ path: f.path.slice(0, 120), reason: `"${String(f.role).slice(0, 40)}" is not a role` });
-      continue;
-    }
-    const existing = work.get(slug) || null;
-    const existingPath = existing ? existing.srcPath.replace(/\\/g, '/') : null;
-    const wantPath = f.path.replace(/\\/g, '/').replace(/^\.\//, '');
-    if (existingPath && existingPath !== wantPath) {
-      refused.push({ path: f.path.slice(0, 120), reason: `slug "${slug}" already mirrors ${existingPath}` });
-      continue;
-    }
-    const holder = byPath().get(wantPath);
-    if (holder && holder !== slug) {
-      refused.push({ path: f.path.slice(0, 120), reason: `${wantPath} is already mirrored as "${holder}"` });
-      continue;
-    }
-    const curatorClash = manifest.documents.find((d) => d.slug === slug && d.source.kind !== 'repo');
-    if (curatorClash) { refused.push({ path: f.path.slice(0, 120), reason: `slug "${slug}" is a curator-authored document` }); continue; }
-    const role = f.role !== undefined && f.role !== null ? f.role : (existing ? existing.role : guessRole(f.path));
-    work.set(slug, {
-      entry: existing ? existing.entry : null, srcPath: wantPath, role,
-      title: readTitle(f.title) || (existing ? existing.title : null),
-    });
-  }
-  return { work, refused };
-}
-
-/**
- * The mirror step itself, WITHOUT the lock.
- *
- * Split out in v3.61.0 for exactly one reason: `initFoundations` has to write
- * the ownership manifest and then mirror the first files inside ONE
- * `withFoundationsLock` acquisition, and `acquireFileLock` is NOT re-entrant
- * — it takes the lock by an exclusive `link()`, so a nested call refuses
- * itself with `locked` rather than deadlocking, which would be an init that
- * reports a lock conflict against nobody. Every caller of this function must
- * already hold both locks; `refreshFoundationsFromRepo` above is the one that
- * takes them for the public path.
- */
-async function refreshCore(domain, target, paths, realRoot, files) {
-  {
-    const notes = [];
     const mf = await readManifest(paths.manifestAbs);
     if (mf.status === 'malformed' && mf.code === MANIFEST_NEWER_CODE) return newerManifestRefusal(mf);
     if (mf.status === 'malformed') {
       return { ok: false, reason: 'manifest-unreadable', manifestError: mf.error, message: `The foundations manifest could not be read (${mf.error}). Nothing was refreshed.` };
     }
-    const manifest = mf.status === 'ok' ? mf.manifest : emptyManifest();
-    if (manifest.ownership === 'curator') {
-      return {
-        ok: false, reason: 'ownership-mismatch', ownership: 'curator',
-        message: `Project "${target.project}" holds curator-authored foundations. A refresh mirrors repository files and would `
-          + 'overwrite them — a project holds documents of ONE ownership. Nothing was changed.',
-      };
+    const model = mf.status === 'ok' ? mf.manifest : emptyManifest();
+    let groups;
+    if (groupAsked) {
+      const g = groupById(model, groupAsked);
+      if (!g) return { ok: false, reason: 'unknown-group', message: `This project has no source "${groupAsked}". Nothing was refreshed.` };
+      groups = [g];
+    } else if (!model.sources.length) {
+      if (model.documents.length) return noSourcesRefusal(target);
+      groups = [null];
+    } else if (model.sources.length === 1) {
+      groups = [model.sources[0]];
+    } else {
+      if (files.length) {
+        return {
+          ok: false, reason: 'group-required',
+          message: `This project mirrors from ${model.sources.length} sources, so name the one (group) these files come from. Nothing was refreshed.`,
+        };
+      }
+      groups = model.sources.slice();
     }
-    const { work, refused } = buildMirrorWorkList(manifest, files);
-    if (work.size > MAX_FOUNDATIONS_PER_PROJECT) {
-      return { ok: false, reason: 'too-many-documents', message: `${work.size} documents would exceed the ${MAX_FOUNDATIONS_PER_PROJECT}-document cap.` };
-    }
-    if (!work.size) {
-      return {
-        ok: true, domain, project: target.project, repoRoot: realRoot, noop: true, commit: null,
-        // The four remote readings, present on BOTH arms so a caller reads one
-        // shape (v3.63.0). This is the LOCAL arm: nothing was asked of GitHub.
-        source: 'local', remoteChecked: false, remoteCommit: null, remoteError: null,
-        refreshed: [], unchanged: [], missing: [], added: [], refused,
-        totalBytes: totalBytesOf(manifest), budgetBytes: manifest.budgetBytes, budgetExceeded: false,
-        notes: ['nothing to refresh: no repo-sourced documents are listed and no `files` were named'],
-      };
-    }
-
-    const commit = await gitHeadCommit(realRoot);
-    // v3.63.0: RECORD WHERE THIS CHECKOUT CAME FROM, once, and never
-    // overwrite one the owner set — a stored remote is a decision, an
-    // observed `origin` is a default. This is what lets a SECOND machine,
-    // which has no checkout, refresh the same mirror over the GitHub API.
-    const remote = manifest.repo?.remote ?? await gitOriginRemote(realRoot);
-    const now = new Date().toISOString();
-    const refreshed = [], unchanged = [], missing = [], added = [];
-    let documents = manifest.documents.slice();
-    let dirMade = false;
-    for (const [slug, w] of work) {
-      const src = await sourceDigest(realRoot, w.srcPath);
-      if (src.status === 'refused') { refused.push({ path: w.srcPath.slice(0, 120), reason: src.reason }); continue; }
-      if (src.status === 'missing') { missing.push(w.srcPath); continue; }
-      if (src.status === 'too-large') {
-        refused.push({ path: w.srcPath.slice(0, 120), reason: `${src.bytes} bytes is over the ${MAX_FOUNDATION_BYTES}-byte per-document cap` });
+    const single = groups.length === 1;
+    const plans = [];
+    for (const g of groups) {
+      const arm = await chooseRefreshArm(g, single ? rootAsked : null, source);
+      if (!arm.ok) {
+        if (single) return arm.refusal;
+        plans.push({ group: g, failed: arm.refusal });
         continue;
       }
-      const docAbs = resolveInsideState(domain, `${paths.dirRel}/${slug}`);
-      if (!docAbs) { refused.push({ path: w.srcPath.slice(0, 120), reason: 'the document path resolves outside the state folder' }); continue; }
-      const onDisk = await isFile(docAbs);
-      if (w.entry && w.entry.sha256 === src.sha256 && onDisk) { unchanged.push(slug); continue; }
-      if (!dirMade) {
-        try { await mkdir(paths.dirAbs, { recursive: true }); dirMade = true; }
-        catch (err) { return { ok: false, reason: 'io', message: `Could not create the foundations folder: ${scrubPaths(String(err?.message ?? err))}` }; }
-      }
-      const docAbs2 = resolveInsideState(domain, `${paths.dirRel}/${slug}`);
-      if (!docAbs2) { refused.push({ path: w.srcPath.slice(0, 120), reason: 'the document path resolves outside the state folder' }); continue; }
-      try { await writeFileAtomic(docAbs2, src.buf); }
-      catch (err) { return { ok: false, reason: 'io', message: `Could not write ${slug}: ${scrubPaths(String(err?.message ?? err))}`, refreshed, added }; }
-      const entry = {
-        slug, role: w.role, title: w.title || deriveTitle(src.buf, slug),
-        source: { kind: 'repo', path: src.rel },
-        sha256: src.sha256, bytes: src.bytes, updatedAt: now, commit,
-        authoredBy: w.entry?.authoredBy || { kind: 'human', harness: null, model: null, commissionedBy: null },
-        // A mirrored document is never a skeleton: it is whatever the
-        // repository says, and the repository is the source of truth.
-        skeleton: false,
-        // …but `readFirst` IS preserved across a re-copy (v3.62.0), and the
-        // difference is the whole distinction the flag rests on: the
-        // repository owns the BYTES, the owner owns the ROUTING. A refresh
-        // that dropped the flag would silently un-flag the architecture note
-        // the moment somebody edited it in the checkout — exactly when it
-        // most needs reading. A newly added document starts unflagged.
-        readFirst: w.entry ? w.entry.readFirst === true : false,
-        // v3.67.0 — and so is `hidden`, by slug, for the same reason.
-        hidden: w.entry ? w.entry.hidden === true : false,
-      };
-      if (w.entry && w.entry[MANIFEST_EXTRAS]) entry[MANIFEST_EXTRAS] = w.entry[MANIFEST_EXTRAS];   // v3.68.1
-      documents = w.entry ? documents.map((d) => (d.slug === slug ? entry : d)) : [...documents, entry];
-      (w.entry ? refreshed : added).push(slug);
+      plans.push({
+        group: g, arm: arm.arm, realRoot: arm.realRoot, localRefusal: arm.localRefusal,
+        files: single ? files : [], remoteAsked: single ? o.remote : undefined,
+        // A GitHub group read from a checkout keeps `root: null` — it stays a
+        // GitHub source (a v3.65.1 switch is no longer undone by a refresh).
+        keepRootNull: !!(g && !g.root && arm.arm === 'local' && !rootAsked),
+        tag: groupTag(g),
+      });
     }
-    const next = {
-      ...manifest,
-      ownership: 'repo',
-      repo: { root: realRoot, remote, lastRefreshAt: now, lastRefreshCommit: commit },
-      documents,
-    };
-    const totalBytes = totalBytesOf(next);
-    const budgetExceeded = totalBytes > next.budgetBytes;
-    if (budgetExceeded) notes.push(`budget: the mirrored documents total ${totalBytes} bytes, over the ${next.budgetBytes}-byte project budget — accepted; the bootstrap omits past its reading budget and says which`);
-    if (missing.length) notes.push(`missing: ${missing.length} source file(s) are not in the checkout; their stored copies were KEPT and are reported unreachable`);
-    if (!commit) notes.push('commit: could not be read (no git, or not a checkout) — stamped null');
-    const manifestAbs2 = resolveInsideState(domain, `${paths.dirRel}/${FOUNDATIONS_MANIFEST_FILENAME}`);
-    if (!manifestAbs2) return { ok: false, reason: 'unsafe-path', message: 'The manifest path resolves outside the state folder.' };
-    if (!dirMade) {
-      try { await mkdir(paths.dirAbs, { recursive: true }); }
-      catch (err) { return { ok: false, reason: 'io', message: `Could not create the foundations folder: ${scrubPaths(String(err?.message ?? err))}` }; }
-    }
-    try { await writeManifest(manifestAbs2, next); }
-    catch (err) {
-      return { ok: false, reason: 'io', message: `Documents were copied but the manifest was not written: ${scrubPaths(String(err?.message ?? err))}. Newly added copies are orphan files until the next refresh.`, refreshed, added };
-    }
-    return {
-      ok: true, domain, project: target.project, repoRoot: realRoot, commit, refreshedAt: now,
-      source: 'local', remoteChecked: false, remoteCommit: null, remoteError: null,
-      remote: next.repo.remote,
-      refreshed, unchanged, missing, added, refused,
-      totalBytes, budgetBytes: next.budgetBytes, budgetExceeded, documentCount: documents.length,
-      notes: finaliseNotes(notes),
-    };
+    const notes = [];
+    if (!single && rootAsked) notes.push('repoRoot: not applied — this project has several sources, and each was refreshed from its own');
+    return runRefreshPlans(domain, target, paths, model, plans, {
+      tokenSource: o.tokenSource, fetchImpl: o.fetchImpl, sleepImpl: o.sleepImpl, onWarn: o.onWarn, notes,
+    });
+  });
+}
+
+/** The refusal a project with nothing mirrored answers (CONTRACT §3.1). */
+function noSourcesRefusal(target) {
+  return {
+    ok: false, reason: 'no-sources',
+    message: `Nothing in "${target.project}" is mirrored, so there is nothing to refresh. Copies and documents written here `
+      + 'never change on their own. Nothing was changed.',
+  };
+}
+
+/** A group's tag for a colliding name (§4.5): the repository or folder name. */
+function groupTag(g) {
+  if (!g) return null;
+  if (g.remote && !g.root) return g.remote.repo;
+  if (g.root) return path.basename(g.root);
+  return g.remote ? g.remote.repo : null;
+}
+
+/** Which arm reads group `g` — `{ok, arm, realRoot?, localRefusal?}` or
+ *  `{ok:false, refusal}` when `local` was named and there is no folder. */
+async function chooseRefreshArm(g, rootOverride, source) {
+  let realRoot = null, localRefusal = null;
+  if (source !== 'remote') {
+    const cand = rootOverride || (g && g.root) || null;
+    const r = await resolveRepoRoot(cand);
+    if (r.ok) realRoot = r.realRoot; else localRefusal = r;
   }
+  if (source === 'local' && !realRoot) return { ok: false, refusal: localRefusal };
+  return realRoot ? { ok: true, arm: 'local', realRoot } : { ok: true, arm: 'remote', localRefusal };
+}
+
+/**
+ * A NAME FOR A DOCUMENT FROM ANOTHER SOURCE (v3.69.0, CONTRACT §4.5).
+ * Documents live flat in `foundations/<slug>`, so a name is one namespace:
+ *   1. `base` when it is free;
+ *   2. otherwise `<stem>-<tag>.md` — `tag` the repository name (GitHub) or the
+ *      folder's basename (folder or copy), slugged, the stem trimmed so the
+ *      whole name stays within 64 characters;
+ *   3. otherwise `<stem>-<tag>-2.md` … `-99`;
+ *   4. otherwise null — refused as "no free document name".
+ * Deterministic given the taken names. NEVER an overwrite and never a silent
+ * rename: the checklist shows the name before commit (`landsAs`), and the
+ * outcome lists it (`landed`).
+ */
+export function landingSlug(base, takenSlugs, tag) {
+  const taken = takenSlugs instanceof Set ? takenSlugs : new Set(Array.isArray(takenSlugs) ? takenSlugs : []);
+  const b = normaliseFoundationSlug(base);
+  if (!b) return null;
+  if (!taken.has(b)) return b;
+  const stem = b.replace(/\.md$/, '');
+  const t = String(tag || '').normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '').slice(0, 40) || 'source';
+  for (let n = 1; n <= 99; n++) {
+    const suffix = n === 1 ? `-${t}` : `-${t}-${n}`;
+    const room = 64 - '.md'.length - suffix.length;
+    if (room < 1) return null;
+    const s = normaliseFoundationSlug(`${stem.slice(0, room).replace(/-+$/, '')}${suffix}.md`);
+    if (s && !taken.has(s)) return s;
+  }
+  return null;
+}
+
+/**
+ * THE MIRROR WORK LIST for ONE group — its existing documents, then the
+ * listed files. ONE slug per path and ONE path per slug WITHIN the group (the
+ * v3.61 rule, found by the suite: `docs\decisions.md` listed under a new slug
+ * once landed as a fourth document mirroring a file already mirrored). A
+ * listed file already in the group IS that document. A NEW file's name comes
+ * from `landingSlug` against every name in the project (`taken`, which this
+ * call grows), so a file never lands on a kept document or on another
+ * group's mirror; an explicit `slug` that is taken is refused, never moved.
+ */
+function buildGroupWorkList(model, groupId, files, taken, tag) {
+  const work = new Map();
+  if (groupId) {
+    for (const d of docsInGroup(model, groupId)) work.set(d.slug, { entry: d, srcPath: d.source.path, role: d.role, title: d.title });
+  }
+  const refused = [];
+  const landed = [];
+  const held = [];
+  let newCount = 0;
+  const byPath = () => new Map([...work].map(([s, w]) => [normSourcePath(w.srcPath), s]));
+  for (const f of files) {
+    if (!f || typeof f !== 'object' || typeof f.path !== 'string') {
+      refused.push({ path: String(f && typeof f === 'object' ? f.path : f).slice(0, 120), reason: 'not a {path} object' });
+      continue;
+    }
+    if (f.role !== undefined && f.role !== null && !FOUNDATION_ROLES.includes(f.role)) {
+      refused.push({ path: f.path.slice(0, 120), reason: `"${String(f.role).slice(0, 40)}" is not a role` });
+      continue;
+    }
+    const wantPath = normSourcePath(f.path);
+    const explicit = f.slug !== undefined && f.slug !== null ? normaliseFoundationSlug(f.slug) : undefined;
+    if (explicit === null) { refused.push({ path: f.path.slice(0, 120), reason: 'no usable slug could be derived — pass `slug`' }); continue; }
+    const holder = byPath().get(wantPath);
+    if (holder) {
+      if (explicit && explicit !== holder) {
+        refused.push({ path: f.path.slice(0, 120), reason: `${wantPath} is already mirrored as "${holder}"` });
+        continue;
+      }
+      const existing = work.get(holder);
+      held.push({ path: wantPath.slice(0, 120), slug: holder });
+      work.set(holder, {
+        ...existing,
+        role: f.role !== undefined && f.role !== null ? f.role : existing.role,
+        title: readTitle(f.title) || existing.title,
+      });
+      continue;
+    }
+    let slug;
+    if (explicit) {
+      const existing = work.get(explicit);
+      if (existing) {
+        refused.push({ path: f.path.slice(0, 120), reason: `slug "${explicit}" already mirrors ${normSourcePath(existing.srcPath)}` });
+        continue;
+      }
+      if (taken.has(explicit)) {
+        const d = model.documents.find((x) => x.slug === explicit);
+        refused.push({
+          path: f.path.slice(0, 120),
+          reason: d && d.source.kind !== 'repo' ? `slug "${explicit}" is a curator-authored document`
+            : `slug "${explicit}" is already used by another document`,
+        });
+        continue;
+      }
+      slug = explicit;
+    } else {
+      const base = deriveSlugFromPath(f.path);
+      if (!base) { refused.push({ path: f.path.slice(0, 120), reason: 'no usable slug could be derived — pass `slug`' }); continue; }
+      slug = landingSlug(base, taken, tag);
+      if (!slug) { refused.push({ path: f.path.slice(0, 120), reason: 'no free document name' }); continue; }
+      if (slug !== base) landed.push({ path: wantPath, slug, from: base });
+    }
+    if (model.documents.length + newCount >= MAX_FOUNDATIONS_PER_PROJECT) {
+      refused.push({ path: f.path.slice(0, 120), reason: `the project already holds ${MAX_FOUNDATIONS_PER_PROJECT} documents, the cap` });
+      continue;
+    }
+    newCount++;
+    taken.add(slug);
+    work.set(slug, {
+      entry: null, srcPath: wantPath,
+      role: f.role !== undefined && f.role !== null ? f.role : guessRole(f.path),
+      title: readTitle(f.title) || null,
+    });
+  }
+  return { work, refused, landed, held, newCount };
+}
+
+/** PHASE 1, LOCAL ARM: read every source of one group into memory. Writes
+ *  nothing. Items are the documents to write; the rest is disclosed. */
+async function readGroupLocal(domain, paths, plan, work) {
+  const refused = [], missing = [], unchanged = [], items = [];
+  for (const [slug, w] of work) {
+    const src = await sourceDigest(plan.realRoot, w.srcPath);
+    if (src.status === 'refused') { refused.push({ path: w.srcPath.slice(0, 120), reason: src.reason }); continue; }
+    if (src.status === 'missing') { missing.push(w.srcPath); continue; }
+    if (src.status === 'too-large') {
+      refused.push({ path: w.srcPath.slice(0, 120), reason: `${src.bytes} bytes is over the ${MAX_FOUNDATION_BYTES}-byte per-document cap` });
+      continue;
+    }
+    const docAbs = resolveInsideState(domain, `${paths.dirRel}/${slug}`);
+    if (!docAbs) { refused.push({ path: w.srcPath.slice(0, 120), reason: 'the document path resolves outside the state folder' }); continue; }
+    const onDisk = await isFile(docAbs);
+    if (w.entry && w.entry.sha256 === src.sha256 && onDisk) { unchanged.push(slug); continue; }
+    items.push({ slug, w, buf: src.buf, bytes: src.bytes, sha256: src.sha256, rel: src.rel });
+  }
+  const commit = await gitHeadCommit(plan.realRoot);
+  // v3.63.0: RECORD WHERE THIS CHECKOUT CAME FROM, once, and never overwrite
+  // one the owner set — a stored remote is a decision, an observed `origin`
+  // is a default. This is what lets a SECOND machine, which has no checkout,
+  // refresh the same folder source over the GitHub API. A GitHub source read
+  // from a checkout keeps the remote it has.
+  const g = plan.group;
+  const remote = plan.keepRootNull ? (g ? g.remote : null)
+    : (g && g.remote) || plan.newRemote || await gitOriginRemote(plan.realRoot);
+  return { ok: true, source: 'local', commit, remote, items, unchanged, missing, refused };
 }
 
 // ── THE GITHUB MIRROR ARM (v3.63.0) ──────────────────────────────────────
@@ -6458,9 +6972,8 @@ async function refreshCore(domain, target, paths, realRoot, files) {
 // never a poll and never a background refresh.
 //
 // WHAT IT WILL NOT DO. Write to the source repository — the client has no
-// verb but GET. Create a curator-owned document. Change `ownership`, which
-// stays `repo`: a non-null `repo.remote` is what makes a mirror a REMOTE
-// mirror, so the one-ownership-per-project rule is untouched.
+// verb but GET. Create or overwrite a kept document: it writes only the
+// mirrored documents of the ONE source group it is reading (v3.69.0).
 //
 // NOTHING IS WRITTEN UNTIL EVERYTHING IS FETCHED. The ref, the tree and
 // every changed blob are read FIRST, into memory; the documents and then the
@@ -6539,42 +7052,25 @@ function resolveRemoteArg(gh, raw) {
   return { ok: true, remote: null };
 }
 
-async function refreshRemoteCore(domain, target, paths, files, opts) {
-  const notes = [];
-  const mf = await readManifest(paths.manifestAbs);
-  if (mf.status === 'malformed' && mf.code === MANIFEST_NEWER_CODE) return newerManifestRefusal(mf);
-  if (mf.status === 'malformed') {
-    return { ok: false, reason: 'manifest-unreadable', manifestError: mf.error, message: `The foundations manifest could not be read (${mf.error}). Nothing was refreshed.` };
-  }
-  // `freshManifest` (v3.68.0) is `initFoundations` re-choosing an EMPTY
-  // project's source: the manifest on disk lists no document (checked by the
-  // caller, under the same lock), so it is read as absent and replaced whole.
-  const manifest = mf.status === 'ok' && opts.freshManifest !== true ? mf.manifest : emptyManifest();
-  if (manifest.ownership === 'curator') {
-    return {
-      ok: false, reason: 'ownership-mismatch', ownership: 'curator',
-      message: `Project "${target.project}" holds curator-authored foundations. A refresh mirrors repository files and would `
-        + 'overwrite them — a project holds documents of ONE ownership. Nothing was changed.',
-    };
-  }
-
-  // The fetch side, and the remote's grammar — both through the helpers
-  // above, which are this code extracted in v3.65.0 so `initFoundations`
-  // loads and validates identically rather than in a second copy.
-  const loaded = await loadGitHubReader();
-  if (!loaded.ok) return loaded;
-  const gh = loaded.gh;
-
+/**
+ * PHASE 1, REMOTE ARM: read one group's documents from GitHub into memory —
+ * the ref, the tree, then every changed blob. Writes NOTHING: a refusal here
+ * leaves the group exactly as it was (and, in a refresh of every group, the
+ * others still refresh). `ctx.gh` is the loaded read client module.
+ */
+async function readGroupRemote(domain, paths, plan, work, ctx) {
+  const gh = ctx.gh;
+  const g = plan.group;
   // ── WHERE TO READ FROM ────────────────────────────────────────────────
-  const askedRes = resolveRemoteArg(gh, opts.remote);
+  const askedRes = resolveRemoteArg(gh, plan.remoteAsked);
   if (!askedRes.ok) return askedRes;
-  const remote = askedRes.remote || manifest.repo?.remote || null;
-  if (!remote) {
+  const remote0 = askedRes.remote || (g && g.remote) || plan.newRemote || null;
+  if (!remote0) {
     // BOTH ARMS ARE IMPOSSIBLE, and each says why — the local one because the
     // checkout is not here, the remote one because nothing records which
     // repository it came from. Reported under the reason the local arm has
     // always used, so every existing caller keeps matching.
-    const localWhy = opts.localRefusal?.message
+    const localWhy = plan.localRefusal?.message
       || 'The repository root is not reachable from this machine — the manifest records where the last refresh ran, and that path may only exist there.';
     return {
       ok: false, reason: 'repo-unreachable',
@@ -6586,15 +7082,21 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
         + 'has the checkout, or name the repository.',
     };
   }
+  // A GitHub add that reaches outside a migrated group's folder prefix WIDENS
+  // it (CONTRACT §3.2): the prefix was a listing scope, not a boundary.
+  const remote = plan.widenPath ? { ...remote0, path: null } : remote0;
 
   // ── THE TOKEN ─────────────────────────────────────────────────────────
   // Read from a FILE, never from a caller's argument: a token that can arrive
   // in a function call can arrive in an HTTP body, and this feature is not
   // going to be the first credential path into the app.
-  const tokenSource = opts.tokenSource === 'sync' ? 'sync' : 'config';
+  // v3.69.0 — the SOURCE of the token (never a token) is recorded on the
+  // group the first time it is mirrored, so a per-group refresh reads the
+  // same one; a caller that names one wins for this call.
+  const tokenSource = plan.tokenSource === 'sync' ? 'sync' : 'config';
   const tok = gh.readGitHubReadToken(tokenSource);
   if (!tok.ok) {
-    const localWhy = opts.localRefusal?.message || 'The checkout is not on this machine.';
+    const localWhy = plan.localRefusal?.message || 'The checkout is not on this machine.';
     return {
       ok: false, reason: 'no-token', tokenSource,
       remote: { owner: remote.owner, repo: remote.repo, ref: remote.ref, path: remote.path },
@@ -6606,13 +7108,12 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
         + 'is not on this machine either.',
     };
   }
-
   const client = gh.createGitHubReadClient({
     token: tok.token,
     tokenSource,
-    ...(typeof opts.fetchImpl === 'function' ? { fetchImpl: opts.fetchImpl } : {}),
-    ...(typeof opts.sleepImpl === 'function' ? { sleepImpl: opts.sleepImpl } : {}),
-    ...(typeof opts.onWarn === 'function' ? { onWarn: opts.onWarn } : {}),
+    ...(typeof ctx.fetchImpl === 'function' ? { fetchImpl: ctx.fetchImpl } : {}),
+    ...(typeof ctx.sleepImpl === 'function' ? { sleepImpl: ctx.sleepImpl } : {}),
+    ...(typeof ctx.onWarn === 'function' ? { onWarn: ctx.onWarn } : {}),
   });
 
   /** A client throw, as this store's own refusal. NOTHING has been written. */
@@ -6632,35 +7133,17 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
       refreshed: [], unchanged: [], missing: [], added: [],
       // The client's messages are built from a status, a sanitised GitHub
       // `message` field and the token's SOURCE. Never its value.
-      message: String(err?.message ?? err).slice(0, 400),
+      message: String(err?.message ?? err).slice(0, 400)
+        + (reason === 'remote-not-found' && plan.tokenDefaulted
+          ? ' No token source is recorded for this repository, so the one in Settings was used — if it is private, read it with the token that can see it.'
+          : ''),
     };
   };
 
-  const { work, refused } = buildMirrorWorkList(manifest, files);
-  if (work.size > MAX_FOUNDATIONS_PER_PROJECT) {
-    return { ok: false, reason: 'too-many-documents', message: `${work.size} documents would exceed the ${MAX_FOUNDATIONS_PER_PROJECT}-document cap.` };
+  const refused = [], missing = [], unchanged = [], items = [];
+  if (!work.size && !plan.switchSource) {
+    return { ok: true, source: 'remote', noopRemote: true, remote, tokenSource, commit: null, head: null, items, unchanged, missing, refused, requests: 0 };
   }
-  // NOTHING TO COPY. A refresh says so and writes nothing — there is no
-  // decision in it. A SOURCE SWITCH (`opts.switchSource`, v3.65.1) is the
-  // exception and must NOT return here: the decision it records — this
-  // mirror now reads GitHub, not a folder — is worth writing even when the
-  // project holds no document yet, which is the ordinary state of a mirror
-  // born from the chooser's "repo" choice with no files ticked. It falls
-  // through instead, so the ref and the tree are still READ (the remote is
-  // verified before it is recorded) and the manifest below is written with
-  // an empty `fetched` set.
-  if (!work.size && !opts.switchSource) {
-    return {
-      ok: true, domain, project: target.project, repoRoot: null, noop: true, commit: null,
-      source: 'remote', remoteChecked: false, remoteCommit: null, remoteError: null,
-      remote: { owner: remote.owner, repo: remote.repo, ref: remote.ref, path: remote.path },
-      refreshed: [], unchanged: [], missing: [], added: [], refused,
-      totalBytes: totalBytesOf(manifest), budgetBytes: manifest.budgetBytes, budgetExceeded: false,
-      notes: ['nothing to refresh: no repo-sourced documents are listed and no `files` were named'],
-    };
-  }
-
-  // ── PHASE 1: READ. The ref, the tree, then the changed blobs. ─────────
   let head, tree;
   try {
     head = await client.getRef(remote.owner, remote.repo, remote.ref);
@@ -6669,12 +7152,8 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
 
   const inTree = new Map(tree.entries.map((e) => [e.path, e]));
   const prefix = remote.path ? `${remote.path}/` : '';
-  const missing = [];
-  const fetched = new Map();     // slug → {buf, bytes, sha256, rel}
-  const unchangedSlugs = [];
-
   for (const [slug, w] of work) {
-    const rel = String(w.srcPath).replace(/\\/g, '/').replace(/^\.\//, '');
+    const rel = normSourcePath(w.srcPath);
     // The same path rules the local arm's `sourceDigest` applies, minus the
     // filesystem ones — there is no symlink to resolve over the API, and the
     // confinement it gets from `realpath` this one gets from `remote.path`.
@@ -6696,7 +7175,7 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
     if (!docAbs) { refused.push({ path: rel.slice(0, 120), reason: 'the document path resolves outside the state folder' }); continue; }
     if (w.entry && entry.sha) {
       const stored = await readCappedBytes(docAbs, MAX_FOUNDATION_BYTES);
-      if (stored && !stored.truncated && gitBlobSha(stored.buf) === entry.sha) { unchangedSlugs.push(slug); continue; }
+      if (stored && !stored.truncated && gitBlobSha(stored.buf) === entry.sha) { unchanged.push(slug); continue; }
     }
     let blob;
     try { blob = await client.getBlob(remote.owner, remote.repo, entry.sha); }
@@ -6707,85 +7186,302 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
       refused.push({ path: rel.slice(0, 120), reason: `${blob.bytes} bytes is over the ${MAX_FOUNDATION_BYTES}-byte per-document cap` });
       continue;
     }
-    fetched.set(slug, { buf: blob.buf, bytes: blob.bytes, sha256: sha256Hex(blob.buf), rel });
+    items.push({ slug, w, buf: blob.buf, bytes: blob.bytes, sha256: sha256Hex(blob.buf), rel, remoteCheck: true });
+  }
+  return { ok: true, source: 'remote', remote, tokenSource, commit: head.sha, head, items, unchanged, missing, refused, requests: client.stats().requests };
+}
+
+/**
+ * THE ONE REFRESH ENGINE (v3.69.0). `plans` is one entry per group to read —
+ * an existing group, or `group: null` for a NEW one (a first mirror, an add
+ * that starts a source). Every caller already holds both locks.
+ *
+ *   PHASE 0  build each group's work list; a new group takes the smallest
+ *            unused id, and the ≤ MAX_SOURCES_PER_PROJECT cap is enforced.
+ *   PHASE 1  READ every group into memory. A group that fails is set aside,
+ *            untouched. NOTHING is written in this phase.
+ *   PHASE 2  WRITE the documents of every group that read, then the manifest
+ *            ONCE, LAST — at the lowest version that expresses it.
+ *
+ * One plan answers v3.68's exact shape (local or remote) plus `groups[]`, so
+ * every existing caller keeps reading what it read; several plans answer the
+ * aggregate, `ok` when at least one group was refreshed.
+ *
+ * `opts.requireAdded` (the two add doors): a plan that adds nothing writes
+ * nothing and answers `nothing-added`.
+ */
+async function runRefreshPlans(domain, target, paths, model, plans, opts = {}) {
+  const notes = Array.isArray(opts.notes) ? opts.notes.slice() : [];
+  const single = plans.length === 1;
+  const taken = new Set(model.documents.map((d) => d.slug));
+  for (const n of (opts.extraTaken || [])) taken.add(n);
+  const idModel = { sources: model.sources.slice() };
+  const newGroups = plans.filter((p) => !p.failed && !p.group).length;
+  if (newGroups && model.sources.length + newGroups > MAX_SOURCES_PER_PROJECT) {
+    return tooManySourcesRefusal(model);
+  }
+  // PHASE 0
+  for (const p of plans) {
+    if (p.failed) continue;
+    if (!p.group) {
+      p.newId = nextGroupId(idModel);
+      idModel.sources.push({ id: p.newId });
+    }
+    p.id = p.group ? p.group.id : p.newId;
+    // WHICH TOKEN FILE a remote read uses: the caller's, else the one this
+    // group recorded, else Settings' ("config").
+    const recorded = p.group && (p.group.tokenSource === 'sync' || p.group.tokenSource === 'config') ? p.group.tokenSource : null;
+    const asked = p.tokenSource === 'sync' || p.tokenSource === 'config' ? p.tokenSource
+      : opts.tokenSource === 'sync' || opts.tokenSource === 'config' ? opts.tokenSource : null;
+    p.tokenSource = asked || recorded || 'config';
+    p.tokenDefaulted = !asked && !recorded;
+    const wl = buildGroupWorkList(model, p.group ? p.group.id : null, p.files || [], taken, p.tag || null);
+    p.work = wl.work;
+    p.preRefused = [...(p.preRefused || []), ...wl.refused];
+    // An ADD that names a file this source already mirrors adds nothing: say
+    // so by name. (A refresh that names one simply re-copies it.)
+    if (opts.requireAdded) {
+      for (const h of wl.held) p.preRefused.push({ path: h.path, slug: h.slug, reason: `already added — it is mirrored as “${h.slug}”` });
+    }
+    p.landed = wl.landed;
+    p.newCount = wl.newCount;
+  }
+  // PHASE 1 — every read, before any write.
+  let ghCtx = null;
+  for (const p of plans) {
+    if (p.failed) continue;
+    // An empty LOCAL work list is a no-op with nothing to read. The REMOTE
+    // arm still checks, in v3.63's order, that there IS a repository and a
+    // token before it answers "nothing to refresh".
+    if (p.arm === 'local' && !p.work.size && !p.switchSource) { p.read = { ok: true, noop: true }; continue; }
+    if (p.arm === 'local') {
+      p.read = await readGroupLocal(domain, paths, p, p.work);
+    } else {
+      if (!ghCtx) {
+        const loaded = await loadGitHubReader();
+        if (!loaded.ok) { p.read = loaded; continue; }
+        ghCtx = { gh: loaded.gh, tokenSource: opts.tokenSource, fetchImpl: opts.fetchImpl, sleepImpl: opts.sleepImpl, onWarn: opts.onWarn };
+      }
+      p.read = await readGroupRemote(domain, paths, p, p.work, ghCtx);
+    }
+    if (p.read && p.read.ok === false) p.failed = p.read;
   }
 
-  // ── PHASE 2: WRITE. Documents, then the manifest, LAST. ───────────────
+  const groupOut = (p, extra) => {
+    const g = p.group || { id: p.id, root: null, remote: null };
+    return { id: p.id || (g && g.id) || null, kind: groupKind(g), label: groupLabel(g), ...extra };
+  };
+
+  // ── ONE PLAN: v3.68's shapes, answered as they were ────────────────────
+  if (single) {
+    const p = plans[0];
+    if (p.failed) return { ...p.failed, groups: [groupOut(p, { ok: false, reason: p.failed.reason, message: p.failed.message })] };
+    if (p.read.noop || (p.read.noopRemote && !p.switchSource)) {
+      const remote = p.read.remote || (p.group && p.group.remote) || null;
+      const isRemote = p.arm !== 'local';
+      if (opts.requireAdded) return nothingAddedRefusal(p.preRefused);
+      return {
+        ok: true, domain, project: target.project, repoRoot: isRemote ? null : p.realRoot, noop: true, commit: null,
+        // The four remote readings, present on BOTH arms so a caller reads one
+        // shape (v3.63.0). Nothing was asked of GitHub.
+        source: isRemote ? 'remote' : 'local', remoteChecked: false, remoteCommit: null, remoteError: null,
+        ...(isRemote && remote ? { remote: { owner: remote.owner, repo: remote.repo, ref: remote.ref, path: remote.path } } : {}),
+        refreshed: [], unchanged: [], missing: [], added: [], refused: p.preRefused,
+        totalBytes: totalBytesOf(model), budgetBytes: model.budgetBytes, budgetExceeded: false,
+        notes: ['nothing to refresh: no repo-sourced documents are listed and no `files` were named'],
+        groups: [groupOut(p, { ok: true, noop: true, source: isRemote ? 'remote' : 'local', refreshed: [], unchanged: [], missing: [], added: [], refused: p.preRefused, commit: null })],
+      };
+    }
+  }
+
+  // ── PHASE 2: WRITE. Documents, then the manifest, LAST. ─────────────────
   const now = new Date().toISOString();
-  const refreshed = [], added = [];
-  const unchanged = unchangedSlugs.slice();
-  let documents = manifest.documents.slice();
-  if (fetched.size) {
+  let documents = model.documents.slice();
+  let sources = model.sources.slice();
+  const perPlan = new Map();
+  const toWrite = plans.filter((p) => !p.failed && p.read && !p.read.noop && !(p.read.noopRemote && !p.switchSource));
+  if (opts.requireAdded) {
+    // An add that would add nothing writes nothing — not even a refresh of
+    // the documents the group already had.
+    const addsSomething = toWrite.some((p) => p.read.items.some((it) => !it.w.entry));
+    if (!addsSomething) {
+      const p0 = plans[0];
+      const refusedAll = [...(p0.preRefused || []), ...((p0.read && p0.read.refused) || []),
+        ...((p0.read && p0.read.missing) || []).map((m) => ({ path: m, reason: 'not found' }))];
+      return nothingAddedRefusal(refusedAll);
+    }
+  }
+  if (toWrite.some((p) => p.read.items.length)) {
     try { await mkdir(paths.dirAbs, { recursive: true }); }
     catch (err) { return { ok: false, reason: 'io', message: `Could not create the foundations folder: ${scrubPaths(String(err?.message ?? err))}` }; }
   }
-  for (const [slug, got] of fetched) {
-    const w = work.get(slug);
-    const docAbs = resolveInsideState(domain, `${paths.dirRel}/${slug}`);
-    if (!docAbs) { refused.push({ path: got.rel.slice(0, 120), reason: 'the document path resolves outside the state folder' }); continue; }
-    if (w.entry && w.entry.sha256 === got.sha256 && await isFile(docAbs)) { unchanged.push(slug); continue; }
-    try { await writeFileAtomic(docAbs, got.buf); }
-    catch (err) { return { ok: false, reason: 'io', message: `Could not write ${slug}: ${scrubPaths(String(err?.message ?? err))}`, refreshed, added }; }
-    const next = {
-      slug, role: w.role, title: w.title || deriveTitle(got.buf, slug),
-      source: { kind: 'repo', path: got.rel },
-      sha256: got.sha256, bytes: got.bytes, updatedAt: now, commit: head.sha,
-      authoredBy: w.entry?.authoredBy || { kind: 'human', harness: null, model: null, commissionedBy: null },
-      skeleton: false,
-      // PRESERVED, exactly as on the local arm (v3.62.0): the repository owns
-      // the BYTES, the owner owns the ROUTING.
-      readFirst: w.entry ? w.entry.readFirst === true : false,
-      hidden: w.entry ? w.entry.hidden === true : false,
+  const allRefreshed = [], allAdded = [];
+  for (const p of toWrite) {
+    const r = p.read;
+    const refreshed = [], added = [], addedFiles = [], unchanged = r.unchanged.slice();
+    for (const it of r.items) {
+      const docAbs = resolveInsideState(domain, `${paths.dirRel}/${it.slug}`);
+      if (!docAbs) { r.refused.push({ path: it.rel.slice(0, 120), reason: 'the document path resolves outside the state folder' }); continue; }
+      if (it.remoteCheck && it.w.entry && it.w.entry.sha256 === it.sha256 && await isFile(docAbs)) { unchanged.push(it.slug); continue; }
+      try { await writeFileAtomic(docAbs, it.buf); }
+      catch (err) {
+        return { ok: false, reason: 'io', message: `Could not write ${it.slug}: ${scrubPaths(String(err?.message ?? err))}`, refreshed: allRefreshed.concat(refreshed), added: allAdded.concat(added) };
+      }
+      const w = it.w;
+      const entry = {
+        slug: it.slug, role: w.role, title: w.title || deriveTitle(it.buf, it.slug),
+        source: { kind: 'repo', path: it.rel, group: p.id },
+        sha256: it.sha256, bytes: it.bytes, updatedAt: now, commit: r.commit,
+        authoredBy: w.entry?.authoredBy || { kind: 'human', harness: null, model: null, commissionedBy: null },
+        // A mirrored document is never a skeleton: it is whatever the
+        // source says, and the source is the truth.
+        skeleton: false,
+        // …but `readFirst` IS preserved across a re-copy (v3.62.0), and the
+        // difference is the whole distinction the flag rests on: the source
+        // owns the BYTES, the owner owns the ROUTING. A newly added document
+        // starts unflagged. v3.67.0 — and so is `hidden`, by slug.
+        readFirst: w.entry ? w.entry.readFirst === true : false,
+        hidden: w.entry ? w.entry.hidden === true : false,
+      };
+      if (w.entry && w.entry[MANIFEST_EXTRAS]) entry[MANIFEST_EXTRAS] = w.entry[MANIFEST_EXTRAS];   // v3.68.1
+      documents = w.entry ? documents.map((d) => (d.slug === it.slug ? entry : d)) : [...documents, entry];
+      (w.entry ? refreshed : added).push(it.slug);
+      if (!w.entry) addedFiles.push({ path: it.rel, slug: it.slug });
+    }
+    allRefreshed.push(...refreshed); allAdded.push(...added);
+    // The group's own record. A folder read here records THIS folder (the
+    // machine that last refreshed); a GitHub source read from a checkout
+    // keeps `root: null`; a source SWITCH clears the folder in this same
+    // write (v3.65.1) — a second write would be a second failure point.
+    const g = p.group;
+    const root = p.arm === 'local' ? (p.keepRootNull ? (g ? g.root : null) : p.realRoot)
+      : p.switchSource ? null : (g ? g.root : null);
+    const nextGroup = {
+      ...(g || {}), id: p.id, root, remote: r.remote || null,
+      lastRefreshAt: now, lastRefreshCommit: r.commit || null,
     };
-    if (w.entry && w.entry[MANIFEST_EXTRAS]) next[MANIFEST_EXTRAS] = w.entry[MANIFEST_EXTRAS];   // v3.68.1
-    documents = w.entry ? documents.map((d) => (d.slug === slug ? next : d)) : [...documents, next];
-    (w.entry ? refreshed : added).push(slug);
+    // The token SOURCE, recorded when the group is first read over GitHub —
+    // and re-recorded by a deliberate choice (an add or a source switch).
+    // A DEFAULTED source is not recorded — "none recorded" already means the
+    // default, and writing a guess would read later as somebody's choice.
+    if (r.source === 'remote' && (p.recordTokenSource || (!nextGroup.tokenSource && !p.tokenDefaulted))) nextGroup.tokenSource = r.tokenSource;
+    sources = g ? sources.map((x) => (x.id === g.id ? nextGroup : x)) : [...sources, nextGroup];
+    perPlan.set(p, { refreshed, added, addedFiles, unchanged, group: nextGroup });
   }
-
-  const nextManifest = {
-    ...manifest,
-    ownership: 'repo',
-    // `root` is KEPT on a REFRESH: it records the machine that has a
-    // checkout, which is still true and is what the local arm will use
-    // there. A remote refresh does not make that machine's path wrong.
-    //
-    // A SOURCE SWITCH CLEARS IT (v3.65.1), in THIS write and not a second
-    // one: the owner said "mirror from GitHub instead", and a manifest that
-    // kept both would go on taking the local arm on `auto` from the machine
-    // that has the checkout — the switch would hold on every machine but the
-    // one it was made on. A second write would be a second failure point,
-    // able to leave a mirror with a stale root and a fresh remote.
-    repo: {
-      root: opts.switchSource ? null : (manifest.repo?.root ?? null),
-      remote, lastRefreshAt: now, lastRefreshCommit: head.sha,
-    },
-    documents,
-  };
-  const totalBytes = totalBytesOf(nextManifest);
-  const budgetExceeded = totalBytes > nextManifest.budgetBytes;
-  if (budgetExceeded) notes.push(`budget: the mirrored documents total ${totalBytes} bytes, over the ${nextManifest.budgetBytes}-byte project budget — accepted; the bootstrap omits past its reading budget and says which`);
-  if (missing.length) notes.push(`missing: ${missing.length} source file(s) are not in ${remote.owner}/${remote.repo} at this commit; their stored copies were KEPT and are reported unreachable`);
+  const next = { ...model, sources, documents };
+  const totalBytes = totalBytesOf(next);
+  const budgetExceeded = totalBytes > next.budgetBytes;
+  if (budgetExceeded) notes.push(`budget: the mirrored documents total ${totalBytes} bytes, over the ${next.budgetBytes}-byte project budget — accepted; the bootstrap omits past its reading budget and says which`);
+  for (const p of toWrite) {
+    const r = p.read;
+    if (r.missing.length) {
+      notes.push(r.source === 'remote'
+        ? `missing: ${r.missing.length} source file(s) are not in ${r.remote.owner}/${r.remote.repo} at this commit; their stored copies were KEPT and are reported unreachable`
+        : `missing: ${r.missing.length} source file(s) are not in the checkout; their stored copies were KEPT and are reported unreachable`);
+    }
+    if (r.source === 'local' && !r.commit) notes.push('commit: could not be read (no git, or not a checkout) — stamped null');
+  }
+  for (const p of plans) {
+    if (p.failed && !single) notes.push(`source ${groupLabel(p.group) || p.id}: not refreshed — ${String(p.failed.message || p.failed.reason).slice(0, 200)}`);
+  }
   const manifestAbs2 = resolveInsideState(domain, `${paths.dirRel}/${FOUNDATIONS_MANIFEST_FILENAME}`);
   if (!manifestAbs2) return { ok: false, reason: 'unsafe-path', message: 'The manifest path resolves outside the state folder.' };
-  try { await mkdir(paths.dirAbs, { recursive: true }); }
-  catch (err) { return { ok: false, reason: 'io', message: `Could not create the foundations folder: ${scrubPaths(String(err?.message ?? err))}` }; }
-  try { await writeManifest(manifestAbs2, nextManifest); }
-  catch (err) {
-    return { ok: false, reason: 'io', message: `Documents were copied but the manifest was not written: ${scrubPaths(String(err?.message ?? err))}. Newly added copies are orphan files until the next refresh.`, refreshed, added };
+  if (toWrite.length) {
+    try { await mkdir(paths.dirAbs, { recursive: true }); }
+    catch (err) { return { ok: false, reason: 'io', message: `Could not create the foundations folder: ${scrubPaths(String(err?.message ?? err))}` }; }
+    try { await writeManifest(manifestAbs2, next); }
+    catch (err) {
+      return { ok: false, reason: 'io', message: `Documents were copied but the manifest was not written: ${scrubPaths(String(err?.message ?? err))}. Newly added copies are orphan files until the next refresh.`, refreshed: allRefreshed, added: allAdded };
+    }
   }
+
+  const groupsOut = plans.map((p) => {
+    if (p.failed) return groupOut(p, { ok: false, source: p.arm === 'local' ? 'local' : 'remote', reason: p.failed.reason, message: p.failed.message, refreshed: [], unchanged: [], missing: [], added: [], refused: [], commit: null });
+    const done = perPlan.get(p);
+    if (!done) return groupOut(p, { ok: true, noop: true, source: p.arm === 'local' ? 'local' : 'remote', refreshed: [], unchanged: [], missing: [], added: [], refused: p.preRefused, commit: null });
+    const outG = { ...p, group: done.group };
+    return groupOut(outG, {
+      ok: true, source: p.read.source, refreshed: done.refreshed, unchanged: done.unchanged, missing: p.read.missing,
+      added: done.added, addedFiles: done.addedFiles, refused: [...p.preRefused, ...p.read.refused], commit: p.read.commit || null,
+      ...(p.landed && p.landed.length ? { landed: p.landed } : {}),
+    });
+  });
+  const landed = plans.flatMap((p) => p.landed || []);
+
+  if (single) {
+    const p = plans[0];
+    const r = p.read;
+    const done = perPlan.get(p);
+    const base = {
+      ok: true, domain, project: target.project,
+      refreshed: done.refreshed, unchanged: done.unchanged, missing: r.missing, added: done.added,
+      refused: [...p.preRefused, ...r.refused],
+      addedFiles: done.addedFiles,
+      totalBytes, budgetBytes: next.budgetBytes, budgetExceeded, documentCount: documents.length,
+      ...(landed.length ? { landed } : {}),
+      groups: groupsOut,
+      notes: finaliseNotes(notes),
+    };
+    if (r.source === 'local') {
+      return {
+        ok: true, domain, project: target.project, repoRoot: p.realRoot, commit: r.commit, refreshedAt: now,
+        source: 'local', remoteChecked: false, remoteCommit: null, remoteError: null,
+        remote: done.group.remote,
+        ...base,
+      };
+    }
+    return {
+      ok: true, domain, project: target.project,
+      // NULL, not a guess: no checkout was read on this machine, and reporting
+      // the group's advisory `root` here would say a folder was copied from.
+      repoRoot: null,
+      source: 'remote', remoteChecked: true, remoteCommit: r.head.sha, remoteError: null,
+      remote: { owner: r.remote.owner, repo: r.remote.repo, ref: r.head.ref, path: r.remote.path },
+      tokenSource: r.tokenSource,
+      commit: r.head.sha, refreshedAt: now,
+      ...base,
+      requests: r.requests,
+    };
+  }
+
+  // ── SEVERAL GROUPS: the aggregate ──────────────────────────────────────
+  const okPlans = plans.filter((p) => !p.failed);
+  if (!okPlans.length) {
+    const first = plans[0].failed;
+    return {
+      ok: false, reason: first.reason, domain, project: target.project,
+      message: `No source could be read, so nothing was refreshed. ${String(first.message || '').slice(0, 300)}`,
+      groups: groupsOut,
+    };
+  }
+  const srcs = new Set(okPlans.filter((p) => perPlan.has(p)).map((p) => p.read.source));
+  const agg = (k) => groupsOut.flatMap((g) => (Array.isArray(g[k]) ? g[k] : []));
   return {
-    ok: true, domain, project: target.project,
-    // NULL, not a guess: no checkout was read on this machine, and reporting
-    // the manifest's advisory `root` here would say a folder was copied from.
-    repoRoot: null,
-    source: 'remote', remoteChecked: true, remoteCommit: head.sha, remoteError: null,
-    remote: { owner: remote.owner, repo: remote.repo, ref: head.ref, path: remote.path },
-    tokenSource,
-    commit: head.sha, refreshedAt: now,
-    refreshed, unchanged, missing, added, refused,
-    totalBytes, budgetBytes: nextManifest.budgetBytes, budgetExceeded, documentCount: documents.length,
-    requests: client.stats().requests,
+    ok: true, domain, project: target.project, repoRoot: null, commit: null, refreshedAt: now,
+    source: srcs.size === 1 ? [...srcs][0] : srcs.size ? 'mixed' : 'local',
+    remoteChecked: okPlans.some((p) => p.read && p.read.source === 'remote' && !p.read.noopRemote),
+    remoteCommit: null, remoteError: null, remote: null,
+    refreshed: agg('refreshed'), unchanged: agg('unchanged'), missing: agg('missing'), added: agg('added'), refused: agg('refused'),
+    failedCount: plans.length - okPlans.length,
+    totalBytes, budgetBytes: next.budgetBytes, budgetExceeded, documentCount: documents.length,
+    ...(landed.length ? { landed } : {}),
+    groups: groupsOut,
     notes: finaliseNotes(notes),
+  };
+}
+
+function tooManySourcesRefusal(model) {
+  return {
+    ok: false, reason: 'too-many-sources', sourceCount: model.sources.length, cap: MAX_SOURCES_PER_PROJECT,
+    message: `This project already mirrors from ${model.sources.length} sources, the cap of ${MAX_SOURCES_PER_PROJECT}. `
+      + 'Add from one of them, or delete every document of one source first. Nothing was written.',
+  };
+}
+
+function nothingAddedRefusal(refused) {
+  return {
+    ok: false, reason: 'nothing-added', refused: refused || [],
+    message: 'None of the ticked files could be added — each one is listed with its reason. Nothing was written.',
   };
 }
 
@@ -6799,12 +7495,11 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
 // offered — ONE OWNERSHIP PER PROJECT — and `scanRepoForFoundations` is the
 // read that lets a person pick the files instead of typing paths.
 //
-// The ownership rule is NOT new here: `saveFoundation` has refused a mismatch
-// since v3.59.0 and `refreshFoundationsFromRepo` refuses a curator-owned
-// project. What is new is that the decision can be made once, deliberately,
-// before any document exists — and that it is REFUSED once made, because
-// re-deciding it would mean either overwriting the owner's documents with a
-// mirror or orphaning a checkout's copies.
+// v3.69.0: sources are PER DOCUMENT and a project may mix them, so ownership
+// is no longer a project rule — `init` survives as the Domains form's "new
+// project" chooser (CONTRACT §8, unchanged), still refused once a manifest
+// exists; the two "Add from…" doors (`addFoundationsFromFolder`,
+// `addFoundationsFromRemote`) add to ANY project.
 
 /** Does the foundations folder hold a `.md` document the manifest does not
  *  list? An orphan is a document somebody wrote, so a folder holding one is
@@ -6835,7 +7530,7 @@ async function hasUnlistedDocument(dirAbs, manifest) {
  *   `repo` +   → THE REMOTE ARM (v3.65.0). A mirror BORN REMOTE, for the
  *   `remote`     machine that has no checkout at all. Same ownership, same
  *                one-ownership-per-project rule, `repo.root: null` and
- *                `repo.remote` set — the shape `refreshRemoteCore` already
+ *                `repo.remote` set — the shape the remote arm already
  *                writes, and the shape v3.61.0's read path already tolerates
  *                (a plain folder records `commit: null` the same way).
  *
@@ -6849,7 +7544,7 @@ async function hasUnlistedDocument(dirAbs, manifest) {
  * refused afterwards. Recording it against a typo would leave the project
  * permanently pointed at a repository that does not exist, fixable only by
  * deleting the manifest by hand. So: with `files`, the read happens first and
- * NOTHING is written unless every blob is in hand (`refreshRemoteCore`'s own
+ * NOTHING is written unless every blob is in hand (the remote arm's own
  * guarantee, which also writes the ownership manifest at the end of it);
  * with no `files` there is nothing to read and the manifest is written with
  * NO network call at all, exactly as the design record describes.
@@ -6872,7 +7567,7 @@ async function hasUnlistedDocument(dirAbs, manifest) {
  * not read — not forwarded, not defaulted from, not logged.
  *
  * ONE `withFoundationsLock` acquisition for the whole write — the lock is not
- * re-entrant, which is why the mirror step calls `refreshCore` rather than
+ * re-entrant, which is why the mirror step calls the refresh engine rather than
  * `refreshFoundationsFromRepo`. The manifest is written LAST in the curator
  * branch (a crash leaves orphan documents, disclosed, never an entry with no
  * file); in the repo branch the ownership manifest comes first and the mirror
@@ -6930,6 +7625,8 @@ export async function initFoundations(domain, project, opts = {}) {
         + 'GitHub token in Settings, or "sync" for Personal Sync’s own token. Nothing was written.',
     };
   }
+  // Recorded on the group only when the caller NAMED one (v3.69.0).
+  const tokenNamed = inp.tokenSource === 'config' || inp.tokenSource === 'sync';
   const files = Array.isArray(inp.files) ? inp.files : [];
   const notes = [];
   if (ownership === 'curator' && files.length) {
@@ -6981,11 +7678,12 @@ export async function initFoundations(domain, project, opts = {}) {
     const rechoosable = mf.status === 'ok' && inp.rechooseEmpty === true
       && mf.manifest.documents.length === 0 && !(await hasUnlistedDocument(paths.dirAbs, mf.manifest));
     if (mf.status === 'ok' && !rechoosable) {
+      const own = ownershipOf(mf.manifest);
       return {
-        ok: false, reason: 'ownership-set', ownership: mf.manifest.ownership,
+        ok: false, reason: 'ownership-set', ownership: own,
         documentCount: mf.manifest.documents.length,
         message: `Project "${target.project}" has already chosen where its canonical documents live`
-          + (mf.manifest.ownership ? ` (${mf.manifest.ownership}-owned)` : '')
+          + (own ? ` (${own}-owned)` : '')
           + `, and it holds ${mf.manifest.documents.length} document(s). That choice is made once: changing it `
           + 'would either overwrite documents written here with a repository mirror, or strand the copies of a '
           + 'checkout. Nothing was written.',
@@ -7023,7 +7721,7 @@ export async function initFoundations(domain, project, opts = {}) {
           seeded.push(sk.slug);
         }
       }
-      const manifest = { ...emptyManifest(), ownership: 'curator', documents };
+      const manifest = { ...emptyManifest('curator'), documents };
       try { await writeManifest(manifestAbs2, manifest); }
       catch (err) {
         return {
@@ -7046,23 +7744,24 @@ export async function initFoundations(domain, project, opts = {}) {
     if (remote) {
       if (!files.length) {
         const manifest = {
-          ...emptyManifest(), ownership: 'repo',
-          repo: { root: null, remote, lastRefreshAt: null, lastRefreshCommit: null },
-          documents: [],
+          ...emptyManifest('repo'),
+          sources: [{
+            id: 's1', root: null, remote, lastRefreshAt: null, lastRefreshCommit: null,
+            ...(tokenNamed ? { tokenSource } : {}),
+          }],
         };
         try { await writeManifest(manifestAbs2, manifest); }
         catch (err) { return { ok: false, reason: 'io', message: `Could not write the foundations manifest: ${scrubPaths(String(err?.message ?? err))}` }; }
         return { ok: true, ownership: 'repo', seeded: [], refresh: null, remote };
       }
-      // `refreshRemoteCore` writes the documents and then the manifest, with
-      // `ownership: 'repo'` and this remote on it — the same bytes this arm
-      // would write itself, and it tolerates an ABSENT manifest by design
-      // (`emptyManifest()`), which is exactly the state it is called in here.
-      const refresh = await refreshRemoteCore(domain, target, paths, files, {
-        source: 'remote',
-        remote,
-        tokenSource,
-        freshManifest: rechoosable,
+      // The refresh engine writes the documents and then the manifest, with
+      // this remote as source s1 — the same bytes this arm would write itself.
+      // The model is EMPTY here: either there was no manifest, or it listed
+      // nothing and the caller asked to re-choose (`rechooseEmpty`).
+      const refresh = await runRefreshPlans(domain, target, paths, emptyManifest(), [{
+        group: null, arm: 'remote', newRemote: remote, files, tag: remote.repo,
+        tokenSource, recordTokenSource: tokenNamed,
+      }], {
         // TEST SEAMS ONLY, forwarded exactly as `refreshFoundationsFromRepo`
         // forwards them. `token` is NOT among them, here or there.
         fetchImpl: inp.fetchImpl,
@@ -7088,9 +7787,8 @@ export async function initFoundations(domain, project, opts = {}) {
 
     // repo — the ownership manifest FIRST and unconditionally, then the mirror.
     const manifest = {
-      ...emptyManifest(), ownership: 'repo',
-      repo: { root: realRoot, remote: null, lastRefreshAt: null, lastRefreshCommit: null },
-      documents: [],
+      ...emptyManifest('repo'),
+      sources: [{ id: 's1', root: realRoot, remote: null, lastRefreshAt: null, lastRefreshCommit: null }],
     };
     try { await writeManifest(manifestAbs2, manifest); }
     catch (err) { return { ok: false, reason: 'io', message: `Could not write the foundations manifest: ${scrubPaths(String(err?.message ?? err))}` }; }
@@ -7098,7 +7796,9 @@ export async function initFoundations(domain, project, opts = {}) {
     // A failed mirror does NOT undo the ownership: the decision was made and
     // recorded, and the files can be mirrored again through a refresh. The
     // result is returned whole so the caller can say what did not copy.
-    const refresh = await refreshCore(domain, target, paths, realRoot, files);
+    const refresh = await runRefreshPlans(domain, target, paths, manifest, [{
+      group: manifest.sources[0], arm: 'local', realRoot, files, tag: path.basename(realRoot),
+    }]);
     return { ok: true, ownership: 'repo', seeded: [], refresh };
   });
   if (!done.ok) return done;
@@ -7129,7 +7829,7 @@ export async function initFoundations(domain, project, opts = {}) {
  * documents are copied from, keeping everything else (v3.65.1).
  *
  * ── THE GAP THIS CLOSES ─────────────────────────────────────────────────
- * `refreshRemoteCore` has SET `repo.remote` since v3.63.0 and has always
+ * The remote arm has SET `repo.remote` since v3.63.0 and has always
  * PRESERVED `repo.root`, which is right for a refresh: the checkout on the
  * machine that made the mirror is still there, and `auto` should go on
  * preferring it. The consequence is that a project born from a folder takes
@@ -7138,19 +7838,19 @@ export async function initFoundations(domain, project, opts = {}) {
  * mirror of a checkout he no longer wanted to be the source.
  *
  * ── WHAT IT IS AND IS NOT ───────────────────────────────────────────────
- * It is ONE SOURCE PER PROJECT, re-chosen. `ownership` is NOT touched: it
- * stays `repo`, one ownership per project is untouched, and this is still a
- * byte copy with the repository as the author. What moves is the ROUTE the
- * bytes travel: `repo.remote` is set to the named repository and `repo.root`
- * is CLEARED, in the same `writeManifest` the copy performs.
+ * v3.69.0: it is ONE SOURCE GROUP, re-chosen (`opts.group`; the only group
+ * when there is one, `group-required` when there are several — acting on
+ * "the first" would re-point a source the owner did not pick). This is still
+ * a byte copy with the repository as the author. What moves is the ROUTE the
+ * bytes travel: the group's `remote` is set to the named repository and its
+ * `root` is CLEARED, in the same manifest write the copy performs. The token
+ * SOURCE named is recorded on the group, so its refreshes read the same one.
  *
- * It is refused unless the manifest already says `repo`:
- *   · no manifest at all      → `no-manifest` (nothing has been chosen yet —
- *                               that is `initFoundations`'s decision, and
- *                               making it here would set an ownership
- *                               sideways through a function named "switch")
- *   · `ownership: 'curator'`  → `ownership-mismatch`, the wording
- *                               `refreshRemoteCore` already uses
+ * It is refused:
+ *   · no manifest at all      → `no-manifest`
+ *   · nothing mirrored        → `no-sources` (kept documents are never read
+ *                               from GitHub; the reply carries `ownership`)
+ *   · an unknown `group`      → `unknown-group`
  *   · a `shared-*` mirror     → `readonly`, via `checkProjectTarget`
  *
  * ── THE TOKEN, AND WHAT IS NEVER WRITTEN ────────────────────────────────
@@ -7163,7 +7863,7 @@ export async function initFoundations(domain, project, opts = {}) {
  * not defaulted from, not logged.
  *
  * NOTHING IS WRITTEN UNTIL EVERY BLOB IS IN HAND, and a truncated tree throws
- * before the first blob — both inherited by going THROUGH `refreshRemoteCore`
+ * before the first blob — both inherited by going THROUGH the refresh engine
  * rather than around it. So does `readFirst`: it is preserved BY SLUG across
  * the re-copy (`readFirst: w.entry ? w.entry.readFirst === true : false`),
  * because the repository owns the bytes and the owner owns the routing.
@@ -7171,10 +7871,10 @@ export async function initFoundations(domain, project, opts = {}) {
  * `files` is accepted and defaults to the manifest's own documents, which is
  * the right default for a switch — same documents, new source. A listed file
  * may ADD a document; re-pointing an EXISTING slug at a different path is
- * refused by `buildMirrorWorkList` and named in `refused[]`, exactly as on a
+ * refused by `buildGroupWorkList` and named in `refused[]`, exactly as on a
  * refresh.
  *
- * Returns `refreshRemoteCore`'s envelope plus `{rootCleared, previousRoot}`.
+ * Returns the refresh envelope plus `{group, rootCleared, previousRoot}`.
  */
 export async function setFoundationsSource(domain, project, opts = {}) {
   const inp = opts && typeof opts === 'object' ? opts : {};
@@ -7214,8 +7914,10 @@ export async function setFoundationsSource(domain, project, opts = {}) {
   const remote = asked.remote;
   const files = Array.isArray(inp.files) ? inp.files : [];
 
+  const groupAsked = inp.group === undefined || inp.group === null || inp.group === '' ? null : String(inp.group);
+
   return withFoundationsLock(domain, 'set-foundations-source', async () => {
-    // OWNERSHIP IS READ UNDER THE LOCK, so the manifest this refuses on is
+    // THE SOURCES ARE READ UNDER THE LOCK, so the manifest this refuses on is
     // the manifest the copy would rewrite.
     const mf = await readManifest(paths.manifestAbs);
     if (mf.status === 'malformed' && mf.code === MANIFEST_NEWER_CODE) return newerManifestRefusal(mf);
@@ -7232,30 +7934,38 @@ export async function setFoundationsSource(domain, project, opts = {}) {
           + 'no source to change. Choose "mirror a repository" first; this switch re-points an existing mirror.',
       };
     }
-    // `null` IS A VALID OWNERSHIP ON DISK (`validateManifest`), so the two
-    // cases are told apart rather than sharing one sentence: a manifest that
-    // has chosen `curator` is a refusal about documents that exist, and one
-    // that has chosen nothing is a refusal about a decision not yet made.
-    if (mf.manifest.ownership !== 'repo') {
+    const model = mf.manifest;
+    // v3.69.0 — the switch is PER GROUP. With several, the caller names one:
+    // acting on "the first" would re-point a source the owner did not pick.
+    if (!model.sources.length) {
       return {
-        ok: false, reason: 'ownership-mismatch', ownership: mf.manifest.ownership || null,
-        message: mf.manifest.ownership === 'curator'
-          ? `Project "${target.project}" holds curator-authored foundations. Mirroring a repository would `
-            + 'overwrite them — a project holds documents of ONE ownership. Nothing was changed.'
-          : `Project "${target.project}" has not chosen where its canonical documents live, so there is no `
-            + 'mirror to re-point. Choose "mirror a repository" first. Nothing was changed.',
+        ...noSourcesRefusal(target), ownership: ownershipOf(model),
+        message: `Nothing in "${target.project}" is mirrored, so there is no source to re-point. Copies and documents `
+          + 'written here are never read from GitHub. Nothing was changed.',
       };
     }
-    const previousRoot = (mf.manifest.repo && typeof mf.manifest.repo.root === 'string') ? mf.manifest.repo.root : null;
+    let g;
+    if (groupAsked) {
+      g = groupById(model, groupAsked);
+      if (!g) return { ok: false, reason: 'unknown-group', message: `This project has no source "${groupAsked.slice(0, 20)}". Nothing was changed.` };
+    } else if (model.sources.length === 1) {
+      g = model.sources[0];
+    } else {
+      return {
+        ok: false, reason: 'group-required',
+        message: `This project mirrors from ${model.sources.length} sources, so name the one (group) to read from GitHub instead. Nothing was changed.`,
+      };
+    }
+    const previousRoot = typeof g.root === 'string' ? g.root : null;
 
-    const out = await refreshRemoteCore(domain, target, paths, files, {
-      source: 'remote',
-      remote,
-      tokenSource,
-      // THE ONE LINE THAT MAKES THIS A SWITCH: the manifest's `repo.root` is
-      // written as null in the copy's OWN `writeManifest`, and an empty work
-      // list still verifies the remote and records it.
+    const out = await runRefreshPlans(domain, target, paths, model, [{
+      group: g, arm: 'remote', remoteAsked: remote, files, tag: remote.repo,
+      // THE ONE FLAG THAT MAKES THIS A SWITCH: the group's `root` is written as
+      // null in the copy's OWN manifest write, and an empty work list still
+      // verifies the remote and records it.
       switchSource: true,
+      tokenSource, recordTokenSource: true,
+    }], {
       // TEST SEAMS ONLY, forwarded exactly as `refreshFoundationsFromRepo`
       // forwards them. `token` is NOT among them, here or there.
       fetchImpl: inp.fetchImpl,
@@ -7279,7 +7989,7 @@ export async function setFoundationsSource(domain, project, opts = {}) {
       ? `source: this mirror now reads ${remote.owner}/${remote.repo} over GitHub; the folder path it used to `
         + 'copy from is cleared, so every machine reads the same source'
       : `source: this mirror now reads ${remote.owner}/${remote.repo} over GitHub`);
-    return { ...out, rootCleared: true, previousRoot, notes };
+    return { ...out, group: { id: g.id, kind: 'github', label: `${remote.owner}/${remote.repo}` }, rootCleared: true, previousRoot, notes };
   });
 }
 
@@ -7647,27 +8357,29 @@ export async function scanRemoteForFoundations(opts = {}) {
   };
 }
 
-// ── "ADD FROM THIS COMPUTER" — documents from a folder the owner picked (v3.68.0)
+// ── "ADD FROM THIS COMPUTER" — documents from a folder the owner picked (v3.68.0; per document v3.69.0)
 //
 // The maintainer's own words for the door: "choose a folder, select files from
 // it, drop them in, that's it" — and add more later, from the same folder or
-// another one, without starting over. What that means depends on the ONE
-// ownership a project already has, and this function never changes a
-// project's ownership sideways:
+// another one, without starting over. From v3.69.0 the door works on EVERY
+// project, whatever it already holds, in one of two modes (decision D2):
 //
-//   · NO DOCUMENTS YET (no manifest, or one that lists none and a folder with
-//     no unlisted document) → the files are COPIED IN as curator-kept
-//     documents. A copy, not a mirror: the folder is where they came from, not
-//     their source of truth, so a second folder later is simply more copies.
-//   · CURATOR-KEPT → the same copy, APPENDED. A file whose slug is already in
-//     the project is refused as "already added" — a copy never replaces.
-//   · A FOLDER MIRROR (repo-owned, with a recorded folder) → the picked files
-//     are MIRRORED through the existing refresh (`refreshCore`), so they keep
-//     the mirror's freshness reading. They must sit inside the recorded
-//     folder: a mirror has one source, and a file from anywhere else is
-//     refused by name rather than quietly turned into a second source.
-//   · A GITHUB MIRROR (no recorded folder) → refused `source-is-github`: its
-//     documents come from the repository, and a local copy cannot join it.
+//   · `copy`   ("Copy once") — the files are COPIED IN as kept documents
+//              (`source.kind: 'curator'`, `copiedFrom` the folder's basename).
+//              Never refreshed; a second folder later is simply more copies.
+//   · `mirror` ("Keep in sync") — the files are MIRRORED: they join the
+//              folder source whose recorded folder contains the picked one, or
+//              start a NEW source rooted at the checkout's TOP LEVEL (`git
+//              rev-parse --show-toplevel`, else the picked folder), with paths
+//              rebased to it and the checkout's `origin` recorded — so another
+//              machine can refresh the same paths over GitHub (the §0.4.2 fix).
+//   · absent   `mirror` when the picked folder lies inside a folder this
+//              project already mirrors (what v3.68 did for a mirror), else
+//              `copy` (what v3.68 did for everything else).
+//
+// A NAME ALREADY TAKEN lands under a readable suffix (`landingSlug`), never on
+// top of another document; a file already added is refused as "already
+// added"; a new source past MAX_SOURCES_PER_PROJECT is refused at commit.
 //
 // SECURITY — every rule is one this module already enforces, reused rather
 // than restated: the root is absolute and resolved through `resolveRepoRoot`
@@ -7678,6 +8390,99 @@ export async function scanRemoteForFoundations(opts = {}) {
 // read into memory — the documents first, then the manifest, last.
 export const MAX_ADD_FILES_PER_CALL = MAX_FOUNDATIONS_PER_PROJECT;
 
+/**
+ * `git rev-parse --show-toplevel` for a folder, realpath'd, or null — git
+ * absent, not a work tree, a timeout: all null, none an error. `execFile`,
+ * never `exec`: no shell; `child_process` DYNAMICALLY, for the tray guard
+ * `gitHeadCommit` explains.
+ */
+async function gitTopLevel(realRoot) {
+  try {
+    const { execFile } = await import('child_process');
+    const out = await new Promise((resolve) => {
+      let settled = false;
+      const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+      try {
+        execFile('git', ['-C', realRoot, 'rev-parse', '--show-toplevel'],
+          { timeout: 4000, windowsHide: true, maxBuffer: 8192 },
+          (err, stdout) => done(err ? null : String(stdout || '').trim() || null));
+      } catch { done(null); }
+    });
+    if (!out || !path.isAbsolute(out)) return null;
+    return await realpath(out);
+  } catch { return null; }
+}
+
+/** Is `inner` the folder `outer` or inside it? Both already realpath'd. */
+function folderInside(outer, inner) {
+  const rel = path.relative(outer, inner);
+  return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel));
+}
+
+/**
+ * WHAT A PICKED FOLDER IS, for the door (addendum 1): `{ok, root, topLevel,
+ * inGitCheckout}` — `root` the picked folder's realpath, `topLevel` the
+ * checkout it sits in (or null). Read-only; runs one `git rev-parse`.
+ */
+export async function describeFolderSource(root) {
+  if (typeof root !== 'string' || !root.trim() || root.includes('\0') || !path.isAbsolute(root)) {
+    return { ok: false, reason: 'invalid-root', message: 'Name the folder as an absolute path on this computer.' };
+  }
+  const r = await resolveRepoRoot(root.trim());
+  if (!r.ok) return r;
+  const topLevel = await gitTopLevel(r.realRoot);
+  return { ok: true, root: r.realRoot, topLevel, inGitCheckout: !!topLevel };
+}
+
+/**
+ * WHERE A FOLDER MIRROR LANDS: the existing folder source whose recorded
+ * folder (resolved on THIS machine) contains the picked one — the deepest,
+ * when two do — or a new source rooted at the checkout's top level. `prefix`
+ * rebases a path relative to the picked folder onto the source's root.
+ */
+async function resolveFolderMirrorTarget(model, pickedRoot) {
+  let best = null;
+  for (const g of model.sources) {
+    if (!g.root) continue;
+    const r = await resolveRepoRoot(g.root);
+    if (!r.ok || !folderInside(r.realRoot, pickedRoot)) continue;
+    if (!best || r.realRoot.length > best.groupRoot.length) best = { group: g, groupRoot: r.realRoot };
+  }
+  let groupRoot, group = null, newRemote = null, topLevel = null;
+  if (best) {
+    ({ group, groupRoot } = best);
+  } else {
+    topLevel = await gitTopLevel(pickedRoot);
+    groupRoot = topLevel && folderInside(topLevel, pickedRoot) ? topLevel : pickedRoot;
+    newRemote = topLevel ? await gitOriginRemote(groupRoot) : null;
+  }
+  const rel = path.relative(groupRoot, pickedRoot);
+  const prefix = rel ? `${rel.split(path.sep).join('/')}/` : '';
+  return { group, groupRoot, prefix, newRemote };
+}
+
+/** A mirrored document of the SAME repository path reached through another
+ *  group of the same repository (a folder source whose origin is that GitHub
+ *  repository, or the reverse) — the same file reached two ways is one file. */
+function sameFileElsewhere(model, remote, excludeGroupId, repoPath) {
+  if (!remote) return null;
+  const want = normSourcePath(repoPath);
+  for (const g of model.sources) {
+    if (g.id === excludeGroupId || !g.remote || !sameRepository(g.remote, remote)) continue;
+    const d = docsInGroup(model, g.id).find((x) => normSourcePath(x.source.path) === want);
+    if (d) return d.slug;
+  }
+  return null;
+}
+
+/** Names on disk the manifest does not list: never landed on. */
+async function unlistedNames(dirAbs, model) {
+  let names = [];
+  try { names = await readdir(dirAbs); } catch { return []; }
+  const listed = new Set(model.documents.map((d) => d.slug));
+  return names.filter((n) => FOUNDATION_SLUG_RE.test(n) && !listed.has(n));
+}
+
 export async function addFoundationsFromFolder(domain, project, opts = {}) {
   const inp = opts && typeof opts === 'object' ? opts : {};
   const target = await checkProjectTarget(domain, project);
@@ -7686,6 +8491,9 @@ export async function addFoundationsFromFolder(domain, project, opts = {}) {
   if (!paths) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
   if (typeof inp.root !== 'string' || !inp.root.trim() || inp.root.includes('\0') || !path.isAbsolute(inp.root)) {
     return { ok: false, reason: 'invalid-root', message: 'Name the folder as an absolute path on this computer (for example /Users/you/Documents/notes).' };
+  }
+  if (inp.mode !== undefined && inp.mode !== null && inp.mode !== 'copy' && inp.mode !== 'mirror') {
+    return { ok: false, reason: 'invalid-mode', message: `"${String(inp.mode).slice(0, 20)}" is not a mode — "copy" (copy once) or "mirror" (keep in sync). Nothing was written.` };
   }
   const files = Array.isArray(inp.files) ? inp.files : [];
   if (!files.length) {
@@ -7706,144 +8514,343 @@ export async function addFoundationsFromFolder(domain, project, opts = {}) {
     if (mf.status === 'malformed') {
       return { ok: false, reason: 'manifest-unreadable', manifestError: mf.error, message: `The foundations manifest could not be read (${mf.error}). Nothing was added.` };
     }
-    const manifest = mf.status === 'ok' ? mf.manifest : null;
-    const populated = !!manifest && manifest.documents.length > 0;
-
-    // ── A MIRROR WITH DOCUMENTS: add through the mirror, never beside it ──
-    if (populated && manifest.ownership === 'repo') {
-      if (!manifest.repo || !manifest.repo.root) {
-        const r = manifest.repo && manifest.repo.remote;
-        return {
-          ok: false, reason: 'source-is-github', remote: r ? { owner: r.owner, repo: r.repo } : null,
-          message: `This project mirrors ${r ? `${r.owner}/${r.repo}` : 'a GitHub repository'}, so its documents come from there. `
-            + 'Add more with “Add from GitHub”. Nothing was written.',
-        };
-      }
-      const recorded = await resolveRepoRoot(manifest.repo.root);
-      if (!recorded.ok) {
-        return { ...recorded, message: 'The folder this project mirrors is not on this computer, so nothing can be added from it here. Nothing was written.' };
-      }
-      // Both sides are already realpath'd, so this compares where the folders
-      // ACTUALLY are — a symlink to somewhere else cannot pass as "inside".
-      const relToMirror = path.relative(recorded.realRoot, pickedRoot);
-      const outside = relToMirror === '..' || relToMirror.startsWith(`..${path.sep}`) || path.isAbsolute(relToMirror);
-      if (outside) {
-        return {
-          ok: false, reason: 'outside-mirrored-folder', mirroredFolder: recorded.realRoot,
-          message: `This project mirrors ${recorded.realRoot}. A mirror has one source, so documents can be added only `
-            + 'from inside that folder. Nothing was written.',
-        };
-      }
-      const prefix = relToMirror ? `${relToMirror.split(path.sep).join('/')}/` : '';
-      const rebased = files.map((f) => (f && typeof f === 'object' && typeof f.path === 'string'
-        ? { path: prefix + f.path.replace(/\\/g, '/').replace(/^\.\//, ''), ...(f.role ? { role: f.role } : {}) }
-        : f));
-      const out = await refreshCore(domain, target, paths, recorded.realRoot, rebased);
-      return out && out.ok ? { ...out, mode: 'mirror' } : out;
-    }
-
-    // ── EVERYTHING ELSE COPIES: absent, empty, or curator-kept ───────────
-    if (manifest && !populated && await hasUnlistedDocument(paths.dirAbs, manifest)) {
+    const model = mf.status === 'ok' ? mf.manifest : emptyManifest();
+    if (mf.status === 'ok' && !model.documents.length && await hasUnlistedDocument(paths.dirAbs, model)) {
       return {
         ok: false, reason: 'orphans-present',
         message: 'The documents folder holds a file the manifest does not list, so this project is not empty. '
           + 'Remove or re-list it first. Nothing was written.',
       };
     }
-    const base = manifest && manifest.ownership === 'curator' ? manifest
-      : { ...emptyManifest(), ownership: 'curator' };
-    const rechosen = !!manifest && manifest.ownership === 'repo';
-    const existing = new Set(base.documents.map((d) => d.slug));
-    const refused = [];
-    const accepted = [];
-    const seenSlugs = new Set();
-    for (const f of files) {
-      const rawPath = f && typeof f === 'object' && typeof f.path === 'string' ? f.path : null;
-      if (!rawPath) { refused.push({ path: String(f && typeof f === 'object' ? f.path : f).slice(0, 120), reason: 'not a {path} object' }); continue; }
-      const rel0 = rawPath.replace(/\\/g, '/').replace(/^\.\//, '');
-      if (f.role !== undefined && f.role !== null && !FOUNDATION_ROLES.includes(f.role)) {
-        refused.push({ path: rel0.slice(0, 120), reason: `"${String(f.role).slice(0, 40)}" is not a role` }); continue;
+    let mode = inp.mode;
+    if (mode !== 'copy' && mode !== 'mirror') {
+      mode = 'copy';
+      for (const g of model.sources) {
+        if (!g.root) continue;
+        const r = await resolveRepoRoot(g.root);
+        if (r.ok && folderInside(r.realRoot, pickedRoot)) { mode = 'mirror'; break; }
       }
-      const src = await sourceDigest(pickedRoot, rel0);
-      if (src.status === 'refused') { refused.push({ path: rel0.slice(0, 120), reason: src.reason }); continue; }
-      if (src.status === 'missing') { refused.push({ path: rel0.slice(0, 120), reason: 'not found in that folder' }); continue; }
-      if (src.status === 'too-large') {
-        refused.push({ path: rel0.slice(0, 120), bytes: src.bytes, cap: MAX_FOUNDATION_BYTES,
-          reason: `${src.bytes} bytes is over the ${MAX_FOUNDATION_BYTES}-byte (${Math.round(MAX_FOUNDATION_BYTES / 1024)} KB) per-document cap` });
-        continue;
-      }
-      if (!src.buf.toString('utf8').trim()) { refused.push({ path: src.rel.slice(0, 120), reason: 'the file is empty' }); continue; }
-      const slug = deriveSlugFromPath(src.rel);
-      if (!slug) { refused.push({ path: src.rel.slice(0, 120), reason: 'no usable document name could be made from the file name' }); continue; }
-      if (existing.has(slug)) { refused.push({ path: src.rel.slice(0, 120), slug, reason: `already added — “${slug}” is in this project` }); continue; }
-      if (seenSlugs.has(slug)) { refused.push({ path: src.rel.slice(0, 120), slug, reason: `another ticked file is also named “${slug}”` }); continue; }
-      if (base.documents.length + accepted.length >= MAX_FOUNDATIONS_PER_PROJECT) {
-        refused.push({ path: src.rel.slice(0, 120), reason: `the project already holds ${MAX_FOUNDATIONS_PER_PROJECT} documents, the cap` }); continue;
-      }
-      seenSlugs.add(slug);
-      accepted.push({ slug, rel: src.rel, buf: src.buf, role: f.role || guessRole(src.rel) });
     }
-    if (!accepted.length) {
-      return {
-        ok: false, reason: 'nothing-added', refused,
-        message: 'None of the ticked files could be added — each one is listed with its reason. Nothing was written.',
-      };
+    if (mode === 'mirror') return addMirrorFromFolder(domain, target, paths, model, pickedRoot, files);
+    return addCopiesFromFolder(domain, target, paths, model, pickedRoot, files);
+  });
+}
+
+/** "Keep in sync": join or start a folder source, then read it (lock held). */
+async function addMirrorFromFolder(domain, target, paths, model, pickedRoot, files) {
+  const t = await resolveFolderMirrorTarget(model, pickedRoot);
+  if (!t.group && model.sources.length >= MAX_SOURCES_PER_PROJECT) return tooManySourcesRefusal(model);
+  const groupRemote = t.group ? t.group.remote : t.newRemote;
+  const refusedPre = [];
+  const rebased = [];
+  for (const f of files) {
+    if (!f || typeof f !== 'object' || typeof f.path !== 'string') { rebased.push(f); continue; }
+    const repoPath = t.prefix + normSourcePath(f.path);
+    const elsewhere = sameFileElsewhere(model, groupRemote, t.group ? t.group.id : null, repoPath);
+    if (elsewhere) { refusedPre.push({ path: repoPath.slice(0, 120), slug: elsewhere, reason: `already added — it is mirrored as “${elsewhere}”` }); continue; }
+    rebased.push({ path: repoPath, ...(f.role ? { role: f.role } : {}) });
+  }
+  const tag = path.basename(t.groupRoot);
+  const out = await runRefreshPlans(domain, target, paths, model, [{
+    group: t.group, arm: 'local', realRoot: t.groupRoot, newRemote: t.newRemote, files: rebased, tag,
+    preRefused: refusedPre,
+  }], { requireAdded: true, extraTaken: await unlistedNames(paths.dirAbs, model) });
+  if (!out || !out.ok) return out;
+  const g = out.groups && out.groups[0];
+  return {
+    ...out, mode: 'mirror', root: pickedRoot,
+    groupId: g ? g.id : null, groupCreated: !t.group,
+    group: g ? { id: g.id, kind: g.kind, label: g.label } : null,
+    // Paths as the caller sent them — relative to the PICKED folder.
+    addedFiles: (out.addedFiles || []).map((a) => ({
+      path: t.prefix && a.path.startsWith(t.prefix) ? a.path.slice(t.prefix.length) : a.path, slug: a.slug,
+    })),
+  };
+}
+
+/** "Copy once": kept documents with `copiedFrom` (lock held). */
+async function addCopiesFromFolder(domain, target, paths, model, pickedRoot, files) {
+  const folderName = readCopiedFrom(path.basename(pickedRoot)) || 'a folder';
+  const taken = new Set([...model.documents.map((d) => d.slug), ...(await unlistedNames(paths.dirAbs, model))]);
+  const refused = [];
+  const accepted = [];
+  const landed = [];
+  for (const f of files) {
+    const rawPath = f && typeof f === 'object' && typeof f.path === 'string' ? f.path : null;
+    if (!rawPath) { refused.push({ path: String(f && typeof f === 'object' ? f.path : f).slice(0, 120), reason: 'not a {path} object' }); continue; }
+    const rel0 = normSourcePath(rawPath);
+    if (f.role !== undefined && f.role !== null && !FOUNDATION_ROLES.includes(f.role)) {
+      refused.push({ path: rel0.slice(0, 120), reason: `"${String(f.role).slice(0, 40)}" is not a role` }); continue;
     }
-    try { await mkdir(paths.dirAbs, { recursive: true }); }
-    catch (err) { return { ok: false, reason: 'io', message: `Could not create the documents folder: ${scrubPaths(String(err?.message ?? err))}` }; }
-    const manifestAbs2 = resolveInsideState(domain, `${paths.dirRel}/${FOUNDATIONS_MANIFEST_FILENAME}`);
-    if (!manifestAbs2) return { ok: false, reason: 'unsafe-path', message: 'The documents folder resolves outside the project — refusing to write.' };
-    const now = new Date().toISOString();
-    const added = [];
-    const entries = [];
-    for (const a of accepted) {
-      const docAbs = resolveInsideState(domain, `${paths.dirRel}/${a.slug}`);
-      if (!docAbs) { refused.push({ path: a.rel.slice(0, 120), reason: 'the document path resolves outside the state folder' }); continue; }
-      // An unlisted file of the same name was written by somebody; a copy
-      // never lands on top of it.
-      if (await isFile(docAbs)) { refused.push({ path: a.rel.slice(0, 120), slug: a.slug, reason: `a file named “${a.slug}” is already in the documents folder, unlisted` }); continue; }
-      try { await writeFileAtomic(docAbs, a.buf); }
-      catch (err) {
-        return { ok: false, reason: 'io', message: `Could not write ${a.slug}: ${scrubPaths(String(err?.message ?? err))}. Documents written before it are orphan files until the next add.`, added };
-      }
-      added.push(a.slug);
-      entries.push({
-        slug: a.slug, role: a.role, title: deriveTitle(a.buf, a.slug), source: { kind: 'curator' },
-        sha256: sha256Hex(a.buf), bytes: a.buf.length, updatedAt: now, commit: null,
-        authoredBy: { kind: 'human', harness: null, model: null, commissionedBy: null },
-        skeleton: false, readFirst: false,
-        // PROVENANCE: copied, not written — the folder's basename only.
-        copiedFrom: readCopiedFrom(path.basename(pickedRoot)) || 'a folder',
-      });
+    const src = await sourceDigest(pickedRoot, rel0);
+    if (src.status === 'refused') { refused.push({ path: rel0.slice(0, 120), reason: src.reason }); continue; }
+    if (src.status === 'missing') { refused.push({ path: rel0.slice(0, 120), reason: 'not found in that folder' }); continue; }
+    if (src.status === 'too-large') {
+      refused.push({ path: rel0.slice(0, 120), bytes: src.bytes, cap: MAX_FOUNDATION_BYTES,
+        reason: `${src.bytes} bytes is over the ${MAX_FOUNDATION_BYTES}-byte (${Math.round(MAX_FOUNDATION_BYTES / 1024)} KB) per-document cap` });
+      continue;
     }
-    if (!entries.length) {
-      return { ok: false, reason: 'nothing-added', refused, message: 'None of the ticked files could be added — each one is listed with its reason. Nothing was written.' };
+    if (!src.buf.toString('utf8').trim()) { refused.push({ path: src.rel.slice(0, 120), reason: 'the file is empty' }); continue; }
+    const base = deriveSlugFromPath(src.rel);
+    if (!base) { refused.push({ path: src.rel.slice(0, 120), reason: 'no usable document name could be made from the file name' }); continue; }
+    // ALREADY ADDED (a copy): a kept document of this name copied from a
+    // folder of this name. Anything else of that name is a different
+    // document, and this one lands beside it.
+    const same = model.documents.find((d) => d.slug === base && d.source.kind !== 'repo' && d.copiedFrom === folderName);
+    if (same) { refused.push({ path: src.rel.slice(0, 120), slug: base, reason: `already added — “${base}” is in this project` }); continue; }
+    if (model.documents.length + accepted.length >= MAX_FOUNDATIONS_PER_PROJECT) {
+      refused.push({ path: src.rel.slice(0, 120), reason: `the project already holds ${MAX_FOUNDATIONS_PER_PROJECT} documents, the cap` }); continue;
     }
-    const next = { ...base, ownership: 'curator', repo: null, documents: [...base.documents, ...entries] };
-    const totalBytes = totalBytesOf(next);
-    const budgetExceeded = totalBytes > next.budgetBytes;
-    const notes = [];
-    if (budgetExceeded) {
-      notes.push(`budget: this project's documents now total ${totalBytes} bytes, over the ${next.budgetBytes}-byte `
-        + `(${Math.round(next.budgetBytes / 1024)} KB) project budget. The add is complete; a session start sends only what its reading budget allows.`);
-    }
-    try { await writeManifest(manifestAbs2, next); }
+    const slug = landingSlug(base, taken, folderName);
+    if (!slug) { refused.push({ path: src.rel.slice(0, 120), reason: 'no free document name' }); continue; }
+    taken.add(slug);
+    if (slug !== base) landed.push({ path: src.rel, slug, from: base });
+    accepted.push({ slug, rel: src.rel, buf: src.buf, role: f.role || guessRole(src.rel) });
+  }
+  if (!accepted.length) return nothingAddedRefusal(refused);
+  try { await mkdir(paths.dirAbs, { recursive: true }); }
+  catch (err) { return { ok: false, reason: 'io', message: `Could not create the documents folder: ${scrubPaths(String(err?.message ?? err))}` }; }
+  const manifestAbs2 = resolveInsideState(domain, `${paths.dirRel}/${FOUNDATIONS_MANIFEST_FILENAME}`);
+  if (!manifestAbs2) return { ok: false, reason: 'unsafe-path', message: 'The documents folder resolves outside the project — refusing to write.' };
+  const now = new Date().toISOString();
+  const added = [];
+  const addedFiles = [];
+  const entries = [];
+  for (const a of accepted) {
+    const docAbs = resolveInsideState(domain, `${paths.dirRel}/${a.slug}`);
+    if (!docAbs) { refused.push({ path: a.rel.slice(0, 120), reason: 'the document path resolves outside the state folder' }); continue; }
+    // An unlisted file of the same name was written by somebody; a copy
+    // never lands on top of it.
+    if (await isFile(docAbs)) { refused.push({ path: a.rel.slice(0, 120), slug: a.slug, reason: `a file named “${a.slug}” is already in the documents folder, unlisted` }); continue; }
+    try { await writeFileAtomic(docAbs, a.buf); }
     catch (err) {
-      return { ok: false, reason: 'io', message: `The documents were written but the manifest was not: ${scrubPaths(String(err?.message ?? err))}. They are orphan files until the next add.`, added };
+      return { ok: false, reason: 'io', message: `Could not write ${a.slug}: ${scrubPaths(String(err?.message ?? err))}. Documents written before it are orphan files until the next add.`, added };
     }
+    added.push(a.slug);
+    addedFiles.push({ path: a.rel, slug: a.slug });
+    entries.push({
+      slug: a.slug, role: a.role, title: deriveTitle(a.buf, a.slug), source: { kind: 'curator' },
+      sha256: sha256Hex(a.buf), bytes: a.buf.length, updatedAt: now, commit: null,
+      authoredBy: { kind: 'human', harness: null, model: null, commissionedBy: null },
+      skeleton: false, readFirst: false,
+      // PROVENANCE: copied, not written — the folder's basename only.
+      copiedFrom: folderName,
+    });
+  }
+  if (!entries.length) return nothingAddedRefusal(refused);
+  // Groups are untouched by a copy: a declared source stays declared.
+  const next = { ...model, documents: [...model.documents, ...entries] };
+  const totalBytes = totalBytesOf(next);
+  const budgetExceeded = totalBytes > next.budgetBytes;
+  const notes = [];
+  if (budgetExceeded) {
+    notes.push(`budget: this project's documents now total ${totalBytes} bytes, over the ${next.budgetBytes}-byte `
+      + `(${Math.round(next.budgetBytes / 1024)} KB) project budget. The add is complete; a session start sends only what its reading budget allows.`);
+  }
+  try { await writeManifest(manifestAbs2, next); }
+  catch (err) {
+    return { ok: false, reason: 'io', message: `The documents were written but the manifest was not: ${scrubPaths(String(err?.message ?? err))}. They are orphan files until the next add.`, added };
+  }
+  return {
+    ok: true, mode: 'copy', domain, project: target.project, root: pickedRoot,
+    added, addedFiles, refused, rechosen: false, groupId: null,
+    ...(landed.length ? { landed } : {}),
+    addedBytes: entries.reduce((n, e) => n + e.bytes, 0),
+    totalBytes, budgetBytes: next.budgetBytes, budgetExceeded, documentCount: next.documents.length,
+    notes: finaliseNotes(notes),
+  };
+}
+
+/**
+ * "ADD FROM GITHUB" (v3.69.0) — mirror files from a GitHub repository into
+ * ANY project. The files JOIN the GitHub source for the same repository
+ * (owner and name case-insensitive, `ref` exactly; null = the default
+ * branch), or start a new one (`remote.path: null`, repository-relative
+ * paths); naming a DIFFERENT repository adds a source, it no longer switches
+ * one (§3.2). A migrated source with a folder prefix that receives a file
+ * outside it has the prefix widened in the same write.
+ *
+ * Nothing is written unless every blob is in hand (the remote arm's own
+ * guarantee). The token is read from a FILE by `tokenSource` — refused, not
+ * normalised, when it is neither `config` nor `sync` — and recorded on the
+ * source so its refreshes read the same one. A `token` in `opts` is not read.
+ *
+ * Returns the refresh envelope plus `{mode:'mirror', groupId, groupCreated,
+ * group, addedFiles:[{path, slug}]}`; `nothing-added` when no file was added.
+ */
+export async function addFoundationsFromRemote(domain, project, opts = {}) {
+  const inp = opts && typeof opts === 'object' ? opts : {};
+  const target = await checkProjectTarget(domain, project);
+  if (!target.ok) return target;
+  const paths = foundationsPaths(domain, target.prefix);
+  if (!paths) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
+  const files = Array.isArray(inp.files) ? inp.files : [];
+  if (!files.length) return { ok: false, reason: 'no-files', message: 'Tick at least one document to add. Nothing was written.' };
+  if (files.length > MAX_ADD_FILES_PER_CALL) {
+    return { ok: false, reason: 'too-many-documents', message: `${files.length} files were named; one add takes at most ${MAX_ADD_FILES_PER_CALL}. Nothing was written.` };
+  }
+  const tokenNamed = inp.tokenSource === 'config' || inp.tokenSource === 'sync';
+  if (!tokenNamed && inp.tokenSource !== undefined && inp.tokenSource !== null) {
     return {
-      ok: true, mode: 'copy', domain, project: target.project, root: pickedRoot,
-      added, refused, rechosen,
-      addedBytes: entries.reduce((n, e) => n + e.bytes, 0),
-      totalBytes, budgetBytes: next.budgetBytes, budgetExceeded, documentCount: next.documents.length,
-      notes: finaliseNotes(notes),
+      ok: false, reason: 'invalid-token-source',
+      message: `"${String(inp.tokenSource).slice(0, 40)}" is not a token source. Pass "config" for the read-only `
+        + 'GitHub token in Settings, or "sync" for Personal Sync’s own token. Nothing was written.',
+    };
+  }
+  const loaded = await loadGitHubReader();
+  if (!loaded.ok) return loaded;
+  const asked0 = resolveRemoteArg(loaded.gh, inp.remote);
+  if (!asked0.ok) return asked0;
+  if (!asked0.remote) return { ok: false, reason: 'invalid-remote', message: 'Name the repository as owner/repo, or as the https:// or git@ URL git prints for the remote. Nothing was written.' };
+  const refAsked = inp.ref !== undefined && inp.ref !== null && inp.ref !== '' ? inp.ref : asked0.remote.ref;
+  const asked = normaliseRemote({ ...asked0.remote, ref: refAsked, path: null });
+  if (!asked) return { ok: false, reason: 'invalid-remote', message: 'The branch named is not one this can read. Nothing was written.' };
+
+  return withFoundationsLock(domain, 'add-foundations-remote', async () => {
+    const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'malformed' && mf.code === MANIFEST_NEWER_CODE) return newerManifestRefusal(mf);
+    if (mf.status === 'malformed') {
+      return { ok: false, reason: 'manifest-unreadable', manifestError: mf.error, message: `The foundations manifest could not be read (${mf.error}). Nothing was added.` };
+    }
+    const model = mf.status === 'ok' ? mf.manifest : emptyManifest();
+    const group = model.sources.find((g) => !g.root && g.remote && sameRepository(g.remote, asked)
+      && (g.remote.ref || null) === (asked.ref || null)) || null;
+    if (!group && model.sources.length >= MAX_SOURCES_PER_PROJECT) return tooManySourcesRefusal(model);
+    const prefix = group && group.remote.path ? `${group.remote.path}/` : '';
+    const refusedPre = [];
+    const keep = [];
+    let widen = false;
+    for (const f of files) {
+      if (!f || typeof f !== 'object' || typeof f.path !== 'string') { keep.push(f); continue; }
+      const repoPath = normSourcePath(f.path);
+      const elsewhere = sameFileElsewhere(model, asked, group ? group.id : null, repoPath);
+      if (elsewhere) { refusedPre.push({ path: repoPath.slice(0, 120), slug: elsewhere, reason: `already added — it is mirrored as “${elsewhere}”` }); continue; }
+      if (prefix && !repoPath.startsWith(prefix)) widen = true;
+      keep.push(f);
+    }
+    const out = await runRefreshPlans(domain, target, paths, model, [{
+      group, arm: 'remote', newRemote: group ? null : asked, files: keep, tag: asked.repo,
+      widenPath: widen, preRefused: refusedPre,
+      tokenSource: tokenNamed ? inp.tokenSource : undefined, recordTokenSource: tokenNamed,
+    }], {
+      requireAdded: true, extraTaken: await unlistedNames(paths.dirAbs, model),
+      // TEST SEAMS ONLY. `token` is NOT among them.
+      fetchImpl: inp.fetchImpl, sleepImpl: inp.sleepImpl, onWarn: inp.onWarn,
+    });
+    if (!out || !out.ok) return out;
+    const g = out.groups && out.groups[0];
+    return {
+      ...out, mode: 'mirror',
+      groupId: g ? g.id : null, groupCreated: !group,
+      group: g ? { id: g.id, kind: g.kind, label: g.label } : null,
+      ...(widen ? { widened: true } : {}),
     };
   });
 }
 
 /**
+ * THE CHECKLIST'S ANNOTATIONS, decided by the store (CONTRACT §4.3 +
+ * addendum 1). For each scanned candidate, in list order:
+ *
+ *   alreadyAdded / alreadyAs — MIRROR: the same (source, path) is in the
+ *     project, or the same repository path is mirrored through another source
+ *     of the same repository. COPY: a kept document of the natural name was
+ *     copied from a folder of this name.
+ *   landsAs — the name a commit would create (`landingSlug`, every earlier
+ *     not-yet-added row counted as ticked); `alreadyAs` when already added.
+ *   suggestedSlug — the NATURAL name (the file's own), unchanged.
+ *
+ * `sourceRef`: `{mode:'copy'|'mirror', root}` for a folder (candidate paths
+ * relative to `root`), or `{remote:{owner,repo,ref}}` for GitHub (paths
+ * repository-relative). Read-only: no lock, no write. Returns `{ok, mode,
+ * candidates, inGitCheckout, group:{id|null, label, created}}`.
+ */
+export async function annotateScanCandidates(domain, project, sourceRef, candidates) {
+  const view = projectView(domain, project);
+  if (!view.ok) return view;
+  const ref = sourceRef && typeof sourceRef === 'object' ? sourceRef : {};
+  const list = Array.isArray(candidates) ? candidates : [];
+  const mf = await readManifest(view.paths.manifestAbs);
+  const blank = (c) => ({ ...c, alreadyAdded: false, alreadyAs: null, landsAs: null });
+  if (mf.status === 'malformed') {
+    return { ok: true, mode: ref.mode || null, candidates: list.map(blank), inGitCheckout: null, group: null, manifestError: mf.error };
+  }
+  const model = mf.status === 'ok' ? mf.manifest : emptyManifest();
+  const taken = new Set([...model.documents.map((d) => d.slug), ...(await unlistedNames(view.paths.dirAbs, model))]);
+  const natural = (p) => deriveSlugFromPath(p);
+
+  if (ref.remote) {
+    const remote = normaliseRemote({ ...ref.remote, path: null });
+    if (!remote) return { ok: false, reason: 'invalid-remote', message: 'The remote must name a GitHub owner and repository.' };
+    const group = model.sources.find((g) => !g.root && g.remote && sameRepository(g.remote, remote)
+      && (g.remote.ref || null) === (remote.ref || null)) || null;
+    const out = list.map((c) => {
+      const p = normSourcePath(c.path);
+      const inGroup = group ? docsInGroup(model, group.id).find((d) => normSourcePath(d.source.path) === p) : null;
+      const elsewhere = inGroup ? inGroup.slug : sameFileElsewhere(model, remote, group ? group.id : null, p);
+      if (elsewhere) return { ...c, suggestedSlug: natural(c.path), alreadyAdded: true, alreadyAs: elsewhere, landsAs: elsewhere };
+      const base = natural(c.path);
+      const landsAs = base ? landingSlug(base, taken, remote.repo) : null;
+      if (landsAs) taken.add(landsAs);
+      return { ...c, suggestedSlug: base, alreadyAdded: false, alreadyAs: null, landsAs };
+    });
+    return {
+      ok: true, mode: 'mirror', candidates: out, inGitCheckout: false,
+      group: { id: group ? group.id : null, label: `${remote.owner}/${remote.repo}`, created: !group },
+    };
+  }
+
+  const d = await describeFolderSource(ref.root);
+  if (!d.ok) return d;
+  const pickedRoot = d.root;
+  const mode = ref.mode === 'mirror' ? 'mirror' : 'copy';
+  if (mode === 'copy') {
+    const folderName = readCopiedFrom(path.basename(pickedRoot)) || 'a folder';
+    const out = list.map((c) => {
+      const base = natural(c.path);
+      const same = base ? model.documents.find((x) => x.slug === base && x.source.kind !== 'repo' && x.copiedFrom === folderName) : null;
+      if (same) return { ...c, suggestedSlug: base, alreadyAdded: true, alreadyAs: same.slug, landsAs: same.slug };
+      const landsAs = base ? landingSlug(base, taken, folderName) : null;
+      if (landsAs) taken.add(landsAs);
+      return { ...c, suggestedSlug: base, alreadyAdded: false, alreadyAs: null, landsAs };
+    });
+    return { ok: true, mode, candidates: out, inGitCheckout: d.inGitCheckout, group: null };
+  }
+  const t = await resolveFolderMirrorTarget(model, pickedRoot);
+  const groupRemote = t.group ? t.group.remote : t.newRemote;
+  const tag = path.basename(t.groupRoot);
+  const out = list.map((c) => {
+    const p = t.prefix + normSourcePath(c.path);
+    const inGroup = t.group ? docsInGroup(model, t.group.id).find((x) => normSourcePath(x.source.path) === p) : null;
+    const elsewhere = inGroup ? inGroup.slug : sameFileElsewhere(model, groupRemote, t.group ? t.group.id : null, p);
+    const base = natural(c.path);
+    if (elsewhere) return { ...c, suggestedSlug: base, alreadyAdded: true, alreadyAs: elsewhere, landsAs: elsewhere };
+    const landsAs = base ? landingSlug(base, taken, tag) : null;
+    if (landsAs) taken.add(landsAs);
+    return { ...c, suggestedSlug: base, alreadyAdded: false, alreadyAs: null, landsAs };
+  });
+  return {
+    ok: true, mode, candidates: out, inGitCheckout: d.inGitCheckout,
+    group: { id: t.group ? t.group.id : null, label: path.basename(t.groupRoot), created: !t.group },
+  };
+}
+
+/**
  * The ADVISORY refresh `saveWorkingState` runs when handed `repoRoot`.
  * Never throws; `attempted: false` carries the reason it was skipped.
+ *
+ * v3.69.0 (CONTRACT §3.6) — once the `.curator-project` marker names this
+ * project, it refreshes WHICHEVER of the project's sources this checkout is:
+ *   (a) a FOLDER source whose folder (resolved here) is the checkout's top
+ *       level or inside it — read from ITS OWN folder, so a subfolder source's
+ *       paths still resolve (v3.68 read them against the checkout root);
+ *   (a') a folder source recorded on ANOTHER machine (its folder is not here)
+ *       whose `origin` is this checkout's and whose folder has the same name
+ *       as this checkout — read from the checkout, which is where it now is;
+ *   (b) a GITHUB source whose repository is this checkout's `origin` — read
+ *       from the working tree (a machine with the checkout never spends a
+ *       rate limit), and it STAYS a GitHub source (`root` is not set).
+ * None of them: skipped, "no source of this project is this checkout".
  */
 async function maybeRefreshFoundations(domain, projectSlug, prefix, repoRoot) {
   const skip = (skipped) => ({ attempted: false, skipped });
@@ -7869,8 +8876,39 @@ async function maybeRefreshFoundations(domain, projectSlug, prefix, repoRoot) {
       return { attempted: false, skipped: 'the foundations were saved by a newer version of The Curator; update this app to refresh them', code: MANIFEST_NEWER_CODE, manifestError: mf.error };
     }
     if (mf.status === 'malformed') return { attempted: false, skipped: 'the foundations manifest could not be read', manifestError: mf.error };
-    if (mf.manifest.ownership !== 'repo') return skip('this project\'s foundations are curator-authored, not a repository mirror');
-    const r = await refreshFoundationsFromRepo(domain, projectSlug, root.realRoot);
+    const model = mf.manifest;
+    if (!model.sources.length) return skip('this project\'s foundations are curator-authored, not a repository mirror');
+    const top = (await gitTopLevel(root.realRoot)) || root.realRoot;
+    const origin = await gitOriginRemote(top);
+    const picks = [];
+    for (const g of model.sources) {
+      if (g.root) {
+        const r = await resolveRepoRoot(g.root);
+        if (r.ok) {
+          if (folderInside(top, r.realRoot)) picks.push({ group: g, realRoot: r.realRoot, keepRootNull: false });
+        } else if (origin && g.remote && sameRepository(g.remote, origin) && path.basename(g.root) === path.basename(top)) {
+          picks.push({ group: g, realRoot: top, keepRootNull: false });
+        }
+      } else if (origin && g.remote && sameRepository(g.remote, origin)) {
+        picks.push({ group: g, realRoot: top, keepRootNull: true });
+      }
+    }
+    if (!picks.length) return skip('no source of this project is this checkout');
+    const target = await checkProjectTarget(domain, projectSlug);
+    if (!target.ok) return { attempted: true, ...target };
+    const r = await withFoundationsLock(domain, 'refresh-foundations', async () => {
+      // Re-read UNDER the lock: the model the plans write is the one on disk.
+      const mf2 = await readManifest(paths.manifestAbs);
+      if (mf2.status !== 'ok') return { ok: false, reason: 'manifest-unreadable', message: 'The foundations manifest changed while refreshing; nothing was refreshed.' };
+      const plans = [];
+      for (const pk of picks) {
+        const g = groupById(mf2.manifest, pk.group.id);
+        if (!g) continue;
+        plans.push({ group: g, arm: 'local', realRoot: pk.realRoot, keepRootNull: pk.keepRootNull, files: [], tag: groupTag(g) });
+      }
+      if (!plans.length) return { ok: false, reason: 'no-sources', message: 'no source of this project is this checkout' };
+      return runRefreshPlans(domain, target, paths, mf2.manifest, plans);
+    });
     return { attempted: true, ...r };
   } catch (err) {
     return { attempted: true, ok: false, reason: 'io', message: scrubPaths(String(err?.message ?? err)).slice(0, 200) };
@@ -8114,6 +9152,10 @@ export async function getProjectContext(domain, project, opts = {}) {
       present: index.present,
       ownership: index.ownership,
       repo: index.repo,
+      // v3.69.0 — ONLY for a version-2 manifest (a project that mixes, or has
+      // several sources), so every v1 project's context keeps its bytes
+      // (CONTRACT §3.5; test-reading-budget.js pins the digest).
+      ...(index.manifestVersion === FOUNDATIONS_MANIFEST_V2 ? { sources: index.sources } : {}),
       manifestError: index.manifestError,
       // v3.68.1 — only for a newer app's manifest, so every other envelope keeps its bytes.
       ...(index.manifestErrorCode ? { manifestErrorCode: index.manifestErrorCode } : {}),

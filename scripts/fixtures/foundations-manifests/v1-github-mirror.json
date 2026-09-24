@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "ownership": "repo",
+  "repo": {
+    "root": null,
+    "remote": {
+      "owner": "acme",
+      "repo": "lumina",
+      "ref": "main",
+      "path": "docs"
+    },
+    "lastRefreshAt": "2026-09-22T12:00:00.000Z",
+    "lastRefreshCommit": "fedcba9876543210fedcba9876543210fedcba98"
+  },
+  "budgetBytes": 204800,
+  "order": [
+    "architecture",
+    "decisions",
+    "conventions",
+    "roadmap",
+    "api",
+    "guide",
+    "other"
+  ],
+  "documents": [
+    {
+      "slug": "architecture.md",
+      "role": "architecture",
+      "title": "architecture",
+      "source": {
+        "kind": "repo",
+        "path": "docs/architecture.md"
+      },
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "bytes": 1200,
+      "updatedAt": "2026-09-20T10:00:00.000Z",
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "authoredBy": {
+        "kind": "human",
+        "harness": null,
+        "model": null,
+        "commissionedBy": null
+      },
+      "skeleton": false,
+      "readFirst": false,
+      "copiedFrom": null
+    },
+    {
+      "slug": "api.md",
+      "role": "api",
+      "title": "api",
+      "source": {
+        "kind": "repo",
+        "path": "docs/reference/api.md"
+      },
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "bytes": 1200,
+      "updatedAt": "2026-09-20T10:00:00.000Z",
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "authoredBy": {
+        "kind": "human",
+        "harness": null,
+        "model": null,
+        "commissionedBy": null
+      },
+      "skeleton": false,
+      "readFirst": false,
+      "copiedFrom": null,
+      "hidden": true
+    }
+  ]
+}

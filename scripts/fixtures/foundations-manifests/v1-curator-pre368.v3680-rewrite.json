@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "ownership": "curator",
+  "repo": null,
+  "budgetBytes": 204800,
+  "order": [
+    "architecture",
+    "decisions",
+    "conventions",
+    "roadmap",
+    "api",
+    "guide",
+    "other"
+  ],
+  "documents": [
+    {
+      "slug": "architecture.md",
+      "role": "architecture",
+      "title": "architecture",
+      "source": {
+        "kind": "curator"
+      },
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bytes": 1200,
+      "updatedAt": "2026-09-20T10:00:00.000Z",
+      "commit": null,
+      "authoredBy": {
+        "kind": "human",
+        "harness": null,
+        "model": null,
+        "commissionedBy": null
+      },
+      "skeleton": true,
+      "readFirst": false,
+      "copiedFrom": null
+    },
+    {
+      "slug": "conventions.md",
+      "role": "conventions",
+      "title": "conventions",
+      "source": {
+        "kind": "curator"
+      },
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bytes": 1200,
+      "updatedAt": "2026-09-20T10:00:00.000Z",
+      "commit": null,
+      "authoredBy": {
+        "kind": "human",
+        "harness": null,
+        "model": null,
+        "commissionedBy": null
+      },
+      "skeleton": false,
+      "readFirst": true,
+      "copiedFrom": null
+    }
+  ]
+}

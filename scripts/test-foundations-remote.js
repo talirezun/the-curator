@@ -1307,7 +1307,9 @@ section('16. "MIRROR FROM GITHUB INSTEAD" — the source switch (v3.65.1)');
     const gh = makeGitHub(REPO_FILES);
     const out = await setFoundationsSource(D, PJ, { remote: 'acme/thing', fetchImpl: gh.fetchImpl });
     eq(out.ok, false, 'a switch on a CURATOR-owned project is refused');
-    eq(out.reason, 'ownership-mismatch', '...as an ownership mismatch');
+    // v3.69.0: sources are per document — a project whose documents are all
+    // kept here has no source to re-point, and says so.
+    eq(out.reason, 'no-sources', '...as "nothing here is mirrored" (v3.69.0)');
     eq(out.ownership, 'curator', '...naming the ownership it found');
     eq(fileSha(manifestPath(PJ)), before, '...and the manifest is BYTE-IDENTICAL afterwards (sha256)');
     eq(gh.calls.length, 0, '...with ZERO HTTP requests — the ownership is read before anything is fetched');
@@ -1340,7 +1342,7 @@ section('16. "MIRROR FROM GITHUB INSTEAD" — the source switch (v3.65.1)');
     const gh2 = makeGitHub(REPO_FILES);
     const unchosen = await setFoundationsSource(D, PJ, { remote: 'acme/thing', fetchImpl: gh2.fetchImpl, sleepImpl: fakeSleep });
     eq(unchosen.ok, false, 'a manifest that exists but has chosen NO ownership is refused');
-    eq(unchosen.reason, 'ownership-mismatch', '...as an ownership mismatch');
+    eq(unchosen.reason, 'no-sources', '...as "nothing here is mirrored" (v3.69.0)');
     eq(unchosen.ownership, null, '...naming the absent ownership rather than guessing one');
     eq(manifestOf(PJ).ownership, null, 'THE HOLE THIS CLOSES: no ownership was set sideways');
     eq(fileSha(manifestPath(PJ)), beforeUnchosen, '...and the manifest is byte-identical');
@@ -1521,8 +1523,11 @@ section('16. "MIRROR FROM GITHUB INSTEAD" — the source switch (v3.65.1)');
       // A CURATOR-OWNED PROJECT: 409, and the word is NOT `repo_owned` —
       // that is the shared table's word for the opposite fact.
       const curOut = await post(`/api/memory/${D}/switchcurator/foundations/source`, { remote: 'acme/thing' });
-      eq(curOut.status, 409, 'a curator-owned project is a 409 — the server’s state, not a malformed request');
-      eq(curOut.body.reason, 'ownership_mismatch', '...spelled for the wire');
+      // v3.69.0 — the store answers `no-sources`; the route's status and wire
+      // spelling are package B's (400 per CONTRACT §3.1), so any refusal
+      // status is accepted here and the reason is matched in either spelling.
+      assert(curOut.status === 400 || curOut.status === 409, 'a curator-owned project is refused (4xx)', String(curOut.status));
+      assert(/^no[-_]sources$/.test(String(curOut.body.reason)), '...as no_sources', String(curOut.body.reason));
       eq(curOut.body.ownership, 'curator', '...carrying the ownership it found, so a client need not parse prose');
       assert(typeof curOut.body.error === 'string' && curOut.body.error.length > 0, '...with a sentence a person can act on');
 

@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "ownership": null,
+  "repo": {
+    "root": "/srv/checkouts/lumina",
+    "remote": null,
+    "lastRefreshAt": "2026-09-21T08:30:00.000Z",
+    "lastRefreshCommit": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "budgetBytes": 204800,
+  "order": [
+    "architecture",
+    "decisions",
+    "conventions",
+    "roadmap",
+    "api",
+    "guide",
+    "other"
+  ],
+  "documents": [
+    {
+      "slug": "guide.md",
+      "role": "guide",
+      "title": "guide",
+      "source": {
+        "kind": "repo",
+        "path": "docs/guide.md"
+      },
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "bytes": 1200,
+      "updatedAt": "2026-09-20T10:00:00.000Z",
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "authoredBy": {
+        "kind": "human",
+        "harness": null,
+        "model": null,
+        "commissionedBy": null
+      },
+      "skeleton": false,
+      "readFirst": false,
+      "copiedFrom": null
+    }
+  ]
+}

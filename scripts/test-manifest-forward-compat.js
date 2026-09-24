@@ -87,9 +87,11 @@ function makeProject(prefix = 'fc') {
 }
 const listDir = (d) => readdirSync(d).sort().join(',');
 
-// A synthetic version-2 manifest, shaped as contract §1.4 draws it.
+// A synthetic manifest from a NEWER app. v3.68.1 used version 2 (contract
+// §1.4's shape); v3.69.0 READS version 2, so the "newer" case is now version 3
+// — same body, one version past what this store reads.
 const V2 = `${JSON.stringify({
-  version: 2,
+  version: 3,
   sources: [
     { id: 's1', root: '/srv/checkouts/lumina', remote: { owner: 'acme', repo: 'lumina', ref: null, path: null },
       lastRefreshAt: '2026-09-23T10:00:00.000Z', lastRefreshCommit: '0123456789abcdef0123456789abcdef01234567' },
@@ -134,7 +136,7 @@ section('1. Reads say "written by a newer version", never "fix or remove"');
   assert(/newer version of The Curator/.test(idx.manifestError) && /Update the app/.test(idx.manifestError),
     '…and the message says a newer version wrote it and to update the app', idx.manifestError);
   assert(!NO_REMOVE.test(idx.manifestError) && !NO_FIX.test(idx.manifestError), '…and never says fix or remove', idx.manifestError);
-  assert(/version 2/.test(idx.manifestError), '…and names the version it found', idx.manifestError);
+  assert(/version 3/.test(idx.manifestError), '…and names the version it found', idx.manifestError);
   assert(Array.isArray(idx.orphanFiles) && idx.orphanFiles.length === 0,
     '…and the listed files are NOT reported as orphans (the newer manifest does list them)', JSON.stringify(idx.orphanFiles));
   const rws = await WS.readWorkingState(p.dom, {});

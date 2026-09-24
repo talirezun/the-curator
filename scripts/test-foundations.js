@@ -14,7 +14,8 @@
  *     leaves to be DISCLOSED, never an entry pointing at nothing);
  *   · every writer takes BOTH locks — the registry is SPIED while a write is
  *     in flight, and a held file lock refuses the write (§4g);
- *   · one ownership per project (§4e), the 10 % shrink guard (§4f) and its
+ *   · one writer per DOCUMENT (§4e, §6g — v3.69.0: a save over a mirrored
+ *     slug is refused, a new document is fine anywhere), the 10 % shrink guard (§4f) and its
  *     deliberate ABSENCE on a repo refresh (§6f);
  *   · heading escaping OFF for a document and ON for a handoff field and a
  *     structured brief section, both asserted (§3) — a mirrored architecture
@@ -273,10 +274,11 @@ section('4. saveFoundation — the cap, the budget, ownership, the shrink guard,
     'listFoundations agrees: over budget, same total', JSON.stringify({ t: idx.totalBytes, b: idx.budgetBytes }));
   for (const s of ['b1', 'b2', 'b3']) await removeFoundation(P, P, s);
 
-  // 4e. ONE ownership per project.
+  // 4e. One writer per DOCUMENT (v3.69.0). A hand-listed mirror needs a
+  // source to belong to, and a project that mirrors nothing has none.
   const mix = await saveFoundation(P, P, { slug: 'mirror', text: 'x', source: { kind: 'repo', path: 'docs/x.md' } });
-  assert(!mix.ok && mix.reason === 'ownership-mismatch' && mix.ownership === 'curator',
-    'a repo-sourced save into a curator-owned project is REFUSED with the reason', mix.message);
+  assert(!mix.ok && mix.reason === 'invalid-source' && mix.ownership === 'curator',
+    'a repo-sourced save into a project that mirrors nothing is REFUSED with the reason', mix.message);
   assert(!existsSync(path.join(fdir(P, P), 'mirror.md')), '…and nothing was written');
 
   // 4f. The shrink guard, at 10 %.
@@ -507,11 +509,18 @@ const SRC = {
     && readFileSync(path.join(fdir('frepo', 'proj'), 'architecture.md'), 'utf8') === '# A\n',
     'a source that shrank from 3 KB to 4 bytes is mirrored without a refusal — no shrink guard on a refresh', JSON.stringify(r4.refused));
 
-  // 6g. Ownership and the cap, on the refresh side.
-  const cur = await saveFoundation('frepo', 'proj', { slug: 'hand', text: 'x' });
-  assert(!cur.ok && cur.reason === 'ownership-mismatch' && cur.ownership === 'repo', 'a curator save into the repo-owned project is refused');
+  // 6g. One writer per DOCUMENT (v3.69.0), and the cap, on the refresh side.
+  const mirroredBefore = readFileSync(path.join(fdir('frepo', 'proj'), 'architecture.md'));
+  const cur = await saveFoundation('frepo', 'proj', { slug: 'architecture', text: '# hand\n' });
+  assert(!cur.ok && cur.reason === 'ownership-mismatch' && cur.ownership === 'repo' && /is mirrored from/.test(cur.message),
+    'a save over a MIRRORED document is refused, naming where it is mirrored from', cur.message);
+  assert(Buffer.compare(readFileSync(path.join(fdir('frepo', 'proj'), 'architecture.md')), mirroredBefore) === 0,
+    '…and the mirrored bytes are untouched');
+  const manBefore = readFileSync(path.join(fdir('frepo', 'proj'), FOUNDATIONS_MANIFEST_FILENAME));
   const rc = await refreshFoundationsFromRepo(P, P, REPO_DIR, { files: [{ path: 'docs/decisions.md' }] });
-  assert(!rc.ok && rc.reason === 'ownership-mismatch', 'a refresh into the curator-owned project is refused');
+  assert(!rc.ok && rc.reason === 'no-sources', 'a refresh of a project that mirrors nothing answers no-sources', JSON.stringify(rc).slice(0, 200));
+  assert(Buffer.compare(readFileSync(path.join(fdir('frepo', 'proj'), FOUNDATIONS_MANIFEST_FILENAME)), manBefore) === 0,
+    '…and the mirror project next door is untouched');
   writeFileSync(path.join(REPO_DIR, 'docs', 'huge.md'), Buffer.alloc(MAX_FOUNDATION_BYTES + 1, 0x63));
   const rh = await refreshFoundationsFromRepo('frepo', 'proj', REPO_DIR, { files: [{ path: 'docs/huge.md' }] });
   assert(rh.ok && rh.refused.some((x) => x.path === 'docs/huge.md' && x.reason.includes(String(MAX_FOUNDATION_BYTES + 1))),
