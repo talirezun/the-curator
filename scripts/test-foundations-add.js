@@ -359,10 +359,15 @@ section('9. The route: strict body, honest statuses, the numbers ride out');
   const scan0 = await fetch(`${LOOPBACK}/api/memory/repo-scan?root=${encodeURIComponent(NOTES)}`).then((r) => r.json());
   ok('CONTROL: without all=1 the route keeps the heuristic scan', !scan0.candidates.some((c) => c.path === 'sub/meeting.txt'),
     JSON.stringify(scan0.candidates.map((c) => c.path)));
-  const init = await fetch(`${LOOPBACK}/api/memory/${D}/${P}/foundations/init`, { method: 'POST',
-    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ownership: 'curator', rechooseEmpty: 'yes' }) });
-  ok('init forwards rechooseEmpty only as the literal true (a populated project still refuses)',
-    init.status === 400 || init.status === 409, String(init.status));
+  const E = await newProject();
+  await WS.initFoundations(D, E, { ownership: 'curator', seed: false });
+  const initPost = (body) => fetch(`${LOOPBACK}/api/memory/${D}/${E}/foundations/init`, { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const truthy = await initPost({ ownership: 'curator', rechooseEmpty: 'yes' });
+  eq('init forwards rechooseEmpty ONLY as the literal true — a truthy string still refuses an empty project',
+    truthy.status, 400);
+  const literal = await initPost({ ownership: 'curator', rechooseEmpty: true });
+  eq('...and the literal true re-chooses it (the four templates)', literal.status, 201);
   await new Promise((r) => server.close(r));
   LOOPBACK = null;
 }
@@ -409,7 +414,7 @@ section('11. The checklist and the commit, DOM-free');
   const facts = { present: true, ownership: 'curator', count: 1, bytes: 1000, budgetBytes: 204800,
     docs: [{ slug: 'architecture.md', source: { kind: 'curator' } }] };
   const rec = Object.assign(FA.freshAddPanel('local', FA.doorsFor(facts).local, facts), {
-    root: '/n', listedRoot: '/n',
+    root: '/typed/n', listedRoot: '/n',
     candidates: [{ path: 'architecture.md', bytes: 10, suggestedSlug: 'architecture.md' },
       { path: 'b.md', bytes: 20, suggestedSlug: 'b.md' }, { path: 'big.md', bytes: 600000, suggestedSlug: 'big.md', tooLarge: true }],
     picks: { 'architecture.md': true, 'b.md': true, 'big.md': true } });
