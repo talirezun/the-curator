@@ -122,8 +122,10 @@ section('1. Constants and the slug rule');
   assert(MAX_FOUNDATION_BYTES === 512 * 1024, 'per-document cap is 512 KB', MAX_FOUNDATION_BYTES);
   assert(FOUNDATIONS_BUDGET_BYTES === 200 * 1024, 'project budget is 200 KB', FOUNDATIONS_BUDGET_BYTES);
   assert(FOUNDATION_REPLACE_RATIO === 0.10, 'the shrink guard ratio is 10 %', FOUNDATION_REPLACE_RATIO);
-  assert(CONTEXT_MAX_BYTES_DEFAULT === 120 * 1024 && CONTEXT_MAX_BYTES_CAP === 200 * 1024,
-    'the bootstrap reads 120 KB by default and never more than 200 KB');
+  // v3.70.0: the ceiling is 800 KB (the Max preset, ≈200k tokens); the MCP
+  // door pages anything over 80 KB (test-context-paging.js).
+  assert(CONTEXT_MAX_BYTES_DEFAULT === 120 * 1024 && CONTEXT_MAX_BYTES_CAP === 800 * 1024,
+    'the bootstrap reads 120 KB by default and never more than 800 KB');
   assert(JSON.stringify(FOUNDATION_ROLES) === JSON.stringify(['architecture', 'decisions', 'conventions', 'roadmap', 'api', 'guide', 'other']),
     'the seven roles, in reading order', JSON.stringify(FOUNDATION_ROLES));
   for (const [input, want] of [
@@ -660,8 +662,10 @@ section('8. getProjectContext — the bootstrap, the budget, the delta, the size
       `the MCP payload for ${JSON.stringify(args)} is ${Math.round(Buffer.byteLength(wire, 'utf8') / 1024)} KB — under the 400 KB guard, with the brief and handoff included`);
     assert(payload.brief?.present === true && payload.current?.present === true, '…and the brief and handoff are both in it');
   }
-  const capped = await getProjectContextHandler({ project: 'fbig', include: 'all', max_bytes: CONTEXT_MAX_BYTES_CAP }, storage);
-  assert(capped.foundations.budget.omitted.length >= 1 || capped.foundations.budget.truncated, 'at the cap something is omitted or cut, and it is named', JSON.stringify(capped.foundations.budget));
+  // v3.70.0: the 800 KB cap now holds this whole 200 KB set, so the budget
+  // that must omit is one below the set's size.
+  const capped = await getProjectContextHandler({ project: 'fbig', include: 'all', max_bytes: 150 * 1024 }, storage);
+  assert(capped.foundations.budget.omitted.length >= 1 || capped.foundations.budget.truncated, 'under the set\'s size something is omitted or cut, and it is named', JSON.stringify(capped.foundations.budget));
   // 8h. The MCP handler's instruction gate and label are behavioural too.
   const gated = await saveFoundationHandler({ project: 'fctx', slug: 'x', text: 'y' }, storage);
   assert(gated.ok === false && gated.reason === 'not-commissioned', 'the MCP handler refuses without commissioned_by_owner');

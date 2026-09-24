@@ -247,28 +247,135 @@ export const FOUNDATION_ROLES = Object.freeze([
 /** Replacing a document with one under this fraction of its size needs
  *  `replace: true` — 10 %, not the brief's 5 %, per the v3.59.0 contract. */
 export const FOUNDATION_REPLACE_RATIO = 0.10;
-/** `getProjectContext` document-text budget: default and hard cap. The cap
- *  keeps the whole MCP response (brief 32 KB + handoff 48 KB + index) under
- *  the 400 KB guard with margin; `scripts/test-foundations.js` asserts it. */
+/** `getProjectContext` document-text budget: default and hard cap.
+ *  v3.70.0: the cap is 800 KB (≈200k tokens, the Max preset). It no longer
+ *  has to fit ONE MCP reply, because the MCP door PAGES a bootstrap into
+ *  replies of at most `CONTEXT_PAGE_BYTES` (see `deliveryPlan` below); the
+ *  300 KB per-reply guard in mcp/tools/working-state.js still bounds each
+ *  page. The default (an untouched project) is unchanged at 120 KB. */
 export const CONTEXT_MAX_BYTES_DEFAULT = 120 * 1024;
-export const CONTEXT_MAX_BYTES_CAP = 200 * 1024;
+export const CONTEXT_MAX_BYTES_CAP = 800 * 1024;
 
-// ── THE OWNER'S READING BUDGET (v3.67.0) ─────────────────────────────────
+// ── THE OWNER'S READING BUDGET (v3.67.0; a token ladder since v3.70.0) ────
 // `readingBudgetBytes` in `project.json`: how much document TEXT an agent is
 // handed at session start. Absent means today's 120 KB default and nothing
 // else changes (an untouched project's bootstrap is byte-identical to
 // v3.66.0). Present means the project is PLANNED: only documents marked read
-// first arrive with text, within this number. The presets are the view's; the
-// store accepts 0 (index only) or any integer from the minimum to the cap, so
-// a hand-edited file is honoured and bounded rather than refused.
+// first arrive with text, within this number. The store accepts 0 (index
+// only) or any integer from the minimum to the cap, so a hand-edited file is
+// honoured and bounded rather than refused.
+//
+// v3.70.0 — SEVEN PRESETS, NAMED IN TOKENS. The stored value stays BYTES
+// (on disk and on the wire, unchanged); a preset is `tokens × BYTES_PER_TOKEN`.
+// Lean and Standard keep v3.67.0's bytes exactly; Deep moved 120 KB → 128 KB
+// and Max 200 KB → 800 KB. A project still holding 120 KB or 200 KB (or any
+// other valid value) keeps it, untouched — `readingBudgetPreset` reads it as
+// CUSTOM and names the nearest preset. No migration ever writes.
+/** The estimate the whole app uses: four bytes per token, always shown "≈". */
+export const BYTES_PER_TOKEN = 4;
 export const READING_BUDGET_PRESETS = Object.freeze([
-  Object.freeze({ id: 'index-only', bytes: 0 }),
-  Object.freeze({ id: 'lean', bytes: 32768 }),
-  Object.freeze({ id: 'standard', bytes: 65536 }),
-  Object.freeze({ id: 'deep', bytes: 122880 }),
-  Object.freeze({ id: 'max', bytes: 204800 }),
+  Object.freeze({ id: 'index-only', tokens: 0, bytes: 0 }),
+  Object.freeze({ id: 'lean', tokens: 8192, bytes: 32768 }),
+  Object.freeze({ id: 'standard', tokens: 16384, bytes: 65536 }),
+  Object.freeze({ id: 'deep', tokens: 32768, bytes: 131072 }),
+  Object.freeze({ id: 'large', tokens: 65536, bytes: 262144 }),
+  Object.freeze({ id: 'extra-large', tokens: 131072, bytes: 524288 }),
+  Object.freeze({ id: 'max', tokens: 204800, bytes: 819200 }),
 ]);
 export const READING_BUDGET_RECOMMENDED = 'standard';
+
+/** Bytes → the token ESTIMATE, rounded to the nearest whole token. */
+export function estimateTokens(bytes) {
+  return Number.isFinite(bytes) && bytes > 0 ? Math.round(bytes / BYTES_PER_TOKEN) : 0;
+}
+
+/**
+ * Which preset a stored budget IS (v3.70.0). Pure.
+ *   · `null`/`undefined` → `null` (no budget set: the project is unplanned).
+ *   · a preset's exact bytes → `{id, tokens, bytes, custom: false}`.
+ *   · any other VALID budget (a v3.67.0 120 KB Deep or 200 KB Max, or a hand
+ *     edit) → `{id: 'custom', tokens, bytes, custom: true, nearest}` where
+ *     `nearest` is the preset id closest in bytes (a tie takes the smaller —
+ *     the fail-cheap direction). It is an OFFER for the view, never a write.
+ *   · an invalid value → `null`, exactly as `readProjectMeta` reads it.
+ */
+export function readingBudgetPreset(bytes) {
+  if (bytes === null || bytes === undefined || !isValidReadingBudget(bytes)) return null;
+  const hit = READING_BUDGET_PRESETS.find((p) => p.bytes === bytes);
+  if (hit) return { id: hit.id, tokens: hit.tokens, bytes: hit.bytes, custom: false };
+  let nearest = READING_BUDGET_PRESETS[0];
+  for (const p of READING_BUDGET_PRESETS) {
+    if (Math.abs(p.bytes - bytes) < Math.abs(nearest.bytes - bytes)) nearest = p;
+  }
+  return { id: 'custom', tokens: estimateTokens(bytes), bytes, custom: true, nearest: nearest.id };
+}
+
+// ── PAGED DELIVERY (v3.70.0) ─────────────────────────────────────────────
+// Claude Code shows an MCP reply of at most 25,000 tokens by default
+// (MAX_MCP_OUTPUT_TOKENS) and SAVES a larger one to a file, handing the model
+// a file reference instead of the text. So the MCP door sends a bootstrap in
+// PAGES of at most this many bytes of serialised reply — ≈20k tokens at four
+// bytes each, 20% headroom under the 25k cap for tokenizers that read denser
+// than the estimate. The bound is on the WHOLE REPLY, not on document text
+// alone: page 1 also carries the brief (≤32 KB), the handoff (≤48 KB), the
+// journal and the index, and 80 KB of documents on top of those is ≈27k
+// tokens on the maintainer's own project — over the cap it exists to respect.
+export const CONTEXT_PAGE_BYTES = 80 * 1024;
+
+/**
+ * The page plan for one bootstrap. PURE — no I/O, no clock — so the MCP door
+ * and the session-start measurement (the app's step ④) plan with ONE rule.
+ *
+ * `items`: `[{slug, bytes}]` IN DELIVERY ORDER, `bytes` being what the item
+ * costs inside a reply. `opts.firstPageFixedBytes`: what page 1 carries before
+ * any document (brief, handoff, journal, index, framing). `opts.laterPageFixedBytes`:
+ * the same for a later page's envelope. `opts.pageBytes`: the ceiling.
+ *
+ * The rule: WHOLE documents only, in the order given, never reordered (a
+ * reader's order is the owner's order). A page is closed when the next
+ * document would take it over the ceiling. A document that cannot fit even on
+ * an empty later page goes ALONE on its own page, `oversize: true` — never
+ * cut, never skipped. Page 1 never carries an oversize document: its fixed
+ * layers are already in it, so the document starts page 2 instead. Page 1
+ * always exists, even with no documents at all.
+ *
+ * @returns {{pageBytes:number, replies:number, paged:boolean,
+ *   pages:Array<{page:number, slugs:string[], bytes:number, tokens:number, oversize:boolean}>,
+ *   oversize:string[]}}  `bytes` per page is fixed + items (an ESTIMATE of the
+ *   reply's size; the MCP door re-measures the real replies).
+ */
+export function deliveryPlan(items, opts = {}) {
+  const o = opts && typeof opts === 'object' ? opts : {};
+  const num = (v, d) => (Number.isFinite(v) && v >= 0 ? Math.floor(v) : d);
+  const pageBytes = num(o.pageBytes, CONTEXT_PAGE_BYTES) || CONTEXT_PAGE_BYTES;
+  const first = num(o.firstPageFixedBytes, 0);
+  const later = num(o.laterPageFixedBytes, 0);
+  const list = Array.isArray(items) ? items : [];
+  const pages = [];
+  let cur = { page: 1, slugs: [], bytes: first, oversize: false };
+  const close = () => { pages.push(cur); cur = { page: cur.page + 1, slugs: [], bytes: later, oversize: false }; };
+  for (const it of list) {
+    const slug = String(it && it.slug);
+    const cost = num(it && it.bytes, 0);
+    if (cur.bytes + cost <= pageBytes) { cur.slugs.push(slug); cur.bytes += cost; continue; }
+    if (cur.slugs.length > 0 || cur.page === 1) close();
+    // `cur` is now an EMPTY later page.
+    cur.slugs.push(slug);
+    cur.bytes += cost;
+    if (cur.bytes > pageBytes) { cur.oversize = true; close(); }
+  }
+  // An empty trailing page is only ever the one `close()` opened after an
+  // oversize document; page 1 is kept even when empty.
+  if (cur.slugs.length > 0 || pages.length === 0) pages.push(cur);
+  const out = pages.map((p) => ({ page: p.page, slugs: p.slugs, bytes: p.bytes, tokens: estimateTokens(p.bytes), oversize: p.oversize }));
+  return {
+    pageBytes,
+    replies: out.length,
+    paged: out.length > 1,
+    pages: out,
+    oversize: out.filter((p) => p.oversize).flatMap((p) => p.slugs),
+  };
+}
 /** Below this only 0 is accepted: a budget of a few hundred bytes is not a
  *  plan, it is a typo that would cut the first document to nothing. */
 export const READING_BUDGET_MIN_BYTES = 8192;

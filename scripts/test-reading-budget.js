@@ -193,7 +193,10 @@ section('1. AN UNTOUCHED PROJECT IS BYTE-IDENTICAL TO v3.66.0');
 section('2. THE CONSTANTS — the contract\'s join names, verbatim');
 {
   eq(JSON.stringify(WS.READING_BUDGET_PRESETS),
-    JSON.stringify([{ id: 'index-only', bytes: 0 }, { id: 'lean', bytes: 32768 }, { id: 'standard', bytes: 65536 }, { id: 'deep', bytes: 122880 }, { id: 'max', bytes: 204800 }]),
+    // v3.70.0: the seven-preset token ladder (test-context-paging.js §1).
+    JSON.stringify([{ id: 'index-only', tokens: 0, bytes: 0 }, { id: 'lean', tokens: 8192, bytes: 32768 }, { id: 'standard', tokens: 16384, bytes: 65536 },
+      { id: 'deep', tokens: 32768, bytes: 131072 }, { id: 'large', tokens: 65536, bytes: 262144 }, { id: 'extra-large', tokens: 131072, bytes: 524288 },
+      { id: 'max', tokens: 204800, bytes: 819200 }]),
     'READING_BUDGET_PRESETS');
   eq(WS.READING_BUDGET_RECOMMENDED, 'standard', 'READING_BUDGET_RECOMMENDED');
   eq(WS.READING_BUDGET_MIN_BYTES, 8192, 'READING_BUDGET_MIN_BYTES');
@@ -201,7 +204,7 @@ section('2. THE CONSTANTS — the contract\'s join names, verbatim');
   assert(Object.isFrozen(WS.READING_BUDGET_PRESETS) && Object.isFrozen(WS.READING_BUDGET_PRESETS[0]) && Object.isFrozen(WS.FOUNDATION_START_STATES),
     'the presets and the alphabet are frozen');
   for (const v of [0, 8192, 65536, 204800]) assert(WS.isValidReadingBudget(v), `${v} is a valid budget`);
-  for (const v of [1, 8191, 204801, 1.5, -1, '65536', null, NaN]) assert(!WS.isValidReadingBudget(v), `${JSON.stringify(v)} is NOT a valid budget`);
+  for (const v of [1, 8191, 819201, 1.5, -1, '65536', null, NaN]) assert(!WS.isValidReadingBudget(v), `${JSON.stringify(v)} is NOT a valid budget`);
 }
 
 section('3. readProjectMeta — the budget is its OWN field, parsed first');
@@ -222,7 +225,7 @@ await WS.createProject('alpha', 'p2', {});
   const both = await WS.readProjectMeta('alpha', 'p1');
   assert(both.readingBudgetBytes === 0 && both.readingBudgetDefaulted === false && both.knowledgeDomainsDefaulted === false,
     'both fields together: 0 is a real budget (Index only), not "unset"', JSON.stringify(both));
-  for (const v of [100, 204801, 1.5, '65536', -5, true]) {
+  for (const v of [100, 819201, 1.5, '65536', -5, true]) {
     writeFileSync(metaPath('alpha', 'p1'), JSON.stringify({ version: 1, readingBudgetBytes: v }));
     const m = await WS.readProjectMeta('alpha', 'p1');
     assert(m.readingBudgetBytes === null && m.readingBudgetDefaulted === true && /readingBudgetBytes/.test(m.readingBudgetError || ''),
@@ -264,7 +267,7 @@ makeDomain('shared-mirror', '---\nreadonly: true\n---\n\n');
   assert(c2.ok && existsSync(metaPath('alpha', 'p1')), 'a budget alone creates the file');
   await WS.setReadingBudget('alpha', 'p1', null);
   assert(!existsSync(metaPath('alpha', 'p1')), 'clearing the only field removes it again');
-  for (const v of [1, 8191, 204801, 1.5, '65536', undefined, {}]) {
+  for (const v of [1, 8191, 819201, 1.5, '65536', undefined, {}]) {
     const bad2 = await WS.setReadingBudget('alpha', 'p1', v);
     assert(bad2.ok === false && bad2.reason === 'invalid-reading-budget', `${JSON.stringify(v)} is refused invalid-reading-budget`);
   }
@@ -532,8 +535,8 @@ section('10. THE MCP DOOR — description, report, get_working_state, and whatIf
 const storage = { listDomains: async () => ['alpha', 'bi'] };
 {
   const d = tools.getProjectContextDefinition;
-  assert(/default: the owner's reading budget — 120 KB unless the owner set one; max 200 KB/.test(d.inputSchema.properties.max_bytes.description),
-    'max_bytes reads "(default: the owner\'s reading budget — 120 KB unless the owner set one; max 200 KB)"');
+  assert(/default: the owner's reading budget — 120 KB unless the owner set one; max 800 KB/.test(d.inputSchema.properties.max_bytes.description),
+    'max_bytes reads "(default: the owner\'s reading budget — 120 KB unless the owner set one; max 800 KB)" (v3.70.0 ceiling)');
   assert(d.description.includes('When the owner has set a reading budget, only documents marked read first arrive with text; otherwise, when none is marked, a session gets every document within the budget and later ones only what changed against `seen_hashes`'),
     'the description carries the planned-mode sentence');
   assert(d.description.includes("Documents the owner keeps 'not at start' are absent from the index; open one by name with `slugs` if the brief names it."),

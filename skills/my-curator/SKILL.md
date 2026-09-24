@@ -255,7 +255,7 @@ Four rules that hold whatever you are fixing:
 | `get_summary` | Pull a summary page | When user references a specific source |
 | `get_raw_source` | Pull the original document a summary was built from — verbatim text, never binary | Escalation only — exact quotes/figures. See §4.1 |
 | `get_working_state` | Resume a previous session's handoff (brief, decisions, next steps, journal) | "carry on", "where did we leave off" — call first, before re-reading code |
-| `get_project_context` | The session-start bootstrap (v3.59.0) — brief + latest handoff + any project foundations not already seen, in one call | Prefer this OVER `get_working_state` at the start of a session; see `curator-continuity` §2 |
+| `get_project_context` | The session-start bootstrap (v3.59.0) — brief + latest handoff + any project foundations not already seen, in one call. A large one arrives in pages of at most 80 KB (v3.70.0): while `foundations.continuation` is present, call again with the same arguments plus `page: N`, and read every page before starting work | Prefer this OVER `get_working_state` at the start of a session; see `curator-continuity` §2 |
 | `list_projects` | What is being built, and where — projects with their newest work-stream, age and headline | You do not know which project the user means. **Ask; never guess** |
 | `compile_to_wiki` | Save findings as wiki pages | THE write tool — follow §5 |
 | `scan_wiki_health` | Find structural issues | "Check my wiki" |

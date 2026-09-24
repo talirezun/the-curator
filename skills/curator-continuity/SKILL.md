@@ -111,6 +111,24 @@ canonical documents like the architecture doc or the decision log. Omit `seen_ha
 defaults it from the latest handoff's own `foundations_read` section, so you never have to track
 hashes yourself.
 
+**A large context arrives in pages — fetch every page before you start work (v3.70.0).** One MCP
+reply carries at most 80 KB (about 20k tokens), because Claude Code shows a reply of at most 25k
+tokens and saves anything larger to a file instead. When the documents do not fit, page 1 carries
+the brief, the handoff, the journal, the index, `seen`, and as many whole documents as fit, its
+`report` opens with `PAGED:`, and `foundations.continuation` names the next page. Call again with
+**the same arguments plus that page**:
+
+```
+get_project_context({ project: "the-project", scope: "latest", page: 2 })
+```
+
+and repeat while `foundations.continuation` is present (it says how many pages remain and which
+documents they carry). A document larger than one page arrives alone on its own page. Do not pass
+`seen` back as `seen_hashes` between pages — that changes which documents are selected. The
+bootstrap is not finished until the last page says so: planning from page 1 alone means working
+without documents the owner decided every session must read. Record **page 1's** `seen` on your
+next save; it already covers every page. A page past the end is refused with the page count.
+
 **Read the index first, then open by name what the brief or the task says.** `foundations.index`
 lists **every** document the project has — slug, role, title, size, freshness, and whether it is
 marked **read first**. The documents the owner marked read-first arrive with their text in
@@ -413,6 +431,8 @@ Session opening on a tracked project, or the user says "continue" / "resume":
                     → else list_projects() and ASK. Never guess.
   → get_project_context({project, scope: "latest"})   ONE call: brief + handoff + foundations
      (seen_hashes omitted — the store defaults it from the latest handoff)
+     (PAGED? while `foundations.continuation` is present, call again with the same
+      arguments plus page: 2, 3, … — read every page before starting work)
      (unsure which scope? drop `scope` for the index, read headlines, ask — never guess)
      (scope wrong? read `scope_not_found` + `did_you_mean` — never guess twice)
   → read the foundations INDEX; the read-first ones arrive with their text

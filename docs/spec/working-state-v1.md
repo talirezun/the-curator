@@ -332,7 +332,7 @@ project that are neither state nor a document — metadata the app writes on the
 |---|---|---|
 | `version` | integer | exactly `1` |
 | `knowledgeDomains` | array of names or absent | which **wikis** this project's knowledge lives in, in the owner's order. Each entry is a domain name (§4). Duplicates collapse to their first position; at most `12` |
-| `readingBudgetBytes` | integer or absent (v3.67.0) | the owner's **reading budget**: how much document text an agent is handed at session start (§11). `0` (index only) or an integer from `8192` to `204800` |
+| `readingBudgetBytes` | integer or absent (v3.67.0) | the owner's **reading budget**: how much document text an agent is handed at session start (§11). `0` (index only) or an integer from `8192` to `819200` (v3.70.0 raised the ceiling from `204800`; every value valid before stays valid) |
 
 **The reading budget is a second, independent field.** A reader must parse it whether or not
 `knowledgeDomains` is present — a file holding only `readingBudgetBytes` carries a budget. Absent
@@ -595,7 +595,7 @@ on every page load.
 | Foundations per project | 204,800 (200 KB) | `FOUNDATIONS_BUDGET_BYTES` | **Accepted and disclosed** — over budget is a reading the owner acts on |
 | Documents per project | 200 | `MAX_FOUNDATIONS_PER_PROJECT` | Refused |
 | A bootstrap read, when the owner has set no reading budget | 122,880 (120 KB) | `CONTEXT_MAX_BYTES_DEFAULT` | Bodies dropped in reverse reading order, omissions disclosed |
-| A bootstrap read, ceiling | 204,800 (200 KB) | `CONTEXT_MAX_BYTES_CAP` | A caller may not ask for more, and an owner may not set more |
+| A bootstrap read, ceiling | 819,200 (800 KB) | `CONTEXT_MAX_BYTES_CAP` | A caller may not ask for more, and an owner may not set more |
 | The smallest non-zero reading budget | 8,192 (8 KB) | `READING_BUDGET_MIN_BYTES` | Below it only `0` (index only) is a reading budget; anything else reads as not set (§7b) |
 | The manifest file | 1,048,576 (1 MB) | `MAX_FOUNDATIONS_MANIFEST_BYTES` | Read cap; a larger file is malformed |
 
@@ -686,6 +686,15 @@ orientation at all.
 
 A caller may also name documents by slug; those come back **whole**, in the order given, and are
 excluded from the budgeted set rather than sent twice.
+
+**Delivery in pages (v3.70.0) is a property of a reader's transport, not of this format.** The
+reference implementation's MCP door sends one bootstrap in replies of at most 81,920 bytes of
+serialised JSON (≈20k tokens), because a common harness shows a tool reply of at most 25,000 tokens
+and moves a larger one into a file. Documents are never cut to make a page: whole documents, in the
+order above, and a document larger than one page travels alone. Page 1 carries items 1–3 and the
+index exactly as an unpaged read does; each page but the last names the next in
+`foundations.continuation` (`page`, `of`, `remaining`, `slugs`). A reply that fits one page carries
+no paging field at all. What is selected — and therefore the `seen` map — does not depend on paging.
 
 **Reads never write.** Nothing is marked seen by reading it. The reader returns the map of hashes it
 served, and the **caller records it on its next save** — which is exactly what the
