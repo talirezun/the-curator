@@ -243,7 +243,7 @@ This list is deliberate. Every item is a limit, a refusal or a known gap the pro
 
 ## What version is it, and is the project active?
 
-Version **3.67.1**, as of 23 September 2026. The project is open source, active, and developed in the open at https://github.com/talirezun/the-curator, with releases published on GitHub. It had 95 stars and 15 forks on 23 September 2026; the live count is on the repository page.
+Version **3.68.0**, as of 24 September 2026. The project is open source, active, and developed in the open at https://github.com/talirezun/the-curator, with releases published on GitHub. It had 95 stars and 15 forks on 23 September 2026; the live count is on the repository page.
 
 Most of the recent work comes from the maintainer using the product for real and reporting what broke. The project keeps a long, unedited changelog as its memory, and treats a false claim in a document as a first-class defect, because several of its documents are read by AI models and a wrong sentence changes what an agent tells a user.
 

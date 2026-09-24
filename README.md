@@ -49,7 +49,7 @@ anyone else's server.
 |---|---|---|---|
 | **Compounded knowledge** — the wiki | Entities, concepts and summaries, cross-linked into a graph | **Accumulates** — a new source updates existing pages instead of duplicating them | A page per person, tool and idea across everything you have read |
 | **Volatile state** — the standing brief, the handoff, the journal (on screen since v3.65.1: **Memory**) | Where a piece of work stands, per project | **Supersedes** — each save replaces the last, because a resolved blocker must not come back | Where you stopped, what you decided, what to do next |
-| **Canonical documents** — foundations, new in v3.59.0 (on screen since v3.65.1: **Documents**) | Architecture, decisions, conventions, roadmap — verbatim | **Replaced whole** — mirrored byte-for-byte from a repository, written by an agent you asked, or (v3.61.0) written or edited by you directly, in the app, or (v3.65.1) re-pointed at a repository with **"Mirror from GitHub instead"** | The document an agent should not start work without |
+| **Canonical documents** — foundations, new in v3.59.0 (on screen since v3.65.1: **Documents**) | Architecture, decisions, conventions, roadmap — verbatim | **Replaced whole** — since v3.68.0 added through two doors, **Add from this computer** and **Add from GitHub**, always both, matched to the project's one source; written by an agent you asked, or written or edited by you directly, in the app | The document an agent should not start work without |
 
 Since v3.62.0 you also choose **which** foundations an agent is handed automatically: mark a
 document **read first** and its text reaches every session, and everything else arrives as an index

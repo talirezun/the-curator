@@ -779,9 +779,13 @@ stale against.
 rather than unfinished. A read rides on every project switch and on the menu bar widget's summary; a
 GitHub comparison is a network call with a rate limit attached. So the comparison happens only inside
 a **refresh** — an action with a button — and a read of a project whose checkout is not here still
-says `source not on this computer`, which remains true of *this disk*. `remoteChecked` on the wire is
+comes back `unreachable`, which remains true of *this disk*. `remoteChecked` on the wire is
 `false` off any read, and the field exists so a surface can tell *"nobody has asked GitHub"* from
-*"GitHub said the copy is current"*.
+*"GitHub said the copy is current"*. **Since v3.67.2**, the view reads that same `unreachable`
+differently depending on *why*: a project with `repo.root` null and a `repo.remote` set — a mirror
+born from, or switched to, GitHub — shows **"GitHub · not checked"**, because there never was a
+local checkout to be missing; a project whose recorded folder really is absent from this machine
+still shows **"source not here"**, now a pressable control rather than a floating note.
 
 ### The reading plan: read-first documents, and fetch by name
 
@@ -1111,8 +1115,10 @@ With no documents named, the mirror is recorded with no network call at all and 
 
 **A mirror's source can be re-chosen, without touching ownership (v3.65.1).** A project mirrored
 from a folder is stuck reading that folder forever, on the one machine that has it — until now:
-**"Mirror from GitHub instead"**, offered in step ① of Project-context beside *Refresh from repo*
-and *Add from folder*, switches the source to a repository. What changes: the documents are
+**"Mirror from GitHub instead"** — since v3.68.0 this is the **Add from GitHub** door's `switch`
+mode, pressed on a project that already mirrors a folder; step ①'s head row shows two doors, *Add
+from this computer* and *Add from GitHub*, always both, beside *Refresh from repo*/*Refresh from
+GitHub* once a source is set — switches the source to a repository. What changes: the documents are
 re-copied from the repository you name, `repo.remote` is recorded, and `repo.root` is **cleared** —
 so every machine reads the same source afterwards, not only the one that made the mirror. What does
 not change: `ownership` stays `repo` — the switch closes the gap where `refreshFoundationsFromRepo`
@@ -1831,7 +1837,7 @@ its ⓘ beside it and **no lede sentence underneath**; the explanation lives in 
 
 | | Step (v3.65.1 name) | What it holds |
 |---|---|---|
-| ① | **Documents** *(the store still calls this tier* foundations *)* | The project's canonical documents — or, before ownership is chosen, the question that chooses it. First because a document an agent must not act without is the thing a new project does not have. A head row above the table carries its controls: **Refresh from repo**, **Add from folder**, and — new in v3.65.1 — **Mirror from GitHub instead**, which re-points an existing mirror at a repository without moving its ownership |
+| ① | **Documents** *(the store still calls this tier* foundations *)* | The project's canonical documents — or, before ownership is chosen, the question that chooses it. First because a document an agent must not act without is the thing a new project does not have. **Since v3.68.0** a head row above the table always shows two doors, **Add from this computer** and **Add from GitHub** — at zero documents and at twenty, matched to the project's one current source — plus **Refresh from repo**/**Refresh from GitHub** once a source is set; a door that cannot work for this project stays visible, disabled with the reason |
 | ② | **Memory** *(the store still calls this* working state *)* | Four closed rows, in this order: **Capture**, **Handoffs** (a press opens that handoff in the reader; the store calls each one a `scope`), **The brief** (yours, with a pencil), **Journal**. Everything that qualifies them sits unfolded, outside every row. **v3.65.1 removes the "Last saved" row** that used to lead them; its fact moved into the overview's MEMORY tile and into the Handoffs row's own summary |
 | ③ | **Knowledge** | One row per domain the project draws on — the project's own domain is now always an explicit row, not an implied default — each opening that domain's figures and two doors, *Open in Domains* and *Ask this domain*, plus its own **Remove**. A head row above the rows carries **+ Add a domain** (v3.65.1 moved this picker out from under the last row, the same head-row placement step ① uses) |
 

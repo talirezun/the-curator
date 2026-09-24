@@ -1509,6 +1509,12 @@ the same colour everywhere it is named on this screen — the breadcrumb, the si
 and every Knowledge row — the same [identity dot](design-system-source.md#18-identity--one-palette-one-mapping-one-glyph-v3651) the Domains sidebar
 uses ([§10](#projects-inside-a-domain)).*
 
+**Step ①'s controls in the wireframe below predate v3.68.0.** *"Refresh from repo", "Add from
+folder" and "Mirror from GitHub instead"* is the v3.65.1 head row; since v3.68.0 that head row
+always shows two doors, **Add from this computer** and **Add from GitHub**, with Refresh beside
+them once a source is set — see "The three steps, in detail" → **① Documents**, below. Everything
+else the wireframe shows is unchanged.
+
 The wireframe below is the same shape with the labels called out.
 
 **What each step is for, and what it costs you to read:**
@@ -1715,9 +1721,14 @@ paraphrase of it. → [§13b, Foundations](#foundations--canonical-documents-tha
 documents get in and what the two ownership modes mean — the store and that chapter still call this
 tier **foundations**; see [the table above](#the-word-on-screen-and-the-word-on-disk).
 
-**Three controls sit in a head row above the table**, in this order: **Refresh from repo** (a
-local mirror re-reads its checkout), **Add from folder** (opens the panel below), and — new in
-v3.65.1 — **Mirror from GitHub instead**.
+**The head row above the table always offers two doors, since v3.68.0: Add from this computer and
+Add from GitHub** — at zero documents and at twenty, whatever the project's current source.
+Pressing either opens the same checklist panel under the head row. A **Refresh** button (*"Refresh
+from repo"* or *"Refresh from GitHub"*, matching the project's source) sits beside the doors on a
+project that already mirrors something. **Until a project holds its first document, both doors are
+open and neither is a commitment** — its source is whichever door you press first — and at that
+same empty state the step also offers a quiet **"Or start from four templates to fill"**. Removing
+every document from a project puts it back to this open choice.
 
 The fold's summary line is the decision to open it — *"3 documents · 391 KB · mirrored · 2 read
 first · 1 on request · fresh"*. Inside, one row per document, in eight columns: **ROLE ·
@@ -1735,16 +1746,25 @@ read-first control is the new one — so on a phone-width window the table scrol
 card rather than the page scrolling. That is one column worse than v3.59.0 already recorded, and it
 is the honest cost of putting the control in the row it belongs to.
 
-**"Mirror from GitHub instead" re-points an existing mirror at a repository.** It is offered on a
-project that mirrors documents from a folder on this or another computer — including a computer
-this one cannot currently reach, which is exactly the machine that most needs it. There is **one
-source per project**: choosing GitHub re-copies the documents from the repository you name, records
-it, and **clears the folder path** — every machine then reads the same source rather than only the
-one that made the mirror. **Ownership does not move** — the repository is still the author, exactly
-as a folder mirror is — and any document you had marked **read first** stays marked, by name, across
-the switch. As with every mirror, there is **no token field on this panel**: you name which file on
-this computer the read-only token is read from — **config**, or **sync** (Personal Sync's token) —
-never paste one here.
+**A project has one source, and each door does something different depending on what that source
+already is.** The door that cannot work for this project stays visible — never hidden — shown
+`aria-disabled` with the reason as its tooltip; pressing it anyway shows the same reason as a
+toast.
+
+| This project | Add from this computer | Add from GitHub |
+|---|---|---|
+| No documents yet | Copies files in — the project becomes curator-kept | Mirrors from the repository you name — the project becomes a GitHub mirror |
+| Keeps its own copies (curator-kept) | Copies files in, **appended** — never replaces what is already there | Disabled — *"a project has one source. Start a new project to mirror a repository."* |
+| Mirrors a folder | Mirrors more, from **inside that folder only** — a file from elsewhere is refused | Switches the source to GitHub — re-reads the existing documents from the repository by path, and the folder stops being used (this was **"Mirror from GitHub instead"**) |
+| Mirrors a GitHub repository | Disabled, naming the repository | Adds more from that repository; naming a **different** repository switches the source again |
+
+Choosing GitHub from a folder mirror **re-copies the documents from the repository you name,
+records it, and clears the folder path** — every machine then reads the same source rather than
+only the one that made the mirror. **Ownership does not move** — the repository is still the
+author, exactly as a folder mirror is — and any document you had marked **read first** stays
+marked, by name, across the switch. As with every mirror, there is **no token field on this
+panel**: you name which file on this computer the read-only token is read from — **config**, or
+**sync** (Personal Sync's token) — never paste one here.
 
 **READ WITH now tells you the truth, and gives you a door if there is nothing to tell (v3.65.2).**
 Through v3.65.1 the radio's **config** option always claimed *"the read-only token in Settings"* —
@@ -1758,23 +1778,35 @@ the same five steps for creating a fine-grained, read-only token as
 [the API reference](api-reference.md#post-apimemorydomainprojectfoundationssource) for the request this
 button sends and every way it can refuse.
 
-**"Add from folder" on an already-mirrored project (redesigned v3.65.2).** The maintainer's own
-words on the earlier shape: *"You can add a folder on this Mac or add a file that scan missed — the
-second part I don't understand… check that this goes smoothly, because it's kind of rusty
-experience."* On a project that already mirrors documents from a folder, this panel no longer asks
-you to point at a folder again — **the recorded folder is shown, not asked for**, and it scans that
-folder **the moment the panel opens**, with **nothing ticked by default**. Documents already
-mirrored are listed as **mirrored** and cannot be ticked (there is nothing to add — they are already
-there); only new candidates the scan found start selectable. If the folder itself is not on this
-computer — a mirror set up on another machine — the panel says so and asks for your own copy of it
-instead. The list's **last row is "+ A file that isn't listed"** — type or paste a path and press
-**Add to list** (or Enter) to add a file the scan missed, exactly the gap the maintainer's words
-named; it becomes an ordinary row, tickable like any other. The running total counts what is already
-mirrored **plus** what you have ticked, against the project's 200 KB budget, as a depth bar; the
-button at the foot reads **"Copy N documents"**, counting only the newly ticked files, and copies
-them the moment you press it. Scrolling the list to tick a row near the bottom no longer throws you
-back to the top on the next repaint — a defect found only by using the redesigned panel in a
-browser, now fixed.
+**The checklist panel, either door (v3.68.0).** Add from this computer asks for a folder (or a
+typed full path); Add from GitHub asks for `owner/repo`, and optionally a branch and a folder
+inside it. Either way, pressing **List documents** scans and shows every candidate: its path, its
+size, and how long ago it changed. A document already in the project is shown **ticked and
+disabled**, with an "already added" badge — there is nothing to add, it is already there. A file
+over 512 KB is shown disabled with its size — a canonical document cannot be honestly trimmed, so
+it is never tickable. A **live count line** runs under the list — ticks and bytes, and what the
+project's total would become against its 200 KB budget — with a warning, in words, once the total
+would go over. The button at the foot reads **"Add N documents"** (this computer) or **"Mirror N
+documents"** (GitHub), counting only what you ticked, and commits the moment you press it. A clean
+commit closes the panel and shows a toast; a refusal, a partial add (each refused file listed with
+its reason), a GitHub error or a rate limit stays on the panel until your next action — never a
+toast, because it still blocks you. **Adding always appends — it never replaces** a document that
+is already there.
+
+A one-line legend sits above the table, spelling out what each start state costs: **read first** —
+sent in full at session start, and counts against the reading budget; **on request** — listed by
+name, opened only when needed, no budget cost; **not at start** — hidden at the start, opened by
+name only.
+
+**A document copied in from a folder is labelled "copied from `<folder>`"** — never "written by
+you" — everywhere its provenance shows: the table row, the fold's own summary and the overview
+tile, and the chips in the reader. A document you write with **Write a document** or that arrived
+from a template still says **"written by you"**; editing a copied document in the app's own editor
+makes it yours from then on, so it becomes "written by you" too. **Add from this computer
+remembers the last folder you added from, for that project, until you quit the app** — the field
+is prefilled and its contents listed straight away the next time you open the door, so adding a
+second batch from the same place is one press instead of typing the path again; nothing is saved
+past that session.
 
 **The `read first` control is the one that changes what your agents get** (*new in v3.62.0*). A
 project with four documents can hand an agent all four at the start of every session. A project
@@ -4325,7 +4357,9 @@ flowchart TD
 repo-owned one is mirrored, so editing it in the app would be immediately overwritten by the next
 refresh; the app says so and points you at the checkout instead. On a curator-owned project, each
 row in the Foundations block's table carries its own **Edit** control, and the block's own header
-carries **Add document**. Either one opens an editor **in place of the table**, inside the same
+carries **Write a document** (renamed from **Add document** in v3.68.0, so it reads as its own
+button rather than a third way to add files beside step ①'s two doors, Add from this computer and
+Add from GitHub). Either one opens an editor **in place of the table**, inside the same
 fold — the standing brief's own pattern — with the document's title and role, a plain-text box that
 renders in the same monospace face as everywhere else code-shaped text appears in this app, and a
 live byte counter. **Save** is disabled past **512 KB** — a canonical document cannot be honestly
@@ -4336,7 +4370,7 @@ an ordinary foundation, banner and all, exactly as if you had deleted the first 
 **Delete** sits in the editor's own footer, behind a confirmation naming the document, for the
 occasional skeleton you decide the project does not need.
 
-**Add document** offers two ways to start that editor, side by side: an **empty editor**, or
+**Write a document** offers two ways to start that editor, side by side: an **empty editor**, or
 **Choose a file…**, which reads a `.md`/`.txt` file straight off your computer into the editor's
 text box so you can review it before anything is saved — nothing is uploaded until you press
 **Save**, and a file over the 512 KB wall is refused before it is even read, naming both sizes.
@@ -4345,13 +4379,14 @@ same role guess the repository scan uses) and are yours to correct before saving
 whose slug matches an existing skeleton **replaces that skeleton** and clears its mark — the
 banner says so, so you are never left wondering whether you overwrote a document.
 
-**Getting an existing document into a curator-owned project — three ways in, not one.** Before
-v3.61.0 there was exactly one: asking an agent to write it. All three now:
+**Getting an existing document into a curator-owned project — four ways in, not one.** Before
+v3.61.0 there was exactly one: asking an agent to write it.
 
 | Way in | What actually happens | When to use it |
 |---|---|---|
+| **Add from this computer** (step ①'s head row, v3.68.0) | Tick documents from a folder scan and copy them in, appended to what is already there — the ordinary way to bring in several documents at once | You are adding one or more existing files, from anywhere on this computer |
 | **Mirror from a repository** | Scanned from a checkout you point at, copied byte-for-byte, kept fresh by **Refresh from repo** — never edited here | The document already lives in a repository and should keep that repository as its source of truth |
-| **Choose a file…** | Read from your disk into the editor, shown to you, saved only when you press **Save** — a `curator`-owned copy from here on, with no checkout behind it | The document exists as a file, but you don't want a repository dependency, or the project has no repository at all |
+| **Choose a file…**, inside **Write a document**'s editor | Read from your disk into the editor, shown to you, saved only when you press **Save** — a `curator`-owned copy from here on, with no checkout behind it | You want to review or trim the text before it is saved, not just copy it in whole |
 | **An agent's commissioned save** | An agent writes or updates it with `save_foundation`, **only when you ask** | You want an agent to draft or fill the document from what you've just discussed, rather than typing or pasting it yourself |
 
 **Asking, without composing the request yourself.** The Foundations block's **Copy the drafting
