@@ -21,12 +21,14 @@
    its arrows turned downward. No horizontal scroll at any width.
    ─────────────────────────────────────────────────────────────────────── */
 
-/* The explainer takes the panel's padding over so its head runs edge to
-   edge. Specificity (0,2,0) under `.tx-vh-panel[hidden]` would still hide
-   it: `[hidden]` sets display, this sets padding only. */
-.tx-vh-panel:has(> .xp) { padding: 0; }
-
+/* THE PANEL'S PADDING, RECLAIMED. text.css pads .tx-vh-panel 12px 14px;
+   the explainer pulls itself out by exactly that much so its head's rule
+   runs edge to edge, then pads its own parts. A selector on the panel would
+   put a `tx-` rule in this file, and text.css owns that prefix outright
+   (test-next-text-system.js). The two numbers are one fact in two files, so
+   test-explainer-kit.js §8 reads BOTH and goes red if they drift. */
 .xp {
+  margin: -12px -14px;
   container-type: inline-size;
   display: grid;
   grid-template-columns: minmax(0, 1fr);

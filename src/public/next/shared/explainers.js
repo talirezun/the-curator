@@ -321,6 +321,10 @@ export const SCREEN_WORDS = [
   'domain', 'Projects', 'New domain', 'Ingest', 'PROJECT', 'Length', 'Model',
   'Wiki', 'Context', 'All', 'Scan', 'Providers & keys', 'Knowledge base', 'MCP bridge',
   'Shared Brain', 'Push', 'Pull',
+  // The overview's tile names, printed as the tiles print them, and the
+  // Pages list's three kinds — a table's row names are screen words too.
+  'DOCUMENTS', 'MEMORY', 'KNOWLEDGE', 'AGENT SESSIONS', 'SESSION START',
+  'Entity', 'Concept', 'Summary',
 ];
 
 // Frozen DEEPLY: a caller that could assign into this map would be a second,

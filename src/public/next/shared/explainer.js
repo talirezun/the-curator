@@ -15,7 +15,7 @@
  *
  * ── THE API (views call these; nothing else) ───────────────────────────────
  *
- *   renderExplainer(key, opts?) → string (HTML)
+ *   explainerHtml(key, opts?) → string (HTML)
  *       The panel body for EXPLAINERS[key]. `opts.here` —
  *       'second-brain' | 'shared-brain' | 'agent-memory' — overrides which
  *       framing node is marked "you are here" (only matters for a `frame`
@@ -25,18 +25,25 @@
  *
  *   explainerMark(id, key, opts?) → { btn, panel }
  *       The whole affordance for a block, a row or a step head:
- *       renderInfoMark(id, EXPLAINERS[key].label, renderExplainer(key, opts),
+ *       renderInfoMark(id, EXPLAINERS[key].label, explainerHtml(key, opts),
  *       { html: true }). Same ids, same listener, same two fragments.
  *
  *   explainerLabel(key) → string
  *       The entry's ⓘ accessible name. For a VIEW HEADER, whose name
  *       renderViewHeader derives itself ("About " + title), pass the body:
- *         renderViewHeader({ title, info: renderExplainer('context.page'),
+ *         renderViewHeader({ title, info: explainerHtml('context.page'),
  *                            infoHtml: true })
  *
  * Adoption is one line per call site. The HTML carries its own classes
- * (`xp-…`, shared/explainer.css); `.tx-vh-panel:has(> .xp)` drops the old
- * panel padding so the explainer's head can run edge to edge.
+ * (`xp-…`, shared/explainer.css), and the explainer reclaims the panel's
+ * padding itself so its head can run edge to edge.
+ *
+ * NAMED `explainerHtml`, NOT `renderExplainer` (the design's name): text.js
+ * already exports a `renderExplainer` — the <details> disclosure with its
+ * outside-the-fold `warning` field — that views/memory.js and domains.js
+ * import, and test-next-text-system.js pins it as declared exactly once. A
+ * view adopting this module beside that one would need an import alias at
+ * every site; a distinct name needs none.
  *
  * ── ESCAPE-FIRST, AND WHY THAT IS THE WHOLE SECURITY STORY ────────────────
  *
@@ -260,7 +267,7 @@ function renderVisual(v, here, title) {
  * @param {{here?: 'second-brain'|'shared-brain'|'agent-memory'}} [opts]
  * @returns {string} HTML — the panel body
  */
-export function renderExplainer(key, opts) {
+export function explainerHtml(key, opts) {
   const e = entryFor(key);
   const o = opts || {};
   const here = FRAME_NODES.indexOf(o.here) !== -1 ? o.here : (e.visual && e.visual.here) || null;
@@ -306,5 +313,5 @@ export function explainerLabel(key) {
  */
 export function explainerMark(id, key, opts) {
   const e = entryFor(key);
-  return renderInfoMark(id, e.label, renderExplainer(key, opts), { html: true });
+  return renderInfoMark(id, e.label, explainerHtml(key, opts), { html: true });
 }
