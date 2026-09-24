@@ -133,13 +133,37 @@ export const DOCS_LINKS = {
   // the part only the guide carries — which documents are worth making
   // canonical, and the two ways one arrives (an agent commissioned to write it,
   // or a byte copy refreshed from the project's repository).
-  'memory.foundations': { file: 'user-guide.md', anchor: 'foundations--canonical-documents-that-travel' },
+  'memory.foundations': { file: 'user-guide.md', anchor: 'documents--the-files-that-travel-with-a-project' },
   // v3.61.0: the start-a-project flow and the curator-owned editor. This one
   // is reached from the Foundations block's own ⓘ (WP-V), on the sentence
   // that names how a curator-owned document gets edited — what someone
   // pressing "Edit" wants next is the walkthrough, not the tier's definition
   // again (that is `memory.foundations`, above).
   'memory.foundations-edit': { file: 'user-guide.md', anchor: 'start-a-project' },
+
+  // ── The explainers' guide cards (v3.71.0) ──────────────────────────────
+  // One per entry in shared/explainers.js whose destination no key above
+  // already names. The card SHOWS the heading, so each of these lands on a
+  // heading whose words match the screen's (scripts/test-explainers.js
+  // checks the heading text as well as the anchor). Three of them are the
+  // headings the v3.71.0 docs pass retitles or adds — "Documents — …",
+  // "Memory — …" and "Session start and the context window" — because the
+  // old ones said Foundations, working state and "Step ④". The same retitle
+  // moved `memory.foundations` above to the new Documents heading.
+  'context.page': { file: 'user-guide.md', anchor: 'project-context--what-the-screen-shows' },
+  'context.overview': { file: 'user-guide.md', anchor: 'the-freshness-dot-one-scale-everywhere' },
+  'context.documents': { file: 'user-guide.md', anchor: 'documents--the-files-that-travel-with-a-project' },
+  'context.memory': { file: 'user-guide.md', anchor: 'memory--the-brief-handoffs-and-the-journal' },
+  'context.knowledge': { file: 'user-guide.md', anchor: 'the-three-layers-and-the-one-rule-that-separates-them' },
+  'context.session-start': { file: 'user-guide.md', anchor: 'session-start-and-the-context-window' },
+  'settings.github-token': { file: 'user-guide.md', anchor: 'github-read-only-token' },
+  'app.what-is-this': { file: 'user-guide.md', anchor: '1-what-is-this-app' },
+  'app.first-run': { file: 'user-guide.md', anchor: '5-first-run--the-getting-started-panel' },
+  'domains.page': { file: 'user-guide.md', anchor: '10-manage-your-domains' },
+  'domains.pages': { file: 'user-guide.md', anchor: 'the-pages-lens--wiki--context--all' },
+  'domains.health': { file: 'user-guide.md', anchor: '17-wiki-health' },
+  'chat.page': { file: 'user-guide.md', anchor: '9-chat-with-your-brain' },
+  'shared.page': { file: 'user-guide.md', anchor: '15b-shared-brain' },
 };
 for (const v of Object.values(DOCS_LINKS)) Object.freeze(v);
 Object.freeze(DOCS_LINKS);

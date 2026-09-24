@@ -119,6 +119,13 @@
      components above document. -->
 <link rel="stylesheet" href="/next/shared/text.css">
 
+<!-- shared/explainer.css — the INSIDE of every ⓘ panel (v3.71.0): head, lead,
+     one visual, points, and the guide card, rendered by shared/explainer.js
+     from shared/explainers.js. Right after text.css because it styles inside
+     text.css's .tx-vh-panel. Linked here because scripts/test-css-tokens.js
+     §5 discovers /next stylesheets only from this file's <link> tags. -->
+<link rel="stylesheet" href="/next/shared/explainer.css">
+
 <!-- shared/checkbox.css — the ONE checkbox surface in /next, replacing the
      OS-native `<input type="checkbox">` chrome at every call site, the same
      way listbox.css replaced every native <select> in v3.18.0. Linked here

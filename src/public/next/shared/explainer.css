@@ -1,0 +1,366 @@
+/* ── THE EXPLAINER (v3.71.0) — the inside of every ⓘ panel ──────────────────
+   Rendered by shared/explainer.js from shared/explainers.js. Owns the whole
+   `xp-` prefix. The panel FRAME is unchanged and stays shared/text.css's
+   (.tx-vh-panel: 2px accent rule, accent-tint wash over --surface-raised,
+   --radius-md, in flow); this file styles only what goes inside it.
+
+   Treatment B, the maintainer's choice: a labelled head, a sunken well for
+   the one visual, points as small cards, and a designed link card.
+
+   TOKENS ONLY — no literal colour. Both themes come from tokens/color.css and
+   tokens/layer.css, which the shell restates under [data-theme]; nothing here
+   branches on theme. scripts/test-css-tokens.js scans this file (it is linked
+   from index.html) and scripts/test-explainer-kit.js refuses a hex, rgb() or
+   hsl() literal in it.
+
+   WIDTH IS THE PANEL'S, NOT THE WINDOW'S. The same explainer sits in a
+   full-width view header and in a narrow step column, so the narrow layout
+   is a CONTAINER query on the explainer itself: under 560px of its own
+   width the frame's three nodes stack, the points go to one column, the
+   foot stacks, a table stacks into label/value pairs and the flow wraps with
+   its arrows turned downward. No horizontal scroll at any width.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* The explainer takes the panel's padding over so its head runs edge to
+   edge. Specificity (0,2,0) under `.tx-vh-panel[hidden]` would still hide
+   it: `[hidden]` sets display, this sets padding only. */
+.tx-vh-panel:has(> .xp) { padding: 0; }
+
+.xp {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  padding: 0 0 16px;
+  font: var(--type-body-sm);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.xp > :not(.xp-head) { margin-left: 16px; margin-right: 16px; }
+.xp p, .xp ul, .xp ol { margin: 0; }
+.xp b { color: var(--text); font-weight: var(--weight-semibold); }
+.xp code {
+  font: var(--type-mono);
+  font-size: 0.92em;
+  color: var(--text);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 0 4px;
+}
+.xp-svg { flex: none; display: block; }
+
+/* A caption only a screen reader hears. */
+.xp-sr {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ── Head ── */
+.xp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px 9px;
+  border-bottom: 1px solid var(--border-subtle);
+  font: var(--type-eyebrow);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+
+/* ── Lead ── */
+.xp-lead {
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+  max-width: 62ch;
+}
+
+/* ── The well that holds the one visual ── */
+.xp-well {
+  border: 1px solid var(--border);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  padding: 12px 14px 14px;
+  min-width: 0;
+}
+.xp-well-cap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px !important;
+  font: var(--type-eyebrow);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.xp-well-t { padding: 6px 14px 8px; }
+
+/* frame — three nodes, one store, "you are here" */
+.xp-nodes {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px;
+}
+.xp-node {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.xp-node + .xp-node::before {
+  content: "";
+  position: absolute;
+  left: -22px; top: 50%;
+  width: 22px;
+  border-top: 1.5px solid var(--border-strong);
+}
+.xp-node + .xp-node::after {
+  content: "";
+  position: absolute;
+  left: -7px; top: calc(50% - 4px);
+  border: 4.5px solid transparent;
+  border-left: 6px solid var(--border-strong);
+  border-right: 0;
+}
+.xp-node.is-here {
+  border-color: var(--accent-border);
+  background: var(--accent-tint-strong);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+.xp-node-top { display: flex; align-items: center; gap: 7px; }
+.xp-node-n {
+  width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-full);
+  background: var(--surface-active);
+  color: var(--text-2);
+  font: var(--type-eyebrow);
+  font-weight: var(--weight-semibold);
+}
+.xp-node.is-here .xp-node-n { background: var(--accent); color: var(--text-on-accent); }
+.xp-node-name { font-size: var(--text-md); font-weight: var(--weight-semibold); color: var(--text); }
+.xp-node-sub { font: var(--type-mono); font-size: var(--text-xs); color: var(--text-3); }
+.xp-node-line { font-size: var(--text-sm); color: var(--text-2); }
+.xp-here {
+  position: absolute;
+  top: -8px; right: 10px;
+  padding: 3px 7px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font: var(--type-eyebrow);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* flow — chips with arrows */
+.xp-flow {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+}
+.xp-flow li {
+  position: relative;
+  padding: 4px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  font: var(--type-mono);
+  color: var(--text);
+}
+.xp-flow li + li::before {
+  content: "→";
+  position: absolute;
+  left: -16px;
+  color: var(--text-3);
+}
+
+/* steps — numbered */
+.xp-steps { list-style: none; padding: 0; counter-reset: xp-s; display: grid; gap: 6px; }
+.xp-steps li { counter-increment: xp-s; display: flex; gap: 10px; align-items: baseline; }
+.xp-steps li::before {
+  content: counter(xp-s);
+  flex: none;
+  width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-full);
+  background: var(--accent-tint-strong);
+  color: var(--accent-text);
+  font: var(--type-eyebrow);
+  font-weight: var(--weight-semibold);
+}
+
+/* table — a real table; stacks when narrow */
+.xp-tbl { border-collapse: collapse; width: 100%; font-size: var(--text-sm); }
+.xp-tbl th, .xp-tbl td { text-align: left; vertical-align: top; padding: 8px 12px 8px 0; }
+.xp-tbl tbody th {
+  font: var(--type-mono);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+  white-space: nowrap;
+}
+.xp-tbl thead th {
+  font: var(--type-eyebrow);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.xp-tbl tbody tr + tr th, .xp-tbl tbody tr + tr td { border-top: 1px solid var(--border); }
+.xp-who { display: inline-flex; align-items: center; gap: 5px; }
+.xp-who .xp-svg { color: var(--accent-text); }
+
+/* meter — a SCHEMATIC of the window, drawn with step ④'s layer tokens */
+.xp-m-bar {
+  display: flex;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--ly-free);
+}
+.xp-m-harness { flex: 24; background: repeating-linear-gradient(135deg, var(--ly-harness-a) 0 3px, var(--ly-harness-b) 3px 7px); }
+.xp-m-framing { flex: 1.2; background: var(--ly-framing); }
+.xp-m-brief   { flex: 4;   background: var(--ly-brief); }
+.xp-m-handoff { flex: 3;   background: var(--ly-handoff); }
+.xp-m-journal { flex: 1.6; background: var(--ly-journal); }
+.xp-m-index   { flex: 1.6; background: var(--ly-index); }
+.xp-m-read    { flex: 8;   background: var(--ly-read); }
+.xp-m-room    { flex: 14;  outline: 1.5px dashed var(--ly-room-edge); outline-offset: -2px; }
+.xp-m-free    { flex: 26;  background: var(--ly-free); }
+.xp-m-labels { display: flex; margin-top: 8px; }
+.xp-ml { min-width: 0; display: flex; flex-direction: column; gap: 1px; padding-right: 8px; }
+.xp-ml-harness { flex: 24; }
+.xp-ml-curator { flex: 19.4; }
+.xp-ml-room    { flex: 14; }
+.xp-ml-free    { flex: 26; }
+.xp-ml-name { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-sm); color: var(--text); }
+.xp-ml-name .xp-svg { color: var(--accent-text); }
+.xp-ml-sub { font-size: var(--text-xs); color: var(--text-3); }
+
+/* ── Points — small cards, one icon each ── */
+.xp-pts {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+.xp-pts li {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.xp-ic {
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--accent-tint-strong);
+  color: var(--accent-text);
+}
+.xp-pt { line-height: var(--leading-normal); }
+
+/* ── Foot: Try + the guide card ── */
+.xp-foot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+}
+.xp-foot-solo { grid-template-columns: minmax(0, 420px); }
+.xp-try {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 11px 12px;
+  border: 1px dashed var(--accent-border);
+  border-radius: var(--radius-lg);
+  background: var(--accent-tint);
+  color: var(--text-2);
+}
+.xp-try .xp-svg { color: var(--accent-text); margin-top: 2px; }
+.xp-try .xp-try-k { color: var(--accent-text); margin-right: 2px; }
+
+.xp-guide {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+.xp-guide:hover { border-color: var(--accent-border); background: var(--accent-tint); }
+.xp-guide:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.xp-guide-ic {
+  flex: none;
+  width: 34px; height: 34px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--accent-tint-strong);
+  color: var(--accent-text);
+}
+.xp-guide-tx { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.xp-guide-eb {
+  font: var(--type-eyebrow);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.xp-guide-t { font: var(--type-label); color: var(--text); }
+.xp-guide-sub { font-size: var(--text-xs); color: var(--text-3); }
+.xp-guide-ext { flex: none; margin-left: auto; color: var(--text-3); display: inline-flex; }
+
+@media (prefers-reduced-motion: reduce) {
+  .xp-guide { transition: none; }
+}
+
+/* ── Narrow: the explainer's own width, not the window's ── */
+@container (max-width: 560px) {
+  .xp > :not(.xp-head) { margin-left: 14px; margin-right: 14px; }
+  .xp-nodes { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .xp-node + .xp-node::before { left: 20px; top: -14px; width: 0; height: 14px; border-top: 0; border-left: 1.5px solid var(--border-strong); }
+  .xp-node + .xp-node::after { display: none; }
+  .xp-pts { grid-template-columns: minmax(0, 1fr); }
+  .xp-pts li { flex-direction: row; align-items: flex-start; gap: 10px; padding: 9px 10px; }
+  .xp-ic { width: 26px; height: 26px; }
+  .xp-foot, .xp-foot-solo { grid-template-columns: minmax(0, 1fr); }
+  .xp-ml-sub { display: none; }
+  /* flow: wraps to a column, arrows turn downward */
+  .xp-flow { flex-direction: column; align-items: flex-start; gap: 18px; }
+  .xp-flow li + li::before { content: "↓"; left: 12px; top: -18px; }
+  /* table: label/value pairs */
+  .xp-tbl thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); }
+  .xp-tbl tr { display: block; padding: 7px 0; }
+  .xp-tbl tbody tr + tr { border-top: 1px solid var(--border); }
+  .xp-tbl th, .xp-tbl td { display: block; padding: 2px 0; border-top: 0 !important; }
+  .xp-tbl tbody th { white-space: normal; }
+  .xp-tbl td[data-col]::before {
+    content: attr(data-col) " · ";
+    color: var(--text-3);
+    font-size: var(--text-xs);
+  }
+}
