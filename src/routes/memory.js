@@ -1230,7 +1230,9 @@ router.get('/repo-scan', async (req, res) => {
     // inside it — an unowned pin, measured, and this ordering is what keeps
     // it true.
     if (req.query.source !== 'remote') {
-      const out = await fstore().scanRepoForFoundations(root);
+      // `all=1` (v3.68.0): every .md/.txt in the folder rather than the
+      // three canonical-document rules — the "Add from this computer" door.
+      const out = await fstore().scanRepoForFoundations(root, { all: req.query.all === '1' });
       if (!out || out.ok === false) {
         // TWO DIFFERENT FACTS, TWO DIFFERENT STATUSES, and the store already
         // separates them: `invalid-root` means the text is not a usable
@@ -1304,6 +1306,8 @@ router.get('/repo-scan', async (req, res) => {
         ...(typeof req.query.ref === 'string' && req.query.ref.trim() ? { ref: req.query.ref.trim().slice(0, 200) } : {}),
         ...(typeof req.query.path === 'string' && req.query.path.trim() ? { path: req.query.path.trim().slice(0, 300) } : {}),
         tokenSource: req.query.tokenSource === 'sync' ? 'sync' : 'config',
+        // `all=1` (v3.68.0) — the "Add from GitHub" door lists every document.
+        all: req.query.all === '1',
       });
       if (!scan || scan.ok === false) {
         const reason = (scan && scan.reason) || 'invalid-remote';
@@ -2600,7 +2604,7 @@ router.delete('/:domain/:project/foundations/:slug', async (req, res) => {
  * a typo and a caller guessing. `token` is deliberately absent: see the
  * handler.
  */
-export const INIT_BODY_FIELDS = new Set(['ownership', 'repoRoot', 'files', 'seed', 'remote', 'tokenSource']);
+export const INIT_BODY_FIELDS = new Set(['ownership', 'repoRoot', 'files', 'seed', 'remote', 'tokenSource', 'rechooseEmpty']);
 
 router.post('/:domain/:project/foundations/init', async (req, res) => {
   try {
@@ -2652,6 +2656,9 @@ router.post('/:domain/:project/foundations/init', async (req, res) => {
       // ROUTE: `tokenSource` names the FILE, exactly as on `…/refresh`.
       ...(namedRemote ? { remote: namedRemote } : {}),
       ...(typeof body.tokenSource === 'string' ? { tokenSource: body.tokenSource } : {}),
+      // v3.68.0 — only the literal `true`: an EMPTY project's source may be
+      // chosen again (the store checks it lists no document and holds none).
+      ...(body.rechooseEmpty === true ? { rechooseEmpty: true } : {}),
       authoredBy: { kind: 'human' },
     });
     if (!out || out.ok === false) {
@@ -2694,6 +2701,81 @@ router.post('/:domain/:project/foundations/init', async (req, res) => {
     });
   } catch (err) {
     console.error('Memory foundations init error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// POST /api/memory/:domain/:project/foundations/add-local — "Add from this
+// computer" (v3.68.0)
+//
+// `{root, files: [{path, role?}]}` — the folder the owner picked and the files
+// they ticked in it. The STORE decides what that means for this project's one
+// ownership (`addFoundationsFromFolder`: copy into an empty or curator-kept
+// project, mirror into a folder mirror from inside its folder, refuse on a
+// GitHub mirror) and enforces every path rule — absolute root, realpath,
+// inside the root through symlinks, .md/.txt only, a regular file, the
+// per-document cap. This route only shapes the body: a STRICT allow-list, so
+// nothing else rides in, and the refusal numbers ride out.
+// ═════════════════════════════════════════════════════════════════════════
+export const ADD_LOCAL_BODY_FIELDS = new Set(['root', 'files']);
+router.post('/:domain/:project/foundations/add-local', async (req, res) => {
+  try {
+    const { domain, project } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    if (await refuseMirror(res, domain)) return;
+    if (!validProjectName(ws(), project)) {
+      return res.status(400).json({ ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.` });
+    }
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    const extra = Object.keys(body).filter((k) => !ADD_LOCAL_BODY_FIELDS.has(k));
+    if (extra.length) {
+      return res.status(400).json({
+        ok: false, reason: 'unexpected_fields', fields: extra.slice(0, 10),
+        error: `This route accepts ${[...ADD_LOCAL_BODY_FIELDS].join(', ')}. It was also sent: ${extra.slice(0, 10).join(', ')}.`,
+      });
+    }
+    const out = await fstore().addFoundationsFromFolder(domain, project, {
+      root: typeof body.root === 'string' ? body.root.slice(0, 4096) : '',
+      files: Array.isArray(body.files) ? body.files : [],
+    });
+    const refusedWire = (v) => (Array.isArray(v) ? v : []).slice(0, 200).map((r) => ({
+      path: r && typeof r.path === 'string' ? r.path.slice(0, 200) : null,
+      reason: r && typeof r.reason === 'string' ? r.reason.slice(0, 200) : null,
+      ...(r && Number.isInteger(r.bytes) ? { bytes: r.bytes } : {}),
+      ...(r && Number.isInteger(r.cap) ? { cap: r.cap } : {}),
+    }));
+    if (!out || out.ok === false) {
+      const reason = (out && out.reason) || 'io';
+      const status = reason === 'source-is-github' || reason === 'outside-mirrored-folder'
+        || reason === 'orphans-present' ? 409
+        : reason === 'nothing-added' ? 422
+          : statusForStoreRefusal({ reason });
+      return res.status(status).json(withErrorProse({
+        ok: false, domain, project, reason: tier0Reason(reason),
+        message: out && typeof out.message === 'string' ? out.message : 'Nothing was added.',
+        refused: refusedWire(out && out.refused),
+        ...(out && out.mirroredFolder ? { mirroredFolder: out.mirroredFolder } : {}),
+        ...(out && out.remote ? { remote: out.remote } : {}),
+      }));
+    }
+    const index = await fstore().listFoundations(domain, project);
+    res.status(200).json({
+      ok: true, domain, project,
+      mode: out.mode === 'mirror' ? 'mirror' : 'copy',
+      added: (Array.isArray(out.added) ? out.added : []).filter((x) => typeof x === 'string').slice(0, 200),
+      refused: refusedWire(out.refused),
+      rechosen: out.rechosen === true,
+      addedBytes: Number.isInteger(out.addedBytes) ? out.addedBytes : null,
+      totalBytes: Number.isInteger(out.totalBytes) ? out.totalBytes : null,
+      budgetBytes: Number.isInteger(out.budgetBytes) ? out.budgetBytes : null,
+      budgetExceeded: out.budgetExceeded === true,
+      documentCount: Number.isInteger(out.documentCount) ? out.documentCount : null,
+      foundations: index && index.ok !== false ? foundationsWire(index) : null,
+      notes: Array.isArray(out.notes) ? out.notes.filter((n) => typeof n === 'string').slice(0, 20) : [],
+    });
+  } catch (err) {
+    console.error('Memory foundations add-local error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });

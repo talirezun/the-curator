@@ -317,24 +317,29 @@ import { showToast } from '../shared/toast.js';
 // `composeAgentInstructionsFull` — that output is pasted into CLAUDE.md, where
 // "draft these now" would become a standing instruction to keep re-drafting.
 import { composeDraftingAsk } from '../shared/agent-instructions.js';
+// ── THE TWO DOORS (v3.68.0) ─────────────────────────────────────────────
+// "Add from this computer" and "Add from GitHub", always both, leading to one
+// checklist. The rules — what each door does for THIS project's ownership, and
+// the sentence for a door that cannot work — live in the DOM-free module so a
+// plain Node suite drives them; this view owns only state and wiring.
+import {
+  doorsFor, freshAddPanel, renderDoors, renderAddPanel, startLegendHtml,
+  listUrl, commitRequest, readCommitResponse, outcomeToast, tickedPaths,
+  commitBlockedReason, listBlockedReason, countLine, budgetWarning, commitWord,
+  alreadyAdded,
+} from '../shared/foundations-add.js';
 import {
   FOUNDATION_SLUG_RE, FOUNDATION_ROLES, MAX_FOUNDATION_BYTES, FOUNDATIONS_BUDGET_BYTES,
-  freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
-  bindFoundationsChooser, renderRoleOptions, renderRefusedList,
+  renderRoleOptions, renderRefusedList,
   readPickedFile, slugForFilename, roleForBasename, titleFromText, formatBytes,
   // ── THE REMOTE MIRROR'S REFUSAL VOCABULARY (v3.65.0) ───────────────────
   // Nine store codes, nine sentences, every one naming the token's SOURCE
   // rather than the token — which is the store's own rule and the one a view
   // is in a position to break.
-  remoteRefusalText, nextStepReason, pickedFiles, READ_WITH_INFO_HTML,
-  // ── ONE PREDICATE FOR THE COMMIT, SHARED WITH THE OTHER HOST (v3.61.1) ──
-  // What makes "Set up documents" pressable is a fact about the CHOICE, not
-  // about this view, so the rule lives beside the choice. This view calls it
-  // twice — once for the disabled flag at render, once in the patch the
-  // chooser's `onSelect` triggers — and both answers come from the same
-  // function, which is what stops a button and the sentence under it
-  // disagreeing.
-  commitBlockedReason,
+  remoteRefusalText, READ_WITH_INFO_HTML,
+  // The native folder picker (`POST /api/config/pick-path`, which mutates
+  // nothing) — the "Add from this computer" door's "Choose folder…".
+  pickFolder,
 } from '../shared/foundations-init.js';
 
 // ── THE TWO PICKERS ARE GONE, AND SO IS THE HANDOFF THEY NEEDED ──────────
@@ -8270,9 +8275,7 @@ function renderFoundations(read) {
     // still arrives and can be answered.
     : controls.sourceMissing && !editing
       ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-blocked" id="mem-fnd-refresh-blocked"' +
-        ' aria-disabled="true" data-fnd-blocked="1">Refresh from repo</button>' +
-        '<button type="button" class="btn btn-secondary btn-xs mem-fnd-blocked" id="mem-fnd-addrepo-blocked"' +
-        ' aria-disabled="true" data-fnd-blocked="1">Add from folder</button>'
+        ' aria-disabled="true" data-fnd-blocked="1">Refresh from repo</button>'
       : '';
   // "Add from folder" on a MIRROR and "Add document" on a curator-owned
   // project are the same control with the reader's own word for what arrives:
@@ -8283,11 +8286,13 @@ function renderFoundations(read) {
   // unticked the seeding, and a mirror whose ownership was set a second ago,
   // are exactly the two states in which the one action that puts a document in
   // must be reachable — the mistake v3.59.0 made with Refresh, one arm over.
-  const addBtnId = curator ? 'mem-fnd-add' : 'mem-fnd-addrepo';
-  const addBtn = controls.add
-    ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-action" id="' + addBtnId + '"' +
-      (busy ? ' disabled aria-disabled="true"' : '') + '>' +
-      (curator ? 'Add document' : 'Add from folder') + '</button>'
+  // ── v3.68.0: THE MIRROR'S "Add from folder" IS THE LOCAL DOOR NOW ─────
+  // Only the curator arm's in-app editor keeps a button of its own, and it
+  // says what it opens — an empty document to WRITE — so it cannot be read as
+  // a third way to add files beside the two doors.
+  const addBtn = controls.add && curator
+    ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-action" id="mem-fnd-add"' +
+      (busy ? ' disabled aria-disabled="true"' : '') + '>Write a document</button>'
     : '';
   // ── "Mirror from GitHub instead" (v3.65.1, D6) ────────────────────────
   // ONE SOURCE PER PROJECT, and this is how it moves: the ownership stays
@@ -8297,15 +8302,25 @@ function renderFoundations(read) {
   //
   // Offered on BOTH repo-owned arms, including the one where the checkout is
   // not on this computer: see `foundationsControlOffer`.
-  const mirrorBtn = controls.mirror
-    ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-mirror" id="mem-fnd-mirror"' +
-      (busy ? ' disabled aria-disabled="true"' : '') + '>Mirror from GitHub instead</button>'
+  // ── THE TWO DOORS (v3.68.0) — always both, at 0 documents and at 20 ────
+  // "Mirror from GitHub instead" is the GitHub door's `switch` mode now, and
+  // "Add from folder" the local door's `mirror` mode: one pair of doors, whose
+  // open panel says honestly what a press will do for THIS project.
+  const doors = doorsFor(facts, { readonly, sourceMissing: !!controls.sourceMissing });
+  const addRec = addPanelFor();
+  const doorsHtml = editing ? '' : renderDoors(doors, { busy, open: addRec ? addRec.door : null });
+  const addPanel = addRec && !editing
+    ? renderAddPanel(addRec, facts, doors[addRec.door], {
+      readWithInfo: addRec.door === 'github'
+        ? renderInfoMark('fadd-readwith-info', 'How to create a read-only token', READ_WITH_INFO_HTML, { html: true })
+        : null,
+    })
     : '';
   const askBtn = foundationsDraftAsk(facts, readonly);
   // v3.67.0: "Suggest a reading plan" — or, while a proposal is pending, the
   // two controls that settle it. See `planHeadHtml`.
   const planHead = facts.count && !readonly && !facts.manifestError ? planHeadHtml() : '';
-  const action = editing ? '' : (refreshBtn + addBtn + mirrorBtn + askBtn.btn + planHead);
+  const action = editing ? '' : (doorsHtml + refreshBtn + addBtn + askBtn.btn + planHead);
   // A WITHHELD CONTROL SAYS WHY (v3.17.1). A read-only mirror's reason is
   // `.tx-note`, unfolded: every control is gone there and nothing on the page
   // would say so otherwise. The "folder is not on this computer" reason is
@@ -8352,7 +8367,12 @@ function renderFoundations(read) {
     // question away from the one control that answers it. The pointer
     // belongs to `renderNoProjects()`, where a project genuinely does not
     // exist yet (§8(e)).
-    return renderFoundationsInit(facts);
+    // ── v3.68.0: THE TWO DOORS, NOT A THREE-WAY OWNERSHIP CHOICE ─────────
+    // The chooser asked an ownership question first ("The Curator keeps them"
+    // / "Mirror a folder" / "Mirror a GitHub repository"); the maintainer read
+    // it as "you must first add a local document, then GitHub appears". Now
+    // the question is only "from where?", and the answer IS the ownership.
+    return renderFoundationsEmpty(facts, action, addPanel, askBtn, withheld, editing, true);
   }
   // ── AND WITHHELD ON AN UNREADABLE MANIFEST (P1-3) ────────────────────
   // An unreadable manifest is a PRESENT manifest: `…/foundations/init`
@@ -8373,9 +8393,8 @@ function renderFoundations(read) {
   // The scan picker on its own: the ownership is settled, so the two-way
   // choice is withheld (it cannot be made) and what is left is the one action
   // that puts documents in — "Add from repository".
-  if (!facts.count && facts.ownership === 'repo' && !readonly) {
-    return renderFoundationsInit(facts);
-  }
+  // (v3.68.0: no special arm any more — an empty mirror gets the same two
+  // doors as every other empty project, and its source may be chosen again.)
 
   // ── NO DOCUMENTS, NO FOLD ─────────────────────────────────────────────
   // The same shape `renderBrief` uses for a project with no brief, and for the
@@ -8383,24 +8402,7 @@ function renderFoundations(read) {
   // explains what is missing behind a chevron is "the missing thing has to be
   // missing where you looked for it" read backwards.
   if (!facts.count) {
-    // ── THE OWNER IS NAMED FIRST (P1-12) ──────────────────────────────
-    // A person can start a project here with no agent and no repository and
-    // write the first document by hand — a first-class path, not a fallback —
-    // so the body names BOTH ways in, and the owner's way first. The summary
-    // meta beside it already distinguishes "kept here · no documents yet"
-    // from "mirrored · no documents copied yet" (P1-11).
-    const emptyBody = facts.ownership === 'repo'
-      ? 'Mirrored from ' + ((facts.repo && facts.repo.root) || 'a folder on this Mac')
-        + '. Nothing copied yet.'
-      : 'Kept here. No documents yet. Write the first one yourself, or ask an agent to draft them.';
-    // THE HEAD ROW FIRST HERE TOO (v3.65.1) — the empty arm and the populated
-    // one must not disagree about where a section's controls live.
-    return '<div class="mem-fnd-row">' +
-        '<div class="mem-fnd-head-controls">' + action + '</div>' +
-        '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
-          (editing ? renderFoundationEditor(facts) : renderDescription(emptyBody)) +
-        '</div></div>' +
-      '</div>' + askBtn.panel + withheld;
+    return renderFoundationsEmpty(facts, action, addPanel, askBtn, withheld, editing, !readonly);
   }
 
   const summary =
@@ -8429,20 +8431,16 @@ function renderFoundations(read) {
   // the `editing || adding ||` disjunction that used to be in the `open`
   // expression below re-forced it on every paint — which is how a close the
   // user had just made was overwritten by the renderer that ignored it.
-  // ── "Add from folder" ON A POPULATED MIRROR (P1-4) ────────────────────
-  // The chooser's repo arm under the table rather than in place of it: a
-  // mirror with six documents that hid them in order to ask about a seventh
-  // would be describing a state the owner is not in. `adding` is set only by
-  // the head control, so the ordinary paint is unaffected.
-  const adding = !!(state.fndInit && state.fndInit.domain === state.activeDomain
-    && state.fndInit.project === state.activeProject && state.fndInit.adding);
+  // (v3.68.0: the add panel sits under the head row, ABOVE the table, on
+  // every state — the table stays on screen behind it.)
   // ── THE MONITOR ABOVE THE TABLE (v3.66.0, P1) ────────────────────────
   // The two budget readings, first thing in the row's body — see
   // `foundationsMonitor` for why each line is drawn against the budget it is.
   const body = editing
     ? renderFoundationEditor(facts)
     : (plan && plan.open ? renderPlanPanel(facts, plan) : '')
-      + foundationsMonitor(facts) + '<div class="fnd-wrap"><table class="fnd-table">' +
+      + foundationsMonitor(facts) + (readonly ? '' : startLegendHtml())
+      + '<div class="fnd-wrap"><table class="fnd-table">' +
         '<thead><tr>' +
           '<th scope="col">Role</th>' +
           '<th scope="col">Document</th>' +
@@ -8484,8 +8482,7 @@ function renderFoundations(read) {
           (readonly ? '' : '<th scope="col"><span class="visually-hidden">Actions</span></th>') +
         '</tr></thead>' +
         '<tbody>' + rows + '</tbody>' +
-      '</table></div>' + renderFoundationStop(facts)
-      + (adding ? renderFoundationsInit(facts) : '');
+      '</table></div>' + renderFoundationStop(facts);
   // ── THE BUDGET WARNING — A COST, SO IT NEVER FOLDS ────────────────────
   // Emitted always and `hidden` when there is nothing to say, because
   // `setStartState` patches it in place rather than re-rendering: a node
@@ -8541,7 +8538,7 @@ function renderFoundations(read) {
   // the section's siblings, and nothing else — `setStartState` still patches
   // `#mem-fnd-budget` in place by id.
   return '<div class="mem-fnd-row">' +
-      '<div class="mem-fnd-head-controls">' + action + '</div>' +
+      '<div class="mem-fnd-head-controls">' + action + '</div>' + addPanel +
       '<details class="mem-fold" data-mem-fold="foundations"' + open + '>' +
         summary +
         '<div class="mem-fold-body">' + body + '</div>' +
@@ -8630,179 +8627,48 @@ const DRAFT_ASK_INFO_HTML =
   'agent to show you first, and the tool refuses unless it is told the owner commissioned it.</p>';
 
 /**
- * THE OWNERSHIP CHOICE, IN THE PLACE THE ANSWER IS MISSING.
- *
- * Two shapes, one renderer: a project with no manifest gets the full two-way
- * (plus nothing — "decide later" is the create form's third answer and is
- * meaningless here, because this screen IS the later), and a repo-owned
- * project with nothing mirrored gets the scan arm alone under a heading that
- * says what is being added rather than what is being decided.
- *
- * ── WHAT IS A LEDE AND WHAT IS AN ⓘ HERE ────────────────────────────────
- * The sentence above the chooser is an INSTRUCTION at ten words. What a
- * canonical document IS, that the choice cannot be changed afterwards, and
- * that a plain folder with no git in it works perfectly well as a mirror
- * source are all DEFINITIONS or MECHANISM, and they are in the block's ⓘ —
- * which this function does not emit, because the block above it already has
- * one and a second mark beside it would be a second voice.
+ * THE ADD PANEL OPEN ON THIS PROJECT, or null (v3.68.0). Stamped to the
+ * project it was opened on, so a project switch drops it.
  */
-function renderFoundationsInit(facts) {
-  const ini = state.fndInit && state.fndInit.domain === state.activeDomain
-    && state.fndInit.project === state.activeProject ? state.fndInit : null;
-  const repoOnly = facts.ownership === 'repo';
-  // ── SWITCHING THIS PROJECT'S SOURCE TO GITHUB (v3.65.1, D6) ────────────
-  // A transient on the same stamped record every other state of this panel
-  // rides, so a project switch drops it with the rest. It selects the GitHub
-  // arm, changes the primary's word and the sentence above it, and routes the
-  // commit at `POST …/foundations/source` instead of `…/foundations/init`.
-  const switching = !!(ini && ini.switching);
-  const choice = ini && ini.choice
-    ? ini.choice
-    // A FRESH CHOICE PAINTED FROM NOTHING, so the block renders its own first
-    // frame without a click: `state.fndInit` is written by the first
-    // interaction, and until then this is a pure function of the payload.
-    : freshChooser({ allowLater: false });
-  if (switching) choice.ownership = 'remote';
-  else if (repoOnly) choice.ownership = 'repo';
-  const busy = !!(ini && ini.busy);
-  // ── AND ONE MORE CONDITION, WITH ITS REASON (v3.61.1) ──────────────────
-  // A mirror that has been SCANNED and has nothing ticked would set the
-  // ownership and copy no documents — `chooserBody` omits an empty `files`, so
-  // the wire would carry a decision nobody made. `commitBlockedReason` is the
-  // shared rule (it keys on `candidates` being a non-empty array, so pointing
-  // at a folder WITHOUT scanning stays a complete answer), and the same call
-  // decides both the disabled flag and the sentence under the button — one
-  // predicate, so the control and its explanation cannot come apart.
-  // ── ONE REASON, THE FIRST UNMET STEP (v3.65.2, C1) ─────────────────────
-  // The chooser renders NO reason node in this host (`reasons: 'host'`), so
-  // the line under the actions is the only one, with the only
-  // `mem-fnd-init-why` id — through v3.65.1 there were two nodes sharing it,
-  // printing "Name the repository first." twice, and the host's own was never
-  // patched because `getElementById` reaches the first. `nextStepReason` is
-  // scan-blocked-or-commit-blocked, in the order the steps happen.
-  const blocked = nextStepReason(choice);
-  const addMode = choice.addMode === true;
-  const ready = (switching
-    ? !!String(choice.remote || '').trim()
-    : repoOnly
-      ? (addMode ? true : !!String(choice.repoRoot || '').trim())
-      : (choice.ownership === 'curator' || !!String(choice.repoRoot || '').trim())) && !blocked;
-  const picked = pickedFiles(choice).length;
-  // ── THE PRIMARY SAYS WHAT IT DOES, WITH THE COUNT (v3.65.2) ────────────
-  // "Add from folder" was the head button's own words on a control that
-  // copied; "Mirror from GitHub" did not say how much. The count is patched
-  // live by the binder's `onSelect`, from the same words.
-  const goWord = busy
-    ? (switching ? 'Mirroring…' : repoOnly ? 'Copying…' : 'Setting up…')
-    : switching
-      ? 'Mirror ' + (picked ? picked + ' document' + (picked === 1 ? '' : 's') + ' ' : '') + 'from GitHub'
-      : repoOnly
-        ? (addMode ? 'Copy ' + (picked ? picked + ' document' + (picked === 1 ? '' : 's') : 'documents')
-          : 'Add from folder')
-        : 'Set up documents';
-  // BEFORE A SCAN ON THE GITHUB PANEL THERE IS NO PRIMARY AT ALL: the step it
-  // needs has not happened, and the one reason line says so.
-  const showGo = !(switching && !Array.isArray(choice.candidates));
-  const closable = switching || addMode;
-  // ── THE PANEL'S OWN ⓘ (v3.65.2, C2) ──────────────────────────────────
-  // What the scan looks for, and what "a file that isn't listed" is for —
-  // the explanation the maintainer could not find anywhere on screen.
-  const addInfo = addMode
-    ? renderInfoMark('mem-fnd-add-info', 'About adding from a folder',
-      '<p>The scan looks in docs folders and at files named like a role — README, ARCHITECTURE, '
-      + 'CONVENTIONS. Any other .md file inside this folder can be added by its path, with '
-      + '<b>+ A file that isn’t listed</b> at the end of the list.</p>'
-      + '<p>A tick <b>copies</b> the file into this project. Whether an agent reads it first is '
-      + 'set afterwards, per document, in the table’s READ column.</p>', { html: true })
-    : { btn: '', panel: '' };
-  // v3.65.3: the FIRST-TIME chooser's GitHub card reads the same token
-  // facts, carries the same ⓘ and the same door as the switch panel — it
-  // printed "Add a read-only token in Settings" to somebody with one saved.
-  const githubArm = switching || !repoOnly;
-  const readWithInfo = githubArm
-    ? renderInfoMark('mem-fnd-readwith-info', 'How to create a read-only token',
-      READ_WITH_INFO_HTML, { html: true })
-    : null;
+function addPanelFor() {
+  const r = state.fndAdd;
+  return r && r.domain === state.activeDomain && r.project === state.activeProject ? r : null;
+}
 
-  return (
-    // ── THE STATE'S OWN STACK, SO THE RHYTHM IS ONE RULE (v3.61.1) ───────
-    // Measured before this: the "Set once" note and the card below it were
-    // 0px apart. A flex column with one gap is the fix rather than a margin
-    // per element (design-system §2).
-    '<div class="mem-fnd-init-wrap">' +
-    // ── IRREVERSIBILITY NEVER FOLDS (§3.10) ──────────────────────────────
-    // The store refuses a mismatch on every later write, so this choice is
-    // made once — a cost read at the moment of acting, never behind a chevron.
-    (repoOnly ? ''
-      : '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' +
-        escapeHtml('Set once — a project is mirrored or kept here, never both.') +
-        '</span></div>') +
-    // ── ONE BOX, AT THE ROWS' OWN WIDTH (v3.65.1) ────────────────────────
-    // Wiki health's QUICK MAINTENANCE anatomy: one box, 14px on all four
-    // sides, an eyebrow row, a content stack, ONE actions row and a footnote.
-    // Since v3.65.2 the chooser inside it is `flat` — no second tinted arm
-    // inside the tinted panel.
-    '<div class="mem-fnd-panel">' +
-      '<div class="mem-fnd-panel-eyebrow cur-group-title">' +
-        escapeHtml(switching ? 'MIRROR FROM GITHUB'
-          : repoOnly ? 'ADD FROM FOLDER' : 'SET UP DOCUMENTS') + addInfo.btn +
-      '</div>' + addInfo.panel +
-      '<div class="mem-fnd-init-body">' +
-        // ── THE SENTENCE SPLITS ON THE COUNT (v3.65.1) ──────────────────
-        renderDescription(switching
-          ? 'Name the repository this project mirrors from now. The documents are re-copied '
-            + 'from GitHub and the folder on this Mac stops being the source.'
-          : repoOnly
-            ? (facts.count
-              ? 'Add more files from the folder this project mirrors.'
-              : 'Nothing mirrored yet. Point at the folder and choose which files to copy.')
-            : 'No canonical documents yet. Choose how they arrive.') +
-        renderFoundationsChooser({
-          // `optionsHidden: repoOnly` ALONE: `switching` implies `repoOnly`.
-          id: 'mem-fnd-init', choice, busy, optionsHidden: repoOnly,
-          existingProject: true,
-          // v3.65.2: one panel (no framed arm inside it), one host-owned
-          // reason line, the READ WITH ⓘ, and a real door to Settings.
-          flat: true, reasons: 'host', readWithInfo, tokenDoor: githubArm,
-        }) +
-        ((showGo || closable)
-          ? '<div class="mem-fnd-init-actions">' +
-            // ── THE PRIMARY IS THE HOST'S DECISION (P2-6) ────────────────
-            // The shared chooser emits NO primary; the other host (the "New
-            // project" form) already has one, and a card with two primaries
-            // has not decided what it is asking for.
-            (showGo
-              ? '<button type="button" class="btn btn-primary" id="mem-fnd-init-go"' +
-                (busy || !ready ? ' disabled' : '') + '>' + escapeHtml(goWord) + '</button>'
-              : '') +
-            // ── AND A WAY OUT WITH NO WRITE (v3.65.2) ────────────────────
-            // Through v3.65.1 the two panels a head control opens could not
-            // be dismissed without navigating away.
-            (closable && showGo
-              ? '<button type="button" class="btn btn-ghost btn-xs" id="mem-fnd-init-cancel"'
-                + (busy ? ' disabled' : '') + '>Cancel</button>'
-              : '') +
-          '</div>'
-          : '') +
-        // ── WHY THE NEXT STEP CANNOT BE TAKEN YET — ONE NODE ─────────────
-        // Emitted ALWAYS and merely `hidden`, because a tick and a keystroke
-        // do NOT re-render this block — the chooser's binder hands the reason
-        // back through `onSelect` and this node is patched in place.
-        // `.fnd-init-why` carries the `[hidden]` counter-rule `.tx-note` needs.
-        '<div class="tx-note fnd-init-why" id="mem-fnd-init-why"' +
-          (blocked ? '' : ' hidden') + '>' +
-          '<span>' + escapeHtml(blocked) + '</span>' +
-        '</div>' +
-        // ── WHAT THE SWITCH COSTS, UNFOLDED (v3.16.1) ──────────────────
-        (switching
-          ? '<div class="tx-note mem-fnd-switch-note">' + icon('alertCircle', 13) + '<span>' +
-            escapeHtml('The folder on this Mac stops being this project’s source. Nothing is '
-              + 'written unless every document is read, and "read first" is kept by name.') +
-            '</span></div>'
-          : '') +
+/**
+ * A PROJECT WITH NO DOCUMENTS — no manifest, or one that lists none (v3.68.0).
+ *
+ * The head row carries the two doors; the body says in one sentence what the
+ * two ways in are, and — where nothing is mirrored — offers the four templates
+ * an agent or the owner can fill, as a quiet third answer rather than a card.
+ * `canSeed` is false on a read-only mirror and on an empty MIRROR, whose
+ * owner chose a source already (both doors still re-choose it).
+ */
+function renderFoundationsEmpty(facts, action, addPanel, askBtn, withheld, editing, canSeed) {
+  const tpl = state.fndTpl && state.fndTpl.domain === state.activeDomain
+    && state.fndTpl.project === state.activeProject ? state.fndTpl : null;
+  const seedable = canSeed && (!facts.present || facts.ownership === 'curator');
+  const bodyText = facts.present && facts.ownership === 'repo'
+    ? 'Nothing mirrored yet. Add documents from this computer or from GitHub.'
+    : 'No documents yet. Add them from this computer or from a GitHub repository.';
+  const seedRow = seedable
+    ? '<div class="mem-fnd-tpl-row">' +
+        '<button type="button" class="btn btn-ghost btn-xs" id="mem-fnd-templates"' +
+          (tpl && tpl.busy ? ' disabled' : '') + '>' +
+          escapeHtml(tpl && tpl.busy ? 'Starting…' : 'Or start from four templates to fill') +
+        '</button>' +
       '</div>' +
-    '</div>'
-  );
+      (tpl && tpl.error
+        ? '<div class="fnd-init-note fnd-init-note-loud mem-fnd-add-loud" role="alert">' + icon('alertTriangle', 13) +
+          '<span>' + escapeHtml('The templates were not written: ' + tpl.error) + '</span></div>'
+        : '')
+    : '';
+  return '<div class="mem-fnd-row">' +
+      '<div class="mem-fnd-head-controls">' + action + '</div>' + addPanel +
+      '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
+        (editing ? renderFoundationEditor(facts) : renderDescription(bodyText) + seedRow) +
+      '</div></div>' +
+    '</div>' + askBtn.panel + withheld;
 }
 
 /**
@@ -9494,186 +9360,297 @@ async function refreshFoundations(token, files, repoRoot) {
 
 /**
  * WHICH TOKENS THIS COMPUTER HAS SAVED — read once per open of the GitHub
- * panel (v3.65.2, C1).
- *
- * Two cheap local reads, never polled: `GET /api/config/github-read-token`
- * answers `{present, last4}` — presence and four characters, NEVER the value
- * (the token package's contract) — and `GET /api/sync/status` answers whether
- * Personal Sync is configured. Nothing here holds, prints or sends a token.
- *
- * STAMPED to the panel record it was asked for: a panel closed or reopened
- * before the answer lands keeps the answer it asked for, not this one. A read
- * that fails leaves the fact UNKNOWN (`undefined`) — never "not set", which
- * would put a door to Settings in front of somebody whose token is fine.
+ * door (v3.65.2's reads, v3.68.0's panel). Presence and four characters,
+ * NEVER the value. A read that fails leaves the fact UNKNOWN (`undefined`),
+ * never "not set". Stamped to the record it was asked for.
  */
-async function loadTokenFacts(record, token) {
-  if (!record || !record.choice) return;
-  const ch = record.choice;
+async function loadAddTokenFacts(rec, token) {
   const [readTok, sync] = await Promise.all([
     fetch('/api/config/github-read-token').then((r) => (r.ok ? r.json() : null)).catch(() => null),
     fetch('/api/sync/status').then((r) => (r.ok ? r.json() : null)).catch(() => null),
   ]);
-  if (!isCurrentMount(token) || state.fndInit !== record) return;
+  if (!isCurrentMount(token) || state.fndAdd !== rec) return;
   if (readTok && readTok.ok === true && typeof readTok.present === 'boolean') {
-    ch.hasReadToken = readTok.present;
-    ch.readTokenLast4 = readTok.present && typeof readTok.last4 === 'string'
+    rec.hasReadToken = readTok.present;
+    rec.readTokenLast4 = readTok.present && typeof readTok.last4 === 'string'
       && /^[A-Za-z0-9_]{1,4}$/.test(readTok.last4) ? readTok.last4 : null;
   }
-  if (sync && typeof sync.configured === 'boolean') ch.hasSyncToken = sync.configured;
+  if (sync && typeof sync.configured === 'boolean') rec.hasSyncToken = sync.configured;
+  render(token);
+}
+
+/** OPEN A DOOR (v3.68.0). The same door pressed again closes its panel. */
+function openAddDoor(door, token) {
+  const facts = foundationsFacts(state.projectRead);
+  const readonly = !!(state.detail && state.detail.readonly) || !!(state.projectRead && state.projectRead.readonly);
+  const doors = doorsFor(facts, { readonly, sourceMissing: !!foundationsControlOffer(facts, readonly).sourceMissing });
+  const info = doors[door];
+  if (!info || !info.available) return;
+  const cur = addPanelFor();
+  if (cur && cur.door === door && !cur.busy) { state.fndAdd = null; render(token); return; }
+  const rec = Object.assign(freshAddPanel(door, info, facts),
+    { domain: state.activeDomain, project: state.activeProject });
+  state.fndAdd = rec;
+  state.fndEdit = null;
+  render(token);
+  if (door === 'github') loadAddTokenFacts(rec, token).catch((err) => reportAsyncMountFailure(token, err));
+  // A folder mirror's folder is a FACT — list it straight away.
+  if (door === 'local' && rec.mode === 'mirror' && rec.root) {
+    listAddDocuments(token).catch((err) => reportAsyncMountFailure(token, err));
+  }
+}
+
+/** THE NATIVE FOLDER PICKER — `POST /api/config/pick-path`, which mutates nothing. */
+async function pickAddFolder(token) {
+  const rec = addPanelFor();
+  if (!rec || rec.picking || rec.busy) return;
+  rec.picking = true; rec.pickError = null;
+  render(token);
+  const got = await pickFolder();
+  if (!isCurrentMount(token) || state.fndAdd !== rec) return;
+  rec.picking = false;
+  if (got.ok) {
+    rec.root = got.path;
+    render(token);
+    await listAddDocuments(token);
+    return;
+  }
+  if (got.reason === 'no-dialog') rec.pickUnavailable = got.message || 'There is no folder picker here — type the folder’s full path instead.';
+  else if (got.reason !== 'cancelled') rec.pickError = 'The folder picker failed: ' + (got.message || 'no answer');
+  render(token);
+}
+
+/** LIST THE DOCUMENTS the door points at — every .md/.txt (`all=1`). */
+async function listAddDocuments(token) {
+  const rec = addPanelFor();
+  if (!rec || rec.scanning || rec.busy) return;
+  if (listBlockedReason(rec)) { render(token); return; }
+  rec.scanning = true; rec.scanError = null; rec.error = null; rec.refused = [];
+  render(token);
+  let data = null;
+  let status = 0;
+  try {
+    const res = await fetch(listUrl(rec));
+    status = res.status;
+    try { data = await res.json(); } catch { data = null; }
+  } catch (err) {
+    data = { ok: false, error: (err && err.message) || 'the request failed' };
+  }
+  if (!isCurrentMount(token) || state.fndAdd !== rec) return;
+  rec.scanning = false;
+  if (!data || data.ok !== true) {
+    const code = data && typeof data.reason === 'string' ? data.reason : null;
+    rec.scanError = (rec.door === 'github' ? remoteRefusalText(code, { tokenSource: rec.tokenSource }) : null)
+      || (code === 'repo-unreachable' || code === 'repo_unreachable'
+        ? 'That folder is not on this computer, or it cannot be read.' : null)
+      || (data && (data.error || data.message)) || ('HTTP ' + status);
+    rec.candidates = null;
+  } else {
+    rec.candidates = Array.isArray(data.candidates) ? data.candidates : [];
+    rec.truncated = data.truncated === true;
+    rec.listedRoot = typeof data.root === 'string' ? data.root : null;
+    rec.picks = {};
+  }
+  render(token);
+}
+
+/** COMMIT THE TICKS — add-local, init, refresh or source, as the facts decide. */
+async function commitAdd(token) {
+  const rec = addPanelFor();
+  if (!rec || rec.busy) return;
+  const facts = foundationsFacts(state.projectRead);
+  if (commitBlockedReason(rec, facts)) return;
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  const key = keyOf(domain, project);
+  const req = commitRequest(rec, facts, domain, project);
+  rec.busy = true; rec.error = null; rec.refused = [];
+  render(token);
+  let status = 0;
+  let data = null;
+  try {
+    const res = await fetch(req.url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body),
+    });
+    status = res.status;
+    try { data = await res.json(); } catch { data = null; }
+  } catch (err) {
+    data = { ok: false, error: (err && err.message) || 'the request failed' };
+  }
+  if (!isCurrentMount(token) || activeKey() !== key || state.fndAdd !== rec) return;
+  const out = readCommitResponse(status, data, rec);
+  rec.busy = false;
+  rec.refused = out.refused;
+  if (!out.ok) {
+    // A REFUSAL IS PERSISTENT AND IN FLOW, never a toast (v3.16.1).
+    rec.error = out.error;
+  }
+  const changed = out.added.length > 0 || out.refreshed.length > 0;
+  if (changed) {
+    const t = outcomeToast(rec, out);
+    showToast({ key: 'fnd-add-done', tone: 'success', title: t.title, lines: t.lines });
+    // A clean add closes its panel; one with refusals keeps them on screen.
+    if (!out.refused.length && out.ok) state.fndAdd = null;
+    else { rec.candidates = null; rec.picks = {}; }
+    forgetProject(domain, project);
+    const read = await fetchState(domain, project, {}, token);
+    if (!isCurrentMount(token) || activeKey() !== key) return;
+    if (read.data) state.projectRead = read.data;
+    state.fndForceOpen = true;
+  }
+  render(token);
+}
+
+/** THE FOUR TEMPLATES — the curator arm's skeletons, as a quiet third answer. */
+async function seedTemplates(token) {
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  if (!domain || !project) return;
+  if (state.fndTpl && state.fndTpl.busy) return;
+  const key = keyOf(domain, project);
+  const facts = foundationsFacts(state.projectRead);
+  state.fndTpl = { domain, project, busy: true, error: null };
+  render(token);
+  let error = null;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' + encodeURIComponent(project)
+      + '/foundations/init', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(facts.present ? { ownership: 'curator', rechooseEmpty: true } : { ownership: 'curator' }),
+    });
+    let body = null;
+    try { body = await res.json(); } catch { body = null; }
+    if (!res.ok || !body || !body.ok) error = (body && (body.error || body.message)) || ('HTTP ' + res.status);
+  } catch (err) { error = err.message; }
+  if (!isCurrentMount(token) || activeKey() !== key) return;
+  state.fndTpl = error ? { domain, project, busy: false, error } : null;
+  if (!error) {
+    showToast({ key: 'fnd-templates', tone: 'success', title: 'Four templates added',
+      lines: ['Fill them yourself, or copy the drafting request for an agent.'] });
+    forgetProject(domain, project);
+    const read = await fetchState(domain, project, {}, token);
+    if (!isCurrentMount(token) || activeKey() !== key) return;
+    if (read.data) state.projectRead = read.data;
+    state.fndForceOpen = true;
+  }
   render(token);
 }
 
 /**
- * SET THE OWNERSHIP, OR EXTEND A MIRROR THAT HAS NOTHING IN IT YET.
- *
- * ── ONE CONTROL, TWO ROUTES, AND THE FACTS DECIDE WHICH ─────────────────
- * A project with NO manifest is being given one: `POST …/foundations/init`,
- * which is the only route that sets an ownership and the only one the store
- * lets run once. A project that is already repo-owned and has nothing
- * mirrored has its ownership settled, so the same press is a `refresh` with a
- * file list. Rendering two controls for that would put a decision on screen
- * that the store has already made.
- *
- * ── STAMPED, AND DROPPED IF THE USER MOVED ON ───────────────────────────
- * The reply is applied only when the selection is still the one it was asked
- * for. A project switch mid-flight is ordinary: an init that seeds four
- * documents is four atomic writes plus a manifest.
- *
- * ── THE REFUSAL IS INLINE, NEVER AN ALERT ───────────────────────────────
- * Every refusal this can get — an ownership already set, a root that is not
- * on this computer, a curator arm carrying a repoRoot — is a fact about the
- * project in front of the owner, and it belongs on it.
+ * WIRE THE DOORS AND THE OPEN PANEL (v3.68.0). A tick PATCHES the count, the
+ * budget line and the primary in place — it never re-renders, which is what
+ * kept a reader scrolled down a long list in place (v3.61.1's finding).
  */
-async function initFoundations(token, facts) {
-  const domain = state.activeDomain;
-  const project = state.activeProject;
-  if (!domain || !project) return;
-  const cur = state.fndInit && state.fndInit.domain === domain
-    && state.fndInit.project === project ? state.fndInit : null;
-  if (cur && cur.busy) return;
-  const choice = (cur && cur.choice) || freshChooser({ allowLater: false });
-  const body = chooserBody(choice);
-  if (!body) return;
-  const key = keyOf(domain, project);
-  const mirrorOnly = !!(facts && facts.present && facts.ownership === 'repo');
-  // `adding` SURVIVES EVERY WRITE TO THIS RECORD while the request is in
-  // flight and on a refusal: it is the flag that decides whether the picker is
-  // painted at all on a populated mirror, and a refused request that also made
-  // the form vanish would throw away the path the owner typed (the same rule
-  // the project lifecycle form follows on a 4xx).
-  const keepAdding = !!(cur && cur.adding);
-  // THE SWITCH SURVIVES THE ROUND TRIP for the same reason `adding` does: a
-  // refused switch that also closed the panel would throw away the repository
-  // the owner named.
-  const keepSwitching = !!(cur && cur.switching);
-  state.fndInit = {
-    domain, project, choice, busy: true, error: null, refused: [], adding: keepAdding,
-    switching: keepSwitching,
-  };
-  render(token);
-
-  // AN ALREADY-OWNED MIRROR TAKES THE REFRESH ROUTE, which has its own
-  // outcome rendering and its own stamped record — so this hands off rather
-  // than duplicating it.
-  if (mirrorOnly && !keepSwitching) {
-    // `adding` IS PRESERVED THROUGH THE COPY. On a populated mirror the picker
-    // sits under the table, and dropping the flag here would take it off
-    // screen the instant the button was pressed — which reads as the press
-    // having cancelled rather than started something (v3.27.0's finding).
-    // `refreshFoundations`'s own stamped outcome is what clears it.
-    state.fndInit = {
-      domain, project, choice, busy: false, error: null, refused: [], adding: keepAdding,
-      switching: false,
-    };
-    await refreshFoundations(token, body.files || [],
-      choice.addMode && choice.rootEditable ? String(choice.repoRoot || '') : undefined);
-    return;
-  }
-
-  let data = null;
-  let error = null;
-  try {
-    // ── TWO ROUTES, ONE CONTROL, AND THE FACTS DECIDE (v3.65.1) ────────
-    // `…/foundations/init` is the only route that SETS an ownership and the
-    // store lets it run once. A project whose ownership is already settled and
-    // is moving its source to GitHub takes `…/foundations/source`, which
-    // leaves `ownership: 'repo'` where it is, clears `repo.root` and sets
-    // `repo.remote` in the SAME manifest write the re-copy performs — so a
-    // failed read cannot leave a stale root beside a fresh remote.
-    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
-      encodeURIComponent(project) + '/foundations/' + (keepSwitching ? 'source' : 'init'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // ── THE SOURCE ROUTE TAKES THREE FIELDS AND REFUSES A FOURTH ────
-      // `SOURCE_BODY_FIELDS` is a strict allow-list — `remote`,
-      // `tokenSource`, `files` — and `chooserBody` composes an `ownership`
-      // beside them because `…/foundations/init` needs one. Sending it here
-      // would be a 400 `unexpected_fields`, so the three are picked out
-      // explicitly rather than the object being passed through and hoped for.
-      // NOTHING ELSE MAY BE ADDED HERE: there is no token field on this form
-      // and there may never be one — the store reads a token from a FILE, and
-      // `tokenSource` names WHICH file.
-      body: JSON.stringify(keepSwitching
-        ? {
-          remote: body.remote,
-          tokenSource: body.tokenSource,
-          ...(body.files ? { files: body.files } : {}),
-        }
-        : body),
+function bindAddDoors(root, token) {
+  const byId = (id) => (root.getElementById ? root.getElementById(id) : null);
+  root.querySelectorAll('[data-fnd-door]').forEach((btn) => {
+    btn.addEventListener('click', () => openAddDoor(btn.getAttribute('data-fnd-door'), token));
+  });
+  // A DOOR THAT CANNOT WORK answers with its reason, on every press.
+  root.querySelectorAll('[data-fnd-door-why]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const why = btn.getAttribute('data-fnd-door-why') || '';
+      const label = btn.textContent || '';
+      showToast({ key: 'fnd-door-why', tone: 'neutral', title: label + ' is not available for this project',
+        lines: why ? [why] : [] });
     });
-    const got = await res.json();
-    // ── A REMOTE REFUSAL NAMES THE TOKEN'S SOURCE, NEVER THE TOKEN ──────
-    // The store answers a failed remote read with one of nine codes; printing
-    // the code would show a person a word from a protocol. `remoteRefusalText`
-    // turns each into a sentence saying which FILE the token was read from and
-    // what to do about it — and returns null for a code it does not know, so
-    // an unrecognised refusal falls back to the PRODUCER's own message rather
-    // than to a guess. Nothing here can print a token, because nothing here
-    // has one: the store reads it from a file and never returns it.
-    if (!res.ok || !got.ok) {
-      // ── THE CODE IS `reason`, NOT `error` (corrected v3.65.1) ─────────
-      // `error` is PROSE — `withErrorProse` copies the store's `message` into
-      // it when the route did not compose one — so keying the nine sentences
-      // on it matched nothing and every remote refusal fell through to the
-      // producer's own words. The wire CODE is `reason`, and the GitHub-read
-      // refusals deliberately cross it in the store's own dash spelling
-      // (`no-token`, `rate-limited`, `remote-tree-truncated`, …) precisely so
-      // one client branch reads both doors — src/routes/memory.js:919-923 says
-      // so in the table that excludes them. `error` is still tried, because it
-      // carried a code on some paths and trying both costs nothing.
-      error = remoteRefusalText(got && got.reason, { tokenSource: body.tokenSource })
-        || remoteRefusalText(got && got.error, { tokenSource: body.tokenSource })
-        || got.message || got.error || ('HTTP ' + res.status);
-    } else data = got;
-  } catch (err) {
-    error = err.message;
-  }
-  if (!isCurrentMount(token) || activeKey() !== key) return;
+  });
+  const tpl = byId('mem-fnd-templates');
+  if (tpl) tpl.addEventListener('click', () => seedTemplates(token).catch((err) => reportAsyncMountFailure(token, err)));
 
-  if (error) {
-    // THE CHOICE SURVIVES THE REFUSAL. A path typed, a scan read and eight
-    // boxes ticked are not thrown away because the server said no — that is
-    // the same rule the project lifecycle form follows on a 4xx.
-    state.fndInit = {
-      domain, project, choice, busy: false, error, refused: [], adding: keepAdding,
-      switching: keepSwitching,
-    };
-    render(token);
-    return;
-  }
-  const refresh = data.refresh && typeof data.refresh === 'object' ? data.refresh : null;
-  state.fndInit = {
-    domain, project, choice: null, busy: false, error: null,
-    refused: refresh && Array.isArray(refresh.refused) ? refresh.refused : [],
+  const rec = addPanelFor();
+  if (!rec) return;
+  const facts = foundationsFacts(state.projectRead);
+  const patch = () => {
+    const blocked = Array.isArray(rec.candidates) ? commitBlockedReason(rec, facts) : listBlockedReason(rec);
+    const go = byId('fadd-go');
+    if (go) { go.disabled = rec.busy || !!blocked; go.textContent = commitWord(rec, facts); }
+    const list = byId('fadd-list');
+    if (list && !Array.isArray(rec.candidates)) list.disabled = rec.busy || rec.scanning || !!listBlockedReason(rec);
+    else if (list) list.disabled = rec.busy || rec.scanning || !!listBlockedReason(rec);
+    const why = byId('fadd-why');
+    if (why) {
+      const span = why.querySelector ? why.querySelector('span') : null;
+      if (span) span.textContent = blocked || '';
+      why.hidden = !blocked;
+    }
+    const count = byId('fadd-count');
+    if (count && Array.isArray(rec.candidates)) count.textContent = countLine(rec, facts);
+    const budget = byId('fadd-budget');
+    if (budget) {
+      const w = budgetWarning(rec, facts);
+      const span = budget.querySelector ? budget.querySelector('span') : null;
+      if (span) span.textContent = w;
+      budget.hidden = !w;
+    }
+    const all = byId('fadd-all');
+    if (all && Array.isArray(rec.candidates)) {
+      const done = alreadyAdded(rec, facts);
+      const sel = rec.candidates.filter((c) => c && !c.tooLarge && !done.has(c.path));
+      all.checked = sel.length > 0 && sel.every((c) => rec.picks[c.path] === true);
+    }
   };
-  // The cached read is now wrong — a manifest and up to four documents exist
-  // that did not a moment ago — so it goes before the re-read, exactly as
-  // `refreshFoundations` and `reloadActive` drop it.
-  forgetProject(domain, project);
-  const read = await fetchState(domain, project, {}, token);
-  if (!isCurrentMount(token) || activeKey() !== key) return;
-  if (read.data) state.projectRead = read.data;
-  render(token);
+  const text = (id, field) => {
+    const el = byId(id);
+    if (el) el.addEventListener('input', () => { rec[field] = el.value; patch(); });
+    if (el) el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !listBlockedReason(rec)) listAddDocuments(token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  };
+  text('fadd-root', 'root');
+  text('fadd-remote', 'remote');
+  text('fadd-ref', 'ref');
+  text('fadd-path', 'path');
+  root.querySelectorAll('[data-fadd-token]').forEach((r) => {
+    r.addEventListener('change', () => { rec.tokenSource = r.getAttribute('data-fadd-token'); patch(); });
+  });
+  const tokDoor = byId('fadd-token-door');
+  if (tokDoor) {
+    tokDoor.addEventListener('click', () => {
+      if (typeof requestSettingsSection === 'function') requestSettingsSection('storage');
+      navigate('settings');
+    });
+  }
+  const pick = byId('fadd-pick');
+  if (pick) pick.addEventListener('click', () => pickAddFolder(token).catch((err) => reportAsyncMountFailure(token, err)));
+  const list = byId('fadd-list');
+  if (list) list.addEventListener('click', () => listAddDocuments(token).catch((err) => reportAsyncMountFailure(token, err)));
+  root.querySelectorAll('[data-fadd-pick]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const p = cb.getAttribute('data-fadd-pick');
+      if (cb.checked) rec.picks[p] = true; else delete rec.picks[p];
+      patch();
+    });
+  });
+  const all = byId('fadd-all');
+  if (all) {
+    all.addEventListener('change', () => {
+      const done = alreadyAdded(rec, facts);
+      for (const c of rec.candidates || []) {
+        if (!c || c.tooLarge || done.has(c.path)) continue;
+        if (all.checked) rec.picks[c.path] = true; else delete rec.picks[c.path];
+      }
+      root.querySelectorAll('[data-fadd-pick]').forEach((cb) => {
+        cb.checked = rec.picks[cb.getAttribute('data-fadd-pick')] === true;
+      });
+      patch();
+    });
+  }
+  const cands = byId('fadd-cands');
+  if (cands) {
+    if (Number.isFinite(rec.listScroll) && rec.listScroll > 0) cands.scrollTop = rec.listScroll;
+    cands.addEventListener('scroll', () => { rec.listScroll = cands.scrollTop; }, { passive: true });
+  }
+  const go = byId('fadd-go');
+  if (go) go.addEventListener('click', () => commitAdd(token).catch((err) => reportAsyncMountFailure(token, err)));
+  const cancel = byId('fadd-cancel');
+  if (cancel) {
+    cancel.addEventListener('click', () => {
+      if (rec.busy) return;
+      state.fndAdd = null;
+      render(token);
+    });
+  }
 }
 
 /**
@@ -10008,185 +9985,10 @@ function bindFoundationRows(root, token) {
   // this release added: one binder for one release's controls, so the
   // lifted binders above do not grow a collaborator each.
 
-  // ── THE OWNERSHIP CHOOSER ──────────────────────────────────────────────
-  // The shared module owns the markup and the per-control behaviour; this
-  // view owns only WHEN to repaint and WHERE the state lives. The choice
-  // object is created on first interaction and stamped, so a project switch
-  // cannot post one project's answer against another.
-  const facts = foundationsFacts(state.projectRead);
-  const initBox = root.querySelector
-    ? root.querySelector('[data-fnd-init="mem-fnd-init"]') : null;
-  if (initBox) {
-    if (!state.fndInit || state.fndInit.domain !== state.activeDomain
-        || state.fndInit.project !== state.activeProject) {
-      state.fndInit = {
-        domain: state.activeDomain, project: state.activeProject,
-        choice: freshChooser({ allowLater: false }), busy: false, error: null, refused: [],
-      };
-    }
-    if (!state.fndInit.choice) state.fndInit.choice = freshChooser({ allowLater: false });
-    // ── THE SAME FORCING THE RENDERER DOES, IN THE SAME ORDER (v3.65.1) ──
-    // `renderFoundationsInit` sets `remote` when the panel is switching this
-    // project's source to GitHub and `repo` otherwise. This line ran AFTER the
-    // render and knew only about `repo`, so it put the ownership back — and
-    // the binder then held a choice whose `ownership` disagreed with the arm
-    // on screen: measured, the remote arm painted while `scanBlockedReason`
-    // answered out of its `repoRoot` branch and the scan stayed disabled
-    // saying "Type or choose the folder first." over a field asking for a
-    // repository. Two writers of one field, and this one is the copy.
-    if (state.fndInit.switching) state.fndInit.choice.ownership = 'remote';
-    else if (facts.ownership === 'repo') state.fndInit.choice.ownership = 'repo';
-    // ── THE FIRST-TIME CHOOSER READS THE TOKEN FACTS TOO (v3.65.3) ──────
-    // Once the GitHub card is chosen, the same `loadTokenFacts` the switch
-    // panel calls on open — once per panel record, so its own re-render does
-    // not ask again. The switch panel's record is born with the flag set.
-    if (state.fndInit.choice.ownership === 'remote' && !state.fndInit.tokenFactsAsked) {
-      state.fndInit.tokenFactsAsked = true;
-      loadTokenFacts(state.fndInit, token).catch((err) => reportAsyncMountFailure(token, err));
-    }
-    bindFoundationsChooser({
-      doc: root,
-      id: 'mem-fnd-init',
-      choice: state.fndInit.choice,
-      // v3.65.2: the host owns the ONE reason line; the add panel scans the
-      // recorded folder on open; the GitHub panel's door opens Settings.
-      reasons: 'host',
-      autoScan: true,
-      onOpenTokenSettings: () => {
-        // A REQUEST, NOT A CLICK: the Settings view consumes it on entry and
-        // opens its Knowledge base section, where the token is saved.
-        if (typeof requestSettingsSection === 'function') requestSettingsSection('storage');
-        navigate('settings');
-      },
-      onChange: () => render(token),
-      // ── A TICK PATCHES; IT DOES NOT RENDER (v3.61.1) ──────────────────
-      //
-      // THE DEFECT: `onChange` is `render(token)` — a full view render — and
-      // every tick went through it. Measured on a 44-candidate folder, the
-      // list's own scrollTop went 1105 → 0, the container came back a
-      // different node and the focused checkbox lost focus. The maintainer's
-      // words: "when I select or deselect a document I'm always thrown at the
-      // top — confusing with 50 documents."
-      //
-      // The chooser now patches its own count, budget line and row controls
-      // and hands back only what THIS view owns: whether its primary can be
-      // pressed, and the sentence saying why not. Two `textContent` writes and
-      // two flags, with every node checked before it is touched — the same
-      // shape v3.57.0's row press uses, and the reason it takes no render.
-      onSelect: (reason) => {
-        const go = root.getElementById ? root.getElementById('mem-fnd-init-go') : null;
-        const why = root.getElementById ? root.getElementById('mem-fnd-init-why') : null;
-        // `busy` is the request in flight and outranks the tick state: a
-        // disabled-because-saving button must not be re-armed by a tick.
-        const saving = !!(state.fndInit && state.fndInit.busy);
-        if (go) go.disabled = saving || !!reason;
-        // THE PRIMARY'S COUNT, patched with the tick — the same words the
-        // renderer composes ("Copy 2 documents", "Mirror 1 document from
-        // GitHub"), from the same `pickedFiles`.
-        const ch = state.fndInit && state.fndInit.choice;
-        if (go && ch && !saving && (ch.addMode || (state.fndInit && state.fndInit.switching))) {
-          const n = pickedFiles(ch).length;
-          const docs = n ? n + ' document' + (n === 1 ? '' : 's') : '';
-          go.textContent = state.fndInit.switching
-            ? 'Mirror ' + (docs ? docs + ' ' : '') + 'from GitHub'
-            : 'Copy ' + (docs || 'documents');
-        }
-        if (why) {
-          const span = why.querySelector ? why.querySelector('span') : null;
-          if (span) span.textContent = reason || '';
-          why.hidden = !reason;
-        }
-      },
-      onFailure: (err) => reportAsyncMountFailure(token, err),
-    });
-  }
-  // ── THE LIST KEEPS ITS PLACE THROUGH A REPAINT (v3.65.2, C2) ───────────
-  // A tick never repaints (v3.61.1), but the view's own 20 s poll does when
-  // its screen signature moves — measured in the browser: an age word ticking
-  // over rebuilt the add panel and threw a reader 1,297px down a 48-row list
-  // back to the top, with their added row and ticks intact. The list's scroll
-  // position is held on the panel's own record and put back after each paint.
-  const candList = root.getElementById ? root.getElementById('mem-fnd-init-cands') : null;
-  if (candList && state.fndInit) {
-    const rec = state.fndInit;
-    if (Number.isFinite(rec.listScroll) && rec.listScroll > 0) candList.scrollTop = rec.listScroll;
-    candList.addEventListener('scroll', () => { rec.listScroll = candList.scrollTop; }, { passive: true });
-  }
-  const initGo = root.getElementById ? root.getElementById('mem-fnd-init-go') : null;
-  if (initGo) {
-    initGo.addEventListener('click', () => {
-      initFoundations(token, facts).catch((err) => reportAsyncMountFailure(token, err));
-    });
-  }
-  // ── CANCEL: CLOSE THE PANEL, WRITE NOTHING (v3.65.2) ──────────────────
-  const initCancel = root.getElementById ? root.getElementById('mem-fnd-init-cancel') : null;
-  if (initCancel) {
-    initCancel.addEventListener('click', () => {
-      if (state.fndInit && state.fndInit.busy) return;
-      state.fndInit = null;
-      render(token);
-    });
-  }
-
-  // ── "Add from folder" ON A MIRROR THAT ALREADY HAS DOCUMENTS (P1-4) ────
-  // Distinct from the chooser's own commit above, which serves a mirror with
-  // NOTHING in it: this control belongs to the table state, where the head now
-  // carries Refresh and Add side by side. Pressing it re-enters the chooser
-  // through the same state field the chooser's own first interaction writes,
-  // with `repo` forced — so there is one state shape, one renderer and one
-  // request body, and the two entrances cannot describe two different asks.
-  const addRepoBtn = root.getElementById ? root.getElementById('mem-fnd-addrepo') : null;
-  if (addRepoBtn) {
-    addRepoBtn.addEventListener('click', () => {
-      state.fndInit = {
-        domain: state.activeDomain, project: state.activeProject,
-        choice: freshChooser({ allowLater: false }), busy: false, error: null, refused: [],
-        // THE TABLE STAYS ON SCREEN BEHIND IT. `adding` is what tells
-        // renderFoundations to paint the chooser BESIDE the documents rather
-        // than instead of them: a mirror with six documents that hid them to
-        // ask about a seventh would be answering with a state the owner is not
-        // in (v3.17.1).
-        adding: true,
-      };
-      state.fndInit.choice.ownership = 'repo';
-      // ── ADD MODE (v3.65.2, C2): the folder is a FACT, read off the
-      // manifest's own `repo.root`, and scanned on open; what is already
-      // mirrored is listed but never tickable; nothing is ticked by default;
-      // and the running total is the PROJECT's. See `freshChooser`.
-      const ch = state.fndInit.choice;
-      ch.addMode = true;
-      ch.fixedRoot = facts.repo && typeof facts.repo.root === 'string' && facts.repo.root
-        ? facts.repo.root : null;
-      ch.repoRoot = ch.fixedRoot || '';
-      ch.mirrored = facts.docs
-        .map((d) => (d && d.source && typeof d.source.path === 'string' ? d.source.path : null))
-        .filter(Boolean);
-      ch.projectBytes = facts.bytes;
-      // THE FORCE IS A TRANSIENT (v3.64.1) — see `fndForceOpen` in freshState.
-      state.fndForceOpen = true;
-      render(token);
-    });
-  }
-
-  // ── "Mirror from GitHub instead" (v3.65.1, D6) ─────────────────────────
-  // The SAME transient record the two folder controls write, with one more
-  // field: `switching`. It opens the panel with the GitHub arm selected and
-  // routes the commit at the source route; the documents table stays on screen
-  // behind it, for the reason `adding` exists.
-  const mirrorBtn = root.getElementById ? root.getElementById('mem-fnd-mirror') : null;
-  if (mirrorBtn) {
-    mirrorBtn.addEventListener('click', () => {
-      state.fndInit = {
-        domain: state.activeDomain, project: state.activeProject,
-        choice: freshChooser({ allowLater: false }), busy: false, error: null, refused: [],
-        adding: true, switching: true, tokenFactsAsked: true,
-      };
-      state.fndInit.choice.ownership = 'remote';
-      state.fndForceOpen = true;
-      render(token);
-      loadTokenFacts(state.fndInit, token).catch((err) => reportAsyncMountFailure(token, err));
-    });
-  }
+  // ── THE TWO DOORS AND THEIR PANEL (v3.68.0) ────────────────────────────
+  // Replaces the ownership chooser, "Add from folder" and "Mirror from
+  // GitHub instead" — see shared/foundations-add.js.
+  bindAddDoors(root, token);
 
   // ── "Create a project in Domains" (§8(e)) ──────────────────────────────
   // A POINTER, not a second create path. `navigate` is the shell's single

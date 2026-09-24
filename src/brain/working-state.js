@@ -6416,7 +6416,10 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
   if (mf.status === 'malformed') {
     return { ok: false, reason: 'manifest-unreadable', manifestError: mf.error, message: `The foundations manifest could not be read (${mf.error}). Nothing was refreshed.` };
   }
-  const manifest = mf.status === 'ok' ? mf.manifest : emptyManifest();
+  // `freshManifest` (v3.68.0) is `initFoundations` re-choosing an EMPTY
+  // project's source: the manifest on disk lists no document (checked by the
+  // caller, under the same lock), so it is read as absent and replaced whole.
+  const manifest = mf.status === 'ok' && opts.freshManifest !== true ? mf.manifest : emptyManifest();
   if (manifest.ownership === 'curator') {
     return {
       ok: false, reason: 'ownership-mismatch', ownership: 'curator',
@@ -6672,6 +6675,17 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
 // re-deciding it would mean either overwriting the owner's documents with a
 // mirror or orphaning a checkout's copies.
 
+/** Does the foundations folder hold a `.md` document the manifest does not
+ *  list? An orphan is a document somebody wrote, so a folder holding one is
+ *  never "empty" — the re-choice and the folder copy both refuse over it
+ *  rather than decide its fate. Never throws; unreadable reads as none. */
+async function hasUnlistedDocument(dirAbs, manifest) {
+  let names = [];
+  try { names = await readdir(dirAbs); } catch { return false; }
+  const listed = new Set((manifest && Array.isArray(manifest.documents) ? manifest.documents : []).map((d) => d.slug));
+  return names.some((n) => FOUNDATION_SLUG_RE.test(n) && !listed.has(n));
+}
+
 /**
  * Set a project's tier-0 ownership ONCE, and populate it.
  *
@@ -6825,7 +6839,16 @@ export async function initFoundations(domain, project, opts = {}) {
           + `(${mf.error}). Nothing was written — fix or remove foundations/manifest.json first.`,
       };
     }
-    if (mf.status === 'ok') {
+    // ── AN EMPTY PROJECT'S SOURCE MAY BE CHOSEN AGAIN (v3.68.0) ──────────
+    // "Made once" protects DOCUMENTS: a re-choice would overwrite documents
+    // written here, or strand a checkout's copies. A manifest that lists NONE
+    // and a folder holding no unlisted document has neither to lose, so a
+    // caller that ASKS (`rechooseEmpty`, the two "Add from…" doors) may
+    // record a new answer. Without the flag, and with a single document or
+    // orphan file present, the refusal below is unchanged.
+    const rechoosable = mf.status === 'ok' && inp.rechooseEmpty === true
+      && mf.manifest.documents.length === 0 && !(await hasUnlistedDocument(paths.dirAbs, mf.manifest));
+    if (mf.status === 'ok' && !rechoosable) {
       return {
         ok: false, reason: 'ownership-set', ownership: mf.manifest.ownership,
         documentCount: mf.manifest.documents.length,
@@ -6907,6 +6930,7 @@ export async function initFoundations(domain, project, opts = {}) {
         source: 'remote',
         remote,
         tokenSource,
+        freshManifest: rechoosable,
         // TEST SEAMS ONLY, forwarded exactly as `refreshFoundationsFromRepo`
         // forwards them. `token` is NOT among them, here or there.
         fetchImpl: inp.fetchImpl,
@@ -7225,7 +7249,14 @@ function admitsFoundationPath(segments) {
  * path, because the maintainer asked to see the age, not to have the rows
  * rearranged by it.
  */
-export async function scanRepoForFoundations(root) {
+export async function scanRepoForFoundations(root, opts = {}) {
+  // ── `all` (v3.68.0): EVERY .md/.txt, NOT THE THREE RULES ──────────────
+  // The two "Add from…" doors list a folder's documents for a person who has
+  // already pointed at the folder they mean, so the heuristic that serves a
+  // whole repository ("which of these 400 files are canonical?") would hide
+  // the notes they came for. Same walk, same depth, same skipped folders,
+  // same containment; only the admission rule changes, and rows sort by path.
+  const all = !!(opts && typeof opts === 'object' && opts.all === true);
   if (typeof root !== 'string' || !root.trim() || root.includes('\0') || !path.isAbsolute(root)) {
     return {
       ok: false, reason: 'invalid-root',
@@ -7238,8 +7269,8 @@ export async function scanRepoForFoundations(root) {
   const found = [];
   let truncated = false;
 
-  /** Which of the three rules admits this file, or null. */
-  const admits = admitsFoundationPath;
+  /** Which of the three rules admits this file, or null — or `any`. */
+  const admits = all ? () => 'any' : admitsFoundationPath;
 
   /** One directory level. `relDir` is '' for the root. Never throws. */
   const scanDir = async (relDir, depth) => {
@@ -7301,8 +7332,9 @@ export async function scanRepoForFoundations(root) {
   await scanDir('', 0);
 
   const rank = new Map(FOUNDATION_ROLES.map((role, i) => [role, i]));
-  found.sort((a, b) => (rank.get(a.suggestedRole) ?? 99) - (rank.get(b.suggestedRole) ?? 99)
-    || a.path.localeCompare(b.path));
+  found.sort(all ? (a, b) => a.path.localeCompare(b.path)
+    : (a, b) => (rank.get(a.suggestedRole) ?? 99) - (rank.get(b.suggestedRole) ?? 99)
+      || a.path.localeCompare(b.path));
   if (found.length > MAX_REPO_SCAN_CANDIDATES) truncated = true;
   const kept = found.slice(0, MAX_REPO_SCAN_CANDIDATES);
 
@@ -7444,7 +7476,7 @@ export async function scanRemoteForFoundations(opts = {}) {
     if (segments.length > REPO_SCAN_MAX_DEPTH) continue;
     if (segments.slice(0, -1).some((s) => REPO_SCAN_SKIP_DIRS.has(s) || s.startsWith('.'))) continue;
     if (segments[segments.length - 1].startsWith('.')) continue;
-    const rule = admitsFoundationPath(segments);
+    const rule = o.all === true ? 'any' : admitsFoundationPath(segments);
     if (!rule) continue;
     if (found.length >= REPO_SCAN_COLLECT_LIMIT) { truncated = true; break; }
     const bytes = Number.isInteger(e.size) ? e.size : 0;
@@ -7461,8 +7493,9 @@ export async function scanRemoteForFoundations(opts = {}) {
     });
   }
   const rank = new Map(FOUNDATION_ROLES.map((role, i) => [role, i]));
-  found.sort((a, b) => (rank.get(a.suggestedRole) ?? 99) - (rank.get(b.suggestedRole) ?? 99)
-    || a.path.localeCompare(b.path));
+  found.sort(o.all === true ? (a, b) => a.path.localeCompare(b.path)
+    : (a, b) => (rank.get(a.suggestedRole) ?? 99) - (rank.get(b.suggestedRole) ?? 99)
+      || a.path.localeCompare(b.path));
   if (found.length > MAX_REPO_SCAN_CANDIDATES) truncated = true;
   return {
     ok: true,
@@ -7479,6 +7512,194 @@ export async function scanRemoteForFoundations(opts = {}) {
     maxDocumentBytes: MAX_FOUNDATION_BYTES,
     requests: client.stats().requests,
   };
+}
+
+// ── "ADD FROM THIS COMPUTER" — documents from a folder the owner picked (v3.68.0)
+//
+// The maintainer's own words for the door: "choose a folder, select files from
+// it, drop them in, that's it" — and add more later, from the same folder or
+// another one, without starting over. What that means depends on the ONE
+// ownership a project already has, and this function never changes a
+// project's ownership sideways:
+//
+//   · NO DOCUMENTS YET (no manifest, or one that lists none and a folder with
+//     no unlisted document) → the files are COPIED IN as curator-kept
+//     documents. A copy, not a mirror: the folder is where they came from, not
+//     their source of truth, so a second folder later is simply more copies.
+//   · CURATOR-KEPT → the same copy, APPENDED. A file whose slug is already in
+//     the project is refused as "already added" — a copy never replaces.
+//   · A FOLDER MIRROR (repo-owned, with a recorded folder) → the picked files
+//     are MIRRORED through the existing refresh (`refreshCore`), so they keep
+//     the mirror's freshness reading. They must sit inside the recorded
+//     folder: a mirror has one source, and a file from anywhere else is
+//     refused by name rather than quietly turned into a second source.
+//   · A GITHUB MIRROR (no recorded folder) → refused `source-is-github`: its
+//     documents come from the repository, and a local copy cannot join it.
+//
+// SECURITY — every rule is one this module already enforces, reused rather
+// than restated: the root is absolute and resolved through `resolveRepoRoot`
+// (realpath, a directory); every file goes through `sourceDigest` (relative,
+// inside the root lexically AND through symlinks, `.md`/`.txt` only, a
+// regular file, under the per-document cap); every write goes through
+// `resolveInsideState`; and NOTHING is written until every accepted file is
+// read into memory — the documents first, then the manifest, last.
+export const MAX_ADD_FILES_PER_CALL = MAX_FOUNDATIONS_PER_PROJECT;
+
+export async function addFoundationsFromFolder(domain, project, opts = {}) {
+  const inp = opts && typeof opts === 'object' ? opts : {};
+  const target = await checkProjectTarget(domain, project);
+  if (!target.ok) return target;
+  const paths = foundationsPaths(domain, target.prefix);
+  if (!paths) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
+  if (typeof inp.root !== 'string' || !inp.root.trim() || inp.root.includes('\0') || !path.isAbsolute(inp.root)) {
+    return { ok: false, reason: 'invalid-root', message: 'Name the folder as an absolute path on this computer (for example /Users/you/Documents/notes).' };
+  }
+  const files = Array.isArray(inp.files) ? inp.files : [];
+  if (!files.length) {
+    return { ok: false, reason: 'no-files', message: 'Tick at least one document to add. Nothing was written.' };
+  }
+  if (files.length > MAX_ADD_FILES_PER_CALL) {
+    return { ok: false, reason: 'too-many-documents', message: `${files.length} files were named; one add takes at most ${MAX_ADD_FILES_PER_CALL}. Nothing was written.` };
+  }
+  const picked = await resolveRepoRoot(inp.root.trim());
+  if (!picked.ok) {
+    return { ...picked, message: 'That folder could not be read on this computer — it is missing, not a folder, or not readable. Nothing was written.' };
+  }
+  const pickedRoot = picked.realRoot;
+
+  return withFoundationsLock(domain, 'add-foundations', async () => {
+    const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'malformed') {
+      return { ok: false, reason: 'manifest-unreadable', manifestError: mf.error, message: `The foundations manifest could not be read (${mf.error}). Nothing was added.` };
+    }
+    const manifest = mf.status === 'ok' ? mf.manifest : null;
+    const populated = !!manifest && manifest.documents.length > 0;
+
+    // ── A MIRROR WITH DOCUMENTS: add through the mirror, never beside it ──
+    if (populated && manifest.ownership === 'repo') {
+      if (!manifest.repo || !manifest.repo.root) {
+        const r = manifest.repo && manifest.repo.remote;
+        return {
+          ok: false, reason: 'source-is-github', remote: r ? { owner: r.owner, repo: r.repo } : null,
+          message: `This project mirrors ${r ? `${r.owner}/${r.repo}` : 'a GitHub repository'}, so its documents come from there. `
+            + 'Add more with “Add from GitHub”. Nothing was written.',
+        };
+      }
+      const recorded = await resolveRepoRoot(manifest.repo.root);
+      if (!recorded.ok) {
+        return { ...recorded, message: 'The folder this project mirrors is not on this computer, so nothing can be added from it here. Nothing was written.' };
+      }
+      const rel = path.relative(recorded.realRoot, pickedRoot);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+        return {
+          ok: false, reason: 'outside-mirrored-folder', mirroredFolder: recorded.realRoot,
+          message: `This project mirrors ${recorded.realRoot}. A mirror has one source, so documents can be added only `
+            + 'from inside that folder. Nothing was written.',
+        };
+      }
+      const prefix = rel ? `${rel.split(path.sep).join('/')}/` : '';
+      const rebased = files.map((f) => (f && typeof f === 'object' && typeof f.path === 'string'
+        ? { path: prefix + f.path.replace(/\\/g, '/').replace(/^\.\//, ''), ...(f.role ? { role: f.role } : {}) }
+        : f));
+      const out = await refreshCore(domain, target, paths, recorded.realRoot, rebased);
+      return out && out.ok ? { ...out, mode: 'mirror' } : out;
+    }
+
+    // ── EVERYTHING ELSE COPIES: absent, empty, or curator-kept ───────────
+    if (manifest && !populated && await hasUnlistedDocument(paths.dirAbs, manifest)) {
+      return {
+        ok: false, reason: 'orphans-present',
+        message: 'The documents folder holds a file the manifest does not list, so this project is not empty. '
+          + 'Remove or re-list it first. Nothing was written.',
+      };
+    }
+    const base = manifest && manifest.ownership === 'curator' ? manifest
+      : { ...emptyManifest(), ownership: 'curator' };
+    const rechosen = !!manifest && manifest.ownership === 'repo';
+    const existing = new Set(base.documents.map((d) => d.slug));
+    const refused = [];
+    const accepted = [];
+    const seenSlugs = new Set();
+    for (const f of files) {
+      const rawPath = f && typeof f === 'object' && typeof f.path === 'string' ? f.path : null;
+      if (!rawPath) { refused.push({ path: String(f && typeof f === 'object' ? f.path : f).slice(0, 120), reason: 'not a {path} object' }); continue; }
+      const rel0 = rawPath.replace(/\\/g, '/').replace(/^\.\//, '');
+      if (f.role !== undefined && f.role !== null && !FOUNDATION_ROLES.includes(f.role)) {
+        refused.push({ path: rel0.slice(0, 120), reason: `"${String(f.role).slice(0, 40)}" is not a role` }); continue;
+      }
+      const src = await sourceDigest(pickedRoot, rel0);
+      if (src.status === 'refused') { refused.push({ path: rel0.slice(0, 120), reason: src.reason }); continue; }
+      if (src.status === 'missing') { refused.push({ path: rel0.slice(0, 120), reason: 'not found in that folder' }); continue; }
+      if (src.status === 'too-large') {
+        refused.push({ path: rel0.slice(0, 120), bytes: src.bytes, cap: MAX_FOUNDATION_BYTES,
+          reason: `${src.bytes} bytes is over the ${MAX_FOUNDATION_BYTES}-byte (${Math.round(MAX_FOUNDATION_BYTES / 1024)} KB) per-document cap` });
+        continue;
+      }
+      if (!src.buf.toString('utf8').trim()) { refused.push({ path: src.rel.slice(0, 120), reason: 'the file is empty' }); continue; }
+      const slug = deriveSlugFromPath(src.rel);
+      if (!slug) { refused.push({ path: src.rel.slice(0, 120), reason: 'no usable document name could be made from the file name' }); continue; }
+      if (existing.has(slug)) { refused.push({ path: src.rel.slice(0, 120), slug, reason: `already added — “${slug}” is in this project` }); continue; }
+      if (seenSlugs.has(slug)) { refused.push({ path: src.rel.slice(0, 120), slug, reason: `another ticked file is also named “${slug}”` }); continue; }
+      if (base.documents.length + accepted.length >= MAX_FOUNDATIONS_PER_PROJECT) {
+        refused.push({ path: src.rel.slice(0, 120), reason: `the project already holds ${MAX_FOUNDATIONS_PER_PROJECT} documents, the cap` }); continue;
+      }
+      seenSlugs.add(slug);
+      accepted.push({ slug, rel: src.rel, buf: src.buf, role: f.role || guessRole(src.rel) });
+    }
+    if (!accepted.length) {
+      return {
+        ok: false, reason: 'nothing-added', refused,
+        message: 'None of the ticked files could be added — each one is listed with its reason. Nothing was written.',
+      };
+    }
+    try { await mkdir(paths.dirAbs, { recursive: true }); }
+    catch (err) { return { ok: false, reason: 'io', message: `Could not create the documents folder: ${scrubPaths(String(err?.message ?? err))}` }; }
+    const manifestAbs2 = resolveInsideState(domain, `${paths.dirRel}/${FOUNDATIONS_MANIFEST_FILENAME}`);
+    if (!manifestAbs2) return { ok: false, reason: 'unsafe-path', message: 'The documents folder resolves outside the project — refusing to write.' };
+    const now = new Date().toISOString();
+    const added = [];
+    const entries = [];
+    for (const a of accepted) {
+      const docAbs = resolveInsideState(domain, `${paths.dirRel}/${a.slug}`);
+      if (!docAbs) { refused.push({ path: a.rel.slice(0, 120), reason: 'the document path resolves outside the state folder' }); continue; }
+      // An unlisted file of the same name was written by somebody; a copy
+      // never lands on top of it.
+      if (await isFile(docAbs)) { refused.push({ path: a.rel.slice(0, 120), slug: a.slug, reason: `a file named “${a.slug}” is already in the documents folder, unlisted` }); continue; }
+      try { await writeFileAtomic(docAbs, a.buf); }
+      catch (err) {
+        return { ok: false, reason: 'io', message: `Could not write ${a.slug}: ${scrubPaths(String(err?.message ?? err))}. Documents written before it are orphan files until the next add.`, added };
+      }
+      added.push(a.slug);
+      entries.push({
+        slug: a.slug, role: a.role, title: deriveTitle(a.buf, a.slug), source: { kind: 'curator' },
+        sha256: sha256Hex(a.buf), bytes: a.buf.length, updatedAt: now, commit: null,
+        authoredBy: { kind: 'human', harness: null, model: null, commissionedBy: null },
+        skeleton: false, readFirst: false,
+      });
+    }
+    if (!entries.length) {
+      return { ok: false, reason: 'nothing-added', refused, message: 'None of the ticked files could be added — each one is listed with its reason. Nothing was written.' };
+    }
+    const next = { ...base, ownership: 'curator', repo: null, documents: [...base.documents, ...entries] };
+    const totalBytes = totalBytesOf(next);
+    const budgetExceeded = totalBytes > next.budgetBytes;
+    const notes = [];
+    if (budgetExceeded) {
+      notes.push(`budget: this project's documents now total ${totalBytes} bytes, over the ${next.budgetBytes}-byte `
+        + `(${Math.round(next.budgetBytes / 1024)} KB) project budget. The add is complete; a session start sends only what its reading budget allows.`);
+    }
+    try { await writeManifest(manifestAbs2, next); }
+    catch (err) {
+      return { ok: false, reason: 'io', message: `The documents were written but the manifest was not: ${scrubPaths(String(err?.message ?? err))}. They are orphan files until the next add.`, added };
+    }
+    return {
+      ok: true, mode: 'copy', domain, project: target.project, root: pickedRoot,
+      added, refused, rechosen,
+      addedBytes: entries.reduce((n, e) => n + e.bytes, 0),
+      totalBytes, budgetBytes: next.budgetBytes, budgetExceeded, documentCount: next.documents.length,
+      notes: finaliseNotes(notes),
+    };
+  });
 }
 
 /**

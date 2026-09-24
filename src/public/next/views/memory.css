@@ -2291,3 +2291,43 @@
 .lb-opt.is-selected .mem-bp-bytes,
 .lb-opt.is-selected .mem-bp-start,
 .lb-opt.is-selected .mem-bp-hint { color: currentColor; }
+
+/* ── THE TWO DOORS' PANEL (v3.68.0) ───────────────────────────────────────
+   "Add from this computer" / "Add from GitHub" open ONE panel under the head
+   row (the `.mem-fnd-panel` box above), whose list reuses the chooser's own
+   candidate rows (`.fnd-init-cands` / `.fnd-init-cand`, foundations-init.css)
+   so a listed document looks the same whichever door it came through. Only
+   the bits the chooser never had are declared here, all on existing tokens. */
+.mem-fnd-add-listhead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-6);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+.mem-fnd-add-count {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  font-variant-numeric: var(--numeric-tabular);
+}
+/* `.fnd-init-note` is `display:flex`, which defeats `[hidden]` (design-system
+   §9) — the budget line is emitted always and toggled in place. */
+.mem-fnd-add-loud[hidden] { display: none; }
+.mem-fnd-add-note { margin: 0; }
+.mem-fnd-add-refused {
+  margin: 0;
+  padding-left: var(--space-8);
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  line-height: var(--leading-normal);
+}
+.mem-fnd-tpl-row { margin-top: var(--space-3); }
+/* The at-session-start legend: one compact line near the table's column. */
+.mem-fnd-legend {
+  margin: var(--space-4) 0;
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+  color: var(--text-2);
+}
+.mem-fnd-legend b { color: var(--text); font-weight: 600; }
