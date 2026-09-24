@@ -291,6 +291,539 @@ const E = {
     ],
     guide: { key: 'shared.page', heading: 'Shared Brain' },
   },
+
+  // ── v3.71.1: every remaining ⓘ, in the same model ───────────────────────
+  //
+  // Each entry names, above it, the ⓘ it replaces (view · DOM id). Where one
+  // entry serves several marks, or a mark was cut, the note says so. Nothing
+  // below claims a count, a state, a cost or an outcome: those stay on the
+  // page, unfolded (v3.16.1).
+
+  // ── Domains (views/domains.js) ──────────────────────────────────────────
+  // D3 · the domain page's OVERVIEW card — `threeLayersInfoHtml()`.
+  'domains.overview': {
+    label: 'About this domain’s figures',
+    title: 'Overview',
+    lead: 'This domain in figures: the wiki pages it holds, and the projects that give agents memory.',
+    visual: {
+      type: 'table',
+      caption: 'Three kinds of context, one folder',
+      head: ['', 'What it is', 'How it changes'],
+      rows: [
+        ['Knowledge', 'the wiki pages ingest writes', 'grows with each source'],
+        ['Memory', 'a project’s brief and Handoffs', 'each save replaces the last'],
+        ['Documents', 'a project’s decisions and plans', 'read word for word'],
+      ],
+    },
+    points: [
+      { icon: 'search', text: 'Press a page type to filter the list below; **PAGES** shows all.' },
+      { icon: 'agent', text: '**PROJECTS** jumps to the projects kept in this domain.' },
+    ],
+    guide: { key: 'domains.three-layers', heading: 'The three kinds of context it carries' },
+  },
+
+  // D4 · the domain page's ① Ingest — `dm-ingest-info` (INGEST_INFO); ALSO
+  // the Ingest view's own header, replacing the sidebar-title ⓘ
+  // `tx-vh-info-ingest-sidebar` (both hint variants), which broke the
+  // "no ⓘ on a sidebar title" rule.
+  'ingest.page': {
+    label: 'About Ingest',
+    title: 'Ingest',
+    lead: '**Ingest** reads a PDF, Markdown or text file and turns it into pages of your wiki.',
+    points: [
+      { icon: 'file', text: 'Each source becomes entity, concept and summary pages.' },
+      { icon: 'grow', text: 'New sources deepen the pages already there, not copy them.' },
+      { icon: 'refresh', text: 'Files run one at a time; a paused batch picks up again.' },
+    ],
+    try: 'Drop a PDF onto this section, or press browse your files.',
+    guide: { key: 'ingest.page', heading: 'Ingest a source' },
+  },
+
+  // D5 · ③ Projects in this domain — `dm-proj-info` (PROJECTS_INFO_HTML).
+  // Its second paragraph (the two copy buttons) is dropped here: each button
+  // carries its own ⓘ, below.
+  'domains.projects': {
+    label: 'About projects',
+    title: 'Projects',
+    lead: 'A project is one piece of work inside this domain, with its own memory for your agents.',
+    points: [
+      { icon: 'pencil', text: 'You write **the brief**: the goal and the firm decisions.' },
+      { icon: 'agent', text: 'Agents save **Handoffs**, so each session starts where the last stopped.' },
+      { icon: 'layers', text: 'Open a project in **Context** to see what an agent gets.' },
+    ],
+    guide: { key: 'domains.projects', heading: 'Projects inside a domain' },
+  },
+
+  // D6 + D9 · every project row's, and the "created" card's, marker ⓘ —
+  // `dm-proj-marker-info-*`, `dm-proj-done-marker-info` (MARKER_INFO_TEXT).
+  'domains.marker-line': {
+    label: 'About Copy marker line',
+    title: 'Copy marker line',
+    lead: '**Copy marker line** copies one line naming this project, so an agent knows where it is.',
+    visual: {
+      type: 'steps',
+      caption: 'Once per project folder',
+      steps: [
+        'Press **Copy marker line**',
+        'Save it in a file named `.curator-project`',
+        'Put that file at the top of the project’s folder',
+      ],
+    },
+    points: [
+      { icon: 'agent', text: 'An agent that starts in that folder resumes this project unasked.' },
+    ],
+    guide: { key: 'domains.marker-line', heading: 'Resuming — the one line to learn' },
+  },
+
+  // D7 + D10 · every project row's, and the "created" card's, instructions
+  // ⓘ — `dm-proj-agent-info-*`, `dm-proj-done-agent-info` (AGENT_INFO_TEXT).
+  'domains.agent-instructions': {
+    label: 'About Copy agent instructions',
+    title: 'Copy agent instructions',
+    lead: '**Copy agent instructions** copies a short paragraph telling your agent to use this project’s memory.',
+    points: [
+      { icon: 'file', text: 'Paste it into the file your agent loads every session.' },
+      { icon: 'agent', text: 'Your agent then reads the project’s memory first, and saves before stopping.' },
+    ],
+    try: 'Press **Copy agent instructions**, then paste it into your agent’s instructions file.',
+    guide: { key: 'domains.agent-instructions', heading: 'Making sure your agent actually does it' },
+  },
+
+  // D8 · the New project card — `dm-proj-new-info` (CREATE_INFO_HTML).
+  'domains.new-project': {
+    label: 'About creating a project',
+    title: 'New project',
+    lead: '**New project** starts one piece of work in this domain, with memory your agents keep.',
+    points: [
+      { icon: 'folder', text: 'Use a lowercase name; nothing in the wiki moves or changes.' },
+      { icon: 'pencil', text: '**The brief** is optional here; you can write it later in **Context**.' },
+      { icon: 'file', text: 'Add **Documents** later, from this computer or from GitHub.' },
+    ],
+    guide: { key: 'memory.foundations-edit', heading: 'Start a project' },
+  },
+
+  // D11 · the create form's Documents chooser — `dm-proj-fnd-info`
+  // (FOUNDATIONS_INFO_HTML). Lives only as long as that chooser does; when the
+  // form drops it, this entry goes with it.
+  'domains.new-project-documents': {
+    label: 'About a new project’s Documents',
+    title: 'Documents',
+    lead: '**Documents** are the files your agents read word for word: your decisions, conventions and plans.',
+    points: [
+      { icon: 'folder', text: 'Choose where they come from, or press **Decide later**.' },
+      { icon: 'refresh', text: 'A **mirrored** document follows its original; change it there.' },
+      { icon: 'pencil', text: 'Documents you write or copy in are yours to edit.' },
+    ],
+    guide: { key: 'context.documents', heading: 'Documents — the files that travel with a project' },
+  },
+
+  // D12 · ④ Shared Brain on the domain page — `dm-shared-info`.
+  'domains.shared-brain': {
+    label: 'About this domain in a Shared Brain',
+    title: 'Shared Brain',
+    lead: 'This domain can take part in a **Shared Brain**: one wiki a team writes together.',
+    visual: {
+      type: 'table',
+      caption: 'Two ways a domain takes part',
+      rows: [
+        ['Push', 'sends the pages you changed'],
+        ['Pull', 'brings the team’s wiki back, read-only'],
+      ],
+    },
+    points: [
+      { icon: 'agent', text: '**Push** summarises your changed pages with your AI model.' },
+      { icon: 'lock', text: 'Which domains take part is chosen when you join.' },
+      { icon: 'folder', text: 'Nothing leaves this computer until you push.' },
+    ],
+    guide: { key: 'shared.page', heading: 'Shared Brain' },
+  },
+
+  // ── Settings (views/settings.js) ─────────────────────────────────────────
+  // SECTION_INFO.providers · the Providers & keys header.
+  'settings.providers': {
+    label: 'About Providers & keys',
+    title: 'Providers & keys',
+    lead: '**Providers & keys** connects the AI that builds your wiki and answers your questions.',
+    visual: { type: 'flow', caption: 'Four steps, in order', steps: ['Connect a provider', 'Your AI model', 'Chat', 'All models'] },
+    points: [
+      { icon: 'lock', text: 'Paste a key from Gemini, Anthropic or OpenRouter.' },
+      { icon: 'agent', text: '**Your AI model** runs ingest, compile and **Wiki health**.' },
+    ],
+    guide: { key: 'settings.api-key', heading: 'Get your API key (Gemini, Claude or OpenRouter)' },
+  },
+
+  // Block 1 · Connect a provider — `settings-block-info-connect`.
+  'settings.connect': {
+    label: 'About Connect a provider',
+    title: 'Connect a provider',
+    lead: '**Connect a provider** by pasting its key. Connect as many providers as you like.',
+    points: [
+      { icon: 'lock', text: 'The Curator calls the provider directly; your key stays on this computer.' },
+      { icon: 'search', text: 'Any connected provider can answer in **Chat** straight away.' },
+      { icon: 'agent', text: 'Building your wiki needs a measured model: see **Your AI model**.' },
+    ],
+    guide: { key: 'settings.connect', heading: '1 · Connect a provider' },
+  },
+
+  // Block 2 · Your AI model — `settings-block-info-build`.
+  'settings.build': {
+    label: 'About Your AI model',
+    title: 'Your AI model',
+    lead: '**Your AI model** is the one model every AI job uses: ingest, compile, Wiki health and more.',
+    points: [
+      { icon: 'check', text: 'Nothing to set per job: one choice covers them all.' },
+      { icon: 'refresh', text: 'A model from another provider makes that provider the active one.' },
+      { icon: 'search', text: '**Chat** is separate: pick any model per message, in the composer.' },
+    ],
+    guide: { key: 'settings.build', heading: '2 · What builds your wiki' },
+  },
+
+  // Block 3 · Chat — `settings-block-info-chat`.
+  'settings.chat': {
+    label: 'About Chat models',
+    title: 'Chat',
+    lead: 'In **Chat**, any model you have connected can answer. Pick one per message, in the composer.',
+    points: [
+      { icon: 'check', text: 'Your Chat choice never changes the model that builds your wiki.' },
+    ],
+    guide: { key: 'settings.chat', heading: 'The composer — Length and Model selectors' },
+  },
+
+  // Block 4 · All models — `settings-block-info-all`.
+  'settings.all-models': {
+    label: 'About All models',
+    title: 'All models',
+    lead: '**All models** lists every model from the providers you connected, with search and filters.',
+    points: [
+      { icon: 'search', text: 'Every model here can answer in Chat.' },
+      { icon: 'check', text: 'A badge marks the ones measured to build your wiki.' },
+      { icon: 'file', text: 'Each column is a published fact or a measurement, not advice.' },
+    ],
+    guide: { key: 'settings.all-models', heading: '4 · All models' },
+  },
+
+  // Block 2's measurement badge — `settings-build-chip-info` (was the
+  // dynamic `chip.title`). One entry for every badge: a table of all three,
+  // so the panel reads true whichever one is showing.
+  'settings.measured': {
+    label: 'About the measurement badge',
+    title: 'Measurement badge',
+    lead: 'The badge says whether anyone has measured this model building a wiki.',
+    visual: {
+      type: 'table',
+      caption: 'The three badges',
+      rows: [
+        ['measured for the build lane', 'tested by The Curator on prose'],
+        ['measured on your wiki', 'you tested it on your pages'],
+        ['not measured', 'nobody has tested it here'],
+      ],
+    },
+    points: [
+      { icon: 'search', text: 'An untested model may be fine; nobody can say how it builds.' },
+    ],
+    guide: { key: 'settings.measured', heading: 'What a model row tells you' },
+  },
+
+  // Every provider's fetched-model lane — `settings-fetched-lane-info-<id>`.
+  'settings.fetched-models': {
+    label: 'About fetched models',
+    title: 'Fetched models',
+    lead: 'Fetched models come straight from the provider’s own list, and answer in Chat only.',
+    points: [
+      { icon: 'search', text: 'The price is published; only a real run shows how it builds.' },
+      { icon: 'check', text: 'To build with one, test it on your own pages first.' },
+    ],
+    try: 'Open **Worth testing for this job** and test one on your wiki.',
+    guide: { key: 'settings.fetched-models', heading: 'Test a model on your own wiki' },
+  },
+
+  // General · Software update — `settings-block-info-updates` (all three
+  // install modes: the words below are true of each).
+  'settings.update': {
+    label: 'About Software update',
+    title: 'Software update',
+    lead: '**Software update** installs the newest version of The Curator over this copy.',
+    points: [
+      { icon: 'lock', text: 'Your wiki, keys and sync settings are never touched.' },
+      { icon: 'refresh', text: 'There is one channel: whatever is published right now.' },
+    ],
+    guide: { key: 'settings.software-update', heading: 'Version and updates' },
+  },
+
+  // General · "Going back to an earlier version" — `settings-update-recovery-info`,
+  // the git-checkout arm (UPDATE_RECOVERY_INFO).
+  'settings.update-recovery': {
+    label: 'How to go back to an earlier version',
+    title: 'Going back',
+    lead: 'Updates only move forward. Going back to an earlier version is a Terminal step.',
+    visual: {
+      type: 'steps',
+      caption: 'In Terminal',
+      steps: [
+        'Open the app folder, `~/the-curator` by default',
+        'Run `git fetch --depth 1 origin tag VERSION`',
+        'Run `git checkout VERSION`, then `npm install`',
+      ],
+    },
+    points: [
+      { icon: 'search', text: 'VERSION is a tag from the project’s tags page on GitHub.' },
+      { icon: 'refresh', text: 'Checking for updates again returns you to the newest version.' },
+    ],
+    guide: { key: 'settings.software-update', heading: 'Version and updates' },
+  },
+
+  // The same mark on a packaged install — UPDATE_RECOVERY_INFO_INSTALLER.
+  'settings.update-recovery-installer': {
+    label: 'How to go back to an earlier build',
+    title: 'Going back',
+    lead: 'This copy came from a downloaded installer. Going back means installing an older build.',
+    points: [
+      { icon: 'search', text: 'Only releases with a download can be reinstalled; see the releases page.' },
+      { icon: 'lock', text: 'Your wiki, keys and sync settings live outside the app.' },
+    ],
+    guide: { key: 'settings.update-recovery-installer', heading: 'Going back to an earlier version' },
+  },
+
+  // General · Appearance — `settings-block-info-appearance`.
+  'settings.appearance': {
+    label: 'About Appearance',
+    title: 'Appearance',
+    lead: '**Appearance** sets the theme, the text size and the Mac menu bar icon.',
+    points: [
+      { icon: 'search', text: '**Text size** scales every word; controls and layout keep their size.' },
+      { icon: 'computer', text: '**Menu bar** shows what your agents just saved. Mac app only.' },
+    ],
+    guide: { key: 'settings.text-size', heading: 'Appearance and the setup guide' },
+  },
+
+  // General · System check — `settings-block-info-system-check`.
+  'settings.system-check': {
+    label: 'About System check',
+    title: 'System check',
+    lead: '**System check** confirms the app is set up. It never opens a wiki page.',
+    points: [
+      { icon: 'check', text: 'It checks your AI key, the knowledge folder, key files and sync.' },
+      { icon: 'search', text: 'To fix broken links or duplicates, use a domain’s **Wiki health**.' },
+    ],
+    guide: { key: 'settings.system-check-guide', heading: 'System check' },
+  },
+
+  // SECTION_INFO.mcp · the MCP bridge header.
+  'settings.mcp': {
+    label: 'About MCP bridge',
+    title: 'MCP bridge',
+    lead: 'The **MCP bridge** lets your agents read and write your wiki and your projects’ memory.',
+    visual: { type: 'flow', caption: 'Four steps', steps: ['Connect a client', 'Default domain for MCP writes', 'Tool map', 'Across projects'] },
+    points: [
+      { icon: 'agent', text: 'It works with Claude Code, Claude Desktop and Cursor.' },
+      { icon: 'lock', text: 'A read-only Shared Brain domain is never written to.' },
+    ],
+    guide: { key: 'settings.mcp', heading: 'Three ways to talk to your knowledge (Chat · Obsidian · MCP)' },
+  },
+
+  // MCP block 1 · Connect a client — `settings-block-info-mcp-connect`.
+  'settings.mcp-connect': {
+    label: 'About Connect a client',
+    title: 'Connect a client',
+    lead: '**Connect a client** sets up one agent app to use your wiki. Do it once per app.',
+    points: [
+      { icon: 'computer', text: 'The Curator need not be running; your agent app starts the bridge.' },
+      { icon: 'refresh', text: 'Run it again if the knowledge folder or the app moves.' },
+      { icon: 'search', text: 'ChatGPT’s web app cannot connect: it cannot run local servers.' },
+    ],
+    guide: { key: 'settings.mcp', heading: 'Three ways to talk to your knowledge (Chat · Obsidian · MCP)' },
+  },
+
+  // MCP block 2 · Default domain for MCP writes — `settings-block-info-mcp-domain`.
+  'settings.mcp-domain': {
+    label: 'About Default domain for MCP writes',
+    title: 'Default domain',
+    lead: '**Default domain for MCP writes** is where an agent saves when it names no domain.',
+    points: [
+      { icon: 'check', text: 'Left unset, each agent must name a domain: safest with several.' },
+    ],
+    guide: { key: 'settings.mcp', heading: 'Three ways to talk to your knowledge (Chat · Obsidian · MCP)' },
+  },
+
+  // MCP block 3 · Tool map — `settings-block-info-mcp-tool-map`.
+  'settings.mcp-tool-map': {
+    label: 'About Tool map',
+    title: 'Tool map',
+    lead: 'The **Tool map** shows which tools your agents used, and when. It stays on this computer.',
+    points: [
+      { icon: 'lock', text: 'It keeps tool names and times, never what agents read or wrote.' },
+      { icon: 'computer', text: 'It is never synced; deleting it only restarts the map.' },
+      { icon: 'check', text: 'A test run from this page never counts as a session.' },
+    ],
+    guide: { key: 'settings.mcp-tool-map', heading: 'The tool map — what your agents used' },
+  },
+
+  // MCP block 4 · Across projects — `settings-block-info-mcp-across`.
+  'settings.mcp-across': {
+    label: 'About Across projects',
+    title: 'Across projects',
+    lead: '**Across projects** shows which projects’ agent sessions saved a Handoff in the last 30 days.',
+    points: [
+      { icon: 'agent', text: 'A session is one run of an agent through the MCP bridge.' },
+      { icon: 'search', text: 'A project that never saves reads 0, so gaps stand out.' },
+      { icon: 'clock', text: 'The last line counts every save in the last 7 days.' },
+    ],
+    guide: { key: 'settings.mcp-tool-map', heading: 'The tool map — what your agents used' },
+  },
+
+  // SECTION_INFO.health · the Health & scan limits header. ALSO replaces the
+  // one block's own ⓘ (`settings-block-info-health-limits`): the section holds
+  // that block alone, and the two said the same thing.
+  'settings.health': {
+    label: 'About Health & scan limits',
+    title: 'Health & scan limits',
+    lead: 'Limits for the AI duplicate scan you run from a domain’s **Wiki health**.',
+    points: [
+      { icon: 'gauge', text: 'The first limit caps how many tokens one scan may use.' },
+      { icon: 'search', text: '**Maximum candidate pairs per scan** caps the pairs the model checks.' },
+      { icon: 'check', text: 'The free structural scan is never limited here.' },
+    ],
+    guide: { key: 'settings.health', heading: 'Health & scan limits' },
+  },
+
+  // SECTION_INFO.storage · the Knowledge base header.
+  'settings.storage': {
+    label: 'About Knowledge base',
+    title: 'Knowledge base',
+    lead: 'The **Knowledge base** is the folder on this computer that holds every domain you have.',
+    points: [
+      { icon: 'folder', text: '**Vault folder** — where your wiki lives. Obsidian opens it too.' },
+      { icon: 'repo', text: '**GitHub read-only token** — lets Documents mirror from GitHub.' },
+    ],
+    guide: { key: 'settings.knowledge-base', heading: 'Knowledge base folder' },
+  },
+
+  // Knowledge base · Vault folder — `settings-block-info-storage-folder`.
+  'settings.vault-folder': {
+    label: 'About Vault folder',
+    title: 'Vault folder',
+    lead: 'The **Vault folder** holds every domain as plain files, with no database behind them.',
+    points: [
+      { icon: 'folder', text: 'In Obsidian, use Open folder as vault to see the graph.' },
+      { icon: 'refresh', text: '**Choose folder** points The Curator elsewhere; it moves nothing itself.' },
+    ],
+    guide: { key: 'settings.knowledge-base', heading: 'Knowledge base folder' },
+  },
+
+  // Knowledge base · GitHub read-only token — `settings-block-info-storage-github-token`.
+  // The same four steps as context.read-with; the points differ, because
+  // this IS the place the token is typed.
+  'settings.github-token': {
+    label: 'About the GitHub read-only token',
+    title: 'GitHub read-only token',
+    lead: 'A GitHub token that can only read the repositories you pick, so Documents can mirror them.',
+    visual: {
+      type: 'steps',
+      caption: 'Create the token on GitHub',
+      steps: [
+        'GitHub → Settings → Developer settings → Fine-grained tokens',
+        'Repository access: Only select repositories',
+        'Permissions → Contents: Read-only',
+        'Choose an expiry, and note when to renew',
+      ],
+    },
+    points: [
+      { icon: 'lock', text: 'It stays on this computer and is never shown again.' },
+      { icon: 'check', text: 'Press **Test** to try one read of a repository.' },
+    ],
+    guide: { key: 'settings.github-token', heading: 'GitHub read-only token' },
+  },
+
+  // ── Shared Brain (views/shared.js, views/shared-brain-wizard.js) ─────────
+  // "Shared Brain is off on this install" — `sb-enable-info`.
+  'shared.enable': {
+    label: 'What enabling does',
+    title: 'Turning it on',
+    lead: 'Turning **Shared Brain** on only unlocks this section. By itself it connects you to nothing.',
+    points: [
+      { icon: 'folder', text: 'Nothing leaves this computer until you push a domain.' },
+    ],
+    guide: { key: 'shared.getting-started', heading: 'Getting started' },
+  },
+
+  // Each connection's Access token row — `sb-sec-token-info-<id>`.
+  'shared.token-check': {
+    label: 'Why check the token',
+    title: 'Access token',
+    lead: 'The **Access token** is the GitHub token you pasted when you joined. **Check now** tests it.',
+    points: [
+      { icon: 'clock', text: 'Fine-grained tokens expire on the date you chose.' },
+      { icon: 'search', text: 'The check reads the team’s records; it uses no AI.' },
+    ],
+    guide: { key: 'shared.security', heading: 'The two-primitives security model (read this before you start)' },
+  },
+
+  // Wizard, admin step 1 — `sbw-admin-repo-info`.
+  'shared.wizard-repo': {
+    label: 'What a repository and a collaborator are',
+    title: 'Repository and collaborators',
+    lead: 'A repository is a folder GitHub keeps for you, with the history of every change.',
+    points: [
+      { icon: 'repo', text: 'Any name works; you paste its full name below.' },
+      { icon: 'pencil', text: 'Adding someone as a collaborator lets them write to it.' },
+      { icon: 'file', text: 'The brain name is the label every member sees.' },
+    ],
+    guide: { key: 'shared.getting-started', heading: 'Getting started' },
+  },
+
+  // Wizard step 3 — `sbw-pat-info`.
+  'shared.wizard-token': {
+    label: 'What this token is',
+    title: 'Your GitHub token',
+    lead: 'A GitHub token is a password-like key that lets The Curator read and write the team’s repository.',
+    points: [
+      { icon: 'lock', text: 'It is yours alone; nobody else in the team sees it.' },
+      { icon: 'pencil', text: 'It marks which contributions are yours.' },
+      { icon: 'check', text: 'Checking it proves the repository exists and you can write to it.' },
+    ],
+    guide: { key: 'shared.security', heading: 'The two-primitives security model (read this before you start)' },
+  },
+
+  // Wizard step 4 — `sbw-attribution-info`.
+  'shared.wizard-attribution': {
+    label: 'What name attribution changes',
+    title: 'Name attribution',
+    lead: 'Name attribution decides whether your name is stored with your contributions. It is off by default.',
+    points: [
+      { icon: 'lock', text: 'Pages credit a short random ID either way.' },
+      { icon: 'search', text: 'Everyone with access to the repository can read those records.' },
+    ],
+    guide: { key: 'shared.attribution', heading: 'Step 4 — Domains + display name + attribution' },
+  },
+
+  // ── Sync (views/sync.js) ─────────────────────────────────────────────────
+  // The main header — `tx-vh-info-sync`. ALSO replaces the sidebar-title ⓘ
+  // (`tx-vh-info-sync-sidebar`), which broke the no-ⓘ-on-a-sidebar-title rule.
+  'sync.page': {
+    label: 'About Sync',
+    title: 'Sync',
+    lead: '**Sync** keeps your knowledge folder in a private GitHub repository, so every computer has the same brain.',
+    points: [
+      { icon: 'file', text: 'Pages, chats and project memory travel; source files and keys stay here.' },
+      { icon: 'refresh', text: '**Sync now** sends your changes and brings in the other computers’.' },
+      { icon: 'clock', text: 'Each sync is a git commit that a git client can undo.' },
+    ],
+    guide: { key: 'sync.page', heading: 'Sync across computers' },
+  },
+
+  // ── Chat (views/chat.js) ─────────────────────────────────────────────────
+  // The PROJECT pin's ⓘ — `chat-project-info` (was a literal "ⓘ" character
+  // with its own panel; the wiring moves it onto the shared mark).
+  'chat.project': {
+    label: 'What a pinned project adds',
+    title: 'A pinned project',
+    lead: 'Pin a project and answers also read its brief, its latest Handoff and its **read first** Documents.',
+    points: [
+      { icon: 'search', text: 'Chat treats them as notes to check, never as orders.' },
+      { icon: 'lock', text: 'Chat never writes to your project.' },
+    ],
+    guide: { key: 'chat.page', heading: 'Chat with your brain' },
+  },
 };
 
 /**
@@ -325,6 +858,16 @@ export const SCREEN_WORDS = [
   // Pages list's three kinds — a table's row names are screen words too.
   'DOCUMENTS', 'MEMORY', 'KNOWLEDGE', 'AGENT SESSIONS', 'SESSION START',
   'Entity', 'Concept', 'Summary',
+  // v3.71.1 — the rest of the app's screen words, each as printed: domain
+  // page figures and buttons, Settings block titles and fields, the model
+  // badges, Shared Brain and Sync controls.
+  'PAGES', 'PROJECTS', 'Copy marker line', 'New project', 'Decide later',
+  'Connect a provider', 'Your AI model', 'Chat', 'All models', 'Wiki health',
+  'measured for the build lane', 'measured on your wiki', 'not measured', 'Worth testing for this job',
+  'Software update', 'Appearance', 'Text size', 'Menu bar', 'System check',
+  'Connect a client', 'Default domain for MCP writes', 'Tool map', 'Across projects',
+  'Maximum candidate pairs per scan', 'Vault folder', 'GitHub read-only token', 'Choose folder', 'Test',
+  'Access token', 'Check now', 'Sync', 'Sync now',
 ];
 
 // Frozen DEEPLY: a caller that could assign into this map would be a second,

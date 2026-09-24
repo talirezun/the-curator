@@ -164,6 +164,37 @@ export const DOCS_LINKS = {
   'domains.health': { file: 'user-guide.md', anchor: '17-wiki-health' },
   'chat.page': { file: 'user-guide.md', anchor: '9-chat-with-your-brain' },
   'shared.page': { file: 'user-guide.md', anchor: '15b-shared-brain' },
+
+  // ── v3.71.1: the guide cards of the remaining explainers ───────────────
+  // Same rule as above: each lands on a heading whose words the card prints
+  // (scripts/test-explainers.js checks both). Where the right section has no
+  // clean heading yet — the MCP bridge's "① Connect a client" carries a
+  // circled numeral, "Default domain for MCP writes (v2.5.2+)" and the chat
+  // pin's heading carry version numbers — the card lands on the nearest
+  // clean one, and the v3.71.1 report names the retitle that would let it
+  // point closer.
+  'ingest.page': { file: 'user-guide.md', anchor: '8-ingest-a-source' },
+  'domains.projects': { file: 'user-guide.md', anchor: 'projects-inside-a-domain' },
+  'domains.marker-line': { file: 'user-guide.md', anchor: 'resuming--the-one-line-to-learn' },
+  'domains.agent-instructions': { file: 'user-guide.md', anchor: 'making-sure-your-agent-actually-does-it' },
+  'settings.api-key': { file: 'user-guide.md', anchor: '4-get-your-api-key-gemini-claude-or-openrouter' },
+  'settings.connect': { file: 'user-guide.md', anchor: '1--connect-a-provider' },
+  'settings.build': { file: 'user-guide.md', anchor: '2--what-builds-your-wiki' },
+  'settings.chat': { file: 'user-guide.md', anchor: 'the-composer--length-and-model-selectors' },
+  'settings.all-models': { file: 'user-guide.md', anchor: '4--all-models' },
+  'settings.measured': { file: 'user-guide.md', anchor: 'what-a-model-row-tells-you' },
+  'settings.fetched-models': { file: 'user-guide.md', anchor: 'test-a-model-on-your-own-wiki' },
+  // The packaged install's way back is written in the Mac app guide only.
+  'settings.update-recovery-installer': { file: 'mac-app.md', anchor: 'going-back-to-an-earlier-version' },
+  // `settings.system-check` above is the whole system-check.md; an explainer
+  // card needs a named section, and the user guide has one.
+  'settings.system-check-guide': { file: 'user-guide.md', anchor: 'system-check' },
+  'settings.mcp': { file: 'user-guide.md', anchor: '13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp' },
+  'settings.health': { file: 'user-guide.md', anchor: 'health--scan-limits' },
+  'shared.getting-started': { file: 'user-guide.md', anchor: 'getting-started' },
+  'shared.security': { file: 'user-guide.md', anchor: 'the-two-primitives-security-model-read-this-before-you-start' },
+  'shared.attribution': { file: 'shared-brain-user-guide.md', anchor: 'step-4--domains--display-name--attribution' },
+  'sync.page': { file: 'user-guide.md', anchor: '15-sync-across-computers' },
 };
 for (const v of Object.values(DOCS_LINKS)) Object.freeze(v);
 Object.freeze(DOCS_LINKS);

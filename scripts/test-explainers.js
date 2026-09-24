@@ -208,6 +208,18 @@ const REQUIRED = [
   'context.session-start', 'context.drafting-request', 'context.read-with',
   'onboarding.frame', 'domains.page', 'domains.page-mirror', 'chat.page', 'domains.pages',
   'domains.health', 'settings.general', 'shared.page',
+  // v3.71.1 — the remaining ⓘ (REPORT-v3711-copy.md has the location each replaces)
+  'domains.overview', 'ingest.page', 'domains.projects', 'domains.marker-line',
+  'domains.agent-instructions', 'domains.new-project', 'domains.new-project-documents',
+  'domains.shared-brain',
+  'settings.providers', 'settings.connect', 'settings.build', 'settings.chat', 'settings.all-models',
+  'settings.measured', 'settings.fetched-models', 'settings.update', 'settings.update-recovery',
+  'settings.update-recovery-installer', 'settings.appearance', 'settings.system-check',
+  'settings.mcp', 'settings.mcp-connect', 'settings.mcp-domain', 'settings.mcp-tool-map',
+  'settings.mcp-across', 'settings.health', 'settings.storage', 'settings.vault-folder',
+  'settings.github-token',
+  'shared.enable', 'shared.token-check', 'shared.wizard-repo', 'shared.wizard-token',
+  'shared.wizard-attribution', 'sync.page', 'chat.project',
 ];
 for (const k of REQUIRED) ok(keys.includes(k), `COPY.md §2–§3 entry "${k}" is present`);
 ok(keys.every((k) => REQUIRED.includes(k)), `…and nothing else (${keys.length} entries) — a new entry is added here as well, on purpose`);
@@ -365,6 +377,35 @@ ok(keys.filter((k) => (EXPLAINERS[k].visual || {}).type === 'frame').every((k) =
   const html = explainerHtml('context.page');
   ok((html.match(/you are here/g) || []).length === 1 && /is-here[^>]*>[\s\S]*?Agent memory/.test(html),
     'rendered: Context\'s top ⓘ marks Agent memory "you are here", once');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§8b  v3.71.1 — THE REMAINING ⓘ');
+
+{
+  // One set of GitHub steps, two panels (Context's READ WITH and Settings →
+  // Knowledge base). They are the same procedure; if one is corrected the
+  // other must be, or a beginner meets two different recipes for one token.
+  const a = EXPLAINERS['context.read-with'].visual.steps;
+  const b = EXPLAINERS['settings.github-token'].visual.steps;
+  ok(JSON.stringify(a) === JSON.stringify(b),
+    'settings.github-token carries exactly context.read-with\'s four GitHub steps');
+  // The MCP tool count is counted from mcp/tools/index.js, never written in
+  // prose (CLAUDE.md, The MCP), and an explainer carries no counts at all.
+  const counted = keys.filter((k) => textsOf(EXPLAINERS[k]).some(([, t]) =>
+    /\b(\d+|twenty|seventeen|seven)[\s-]+(\w+\s+)?tools?\b/i.test(t)));
+  ok(counted.length === 0, 'no explainer states how many MCP tools there are' +
+    (counted.length ? ' — ' + counted.join(', ') : ''));
+  // A Settings ⓘ whose words describe only ONE install mode would read false
+  // on the other two; the recovery mark is therefore two entries, one per arm.
+  ok(/Terminal/.test(EXPLAINERS['settings.update-recovery'].lead) &&
+     /installer/.test(EXPLAINERS['settings.update-recovery-installer'].lead) &&
+     !/git|Terminal/.test(JSON.stringify(EXPLAINERS['settings.update-recovery-installer'])),
+    'the two going-back entries each describe their own install, and the installer one never mentions git');
+  // The create form's retired claim (v3.69.0 made a mix of sources legal).
+  const neverMix = keys.filter((k) => /never (a )?mix|never both|answered once|set once/i.test(JSON.stringify(EXPLAINERS[k])));
+  ok(neverMix.length === 0, 'no explainer repeats "a project is never a mix of sources" — false since per-document sources' +
+    (neverMix.length ? ' — ' + neverMix.join(', ') : ''));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
