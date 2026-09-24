@@ -182,6 +182,8 @@ function extractFunction(source, name) {
 }
 const FI = await import('../src/public/next/shared/foundations-init.js');
 const FA = await import('../src/public/next/shared/foundations-add.js');
+// v3.69.0 — per-document sources, one namespace the view imports as `FSRC`.
+const FSRC = await import('../src/public/next/shared/foundations-sources.js');
 const { renderInfoMark: realRenderInfoMark } = await import('../src/public/next/shared/text.js');
 
 const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
@@ -1180,6 +1182,8 @@ const renderers = (() => {
     // `nextStepReason`, counts the primary with `pickedFiles`, and composes
     // two ⓘ marks. All REAL, appended LAST for the positional reason above.
     'nextStepReason', 'pickedFiles', 'READ_WITH_INFO_HTML', 'renderInfoMark',
+    // v3.69.0: the per-document source rules — REAL, appended LAST.
+    'FSRC',
     body)(
     stateBox, escapeHtml, () => '<svg></svg>', (t) => '<md>' + escapeHtml(t) + '</md>',
     (o) => '<div class="tx-status tx-status-' + o.state + '"><b>' + escapeHtml(o.title)
@@ -1193,7 +1197,7 @@ const renderers = (() => {
     // in this file could agree with every assertion while the shipped block
     // warned at another number.
     READ_FIRST_BUDGET_SRC,
-    FI.nextStepReason, FI.pickedFiles, FI.READ_WITH_INFO_HTML, realRenderInfoMark);
+    FI.nextStepReason, FI.pickedFiles, FI.READ_WITH_INFO_HTML, realRenderInfoMark, FSRC);
 })();
 // The sandbox's `state` is a fixed OBJECT the shipped functions read through,
 // so fields are assigned onto it rather than the binding being replaced.
@@ -1475,8 +1479,12 @@ const anEdit = (over) => ({ domain: 'acme', project: 'lumina', slug: 'architectu
     /id="mem-fnd-templates"/.test(unchosen) && /btn-ghost/.test(unchosen));
   ok('...and no ownership chooser, and no "Set up documents" primary',
     !/data-fnd-init=/.test(unchosen) && !/Set up documents/.test(unchosen) && !/btn-primary/.test(unchosen));
+  // v3.69.0: an empty mirror is one with a DECLARED source and nothing in it
+  // — the view reads the source, never `ownership` (§1.6).
   const mirrorFacts = renderers.foundationsFacts({
-    foundations: { present: true, ownership: 'repo', documents: [] } });
+    foundations: { present: true, ownership: 'repo', documents: [], sources: [
+      { id: 's1', kind: 'folder', label: 'notes', reachableHere: true, remote: null,
+        lastRefreshAt: null, lastRefreshCommit: null, documentCount: 0 }] } });
   const emptyMirror = renderers.renderFoundationsEmpty(mirrorFacts, '<DOORS>', '', ask, '', false, true);
   ok('an empty MIRROR says nothing is mirrored yet, and offers no templates (its owner chose a source)',
     /Nothing mirrored yet/.test(emptyMirror) && !/mem-fnd-templates/.test(emptyMirror));
@@ -1586,9 +1594,9 @@ function writeRig(responder) {
     extractFunction(viewSrc, 'listAddDocuments') + '\n' +
     extractFunction(viewSrc, 'commitAdd') + '\n' +
     extractFunction(viewSrc, 'seedTemplates') + '\n' +
-    extractFunction(viewSrc, 'foundationsRemoteSource') + '\n' +
-    extractFunction(viewSrc, 'foundationsControlOffer') + '\n' +
     extractFunction(viewSrc, 'openAddDoor') + '\n' +
+    // v3.69.0: the delete confirmation toast, from the route's own answer.
+    extractFunction(viewSrc, 'fndDeletedToast') + '\n' +
     'return { loadFoundationDraft, saveFoundation, deleteFoundation, listAddDocuments, commitAdd, seedTemplates, openAddDoor };';
   // eslint-disable-next-line no-new-func
   const api = new Function('state', 'render', 'isCurrentMount', 'fetch', 'forgetProject',
@@ -1599,7 +1607,7 @@ function writeRig(responder) {
     'buildAddCommit', 'commitBlockedReason', 'readCommitResponse', 'outcomeToast',
     'listBlockedReason', 'listUrl', 'showToast', 'READ_FIRST_BUDGET_BYTES', 'FOUNDATIONS_BUDGET_BYTES',
     // v3.68.0 — the in-memory last folder, and what openAddDoor needs.
-    'LAST_ADD_FOLDER', 'doorsFor', 'freshAddPanel', 'loadAddTokenFacts', body)(
+    'LAST_ADD_FOLDER', 'doorsFor', 'freshAddPanel', 'loadAddTokenFacts', 'FSRC', body)(
     st,
     () => { calls.render++; },
     () => true,
@@ -1617,7 +1625,7 @@ function writeRig(responder) {
     FI.remoteRefusalText, JSON, TextEncoder,
     FA.buildAddCommit, FA.commitBlockedReason, FA.readCommitResponse, FA.outcomeToast,
     FA.listBlockedReason, FA.listUrl, (o) => { calls.toasts.push(o); }, READ_FIRST_BUDGET_SRC,
-    FI.FOUNDATIONS_BUDGET_BYTES, lastFolder, FA.doorsFor, FA.freshAddPanel, async () => {});
+    FI.FOUNDATIONS_BUDGET_BYTES, lastFolder, FA.doorsFor, FA.freshAddPanel, async () => {}, FSRC);
   return { api, st, calls };
 }
 
@@ -1790,18 +1798,20 @@ function writeRig(responder) {
   st.projectRead = { foundations: { present: false, documents: [] } };
   st.fndAdd = rec({ root: '/Users/me/notes' });
   await api.listAddDocuments(1);
-  eq('LIST asks for every document in the folder', calls.urls[0],
-    '/api/memory/repo-scan?all=1&root=%2FUsers%2Fme%2Fnotes');
+  // v3.69.0 (§4.3): the listing names its mode and this project, so the
+  // server annotates every candidate (alreadyAdded, alreadyAs, landsAs).
+  eq('LIST asks for every document in the folder, as a copy listing for THIS project', calls.urls[0],
+    '/api/memory/repo-scan?all=1&root=%2FUsers%2Fme%2Fnotes&mode=copy&domain=acme&project=lumina');
   eq('...and holds the RESOLVED folder the server read', st.fndAdd.listedRoot, '/real/notes');
   eq('...with nothing ticked by default', Object.keys(st.fndAdd.picks).length, 0);
   st.fndAdd.picks = { 'a.md': true, 'b.txt': true };
   await api.commitAdd(1);
   eq('ADD posts to add-local', calls.urls[1], '/api/memory/acme/lumina/foundations/add-local');
   eq('...a POST', calls.inits[1].method, 'POST');
-  eq('...carrying the folder that was LISTED and the ticked paths — nothing else',
-    calls.inits[1].body, JSON.stringify({ root: '/real/notes', files: [{ path: 'a.md' }, { path: 'b.txt' }] }));
+  eq('...carrying the folder that was LISTED, the ticked paths and the chosen mode — nothing else',
+    calls.inits[1].body, JSON.stringify({ root: '/real/notes', files: [{ path: 'a.md' }, { path: 'b.txt' }], mode: 'copy' }));
   ok('a clean add toasts the count and closes the panel',
-    calls.toasts.length === 1 && calls.toasts[0].title === '2 documents added' && st.fndAdd === null,
+    calls.toasts.length === 1 && calls.toasts[0].title === '2 documents copied in' && st.fndAdd === null,
     JSON.stringify(calls.toasts));
   eq('...and drops the cached read', calls.forgot[0], 'acme/lumina');
   // ── THE LAST FOLDER IS REMEMBERED (v3.68.0, screen review) ───────────
@@ -1842,22 +1852,23 @@ function writeRig(responder) {
     root: '/n', listedRoot: '/n', candidates: [{ path: 'a.md', bytes: 1 }, { path: 'big.md', bytes: 2 }],
     picks: { 'a.md': true, 'big.md': true } });
   await api.commitAdd(1);
-  ok('the arrival is toasted', calls.toasts.length === 1 && /1 document added/.test(calls.toasts[0].title));
+  ok('the arrival is toasted', calls.toasts.length === 1 && /1 document copied in/.test(calls.toasts[0].title));
   ok('...the refused file stays on the panel WITH its numbers',
     !!st.fndAdd && st.fndAdd.refused.length === 1 && /512 KB/.test(st.fndAdd.refused[0].reason));
 }
 {
-  // THE GITHUB DOOR ON AN EMPTY PROJECT → init; the TOKEN is never in a body.
+  // THE GITHUB DOOR ON ANY PROJECT → add-remote (v3.69.0); the TOKEN is never
+  // in a body. A curator-kept project is the case v3.68.0 refused outright.
   const { api, st, calls } = writeRig(() => ({ ok: false, status: 403, json: async () => ({
     ok: false, reason: 'unauthorised', error: 'unauthorised' }) }));
-  st.projectRead = { foundations: { present: true, ownership: 'curator', documents: [] } };
-  st.fndAdd = Object.assign(FA.freshAddPanel('github', { mode: 'init' }, null), { domain: 'acme', project: 'lumina',
+  st.projectRead = { foundations: { present: true, ownership: 'curator', documents: [{ slug: 'n.md', source: { kind: 'curator' } }] } };
+  st.fndAdd = Object.assign(FA.freshAddPanel('github', { mode: 'add' }, null), { domain: 'acme', project: 'lumina',
     remote: 'o/r', tokenSource: 'sync', candidates: [{ path: 'docs/a.md', bytes: 1 }], picks: { 'docs/a.md': true } });
   await api.commitAdd(1);
-  eq('...at the init route', calls.urls[0], '/api/memory/acme/lumina/foundations/init');
-  eq('...re-choosing the EMPTY project\'s source, naming the token FILE and never a token',
-    calls.inits[0].body, JSON.stringify({ ownership: 'repo', remote: { owner: 'o', repo: 'r' },
-      tokenSource: 'sync', files: [{ path: 'docs/a.md' }], rechooseEmpty: true }));
+  eq('...at the add-remote route', calls.urls[0], '/api/memory/acme/lumina/foundations/add-remote');
+  eq('...naming the repository, the token FILE and the ticked paths — never a token, never an ownership',
+    calls.inits[0].body, JSON.stringify({ remote: { owner: 'o', repo: 'r' },
+      tokenSource: 'sync', files: [{ path: 'docs/a.md' }] }));
   const msg = String(st.fndAdd && st.fndAdd.error);
   ok('a remote refusal is a SENTENCE naming which stored token was used',
     /refused by GitHub/.test(msg) && /Personal Sync’s token/.test(msg), msg);
@@ -1970,9 +1981,15 @@ section('§10 — THE BINDER: wire() grows no new identifier');
   // v3.68.0: the ownership chooser is gone from this view; the two doors'
   // panel is bound by ONE call from inside this binder.
   ok('...and the two doors\' panel', binderSrc.includes('bindAddDoors(root, token)'));
-  ok('wire() itself still names only the two tier-0 entry points it always did',
+  // v3.69.0: ONE entry point now — the project-level Refresh left wire() for
+  // the sources strip, whose per-group controls the binder carries.
+  ok('wire() itself names only the tier-0 binder, and no longer the project-level refresh',
     /bindFoundationRows\(document, token\)/.test(wireSrc)
-    && /refreshFoundations\(token\)/.test(wireSrc));
+    && !/refreshFoundations\(token\)/.test(wireSrc.replace(/(^|[^:])\/\/[^\n]*/g, '$1')));
+  ok('...and the binder carries the strip: per-group Refresh, Refresh all, Read from GitHub instead',
+    binderSrc.includes('[data-fnd-refresh]') && binderSrc.includes("'mem-fnd-refresh-all'")
+    && binderSrc.includes('[data-fnd-read-gh]'));
+  ok('...and the trash icon on every row', binderSrc.includes('[data-fnd-delete]'));
 }
 {
   // ── EVERY CONTROL THAT REMOVES ITSELF HAS SOMEWHERE FOR FOCUS TO GO ────
@@ -2060,7 +2077,9 @@ section('§10 — "COPY THE DRAFTING REQUEST", DRIVEN (v3.61.0, P2-8)');
       // it is the fallback the facts use when the server sends no
       // `readFirstBudgetBytes`, and an undefined identifier there is a CRASH
       // rather than a failing assertion.
-      'composeDraftingAsk', 'FOUNDATIONS_BUDGET_BYTES', 'READ_FIRST_BUDGET_BYTES', 'showToast', body)(
+      'composeDraftingAsk', 'FOUNDATIONS_BUDGET_BYTES', 'READ_FIRST_BUDGET_BYTES', 'showToast',
+      // v3.69.0: the facts and the ask read the per-document rules, REAL.
+      'FSRC', body)(
       st,
       () => { calls.render++; },
       () => true,
@@ -2069,7 +2088,7 @@ section('§10 — "COPY THE DRAFTING REQUEST", DRIVEN (v3.61.0, P2-8)');
         calls.clipboard.push(t);
       } } },
       composeDraftingAsk, FI.FOUNDATIONS_BUDGET_BYTES, READ_FIRST_BUDGET_SRC,
-      (o) => { calls.toasts.push(o); return o && o.key; });
+      (o) => { calls.toasts.push(o); return o && o.key; }, FSRC);
     return { api, st, calls };
   };
   const skel = (slug, role) => ({ slug, role, title: role, bytes: 100, skeleton: true,

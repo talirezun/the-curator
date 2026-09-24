@@ -234,6 +234,9 @@ import {
   doorsFor, renderDoors, renderAddPanel, startLegendHtml,
 } from '../src/public/next/shared/foundations-add.js';
 import * as FA from '../src/public/next/shared/foundations-add.js';
+// v3.69.0 — per-document sources: the DOM-free rules the view imports as ONE
+// namespace (`FSRC`), injected REAL into every lifted renderer that reads it.
+import * as FSRC from '../src/public/next/shared/foundations-sources.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -1312,10 +1315,8 @@ function makeRenderers(stateObj) {
     // reader payload, driven in §21.
     extractFunction(viewSrc, 'foundationsFacts', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationsWord', 'memory.js') + '\n' +
-    extractFunction(viewSrc, 'foundationsControlOffer', 'memory.js') + '\n' +
-    // v3.67.2: a GitHub mirror is told apart from a missing folder, and the
-    // reason a withheld control or an unchecked row gives is composed once.
-    extractFunction(viewSrc, 'foundationsRemoteSource', 'memory.js') + '\n' +
+    // v3.67.2: the reason an unchecked row gives is composed once — v3.69.0
+    // from the row's OWN source group (FSRC.uncheckedWhy).
     extractFunction(viewSrc, 'foundationsUncheckedWhy', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationsOwnershipWord', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationsSummaryMeta', 'memory.js') + '\n' +
@@ -1478,8 +1479,8 @@ function makeRenderers(stateObj) {
     // `renderWorkStreams`, which IS lifted.
     'return { renderWorkStreams, workStreamCounts, newerOnAnotherMachine, workStreamOrder, ' +
     'wsShownCount, wsMoreHtml, wsRowHtml, handoffReaderContent, ' +
-    'foundationsFacts, foundationsWord, foundationsControlOffer, foundationsDraftAsk, '
-    + 'foundationsRemoteSource, foundationsUncheckedWhy, '
+    'foundationsFacts, foundationsWord, foundationsDraftAsk, '
+    + 'foundationsUncheckedWhy, '
     + 'foundationsOwnershipWord, foundationsSummaryMeta, foundationsBudgetWarning, ' +
     'fndSize, skeletonOf, fndRowHtml, ' +
     'renderFoundations, foundationsNotices, foundationReaderContent, foundationsMonitor, ' +
@@ -1555,7 +1556,9 @@ function makeRenderers(stateObj) {
     'renderRunsOn', 'renderSpent', 'aiActionDisabledAttrs',
     'renderOverview',
     // v3.68.0 — the two doors, real.
-    'doorsFor', 'renderDoors', 'renderAddPanel', 'startLegendHtml', body)(
+    'doorsFor', 'renderDoors', 'renderAddPanel', 'startLegendHtml',
+    // v3.69.0 — the per-document source rules, one namespace, real.
+    'FSRC', body)(
     stateObj, escapeHtml, () => '<svg></svg>', renderMarkdown, () => '<div class="loader"></div>', null, 10, 50,
     // The REAL shared block, imported rather than stubbed: renderProject
     // composes all five of this page's sections through it, so a stub would
@@ -1582,7 +1585,7 @@ function makeRenderers(stateObj) {
         label: cfg.ariaLabel || null })) + '"></button>',
     renderRunsOn, renderSpent, aiActionDisabledAttrs,
     realRenderOverview,
-    doorsFor, renderDoors, renderAddPanel, startLegendHtml);
+    doorsFor, renderDoors, renderAddPanel, startLegendHtml, FSRC);
 }
 
 const hostileDetail = {
@@ -2795,15 +2798,19 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
   // is what keeps "the app is a copier on a mirror, never an author" true of
   // it. A curator document's bytes go through the PUT below, which is a
   // different route with a different ownership.
-  ok('...carrying at most a FILE LIST — a path array, never a document body',
-    refresh && /\{\s*files\s*\}/.test(refresh.init) && !/\btext\s*:/.test(refresh.init),
+  // ── v3.69.0: THE REFRESH BODY NAMES A SOURCE GROUP OR NOTHING ──────────
+  // `files` and `repoRoot` left with the doors, whose commits go to
+  // add-local / add-remote. What crosses now is WHICH source group — a
+  // strip line's id — or nothing at all for "Refresh all". Still no document
+  // BODY in either direction: that is what keeps "the app is a copier on a
+  // mirror, never an author" true of this route.
+  ok('...carrying the refresh target and nothing else — never a file list, never a document body',
+    refresh && /body:\s*JSON\.stringify\(rootPart\)/.test(refresh.init)
+    && !/\btext\s*:|files/.test(refresh.init),
     refresh ? refresh.init.slice(0, 220) : 'none');
-  // v3.65.2: the empty case is `rootPart`, which is a literal `{}` unless the
-  // add panel showed a folder field. §21k drives it: an ordinary refresh's
-  // body is exactly '{}'.
-  ok('...and the empty case is still a literal empty object, so the ordinary refresh sends nothing',
-    refresh && /:\s*rootPart\s*\)/.test(refresh.init)
-    && /const rootPart = [^\n]*: \{\};/.test(viewNoComments), refresh ? refresh.init.slice(0, 220) : 'none');
+  ok('...and `rootPart` is `{ group }` for one source and a literal empty object for all of them',
+    /const rootPart = one \? \{ group: one \} : \{\};/.test(viewNoComments),
+    'rootPart not found');
   // ── v3.68.0: THE TWO DOORS' COMMIT, AND THE TEMPLATES ───────────────
   // The commit's URL and body are composed by `buildAddCommit` in the DOM-free
   // module, so the view's fetch carries them through verbatim — asserted here
@@ -2817,10 +2824,12 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     const cases = [
       ['local copy', Object.assign(FA.freshAddPanel('local', { mode: 'copy' }, facts0), {
         root: '/n', listedRoot: '/n', candidates: [{ path: 'a.md', bytes: 1 }], picks: { 'a.md': true } }), facts0],
-      ['github init', Object.assign(FA.freshAddPanel('github', { mode: 'init' }, facts0), {
+      ['github add', Object.assign(FA.freshAddPanel('github', { mode: 'add' }, facts0), {
         remote: 'o/r', tokenSource: 'sync', candidates: [{ path: 'a.md', bytes: 1 }], picks: { 'a.md': true } }), facts0],
-      ['github switch', Object.assign(FA.freshAddPanel('github', { mode: 'switch' }, facts0), {
-        remote: 'o/r', candidates: [{ path: 'a.md', bytes: 1 }], picks: { 'a.md': true } }), facts0],
+      ['github switch', Object.assign(FA.freshAddPanel('github', { mode: 'switch', group: 's1',
+        remote: { owner: 'o', repo: 'r' } }, facts0), { tokenSource: 'config' }), facts0],
+      ['local mirror', Object.assign(FA.freshAddPanel('local', { mode: 'mirror' }, facts0), {
+        root: '/n', listedRoot: '/n', candidates: [{ path: 'a.md', bytes: 1 }], picks: { 'a.md': true } }), facts0],
     ];
     for (const [name, rec, f] of cases) {
       const req = FA.buildAddCommit(rec, f, 'a d', 'p/x');
@@ -2829,9 +2838,12 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
       ok('...and its body carries no token and no document text',
         !/"token"|"text"/.test(JSON.stringify(req.body)), JSON.stringify(req.body));
     }
+    // v3.69.0: the switch is per GROUP (§4.4) and lists nothing, so its body
+    // is the group, the repository and the token FILE — and no ownership.
     ok('the SOURCE (switch) body carries the three fields that route allows and no ownership',
       JSON.stringify(Object.keys(FA.buildAddCommit(cases[2][1], facts0, 'd', 'p').body).sort())
-        === JSON.stringify(['files', 'remote', 'tokenSource']));
+        === JSON.stringify(['group', 'remote', 'tokenSource']),
+      JSON.stringify(FA.buildAddCommit(cases[2][1], facts0, 'd', 'p').body));
   }
   const init = posts.find((x) => x.url.includes("'/foundations/init'"));
   ok('the templates POST targets the foundations INIT endpoint',
@@ -7444,12 +7456,29 @@ const fndDoc = (over = {}) => ({
   commit: '9623343abcdef', source: { kind: 'repo', path: 'docs/architecture.md' },
   authoredBy: { kind: 'human' }, freshness: 'fresh', ...over,
 });
-const fndPayload = (docs, over = {}) => ({
-  present: true, ownership: 'repo',
-  repo: { root: '/somewhere/repo', remote: null, lastRefreshAt: null, lastRefreshCommit: null },
-  budgetBytes: 200000, totalBytes: docs.reduce((a, d) => a + (d.bytes || 0), 0),
-  documents: docs, orphanFiles: [], manifestError: null, ...over,
-});
+// ── v3.69.0: THE SOURCE IS PER DOCUMENT ──────────────────────────────────
+// Through v3.68.0 these fixtures said "curator-owned" with the PAYLOAD's
+// `ownership` alone and left every row `source.kind: 'repo'` — a shape the
+// view could not tell apart then, because it read `ownership`. It reads the
+// DOCUMENTS now (CONTRACT §1.6: `ownership` is display-only), so a
+// curator-owned fixture is made TRUE: every row becomes a kept document and
+// the project records no repository, exactly what the store writes.
+const fndPayload = (docs, over = {}) => {
+  const kept = over.ownership === 'curator';
+  const documents = kept
+    ? docs.map((d) => (d.source && d.source.kind === 'repo'
+      ? { ...d, source: { kind: 'curator' }, commit: undefined, freshness: d.freshness === 'fresh' ? 'n/a' : d.freshness }
+      : d))
+    : docs;
+  return {
+    present: true, ownership: 'repo',
+    repo: kept ? null : { root: '/somewhere/repo', remote: null, lastRefreshAt: null, lastRefreshCommit: null },
+    budgetBytes: 200000, totalBytes: docs.reduce((a, d) => a + (d.bytes || 0), 0),
+    ...over, documents, orphanFiles: [], manifestError: null,
+    ...(over.orphanFiles ? { orphanFiles: over.orphanFiles } : {}),
+    ...(over.manifestError ? { manifestError: over.manifestError } : {}),
+  };
+};
 const fndRead = (payload) => ({
   scopes: [], brief: { present: false }, foundations: payload,
 });
@@ -7604,48 +7633,40 @@ const fndRead = (payload) => ({
       note: 'no usage log yet — the meter starts counting with the first bridge session on v3.63.0' }).slice(0, 400));
   }
 
-  // ── (2) "Mirror from GitHub instead" — D6 ───────────────────────────
-  // The store has had a REMOTE refresh arm since v3.65.0 and no control on the
-  // machine that needs it. Offered on BOTH repo-owned arms, including the one
-  // where the checkout is not on this computer — which through v3.65.0 offered
-  // nothing at all — and NEVER on a curator-owned project, where the route
-  // answers 409 `ownership_mismatch` and a control whose only outcome is a
-  // refusal is worse than none (v3.16.1).
-  const offer = (docs, over, readonly) =>
-    F.foundationsControlOffer(F.foundationsFacts(fndRead(fndPayload(docs, over))), readonly === true);
-  ok('a repo-owned project with a reachable folder is offered the GitHub switch',
-    offer([fndDoc()]).mirror === true, JSON.stringify(offer([fndDoc()])));
-  ok('...and so is one whose folder is NOT on this computer — the arm the store '
-    + 'built the remote reader for, and the one that offered nothing at all',
-  offer([fndDoc({ freshness: 'unreachable' })]).mirror === true
-    && offer([fndDoc({ freshness: 'unreachable' })]).refresh === false,
-  JSON.stringify(offer([fndDoc({ freshness: 'unreachable' })])));
-  ok('...and the withheld folder controls still say WHY, naming the folder',
-    /not on this computer/.test(offer([fndDoc({ freshness: 'unreachable' })]).reason || ''),
-    offer([fndDoc({ freshness: 'unreachable' })]).reason);
-  ok('...saying "folder", never "repository", on the LOCAL half of that sentence',
-    !/repositor/i.test(offer([fndDoc({ freshness: 'unreachable' })]).reason || ''),
-    offer([fndDoc({ freshness: 'unreachable' })]).reason);
-  ok('a CURATOR-owned project is NOT offered it — the store refuses the switch '
-    + 'with 409 ownership_mismatch, and an offered refusal is worse than none',
-  offer([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' }).mirror === false,
-  JSON.stringify(offer([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' })));
-  ok('a read-only Shared Brain mirror is not offered it either',
-    offer([fndDoc()], {}, true).mirror === false,
-    JSON.stringify(offer([fndDoc()], {}, true)));
-  // ── v3.68.0: THE GITHUB DOOR IS THE SWITCH NOW ─────────────────────
-  // "Mirror from GitHub instead" became the "Add from GitHub" door's `switch`
-  // mode. It is on EVERY block — enabled on a mirror, and on a curator-owned
-  // one present but aria-disabled with its reason, never hidden.
+  // ── (2) v3.69.0: BOTH DOORS, ALWAYS ENABLED — AND THE SOURCES STRIP ───
+  // Through v3.68.0 the GitHub door was DISABLED on a curator-owned project
+  // ("a project has one source"). The maintainer retired the rule: the source
+  // is recorded per document, so both doors are enabled on every project that
+  // may be written (CONTRACT §4.1), and the project-level Refresh became one
+  // Refresh per source group, in a strip under the head row (§4.4).
+  const kept = block([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' });
+  ok('the GitHub door reaches a CURATOR-kept block ENABLED — no "one source" any more',
+    /id="mem-fnd-door-github" data-fnd-door="github"/.test(kept)
+    && !/id="mem-fnd-door-github"[^>]*aria-disabled/.test(kept) && !/one source/.test(kept),
+    (kept.match(/id="mem-fnd-door-github"[^>]*>/) || [''])[0]);
+  ok('...and so does the local door', /id="mem-fnd-door-local" data-fnd-door="local"/.test(kept));
   ok('the GitHub door reaches a mirror\'s block, enabled',
     /id="mem-fnd-door-github" data-fnd-door="github"/.test(populated), populated.slice(0, 600));
-  ok('CONTROL: on a curator-owned block it is present but DISABLED, carrying its reason',
-    /id="mem-fnd-door-github"[^>]*aria-disabled="true"[^>]*data-fnd-door-why="[^"]*one source/.test(
-      block([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' })));
-  ok('...and neither "Mirror from GitHub instead" nor "Add from folder" survives as a head control',
-    !/id="mem-fnd-mirror"|id="mem-fnd-addrepo"/.test(populated));
+  ok('neither the old project-level Refresh nor "Mirror from GitHub instead" survives as a head control',
+    !/id="mem-fnd-refresh"|id="mem-fnd-mirror"|id="mem-fnd-addrepo"|id="mem-fnd-refresh-blocked"/.test(populated));
+  ok('a mirror gets the SOURCES STRIP under the head row, one line per group, with its own Refresh',
+    /id="mem-fnd-sources"/.test(populated) && /data-fnd-refresh="s1"/.test(populated)
+    && populated.indexOf('id="mem-fnd-sources"') > populated.indexOf('mem-fnd-head-controls')
+    && populated.indexOf('id="mem-fnd-sources"') < populated.indexOf('data-mem-fold="foundations"'),
+    populated.slice(0, 900));
+  ok('...and a project of KEPT documents has NO strip — copies and written documents never refresh',
+    !/id="mem-fnd-sources"/.test(kept) && !/data-fnd-refresh/.test(kept));
+  ok('"Refresh all" appears only with two or more sources',
+    !/id="mem-fnd-refresh-all"/.test(populated));
+  // A FOLDER GROUP WITH A REMOTE RECORDED gets "Read from GitHub instead",
+  // v3.65.1's switch now per group; one with none does not.
+  const withRemote = block([fndDoc()], { repo: { root: '/somewhere/repo',
+    remote: { owner: 'acme', repo: 'lumina', ref: null, path: null } } });
+  ok('a folder source with a remote recorded offers "Read from GitHub instead" on ITS line',
+    /data-fnd-source="s1"[\s\S]*data-fnd-read-gh="s1"/.test(withRemote), withRemote.slice(0, 900));
+  ok('...and one with no remote does not', !/data-fnd-read-gh/.test(populated));
 
-  // ── (3) THE LOCAL DOOR ON A MIRROR SAYS WHAT IT DOES ────────────────
+  // ── (3) THE LOCAL PANEL: KEEP IN SYNC / COPY ONCE (§4.2, D2) ──────────
   const withPanel = (docs, door, over, payloadOver) => {
     const facts = F.foundationsFacts(fndRead(fndPayload(docs, payloadOver)));
     const info = doorsFor(facts, {})[door];
@@ -7654,34 +7675,57 @@ const fndRead = (payload) => ({
       fndAdd: Object.assign(FA.freshAddPanel(door, info, facts), { domain: 'acme', project: 'lumina' }, over || {}),
     }).renderFoundations(fndRead(fndPayload(docs, payloadOver)));
   };
-  const adding = (docs) => withPanel(docs, 'local');
-  ok('the local door on a folder mirror names the folder and says a file from elsewhere cannot join',
-    /This project mirrors the folder \/somewhere\/repo/.test(adding([fndDoc()]))
-    && /cannot join a mirror/.test(adding([fndDoc()])),
-    (adding([fndDoc()]).match(/mem-fnd-add-note">[^<]*/) || [''])[0]);
-  ok('...its folder field is prefilled with the mirrored folder',
-    /id="fadd-root"[^>]*value="\/somewhere\/repo"/.test(adding([fndDoc()])));
+  const adding = (docs, over) => withPanel(docs, 'local', over);
+  {
+    const h = adding([fndDoc()]);
+    ok('the local panel shows BOTH options, always',
+      /data-fadd-mode="mirror"/.test(h) && /data-fadd-mode="copy"/.test(h)
+      && /Keep in sync with this folder/.test(h) && /Copy once/.test(h), h.slice(h.indexOf('fadd-panel'), h.indexOf('fadd-panel') + 1500));
+    ok('...Copy once is chosen before any folder is listed', /value="copy" data-fadd-mode="copy" checked/.test(h));
+    ok('...and the lead note states the chosen outcome in one sentence',
+      /id="fadd-note">Copied once: /.test(h), (h.match(/id="fadd-note">[^<]*/) || [''])[0]);
+    const g = adding([fndDoc()], { mode: 'mirror', inGitCheckout: true, root: '/r', listedRoot: '/r',
+      candidates: [{ path: 'a.md', bytes: 10 }], picks: { 'a.md': true } });
+    ok('inside a git checkout Keep in sync is the chosen default, and the note says why',
+      /value="mirror" data-fadd-mode="mirror" checked/.test(g) && /inside a git checkout/.test(g),
+      (g.match(/id="fadd-note">[^<]*/) || [''])[0]);
+    ok('...and the primary reads "Mirror N documents"', /id="fadd-go">Mirror 1 document</.test(g));
+    const c = adding([fndDoc()], { mode: 'copy', root: '/r', listedRoot: '/r',
+      candidates: [{ path: 'a.md', bytes: 10 }], picks: { 'a.md': true } });
+    ok('...while Copy once reads "Copy N documents"', /id="fadd-go">Copy 1 document</.test(c));
+  }
   ok('CONTROL: and a mirror with nothing in it still says so',
     /Nothing mirrored yet/.test(block([], {})), (block([], {}).match(/class="tx-desc">[^<]*/) || [''])[0]);
 
-  // ── (4) THE GITHUB DOOR ON A FOLDER MIRROR IS A SWITCH, AND SAYS SO ──
+  // ── (4) THE GITHUB PANEL ADDS; "already added" AND "lands as" ARE THE SERVER'S
   {
-    const switching = withPanel([fndDoc()], 'github');
+    const gh = withPanel([fndDoc()], 'github');
     ok('the GitHub panel renders the REMOTE fields, not the folder one',
-      /class="fnd-init-remote-fields"/.test(switching) && !/id="fadd-root"/.test(switching));
-    ok('...under its own eyebrow', /class="mem-fnd-panel-eyebrow[^"]*">ADD FROM GITHUB</.test(switching));
-    ok('...and the consequence stated UNFOLDED, at the moment of acting (v3.16.1)',
-      /makes the repository its source instead/.test(switching) && /folder stops being used/.test(switching));
+      /class="fnd-init-remote-fields"/.test(gh) && !/id="fadd-root"/.test(gh));
+    ok('...under its own eyebrow', /class="mem-fnd-panel-eyebrow[^"]*">ADD FROM GITHUB</.test(gh));
+    ok('...and says a new repository becomes a NEW source — never that it switches one',
+      /becomes a new source/.test(gh) && !/switch/i.test((gh.match(/id="fadd-note">[^<]*/) || [''])[0]));
     ok('...before a list its primary is NOT RENDERED — the reason line says why',
-      !/id="fadd-go"/.test(switching) && /Name the repository first/.test(switching));
+      !/id="fadd-go"/.test(gh) && /Name the repository first/.test(gh));
     const listed = withPanel([fndDoc()], 'github', { remote: 'o/r', hasReadToken: true,
-      candidates: [{ path: 'docs/architecture.md', bytes: 4096 }, { path: 'docs/new.md', bytes: 10 }],
+      candidates: [
+        { path: 'docs/architecture.md', bytes: 4096, suggestedSlug: 'architecture.md',
+          alreadyAdded: true, alreadyAs: 'architecture.md', landsAs: 'architecture.md' },
+        { path: 'docs/new.md', bytes: 10, suggestedSlug: 'new.md', alreadyAdded: false, landsAs: 'new.md' },
+        { path: 'guide/architecture.md', bytes: 20, suggestedSlug: 'architecture.md',
+          alreadyAdded: false, alreadyAs: null, landsAs: 'architecture-r.md' }],
       picks: { 'docs/new.md': true } });
     ok('...after one, it counts what it will mirror', /id="fadd-go">Mirror 1 document</.test(listed),
       (listed.match(/id="fadd-go"[\s\S]{0,80}/) || [''])[0]);
-    ok('...and the document ALREADY mirrored from that path is ticked and disabled, never tickable',
+    ok('...the row the SERVER marks alreadyAdded is ticked and disabled, never tickable',
       /data-fadd-row="docs\/architecture\.md"[^>]*>[\s\S]{0,120}checked disabled/.test(listed)
       && /already added/.test(listed));
+    ok('...a same-NAMED file the server does NOT mark stays tickable — never keyed by slug',
+      /data-fadd-pick="guide\/architecture\.md"/.test(listed));
+    ok('...and it carries its "lands as" badge, before the commit',
+      /data-fadd-row="guide\/architecture\.md"[\s\S]{0,400}lands as architecture-r\.md/.test(listed));
+    ok('...while a file landing under its own name carries none',
+      !/data-fadd-row="docs\/new\.md"[^]*?lands as new\.md/.test(listed));
   }
 
   // ── (5) ONE BOX, AND ITS EYEBROW ────────────────────────────────────
@@ -7885,67 +7929,74 @@ const fndRead = (payload) => ({
     null);
 }
 
-// ── §21c — the HEAD CONTROL ROW: Refresh and Add coexist (P1-4) ────────
+// ── §21c — THE HEAD ROW AND THE SOURCES STRIP (P1-4; v3.69.0 §4) ───────
 {
-  const F = makeRenderers({});
-  const offer = (docs, over, ro) =>
-    F.foundationsControlOffer(F.foundationsFacts(fndRead(fndPayload(docs, over))), ro === true);
+  const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {} });
+  const block = (docs, over, st) => makeRenderers({ activeDomain: 'acme', activeProject: 'lumina',
+    openFolds: {}, ...(st || {}) }).renderFoundations(fndRead(fndPayload(docs, over)));
 
-  // ── THE DELTA THIS SECTION EXISTS FOR ────────────────────────────────
-  // The first cut gave the head ONE slot filled by ownership, "never both",
-  // which made a mirror UN-EXTENDABLE after its first document: the only way
-  // to add a fourth was an agent's `save_working_state({repo_root})`, which is
-  // exactly the "the app writes nothing on this tier" complaint the release
-  // was written to fix.
+  // ── REFRESH IS PER SOURCE, AND ADD IS ALWAYS THERE ───────────────────
+  // The v3.61.0 delta this section was written for still holds — a mirror is
+  // never un-extendable — and the doors now say it for every project.
   {
-    const o = offer([fndDoc({ freshness: 'fresh' }), fndDoc({ slug: 'b.md', freshness: 'stale' })]);
-    ok('a populated, reachable mirror is offered Refresh', o.refresh === true);
-    ok('...AND Add from folder, at the same time', o.add === true);
-    eq('...and nothing is withheld, so nothing is explained away', o.reason, null);
+    const h = block([fndDoc({ freshness: 'fresh' }), fndDoc({ slug: 'b.md', freshness: 'stale' })]);
+    ok('a populated, reachable mirror has its source line with a Refresh', /data-fnd-refresh="s1"/.test(h));
+    ok('...AND both doors, at the same time',
+      /data-fnd-door="local"/.test(h) && /data-fnd-door="github"/.test(h));
   }
   {
-    const o = offer([], { ownership: 'repo' });
-    ok('a mirror with NOTHING copied is offered Add', o.add === true);
-    ok('...and not Refresh, which has nothing to re-copy', o.refresh === false);
+    const h = block([], { ownership: 'repo' });
+    ok('a mirror with NOTHING copied still shows its declared source',
+      /id="mem-fnd-sources"/.test(h) && /0 documents/.test(h), h.slice(0, 900));
+    ok('...and both doors', /data-fnd-door="local"/.test(h) && /data-fnd-door="github"/.test(h));
   }
   {
-    const o = offer([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' });
-    ok('a curator-owned project is offered Add document', o.add === true);
-    ok('...and never Refresh — there is no upstream to refresh from', o.refresh === false);
+    const h = block([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' });
+    ok('a project of kept documents is offered "Write a document"', /id="mem-fnd-add"/.test(h));
+    ok('...and never a Refresh — there is no upstream to refresh from', !/data-fnd-refresh/.test(h));
   }
   {
-    const o = offer([fndDoc({ freshness: 'unreachable' })]);
-    ok('a mirror whose every source is unreachable is offered neither',
-      o.refresh === false && o.add === false);
-    ok('...and is TOLD, in words, that the folder is not on this computer — a '
-      + 'control that is simply absent is worse than one that says it cannot work',
-    typeof o.reason === 'string' && /not on this computer/.test(o.reason), o.reason);
-    // P1-9: the word is FOLDER. `resolveRepoRoot` requires only an absolute,
-    // reachable directory, and "repository" turns away everybody whose
-    // documents live in ~/Documents/lumina-docs.
-    ok('...saying "folder", never "repository"',
-      /folder/.test(o.reason) && !/repositor/i.test(o.reason), o.reason);
+    // D4: the owner's pen on ANY project, a mirror included.
+    const h = block([fndDoc({ freshness: 'fresh' })]);
+    ok('a MIRROR is offered "Write a document" too — a new document may be written anywhere',
+      /id="mem-fnd-add"/.test(h));
   }
-  // REACHABILITY IS READ OFF THE DOCUMENTS, not off `repo.root`: the manifest
-  // records the path on the machine that LAST REFRESHED, which on any other
-  // machine is a hint. The store's own per-document measurement is the fact.
-  ok('a recorded repo.root does NOT by itself offer Refresh when every '
-    + 'document measured unreachable',
-  offer([fndDoc({ freshness: 'unreachable' })], { repo: { root: '/somewhere/repo' } }).refresh === false);
-
+  {
+    // A FOLDER NOT ON THIS COMPUTER: its line says so, and it still refreshes
+    // (over GitHub when a remote is recorded) — nothing is disabled.
+    const h = block([fndDoc({ freshness: 'unreachable' })]);
+    ok('a folder source that is not here says so on ITS line', /not on this computer/.test(h), h.slice(0, 900));
+    ok('...and keeps its Refresh (the store reads GitHub when the folder is not here)',
+      /data-fnd-refresh="s1"/.test(h) && !/data-fnd-refresh="s1"[^>]*aria-disabled/.test(h));
+    ok('...and both doors stay enabled', !/mem-fnd-door-[a-z]+"[^>]*aria-disabled/.test(h));
+  }
   // ── P1-3: A READ-ONLY MIRROR GETS NOTHING, AND IS TOLD WHY ───────────
   {
-    const o = offer([fndDoc({ freshness: 'fresh' })], {}, true);
-    ok('a read-only Shared Brain mirror is offered neither control',
-      o.refresh === false && o.add === false);
-    ok('...and carries the mirror reason', /read-only mirror/.test(o.reason || ''), o.reason);
+    const h = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+      detail: { readonly: true } }).renderFoundations(fndRead(fndPayload([fndDoc({ freshness: 'fresh' })])));
+    ok('a read-only Shared Brain mirror gets no strip and no Write',
+      !/id="mem-fnd-sources"/.test(h) && !/id="mem-fnd-add"/.test(h));
+    ok('...its doors are aria-disabled with the reason', /mem-fnd-door-github"[^>]*aria-disabled="true"/.test(h));
+    ok('...and it carries the mirror reason', /read-only mirror/.test(h));
   }
-  // AND ON A PROJECT WITH NOTHING CHOSEN there is nothing to offer and nothing
-  // to explain: the chooser IS the answer there, one branch down.
-  eq('a project with no manifest offers nothing and explains nothing',
-    offer([], { present: false, ownership: null }).reason, null);
-  eq('...and an unreadable manifest the same, because the error note above it '
-    + 'is the reading', offer([fndDoc()], { manifestError: 'x' }).reason, null);
+  // ── A REFRESH IN FLIGHT names its own line ───────────────────────────
+  {
+    const two = fndPayload([fndDoc(), fndDoc({ slug: 'l.md', source: { kind: 'repo', path: 'l.md', group: 's2' },
+      freshness: 'unreachable' })], { sources: [
+      { id: 's1', kind: 'folder', label: 'repo', reachableHere: true, remote: null, lastRefreshAt: null, lastRefreshCommit: null, documentCount: 1 },
+      { id: 's2', kind: 'github', label: 'acme/lumina', reachableHere: false,
+        remote: { owner: 'acme', repo: 'lumina', ref: null, path: null }, lastRefreshAt: null, lastRefreshCommit: null, documentCount: 1 }] });
+    two.documents[0].source = { kind: 'repo', path: 'docs/architecture.md', group: 's1' };
+    const busy = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+      fnd: { domain: 'acme', project: 'lumina', busy: true, group: 's2', error: null, result: null } })
+      .renderFoundations(fndRead(two));
+    ok('two sources get "Refresh all"', /id="mem-fnd-refresh-all"/.test(busy));
+    ok('a refresh of ONE source says "Refreshing…" on THAT line only',
+      /data-fnd-refresh="s2"[^>]*>Refreshing…/.test(busy) && !/data-fnd-refresh="s1"[^>]*>Refreshing…/.test(busy)
+      && /id="mem-fnd-refresh-all"[^>]*>Refresh all/.test(busy), busy.slice(0, 1400));
+    ok('...and every refresh control is disabled while one runs',
+      (busy.match(/data-fnd-refresh="s\d"[^>]*disabled/g) || []).length === 2);
+  }
 }
 
 // ── §21c2 — "Copy the drafting request": offered, withheld, absent (P2-8) ──
@@ -7998,9 +8049,9 @@ const fndRead = (payload) => ({
       projectRead: fndRead(fndPayload([fndDoc({ freshness: 'fresh' })])),
     }).renderProject();
     const at = panel.indexOf('id="settings-block-info-context-canonical"');
-    ok('...because the fact is in step ①\'s ⓘ, where the rest of the ownership '
-      + 'explanation already is',
-    at !== -1 && /an agent’s save here is <b>refused<\/b>/.test(panel.slice(at, at + 4000)),
+    ok('...because the fact is in step ①\'s ⓘ, where the rest of the source '
+      + 'explanation already is (v3.69.0: said per document)',
+    at !== -1 && /save to a '?\s*\+?\s*'?<b>mirrored<\/b> document is <b>refused<\/b>/.test(panel.slice(at, at + 4000)),
     panel.slice(at, at + 600));
   }
   {
@@ -8166,8 +8217,9 @@ const fndRead = (payload) => ({
     ok('FOCUSABLE_IDS was found in live source', !!focusable);
     ok('...and knows the fold\'s summary, so a render cannot drop a keyboard user '
       + 'who has just toggled it', focusable[1].includes("'mem-fold-foundations'"));
+    // v3.69.0: the project-level Refresh is the strip's "Refresh all" now.
     ok('...and the Refresh control, which survives two renders per press',
-      focusable[1].includes("'mem-fnd-refresh'"));
+      focusable[1].includes("'mem-fnd-refresh-all'") && !focusable[1].includes("'mem-fnd-refresh'"));
     // The ROWS deliberately are NOT there: a row press causes no render at all,
     // so there is nothing for the capture/restore pass to put back — and an
     // indexed or slug-derived id could never be listed in a fixed array anyway.
@@ -8367,11 +8419,12 @@ const fndRead = (payload) => ({
     /class="tx-note fnd-init-why" id="fadd-why"/.test(blocked));
     const live = panelWith({ 'docs/a.md': true });
     ok('CONTROL: one tick arms the commit again, counted',
-      /id="fadd-go">Add 1 document</.test(live), (live.match(/id="fadd-go"[\s\S]{0,60}/) || [''])[0]);
+      /id="fadd-go">Copy 1 document</.test(live), (live.match(/id="fadd-go"[\s\S]{0,60}/) || [''])[0]);
     ok('...and hides the reason', /id="fadd-why" hidden/.test(live), live.slice(-700));
     ok('the panel sits between the head row and the empty-state body',
       live.indexOf('mem-fnd-head-controls') < live.indexOf('fadd-panel')
-      && live.indexOf('fadd-panel') < live.indexOf('No documents yet'));
+      && live.indexOf('fadd-panel') < live.indexOf('No documents yet'),
+      [live.indexOf('mem-fnd-head-controls'), live.indexOf('fadd-panel'), live.indexOf('No documents yet')].join(' '));
   }
 
   // ── v3.61.1: THE MECHANICS THE FILE HINT GAVE UP ARE IN THE ⓘ ──────────
@@ -8560,6 +8613,7 @@ const fndRead = (payload) => ({
     ok('...and the state says who wrote it', /written by you/.test(curRow), curRow);
     const byAgent = F.fndRowHtml(fndDoc({
       skeleton: false, freshness: 'n/a', authoredBy: { kind: 'agent', tool: 'save_foundation' },
+      source: { kind: 'curator' },
     }), true);
     ok('...or that an agent did', /written by an agent/.test(byAgent), byAgent);
     ok('CONTROL: a MIRRORED row still has Source and no State cell',
@@ -8578,25 +8632,38 @@ const fndRead = (payload) => ({
     // than no control. The route accepts removal on both ownerships now — it
     // is the decision to stop mirroring, not an edit — so the cell exists on
     // both arms and the two tables are 6 and 7 cells wide.
-    eq('...and a mirrored row is eight: its seven plus the actions cell',
-      cells(F.fndRowHtml(fndDoc(), false)), 8);
-    ok('...whose control is STOP MIRRORING, labelled and on the danger face — never the '
-      + 'pencil, which would promise an edit the route refuses',
-    /class="btn btn-danger btn-xs fnd-stop"/.test(F.fndRowHtml(fndDoc(), false))
-      && />Remove</.test(F.fndRowHtml(fndDoc(), false))
-      && !/data-fnd-edit/.test(F.fndRowHtml(fndDoc(), false)),
+    // v3.69.0: the unified table is SIX — the role rides above the title and
+    // the age under the freshness word (measured: eight columns pushed the
+    // trash icon behind a horizontal scroll in a 566px box at a 1400px window).
+    eq('...and a mirrored row is six: document, size, start, source, freshness, actions',
+      cells(F.fndRowHtml(fndDoc(), false)), 6);
+    ok('...its role above the title and its age under the freshness word',
+      /fnd-cell-title"><span class="fnd-role fnd-role-inline">architecture</.test(F.fndRowHtml(fndDoc(), false))
+      && /fnd-cell-fresh">[\s\S]*class="fnd-fresh-age" data-mem-age-at=/.test(F.fndRowHtml(fndDoc(), false)));
+    // ── v3.69.0: THE TRASH ICON ON EVERY ROW, THE PENCIL ON KEPT ROWS ────
+    // The maintainer asked for an icon; the confirm strip under the table
+    // carries what v3.61.1's labelled "Remove" used to (§5.1).
+    ok('...whose control is the TRASH ICON — quiet at rest, never the pencil, which would promise an '
+      + 'edit the route refuses',
+    /class="btn btn-ghost btn-xs fnd-delete"/.test(F.fndRowHtml(fndDoc(), false))
+      && /<svg[^>]*aria-hidden="true"/.test(F.fndRowHtml(fndDoc(), false))
+      && !/data-fnd-edit/.test(F.fndRowHtml(fndDoc(), false))
+      && !/>Remove</.test(F.fndRowHtml(fndDoc(), false)),
     F.fndRowHtml(fndDoc(), false));
-    ok('...carrying the slug on its own element and an aria-label naming the document, '
-      + 'because "Remove" alone is a row nobody can identify by ear',
-    /data-fnd-stop="architecture\.md"/.test(F.fndRowHtml(fndDoc(), false))
-      && /aria-label="Stop mirroring [^"]+"/.test(F.fndRowHtml(fndDoc(), false)),
+    ok('...carrying the slug on its own element and an aria-label naming the document — and no title= '
+      + '(the tooltip budget does not grow)',
+    /data-fnd-delete="architecture\.md"/.test(F.fndRowHtml(fndDoc(), false))
+      && /aria-label="Delete Architecture"/.test(F.fndRowHtml(fndDoc(), false))
+      && !/fnd-delete"[^>]*title=/.test(F.fndRowHtml(fndDoc(), false)),
     F.fndRowHtml(fndDoc(), false));
+    ok('a KEPT row carries BOTH: the pencil, and the trash icon beside it',
+      /data-fnd-edit="architecture\.md"[\s\S]*data-fnd-delete="architecture\.md"/.test(curRow), curRow);
     // A READ-ONLY SHARED BRAIN MIRROR GETS NO CELL ON EITHER ARM: nothing
     // there may be written at all, and the third argument is what says so.
     ok('a read-only row gets NO actions cell on either arm — nothing there may be written',
-      cells(F.fndRowHtml(fndDoc(), false, true)) === 6
+      cells(F.fndRowHtml(fndDoc(), false, true)) === 4
       && cells(F.fndRowHtml(fndDoc({ source: { kind: 'curator', path: null } }), true, true)) === 5
-      && !/fnd-stop|fnd-edit/.test(F.fndRowHtml(fndDoc(), false, true)),
+      && !/fnd-delete|fnd-edit/.test(F.fndRowHtml(fndDoc(), false, true)),
     F.fndRowHtml(fndDoc(), false, true));
 
     // ── THE CONFIRM STRIP, AND THE SENTENCE THAT IS NOT "DELETED" ───────
@@ -8613,12 +8680,18 @@ const fndRead = (payload) => ({
         return R;
       };
       const mirrored = withStop().renderFoundations(fndRead(fndPayload([fndDoc()])));
-      ok('the strip names the document and says the folder is untouched',
-        /Stop mirroring <b>architecture\.md<\/b>/.test(mirrored)
-        && /file in your folder is untouched/.test(mirrored), mirrored.slice(-900));
-      ok('...and does NOT say it cannot be undone, which would be false on a mirror',
-        !/cannot be undone/.test(mirrored.slice(mirrored.indexOf('Stop mirroring <b>'))),
+      // v3.69.0 (§5.2): ONE sentence per kind, shared with the editor. For
+      // a folder mirror it names the path and the folder, says only THIS
+      // project's copy goes, and that a refresh will NOT bring it back.
+      ok('the strip names the document and says the original in the folder is not touched',
+        /Delete <b>architecture\.md<\/b>\? Only this project’s copy is removed\./.test(mirrored)
+        && /The original, <span class="fnd-src-path">docs\/architecture\.md<\/span> in the folder <b>repo<\/b>, is not touched\./.test(mirrored),
         mirrored.slice(-900));
+      ok('...and that a refresh will NOT bring it back', /A refresh will <b>not<\/b> bring it back/.test(mirrored));
+      ok('...and does NOT say it cannot be undone, which would be false on a mirror',
+        !/cannot be undone/.test(mirrored.slice(mirrored.indexOf('Delete <b>'))),
+        mirrored.slice(-900));
+      ok('...its primary is "Delete copy"', /id="mem-fnd-stop-go">Delete copy</.test(mirrored));
       ok('...with the filled danger face on the confirm and a ghost beside it',
         /id="mem-fnd-stop-go"/.test(mirrored) && /btn-danger-solid/.test(mirrored)
         && /id="mem-fnd-stop-no"/.test(mirrored), mirrored.slice(-700));
@@ -8626,7 +8699,7 @@ const fndRead = (payload) => ({
         !/<dialog/.test(mirrored) && /role="alertdialog"/.test(mirrored), mirrored.slice(-700));
       const busy = withStop({ busy: true }).renderFoundations(fndRead(fndPayload([fndDoc()])));
       ok('a press in flight disables both controls and says what is happening',
-        /id="mem-fnd-stop-go" disabled>Removing/.test(busy)
+        /id="mem-fnd-stop-go" disabled>Deleting/.test(busy)
         && /id="mem-fnd-stop-no" disabled/.test(busy), busy.slice(-700));
       const failed = withStop({ error: 'the store said no' })
         .renderFoundations(fndRead(fndPayload([fndDoc()])));
@@ -8651,15 +8724,15 @@ const fndRead = (payload) => ({
       [fndDoc({ skeleton: false, freshness: 'n/a' })],
       { ownership: 'curator', openFolds: {} })));
     ok('the curator-owned table head says State', />State</.test(curTable), curTable.slice(0, 1400));
-    ok('...and names neither Source nor Copy',
-      !/>Source</.test(curTable) && !/>Copy</.test(curTable), curTable.slice(0, 1400));
+    ok('...and names neither Source nor Freshness',
+      !/>Source</.test(curTable) && !/>Freshness</.test(curTable), curTable.slice(0, 1400));
     ok('...and its actions column is named for a screen reader rather than left blank',
       /visually-hidden">Actions</.test(curTable), curTable.slice(0, 1400));
     const repoTable = F.renderFoundations(fndRead(fndPayload([fndDoc()])));
-    ok('CONTROL: the mirrored table still has Source AND Copy',
-      />Source</.test(repoTable) && />Copy</.test(repoTable), repoTable.slice(0, 1400));
-    ok('...and an actions column on BOTH arms since v3.61.1, because a mirrored row has a '
-      + 'control now (Remove = stop mirroring); it is withheld only where nothing may be written',
+    ok('CONTROL: the mirrored table has Source AND Freshness (v3.69.0 names the column for what it says)',
+      />Source</.test(repoTable) && />Freshness</.test(repoTable), repoTable.slice(0, 1400));
+    ok('...and an actions column on BOTH arms, because every row has the trash icon; '
+      + 'it is withheld only where nothing may be written',
     (repoTable.match(/<th scope="col">/g) || []).length >= 6
       && /visually-hidden">Actions/.test(repoTable), repoTable.slice(0, 600));
   }
@@ -8746,26 +8819,23 @@ const fndRead = (payload) => ({
 
   // ── (1) A FOLDER THAT REALLY IS MISSING ────────────────────────────────
   const missing = F.renderFoundations(fndRead(fndPayload(unreach)));
-  // (v3.68.0: the disabled local door CARRIES that sentence as its tooltip
-  // and its press-answer — an attribute, not a note — so attributes are
-  // stripped before looking for a painted one.)
-  const missingPainted = missing.replace(/(title|data-fnd-door-why)="[^"]*"/g, '');
+  // v3.69.0: the sentence is the SOURCE LINE's state now (one line per group,
+  // in the strip) — never a floating note under the table.
+  const underTable = missing.slice(missing.indexOf('</details>'));
   ok('a missing folder paints NO permanent "not on this computer" note under the table',
-    !/not on this computer/.test(missingPainted), (missingPainted.match(/tx-note[\s\S]{0,200}/) || [''])[0]);
+    !/not on this computer/.test(underTable), underTable.slice(0, 400));
+  ok('...its SOURCE line says so, as that group\'s state',
+    /data-fnd-source="s1"[\s\S]{0,300}not on this computer/.test(missing), missing.slice(0, 900));
   ok('...its STATE stays on every row, as the persistent indicator',
     (missing.match(/>source not here</g) || []).length === 2, missing.slice(0, 300));
   ok('...and each row word is a button that answers "why?"',
     (missing.match(/<button[^>]*data-fnd-why="/g) || []).length === 2);
-  ok('the two folder controls it withholds stay in the head row, DISABLED (aria-disabled, so a press still answers)',
-    /id="mem-fnd-refresh-blocked"[^>]*aria-disabled="true"[^>]*data-fnd-blocked/.test(missing)
-    && /id="mem-fnd-door-local"[^>]*aria-disabled="true"[^>]*data-fnd-door-why="[^"]*not on this computer/.test(missing));
-  ok('CONTROL: they are not the working controls, whose ids the refresh binder listens on',
-    !/id="mem-fnd-refresh"/.test(missing) && !/id="mem-fnd-addrepo"/.test(missing));
-  ok('...and the GitHub door (the switch) is still offered there, enabled',
-    /id="mem-fnd-door-github" data-fnd-door="github"/.test(missing));
-  const whyMissing = F.foundationsUncheckedWhy(F.foundationsFacts(fndRead(fndPayload(unreach))));
-  ok('the reason the press shows is the one the maintainer read, truthfully here',
-    /not on this computer/.test(whyMissing.title) && /Mirror it from GitHub/.test(whyMissing.lines.join(' ')),
+  ok('v3.69.0: NO control is disabled for it — both doors stay open, and the group keeps its Refresh',
+    !/aria-disabled/.test(missing.slice(0, missing.indexOf('<details'))) && /data-fnd-refresh="s1"/.test(missing));
+  const whyMissing = F.foundationsUncheckedWhy(F.foundationsFacts(fndRead(fndPayload(unreach))), 'architecture.md');
+  ok('the reason the press shows is about THIS row\'s folder, truthfully',
+    /not on this computer/.test(whyMissing.title) && /repo/.test(whyMissing.title)
+    && /add them again from GitHub/.test(whyMissing.lines.join(' ')),
     JSON.stringify(whyMissing));
   ok('...in a title and AT MOST two lines', whyMissing.lines.length <= 2);
 
@@ -8775,13 +8845,12 @@ const fndRead = (payload) => ({
     !/not on this computer/.test(gh) && !/source not here/.test(gh), gh.slice(0, 400));
   ok('...its rows say what is true: GitHub, not checked',
     (gh.match(/>GitHub · not checked</g) || []).length === 2);
-  ok('...it is offered the refresh that works — over GitHub, the store\u2019s auto arm',
-    /id="mem-fnd-refresh"[^>]*>Refresh from GitHub</.test(gh));
-  ok('...and NOT "Mirror from GitHub instead", which would offer the source it already has',
-    !/id="mem-fnd-mirror"/.test(gh));
-  ok('...and no disabled folder controls, because nothing is withheld',
-    !/data-fnd-blocked/.test(gh));
-  const whyGh = F.foundationsUncheckedWhy(F.foundationsFacts(fndRead(fndPayload(unreach, GH))));
+  ok('...its source line is GitHub, named, "not checked", with its own Refresh',
+    /mem-fnd-source-kind">GitHub</.test(gh) && /mem-fnd-source-label">talirezun\/the-curator</.test(gh)
+    && /not checked/.test(gh) && /data-fnd-refresh="s1"/.test(gh), gh.slice(0, 1200));
+  ok('...and NOT "Read from GitHub instead", which would offer the source it already has',
+    !/data-fnd-read-gh/.test(gh));
+  const whyGh = F.foundationsUncheckedWhy(F.foundationsFacts(fndRead(fndPayload(unreach, GH))), 'b.md');
   ok('its "why?" names the repository and says freshness is checked on refresh',
     /talirezun\/the-curator/.test(whyGh.title) && /not checked on a read/.test(whyGh.lines[0]),
     JSON.stringify(whyGh));
@@ -8792,55 +8861,64 @@ const fndRead = (payload) => ({
   eq('CONTROL: a missing folder keeps "source unreachable"',
     F.foundationsWord(F.foundationsFacts(fndRead(fndPayload(unreach)))), 'source unreachable');
 
-  // ── (3) THE SPLIT IS ON `root`, NOT ON `remote` ALONE ──────────────────
-  // A LOCAL refresh records BOTH a root and the remote it inferred
-  // (working-state.js refreshCore). When that recorded folder is gone the old
-  // sentence is TRUE, and must stay.
+  // ── (3) A FOLDER THAT IS NOT HERE BUT HAS A REMOTE (v3.69.0 §3.4) ──────
+  // A LOCAL refresh records BOTH a root and the origin it inferred. On a
+  // machine without the folder the row reads "GitHub · not checked" — its
+  // Refresh goes over GitHub (the store's `auto` arm) — and the line offers
+  // "Read from GitHub instead".
   const both = { repo: { root: '/gone/repo', remote: GH.repo.remote } };
-  eq('a recorded root that is missing is still "not on this computer", remote or not',
-    F.foundationsRemoteSource(both.repo), null);
-  ok('...so that block keeps the folder wording',
-    />source not here</.test(F.renderFoundations(fndRead(fndPayload(unreach, both)))));
-  eq('a remote with no owner is not a GitHub source', F.foundationsRemoteSource(
-    { root: null, remote: { owner: '', repo: 'x' } }), null);
+  const bothHtml = F.renderFoundations(fndRead(fndPayload(unreach, both)));
+  ok('a missing folder WITH a recorded remote reads "GitHub · not checked" on its rows',
+    (bothHtml.match(/>GitHub · not checked</g) || []).length === 2, bothHtml.slice(0, 300));
+  ok('...its line says it is not here and reads from GitHub on refresh, and offers the switch',
+    /not on this computer · read from GitHub on refresh/.test(bothHtml) && /data-fnd-read-gh="s1"/.test(bothHtml));
+  const whyBoth = F.foundationsUncheckedWhy(F.foundationsFacts(fndRead(fndPayload(unreach, both))), 'b.md');
+  ok('...and its "why?" names the folder AND the repository it is refreshed from',
+    /The folder repo is not on this computer/.test(whyBoth.title) && /talirezun\/the-curator/.test(whyBoth.lines.join(' ')),
+    JSON.stringify(whyBoth));
 
   // ── (4) THE READER SAYS THE SAME THING THE TABLE DOES ──────────────────
   const doc = { slug: 'architecture.md', title: 'Architecture', text: 'x', updatedAt: '2026-09-17T09:00:00.000Z',
     source: { kind: 'repo', path: 'docs/architecture.md' }, freshness: 'unreachable' };
-  const rGh = F.foundationReaderContent(doc, 'lumina', F.foundationsRemoteSource(GH.repo));
+  const rGh = F.foundationReaderContent(doc, 'lumina', { label: 'talirezun/the-curator' });
   ok('the reader of a GitHub mirror says GitHub, never "not on this computer"',
     /Mirrored from GitHub \(talirezun\/the-curator\)/.test(rGh.bodyHtml)
     && !/not on this computer/.test(rGh.bodyHtml + rGh.tags.join('|')), rGh.tags.join('|'));
   ok('...and its read-only note points at the repository', /GitHub/.test(rGh.readonlyNote));
   const rMissing = F.foundationReaderContent(doc, 'lumina', null);
-  ok('CONTROL: a missing folder\u2019s reader keeps the folder sentence',
+  ok('CONTROL: a missing folder’s reader keeps the folder sentence',
     /not on this computer/.test(rMissing.bodyHtml));
+  // v3.69.0: a KEPT document's reader never says "mirrored", even when the
+  // single-document route reports the PROJECT's ownership as `mixed`.
+  const rKept = F.foundationReaderContent({ ...doc, source: { kind: 'curator' }, freshness: 'n/a',
+    ownership: 'mixed' }, 'lumina', null);
+  ok('a kept document in a MIXED project reads as kept, never mirrored',
+    /Edit this in the Documents table/.test(rKept.readonlyNote) && !/mirrored/.test(rKept.tags.join('|')),
+    rKept.readonlyNote + ' | ' + rKept.tags.join('|'));
 }
 
 // ── §21e — the control's three states, painted ──────────────────────────
 {
   const base = { activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null };
+  // v3.69.0: the control is the SOURCE LINE's Refresh — one per group.
   const offered = makeRenderers(base).renderFoundations(fndRead(fndPayload([fndDoc()])));
-  ok('the control is painted when it can work', offered.includes('id="mem-fnd-refresh"'));
-  ok('...and carries no `title=` — this view\'s ratchet stands', !/id="mem-fnd-refresh"[^>]*title=/.test(offered));
+  ok('the control is painted when it can work', /data-fnd-refresh="s1"/.test(offered));
+  ok('...and carries no `title=` — this view\'s ratchet stands', !/data-fnd-refresh="s1"[^>]*title=/.test(offered));
 
   const withheld = makeRenderers(base).renderFoundations(
     fndRead(fndPayload([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' })));
-  ok('Refresh is WITHHELD on a curator-owned project', !withheld.includes('id="mem-fnd-refresh"'));
-  // ── AND "Add document" TAKES ITS PLACE, rather than a reason (P1-4) ────
-  // The head is a control ROW now, and on a curator-owned project the right
-  // answer is not "here is why you cannot refresh" but the control that DOES
-  // work: `foundationsControlOffer` returns `reason: null` there, because
-  // there is nothing to explain away when something is offered instead.
+  ok('Refresh is WITHHELD on a project of kept documents — there is no source line at all',
+    !/data-fnd-refresh/.test(withheld) && !/id="mem-fnd-sources"/.test(withheld));
+  // ── AND "Write a document" IS OFFERED, rather than a reason (P1-4) ────
   ok('...and the control that DOES work is offered', withheld.includes('id="mem-fnd-add"'),
     withheld.slice(-600));
   ok('...so no reason is manufactured for a control nobody is missing',
     !/nothing to refresh them from/.test(withheld));
 
-  const busy = makeRenderers({ ...base, fnd: { domain: 'acme', project: 'lumina', busy: true, error: null, result: null } })
+  const busy = makeRenderers({ ...base, fnd: { domain: 'acme', project: 'lumina', busy: true, group: 's1', error: null, result: null } })
     .renderFoundations(fndRead(fndPayload([fndDoc()])));
   ok('while a copy runs the control is DISABLED rather than removed',
-    /id="mem-fnd-refresh"[^>]*disabled/.test(busy) && busy.includes('Refreshing'), busy.slice(0, 400));
+    /data-fnd-refresh="s1"[^>]*disabled[^>]*>Refreshing/.test(busy), busy.slice(0, 1200));
 
   // ── THE OUTCOMES LEFT THE BODY FOR THE NOTICE SLOT (v3.62.0, P1-7) ──
   // They are `foundationsNotices` now — step ①'s `noticeHtml`, which
@@ -8865,7 +8943,18 @@ const fndRead = (payload) => ({
     .foundationsNotices(fndRead(fndPayload([fndDoc()])));
   ok('a result names what happened to every class of document',
     done.includes('1 re-copied') && done.includes('1 already current')
-    && done.includes('no longer in that folder (the copy is kept)'), done.slice(0, 400));
+    && done.includes('no longer at the source (the copy is kept)'), done.slice(0, 400));
+  // v3.69.0 (§3.1): "Refresh all" runs every group; a group whose read failed
+  // is left EXACTLY as it was, and its line says so by name, unfolded.
+  const partial = makeRenderers({ ...base, fnd: { domain: 'acme', project: 'lumina', busy: false, error: null,
+    result: { refreshed: ['a.md'], added: [], unchanged: [], missing: [], refused: [{ path: 'x.md', reason: 'too large' }],
+      failed: ['acme/lumina was not refreshed and is unchanged: GitHub answered 500'] } } })
+    .foundationsNotices(fndRead(fndPayload([fndDoc()])));
+  ok('a source that failed is named, unchanged, with the reason — beside what did refresh',
+    /1 re-copied/.test(partial) && /acme\/lumina was not refreshed and is unchanged: GitHub answered 500/.test(partial)
+    && !/<details/.test(partial), partial.slice(0, 600));
+  ok('...and what the store refused is listed too, unfolded', /x\.md/.test(partial) && /too large/.test(partial),
+    partial.slice(0, 900));
 
   // STAMPED. A result belonging to another project must not sit under this
   // one's header claiming its documents were re-copied.
@@ -10637,6 +10726,8 @@ function realListbox() {
     // v3.68.0: the two doors' panel binder — STUBBED, driven for real in
     // scripts/test-next-foundations-editor.js and test-foundations-add.js.
     'bindAddDoors',
+    // v3.69.0: the per-document source rules, one namespace, REAL.
+    'FSRC',
     // Named one by one rather than mapped over a list: §17's census requires
     // every function it claims is EXECUTED to appear in a real
     // `extractFunction(viewSrc, '<name>')` call somewhere in this file, which is
@@ -10648,10 +10739,9 @@ function realListbox() {
     // missing with this section fully green.
     extractFunction(viewSrc, 'skeletonOf', 'memory.js') + '\n' + extractFunction(viewSrc, 'copiedFromOf', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationReaderContent', 'memory.js') + '\n' +
-    // v3.67.2: `openFoundation` asks whether the mirror is read from GitHub
-    // (so the reader does not say "not on this computer" of a GitHub mirror),
-    // and the binder answers an unchecked row's "why?" — both pure, LIFTED.
-    extractFunction(viewSrc, 'foundationsRemoteSource', 'memory.js') + '\n' +
+    // v3.67.2: the binder answers an unchecked row's "why?" — pure, LIFTED.
+    // (v3.69.0: whether a row is read from GitHub is its GROUP's fact, asked
+    // of FSRC inside `openFoundation`.)
     extractFunction(viewSrc, 'foundationsUncheckedWhy', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'openFoundation', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'bindFoundationRows', 'memory.js') + '\n'
@@ -10679,7 +10769,7 @@ function realListbox() {
     () => 'close',
     async () => {}, () => {},
     MAX_FOUNDATION_BYTES, FOUNDATION_ROLES,
-    { getItem: () => null, setItem: () => {} }, () => {});
+    { getItem: () => null, setItem: () => {} }, () => {}, FSRC);
   api.bindFoundationRows(doc, 1);
   ok('SETUP: the row\'s click handler was bound', typeof btn._click === 'function');
 
@@ -10806,8 +10896,10 @@ function realListbox() {
   // ── THE CHECKLIST ──────────────────────────────────────────────────────
   const listed = (picks, docs, payloadOver, extra) => panel('local', Object.assign({
     root: '/n', listedRoot: '/n', picks,
-    candidates: [{ path: 'docs/architecture.md', bytes: 12345, suggestedSlug: 'architecture.md' },
-      { path: 'notes/b.md', bytes: 100, suggestedSlug: 'b.md' },
+    // v3.69.0 (§4.3): "already added" is the SERVER's answer, per candidate.
+    candidates: [{ path: 'docs/architecture.md', bytes: 12345, suggestedSlug: 'architecture.md',
+      alreadyAdded: true, alreadyAs: 'architecture.md', landsAs: 'architecture.md' },
+      { path: 'notes/b.md', bytes: 100, suggestedSlug: 'b.md', alreadyAdded: false, landsAs: 'b.md' },
       { path: 'huge.md', bytes: 600 * 1024, suggestedSlug: 'huge.md', tooLarge: true }],
   }, extra || {}), docs, payloadOver);
   const curatorArch = [fndDoc({ freshness: 'n/a', source: { kind: 'curator', path: null } })];
@@ -10819,10 +10911,10 @@ function realListbox() {
   ok('a file over the per-document limit is shown, disabled, WITH its numbers',
     /data-fadd-row="huge\.md"[\s\S]{0,400}600 KB is over the 512 KB per-document limit/.test(l0));
   ok('with nothing ticked the ONE primary is disabled and the ONE reason says why',
-    /id="fadd-go" disabled>Add documents</.test(l0) && />Tick at least one document\.</.test(l0));
+    /id="fadd-go" disabled>Copy documents</.test(l0) && />Tick at least one document\.</.test(l0));
   const l1 = listed({ 'notes/b.md': true }, curatorArch, { ownership: 'curator' });
-  ok('one ticked: "Add 1 document", live, and no reason',
-    /id="fadd-go">Add 1 document</.test(l1) && /id="fadd-why" hidden/.test(l1));
+  ok('one ticked: "Copy 1 document", live, and no reason',
+    /id="fadd-go">Copy 1 document</.test(l1) && /id="fadd-why" hidden/.test(l1));
   ok('the count line is the PROJECT\'s total against its budget',
     /1 ticked · 100 bytes — the project would hold 12 KB of its 195 KB budget/.test(l1),
     (l1.match(/id="fadd-count">[^<]*/) || [''])[0]);
@@ -10905,7 +10997,13 @@ function realListbox() {
     const st = { activeDomain: 'acme', activeProject: 'lumina', fnd: null, projectRead: null };
     const api = new Function(
       'state', 'render', 'isCurrentMount', 'fetch', 'forgetProject', 'URLSearchParams',
+      // v3.69.0: the outcome reads each failed group's name through the
+      // project's facts, so the facts and FSRC are real here too.
+      'FSRC', 'READ_FIRST_BUDGET_BYTES', 'FOUNDATIONS_BUDGET_BYTES',
       // Named one by one, for the census's sake — see the note in §21i.
+      extractFunction(viewSrc, 'skeletonOf', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'copiedFromOf', 'memory.js') + '\n' +
+      extractFunction(viewSrc, 'foundationsFacts', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'keyOf', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'activeKey', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'fetchState', 'memory.js') + '\n' +
@@ -10920,7 +11018,7 @@ function realListbox() {
         return responder(String(url), init);
       },
       (d, p) => { calls.forgot.push(d + '/' + p); },
-      URLSearchParams);
+      URLSearchParams, FSRC, READ_FIRST_BUDGET_SRC, FOUNDATIONS_BUDGET_BYTES);
     return { api, calls, st };
   };
 
@@ -10945,37 +11043,44 @@ function realListbox() {
       r.st.projectRead && r.st.projectRead.foundations.documents.length === 1);
     ok('...and the outcome is stamped with the pair it was asked for',
       r.st.fnd.domain === 'acme' && r.st.fnd.project === 'lumina' && r.st.fnd.busy === false);
-    eq('...and carries the four lists the note reads',
+    eq('...and carries the four lists the note reads, the refused list and the failed sources',
       JSON.stringify(Object.keys(r.st.fnd.result).sort()),
-      JSON.stringify(['added', 'missing', 'refreshed', 'unchanged']));
+      JSON.stringify(['added', 'failed', 'missing', 'refreshed', 'refused', 'unchanged']));
   }
 
-  // ── THE FOLDER TYPED IS THE FOLDER COPIED FROM (v3.65.2, C2) ─────────
+  // ── ONE SOURCE, OR ALL OF THEM (v3.69.0, §3.1) ───────────────────────
+  // A strip line's Refresh names its group; "Refresh all" names none. The
+  // v3.65.2 `repoRoot`/`files` body left with the doors.
   {
     const r = mkRig((url, init) => (init
-      ? { ok: true, json: async () => ({ ok: true, refreshed: [], added: ['b.md'], unchanged: [], missing: [] }) }
+      ? { ok: true, json: async () => ({ ok: true, refreshed: [], added: [], unchanged: ['a.md'], missing: [],
+        groups: [{ id: 's1', ok: true }, { id: 's2', kind: 'github', label: 'acme/lumina', ok: false,
+          message: 'GitHub answered 500' }] }) }
       : { ok: true, json: async () => ({ ok: true, scopes: [], foundations: fndPayload([fndDoc()]) }) }));
-    await r.api.refreshFoundations(1, [{ path: 'docs/b.md', role: 'other' }], '  /my/copy ');
-    eq('a typed folder rides the refresh body as `repoRoot`, beside the files — the route '
-      + 'reads `asked || index.repo.root`, so without it a folder scanned was not the one copied from',
-    r.calls.bodies[0], '{"files":[{"path":"docs/b.md","role":"other"}],"repoRoot":"/my/copy"}');
+    await r.api.refreshFoundations(1, 's2');
+    eq('a strip line\'s Refresh sends ITS group and nothing else', r.calls.bodies[0], '{"group":"s2"}');
+    eq('...and the outcome is stamped with the group it was for', r.st.fnd.group, 's2');
+    ok('...a failed group is named, left unchanged, with its reason',
+      r.st.fnd.result.failed.length === 1
+      && /acme\/lumina was not refreshed and is unchanged: GitHub answered 500/.test(r.st.fnd.result.failed[0]),
+      JSON.stringify(r.st.fnd.result.failed));
     const r2 = mkRig((url, init) => (init
       ? { ok: true, json: async () => ({ ok: true, refreshed: [], added: [], unchanged: [], missing: [] }) }
       : { ok: true, json: async () => ({ ok: true, scopes: [], foundations: fndPayload([fndDoc()]) }) }));
-    await r2.api.refreshFoundations(1, [{ path: 'docs/b.md', role: 'other' }]);
-    eq('...and is ABSENT when the recorded folder was used', r2.calls.bodies[0],
-      '{"files":[{"path":"docs/b.md","role":"other"}]}');
+    await r2.api.refreshFoundations(1);
+    eq('...and "Refresh all" sends a literal empty object', r2.calls.bodies[0], '{}');
+    eq('...stamped with no group', r2.st.fnd.group, null);
   }
 
   // ── A REFUSAL ─────────────────────────────────────────────────────────
   {
     const r = mkRig(() => ({ ok: false, status: 400,
-      json: async () => ({ ok: false, reason: 'curator_owned',
-        error: 'These documents were written for this project' }) }));
+      json: async () => ({ ok: false, reason: 'no_sources',
+        error: 'Nothing here is mirrored, so there is nothing to refresh.' }) }));
     await r.api.refreshFoundations(1);
     eq('a refusal paints twice — busy, then the reason', r.calls.render, 2);
-    eq('...it is the SERVER\'s sentence, not a status code',
-      r.st.fnd.error, 'These documents were written for this project');
+    eq('...it is the SERVER\'s sentence, not a status code (v3.69.0: `no_sources`)',
+      r.st.fnd.error, 'Nothing here is mirrored, so there is nothing to refresh.');
     eq('...and nothing is re-read, because nothing changed', r.calls.urls.length, 1);
     eq('...and the cache is NOT dropped either', r.calls.forgot.length, 0);
   }
@@ -10988,6 +11093,24 @@ function realListbox() {
     eq('a second press while a copy is running does nothing at all — one '
       + 'operation per project', r.calls.urls.length, 0);
   }
+}
+
+// ── §21k2 — THE DELETE CONFIRMATION, FROM THE ROUTE'S OWN ANSWER (v3.69.0) ──
+// A toast (an outcome of the owner's own press), and its lines are the
+// route's §5.4 fields — never a guess about what was kept.
+{
+  const T = new Function(extractFunction(viewSrc, 'fndDeletedToast', 'memory.js')
+    + '\nreturn fndDeletedToast;')();
+  const gh = T('architecture.md', { ok: true, origin: 'github', sourceKept: true,
+    source: { label: 'acme/lumina', path: 'docs/architecture.md' }, groupRemoved: true });
+  eq('the title names the document', gh.title, 'Deleted architecture.md');
+  ok('...a kept source is said to be untouched, by name',
+    gh.lines.includes('The original in acme/lumina is not touched.'), JSON.stringify(gh.lines));
+  ok('...and a group removed with its last document is said too',
+    gh.lines.includes('acme/lumina is no longer a source of this project.'), JSON.stringify(gh.lines));
+  const written = T('notes.md', { ok: true, origin: 'written', sourceKept: false, source: null, groupRemoved: false });
+  eq('a WRITTEN document claims no untouched original — there is none', written.lines.length, 0);
+  eq('CONTROL: an answer with no fields claims nothing', T('x.md', null).lines.length, 0);
 }
 
 // ── §21j — hostile text, through the real renderers ─────────────────────
@@ -11715,7 +11838,7 @@ const EXECUTED = new Set([
   // v3.67.2: the GitHub-mirror test and its "why?" sentence, lifted by §6's
   // makeRenderers and by the row-press section, and driven in
   // scripts/test-toast.js (both cases: a GitHub mirror and a missing folder).
-  'foundationsRemoteSource', 'foundationsUncheckedWhy',
+  'foundationsUncheckedWhy',
   // The freshness surface (v3.31.0). All six are lifted from live source by
   // §6's makeRenderers and reached through renderProject, which §6/§14 execute;
   // effectiveSave is additionally lifted into §5 and §11.
@@ -11789,7 +11912,9 @@ const EXECUTED = new Set([
   // A stub anywhere in that list would let this suite agree with itself that
   // the summary line, the Status reading and the Refresh control all describe
   // one project while the shipped page described three.
-  'foundationsFacts', 'foundationsWord', 'foundationsControlOffer',
+  'foundationsFacts', 'foundationsWord',
+  // v3.69.0 — the delete confirmation toast, driven in §21k2.
+  'fndDeletedToast',
   'foundationsOwnershipWord', 'foundationsSummaryMeta', 'fndSize', 'skeletonOf', 'fndRowHtml',
   'renderFoundations', 'foundationsNotices', 'foundationReaderContent',
   // v3.62.0 — the three steps. The strip that replaced the Status block, the

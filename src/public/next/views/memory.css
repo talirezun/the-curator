@@ -2331,3 +2331,100 @@
   color: var(--text-2);
 }
 .mem-fnd-legend b { color: var(--text); font-weight: 600; }
+
+/* ── THE SOURCES STRIP (v3.69.0, CONTRACT §4.4) ───────────────────────────
+   One line per source group under the head row — a folder or a GitHub
+   repository this project mirrors — each with its own Refresh, and "Refresh
+   all" under them when there are two or more. PLAIN ROWS, never a fold: what
+   a refresh finds is a notice above the heading, and a source that is not on
+   this computer says so on its own line (the never-fold rule, v3.16.1).
+   The line WRAPS rather than scrolls at 568: its label is data (a repository
+   name) and a clipped name is a wrong name. Existing tokens only. */
+.mem-fnd-sources-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.mem-fnd-sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  align-self: stretch;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+.mem-fnd-source {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  min-width: 0;
+}
+.mem-fnd-source + .mem-fnd-source { border-top: 1px solid var(--border-subtle); }
+.mem-fnd-source-kind {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mem-fnd-source-label {
+  font: var(--type-mono);
+  font-size: var(--text-2xs);
+  color: var(--text);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.mem-fnd-source-meta { font-variant-numeric: var(--numeric-tabular); min-width: 0; }
+.mem-fnd-source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+.mem-fnd-source-actions > .btn { white-space: normal; text-align: left; }
+
+/* ── THE UNIFIED TABLE'S SOURCE CELL (v3.69.0) ────────────────────────────
+   A mirrored path may be long, and with two or more sources the group's
+   label rides under it. Both WRAP at a path boundary rather than widening
+   the table past a 568px window. */
+.fnd-cell-source .fnd-src-path { overflow-wrap: anywhere; }
+.fnd-src-group {
+  display: block;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+}
+
+/* ── THE ROW'S TWO ICON CONTROLS (v3.69.0, §5.1) ──────────────────────────
+   Pencil (kept rows only) and trash (every row), side by side, visible at
+   rest, both on the quiet ghost face — a table of twenty rows is not twenty
+   red marks (a flag on every row carries nothing, v3.53.1), and this file's
+   tone baseline does not grow (scripts/test-tone-channel.js). The danger
+   face belongs to the confirm strip's primary, where the deletion is. */
+.fnd-cell-edit > .btn + .btn { margin-left: var(--space-1); }
+
+/* ── THE KEEP IN SYNC / COPY ONCE RADIO (v3.69.0, §4.2) ───────────────────
+   The GitHub panel's own token radios (`.fnd-init-tokens`), reused so the
+   two choices look like the one the owner already knows. */
+.mem-fnd-add-mode { margin-top: var(--space-1); }
+.fnd-lands-as { font-variant-numeric: var(--numeric-tabular); }
+
+/* ── THE UNIFIED TABLE'S STACKED CELLS (v3.69.0) ──────────────────────────
+   Role above the title, age under the freshness word — measured: eight
+   columns came to 715px in a 566px box and pushed the trash icon behind a
+   scroll. The freshness word may wrap ("GitHub · / not checked") rather than
+   widen the table. */
+.fnd-role-inline { display: block; width: fit-content; margin-bottom: var(--space-1); }
+.fnd-cell-fresh .fnd-fresh { white-space: normal; }
+.fnd-fresh-age {
+  display: block;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  white-space: nowrap;
+}
