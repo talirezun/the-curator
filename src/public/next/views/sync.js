@@ -566,6 +566,8 @@ function renderSetupDecision(f) {
   );
 }
 
+const SYNC_UNDO_NOTE = 'The Curator has no revert control. A git client pointed at your knowledge folder can undo a sync.';
+
 function renderConfigured(s) {
   const acting = state.acting;
   const lastSyncLabel = s.lastSync ? formatSyncTime(s.lastSync) : 'never';
@@ -658,6 +660,10 @@ function renderConfigured(s) {
         '<button type="button" class="btn btn-secondary" id="btn-sync-pull"' + (disabled ? ' disabled' : '') + '>' + (acting === 'pull' ? 'Pulling…' : 'Pull only') + '</button>' +
         '<span class="sync-pending-note">' + escapeHtml(String(pendingCount)) + ' local change' + (pendingCount === 1 ? '' : 's') + ' not pushed</span>' +
       '</div>' +
+      // AN OUTCOME STAYS ON THE PAGE (v3.71.1): the app cannot undo a sync,
+      // and the one route back is a git client — said beside the actions,
+      // unfolded, not only in the header's ⓘ (v3.16.1).
+      '<div class="sync-undo-note">' + escapeHtml(SYNC_UNDO_NOTE) + '</div>' +
       (state.actionMessage ? '<div class="sync-action-note">' + escapeHtml(state.actionMessage) + '</div>' : '') +
       (state.actionError ? '<div class="settings-inline-error" style="margin-top:8px">' + escapeHtml(state.actionError) + '</div>' : '') +
     '</div>' +

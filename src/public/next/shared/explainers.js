@@ -335,7 +335,7 @@ const E = {
       { icon: 'grow', text: 'New sources deepen the pages already there, not copy them.' },
       { icon: 'refresh', text: 'Files run one at a time; a paused batch picks up again.' },
     ],
-    try: 'Drop a PDF onto this section, or press browse your files.',
+    try: 'Drop a PDF on the drop zone, or press browse your files.',
     guide: { key: 'ingest.page', heading: 'Ingest a source' },
   },
 

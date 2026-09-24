@@ -354,6 +354,11 @@ const wizCode = code(byRel['views/shared-brain-wizard.js'].src);
 ok(/const ATTRIBUTION_FIXED_NOTE = 'Fixed when you join: changing it means leaving and joining again\. ' \+\s*'It applies only to future pushes and cannot remove a name already published\.'/.test(wizCode) &&
    /escapeHtml\(ATTRIBUTION_FIXED_NOTE\)/.test(fnBody(wizCode, 'panelStep4')),
   'wizard step 4: what is irreversible about attribution is in the visible hint');
+// Sync: no in-app revert, and the git route back, beside the actions.
+const syncCode = code(byRel['views/sync.js'].src);
+ok(/const SYNC_UNDO_NOTE = 'The Curator has no revert control\. A git client pointed at your knowledge folder can undo a sync\.'/.test(syncCode) &&
+   /'<div class="sync-undo-note">' \+ escapeHtml\(SYNC_UNDO_NOTE\) \+ '<\/div>'/.test(fnBody(syncCode, 'renderConfigured')),
+  'Sync: "no revert control; a git client can undo a sync" is printed beside the sync actions');
 // Chat: the state line.
 const chatCode = code(byRel['views/chat.js'].src);
 ok(/its knowledge lives in another domain \\u2014 this chat reads only ' \+ state\.activeDomain/.test(fnBody(chatCode, 'projectKnowledgeReadout')),

@@ -153,6 +153,8 @@ const sandboxSrc =
   extractObjectOrSimpleConst(appSrc, 'ICON_BODY', 'app.js') + '\n' +
   extractObjectOrSimpleConst(appSrc, 'MISSING_ICON_BODY', 'app.js') + '\n' +
   APP_FNS.map((n) => extractFunction(appSrc, n, 'app.js')).join('\n\n') + '\n' +
+  // v3.71.1: renderConfigured prints SYNC_UNDO_NOTE beside the actions.
+  extractObjectOrSimpleConst(syncSrc, 'SYNC_UNDO_NOTE', 'views/sync.js') + '\n' +
   SYNC_FNS.map((n) => extractFunction(syncSrc, n, 'views/sync.js')).join('\n\n') + '\n' +
   `let state = freshState();\n` +
   `return { state, renderConfigured, freshState };\n`;

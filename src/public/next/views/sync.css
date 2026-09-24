@@ -240,6 +240,11 @@
   background: var(--attention-tint);
   border: 1px solid var(--attention-text);
 }
+.sync-undo-note {
+  margin-top: 10px;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
 .sync-action-note {
   margin-top: 12px;
   font-size: var(--text-sm);
