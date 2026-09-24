@@ -113,6 +113,10 @@ import {
  * the read-side sanitiser. It is reached through `storeAdapter`, never copied.
  */
 import * as workingStore from './working-state.js';
+// v3.70.0 — the open project's SESSION START, measured by the one function
+// the app's step ④ calls (src/brain/session-start.js), so the widget's line
+// is the app's reading and never a figure of its own.
+import { sessionStartReport, sessionStartBrief } from './session-start.js';
 
 /** Rows the panel asks for when it does not say. §1.3's eight-row layout. */
 export const TRAY_DEFAULT_LIMIT = 8;
@@ -1022,6 +1026,8 @@ export async function getTraySummary(opts = {}) {
       // v3.66.0 — nothing was enumerated, so there is no per-project, capture
       // or per-domain reading either: absent, never an empty "measured" list.
       projects: null, capture: null, domains: null,
+      // v3.70.0 — nothing was read, so nothing was measured.
+      sessionStart: null,
       warnings: [{
         code: 'domains-unreadable',
         message: 'Could not read the knowledge folder, so no project context can be listed.',
@@ -1395,10 +1401,47 @@ export async function getTraySummary(opts = {}) {
     capture: shown[0].capture,
   } : null;
 
+  // ── v3.70.0: THE OPEN PROJECT'S SESSION START ─────────────────────────
+  //
+  // For `lastSave`'s project only — the one the widget's group is about —
+  // measured by `sessionStartReport` with the per-preset table and the hook
+  // door switched off (the widget draws neither), then projected by
+  // `sessionStartBrief`: the same layers, tokens and replies the app's step ④
+  // shows, and nothing the app does not. Null when there is no save to anchor
+  // it, or when the measurement fails — never a zero standing in for "could
+  // not measure"; the failure is a warning. `opts.sessionStart === false` is
+  // a TEST-ONLY switch for suites that time or stub the walk.
+  let sessionStart = null;
+  if (lastSave && !(opts && opts.sessionStart === false)) {
+    try {
+      const rep = await sessionStartReport(lastSave.domain, lastSave.project, null, { presets: false, hook: false });
+      sessionStart = sessionStartBrief(rep);
+      if (!sessionStart) {
+        warnings.push({
+          code: 'session-start-unavailable',
+          message: 'Could not measure what an agent receives at session start for this project.',
+          detail: rep && typeof rep.reason === 'string' ? rep.reason.slice(0, 80) : null,
+        });
+      }
+    } catch (err) {
+      sessionStart = null;
+      warnings.push({
+        code: 'session-start-unavailable',
+        message: 'Could not measure what an agent receives at session start for this project.',
+        detail: err && err.message ? String(err.message).slice(0, 200) : null,
+      });
+    }
+  }
+
   return {
     ok: true,
     lastSave,
     scopes: shown,
+    // v3.70.0 — {domain, project, planned, bytes, tokens, layers[{key,label,
+    //   bytes,tokens}], budget{bytes,tokens,source,preset,custom,nearest},
+    //   onDemand{documents,tokens}, delivery{replies,paged,pageTokens},
+    //   window{tokens,set}, harness{tokens,set}, meter} | null.
+    sessionStart,
     // ── THE DENOMINATOR, TAKEN BEFORE THE SLICE ─────────────────────────
     //
     // Without this a consumer cannot tell "capped at 8" from "there are

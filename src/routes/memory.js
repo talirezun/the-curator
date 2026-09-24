@@ -203,6 +203,7 @@
 import { Router } from 'express';
 import { listDomains, isDomainReadonly } from '../brain/files.js';
 import * as workingState from '../brain/working-state.js';
+import { sessionStartReport } from '../brain/session-start.js';
 import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
 import {
   readUsageLinesUnion, summariseSessions, MAX_LINE_BYTES, MAX_LINE_BYTES_LABEL,
@@ -755,7 +756,7 @@ function fstore() {
  * nothing" from "this server does not know the field".
  *
  * NEVER A BODY. This rides on the detail envelope, which is fetched on every
- * project switch and on the Reload path; a 200 KB budget of document text on
+ * project switch and on the Reload path; hundreds of KB of document text on
  * a read whose job is "what is here" would make the cheapest screen in the app
  * the most expensive one. `GET …/foundations/:slug` is the body.
  */
@@ -876,11 +877,13 @@ function foundationsWire(out) {
     // from "this server does not know the field".
     //
     // `readFirstBudgetBytes` IS NOT `budgetBytes`. The first is the
-    // BOOTSTRAP's reading budget (120 KB — what one session is actually
-    // handed); the second is the PROJECT budget (200 KB — what tier 0 may
-    // hold on disk). A project can sit comfortably under 200 KB and still
-    // flag more than a bootstrap will send, so collapsing the two would make
-    // a view say "within budget" about the wrong budget.
+    // BOOTSTRAP's reading budget (the owner's, 0 … 800 KB, else the 120 KB
+    // default — what one session is actually handed); the second is the
+    // stored-size figure the store still reports for the project
+    // (FOUNDATIONS_BUDGET_BYTES). That second number only ever WARNED, and
+    // since v3.70.0 it is not a limit the app states: the reading budget is
+    // the meter that matters. Collapsing the two would make a view say
+    // "within budget" about the wrong budget.
     readFirstCount: Number.isInteger(out.readFirstCount) ? out.readFirstCount : 0,
     onRequestCount: Number.isInteger(out.onRequestCount) ? out.onRequestCount : 0,
     readFirstBytes: Number.isInteger(out.readFirstBytes) ? out.readFirstBytes : 0,
@@ -2047,7 +2050,7 @@ router.patch('/:domain/:project/knowledge/domains', async (req, res) => {
 // `projects` is swallowed by `PATCH /:domain/projects/:project`.
 //
 // A STRICT ONE-FIELD BODY: `{readingBudgetBytes: int|null}`. 0 is Index only;
-// 8192 … 204800 is a budget; null CLEARS it, and the project reads as
+// 8192 … 819200 (the store's cap) is a budget; null CLEARS it, and the project reads as
 // unplanned — v3.66.0's behaviour — again.
 // ═════════════════════════════════════════════════════════════════════════
 const READING_BUDGET_STATUS = new Map([
@@ -2060,10 +2063,13 @@ const READING_BUDGET_WIRE_REASON = new Map([
   ['invalid-state-project', 'invalid_project'],
   ['unsafe-path', 'unsafe_path'],
 ]);
-const READING_BUDGET_CAP = 204800;
-const READING_BUDGET_MIN = 8192;
+// DERIVED FROM THE STORE (v3.70.0), never a second copy: the ladder grew to
+// seven presets and the cap to 800 KB, and a route that kept its own 200 KB
+// refused every preset above Large while the store accepted it.
+const READING_BUDGET_CAP = workingState.CONTEXT_MAX_BYTES_CAP;
+const READING_BUDGET_MIN = workingState.READING_BUDGET_MIN_BYTES;
 function isReadingBudgetValue(v) {
-  return Number.isInteger(v) && (v === 0 || (v >= READING_BUDGET_MIN && v <= READING_BUDGET_CAP));
+  return workingState.isValidReadingBudget(v);
 }
 
 router.patch('/:domain/:project/reading/budget', async (req, res) => {
@@ -2124,131 +2130,29 @@ router.patch('/:domain/:project/reading/budget', async (req, res) => {
 // moved to src/brain/ so no route imports src/cli/). Both are READS: nothing
 // is written anywhere, including the usage log.
 //
-// Tokens are NEVER on the wire. The view divides by four and says so; a wire
-// field would be an estimate dressed as a measurement.
+// v3.70.0: tokens ride BESIDE the bytes, every one `estimateTokens(bytes)` —
+// the store's one estimator — and named an estimate by the view ("≈"). The
+// report adds `layers`, `onDemand`, `delivery` (the MCP door's pages, from
+// `replyDelivery` of the real reply), `window` and `harness` (install config),
+// `presetsSummary` and `meter` (the bucket kit's model); every v3.69.0 field
+// is still there. The MCP figure is now the TOTAL over every page.
 //
-// `presets[]` carries all five presets' MCP bytes in ONE answer (a what-if run
-// per preset), so hovering a preset in the picker costs no request at all.
+// `presets[]` carries all SEVEN presets (the store's ladder, never a copy
+// here) in ONE answer (a what-if run per preset), so hovering a preset in the
+// picker costs no request at all.
 // The preview POST is for the one what-if that needs a body — a proposed plan
 // of up to 200 documents does not belong in a URL.
 //
 // Read routes are not behind `refuseMirror` (a mirror's start is real).
 // ═════════════════════════════════════════════════════════════════════════
 const SESSION_START_PLAN_MAX = 200;
-const SESSION_BRIEF_CAP = 32768;
-const SESSION_HANDOFF_CAP = 49152;
-const SESSION_REPLY_CAP = 307200;
-const PRESET_BYTES = Object.freeze([
-  ['index-only', 0], ['lean', 32768], ['standard', 65536], ['deep', 122880], ['max', 204800],
-]);
-
-const utf8 = (x) => Buffer.byteLength(typeof x === 'string' ? x : JSON.stringify(x ?? null), 'utf8');
-/** Exactly as mcp/tools/index.js serialises a reply. */
-const mcpSize = (obj) => Buffer.byteLength(JSON.stringify(obj, null, 2), 'utf8');
 
 /**
- * The session-start report. `whatIf` is the store's internal option
- * (`{ownerBudgetBytes?, startStates?}`), reached ONLY from this router.
- * Exported for the suite; not a route of its own.
+ * The session-start report lives in src/brain/session-start.js since v3.70.0
+ * (the tray calls it too, and a brain module may not import a route). Re-
+ * exported under its old name so nothing that imported it from here breaks.
  */
-export async function sessionStartReport(domain, project, whatIf = null) {
-  const { getProjectContextHandler } = await import('../../mcp/tools/working-state.js');
-  const { renderFramedContextMarkdown } = await import('../brain/context-markdown.js');
-  const run = (wi) => getProjectContextHandler({ domain, project }, null, wi ? { whatIf: wi } : {});
-  const out = await run(whatIf);
-  if (!out || out.ok !== true) return { ok: false, reason: out?.reason || 'io', error: out?.error || 'unreadable' };
-  const f = out.foundations || {};
-  const mcp = mcpSize(out);
-
-  // THE HOOK DOOR: the store envelope the hook reads (no caller budget, the
-  // store's own journal default), rendered by the real function.
-  const store = workingState;
-  const ctx = await store.getProjectContext(domain, project, whatIf ? { whatIf } : {});
-  const hook = ctx && ctx.ok === true ? utf8(await renderFramedContextMarkdown(ctx)) : 0;
-
-  // Every preset, same plan, one what-if run each — MCP bytes only.
-  const presets = [];
-  for (const [id, bytes] of PRESET_BYTES) {
-    const wi = { ...(whatIf || {}), ownerBudgetBytes: bytes };
-    const p = await run(wi);
-    presets.push({ id, bytes, mcpBytes: p && p.ok === true ? mcpSize(p) : null });
-  }
-
-  // "Not at start" documents are absent from the reply by design; their size
-  // comes from the index, with the what-if plan applied the same way.
-  const list = await store.listFoundations(domain, out.project);
-  const plan = whatIf && whatIf.startStates && typeof whatIf.startStates === 'object' ? whatIf.startStates : null;
-  const hiddenDocs = (list && list.ok !== false && Array.isArray(list.documents) ? list.documents : [])
-    .filter((d) => {
-      const st = plan && Object.prototype.hasOwnProperty.call(plan, d.slug) ? plan[d.slug] : d.atStart;
-      return st === 'not-at-start';
-    });
-
-  const sent = Array.isArray(f.documents) ? f.documents : [];
-  const rows = Array.isArray(f.index) ? f.index : [];
-  const sizeOf = new Map(rows.map((r) => [r.slug, Number.isInteger(r.bytes) ? r.bytes : 0]));
-  const sentSlugs = new Set(sent.map((d) => d.slug));
-  const omittedSlugs = Array.isArray(f.budget?.omitted) ? f.budget.omitted.filter((x) => typeof x === 'string') : [];
-  const omittedSet = new Set(omittedSlugs);
-  const readFirstSent = sent.filter((d) => d.readFirst === true);
-  const otherSent = sent.filter((d) => d.readFirst !== true);
-  const onRequest = rows.filter((r) => !sentSlugs.has(r.slug) && !omittedSet.has(r.slug));
-  const textBytes = (arr) => arr.reduce((n, d) => n + utf8(d.text || ''), 0);
-
-  const tiers = {
-    brief: { bytes: out.brief?.present ? utf8(out.brief.text || '') : 0, present: out.brief?.present === true, capBytes: SESSION_BRIEF_CAP },
-    handoff: { bytes: out.current?.present ? utf8(out.current.text || '') : 0, present: out.current?.present === true, capBytes: SESSION_HANDOFF_CAP },
-    journal: {
-      bytes: Array.isArray(out.journal?.entries) && out.journal.entries.length ? utf8(out.journal.entries) : 0,
-      lines: Array.isArray(out.journal?.entries) ? out.journal.entries.length : 0,
-    },
-    index: { bytes: rows.length ? utf8(rows) : 0, listed: rows.length, hiddenCount: Number.isInteger(f.hiddenCount) ? f.hiddenCount : 0 },
-    readFirst: {
-      bytes: textBytes(readFirstSent), count: readFirstSent.length,
-      budgetBytes: Number.isInteger(f.readFirstBudgetBytes) ? f.readFirstBudgetBytes : 0,
-      exceeded: f.readFirstBudgetExceeded === true,
-    },
-    otherText: { bytes: textBytes(otherSent), count: otherSent.length },
-    onRequest: { bytes: onRequest.reduce((n, r) => n + (sizeOf.get(r.slug) || 0), 0), count: onRequest.length },
-    omitted: { bytes: omittedSlugs.reduce((n, sl) => n + (sizeOf.get(sl) || 0), 0), count: omittedSlugs.length, slugs: omittedSlugs.slice(0, 200) },
-    hidden: { bytes: hiddenDocs.reduce((n, d) => n + (Number.isInteger(d.bytes) ? d.bytes : 0), 0), count: hiddenDocs.length },
-    domainPages: { domains: Array.isArray(out.knowledgeDomains) ? out.knowledgeDomains.slice(0, 12) : [], bytes: 0 },
-    framing: { bytes: 0 },
-  };
-  const counted = tiers.brief.bytes + tiers.handoff.bytes + tiers.journal.bytes + tiers.index.bytes
-    + tiers.readFirst.bytes + tiers.otherText.bytes;
-  // "Framing and structure": labels, the report, the authority note, the
-  // JSON keys and indentation — everything in the reply that is not a tier.
-  tiers.framing.bytes = Math.max(0, mcp - counted);
-
-  const b = f.budget || {};
-  const source = ['owner', 'default', 'whatif', 'caller'].includes(b.source) ? b.source : 'default';
-  const sentText = tiers.readFirst.bytes + tiers.otherText.bytes;
-  const planned = f.planned === true;
-  const notes = [];
-  if (out.readingBudgetError) notes.push(String(out.readingBudgetError).slice(0, 300));
-  if (f.manifestError) {
-    notes.push(f.manifestErrorCode === 'manifest-newer'   // v3.68.1
-      ? String(f.manifestError).slice(0, 300)
-      : `the foundations manifest could not be read: ${String(f.manifestError).slice(0, 200)}`);
-  }
-  if (typeof b.bounded === 'string') notes.push(b.bounded);
-  return {
-    ok: true, domain: out.domain, project: out.project,
-    budget: {
-      bytes: Number.isInteger(b.maxBytes) ? b.maxBytes : 0,
-      source, defaulted: source === 'default',
-      ownerBytes: Number.isInteger(out.readingBudgetBytes) ? out.readingBudgetBytes : null,
-      cap: READING_BUDGET_CAP, replyCapBytes: SESSION_REPLY_CAP,
-    },
-    planned,
-    presets,
-    tiers,
-    bytes: { mcp, hook },
-    costLine: { applies: !planned && (f.count || 0) > 0 && sentText > 32768, documentTextBytes: sentText },
-    notes,
-  };
-}
+export { sessionStartReport };
 
 async function sessionStartGate(req, res) {
   const { domain, project } = req.params;
@@ -2694,9 +2598,10 @@ router.patch('/:domain/:project/foundations/:slug', async (req, res) => {
       readFirstBytes: Number.isInteger(out.readFirstBytes) ? out.readFirstBytes : 0,
       readFirstBudgetBytes: Number.isInteger(out.readFirstBudgetBytes) ? out.readFirstBudgetBytes : 0,
       // A DISCLOSURE, NEVER A WALL, and measured against the BOOTSTRAP's
-      // 120 KB reading budget rather than the project's 200 KB: the flagged
-      // set is what one session is handed, so that is the figure a person
-      // flagging a fifth document needs to see.
+      // reading budget (the owner's, else the 120 KB default) rather than
+      // the project's stored-size figure: the flagged set is what one session
+      // is handed, so that is the figure a person flagging a fifth document
+      // needs to see.
       readFirstBudgetExceeded: out.readFirstBudgetExceeded === true,
       // v3.67.0, additive: the three-state reading of the same row, so a
       // view using either body can repaint from either reply.

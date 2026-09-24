@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
-import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState, getReleaseChannel, getReleaseRef, getBackgroundMode, setBackgroundMode, backgroundModeNames, getGithubReadTokenStatus, setGithubReadToken, clearGithubReadToken } from '../brain/config.js';
+import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState, getReleaseChannel, getReleaseRef, getBackgroundMode, setBackgroundMode, backgroundModeNames, getGithubReadTokenStatus, setGithubReadToken, clearGithubReadToken, getContextWindowSettings, setContextWindowSettings } from '../brain/config.js';
 // v3.65.2 — the GitHub read-only token's TEST route. The read client is the
 // one implementation of GET-only GitHub plumbing (v3.63.0); this route reuses
 // its token reader and its getRef rather than composing a second request.
@@ -650,6 +650,55 @@ router.post('/ui-state', (req, res) => {
     res.json({ ok: true, ui: state, refused });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── The context window and the harness estimate (v3.70.0) ──────────────────
+//
+// Two install-wide numbers the Context view's window meter and the menubar
+// widget are drawn against (src/brain/config.js's CONTEXT WINDOW block holds
+// the rules). NOT behind guardConcurrent, for the ui-state routes' reason:
+// nothing on any write path reads them, and a 409 while an ingest runs would
+// make the meter forget a choice the owner just made. The cross-origin guard
+// in server.js covers the PUT like every mutating request; the store's
+// allow-list of integers is what keeps any request string out of the file.
+const CONTEXT_WINDOW_STATUS = new Map([
+  ['unexpected_fields', 400], ['nothing_to_change', 400], ['invalid_context_window', 400],
+  ['invalid_harness_estimate', 400], ['harness_exceeds_window', 409], ['config_unreadable', 409],
+]);
+const CONTEXT_WINDOW_PROSE = {
+  unexpected_fields: 'This route accepts only `contextWindowTokens` and `harnessEstimateTokens`.',
+  nothing_to_change: 'Send `contextWindowTokens`, `harnessEstimateTokens`, or both.',
+  invalid_context_window: 'The window is a whole number of tokens from the allowed range (200K, 400K, 1M, or a custom size), or null for the default.',
+  invalid_harness_estimate: 'The harness estimate is a whole number of tokens from 0 up to the window, or null for Not set.',
+  harness_exceeds_window: 'The harness estimate is larger than that window. Lower or clear the estimate in the same change.',
+  config_unreadable: 'The settings file could not be read, so nothing was written to it.',
+};
+
+/** GET /api/config/context-window — {ok, settings}; every field always present. */
+router.get('/context-window', (_req, res) => {
+  try {
+    res.json({ ok: true, settings: getContextWindowSettings() });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/** PUT /api/config/context-window — body `{contextWindowTokens?, harnessEstimateTokens?}`. */
+router.put('/context-window', (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : null;
+    const out = setContextWindowSettings(body);
+    if (!out.ok) {
+      return res.status(CONTEXT_WINDOW_STATUS.get(out.reason) || 400).json({
+        ok: false, reason: out.reason, ...(out.field ? { field: out.field } : {}),
+        ...(out.fields ? { fields: out.fields } : {}),
+        error: CONTEXT_WINDOW_PROSE[out.reason] || 'Refused.', settings: out.settings,
+      });
+    }
+    res.json({ ok: true, settings: out.settings });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 

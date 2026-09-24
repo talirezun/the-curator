@@ -711,10 +711,14 @@ section('13. THE ROUTES — reading/budget, {atStart}, session-start and its pre
     r = await req('GET', '/alpha/alpha/session-start');
     const s = r.body;
     assert(r.status === 200 && s.ok === true, 'GET session-start answers');
-    eq(JSON.stringify(Object.keys(s).sort()), JSON.stringify(['ok', 'domain', 'project', 'budget', 'planned', 'presets', 'tiers', 'bytes', 'costLine', 'notes'].sort()), '…with exactly the contract\'s top-level keys');
+    // v3.70.0: ADDITIVE — every v3.67.0 key is still there, and the new ones
+    // are exactly the v3.70.0 contract's (P2: layers, onDemand, delivery,
+    // window, harness, tokens, presetsSummary, meter).
+    eq(JSON.stringify(Object.keys(s).sort()), JSON.stringify(['ok', 'domain', 'project', 'budget', 'planned', 'presets', 'tiers', 'bytes', 'costLine', 'notes',
+      'tokens', 'layers', 'onDemand', 'delivery', 'window', 'harness', 'presetsSummary', 'meter'].sort()), '…with exactly the contract\'s top-level keys (v3.67.0 + v3.70.0 additive)');
     assert(s.budget.bytes === 65536 && s.budget.source === 'owner' && s.budget.defaulted === false && s.budget.ownerBytes === 65536
-      && s.budget.cap === 204800 && s.budget.replyCapBytes === 307200, 'budget: bytes/source/defaulted/ownerBytes/cap/replyCapBytes', JSON.stringify(s.budget));
-    eq(JSON.stringify(s.presets.map((p) => [p.id, p.bytes])), JSON.stringify(WS.READING_BUDGET_PRESETS.map((p) => [p.id, p.bytes])), 'presets: all five, in order');
+      && s.budget.cap === WS.CONTEXT_MAX_BYTES_CAP && s.budget.replyCapBytes === 307200, 'budget: bytes/source/defaulted/ownerBytes/cap (the STORE\'s cap)/replyCapBytes', JSON.stringify(s.budget));
+    eq(JSON.stringify(s.presets.map((p) => [p.id, p.bytes])), JSON.stringify(WS.READING_BUDGET_PRESETS.map((p) => [p.id, p.bytes])), 'presets: all seven (the store\'s ladder), in order');
     assert(s.presets.every((p) => Number.isInteger(p.mcpBytes) && p.mcpBytes > 0), '…each with its measured MCP bytes');
     const real = await tools.getProjectContextHandler({ domain: 'alpha', project: 'alpha' }, storage);
     eq(s.bytes.mcp, Buffer.byteLength(JSON.stringify(real, null, 2)), 'bytes.mcp is EXACTLY the real handler\'s serialised reply');
@@ -729,7 +733,12 @@ section('13. THE ROUTES — reading/budget, {atStart}, session-start and its pre
     const sumT = s.tiers.brief.bytes + s.tiers.handoff.bytes + s.tiers.journal.bytes + s.tiers.index.bytes + s.tiers.readFirst.bytes + s.tiers.otherText.bytes + s.tiers.framing.bytes;
     eq(sumT, s.bytes.mcp, 'framing = bytes.mcp − Σ the sent tiers, so the parts add up to the whole');
     eq(s.costLine.applies, false, 'a planned project never gets the cost line');
-    assert(!/token/i.test(JSON.stringify(s)), 'no token figure anywhere on the wire');
+    // v3.70.0: tokens ride BESIDE bytes, and every one is the store's ONE
+    // estimator over its own bytes — never a second rounding. The v3.67.0
+    // fields themselves still carry no token figure.
+    assert(!/token/i.test(JSON.stringify({ tiers: s.tiers, bytes: s.bytes, costLine: s.costLine })), 'no token figure inside the v3.67.0 fields (tiers, bytes, costLine)');
+    assert(s.layers.every((l) => l.tokens === WS.estimateTokens(l.bytes)) && s.tokens.mcp === WS.estimateTokens(s.bytes.mcp) && s.budget.tokens === WS.estimateTokens(s.budget.bytes),
+      'every token figure on the wire is estimateTokens(bytes) of its own bytes');
     // The untouched case: the cost line applies.
     await WS.setReadingBudget('alpha', 'alpha', null);
     for (const sl of ['architecture.md', 'decisions.md', 'roadmap.md']) await WS.setFoundationStartState('alpha', 'alpha', sl, 'on-request');

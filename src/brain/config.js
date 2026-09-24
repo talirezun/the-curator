@@ -1534,3 +1534,126 @@ export function getEffectiveKey(provider) {
   }
   return null;
 }
+
+// ── THE CONTEXT WINDOW AND THE HARNESS ESTIMATE (v3.70.0) ───────────────────
+//
+// Two numbers the Context view's window meter (step ④) and the menubar widget
+// are drawn against. PER COMPUTER, in this file, by the maintainer's decision
+// (v3.70.0 D4): every browser and the widget read the one value, so the app
+// and the widget can never disagree about "of 1M". Not synced — this file
+// lives under getUserDataDir(), never under the domains folder.
+//
+//   contextWindowTokens    the agent's context window, in tokens. One of
+//                          CONTEXT_WINDOW_CHOICES, or a custom whole number in
+//                          [CONTEXT_WINDOW_MIN, CONTEXT_WINDOW_MAX]. Absent
+//                          reads as CONTEXT_WINDOW_DEFAULT (the view's
+//                          v3.67.0 default, 200K), with `contextWindowSet:
+//                          false` so a reader can tell a choice from a default.
+//   harnessEstimateTokens  the OWNER'S ESTIMATE of what the harness itself
+//                          uses (system prompt, tools, CLAUDE.md, skills) — a
+//                          number The Curator cannot measure. `null` is "Not
+//                          set" (the default), never 0; 0 is a real answer.
+//                          Bounded by the window. It is never added to any
+//                          measured figure — that is the view's rule and the
+//                          widget's, and this store keeps the two apart by
+//                          returning it under its own name.
+//
+// NEITHER IS A SECRET, but this file holds API keys, so the write is guarded
+// the way the GitHub token's is: a file that does not parse as a settings
+// object is REFUSED, never replaced — readRaw() returns {} on a bad parse and
+// writing that back would wipe every key in it. Values are allow-listed
+// integers, so no request string ever reaches the file.
+export const CONTEXT_WINDOW_CHOICES = Object.freeze([200000, 400000, 1000000]);
+export const CONTEXT_WINDOW_DEFAULT = 200000;
+export const CONTEXT_WINDOW_MIN = 8000;
+export const CONTEXT_WINDOW_MAX = 10000000;
+
+/** A usable window: an allowed choice, or a whole number within the bounds. */
+export function isValidContextWindow(v) {
+  return Number.isInteger(v) && v >= CONTEXT_WINDOW_MIN && v <= CONTEXT_WINDOW_MAX;
+}
+
+/** A usable harness estimate for a given window: null, or 0 … window. */
+export function isValidHarnessEstimate(v, windowTokens) {
+  if (v === null) return true;
+  return Number.isInteger(v) && v >= 0 && v <= windowTokens;
+}
+
+/**
+ * The two values as the app and the widget read them. Never throws; anything
+ * unusable on disk reads as its default (window) or Not set (harness), and
+ * `windowSet`/`harnessSet` say which.
+ */
+export function getContextWindowSettings() {
+  let cfg = {};
+  try { cfg = readRaw() || {}; } catch { cfg = {}; }
+  const w = cfg.contextWindowTokens;
+  const windowSet = isValidContextWindow(w);
+  const contextWindowTokens = windowSet ? w : CONTEXT_WINDOW_DEFAULT;
+  const h = cfg.harnessEstimateTokens;
+  const harnessSet = Number.isInteger(h) && isValidHarnessEstimate(h, contextWindowTokens);
+  return {
+    contextWindowTokens,
+    contextWindowSet: windowSet,
+    contextWindowCustom: !CONTEXT_WINDOW_CHOICES.includes(contextWindowTokens),
+    harnessEstimateTokens: harnessSet ? h : null,
+    choices: [...CONTEXT_WINDOW_CHOICES],
+    min: CONTEXT_WINDOW_MIN,
+    max: CONTEXT_WINDOW_MAX,
+  };
+}
+
+/**
+ * Record either or both. `patch` is `{contextWindowTokens?, harnessEstimateTokens?}`
+ * and nothing else. Returns `{ok: true, settings}` or `{ok: false, reason,
+ * field?, settings}` — the settings still in force ride on a refusal too.
+ *
+ * Reasons: `unexpected_fields`, `nothing_to_change`, `invalid_context_window`,
+ * `invalid_harness_estimate` (outside 0 … window, or not a whole number),
+ * `harness_exceeds_window` (the window was lowered below a stored estimate
+ * the same patch did not also change — refused rather than silently clearing
+ * the owner's number), `config_unreadable`.
+ *
+ * `contextWindowTokens: null` goes back to the default; `harnessEstimateTokens:
+ * null` is Not set.
+ */
+export function setContextWindowSettings(patch) {
+  const p = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : null;
+  const current = getContextWindowSettings();
+  if (!p) return { ok: false, reason: 'nothing_to_change', settings: current };
+  const extra = Object.keys(p).filter((k) => k !== 'contextWindowTokens' && k !== 'harnessEstimateTokens');
+  if (extra.length) return { ok: false, reason: 'unexpected_fields', fields: extra.slice(0, 10), settings: current };
+  const hasW = Object.hasOwn(p, 'contextWindowTokens');
+  const hasH = Object.hasOwn(p, 'harnessEstimateTokens');
+  if (!hasW && !hasH) return { ok: false, reason: 'nothing_to_change', settings: current };
+  if (hasW && p.contextWindowTokens !== null && !isValidContextWindow(p.contextWindowTokens)) {
+    return { ok: false, reason: 'invalid_context_window', field: 'contextWindowTokens', settings: current };
+  }
+  const nextW = hasW ? (p.contextWindowTokens === null ? CONTEXT_WINDOW_DEFAULT : p.contextWindowTokens) : current.contextWindowTokens;
+  const nextH = hasH ? p.harnessEstimateTokens : current.harnessEstimateTokens;
+  if (hasH && !isValidHarnessEstimate(nextH, nextW)) {
+    return { ok: false, reason: 'invalid_harness_estimate', field: 'harnessEstimateTokens', settings: current };
+  }
+  if (!hasH && !isValidHarnessEstimate(nextH, nextW)) {
+    return { ok: false, reason: 'harness_exceeds_window', field: 'contextWindowTokens', settings: current };
+  }
+  // THE GUARDED READ: never write back a file this process could not parse.
+  const f = configFile();
+  let cfg = {};
+  if (existsSync(f)) {
+    try { cfg = JSON.parse(readFileSync(f, 'utf8')); } catch { cfg = null; }
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
+      return { ok: false, reason: 'config_unreadable', settings: current };
+    }
+  }
+  if (hasW) {
+    if (p.contextWindowTokens === null) delete cfg.contextWindowTokens;
+    else cfg.contextWindowTokens = p.contextWindowTokens;
+  }
+  if (hasH) {
+    if (p.harnessEstimateTokens === null) delete cfg.harnessEstimateTokens;
+    else cfg.harnessEstimateTokens = p.harnessEstimateTokens;
+  }
+  writeRaw(cfg);
+  return { ok: true, settings: getContextWindowSettings() };
+}
