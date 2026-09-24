@@ -1,0 +1,106 @@
+/* shared/toast.css — the ONE "message that results from an action" (v3.67.2).
+   Rendered by shared/toast.js; owns the whole `cur-toast` prefix.
+
+   THE LOOK IS `.tx-status`'s, ON PURPOSE. The maintainer liked the in-flow
+   "Agent instructions copied" card — a raised, bordered box whose 3px left
+   rail carries the tone — and asked for it to go away on its own, not to look
+   different. So the toast is that card, lifted out of the flow into a fixed
+   stack at the bottom-right, with a shadow because it now floats.
+
+   Every colour is an existing token (scripts/test-css-tokens.js fails on an
+   undefined `var(--x)`); there is no `--text-dim` in this app — `--text-2` is
+   "dim but readable". */
+
+.cur-toast-region {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  /* Above the listbox menus (60) and the view's own sticky bars; BELOW the
+     modal sheets' scrims (200+), which are the one thing that may cover it. */
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: min(440px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+/* An empty region takes no space and catches no clicks. */
+.cur-toast-region:empty { display: none; }
+
+.cur-toast {
+  --cur-toast-rail: var(--border-strong);
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 10px 12px 14px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--cur-toast-rail);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  box-sizing: border-box;
+  min-width: 0;
+  animation: curator-panel-in var(--dur-mid) var(--ease-out);
+}
+
+.cur-toast-success   { --cur-toast-rail: var(--success-text); }
+.cur-toast-neutral   { --cur-toast-rail: var(--border-strong); }
+.cur-toast-attention { --cur-toast-rail: var(--attention-text); }
+
+.cur-toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.cur-toast-title {
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+  color: var(--text);
+}
+
+.cur-toast-line {
+  font: var(--type-body-sm);
+  letter-spacing: var(--track-body);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.cur-toast-close {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin: -2px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: 1;
+  /* The house rule (scripts/test-next-views-kit.js §5): no pointing hand on
+     a control in this app, and chrome does not drag-select. */
+  cursor: default;
+  user-select: none;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.cur-toast-close:hover,
+.cur-toast-close:focus-visible { background: var(--surface-inset); color: var(--text); }
+/* The focus RING is tokens/base.css's global one; this is the fill under it. */
+
+/* Reduced motion: the arrival is a pure flourish, so it is switched off
+   outright — the second layer over tokens/motion.css's zeroed `--dur-*`, in
+   the shape scripts/test-next-reduced-motion.js recognises. */
+@media (prefers-reduced-motion: reduce) {
+  .cur-toast { animation: none; }
+  .cur-toast-close { transition: none; }
+}

@@ -257,6 +257,15 @@
      from this file's <link> tags. -->
 <link rel="stylesheet" href="/next/shared/ai-run.css">
 
+<!-- shared/toast.css — the ONE "message that results from an action" (v3.67.2):
+     a confirmation, clarification or short instruction that disappears on its
+     own after 30 s (paused while hovered or focused). Rendered by
+     shared/toast.js from any view, so its rules can live in none of their
+     stylesheets. Owns the whole `cur-toast` prefix. Linked here because
+     scripts/test-css-tokens.js §5 discovers /next stylesheets only from this
+     file's <link> tags. -->
+<link rel="stylesheet" href="/next/shared/toast.css">
+
 <!-- One CSS file per view (views/README.md) — linked here so the views/
      directory never has to touch this file to add view-specific styling.
      All seven exist even where a view currently has no rules of its own,

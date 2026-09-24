@@ -735,6 +735,52 @@ function safeActions(html) {
   return PROSE_IN_ACTIONS.test(h) ? null : h;
 }
 
+/**
+ * ── AN OPEN ⓘ SURVIVES A RE-RENDER (v3.67.2) ──────────────────────────────
+ *
+ * The panel's open state lives ONLY in the DOM (`hidden` + `aria-expanded`),
+ * so a view that re-renders by innerHTML closes it. memory.js, domains.js,
+ * settings.js and chat.js each grew their own capture/restore around their
+ * render; views/ingest.js had none, and its activity poll shut an open panel
+ * whenever a job moved. These two are that pattern, once, for any view.
+ *
+ * RESTORE ONLY EVER OPENS, and it opens BOTH halves (the panel and the
+ * button's `aria-expanded`), for the reason memory.js's render states: the
+ * delegated listener reads `aria-expanded` to decide what the next click
+ * does. It does NOT stamp `data-tx-entering`, so a restored panel does not
+ * replay its entrance — see shared/text.css.
+ *
+ * @param {Document|Element} [root] where to look; defaults to `document`
+ * @returns {string[]} the panel ids that are open now
+ */
+export function captureOpenInfoPanels(root) {
+  const r = root || (typeof document !== 'undefined' ? document : null);
+  if (!r || typeof r.querySelectorAll !== 'function') return [];
+  return Array.prototype.slice
+    .call(r.querySelectorAll('[data-tx-info][aria-expanded="true"]'))
+    .map((btn) => btn.getAttribute('data-tx-info'))
+    .filter(Boolean);
+}
+
+/**
+ * @param {string[]} ids from `captureOpenInfoPanels`
+ * @param {Document} [doc] defaults to `document`
+ */
+export function restoreOpenInfoPanels(ids, doc) {
+  const d = doc || (typeof document !== 'undefined' ? document : null);
+  if (!ids || !ids.length || !d || typeof d.querySelectorAll !== 'function') return;
+  const marks = d.querySelectorAll('[data-tx-info]');
+  for (let i = 0; i < marks.length; i++) {
+    const btn = marks[i];
+    const id = btn.getAttribute('data-tx-info');
+    if (!id || ids.indexOf(id) === -1) continue;
+    const panel = d.getElementById(id);
+    if (!panel) continue;
+    panel.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+  }
+}
+
 // ── The info affordance's behaviour: ONE delegated listener, installed once ──
 //
 // Guarded on `typeof document` so importing this module in Node — which every
@@ -749,7 +795,7 @@ function wireInfoToggles() {
 
   const close = (btn) => {
     const panel = panelFor(btn);
-    if (panel) panel.hidden = true;
+    if (panel) { panel.hidden = true; panel.removeAttribute('data-tx-entering'); }
     btn.setAttribute('aria-expanded', 'false');
   };
 
@@ -765,6 +811,13 @@ function wireInfoToggles() {
       // Only one at a time, so a second header's panel cannot leave the first
       // one open off-screen.
       openPanels().forEach((b) => { if (b !== btn) close(b); });
+      // THE ENTRANCE BELONGS TO THE PRESS (v3.67.2). Only a panel opened HERE
+      // carries `data-tx-entering`, and only that attribute animates
+      // (shared/text.css). A re-render that restores an open panel emits a
+      // fresh element without it, so the panel stays put instead of fading
+      // out and back in on every repaint — the "blink" on Context.
+      if (willOpen) panel.setAttribute('data-tx-entering', '');
+      else panel.removeAttribute('data-tx-entering');
       panel.hidden = !willOpen;
       btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
       return;

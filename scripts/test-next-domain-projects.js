@@ -229,8 +229,12 @@ const navigator = { clipboard: { writeText: async (t) => {
 // The REAL shared helper, injected rather than stubbed: this suite's marker
 // assertions must keep passing against the same function the browser runs, and
 // a stub here would let a broken import in the view pass unnoticed.
-const { composeAgentInstructions, COPY_SUCCESS_BANNER } =
+const { composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER, COPY_SUCCESS_TITLE, COPY_SUCCESS_LINES } =
   await import('../src/public/next/shared/agent-instructions.js');
+// v3.67.2: a successful copy raises a TOAST (shared/toast.js) rather than
+// recording an in-flow outcome. A spy stands in for `showToast` so S7 can
+// assert WHAT the user is told, from the shipped call.
+const toasts = [];
 // ── THE OWNERSHIP CHOOSER, THE REAL ONE (v3.61.0) ─────────────────────────
 // shared/foundations-init.js takes NO imports (the same contract shared/text.js
 // carries), so the real module runs in Node and is imported rather than
@@ -260,7 +264,8 @@ const navigations = [];
 let sandbox;
 try {
   sandbox = new Function(
-    'composeAgentInstructions', 'COPY_SUCCESS_BANNER',
+    'composeAgentInstructions', 'composeAgentInstructionsFull', 'COPY_SUCCESS_BANNER', 'COPY_SUCCESS_TITLE', 'COPY_SUCCESS_LINES',
+    'showToast',
     'freshChooser', 'chooserBody', 'chooserOutcomeWords', 'renderFoundationsChooser',
     'bindFoundationsChooser', 'renderRefusedList', 'SKELETON_SLUGS', 'pickedFiles',
     // ── THE HANDOFF INTO AGENT MEMORY (v3.61.0, P1-10) ──────────────────
@@ -312,7 +317,8 @@ try {
        __setRenderImpl: (fn) => { renderImpl = fn; },
        __setClipboard: (v) => { clipboardOk = v; },
        __setMounted: (v) => { mounted = v; } };`
-  )(composeAgentInstructions, COPY_SUCCESS_BANNER,
+  )(composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER, COPY_SUCCESS_TITLE, COPY_SUCCESS_LINES,
+    (o) => { toasts.push(o); return o && o.key; },
     freshChooser, chooserBody, chooserOutcomeWords, renderFoundationsChooser,
     bindFoundationsChooser, renderRefusedList, SKELETON_SLUGS, pickedFiles,
     (d, p2) => { handoff.push([d, p2]); },
@@ -1474,11 +1480,31 @@ section('S7 -- The .curator-project marker line');
   __setState(freshState());
   __reset();
   __setClipboard(true);
+  toasts.length = 0;
   await copyProjectMarker('lumina');
   eq('the copied line is exactly domain/project', __calls().clipboard[0], 'alpha/lumina');
-  eq('...and the outcome is recorded', __state().copied.ok, true);
+  // v3.67.2: the confirmation is a TOAST that goes away on its own, not an
+  // in-flow record that stood until the domain changed.
+  eq('...and a success records NO in-flow outcome', __state().copied, null);
+  ok('...it raises one toast instead', toasts.length === 1, JSON.stringify(toasts));
+  ok('the confirmation names the file it goes in',
+    (toasts[0].lines || []).join(' ').includes('.curator-project'), JSON.stringify(toasts[0]));
   const panel = renderProjectsPanel(false);
-  ok('the confirmation names the file it goes in', panel.includes('.curator-project'));
+  ok('...and the panel carries no permanent copy of it', !panel.includes('Marker line copied'));
+}
+{
+  __setState(freshState());
+  __reset();
+  __setClipboard(true);
+  toasts.length = 0;
+  await copyProjectAgentInstructions('lumina');
+  eq('the agent block copy raises the shared confirmation toast',
+    toasts.length === 1 && toasts[0].title, COPY_SUCCESS_TITLE);
+  ok('...whose lines say WHERE — at the very top — and WHICH file per harness',
+    /very top/.test((toasts[0].lines || [])[0] || '') && /Claude Code/.test((toasts[0].lines || [])[1] || ''),
+    JSON.stringify(toasts[0]));
+  eq('...under the same key the Context view uses, so a repeat press re-shows ONE toast',
+    toasts[0].key, 'copy-agent-instructions');
 }
 {
   // A REFUSED CLIPBOARD PRINTS THE LINE. navigator.clipboard is unavailable on
@@ -1487,8 +1513,10 @@ section('S7 -- The .curator-project marker line');
   __setState(freshState());
   __reset();
   __setClipboard(false);
+  toasts.length = 0;
   await copyProjectMarker('lumina');
   eq('a refusal is recorded as a failure', __state().copied.ok, false);
+  eq('...and raises NO toast — a refusal stays on the page with the text', toasts.length, 0);
   eq('...and keeps the line', __state().copied.text, 'alpha/lumina');
   const panel = renderProjectsPanel(false);
   ok('...which is shown, so the user can type it', panel.includes('alpha/lumina'));

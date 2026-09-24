@@ -103,16 +103,35 @@ export function composeAgentInstructions(args) {
 }
 
 /**
- * The one-sentence banner shown after a successful copy. Exported so the two
- * views cannot drift apart on it, and so the suite asserts the shipped wording
- * rather than a copy of it.
+ * The confirmation shown after a successful copy — a TITLE and TWO short
+ * lines, rendered as a toast (shared/toast.js) that goes away on its own.
+ * Exported so the two views cannot drift apart on it, and so the suites assert
+ * the shipped wording rather than a copy of it.
  *
- * It names four files rather than one because the whole point of the block is
- * that it is harness-neutral: Claude Code reads CLAUDE.md, Codex and opencode
- * read AGENTS.md, Gemini CLI reads GEMINI.md, Cursor reads .cursor/rules.
+ * v3.67.2 — the maintainer's finding was that the old one-line banner said
+ * WHICH files but not WHERE in them, nor which file belongs to which harness.
+ * Both are now said, and both are true of the block itself:
+ *
+ *   · AT THE VERY TOP. The block is the instruction an agent must act on
+ *     before anything else in the file ("At the START of every session…"),
+ *     and entry files are read top-down and CAPPED — Codex reads AGENTS.md
+ *     only up to 32,768 bytes and truncates the rest silently, Windsurf caps
+ *     rule files by characters (docs/working-state.md, "Where it goes"). The
+ *     block is ~2 KB; at the top it is always inside any cap, at the bottom of
+ *     a long file it can be the part that is cut.
+ *   · ONE FILE PER HARNESS, from the same table: Claude Code auto-loads
+ *     CLAUDE.md; Codex, opencode and Zed read AGENTS.md ("Codex and others");
+ *     Gemini CLI reads GEMINI.md; Cursor reads rule files in .cursor/rules.
+ *
+ * `COPY_SUCCESS_BANNER` is kept as the two lines joined, for every caller and
+ * suite that reads the sentence as one string.
  */
-export const COPY_SUCCESS_BANNER =
-  'Agent instructions copied — paste into CLAUDE.md, AGENTS.md, GEMINI.md or your Cursor rules';
+export const COPY_SUCCESS_TITLE = 'Agent instructions copied';
+export const COPY_SUCCESS_LINES = [
+  'Paste it at the very top of the file your agent loads every session, so it is read first and no size cap cuts it off.',
+  'CLAUDE.md for Claude Code · AGENTS.md for Codex and others · GEMINI.md for Gemini CLI · a rule file in .cursor/rules for Cursor.',
+];
+export const COPY_SUCCESS_BANNER = COPY_SUCCESS_LINES.join(' ');
 
 // ── v3.59.0: the foundations tier gets a SECOND, separately pinned paragraph ─
 //

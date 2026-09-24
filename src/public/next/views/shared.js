@@ -177,6 +177,7 @@ import { openSharedBrainWizard, closeSharedBrainWizardIfOpen, isSharedBrainWizar
 // rule test-next-confirm-dialog enforces). Used by the shown-once admin
 // token's leave guard, below.
 import { confirmThen } from '../shared/confirm.js';
+import { showToast } from '../shared/toast.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 // The ONE text system in /next (shared/text.js). The view header owns the
 // eyebrow, the title and the info mark; it has NO parameter that renders a
@@ -2724,6 +2725,20 @@ async function onRotateAdminToken(token, connId) {
   }
 }
 
+// ── A COPY CONFIRMATION IS A TOAST (v3.67.2) ──────────────────────────────
+// The one app-wide pattern for a message that results from an action
+// (shared/toast.js). The token itself stays on the card, exactly as before;
+// only the sentence confirming the copy moves, so it goes away on its own
+// instead of standing on the card until the next action. A FAILED copy still
+// writes `card.message` — it tells the user to select the token by hand, and
+// that instruction must stay beside the token for as long as they need it.
+function copiedToast(token, card, key, title, line) {
+  card.message = null;
+  card.error = false;
+  showToast({ key, tone: 'success', title, lines: [line] });
+  if (isCurrentMount(token)) render(token);
+}
+
 // Copy must never be able to lose the token: the value is read from card
 // state (not the DOM), and neither the success nor the failure path clears
 // card.shownAdminToken or re-renders the box away. A failed clipboard write
@@ -2740,7 +2755,8 @@ function copyShownAdminToken(token, connId) {
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(value).then(
-        () => done('Admin token copied to the clipboard. It is still shown below until you press Hide.', false),
+        () => copiedToast(token, card, 'copy-admin-token', 'Admin token copied',
+          'It is still shown below until you press Hide.'),
         () => done('Could not copy automatically — select the token below and copy it by hand.', true)
       );
       return;
@@ -2845,7 +2861,8 @@ function copyInviteToken(token, connId) {
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(value).then(
-        () => done('Invite token copied to the clipboard.', false),
+        () => copiedToast(token, card, 'copy-invite-token', 'Invite token copied',
+          'Send it to the person you are inviting.'),
         () => done('Could not copy automatically — select the invite token below and copy it by hand.', true)
       );
       return;

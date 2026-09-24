@@ -1305,6 +1305,10 @@ function makeRenderers(stateObj) {
     extractFunction(viewSrc, 'foundationsFacts', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationsWord', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationsControlOffer', 'memory.js') + '\n' +
+    // v3.67.2: a GitHub mirror is told apart from a missing folder, and the
+    // reason a withheld control or an unchecked row gives is composed once.
+    extractFunction(viewSrc, 'foundationsRemoteSource', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'foundationsUncheckedWhy', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationsOwnershipWord', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationsSummaryMeta', 'memory.js') + '\n' +
     // The store's session budget, off LIVE SOURCE. `foundationsFacts` falls
@@ -1463,6 +1467,7 @@ function makeRenderers(stateObj) {
     'return { renderWorkStreams, workStreamCounts, newerOnAnotherMachine, workStreamOrder, ' +
     'wsShownCount, wsMoreHtml, wsRowHtml, handoffReaderContent, ' +
     'foundationsFacts, foundationsWord, foundationsControlOffer, foundationsDraftAsk, '
+    + 'foundationsRemoteSource, foundationsUncheckedWhy, '
     + 'foundationsOwnershipWord, foundationsSummaryMeta, foundationsBudgetWarning, ' +
     'fndSize, skeletonOf, fndRowHtml, ' +
     'renderFoundations, foundationsNotices, foundationReaderContent, foundationsMonitor, ' +
@@ -8714,14 +8719,13 @@ const fndRead = (payload) => ({
     st.copied = { domain: 'acme', project: 'lumina', ok: true, text: 'THE TEXT', ...over };
     return F.renderCopyOutcome();
   };
-  ok('the DRAFTING request\u2019s success names itself',
-    /Drafting request copied/.test(out({ kind: 'draft' })), out({ kind: 'draft' }));
-  ok('...and says where it goes, which is a CHAT, not a file',
-    /any assistant with the my-curator bridge/.test(out({ kind: 'draft' })));
-  ok('an ABSENT kind is the header\u2019s control — the pre-v3.61.0 record shape, '
-    + 'unchanged', /Agent instructions copied/.test(out({})), out({}));
-  ok('...and the two successes are different sentences',
-    out({ kind: 'draft' }) !== out({}));
+  // v3.67.2: A SUCCESS IS A TOAST (shared/toast.js), raised by the copy
+  // itself — the two successes are told apart by their toast's own title and
+  // key (test-next-foundations-editor.js and test-agent-instructions.js drive
+  // both). What is asserted HERE is that the page paints NOTHING permanent
+  // for either: the in-flow card "never went away", which was the finding.
+  eq('a DRAFTING success paints nothing in flow — it is a toast', out({ kind: 'draft' }), '');
+  eq('...nor does the header control\u2019s success', out({}), '');
   // ── A REFUSAL HANDS THE TEXT OVER (never a button that silently did
   //    nothing) ─────────────────────────────────────────────────────────
   const refused = out({ kind: 'draft', ok: false });
@@ -8738,6 +8742,89 @@ const fndRead = (payload) => ({
   st.copied = { domain: 'acme', project: 'OTHER', ok: true, text: 'x', kind: 'draft' };
   eq('an outcome stamped with a different project is withheld entirely',
     F.renderCopyOutcome(), '');
+}
+
+// ── §21v — v3.67.2: "source not here" is a STATE on the row, its reason a
+//    TOAST on the press — and a GitHub mirror is not a missing folder ──────
+//
+// Two maintainer findings on one screen. (1) The "folder … is not on this
+// computer" sentence floated permanently under the table; the row word stays
+// as the persistent indicator and the sentence arrives when it is asked for.
+// (2) On his own project the sentence was FALSE: the documents came over the
+// GitHub arm, which records no local folder (`repo.root: null`) — so every row
+// read "unreachable" on the very machine that holds the checkout.
+{
+  const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: { foundations: true } });
+  const GH = { repo: { root: null, remote: { owner: 'talirezun', repo: 'the-curator', ref: null, path: null },
+    lastRefreshAt: '2026-09-24T06:34:07.388Z', lastRefreshCommit: 'f796b6d6be2e1acc' } };
+  const unreach = [fndDoc({ freshness: 'unreachable' }), fndDoc({ slug: 'b.md', freshness: 'unreachable' })];
+
+  // ── (1) A FOLDER THAT REALLY IS MISSING ────────────────────────────────
+  const missing = F.renderFoundations(fndRead(fndPayload(unreach)));
+  ok('a missing folder paints NO permanent "not on this computer" note under the table',
+    !/not on this computer/.test(missing), (missing.match(/tx-note[\s\S]{0,200}/) || [''])[0]);
+  ok('...its STATE stays on every row, as the persistent indicator',
+    (missing.match(/>source not here</g) || []).length === 2, missing.slice(0, 300));
+  ok('...and each row word is a button that answers "why?"',
+    (missing.match(/<button[^>]*data-fnd-why="/g) || []).length === 2);
+  ok('the two folder controls it withholds stay in the head row, DISABLED (aria-disabled, so a press still answers)',
+    /id="mem-fnd-refresh-blocked"[^>]*aria-disabled="true"[^>]*data-fnd-blocked/.test(missing)
+    && /id="mem-fnd-addrepo-blocked"[^>]*aria-disabled="true"/.test(missing));
+  ok('CONTROL: they are not the working controls, whose ids the refresh binder listens on',
+    !/id="mem-fnd-refresh"/.test(missing) && !/id="mem-fnd-addrepo"/.test(missing));
+  ok('...and the GitHub switch is still offered there', /id="mem-fnd-mirror"/.test(missing));
+  const whyMissing = F.foundationsUncheckedWhy(F.foundationsFacts(fndRead(fndPayload(unreach))));
+  ok('the reason the press shows is the one the maintainer read, truthfully here',
+    /not on this computer/.test(whyMissing.title) && /Mirror it from GitHub/.test(whyMissing.lines.join(' ')),
+    JSON.stringify(whyMissing));
+  ok('...in a title and AT MOST two lines', whyMissing.lines.length <= 2);
+
+  // ── (2) A GITHUB MIRROR, NO FOLDER RECORDED ────────────────────────────
+  const gh = F.renderFoundations(fndRead(fndPayload(unreach, GH)));
+  ok('a GitHub mirror NEVER says "not on this computer" — no folder was its source',
+    !/not on this computer/.test(gh) && !/source not here/.test(gh), gh.slice(0, 400));
+  ok('...its rows say what is true: GitHub, not checked',
+    (gh.match(/>GitHub · not checked</g) || []).length === 2);
+  ok('...it is offered the refresh that works — over GitHub, the store\u2019s auto arm',
+    /id="mem-fnd-refresh"[^>]*>Refresh from GitHub</.test(gh));
+  ok('...and NOT "Mirror from GitHub instead", which would offer the source it already has',
+    !/id="mem-fnd-mirror"/.test(gh));
+  ok('...and no disabled folder controls, because nothing is withheld',
+    !/data-fnd-blocked/.test(gh));
+  const whyGh = F.foundationsUncheckedWhy(F.foundationsFacts(fndRead(fndPayload(unreach, GH))));
+  ok('its "why?" names the repository and says freshness is checked on refresh',
+    /talirezun\/the-curator/.test(whyGh.title) && /not checked on a read/.test(whyGh.lines[0]),
+    JSON.stringify(whyGh));
+  ok('...and never claims a folder is missing', !/not on this computer/.test(JSON.stringify(whyGh)));
+
+  eq('...and the summary/overview word agrees with the rows',
+    F.foundationsWord(F.foundationsFacts(fndRead(fndPayload(unreach, GH)))), 'GitHub · not checked');
+  eq('CONTROL: a missing folder keeps "source unreachable"',
+    F.foundationsWord(F.foundationsFacts(fndRead(fndPayload(unreach)))), 'source unreachable');
+
+  // ── (3) THE SPLIT IS ON `root`, NOT ON `remote` ALONE ──────────────────
+  // A LOCAL refresh records BOTH a root and the remote it inferred
+  // (working-state.js refreshCore). When that recorded folder is gone the old
+  // sentence is TRUE, and must stay.
+  const both = { repo: { root: '/gone/repo', remote: GH.repo.remote } };
+  eq('a recorded root that is missing is still "not on this computer", remote or not',
+    F.foundationsRemoteSource(both.repo), null);
+  ok('...so that block keeps the folder wording',
+    />source not here</.test(F.renderFoundations(fndRead(fndPayload(unreach, both)))));
+  eq('a remote with no owner is not a GitHub source', F.foundationsRemoteSource(
+    { root: null, remote: { owner: '', repo: 'x' } }), null);
+
+  // ── (4) THE READER SAYS THE SAME THING THE TABLE DOES ──────────────────
+  const doc = { slug: 'architecture.md', title: 'Architecture', text: 'x', updatedAt: '2026-09-17T09:00:00.000Z',
+    source: { kind: 'repo', path: 'docs/architecture.md' }, freshness: 'unreachable' };
+  const rGh = F.foundationReaderContent(doc, 'lumina', F.foundationsRemoteSource(GH.repo));
+  ok('the reader of a GitHub mirror says GitHub, never "not on this computer"',
+    /Mirrored from GitHub \(talirezun\/the-curator\)/.test(rGh.bodyHtml)
+    && !/not on this computer/.test(rGh.bodyHtml + rGh.tags.join('|')), rGh.tags.join('|'));
+  ok('...and its read-only note points at the repository', /GitHub/.test(rGh.readonlyNote));
+  const rMissing = F.foundationReaderContent(doc, 'lumina', null);
+  ok('CONTROL: a missing folder\u2019s reader keeps the folder sentence',
+    /not on this computer/.test(rMissing.bodyHtml));
 }
 
 // ── §21e — the control's three states, painted ──────────────────────────
@@ -10568,6 +10655,11 @@ function realListbox() {
     // missing with this section fully green.
     extractFunction(viewSrc, 'skeletonOf', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationReaderContent', 'memory.js') + '\n' +
+    // v3.67.2: `openFoundation` asks whether the mirror is read from GitHub
+    // (so the reader does not say "not on this computer" of a GitHub mirror),
+    // and the binder answers an unchecked row's "why?" — both pure, LIFTED.
+    extractFunction(viewSrc, 'foundationsRemoteSource', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'foundationsUncheckedWhy', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'openFoundation', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'bindFoundationRows', 'memory.js') + '\n'
     + '\nreturn { bindFoundationRows };')(
@@ -11748,6 +11840,10 @@ const TOP_LEVEL_FNS = [...viewNoComments.matchAll(/^(?:export\s+)?(?:async\s+)?f
 // Executed somewhere above, with real assertions over what they returned/did.
 const EXECUTED = new Set([
   'formatAge', 'projectMetaLine', 'splitHandoffPreamble',
+  // v3.67.2: the GitHub-mirror test and its "why?" sentence, lifted by §6's
+  // makeRenderers and by the row-press section, and driven in
+  // scripts/test-toast.js (both cases: a GitHub mirror and a missing folder).
+  'foundationsRemoteSource', 'foundationsUncheckedWhy',
   // The freshness surface (v3.31.0). All six are lifted from live source by
   // §6's makeRenderers and reached through renderProject, which §6/§14 execute;
   // effectiveSave is additionally lifted into §5 and §11.

@@ -2045,7 +2045,9 @@ section('§10 — "COPY THE DRAFTING REQUEST", DRIVEN (v3.61.0, P2-8)');
 {
   const { composeDraftingAsk } = await import('../src/public/next/shared/agent-instructions.js');
   const rig = (clipboardOk, docs, over) => {
-    const calls = { render: 0, clipboard: [] };
+    // v3.67.2: `toasts` spies shared/toast.js's `showToast` — a success is a
+    // toast now, never an in-flow record.
+    const calls = { render: 0, clipboard: [], toasts: [] };
     const st = {
       activeDomain: 'acme', activeProject: 'lumina', copied: null,
       projectRead: { scopes: [], brief: { present: false }, foundations: {
@@ -2063,7 +2065,7 @@ section('§10 — "COPY THE DRAFTING REQUEST", DRIVEN (v3.61.0, P2-8)');
       // it is the fallback the facts use when the server sends no
       // `readFirstBudgetBytes`, and an undefined identifier there is a CRASH
       // rather than a failing assertion.
-      'composeDraftingAsk', 'FOUNDATIONS_BUDGET_BYTES', 'READ_FIRST_BUDGET_BYTES', body)(
+      'composeDraftingAsk', 'FOUNDATIONS_BUDGET_BYTES', 'READ_FIRST_BUDGET_BYTES', 'showToast', body)(
       st,
       () => { calls.render++; },
       () => true,
@@ -2071,7 +2073,8 @@ section('§10 — "COPY THE DRAFTING REQUEST", DRIVEN (v3.61.0, P2-8)');
         if (!clipboardOk) throw new Error('denied');
         calls.clipboard.push(t);
       } } },
-      composeDraftingAsk, FI.FOUNDATIONS_BUDGET_BYTES, READ_FIRST_BUDGET_SRC);
+      composeDraftingAsk, FI.FOUNDATIONS_BUDGET_BYTES, READ_FIRST_BUDGET_SRC,
+      (o) => { calls.toasts.push(o); return o && o.key; });
     return { api, st, calls };
   };
   const skel = (slug, role) => ({ slug, role, title: role, bytes: 100, skeleton: true,
@@ -2103,14 +2106,15 @@ section('§10 — "COPY THE DRAFTING REQUEST", DRIVEN (v3.61.0, P2-8)');
       && !/conventions/.test(calls.clipboard[0]), calls.clipboard[0]);
     ok('...and the tool, so an agent knows what to call', /save_foundation/.test(calls.clipboard[0]));
     ok('...and the approval gate', /Show me each document before saving/.test(calls.clipboard[0]));
-    // STAMPED with the pair it was pressed on, and with the KIND, so the
-    // confirmation cannot describe the other copy control's text.
-    eq('the outcome is stamped with the domain', st.copied.domain, 'acme');
-    eq('...and the project', st.copied.project, 'lumina');
-    eq('...and the KIND, so one confirmation cannot describe two different texts',
-      st.copied.kind, 'draft');
-    eq('...and records that it worked', st.copied.ok, true);
-    ok('...and the page repainted to show it', calls.render >= 1);
+    // v3.67.2: A SUCCESS IS A TOAST, under its OWN key and title, so the
+    // confirmation cannot describe the other copy control's text — the job
+    // the `kind` stamp did while the confirmation was an in-flow record.
+    eq('a success records NO in-flow outcome', st.copied, null);
+    eq('...it raises one toast', calls.toasts.length, 1);
+    eq('...titled for THIS text, not the agent block', calls.toasts[0].title, 'Drafting request copied');
+    eq('...under its own key, so it never replaces the agent-instructions toast',
+      calls.toasts[0].key, 'copy-drafting-request');
+    ok('...and the page repainted', calls.render >= 1);
   }
   {
     // EVERY DOCUMENT WRITTEN: asking for a rewrite of a NAMED set is
