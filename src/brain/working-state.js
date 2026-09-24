@@ -5013,6 +5013,14 @@ function normaliseAuthoredBy(a) {
   };
 }
 
+/** A copied-from folder BASENAME, or null. Never a path, never a control char. */
+function readCopiedFrom(v) {
+  if (typeof v !== 'string') return null;
+  const t = neutraliseProtocol(v.replace(/[\r\n\t]+/g, ' ')).trim();
+  if (!t || /[\\/]/.test(t) || t.includes('\0')) return null;
+  return t.slice(0, 120);
+}
+
 function readTitle(t) {
   return typeof t === 'string' && t.trim()
     ? neutraliseProtocol(t.replace(/[\r\n\t]+/g, ' ')).trim().slice(0, MAX_FOUNDATION_TITLE_CHARS)
@@ -5168,6 +5176,14 @@ function validateManifest(obj) {
       // resolved in silence. Written to disk only when true (`writeManifest`),
       // so a project nobody routes keeps byte-identical manifests.
       hidden: d.hidden === true && d.readFirst !== true,
+      // v3.68.0, schema STILL v1: an ADDITIVE optional string. The BASENAME of
+      // the folder a curator-kept document was COPIED from by "Add from this
+      // computer" — provenance, so the table can say "copied" rather than
+      // "written by you". A basename only (never a path: the manifest syncs).
+      // Absent (every older manifest) reads as null, i.e. written here. Only
+      // on a curator source; a save of new text clears it (saveFoundation
+      // builds a fresh entry), because the owner then HAS written it.
+      copiedFrom: kind === 'curator' ? readCopiedFrom(d.copiedFrom) : null,
     });
     if (d.hidden === true && d.readFirst === true) {
       notes.push(`${where} ("${slug}") is marked both read first and not at start; it reads as read first`);
@@ -5442,6 +5458,10 @@ function indexEntry(d, freshness, fileMissing) {
     slug: d.slug, role: d.role, title: d.title, bytes: d.bytes, sha256: d.sha256,
     updatedAt: d.updatedAt, commit: d.commit, source: d.source, authoredBy: d.authoredBy,
     freshness, fileMissing, skeleton: d.skeleton === true, readFirst: d.readFirst === true,
+    // v3.68.0 — ONLY when present: an untouched project's index (and so
+    // getProjectContext, pinned byte-for-byte by test-reading-budget.js)
+    // stays identical; absent reads as "written here".
+    ...(d.copiedFrom ? { copiedFrom: d.copiedFrom } : {}),
     // v3.67.0 — the third state, and the one-word reading of all three. Both
     // always present, so a table needs no absence to interpret. Exclusivity
     // with `readFirst` is decided ONCE, in `validateManifest`, and trusted
@@ -5669,6 +5689,7 @@ async function readStoredDocument(domain, dirRel, d, { raw = false } = {}) {
     bytes: r.bytes, sha256, manifestSha256: d.sha256, shaMismatch: sha256 !== d.sha256,
     truncated: r.truncated, updatedAt: d.updatedAt, commit: d.commit, source: d.source, authoredBy: d.authoredBy,
     skeleton: d.skeleton === true, readFirst: d.readFirst === true,
+    ...(d.copiedFrom ? { copiedFrom: d.copiedFrom } : {}),
     sanitisedOnRead: raw ? false : clean !== verbatim,
     sanitisedOnReadNote: !raw && clean !== verbatim ? READ_SANITISE_NOTE : null,
     mtime: r.mtime,
@@ -7678,6 +7699,8 @@ export async function addFoundationsFromFolder(domain, project, opts = {}) {
         sha256: sha256Hex(a.buf), bytes: a.buf.length, updatedAt: now, commit: null,
         authoredBy: { kind: 'human', harness: null, model: null, commissionedBy: null },
         skeleton: false, readFirst: false,
+        // PROVENANCE: copied, not written — the folder's basename only.
+        copiedFrom: readCopiedFrom(path.basename(pickedRoot)) || 'a folder',
       });
     }
     if (!entries.length) {

@@ -1144,7 +1144,7 @@ const renderers = (() => {
     // is invited to delete the moment they answer the prompts. Lifted rather
     // than stubbed: a stub would let the reader's most consequential note go
     // missing with every assertion here green.
-    extractFunction(viewSrc, 'skeletonOf') + '\n' +
+    extractFunction(viewSrc, 'skeletonOf') + '\n' + extractFunction(viewSrc, 'copiedFromOf') + '\n' +
     extractFunction(viewSrc, 'fndStats') + '\n' +
     extractFunction(viewSrc, 'fndSlugError') + '\n' +
     extractFunction(viewSrc, 'fndShrinkWarn') + '\n' +
@@ -1566,6 +1566,7 @@ section('§8 — THE READER SAYS WHY, PER OWNERSHIP');
 section('§9 — THE FOUR WRITES, DRIVEN (a fake fetch, the shipped functions)');
 // ═════════════════════════════════════════════════════════════════════════
 
+const lastFolder = new Map();
 function writeRig(responder) {
   const calls = { render: 0, urls: [], inits: [], forgot: [], reloaded: 0, refreshed: 0, toasts: [] };
   const st = { activeDomain: 'acme', activeProject: 'lumina', fndEdit: null, fndInit: null,
@@ -1575,7 +1576,7 @@ function writeRig(responder) {
     extractFunction(viewSrc, 'activeKey') + '\n' +
     extractFunction(viewSrc, 'fndStats') + '\n' +
     extractFunction(viewSrc, 'fndSlugError') + '\n' +
-    extractFunction(viewSrc, 'skeletonOf') + '\n' +
+    extractFunction(viewSrc, 'skeletonOf') + '\n' + extractFunction(viewSrc, 'copiedFromOf') + '\n' +
     extractFunction(viewSrc, 'foundationsFacts') + '\n' +
     extractFunction(viewSrc, 'addPanelFor') + '\n' +
     extractFunction(viewSrc, 'loadFoundationDraft') + '\n' +
@@ -1585,7 +1586,10 @@ function writeRig(responder) {
     extractFunction(viewSrc, 'listAddDocuments') + '\n' +
     extractFunction(viewSrc, 'commitAdd') + '\n' +
     extractFunction(viewSrc, 'seedTemplates') + '\n' +
-    'return { loadFoundationDraft, saveFoundation, deleteFoundation, listAddDocuments, commitAdd, seedTemplates };';
+    extractFunction(viewSrc, 'foundationsRemoteSource') + '\n' +
+    extractFunction(viewSrc, 'foundationsControlOffer') + '\n' +
+    extractFunction(viewSrc, 'openAddDoor') + '\n' +
+    'return { loadFoundationDraft, saveFoundation, deleteFoundation, listAddDocuments, commitAdd, seedTemplates, openAddDoor };';
   // eslint-disable-next-line no-new-func
   const api = new Function('state', 'render', 'isCurrentMount', 'fetch', 'forgetProject',
     'reloadActive', 'refreshIndex', 'reportAsyncMountFailure', 'refreshFoundations',
@@ -1593,7 +1597,9 @@ function writeRig(responder) {
     'MAX_FOUNDATION_BYTES', 'remoteRefusalText', 'JSON', 'TextEncoder',
     // The DOM-free rules the doors' writes call — REAL, not stubbed.
     'buildAddCommit', 'commitBlockedReason', 'readCommitResponse', 'outcomeToast',
-    'listBlockedReason', 'listUrl', 'showToast', 'READ_FIRST_BUDGET_BYTES', 'FOUNDATIONS_BUDGET_BYTES', body)(
+    'listBlockedReason', 'listUrl', 'showToast', 'READ_FIRST_BUDGET_BYTES', 'FOUNDATIONS_BUDGET_BYTES',
+    // v3.68.0 — the in-memory last folder, and what openAddDoor needs.
+    'LAST_ADD_FOLDER', 'doorsFor', 'freshAddPanel', 'loadAddTokenFacts', body)(
     st,
     () => { calls.render++; },
     () => true,
@@ -1611,7 +1617,7 @@ function writeRig(responder) {
     FI.remoteRefusalText, JSON, TextEncoder,
     FA.buildAddCommit, FA.commitBlockedReason, FA.readCommitResponse, FA.outcomeToast,
     FA.listBlockedReason, FA.listUrl, (o) => { calls.toasts.push(o); }, READ_FIRST_BUDGET_SRC,
-    FI.FOUNDATIONS_BUDGET_BYTES);
+    FI.FOUNDATIONS_BUDGET_BYTES, lastFolder, FA.doorsFor, FA.freshAddPanel, async () => {});
   return { api, st, calls };
 }
 
@@ -1798,6 +1804,21 @@ function writeRig(responder) {
     calls.toasts.length === 1 && calls.toasts[0].title === '2 documents added' && st.fndAdd === null,
     JSON.stringify(calls.toasts));
   eq('...and drops the cached read', calls.forgot[0], 'acme/lumina');
+  // ── THE LAST FOLDER IS REMEMBERED (v3.68.0, screen review) ───────────
+  eq('a successful copy remembers the LISTED folder for this project, in memory',
+    lastFolder.get('acme\u0000lumina') || lastFolder.get([...lastFolder.keys()][0]), '/real/notes');
+  st.fndAdd = null;
+  st.projectRead = { foundations: { present: true, ownership: 'curator', documents: [{ slug: 'a.md' }] } };
+  api.openAddDoor('local', 1);
+  eq('reopening "Add from this computer" prefills that folder', st.fndAdd && st.fndAdd.root, '/real/notes');
+  await new Promise((r) => setTimeout(r, 0));
+  ok('...and lists it straight away', calls.urls.some((u, i) => i >= 2 && /repo-scan\?all=1&root=%2Freal%2Fnotes/.test(u)),
+    JSON.stringify(calls.urls));
+  const other = writeRig(() => ({ ok: true, status: 200, json: async () => ({ ok: true, candidates: [] }) }));
+  other.st.activeProject = 'another';
+  other.st.projectRead = { foundations: { present: false, documents: [] } };
+  other.api.openAddDoor('local', 1);
+  eq('...but ANOTHER project starts empty', other.st.fndAdd && other.st.fndAdd.root, '');
 }
 {
   // A REFUSAL IS PERSISTENT AND IN FLOW, NEVER A TOAST — and the ticks stay.
@@ -2029,7 +2050,7 @@ section('§10 — "COPY THE DRAFTING REQUEST", DRIVEN (v3.61.0, P2-8)');
         totalBytes: 0, documents: docs, orphanFiles: [], manifestError: null, ...(over || {}) } },
     };
     const body =
-      extractFunction(viewSrc, 'skeletonOf') + '\n' +
+      extractFunction(viewSrc, 'skeletonOf') + '\n' + extractFunction(viewSrc, 'copiedFromOf') + '\n' +
       extractFunction(viewSrc, 'foundationsFacts') + '\n' +
       extractFunction(viewSrc, 'copyDraftingAsk') + '\n' +
       'return { copyDraftingAsk };';

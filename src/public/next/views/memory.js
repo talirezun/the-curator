@@ -7273,6 +7273,7 @@ function foundationsFacts(read) {
   // rows on screen must be one reading, and a server count over a capped row
   // list would report a number the table cannot show. The payload's own count
   // is the fallback for a build that sends no `skeleton` flag per row.
+  let copied = 0;
   let skeletons = 0;
   // ── THE READ-FIRST SET (v3.62.0) ──────────────────────────────────────
   // A document flagged `readFirst` is one whose BODY arrives with every
@@ -7296,6 +7297,9 @@ function foundationsFacts(read) {
       readFirstBytes += Number.isInteger(d.bytes) ? d.bytes : 0;
     }
     // THE FLAG, THROUGH THE ONE PREDICATE (P1-2). Never the banner's text.
+    // v3.68.0 — copied in from a folder ("Add from this computer"), not
+    // written here: the store's `copiedFrom` field, absent on older manifests.
+    if (copiedFromOf(d)) copied++;
     if (skeletonOf(d)) skeletons++;
     if (d.freshness === 'stale') stale++;
     else if (d.freshness === 'unreachable') unreachable++;
@@ -7322,6 +7326,7 @@ function foundationsFacts(read) {
     stale,
     unreachable,
     unrated,
+    copied,
     skeletons,
     // ── FIVE READINGS, THE SERVER'S WHERE IT SENT THEM ─────────────────
     // The store computes all five and the route forwards them; they are
@@ -7611,7 +7616,15 @@ function foundationsWord(facts) {
     return facts.skeletons + ' skeleton' + (facts.skeletons === 1 ? '' : 's') + ' to fill';
   }
   if (facts.fresh) return 'fresh';
-  if (facts.ownership === 'curator') return 'written';
+  // v3.68.0 — a curator-kept project's documents are WRITTEN here or COPIED
+  // in from a folder, and the word says which rather than calling a copy
+  // "written".
+  if (facts.ownership === 'curator') {
+    const copied = Number.isInteger(facts.copied) ? facts.copied : 0;
+    if (copied && copied >= facts.count) return 'copied';
+    if (copied) return 'written and copied';
+    return 'written';
+  }
   return 'no freshness reading';
 }
 
@@ -7776,6 +7789,15 @@ function foundationsControlOffer(facts, readonly) {
  * `=== true` rather than truthiness so a build that sends no flag at all reads
  * FALSE rather than `undefined`-as-maybe — a fact and its absence stay apart.
  */
+/**
+ * THE FOLDER A CURATOR-KEPT DOCUMENT WAS COPIED FROM, or '' (v3.68.0).
+ * The store's `copiedFrom` (a basename); absent on anything written here and
+ * on every manifest older than v3.68.0, which therefore reads as written.
+ */
+function copiedFromOf(d) {
+  return d && typeof d.copiedFrom === 'string' && d.copiedFrom.trim() ? d.copiedFrom.trim() : '';
+}
+
 function skeletonOf(d) {
   return !!d && d.skeleton === true;
 }
@@ -7850,6 +7872,8 @@ function fndRowHtml(d, editable, readonly, budgetBytes, suggest, remoteLabel) {
   // carries the row's only variable fact — is this written, and by whom, or is
   // it still a set of prompts.
   const stateWord = skeletonOf(d) ? 'skeleton · to fill'
+    // v3.68.0 — COPIED from a folder, not written by anybody here.
+    : copiedFromOf(d) ? 'copied from ' + copiedFromOf(d)
     : (d.authoredBy && d.authoredBy.kind === 'human') ? 'written by you'
       : (d.authoredBy && d.authoredBy.kind) ? 'written by an agent' : 'written';
   // THE SHARED SCALE, AND ONLY ON THE TIERS THAT HAVE A READING. fresh and
@@ -9161,9 +9185,11 @@ function foundationReaderContent(doc, project, remote) {
     tags: [
       doc.role ? 'role: ' + doc.role : null,
       doc.source && doc.source.kind === 'repo' && doc.source.path
-        ? 'source: ' + doc.source.path : 'written for this project',
+        ? 'source: ' + doc.source.path
+        : (copiedFromOf(doc) ? 'copied in from a folder' : 'written for this project'),
       doc.commit ? 'commit ' + String(doc.commit).slice(0, 7) : null,
-      curatorOwned ? 'Curator-authored' : (fromGitHub ? 'mirrored from GitHub' : 'mirrored from a folder'),
+      curatorOwned ? (copiedFromOf(doc) ? 'copied from ' + copiedFromOf(doc) : 'Curator-authored')
+        : (fromGitHub ? 'mirrored from GitHub' : 'mirrored from a folder'),
       // THE FIFTH FACT OF THE SAME KIND (P2-4). role · source · commit ·
       // ownership already qualify the text rather than decorating it, and
       // whether it has been WRITTEN is the same kind of fact — arguably the
@@ -9392,6 +9418,15 @@ async function loadAddTokenFacts(rec, token) {
   render(token);
 }
 
+/**
+ * THE LAST FOLDER USED BY "Add from this computer", per project (v3.68.0).
+ * IN MEMORY ONLY, for this app session — module-level rather than on `state`
+ * because `state` is rebuilt on every entry to the view, and "add another
+ * batch from the same folder" often comes after a look elsewhere. Never
+ * persisted: a path on this machine is not something to sync or remember.
+ */
+const LAST_ADD_FOLDER = new Map();
+
 /** OPEN A DOOR (v3.68.0). The same door pressed again closes its panel. */
 function openAddDoor(door, token) {
   const facts = foundationsFacts(state.projectRead);
@@ -9403,12 +9438,17 @@ function openAddDoor(door, token) {
   if (cur && cur.door === door && !cur.busy) { state.fndAdd = null; render(token); return; }
   const rec = Object.assign(freshAddPanel(door, info, facts),
     { domain: state.activeDomain, project: state.activeProject });
+  // Prefill the copy door with the folder this project last added from.
+  if (door === 'local' && rec.mode === 'copy' && !rec.root) {
+    rec.root = LAST_ADD_FOLDER.get(keyOf(state.activeDomain, state.activeProject)) || '';
+  }
   state.fndAdd = rec;
   state.fndEdit = null;
   render(token);
   if (door === 'github') loadAddTokenFacts(rec, token).catch((err) => reportAsyncMountFailure(token, err));
-  // A folder mirror's folder is a FACT — list it straight away.
-  if (door === 'local' && rec.mode === 'mirror' && rec.root) {
+  // A folder mirror's folder is a FACT, and a remembered folder is the one
+  // the owner used last — list either straight away.
+  if (door === 'local' && rec.root) {
     listAddDocuments(token).catch((err) => reportAsyncMountFailure(token, err));
   }
 }
@@ -9499,6 +9539,9 @@ async function commitAdd(token) {
     rec.error = out.error;
   }
   const changed = out.added.length > 0 || out.refreshed.length > 0;
+  if (changed && rec.door === 'local' && rec.mode === 'copy') {
+    LAST_ADD_FOLDER.set(key, String(rec.listedRoot || rec.root || ''));
+  }
   if (changed) {
     const t = outcomeToast(rec, out);
     showToast({ key: 'fnd-add-done', tone: 'success', title: t.title, lines: t.lines });

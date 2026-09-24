@@ -1326,7 +1326,7 @@ function makeRenderers(stateObj) {
     'const READ_FIRST_BUDGET_BYTES = ' + READ_FIRST_BUDGET_SRC + ';\n' +
     extractFunction(viewSrc, 'foundationsBudgetWarning', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fndSize', 'memory.js') + '\n' +
-    extractFunction(viewSrc, 'skeletonOf', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'skeletonOf', 'memory.js') + '\n' + extractFunction(viewSrc, 'copiedFromOf', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fndRowHtml', 'memory.js') + '\n' +
     // ── THE ROW-REMOVE CONFIRM STRIP (v3.61.1) ──────────────────────────
     // Lifted rather than stubbed: it is the sentence somebody reads before
@@ -8427,6 +8427,36 @@ const fndRead = (payload) => ({
   ok('...and emits no table at all', !curatorEmpty.includes('fnd-table'));
 }
 
+// ── §21d3 — COPIED is not WRITTEN (v3.68.0, the orchestrator's screen review)
+// A document copied in by "Add from this computer" was not written by the
+// owner. The row, the fold's word (which the overview tile and the fold meta
+// both read) and the reader say "copied"; a written one keeps "written by
+// you"; an older manifest with no `copiedFrom` reads as written, unchanged.
+{
+  const F = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: { foundations: true }, fnd: null });
+  const cur = (over) => fndDoc({ freshness: 'n/a', commit: null, source: { kind: 'curator', path: null },
+    authoredBy: { kind: 'human' }, ...over });
+  const copiedDoc = cur({ slug: 'notes.md', copiedFrom: 'project-notes' });
+  const writtenDoc = cur({ slug: 'plan.md' });
+  const row = (d) => F.fndRowHtml(d, true, false, 204800);
+  ok('a copied row says "copied from <folder>", never "written by you"',
+    /copied from project-notes/.test(row(copiedDoc)) && !/written by you/.test(row(copiedDoc)), row(copiedDoc).slice(0, 600));
+  ok('CONTROL: a written row keeps "written by you"', /written by you/.test(row(writtenDoc)));
+  const word = (docs) => F.foundationsWord(F.foundationsFacts(fndRead(fndPayload(docs, { ownership: 'curator', repo: null }))));
+  eq('all copied: the fold / overview word is "copied"', word([copiedDoc]), 'copied');
+  eq('mixed: "written and copied"', word([copiedDoc, writtenDoc]), 'written and copied');
+  eq('an OLDER manifest (no copiedFrom) still reads "written"', word([writtenDoc]), 'written');
+  const blockHtml = F.renderFoundations(fndRead(fndPayload([copiedDoc], { ownership: 'curator', repo: null })));
+  ok('the fold meta says "kept here · copied", not "written"', /kept here · copied/.test(blockHtml) && !/kept here · written/.test(blockHtml),
+    (blockHtml.match(/mem-fold-meta">[^<]*/) || [''])[0]);
+  const reader = F.foundationReaderContent({ ...copiedDoc, text: '# N' }, 'lumina');
+  ok('the reader’s chips say copied, not "written for this project"',
+    reader.tags.includes('copied from project-notes') && reader.tags.includes('copied in from a folder')
+    && !reader.tags.includes('written for this project'), JSON.stringify(reader.tags));
+  const hostile = row(cur({ slug: 'x.md', copiedFrom: '<img onerror=x>' }));
+  ok('the folder name is escaped', !/<img onerror/.test(hostile));
+}
+
 // ── §21d2 — a SKELETON is a prompt, and the block says so (v3.61.0) ─────
 {
   const st = { activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, fnd: null };
@@ -10616,7 +10646,7 @@ function realListbox() {
     // set of PROMPTS rather than facts (P2-4), so the predicate is LIFTED
     // here: stubbing it would let the reader's most consequential note go
     // missing with this section fully green.
-    extractFunction(viewSrc, 'skeletonOf', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'skeletonOf', 'memory.js') + '\n' + extractFunction(viewSrc, 'copiedFromOf', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'foundationReaderContent', 'memory.js') + '\n' +
     // v3.67.2: `openFoundation` asks whether the mirror is read from GitHub
     // (so the reader does not say "not on this computer" of a GitHub mirror),
@@ -11800,6 +11830,10 @@ const EXECUTED = new Set([
   // v3.68.0 — an empty project's block and the open door's record, lifted by
   // makeRenderers and driven through renderFoundations in §21 and §21m.
   'renderFoundationsEmpty', 'addPanelFor',
+  // v3.68.0 (screen review) — "copied", never "written by you", for a document
+  // copied in from a folder; driven in §21d3 through the row, the fold word,
+  // the overview's reading and the reader.
+  'copiedFromOf',
   // The age clock (§18). Lifted and driven against a fake document, with a
   // render spy proving it never reaches for one.
   'tickAges',

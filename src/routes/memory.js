@@ -785,6 +785,9 @@ function foundationDocRow(d) {
     // row, not an absence to interpret. A store that does not know the field
     // answers `false`, which is what an unfilled skeleton is not.
     skeleton: d.skeleton === true,
+    // v3.68.0 — the folder BASENAME a curator-kept document was copied from
+    // ("Add from this computer"), or null for one written here.
+    copiedFrom: typeof d.copiedFrom === 'string' && d.copiedFrom ? d.copiedFrom.slice(0, 120) : null,
     // ── THE OWNER'S ROUTING FLAG (v3.62.0) ────────────────────────────
     // `readFirst` is what a session is handed every time; everything else
     // rides as an index row an agent opens BY NAME. Same `=== true` and the

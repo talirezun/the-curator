@@ -150,6 +150,23 @@ let P1;
   eq('the picked folder is untouched', fingerprint(NOTES), before);
 }
 
+// ── 2b. PROVENANCE: copied, not written (screen review) ─────────────────
+{
+  const m = manifestOf(P1);
+  ok('each copied document records the folder BASENAME it came from — never a path',
+    m.documents.every((d) => d.copiedFrom === 'notes'), JSON.stringify(m.documents.map((d) => d.copiedFrom)));
+  const idx = await WS.listFoundations(D, P1);
+  ok('...and the index carries it', idx.documents.every((d) => d.copiedFrom === 'notes'));
+  const P2 = await newProject();
+  await WS.saveFoundation(D, P2, { slug: 'own.md', text: '# Own\n' });
+  eq('a document WRITTEN here carries no copiedFrom', (await WS.listFoundations(D, P2)).documents[0].copiedFrom, undefined);
+  // An OLDER manifest (no field) and a hand-edited one with a PATH both read safely.
+  const mm = manifestOf(P2);
+  mm.documents[0].copiedFrom = '/Users/me/secret/folder';
+  writeFileSync(path.join(fdir(P2), 'manifest.json'), JSON.stringify(mm));
+  eq('a copiedFrom that is a PATH is dropped on read, not shown', (await WS.listFoundations(D, P2)).documents[0].copiedFrom, undefined);
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 section('3. A second add — another folder — APPENDS and never replaces');
 {
@@ -161,6 +178,14 @@ section('3. A second add — another folder — APPENDS and never replaces');
     && x.path === 'architecture.md'), JSON.stringify(r.refused));
   eq('...and the document already there is byte-identical', sha(readFileSync(path.join(fdir(P1), 'architecture.md'))), archBefore);
   eq('the project now holds four', manifestOf(P1).documents.length, 4);
+  ok('the second batch records ITS folder', manifestOf(P1).documents.find((d) => d.slug === 'roadmap.md').copiedFrom === 'more');
+  await WS.saveFoundation(D, P1, { slug: 'roadmap.md', text: '# Roadmap\n\nRewritten here by the owner.\n' });
+  eq('an EDIT in the app makes it written — copiedFrom is cleared',
+    manifestOf(P1).documents.find((d) => d.slug === 'roadmap.md').copiedFrom, undefined);
+  await WS.setFoundationStartState(D, P1, 'decisions.md', 'read-first');
+  ok('...while its siblings keep theirs, through a start-state write too',
+    manifestOf(P1).documents.find((d) => d.slug === 'decisions.md').copiedFrom === 'notes'
+    && manifestOf(P1).documents.find((d) => d.slug === 'decisions.md').readFirst === true);
   const again = await WS.addFoundationsFromFolder(D, P1, { root: NOTES, files: [{ path: 'decisions.md' }] });
   ok('an add where EVERY file is already there refuses the whole call, listing why',
     again.ok === false && again.reason === 'nothing-added' && again.refused.length === 1, JSON.stringify(again));
@@ -339,6 +364,7 @@ section('9. The route: strict body, honest statuses, the numbers ride out');
   ok('a body with any other field (here `token`) is a 400 naming it', tok.status === 400
     && tok.body.reason === 'unexpected_fields' && tok.body.fields.includes('token'), JSON.stringify(tok));
   const okAdd = await post(P, { root: NOTES, files: [{ path: 'decisions.md' }, { path: 'architecture.md' }] });
+  ok('the wire index carries copiedFrom', okAdd.body.foundations.documents.every((d) => d.copiedFrom === 'notes'));
   ok('an add answers 200 with what was added and the fresh index', okAdd.status === 200
     && okAdd.body.added.length === 2 && okAdd.body.foundations && okAdd.body.foundations.documents.length === 2,
     JSON.stringify(okAdd).slice(0, 300));
