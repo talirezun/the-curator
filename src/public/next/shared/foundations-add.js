@@ -262,24 +262,24 @@ export function commitBlockedReason(rec) {
   return null;
 }
 
-/** The count line: ticks and bytes, and the project total against its budget. */
+/** The count line: ticks and bytes, and what the project would then hold —
+ *  said NEUTRALLY (v3.70.0). The 200 KB project figure only ever warned; what
+ *  an agent is handed is the reading budget's question (Context, step ④). */
 export function countLine(rec) {
   const n = tickedPaths(rec).length;
   const b = tickedBytes(rec);
   const total = (rec.projectBytes || 0) + b;
   return n + ' ticked · ' + formatBytes(b) + ' — the project would hold '
-    + formatBytes(total) + ' of its ' + formatBytes(rec.budgetBytes || PROJECT_BUDGET_BYTES) + ' budget';
+    + formatBytes(total) + ' of documents';
 }
 
-/** The over-budget sentence (with the numbers), or ''. A cost: never folds. */
-export function budgetWarning(rec) {
-  const b = tickedBytes(rec);
-  const total = (rec.projectBytes || 0) + b;
-  const budget = rec.budgetBytes || PROJECT_BUDGET_BYTES;
-  if (!b || total <= budget) return '';
-  return 'These bring the project to ' + formatBytes(total) + ', over its ' + formatBytes(budget)
-    + ' budget by ' + formatBytes(total - budget) + '. They are still added; a session start sends '
-    + 'only what its reading budget allows, and says which documents it left out.';
+/** v3.70.0: WITHDRAWN as an alarm with the 200 KB project figure — always ''.
+ *  Kept as an export (and its hidden slot in the panel) so a host that still
+ *  asks gets "nothing to warn about" rather than a ReferenceError. A stored
+ *  total is never "over budget": the reading budget is the limit that decides
+ *  what an agent is handed, and step ④ draws it. */
+export function budgetWarning() {
+  return '';
 }
 
 // ═════════════════════════════════════════════════════════════════════════

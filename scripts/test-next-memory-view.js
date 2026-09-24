@@ -10960,12 +10960,12 @@ function realListbox() {
   const l1 = listed({ 'notes/b.md': true }, curatorArch, { ownership: 'curator' });
   ok('one ticked: "Copy 1 document", live, and no reason',
     /id="fadd-go">Copy 1 document</.test(l1) && /id="fadd-why" hidden/.test(l1));
-  ok('the count line is the PROJECT\'s total against its budget',
-    /1 ticked · 100 bytes — the project would hold 12 KB of its 195 KB budget/.test(l1),
+  ok('the count line is the PROJECT\'s total, said neutrally (v3.70.0: no project budget)',
+    /1 ticked · 100 bytes — the project would hold 12 KB of documents</.test(l1),
     (l1.match(/id="fadd-count">[^<]*/) || [''])[0]);
   const big = listed({ 'notes/b.md': true }, curatorArch, { ownership: 'curator', totalBytes: 250 * 1024, budgetBytes: 204800 });
-  ok('...and OVER the budget it says so in words, WITH the numbers, unfolded',
-    /id="fadd-budget"><span>These bring the project to 250 KB, over its 200 KB budget by 50 KB\./.test(big),
+  ok('...and past the old 200 KB figure there is NO alarm — the slot stays hidden and empty',
+    /id="fadd-budget" hidden><span><\/span>/.test(big) && !/over its|budget by/.test(big),
     (big.match(/id="fadd-budget"[^>]*><span>[^<]*/) || [''])[0]);
   ok('select-all counts only the rows that can be ticked',
     /Select all \(1\)/.test(l0));

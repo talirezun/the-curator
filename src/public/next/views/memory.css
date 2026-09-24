@@ -2344,11 +2344,6 @@
   .mem-window-btn,
   .mem-harness-btn { min-width: 0; max-width: 100%; }
   .mem-ss-ctl .lb-btn-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  /* The legend's longest item ("on demand — outside the window · N
-     documents") is an inline-flex box sized to its content, and ran 42px past
-     a 168px step at a 568px window (measured). Capped to the column so its
-     words wrap. Scoped to this host; the kit's own fix is noted for P3. */
-  #mem-ss-meter .bk-it { max-width: 100%; }
 }
 /* On the SELECTED row the listbox paints an accent fill with its own ink, and
    shared/listbox.css hands its own detail column `currentColor` for exactly

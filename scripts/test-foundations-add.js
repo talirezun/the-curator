@@ -495,8 +495,11 @@ section('11. The checklist and the commit, DOM-free (v3.69.0)');
       .every((x) => !/token"\s*:/.test(JSON.stringify(x.body).replace(/tokenSource/g, ''))));
   const over = Object.assign({}, rec, { projectBytes: 204000, picks: { 'b.md': true },
     candidates: [{ path: 'b.md', bytes: 2000, suggestedSlug: 'b.md' }] });
-  ok('the budget warning carries the numbers', /201 KB, over its 200 KB budget by 1 KB/.test(FA.budgetWarning(over)),
-    FA.budgetWarning(over));
+  // v3.70.0: the stored total is said NEUTRALLY; the 200 KB project figure no
+  // longer warns (the reading budget is the limit, drawn in Context step ④).
+  eq('a set that takes the project past the old 200 KB figure raises NO warning', FA.budgetWarning(over), '');
+  ok('...while the count line still carries the numbers, neutrally — never "budget"',
+    /^1 ticked · 2 KB — the project would hold 201 KB of documents$/.test(FA.countLine(over)), FA.countLine(over));
   const read = FA.readCommitResponse(422, { ok: false, reason: 'nothing-added', error: 'None…', refused: [{ path: 'a', reason: 'r' }] }, rec);
   ok('a refusal reads as an error with its refused list', read.ok === false && read.error === 'None…' && read.refused.length === 1);
   const readGh = FA.readCommitResponse(429, { ok: false, reason: 'rate-limited' }, g);
