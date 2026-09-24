@@ -4938,7 +4938,8 @@ section('§16 — Projects inside a domain (v3.48.0)');
 // for the fold to be usable at all: the age and the size.
 {
   const R = makeRenderers({ briefEdit: null });
-  const present = { brief: { present: true, text: '## x\n\nbody', updatedAt: '2026-09-10T00:00:00.000Z' } };
+  const briefAt = new Date(Date.now() - 8 * 86400_000).toISOString();
+  const present = { brief: { present: true, text: '## x\n\nbody', updatedAt: briefAt } };
 
   // ── THE PENCIL, AND WHERE IT IS ─────────────────────────────────────────
   const idle = R.renderBrief(present);
@@ -4969,7 +4970,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
   // asserted, because a fold whose head says only "The brief" would be a
   // chevron over a mystery.
   ok('the closed summary carries the brief\'s AGE, live-ticking',
-    /mem-fold-meta[^>]*data-mem-age-at="2026-09-10T00:00:00\.000Z"/.test(idle)
+    idle.includes(`data-mem-age-at="${briefAt}"`)
     && /class="mem-age-words">1 week ago</.test(idle), idle.slice(0, 500));
   ok('...and its SIZE, so a four-screen brief and a two-line one are told apart',
     /· 3 words</.test(idle), idle.slice(0, 500));
