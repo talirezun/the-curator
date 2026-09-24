@@ -37,6 +37,11 @@ import {
 // shared/text.js's own header for why `info` is the only prose field and why it
 // is emitted only inside a panel that is `hidden` on first paint.
 import { renderViewHeader, renderReadoutGroup } from '../shared/text.js';
+// G2 (v3.71.0, COPY.md §3): the Chat header had no ⓘ at all — the domain
+// chips, the PROJECT pin, Length and Model were unexplained. `CHAT_INFO` is
+// the framing top ⓘ (second brain → Shared Brain → agent memory, "you are
+// here" on second-brain) every other top ⓘ in the app now opens with.
+import { explainerHtml } from '../shared/explainer.js';
 import { renderMarkdown } from '../shared/markdown.js';
 // The ONE honest USD renderer for /next. Imported, never re-implemented: a
 // local `'$' + n.toFixed(4)` renders any charge below $0.00005 as the string
@@ -203,6 +208,28 @@ function timeAgo(iso) {
 // composer names the thing that answers, and users say Claude. 'OpenRouter' is
 // the vendor's own capitalisation — note the wire field is `hasOpenrouterKey`
 // with a lowercase r, because the route derives it mechanically from the id.
+// G2 (v3.71.0): computed once, like every other explainer adopter — the
+// entry's own `visual.here: 'second-brain'` already marks this view's place
+// in the frame, so no `{ here }` override is needed here.
+const CHAT_INFO = explainerHtml('chat.page');
+
+// ── THE PROJECT ⓘ'S GLYPH (v3.71.0 fix) ──────────────────────────────────
+// INVENTORY.md's survey of every ⓘ in the app found this one a hand-rolled
+// button whose "icon" was the literal TYPED CHARACTER "ⓘ" rather than the
+// app's own violet circled-i SVG every other mark in the app uses — the odd
+// one out among five emitters that otherwise agree on the mark (shared/
+// text.js's INFO_GLYPH, and its two local copies, views/settings.js's
+// TX_INFO_GLYPH and views/domains.js's `infoMark`'s own `glyph`). This is a
+// FOURTH local copy of the same bytes, same reason as those two: `shared/
+// text.js` takes no imports and `app.js`'s icon() cannot be imported here
+// either, so the glyph is data, not a call. `test-next-chat-scopebar.js`
+// proves it byte-equal to `shared/text.js`'s INFO_GLYPH.
+//
+// This is the GLYPH ONLY. The panel's copy (projectInfoPanelHtml, below) is
+// unchanged — rewriting it onto the shared explainer shape is v3.71.1 scope
+// (COPY.md §5: "project ⓘ → shared glyph + model").
+const CHAT_PROJECT_INFO_GLYPH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>';
+
 const PROVIDER_LABELS = Object.assign(Object.create(null), {
   gemini: 'Gemini',
   anthropic: 'Claude',
@@ -3944,7 +3971,9 @@ function projectGroupHtml() {
     // sentence a user actually needs — that nothing is written back.
       '<button type="button" class="chat-project-info" id="chat-project-info-btn"' +
         ' data-tx-info="chat-project-info" aria-expanded="false"' +
-        ' aria-controls="chat-project-info" aria-label="What a pinned project adds">ⓘ</button>' +
+        ' aria-controls="chat-project-info" aria-label="What a pinned project adds">' +
+        CHAT_PROJECT_INFO_GLYPH +
+      '</button>' +
     '</div>' +
     // ── AND ITS PANEL, BACK INSIDE THE GROUP (v3.64.1) ────────────────────
     // Reported: "the ⓘ opens somewhere on the left." It did — as a sibling of
@@ -4100,15 +4129,26 @@ function renderMain(token) {
   // real conclusion with its own rendering elsewhere; waiting on it here
   // would replace an error with a spinner.
   // WRITTEN OUT AT BOTH SITES rather than hoisted into a `chatHeader()`
-  // builder, deliberately. The argument is a two-field literal with no
-  // branching — there is no `info`, no readonly variant, nothing that could
-  // drift the way views/domains.js's header can (which is why THAT one is a
-  // builder). And an indirection would hide the call from the adjacency arm of
-  // scripts/test-next-view-header.js §9b, which reads what sits next to a
-  // `renderViewHeader(` call: a helper name is not that call.
+  // builder, deliberately. The argument has no branching — no readonly
+  // variant, nothing that could drift the way views/domains.js's header can
+  // (which is why THAT one is a builder). And an indirection would hide the
+  // call from the adjacency arm of scripts/test-next-view-header.js §9b,
+  // which reads what sits next to a `renderViewHeader(` call: a helper name
+  // is not that call.
+  //
+  // `info: CHAT_INFO` (v3.71.0, G2) IS the one field that now differs from a
+  // truly bare two-field literal — this view had no ⓘ at all, and the const
+  // is computed once above rather than re-typed at each site, for the same
+  // reason `chatHeader()` above stayed out: the explainer's own copy lives in
+  // shared/explainers.js, not here. `infoId` is EXPLICIT and DIFFERENT at
+  // each site — both calls resolve to the same title and density, so the
+  // derived id would collide (scripts/test-next-view-header.js's own §8
+  // "TWO DENSITIES, ONE VOCABULARY" guard, written for exactly this class of
+  // defect). The two branches never both reach the DOM, but the guard has no
+  // way to know that and is right not to trust it.
   if (!state.booted && !state.loadError && state.domains.length === 0) {
     setMain(
-      renderViewHeader({ eyebrow: 'ask your wiki', title: 'Chat' }) +
+      renderViewHeader({ eyebrow: 'ask your wiki', title: 'Chat', info: CHAT_INFO, infoHtml: true, infoId: 'tx-vh-info-chat-boot' }) +
       gatedLoader(bootGate, 'Loading…'),
       token
     );
@@ -4147,7 +4187,7 @@ function renderMain(token) {
   // wrong half of "prefer cutting".
   if (state.domains.length === 0) {
     setMain(
-      renderViewHeader({ eyebrow: 'ask your wiki', title: 'Chat' }) +
+      renderViewHeader({ eyebrow: 'ask your wiki', title: 'Chat', info: CHAT_INFO, infoHtml: true, infoId: 'tx-vh-info-chat-empty' }) +
       emptyCard({
         title: 'Nothing to chat with yet',
         body: 'Chat needs at least one domain to talk to. Create one in Domains.',

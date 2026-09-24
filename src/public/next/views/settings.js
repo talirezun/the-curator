@@ -201,6 +201,11 @@ import { renderRunsOn, aiActionDisabledAttrs } from '../shared/ai-run.js';
 // because `.tx-readout` is a COLUMN (label above value) and no stylesheet but
 // shared/text.css may declare a `.tx-` rule to turn it into a row.
 import { renderViewHeader } from '../shared/text.js';
+// G5 (v3.71.0, COPY.md §3): `general` was the one section with no entry in
+// SECTION_INFO — Settings is where setup starts, and nothing said "begin in
+// Providers & keys". Adds exactly that one entry; every other section keeps
+// its own hand-written prose (P4 owns only SECTION_INFO.general).
+import { explainerHtml } from '../shared/explainer.js';
 // ── THE SIDEBAR, AND IT IS THE DOMAINS SIDEBAR ───────────────────────────
 // Settings had the app's third answer to "a title, some actions, and a list
 // you select from": rows 48.8px tall against Domains' 63.8, no action in the
@@ -309,9 +314,16 @@ const SECTION_TITLES = Object.fromEntries(SETTINGS_SECTIONS.map(([id, label]) =>
  * the MCP bridge runs without the app; that a ceiling REFUSES rather than
  * truncates; that the folder is an Obsidian vault).
  *
- * `general` is deliberately absent, so that section renders NO mark. Its copy
- * is per-control hint text sitting beside the control it describes, which is
- * in-context labelling and not a view description.
+ * `general` USED to be deliberately absent (every other section's copy hint
+ * text sitting beside its own control, in-context labelling rather than a
+ * view description) — G5 (v3.71.0, COPY.md §3) closes that gap: Settings is
+ * where setup starts, and nothing on the section a user lands on first said
+ * "begin in Providers & keys". Its entry is assigned separately, just below
+ * this literal, rather than written inline in it: the literal below is pure
+ * data (every other value a plain string), which `scripts/test-next-view-
+ * header.js` §8 relies on to `eval` it standalone for the html-entry grid
+ * check — a call to the shared `explainerHtml` inside the literal would make
+ * that isolated eval throw on a free identifier it never injects.
  *
  * NOTHING THAT WARNS OR COSTS BELONGS HERE. The cross-write banner, the
  * fallback-model banner (a silent change to what the user is billed) and every
@@ -363,6 +375,9 @@ const SECTION_INFO = {
         + 'copy on this Mac; it can only read, and it stays on this computer.</p>',
   },
 };
+// See the docblock above SECTION_INFO for why this is assigned here, outside
+// the literal, rather than written as a `general:` key inside it.
+SECTION_INFO.general = { html: true, text: explainerHtml('settings.general') };
 
 // ── Provider display metadata — 3 of these actually run. The remaining one
 // is rendered clearly inert (see honesty note above). ────────────────────

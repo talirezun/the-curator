@@ -87,6 +87,10 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// v3.71.0 (G3): BROWSE_EYEBROW now carries its own ⓘ, `PAGES_INFO`, a module
+// const computed from the real kit — injected the same way every other
+// free identifier this sandbox's PREAMBLE cannot see is.
+import { explainerMark } from '../src/public/next/shared/explainer.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = readFileSync(join(ROOT, 'src/public/next/views/domains.js'), 'utf8');
@@ -210,7 +214,10 @@ const FNS = [
 let box;
 try {
   box = new Function(
+    'explainerMark',
     PREAMBLE +
+    extractConstText(SRC, 'PAGES_INFO') + '\n' +
+    extractConstText(SRC, 'HEALTH_INFO') + '\n' +
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
     extractConstText(SRC, 'RESERVE_MIN_PX') + '\n' +
@@ -259,7 +266,7 @@ ${(() => {
        __setMounted: (v) => { mounted = v; },
        __setSwapDom: (d) => { swapDom = d; },
        __resetTaskFlag: () => { reserveCapturedThisTask = false; } };`
-  )();
+  )(explainerMark);
 } catch (err) {
   console.log('FATAL: could not build the SWR sandbox from domains.js -- ' + err.message);
   process.exit(1);

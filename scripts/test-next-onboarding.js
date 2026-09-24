@@ -983,9 +983,13 @@ section('7. It is a REGION, not a dialog (D-E) — no modality, no trap');
     [...src.matchAll(/'\s*\+\s*([A-Za-z_$][\w$.()\[\]]*)\s*\+\s*'/g)].map((m) => m[1]);
   // `rows` and `doors` are the two locals that hold BUILT markup, and both
   // are built inside this same function from escapeHtml()/icon() calls the
-  // scan below therefore also sees. Nothing else may be interpolated.
+  // scan below therefore also sees. `frameInfo.btn`/`frameInfo.panel`
+  // (v3.71.0, G1) are the framing ⓘ's two fragments — `explainerMark`'s
+  // output, already escape-first by shared/explainer.js's own contract (it
+  // takes no caller-supplied strings at all, only a fixed key). Nothing else
+  // may be interpolated.
   const unguarded = (src) =>
-    interpolationsIn(src).filter((x) => !/^escapeHtml\(|^icon\(|^rows$|^doors$|^String\(/.test(x));
+    interpolationsIn(src).filter((x) => !/^escapeHtml\(|^icon\(|^rows$|^doors$|^String\(|^frameInfo\.(?:btn|panel)$/.test(x));
   const found = unguarded(renderFn);
   // A FLOOR AND A COUNT. The floor catches a scanner that stopped reaching
   // the function at all; the count catches the subtler thing that nearly

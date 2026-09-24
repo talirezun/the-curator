@@ -164,6 +164,10 @@ function docOrder(root) {
 // ═════════════════════════════════════════════════════════════════════════
 const { docsLinkHtml } = await import('../src/public/next/shared/docs-links.js');
 const { renderOverview } = await import('../src/public/next/shared/overview.js');
+// v3.71.0 (G3/G4): PAGES_INFO and HEALTH_INFO are module consts computed
+// from the real kit — the same reason docsLinkHtml/renderOverview above are
+// the real modules and not stubs.
+const { explainerMark } = await import('../src/public/next/shared/explainer.js');
 
 const PREAMBLE = `
 let state = {};
@@ -207,13 +211,15 @@ const document = { getElementById: () => null, querySelector: () => null, queryS
 
 let box;
 try {
-  box = new Function('docsLinkHtml', 'renderOverview',
+  box = new Function('docsLinkHtml', 'renderOverview', 'explainerMark',
     PREAMBLE +
     // v3.65.0 (R4): section ①'s explanation left the fold's BODY for an ⓘ on
     // its head, and the sentence is a module const so `renderMain` does not
     // carry a paragraph every lifting sandbox has to carry with it. LIFTED,
     // not stubbed — the words are the thing R4 moved.
     extractConstText(SRC, 'INGEST_INFO') + '\n' +
+    // v3.71.0 (G3): BROWSE_EYEBROW now carries its own ⓘ, `PAGES_INFO`.
+    extractConstText(SRC, 'PAGES_INFO') + '\n' +
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
     extractConstArray(SRC, 'BROWSE_FOLDERS') + '\n' +
@@ -240,7 +246,7 @@ try {
        __setState: (s) => { state = s; }, __state: () => state, __calls: () => calls,
        __setRender: (fn) => { render = fn; },
        __reset: () => { calls.setMain.length = 0; calls.jumps.length = 0; } };`
-  )(docsLinkHtml, renderOverview);
+  )(docsLinkHtml, renderOverview, explainerMark);
 } catch (err) {
   console.log('FATAL: could not build the renderMain sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -415,8 +421,11 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
         .test(SRC), 'not found in domains.js');
     {
       // ⑤ WIKI HEALTH, EXECUTED — the wrapper is a pure function of its inner
-      // markup, so it can be lifted on its own.
-      const wrap = new Function(extractFunction(SRC, 'healthSection') + '\nreturn healthSection;')();
+      // markup, so it can be lifted on its own. v3.71.0 (G4): it now carries
+      // its own ⓘ, `HEALTH_INFO`, a module const computed from the real kit.
+      const wrap = new Function('explainerMark',
+        extractConstText(SRC, 'HEALTH_INFO') + '\n' +
+        extractFunction(SRC, 'healthSection') + '\nreturn healthSection;')(explainerMark);
       const out = wrap('<div class="dm-health-card">x</div>');
       ok('the health section carries numeral 5 beside its title',
         /<span class="dm-section-num" aria-hidden="true">5<\/span><div class="cur-group-title dm-section-eyebrow">Wiki health<\/div>/
@@ -466,8 +475,13 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
     // element rather than by replacing it.
     ok('the Pages title still carries the classes two other suites pin by name',
       /class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">Pages</.test(html), html.slice(0, 600));
+    // v3.71.0 (G3): the Pages head row also carries its own ⓘ now — the
+    // button sits inside the SAME head, after the title, so the property
+    // this proves ("one head, not two eyebrows") still holds; only the
+    // literal closing sequence gained the button between the title and the
+    // head's own closing tag.
     ok('...and the two eyebrow classes are now ONE treatment, inside one head',
-      /<div class="dm-section-hd"><span class="dm-section-num"[^>]*>2<\/span><div class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">Pages<\/div><\/div>/
+      /<div class="dm-section-hd"><span class="dm-section-num"[^>]*>2<\/span><div class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">Pages<\/div><button[^>]*class="tx-vh-info"[^>]*>[\s\S]*?<\/button><\/div>/
         .test(html), html.slice(0, 600));
     // TITLE CASE, LIKE THE CONTEXT VIEW'S STEPS. An ALL-CAPS title beside
     // "① Foundations" next door is two designs for one heading — the second
@@ -2302,12 +2316,15 @@ section('S10 -- EVERY ROW IN SECTION 5 SHIPS CLOSED, AND SAYS SO BY EXECUTION');
     describeDismissed: (r) => String(r && r.type),
     renderIssueRow: () => '<div class="dm-issue-row"></div>',
     renderMonitor, freshnessTier, renderStatus, renderDescription,
+    // v3.71.0 (G4): healthSection's own ⓘ, `HEALTH_INFO`.
+    explainerMark,
   };
   const names = Object.keys(deps);
   const build = () => new Function(
     'state', ...names,
     extractFunction(SRC, 'shouldKeepHealthOnReload') + '\n' +
     extractFunction(SRC, 'healthScanLabel') + '\n' +
+    extractConstText(SRC, 'HEALTH_INFO') + '\n' +
     extractFunction(SRC, 'healthSection') + '\n' +
     extractFunction(SRC, 'renderIssueGroup') + '\n' +
     extractFunction(SRC, 'renderDismissedGroup') + '\n' +

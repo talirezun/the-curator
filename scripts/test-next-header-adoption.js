@@ -225,7 +225,11 @@ section('§1  THE CLASS GUARD — no view hand-rolls a header');
   ok('...and its zero-domain sentence lives in the SHARED empty card, not under the title',
     /emptyCard\(\{[\s\S]{0,300}?Chat needs at least one domain to talk to/.test(SRC['chat.js']));
   ok('...with the header itself coming from the component, in both densities',
-    /renderViewHeader\(\{ eyebrow: 'ask your wiki', title: 'Chat' \}\)/.test(SRC['chat.js'])
+    // v3.71.0 (G2) gave the centre header its own ⓘ (`info: CHAT_INFO`), so
+    // this no longer anchors on the exact two-field literal — it anchors on
+    // the eyebrow+title PREFIX, which is what "comes from the component"
+    // actually claims; test-next-view-header.js §8 pins the exact call shape.
+    /renderViewHeader\(\{ eyebrow: 'ask your wiki', title: 'Chat',/.test(SRC['chat.js'])
     && /renderViewHeader\(\{ variant: 'sidebar', title: 'Chat' \}\)/.test(SRC['chat.js']));
   // CONTROL: the inverted assertion can still go red — proven on a copy that
   // restores the exact original two lines.

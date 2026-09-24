@@ -105,6 +105,7 @@ import { dirname, join } from 'path';
 import {
   renderViewHeader, renderStatus, renderDescription,
 } from '../src/public/next/shared/text.js';
+import { explainerHtml } from '../src/public/next/shared/explainer.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const NEXT = join(HERE, '..', 'src', 'public', 'next');
@@ -629,7 +630,7 @@ for (const [name, src] of Object.entries(VIEWS)) {
 }
 // The named sites.
 ok('domains.js: ONE header builder serves all four list branches',
-  /function domainsHeader\(\)[\s\S]{0,300}renderViewHeader\(\{ eyebrow: 'your brain', title: 'Domains', info: DOMAIN_BLURB \}\)/
+  /function domainsHeader\(\)[\s\S]{0,300}renderViewHeader\(\{ eyebrow: 'your brain', title: 'Domains', info: DOMAIN_BLURB, infoHtml: true \}\)/
     .test(VIEWS['domains.js']));
 ok('domains.js: the four list branches call it, and none hand-rolls the header',
   (VIEWS['domains.js'].match(/domainsHeader\(\)/g) || []).length >= 5
@@ -654,15 +655,22 @@ ok('settings.js: renderMain builds the header, per-section, from SECTION_INFO',
 // (an eyebrow names the block; it does not carry a claim, least of all an
 // expired one). `ask your wiki` is what the view does, in the same voice as
 // 'the way material gets in' and 'your brain'.
-ok('chat.js: both centre branches build the header from the component, identically',
-  (VIEWS['chat.js'].match(/renderViewHeader\(\{ eyebrow: 'ask your wiki', title: 'Chat' \}\)/g) || []).length === 2);
+ok('chat.js: both centre branches build the header from the SAME explainer, with DISTINCT panel ids',
+  (VIEWS['chat.js'].match(/renderViewHeader\(\{ eyebrow: 'ask your wiki', title: 'Chat', info: CHAT_INFO, infoHtml: true, infoId: 'tx-vh-info-chat-(?:boot|empty)' \}\)/g) || []).length === 2);
 ok('chat.js: the sidebar uses the sidebar DENSITY, so the screen keeps one <h1>',
   /renderViewHeader\(\{ variant: 'sidebar', title: 'Chat' \}\)/.test(VIEWS['chat.js']));
-ok('chat.js: neither centre call passes `info` — there was no prose to fold, only prose to MOVE',
-  !/renderViewHeader\(\{ eyebrow: 'ask your wiki', title: 'Chat', info:/.test(VIEWS['chat.js']));
-ok('settings.js: `general` has NO entry, so that section renders no mark',
-  /const SECTION_INFO = \{[\s\S]*?\n\};/.test(VIEWS['settings.js'])
-  && !/^\s{2}general:/m.test(VIEWS['settings.js'].match(/const SECTION_INFO = \{[\s\S]*?\n\};/)[0]));
+// v3.71.0 (G2): Chat had NO ⓘ at all — the gap INVENTORY.md found. Both
+// centre calls now carry the SAME framing explainer, computed once as a
+// module const (`CHAT_INFO = explainerHtml('chat.page')`), so there is
+// still nothing to drift between the two sites.
+ok('chat.js: CHAT_INFO is computed from the real shared explainer kit, once',
+  /const CHAT_INFO = explainerHtml\('chat\.page'\);/.test(VIEWS['chat.js']));
+ok('chat.js: imports explainerHtml from the ONE shared kit module',
+  /import \{ explainerHtml \} from '\.\.\/shared\/explainer\.js';/.test(VIEWS['chat.js']));
+ok('settings.js: `general` NOW has an entry — G5 closes the one section with no ⓘ',
+  /SECTION_INFO\.general = \{ html: true, text: explainerHtml\('settings\.general'\) \};/.test(VIEWS['settings.js']));
+ok('settings.js: imports explainerHtml from the ONE shared kit module',
+  /import \{ explainerHtml \} from '\.\.\/shared\/explainer\.js';/.test(VIEWS['settings.js']));
 
 // ── v3.65.3: AN html ⓘ IS ONE GRID ITEM, NOT A SENTENCE CUT INTO ROWS ─────
 // The ⓘ panel is a one-column grid (shared/text.css), so bare text beside an
@@ -855,6 +863,54 @@ ok('chat.js: `eyebrow()` is no longer imported — both of its call sites were h
     !/renderViewHeader\(([\s\S]{0,600}?)\)\s*\+\s*(?:renderDescription\(|'<p|'<div class="(?:tx-desc|view-body|sidebar-hint)")/
       .test("      '<h1 class=\"view-title\">Chat</h1>' +\n" +
             "      '<div class=\"view-body\">Chat needs at least one domain to talk to.</div>' +"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§9c  EVERY NEW/REWRITTEN ⓘ (v3.71.0) RENDERS ITS OWN EXPLAINER KEY');
+// ═══════════════════════════════════════════════════════════════════════════
+// G1–G5, D1/D2 and SB, one assertion each: the view computes its mark from
+// EXECUTING the real shared kit against the named key, not from a copy of
+// its words. §8/§9 above prove the CALL SHAPE; this proves the KEY.
+{
+  const shared = VIEWS['shared.js'];
+  const onboarding = stripComments(read('views/onboarding.js'));
+
+  ok('G1 (onboarding.js): the framing ⓘ is explainerMark against onboarding.frame',
+    /explainerMark\('obp-frame-info', 'onboarding\.frame'\)/.test(onboarding));
+  ok('G1: onboarding.js imports explainerMark from the ONE shared kit module',
+    /import \{ explainerMark \} from '\.\.\/shared\/explainer\.js';/.test(onboarding));
+
+  ok('G2 (chat.js): already proved above — CHAT_INFO = explainerHtml(\'chat.page\')', true);
+
+  ok('D1/D2 (domains.js): DOMAIN_BLURB is explainerHtml against domains.page',
+    /const DOMAIN_BLURB = explainerHtml\('domains\.page'\);/.test(VIEWS['domains.js']));
+  ok('D1/D2: MIRROR_INFO is explainerHtml against domains.page-mirror',
+    /const MIRROR_INFO = explainerHtml\('domains\.page-mirror'\);/.test(VIEWS['domains.js']));
+  ok('G3 (domains.js): the Pages eyebrow ⓘ is explainerMark against domains.pages',
+    /const PAGES_INFO = explainerMark\('dm-pages-info', 'domains\.pages'\);/.test(VIEWS['domains.js']));
+  ok('G4 (domains.js): the Wiki health ⓘ is explainerMark against domains.health',
+    /const HEALTH_INFO = explainerMark\('dm-health-info', 'domains\.health'\);/.test(VIEWS['domains.js']));
+  ok('D1/D2/G3/G4: domains.js imports explainerHtml AND explainerMark from the ONE shared kit module',
+    /import \{ explainerHtml, explainerMark \} from '\.\.\/shared\/explainer\.js';/.test(VIEWS['domains.js']));
+
+  ok('G5 (settings.js): SECTION_INFO.general is explainerHtml against settings.general',
+    /SECTION_INFO\.general = \{ html: true, text: explainerHtml\('settings\.general'\) \};/.test(VIEWS['settings.js']));
+
+  ok('SB (shared.js): the header ⓘ is explainerHtml against shared.page, rendered as HTML',
+    /info: explainerHtml\('shared\.page'\),\s*\n\s*infoHtml: true,/.test(shared));
+  ok('SB: shared.js imports explainerHtml from the ONE shared kit module',
+    /import \{ explainerHtml \} from '\.\.\/shared\/explainer\.js';/.test(shared));
+
+  // EXECUTED, not just matched: run the real kit against every key these
+  // eight marks claim, and prove none of them throws (an unknown key throws
+  // by contract — see shared/explainer.js) and each renders non-empty HTML.
+  for (const key of ['onboarding.frame', 'chat.page', 'domains.page', 'domains.page-mirror',
+    'domains.pages', 'domains.health', 'settings.general', 'shared.page']) {
+    let html = null, threw = null;
+    try { html = explainerHtml(key); } catch (e) { threw = e; }
+    ok(`EXECUTED: explainerHtml('${key}') renders without throwing`, !threw, threw && threw.message);
+    ok(`EXECUTED: ...and produces real markup`, typeof html === 'string' && html.length > 40, html && html.length);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

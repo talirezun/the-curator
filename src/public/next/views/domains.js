@@ -219,6 +219,10 @@ import { formatDayAge, freshnessDotHtml, clockGlyph, freshnessTier } from '../sh
 // state ... we are looking for a unified design AND a distinguished design"*.
 // This view's one adopter is M6, the wiki-health scan's own report.
 import { renderMonitor } from '../shared/monitor.js';
+// v3.71.0: the shared explainer kit — one shape for every ⓘ (MODEL.md). D1/D2
+// rewrite the list and detail headers as the view's framing top ⓘ; G3 and G4
+// are the two gap ⓘ this release adds (Pages, Wiki health).
+import { explainerHtml, explainerMark } from '../shared/explainer.js';
 // ── THE OWNERSHIP CHOOSER, SHARED WITH THE AGENT-MEMORY VIEW (v3.61.0) ────
 //
 // "Where do this project's canonical documents come from" is asked here, on
@@ -370,7 +374,15 @@ const GIT_UNDO_WARN = 'There is no Undo button in the app. If you use GitHub Syn
 // So the figures were not restyled, they were DE-DUPLICATED: the cards are the
 // instrument, and what is left of the sentence is what it always actually was
 // — an explanation of what a domain is. That is this constant.
-const DOMAIN_BLURB = 'A domain is one compounding wiki — a subject you read about often. Everything ingested into it updates the pages already there, so the graph gets denser rather than just bigger.';
+//
+// v3.71.0 (D1/D2, COPY.md §3): rewritten as the view's FRAMING top ⓘ — the
+// one-sentence chain (second brain → Shared Brain → agent memory, "you are
+// here" on second-brain) every top ⓘ in the app now opens with. The prose
+// itself moved into shared/explainers.js's `domains.page` entry; this stays
+// a module constant, computed once, so every call site and every existing
+// pin on the NAME keeps working — only what the name now HOLDS changed, from
+// a plain sentence to the explainer's HTML.
+const DOMAIN_BLURB = explainerHtml('domains.page');
 // MIRROR_BLURB IS NOT A DESCRIPTION AND MUST NOT GO BEHIND THE INFO MARK.
 // Its second half — "changes made here are overwritten on the next Pull" —
 // is a data-loss notice about the wiki the user is looking at, and
@@ -379,7 +391,11 @@ const DOMAIN_BLURB = 'A domain is one compounding wiki — a subject you read ab
 // DOMAIN_BLURB behind the mark, and the sentence that WARNS renders as an
 // unfolded renderStatus box in the body. renderViewHeader has no tone and
 // no warning field, so this split is the only shape it can take.
-const MIRROR_INFO = 'A read-only mirror of a Shared Brain — synthesised from every contributor’s opted-in pages.';
+//
+// v3.71.0: also a framing top ⓘ, `domains.page-mirror` — its own lead (the
+// mirror is not a domain a user typed, so it keeps a lead that says so) with
+// "you are here" on shared-brain rather than second-brain.
+const MIRROR_INFO = explainerHtml('domains.page-mirror');
 
 // ── ① INGEST'S OWN SENTENCE (v3.65.0, R4) ────────────────────────────────
 // It was the first line of the fold's BODY, rendered as a description above
@@ -3372,7 +3388,7 @@ async function loadProjects(slug, token) {
  * DOMAIN_BLURB reaches the fold on every branch instead of only the empty one.
  */
 function domainsHeader() {
-  return renderViewHeader({ eyebrow: 'your brain', title: 'Domains', info: DOMAIN_BLURB });
+  return renderViewHeader({ eyebrow: 'your brain', title: 'Domains', info: DOMAIN_BLURB, infoHtml: true });
 }
 
 function renderMain(token) {
@@ -3505,6 +3521,7 @@ function renderMain(token) {
     renderViewHeader({
       title: domain.displayName || domain.slug,
       info: readonly ? MIRROR_INFO : DOMAIN_BLURB,
+      infoHtml: true,
       infoId: 'tx-vh-info-domain',
       actionsHtml:
         (readonly ? '<span class="dm-mirror-pill">' + icon('lock', 11) + ' read-only mirror</span>' : '') +
@@ -5149,7 +5166,14 @@ async function loadBrowse(slug, token) {
 // `aria-hidden`, because a numeral is an ordering cue and not a name — a
 // screen reader reads "INGEST", not "1 INGEST", which is the same call
 // shared/block.js makes about its own.
-const BROWSE_EYEBROW = '<div class="dm-section-hd"><span class="dm-section-num" aria-hidden="true">2</span><div class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">Pages</div></div>';
+// G3 (v3.71.0, COPY.md §3): the only numbered domain section with no ⓘ —
+// what a page IS, and the Wiki · Context · All lens above it, were
+// unexplained. `PAGES_INFO` is computed once, like `BROWSE_EYEBROW` itself,
+// and its panel is appended as BROWSE_EYEBROW's own sibling at every one of
+// its three call sites (loading, error, loaded) so the mark and its panel
+// always travel together.
+const PAGES_INFO = explainerMark('dm-pages-info', 'domains.pages');
+const BROWSE_EYEBROW = '<div class="dm-section-hd"><span class="dm-section-num" aria-hidden="true">2</span><div class="cur-group-title dm-recent-eyebrow dm-section-eyebrow">Pages</div>' + PAGES_INFO.btn + '</div>' + PAGES_INFO.panel;
 
 function renderBrowsePanel() {
   const b = activeBrowse();
@@ -6671,6 +6695,11 @@ function healthScanLabel(hasResult) {
  * returns '' when there is no report, and a section heading over nothing is a
  * gap that looks like a failure.
  */
+// G4 (v3.71.0, COPY.md §3): no ⓘ said what a scan finds, what is free and
+// what an AI action costs (the cost itself stays on the page, unfolded —
+// v3.16.1). Computed once: this function's own body has no per-call state.
+const HEALTH_INFO = explainerMark('dm-health-info', 'domains.health');
+
 function healthSection(inner) {
   if (!inner) return '';
   return (
@@ -6678,7 +6707,9 @@ function healthSection(inner) {
       '<div class="dm-section-hd">' +
         '<span class="dm-section-num" aria-hidden="true">5</span>' +
         '<div class="cur-group-title dm-section-eyebrow">Wiki health</div>' +
+        HEALTH_INFO.btn +
       '</div>' +
+      HEALTH_INFO.panel +
       inner +
     '</section>'
   );
