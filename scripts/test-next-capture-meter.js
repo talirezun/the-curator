@@ -226,9 +226,14 @@ section('§1 — THE FOUR NUMBERS, AND THE ONE THAT MATTERS IS NAMED');
   // numbers. The maintainer read that card and its fold as two things and
   // said so. One row: the headline AND the three clauses are the closed line,
   // and the instrument opens under it.
-  ok(/<summary class="mem-fold-summary" id="mem-fold-capture">[\s\S]*?<span>Capture<\/span>/.test(html),
-    'the reading is a fold row, titled Capture, in the same chrome as its four siblings',
+  // v3.70.0: "Capture" is "Agent sessions" on screen; `capture` stays the
+  // fold key, the route and every on-disk name.
+  ok(/<summary class="mem-fold-summary" id="mem-fold-capture">[\s\S]*?<span>Agent sessions<\/span>/.test(html)
+    && !/>Capture</.test(html),
+    'the reading is a fold row, titled Agent sessions, in the same chrome as its four siblings',
     html.slice(0, 400));
+  ok(!html.includes('mem-capture-zero'),
+    '...and with sessions counted there is NO zero line — it explains a zero, nothing else');
   ok(/<span class="mem-fold-meta"><span class="fresh-dot[^>]*><\/span>6 sessions in the last [0-9]+ days · 4 started with the context/
     .test(html), '...with the headline AND the three clauses as its one closed line',
   html.slice(0, 600));
@@ -278,6 +283,15 @@ section('§2 — THE THREE STATES, TOLD APART (roadmap B12)');
     '...and the mark is the dashed UNKNOWN ring, never age zero');
   ok(noLog.includes('No usage log has been written on this computer yet.'),
     '...with the route\'s own note beside it');
+  // v3.70.0: AT ZERO, one unfolded line says what is counted — the likeliest
+  // reason for a zero on a busy project is sessions that never touched the
+  // MCP (the hook and `my-curator context` write no usage log).
+  const ZERO = 'Counts sessions where an agent used the MCP tools here; sessions started only through a hook '
+    + 'or <code>my-curator context</code> are not counted.';
+  ok(noLog.includes('id="mem-capture-zero">' + ZERO + '</p>'),
+    '...and the ZERO line says what is counted — the hook and `my-curator context` are not', noLog);
+  ok(noLog.indexOf('id="mem-capture-zero"') > noLog.indexOf('</details>') || noLog.indexOf('id="mem-capture-zero"') > noLog.indexOf('mem-save-flat'),
+    '...UNFOLDED — after the row, never inside its chevron');
 
   // ── (b) A LOG, AND NOTHING RAN ─────────────────────────────────────────
   const idle = makeMeter(stFor({
@@ -290,6 +304,8 @@ section('§2 — THE THREE STATES, TOLD APART (roadmap B12)');
     'a log with nothing in the window says NO SESSION RAN — a different sentence');
   ok(!idle.includes('no usage log'),
     '...and does not claim the log is missing', idle.slice(0, 300));
+  ok(idle.includes('id="mem-capture-zero"'),
+    '...and carries the zero line too: zero sessions is exactly when it is needed');
   ok(idle.includes('fresh-dot fresh-unknown'),
     '...and takes the unknown ring too: there is no age to read');
   // IT IS STILL A FOLD, and the reason changed with the shape rather than
@@ -608,7 +624,7 @@ section('§6 — LOADING, FAILING, AND NOTHING HOSTILE REACHING THE PAGE');
   const failed_ = makeMeter(stFor({
     capture: { domain: 'acme', project: 'lumina', data: null, error: 'HTTP 404' },
   })).renderCaptureMeter();
-  ok(failed_.includes('No capture reading for this project') && failed_.includes('HTTP 404'),
+  ok(failed_.includes('No agent-sessions reading for this project') && failed_.includes('HTTP 404'),
     'a failure is DISCLOSED with its reason, never a blank');
   ok(failed_.includes('tx-status-neutral'),
     '...and neutral rather than danger: on a server older than this release the route is '

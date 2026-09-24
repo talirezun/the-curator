@@ -227,6 +227,10 @@ import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
 // trims at) and Capture (sessions that saved, as a share of all sessions).
 import { renderMonitor } from '../shared/monitor.js';
 import { renderDepthCell } from '../shared/depth-bar.js';
+// v3.70.0: the window meter — the SEGMENTED depth bar (rule 6 as amended).
+// Step ④ draws the route's `meter` through it, and every token figure on the
+// step goes through its one formatter.
+import { renderBucket, formatTokens } from '../shared/bucket.js';
 // ── THE ONE PICKER ON THIS SCREEN (v3.65.0, P10) ───────────────────────────
 // Step ③'s "+ Add a wiki". The shared listbox, ADD ONE AT A TIME: the
 // component implements no multi-select and says so in its own header, and
@@ -400,30 +404,30 @@ const BRIEF_MAX_BYTES = 32768;
 // not add an export to a module two views share.
 const READ_FIRST_BUDGET_BYTES = 120 * 1024;
 
-// ── THE READING BUDGET'S FIVE PRESETS (v3.67.0) ──────────────────────────
+// ── THE READING BUDGET'S SEVEN PRESETS — THE ROUTE'S LIST (v3.70.0) ──────
 //
-// The store's `READING_BUDGET_PRESETS`, mirrored for the same reason the line
-// above is: `src/brain` is not served, and a view may not add an export to a
-// module two views share. The bytes are the store's; the WORDS are the view's,
-// verbatim from the design's "meaning in the picker" column
-// (DESIGN-context-budget §2.2), with Standard marked recommended (CONTRACT §5.1).
-// scripts/test-next-memory-view.js pins the ids and bytes against the store.
+// v3.67.0 kept a byte-for-byte COPY of the store's ladder here, and v3.70.0
+// proved what a copy costs: the store grew to seven presets and this list
+// stayed at five. The ids, bytes and tokens now arrive with the measurement
+// (`GET …/session-start` → `presets[]`, one what-if per preset, derived from
+// the store's `READING_BUDGET_PRESETS` by the route), so there is no second
+// description of the ladder left in this file to drift.
 //
-// No slider, on purpose: five named options with a figure beside each are a
-// decision, a slider is a tuning task, and the maintainer's brief was "easy to
-// set up and to make choices".
-const READING_BUDGET_PRESETS = [
-  { id: 'index-only', bytes: 0, label: 'Index only',
-    hint: 'No document text at start. Agents see the list and open what they need by name.' },
-  { id: 'lean', bytes: 32768, label: 'Lean',
-    hint: 'One or two short documents: conventions, a decision log.' },
-  { id: 'standard', bytes: 65536, label: 'Standard · recommended',
-    hint: 'A handful of core documents.' },
-  { id: 'deep', bytes: 122880, label: 'Deep', hint: 'Today’s default.' },
-  { id: 'max', bytes: 204800, label: 'Max',
-    hint: 'The store’s ceiling. The whole reply is still limited to 300 KB, so on a project with '
-      + 'a long brief and handoff some text can be left out, and it is named if so.' },
-];
+// What stays here is only the WORDS — the name and the one-line meaning a
+// person decides with — keyed by the store's id. An id the route sends that
+// this table does not know still renders, under its own id, so a future
+// eighth preset appears without a view change.
+const READING_BUDGET_WORDS = {
+  'index-only': { label: 'Index only',
+    hint: 'The list only. Agents open documents by name when a task needs one.' },
+  lean: { label: 'Lean', hint: 'One or two short documents: conventions, a decision log.' },
+  standard: { label: 'Standard', recommended: true, hint: 'A handful of core documents.' },
+  deep: { label: 'Deep', hint: 'A design an agent must hold in mind.' },
+  large: { label: 'Large', hint: 'A big project, on a 1M-token window.' },
+  'extra-large': { label: 'Extra large', hint: 'A whole design set. 1M-token windows only.' },
+  max: { label: 'Max',
+    hint: 'The ceiling. Almost never right; a few 1M-window projects need it.' },
+};
 // What the helper plans against when the owner has set nothing (§1.11), and
 // what "Set a reading budget" opens the picker on.
 const READING_BUDGET_STANDARD = 65536;
@@ -443,12 +447,25 @@ const START_STATES = [
       + 'should find it.' },
 ];
 
-// ── THE CONTEXT WINDOW THE PERCENTAGE IS OF (v3.67.0) ────────────────────
-// A PER-VIEWER convenience: it changes one denominator on this screen and
-// nothing the project stores or an agent receives. Browser storage, wrapped,
-// because a private window throws rather than returning null.
+// ── THE CONTEXT WINDOW AND THE HARNESS ESTIMATE (v3.70.0) ───────────────
+// Both are PER COMPUTER now, in the app's settings file (GET/PUT
+// /api/config/context-window), so every browser and the menu bar widget agree.
+// v3.67.0 kept the window per BROWSER under this key; it is read ONCE, to
+// carry an old choice across (`migrateLegacyWindow`), then removed and never
+// read again. `CONTEXT_WINDOWS` is that old key's alphabet, kept only to read it.
 const CONTEXT_WINDOW_KEY = 'curator-context-window-v1';
 const CONTEXT_WINDOWS = { '200k': 200000, '1m': 1000000 };
+// The window picker's choices when the settings read has not landed, and the
+// harness picker's starting points (DESIGN-v3.70.0 §2, decision 2).
+const CONTEXT_WINDOW_CHOICES = [200000, 400000, 1000000];
+const HARNESS_PRESETS = [
+  { tokens: 20000, label: 'Light', hint: 'A short system prompt, few tools.' },
+  { tokens: 50000, label: 'Typical', hint: 'Claude Code with a CLAUDE.md and a few MCP servers.' },
+  { tokens: 120000, label: 'Heavy', hint: 'Many MCP servers, skills and a long CLAUDE.md.' },
+];
+// Where the exact figure comes from, said wherever the estimate is set.
+const HARNESS_HINT = 'Run /context in Claude Code and add up its system prompt, system tools, '
+  + 'MCP tools, memory files and skills.';
 
 // ── THE HONESTY METER'S WINDOW, AND THE LIST UNDER IT (v3.63.0) ──────────
 //
@@ -810,7 +827,15 @@ function freshState() {
     budgetError: null,
     startSaving: null,
     startError: null,
-    ctxWindow: null,
+    // v3.70.0: this computer's window and harness (GET /api/config/
+    // context-window), the inline editor for a custom window / exact harness,
+    // a write in flight, a refusal (persistent), and the budget being
+    // previewed from the picker.
+    ctxSettings: null,
+    ctxEdit: null,
+    ctxSaving: false,
+    ctxError: null,
+    budgetPreview: null,
   };
 }
 
@@ -1112,6 +1137,13 @@ let captureInFlight = null;
 let sessionStartInFlight = null;
 // The `if applied` preview in flight, keyed by its request body.
 let previewInFlight = null;
+// v3.70.0: the settings read in flight (once per mount), and the picker's
+// budget preview — its debounce timer, the request in flight and a per-
+// measurement cache, so arrowing back over a preset asks nothing.
+let ctxSettingsInFlight = false;
+let budgetPreviewTimer = null;
+let budgetPreviewInFlight = null;
+const budgetPreviewCache = new Map();
 // THE PROJECT LAST OPEN IN THIS TAB. Coming back to Context from Chat or
 // Domains used to re-derive the project from recency (`initialPick`), so a user
 // reading a quieter project in another domain was dropped onto the freshest
@@ -1883,7 +1915,11 @@ function screenSignature() {
     : null;
   const budgetMark = [!!state.budgetSaving, state.budgetError || null,
     pr ? (pr.readingBudgetBytes === undefined ? null : pr.readingBudgetBytes) : null,
-    state.startError ? [state.startError.slug, state.startError.error] : null];
+    state.startError ? [state.startError.slug, state.startError.error] : null,
+    // v3.70.0: this computer's window and harness, the inline editor and a
+    // refusal — each changes what step ④ paints.
+    state.ctxSettings ? [state.ctxSettings.contextWindowTokens, state.ctxSettings.harnessEstimateTokens] : null,
+    state.ctxEdit ? state.ctxEdit.kind : null, !!state.ctxSaving, state.ctxError || null];
 
   const editMark = state.briefEdit
     ? [state.briefEdit.domain, state.briefEdit.project, !!state.briefEdit.busy, state.briefEdit.error || null,
@@ -4009,12 +4045,15 @@ function renderLayerStrip(read) {
   // (`CAPTURE_WINDOW_DAYS`, for "in the last 30 days") is a ReferenceError
   // there — a suite that CRASHES rather than asserts. The window is stated in
   // words in step ②'s own row summary, which is where the jump lands.
+  // v3.70.0: "Capture" became AGENT SESSIONS on screen — what it counts, in
+  // the owner's words. The jump id, the route (`…/capture`) and every on-disk
+  // name keep the old word, as v3.65.1 did for Documents/Memory.
   cards.push({
-    label: 'CAPTURE',
+    label: 'AGENT SESSIONS',
     value: cap ? capValue : 'not counted',
     hidden: !cap,
     jump: 'capture',
-    name: 'Capture — open the session reading in step 2',
+    name: 'Agent sessions — open the session reading in step 2',
   });
 
   // ── SESSION START — THE SUM OF THE THREE LAYERS (v3.67.0) ─────────────
@@ -4034,15 +4073,22 @@ function renderLayerStrip(read) {
   // a style: this function is LIFTED by brace-matching and executed by two
   // suites, and a helper named here is a ReferenceError there. The data rides
   // on `state`, which the body already reads, and the arithmetic is inline.
-  const ssRead = state.sessionStart && state.sessionStart.domain === state.activeDomain
+  //
+  // v3.70.0: IN TOKENS, and in how many MCP replies — "≈8.8k tokens · 1 reply"
+  // — the unit the meter in step ④ draws. The token figure is written by the
+  // same rule as the meter kit's `formatTokens` (inline, for the reason above).
+  const ssD = state.sessionStart && state.sessionStart.domain === state.activeDomain
     && state.sessionStart.project === state.activeProject && state.sessionStart.data
-    && state.sessionStart.data.bytes && Number.isInteger(state.sessionStart.data.bytes.mcp)
-    ? state.sessionStart.data.bytes.mcp : null;
+    ? state.sessionStart.data : null;
+  const ssRead = ssD && ssD.tokens && Number.isInteger(ssD.tokens.mcp) ? ssD.tokens.mcp
+    : (ssD && ssD.bytes && Number.isInteger(ssD.bytes.mcp) ? Math.round(ssD.bytes.mcp / 4) : null);
+  const ssReplies = ssD && ssD.delivery && Number.isInteger(ssD.delivery.replies) && ssD.delivery.replies > 0
+    ? ssD.delivery.replies : 1;
+  const ssK = ssRead === null ? 0 : Math.round(ssRead / 100) / 10;
   const ssValue = ssRead === null ? 'not measured'
-    : Math.round(ssRead / 1024).toLocaleString('en-US') + ' KB · ≈'
-      + (ssRead / 4 < 10000
-        ? (Math.round(ssRead / 400) / 10).toLocaleString('en-US')
-        : Math.round(ssRead / 4000).toLocaleString('en-US')) + 'k tokens';
+    : '≈' + (ssRead >= 1e6 ? (Math.round(ssRead / 1e5) / 10) + 'M'
+      : (ssK >= 100 ? Math.round(ssRead / 1000) : (ssK >= 10 && Number.isInteger(ssK) ? ssK : ssK.toFixed(1))) + 'k')
+      + ' tokens · ' + ssReplies + (ssReplies === 1 ? ' reply' : ' replies');
   cards.push({
     label: 'SESSION START',
     value: ssValue,
@@ -4084,8 +4130,8 @@ function renderLayerStrip(read) {
     infoLabel: 'About the readings on this page',
     infoText:
       '<p>The first three are the project’s three layers of context, and pressing one goes to the '
-      + 'step that owns it; CAPTURE reads whether agents are using them, and SESSION START is what '
-      + 'an agent is handed when it starts, all three together. They are READINGS, not a '
+      + 'step that owns it; AGENT SESSIONS reads whether agents are using them, and SESSION START is what '
+      + 'an agent is handed when it starts, all three together, in tokens. They are READINGS, not a '
       + 'filter — nothing on this page narrows when '
       + 'you press one, unlike the figures on a domain page, which also select what the list '
       + 'below them shows.</p>'
@@ -4964,7 +5010,7 @@ function renderCaptureMeter() {
     // it has not diagnosed.
     return shell(renderStatus({
       state: 'neutral',
-      title: 'No capture reading for this project',
+      title: 'No agent-sessions reading for this project',
       detail: c.error,
     })) + '</div>';
   }
@@ -5178,7 +5224,7 @@ function renderCaptureMeter() {
   const ofSessions = f.sessions !== null && f.sessions > 0
     ? 'of ' + f.sessions.toLocaleString('en-US') : undefined;
   const monitor = renderMonitor({
-    label: 'The capture reading',
+    label: 'The agent-sessions reading',
     lines: [
       f.sessions === null ? null
         : { key: 'sessions', value: f.sessions, sub: 'in the last ' + win },
@@ -5206,19 +5252,30 @@ function renderCaptureMeter() {
   // own idle state, and the one `renderSaveStatus` makes for a healthy save.
   const body = monitor;
   const open = (state.openFolds && state.openFolds.capture) ? ' open' : '';
+  // v3.70.0: the row is "Agent sessions" on screen (on disk it stays
+  // `capture`). At ZERO — no log, or none in the window — one unfolded line
+  // says what is counted, because the likeliest reason for a zero on a busy
+  // project is a session that never touched the MCP: the hook and
+  // `my-curator context` read the store directly and write no usage log
+  // (src/cli/context.js, src/cli/resolve.js).
+  const zeroLine = (!f.logPresent || f.sessions === 0)
+    ? '<p class="mem-capture-limits mem-capture-zero" id="mem-capture-zero">Counts sessions where an agent '
+      + 'used the MCP tools here; sessions started only through a hook or <code>my-curator context</code> '
+      + 'are not counted.</p>'
+    : '';
   const row = body
     ? '<details class="mem-fold" data-mem-fold="capture"' + open + '>'
       + '<summary class="mem-fold-summary" id="mem-fold-capture">' + icon('chevronRight', 14)
-        + '<span>Capture</span>'
+        + '<span>Agent sessions</span>'
         + '<span class="mem-fold-meta">' + meta + '</span>'
       + '</summary>'
       + '<div class="mem-fold-body">' + body + '</div>'
     + '</details>'
     : '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-save-flat">'
-      + '<span>Capture</span>'
+      + '<span>Agent sessions</span>'
       + '<span class="mem-fold-meta">' + meta + '</span>'
     + '</div></div>';
-  return row + notice + limitsHtml;
+  return row + zeroLine + notice + limitsHtml;
 }
 
 
@@ -7462,9 +7519,11 @@ function foundationsSummaryMeta(facts) {
       ? fndSize(facts.readFirstBytes) + ' read first, of a '
         + fndSize(facts.readFirstBudgetBytes) + ' budget'
       : fndSize(facts.bytes))
-    : (facts.bytes > facts.budgetBytes
-      ? fndSize(facts.bytes) + ' of a ' + fndSize(facts.budgetBytes) + ' budget'
-      : fndSize(facts.bytes));
+    // v3.70.0: the stored total is said NEUTRALLY. The 200 KB project figure
+    // only ever warned, and the reading budget is the meter that decides what
+    // an agent is handed (step ④), so "of a 200 KB budget" was an alarm about
+    // a number nothing acts on.
+    : fndSize(facts.bytes);
   return [
     facts.count.toLocaleString('en-US') + ' document' + (facts.count === 1 ? '' : 's'),
     size,
@@ -7510,7 +7569,10 @@ function foundationsBudgetWarning(facts) {
       + fndSize(facts.readFirstBudgetBytes)
       + ' at session start; the rest stay listed and are fetched by name when needed.';
   }
-  if (facts.bytes <= facts.budgetBytes) return '';
+  // v3.70.0: NOTHING TO SAY when nothing is flagged. The stored total over
+  // the 200 KB project figure was a warning about a number nothing acts on;
+  // what an unplanned project hands over is step ④'s cost line, in tokens.
+  if (!flagged) return '';
   // ── THE READING BUDGET COMES FROM THE PAYLOAD (v3.66.0) ─────────────
   // `facts.readFirstBudgetBytes` is the server's `CONTEXT_MAX_BYTES_DEFAULT`
   // (the view constant only when a build sent none), for the reason the
@@ -7571,24 +7633,20 @@ function foundationsBudgetWarning(facts) {
 function foundationsMonitor(facts) {
   if (!facts || !facts.count) return '';
   const flagged = facts.readFirstCount > 0;
-  const storedOver = facts.bytes > facts.budgetBytes;
   const readOver = flagged && facts.readFirstBudgetExceeded === true;
   return renderMonitor({
     id: 'mem-fnd-monitor',
     label: 'Document budgets',
     lines: [
+      // v3.70.0: THE STORED TOTAL IS A READING, NOT A BUDGET. No bar against
+      // the 200 KB project figure and never danger — that figure only ever
+      // warned, and what an agent is handed is the reading budget's question
+      // (the line below, and step ④'s meter). Said neutrally, whatever its size.
       {
         key: 'stored',
         value: fndSize(facts.bytes),
-        sub: 'of ' + fndSize(facts.budgetBytes) + ' project',
-        tone: (!flagged && storedOver) ? 'danger' : undefined,
-        depth: {
-          // Clamped when something is flagged, so the bar fills but cannot
-          // take the danger tone: see the applicability note above.
-          amount: flagged ? Math.min(facts.bytes, facts.budgetBytes) : facts.bytes,
-          budget: facts.budgetBytes,
-          label: fndSize(facts.bytes) + ' of a ' + fndSize(facts.budgetBytes) + ' project budget',
-        },
+        sub: facts.count.toLocaleString('en-US') + ' document' + (facts.count === 1 ? '' : 's')
+          + ' in this project',
       },
       flagged ? {
         key: 'read first',
@@ -7834,11 +7892,15 @@ function fndRowHtml(d, keptOnly, readonly, budgetBytes, suggest, sources) {
       // apart (CLAUDE.md's own invariant): `CONTEXT_MAX_BYTES_DEFAULT` is the
       // READING budget and applies only to the `readFirst` subset, while this
       // column lists EVERY document.
+      // v3.70.0: A SHARE OF THE PROJECT'S OWN DOCUMENTS (`max`, never
+      // danger), no longer against the 200 KB project figure — that figure
+      // only warned, and a bar over it read as an alarm. `budgetBytes` is the
+      // caller's total of every document here.
       '<td class="fnd-cell-size">' + renderDepthCell({
         value: size,
         amount: bytes,
-        budget: budgetBytes,
-        label: fndSize(bytes) + ' of a ' + fndSize(budgetBytes) + ' project budget',
+        max: budgetBytes,
+        label: fndSize(bytes) + ' of the ' + fndSize(budgetBytes) + ' of documents in this project',
       }) + '</td>' +
       // ── "AT SESSION START" — THREE STATES (v3.67.0) ─────────────────────
       // Curator METADATA ABOUT a document, never part of it, so it is set on
@@ -8275,7 +8337,7 @@ function renderFoundations(read) {
   const plan = readonly ? null : planFor();
   const proposal = plan && plan.result && Array.isArray(plan.result.proposals) ? plan : null;
   const rows = facts.docs.map(
-    (d) => fndRowHtml(d, keptOnly, readonly, facts.budgetBytes,
+    (d) => fndRowHtml(d, keptOnly, readonly, facts.bytes,
       proposal ? planRowFor(proposal, d.slug) : undefined,
       facts.sources)).join('');
   // ── THE EDITOR REPLACES THE TABLE, IT DOES NOT SIT UNDER IT ────────────
@@ -8638,9 +8700,6 @@ function renderFoundationEditor(facts) {
     : '';
 
   // ── THE COUNTER, THE WALL AND THE BUDGET ──────────────────────────────
-  const budget = facts.budgetBytes;
-  const projected = Math.max(0, facts.bytes -
-    (e.isNew ? 0 : new TextEncoder().encode(String(e.loaded || '')).length)) + stats.bytes;
   const statusLine =
     '<div class="mem-brief-stats' + (stats.over ? ' mem-brief-stats-over' : '') + '" id="mem-fnd-stats">' +
       '<span data-fnd-stat="dirty">' + (dirty ? 'modified' : 'unchanged') + '</span>' +
@@ -8656,25 +8715,11 @@ function renderFoundationEditor(facts) {
       escapeHtml(formatBytes(MAX_FOUNDATION_BYTES)) + ') — this draft is ' +
       escapeHtml(String(stats.bytes)) + '. A canonical document cannot be trimmed for you, so ' +
       'split it or point at the part that matters.</span></div>' +
-    // THE BUDGET IS SAID, NEVER ENFORCED. The store accepts the save and
-    // discloses the overrun; refusing here would be the app standing between
-    // the owner and a write the server would have taken.
-    // ── v3.66.0: IT NAMED THE WRONG BUDGET ───────────────────────────────
-    // It said the 200 KB was what "an agent reads in one call" and that the
-    // read is "trimmed, oldest-listed last". Both false: 200 KB is what a
-    // project may STORE, an agent is handed up to the READING budget
-    // (`facts.readFirstBudgetBytes`, 120 KB by default) in reading order, and
-    // a document that does not fit is named and fetched by name, not trimmed.
-    // Now the same true sentence `foundationsBudgetWarning` says under the row.
-    (projected > budget
-      ? '<div class="mem-note">' + icon('alertCircle', 13) +
-        '<span>Saving this takes the project to about ' + escapeHtml(formatBytes(projected)) +
-        ' of documents, over the ' + escapeHtml(formatBytes(budget)) +
-        ' project budget. It will still be saved — agents are handed up to ' +
-        escapeHtml(formatBytes(facts.readFirstBudgetBytes)) +
-        ' of document text at session start, in reading order; every other document ' +
-        'stays listed and is fetched by name when needed.</span></div>'
-      : '');
+    // v3.70.0: the "over the 200 KB project budget" note under the editor is
+    // WITHDRAWN with that figure as an alarm (see `foundationsMonitor`): a save
+    // is never refused over it, and what an agent is handed is the reading
+    // budget's question, answered by step ④.
+    '';
 
   const discardBar = e.confirmDiscard
     ? '<div class="mem-brief-discard" role="alertdialog" aria-label="Unsaved changes">' +
@@ -10609,7 +10654,8 @@ function ssSize(bytes) {
     + ' KB';
 }
 
-/** Tokens, ESTIMATED at four characters each — the ⓘ of ④ says so. */
+/** Tokens, ESTIMATED at four bytes each — the ⓘ of ④ says so. From BYTES,
+ *  for the helper's lines, which still quote bytes. */
 function ssTokens(bytes) {
   const t = Number.isFinite(bytes) && bytes > 0 ? bytes / 4 : 0;
   return '≈' + (t < 10000
@@ -10617,39 +10663,74 @@ function ssTokens(bytes) {
     : Math.round(t / 1000).toLocaleString('en-US')) + 'k';
 }
 
+/** ≈ tokens, through the meter kit's ONE formatter, so a figure in the
+ *  monitor and the same figure on the bar cannot be written two ways. */
+function tok(tokens) {
+  return Number.isFinite(tokens) && tokens > 0 ? '≈' + formatTokens(tokens) : '0';
+}
+
 /** The reading budget in words: "Index only", "64 KB". */
 function budgetWord(bytes) {
   return bytes === 0 ? 'Index only' : ssSize(bytes);
 }
 
-/** The per-viewer context window: '200k' (the default) or '1m'. */
+/**
+ * THE OLD PER-BROWSER WINDOW, READ ONCE (v3.67.0 → v3.70.0).
+ *
+ * Returns the tokens the old key held, or null. Wrapped: a private window
+ * THROWS on access rather than returning null. `migrateLegacyWindow` is the
+ * only caller, and it removes the key after — nothing else reads it.
+ */
 function readContextWindow() {
   try {
     const v = localStorage.getItem(CONTEXT_WINDOW_KEY);
-    return Object.hasOwn(CONTEXT_WINDOWS, v || '') ? v : '200k';
+    return Object.hasOwn(CONTEXT_WINDOWS, v || '') ? CONTEXT_WINDOWS[v] : null;
   } catch {
-    return '200k';
+    return null;
   }
 }
 
+/** The window the meter is drawn against, in tokens: this computer's setting,
+ *  else the one the measurement was taken with, else 200K. */
 function contextWindowNow() {
-  if (!state.ctxWindow || !Object.hasOwn(CONTEXT_WINDOWS, state.ctxWindow)) {
-    state.ctxWindow = readContextWindow();
+  const s = state.ctxSettings;
+  if (s && Number.isInteger(s.contextWindowTokens) && s.contextWindowTokens > 0) {
+    return s.contextWindowTokens;
   }
-  return state.ctxWindow;
+  const ss = sessionStartFor();
+  const w = ss && ss.data && ss.data.window;
+  return w && Number.isInteger(w.tokens) && w.tokens > 0 ? w.tokens : 200000;
 }
 
-/** "18.6%" of the chosen window, from bytes (tokens = bytes ÷ 4). */
-function ssPct(bytes, win) {
-  const tokens = (Number.isFinite(bytes) && bytes > 0 ? bytes : 0) / 4;
-  const pct = (tokens / CONTEXT_WINDOWS[win]) * 100;
+/** The owner's harness estimate in tokens, or null when Not set. */
+function harnessNow() {
+  const s = state.ctxSettings;
+  if (s) {
+    return Number.isInteger(s.harnessEstimateTokens) && s.harnessEstimateTokens >= 0
+      ? s.harnessEstimateTokens : null;
+  }
+  const ss = sessionStartFor();
+  const h = ss && ss.data && ss.data.harness;
+  return h && Number.isInteger(h.tokens) && h.tokens >= 0 ? h.tokens : null;
+}
+
+/** "200K", "1M" — a window's name. */
+function windowWord(tokens) {
+  return formatTokens(tokens).replace(/k$/, 'K');
+}
+
+/** A share of the window, "4.4%" ("<0.1%" for a sliver, never "0.0%"). */
+function ssPct(tokens, windowTokens) {
+  const t = Number.isFinite(tokens) && tokens > 0 ? tokens : 0;
+  const pct = windowTokens > 0 ? (t / windowTokens) * 100 : 0;
   if (pct > 0 && pct < 0.1) return '<0.1%';
   return (Math.round(pct * 10) / 10).toFixed(1) + '%';
 }
 
-/** The one line a whole start reads as: "149 KB · ≈37k tokens · 18.6%". */
-function ssTotalWords(bytes, win) {
-  return ssSize(bytes) + ' · ' + ssTokens(bytes) + ' tokens · ' + ssPct(bytes, win);
+/** "3 MCP replies". */
+function repliesWord(n) {
+  const r = Number.isInteger(n) && n > 0 ? n : 1;
+  return r + ' MCP repl' + (r === 1 ? 'y' : 'ies');
 }
 
 /** Step ④'s measurement, for the project on screen only. */
@@ -10658,65 +10739,243 @@ function sessionStartFor() {
   return ss && ss.domain === state.activeDomain && ss.project === state.activeProject ? ss : null;
 }
 
+/** A preset's name: "Standard 16k", "Index only". The number is the store's
+ *  own token figure in whole thousands of 1,024 — the ladder's names. */
+function presetLabel(p) {
+  if (!p) return 'Custom';
+  const w = READING_BUDGET_WORDS[p.id];
+  const name = w ? w.label : String(p.id);
+  return Number.isInteger(p.tokens) && p.tokens > 0 ? name + ' ' + Math.round(p.tokens / 1024) + 'k' : name;
+}
+
+/** The route's seven presets, validated. [] before the measurement lands. */
+function presetsOf(data) {
+  return (data && Array.isArray(data.presets) ? data.presets : [])
+    .filter((p) => p && typeof p.id === 'string' && Number.isInteger(p.bytes) && p.bytes >= 0);
+}
+
 /**
  * THE READING BUDGET PICKER — the shared listbox, ONE cfg for both halves.
  *
- * Each preset carries what an agent would be handed under it (`presets[].
- * mcpBytes`, measured by the store in the same answer), so hovering or
- * arrowing through the list is a comparison with no request behind it.
+ * TOKEN-FIRST, and every row is the ROUTE's: the id, the bytes and the tokens
+ * come from `presets[]` (the store's ladder, one what-if per preset), and so do
+ * what an agent would start with under it and in how many MCP replies. This
+ * file holds only the words (`READING_BUDGET_WORDS`).
  *
  * ── STANDARD IS PRESELECTED WHEN NOTHING IS SET, AND STILL CHOOSABLE ────
  * The listbox commits only a CHANGED value, so "preselected" and "choosable"
  * would contradict each other on an untouched project. Standard is therefore
  * the highlighted row AND an action row there: pressing it runs the write
  * without the trigger pretending a budget is already set. The trigger keeps
- * saying what is true — `Default · 120 KB` — until the owner chooses.
+ * saying what is true — `Default · ≈30.7k` — until the owner chooses.
+ *
+ * A stored budget that is no preset (a v3.67 Deep of 120 KB, a Max of 200 KB)
+ * reads "Custom ≈51.2k, nearest Large" and is never rewritten by reading it.
  */
 function budgetPickerCfg(read, data, busy) {
   const owner = read && Number.isInteger(read.readingBudgetBytes) ? read.readingBudgetBytes : null;
-  const measured = new Map();
-  for (const p of (data && Array.isArray(data.presets) ? data.presets : [])) {
-    if (p && typeof p.id === 'string' && Number.isInteger(p.mcpBytes)) measured.set(p.id, p.mcpBytes);
-  }
-  const match = owner === null ? null : READING_BUDGET_PRESETS.find((p) => p.bytes === owner) || null;
+  const presets = presetsOf(data);
+  const b = data && data.budget && typeof data.budget === 'object' ? data.budget : {};
+  const match = owner === null ? null : presets.find((p) => p.bytes === owner) || null;
   const untouched = owner === null;
+  const winTokens = contextWindowNow();
+  const nearest = typeof b.nearest === 'string' ? presets.find((p) => p.id === b.nearest) || null : null;
+  const defaultBytes = Number.isInteger(b.bytes) && untouched ? b.bytes : READ_FIRST_BUDGET_BYTES;
+  const customWords = owner === null ? '' : 'Custom ' + tok(owner / 4)
+    + (nearest ? ', nearest ' + (READING_BUDGET_WORDS[nearest.id] || { label: nearest.id }).label : '');
   return {
     id: 'mem-budget-lb',
     value: untouched ? 'standard' : (match ? match.id : null),
     triggerText: busy === true ? 'Saving…'
-      : untouched ? 'Default · 120 KB'
-        : match ? (match.bytes === 0 ? 'Index only' : match.label.replace(' · recommended', '') + ' · ' + ssSize(match.bytes))
-          : 'Custom · ' + ssSize(owner),
-    ariaLabel: 'Reading budget: ' + (untouched ? 'not set, the default 120 KB applies'
-      : budgetWord(owner)),
-    disabled: busy === true,
+      : untouched ? 'Default · ' + tok(defaultBytes / 4)
+        : match ? presetLabel(match) : customWords,
+    ariaLabel: 'Reading budget: ' + (untouched
+      ? 'not set, the default of about ' + formatTokens(defaultBytes / 4) + ' tokens applies'
+      : match ? presetLabel(match) + ' tokens' : customWords),
+    disabled: busy === true || presets.length === 0,
     triggerClass: 'mem-budget-btn',
-    minWidth: 320,
+    minWidth: 340,
     actionValues: untouched ? ['standard'] : [],
-    options: READING_BUDGET_PRESETS.map((p) => {
-      const mcp = measured.get(p.id);
+    options: presets.map((p) => {
+      const w = READING_BUDGET_WORDS[p.id] || { label: p.id, hint: '' };
+      const mcpTokens = Number.isInteger(p.mcpTokens) ? p.mcpTokens
+        : (Number.isInteger(p.mcpBytes) ? Math.round(p.mcpBytes / 4) : null);
+      // Window-aware, words first, never disabled (DESIGN §3.1): the owner
+      // may know better, so the row says it and still offers itself.
+      const big = mcpTokens !== null && winTokens > 0 && mcpTokens > winTokens / 4;
       return {
         value: p.id,
-        label: p.bytes === 0 ? 'Index only' : p.label.replace(' · recommended', '') + ' · ' + ssSize(p.bytes),
+        label: presetLabel(p),
         ...(untouched && p.id === 'standard' ? { action: true } : {}),
-        typeahead: p.label,
+        typeahead: w.label,
         html: '<span class="mem-bp"><span class="mem-bp-row"><span class="mem-bp-name">'
-          + escapeHtml(p.label) + '</span>'
+          + escapeHtml(presetLabel(p) + (w.recommended ? ' · recommended' : '')) + '</span>'
           + '<span class="mem-bp-bytes">' + escapeHtml(ssSize(p.bytes)) + '</span></span>'
-          + (Number.isInteger(mcp)
-            ? '<span class="mem-bp-start">an agent starts with ≈' + escapeHtml(ssSize(mcp)) + ' · '
-              + escapeHtml(ssTokens(mcp)) + ' tokens</span>'
+          + (mcpTokens !== null
+            ? '<span class="mem-bp-start">an agent starts with ' + escapeHtml(tok(mcpTokens))
+              + ' tokens · ' + escapeHtml(repliesWord(p.replies))
+              + (big ? ' · over ¼ of this window' : '') + '</span>'
             : '')
-          + '<span class="mem-bp-hint">' + escapeHtml(p.hint) + '</span></span>',
+          + (w.hint ? '<span class="mem-bp-hint">' + escapeHtml(w.hint) + '</span>' : '') + '</span>',
       };
     }),
   };
+}
+
+/** THE WINDOW PICKER — 200K · 400K · 1M, and Custom… (an action row that
+ *  opens the inline editor). Per computer, never per project. */
+function windowPickerCfg(busy) {
+  const s = state.ctxSettings;
+  const choices = s && Array.isArray(s.choices) && s.choices.every((c) => Number.isInteger(c) && c > 0)
+    ? s.choices : CONTEXT_WINDOW_CHOICES;
+  const cur = contextWindowNow();
+  const isChoice = choices.indexOf(cur) >= 0;
+  return {
+    id: 'mem-window-lb',
+    value: isChoice ? String(cur) : null,
+    triggerText: busy === true ? 'Saving…' : (isChoice ? windowWord(cur) : 'Custom · ' + windowWord(cur)),
+    ariaLabel: 'Context window: ' + windowWord(cur) + ' tokens, set for this computer',
+    disabled: busy === true,
+    triggerClass: 'mem-window-btn',
+    minWidth: 240,
+    actionValues: ['custom'],
+    options: choices.map((t) => ({ value: String(t), label: windowWord(t) + ' tokens' }))
+      .concat([{ value: 'custom', label: 'Custom…', action: true,
+        html: '<span class="mem-bp"><span class="mem-bp-name">Custom…</span>'
+          + '<span class="mem-bp-hint">Any size from 8K to 10M tokens.</span></span>' }]),
+  };
+}
+
+/** THE HARNESS PICKER — Not set · Light · Typical · Heavy · Exact…. The
+ *  figure is the OWNER's estimate: never measured, never added to a measured
+ *  figure, labelled "your estimate" wherever it appears. */
+function harnessPickerCfg(busy) {
+  const cur = harnessNow();
+  const match = cur === null ? null : HARNESS_PRESETS.find((h) => h.tokens === cur) || null;
+  return {
+    id: 'mem-harness-lb',
+    value: cur === null ? 'none' : (match ? String(match.tokens) : null),
+    triggerText: busy === true ? 'Saving…'
+      : cur === null ? 'Not set' : tok(cur) + ' · your estimate',
+    ariaLabel: 'Harness estimate: ' + (cur === null ? 'not set'
+      : 'about ' + formatTokens(cur) + ' tokens, your estimate'),
+    disabled: busy === true,
+    triggerClass: 'mem-harness-btn',
+    minWidth: 320,
+    actionValues: ['exact'],
+    options: [{ value: 'none', label: 'Not set',
+      html: '<span class="mem-bp"><span class="mem-bp-name">Not set</span>'
+        + '<span class="mem-bp-hint">The meter shows The Curator and free space only.</span></span>' }]
+      .concat(HARNESS_PRESETS.map((h) => ({
+        value: String(h.tokens), label: h.label + ' ≈' + formatTokens(h.tokens), typeahead: h.label,
+        html: '<span class="mem-bp"><span class="mem-bp-row"><span class="mem-bp-name">'
+          + escapeHtml(h.label) + '</span><span class="mem-bp-bytes">' + escapeHtml(tok(h.tokens))
+          + '</span></span><span class="mem-bp-hint">' + escapeHtml(h.hint) + '</span></span>',
+      })))
+      .concat([{ value: 'exact', label: 'Exact…', action: true,
+        html: '<span class="mem-bp"><span class="mem-bp-name">Exact…</span>'
+          + '<span class="mem-bp-hint">' + escapeHtml(HARNESS_HINT) + '</span></span>' }]),
+  };
+}
+
+/**
+ * THE INLINE EDITOR for a custom window or an exact harness — a number field
+ * with Save and Cancel, in the step's body under the head row that opened it.
+ * The route validates; a refusal stays on the page (`ctxError`), a success is
+ * a toast.
+ */
+function ctxEditHtml() {
+  const e = state.ctxEdit;
+  if (!e || (e.kind !== 'window' && e.kind !== 'harness')) return '';
+  const isWin = e.kind === 'window';
+  const busy = state.ctxSaving === true;
+  return '<div class="mem-ss-edit" id="mem-ss-edit" role="group" aria-labelledby="mem-ss-edit-label">'
+    + '<label class="mem-ss-edit-label" id="mem-ss-edit-label" for="mem-ss-edit-input">'
+      + (isWin ? 'Context window, in tokens' : 'Your harness, in tokens') + '</label>'
+    + '<input type="number" inputmode="numeric" class="mem-fnd-input mem-ss-edit-input" id="mem-ss-edit-input"'
+      + ' min="' + (isWin ? 8000 : 0) + '" max="10000000" step="1000"'
+      + ' value="' + escapeHtml(String(e.text === undefined || e.text === null ? '' : e.text)) + '"'
+      + (busy ? ' disabled' : '') + '>'
+    + '<button type="button" class="btn btn-primary btn-xs" id="mem-ss-edit-save"'
+      + (busy ? ' disabled aria-disabled="true"' : '') + '>' + (busy ? 'Saving…' : 'Save') + '</button>'
+    + '<button type="button" class="btn btn-ghost btn-xs" id="mem-ss-edit-cancel"'
+      + (busy ? ' disabled aria-disabled="true"' : '') + '>Cancel</button>'
+    + '<p class="mem-ss-edit-hint">' + escapeHtml(isWin
+      ? 'Your model’s context window, from 8,000 to 10,000,000 tokens. It is set for this computer.'
+      : HARNESS_HINT + ' It is your estimate, and it is never added to a measured figure.') + '</p>'
+    + '</div>';
+}
+
+/**
+ * THE METER'S MODEL — the route's `meter`, drawn against THIS computer's
+ * window and harness (read from the settings the moment they change, so a
+ * window or harness change repaints with no request), and the one on screen:
+ * a budget being previewed, else the reading plan's "if applied", else the
+ * measurement. The delivery line is said when it carries news — more than
+ * one reply, or a preview — and a single-reply start says nothing about it.
+ */
+function meterModel(data) {
+  if (!data || !data.meter || typeof data.meter !== 'object') return null;
+  const m = data.meter;
+  const replies = m.delivery && Number.isInteger(m.delivery.replies) ? m.delivery.replies : 1;
+  return {
+    windowTokens: contextWindowNow(),
+    harnessTokens: harnessNow(),
+    layers: Array.isArray(m.layers) ? m.layers : [],
+    budgetTokens: Number.isFinite(m.budgetTokens) ? m.budgetTokens : 0,
+    onDemand: m.onDemand || null,
+    delivery: (replies > 1 || m.preview === true) ? m.delivery || null : null,
+    preview: m.preview === true,
+  };
+}
+
+/** The data the meter shows now: a budget preview, a plan preview, or the
+ *  measurement — and which it is. */
+function meterSource(data) {
+  const bp = budgetPreviewFor();
+  if (bp && bp.data) return { data: bp.data, kind: 'budget', bytes: bp.bytes };
+  const pv = previewFor();
+  if (pv && pv.data && pv.data.meter) return { data: pv.data, kind: 'plan' };
+  return { data, kind: 'measured' };
+}
+
+/** The meter's box: the instrument, or what stands in for it. Its own id,
+ *  so a preview repaints it without touching the head row's open picker. */
+function sessionMeterHtml(data, error) {
+  const src = meterSource(data);
+  const m = meterModel(src.data);
+  let inner;
+  if (m) {
+    const which = src.kind === 'budget'
+      ? '<p class="mem-ss-preview-of">' + escapeHtml('Previewing the '
+        + presetName(src.bytes) + ' reading budget — choose it to apply, or close the list to go back.')
+        + '</p>'
+      : src.kind === 'plan'
+        ? '<p class="mem-ss-preview-of">Previewing the suggested reading plan — apply it in step 1.</p>' : '';
+    // The one-line hint the harness picker carries, said where the gap is
+    // drawn, and only while the estimate is Not set.
+    const hint = m.harnessTokens === null
+      ? '<p class="mem-ss-preview-of mem-ss-harness-hint" id="mem-ss-harness-hint">Read your harness from '
+        + 'Claude Code’s <code>/context</code> and set it under Harness above.</p>'
+      : '';
+    inner = renderBucket(m) + which + hint;
+  } else {
+    inner = renderDescription(error
+      ? 'What an agent receives could not be measured: ' + error
+      : 'Measuring what an agent receives…');
+  }
+  return '<div class="mem-ss-meter" id="mem-ss-meter" aria-live="polite">' + inner + '</div>';
 }
 
 /**
  * ④'s UNFOLDED LINES — each one only when it applies (v3.16.1: a cost may
  * never sit behind a chevron).
  *
+ *   · THE SAME-FOR-EVERY-BUDGET LINE (v3.70.0), when `presetsSummary.allEqual`:
+ *     the route measured all seven budgets and they send the same documents.
+ *     Without it every preset card reading one figure looks broken; with it
+ *     the dashed empty room on the meter has its reason in words, and a door
+ *     to where the answer is (step ①).
  *   · THE COST LINE, on a project nobody has planned whose next session is
  *     handed more than the Lean preset: every document's text, every session.
  *     One action, "Set a reading budget", which opens the picker on Standard.
@@ -10730,7 +10989,27 @@ function sessionNoticesHtml(data, facts, readonly) {
   const b = data.budget && typeof data.budget === 'object' ? data.budget : {};
   const rf = t.readFirst || {};
   const om = t.omitted || {};
+  const sum = data.presetsSummary && typeof data.presetsSummary === 'object' ? data.presetsSummary : null;
   let out = '';
+  // Only where there is something to choose: a project with no documents
+  // has no budget question at all.
+  if (sum && sum.allEqual === true && facts.count > 0
+    && !(data.costLine && data.costLine.applies === true)) {
+    const total = data.tokens && Number.isInteger(data.tokens.mcp) ? data.tokens.mcp
+      : Math.round(((data.bytes && data.bytes.mcp) || 0) / 4);
+    const why = sum.reason === 'nothing-read-first'
+      ? 'Nothing is read first, so every budget sends the same — a budget only caps the documents '
+        + 'marked read first. Mark the two or three an agent should never start without in step 1.'
+      : 'Every document marked read first already fits the smallest budget, so a larger one sends '
+        + 'nothing more.';
+    out += '<div class="tx-note mem-ss-note mem-ss-same" id="mem-ss-same">' + icon('alertCircle', 13)
+      + '<span>' + escapeHtml('Every reading budget sends the same ' + tok(total) + ' tokens right now. '
+        + why) + '</span>'
+      + (readonly || sum.reason !== 'nothing-read-first' ? ''
+        : '<button type="button" class="btn btn-secondary btn-xs" id="mem-ss-choose">'
+          + 'Choose read-first documents</button>')
+      + '</div>';
+  }
   if (data.costLine && data.costLine.applies === true && data.planned !== true) {
     const text = Number.isInteger(data.costLine.documentTextBytes) ? data.costLine.documentTextBytes : 0;
     const why = (Number.isInteger(rf.count) && rf.count > 0)
@@ -10738,12 +11017,12 @@ function sessionNoticesHtml(data, facts, readonly) {
       : ': nothing is marked read first and no reading budget is set.';
     const left = Number.isInteger(om.count) && om.count > 0
       ? ' ' + (om.count === 1 ? 'One more document' : om.count.toLocaleString('en-US') + ' more documents')
-        + ' did not fit the ' + ssSize(b.bytes) + ' default and ' + (om.count === 1 ? 'is' : 'are')
+        + ' did not fit the ' + tok((b.bytes || 0) / 4) + '-token default and ' + (om.count === 1 ? 'is' : 'are')
         + ' listed by name.'
       : '';
     out += '<div class="tx-note mem-ss-note mem-ss-cost" id="mem-ss-cost">' + icon('alertTriangle', 13)
-      + '<span>' + escapeHtml('Every session is handed ' + ssSize(text) + ' of document text ('
-        + ssTokens(text) + ' tokens)' + why + left) + '</span>'
+      + '<span>' + escapeHtml('Every session is handed ' + tok(text / 4) + ' tokens of document text ('
+        + ssSize(text) + ')' + why + left) + '</span>'
       + (readonly ? '' : '<button type="button" class="btn btn-secondary btn-xs" id="mem-ss-set-budget">'
         + 'Set a reading budget</button>')
       + '</div>';
@@ -10757,94 +11036,124 @@ function sessionNoticesHtml(data, facts, readonly) {
         + ' listed and fetched by name.') + '</span></div>';
   } else if (data.planned === true && b.bytes > 0 && rf.exceeded === true) {
     out += '<div class="tx-note mem-ss-note mem-ss-over" id="mem-ss-over">' + icon('alertTriangle', 13)
-      + '<span>' + escapeHtml('The read-first set is ' + ssSize(facts.readFirstBytes) + ', over the '
-        + ssSize(b.bytes) + ' reading budget. Agents are handed the first ' + ssSize(rf.bytes)
+      + '<span>' + escapeHtml('The read-first set is ' + tok(facts.readFirstBytes / 4) + ' tokens, over the '
+        + tok(b.bytes / 4) + '-token reading budget. Agents are handed the first ' + tok((rf.bytes || 0) / 4)
         + ' in reading order; the rest stay listed and are fetched by name.') + '</span></div>';
   }
   return out;
 }
 
-/** "3 documents · 30.7 KB" — a count and its bytes, for a tier line. */
+/** "3 documents · ≈7.7k" — a count and its tokens, for a tier line. */
 function ssDocs(tier) {
   const n = tier && Number.isInteger(tier.count) ? tier.count : 0;
   return n.toLocaleString('en-US') + ' document' + (n === 1 ? '' : 's') + ' · '
-    + ssSize(tier && tier.bytes);
+    + tok(((tier && tier.bytes) || 0) / 4);
 }
 
 /**
- * "WHAT AN AGENT RECEIVES" — ONE monitor, a line per tier, each depth bar
+ * "WHAT AN AGENT RECEIVES" — the meter's TEXT TWIN (design §2): ONE monitor, a
+ * line per layer, TOKENS FIRST with the bytes as the hint, each depth bar
  * against a NAMED denominator (rule 6), and never a bar in a summary.
  *
- * The denominators, each the one the tier is actually bounded by: the 32 KB
+ * The denominators, each the one the layer is actually bounded by: the 32 KB
  * brief budget, the 48 KB handoff budget (the store trims a save there), the
- * reading budget for document text, and the chosen context window for the
- * total — which is never danger-toned, because a window is not a budget the
- * owner set. The read-first line turns danger only when the set is over the
- * budget, and then ④'s unfolded sentence says so in words.
+ * reading budget for read-first text, and the chosen context window for the
+ * session start — drawn as a SHARE (`max`), never danger-toned, because a
+ * window is not a budget the owner set. The read-first line turns danger only
+ * when the set is over the budget, and then ④'s unfolded sentence says so.
+ *
+ * The harness is its own line, "your estimate, not measured", and is never
+ * summed into the session start above it.
  */
-function sessionReceivesMonitor(data, facts, win) {
+function sessionReceivesMonitor(data, facts) {
   const t = data.tiers && typeof data.tiers === 'object' ? data.tiers : {};
   const b = data.budget && typeof data.budget === 'object' ? data.budget : {};
   const planned = data.planned === true;
+  const winTokens = contextWindowNow();
+  const W = windowWord(winTokens);
   const lines = [];
   const tier = (x) => (x && typeof x === 'object' ? x : {});
   const brief = tier(t.brief);
   lines.push(brief.present === true
-    ? { key: 'standing brief', value: ssSize(brief.bytes) + ' · ' + ssTokens(brief.bytes),
-      sub: 'of ' + ssSize(brief.capBytes) + ' brief budget',
+    ? { key: 'standing brief', value: tok(brief.bytes / 4),
+      sub: ssSize(brief.bytes) + ' · of the ' + tok(brief.capBytes / 4) + ' brief budget',
       depth: { amount: brief.bytes, budget: brief.capBytes,
         label: ssSize(brief.bytes) + ' of the ' + ssSize(brief.capBytes) + ' brief budget' } }
     : { key: 'standing brief', value: 'none yet', sub: 'you write it in step 2' });
   const handoff = tier(t.handoff);
   lines.push(handoff.present === true
-    ? { key: 'latest handoff', value: ssSize(handoff.bytes) + ' · ' + ssTokens(handoff.bytes),
-      sub: 'of ' + ssSize(handoff.capBytes) + ' handoff budget',
+    ? { key: 'latest handoff', value: tok(handoff.bytes / 4),
+      sub: ssSize(handoff.bytes) + ' · of the ' + tok(handoff.capBytes / 4) + ' handoff budget',
       depth: { amount: handoff.bytes, budget: handoff.capBytes,
         label: ssSize(handoff.bytes) + ' of the ' + ssSize(handoff.capBytes) + ' handoff budget' } }
     : { key: 'latest handoff', value: 'none yet', sub: 'an agent saves one' });
   const journal = tier(t.journal);
   const jl = Number.isInteger(journal.lines) ? journal.lines : 0;
-  lines.push({ key: 'journal', value: jl + ' line' + (jl === 1 ? '' : 's') + ' · ' + ssSize(journal.bytes) });
+  lines.push({ key: 'journal', value: tok((journal.bytes || 0) / 4),
+    sub: jl + ' line' + (jl === 1 ? '' : 's') + ' · ' + ssSize(journal.bytes) });
   const index = tier(t.index);
-  lines.push({ key: 'document list',
-    value: (Number.isInteger(index.listed) ? index.listed : 0) + ' listed · ' + ssSize(index.bytes) });
+  lines.push({ key: 'document list', value: tok((index.bytes || 0) / 4),
+    sub: (Number.isInteger(index.listed) ? index.listed : 0) + ' listed · ' + ssSize(index.bytes) });
   const rf = tier(t.readFirst);
   const rfCount = Number.isInteger(rf.count) ? rf.count : 0;
   if (planned || rfCount > 0) {
     const over = rf.exceeded === true;
     lines.push({
-      key: 'read-first text',
-      value: ssSize(rf.bytes) + (rf.bytes > 0 ? ' · ' + ssTokens(rf.bytes) : ''),
-      sub: b.bytes === 0 ? 'the reading budget is Index only'
-        : 'of the ' + ssSize(b.bytes) + (planned ? ' reading budget' : ' default'),
+      key: 'read first',
+      value: tok((rf.bytes || 0) / 4),
+      sub: (rfCount ? rfCount + ' document' + (rfCount === 1 ? '' : 's') + ' · ' + ssSize(rf.bytes) + ' · '
+        : 'nothing is read first · ')
+        + (b.bytes === 0 ? 'the reading budget is Index only'
+          : 'of the ' + tok(b.bytes / 4) + (planned ? ' reading budget' : ' default')),
       tone: over ? 'danger' : undefined,
       depth: b.bytes > 0 ? {
-        amount: over ? Math.max(facts.readFirstBytes, rf.bytes || 0) : rf.bytes,
+        amount: over ? Math.max(facts.readFirstBytes, rf.bytes || 0) : (rf.bytes || 0),
         budget: b.bytes,
-        label: ssSize(over ? facts.readFirstBytes : rf.bytes) + ' of the ' + ssSize(b.bytes)
-          + ' reading budget',
+        label: tok((over ? facts.readFirstBytes : rf.bytes || 0) / 4) + ' of the ' + tok(b.bytes / 4)
+          + '-token reading budget',
       } : undefined,
     });
   } else {
-    lines.push({ key: 'read-first text', value: '0 KB', sub: 'no reading budget set' });
+    lines.push({ key: 'read first', value: '0', sub: 'no reading budget set' });
   }
   const other = tier(t.otherText);
   if (Number.isInteger(other.count) && other.count > 0) {
     lines.push({
       key: 'other document text',
-      value: ssSize(other.bytes) + ' · ' + ssTokens(other.bytes),
-      sub: 'of the ' + ssSize(b.bytes) + ' default · sent because nothing is planned',
+      value: tok(other.bytes / 4),
+      sub: ssSize(other.bytes) + ' · of the ' + tok(b.bytes / 4) + ' default · sent because nothing is planned',
       depth: { amount: other.bytes, budget: b.bytes,
-        label: ssSize(other.bytes) + ' of the ' + ssSize(b.bytes) + ' default' },
+        label: tok(other.bytes / 4) + ' of the ' + tok(b.bytes / 4) + '-token default' },
     });
   }
+  const framing = tier(t.framing);
+  lines.push({ key: 'framing', value: tok((framing.bytes || 0) / 4),
+    sub: 'labels the data as data · ' + ssSize(framing.bytes) });
+  const mcp = data.bytes && Number.isInteger(data.bytes.mcp) ? data.bytes.mcp : 0;
+  const mcpTokens = data.tokens && Number.isInteger(data.tokens.mcp) ? data.tokens.mcp : Math.round(mcp / 4);
+  const replies = data.delivery && Number.isInteger(data.delivery.replies) ? data.delivery.replies : 1;
+  lines.push({
+    key: 'session start',
+    value: tok(mcpTokens) + ' · ' + ssPct(mcpTokens, winTokens),
+    sub: ssSize(mcp) + ' · measured · ' + repliesWord(replies),
+    depth: { amount: mcpTokens, max: winTokens,
+      label: tok(mcpTokens) + ' tokens of a ' + W + '-token window' },
+  });
+  const harness = harnessNow();
+  lines.push(harness === null
+    ? { key: 'harness', value: 'not set', sub: 'system prompt, tools, CLAUDE.md, skills · set an estimate above' }
+    : { key: 'harness', value: tok(harness) + ' · ' + ssPct(harness, winTokens),
+      sub: 'system prompt, tools, CLAUDE.md, skills · your estimate, not measured' });
+  lines.push({ key: 'free at start',
+    value: tok(Math.max(0, winTokens - mcpTokens - (harness || 0))),
+    sub: 'of a ' + W + '-token window' + (harness === null ? ', before your harness' : '') });
   const omitted = tier(t.omitted);
   if (Number.isInteger(omitted.count) && omitted.count > 0) {
     lines.push({ key: 'left out, by name', value: ssDocs(omitted), sub: 'fetched by name when needed' });
   }
   const onRequest = tier(t.onRequest);
   if (Number.isInteger(onRequest.count) && onRequest.count > 0) {
-    lines.push({ key: 'on request', value: ssDocs(onRequest), sub: 'listed; fetched by name' });
+    lines.push({ key: 'on request', value: ssDocs(onRequest), sub: 'listed; outside the window until opened' });
   }
   const hidden = tier(t.hidden);
   if (Number.isInteger(hidden.count) && hidden.count > 0) {
@@ -10852,32 +11161,22 @@ function sessionReceivesMonitor(data, facts, win) {
   }
   const pages = tier(t.domainPages);
   const doms = Array.isArray(pages.domains) ? pages.domains.filter((x) => typeof x === 'string') : [];
-  lines.push({ key: 'domain pages', value: (doms.length ? doms.join(', ') + ' · ' : '') + '0 KB',
+  lines.push({ key: 'domain pages', value: (doms.length ? doms.join(', ') + ' · ' : '') + '0',
     sub: 'searched when needed, never at start' });
-  const framing = tier(t.framing);
-  lines.push({ key: 'framing', value: ssSize(framing.bytes), sub: 'labels the data as data' });
-  const mcp = data.bytes && Number.isInteger(data.bytes.mcp) ? data.bytes.mcp : 0;
-  const winTokens = CONTEXT_WINDOWS[win];
-  lines.push({
-    key: 'total',
-    value: ssTotalWords(mcp, win),
-    sub: 'of a ' + (win === '1m' ? '1M' : '200k') + '-token window',
-    depth: { amount: mcp / 4, budget: winTokens,
-      label: ssTokens(mcp) + ' tokens of a ' + (win === '1m' ? '1M' : '200k') + '-token window' },
-  });
   // ── IF APPLIED — the pending proposal, measured by the store (a read) ──
   const pv = previewFor();
   if (pv && pv.data && pv.data.bytes && Number.isInteger(pv.data.bytes.mcp)) {
     const pb = pv.data.budget && Number.isInteger(pv.data.budget.bytes) ? pv.data.budget.bytes : null;
+    const pt = pv.data.tokens && Number.isInteger(pv.data.tokens.mcp) ? pv.data.tokens.mcp
+      : Math.round(pv.data.bytes.mcp / 4);
     lines.push({
       key: 'if applied',
-      value: ssTotalWords(pv.data.bytes.mcp, win),
+      value: tok(pt) + ' · ' + ssPct(pt, winTokens),
       sub: pv.withBudget && pb !== null
-        ? presetName(pb) + ' · ' + budgetWord(pb) + ' budget, with the suggestion'
+        ? presetName(pb) + ' reading budget, with the suggestion'
         : 'with the suggestion applied',
-      depth: { amount: pv.data.bytes.mcp / 4, budget: winTokens,
-        label: ssTokens(pv.data.bytes.mcp) + ' tokens of a ' + (win === '1m' ? '1M' : '200k')
-          + '-token window, if the suggestion is applied' },
+      depth: { amount: pt, max: winTokens,
+        label: tok(pt) + ' tokens of a ' + W + '-token window, if the suggestion is applied' },
     });
   }
   const notes = Array.isArray(data.notes) ? data.notes.filter((n) => typeof n === 'string' && n) : [];
@@ -10889,10 +11188,13 @@ function sessionReceivesMonitor(data, facts, win) {
   });
 }
 
-/** A preset's short name for a byte figure, or "Custom". */
+/** A preset's name for a byte figure ("Standard 16k"), or "Custom ≈Nk". */
 function presetName(bytes) {
-  const p = READING_BUDGET_PRESETS.find((x) => x.bytes === bytes);
-  return p ? p.label.replace(' · recommended', '') : 'Custom';
+  const ss = sessionStartFor();
+  const p = presetsOf(ss && ss.data).find((x) => x.bytes === bytes);
+  // Before the measurement lands there is no ladder to name it from, so the
+  // figure is said as what it is rather than guessed at as "Custom".
+  return p ? presetLabel(p) : tok((Number.isFinite(bytes) ? bytes : 0) / 4) + ' tokens';
 }
 
 /** The `if applied` measurement, for the proposal on screen only. */
@@ -10901,6 +11203,15 @@ function previewFor() {
   const p = planFor();
   return pv && p && p.result && pv.domain === state.activeDomain && pv.project === state.activeProject
     && pv.key === planPreviewKey(p) ? pv : null;
+}
+
+/** The budget being previewed from the picker, for the project on screen
+ *  only, and only while the measurement it was made against is on screen. */
+function budgetPreviewFor() {
+  const bp = state.budgetPreview;
+  const ss = sessionStartFor();
+  return bp && ss && bp.domain === state.activeDomain && bp.project === state.activeProject
+    && bp.sig === ss.sig ? bp : null;
 }
 
 /** The preview request's body, for the ticked proposal — or null when there
@@ -10922,28 +11233,37 @@ function planPreviewKey(p) {
   return body ? JSON.stringify(body) : null;
 }
 
-/** The ⓘ of step ④ — DESIGN-context-budget §2.5's three paragraphs, verbatim. */
+/** The ⓘ of step ④. */
 const SESSION_START_INFO_HTML =
   '<p>An agent starting work on this project is handed the standing brief, the latest handoff, a '
   + 'few journal lines, the list of documents, and the text of the documents marked <i>read '
   + 'first</i>, up to the reading budget. Nothing from the domain’s pages is loaded until the agent '
-  + 'searches.</p>'
+  + 'searches. The meter draws that start inside your context window, to scale, and then '
+  + 'enlarged; documents on request and the domain’s pages stay outside it until an agent opens them.</p>'
   + '<p>Start small. Most sessions need the brief, the handoff and one or two documents: '
   + 'conventions, a decision log. Everything else stays listed, and the agent opens it by name when '
-  + 'the task calls for it. Lean or Standard is right for most projects; Deep or Max is for a '
-  + 'project whose agents must hold a large design in mind before they touch anything.</p>'
-  + '<p>The figures here are what the store would send right now. Tokens are estimated at four '
-  + 'characters each. Your agent’s tokenizer will differ, and its own system prompt, tools and '
-  + 'project instructions are not counted here.</p>';
+  + 'the task calls for it. Lean or Standard is right for most projects. A 200k-token start is almost '
+  + 'never right; the ladder offers it because a few projects on 1M-token windows need it.</p>'
+  + '<p>Tokens are estimated at four bytes each. For English prose the real count is usually within '
+  + 'about ±20%; code, JSON, tables and non-Latin text tokenize denser, so for those this reads low. '
+  + 'Your agent’s tokenizer decides the real number. The MCP figure is the JSON an agent receives, '
+  + 'delivered in replies of at most about 20k tokens each, because Claude Code saves a larger reply '
+  + 'to a file instead of showing it; the session-start hook sends Markdown in one piece.</p>'
+  + '<p>The window size and your harness estimate are set for this computer, and the menu bar widget '
+  + 'reads the same two. The harness — your agent’s own system prompt, tools, CLAUDE.md and skills — '
+  + 'cannot be measured from here: read it from Claude Code’s <code>/context</code>. It is drawn '
+  + 'hatched, labelled as your estimate, and never added to a measured figure.</p>';
 
 /**
- * ④ SESSION START — the sum of steps ①–③, and the one number the owner sets.
+ * ④ SESSION START — the sum of steps ①–③, drawn as the context window it
+ * lands in (v3.70.0, DESIGN-v3.70.0 concept A+).
  *
- * Head row: the Reading budget picker (step ①'s head-row pattern). Then the
- * unfolded lines that apply, then three fold rows: "What an agent receives"
- * (the ONE row on this page that is open by default — it is the step's
- * answer), "Context window" (a per-viewer denominator) and "How an agent
- * reaches this" (the harness-neutral promise, said once).
+ * Head row: the three things the owner sets — Window, Reading budget, Harness —
+ * step ①'s head-row pattern. Body: the METER (the window to scale, the
+ * enlargement with its dashed budget room, the legend, the delivery line),
+ * then the unfolded lines that apply, then two fold rows: "What an agent
+ * receives" (open by default; the meter's text twin) and "How an agent
+ * reaches this".
  *
  * The measurement arrives after the paint; until it does the step says it is
  * measuring rather than showing a figure it does not have.
@@ -10954,53 +11274,47 @@ function renderSessionStart(read) {
   const ss = sessionStartFor();
   const data = ss && ss.data ? ss.data : null;
   const facts = foundationsFacts(read);
-  const win = contextWindowNow();
   const owner = Number.isInteger(read.readingBudgetBytes) ? read.readingBudgetBytes : null;
+  const ctxBusy = state.ctxSaving === true;
+  const ctl = (label, id, control) => '<span class="mem-ss-ctl">'
+    + '<span class="mem-ss-ctl-label" id="' + id + '">' + label + '</span>' + control + '</span>';
 
-  const headHtml = '<span class="mem-ss-budget-label" id="mem-ss-budget-label">Reading budget</span>'
-    + (readonly
-      ? '<span class="mem-ss-budget-fixed">'
-        + escapeHtml(owner === null ? 'Default · 120 KB' : budgetWord(owner)) + '</span>'
-      : renderListboxHtml(budgetPickerCfg(read, data, state.budgetSaving === true)));
+  const budgetCtl = readonly
+    ? '<span class="mem-ss-budget-fixed">'
+      + escapeHtml(owner === null ? 'Default' : presetName(owner)) + '</span>'
+    : renderListboxHtml(budgetPickerCfg(read, data, state.budgetSaving === true));
+  const headHtml = ctl('Window', 'mem-ss-window-label', renderListboxHtml(windowPickerCfg(ctxBusy)))
+    + ctl('Reading budget', 'mem-ss-budget-label', budgetCtl)
+    + ctl('Harness', 'mem-ss-harness-label', renderListboxHtml(harnessPickerCfg(ctxBusy)));
 
   const budgetErr = state.budgetError && state.budgetError.domain === state.activeDomain
     && state.budgetError.project === state.activeProject
     ? '<div class="mem-note" id="mem-ss-budget-error">' + icon('alertTriangle', 13) + '<span>'
       + escapeHtml('The reading budget was not changed: ' + state.budgetError.error) + '</span></div>'
     : '';
+  const ctxErr = state.ctxError
+    ? '<div class="mem-note" id="mem-ss-ctx-error">' + icon('alertTriangle', 13) + '<span>'
+      + escapeHtml(state.ctxError) + '</span></div>'
+    : '';
 
-  let rows;
-  if (!data) {
-    rows = '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">'
-      + renderDescription(ss && ss.error
-        ? 'What an agent receives could not be measured: ' + ss.error
-        : 'Measuring what an agent receives…')
-      + '</div></div>';
-  } else {
+  let rows = '';
+  if (data) {
     const mcp = data.bytes && Number.isInteger(data.bytes.mcp) ? data.bytes.mcp : 0;
     const hook = data.bytes && Number.isInteger(data.bytes.hook) ? data.bytes.hook : 0;
+    const mcpTokens = data.tokens && Number.isInteger(data.tokens.mcp) ? data.tokens.mcp : Math.round(mcp / 4);
+    const hookTokens = data.tokens && Number.isInteger(data.tokens.hook) ? data.tokens.hook : Math.round(hook / 4);
+    const replies = data.delivery && Number.isInteger(data.delivery.replies) ? data.delivery.replies : 1;
+    const winTokens = contextWindowNow();
     const folds = state.openFolds || {};
     rows =
       '<details class="mem-fold" data-mem-fold="receives"' + (folds.receives === false ? '' : ' open') + '>'
         + '<summary class="mem-fold-summary" id="mem-fold-receives">' + icon('chevronRight', 14)
           + '<span>What an agent receives</span>'
-          + '<span class="mem-fold-meta">' + escapeHtml(ssSize(mcp) + ' · ' + ssTokens(mcp)
-            + ' tokens · ' + ssPct(mcp, win) + ' of a ' + (win === '1m' ? '1M' : '200k') + ' window')
+          + '<span class="mem-fold-meta">' + escapeHtml(tok(mcpTokens) + ' tokens · ' + ssSize(mcp)
+            + ' · ' + ssPct(mcpTokens, winTokens) + ' of ' + windowWord(winTokens))
           + '</span>'
         + '</summary>'
-        + '<div class="mem-fold-body">' + sessionReceivesMonitor(data, facts, win) + '</div>'
-      + '</details>'
-      + '<details class="mem-fold" data-mem-fold="window"' + (folds.window ? ' open' : '') + '>'
-        + '<summary class="mem-fold-summary" id="mem-fold-window">' + icon('chevronRight', 14)
-          + '<span>Context window</span>'
-          + '<span class="mem-fold-meta">' + (win === '1m' ? '1M' : '200k') + ' tokens · per viewer</span>'
-        + '</summary>'
-        + '<div class="mem-fold-body"><div class="mem-ss-window" role="group" '
-          + 'aria-label="The context window the percentage is of">'
-          + ['200k', '1m'].map((w) => '<button type="button" class="btn btn-secondary btn-xs" '
-            + 'data-ctx-window="' + w + '" aria-pressed="' + (w === win ? 'true' : 'false') + '">'
-            + (w === '1m' ? '1M tokens' : '200k tokens') + '</button>').join('')
-        + '</div></div>'
+        + '<div class="mem-fold-body">' + sessionReceivesMonitor(data, facts) + '</div>'
       + '</details>'
       + '<details class="mem-fold" data-mem-fold="reach"' + (folds.reach ? ' open' : '') + '>'
         + '<summary class="mem-fold-summary" id="mem-fold-reach">' + icon('chevronRight', 14)
@@ -11011,9 +11325,10 @@ function renderSessionStart(read) {
           id: 'mem-ss-reach',
           label: 'How an agent reaches this context',
           lines: [
-            { key: 'MCP get_project_context', value: ssSize(mcp),
-              sub: 'the owner’s budget, unless the agent asks for more' },
-            { key: 'session-start hook', value: ssSize(hook), sub: 'the owner’s budget' },
+            { key: 'MCP get_project_context', value: tok(mcpTokens),
+              sub: repliesWord(replies) + ' of at most ≈20k tokens · the owner’s budget' },
+            { key: 'session-start hook', value: tok(hookTokens),
+              sub: 'Markdown, one piece · the owner’s budget' },
             { key: 'Chat', value: '≤ 40,000 characters',
               sub: 'the smaller of this budget and 40,000 characters' },
           ],
@@ -11027,7 +11342,8 @@ function renderSessionStart(read) {
     title: 'Session start',
     infoText: SESSION_START_INFO_HTML,
     headHtml,
-    bodyHtml: '<div class="mem-ss-stack">' + budgetErr
+    bodyHtml: '<div class="mem-ss-stack">' + budgetErr + ctxErr + ctxEditHtml()
+      + sessionMeterHtml(data, ss && ss.error)
       + sessionNoticesHtml(data, facts, readonly) + rows + '</div>',
   });
 }
@@ -11044,6 +11360,10 @@ function renderSessionStart(read) {
 function maybeLoadSessionStart(token) {
   // A proposal belongs to the project it was made on: a switch drops it.
   if (state.plan && !planFor()) state.plan = null;
+  // v3.70.0: this computer's window and harness, read once per mount.
+  if (!state.ctxSettings && !ctxSettingsInFlight) {
+    loadContextSettings(token).catch((err) => reportAsyncMountFailure(token, err));
+  }
   const domain = state.activeDomain;
   const project = state.activeProject;
   const read = state.projectRead;
@@ -11116,10 +11436,13 @@ function patchSessionStart(token) {
   }
   const tile = document.querySelector('[data-ov-jump="context-session"]');
   const ss = sessionStartFor();
-  const mcp = ss && ss.data && ss.data.bytes && Number.isInteger(ss.data.bytes.mcp) ? ss.data.bytes.mcp : null;
-  if (tile && mcp !== null) {
-    // The tile's own arithmetic (whole KB), which `renderLayerStrip` inlines.
-    const words = Math.round(mcp / 1024).toLocaleString('en-US') + ' KB · ' + ssTokens(mcp) + ' tokens';
+  const d = ss && ss.data;
+  const mcpT = d && d.tokens && Number.isInteger(d.tokens.mcp) ? d.tokens.mcp
+    : (d && d.bytes && Number.isInteger(d.bytes.mcp) ? Math.round(d.bytes.mcp / 4) : null);
+  if (tile && mcpT !== null) {
+    // The same words `renderLayerStrip` inlines: tokens first, and the replies.
+    const r = d.delivery && Number.isInteger(d.delivery.replies) && d.delivery.replies > 0 ? d.delivery.replies : 1;
+    const words = tok(mcpT) + ' tokens · ' + r + (r === 1 ? ' reply' : ' replies');
     const value = tile.querySelector('.cur-ov-value');
     if (value) value.textContent = words;
     tile.setAttribute('aria-label', 'Session start, ' + words + ' — go to step 4');
@@ -11317,13 +11640,19 @@ async function setReadingBudget(bytes, token) {
   if (!domain || !project || state.budgetSaving) return;
   state.budgetSaving = true;
   state.budgetError = null;
+  state.budgetPreview = null;
   render(token);
   const out = await writeReadingBudget(domain, project, bytes);
   state.budgetSaving = false;
   if (!isCurrentMount(token)) return;
   if (state.activeDomain !== domain || state.activeProject !== project) return;
   if (!out.ok) state.budgetError = { domain, project, error: out.error };
-  else applyBudgetAnswer(out.data);
+  else {
+    applyBudgetAnswer(out.data);
+    showToast({ key: 'reading-budget-set', tone: 'success',
+      title: 'Reading budget set to ' + presetName(bytes),
+      lines: ['Agents starting on this project are handed read-first documents up to it.'] });
+  }
   render(token);
 }
 
@@ -11371,6 +11700,162 @@ async function applyPlan(token) {
 }
 
 /**
+ * REPAINT THE METER ALONE — for a preview while the picker is OPEN.
+ *
+ * `patchSessionStart` replaces the whole step, head row included, and the
+ * listbox closes itself the moment its trigger leaves the document. A preview
+ * is drawn while the owner is still moving through the list, so it touches
+ * only `#mem-ss-meter`.
+ */
+function patchSessionMeter() {
+  if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return;
+  const box = document.getElementById('mem-ss-meter');
+  const ss = sessionStartFor();
+  if (!box || !ss) return;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = sessionMeterHtml(ss.data, ss.error);
+  const fresh = tmp.firstElementChild;
+  if (fresh) box.innerHTML = fresh.innerHTML;
+}
+
+/**
+ * PREVIEW A READING BUDGET — the picker's highlighted row, measured by the
+ * store through `POST …/session-start/preview` (a read; writes nothing and is
+ * never logged as a session). Debounced 150 ms, cached per measurement, and a
+ * late answer for a row the owner has already left is dropped. `bytes === null`
+ * ends the preview.
+ */
+function previewBudget(bytes, token) {
+  if (budgetPreviewTimer) { clearTimeout(budgetPreviewTimer); budgetPreviewTimer = null; }
+  const ss = sessionStartFor();
+  const owner = state.projectRead && Number.isInteger(state.projectRead.readingBudgetBytes)
+    ? state.projectRead.readingBudgetBytes : null;
+  if (bytes === null || !ss || !ss.data || bytes === owner) {
+    if (state.budgetPreview) { state.budgetPreview = null; patchSessionMeter(); }
+    return;
+  }
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  const key = keyOf(domain, project) + '\n' + ss.sig + '\n' + bytes;
+  const hit = budgetPreviewCache.get(key);
+  if (hit) {
+    state.budgetPreview = { domain, project, sig: ss.sig, bytes, data: hit };
+    patchSessionMeter();
+    return;
+  }
+  budgetPreviewTimer = setTimeout(async () => {
+    budgetPreviewTimer = null;
+    budgetPreviewInFlight = key;
+    let data = null;
+    try {
+      const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/'
+        + encodeURIComponent(project) + '/session-start/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ budgetBytes: bytes }),
+      });
+      const got = await res.json();
+      if (res.ok && got && got.ok) data = got;
+    } catch { data = null; }
+    if (budgetPreviewInFlight !== key) return;
+    budgetPreviewInFlight = null;
+    if (!isCurrentMount(token) || state.activeDomain !== domain || state.activeProject !== project) return;
+    const now = sessionStartFor();
+    if (!data || !now || now.sig !== ss.sig) return;
+    budgetPreviewCache.set(key, data);
+    state.budgetPreview = { domain, project, sig: ss.sig, bytes, data };
+    patchSessionMeter();
+  }, 150);
+}
+
+/**
+ * THIS COMPUTER'S WINDOW AND HARNESS — read once per mount, and the old
+ * per-browser window carried across ONCE (v3.70.0, decision 4).
+ *
+ * The migration: when the settings file has no window set and this browser
+ * still holds a v3.67 choice, that choice is written to the settings file
+ * (one PUT), then the browser key is REMOVED either way — so it is read at
+ * most once and never consulted again. A failed PUT leaves the key in place,
+ * to be tried on the next mount rather than lost.
+ */
+async function loadContextSettings(token) {
+  ctxSettingsInFlight = true;
+  let settings = null;
+  try {
+    const res = await fetch('/api/config/context-window');
+    const data = await res.json();
+    if (res.ok && data && data.ok && data.settings && typeof data.settings === 'object') settings = data.settings;
+  } catch { settings = null; }
+  ctxSettingsInFlight = false;
+  if (!isCurrentMount(token) || !settings) return;
+  state.ctxSettings = settings;
+  const legacy = readContextWindow();
+  if (legacy !== null && settings.contextWindowSet !== true) {
+    const out = await writeContextSettings({ contextWindowTokens: legacy });
+    if (!isCurrentMount(token)) return;
+    if (out.ok) {
+      state.ctxSettings = out.settings;
+      try { localStorage.removeItem(CONTEXT_WINDOW_KEY); } catch { /* the app forgets */ }
+    }
+  } else if (legacy !== null) {
+    try { localStorage.removeItem(CONTEXT_WINDOW_KEY); } catch { /* the app forgets */ }
+  }
+  patchSessionStart(token);
+}
+
+/** PUT /api/config/context-window. Never throws; a refusal carries the
+ *  route's own words and the settings still in force. */
+async function writeContextSettings(body) {
+  try {
+    const res = await fetch('/api/config/context-window', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (res.ok && data && data.ok && data.settings) return { ok: true, settings: data.settings };
+    return { ok: false, error: (data && (data.error || data.message || data.reason)) || ('HTTP ' + res.status),
+      settings: data && data.settings && typeof data.settings === 'object' ? data.settings : null };
+  } catch (err) {
+    return { ok: false, error: err.message, settings: null };
+  }
+}
+
+/**
+ * SET THE WINDOW OR THE HARNESS — one PUT, then the meter repaints from the
+ * answer (pure arithmetic: the measurement does not depend on either) and
+ * the measurement is asked for again so the route's own `window`/`harness`
+ * follow. A success is a toast; a refusal stays on the page.
+ */
+async function setContextSetting(body, token) {
+  if (state.ctxSaving) return;
+  state.ctxSaving = true;
+  state.ctxError = null;
+  patchSessionStart(token);
+  const out = await writeContextSettings(body);
+  state.ctxSaving = false;
+  if (!isCurrentMount(token)) return;
+  if (out.settings) state.ctxSettings = out.settings;
+  if (!out.ok) {
+    state.ctxError = 'Not changed: ' + out.error;
+  } else {
+    state.ctxEdit = null;
+    const s = out.settings;
+    const isWin = Object.hasOwn(body, 'contextWindowTokens');
+    showToast({ key: 'context-window-set', tone: 'success',
+      title: isWin ? 'Context window set to ' + windowWord(s.contextWindowTokens) + ' tokens'
+        : (s.harnessEstimateTokens === null ? 'Harness estimate cleared'
+          : 'Harness estimate set to ≈' + formatTokens(s.harnessEstimateTokens) + ' tokens'),
+      lines: ['For this computer. The menu bar widget reads the same setting.'] });
+    // Re-measure, so the route's own window/harness agree with the screen.
+    const ss = sessionStartFor();
+    if (ss) ss.sig = null;
+  }
+  patchSessionStart(token);
+  maybeLoadSessionStart(token);
+}
+
+/**
  * BIND EVERY CONTROL v3.67.0 ADDED — for the page, or for step ④ alone when
  * `patchSessionStart` replaced it. Guarded per element, so a second pass over
  * a node that is still there binds nothing twice.
@@ -11401,15 +11886,34 @@ function bindSessionAndPlan(root, token) {
     if (one('#' + cfg.id)) mountListbox(cfg);
   }
 
-  // ④ the reading budget picker.
+  // ④ the reading budget picker — and its PREVIEW. The listbox moves
+  // `aria-activedescendant` on its trigger for a hover and for an arrow key
+  // alike, so one observer on that attribute previews the highlighted preset
+  // whichever way the owner moves; closing the list without choosing (the
+  // `aria-expanded` flip) ends the preview. The observer lets go of a trigger
+  // the next paint replaced.
   if (one('#mem-budget-lb') && state.projectRead) {
     const ss = sessionStartFor();
     const cfg = budgetPickerCfg(state.projectRead, ss && ss.data, state.budgetSaving === true);
+    const presets = presetsOf(ss && ss.data);
     cfg.onChange = (value) => {
-      const preset = READING_BUDGET_PRESETS.find((x) => x.id === value);
+      const preset = presets.find((x) => x.id === value);
       if (preset) setReadingBudget(preset.bytes, token).catch((err) => reportAsyncMountFailure(token, err));
     };
     mountListbox(cfg);
+    const trigger = one('#mem-budget-lb');
+    if (once(trigger) && typeof MutationObserver === 'function') {
+      const obs = new MutationObserver(() => {
+        if (typeof document !== 'undefined' && !document.contains(trigger)) { obs.disconnect(); return; }
+        if (trigger.getAttribute('aria-expanded') !== 'true') { previewBudget(null, token); return; }
+        const act = trigger.getAttribute('aria-activedescendant') || '';
+        const m = /-opt-(\d+)$/.exec(act);
+        const opt = m ? cfg.options[Number(m[1])] : null;
+        const preset = opt ? presets.find((x) => x.id === opt.value) : null;
+        previewBudget(preset ? preset.bytes : null, token);
+      });
+      obs.observe(trigger, { attributes: true, attributeFilter: ['aria-activedescendant', 'aria-expanded'] });
+    }
   }
   const setBudget = one('#mem-ss-set-budget');
   if (once(setBudget)) {
@@ -11418,16 +11922,99 @@ function bindSessionAndPlan(root, token) {
       if (trigger && !trigger.disabled) trigger.click();
     });
   }
-  root.querySelectorAll('[data-ctx-window]').forEach((btn) => {
-    if (!once(btn)) return;
-    btn.addEventListener('click', () => {
-      const w = btn.dataset.ctxWindow;
-      if (!Object.hasOwn(CONTEXT_WINDOWS, w || '')) return;
-      state.ctxWindow = w;
-      try { localStorage.setItem(CONTEXT_WINDOW_KEY, w); } catch { /* the app forgets */ }
+  // "Choose read-first documents" goes where the answer is: step ①, through
+  // the overview's own door (it scrolls and moves focus to the heading).
+  const choose = one('#mem-ss-choose');
+  if (once(choose)) {
+    choose.addEventListener('click', () => {
+      const door = document.querySelector('[data-ov-jump="context-canonical"]');
+      if (door) door.click();
+    });
+  }
+
+  // ④ the window and the harness — this computer's, one PUT each. "Custom…"
+  // and "Exact…" open the inline editor instead of writing.
+  if (one('#mem-window-lb')) {
+    const cfg = windowPickerCfg(state.ctxSaving === true);
+    cfg.onChange = (value) => {
+      if (value === 'custom') {
+        state.ctxEdit = { kind: 'window', text: String(contextWindowNow()) };
+        state.ctxError = null;
+        patchSessionStart(token);
+        // After the listbox has handed focus back to its (now replaced)
+        // trigger, so the field keeps it.
+        setTimeout(() => {
+          const input = document.getElementById('mem-ss-edit-input');
+          if (input) input.focus();
+        }, 0);
+        return;
+      }
+      const n = Number(value);
+      if (Number.isInteger(n) && n > 0) {
+        setContextSetting({ contextWindowTokens: n }, token).catch((err) => reportAsyncMountFailure(token, err));
+      }
+    };
+    mountListbox(cfg);
+  }
+  if (one('#mem-harness-lb')) {
+    const cfg = harnessPickerCfg(state.ctxSaving === true);
+    cfg.onChange = (value) => {
+      if (value === 'exact') {
+        const cur = harnessNow();
+        state.ctxEdit = { kind: 'harness', text: cur === null ? '' : String(cur) };
+        state.ctxError = null;
+        patchSessionStart(token);
+        // After the listbox has handed focus back to its (now replaced)
+        // trigger, so the field keeps it.
+        setTimeout(() => {
+          const input = document.getElementById('mem-ss-edit-input');
+          if (input) input.focus();
+        }, 0);
+        return;
+      }
+      const n = value === 'none' ? null : Number(value);
+      if (n === null || Number.isInteger(n)) {
+        setContextSetting({ harnessEstimateTokens: n }, token).catch((err) => reportAsyncMountFailure(token, err));
+      }
+    };
+    mountListbox(cfg);
+  }
+  const editInput = one('#mem-ss-edit-input');
+  const editSave = one('#mem-ss-edit-save');
+  const editCancel = one('#mem-ss-edit-cancel');
+  const commitEdit = () => {
+    const e = state.ctxEdit;
+    if (!e) return;
+    const raw = editInput ? String(editInput.value).trim() : '';
+    const n = raw === '' ? null : Number(raw);
+    if (e.kind === 'window' && !(Number.isInteger(n) && n > 0)) {
+      state.ctxError = 'Not changed: the window is a whole number of tokens.';
+      patchSessionStart(token);
+      return;
+    }
+    if (e.kind === 'harness' && n !== null && !(Number.isInteger(n) && n >= 0)) {
+      state.ctxError = 'Not changed: the estimate is a whole number of tokens, or empty for Not set.';
+      patchSessionStart(token);
+      return;
+    }
+    setContextSetting(e.kind === 'window' ? { contextWindowTokens: n } : { harnessEstimateTokens: n }, token)
+      .catch((err) => reportAsyncMountFailure(token, err));
+  };
+  if (once(editInput)) {
+    editInput.addEventListener('input', () => { if (state.ctxEdit) state.ctxEdit.text = editInput.value; });
+    editInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); commitEdit(); }
+      if (ev.key === 'Escape') { ev.preventDefault(); state.ctxEdit = null; state.ctxError = null; patchSessionStart(token); }
+    });
+  }
+  if (once(editSave)) editSave.addEventListener('click', commitEdit);
+  if (once(editCancel)) {
+    editCancel.addEventListener('click', () => {
+      state.ctxEdit = null;
+      state.ctxError = null;
       patchSessionStart(token);
     });
-  });
+  }
 
   // ① the helper.
   const openBtn = one('#mem-plan-open');

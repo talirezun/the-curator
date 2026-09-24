@@ -899,12 +899,16 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
   // add ONE commit POST (to `add-local`, `init`, `refresh` or `source` — the
   // URL and body are composed by shared/foundations-add.js's `buildAddCommit`,
   // pinned by test-foundations-add.js) and the "four templates" POST to init.
-  ok('memory.js issues exactly TWELVE mutating-shaped HTTP method keys',
-    methods.length === 12, methods.join(','));
-  ok('...and they are DELETE x2, PATCH x4, POST x5 and PUT, every one a LITERAL',
+  // v3.70.0: FOURTEEN. The budget picker's PREVIEW (a second caller of the
+  // preview READ, `{budgetBytes}`) and THIS COMPUTER's window/harness
+  // (`PUT /api/config/context-window` — app settings, never project state).
+  // test-next-memory-view.js §8 names both by URL and body.
+  ok('memory.js issues exactly FOURTEEN mutating-shaped HTTP method keys',
+    methods.length === 14, methods.join(','));
+  ok('...and they are DELETE x2, PATCH x4, POST x6 and PUT x2, every one a LITERAL',
     methods.join(',') === "method: 'DELETE',method: 'DELETE',method: 'PATCH',method: 'PATCH',"
       + "method: 'PATCH',method: 'PATCH',method: 'POST',method: 'POST',method: 'POST',method: 'POST',"
-      + "method: 'POST',method: 'PUT'",
+      + "method: 'POST',method: 'POST',method: 'PUT',method: 'PUT'",
     methods.join(','));
   ok('...the reading-budget PATCH sends ONE field, to the four-segment route',
     /'\/reading\/budget'/.test(memCode)

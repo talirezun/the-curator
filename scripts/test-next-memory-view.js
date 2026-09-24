@@ -203,6 +203,7 @@ import { COPY_SUCCESS_BANNER } from '../src/public/next/shared/agent-instruction
 // draw their share through it, and a stub would let every assertion about a
 // bar's denominator run past the function that computes the width.
 import { renderMonitor, renderDepthCell } from '../src/public/next/shared/monitor.js';
+import { renderBucket, formatTokens } from '../src/public/next/shared/bucket.js';
 // v3.67.0: the run line kit, REAL — it imports only the honest formatter, so
 // it loads in Node, and the helper's panel is under test through it.
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs } from '../src/public/next/shared/ai-run.js';
@@ -1197,12 +1198,19 @@ function constDecl(src, name) {
   }
   return src.slice(at + 1, i + 1);
 }
-const V367_CONSTS = ['READING_BUDGET_PRESETS', 'READING_BUDGET_STANDARD', 'START_STATES',
-  'CONTEXT_WINDOW_KEY', 'CONTEXT_WINDOWS', 'SESSION_START_INFO_HTML'];
+// v3.70.0: the byte copy of the store's ladder (READING_BUDGET_PRESETS) is
+// GONE — the presets arrive with the measurement — and only the words stay
+// (READING_BUDGET_WORDS). The window and harness constants joined with the
+// meter.
+const V367_CONSTS = ['READING_BUDGET_WORDS', 'READING_BUDGET_STANDARD', 'START_STATES',
+  'CONTEXT_WINDOW_KEY', 'CONTEXT_WINDOWS', 'CONTEXT_WINDOW_CHOICES', 'HARNESS_PRESETS', 'HARNESS_HINT',
+  'SESSION_START_INFO_HTML'];
 const V367_FNS = ['fndStartOf', 'fndStartCfg', 'planRowFor', 'fndSuggestCellHtml', 'planFor',
-  'planChangeCount', 'planHeadHtml', 'ssSize', 'ssTokens', 'budgetWord', 'readContextWindow',
-  'contextWindowNow', 'ssPct', 'ssTotalWords', 'sessionStartFor', 'budgetPickerCfg',
-  'sessionNoticesHtml', 'ssDocs', 'sessionReceivesMonitor', 'presetName', 'previewFor',
+  'planChangeCount', 'planHeadHtml', 'ssSize', 'ssTokens', 'tok', 'budgetWord', 'readContextWindow',
+  'contextWindowNow', 'harnessNow', 'windowWord', 'ssPct', 'repliesWord', 'sessionStartFor',
+  'presetLabel', 'presetsOf', 'budgetPickerCfg', 'windowPickerCfg', 'harnessPickerCfg', 'ctxEditHtml',
+  'meterModel', 'meterSource', 'sessionMeterHtml',
+  'sessionNoticesHtml', 'ssDocs', 'sessionReceivesMonitor', 'presetName', 'previewFor', 'budgetPreviewFor',
   'planPreviewBody', 'planPreviewKey', 'renderSessionStart', 'renderPlanPanel', 'planAiNeedsConfirm'];
 function v367Lift() {
   return V367_CONSTS.map((n) => constDecl(viewSrc, n)).join('\n') + '\n'
@@ -1218,18 +1226,30 @@ function v367Lift() {
     + extractFunction(viewSrc, 'planHeadHtml', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'ssSize', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'ssTokens', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'tok', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'budgetWord', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'readContextWindow', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'contextWindowNow', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'harnessNow', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'windowWord', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'ssPct', 'memory.js') + '\n'
-    + extractFunction(viewSrc, 'ssTotalWords', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'repliesWord', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'sessionStartFor', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'presetLabel', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'presetsOf', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'budgetPickerCfg', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'windowPickerCfg', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'harnessPickerCfg', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'ctxEditHtml', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'meterModel', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'meterSource', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'sessionMeterHtml', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'sessionNoticesHtml', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'ssDocs', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'sessionReceivesMonitor', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'presetName', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'previewFor', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'budgetPreviewFor', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'planPreviewBody', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'planPreviewKey', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'renderSessionStart', 'memory.js') + '\n'
@@ -1544,6 +1564,10 @@ function makeRenderers(stateObj) {
     // assertion about a warning's PLACE run past the component that draws
     // both. Injected real for the same reason renderOverview is.
     'renderMonitor', 'renderDepthCell',
+    // v3.70.0: THE REAL WINDOW METER. shared/bucket.js is pure (no imports,
+    // no DOM), so it is imported for real: every assertion about what step ④
+    // draws is an assertion about the kit the app ships.
+    'renderBucket', 'formatTokens',
     // ── THE LISTBOX IS STUBBED, AND THE REASON IS MECHANICAL ──────────
     // `shared/listbox.js` imports `app.js`, which touches `document` at
     // import time, so it cannot be imported into a Node suite at all — the
@@ -1578,6 +1602,7 @@ function makeRenderers(stateObj) {
     realFormatDayAge, realDayFreshnessTier, realFreshnessDotHtml,
     renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass,
     renderMonitor, renderDepthCell,
+    renderBucket, formatTokens,
     (cfg) => '<button type="button" id="' + cfg.id + '" data-lb-stub="'
       + escapeHtml(JSON.stringify({ options: cfg.options.map((o) => o.value),
         disabled: cfg.disabled === true, placeholder: cfg.placeholder,
@@ -2719,9 +2744,17 @@ const withInit = fetchArgLists.filter((a) => topLevelArgs(a).length > 1);
 // commit POST whose URL and body `buildAddCommit` composes (add-local, init,
 // refresh or source — driven below and in test-foundations-add.js), and the
 // "four templates" POST to init.
-eq('EXACTLY TWELVE fetches in the view carry a request init', withInit.length, 12);
+// ── FOURTEEN SINCE v3.70.0 ───────────────────────────────────────────────
+// · `POST …/session-start/preview {budgetBytes}` — the budget picker's
+//   PREVIEW, a second caller of the v3.67.0 preview READ (the route writes
+//   nothing), sending the previewed budget and nothing else.
+// · `PUT /api/config/context-window` — this COMPUTER's window and harness
+//   estimate (decision 4). App settings, never project state: it cannot name
+//   a project, a document, a brief or a handoff, and the route refuses any
+//   field but the two.
+eq('EXACTLY FOURTEEN fetches in the view carry a request init', withInit.length, 14);
 ok('every other fetch is single-argument — structurally a GET, whatever a method string is spelled like',
-  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 12,
+  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 14,
   JSON.stringify(fetchArgLists.map((a) => topLevelArgs(a).length)));
 {
   const inits = withInit.map((a) => ({ url: topLevelArgs(a)[0], init: topLevelArgs(a)[1] }));
@@ -2730,7 +2763,10 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
   const patch = patches.find((x) => x.url.includes("'/projects/'"));
   const first = patches.find((x) => x.url.includes("'/foundations/'"));
   const posts = withMethod('POST');
-  const put = withMethod('PUT')[0];
+  const puts = withMethod('PUT');
+  const put = puts.find((x) => x.url.includes("'/foundations/'"));
+  // v3.70.0: the second PUT is THIS COMPUTER's window/harness — app settings.
+  const ctxPut = puts.find((x) => x.url === "'/api/config/context-window'");
   const del = withMethod('DELETE')[0];
   eq('exactly FOUR writes use a LITERAL PATCH — never a variable or a concatenation',
     patches.length, 4, JSON.stringify(inits.map((x) => x.init.slice(0, 60))));
@@ -2778,8 +2814,16 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     patches.filter((x) => x.url.includes("'/foundations/'")).length, 1);
   // v3.67.0: two READS carry a body. Named, with their bodies, so neither can
   // grow a write-shaped field.
-  eq('exactly FIVE fetches use a LITERAL POST', posts.length, 5);
-  const preview = posts.find((x) => x.url.includes("'/session-start/preview'"));
+  eq('exactly SIX fetches use a LITERAL POST', posts.length, 6);
+  // v3.70.0: two callers of the preview READ — the plan's `if applied`
+  // (`body`) and the budget picker's preview (`{ budgetBytes: bytes }`).
+  const previews = posts.filter((x) => x.url.includes("'/session-start/preview'"));
+  eq('...TWO of them are the session-start PREVIEW, a read', previews.length, 2);
+  const budgetPv = previews.find((x) => /body:\s*JSON\.stringify\(\{\s*budgetBytes:\s*bytes\s*\}\)/.test(x.init));
+  ok('...one sends the PREVIEWED BUDGET and nothing else — never a plan, a document or a write field',
+    !!budgetPv && budgetPv.url.includes('/api/memory/') && budgetPv.url.includes('encodeURIComponent'),
+    JSON.stringify(previews.map((x) => x.init.slice(0, 140))));
+  const preview = previews.find((x) => x !== budgetPv);
   ok('one POST is the session-start PREVIEW under this project — a read with a plan in its body',
     preview && preview.url.includes('/api/memory/') && /body:\s*JSON\.stringify\(body\)/.test(preview.init),
     preview ? preview.url.slice(0, 200) + preview.init.slice(0, 120) : 'none');
@@ -2867,6 +2911,19 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     put ? put.init.slice(0, 240) : 'none');
   ok('...and it still cannot name a handoff field',
     put && !/nowState|nextSteps|observations|traps/.test(put.init));
+  eq('exactly TWO PUTs: the document, and this computer\'s context-window settings', puts.length, 2);
+  ok('the settings PUT is the named config route, sending the body its caller composed from '
+    + 'the window or the harness — never a project, a document or a brief',
+    !!ctxPut && /body:\s*JSON\.stringify\(body\)/.test(ctxPut.init)
+    && !/encodeURIComponent|project|brief|text:/.test(ctxPut.url + ctxPut.init),
+    ctxPut ? ctxPut.url + ctxPut.init.slice(0, 160) : JSON.stringify(puts.map((x) => x.url)));
+  {
+    // Every body setContextSetting is handed names ONLY the two settings.
+    const calls = [...viewNoComments.matchAll(/setContextSetting\(([^;]*?), token\)/g)].map((m) => m[1]);
+    ok('...and every body it is handed names only contextWindowTokens or harnessEstimateTokens',
+      calls.length >= 3 && calls.every((c) => /^(\{ (contextWindowTokens|harnessEstimateTokens): n \}|e\.kind === 'window' \? \{ contextWindowTokens: n \} : \{ harnessEstimateTokens: n \}|body)$/.test(c.trim())),
+      JSON.stringify(calls));
+  }
   ok('the fourth write is a LITERAL DELETE, at one document under foundations/',
     del && del.url.includes("'/foundations/'"), del ? del.url.slice(0, 200) : 'none');
   // THE SLUG IS SENT AS ITS OWN CONFIRMATION, and the route re-checks it —
@@ -2891,7 +2948,7 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     JSON.stringify(dels.map((d) => d.init.slice(0, 160))));
   ok('every one of them is under /api/memory — the helper\'s one proposal read under '
     + '/api/reading-plan — and escapes its segments',
-    inits.every((x) => (x === doorCommit)
+    inits.every((x) => (x === doorCommit) || (x === ctxPut)
       || ((x.url.includes("'/api/memory/'")
       || (x === suggest && x.url.includes("'/api/reading-plan/'")))
       && x.url.includes('encodeURIComponent'))),
@@ -2915,11 +2972,11 @@ ok('self-test: the argument-count scan does NOT fire on a plain read',
 // transport exists at all.
 {
   const methods = [...viewNoComments.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g)].map((m) => m[1]).sort();
-  ok('exactly TWELVE `method:` property keys appear in the view\'s real code, and every one of them '
+  ok('exactly FOURTEEN `method:` property keys appear in the view\'s real code, and every one of them '
     + 'is a LITERAL — so the `\'PO\' + \'ST\'` evasion is refused by construction',
   JSON.stringify(methods) === JSON.stringify(
     ["'DELETE'", "'DELETE'", "'PATCH'", "'PATCH'", "'PATCH'", "'PATCH'",
-      "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'PUT'"]),
+      "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'PUT'", "'PUT'"]),
   JSON.stringify(methods));
 }
 for (const transport of ['XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource', 'FormData', 'Request(']) {
@@ -2964,7 +3021,9 @@ ok('the view fetches only /api/memory endpoints, the ONE domain-stats read and t
   // by a prefix — the GitHub panel asks, once per open, whether a read-only
   // token is saved (presence + last four, never the value) and whether
   // Personal Sync is connected.
-  const TOKEN_FACTS = ['/api/config/github-read-token', '/api/sync/status'];
+  // v3.70.0: and this computer's window + harness (read once per mount,
+  // written by the one PUT named above).
+  const TOKEN_FACTS = ['/api/config/github-read-token', '/api/sync/status', '/api/config/context-window'];
   // v3.67.0: the reading-plan helper's two reads (estimate, proposal), both
   // under their own prefix and both built the same escaped way.
   const plan = (viewNoComments.match(/fetch\('\/api\/reading-plan\/' \+ encodeURIComponent\(domain\)/g)
@@ -7774,47 +7833,34 @@ const fndRead = (payload) => ({
   ok('CONTROL: the table slice exists and starts AFTER the monitor',
     table.indexOf('<table class="fnd-table">') > table.indexOf('id="mem-fnd-monitor"')
     && table.indexOf('id="mem-fnd-monitor"') > 0);
-  // THE DENOMINATOR IS THE PROJECT BUDGET the payload carries — the store's own
-  // figure where it sent one, which is what `foundationsFacts` already does for
-  // the warning under the table, so the bar and the sentence can never disagree.
-  const fixtureBudget = fndPayload([]).budgetBytes;
-  eq('the SIZE column measures against the PROJECT budget the store sent',
-    pct(table, 'a.md'), Math.round((63488 / fixtureBudget) * 1000) / 10);
-  ok('...and NEVER the 120 KB bootstrap budget, which applies only to the '
-    + 'readFirst subset while this column lists EVERY document — CLAUDE.md\'s '
-    + 'own invariant is that the two are named apart',
-  Math.round((63488 / fixtureBudget) * 1000) / 10
-    !== Math.round((63488 / (120 * 1024)) * 1000) / 10,
-  'the two budgets give the same figure on this fixture, so the check is vacuous');
-  // A PAYLOAD WITH NO `budgetBytes` KEY AT ALL — `{ budgetBytes: undefined }`
-  // spreads as a PRESENT key holding undefined, which is a different thing and
-  // would test the wrong branch.
+  // ── v3.70.0: A SHARE OF THE PROJECT'S OWN DOCUMENTS, NEVER AN ALARM ───
+  // The 200 KB project figure only ever WARNED, and the orchestrator's note
+  // for this release drops it as an alarm: the reading budget is the meter
+  // that decides what an agent is handed (step ④). So the SIZE column is a
+  // share (`max`) of the project's own stored total — each row's part of the
+  // whole — and it can never take the danger tone, however large a document.
+  // What stays true of v3.65.1: never the 120 KB reading budget (the two are
+  // named apart), and every bar names its denominator in words.
+  const total = 63488 + 215042;
+  eq('the SIZE column is each document\'s SHARE of the project\'s stored total',
+    pct(table, 'a.md'), Math.round((63488 / total) * 1000) / 10);
+  ok('...and NEVER the 120 KB reading budget, which applies only to the read-first subset',
+    Math.round((63488 / total) * 1000) / 10 !== Math.round((63488 / (120 * 1024)) * 1000) / 10);
   {
     const bare = fndPayload([fndDoc({ slug: 'a.md', bytes: 63488 })]);
     delete bare.budgetBytes;
-    ok('...and with no budget on the wire it falls back to FOUNDATIONS_BUDGET_BYTES, '
-      + 'the shipped project budget, rather than drawing no bar at all',
-    pct(F.renderFoundations(fndRead(bare)), 'a.md')
-      === Math.round((63488 / FOUNDATIONS_BUDGET_BYTES) * 1000) / 10,
-    String(pct(F.renderFoundations(fndRead(bare)), 'a.md')) + ' vs '
-      + Math.round((63488 / FOUNDATIONS_BUDGET_BYTES) * 1000) / 10);
+    eq('...and with no project budget on the wire at all the bar is unchanged — it never read it',
+      pct(F.renderFoundations(fndRead(bare)), 'a.md'), 100);
   }
-  ok('a document that alone exceeds the budget takes the whole cell, in the '
-    + 'danger tone', /cur-depth-bar cur-depth-danger" style="width:100%"/.test(tbl),
-  (tbl.match(/cur-depth-bar[^>]*/g) || []).join(' | '));
-  ok('...and the one under it does NOT — a bar is not an alarm for being long',
-    (tbl.match(/cur-depth-danger/g) || []).length === 1,
-    (tbl.match(/cur-depth-bar[^>]*/g) || []).join(' | '));
-  ok('every SIZE cell names its denominator in a sentence a screen reader gets — '
-    + 'a bar whose denominator the reader cannot name is decoration',
-  (tbl.match(/class="visually-hidden"> [^<]*project budget/g) || []).length === 2,
-  (tbl.match(/class="visually-hidden">[^<]*/g) || []).join(' | '));
-  // A COST IS NEVER ONLY A COLOUR (v3.16.1): the same fact is in words,
-  // unfolded, outside the fold.
-  ok('...and the over-budget fact is ALSO in words, outside the chevron',
-    /id="mem-fnd-budget"/.test(table)
-    && table.indexOf('id="mem-fnd-budget"') > table.indexOf('</details>'),
-    table.slice(table.indexOf('</details>'), table.indexOf('</details>') + 200));
+  ok('a document larger than the old 200 KB figure is NOT danger-toned — a size is not an alarm',
+    !/cur-depth-danger/.test(tbl), (tbl.match(/cur-depth-bar[^>]*/g) || []).join(' | '));
+  ok('every SIZE cell names its denominator in a sentence a screen reader gets',
+    (tbl.match(/class="visually-hidden"> [^<]* of the 272 KB of documents in this project/g) || []).length === 2,
+    (tbl.match(/class="visually-hidden">[^<]*/g) || []).join(' | '));
+  ok('...and no "project budget" is named anywhere in the table or its row',
+    !/project budget/.test(table), table.slice(0, 400));
+  ok('...nor an unfolded over-budget sentence for the stored total when nothing is read first',
+    /id="mem-fnd-budget" hidden>/.test(table), (/id="mem-fnd-budget"[^>]*>/.exec(table) || ['absent'])[0]);
 
   // ── (2) THE KNOWLEDGE MONITOR, AGAINST THAT DOMAIN'S OWN pageCount ──
   // An EXACT denominator, not "the largest visible row": the producer states
@@ -7917,12 +7963,14 @@ const fndRead = (payload) => ({
   eq('a manifest that will not parse says so and quotes no figure',
     meta([fndDoc()], { manifestError: 'Unexpected token' }), 'manifest unreadable');
 
-  // THE BUDGET IS A READING ON THE BLOCK (P2-3), not only inside an editor the
-  // owner has just closed — the size clause carries it when it is exceeded.
+  // v3.70.0: THE STORED TOTAL IS SAID NEUTRALLY. P2-3 put "of a 200 KB
+  // budget" in the size clause when the total crossed it; the orchestrator's
+  // note for v3.70.0 drops that figure as an alarm, because the reading budget
+  // (step ④) is what decides what an agent is handed.
   const over = meta([fndDoc({ bytes: 220 * 1024 })], { ownership: 'curator' });
-  ok('over budget, the size clause names the budget it crossed',
-    /^1 document \u00b7 220 KB of a \d+ KB budget \u00b7 kept here \u00b7 /.test(over), over);
-  ok('...and under budget it does not', !/budget/.test(meta([fndDoc({ bytes: 4096 })])));
+  ok('a stored total over the old 200 KB figure reads as a plain size — never "over budget"',
+    /^1 document \u00b7 220 KB \u00b7 kept here \u00b7 /.test(over) && !/budget/.test(over), over);
+  ok('...and under it, the same', !/budget/.test(meta([fndDoc({ bytes: 4096 })])));
 
   // OWNERSHIP AS ITS OWN FUNCTION: `null` for an absent mode, because an
   // absent mode is not a third mode.
@@ -9969,6 +10017,9 @@ function realListbox() {
       // be satisfied by deleting the definition.
       ['Sessions (as a name)', /\bSessions\b/],
       ['wiki (as a noun for a domain)', /\bwikis?\b/i],
+      // v3.70.0: "Capture" left the screen for "Agent sessions" — the route,
+      // the jump id and every on-disk name keep the old word.
+      ['Capture (the retired name)', /\bCapture\b/],
     ]) {
       ok('the Context view says nothing of "' + word + '" in its copy',
         !re.test(copy), (copy.match(new RegExp('.{0,70}' + re.source + '.{0,70}', re.flags)) || [''])[0]);
@@ -9980,7 +10031,7 @@ function realListbox() {
     for (const [what, word] of [
       ['step ①', 'Documents'], ['step ②', 'Memory'], ['step ③', 'Knowledge'],
       ['the handoffs row', 'Handoffs'], ['the journal row', 'Journal'],
-      ['the capture row', 'Capture'],
+      ['the capture row', 'Agent sessions'],
       ['the picker', '+ Add a domain'], ['the picker\'s accessible name', 'Add a domain this'],
     ]) {
       ok('CONTROL: ' + what + ' really painted, under its new word',
@@ -10349,22 +10400,14 @@ function realListbox() {
     served.readFirstBytes + '/' + served.readFirstBudgetBytes, '1/2');
 
   // ── THE WARNING NAMES THE SET IT IS ABOUT ───────────────────────────
+  // v3.70.0: with NOTHING flagged there is no warning at all. The stored
+  // total over the 200 KB project figure was an alarm about a number nothing
+  // acts on; what an unplanned project hands over is step ④'s cost line.
   const overProject = F.foundationsFacts(fndRead(fndPayload([big(150), big(150, { slug: 'b.md' })])));
-  const projectWarn = F.foundationsBudgetWarning(overProject);
-  ok('with NOTHING flagged the warning is about the PROJECT budget — v3.61.0\'s '
-    + 'behaviour, because the store then sends every body it can. Quoted from '
-    + 'the facts\' own figure rather than from a literal here, so a server that '
-    + 'sends its own budget is followed rather than contradicted',
-  projectWarn.startsWith('Over the ' + F.fndSize(overProject.budgetBytes) + ' project budget.'), projectWarn);
-  // v3.65.3: "and the rest is dropped" was FALSE (getProjectContext omits a
-  // document from the session-start reading, names it, keeps it in the index,
-  // and hands it over whole when asked for by name). The sentence says so.
-  ok('...and it names the 120 KB of text handed over at SESSION START, the other budget',
-  projectWarn.includes('Agents are handed up to 120 KB of document text at session start, in reading order'),
-  projectWarn);
-  ok('...and what really happens to the rest: listed, fetched by name — never "dropped"',
-    /every other document stays listed and is fetched by name when needed\.$/.test(projectWarn)
-    && !/dropped/i.test(projectWarn), projectWarn);
+  eq('with NOTHING flagged, a stored total over 200 KB warns about nothing',
+    F.foundationsBudgetWarning(overProject), '');
+  ok('CONTROL: that fixture really is over the old project figure',
+    overProject.bytes > overProject.budgetBytes, JSON.stringify([overProject.bytes, overProject.budgetBytes]));
 
   const overSession = F.foundationsFacts(fndRead(fndPayload([
     big(100, { readFirst: true }), big(100, { slug: 'b.md', readFirst: true }),
@@ -11147,25 +11190,59 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
 // name below) against fixtures shaped like the store's own answers
 // (REPORT-v367-store §1's example, REPORT-v367-jobs §0.2's runsOn objects).
 {
-  // ── The store's session-start answer, as S's report prints it ────────
-  const ssData = (over = {}) => ({
-    ok: true, domain: 'acme', project: 'lumina',
-    budget: { bytes: 122880, source: 'default', defaulted: true, ownerBytes: null, cap: 204800,
-      replyCapBytes: 307200 },
-    planned: false,
-    presets: [{ id: 'index-only', bytes: 0, mcpBytes: 10811 }, { id: 'lean', bytes: 32768, mcpBytes: 10806 },
-      { id: 'standard', bytes: 65536, mcpBytes: 27848 }, { id: 'deep', bytes: 122880, mcpBytes: 52958 },
-      { id: 'max', bytes: 204800, mcpBytes: 52958 }],
-    tiers: { brief: { bytes: 796, present: true, capBytes: 32768 },
+  // ── The route's session-start answer, v3.70.0's shape (REPORT-p2) ─────
+  // The presets are DERIVED from the store's own ladder (`ws.READING_BUDGET_
+  // PRESETS`), so a fixture that drifted from the store would red §25b rather
+  // than agree with a stale copy. `layers` sums to `bytes.mcp`, as the route
+  // guarantees, and `meter` is the kit's model built from them.
+  const SS_MCP = { 'index-only': 10811, lean: 10806, standard: 27848 };
+  const ssPresets = (mcpFor = (id) => SS_MCP[id] || 52958, repliesFor = () => 1) =>
+    ws.READING_BUDGET_PRESETS.map((p) => ({ id: p.id, bytes: p.bytes, tokens: p.tokens,
+      mcpBytes: mcpFor(p.id), mcpTokens: Math.round(mcpFor(p.id) / 4), replies: repliesFor(p.id),
+      documents: 0, documentBytes: 0, documentTokens: 0, omitted: 0, current: false, sameAsPrevious: false }));
+  const ssLayers = (t, mcp) => {
+    const rf = (t.readFirst && t.readFirst.bytes) || 0;
+    const other = (t.otherText && t.otherText.bytes) || 0;
+    const fixed = [['brief', 'standing brief', t.brief.bytes], ['handoff', 'latest handoff', t.handoff.bytes],
+      ['journal', 'journal', t.journal.bytes], ['index', 'document list', t.index.bytes]];
+    const framing = mcp - fixed.reduce((a, x) => a + x[2], 0) - rf - other;
+    return [{ key: 'framing', label: 'framing', bytes: framing, tokens: Math.round(framing / 4) }]
+      .concat(fixed.map(([key, label, bytes]) => ({ key, label, bytes, tokens: Math.round(bytes / 4) })))
+      .concat([{ key: 'readFirst', label: other ? 'documents sent at start' : 'read first',
+        bytes: rf + other, tokens: Math.round((rf + other) / 4), documents: 0 }]);
+  };
+  const ssData = (over = {}) => {
+    const tiers = over.tiers || { brief: { bytes: 796, present: true, capBytes: 32768 },
       handoff: { bytes: 255, present: true, capBytes: 49152 },
       journal: { bytes: 106, lines: 1 }, index: { bytes: 1328, listed: 3, hiddenCount: 0 },
       readFirst: { bytes: 0, count: 0, budgetBytes: 122880, exceeded: false },
       otherText: { bytes: 38198, count: 2 }, onRequest: { bytes: 0, count: 0 },
       omitted: { bytes: 102432, count: 1, slugs: ['roadmap.md'] }, hidden: { bytes: 0, count: 0 },
-      domainPages: { domains: ['acme'], bytes: 0 }, framing: { bytes: 12275 } },
-    bytes: { mcp: 52958, hook: 43130 }, costLine: { applies: true, documentTextBytes: 38198 }, notes: [],
-    ...over,
-  });
+      domainPages: { domains: ['acme'], bytes: 0 }, framing: { bytes: 12275 } };
+    const bytes = over.bytes || { mcp: 52958, hook: 43130 };
+    const budget = over.budget || { bytes: 122880, tokens: 30720, source: 'default', defaulted: true,
+      ownerBytes: null, preset: null, custom: false, nearest: null, cap: 819200, capTokens: 204800,
+      replyCapBytes: 307200 };
+    const replies = over.replies || 1;
+    const layers = ssLayers(tiers, bytes.mcp);
+    return {
+      ok: true, domain: 'acme', project: 'lumina', budget, planned: false,
+      presets: ssPresets(), presetsSummary: { allEqual: false, reason: null, readFirstDocuments: 0,
+        readFirstBytes: 0, readFirstTokens: 0 },
+      tiers, bytes, tokens: { mcp: Math.round(bytes.mcp / 4), hook: Math.round(bytes.hook / 4) }, layers,
+      onDemand: { documents: 0, bytes: 0, tokens: 0, notAtStart: 0, notAtStartBytes: 0, notAtStartTokens: 0 },
+      delivery: { pageBytes: 81920, pageTokens: 20480, replies, paged: replies > 1,
+        totalBytes: bytes.mcp, totalTokens: Math.round(bytes.mcp / 4), pages: [], tooLarge: [] },
+      window: { tokens: 200000, set: false, custom: false, choices: [200000, 400000, 1000000] },
+      harness: { tokens: null, set: false, estimate: true },
+      meter: { windowTokens: 200000, harnessTokens: null,
+        layers: layers.map((l) => ({ key: l.key === 'readFirst' ? 'read' : l.key, label: l.label, tokens: l.tokens })),
+        budgetTokens: budget.bytes / 4, onDemand: { tokens: 0, documents: 0 },
+        delivery: { replies, replyTokens: 20480 }, preview: over.preview === true },
+      costLine: { applies: true, documentTextBytes: 38198 }, notes: [],
+      ...Object.fromEntries(Object.entries(over).filter(([k]) => !['tiers', 'bytes', 'budget', 'replies', 'preview'].includes(k))),
+    };
+  };
   const baseSt = (over = {}) => ({
     activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, projects: [], detail: null,
     detailLoading: false, journalLimit: 10, wsWindow: WS_WINDOW_SRC, fnd: null,
@@ -11180,7 +11257,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     return m ? JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) : null;
   };
 
-  // ── §25a — the step, before and after its measurement ─────────────────
+  // ── §25a — the step, before and after its measurement (v3.70.0: A+) ───
   {
     const R = makeRenderers(baseSt());
     eq('no project read, no step', R.renderSessionStart(null), '');
@@ -11190,83 +11267,147 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       && /class="settings-block-num"[^>]*>4</.test(waiting)
       && /<h2 class="settings-job-title">Session start<\/h2>/.test(waiting), waiting.slice(0, 600));
     ok('before the measurement lands it SAYS it is measuring — never a figure it does not have',
-      /Measuring what an agent receives…/.test(waiting) && !/KB · ≈/.test(waiting), waiting);
+      /Measuring what an agent receives…/.test(waiting) && !/≈\d/.test(waiting.replace(/<select[\s\S]*$/, '')), waiting);
     const head = /<div class="settings-block-hd">([\s\S]*?)<\/div><div class="settings-block-info">/.exec(waiting);
-    ok('the Reading budget picker sits IN the head row, after the ⓘ',
-      !!head && /class="mem-step-head-end"/.test(head[1]) && /id="mem-budget-lb"/.test(head[1])
-      && head[1].indexOf('tx-vh-info') < head[1].indexOf('mem-budget-lb'), head ? head[1] : waiting);
-    ok('...labelled "Reading budget", and naming the default while nothing is set',
-      /Reading budget<\/span>/.test(waiting)
-      && (stubOf(waiting) || {}).label === 'Reading budget: not set, the default 120 KB applies',
-      JSON.stringify(stubOf(waiting)));
+    const headIds = head ? [...head[1].matchAll(/data-lb-stub="[^"]*"|id="(mem-[a-z]+-lb)"/g)].map((m) => m[1]).filter(Boolean) : [];
+    eq('the HEAD ROW holds the three things the owner sets, in order: Window · Reading budget · Harness',
+      headIds.join(','), 'mem-window-lb,mem-budget-lb,mem-harness-lb');
+    ok('...each after the ⓘ, each with its visible label',
+      !!head && head[1].indexOf('tx-vh-info') < head[1].indexOf('mem-window-lb')
+      && /mem-ss-ctl-label[^>]*>Window</.test(head[1]) && /id="mem-ss-budget-label">Reading budget<\/span>/.test(head[1])
+      && /mem-ss-ctl-label[^>]*>Harness</.test(head[1]), head ? head[1] : waiting);
+    const budgetStub = (h) => { const m = /id="mem-budget-lb" data-lb-stub="([^"]*)"/.exec(h);
+      return m ? JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) : null; };
+    ok('...the budget picker waits for the ROUTE\'s presets: disabled, no rows, before they land',
+      (budgetStub(waiting) || {}).disabled === true && (budgetStub(waiting) || {}).options.length === 0,
+      JSON.stringify(budgetStub(waiting)));
+    ok('...and names the default while nothing is set, in tokens',
+      /^Reading budget: not set, the default of about 30\.7k tokens applies$/.test((budgetStub(waiting) || {}).label || ''),
+      JSON.stringify(budgetStub(waiting)));
   }
+  const budgetStub = (h) => { const m = /id="mem-budget-lb" data-lb-stub="([^"]*)"/.exec(h);
+    return m ? JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) : null; };
   {
     const st = withSS(ssData());
     const html = makeRenderers(st).renderSessionStart(st.projectRead);
     const firstFold = html.indexOf('<details');
+    // THE METER — the instrument, first in the body, from the route's `meter`.
+    ok('the body OPENS on the meter: the window to scale, then the enlargement, both role="img"',
+      /id="mem-ss-meter"/.test(html) && html.indexOf('id="mem-ss-meter"') < firstFold
+      && (html.match(/class="bk-bar[^"]*" role="img" aria-label="/g) || []).length === 2, html.slice(0, 1500));
+    ok('...its sentence is the measured total against THIS computer\'s window (200K until set)',
+      /The Curator about 13\.2k tokens \(measured, 6\.6%\)/.test(html), html.slice(0, 2500));
+    ok('...with the harness NOT SET said in words, never drawn as a guess',
+      /Harness not set/.test(html) && !/bk-harness"/.test(html));
+    ok('...and a single-reply start carries no delivery line', !/Delivered in/.test(html));
+    ok('...and the one-line hint says where the harness figure comes from, while it is Not set',
+      /id="mem-ss-harness-hint">Read your harness from Claude Code’s <code>\/context<\/code> and set it under Harness above\.</.test(html));
     ok('"What an agent receives" is a fold row, OPEN by default — the one on this page that is',
       /<details class="mem-fold" data-mem-fold="receives" open>/.test(html), html.slice(0, 300));
-    ok('...its summary is the total in bytes, tokens and share of the window — and carries NO bar',
-      /<summary class="mem-fold-summary" id="mem-fold-receives">[\s\S]*?51\.7 KB · ≈13k tokens · 6\.6% of a 200k window<\/span>\s*<\/summary>/.test(html)
+    ok('...its summary is the total in TOKENS first, then bytes and share — and carries NO bar',
+      /<summary class="mem-fold-summary" id="mem-fold-receives">[\s\S]*?≈13\.2k tokens · 51\.7 KB · 6\.6% of 200K<\/span>\s*<\/summary>/.test(html)
       && !/cur-depth/.test((/id="mem-fold-receives">([\s\S]*?)<\/summary>/.exec(html) || ['', 'cur-depth'])[1]), html);
-    ok('the two other rows are CLOSED: Context window, How an agent reaches this',
-      /<details class="mem-fold" data-mem-fold="window">/.test(html)
+    ok('the per-viewer "Context window" fold is GONE (the window is in the head row now); "How an agent reaches this" stays closed',
+      !/data-mem-fold="window"/.test(html) && !/data-ctx-window/.test(html)
       && /<details class="mem-fold" data-mem-fold="reach">/.test(html)
-      && /Context window<\/span><span class="mem-fold-meta">200k tokens · per viewer/.test(html)
       && /How an agent reaches this<\/span><span class="mem-fold-meta">MCP · session-start hook · Chat \(≤ 40,000 characters\)/.test(html));
     // THE COST LINE — unfolded, before the first chevron, with its one action.
     const cost = /id="mem-ss-cost"[\s\S]*?<\/div>/.exec(html);
-    ok('an untouched project whose start hands over more than Lean gets the COST LINE',
-      !!cost && /Every session is handed 37\.3 KB of document text \(≈9\.5k tokens\): nothing is marked read first and no reading budget is set\. One more document did not fit the 120 KB default and is listed by name\./.test(cost[0]),
+    ok('an untouched project whose start hands over more than Lean gets the COST LINE, in tokens',
+      !!cost && /Every session is handed ≈9\.5k tokens of document text \(37\.3 KB\): nothing is marked read first and no reading budget is set\. One more document did not fit the ≈30\.7k-token default and is listed by name\./.test(cost[0]),
       cost ? cost[0] : html.slice(0, 800));
     ok('...UNFOLDED — it sits before the first chevron (v3.16.1: a cost is never behind one)',
       html.indexOf('id="mem-ss-cost"') >= 0 && html.indexOf('id="mem-ss-cost"') < firstFold);
     ok('...with its one action, "Set a reading budget"',
       /id="mem-ss-set-budget">Set a reading budget<\/button>/.test(cost ? cost[0] : ''));
-    // THE MONITOR: every tier, each against a NAMED denominator.
+    // THE MONITOR: the meter's text twin, tokens first.
     const keys = [...html.matchAll(/<span class="cur-mon-key">([^<]*)<\/span>/g)].map((m) => m[1]);
-    eq('the monitor reads every tier that applies, in the order an agent receives them',
-      keys.join('|'), 'standing brief|latest handoff|journal|document list|read-first text|'
-        + 'other document text|left out, by name|domain pages|framing|total|'
+    eq('the monitor reads every layer, then the window it lands in, then what stays outside',
+      keys.join('|'), 'standing brief|latest handoff|journal|document list|read first|'
+        + 'other document text|framing|session start|harness|free at start|left out, by name|domain pages|'
         + 'MCP get_project_context|session-start hook|Chat');
-    ok('the brief\'s bar is against the 32 KB brief budget, NAMED',
-      /cur-depth-bar"[^>]*><\/span><span class="cur-depth-value">796 bytes · ≈0\.2k<\/span><span class="visually-hidden"> 796 bytes of the 32 KB brief budget/.test(html), html);
-    ok('...the handoff\'s against the 48 KB handoff budget, NAMED',
-      /of the 48 KB handoff budget/.test(html));
-    ok('...the untouched project\'s document text against the 120 KB DEFAULT, and says why it is sent',
-      /of the 120 KB default · sent because nothing is planned/.test(html) && /of the 120 KB default<\/span>/.test(html));
-    ok('..."read-first text" says no budget is set rather than drawing a bar against nothing',
-      /read-first text<\/span><span class="cur-mon-value">0 KB<\/span><span class="cur-mon-sub">no reading budget set/.test(html));
-    ok('...the total is drawn against the CONTEXT WINDOW, named',
-      /≈13k tokens of a 200k-token window/.test(html) && /of a 200k-token window<\/span>/.test(html));
+    ok('the brief is TOKENS first, bytes as the hint, its bar against the 32 KB brief budget, NAMED',
+      /standing brief<\/span><span class="cur-mon-value">[\s\S]*?cur-depth-value">≈0\.2k<\/span><span class="visually-hidden"> 796 bytes of the 32 KB brief budget/.test(html)
+      && /796 bytes · of the ≈8\.2k brief budget/.test(html), html);
+    ok('...the handoff\'s against the 48 KB handoff budget, NAMED', /of the 48 KB handoff budget/.test(html));
+    ok('...the untouched project\'s document text against the DEFAULT, and says why it is sent',
+      /37\.3 KB · of the ≈30\.7k default · sent because nothing is planned/.test(html));
+    ok('..."read first" says no budget is set rather than drawing a bar against nothing',
+      /read first<\/span><span class="cur-mon-value">0<\/span><span class="cur-mon-sub">no reading budget set/.test(html));
+    ok('...the session start is a SHARE of the window (never danger), named, with its replies',
+      /session start<\/span>[\s\S]*?≈13\.2k · 6\.6%[\s\S]*?≈13\.2k tokens of a 200K-token window[\s\S]*?51\.7 KB · measured · 1 MCP reply/.test(html), html);
+    ok('...the harness is its own line, "not set" — never summed into the start',
+      /harness<\/span><span class="cur-mon-value">not set/.test(html));
+    ok('...and free at start is the window less the MEASURED start (the harness unknown)',
+      /free at start<\/span><span class="cur-mon-value">≈187k<\/span><span class="cur-mon-sub">of a 200K-token window, before your harness/.test(html), html);
     ok('...and no line is danger-toned on a start that is within every budget',
       !/cur-depth-danger|cur-mon-tone-danger/.test(html), html);
-    // THE PER-VIEWER WINDOW changes one denominator and nothing else.
-    const one = makeRenderers(withSS(ssData(), { ctxWindow: '1m' }));
-    const big = one.renderSessionStart(st.projectRead);
-    ok('the 1M window changes the share and the words, and nothing the project stores',
-      /51\.7 KB · ≈13k tokens · 1\.3% of a 1M window/.test(big) && /of a 1M-token window/.test(big)
-      && /data-ctx-window="1m" aria-pressed="true"/.test(big));
-    // THE ⓘ — DESIGN-context-budget §2.5's three paragraphs, verbatim (CONTRACT §5.1).
+    // THIS COMPUTER's window and harness change the drawing and nothing the project stores.
+    const big = makeRenderers(withSS(ssData(), { ctxSettings: { contextWindowTokens: 1000000,
+      harnessEstimateTokens: 120000, choices: [200000, 400000, 1000000] } })).renderSessionStart(st.projectRead);
+    ok('1M + a 120k harness: the share, the words and the harness line follow the SETTINGS',
+      /≈13\.2k tokens · 51\.7 KB · 1\.3% of 1M/.test(big)
+      && /harness<\/span><span class="cur-mon-value">≈120k · 12\.0%<\/span><span class="cur-mon-sub">system prompt, tools, CLAUDE\.md, skills · your estimate, not measured/.test(big)
+      && /free at start<\/span><span class="cur-mon-value">≈867k</.test(big), big);
+    ok('...the hint leaves once an estimate is set', !/mem-ss-harness-hint/.test(big));
+    ok('...the SESSION START line stays the MEASURED figure — the harness is never added to it',
+      /session start<\/span><span class="cur-mon-value">[\s\S]{0,200}?≈13\.2k · 1\.3%/.test(big), big);
+    ok('...and the meter is drawn against THIS COMPUTER\'s window, not the one the measurement was taken with',
+      /A 1M-token window, drawn to scale/.test(big) && !/A 200k-token window/.test(big));
+    ok('...the meter draws the harness HATCHED, labelled an estimate, and never adds it to The Curator',
+      /bk-harness/.test(big) && /harness about 120k \(your estimate, not measured\), The Curator about 13\.2k tokens/.test(big), big.slice(0, 3000));
+    // THE ⓘ
     const info = /id="settings-block-info-context-session"[^>]*>([\s\S]*?)<\/div>/.exec(html);
-    ok('the step\'s ⓘ is the design\'s three paragraphs, verbatim',
-      !!info && info[1].includes('An agent starting work on this project is handed the standing brief, the latest handoff, a few journal lines, the list of documents, and the text of the documents marked <i>read first</i>, up to the reading budget. Nothing from the domain’s pages is loaded until the agent searches.')
-      && info[1].includes('Start small. Most sessions need the brief, the handoff and one or two documents: conventions, a decision log.')
-      && info[1].includes('Tokens are estimated at four characters each.'), info ? info[1].slice(0, 300) : html.slice(0, 400));
-    // A READ-ONLY MIRROR: the figure, no picker, no action.
+    ok('the step\'s ⓘ keeps the design\'s opening sentence and says how tokens are estimated, with its accuracy',
+      !!info && info[1].includes('An agent starting work on this project is handed the standing brief, the latest handoff, a few journal lines, the list of documents, and the text of the documents marked <i>read first</i>, up to the reading budget.')
+      && info[1].includes('Tokens are estimated at four bytes each. For English prose the real count is usually within about ±20%')
+      && info[1].includes('Claude Code’s <code>/context</code>')
+      && info[1].includes('never added to a measured figure'), info ? info[1].slice(0, 300) : html.slice(0, 400));
+    // A READ-ONLY MIRROR
     const ro = makeRenderers(withSS(ssData(), { detail: { readonly: true } }))
       .renderSessionStart(st.projectRead);
-    ok('a read-only mirror shows the budget as a reading, with no picker and no "Set" action',
+    ok('a read-only mirror shows the budget as a reading, with no budget picker and no "Set" action',
       !/id="mem-budget-lb"/.test(ro) && !/mem-ss-set-budget/.test(ro)
-      && /mem-ss-budget-fixed">Default · 120 KB</.test(ro));
+      && /mem-ss-budget-fixed">Default</.test(ro));
     const failed = makeRenderers(baseSt({ sessionStart: { domain: 'acme', project: 'lumina', sig: 'x',
       data: null, error: 'boom' } })).renderSessionStart(st.projectRead);
     ok('a failed measurement is a disclosure naming the error, never a zero',
-      /could not be measured: boom/.test(failed) && !/0 KB · ≈0k/.test(failed));
+      /could not be measured: boom/.test(failed) && !/≈0/.test(failed));
     const other = makeRenderers(baseSt({ sessionStart: { domain: 'other', project: 'lumina', sig: 'x',
       data: ssData(), error: null } })).renderSessionStart(st.projectRead);
     ok('a measurement STAMPED for another project is never painted on this one',
       /Measuring what an agent receives…/.test(other));
+  }
+  {
+    // THE SAME-FOR-EVERY-BUDGET LINE (v3.70.0): the curator project today.
+    const read = { scopes: [], brief: { present: false }, readingBudgetBytes: 204800,
+      foundations: fndPayload([fndDoc(), fndDoc({ slug: 'b.md' })]) };
+    const data = ssData({ planned: true, costLine: { applies: false, documentTextBytes: 0 },
+      budget: { bytes: 204800, tokens: 51200, source: 'owner', defaulted: false, ownerBytes: 204800,
+        preset: 'custom', custom: true, nearest: 'large', cap: 819200, capTokens: 204800, replyCapBytes: 307200 },
+      presetsSummary: { allEqual: true, reason: 'nothing-read-first', readFirstDocuments: 0,
+        readFirstBytes: 0, readFirstTokens: 0 },
+      tiers: { ...ssData().tiers, otherText: { bytes: 0, count: 0 }, omitted: { bytes: 0, count: 0, slugs: [] },
+        readFirst: { bytes: 0, count: 0, budgetBytes: 204800, exceeded: false },
+        onRequest: { bytes: 191119, count: 9 } }, bytes: { mcp: 35261, hook: 23049 } });
+    const html = makeRenderers(withSS(data, { projectRead: read })).renderSessionStart(read);
+    const same = /id="mem-ss-same"[\s\S]*?<\/div>/.exec(html);
+    ok('nothing read first: ONE plain line says why every budget sends the same, with the door to step 1',
+      !!same && /Every reading budget sends the same ≈8\.8k tokens right now\. Nothing is read first, so every budget sends the same — a budget only caps the documents marked read first\. Mark the two or three an agent should never start without in step 1\./.test(same[0])
+      && /id="mem-ss-choose">Choose read-first documents<\/button>/.test(same[0]), same ? same[0] : html.slice(0, 1500));
+    ok('...unfolded, before the first chevron', html.indexOf('id="mem-ss-same"') < html.indexOf('<details'));
+    ok('...and the meter\'s dashed room is EMPTY and says so, against the owner\'s 51.2k budget',
+      /reading budget 51\.2k — unused: nothing is read first/.test(html));
+    ok('...a stored non-preset budget reads "Custom ≈51.2k, nearest Large" and selects no preset',
+      (budgetStub(html) || {}).value === null
+      && /^Reading budget: Custom ≈51\.2k, nearest Large$/.test((budgetStub(html) || {}).label || ''),
+      JSON.stringify(budgetStub(html)));
+    const bare = makeRenderers(withSS(data, { projectRead: { ...read, foundations: fndPayload([]) } }))
+      .renderSessionStart({ ...read, foundations: fndPayload([]) });
+    ok('...and a project with NO documents gets no such line — there is nothing to choose',
+      !/mem-ss-same/.test(bare));
+    const ro = makeRenderers(withSS(data, { projectRead: read, detail: { readonly: true } })).renderSessionStart(read);
+    ok('...a read-only mirror gets the sentence without the door', /mem-ss-same/.test(ro) && !/mem-ss-choose/.test(ro));
   }
   {
     // PLANNED, and INDEX ONLY with documents marked read first (§1.9).
@@ -11274,7 +11415,8 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       foundations: fndPayload([fndDoc({ readFirst: true }), fndDoc({ slug: 'b.md', readFirst: true })],
         { readFirstCount: 2, readFirstBytes: 24690 }) };
     const data = ssData({ planned: true, costLine: { applies: false, documentTextBytes: 0 },
-      budget: { bytes: 0, source: 'owner', defaulted: false, ownerBytes: 0, cap: 204800, replyCapBytes: 307200 },
+      budget: { bytes: 0, tokens: 0, source: 'owner', defaulted: false, ownerBytes: 0, preset: 'index-only',
+        custom: false, nearest: null, cap: 819200, capTokens: 204800, replyCapBytes: 307200 },
       tiers: { ...ssData().tiers, otherText: { bytes: 0, count: 0 }, omitted: { bytes: 0, count: 0, slugs: [] },
         readFirst: { bytes: 0, count: 2, budgetBytes: 0, exceeded: true },
         onRequest: { bytes: 24690, count: 2 } } });
@@ -11284,10 +11426,10 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('...and a PLANNED project gets no cost line — the plan is the answer to it',
       !/mem-ss-cost/.test(html));
     ok('...its read-first line names the Index-only budget rather than a bar against zero',
-      /read-first text<\/span><span class="cur-mon-value">0 KB<\/span><span class="cur-mon-sub">the reading budget is Index only/.test(html));
-    ok('...and the on-request tier names what stays one request away',
-      /on request<\/span><span class="cur-mon-value">2 documents · 24\.1 KB<\/span><span class="cur-mon-sub">listed; fetched by name/.test(html));
-    eq('...and the picker reads Index only', (stubOf(html) || {}).value, 'index-only');
+      /read first<\/span><span class="cur-mon-value">0<\/span><span class="cur-mon-sub">2 documents · 0 KB · the reading budget is Index only/.test(html), html);
+    ok('...and the on-request tier names what stays one request away, outside the window',
+      /on request<\/span><span class="cur-mon-value">2 documents · ≈6\.2k<\/span><span class="cur-mon-sub">listed; outside the window until opened/.test(html));
+    eq('...and the picker reads Index only', (budgetStub(html) || {}).value, 'index-only');
   }
   {
     // PLANNED and OVER the read-first budget.
@@ -11295,78 +11437,148 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       foundations: fndPayload([fndDoc({ readFirst: true, bytes: 154624 })],
         { readFirstCount: 1, readFirstBytes: 154624 }) };
     const data = ssData({ planned: true, costLine: { applies: false, documentTextBytes: 0 },
-      budget: { bytes: 65536, source: 'owner', defaulted: false, ownerBytes: 65536, cap: 204800, replyCapBytes: 307200 },
+      budget: { bytes: 65536, tokens: 16384, source: 'owner', defaulted: false, ownerBytes: 65536,
+        preset: 'standard', custom: false, nearest: null, cap: 819200, capTokens: 204800, replyCapBytes: 307200 },
       tiers: { ...ssData().tiers, otherText: { bytes: 0, count: 0 },
-        readFirst: { bytes: 59392, count: 1, budgetBytes: 65536, exceeded: true } } });
+        readFirst: { bytes: 59392, count: 1, budgetBytes: 65536, exceeded: true } },
+      bytes: { mcp: 150000, hook: 90000 }, replies: 2 });
     const html = makeRenderers(withSS(data, { projectRead: read })).renderSessionStart(read);
-    ok('over budget, the sentence names the set, the budget and what is handed over',
-      /The read-first set is 151 KB, over the 64 KB reading budget\. Agents are handed the first 58 KB in reading order; the rest stay listed and are fetched by name\./.test(html), html.slice(0, 900));
+    ok('over budget, the sentence names the set, the budget and what is handed over — in tokens',
+      /The read-first set is ≈38\.7k tokens, over the ≈16\.4k-token reading budget\. Agents are handed the first ≈14\.8k in reading order; the rest stay listed and are fetched by name\./.test(html), html.slice(0, 1500));
     ok('...unfolded, before the first chevron',
       html.indexOf('id="mem-ss-over"') >= 0 && html.indexOf('id="mem-ss-over"') < html.indexOf('<details'));
     ok('...and the read-first line turns DANGER — the one line on this monitor that may',
-      /cur-depth-bar cur-depth-danger/.test(html) && /of the 64 KB reading budget/.test(html));
-    eq('...and the picker reads Standard', (stubOf(html) || {}).value, 'standard');
+      /cur-depth-bar cur-depth-danger/.test(html) && /of the ≈16\.4k-token reading budget/.test(html));
+    ok('...while the METER never does: a window is not a budget the owner set',
+      !/bk-[a-z-]*danger/.test(html));
+    ok('a start in TWO replies carries the delivery line on the meter, and the reply count everywhere',
+      /Delivered in 2 MCP replies of at most ≈20\.5k tokens each/.test(html)
+      && /measured · 2 MCP replies/.test(html) && /2 MCP replies of at most ≈20k tokens/.test(html), html);
+    eq('...and the picker reads Standard', (budgetStub(html) || {}).value, 'standard');
   }
 
-  // ── §25b — the budget picker's cfg ────────────────────────────────────
+  // ── §25b — the three pickers' cfgs ────────────────────────────────────
   {
     const R = makeRenderers(baseSt());
     const untouched = R.budgetPickerCfg({ readingBudgetBytes: null }, ssData(), false);
-    eq('the presets are the STORE\'s, id for id and byte for byte',
+    // THE INTENT OF THE v3.67.0 PIN, KEPT: the picker offers the STORE's
+    // ladder, id for id and byte for byte. It now arrives through the route's
+    // `presets[]`, so the view holds no copy that could fall behind (the
+    // v3.70.0 red this release fixes: the view's own list stayed at five).
+    eq('the presets are the STORE\'s, id for id — all seven, through the route',
       JSON.stringify(untouched.options.map((o) => o.value)),
       JSON.stringify(ws.READING_BUDGET_PRESETS.map((p) => p.id)));
     ok('...and every one names the store\'s own bytes in its row',
       untouched.options.every((o, i) => o.html.includes(ws.READING_BUDGET_PRESETS[i].bytes === 0
-        ? '>0 KB<' : (ws.READING_BUDGET_PRESETS[i].bytes / 1024) + ' KB')));
-    eq('untouched: the trigger says what is TRUE — the default applies', untouched.triggerText,
-      'Default · 120 KB');
+        ? '>0 KB<' : (ws.READING_BUDGET_PRESETS[i].bytes / 1024) + ' KB<')));
+    ok('...and the view holds NO byte copy of the ladder any more',
+      !/READING_BUDGET_PRESETS\s*=/.test(viewSrc) && !/bytes:\s*204800|bytes:\s*819200|bytes:\s*131072/.test(viewSrc));
+    eq('TOKEN-FIRST names, the ladder\'s own: Index only · Lean 8k · … · Max 200k',
+      JSON.stringify(untouched.options.map((o) => o.label)),
+      JSON.stringify(['Index only', 'Lean 8k', 'Standard 16k', 'Deep 32k', 'Large 64k', 'Extra large 128k', 'Max 200k']));
+    eq('untouched: the trigger says what is TRUE — the default applies, in tokens', untouched.triggerText,
+      'Default · ≈30.7k');
     ok('...Standard is PRESELECTED, and is an action row so choosing it still writes',
       untouched.value === 'standard' && JSON.stringify(untouched.actionValues) === '["standard"]'
       && untouched.options.find((o) => o.value === 'standard').action === true
       && untouched.options.filter((o) => o.action).length === 1);
-    ok('...and marked "recommended"', /Standard · recommended/.test(
+    ok('...and marked "recommended"', /Standard 16k · recommended/.test(
       untouched.options.find((o) => o.value === 'standard').html));
-    ok('each row carries what an agent would START with under it — no request behind a hover',
-      /an agent starts with ≈27\.2 KB · ≈7k tokens/.test(untouched.options.find((o) => o.value === 'standard').html)
-      && /an agent starts with ≈10\.6 KB/.test(untouched.options[0].html));
-    eq('...and the meaning, verbatim from the design\'s picker column',
-      JSON.stringify(untouched.options.map((o) => /mem-bp-hint">([^<]*)</.exec(o.html)[1])),
-      JSON.stringify([
-        'No document text at start. Agents see the list and open what they need by name.',
-        'One or two short documents: conventions, a decision log.',
-        'A handful of core documents.',
-        'Today’s default.',
-        'The store’s ceiling. The whole reply is still limited to 300 KB, so on a project with a long brief and handoff some text can be left out, and it is named if so.',
-      ]));
+    ok('each row carries what an agent would START with under it, in tokens, and in how many replies',
+      /an agent starts with ≈7\.0k tokens · 1 MCP reply/.test(untouched.options.find((o) => o.value === 'standard').html)
+      && /an agent starts with ≈2\.7k tokens · 1 MCP reply/.test(untouched.options[0].html),
+      untouched.options[2].html);
+    const two = R.budgetPickerCfg({ readingBudgetBytes: null },
+      { ...ssData(), presets: ssPresets(undefined, (id) => (id === 'max' ? 11 : 1)) }, false);
+    ok('...a preset delivered in several replies says so on its own row',
+      /≈13\.2k tokens · 11 MCP replies/.test((two.options[6] || {}).html), (two.options[6] || {}).html);
+    const small = makeRenderers(baseSt({ ctxSettings: { contextWindowTokens: 40000, harnessEstimateTokens: null } }))
+      .budgetPickerCfg({ readingBudgetBytes: null }, ssData(), false);
+    ok('window-aware: a preset whose start is over ¼ of the window says so in words — and is never disabled',
+      /over ¼ of this window/.test((small.options[6] || {}).html) && !/over ¼/.test(small.options[0].html)
+      && small.options.every((o) => !o.disabled), (small.options[6] || {}).html);
+    ok('the meaning of each, in the view\'s own words (the only thing it still holds)',
+      untouched.options.every((o) => /mem-bp-hint">[^<]{8,}</.test(o.html)));
     const set = R.budgetPickerCfg({ readingBudgetBytes: 65536 }, ssData(), false);
     ok('set to Standard: the value is Standard, the trigger names it, and no row is an action',
-      set.value === 'standard' && set.triggerText === 'Standard · 64 KB'
+      set.value === 'standard' && set.triggerText === 'Standard 16k'
       && set.actionValues.length === 0 && !set.options.some((o) => o.action));
-    eq('Index only reads as itself', R.budgetPickerCfg({ readingBudgetBytes: 0 }, null, false).triggerText,
+    eq('Index only reads as itself', R.budgetPickerCfg({ readingBudgetBytes: 0 }, ssData(), false).triggerText,
       'Index only');
-    const custom = R.budgetPickerCfg({ readingBudgetBytes: 50000 }, null, false);
-    ok('a hand-edited budget that is no preset is named as custom, with no preset selected',
-      custom.value === null && custom.triggerText === 'Custom · 48.8 KB', JSON.stringify(custom.triggerText));
+    const custom = R.budgetPickerCfg({ readingBudgetBytes: 122880 },
+      { ...ssData(), budget: { ...ssData().budget, nearest: 'deep' } }, false);
+    ok('a stored budget that is no preset (v3.67\'s Deep, 120 KB) is "Custom ≈30.7k, nearest Deep", no preset selected',
+      custom.value === null && custom.triggerText === 'Custom ≈30.7k, nearest Deep', JSON.stringify(custom.triggerText));
     ok('while a budget write is in flight the picker is disabled and says so',
-      R.budgetPickerCfg({ readingBudgetBytes: null }, null, true).disabled === true
-      && R.budgetPickerCfg({ readingBudgetBytes: null }, null, true).triggerText === 'Saving…');
+      R.budgetPickerCfg({ readingBudgetBytes: null }, ssData(), true).disabled === true
+      && R.budgetPickerCfg({ readingBudgetBytes: null }, ssData(), true).triggerText === 'Saving…');
+    // THE WINDOW AND THE HARNESS — this computer's settings.
+    const w = R.windowPickerCfg(false);
+    ok('the window picker offers 200K · 400K · 1M and a Custom… action row',
+      JSON.stringify(w.options.map((o) => o.value)) === '["200000","400000","1000000","custom"]'
+      && JSON.stringify(w.actionValues) === '["custom"]' && w.triggerText === '200K');
+    const wc = makeRenderers(baseSt({ ctxSettings: { contextWindowTokens: 300000, choices: [200000, 400000, 1000000] } }))
+      .windowPickerCfg(false);
+    ok('...a custom window selects no choice and names itself', wc.value === null && wc.triggerText === 'Custom · 300K');
+    const h = R.harnessPickerCfg(false);
+    ok('the harness picker: Not set · Light ≈20k · Typical ≈50k · Heavy ≈120k · Exact…, Not set by default',
+      JSON.stringify(h.options.map((o) => o.label)) === '["Not set","Light ≈20k","Typical ≈50k","Heavy ≈120k","Exact…"]'
+      && h.value === 'none' && h.triggerText === 'Not set');
+    ok('...Exact… carries the one-line hint to read it from Claude Code\'s /context',
+      /Run \/context in Claude Code/.test(h.options[4].html));
+    const hs = makeRenderers(baseSt({ ctxSettings: { contextWindowTokens: 1000000, harnessEstimateTokens: 37000 } }))
+      .harnessPickerCfg(false);
+    ok('...an exact figure is labelled YOUR ESTIMATE on the trigger', hs.value === null
+      && hs.triggerText === '≈37k · your estimate' && /your estimate/.test(hs.ariaLabel), JSON.stringify(hs));
+    // THE INLINE EDITOR
+    const ed = makeRenderers(baseSt({ ctxEdit: { kind: 'harness', text: '<b>' } })).ctxEditHtml();
+    ok('Exact… opens an inline number field with Save and Cancel, the /context hint, the draft escaped',
+      /id="mem-ss-edit-input"/.test(ed) && /id="mem-ss-edit-save">Save</.test(ed)
+      && /id="mem-ss-edit-cancel">Cancel</.test(ed) && /Run \/context in Claude Code/.test(ed)
+      && /value="&lt;b&gt;"/.test(ed), ed);
+    eq('...and nothing when no edit is open', makeRenderers(baseSt()).ctxEditHtml(), '');
+  }
+  {
+    // THE PREVIEW: a budget previewed from the picker is drawn on the meter,
+    // marked "preview", with the delivery line B contributed — and only while
+    // the measurement it was made against is on screen.
+    const pv = ssData({ preview: true, bytes: { mcp: 150000, hook: 90000 }, replies: 2 });
+    const st = withSS(ssData(), { budgetPreview: { domain: 'acme', project: 'lumina', sig: 'x',
+      bytes: 131072, data: pv } });
+    const html = makeRenderers(st).renderSessionStart(st.projectRead);
+    ok('a previewed budget repaints the meter as a PREVIEW, with "Preview, not saved · … · N MCP replies"',
+      /class="bk-preview">preview</.test(html)
+      && /<b>Preview, not saved<\/b> · ≈37\.5k tokens · 18\.8% of 200k · 2 MCP replies/.test(html), html.slice(0, 4000));
+    ok('...and names the preset being previewed', /Previewing the Deep 32k reading budget/.test(html));
+    ok('...while the monitor below keeps the MEASURED figures — a preview is not saved',
+      /≈13\.2k tokens · 51\.7 KB · 6\.6% of 200K/.test(html));
+    const stale = withSS(ssData(), { budgetPreview: { domain: 'acme', project: 'lumina', sig: 'older',
+      bytes: 131072, data: pv } });
+    ok('a preview made against an OLDER measurement is never painted',
+      !/Preview, not saved/.test(makeRenderers(stale).renderSessionStart(stale.projectRead)));
   }
 
-  // ── §25c — the SESSION START overview tile ────────────────────────────
+  // ── §25c — the SESSION START and AGENT SESSIONS overview tiles ─────────
   {
     const st = withSS(ssData());
     const strip = makeRenderers(st).renderLayerStrip(st.projectRead);
     const tile = /<button type="button" class="cur-ov-card"[^>]*data-ov-jump="context-session"[^>]*>([\s\S]*?)<\/button>/.exec(strip);
-    ok('the overview gains a SESSION START reading tile that jumps to step ④',
-      !!tile && /SESSION START/.test(tile[1]) && /52 KB · ≈13k tokens/.test(tile[1]), strip.slice(-900));
+    ok('the SESSION START tile reads in TOKENS and replies — "≈13.2k tokens · 1 reply"',
+      !!tile && /SESSION START/.test(tile[1]) && /≈13\.2k tokens · 1 reply/.test(tile[1]) && !/KB/.test(tile[1]),
+      strip.slice(-900));
+    const two = withSS(ssData({ bytes: { mcp: 420000, hook: 1 }, replies: 6 }));
+    ok('...and a paged start says how many replies', /≈105k tokens · 6 replies/.test(
+      makeRenderers(two).renderLayerStrip(two.projectRead)));
     ok('...a READING: no bar on it (the overview rule)', !!tile && !/cur-depth/.test(tile[0]));
     ok('...and it is not hidden once measured', !!tile && !/ hidden>/.test(tile[0]));
     const none = makeRenderers(baseSt()).renderLayerStrip(baseSt().projectRead);
     ok('before the measurement lands the tile is RENDERED AND HIDDEN — one attribute reveals it',
       /data-ov-jump="context-session"[^>]*hidden>/.test(none), none.slice(-700));
     const order = [...strip.matchAll(/data-ov-jump="([a-z-]+)"/g)].map((m) => m[1]);
-    eq('...after CAPTURE, as the picture draws it', order.join(','),
+    eq('...after AGENT SESSIONS, as the picture draws it', order.join(','),
       'context-canonical,context-state,capture,context-session');
+    ok('the capture tile is named AGENT SESSIONS on screen; its jump id keeps the on-disk word',
+      /AGENT SESSIONS/.test(strip) && !/>CAPTURE</.test(strip) && /data-ov-jump="capture"/.test(strip));
   }
 
   // ── §25d — the helper: head control, panel, gate ──────────────────────
@@ -11442,7 +11654,10 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
         cachedReadTokens: 0, cacheWriteTokens: 0, calls: 1, usd: 0.0008372, estimated: false, fallbackFrom: null } },
       ticks: { 'architecture.md': true }, budgetTick: true },
     { projectRead: { scopes: [], brief: { present: false }, readingBudgetBytes: null,
-      foundations: fndPayload(docs) } });
+      foundations: fndPayload(docs) },
+    // The page has its measurement by the time a plan is asked for, and the
+    // ladder's names come from it (v3.70.0).
+    sessionStart: { domain: 'acme', project: 'lumina', sig: 'x', data: ssData(), error: null } });
     const html = makeRenderers(st).renderFoundations(st.projectRead);
     ok('a proposal adds the transient SUGGESTED column', /<th scope="col">At session start<\/th><th scope="col">Suggested<\/th>/.test(html));
     ok('...a differing row carries a TICK, ticked, the proposed state and its one-line reason',
@@ -11456,7 +11671,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('the proposal\'s one-line summary, as the picture words it',
       /Suggested plan · 2 read first · 30\.7 KB of the 64 KB reading budget · 1 on request · nothing applied yet/.test(html), html);
     ok('...and, with no budget set, the tick that sets the one it was planned against — ticked',
-      /id="mem-plan-budget-tick" checked><span>Also set the reading budget to Standard · 64 KB<\/span>/.test(html));
+      /id="mem-plan-budget-tick" checked><span>Also set the reading budget to Standard 16k · 64 KB<\/span>/.test(html), html);
     ok('after an AI run, the AFTER line — what ran and what it cost',
       /Ran on/.test(html) && /5,812 in \/ 640 out/.test(html) && /\$0\.0008/.test(html));
     const F = makeRenderers(st);
@@ -11471,11 +11686,13 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     // THE `if applied` LINE, from the preview the store measured.
     const withPrev = { ...st, sessionStart: { domain: 'acme', project: 'lumina', sig: 'x', data: ssData(), error: null },
       sessionPreview: { domain: 'acme', project: 'lumina', key: JSON.stringify(F.planPreviewBody(st.plan)),
-        withBudget: true, data: ssData({ bytes: { mcp: 62464, hook: 50000 },
+        withBudget: true, data: ssData({ bytes: { mcp: 62464, hook: 50000 }, preview: true,
           budget: { bytes: 65536, source: 'whatif', defaulted: false, ownerBytes: null, cap: 204800, replyCapBytes: 307200 } }) } };
     const ss = makeRenderers(withPrev).renderSessionStart(withPrev.projectRead);
     ok('④ reads the pending proposal as an `if applied` line, measured by the store',
-      /if applied<\/span><span class="cur-mon-value">[\s\S]*?61 KB · ≈16k tokens · 7\.8%[\s\S]*?Standard · 64 KB budget, with the suggestion/.test(ss), ss.slice(-2500));
+      /if applied<\/span><span class="cur-mon-value">[\s\S]*?≈15\.6k · 7\.8%[\s\S]*?Standard 16k reading budget, with the suggestion/.test(ss), ss.slice(-2500));
+    ok('...and the METER draws that proposal as a preview, naming it — nothing is applied yet',
+      /class="bk-preview">preview</.test(ss) && /Previewing the suggested reading plan — apply it in step 1\./.test(ss));
     const stale = { ...withPrev, sessionPreview: { ...withPrev.sessionPreview, key: '{"plan":{}}' } };
     ok('...and never a preview measured for a DIFFERENT set of ticks',
       !/if applied/.test(makeRenderers(stale).renderSessionStart(stale.projectRead)));
@@ -11534,20 +11751,25 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     const mk = (st) => {
       const calls = { loads: 0 };
       const api = new Function('state', 'keyOf', 'payloadSignature', 'reportAsyncMountFailure',
-        'loadSessionStart',
-        'let sessionStartInFlight = null;\n'
+        'loadSessionStart', 'loadContextSettings',
+        'let sessionStartInFlight = null;\nlet ctxSettingsInFlight = false;\n'
         + extractFunction(viewSrc, 'planFor', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'sessionStartFor', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'maybeLoadSessionStart', 'memory.js')
         + '\nreturn { maybeLoadSessionStart };')(
         st, (d, p) => d + '/' + p, (r) => JSON.stringify(r), () => {},
-        async () => { calls.loads++; });
+        async () => { calls.loads++; }, async () => { calls.settings = (calls.settings || 0) + 1; });
       return { api, calls };
     };
     const st = baseSt();
     const a = mk(st);
     a.api.maybeLoadSessionStart(1);
     eq('a project with no measurement asks for one', a.calls.loads, 1);
+    eq('...and this computer\'s window and harness are read when the page has none yet',
+      a.calls.settings, 1);
+    const had = mk({ ...st, ctxSettings: { contextWindowTokens: 200000 } });
+    had.api.maybeLoadSessionStart(1);
+    eq('...but never again once they are on the page — one read per mount', had.calls.settings || 0, 0);
     const b = mk({ ...st, sessionStart: { domain: 'acme', project: 'lumina',
       sig: JSON.stringify(st.projectRead), data: {} } });
     b.api.maybeLoadSessionStart(1);
@@ -11600,23 +11822,26 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
   // ── §25g — the start cells and the picker are MOUNTED from the render's cfg ─
   {
     const mounted = [];
-    const els = { 'mem-fnd-start-architecture-md': {}, 'mem-budget-lb': {} };
+    const els = { 'mem-fnd-start-architecture-md': {}, 'mem-budget-lb': {}, 'mem-window-lb': {},
+      'mem-harness-lb': {} };
     const root = { querySelectorAll: () => [], querySelector: (sel) => els[sel.replace('#', '')] || null };
     const st = baseSt({ sessionStart: { domain: 'acme', project: 'lumina', sig: 'x', data: ssData() } });
-    const calls = { start: [], budget: [] };
+    const calls = { start: [], budget: [], ctx: [], patches: 0 };
     const api = new Function('state', 'document', 'mountListbox', 'wireAiRunDoors', 'requestSettingsSection',
       'navigate', 'setStartState', 'setReadingBudget', 'reportAsyncMountFailure', 'patchSessionStart',
       'render', 'loadPlanEstimate', 'runPlan', 'pressPlanAi', 'applyPlan', 'loadPlanPreview', 'localStorage',
       'escapeHtml', 'icon', 'renderMonitor', 'renderListboxHtml', 'renderRunsOn', 'renderSpent',
       'aiActionDisabledAttrs', 'renderDescription', 'renderStatus', 'memStep', 'foundationsFacts',
+      'formatTokens', 'renderBucket', 'setContextSetting', 'previewBudget',
       v367Lift() + extractFunction(viewSrc, 'bindSessionAndPlan', 'memory.js') + '\nreturn { bindSessionAndPlan };')(
       st, { querySelector: () => null, getElementById: () => null },
       (cfg) => { mounted.push(cfg); }, () => true, () => {}, () => {},
       async (slug, v) => { calls.start.push(slug + '=' + v); },
-      async (b) => { calls.budget.push(b); }, () => {}, () => {}, () => {},
+      async (b) => { calls.budget.push(b); }, () => {}, () => { calls.patches++; }, () => {},
       async () => {}, async () => {}, () => {}, async () => {}, async () => {}, { setItem() {} },
       escapeHtml, () => '', renderMonitor, () => '', renderRunsOn, renderSpent, aiActionDisabledAttrs,
-      () => '', () => '', () => '', (read) => makeRenderers({}).foundationsFacts(read));
+      () => '', () => '', () => '', (read) => makeRenderers({}).foundationsFacts(read),
+      formatTokens, renderBucket, async (body) => { calls.ctx.push(JSON.stringify(body)); }, () => {});
     api.bindSessionAndPlan(root, 1);
     const cell = mounted.find((c) => c.id === 'mem-fnd-start-architecture-md');
     ok('each row\'s start cell is mounted from the SAME cfg function the markup used',
@@ -11629,8 +11854,26 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     pick.onChange('lean');
     pick.onChange('standard');
     pick.onChange('nonsense');
-    eq('...and a preset writes ITS bytes — an unknown value writes nothing', calls.budget.join(','),
-      '32768,65536');
+    eq('...and a preset writes ITS bytes — the ROUTE\'s, all seven — an unknown value writes nothing',
+      (pick.onChange('max'), calls.budget.join(',')), '32768,65536,819200');
+    // v3.70.0: the window and the harness, this computer's, one PUT each.
+    const win = mounted.find((c) => c.id === 'mem-window-lb');
+    const har = mounted.find((c) => c.id === 'mem-harness-lb');
+    ok('the window and harness pickers are mounted from the same cfgs the markup used',
+      !!win && !!har && typeof win.onChange === 'function' && typeof har.onChange === 'function');
+    win.onChange('1000000');
+    har.onChange('120000');
+    har.onChange('none');
+    eq('...a choice writes ONE setting through the settings PUT — never a project field',
+      calls.ctx.join(' | '),
+      '{"contextWindowTokens":1000000} | {"harnessEstimateTokens":120000} | {"harnessEstimateTokens":null}');
+    win.onChange('custom');
+    ok('..."Custom…" writes NOTHING: it opens the inline editor on the current window',
+      calls.ctx.length === 3 && st.ctxEdit && st.ctxEdit.kind === 'window' && st.ctxEdit.text === '200000'
+      && calls.patches >= 1, JSON.stringify(st.ctxEdit));
+    har.onChange('exact');
+    ok('..."Exact…" likewise, on the harness, empty while Not set',
+      calls.ctx.length === 3 && st.ctxEdit.kind === 'harness' && st.ctxEdit.text === '');
   }
 
   // ── §25g2 — ONE door listener per root, shared with every other view ──
@@ -11765,7 +12008,9 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     {
       const st = baseSt();
       const seen = [];
-      const api = lift([extractFunction(viewSrc, 'writeReadingBudget', 'memory.js'), extractFunction(viewSrc, 'applyBudgetAnswer', 'memory.js'), extractFunction(viewSrc, 'setReadingBudget', 'memory.js')], [], [], st,
+      const toasts = [];
+      const api = lift([extractFunction(viewSrc, 'writeReadingBudget', 'memory.js'), extractFunction(viewSrc, 'applyBudgetAnswer', 'memory.js'), extractFunction(viewSrc, 'setReadingBudget', 'memory.js')],
+        ['showToast', 'presetName'], [(o) => toasts.push(o), (b) => 'Lean 8k (' + b + ')'], st,
         async (url, init) => { seen.push(url + ' ' + init.body);
           return { ok: true, json: async () => ({ ok: true, readingBudgetBytes: 32768,
             readingBudgetDefaulted: false, readFirstBudgetBytes: 32768, readFirstBudgetExceeded: false }) }; });
@@ -11775,15 +12020,21 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       ok('...the project read takes the ROUTE\'s answer, and the documents\' budget follows it',
         st.projectRead.readingBudgetBytes === 32768 && st.projectRead.foundations.readFirstBudgetBytes === 32768
         && st.budgetSaving === false);
+      ok('...and the confirmation is a TOAST naming the preset it set (v3.67.2: success goes away on its own)',
+        toasts.length === 1 && toasts[0].tone === 'success' && toasts[0].title === 'Reading budget set to Lean 8k (32768)',
+        JSON.stringify(toasts));
       const bad = baseSt();
-      const api2 = lift([extractFunction(viewSrc, 'writeReadingBudget', 'memory.js'), extractFunction(viewSrc, 'applyBudgetAnswer', 'memory.js'), extractFunction(viewSrc, 'setReadingBudget', 'memory.js')], [], [], bad,
+      const toasts2 = [];
+      const api2 = lift([extractFunction(viewSrc, 'writeReadingBudget', 'memory.js'), extractFunction(viewSrc, 'applyBudgetAnswer', 'memory.js'), extractFunction(viewSrc, 'setReadingBudget', 'memory.js')],
+        ['showToast', 'presetName'], [(o) => toasts2.push(o), () => 'x'], bad,
         async () => ({ ok: false, status: 400, json: async () => ({ ok: false, error: 'invalid_reading_budget' }) }));
       await api2.setReadingBudget(5, 1);
       ok('a refusal is disclosed against THIS project and the read is left as it was',
         bad.budgetError && bad.budgetError.error === 'invalid_reading_budget'
         && bad.projectRead.readingBudgetBytes === null);
       const html = makeRenderers(bad).renderSessionStart(bad.projectRead);
-      ok('...and step ④ says so, unfolded', /The reading budget was not changed: invalid_reading_budget/.test(html));
+      ok('...and step ④ says so, unfolded — PERSISTENT, never a toast',
+        /The reading budget was not changed: invalid_reading_budget/.test(html) && toasts2.length === 0);
     }
     // loadPlanEstimate + loadPlanPreview: reads, stamped.
     {
@@ -11806,6 +12057,164 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       ok('...and keeps the answer keyed by that exact plan', st2.sessionPreview
         && st2.sessionPreview.key === '{"plan":{"architecture.md":"read-first"}}'
         && st2.sessionPreview.withBudget === false);
+    }
+  }
+
+  // ── §25k — v3.70.0: this computer's window + harness, the old browser
+  //    setting carried over ONCE, and the budget preview — driven ─────────
+  {
+    const liftCtx = (st, fetchImpl, extra = {}) => {
+      const calls = { patches: 0, meters: 0, toasts: [], removed: [], ls: extra.ls || {}, loads: 0 };
+      const localStorageFake = {
+        getItem: (k) => (Object.hasOwn(calls.ls, k) ? calls.ls[k] : null),
+        removeItem: (k) => { calls.removed.push(k); delete calls.ls[k]; },
+        setItem: () => { throw new Error('v3.70.0 never WRITES the old browser key'); },
+      };
+      const timers = [];
+      const api = new Function('state', 'fetch', 'localStorage', 'isCurrentMount', 'patchSessionStart',
+        'patchSessionMeter', 'showToast', 'maybeLoadSessionStart', 'keyOf', 'formatTokens', 'setTimeout',
+        'clearTimeout', 'encodeURIComponent',
+        'let ctxSettingsInFlight = false;\nlet budgetPreviewTimer = null;\nlet budgetPreviewInFlight = null;\n'
+        + 'const budgetPreviewCache = new Map();\n'
+        + constDecl(viewSrc, 'CONTEXT_WINDOW_KEY') + '\n' + constDecl(viewSrc, 'CONTEXT_WINDOWS') + '\n'
+        + extractFunction(viewSrc, 'readContextWindow', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'sessionStartFor', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'contextWindowNow', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'harnessNow', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'windowWord', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'writeContextSettings', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'loadContextSettings', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'setContextSetting', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'previewBudget', 'memory.js') + '\n'
+        + 'return { loadContextSettings, setContextSetting, writeContextSettings, previewBudget };')(
+        st, fetchImpl, localStorageFake, (t) => t === 1, () => { calls.patches++; }, () => { calls.meters++; },
+        (o) => calls.toasts.push(o), () => { calls.loads++; }, (d, p) => d + '/' + p, formatTokens,
+        (fn) => { timers.push({ fn, live: true }); return timers.length; },
+        (id) => { if (timers[id - 1]) timers[id - 1].live = false; }, encodeURIComponent);
+      return { api, calls, flush: async () => {
+        for (const t of timers.splice(0)) if (t.live) await t.fn();
+      } };
+    };
+    // THE OLD BROWSER KEY IS READ IN ONE PLACE, CALLED FROM ONE PLACE, AND
+    // NEVER WRITTEN: the window is this computer's setting now (decision 4).
+    {
+      const code = viewSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+      eq('the v3.67 window key is READ exactly once in the view', (code.match(/getItem\(CONTEXT_WINDOW_KEY\)/g) || []).length, 1);
+      eq('...by readContextWindow, called ONLY by the one-time carry-over',
+        (code.match(/readContextWindow\(\)/g) || []).length, 2);
+      ok('...inside loadContextSettings', /readContextWindow\(\)/.test(extractFunction(viewSrc, 'loadContextSettings', 'memory.js')));
+      ok('...and NOTHING writes it any more', !/setItem\(CONTEXT_WINDOW_KEY/.test(code));
+    }
+    const settings = (over = {}) => ({ contextWindowTokens: 200000, contextWindowSet: false,
+      contextWindowCustom: false, harnessEstimateTokens: null, choices: [200000, 400000, 1000000], ...over });
+    // THE MIGRATION: a v3.67 browser choice is written to the settings ONCE, then removed.
+    {
+      const st = baseSt();
+      const seen = [];
+      const { api, calls } = liftCtx(st, async (url, init) => {
+        seen.push((init ? init.method + ' ' : 'GET ') + url + (init ? ' ' + init.body : ''));
+        return { ok: true, json: async () => ({ ok: true, settings: init
+          ? settings({ contextWindowTokens: 1000000, contextWindowSet: true }) : settings() }) };
+      }, { ls: { 'curator-context-window-v1': '1m' } });
+      await api.loadContextSettings(1);
+      eq('an unset window + an old browser choice of 1M: ONE read, ONE write of that choice',
+        seen.join(' | '), 'GET /api/config/context-window | PUT /api/config/context-window {"contextWindowTokens":1000000}');
+      ok('...the old key is REMOVED once carried, so it is never read again',
+        JSON.stringify(calls.removed) === '["curator-context-window-v1"]' && !('curator-context-window-v1' in calls.ls));
+      ok('...and the page takes the answer\'s settings', st.ctxSettings.contextWindowTokens === 1000000
+        && calls.patches === 1);
+    }
+    {
+      const st = baseSt();
+      const seen = [];
+      const { api, calls } = liftCtx(st, async (url, init) => { seen.push(init ? 'PUT' : 'GET');
+        return { ok: true, json: async () => ({ ok: true, settings: settings({ contextWindowTokens: 400000,
+          contextWindowSet: true }) }) }; }, { ls: { 'curator-context-window-v1': '1m' } });
+      await api.loadContextSettings(1);
+      ok('a window ALREADY set for this computer wins: nothing is written, and the stale key is removed',
+        seen.join() === 'GET' && st.ctxSettings.contextWindowTokens === 400000
+        && JSON.stringify(calls.removed) === '["curator-context-window-v1"]');
+    }
+    {
+      const st = baseSt();
+      const { api, calls } = liftCtx(st, async (url, init) => (init
+        ? { ok: false, status: 500, json: async () => ({ ok: false, error: 'disk full' }) }
+        : { ok: true, json: async () => ({ ok: true, settings: settings() }) }), { ls: { 'curator-context-window-v1': '1m' } });
+      await api.loadContextSettings(1);
+      ok('a FAILED carry-over keeps the old key, to be tried on the next visit rather than lost',
+        calls.removed.length === 0 && calls.ls['curator-context-window-v1'] === '1m');
+    }
+    {
+      const st = baseSt();
+      const seen = [];
+      const { api, calls } = liftCtx(st, async (url, init) => { seen.push(init ? 'PUT' : 'GET');
+        return { ok: true, json: async () => ({ ok: true, settings: settings() }) }; });
+      await api.loadContextSettings(1);
+      ok('no old key: one read and nothing else', seen.join() === 'GET' && calls.removed.length === 0);
+      const late = liftCtx(baseSt(), async () => ({ ok: true, json: async () => ({ ok: true, settings: settings() }) }));
+      await late.api.loadContextSettings(2);
+      ok('...and an answer for a view that has since unmounted is dropped', late.calls.patches === 0);
+    }
+    // SETTING ONE: a toast on success, a persistent refusal, and a re-measure.
+    {
+      const st = withSS(ssData());
+      const seen = [];
+      const { api, calls } = liftCtx(st, async (url, init) => { seen.push(url + ' ' + init.method + ' ' + init.body);
+        return { ok: true, json: async () => ({ ok: true, settings: settings({ harnessEstimateTokens: 120000 }) }) }; });
+      st.ctxEdit = { kind: 'harness', text: '120000' };
+      await api.setContextSetting({ harnessEstimateTokens: 120000 }, 1);
+      eq('a harness choice is ONE PUT to the settings route with ONE field', seen.join(),
+        '/api/config/context-window PUT {"harnessEstimateTokens":120000}');
+      ok('...the confirmation is a TOAST ("set for this computer"), the editor closes',
+        calls.toasts.length === 1 && calls.toasts[0].title === 'Harness estimate set to ≈120k tokens'
+        && /For this computer/.test(calls.toasts[0].lines[0]) && st.ctxEdit === null && !st.ctxError,
+        JSON.stringify(calls.toasts));
+      ok('...and the measurement is asked for again, so the route\'s own window/harness agree',
+        st.sessionStart.sig === null && calls.loads === 1);
+    }
+    {
+      const st = withSS(ssData(), { ctxSettings: settings({ harnessEstimateTokens: 120000 }) });
+      const { api, calls } = liftCtx(st, async () => ({ ok: false, status: 409, json: async () => ({ ok: false,
+        reason: 'harness_exceeds_window', error: 'The harness estimate is larger than that window.',
+        settings: settings({ harnessEstimateTokens: 120000 }) }) }));
+      await api.setContextSetting({ contextWindowTokens: 100000 }, 1);
+      ok('a REFUSAL stays on the page in the route\'s own words — never a toast, nothing re-measured',
+        st.ctxError === 'Not changed: The harness estimate is larger than that window.' && calls.toasts.length === 0
+        && st.sessionStart.sig === 'x' && st.ctxSaving === false, JSON.stringify([st.ctxError, calls.toasts]));
+      const html = makeRenderers(st).renderSessionStart(st.projectRead);
+      ok('...and step ④ shows it, unfolded', /id="mem-ss-ctx-error"[\s\S]*?Not changed: The harness estimate is larger than that window\./.test(html));
+    }
+    // THE BUDGET PREVIEW: debounced, a READ, cached, and a late answer dropped.
+    {
+      const st = withSS(ssData());
+      const seen = [];
+      const pv = ssData({ preview: true, bytes: { mcp: 99999, hook: 1 } });
+      const { api, calls, flush } = liftCtx(st, async (url, init) => { seen.push(url + ' ' + init.body);
+        return { ok: true, json: async () => pv }; });
+      api.previewBudget(131072, 1);
+      api.previewBudget(262144, 1);
+      await flush();
+      eq('moving through the list previews the row the owner STOPPED on, once — POST preview {budgetBytes}',
+        seen.join(' | '), '/api/memory/acme/lumina/session-start/preview {"budgetBytes":262144}');
+      ok('...drawn as a preview stamped with the measurement it was made against, the meter alone repainted',
+        st.budgetPreview && st.budgetPreview.bytes === 262144 && st.budgetPreview.sig === 'x'
+        && calls.meters === 1 && calls.patches === 0);
+      api.previewBudget(null, 1);
+      ok('closing the list without choosing ENDS the preview', st.budgetPreview === null && calls.meters === 2);
+      api.previewBudget(262144, 1);
+      await flush();
+      ok('...and coming back to a row already measured asks nothing (cached per measurement)',
+        seen.length === 1 && st.budgetPreview && st.budgetPreview.bytes === 262144);
+      api.previewBudget(null, 1);
+      st.projectRead.readingBudgetBytes = 65536;
+      api.previewBudget(65536, 1);
+      await flush();
+      ok('...the budget already SET is never previewed — it is the measurement', seen.length === 1 && !st.budgetPreview);
+      const moved = withSS(ssData());
+      const m = liftCtx(moved, async () => { moved.activeProject = 'elsewhere'; return { ok: true, json: async () => pv }; });
+      m.api.previewBudget(131072, 1);
+      await m.flush();
+      ok('an answer that lands after the owner switched project is dropped', !moved.budgetPreview);
     }
   }
 
@@ -11936,7 +12345,12 @@ const EXECUTED = new Set([
   // the gate over its four cases, and the binder against a fake root.
   'fndStartOf', 'fndStartCfg', 'planRowFor', 'fndSuggestCellHtml', 'planFor', 'planChangeCount',
   'planHeadHtml', 'ssSize', 'ssTokens', 'budgetWord', 'readContextWindow', 'contextWindowNow',
-  'ssPct', 'ssTotalWords', 'sessionStartFor', 'budgetPickerCfg', 'sessionNoticesHtml', 'ssDocs',
+  'ssPct', 'sessionStartFor', 'budgetPickerCfg', 'sessionNoticesHtml', 'ssDocs',
+  // v3.70.0 — the meter's step ④: the pure ones through v367Lift and the
+  // composed page, the async ones against a fake fetch in §25k.
+  'tok', 'harnessNow', 'windowWord', 'repliesWord', 'presetLabel', 'presetsOf', 'windowPickerCfg',
+  'harnessPickerCfg', 'ctxEditHtml', 'meterModel', 'meterSource', 'sessionMeterHtml', 'budgetPreviewFor',
+  'previewBudget', 'loadContextSettings', 'writeContextSettings', 'setContextSetting',
   'sessionReceivesMonitor', 'presetName', 'previewFor', 'planPreviewBody', 'planPreviewKey',
   'renderSessionStart', 'renderPlanPanel', 'planAiNeedsConfirm', 'maybeLoadSessionStart',
   'loadSessionStart', 'loadPlanEstimate', 'runPlan', 'pressPlanAi', 'loadPlanPreview',
@@ -11988,6 +12402,8 @@ const EXECUTED = new Set([
 // NOT executed, each with the reason it is not — so the gap is a decision on
 // the record rather than an omission nobody noticed.
 const NOT_EXECUTED = {
+  // v3.70.0: the meter's in-place repaint during a preview.
+  patchSessionMeter: 'innerHTML write of #mem-ss-meter alone in a live DOM (so an OPEN picker is not replaced); what it writes is sessionMeterHtml, executed in §25b/§25k, and the browser pass previewed a preset with the list open',
   // v3.67.0: the two that need a painted page to say anything.
   patchSessionStart: 'outerHTML replacement of step ④ plus a tile write in a live DOM; its inputs (renderSessionStart, the tile arithmetic) are executed in §25, and the browser pass measured the patch replacing no #view-root child',
   runLineText: 'innerHTML into a detached element to take the kit line\'s textContent for the confirm; the kit line itself is executed in §25d and the confirm\'s use of it in §25j',
@@ -12341,21 +12757,22 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
     flaggedOver.slice(0, 600));
   const stored1 = lineOf(m1, 'stored');
   const read1 = lineOf(m1, 'read first');
-  ok('P1: "stored" reads the total against the PROJECT budget, in words',
-    /cur-mon-value">[\s\S]*?220 KB/.test(stored1) && /cur-mon-sub">of 200 KB project</.test(stored1),
-    stored1);
+  // v3.70.0: "stored" is a READING — its size and how many documents — with
+  // no bar against the 200 KB project figure and never danger (the
+  // orchestrator's note: that figure only ever warned; the reading budget is
+  // the meter now).
+  ok('P1: "stored" reads the total NEUTRALLY — the size and the count, no project budget, no bar',
+    /cur-mon-value">220 KB</.test(stored1) && /cur-mon-sub">3 documents in this project</.test(stored1)
+    && !/cur-depth|200 KB/.test(stored1), stored1);
   ok('P1: "read first" reads the flagged set against the per-session READING budget, in words',
     /140 KB/.test(read1) && /cur-mon-sub">of 120 KB per session</.test(read1), read1);
   eq('P1: the read-first bar is 140 of 120 — full', widthOf(read1), 100);
   ok('P1: an over-run of the READING budget takes the danger tone, on the bar AND the line\'s rule',
     /cur-depth-bar cur-depth-danger/.test(read1) && /cur-mon-line cur-mon-danger/.test(read1), read1);
-  ok('P1: with something flagged, a stored total over 200 KB is NOT danger — the read-first set '
-    + 'is the one handed over, and the one sentence under the row talks about it',
-  !/cur-depth-danger|cur-mon-danger/.test(stored1) && widthOf(stored1) === 100, stored1);
+  ok('P1: a stored total over the old 200 KB figure is NOT danger',
+    !/cur-depth-danger|cur-mon-danger/.test(stored1), stored1);
   ok('P1: every bar names its denominator in a hidden sentence',
-    /visually-hidden"> 220 KB of a 200 KB project budget/.test(stored1)
-    && /visually-hidden"> 140 KB of a 120 KB per-session reading budget/.test(read1),
-    stored1 + ' || ' + read1);
+    /visually-hidden"> 140 KB of a 120 KB per-session reading budget/.test(read1), read1);
   ok('P1: the danger is ALSO said in words, OUTSIDE the chevron (v3.16.1) — the existing '
     + 'budget sentence, unfolded, after </details>',
   flaggedOver.indexOf('id="mem-fnd-budget"') > flaggedOver.indexOf('</details>')
@@ -12374,15 +12791,15 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
   const m2 = monOf(unflaggedOver);
   ok('P1: with nothing flagged there is NO read-first line — "0 read first" would report the '
     + 'absence of a decision as a decision', !/cur-mon-key">read first</.test(m2) && m2.length > 0, m2);
-  ok('P1: ...and then the STORED set is what is handed over, so ITS over-run is danger',
-    /cur-depth-bar cur-depth-danger/.test(lineOf(m2, 'stored'))
-    && /cur-mon-line cur-mon-danger/.test(lineOf(m2, 'stored')), lineOf(m2, 'stored'));
+  ok('P1: ...and the stored total is STILL no alarm: what an unplanned project hands over is '
+    + 'step ④\'s cost line, in tokens',
+    !/danger|cur-depth/.test(lineOf(m2, 'stored')) && /240 KB/.test(lineOf(m2, 'stored')), lineOf(m2, 'stored'));
   const unflaggedUnder = F.renderFoundations(fndRead(fndPayload([
     fndDoc({ slug: 'a.md', bytes: 50 * KB }),
   ], { budgetBytes: 200 * KB, readFirstBudgetBytes: 120 * KB })));
   const m3 = monOf(unflaggedUnder);
-  ok('P1: under budget, nothing is danger and the bar is the true share (25%)',
-    !/danger/.test(m3) && widthOf(lineOf(m3, 'stored')) === 25, m3);
+  ok('P1: a small project reads the same way: nothing danger, no bar on the stored line',
+    !/danger/.test(m3) && widthOf(lineOf(m3, 'stored')) === null && /1 document in this project/.test(m3), m3);
 
   // ── P1 (c): THE ONE LINE — the reading budget comes from the PAYLOAD ─────
   // The approved context-budget plan's bridge: when the store starts sending a
@@ -12399,11 +12816,13 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
     + 'never the 120 KB view constant',
   /of 64 KB per session/.test(read4) && !/120 KB/.test(m4), m4);
   eq('P1: ...and the bar is drawn against it (48 of 64 = 75%)', widthOf(read4), 75);
-  ok('P1: ...and so is the unflagged budget sentence\'s "handed up to" figure',
-    /handed up to 64 KB of document text/.test(F.foundationsBudgetWarning(F.foundationsFacts(fndRead(
-      fndPayload([fndDoc({ bytes: 250 * KB })], { budgetBytes: 200 * KB, readFirstBudgetBytes: 64 * KB }))))),
+  ok('P1: ...and so is the FLAGGED budget sentence\'s "up to" figure (the unflagged one is withdrawn, v3.70.0)',
+    /in reading order up to 64 KB at session start/.test(F.foundationsBudgetWarning(F.foundationsFacts(fndRead(
+      fndPayload([fndDoc({ bytes: 250 * KB, readFirst: true })], { budgetBytes: 200 * KB, readFirstBudgetBytes: 64 * KB,
+        readFirstCount: 1, readFirstBytes: 250 * KB, readFirstBudgetExceeded: true }))))),
     F.foundationsBudgetWarning(F.foundationsFacts(fndRead(
-      fndPayload([fndDoc({ bytes: 250 * KB })], { budgetBytes: 200 * KB, readFirstBudgetBytes: 64 * KB })))));
+      fndPayload([fndDoc({ bytes: 250 * KB, readFirst: true })], { budgetBytes: 200 * KB, readFirstBudgetBytes: 64 * KB,
+        readFirstCount: 1, readFirstBytes: 250 * KB, readFirstBudgetExceeded: true })))));
   {
     // An older server that sent no reading budget: the flag's fallback is
     // computed against the SAME denominator the figure falls back to.

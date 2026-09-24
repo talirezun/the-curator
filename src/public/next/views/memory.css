@@ -2155,8 +2155,58 @@
 .mem-ss-stack > .mem-ss-note > .btn { flex: none; margin-left: auto; }
 .mem-ss-stack > .mem-note { margin: 0; }
 
-/* "Context window": the two denominators, as a pair of pressed buttons. */
-.mem-ss-window { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+/* ── STEP ④ AS THE WINDOW METER (v3.70.0) ─────────────────────────────────
+   The head row holds the three things the owner sets — Window, Reading
+   budget, Harness — each a small label and its picker; on a narrow column they
+   wrap under the title (the head's own `flex-wrap`, below) and then under one
+   another. The body opens on the INSTRUMENT: one bordered card holding the
+   meter (shared/bucket.css draws everything inside it). It is a surface on
+   `--surface`, NOT the monitor's inset well, because it is the step's answer,
+   not a readout among others — the one new shape concept A named. */
+.mem-ss-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.mem-ss-ctl-label { font-size: var(--text-sm); color: var(--text-2); white-space: nowrap; }
+.mem-window-btn { min-width: 9ch; }
+.mem-harness-btn { min-width: 12ch; }
+.mem-ss-meter {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-8);
+  min-width: 0;
+}
+.mem-ss-meter > .mem-ss-preview-of {
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+/* The inline editor for a custom window or an exact harness: label, number,
+   Save, Cancel on one line where they fit, the hint under them. */
+.mem-ss-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+}
+.mem-ss-edit-label { font-size: var(--text-sm); color: var(--text); }
+.mem-ss-edit > .mem-ss-edit-input {
+  width: 16ch;
+  font-family: var(--font-mono);
+  font-variant-numeric: var(--numeric-tabular);
+}
+.mem-ss-edit-hint {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+/* "Agent sessions" at zero: what is counted, said once under the row. */
+.mem-capture-zero code,
+.mem-ss-harness-hint code { font-family: var(--font-mono); font-size: 0.95em; }
 
 /* The budget picker's rows: the preset's name and budget on one line, what an
    agent would start with under it, and the preset's meaning. Words in
@@ -2281,6 +2331,24 @@
 @media (max-width: 639px) {
   #mem-ss-monitor .cur-mon-key,
   #mem-ss-reach .cur-mon-key { white-space: normal; overflow-wrap: anywhere; }
+  /* The instrument keeps its bars full width on a narrow column; its card
+     gives back half its padding rather than squeeze the bars. */
+  .mem-ss-meter { padding: var(--space-5); }
+  /* The three head controls wrap label-over-picker and never run past the
+     column: a picker's trigger may shrink to the column and ellipsise (its
+     accessible name still carries the whole reading). */
+  .mem-ss-ctl { flex-wrap: wrap; max-width: 100%; }
+  .mem-ss-ctl .lb,
+  .mem-ss-ctl .lb-btn,
+  .mem-budget-btn,
+  .mem-window-btn,
+  .mem-harness-btn { min-width: 0; max-width: 100%; }
+  .mem-ss-ctl .lb-btn-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  /* The legend's longest item ("on demand — outside the window · N
+     documents") is an inline-flex box sized to its content, and ran 42px past
+     a 168px step at a 568px window (measured). Capped to the column so its
+     words wrap. Scoped to this host; the kit's own fix is noted for P3. */
+  #mem-ss-meter .bk-it { max-width: 100%; }
 }
 /* On the SELECTED row the listbox paints an accent fill with its own ink, and
    shared/listbox.css hands its own detail column `currentColor` for exactly

@@ -448,7 +448,12 @@ ok(selectOffenders.length === 0,
 //     same cell) and step ④'s READING BUDGET picker (five presets). Each is
 //     one call site handed a cfg from one builder (`fndStartCfg`,
 //     `budgetPickerCfg`) that `bindSessionAndPlan` mounts from again.
-const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 3, 'memory.js': 3 };
+//   · v3.70.0, memory.js 3 -> 5: step ④'s head row holds the three things
+//     the owner sets — the WINDOW (200K · 400K · 1M · Custom…) and the HARNESS
+//     estimate (Not set · Light · Typical · Heavy · Exact…) join the reading
+//     budget, each one call site from one builder (`windowPickerCfg`,
+//     `harnessPickerCfg`) that `bindSessionAndPlan` mounts from again.
+const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 3, 'memory.js': 5 };
 let total = 0;
 for (const f of ADOPTERS) {
   const src = readFileSync(path.join(VIEWS, f), 'utf8');
@@ -465,7 +470,7 @@ for (const f of ADOPTERS) {
   ok((code.match(/closeAllListboxes\(\)/g) || []).length >= 1,
     `${f} closes any open menu on teardown/repaint (in CODE, not in a comment)`);
 }
-ok(total === 13, `THIRTEEN adoptions across four views (found ${total})`);
+ok(total === 15, `FIFTEEN adoptions across four views (found ${total})`);
 
 // ── §5b — memory.js has exactly ONE picker, and it is this one ────────────
 //
