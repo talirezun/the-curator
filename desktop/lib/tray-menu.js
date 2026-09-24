@@ -27,9 +27,13 @@
  *   -  project header               "articles / lumina · 9 of 11 saved · 12 min ago"
  *                                   ENABLED since v3.66.0, carrying the capture
  *                                   depth bar; a click opens Context on it
- *   3a the open project's documents "Documents · 116 of 200 KB" + a depth bar —
- *                                   the FIRST line of the open project's own
- *                                   group only (v3.66.0), before its scope rows
+ *   3a the open project's documents "Read first · 64 of 120 KB" + a depth bar
+ *                                   (or "Documents · 9 · 187 KB stored", no bar,
+ *                                   when nothing is read first — v3.70.0) — the
+ *                                   FIRST line of the open project's own group
+ *                                   only (v3.66.0), before its scope rows
+ *   3a' its session start           "Session start ≈22.7k tok · 2.3% of 1M" + the
+ *                                   window meter (v3.70.0), under 3a
  *   3  up to TWO rows               newest scope first, each with a recency mark
  *                                   in its icon gutter and a four-item submenu
  *   -  … up to THREE such groups, five rows in total
@@ -172,6 +176,7 @@ export const ID_TRUNCATED = 'tray-truncated';
 export const ID_EMPTY = 'tray-empty';
 export const ID_QUIT = 'tray-quit';
 export const ID_DOCUMENTS = 'tray-documents';
+export const ID_SESSION_START = 'tray-session-start';
 export const ID_HEADER_DOMAINS = 'tray-header-domains';
 export const ID_DOMAINS_MORE = 'tray-domains-more';
 
@@ -478,9 +483,10 @@ export function buildTrayMenuTemplate(model, o = {}) {
       //
       // One ENABLED item carrying the depth bar: the headline project's
       // documents against the budget the APP applies (read-first bytes against
-      // 120 KB once any document is flagged, otherwise stored bytes against
-      // 200 KB: the data layer's `documents.basis`). Enabled for the pulse's
-      // reason: a disabled item's icon is tinted grey.
+      // the project's reading budget once any document is flagged; otherwise
+      // the stored total, neutrally and with no bar — v3.70.0 retired the
+      // 200 KB project budget as an alarm). Enabled for the pulse's reason: a
+      // disabled item's icon is tinted grey.
       //
       // WHERE, AND WHY THERE. It first shipped directly under the headline,
       // and the maintainer's photograph read it as having pushed the Save pulse
@@ -502,6 +508,28 @@ export function buildTrayMenuTemplate(model, o = {}) {
           click: () => onOpenScope(documents),
           ...(icon ? { icon } : {}),
           ...(documents.toolTip ? { toolTip: documents.toolTip } : {}),
+        });
+      }
+      // ── 3a'. The open project's SESSION START (v3.70.0) ────────────────
+      //
+      // Directly under the documents line, in the group of the project it
+      // measured (`sessionStart.domain/project`, the data layer's lastSave),
+      // and nowhere else: off screen, it is omitted, as the documents line is.
+      // Its gutter is the meter — the window lane over the enlargement. A
+      // failed measurement is a line too ("could not measure"), with no
+      // picture, because a picture of nothing would read as a measured zero.
+      const ss = m && m.sessionStart ? m.sessionStart : null;
+      if (ss && ss.label && ss.project
+        && group.project === ss.project
+        && (group.domain || null) === (ss.domain || null)) {
+        const icon = image(makeIcon, ss.bar);
+        template.push({
+          id: ss.id || ID_SESSION_START,
+          label: ss.label,
+          enabled: true,
+          click: () => onOpenScope(ss),
+          ...(icon ? { icon } : {}),
+          ...(ss.toolTip ? { toolTip: ss.toolTip } : {}),
         });
       }
       for (const row of gRows) {

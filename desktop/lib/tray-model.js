@@ -111,10 +111,13 @@ try {
 /** The depth-bar renderer (v3.66.0), or null — read the same guarded way, for
  *  the same reason: a missing picture must cost a bar, never the menu. */
 let _renderGutterBar = null;
+/** The session-start meter renderer (v3.70.0), from the same module. */
+let _renderGutterMeter = null;
 try {
   const bars = await import('./menu-bars.js');
   if (bars && typeof bars.renderGutterBar === 'function') _renderGutterBar = bars.renderGutterBar;
-} catch { _renderGutterBar = null; }
+  if (bars && typeof bars.renderGutterMeter === 'function') _renderGutterMeter = bars.renderGutterMeter;
+} catch { _renderGutterBar = null; _renderGutterMeter = null; }
 
 /** Read off the namespace for the same reason: the strip renderer may not have
  *  grown its `{dark}` option yet, and an older single-argument version simply
@@ -483,12 +486,15 @@ export const MAX_NOTICES = 4;
 //                             project's (`summary.capture.busiestSaved`)
 //   (2) a "Domains · pages"   pages ÷ the largest domain's, in that domain's
 //       section               identity colour
-//   (3) the open project's    read-first bytes ÷ 120 KB once any document is
-//       documents             flagged, else stored bytes ÷ 200 KB — the app's
-//                             own `foundationsBudgetWarning` rule, carried by the
-//                             data layer as `documents.basis` /
-//                             `applicableBudgetBytes`; danger only when
-//                             `documents.exceeded`, and then "over" in words
+//   (3) the open project's    read-first bytes ÷ the project's READING budget
+//       documents             once any document is flagged (the data layer's
+//                             `readFirstBudgetBytes`); danger only when
+//                             `documents.exceeded`, and then "over" in words.
+//                             Nothing flagged → the stored total, NEUTRALLY,
+//                             with no bar (v3.70.0 — see `documentsText`)
+//   (4) the open project's    the session-start meter (v3.70.0): the window to
+//       session start         scale over The Curator's part enlarged — see
+//                             `sessionStartLabel` and menu-bars.js
 //
 // REFUSED: a bar for age (the recency dot and the pulse strip own time), and a
 // bar on the headline or the commands.
@@ -604,44 +610,279 @@ export function captureText(capture) {
  * `documents` reading (`documentsReading` in src/brain/tray-summary.js). Null
  * when there is no reading — the item is then not drawn at all rather than
  * drawn as zero.
+ *
+ * ── v3.70.0: THE 200 KB PROJECT BUDGET IS NO LONGER AN ALARM ─────────────
+ *
+ * The one meter that means something now is the READING BUDGET — what an
+ * agent is handed — and the app's Context view stops treating "stored over
+ * 200 KB" as over budget (DESIGN v3.70.0, orchestrator note after P1: the
+ * project byte budget only ever warned, and a stored total above it is shown
+ * neutrally). So:
+ *
+ *   flagged read first  → read-first bytes against the project's READING
+ *                         budget (`readFirstBudgetBytes`, the owner's budget
+ *                         or the 120 KB default — the store's effective one),
+ *                         danger and "over" only on an over-run of THAT
+ *   nothing flagged     → the stored total, NEUTRALLY: no bar, no budget, no
+ *                         "over". A bar needs a named denominator, and the
+ *                         only one on offer (200 KB) is the one being
+ *                         retired; what an agent is handed is the Session
+ *                         start line's picture, one line below.
  */
 export function documentsText(d) {
   if (!d || typeof d !== 'object') return null;
-  const amount = kbFigure(d.amountBytes);
-  const budget = kbFigure(d.applicableBudgetBytes);
-  if (amount === null || budget === null) return null;
   const readFirst = d.basis === 'read-first';
-  const over = d.exceeded === true;
-  let label;
-  if (Number.isInteger(d.count) && d.count === 0) {
-    label = 'Documents · none';
-  } else {
-    // THE NOUN CARRIES THE BASIS, and "over" comes BEFORE the figures so that
-    // no clip can ever remove it — the over-run is said in words on the label,
-    // unfolded, not only in the bar's colour.
-    label = (readFirst ? 'Read first' : 'Documents') + (over ? ' · over' : '')
-      + ' · ' + amount + ' of ' + budget + ' KB';
-  }
-  const parts = [];
   const count = Number.isInteger(d.count) ? d.count : null;
   const stored = kbFigure(d.totalBytes);
-  const storeBudget = kbFigure(d.budgetBytes);
-  if (stored !== null && storeBudget !== null) {
-    parts.push('Documents: ' + (count === null ? '' : count + ' · ') + stored + ' KB stored of the '
-      + storeBudget + ' KB a project may keep' + (d.budgetExceeded === true ? ' (over)' : ''));
+  if (!readFirst) {
+    if (stored === null) return null;
+    const label = count === 0 ? 'Documents · none'
+      : 'Documents · ' + (count === null ? '' : count + ' · ') + stored + ' KB stored';
+    return {
+      label,
+      toolTip: 'Documents: ' + (count === null ? '' : count + ' · ') + stored + ' KB stored'
+        + ' · none flagged read first · what an agent is handed at session start is the Session start line',
+      over: false,
+      frac: null,
+    };
   }
-  const rfBytes = kbFigure(d.readFirstBytes);
-  const rfBudget = kbFigure(d.readFirstBudgetBytes);
-  if (Number.isInteger(d.readFirstCount) && d.readFirstCount > 0 && rfBytes !== null && rfBudget !== null) {
-    parts.push(d.readFirstCount + ' read first · ' + rfBytes + ' KB of the ' + rfBudget
-      + ' KB an agent reads in one call' + (d.readFirstBudgetExceeded === true ? ' (over)' : ''));
+  const amount = kbFigure(d.readFirstBytes);
+  const budget = kbFigure(d.readFirstBudgetBytes);
+  if (amount === null || budget === null) return null;
+  // `exceeded` is the data layer's verdict on THE BAR's reading (read first
+  // against the reading budget, on this basis) — the only thing that may turn
+  // it danger.
+  const over = d.exceeded === true;
+  // THE NOUN CARRIES THE BASIS, and "over" comes BEFORE the figures so that
+  // no clip can ever remove it — the over-run is said in words on the label,
+  // unfolded, not only in the bar's colour.
+  const label = 'Read first' + (over ? ' · over' : '') + ' · ' + amount + ' of ' + budget + ' KB';
+  const parts = [];
+  if (stored !== null) parts.push('Documents: ' + (count === null ? '' : count + ' · ') + stored + ' KB stored');
+  if (Number.isInteger(d.readFirstCount)) {
+    parts.push(d.readFirstCount + ' read first · ' + amount + ' KB of the ' + budget
+      + ' KB reading budget' + (over ? ' (over)' : ''));
   }
-  parts.push('Bar: ' + (readFirst ? 'read-first' : 'stored') + ' bytes against the '
-    + budget + ' KB ' + (readFirst ? 'read-first budget' : 'project budget'));
+  parts.push('Bar: read-first bytes against the ' + budget + ' KB reading budget');
   return {
     label, toolTip: parts.join(' · '), over,
-    frac: d.applicableBudgetBytes > 0 ? d.amountBytes / d.applicableBudgetBytes : null,
+    // An "Index only" budget is 0 bytes: any read-first text is then an
+    // over-run, drawn as the over-run SHAPE, never a division by zero.
+    frac: d.readFirstBudgetBytes > 0 ? d.readFirstBytes / d.readFirstBudgetBytes
+      : (d.readFirstBytes > 0 ? 2 : 0),
   };
+}
+
+// ── THE SESSION-START LINE (v3.70.0) ────────────────────────────────────────
+//
+// One line in the open project's group: what an agent receives at session
+// start, in tokens, as the app's step ④ measures it. The ONLY source is
+// `getTraySummary().sessionStart` (src/brain/session-start.js
+// `sessionStartBrief`, the route's own report projected) — the widget states
+// no fact the app does not. The words and the geometry come from the kit
+// (`src/public/next/shared/bucket.js`), and since this module imports nothing
+// from `src/`, the handful of kit functions they need are COPIED below,
+// verbatim, and the menu-bars suite runs the real ones beside these over the
+// same meters (the `formatAge` trade, made again).
+//
+// ── THE CUTTING ORDER (38 characters, the bar budget) ─────────────────────
+//
+// The design's example, `Session start ≈22.7k tok · 2 replies · 2.3% of 1M`,
+// is 49 characters, so the line can never carry all three clauses at the
+// measured menu width. The head `Session start ≈N tok` is never cut; the two
+// clauses are ranked and the first form that fits wins:
+//
+//   window SET     → [share of the window, replies]
+//   window NOT set → [replies, share of the window]    (the share goes first:
+//                    a percentage of a window nobody chose is the weakest fact)
+//
+//   1. head · first · second
+//   2. head · first
+//   3. head without " tok" · first      only for a SET window's share (the
+//                                       tooltip still says "tokens")
+//   4. head
+//
+// "N replies" is a clause only when delivery is PAGED (more than one reply);
+// one reply is the ordinary case and says nothing. Everything cut is in the
+// tooltip, which is the kit's own text alternative, sentence for sentence.
+
+/** The noun, and the words for a measurement that failed. The failure words
+ *  are the data layer's own warning ("Could not measure what an agent receives
+ *  at session start…"), shortened to the verb it leads with. */
+export const SESSION_START_NOUN = 'Session start';
+export const SESSION_START_FAILED = 'Session start · could not measure';
+export const WARNING_SESSION_START = 'session-start-unavailable';
+
+// ── Verbatim copies from src/public/next/shared/bucket.js (pinned) ─────────
+export const KIT_LAYER_KEYS = Object.freeze(['framing', 'brief', 'handoff', 'journal', 'index', 'read']);
+
+function kitNum(n) {
+  const v = typeof n === 'number' ? n : Number.NaN;
+  return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+export function formatTokens(n) {
+  const v = kitNum(n);
+  if (v === 0) return '0';
+  if (v >= 1e6) {
+    const m = Math.round(v / 1e5) / 10;
+    return (Number.isInteger(m) ? String(m) : m.toFixed(1)) + 'M';
+  }
+  if (v >= 1e5) return Math.round(v / 1000) + 'k';
+  const k = Math.round(v / 100) / 10;
+  if (k >= 100) return Math.round(v / 1000) + 'k';
+  if (k >= 10 && Number.isInteger(k)) return k + 'k';   // "20k", not "20.0k"
+  return (k === 0 ? '0.1' : k.toFixed(1)) + 'k';
+}
+
+export function tokenShare(part, whole) {
+  if (!(whole > 0)) return 0;
+  const p = (part / whole) * 100;
+  return p < 0.05 && part > 0 ? p.toFixed(2) + '%' : (Math.round(p * 10) / 10).toFixed(1) + '%';
+}
+
+function kitOnDemandOf(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'number') return kitNum(v) > 0 ? { tokens: kitNum(v), documents: null } : null;
+  if (typeof v === 'object') {
+    const t = kitNum(v.tokens);
+    const d = Number.isInteger(v.documents) && v.documents >= 0 ? v.documents : null;
+    if (t === 0 && !d) return null;
+    return { tokens: t, documents: d };
+  }
+  return null;
+}
+
+/**
+ * The kit's `bucketModel` geometry, without the on-bar label choices (a menu
+ * gutter prints no label). Same inputs, same arithmetic, same field names —
+ * the suite compares every field it returns against the real one.
+ */
+export function meterModel(m) {
+  if (!m || typeof m !== 'object') return null;
+  const windowTokens = kitNum(m.windowTokens);
+  if (windowTokens === 0) return null;
+  const harnessSet = m.harnessTokens !== null && m.harnessTokens !== undefined && kitNum(m.harnessTokens) > 0;
+  const harness = harnessSet ? kitNum(m.harnessTokens) : 0;
+  const layers = (Array.isArray(m.layers) ? m.layers : [])
+    .filter((l) => l && typeof l === 'object')
+    .map((l) => ({
+      key: KIT_LAYER_KEYS.includes(l.key) ? l.key : 'other',
+      label: typeof l.label === 'string' && l.label.trim() ? l.label.trim() : (KIT_LAYER_KEYS.includes(l.key) ? l.key : 'other'),
+      tokens: kitNum(l.tokens),
+    }));
+  const curator = layers.reduce((a, l) => a + l.tokens, 0);
+  const readTokens = layers.filter((l) => l.key === 'read').reduce((a, l) => a + l.tokens, 0);
+  const fixed = curator - readTokens;
+  const budget = kitNum(m.budgetTokens);
+  const used = harness + curator;
+  const over = Math.max(0, used - windowTokens);
+  const scale = Math.max(windowTokens, used);
+  const harnessPct = (harness / scale) * 100;
+  const curatorPct = (curator / scale) * 100;
+  const free = Math.max(0, windowTokens - used);
+  const freePct = Math.max(0, 100 - harnessPct - curatorPct);
+  const room = Math.max(0, budget - readTokens);
+  const zoomDenom = fixed + Math.max(budget, readTokens);
+  const zoomLayers = layers.map((l) => ({ ...l, pct: zoomDenom > 0 ? (l.tokens / zoomDenom) * 100 : 0 }));
+  const roomPct = zoomDenom > 0 ? (room / zoomDenom) * 100 : 0;
+  let roomState;
+  if (budget === 0) roomState = 'none';
+  else if (readTokens === 0) roomState = 'unused';
+  else if (room > 0) roomState = 'left';
+  else roomState = 'full';
+  return {
+    windowTokens, harnessSet, harness, curator, used, over, free,
+    harnessPct, curatorPct, freePct,
+    layers: zoomLayers, readTokens, fixed, budget, room, roomPct, roomState,
+    onDemand: kitOnDemandOf(m.onDemand),
+    delivery: m.delivery && typeof m.delivery === 'object' && Number.isInteger(m.delivery.replies) && m.delivery.replies > 0
+      ? { replies: m.delivery.replies, replyTokens: kitNum(m.delivery.replyTokens) || 20000 } : null,
+    preview: m.preview === true,
+  };
+}
+
+/** The kit's `bucketText` — the app's text alternative for the same meter,
+ *  and so the widget's tooltip. Verbatim but for the model function's name. */
+export function meterText(m) {
+  const g = meterModel(m);
+  if (!g) return null;
+  const W = formatTokens(g.windowTokens);
+  const pre = g.preview ? 'Preview, not saved: ' : '';
+  const win = pre + 'A ' + W + '-token window, drawn to scale: '
+    + (g.harnessSet ? 'harness about ' + formatTokens(g.harness) + ' (your estimate, not measured), ' : '')
+    + 'The Curator about ' + formatTokens(g.curator) + ' tokens (measured, ' + tokenShare(g.curator, g.windowTokens) + '), '
+    + (g.over > 0 ? 'over the window by about ' + formatTokens(g.over) + '.' : 'about ' + formatTokens(g.free) + ' free.')
+    + (g.harnessSet ? '' : ' Harness not set: your agent\'s own system prompt, tools and instructions also use this window.');
+  const parts = g.layers.map((l) => l.label + ' ' + formatTokens(l.tokens));
+  let budgetWords;
+  if (g.roomState === 'none') budgetWords = 'no reading budget (index only).';
+  else if (g.roomState === 'unused') budgetWords = 'reading budget ' + formatTokens(g.budget) + ', unused: nothing is read first.';
+  else if (g.roomState === 'left') budgetWords = 'reading budget ' + formatTokens(g.budget) + ', ' + formatTokens(g.room) + ' left.';
+  else budgetWords = 'reading budget ' + formatTokens(g.budget) + ', full.';
+  const enl = pre + 'The Curator\'s part, enlarged to its own scale: about ' + formatTokens(g.curator) + ' tokens'
+    + (parts.length ? ' — ' + parts.join(', ') : '') + '; ' + budgetWords;
+  const replies = g.delivery ? g.delivery.replies : null;
+  const rWord = replies === null ? '' : replies + ' MCP repl' + (replies === 1 ? 'y' : 'ies');
+  let delivery;
+  if (g.preview) {
+    delivery = 'Preview, not saved · ≈' + formatTokens(g.curator) + ' tokens · '
+      + tokenShare(g.curator, g.windowTokens) + ' of ' + formatTokens(g.windowTokens)
+      + (rWord ? ' · ' + rWord : '');
+  } else delivery = g.delivery ? 'Delivered in ' + rWord + ' of at most ≈' + formatTokens(g.delivery.replyTokens) + ' tokens each' : '';
+  const od = g.onDemand
+    ? 'On demand, outside the window: '
+      + (g.onDemand.documents !== null ? g.onDemand.documents + ' document' + (g.onDemand.documents === 1 ? '' : 's') + ', ' : '')
+      + 'about ' + formatTokens(g.onDemand.tokens) + ' tokens, opened only when a task needs them.'
+    : '';
+  return { window: win, enlargement: enl, delivery, onDemand: od, lines: [win, enl, delivery, od].filter(Boolean) };
+}
+// ── end of the kit copies ───────────────────────────────────────────────────
+
+/**
+ * The gutter geometry for `menu-bars.js`'s `renderGutterMeter`: the kit's
+ * percentages as fractions of each lane. Null when there is no meter.
+ */
+export function meterGutter(m) {
+  const g = meterModel(m);
+  if (!g) return null;
+  return {
+    harnessFrac: g.harnessSet ? g.harnessPct / 100 : null,
+    curatorFrac: g.curatorPct / 100,
+    layers: g.layers.map((l) => ({ key: l.key, frac: l.pct / 100 })),
+    roomFrac: g.roomPct / 100,
+    roomState: g.roomState,
+  };
+}
+
+/**
+ * The line's label, cut in the order the block comment gives. `ss` is
+ * `getTraySummary().sessionStart`; null → null (the caller decides whether a
+ * failure is worth a line).
+ */
+export function sessionStartLabel(ss, budget = BAR_LABEL_CHARS) {
+  if (!ss || typeof ss !== 'object') return null;
+  const tokens = typeof ss.tokens === 'number' && Number.isFinite(ss.tokens) && ss.tokens >= 0 ? ss.tokens : null;
+  if (tokens === null) return null;
+  const win = ss.window && typeof ss.window === 'object' ? ss.window : {};
+  const windowTokens = kitNum(win.tokens);
+  const shareClause = windowTokens > 0 ? tokenShare(tokens, windowTokens) + ' of ' + formatTokens(windowTokens) : null;
+  const replies = ss.delivery && Number.isInteger(ss.delivery.replies) ? ss.delivery.replies : null;
+  const repliesClause = replies !== null && replies > 1 ? replies + ' replies' : null;
+  const ranked = (win.set === true ? [shareClause, repliesClause] : [repliesClause, shareClause]).filter(Boolean);
+  const head = (unit) => SESSION_START_NOUN + ' ≈' + formatTokens(tokens) + (unit ? ' tok' : '');
+  const forms = [];
+  if (ranked.length > 1) forms.push([head(true), ...ranked]);
+  if (ranked.length) forms.push([head(true), ranked[0]]);
+  // The unit gives way only to keep a CHOSEN window's share: an unset
+  // window's share is the weakest fact on the line, never worth a unit.
+  if (ranked.length && win.set === true && ranked[0] === shareClause) forms.push([head(false), ranked[0]]);
+  forms.push([head(true)]);
+  for (const f of forms) {
+    const s = f.join(' · ');
+    if (s.length <= budget) return s;
+  }
+  return clip(head(true), budget);
 }
 
 /** "Live" — an agent has written in this scope within this many seconds.
@@ -1674,6 +1915,12 @@ export function buildTrayModel(summary, opts = {}) {
   const renderBar = (o) => {
     if (!barFn) return null;
     try { return barFn({ ...o, dark }) || null; } catch { return null; }
+  };
+  // The session-start meter renderer (v3.70.0), injectable on the same terms.
+  const meterFn = typeof opts.renderMeter === 'function' ? opts.renderMeter : _renderGutterMeter;
+  const renderMeter = (o) => {
+    if (!meterFn) return null;
+    try { return meterFn({ ...o, dark }) || null; } catch { return null; }
   };
   // ── THE IDENTITY COLOUR IS THE KIT'S, HANDED IN ──────────────────────────
   //
@@ -2936,7 +3183,7 @@ export function buildTrayModel(summary, opts = {}) {
       [summary && summary.lastSave, ...all]);
     const t = documentsText(d);
     if (t) {
-      const b = renderBar({ frac: t.frac, danger: t.over });
+      const b = t.frac === null ? null : renderBar({ frac: t.frac, danger: t.over });
       documents = {
         id: 'tray-documents',
         label: clip(t.label, BAR_LABEL_CHARS),
@@ -2950,6 +3197,56 @@ export function buildTrayModel(summary, opts = {}) {
         project: headline.project,
       };
     }
+  }
+
+  // (4) The open project's SESSION START (v3.70.0) — `summary.sessionStart`,
+  // the app's own measurement for `lastSave`'s project, placed by tray-menu.js
+  // under THAT project's header (matched by domain and project, never by
+  // position). Null with the data layer's `session-start-unavailable` warning
+  // → one line that says the measurement failed, and the notice is not
+  // repeated below; null with no warning → no line at all (nothing was asked).
+  let sessionStart = null;
+  const ssIn = summary && summary.sessionStart && typeof summary.sessionStart === 'object'
+    ? summary.sessionStart : null;
+  const ssFailed = !ssIn && readWarnings(summary).some((w) => w.code === WARNING_SESSION_START);
+  const ssProject = ssIn ? str(ssIn.project) : (summary && summary.lastSave ? str(summary.lastSave.project) : null);
+  const ssDomain = ssIn ? (str(ssIn.domain) || null)
+    : (summary && summary.lastSave ? (str(summary.lastSave.domain) || null) : null);
+  const ssGroup = ssProject ? groups.find((g) => g.project === ssProject && (g.domain || null) === ssDomain) : null;
+  if (ssGroup && ssIn) {
+    const label = sessionStartLabel(ssIn);
+    if (label) {
+      const geo = meterGutter(ssIn.meter);
+      const text = meterText(ssIn.meter);
+      const b = geo ? renderMeter(geo) : null;
+      sessionStart = {
+        id: 'tray-session-start',
+        label,
+        toolTip: [SESSION_START_NOUN + ', ' + (ssGroup.projectFull || ssProject) + ': ≈'
+          + formatTokens(ssIn.tokens) + ' tokens (estimated at four bytes each)'
+          + (ssIn.window && ssIn.window.set === true ? '' : ' · context window not set; ' + formatTokens(ssIn.window && ssIn.window.tokens) + ' is the default'),
+        ...(text ? text.lines : [])].join(' · '),
+        bar: b,
+        geometry: geo,
+        route: ssGroup.route,
+        domain: ssDomain,
+        project: ssProject,
+        failed: false,
+      };
+    }
+  } else if (ssGroup && ssFailed) {
+    const w = readWarnings(summary).find((x) => x.code === WARNING_SESSION_START);
+    sessionStart = {
+      id: 'tray-session-start',
+      label: SESSION_START_FAILED,
+      toolTip: w ? w.message : SESSION_START_FAILED,
+      bar: null,
+      geometry: null,
+      route: ssGroup.route,
+      domain: ssDomain,
+      project: ssProject,
+      failed: true,
+    };
   }
 
   // (1) Each project header: sessions that saved ÷ the busiest project's.
@@ -3060,11 +3357,17 @@ export function buildTrayModel(summary, opts = {}) {
     };
   }
 
+  // A failed measurement that has its OWN line in the project's group is not
+  // said a second time as a notice; with no line to carry it, it stays one.
+  const shownNotices = sessionStart && sessionStart.failed
+    ? notices.filter((n) => n.code !== WARNING_SESSION_START) : notices;
+
   return {
     ok,
     empty: rows.length === 0,
     headline,
     documents,
+    sessionStart,
     pulse,
     rows,
     domains: domainsSection,
@@ -3075,8 +3378,8 @@ export function buildTrayModel(summary, opts = {}) {
     // disclosed with the true total beside it, never presented as one.
     groupsOnDisk,
     groupsHidden: Math.max(0, groupsOnDisk - groups.length),
-    notices: notices.slice(0, MAX_NOTICES),
-    noticesHidden: Math.max(0, notices.length - MAX_NOTICES),
+    notices: shownNotices.slice(0, MAX_NOTICES),
+    noticesHidden: Math.max(0, shownNotices.length - MAX_NOTICES),
     truncatedNote,
     hiddenRows,
     brief,
