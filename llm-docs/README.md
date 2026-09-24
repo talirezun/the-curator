@@ -96,31 +96,33 @@ release checklist:
 > model, label or URL changes — **and then re-upload the changed files to
 > Lumina by hand.**
 
-**Outstanding for v3.67.1** (supersedes the v3.65.2 note below — this documentation sync covers
-every release from v3.65.2 through v3.67.1 together, so this note replaces rather than adds to it):
-the GitHub read-only token's READ WITH chooser now offers **two** saved tokens, each named by where
-it lives (v3.65.3); Ingest and Shared Brain are both **always-open sections** on the domain page, no
-chevron, nothing remembered (v3.65.2, v3.65.3); five visual channels — identity dot, freshness dot,
-clock + age, depth bar, tone — now render the same way everywhere, including the Mac menu bar
-widget's three new depth bars (v3.66.0, v3.66.1); one AI model now runs every AI job (ingest,
-compile, wiki health, Shared Brain, reading plans), with a "Runs on … · ≈cost" line before and a
-"Ran on … · cost" line after every paid action, and disabled-not-hidden AI buttons with no key
-(v3.67.0); and each project now has a reading budget (five presets, Index only to Max 200 KB), a
-third per-document start state ("not at start"), a free-or-AI **Suggest a reading plan** helper, and
-a new Context step ④ **Session start** showing exactly what an agent receives (v3.67.0). The website
-repository's copies (`site/lumina-knowledge/*.md`, `site/llms.txt`) were updated to match in the
-same session that wrote this note; **Lumina's own live knowledge base still needs the manual
-upload** described below. `curator-links.md` is unchanged — no anchor it points at moved.
-**`curator-overview.md`, `curator-user-guide.md` and `curator-agent-memory.md` all changed** — see
-the budget table below for the current token figures — and need re-uploading; remove this note once
-all three are done, and a stale note left here is how this file stops being read.
+**Outstanding for v3.68.0** (supersedes the v3.67.1 note below — this documentation sync covers
+v3.67.2 and v3.68.0 together, so this note replaces rather than adds to it): Context → Documents'
+step ① head row now always offers **two doors — Add from this computer and Add from GitHub** — at
+zero documents and at twenty, replacing the old three-control row (*Refresh from repo*, *Add from
+folder*, *Mirror from GitHub instead*); each door is disabled with its reason, never hidden, when
+it cannot work for the project's current one source, and both open the same checklist panel (tick,
+see the live total against the 200 KB budget, commit) — adding always appends, never replaces
+(v3.68.0). The curator-owned editor's own button is renamed **Write a document** (was *Add
+document*), so it reads as its own way in rather than a third door. One app-wide **toast** now
+carries every action confirmation (a copy, for example) — bottom-right, closes on its own after 30
+seconds, pauses on hover — while a warning about cost, anything destructive, a failure, or anything
+still blocking the user stays on the page; Copy agent instructions now says exactly where to paste
+the block — the very top of `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / a `.cursor/rules` file,
+because Codex truncates `AGENTS.md` at 32 KB; a document mirrored from GitHub now reads **"GitHub ·
+not checked"** rather than the false "not on this computer" reading (v3.67.2). The website
+repository's copies (`site/lumina-knowledge/*.md`, `site/llms.txt`) still need updating to match,
+and **Lumina's own live knowledge base still needs the manual upload** described below.
+`curator-links.md` is unchanged — no anchor it points at moved. **`curator-agent-memory.md`
+changed** — see the budget table below for the current token figures — and needs re-uploading;
+remove this note once it is done, and a stale note left here is how this file stops being read.
 
-*Prior note, v3.65.2* (a real Settings field for the GitHub read-only token, replacing every earlier
-mention of hand-editing `githubReadToken` into `.curator-config.json`; the Mirror-from-GitHub
-panel's READ WITH row stating the truth instead of a promise nothing could fulfil; the
-Add-from-folder panel's redesign on an already-mirrored project; a clipped save's report rewritten
-as a full-width monitor; step 3 Knowledge's "+ Add a domain" picker and per-row Remove actually
-working end to end) — folded into the v3.67.1 note above rather than tracked twice.
+*Prior note, v3.67.1* (the GitHub read-only token's READ WITH chooser offering two saved tokens
+since v3.65.3; Ingest and Shared Brain as always-open sections on the domain page since v3.65.2/3;
+one visual language for identity, freshness, depth and tone everywhere, including the Mac menu bar
+widget, v3.66.0/3.66.1; one AI model running every AI job with a cost line before and after,
+v3.67.0; each project's reading budget, third document start state and Suggest a reading plan
+helper, v3.67.0) — folded into the v3.68.0 note above rather than tracked twice.
 
 **Editing a file here changes nothing on the website.** There is no pipeline, no
 webhook and no sync: Lumina serves the copy it was given, so a release that

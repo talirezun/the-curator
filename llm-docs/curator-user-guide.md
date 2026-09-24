@@ -656,7 +656,7 @@ handoff before stopping.
 | **MCP bridge** | The setup wizard, **Run self-test**, **View config**, **Copy snippet**, the default write domain, the tool map, and a note naming any bridge process still running older code. |
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans. |
 
-Since version 3.65.0 an **Updates** button sits at the TOP of that sidebar, under the title, and switches to General and runs the check; the version — for example `The Curator v3.67.1` — sits alone at the foot of the list, because a version string is a reading and not an action.
+Since version 3.65.0 an **Updates** button sits at the TOP of that sidebar, under the title, and switches to General and runs the check; the version — for example `The Curator v3.68.0` — sits alone at the foot of the list, because a version string is a reading and not an action.
 
 **Since version 3.67.0, Providers & keys' second block is "Your AI model"** — the one model every AI job runs on: ingest, compile, wiki health, Shared Brain and reading plans. Its **Used by** row lists each of those jobs, where you start it, and whether its cost is shown yet (a job whose cost reporting has not shipped reads "not yet"). Chat is separate — you still pick any connected model per message, in the composer.
 
@@ -666,13 +666,13 @@ The app honours your operating system's **Reduce motion** setting. Movement is r
 
 ## How do I add a GitHub read-only token, for mirroring documents?
 
-**Settings → Knowledge base → GitHub read-only token.** This is the credential a project's Documents step reads with when you choose "Mirror from GitHub" instead of a local folder. Paste a token and press Save; the field then shows only its last four characters, never the value again. **Test** reads one repository with the saved token, to confirm it can see it, before you rely on it. **Disconnect** removes it.
+**Settings → Knowledge base → GitHub read-only token.** This is the credential a project's Documents step reads with when you press **Add from GitHub** (since version 3.68.0; through v3.67.x it was a separate "Mirror from GitHub" control) instead of adding documents from this computer. Paste a token and press Save; the field then shows only its last four characters, never the value again. **Test** reads one repository with the saved token, to confirm it can see it, before you rely on it. **Disconnect** removes it.
 
 **Creating the token.** In GitHub: Settings, Developer settings, Personal access tokens, Fine-grained tokens, Generate new token. Resource owner: the account or organisation that owns the repository. Repository access: only the repository or repositories you want to mirror — several can share one token. Permissions, repository permissions: Contents, Read-only; metadata read-only is added automatically, nothing else is needed. Fine-grained tokens require an expiry of up to a year — set a reminder to renew it.
 
 A classic token (`ghp_…`) also works, but it can read every repository your account owns, not just the ones you intend to mirror — which is why a fine-grained token is recommended, and why Personal Sync's own token (used for push, not for a read-only mirror) is never the default.
 
-**Choosing which saved token to read with, since version 3.65.3.** When a project's Documents step opens "Mirror from GitHub," a **READ WITH** control offers up to two saved tokens, each named by where it lives: the read-only token above (shown by its last four characters) and Personal Sync's own token (which, if it is a classic token, can read every repository its account can see — which is why it is never the default). Whichever a read-only token is saved, it is selected automatically; when none is saved, nothing is selected and **Add one in Settings** takes you to this field. Nothing ever falls back to Personal Sync's token without you pressing it.
+**Choosing which saved token to read with, since version 3.65.3.** When a project's Documents step opens the **Add from GitHub** checklist, a **READ WITH** control offers up to two saved tokens, each named by where it lives: the read-only token above (shown by its last four characters) and Personal Sync's own token (which, if it is a classic token, can read every repository its account can see — which is why it is never the default). Whichever a read-only token is saved, it is selected automatically; when none is saved, nothing is selected and **Add one in Settings** takes you to this field. Nothing ever falls back to Personal Sync's token without you pressing it.
 
 ## How do I check that everything is working?
 
