@@ -133,7 +133,7 @@ export const DOCS_LINKS = {
   // the part only the guide carries — which documents are worth making
   // canonical, and the two ways one arrives (an agent commissioned to write it,
   // or a byte copy refreshed from the project's repository).
-  'memory.foundations': { file: 'user-guide.md', anchor: 'foundations--canonical-documents-that-travel' },
+  'memory.foundations': { file: 'user-guide.md', anchor: 'documents--the-files-that-travel-with-a-project' },
   // v3.61.0: the start-a-project flow and the curator-owned editor. This one
   // is reached from the Foundations block's own ⓘ (WP-V), on the sentence
   // that names how a curator-owned document gets edited — what someone

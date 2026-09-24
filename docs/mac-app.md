@@ -146,7 +146,7 @@ past that is counted on the *More in Project Context…* line rather than droppe
 project's **foundations** (its mirrored architecture, decisions and conventions — see
 [working-state.md § The foundations tier](working-state.md#the-foundations-tier--canonical-documents-that-travel)
 and
-[user-guide.md § Foundations](user-guide.md#foundations--canonical-documents-that-travel)) are
+[user-guide.md § Documents](user-guide.md#documents--the-files-that-travel-with-a-project)) are
 **repo-owned** and one or more no longer match the checkout they were mirrored from, the header's
 sublabel gains `· 1 doc stale` (or `· N docs stale` once there is more than one), clipped by the
 same `labelBudgetChars` every other sublabel respects. Nothing is added when every mirrored

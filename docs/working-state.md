@@ -2607,7 +2607,7 @@ false claim: it double-grants, including across processes.
 ## 8. Related reading
 
 - [user-guide.md § 13b](user-guide.md#13b-working-state--carrying-context-between-sessions) — the same ground for someone using the app, including [when to make a new project](user-guide.md#one-domain-one-project-or-one-more-work-stream)
-- [user-guide.md § Foundations](user-guide.md#foundations--canonical-documents-that-travel) — the same ground for canonical documents, with the diagram and the teaching path
+- [user-guide.md § Documents](user-guide.md#documents--the-files-that-travel-with-a-project) — the same ground for canonical documents, with the diagram and the teaching path
 - [mcp-user-guide.md](mcp-user-guide.md) — installing the MCP bridge and the full tool list
 - [domains.md](domains.md) — what a domain is and why state lives inside one
 - [sync.md](sync.md) — how `state/` reaches your other machines

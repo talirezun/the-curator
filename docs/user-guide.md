@@ -62,6 +62,12 @@ Nothing has been renumbered; only grouped.
 
 ## 1. What is this app?
 
+**Build a second brain from what you read, share it with a team, and give it to your agents.**
+One knowledge folder on your own computer holds all three, in this order: **Second brain**
+(Domains, Chat — your reading, turned into a wiki) → **Shared Brain** (optional — the same wiki,
+written with a team) → **Agent memory** (Context — optional — what your agents read and save).
+The first works alone; the other two are there whenever you want them.
+
 **The Curator is the context engine.** It builds and keeps the context your work runs on — what you have read, where the work stands, and the documents a project is built against — as plain markdown files on your own computer, and carries all three across sessions, machines, AI tools and models.
 
 The building half is what you touch first. You feed it documents — articles, PDFs, notes — and it:
@@ -106,7 +112,7 @@ flowchart TD
 
 **Why the third one is different.** Knowledge is additive: everything you learn about a topic is worth keeping. Working state is not — "blocked on the login bug" stops being true the moment you fix it, and a store that merely *added* the fix would leave the stale blocker sitting there beside it. So each save of your working state replaces the one before it. Knowledge grows; state is current or it is worthless.
 
-Layer 3 also holds the third kind of context, a project's **foundations** — its architecture, its firm decisions, its conventions. Those are not volatile and are not merged either: each one is replaced whole and read verbatim, so an agent gets the document rather than a paraphrase of it. → [§13b, Foundations](#foundations--canonical-documents-that-travel).
+Layer 3 also holds the third kind of context, a project's **foundations** — its architecture, its firm decisions, its conventions. Those are not volatile and are not merged either: each one is replaced whole and read verbatim, so an agent gets the document rather than a paraphrase of it. → [§13b, Foundations](#documents--the-files-that-travel-with-a-project).
 
 The middle layer is off unless you turn it on, and only the domains you explicitly opt in ever leave your machine.
 
@@ -145,7 +151,7 @@ which is the day the second becomes the first's future.
 | To ask your wiki questions and compile answers back into it | [§9 Chat with your brain](#9-chat-with-your-brain) |
 | To build one wiki together with a cohort or team | [§15b Shared Brain](#15b-shared-brain) |
 | To carry build context between sessions, tools and machines | [§13b Working state](#13b-working-state--carrying-context-between-sessions) |
-| The canonical documents a project is built against | [§13b → Foundations](#foundations--canonical-documents-that-travel) |
+| The canonical documents a project is built against | [§13b → Foundations](#documents--the-files-that-travel-with-a-project) |
 | The whole product in one document, including what it deliberately does not do | [Product Overview](product-overview.md) |
 
 > 📖 **For the long-form story** of why a second brain matters and how the parts of The Curator fit together philosophically, read **[Knowledge Immortality — Building a Second Brain with The Curator](../research/articles/knowledge-immortality-second-brain.md)**. It's a 15-minute essay covering the Karpathy spark, what markdown gives you, every section of the app in plain language, and the case for *compounding* knowledge. Recommended before you start ingesting.
@@ -166,7 +172,7 @@ Batch-upload 20+ PDFs on a topic. The Curator extracts all distinct methodologie
 Upload reports, competitor analyses, and meeting transcripts. Build an intelligence layer where the most-referenced nodes grow largest, giving you a visual heat map of your knowledge. Query for synthesised strategic answers that bypass recency bias.
 
 **Software Architects & Development Teams**
-Ingest architecture decision records, API specs, and post-mortems. New team members can ask *"Why did we choose X over Y?"* and get an answer cited directly from a document written years ago. The Curator becomes a conversational Senior Engineer that never leaves. The documents a build is *governed* by — rather than merely informed by — go in a project's [foundations](#foundations--canonical-documents-that-travel) instead, where they are kept verbatim and handed to an agent at the start of every session.
+Ingest architecture decision records, API specs, and post-mortems. New team members can ask *"Why did we choose X over Y?"* and get an answer cited directly from a document written years ago. The Curator becomes a conversational Senior Engineer that never leaves. The documents a build is *governed* by — rather than merely informed by — go in a project's [foundations](#documents--the-files-that-travel-with-a-project) instead, where they are kept verbatim and handed to an agent at the start of every session.
 
 **Medical & Scientific Researchers**
 Drop in clinical trial PDFs and papers. The graph reveals hidden intersections — a compound used in one domain showing efficacy in another study — by visually bridging entity nodes across your entire literature corpus.
@@ -1370,21 +1376,27 @@ on, join a cohort or set one up — is one press away. See [§7b](#7b-the-three-
 
 ### How help works in the app
 
-Every screen in The Curator explains itself the same way, in three layers. Once
-you know the shape you can stop reading it and just use it.
+Every screen in The Curator explains itself the same way. Once you know the
+shape you can stop reading it and just use it.
 
-| Layer | What it looks like | What is in it |
-|---|---|---|
-| **The lede** | One short sentence under a title or a block heading, never more than about twenty words | The one fact you need in order to know what this is for |
-| **The ⓘ** | A small violet **ⓘ** at the end of that sentence | The argument behind it — why it works this way, what the trade-off is, what happens if you leave it alone. Click to open a panel with a **violet left edge**; click again, or press **Esc**, to close it |
-| **Read more in the guide** | A link at the bottom of that panel | The section of this guide that covers the subject properly |
+**The mark.** A small violet **ⓘ** sits at the end of a title or a block
+heading. Click it to open a panel with a violet left edge; click again, or
+press **Esc**, to close it. That is the whole affordance everywhere in the
+app: one colour, one shape, one meaning — "there is an explanation here."
 
-**Violet means "there is an explanation here."** The ⓘ mark is the app's accent
-colour wherever it appears — in a view header, on a Settings block, in a
-sidebar — and the panel it opens carries the same colour as a bar down its left
-edge. That is the whole affordance: one colour, one shape, one meaning. Before
-v3.54.0 the mark was the same grey as the sentence beside it and read as
-punctuation.
+**What is inside the panel (since v3.71.0).** Every ⓘ opens the same shape,
+top to bottom:
+
+| Part | What it is |
+|---|---|
+| **Lead** | One plain sentence — what this thing is, in your own words |
+| **Picture** *(sometimes)* | A small diagram, a table or a short list of steps — the fastest way to show, not just tell |
+| **Points** | Up to three short lines, one idea each, each with a small icon |
+| **Try** *(sometimes)* | One sentence naming a control on this same page, worth pressing |
+| **User guide card** | A link at the foot of the panel — book icon, the section title, and an arrow showing it opens in your browser |
+
+An explainer is written for someone who has never read this guide and never
+will; anything longer than that lives here, one click away behind the card.
 
 **Nothing you need is hidden behind it.** Explanations fold. These never do:
 
@@ -1393,6 +1405,9 @@ punctuation.
 - **refusals and errors** — including the reason a scan would not start
 - **the result of something you just pressed** — a self-test outcome, a saved
   confirmation, a validation message
+- **anything that depends on the state of your project** — an explainer reads
+  true whether you have one document or a hundred, so it never says "nothing
+  here yet" or "Start here."
 
 If a fold is open when the screen refreshes underneath you, it stays open.
 
@@ -1402,6 +1417,11 @@ closes on its own; it never carries a cost, a destructive outcome, a failure, or
 blocking you. Anything that qualifies as one of those stays on the page, unfolded, exactly as the
 list above already required — a warning, a cost, a refusal and a result never move to the
 corner and time out.
+
+**Every top-level ⓘ opens with the same frame.** Second brain → Shared Brain → Agent memory, in
+that order, with "you are here" marked on the place you are reading from — because everything in
+The Curator is one connected system: build a second brain from what you read, share it with a
+team, and give it to your agents. See [What is this app?](#1-what-is-this-app).
 
 **The block shape is no longer Settings-only.** A heading, a short lede with its ⓘ at the end, a
 body, and a hairline before the next block — that is now a shared piece any screen can be built
@@ -1574,7 +1594,7 @@ something up.
    never the whole picture. If your share is higher, mark fewer documents read first or choose a
    smaller preset.
 
-### Step ④ — Session start, and the context-window meter
+### Session start and the context window
 
 **New in v3.67.0; rebuilt around a window meter in v3.70.0.** Session start is what an agent is
 handed the moment it starts work on this project: the standing brief, the latest handoff, a few
@@ -1606,6 +1626,19 @@ preview it on the meter before you choose** — the bar repaints live, tagged *"
 saved"*, and reverts the moment you close the menu without picking. **A project holding an older
 120 KB or 200 KB budget keeps it, unchanged, and reads as "Custom" with its nearest preset named**
 (*"Custom · ≈30.7k tokens, nearest Large"*) — nothing here rewrites a stored value.
+
+**Documents at start (v3.70.1) — the per-document planner.** A fold under step ④, closed by
+default, lists every document in the project: its title, its role and size, and a three-way
+control for its start state — **read first**, **on request** or **not at start** — with its size
+drawn as a depth bar against the reading budget. Changing a state here saves nothing yet: the
+meter redraws as a live preview, marked *"Preview, not saved"*, with each read-first document
+drawn as its own segment and a count of how many MCP replies the start would take. Hovering a
+reading budget while changes are pending previews that budget together with them, so you can try a
+document and a budget together before committing to either. **Apply** saves every changed document
+at once, through the same setting step ① shows — step ① updates to match, and a document The
+Curator could not save stays listed with the reason; **Discard** returns to what is already saved.
+When a start would take more than one MCP reply, the enlarged bar marks where the second reply
+begins, and the legend names each document with the reply it arrives in.
 
 **Window and Harness sit beside the reading budget**, both set **per computer** (in the app's
 config file, not per browser), so the app and the menu bar widget always agree:
@@ -1772,12 +1805,12 @@ readings into the strip. v3.65.1 renamed the steps and their rows — see
 [the table above](#the-word-on-screen-and-the-word-on-disk) — and rebuilt each step's controls into
 a head row above its rows, the same anatomy Wiki health's Quick maintenance panel already used.)*
 
-##### ① Documents — what the project tells an agent
+##### Documents — what the project tells an agent
 
 **The documents this project is built against, kept word for word.** Architecture, firm
 decisions, conventions, a roadmap — the things a competent new contributor reads *before* touching
 anything. They are **replaced whole** and read **verbatim**: an agent gets the document, not a
-paraphrase of it. → [§13b, Foundations](#foundations--canonical-documents-that-travel) for how
+paraphrase of it. → [§13b, Foundations](#documents--the-files-that-travel-with-a-project) for how
 documents get in and what a document's own source means — the store and that chapter still call
 this tier **foundations**; see [the table above](#the-word-on-screen-and-the-word-on-disk).
 
@@ -1934,7 +1967,7 @@ of work, naming the document to open. An agent is told to consult it; when it is
 document roles are the next best signal. → [§13b](#one-standing-brief-many-scopes--how-the-brief-and-your-workstreams-relate) for what else the brief
 carries.
 
-##### ② Memory — what the last session left
+##### Memory — what the last session left
 
 **Four closed rows, in this order: Agent sessions, Handoffs, The brief, Journal.** This layer
 **supersedes** — every save replaces the last, so a blocker you fixed on Tuesday cannot reappear on
@@ -1975,7 +2008,40 @@ sitting above them. Which clock is explained once in the overview's own ⓘ; whi
 Handoffs table's own **MACHINE** column, per row, and the same fact rides as a chip
 (`synced from another machine`) when you open that handoff in the reader.
 
-##### ③ Knowledge — which domains a project draws on
+#### Memory — the brief, Handoffs and the Journal
+
+**Memory is where the last session stopped, plus your standing instructions — the brief, the
+Handoffs and the Journal, in one place.** *State supersedes*: every save replaces the one before
+it rather than being merged into it, because a blocker you fixed has to be able to stop being
+true, and a store that only added to itself could never say so.
+
+- **The brief is yours.** You write it, agents read it on every call and, unless you ask one to,
+  never write it. See [Editing the standing brief](#editing-the-standing-brief).
+- **A Handoff is what one session leaves the next**, one per piece of work. **Each computer keeps
+  its own** — that is what makes two machines safe to sync: no two of them ever touch one file, so
+  a piece of work can appear as more than one saved copy, one per machine that worked on it. A
+  Handoff written on another machine says so, and its next steps are worth reading against your own
+  checkout before you act on them. Two agent tools sharing one machine and one piece of work is the
+  one case this cannot separate — they overwrite each other's Handoff, and the step says so when the
+  Journal shows it; the fix is to give each tool its own.
+- **The Journal is one line per save, and it only grows.** Because it accumulates rather than
+  replacing itself, an old line can describe something already resolved — read it as history, not
+  as the present. Each line's own summary is capped at 200 characters; a cut summary is a shorter
+  label, never lost work.
+- **Agent sessions** counts agents that connected through the MCP tools — a session is one run of
+  the bridge, from the moment an agent connects to the moment its window closes, identified by an
+  id the bridge mints for itself, so two sessions are never merged and one is never split in two.
+  It "started with the context" when it asked for this project's brief, Handoff or Documents at
+  any point before it saved anything, and it "saved before stopping" when a save actually
+  succeeded. What this cannot see: a save made from the command line, a hook, or by hand in a text
+  editor is a real save and still does not count here, because only calls that came through the
+  bridge do — so this reading is about agent sessions that used The Curator, never a claim about
+  your whole week. The harness name beside a session is self-reported by the tool that sent it;
+  nothing in the app behaves differently because of it. It comes from a file beside your settings,
+  never inside your knowledge folder, so it is never synced, and it never names an argument, a
+  result or a file path. This reading only reports — it never stops, delays or warns a session.
+
+##### Knowledge — which domains a project draws on
 
 **One row per domain, plus a picker in a head row above them.** Through v3.64.2 a project could
 only ever read the domain it lived in, with no way to say otherwise — *"Where do I select which
@@ -2329,7 +2395,7 @@ brief** — the handoff and the journal are written by an agent and by nothing e
 > it is a reader too: nothing in it writes.
 
 The menu bar icon also carries a small honesty check on a project that has **any mirrored
-document** (see [Foundations](#foundations--canonical-documents-that-travel), below — the store
+document** (see [Foundations](#documents--the-files-that-travel-with-a-project), below — the store
 still calls this tier **foundations**; the screen calls it **Documents**): when one or more
 mirrored documents, from any of the project's sources, no longer match the folder or repository
 they were copied from, its header sublabel gains **`· docs stale`**, or **`· N docs stale`** once
@@ -4153,7 +4219,7 @@ installed does with that:
 **Copy marker line**, in Domains → Projects, gives you the exact line to paste into a repository's
 `.curator-project` file, which is what turns step 1 into *the agent already knew*.
 
-### Foundations — canonical documents that travel
+### Documents — the files that travel with a project
 
 Working state (above) and the wiki (§9) are two kinds of context, and until v3.59.0 they were the
 only two The Curator carried for you. A third kind was missing: the documents a project is
@@ -4854,7 +4920,7 @@ gate and still render exactly as the route sends them.
 
 ### Canonical documents, from the repository instead of a checkout
 
-One more piece of the same release, for anyone using **[foundations](#foundations--canonical-documents-that-travel)**
+One more piece of the same release, for anyone using **[foundations](#documents--the-files-that-travel-with-a-project)**
 on more than one computer. Until v3.63.0, a mirrored document's freshness could only be checked on
 the machine that had the repository cloned; everywhere else the column read *"source not on this
 computer"* for ever. A mirror can now be refreshed **from the GitHub repository itself**.
@@ -5655,7 +5721,7 @@ disagree.
 
 Since v3.65.2, **Settings → Knowledge base** also holds a **GitHub read-only
 token** row. It lets a project's Documents (Context, step ① — see
-[Foundations](#foundations--canonical-documents-that-travel)) mirror straight
+[Foundations](#documents--the-files-that-travel-with-a-project)) mirror straight
 from a GitHub repository, with no checkout on this computer. The ⓘ beside the
 block's title covers both halves of the page — the vault folder above, and this
 token.

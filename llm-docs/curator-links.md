@@ -46,7 +46,7 @@ Each row links straight to that section.
 | 12. See your knowledge graph in Obsidian | Opening the vault in Obsidian | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#12-see-your-knowledge-graph-in-obsidian |
 | 13. Three ways to talk to your knowledge | Chat, Obsidian and MCP compared | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp |
 | 13b. Working state — carrying context between sessions | Agent handoffs between sessions and machines | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13b-working-state--carrying-context-between-sessions |
-| 13b. Foundations — canonical documents that travel | A project's architecture and decisions, held verbatim | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#foundations--canonical-documents-that-travel |
+| 13b. Documents — the files that travel with a project | A project's architecture and decisions, held word for word | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#documents--the-files-that-travel-with-a-project |
 | 13b. Start a project | Choosing where a new project's foundations live, and editing them | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#start-a-project |
 | 13c. Making capture real | The my-curator command, per-harness hooks, and the capture meter | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13c-making-capture-real--the-command-the-hooks-and-the-meter |
 | 14. Daily workflow | A suggested routine for regulars | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#14-daily-workflow |
@@ -81,7 +81,7 @@ Related pages:
 | Working state, limits | What the store will not do | https://github.com/talirezun/the-curator/blob/main/docs/working-state.md#5-limits |
 | Standing brief template | A copyable project brief file | https://github.com/talirezun/the-curator/blob/main/docs/project-brief-template.md |
 | User guide, section 13b | The same subject for beginners | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13b-working-state--carrying-context-between-sessions |
-| User guide, foundations | Canonical documents, for beginners | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#foundations--canonical-documents-that-travel |
+| User guide, Documents | Canonical documents, for beginners | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#documents--the-files-that-travel-with-a-project |
 
 ## Where do I set up the MCP bridge?
 
