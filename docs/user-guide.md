@@ -91,6 +91,8 @@ Everything The Curator holds for you is one of three kinds. They look alike — 
 
 **Knowledge accumulates, state supersedes, a canonical document is replaced whole and read verbatim.** That is the sentence to carry into everything below. Put something durable into working state and the next save removes it, and nothing warns you — from the store's point of view, overwriting is correct.
 
+All three sync together and are open to an agent in one call — `get_project_context` hands back the brief, the latest handoff and the project's canonical documents in a single response, so a cold session never needs a second round trip just to see where things stand.
+
 The three kinds are *what* is carried. The three layers below are *who reads it*.
 
 ### The three layers, and the one rule that separates them
@@ -122,7 +124,7 @@ Nothing below is required on day one. It is the shape of a full day once all thr
 
 1. **Morning — you add something.** A PDF you were sent lands in **Ingest**. The model reads it once and writes a summary page plus entity and concept pages, linking them into what is already there. A person mentioned in it already had a page, so that page got deeper rather than a second copy. *(→ [§8](#8-ingest-a-source))*
 2. **Midday — you ask.** In **Chat** you ask how this connects to something you read months ago. The answer is built from your own pages and cites them, and you can open any page it names. If the answer is worth keeping, **Compile to Wiki** turns the thread into pages of its own. *(→ [§9](#9-chat-with-your-brain))*
-3. **Afternoon — an agent picks up a build, cold.** You open a new session in whatever tool you are using and say *"resume Lumina."* One call hands the agent your standing brief, the last handoff — where the work stopped, what is settled, what was already ruled out — and the project's canonical documents, which it has either never read or has not read since they changed. It starts from your architecture rather than from a guess at it. *(→ [§13b](#13b-working-state--carrying-context-between-sessions))*
+3. **Afternoon — an agent picks up a build, cold.** You open a new session in whatever tool you are using and say *"resume Lumina."* One call hands the agent your brief, the last handoff — where the work stopped, what is settled, what was already ruled out — and the project's canonical documents, which it has either never read or has not read since they changed. It starts from your architecture rather than from a guess at it. *(→ [§13b](#13b-working-state--carrying-context-between-sessions))*
 4. **Evening — it writes down where it got to.** The agent saves the handoff before it stops; the save overwrites, so what you get back tomorrow is current rather than a pile. On a Mac, the optional **menu bar icon** tells you it landed without opening the app. *(→ [§6b](#6b-the-menu-bar-icon-mac-app))*
 5. **Whenever you like — it all travels.** One **Sync** click pushes the wiki, the conversations and the state to your own private GitHub repository, and pulls them down on the other machine. *(→ [§15](#15-sync-across-computers))*
 
@@ -891,7 +893,7 @@ appear.
 |---|---|
 | **Open in The Curator** | Opens the app on Project context, at that project. This is what clicking the row used to do, and it is still the first thing under the pointer |
 | **Copy resume prompt** | Puts a short **instruction** on your clipboard: paste it into a fresh agent session and it knows how to fetch this work-stream's state for itself |
-| **Copy handoff as Markdown** | Puts the **document itself** on your clipboard — your standing brief and the session handoff, in full |
+| **Copy handoff as Markdown** | Puts the **document itself** on your clipboard — your brief and the session handoff, in full |
 | **Reveal current.md in Finder** | Opens a Finder window with the handoff file selected |
 
 **The two Copy items exist because a menu cannot open a work-stream.** Clicking a row lands on the
@@ -917,13 +919,13 @@ call always agree. Then the file path to fall back on if it has no bridge, the `
 the **complete** state back when it runs low on context.
 
 *Copy handoff as Markdown* is for one that can reach neither — a browser chat with no tools. It is
-the standing brief and the handoff, as two clearly separated sections. **It is not capped**: the
+the brief and the handoff, as two clearly separated sections. **It is not capped**: the
 store already bounds a handoff at 48 KB and a brief at 32 KB, and a second, smaller cap here would
 quietly cut a document you asked for in full. The size is shown on hover instead, so an 80 KB paste
 is never a surprise.
 
 > **Both of them say, in the same words, which half you are supposed to obey.** The handoff and the
-> journal are **recorded data to verify**; the standing brief is **your own instructions and is
+> journal are **recorded data to verify**; the brief is **your own instructions and is
 > followed**. That distinction is the whole of how the memory layer is meant to be read, and a paste
 > that lost it would hand a model a document with no way to tell them apart.
 >
@@ -1138,7 +1140,7 @@ Read it with the five-minute caveat from [How to read a row](#how-to-read-a-row)
 figure may be a reading taken up to five minutes back. That is precise enough to separate *just
 saved* from *this morning*, and not precise enough to time a save to the second.
 
-**The other half of that worry — *"is my standing brief still describing this project?"* — is in
+**The other half of that worry — *"is my brief still describing this project?"* — is in
 the same tooltip**, as a second clause:
 
 ```
@@ -1149,7 +1151,7 @@ It is stated as an **age and never as a judgement**. *"Brief · 6 weeks ago"* is
 *"your brief is stale"* would be the widget passing an opinion on a document you wrote by hand,
 which is not its business — an old brief on a settled project is not a stale one. If the age cannot
 be worked out the clause is simply absent rather than saying *"time unknown"*, and a project with
-no standing brief at all gets no clause, because that is the ordinary case and not a problem to
+no brief at all gets no clause, because that is the ordinary case and not a problem to
 report in a menu bar.
 
 It does not get a **menu row**, and that is the ranking rather than an oversight: a brief is up to
@@ -1237,7 +1239,7 @@ Stated plainly rather than left for you to discover.
 | **The section headers draw on macOS 14; below it, nobody knows.** | **Save pulse** and each project header use a macOS 14+ menu affordance, and the 2026-09-02 capture shows a header of that kind drawing correctly. On macOS 13 they should fall back to a dimmed, inert caption line, which is what a heading looks like anyway — but **that fallback has never been observed**. Either way they can never become a clickable item that does nothing. There are now more of them, one per project group, so a machine where the fallback is ugly is uglier than it was |
 | **The menu's colours follow your SYSTEM appearance, not the app's theme.** | If you run the app in its light theme on a Mac set to dark, the menu is drawn for a dark menu bar — which is correct, because that is where it is drawn. The two are genuinely different questions and are allowed to disagree. What is unproven is that macOS delivers the appearance-changed notification the rebuild listens for |
 | **"On, hide the Dock icon" does not hide the Dock icon.** | The macOS call that hides it has a *return* transition — coming back when you open the window from the menu bar — that is reported broken in exactly the way this would depend on, and it could not be tested here. So the app keeps your setting and does the safe half: menu bar icon on, Dock icon left alone. Shipping the untested half risks no Dock icon, no menu bar icon and no window all at once |
-| **The standing brief's age is in the hover tooltip, not in the menu.** | By design — it changes on the order of weeks, so it does not earn one of five scarce rows. Hover the icon for it, or open Project context for the full picture. See [Scenario 3](#scenario-3--running-low-on-context) |
+| **The brief's age is in the hover tooltip, not in the menu.** | By design — it changes on the order of weeks, so it does not earn one of five scarce rows. Hover the icon for it, or open Project context for the full picture. See [Scenario 3](#scenario-3--running-low-on-context) |
 | **The only way to discover it is Settings.** | The app does not offer it to you when your agent memory starts filling up. That was designed and not built |
 | **The save pulse is one strip over everything, not one per tool or per work-stream.** | A lane per tool — which would answer *"are these two tools taking turns?"* — is designed and not built; a menu has nowhere to put five of them legibly |
 | **The pulse does not re-time when you hover.** | The rows do; the strip is the picture from the last time the store was read. At twelve hours per mark this is not a difference you can see, but it is a real difference between two things on the same menu |
@@ -1279,7 +1281,7 @@ to hover and wait to find out what something is:
 |---|---|---|---|
 | **Chat** | Chat | *ask* | Ask questions of one domain's wiki — and, with a project pinned, of that project's context as well. |
 | **Domains** | Domains | *knowledge* | One subject at a time: its overview, its sources, its pages, its projects, its Shared Brain connections and its wiki health. This is **Home**, and where a first launch opens. |
-| **Project context** | Context | *context* | Everything one project gives an agent: its canonical documents, and the working state your agents read and write over MCP — the standing brief, the current handoff, and the journal of saves. The handoff and the journal are read-only here; the **standing brief** has an Edit, because it is yours. |
+| **Project context** | Context | *context* | Everything one project gives an agent: its canonical documents, and the working state your agents read and write over MCP — the brief, the current handoff, and the journal of saves. The handoff and the journal are read-only here; the **brief** has an Edit, because it is yours. |
 
 There is **no dividing line** any more. Three places do not need grouping, and the old line said
 "everything below this is advanced" about a screen half this app's users came for.
@@ -1485,7 +1487,7 @@ screen. It was called *Agent memory* through v3.61.1, then *Project context* fro
 screen, same files, renamed because it had stopped being only about memory.
 
 Most of it is **read-only** — agents write the handoffs and the journal over MCP and the app shows
-them. Three things are yours to change here: the **standing brief** (a pencil), a **document** you
+them. Three things are yours to change here: the **brief** (a pencil), a **document** you
 keep in The Curator rather than in a repository, and which documents are marked **read first**.
 
 Since v3.62.0 the page is numbered steps, read top to bottom, under an **overview card** — three
@@ -1568,7 +1570,7 @@ The wireframe below is the same shape with the labels called out.
 the start of a session an agent needs three things — its **foundations** (a few canonical
 documents marked **read first**: conventions, decisions, architecture — whatever this project is
 actually built against), the **last state** (the latest handoff — where the previous session
-stopped), and the **standing brief** (your instructions). Everything else stays one request away
+stopped), and the **brief** (your instructions). Everything else stays one request away
 — **on request** — or out of the start entirely — **not at start** — and the agent opens it by
 name the moment the task actually needs it. **The wiki is never loaded at session start at all** —
 your compounded knowledge is *searched*, not handed over, whenever an agent needs to look
@@ -1597,7 +1599,7 @@ something up.
 ### Session start and the context window
 
 **New in v3.67.0; rebuilt around a window meter in v3.70.0.** Session start is what an agent is
-handed the moment it starts work on this project: the standing brief, the latest handoff, a few
+handed the moment it starts work on this project: the brief, the latest handoff, a few
 journal lines, the list of documents, and the text of whichever documents are marked **read
 first** — up to a **reading budget**. Step ④ draws that bootstrap as one bar: **your whole
 context window, to scale**, your agent's harness at the left (hatched, since it is an estimate,
@@ -1772,7 +1774,7 @@ document printed on the page; opening one is a click, not a scroll.*
   nested under their domain. Each row now carries three things: the project name, the **Working
   on** headline from its newest save (omitted, not filled with a dash, when there is none), and a
   status line of a **freshness dot** plus the work-stream count and age (*"13 scopes · 2 weeks
-  ago"*). A project that has a standing brief but has never been saved to is listed — dimmed, with
+  ago"*). A project that has a brief but has never been saved to is listed — dimmed, with
   a hollow marker, reading *"no state saved yet"* — because that is a real answer, not a broken
   row. A domain with **neither** a brief nor a save is not listed at all. If nothing at all is
   listed, the screen says which of the two situations you are in — *no domains*, or domains with
@@ -1962,7 +1964,7 @@ and the mark **survives the refresh**, because the repository owns the text and 
 order.
 
 **Which document for which kind of work is a sentence, not a checkbox** — so it goes in your
-standing brief, under a heading the template now offers: **"Read before you…"**. One line per kind
+brief, under a heading the template now offers: **"Read before you…"**. One line per kind
 of work, naming the document to open. An agent is told to consult it; when it is empty, the
 document roles are the next best signal. → [§13b](#one-standing-brief-many-scopes--how-the-brief-and-your-workstreams-relate) for what else the brief
 carries.
@@ -2391,7 +2393,7 @@ brief** — the handoff and the journal are written by an agent and by nothing e
 
 > 💡 **On a Mac you can watch this without opening the app.** The optional
 > **[menu bar icon](#6b-the-menu-bar-icon-mac-app)** shows the same store — the last save, recent
-> work-streams, a seven-day save pulse, and the standing brief's age — from the menu bar. It is off by default and
+> work-streams, a seven-day save pulse, and the brief's age — from the menu bar. It is off by default and
 > it is a reader too: nothing in it writes.
 
 The menu bar icon also carries a small honesty check on a project that has **any mirrored
@@ -2590,7 +2592,7 @@ has three chips above it:
 | Chip | Shows |
 |---|---|
 | **Wiki** | What the model compounded from your sources — entities, concepts and summaries |
-| **Context** | What the domain holds *about the work*: each project's standing brief, each work-stream's handoff, and its canonical foundations |
+| **Context** | What the domain holds *about the work*: each project's brief, each work-stream's handoff, and its canonical foundations |
 | **All** | Both |
 
 The lens is remembered for the whole install, like the folds — since v3.64.1; through v3.64.0 it
@@ -3071,7 +3073,7 @@ The bar above a chat holds two selectors on the left and **Compile to Wiki** pus
 right. On the left, one chip per knowledge
 base — press one to change what this conversation can see. Beside them, under **PROJECT**,
 a chip that wears the same face as a domain chip — only its chevron says it opens a list, since
-v3.65.0. Open it and pick a project; the answer also draws on its **standing brief**, its **latest
+v3.65.0. Open it and pick a project; the answer also draws on its **brief**, its **latest
 handoff** and the canonical documents marked **read first** — on top of the domain's wiki, never
 instead of it. A slice of the project's journal and any other foundation that matches your question
 come in as well, the same way the bootstrap an agent gets chooses them.
@@ -3637,6 +3639,11 @@ itself. Nothing was moved to produce that, and nothing ever will be: that is whe
 project lives permanently, for a tree written today as much as for one written last year, so the
 old files keep working on any other computer of yours that has not been updated yet.
 
+Every project is **plain markdown** under the domain's own `state/` folder — nothing binary, no
+database — so it opens in any text editor and travels with the domain like any other file. That is
+also why **Personal Sync carries it**: pushing or pulling a domain moves its projects along with
+the wiki, in the same commit, with no separate step.
+
 ### Creating, renaming, deleting
 
 - **New domain** — give it a **Name**, an optional **Description**, and pick a **Template**: **Generic** (a balanced starting schema, the good default) · **Tech** · **Business** · **Personal**. The template writes the domain's starting schema, which tells the AI how to categorise what you ingest — you can edit it later. Nothing is written until you click **Create domain**.
@@ -3662,13 +3669,13 @@ and it is already open — before v3.49.0 it sat at the bottom of the page behin
 button. You get:
 
 - a **Wiki · Context · All** lens above the list (new in v3.64.0) — **Wiki** is entities, concepts
-  and summaries; **Context** is standing briefs, handoffs and a project's canonical documents;
+  and summaries; **Context** is briefs, handoffs and a project's canonical documents;
   **All** is both. The choice is remembered for the whole install (v3.64.1; was per domain)
 - a **Filter by name…** box that narrows the list as you type
-- tabs — **All · Entities · Concepts · Summaries · Memory** — each with its own count (**Memory** lists standing briefs and handoffs and is not included in **All**, see [§10](#memory-pages-in-the-list))
+- tabs — **All · Entities · Concepts · Summaries · Memory** — each with its own count (**Memory** lists briefs and handoffs and is not included in **All**, see [§10](#memory-pages-in-the-list))
 - one row per page, colour-dotted by type, with its full path in monospace
 
-**Every one of them opens in the same reader** — a wiki page, a standing brief, a handoff or a
+**Every one of them opens in the same reader** — a wiki page, a brief, a handoff or a
 canonical document. There is no second way to read a page in this app, and that is deliberate.
 
 Click a row to open it. Very large lists render 150 rows at a time with a **Show 150 more** row at the bottom that appends the next 150 until every match is shown; *Showing N of M* tracks it.
@@ -5126,6 +5133,8 @@ Your GitHub repository is not changed. You can reconnect at any time.
 
 Solo users don't need this — Personal Sync handles single-user backup. Shared Brain is for **groups**.
 
+**Which domains contribute is decided once, at join.** To add or drop a domain from what you contribute, leave the Shared Brain and join it again — there is no separate control for changing the set mid-membership. Your local `shared-<slug>/` mirror is exactly what your last **Pull** wrote: read-only, and current as of that pull rather than live.
+
 ### The two-primitives security model (read this before you start)
 
 Two completely different concepts that beginners often confuse. Get this right and the rest is easy:
@@ -5390,7 +5399,7 @@ instead of the four paragraphs that used to sit here.*
 | **1. Software update** | Checks for, and installs, a newer version — [below](#version-and-updates). It leads the section because it is what most people open Settings for |
 | **2. Appearance** | Theme, text size and the menu bar icon: how the app presents itself **on this machine**. All three are instant, reversible, and saved in this browser |
 | **3. System check** | Is the app itself set up correctly — [below](#system-check) |
-| **4. Setup guide** | Re-opens the first-run checklist from [§5](#5-first-run--the-getting-started-panel). Dismissing that panel is never permanent; this is the one place it can be found again |
+| **4. Setup guide** | Re-opens the first-run checklist from [§5](#5-first-run--the-getting-started-panel). That panel shows on its own until setup is finished, whether or not you have dismissed it before; dismissing it is never permanent, and this button is the one place it can be found again after |
 
 **The three Appearance rows sit in one card**, separated by hairlines, because
 they belong to each other and the blocks around them do not:
@@ -5689,6 +5698,11 @@ already asks an agent to hold itself to.
 
 If no bridge has ever written to the log, the block says so plainly: *"No calls recorded yet.
 The map fills as your agents use the bridge."*
+
+**Across projects**, the block's own depth bar, reads the same figure the Mac menu bar widget's
+own Projects section shows — sessions saved in the last 30 days, one bar per project — and both
+are scaled to the same denominator, the busiest project, so a glance at either one agrees with the
+other.
 
 #### "Test all 24 tools" — lighting the map yourself
 
@@ -6242,6 +6256,8 @@ The labelling was overhauled to stop a long list reading as a wall of warnings. 
 Below the markers, each row carries **one plain line** rather than a paragraph — at most three clauses, in a fixed order: **the reason for any warning first**, then roughly how many wiki pages the model plans from one source, then how fast it answered when measured. A clause whose measurement is missing is simply left out; it is never printed as a zero. The full measured note is still there in its entirety, one click away on the row — **except the warning reason, which never hides behind that click**, because a warning behind a click is not a warning.
 
 > **Two labels were removed, and one rule behind them was not.** The old **caution** badge is gone — its reason now leads the plain line instead, where you actually read it. The old **chat only — not for ingest** badge is gone too, because it was true of nearly every row in a fetched catalogue and had become noise. **The rule it described is fully intact and is enforced on the server**, not merely displayed: a model that isn't fit for building still cannot become your build model, whatever any list looks like.
+
+**What "measured" is actually nine calls of.** Every "Measured by The Curator" chip comes from the same nine runs of the real ingest prompt against a fixed set of real pages — never a synthetic benchmark — and a model measured for one job (say, ingest) carries that reading into the others (Wiki Health, Compile) rather than a second run, because they are the same task class: read a document, plan structure, write pages. **It is a screen, not a guarantee** — nine runs describe what a model tends to do, not what your next call will do.
 
 **Settings and the chat composer deliberately show different amounts.** Settings is a screen you open to manage models and can afford a fuller row; the composer is a menu you open mid-conversation, so it keeps the warning and the speed and drops the rest. Both use the same words for the same facts, computed once in one place so the two cannot drift apart. That is intentional, not a discrepancy to fix.
 
