@@ -186,6 +186,11 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // off-state's two CTA cards used a private `.sb-cta-desc` at 12px, four px
 // under every other description in the app.
 import { renderViewHeader, renderStatus, renderDescription, renderInfoMark } from '../shared/text.js';
+// SB (v3.71.0, COPY.md §3): the header's own hand-typed prose is REWRITTEN
+// as this view's framing top ⓘ (second brain → Shared Brain → agent memory,
+// "you are here" on shared-brain) — the same shape as Domains' D1/D2 and
+// Chat's G2.
+import { explainerHtml } from '../shared/explainer.js';
 // The section body's three kit parts (v3.65.3): the MONITOR for every live
 // reading (design rule 4), the freshness TIER for its time lines, and the
 // IDENTITY dot for every domain it names (rule 5). Imported, never copied —
@@ -880,9 +885,8 @@ function renderMain(token) {
     renderViewHeader({
       eyebrow: 'your team’s brain',
       title: 'Shared Brain',
-      info: 'A Shared Brain is a collective wiki a cohort writes together. Contributors push '
-          + 'synthesised summaries of the domains they opt in; the merged wiki comes back as a '
-          + 'read-only mirror. Nothing else on your machine moves.',
+      info: explainerHtml('shared.page'),
+      infoHtml: true,
     }) +
     body,
     token

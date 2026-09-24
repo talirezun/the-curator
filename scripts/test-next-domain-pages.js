@@ -321,6 +321,10 @@ const { COPY_SUCCESS_BANNER, TEMPLATE } =
 const { docsLinkHtml } =
   await import('../src/public/next/shared/docs-links.js');
 const { renderOverview } = await import('../src/public/next/shared/overview.js');
+// v3.71.0: G3/G4's ⓘ (`PAGES_INFO`, `HEALTH_INFO`) are module consts computed
+// from the real kit, the same reason docsLinkHtml/renderOverview above are
+// the real modules and not stubs.
+const { explainerMark } = await import('../src/public/next/shared/explainer.js');
 
 const FNS = [
   'activeBrowse', 'activeProjects', 'projectCount', 'infoMark', 'projInfoId',
@@ -344,13 +348,17 @@ const FNS = [
 let box;
 try {
   box = new Function(
-    'COPY_SUCCESS_BANNER', 'docsLinkHtml', 'renderOverview',
+    'COPY_SUCCESS_BANNER', 'docsLinkHtml', 'renderOverview', 'explainerMark',
     PREAMBLE +
     // v3.65.0 (R4): section ①'s explanation left the fold's BODY for an ⓘ on
     // its head, and the sentence is a module const so `renderMain` does not
     // carry a paragraph every lifting sandbox has to carry with it. LIFTED,
     // not stubbed — the words are the thing R4 moved.
     extractConstText(SRC, 'INGEST_INFO') + '\n' +
+    // v3.71.0 (G3/G4): the Pages eyebrow and the Wiki health section each
+    // gained their own ⓘ — both consts are computed from `explainerMark`.
+    extractConstText(SRC, 'PAGES_INFO') + '\n' +
+    extractConstText(SRC, 'HEALTH_INFO') + '\n' +
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
     extractConstArray(SRC, 'BROWSE_FOLDERS') + '\n' +
@@ -366,7 +374,7 @@ try {
          calls.reader.length = 0; calls.asyncFailures = 0; },
        __setDocument: (d) => { documentImpl = d; },
        __setFetch: (fn) => { fetchResponder = fn; } };`
-  )(COPY_SUCCESS_BANNER, docsLinkHtml, renderOverview);
+  )(COPY_SUCCESS_BANNER, docsLinkHtml, renderOverview, explainerMark);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js -- ' + err.message);
   process.exit(1);

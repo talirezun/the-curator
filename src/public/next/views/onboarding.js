@@ -104,6 +104,12 @@
 import { navigate, afterViewMount, icon, escapeHtml,
          requestDomainFold, ADD_SOURCES_FOLD } from '../app.js';
 import { loadUiState, durableStorage } from '../shared/ui-state.js';
+// G1 (v3.71.0): the framing ⓘ beside this panel's own title — the first
+// screen a user who dismisses this guide otherwise never sees the shape of.
+// Same mechanism as everywhere else in the app (shared/text.js's delegated
+// listener); the mark and its panel are two fragments this module places
+// itself, exactly like every other `explainerMark` adopter.
+import { explainerMark } from '../shared/explainer.js';
 
 // Namespaced like every other /next key (curator-next-theme,
 // curator-next-view, curator-next-chat-domain).
@@ -996,13 +1002,17 @@ function render() {
     '</li>'
   )).join('');
 
+  const frameInfo = explainerMark('obp-frame-info', 'onboarding.frame');
+
   root.innerHTML =
     '<section class="obp-panel" role="region" aria-labelledby="obp-title">' +
       '<div class="obp-head">' +
         '<h2 class="obp-title" id="obp-title" tabindex="-1">Getting started</h2>' +
+        frameInfo.btn +
         '<button type="button" class="obp-dismiss" id="obp-dismiss" ' +
           'aria-label="Dismiss the setup guide">' + icon('x', 14) + '</button>' +
       '</div>' +
+      frameInfo.panel +
       (askingDoor
         ? '<p class="obp-ask">What do you want to set up first?</p>' +
           '<ul class="obp-doors">' + doors + '</ul>'

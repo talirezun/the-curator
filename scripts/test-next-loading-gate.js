@@ -125,6 +125,11 @@ import {
 // bag below the same way renderReadoutGroup already does.
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
 import { freshnessTier } from '../src/public/next/shared/age.js';
+// v3.71.0: chat.js's CHAT_INFO (G2) and domains.js's HEALTH_INFO (G4) are
+// module consts computed from the real kit — same blind spot, same fix as
+// renderViewHeader/renderMonitor above: a new module-level identifier makes
+// this suite CRASH instead of go red unless it is handed in by name.
+import { explainerHtml, explainerMark } from '../src/public/next/shared/explainer.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NEXT = join(ROOT, 'src/public/next');
@@ -547,7 +552,11 @@ const domainsSrc = readFileSync(join(NEXT, 'views/domains.js'), 'utf8');
   // not how the card is boxed.
   const fn = new Function(
     'state', 'bootGate', 'isCurrentMount', 'setMain', 'renderViewHeader', 'emptyCard',
-    'gatedLoader', 'icon', 'navigate', 'document',
+    'gatedLoader', 'icon', 'navigate', 'document', 'explainerHtml',
+    // v3.71.0 (G2): renderMain's header now carries `info: CHAT_INFO`, a
+    // module const computed once above it — lifted here for the same reason
+    // renderMain itself is.
+    (chatSrc.match(/(?:^|\n)const CHAT_INFO = [^\n]*;/) || [''])[0] + '\n' +
     extractFunction(chatSrc, 'renderMain', 'chat.js') + '\nreturn renderMain;'
   );
   const run = (state, gate) => {
@@ -563,7 +572,8 @@ const domainsSrc = readFileSync(join(NEXT, 'views/domains.js'), 'utf8');
       gatedLoader,                                   // the REAL gate helper
       () => '<icon/>',
       () => {},
-      { getElementById: () => null }
+      { getElementById: () => null },
+      explainerHtml                                   // the REAL explainer kit — CHAT_INFO's own call
     );
     rm(1);
     return html;
@@ -648,6 +658,9 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
     inFlightWriteSlugs: new Set(),
     renderReadoutGroup, renderDescription, renderStatus,
     renderMonitor, freshnessTier,
+    // v3.71.0 (G4): healthSection's own ⓘ, `HEALTH_INFO`, is a module const
+    // computed from the real kit.
+    explainerMark,
   };
   const names = Object.keys(deps);
   const fn = new Function(
@@ -659,6 +672,7 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
     // label say anything. Its own coverage is in
     // scripts/test-next-domain-card-order.js.
     extractFunction(domainsSrc, 'healthScanLabel', 'domains.js') + '\n' +
+    (domainsSrc.match(/(?:^|\n)const HEALTH_INFO = [^\n]*;/) || [''])[0] + '\n' +
     // v3.50.0: the panel is wrapped in its own `.dm-section` with a section
     // eyebrow. Lifted for the same reason healthScanLabel is — this suite
     // renders the REAL panel, and the collapsed/settled patterns it matches

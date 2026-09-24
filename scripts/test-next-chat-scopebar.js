@@ -72,6 +72,7 @@ import { renderDepthCell } from '../src/public/next/shared/depth-bar.js';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CHAT_JS = path.join(ROOT, 'src/public/next/views/chat.js');
 const chatSrc = readFileSync(CHAT_JS, 'utf8');
+const textSrc = readFileSync(path.join(ROOT, 'src/public/next/shared/text.js'), 'utf8');
 
 let passed = 0, failed = 0;
 function ok(cond, label) {
@@ -254,6 +255,9 @@ function render(over = {}) {
     FOOT_HELPERS() +
     extractFunction(chatSrc, 'projectFootHtml') + '\n' +
     extractFunction(chatSrc, 'projectListboxCfg') + '\n' +
+    // v3.71.0 fix: the project ⓘ's typed "ⓘ" character became the app's own
+    // SVG glyph, a module const projectGroupHtml now references.
+    extractConst(chatSrc, 'CHAT_PROJECT_INFO_GLYPH') + '\n' +
     extractFunction(chatSrc, 'projectGroupHtml') + '\n' +
     extractFunction(chatSrc, 'projectInfoPanelHtml') + '\n' +
     extractFunction(chatSrc, 'renderMain') + '\n' +
@@ -768,6 +772,19 @@ section('§7 — THE PROJECT GROUP (v3.64.0): a second group, not a second domai
   eq(info.attrs['aria-controls'], 'chat-project-info', '…and naming the panel it controls');
   ok(typeof info.attrs['aria-label'] === 'string' && info.attrs['aria-label'].length > 0,
     '…with an accessible name, because "ⓘ" is not one');
+  // v3.71.0 fix: INVENTORY.md found this button's "icon" was the literal
+  // TYPED CHARACTER "ⓘ" — the odd one out among the app's five ⓘ emitters,
+  // which otherwise agree on one violet circled-i SVG. It is now a fourth
+  // local copy of that same glyph (shared/text.js takes no imports, so the
+  // real fix — one shared render call — is out of reach here), pinned
+  // byte-identical the same way settings.js's TX_INFO_GLYPH already is.
+  ok(!html.includes('>ⓘ<'), 'the typed "ⓘ" CHARACTER is gone — the button renders an SVG, not text');
+  const glyphM = chatSrc.match(/const CHAT_PROJECT_INFO_GLYPH = '([^\n]*)';/);
+  ok(!!glyphM, 'chat.js defines CHAT_PROJECT_INFO_GLYPH');
+  const theirs = textSrc.match(/const INFO_GLYPH =([\s\S]*?);\n/);
+  ok(!!theirs, 'shared/text.js still has INFO_GLYPH to compare against');
+  ok(!!glyphM && !!theirs && glyphM[1] === theirs[1].trim().replace(/'\s*\+\s*'/g, '').replace(/^'|'$/g, ''),
+    'chat.js’s CHAT_PROJECT_INFO_GLYPH is BYTE-IDENTICAL to shared/text.js’s INFO_GLYPH');
   const panel = findByClass(tree, 'chat-project-panel');
   ok(!!panel, 'the panel it controls is rendered');
   /* ── UNDER ITS OWN BUTTON. TWO MEASUREMENTS, AND THE SECOND ONE MOVED IT
@@ -1234,6 +1251,7 @@ section('§12 — AN OPEN ⓘ SURVIVES A BACKGROUND REPAINT OF ITS GROUP (v3.64.
       FOOT_HELPERS() +
     extractFunction(chatSrc, 'projectFootHtml') + '\n' +
       extractFunction(chatSrc, 'projectListboxCfg') + '\n' +
+      extractConst(chatSrc, 'CHAT_PROJECT_INFO_GLYPH') + '\n' +
       extractFunction(chatSrc, 'projectInfoPanelHtml') + '\n' +
       extractFunction(chatSrc, 'projectGroupHtml') + '\n' +
       extractFunction(chatSrc, 'patchProjectGroup') + '\n' +

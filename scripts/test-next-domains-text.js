@@ -99,6 +99,10 @@ import { renderMonitor } from '../src/public/next/shared/monitor.js';
 import { freshnessTier } from '../src/public/next/shared/age.js';
 // v3.67.0 (package SD): Quick maintenance renders the shared run line.
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs } from '../src/public/next/shared/ai-run.js';
+// v3.71.0 (G3/G4): HEALTH_INFO and PAGES_INFO are module consts computed
+// from the real kit (`explainerMark`) — injected for the same reason
+// renderMonitor/freshnessTier are: not visible inside a lifted body.
+import { explainerMark } from '../src/public/next/shared/explainer.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NEXT = join(ROOT, 'src/public/next');
@@ -364,6 +368,10 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
     // here would let the figures say anything while this section asserts
     // exactly which ones reach the panel.
     renderMonitor, freshnessTier,
+    // v3.71.0 (G4): healthSection's own ⓘ, `HEALTH_INFO`, is a module const
+    // computed from the real kit — `explainerMark` injected for the same
+    // reason renderMonitor/freshnessTier are.
+    explainerMark,
   };
   const names = Object.keys(deps);
   const build = () => makeCallable(
@@ -373,6 +381,7 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
     // §3b. It is LIFTED rather than stubbed, so what these renders show is
     // the shipped word and not this file's idea of it.
     extractFunction(domainsSrc, 'healthScanLabel') + '\n' +
+    extractConstText(domainsSrc, 'HEALTH_INFO') + '\n' +
     // v3.50.0: the panel is now wrapped in its own `.dm-section` with a
     // section eyebrow, by a helper. LIFTED, not stubbed, for the same reason
     // healthScanLabel is: what these renders show has to be the shipped
@@ -457,6 +466,7 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
         ['state', ...names6],
         extractFunction(domainsSrc, 'shouldKeepHealthOnReload') + '\n' +
         extractFunction(domainsSrc, 'healthScanLabel') + '\n' +
+        extractConstText(domainsSrc, 'HEALTH_INFO') + '\n' +
         extractFunction(domainsSrc, 'healthSection') + '\n' +
         extractFunction(domainsSrc, 'renderHealthPanel'),
         'renderHealthPanel')({ ...base, health: rep6 }, ...names6.map((n) => d6[n]))({ slug: 'articles' }, false));
@@ -484,6 +494,7 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
         ['state', ...names6],
         extractFunction(domainsSrc, 'shouldKeepHealthOnReload') + '\n' +
         extractFunction(domainsSrc, 'healthScanLabel') + '\n' +
+        extractConstText(domainsSrc, 'HEALTH_INFO') + '\n' +
         extractFunction(domainsSrc, 'healthSection') + '\n' +
         extractFunction(domainsSrc, 'renderHealthPanel'),
         'renderHealthPanel')({ ...base, health: { ...REPORT, brokenLinks: [], orphans: [], hyphenVariants: [] } },
@@ -579,6 +590,8 @@ section('§4  ABSENT IS NOT ZERO — at this call site, not just in the module')
     // here would let the figures say anything while this section asserts
     // exactly which ones reach the panel.
     renderMonitor, freshnessTier,
+    // v3.71.0 (G4) — see the §3 harness above.
+    explainerMark,
   };
   const names = Object.keys(deps);
   const render = (report) => {
@@ -587,6 +600,7 @@ section('§4  ABSENT IS NOT ZERO — at this call site, not just in the module')
       extractFunction(domainsSrc, 'relTime') + '\n' +
       extractFunction(domainsSrc, 'shouldKeepHealthOnReload') + '\n' +
       extractFunction(domainsSrc, 'healthScanLabel') + '\n' +
+      extractConstText(domainsSrc, 'HEALTH_INFO') + '\n' +
       // v3.50.0 — see the §3 harness above.
       extractFunction(domainsSrc, 'healthSection') + '\n' +
       extractFunction(domainsSrc, 'renderHealthPanel'),
@@ -802,6 +816,9 @@ section('§6  THE OTHER THREE SITES — mirror note, sidebar error, browse error
       icon: () => '', escapeHtml: (x) => String(x), loadGate: {}, gatedLoader: () => '<GATED/>',
       activeBrowse: () => ({ error: HOSTILE }), BROWSE_RENDER_CAP: 300,
       filterBrowseEntries: () => [], renderStatus, renderDescription,
+      // v3.71.0 (G3): BROWSE_EYEBROW now carries its own ⓘ, `PAGES_INFO`, a
+      // module const computed from the real kit.
+      explainerMark,
     };
     const names = Object.keys(deps);
     const html = callOrFail('browse panel with a listing error', () => makeCallable(
@@ -809,6 +826,7 @@ section('§6  THE OTHER THREE SITES — mirror note, sidebar error, browse error
       // (the stat cards above carry their own PAGES eyebrow over a COUNT, so
       // the list says "PAGES · THE WIKI"). Lifted, not retyped.
       ['state', ...names],
+      extractConstText(domainsSrc, 'PAGES_INFO') + '\n' +
       extractConstText(domainsSrc, 'BROWSE_EYEBROW') + '\n' +
       extractFunction(domainsSrc, 'renderBrowsePanel'), 'renderBrowsePanel'
     )({}, ...names.map((n) => deps[n]))());

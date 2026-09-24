@@ -62,6 +62,10 @@ import { fileURLToPath } from 'node:url';
 const { docsLinkHtml } =
   await import('../src/public/next/shared/docs-links.js');
 const { renderOverview } = await import('../src/public/next/shared/overview.js');
+// v3.71.0: G3/G4's ⓘ (`PAGES_INFO`, `HEALTH_INFO`) are module consts computed
+// from the REAL kit, the same reason docsLinkHtml/renderOverview above are
+// the real modules and not stubs — a mistyped explainer key THROWS.
+const { explainerMark } = await import('../src/public/next/shared/explainer.js');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -212,7 +216,7 @@ const document = { getElementById: () => null, querySelectorAll: () => [] };
 let main;
 try {
   main = new Function(
-    'docsLinkHtml', 'renderOverview',
+    'docsLinkHtml', 'renderOverview', 'explainerMark',
     // v3.62.0 (P1-14). `renderStatCards` now builds the OVERVIEW block's ⓘ,
     // so the legend text and the shared docs table are collaborators of it.
     // Both are lifted rather than stubbed: `docsUrl()` THROWS on a key that is
@@ -224,6 +228,7 @@ try {
     // carry a paragraph every lifting sandbox has to carry with it. LIFTED,
     // not stubbed — the words are the thing R4 moved.
     extractConstText(SRC, 'INGEST_INFO') + '\n' +
+    extractConstText(SRC, 'PAGES_INFO') + '\n' +
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
     extractConstArray(SRC, 'BROWSE_FOLDERS') + '\n' +
@@ -247,7 +252,7 @@ try {
        memoryRowHtml, browseRowHtml, browseMoreHtml, browseNoteHtml, projectCount,
        __setState: (s) => { state = s; }, __calls: () => calls,
        __reset: () => { calls.setMain.length = 0; } };`
-  )(docsLinkHtml, renderOverview);
+  )(docsLinkHtml, renderOverview, explainerMark);
 } catch (err) {
   console.log('FATAL: could not build the renderMain sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -316,8 +321,30 @@ section('S1 -- THE WIKI IS NOT BURIED: card order, by DOM position');
       iBrowse < iHealth, iBrowse + ' < ' + iHealth);
     ok('Projects still comes before Wiki health -- the v3.48.0 placement, unchanged by this move',
       iProjects < iHealth, iProjects + ' < ' + iHealth);
-    ok('the eyebrow immediately precedes its own card, so it labels the list and not the stats',
-      iEyebrow < iBrowse && iBrowse - iEyebrow === 1, iEyebrow + ' -> ' + iBrowse);
+    // v3.71.0 (G3): the eyebrow now carries its own ⓘ (`PAGES_INFO`), whose
+    // button sits inside the eyebrow's OWN head row and whose panel is a new
+    // sibling between that row and the card — so document order between the
+    // eyebrow and the card is no longer EMPTY, and a raw index diff of 1 no
+    // longer holds. What still has to be true is the property the diff was a
+    // proxy for: nothing FOREIGN sits between them — every node in that gap
+    // belongs to the eyebrow's own ⓘ (its button or its panel), not to some
+    // other card that drifted in between.
+    const seq = flatten(root);
+    const iPanel = at((n) => n.attrs.id === 'dm-pages-info');
+    const iBtn = at((n) => n.attrs.id === 'dm-pages-info-btn');
+    ok('CONTROL -- the Pages ⓘ button and panel are both in the parsed tree',
+      iBtn >= 0 && iPanel >= 0, iBtn + '/' + iPanel);
+    const isDescendantOfEither = (n) => {
+      for (let p = n; p; p = p.parentNode) {
+        if (p.attrs.id === 'dm-pages-info-btn' || p.attrs.id === 'dm-pages-info') return true;
+      }
+      return false;
+    };
+    const between = seq.slice(iEyebrow + 1, iBrowse);
+    const foreign = between.find((n) => !isDescendantOfEither(n));
+    ok('the eyebrow immediately precedes its own card — the only thing between them is its own ⓘ',
+      iEyebrow < iBrowse && !foreign,
+      foreign ? `foreign node: ${foreign.tagName} class="${foreign.attrs.class || ''}"` : `${iEyebrow} -> ${iBrowse}, ${between.length} nodes between, all the ⓘ's own`);
   }
 }
 {
@@ -432,12 +459,17 @@ section('S3 -- "Scan wiki health" vs "Rescan"');
     // the REAL functions rather than stubs, because this section renders the
     // shipped panel and a stub could let the figures say anything.
     renderMonitor, freshnessTier,
+    // v3.71.0 (G4): healthSection's own ⓘ, `HEALTH_INFO`, is a module const
+    // computed from the real kit — `explainerMark` is injected for the SAME
+    // reason renderMonitor/freshnessTier are: not visible inside a lifted body.
+    explainerMark,
   };
   const names = Object.keys(deps);
   const build = () => new Function(
     'state', ...names,
     extractFunction(SRC, 'shouldKeepHealthOnReload') + '\n' +
     extractFunction(SRC, 'healthScanLabel') + '\n' +
+    extractConstText(SRC, 'HEALTH_INFO') + '\n' +
     extractFunction(SRC, 'healthSection') + '\n' +
     extractFunction(SRC, 'renderHealthPanel') + '\nreturn renderHealthPanel;'
   );
