@@ -1395,6 +1395,13 @@ punctuation.
 
 If a fold is open when the screen refreshes underneath you, it stays open.
 
+**Since v3.67.2, one rule also separates a passing confirmation from a warning.** Confirmation of
+something that just worked — a copy, for instance — appears briefly in the bottom-right corner and
+closes on its own; it never carries a cost, a destructive outcome, a failure, or anything still
+blocking you. Anything that qualifies as one of those stays on the page, unfolded, exactly as the
+list above already required — a warning, a cost, a refusal and a result never move to the
+corner and time out.
+
 **The block shape is no longer Settings-only.** A heading, a short lede with its ⓘ at the end, a
 body, and a hairline before the next block — that is now a shared piece any screen can be built
 from, and [Project context](#project-context--what-the-screen-shows) is the first outside Settings to
@@ -1765,6 +1772,14 @@ author, exactly as a folder mirror is — and any document you had marked **read
 marked, by name, across the switch. As with every mirror, there is **no token field on this
 panel**: you name which file on this computer the read-only token is read from — **config**, or
 **sync** (Personal Sync's token) — never paste one here.
+
+**A document's SOURCE reading tells you why it isn't fresh, in one of two different ways (since
+v3.67.2).** A document mirrored from GitHub reads **"GitHub · not checked"** — freshness there is
+compared only when you press Refresh, never on an ordinary read, so this is not a warning, just an
+honest "nobody has asked yet." A document mirrored from a folder that genuinely is not on this
+computer — a mirror set up on another machine — reads **"source not here"**, now a pressable word
+(or a disabled Refresh/Add control beside it) that explains itself and what to do about it when you
+press it, rather than a floating note that used to say so and then vanish.
 
 **READ WITH now tells you the truth, and gives you a door if there is nothing to tell (v3.65.2).**
 Through v3.65.1 the radio's **config** option always claimed *"the read-only token in Settings"* —
@@ -4419,6 +4434,15 @@ into whichever of these your tool reads:
 
 Unsure which applies to you? **`my-curator doctor`** ([§13c](#13c-making-capture-real--the-command-the-hooks-and-the-meter))
 reports the file your harness will actually read on this machine, and whether the block is in it.
+
+**Since v3.67.2, pressing the button tells you where to paste it, not just that it copied.** A
+short note appears — bottom-right, closing on its own after 30 seconds (it waits while your pointer
+is over it; press Copy again to see it once more) — reading: *"Paste it at the very top of the file
+your agent loads every session, so it is read first and no size cap cuts it off. CLAUDE.md for
+Claude Code · AGENTS.md for Codex and others · GEMINI.md for Gemini CLI · a rule file in
+.cursor/rules for Cursor."* Position matters for a concrete reason: Codex truncates `AGENTS.md`
+silently at 32,768 bytes, so a block appended at the bottom of a large file can go missing with no
+error at all.
 
 It does not replace the skill — the skill is what carries *how* to write a good handoff. The block
 only makes sure the agent goes and looks. The full measurement, including what it does not show
