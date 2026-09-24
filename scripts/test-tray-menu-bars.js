@@ -340,30 +340,38 @@ section('§6 (1) capture per project — numerator, NAMED denominator, absent �
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§7 (3) documents — the APP\'S applicability rule, danger only on over-run');
+section('§7 (3) documents — read first against the READING budget; stored is neutral (v3.70.0)');
 {
   const withDocs = (d) => build(summary({
     projects: [{ ...summary().projects[0], documents: d }, ...summary().projects.slice(1)],
   }), { dark: true }).documents;
   const stored = withDocs(docs({ totalBytes: 88 * KB }));
-  eq(stored.label, 'Documents · 88 of 200 KB', 'nothing flagged → stored bytes against the 200 KB project budget');
-  eq([stored.basis, stored.frac, stored.over, stored.bar.danger], ['stored', 88 * KB / 204800, false, false],
-    '… basis stored, share 88/200, not over, not danger');
+  eq(stored.label, 'Documents · 5 · 88 KB stored', 'nothing flagged → the stored total, NEUTRALLY (no "of 200 KB")');
+  eq([stored.basis, stored.frac, stored.over, stored.bar], ['stored', null, false, null],
+    '… basis stored, NO bar (no named denominator is left to draw it against), never over');
+  ok(!/200/.test(stored.label + stored.toolTip) && /Session start line/.test(stored.toolTip),
+    '… the retired 200 KB project budget appears nowhere, and the tooltip points at the Session start line');
   const rf = withDocs(docs({ totalBytes: 1980 * KB, budgetExceeded: true, readFirstCount: 3, readFirstBytes: 64 * KB }));
   eq(rf.label, 'Read first · 64 of 120 KB',
-    'once anything is flagged → read-first bytes against 120 KB, EVEN THOUGH 1,980 KB stored is over 200');
-  ok(!rf.over && !rf.bar.danger && rf.toolTip.includes('1,980 KB stored') && rf.toolTip.includes('(over)'),
-    '… so the bar is NOT danger (the app warns on the read-first set), and the stored over-run is still told in the tooltip');
+    'once anything is flagged → read-first bytes against the READING budget (120 KB here)');
+  ok(!rf.over && !rf.bar.danger && rf.toolTip.includes('1,980 KB stored') && !rf.toolTip.includes('(over)'),
+    '… not danger, and a stored total over 200 KB is stated NEUTRALLY — no "(over)" anywhere');
+  const owner = withDocs(docs({ readFirstCount: 2, readFirstBytes: 40 * KB, readFirstBudgetBytes: 64 * KB }));
+  eq([owner.label, owner.frac], ['Read first · 40 of 64 KB', 40 / 64],
+    'the denominator is the project\'s OWN reading budget when the store says so (Standard, 64 KB)');
   const rfOver = withDocs(docs({ readFirstCount: 3, readFirstBytes: 151 * KB, readFirstBudgetExceeded: true }));
-  eq(rfOver.label, 'Read first · over · 151 of 120 KB', 'an OVER-RUN says "over" in words, before the figures');
+  eq(rfOver.label, 'Read first · over · 151 of 120 KB', 'an OVER-RUN of the reading budget says "over" in words, before the figures');
   ok(rfOver.over && rfOver.bar.danger && rfOver.bar.over, '… and only then is the bar danger, and over-run in shape');
   const stOver = withDocs(docs({ totalBytes: 1980 * KB, budgetExceeded: true }));
-  eq(stOver.label, 'Documents · over · 1,980 of 200 KB', 'a stored over-run, with the app\'s en-US grouping');
-  ok(stOver.label.length <= M.BAR_LABEL_CHARS && rfOver.label.length <= M.BAR_LABEL_CHARS,
-    'both over-run labels fit the bar budget, so no clip can ever take "over" away');
-  eq(withDocs(docs({ count: 0, totalBytes: 0 })).label, 'Documents · none', 'no documents → "none" …');
-  eq(opaqueRun(withDocs(docs({ count: 0, totalBytes: 0 })).bar), 0, '… over an empty track (a measured zero)');
-  eq(withDocs(docs({ totalBytes: 300 })).label, 'Documents · <1 of 200 KB', '300 bytes is "<1", never a rounded-down "0"');
+  eq([stOver.label, stOver.over, stOver.bar], ['Documents · 5 · 1,980 KB stored', false, null],
+    'a stored total over 200 KB is NOT an alarm any more — no "over", no danger bar (en-US grouping kept)');
+  const idx = withDocs(docs({ readFirstCount: 1, readFirstBytes: 10 * KB, readFirstBudgetBytes: 0, readFirstBudgetExceeded: true }));
+  ok(idx.over && idx.bar.over && idx.label === 'Read first · over · 10 of 0 KB',
+    'an "Index only" (0 KB) budget with read-first text → an over-run SHAPE, never a division by zero');
+  ok(rfOver.label.length <= M.BAR_LABEL_CHARS && stOver.label.length <= M.BAR_LABEL_CHARS,
+    'both labels fit the bar budget, so no clip can ever take "over" away');
+  eq(withDocs(docs({ count: 0, totalBytes: 0 })).label, 'Documents · none', 'no documents → "none"');
+  eq(withDocs(docs({ totalBytes: 300 })).label, 'Documents · 5 · <1 KB stored', '300 bytes is "<1", never a rounded-down "0"');
   eq(withDocs(null), null, 'documents null (index refused / manifest unreadable) → NO item, never a zero');
   eq(build(summary({ scopes: [], projects: [] })).documents, null, 'an empty store has no documents item');
   ok(stored.route === 'projects/curator', 'the item routes to the HEADLINE project');
@@ -426,7 +434,10 @@ section('§9 the menu template — placement, clicks, and the icon seam');
 {
   const seen = [];
   const calls = { scope: [], settings: 0 };
-  const m = build(summary(), { dark: true });
+  // Something flagged read first, so the documents line carries a bar (a
+  // stored-only reading carries none since v3.70.0 — §7).
+  const m = build(summary({ projects: [{ ...summary().projects[0], documents: docs({ readFirstCount: 2, readFirstBytes: 30 * KB }) },
+    ...summary().projects.slice(1)] }), { dark: true });
   const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(m, {
     ...NOOPS,
     onOpenScope: (r) => calls.scope.push(r && r.route),
