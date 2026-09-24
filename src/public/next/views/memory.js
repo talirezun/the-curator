@@ -836,6 +836,11 @@ function freshState() {
     ctxSaving: false,
     ctxError: null,
     budgetPreview: null,
+    // v3.70.1: the "Documents at start" planner — a DRAFT of start states for
+    // the project on screen (`{domain, project, draft: {slug: state},
+    // applying, errors}`), never persisted, and its measured preview.
+    planner: null,
+    plannerPreview: null,
   };
 }
 
@@ -1144,6 +1149,10 @@ let ctxSettingsInFlight = false;
 let budgetPreviewTimer = null;
 let budgetPreviewInFlight = null;
 const budgetPreviewCache = new Map();
+// v3.70.1: the planner's preview — its own debounce timer and request in
+// flight; answers share `budgetPreviewCache` (a key that starts "plan\n").
+let plannerTimer = null;
+let plannerInFlight = null;
 // THE PROJECT LAST OPEN IN THIS TAB. Coming back to Context from Chat or
 // Domains used to re-derive the project from recency (`initialPick`), so a user
 // reading a quieter project in another domain was dropped onto the freshest
@@ -10934,6 +10943,8 @@ function meterModel(data) {
 function meterSource(data) {
   const bp = budgetPreviewFor();
   if (bp && bp.data) return { data: bp.data, kind: 'budget', bytes: bp.bytes };
+  const pp = plannerPreviewFor();
+  if (pp && pp.data && pp.data.meter) return { data: pp.data, kind: 'planner', changes: pp.changes };
   const pv = previewFor();
   if (pv && pv.data && pv.data.meter) return { data: pv.data, kind: 'plan' };
   return { data, kind: 'measured' };
@@ -10950,6 +10961,9 @@ function sessionMeterHtml(data, error) {
       ? '<p class="mem-ss-preview-of">' + escapeHtml('Previewing the '
         + presetName(src.bytes) + ' reading budget — choose it to apply, or close the list to go back.')
         + '</p>'
+      : src.kind === 'planner'
+        ? '<p class="mem-ss-preview-of">' + escapeHtml('Previewing ' + src.changes + ' change'
+          + (src.changes === 1 ? '' : 's') + ' from Documents at start — Apply or Discard them there.') + '</p>'
       : src.kind === 'plan'
         ? '<p class="mem-ss-preview-of">Previewing the suggested reading plan — apply it in step 1.</p>' : '';
     // The one-line hint the harness picker carries, said where the gap is
@@ -10993,13 +11007,18 @@ function sessionNoticesHtml(data, facts, readonly) {
   let out = '';
   // Only where there is something to choose: a project with no documents
   // has no budget question at all.
-  if (sum && sum.allEqual === true && facts.count > 0
+  // v3.70.1: not while the planner previews documents marked read first —
+  // the line describes the SAVED plan, and the meter above is showing another.
+  const pending = plannerBody();
+  const plansReadFirst = !!pending && Object.values(pending.plan).includes('read-first');
+  if (sum && sum.allEqual === true && facts.count > 0 && !plansReadFirst
     && !(data.costLine && data.costLine.applies === true)) {
     const total = data.tokens && Number.isInteger(data.tokens.mcp) ? data.tokens.mcp
       : Math.round(((data.bytes && data.bytes.mcp) || 0) / 4);
     const why = sum.reason === 'nothing-read-first'
       ? 'Nothing is read first, so every budget sends the same — a budget only caps the documents '
-        + 'marked read first. Mark the two or three an agent should never start without in step 1.'
+        + 'marked read first. Mark the two or three an agent should never start without in step 1, or '
+        + 'plan them under Documents at start below, where the meter previews them first.'
       : 'Every document marked read first already fits the smallest budget, so a larger one sends '
         + 'nothing more.';
     out += '<div class="tx-note mem-ss-note mem-ss-same" id="mem-ss-same">' + icon('alertCircle', 13)
@@ -11178,6 +11197,21 @@ function sessionReceivesMonitor(data, facts) {
       depth: { amount: pt, max: winTokens,
         label: tok(pt) + ' tokens of a ' + W + '-token window, if the suggestion is applied' },
     });
+  } else {
+    // v3.70.1: the planner's draft, measured by the same preview READ.
+    const pp = plannerPreviewFor();
+    const pd = pp && pp.data;
+    if (pd && pd.bytes && Number.isInteger(pd.bytes.mcp)) {
+      const pt = pd.tokens && Number.isInteger(pd.tokens.mcp) ? pd.tokens.mcp : Math.round(pd.bytes.mcp / 4);
+      const pr = pd.delivery && Number.isInteger(pd.delivery.replies) ? pd.delivery.replies : 1;
+      lines.push({
+        key: 'if applied',
+        value: tok(pt) + ' · ' + ssPct(pt, winTokens),
+        sub: pp.changes + ' change' + (pp.changes === 1 ? '' : 's') + ' from Documents at start · ' + repliesWord(pr),
+        depth: { amount: pt, max: winTokens,
+          label: tok(pt) + ' tokens of a ' + W + '-token window, if the planned changes are applied' },
+      });
+    }
   }
   const notes = Array.isArray(data.notes) ? data.notes.filter((n) => typeof n === 'string' && n) : [];
   return renderMonitor({
@@ -11306,8 +11340,8 @@ function renderSessionStart(read) {
     const replies = data.delivery && Number.isInteger(data.delivery.replies) ? data.delivery.replies : 1;
     const winTokens = contextWindowNow();
     const folds = state.openFolds || {};
-    rows =
-      '<details class="mem-fold" data-mem-fold="receives"' + (folds.receives === false ? '' : ' open') + '>'
+    rows = plannerFoldHtml(read, data, readonly)
+      + '<details class="mem-fold" data-mem-fold="receives"' + (folds.receives === false ? '' : ' open') + '>'
         + '<summary class="mem-fold-summary" id="mem-fold-receives">' + icon('chevronRight', 14)
           + '<span>What an agent receives</span>'
           + '<span class="mem-fold-meta">' + escapeHtml(tok(mcpTokens) + ' tokens · ' + ssSize(mcp)
@@ -11360,6 +11394,8 @@ function renderSessionStart(read) {
 function maybeLoadSessionStart(token) {
   // A proposal belongs to the project it was made on: a switch drops it.
   if (state.plan && !planFor()) state.plan = null;
+  // …and so does a planner draft (v3.70.1).
+  if (state.planner && !plannerFor()) { state.planner = null; state.plannerPreview = null; }
   // v3.70.0: this computer's window and harness, read once per mount.
   if (!state.ctxSettings && !ctxSettingsInFlight) {
     loadContextSettings(token).catch((err) => reportAsyncMountFailure(token, err));
@@ -11398,6 +11434,8 @@ async function loadSessionStart(domain, project, sig, token) {
   state.sessionStart = { domain, project, sig,
     data: next.data || (prev && prev.data) || null, error: next.error };
   patchSessionStart(token);
+  // A pending planner draft is measured against THIS read: ask again.
+  if (plannerBody()) previewPlanner(token);
 }
 
 /**
@@ -11736,7 +11774,11 @@ function previewBudget(bytes, token) {
   }
   const domain = state.activeDomain;
   const project = state.activeProject;
-  const key = keyOf(domain, project) + '\n' + ss.sig + '\n' + bytes;
+  // v3.70.1: a pending planner draft rides along, so hovering a budget
+  // previews it WITH the documents the owner is planning, not without them.
+  const pending = plannerBody();
+  const key = keyOf(domain, project) + '\n' + ss.sig + '\n' + bytes
+    + (pending ? '\n' + JSON.stringify(pending.plan) : '');
   const hit = budgetPreviewCache.get(key);
   if (hit) {
     state.budgetPreview = { domain, project, sig: ss.sig, bytes, data: hit };
@@ -11752,7 +11794,7 @@ function previewBudget(bytes, token) {
         + encodeURIComponent(project) + '/session-start/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ budgetBytes: bytes }),
+        body: JSON.stringify(pending ? { budgetBytes: bytes, plan: pending.plan } : { budgetBytes: bytes }),
       });
       const got = await res.json();
       if (res.ok && got && got.ok) data = got;
@@ -11766,6 +11808,332 @@ function previewBudget(bytes, token) {
     state.budgetPreview = { domain, project, sig: ss.sig, bytes, data };
     patchSessionMeter();
   }, 150);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  v3.70.1 — "DOCUMENTS AT START": THE PLANNER VIEW OF STEP ①'s START STATES
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A second HOST of the one manifest field step ①'s start-state control
+// writes — not a second control of record. Step ① stays canonical: it shows
+// what is SAVED and writes at once. The planner holds a DRAFT (never
+// persisted: leaving the project drops it), previews it through the existing
+// `POST …/session-start/preview` (a read; writes nothing), and writes only on
+// Apply — through the same `writeStartState` step ① uses, one PATCH per
+// changed row — then re-reads the project, so both hosts show the store.
+// Discard returns to the saved plan.
+
+/** The planner's three states, in the store's alphabet (`START_STATES`). */
+const PLANNER_STATES = [
+  { value: 'read-first', label: 'Read first' },
+  { value: 'on-request', label: 'On request' },
+  { value: 'not-at-start', label: 'Not at start' },
+];
+
+/** The planner draft for the project on screen, or null. */
+function plannerFor() {
+  const pl = state.planner;
+  return pl && pl.domain === state.activeDomain && pl.project === state.activeProject ? pl : null;
+}
+
+/** Every document as the planner sees it: its SAVED state (step ①'s), the
+ *  draft's state, and whether the two differ. Pure over the project read. */
+function plannerRows(read) {
+  const f = read && read.foundations;
+  const docs = f && Array.isArray(f.documents) ? f.documents.filter((d) => d && typeof d.slug === 'string') : [];
+  const pl = plannerFor();
+  const draft = pl && pl.draft && typeof pl.draft === 'object' ? pl.draft : {};
+  return docs.map((d) => {
+    const saved = fndStartOf(d);
+    const want = Object.hasOwn(draft, d.slug) && PLANNER_STATES.some((o) => o.value === draft[d.slug])
+      ? draft[d.slug] : saved;
+    const bytes = Number.isInteger(d.bytes) && d.bytes > 0 ? d.bytes : 0;
+    return {
+      slug: d.slug, title: String(d.title || d.slug), role: String(d.role || 'other'),
+      bytes, tokens: Math.round(bytes / 4), saved, now: want, changed: want !== saved,
+    };
+  });
+}
+
+/** The preview body for the draft — `{plan}` of the CHANGED rows only — or
+ *  null when nothing differs from what is saved. */
+function plannerBody(read) {
+  if (!plannerFor()) return null;
+  const plan = {};
+  for (const r of plannerRows(read === undefined ? state.projectRead : read)) if (r.changed) plan[r.slug] = r.now;
+  return Object.keys(plan).length ? { plan } : null;
+}
+
+/** The planner's measured preview, for the project and the measurement on
+ *  screen. While a newer draft is being measured the last answer stays on the
+ *  meter (no flash back to the saved plan); once nothing is pending it must
+ *  match the draft exactly. */
+function plannerPreviewFor() {
+  const pp = state.plannerPreview;
+  const ss = sessionStartFor();
+  const body = plannerBody();
+  if (!pp || !ss || !body || !pp.data) return null;
+  if (pp.domain !== state.activeDomain || pp.project !== state.activeProject || pp.sig !== ss.sig) return null;
+  if (pp.key === JSON.stringify(body.plan)) return pp;
+  return plannerTimer || plannerInFlight ? pp : null;
+}
+
+/** One row's choice. A choice equal to the saved state leaves the draft. */
+function setPlannerState(slug, value, token) {
+  if (PLANNER_STATES.every((o) => o.value !== value)) return;
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  if (!domain || !project || !state.projectRead) return;
+  let pl = plannerFor();
+  if (pl && pl.applying) return;
+  const row = plannerRows(state.projectRead).find((r) => r.slug === slug);
+  if (!row) return;
+  if (!pl) {
+    pl = { domain, project, draft: {}, applying: false, errors: null };
+    state.planner = pl;
+  }
+  if (value === row.saved) delete pl.draft[slug];
+  else pl.draft[slug] = value;
+  patchSessionStart(token);
+  previewPlanner(token);
+}
+
+/**
+ * PREVIEW THE DRAFT — `POST …/session-start/preview {plan}`, the route P4's
+ * budget preview uses (a read; never logged as a session). Debounced 150 ms,
+ * answers cached per (project, measurement, plan) in the SAME cache as the
+ * budget preview, and a late answer for a draft the owner has moved on from
+ * is dropped. Nothing pending ends the preview.
+ */
+function previewPlanner(token) {
+  if (plannerTimer) { clearTimeout(plannerTimer); plannerTimer = null; }
+  const ss = sessionStartFor();
+  const body = plannerBody();
+  if (!body || !ss || !ss.data) {
+    plannerInFlight = null;
+    if (state.plannerPreview) { state.plannerPreview = null; patchSessionStart(token); }
+    return;
+  }
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  const planKey = JSON.stringify(body.plan);
+  const key = 'plan\n' + keyOf(domain, project) + '\n' + ss.sig + '\n' + planKey;
+  const changes = Object.keys(body.plan).length;
+  const hit = budgetPreviewCache.get(key);
+  if (hit) {
+    plannerInFlight = null;
+    state.plannerPreview = { domain, project, sig: ss.sig, key: planKey, changes, data: hit, error: null };
+    patchSessionStart(token);
+    return;
+  }
+  plannerTimer = setTimeout(async () => {
+    plannerTimer = null;
+    plannerInFlight = key;
+    let data = null;
+    let error = null;
+    try {
+      const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/'
+        + encodeURIComponent(project) + '/session-start/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: body.plan }),
+      });
+      const got = await res.json();
+      if (res.ok && got && got.ok) data = got;
+      else error = (got && (got.error || got.message)) || ('HTTP ' + res.status);
+    } catch (err) { error = err.message; }
+    if (plannerInFlight !== key) return;
+    plannerInFlight = null;
+    if (!isCurrentMount(token) || state.activeDomain !== domain || state.activeProject !== project) return;
+    const now = sessionStartFor();
+    const nb = plannerBody();
+    if (!now || now.sig !== ss.sig || !nb || JSON.stringify(nb.plan) !== planKey) return;
+    if (data) budgetPreviewCache.set(key, data);
+    state.plannerPreview = { domain, project, sig: ss.sig, key: planKey, changes, data, error };
+    patchSessionStart(token);
+  }, 150);
+}
+
+/** Discard: back to the saved plan. Writes nothing. */
+function discardPlanner(token) {
+  if (plannerTimer) { clearTimeout(plannerTimer); plannerTimer = null; }
+  plannerInFlight = null;
+  state.planner = null;
+  state.plannerPreview = null;
+  patchSessionStart(token);
+}
+
+/**
+ * APPLY — every changed row through step ①'s own writer, one PATCH each.
+ *
+ * Every row is attempted: a refusal (a lock, a document removed meanwhile)
+ * does not stop the rest, and each refused row stays in the draft, named with
+ * the route's own words, until the owner applies again or discards. One toast
+ * for what landed. Then the project is re-read, so step ①'s control, the
+ * Documents monitor and the meter all show the store.
+ */
+async function applyPlanner(token) {
+  const pl = plannerFor();
+  if (!pl || pl.applying) return;
+  const changed = plannerRows(state.projectRead).filter((r) => r.changed);
+  if (!changed.length) return;
+  const { domain, project } = pl;
+  pl.applying = true;
+  pl.errors = null;
+  patchSessionStart(token);
+  let done = 0;
+  const errors = [];
+  for (const r of changed) {
+    const out = await writeStartState(domain, project, r.slug, r.now);
+    if (out.ok) { done++; delete pl.draft[r.slug]; }
+    else errors.push({ slug: r.slug, title: r.title, error: String(out.error || 'refused') });
+  }
+  if (!isCurrentMount(token)) return;
+  pl.applying = false;
+  pl.errors = errors.length ? errors : null;
+  if (state.planner === pl && !errors.length) state.planner = null;
+  state.plannerPreview = null;
+  if (done) {
+    showToast({ key: 'planner-applied', tone: 'success',
+      title: done + ' document' + (done === 1 ? '' : 's') + ' updated',
+      lines: ['Saved. Step 1 shows the same start states.'] });
+  }
+  if (state.activeDomain !== domain || state.activeProject !== project) return;
+  await reloadActive(token);
+}
+
+/** "3 read first · 5 on request · 1 not at start". */
+function plannerCountsWord(rows) {
+  const n = (v) => rows.filter((r) => r.now === v).length;
+  return n('read-first') + ' read first · ' + n('on-request') + ' on request · '
+    + n('not-at-start') + ' not at start';
+}
+
+/**
+ * THE "DOCUMENTS AT START" FOLD — step ④'s planner (DESIGN-v3.70.0 concept C,
+ * decision 1: v3.70.1).
+ *
+ * One row per document: its title, role and size; its tokens as a depth bar,
+ * a SHARE of the reading budget (`max`: a document larger than the budget is
+ * not an over-run); and a three-way start state. A changed row is tinted AND
+ * says what is saved ("saved: on request"), so the change is never colour
+ * alone. The totals line measures the read-first set against the budget (the
+ * one bar here that may turn danger — an over-run of a budget the owner set —
+ * and it says so in words). The pending line carries the preview's figures,
+ * Discard and Apply; a refusal stays on the page. The summary carries words
+ * only (rule 6, and the <summary> hazard).
+ */
+function plannerFoldHtml(read, data, readonly) {
+  const rows = plannerRows(read);
+  if (!rows.length || !data) return '';
+  const pl = plannerFor();
+  const pp = plannerPreviewFor();
+  const shown = pp && pp.data ? pp.data : data;
+  const b = shown.budget && typeof shown.budget === 'object' ? shown.budget : {};
+  const budgetBytes = Number.isInteger(b.bytes) && b.bytes >= 0 ? b.bytes : 0;
+  const budgetTokens = Number.isInteger(b.tokens) ? b.tokens : Math.round(budgetBytes / 4);
+  const changes = rows.filter((r) => r.changed);
+  const rfTokens = rows.filter((r) => r.now === 'read-first').reduce((n, r) => n + r.tokens, 0);
+  const rfCount = rows.filter((r) => r.now === 'read-first').length;
+  const planned = shown.planned === true;
+  const budgetName = planned ? 'reading budget' : 'default';
+  const folds = state.openFolds || {};
+  const busy = !!(pl && pl.applying);
+  const winTokens = contextWindowNow();
+
+  const meta = plannerCountsWord(rows) + (changes.length
+    ? ' · ' + changes.length + ' change' + (changes.length === 1 ? '' : 's') + ' not applied'
+    : (rfCount && budgetBytes > 0 ? ' · ' + tok(rfTokens) + ' of the ' + tok(budgetTokens) + ' ' + budgetName : ''));
+
+  let body = '<p class="mem-pl-lead">' + escapeHtml('The planner view of step 1’s start states. '
+    + 'A change previews on the meter above; nothing is saved until you apply it, and step 1 always '
+    + 'shows what is saved.') + '</p>';
+
+  body += '<div class="mem-pl-wrap"><table class="mem-pl-table" id="mem-pl-table">'
+    + '<caption class="visually-hidden">Documents at the start of a session: each document’s tokens, '
+      + 'as a share of the ' + escapeHtml(tok(budgetTokens)) + '-token ' + budgetName + ', and its start state</caption>'
+    + '<thead><tr><th scope="col">Document</th><th scope="col" class="mem-pl-num">Tokens</th>'
+    + '<th scope="col">At start</th></tr></thead><tbody>';
+  rows.forEach((r, i) => {
+    const savedWord = (START_STATES.find((o) => o.value === r.saved) || { label: r.saved }).label;
+    body += '<tr class="mem-pl-row' + (r.changed ? ' is-changed' : '') + '">'
+      + '<td class="mem-pl-doc"><span class="mem-pl-title">' + escapeHtml(r.title) + '</span>'
+        + '<span class="mem-pl-sub">' + escapeHtml(r.role + ' · ' + ssSize(r.bytes)
+          + (r.changed ? ' · saved: ' + savedWord : '')) + '</span></td>'
+      + '<td class="mem-pl-size">' + renderDepthCell({
+        value: tok(r.tokens), amount: r.tokens,
+        max: budgetTokens > 0 ? budgetTokens : undefined,
+        label: budgetTokens > 0 ? 'a share of the ' + tok(budgetTokens) + '-token ' + budgetName : '',
+      }) + '</td>'
+      + '<td class="mem-pl-ctl"><fieldset class="mem-pl-seg"' + (readonly || busy ? ' disabled' : '') + '>'
+        + '<legend class="visually-hidden">' + escapeHtml('At session start: ' + r.title) + '</legend>'
+        + PLANNER_STATES.map((o) => '<label class="mem-pl-opt">'
+          + '<input type="radio" name="mem-pl-' + i + '" id="mem-pl-' + i + '-' + o.value + '" value="' + o.value + '"'
+          + ' data-pl-slug="' + escapeHtml(r.slug) + '"' + (r.now === o.value ? ' checked' : '') + '>'
+          + '<span>' + escapeHtml(o.label) + '</span></label>').join('')
+      + '</fieldset></td></tr>';
+  });
+  body += '</tbody></table></div>';
+
+  // THE TOTALS, against the budget the start would run under (the preview's).
+  let totals;
+  let over = false;
+  if (!rfCount) {
+    totals = planned
+      ? 'Nothing is read first, so the ' + tok(budgetTokens) + ' reading budget stays unused.'
+      : 'Nothing is planned yet: agents are handed documents up to the ' + tok(budgetTokens)
+        + ' default. Marking one read first plans the project.';
+  } else if (budgetBytes === 0) {
+    totals = rfCount + ' read first · ' + tok(rfTokens) + ' — the reading budget is Index only, so agents are '
+      + 'handed none of their text.';
+  } else {
+    over = rfTokens > budgetTokens;
+    totals = rfCount + ' read first · ' + tok(rfTokens) + ' of the ' + tok(budgetTokens) + ' ' + budgetName
+      + (over ? ' — over it by ' + tok(rfTokens - budgetTokens) + ': agents are handed the first documents in '
+        + 'reading order, and the rest stay listed and are fetched by name.' : '');
+  }
+  body += '<div class="mem-pl-totals" id="mem-pl-totals"><span class="mem-pl-totals-words">' + escapeHtml(totals) + '</span>'
+    + (rfCount && budgetBytes > 0 ? '<span class="mem-pl-totals-bar">' + renderDepthCell({
+      value: tok(rfTokens), amount: rfTokens, budget: budgetTokens,
+      label: 'of the ' + tok(budgetTokens) + '-token ' + budgetName }) + '</span>' : '')
+    + '</div>';
+
+  // THE PENDING LINE — the preview's own figures, Discard and Apply.
+  if (changes.length && !readonly) {
+    const d = pp && pp.data ? pp.data : null;
+    const t = d && d.tokens && Number.isInteger(d.tokens.mcp) ? d.tokens.mcp : null;
+    const replies = d && d.delivery && Number.isInteger(d.delivery.replies) ? d.delivery.replies : null;
+    const failed = state.plannerPreview && state.plannerPreview.error && !d ? state.plannerPreview.error : null;
+    const figures = t !== null
+      ? tok(t) + ' tokens · ' + ssPct(t, winTokens) + ' of ' + windowWord(winTokens) + ' · ' + repliesWord(replies)
+      : failed ? 'the preview could not be measured: ' + failed : 'measuring…';
+    body += '<div class="mem-pl-pending" id="mem-pl-pending" role="status">'
+      + '<span class="mem-pl-pending-words"><b>Preview, not saved.</b> ' + escapeHtml(changes.length + ' change'
+        + (changes.length === 1 ? '' : 's') + ': ' + figures) + '</span>'
+      + '<span class="mem-pl-actions">'
+        + '<button type="button" class="btn btn-ghost btn-xs" id="mem-pl-discard"' + (busy ? ' disabled' : '') + '>Discard</button>'
+        + '<button type="button" class="btn btn-primary btn-xs" id="mem-pl-apply"' + (busy ? ' disabled' : '') + '>'
+          + escapeHtml(busy ? 'Applying…' : 'Apply ' + changes.length + ' change' + (changes.length === 1 ? '' : 's'))
+        + '</button></span></div>';
+  } else if (!readonly) {
+    body += '<p class="mem-pl-idle" id="mem-pl-idle">Nothing pending. A change previews on the meter first; '
+      + 'nothing is saved until Apply.</p>';
+  }
+  if (pl && Array.isArray(pl.errors) && pl.errors.length) {
+    body += '<div class="mem-note" id="mem-pl-error" role="alert">' + icon('alertTriangle', 13) + '<span>'
+      + escapeHtml((pl.errors.length === 1 ? 'One document was' : pl.errors.length + ' documents were')
+        + ' not changed: ' + pl.errors.map((e) => '“' + e.title + '” — ' + e.error).join('; ')
+        + '. ' + (pl.errors.length === 1 ? 'It is' : 'They are') + ' still in the plan; apply again or discard.')
+      + '</span></div>';
+  }
+
+  return '<details class="mem-fold" data-mem-fold="planner"' + (folds.planner === true ? ' open' : '') + '>'
+    + '<summary class="mem-fold-summary" id="mem-fold-planner">' + icon('chevronRight', 14)
+      + '<span>Documents at start</span>'
+      + '<span class="mem-fold-meta">' + escapeHtml(meta) + '</span>'
+    + '</summary>'
+    + '<div class="mem-fold-body">' + body + '</div>'
+  + '</details>';
 }
 
 /**
@@ -11915,6 +12283,22 @@ function bindSessionAndPlan(root, token) {
       obs.observe(trigger, { attributes: true, attributeFilter: ['aria-activedescendant', 'aria-expanded'] });
     }
   }
+  // ④ the "Documents at start" planner (v3.70.1): a choice changes the DRAFT
+  // and previews it; Apply and Discard. Nothing writes until Apply.
+  root.querySelectorAll('input[data-pl-slug]').forEach((el) => {
+    if (!once(el)) return;
+    el.addEventListener('change', () => {
+      if (el.checked) setPlannerState(el.getAttribute('data-pl-slug'), el.value, token);
+    });
+  });
+  const plApply = one('#mem-pl-apply');
+  if (once(plApply)) {
+    plApply.addEventListener('click', () => {
+      applyPlanner(token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  }
+  const plDiscard = one('#mem-pl-discard');
+  if (once(plDiscard)) plDiscard.addEventListener('click', () => discardPlanner(token));
   const setBudget = one('#mem-ss-set-budget');
   if (once(setBudget)) {
     setBudget.addEventListener('click', () => {
@@ -11922,11 +12306,25 @@ function bindSessionAndPlan(root, token) {
       if (trigger && !trigger.disabled) trigger.click();
     });
   }
-  // "Choose read-first documents" goes where the answer is: step ①, through
-  // the overview's own door (it scrolls and moves focus to the heading).
+  // "Choose read-first documents" goes where the answer is. v3.70.1: the
+  // planner fold just below — it previews a choice on the meter before
+  // anything is saved — opened and focused; step ①, through the overview's
+  // own door, when there is no planner on screen.
   const choose = one('#mem-ss-choose');
   if (once(choose)) {
     choose.addEventListener('click', () => {
+      const fold = document.querySelector('[data-mem-fold="planner"]');
+      if (fold) {
+        if (!state.openFolds) state.openFolds = {};
+        state.openFolds.planner = true;
+        fold.open = true;
+        const sum = document.getElementById('mem-fold-planner');
+        if (sum) {
+          try { sum.focus({ preventScroll: true }); } catch { sum.focus(); }
+          sum.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        }
+        return;
+      }
       const door = document.querySelector('[data-ov-jump="context-canonical"]');
       if (door) door.click();
     });

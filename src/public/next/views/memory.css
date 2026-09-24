@@ -2246,6 +2246,166 @@
   max-width: 44ch;
 }
 
+/* ── "DOCUMENTS AT START" — THE PLANNER FOLD (v3.70.1) ────────────────────
+   A table (rule 6: a bar in a table's numeric column), one row per document:
+   title over role · size, tokens as a SHARE of the reading budget, and a
+   three-way start state drawn as one segmented control of native radios (the
+   keyboard moves with the arrows; the focus ring is the input's own, drawn on
+   its segment). A changed row is tinted AND says "saved: …" in words. The
+   totals line and the pending line close the table; the pending line is the
+   only place Apply and Discard live. Below 640px each row stacks: the name and
+   its tokens, then the control on its own line (concept C's narrow rule). */
+.mem-pl-lead {
+  margin: 0 0 var(--space-5);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  max-width: 72ch;
+}
+.mem-pl-table { width: 100%; border-collapse: collapse; }
+.mem-pl-table th {
+  text-align: left;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-2);
+  padding: 0 var(--space-5) var(--space-3) 0;
+  border-bottom: var(--hairline-w) solid var(--hairline-strong);
+  white-space: nowrap;
+}
+.mem-pl-table td {
+  padding: var(--space-3) var(--space-5) var(--space-3) 0;
+  border-bottom: var(--hairline-w) solid var(--hairline);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  vertical-align: middle;
+}
+.mem-pl-table th:first-child,
+.mem-pl-table td:first-child { padding-left: var(--space-3); }
+.mem-pl-table tbody tr:last-child td { border-bottom: none; }
+.mem-pl-row.is-changed { background: var(--accent-tint); }
+.mem-pl-doc { min-width: 0; overflow-wrap: anywhere; }
+.mem-pl-title { display: block; color: var(--text); font-size: var(--text-sm); }
+.mem-pl-sub {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+}
+.mem-pl-num { text-align: left; }
+.mem-pl-size { width: 18%; min-width: 11ch; }
+.mem-pl-ctl { width: 1%; white-space: nowrap; }
+.mem-pl-seg {
+  display: inline-flex;
+  margin: 0;
+  padding: 0;
+  border: var(--hairline-w) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  min-width: 0;
+}
+.mem-pl-opt { position: relative; display: inline-flex; }
+.mem-pl-opt + .mem-pl-opt { border-left: var(--hairline-w) solid var(--border-strong); }
+.mem-pl-opt > input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: default;
+  user-select: none;
+}
+.mem-pl-opt > span {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-sm);
+  padding: 0 var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  background: var(--surface);
+  white-space: nowrap;
+}
+.mem-pl-opt > input:checked + span {
+  background: var(--accent-tint-strong);
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+.mem-pl-opt > input:focus-visible + span { box-shadow: var(--ring-focus); position: relative; z-index: 1; }
+.mem-pl-seg:disabled .mem-pl-opt > input { cursor: not-allowed; }
+.mem-pl-seg:disabled .mem-pl-opt > span { opacity: var(--opacity-disabled); cursor: not-allowed; }
+
+.mem-pl-totals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-6);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: var(--hairline-w) solid var(--hairline-strong);
+  font-size: var(--text-xs);
+  color: var(--text);
+}
+.mem-pl-totals-words { flex: 1 1 260px; min-width: 0; }
+.mem-pl-totals-bar { flex: 0 1 180px; min-width: 0; }
+.mem-pl-pending {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-6);
+  margin-top: var(--space-5);
+  padding: var(--space-3) var(--space-5);
+  border: 1px dashed var(--accent-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text);
+}
+.mem-pl-pending-words { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.mem-pl-pending b { font-weight: var(--weight-semibold); }
+.mem-pl-actions { display: flex; gap: var(--space-3); margin-left: auto; }
+.mem-pl-idle { margin: var(--space-5) 0 0; font-size: var(--text-xs); color: var(--text-2); }
+.mem-fold-body > #mem-pl-error { margin-top: var(--space-4); }
+/* Narrow: the rows stack on the width the TABLE has (a container query, not
+   the window — at a 568px window this column is ~170px, at 1370 ~930px):
+   the name on its own line, then its tokens, then the three-way control
+   across the whole row, its words wrapping inside their segments. */
+.mem-pl-wrap { container-type: inline-size; container-name: mempl; min-width: 0; }
+@container mempl (max-width: 519px) {
+  .mem-pl-table thead { display: none; }
+  .mem-pl-table,
+  .mem-pl-table tbody { display: block; }
+  .mem-pl-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border-bottom: var(--hairline-w) solid var(--hairline);
+  }
+  .mem-pl-table td { display: block; padding: 0; border-bottom: none; width: auto; min-width: 0; }
+  .mem-pl-table td:first-child { padding-left: 0; }
+  .mem-pl-ctl { white-space: normal; }
+  .mem-pl-seg { display: flex; width: 100%; }
+  .mem-pl-opt { flex: 1 1 0; min-width: 0; }
+  .mem-pl-opt > span {
+    flex: 1 1 auto;
+    justify-content: center;
+    text-align: center;
+    white-space: normal;
+    line-height: 1.2;
+    padding: var(--space-1) var(--space-2);
+  }
+}
+/* Narrower still (a 568px window leaves this column ~170px): the three
+   states stack, one per line, so no word is clipped. */
+@container mempl (max-width: 259px) {
+  .mem-pl-seg { flex-direction: column; }
+  .mem-pl-opt + .mem-pl-opt { border-left: none; border-top: var(--hairline-w) solid var(--border-strong); }
+  .mem-pl-opt > span { justify-content: flex-start; text-align: left; }
+}
+
+
 /* ── THE HELPER'S PANEL: `.mem-fnd-panel` (Quick maintenance's anatomy) ───
    Explanation left, the two buttons right, the run line under both; the panel
    is the one this page already uses for "Add from folder", so the helper adds

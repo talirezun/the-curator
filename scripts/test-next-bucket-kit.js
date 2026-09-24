@@ -24,6 +24,9 @@
  *       danger tone, no prefers-color-scheme, linked from index.html
  *   §9  contrast, recomputed: ink on every fill ≥ 4.5, neighbours ≥ 3,
  *       every text the meter prints ≥ 4.5, in both themes
+ *   §10 v3.70.1: one segment per read-first document — widths that share
+ *       the layer's, the reply boundary, the legend and the text alternative
+ *       naming every document; a meter WITHOUT parts byte-identical to v3.70.0
  */
 
 import { readFileSync } from 'node:fs';
@@ -310,6 +313,103 @@ section('§9  Contrast, recomputed from the token files');
     const r = C(th, '--ly-room-edge', '--ly-free');
     ok(r !== null && r >= 3, nm + ': the dashed room edge on the track ' + r + ':1 (≥ 3, non-text)');
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§10  v3.70.1 — one segment per read-first document (the planner)');
+{
+  // A LAYER WITHOUT PARTS IS BYTE-FOR-BYTE v3.70.0. The digest is of the
+  // v3.70.0 kit's own output over four models (today, two read first in two
+  // replies, a Not-set preview, an over-full window at Index only), computed
+  // from `git show v3.70.0:src/public/next/shared/bucket.js` before this
+  // release touched the file.
+  const { createHash } = await import('node:crypto');
+  const G = [
+    TODAY, TWO,
+    { windowTokens: 200000, harnessTokens: null, layers: LAYERS(30000), budgetTokens: 32768, onDemand: 1000, delivery: { replies: 2, replyTokens: 20480 }, preview: true },
+    { windowTokens: 200000, harnessTokens: 250000, layers: LAYERS(900), budgetTokens: 0, onDemand: null },
+  ];
+  const digest = createHash('sha256').update(G.map((m) => B.renderBucket(m) + '\u0000' + JSON.stringify(B.bucketText(m))).join('\u0001')).digest('hex');
+  ok(digest === 'd87404e1e700488006f02aa9caae538084bdd0c9bb609abbe1c511d3411ecdab',
+    'a meter WITHOUT per-document parts renders byte-identical to v3.70.0 (markup and text alternative)', digest);
+
+  const parts = [
+    { label: 'directory-map', title: 'Directory map', tokens: 4200, page: 1 },
+    { label: 'decisions-app', title: 'Decisions — app', tokens: 7200, page: 1 },
+    { label: 'decisions-knowledge', title: 'Decisions — knowledge', tokens: 8600, page: 2 },
+  ];
+  const layers = LAYERS(20000).map((l) => (l.key === 'read' ? { ...l, parts } : l));
+  const M = { ...TODAY, layers, budgetTokens: 32768, delivery: { replies: 2 } };
+  const z = B.renderEnlargement(M);
+  const segs = withClass(z, 'bk-part');
+  ok(segs.length === 3 && segs.every((t) => t.classes.includes('bk-ly-read')),
+    'the read-first layer is split into ONE segment per document, each on the same violet step (bk-ly-read)', segs.length);
+  ok(withClass(z, 'bk-ly-read').length === 3, '…and the layer is not ALSO drawn whole');
+  const denom = FIXED + 32768;
+  const layerPct = (20000 / denom) * 100;
+  const sum = segs.reduce((a, t) => a + widthOf(t), 0);
+  ok(near(sum, layerPct, 0.01), 'the documents share exactly the layer\'s width (the layer keeps its figure)', sum + ' vs ' + layerPct);
+  ok(near(widthOf(segs[1]) / widthOf(segs[0]), 7200 / 4200, 0.01), '…each in proportion to its own tokens');
+  // Each document's tokens are rounded on its own, so the parts rarely sum to
+  // the layer exactly; the LAYER's figure still decides the width.
+  const off = { ...M, layers: LAYERS(20000).map((l) => (l.key === 'read' ? { ...l, parts: parts.map((p, i) => ({ ...p, tokens: p.tokens - (i === 0 ? 150 : 0) })) } : l)) };
+  const offSum = withClass(B.renderEnlargement(off), 'bk-part').reduce((a, t2) => a + widthOf(t2), 0);
+  ok(near(offSum, layerPct, 0.01), 'parts that do not add up to the layer (rounding) still fill EXACTLY the layer\'s width', offSum + ' vs ' + layerPct);
+  const all = tags(z).filter((t) => t.classes.includes('bk-seg')).reduce((a, t) => a + widthOf(t), 0);
+  ok(near(all, 100, 0.01), 'the enlargement still sums to 100% with the room after the documents', all);
+  ok(!segs[0].classes.includes('bk-page-start') && !segs[1].classes.includes('bk-page-start') && segs[2].classes.includes('bk-page-start'),
+    'the document that opens reply 2 is marked bk-page-start, and only that one');
+  ok(/title="Decisions — knowledge ≈8\.6k · reply 2"/.test(z), 'its tooltip is the document\'s TITLE, its tokens and its reply');
+  ok(/<span class="bk-l-wide">decisions-knowledge 8\.6k<\/span>/.test(z) && /<span class="bk-l-wide">decisions-app 7\.2k<\/span>/.test(z),
+    'a document segment wide enough carries its name and tokens on the bar (here from 880px of bar)', z);
+  const pagesStrip = /<div class="bk-pages" aria-hidden="true">([\s\S]*?)<\/div>/.exec(z);
+  ok(!!pagesStrip, 'a thin "reply N" strip runs under the bar when the documents arrive in more than one reply (aria-hidden)');
+  const pg = withClass(z, 'bk-page');
+  ok(pg.length === 2 && /left:0%/.test(pg[0].attrs.style) && pg[1].classes.includes('is-later'),
+    'reply 1 runs from the bar\'s start (it carries the fixed layers too); reply 2 is marked later', JSON.stringify(pg.map((t) => t.attrs.style)));
+  const p2left = Number(/left:([\d.]+)%/.exec(pg[1].attrs.style)[1]);
+  const fixedPct = (FIXED / denom) * 100;
+  ok(near(p2left, fixedPct + widthOf(segs[0]) + widthOf(segs[1]), 0.01), 'reply 2 begins exactly where its first document does', p2left);
+  const g = B.bucketModel(M);
+  ok(g.pages && g.pages.length === 2 && g.pages[1].first === 'decisions-knowledge', 'the model names each reply\'s first document');
+  const t = B.bucketText(M);
+  ok(/read first 20k \(directory-map 4\.2k, decisions-app 7\.2k, decisions-knowledge 8\.6k\)/.test(t.enlargement)
+    && /Reply 2 starts with decisions-knowledge\./.test(t.enlargement),
+    'the TEXT ALTERNATIVE names every document with its tokens, and where reply 2 starts', t.enlargement);
+  const bar = tags(z).find((x) => x.classes.includes('bk-bar-zoom'));
+  ok(bar && unescape(bar.attrs['aria-label']) === t.enlargement, '…and the enlarged bar\'s aria-label IS that sentence');
+  const lg = B.renderLegend(M);
+  ok(/read first <b>20k<\/b> · 3 documents/.test(lg), 'the legend keeps the layer\'s own line, with its document count');
+  ok(/decisions-knowledge <b>8\.6k<\/b> · reply 2<\/li>/.test(lg) && /directory-map <b>4\.2k<\/b> · reply 1<\/li>/.test(lg)
+    && withClass(lg, 'bk-it-part').length === 3,
+  'EVERY document is in the legend with its tokens (and its reply when there are several) — the names a narrow bar drops');
+
+  // One reply: no mark, no strip, no reply words.
+  const one = { ...M, layers: LAYERS(20000).map((l) => (l.key === 'read' ? { ...l, parts: parts.map((p) => ({ ...p, page: 1 })) } : l)) };
+  const z1 = B.renderEnlargement(one);
+  ok(!/bk-page-start|bk-pages/.test(z1) && !/reply/.test(B.renderLegend(one)) && !/Reply/.test(B.bucketText(one).enlargement),
+    'in ONE reply: no page mark, no strip, and no reply words anywhere');
+  // Parts on another layer are ignored; empty or junk parts draw the layer whole.
+  const odd = { ...TODAY, layers: LAYERS(900).map((l) => (l.key === 'brief' ? { ...l, parts } : l.key === 'read' ? { ...l, parts: [null, { tokens: 5 }, 'x'] } : l)) };
+  const zo = B.renderEnlargement(odd);
+  ok(withClass(zo, 'bk-part').length === 0 && withClass(zo, 'bk-ly-read').length === 1,
+    'parts on any layer but read first, or parts with no name, are ignored — the layer draws whole, as in v3.70.0');
+  // Escaping.
+  const evil = { ...M, layers: LAYERS(900).map((l) => (l.key === 'read' ? { ...l, parts: [{ label: '<b>x</b>', title: '"><img src=y>', tokens: 900, page: 1 }] } : l)) };
+  const ze = B.renderEnlargement(evil) + B.renderLegend(evil);
+  ok(!/<img|<b>x<\/b>/.test(ze) && /&lt;b&gt;x&lt;\/b&gt;/.test(ze), 'a document\'s label and title are ESCAPED on the bar, in the tooltip and in the legend');
+  // The legend names twelve, then "+ N more".
+  const many = Array.from({ length: 15 }, (_, i) => ({ label: 'doc-' + i, tokens: 1000, page: 1 }));
+  const lm = B.renderLegend({ ...TODAY, layers: LAYERS(15000).map((l) => (l.key === 'read' ? { ...l, parts: many } : l)) });
+  ok(B.LEGEND_PARTS_MAX === 12 && withClass(lm, 'bk-it-part').length === 13 && /\+ 3 more <b>3\.0k<\/b>/.test(lm),
+    'fifteen documents: the legend names twelve, then "+ 3 more" with their tokens (the planner lists every one)');
+
+  // The stylesheet: thin separators, a wider one at a reply boundary, the strip's names drop when narrow.
+  const css = strip(read('shared/bucket.css'));
+  ok(/\.bk-part \+ \.bk-part\s*\{\s*box-shadow:\s*-1px 0 0 var\(--ly-gap\)/.test(css), 'documents are divided by a THIN (1px) separator in the gap token');
+  ok(/\.bk-part\.bk-page-start\s*\{\s*box-shadow:\s*-3px 0 0 var\(--ly-gap\)/.test(css), 'a reply boundary is a wider (3px) gap — subtle, and the strip names it');
+  ok(/@container bk \(max-width: 559px\)\s*\{[^}]*\}\s*\.bk-page span\s*\{\s*display:\s*none/.test(css) || /\.bk-page span\s*\{\s*display:\s*none/.test(css),
+    'below 560px of bar the strip\'s "reply N" names drop too (the legend carries the reply)');
 }
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');

@@ -98,13 +98,19 @@ export async function sessionStartReport(domain, project, whatIf = null, opts = 
   // the brief, handoff, journal and index; pages 2..N carry the rest. A split
   // read off page 1 alone would count page 2's documents "on request".
   const sent = Array.isArray(f.documents) ? [...f.documents] : [];
+  // The reply each document actually arrived in — the fallback for a page the
+  // delivery plan does not name (v3.70.1's per-document entries).
+  const arrivedOn = new Map(sent.map((d) => [d && d.slug, 1]));
   const tooLarge = [];
   const notes = [];
   let pagesUnread = 0;
   for (let pg = 2; delivery && pg <= delivery.replies; pg++) {
     const r = await run(whatIf, pg);
     if (!r || r.ok !== true || !r.foundations) { pagesUnread++; continue; }
-    if (Array.isArray(r.foundations.documents)) sent.push(...r.foundations.documents);
+    if (Array.isArray(r.foundations.documents)) {
+      for (const d of r.foundations.documents) if (d && !arrivedOn.has(d.slug)) arrivedOn.set(d.slug, pg);
+      sent.push(...r.foundations.documents);
+    }
     if (Array.isArray(r.foundations.tooLarge)) tooLarge.push(...r.foundations.tooLarge);
   }
   if (pagesUnread) notes.push(`${pagesUnread} later page${pagesUnread === 1 ? '' : 's'} could not be read for the split; the total is still the measured one.`);
@@ -190,10 +196,36 @@ export async function sessionStartReport(domain, project, whatIf = null, opts = 
     journal: tiers.journal.bytes, index: tiers.index.bytes, readFirst: sentText,
   };
   const LABEL = { framing: 'framing', brief: 'standing brief', handoff: 'latest handoff', journal: 'journal', index: 'document list', readFirst: docLabel };
+
+  // ── v3.70.1: THE DOCUMENT LAYER, ONE ENTRY PER DOCUMENT ────────────────
+  // Every document whose text is in the window, in DELIVERY ORDER (page 1's,
+  // then page 2's …), with the reply it arrives in. `page` is the delivery
+  // plan's (`replyDelivery(out).pages`, P1's `deliveryPlan`), and the reply the
+  // document was actually read from when the plan does not name it. Each
+  // entry's bytes are the text it is handed (so the entries ADD UP to the
+  // layer), and its title is the index row's. Additive: `documents` (the
+  // count) is unchanged.
+  const pageOf = new Map();
+  for (const p of (delivery ? delivery.pages : [])) {
+    for (const sl of (Array.isArray(p.slugs) ? p.slugs : [])) if (!pageOf.has(sl)) pageOf.set(sl, p.page);
+  }
+  const titleOf = new Map(rows.map((r) => [r.slug, typeof r.title === 'string' ? r.title : null]));
+  const entries = sent.filter((d) => d && typeof d.slug === 'string').map((d) => {
+    const bytes = utf8(d.text || '');
+    const t = titleOf.get(d.slug) || (typeof d.title === 'string' && d.title.trim() ? d.title : null);
+    return {
+      slug: d.slug, title: (t || d.slug).slice(0, 200), bytes, tokens: tok(bytes),
+      page: pageOf.get(d.slug) || arrivedOn.get(d.slug) || 1,
+      readFirst: d.readFirst === true,
+    };
+  });
   const layers = SESSION_LAYER_KEYS.map((key) => ({
     key, label: LABEL[key], bytes: layerBytes[key], tokens: tok(layerBytes[key]),
-    ...(key === 'readFirst' ? { documents: tiers.readFirst.count + tiers.otherText.count } : {}),
+    ...(key === 'readFirst' ? { documents: tiers.readFirst.count + tiers.otherText.count, entries } : {}),
   }));
+  // The kit's segments for the same layer: a short name (the slug without
+  // `.md`), the title for the segment's tooltip, and the reply it arrives in.
+  const parts = entries.map((e) => ({ label: e.slug.replace(/\.md$/, ''), title: e.title, tokens: e.tokens, page: e.page }));
 
   // ── THE DELIVERY: how many MCP replies, each page's measured size ───────
   const pageBytes = delivery ? delivery.pageBytes : workingStore.CONTEXT_PAGE_BYTES;
@@ -286,7 +318,8 @@ export async function sessionStartReport(domain, project, whatIf = null, opts = 
     // The bucket kit's model `m`, ready to pass (src/public/next/shared/bucket.js).
     meter: {
       windowTokens, harnessTokens,
-      layers: layers.map((l) => ({ key: KIT_KEY[l.key], label: l.label, tokens: l.tokens })),
+      layers: layers.map((l) => ({ key: KIT_KEY[l.key], label: l.label, tokens: l.tokens,
+        ...(l.key === 'readFirst' && parts.length ? { parts } : {}) })),
       budgetTokens: budget.tokens,
       onDemand: { tokens: onDemand.tokens, documents: onDemand.documents },
       delivery: { replies: deliveryOut.replies, replyTokens: deliveryOut.pageTokens },

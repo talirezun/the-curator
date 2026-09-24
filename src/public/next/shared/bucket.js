@@ -31,7 +31,12 @@
 //       { key: 'handoff', label: 'handoff',       tokens: 500 },
 //       { key: 'journal', label: 'journal',       tokens: 1025 },
 //       { key: 'index',   label: 'document list', tokens: 850 },
-//       { key: 'read',    label: 'read first',    tokens: 0 },
+//       { key: 'read',    label: 'read first',    tokens: 0,
+//         parts: [                       // OPTIONAL (v3.70.1): one per document,
+//           { label: 'decisions-app',    // in delivery order; the enlargement
+//             title: 'Decisions — app',  // draws each as its own segment and
+//             tokens: 7200, page: 1 },   // marks where reply 2 begins
+//         ] },
 //     ],                                 // key ∈ LAYER_KEYS picks the colour;
 //                                        // any other key draws as 'other'
 //     budgetTokens:  16384,              // the reading-budget ceiling (read-first)
@@ -73,6 +78,17 @@
 //   · The Curator's share of a 1M window can be a fraction of a pixel, so its
 //     segment has a CSS min-width and the head line states the true figure.
 //
+// ── PER-DOCUMENT SEGMENTS (v3.70.1, the planner) ───────────────────────────
+//   A 'read' layer may carry `parts`. The enlargement then splits that layer
+//   into one segment per document — the SAME violet step, thin separators —
+//   each labelled on the bar when it fits and ALWAYS in the legend with its
+//   tokens. The parts share the layer's width in proportion to their tokens,
+//   so the layer's own figure (and every other segment) is exactly what it is
+//   without them. When the parts arrive in more than one MCP reply, the
+//   segment that opens a reply is marked (`bk-page-start`) and a thin "reply
+//   N" strip runs under the bar. A layer WITHOUT parts renders byte for byte
+//   as v3.70.0 did.
+//
 // Every caller string is escaped; a layer KEY is looked up in a frozen table,
 // never interpolated, so an unknown key yields the 'other' class.
 
@@ -85,6 +101,8 @@ export const LABEL_MIN_BAR_PX = 560;
 /** At or above this bar width a LONGER label may replace the short one
  *  (bucket.css swaps them with the same container-query figure). */
 export const LABEL_WIDE_BAR_PX = 880;
+/** How many documents the legend names one by one before "+ N more". */
+export const LEGEND_PARTS_MAX = 12;
 const CHAR_PX = 6.8;     // 11px IBM Plex Mono advance, measured ≈ 6.6
 const LABEL_PAD_PX = 14;
 
@@ -162,6 +180,21 @@ function onDemandOf(v) {
   return null;
 }
 
+/** A read layer's documents: `[{label, title, tokens, page}]`, or null when
+ *  there are none (the layer then draws as one segment, as in v3.70.0). */
+function partsOf(v) {
+  if (!Array.isArray(v)) return null;
+  const out = v.filter((p) => p && typeof p === 'object' && typeof p.label === 'string' && p.label.trim())
+    .slice(0, 400)
+    .map((p) => ({
+      label: p.label.trim(),
+      title: typeof p.title === 'string' && p.title.trim() ? p.title.trim() : p.label.trim(),
+      tokens: num(p.tokens),
+      page: Number.isInteger(p.page) && p.page > 0 ? p.page : 1,
+    }));
+  return out.length ? out : null;
+}
+
 /**
  * The normalised geometry. Pure; every renderer below draws from it.
  * @returns {null | object} null when there is no window to draw against.
@@ -175,11 +208,15 @@ export function bucketModel(m) {
 
   const layers = (Array.isArray(m.layers) ? m.layers : [])
     .filter((l) => l && typeof l === 'object')
-    .map((l) => ({
-      key: LAYER_KEYS.includes(l.key) ? l.key : 'other',
-      label: typeof l.label === 'string' && l.label.trim() ? l.label.trim() : (LAYER_KEYS.includes(l.key) ? l.key : 'other'),
-      tokens: num(l.tokens),
-    }));
+    .map((l) => {
+      const out = {
+        key: LAYER_KEYS.includes(l.key) ? l.key : 'other',
+        label: typeof l.label === 'string' && l.label.trim() ? l.label.trim() : (LAYER_KEYS.includes(l.key) ? l.key : 'other'),
+        tokens: num(l.tokens),
+      };
+      const parts = out.key === 'read' ? partsOf(l.parts) : null;
+      return parts ? { ...out, parts } : out;
+    });
   const curator = layers.reduce((a, l) => a + l.tokens, 0);
   const readTokens = layers.filter((l) => l.key === 'read').reduce((a, l) => a + l.tokens, 0);
   const fixed = curator - readTokens;
@@ -199,8 +236,39 @@ export function bucketModel(m) {
   const zoomDenom = fixed + Math.max(budget, readTokens);
   const zoomLayers = layers.map((l) => {
     const w = zoomDenom > 0 ? (l.tokens / zoomDenom) * 100 : 0;
-    return { ...l, pct: w, text: pickLabel([l.label + ' ' + formatTokens(l.tokens)], w) };
+    const base = { ...l, pct: w, text: pickLabel([l.label + ' ' + formatTokens(l.tokens)], w) };
+    if (!l.parts) return base;
+    // The parts SHARE the layer's width by their own tokens, so the layer
+    // keeps its exact figure whatever each document's rounding.
+    const sum = l.parts.reduce((a, p) => a + p.tokens, 0);
+    let at = 0;
+    const parts = l.parts.map((p, i) => {
+      const pw = sum > 0 ? (p.tokens / sum) * w : 0;
+      const part = { ...p, pct: pw, at, pageStart: i > 0 && p.page !== l.parts[i - 1].page,
+        text: pickLabel([p.label + ' ' + formatTokens(p.tokens), p.label], pw) };
+      at += pw;
+      return part;
+    });
+    return { ...base, parts };
   });
+  // Where each reply's documents sit on the enlarged bar — only when the
+  // documents arrive in more than one reply. Reply 1 also carries the fixed
+  // layers, so it runs from the bar's start.
+  const readZoom = zoomLayers.find((l) => l.parts);
+  let pages = null;
+  if (readZoom) {
+    const offset = zoomLayers.slice(0, zoomLayers.indexOf(readZoom)).reduce((a, l) => a + l.pct, 0);
+    const seen = [];
+    for (const p of readZoom.parts) {
+      const last = seen[seen.length - 1];
+      if (!last || last.page !== p.page) seen.push({ page: p.page, from: offset + p.at, to: offset + p.at + p.pct, first: p.label });
+      else last.to = offset + p.at + p.pct;
+    }
+    if (seen.length > 1) {
+      seen[0].from = 0;
+      pages = seen.map((x) => ({ ...x, pct: x.to - x.from, text: pickLabel(['reply ' + x.page], x.to - x.from) }));
+    }
+  }
   const roomPct = zoomDenom > 0 ? (room / zoomDenom) * 100 : 0;
   let roomState;                                    // 'unused' | 'left' | 'full' | 'none'
   if (budget === 0) roomState = 'none';
@@ -219,7 +287,7 @@ export function bucketModel(m) {
     harnessPct, curatorPct, freePct,
     harnessText: harnessSet ? pickLabel(['harness ≈' + formatTokens(harness) + ' · your estimate', 'harness ≈' + formatTokens(harness), 'harness'], harnessPct) : { short: '', wide: '' },
     freeText: pickLabel(['free ≈' + formatTokens(free), '≈' + formatTokens(free)], freePct),
-    layers: zoomLayers, readTokens, fixed, budget, room, roomPct, roomState, roomWords, roomText,
+    layers: zoomLayers, pages, readTokens, fixed, budget, room, roomPct, roomState, roomWords, roomText,
     onDemand: onDemandOf(m.onDemand),
     delivery: m.delivery && typeof m.delivery === 'object' && Number.isInteger(m.delivery.replies) && m.delivery.replies > 0
       ? { replies: m.delivery.replies, replyTokens: num(m.delivery.replyTokens) || 20000 } : null,
@@ -238,14 +306,16 @@ export function bucketText(m) {
     + 'The Curator about ' + formatTokens(g.curator) + ' tokens (measured, ' + share(g.curator, g.windowTokens) + '), '
     + (g.over > 0 ? 'over the window by about ' + formatTokens(g.over) + '.' : 'about ' + formatTokens(g.free) + ' free.')
     + (g.harnessSet ? '' : ' Harness not set: your agent\'s own system prompt, tools and instructions also use this window.');
-  const parts = g.layers.map((l) => l.label + ' ' + formatTokens(l.tokens));
+  const parts = g.layers.map((l) => l.label + ' ' + formatTokens(l.tokens)
+    + (l.parts ? ' (' + l.parts.map((p) => p.label + ' ' + formatTokens(p.tokens)).join(', ') + ')' : ''));
   let budgetWords;
   if (g.roomState === 'none') budgetWords = 'no reading budget (index only).';
   else if (g.roomState === 'unused') budgetWords = 'reading budget ' + formatTokens(g.budget) + ', unused: nothing is read first.';
   else if (g.roomState === 'left') budgetWords = 'reading budget ' + formatTokens(g.budget) + ', ' + formatTokens(g.room) + ' left.';
   else budgetWords = 'reading budget ' + formatTokens(g.budget) + ', full.';
   const enl = pre + 'The Curator\'s part, enlarged to its own scale: about ' + formatTokens(g.curator) + ' tokens'
-    + (parts.length ? ' — ' + parts.join(', ') : '') + '; ' + budgetWords;
+    + (parts.length ? ' — ' + parts.join(', ') : '') + '; ' + budgetWords
+    + (g.pages ? ' ' + g.pages.slice(1).map((x) => 'Reply ' + x.page + ' starts with ' + x.first + '.').join(' ') : '');
   const delivery = deliveryWords(g);
   const od = g.onDemand
     ? 'On demand, outside the window: '
@@ -332,6 +402,15 @@ export function renderEnlargement(m) {
   let segs = '';
   for (const l of g.layers) {
     if (l.tokens === 0) continue;
+    if (l.parts) {
+      for (const p of l.parts) {
+        segs += '<div class="bk-seg bk-ly bk-ly-' + l.key + ' bk-part' + (p.pageStart ? ' bk-page-start' : '')
+          + '" style="width:' + pct(p.pct) + '%" title="' + escapeHtml(p.title + ' ≈' + formatTokens(p.tokens)
+            + (g.pages ? ' · reply ' + p.page : '')) + '">'
+          + labelHtml(p.text) + '</div>';
+      }
+      continue;
+    }
     segs += '<div class="bk-seg bk-ly bk-ly-' + l.key + '" style="width:' + pct(l.pct) + '%" title="' + escapeHtml(l.label + ' ≈' + formatTokens(l.tokens)) + '">'
       + labelHtml(l.text) + '</div>';
   }
@@ -342,7 +421,16 @@ export function renderEnlargement(m) {
   return '<div class="bk-enlarged' + (g.preview ? ' is-preview' : '') + '">'
     + head('The Curator’s part, enlarged', 'enlarged', 'to its own scale: the fixed layers plus your reading budget', g.preview)
     + '<div class="bk-bar bk-bar-zoom" role="img" aria-label="' + escapeHtml(t.enlargement) + '">' + segs + '</div>'
+    + (g.pages ? pagesStrip(g.pages) : '')
     + '</div>';
+}
+
+/** The thin "reply N" strip under the enlarged bar — aria-hidden: the bar's
+ *  own sentence says where each reply starts. */
+function pagesStrip(pages) {
+  return '<div class="bk-pages" aria-hidden="true">' + pages.map((x) => '<span class="bk-page'
+    + (x.page > 1 ? ' is-later' : '') + '" style="left:' + pct(x.from) + '%;width:' + pct(x.pct) + '%">'
+    + labelHtml(x.text) + '</span>').join('') + '</div>';
 }
 
 export function renderLegend(m) {
@@ -350,7 +438,23 @@ export function renderLegend(m) {
   if (!g) return '';
   const it = (sw, words) => '<li class="bk-it"><span class="bk-sw ' + sw + '" aria-hidden="true"></span>' + words + '</li>';
   let out = '';
-  for (const l of g.layers) out += it('bk-ly-' + l.key, escapeHtml(l.label) + ' <b>' + escapeHtml(formatTokens(l.tokens)) + '</b>');
+  for (const l of g.layers) {
+    out += it('bk-ly-' + l.key, escapeHtml(l.label) + ' <b>' + escapeHtml(formatTokens(l.tokens)) + '</b>'
+      + (l.parts ? ' · ' + l.parts.length + ' document' + (l.parts.length === 1 ? '' : 's') : ''));
+    if (!l.parts) continue;
+    // Every document, with its tokens — the names a narrow bar cannot print.
+    const shown = l.parts.slice(0, LEGEND_PARTS_MAX);
+    for (const p of shown) {
+      out += '<li class="bk-it bk-it-part"><span class="bk-sw bk-ly-' + l.key + '" aria-hidden="true"></span>'
+        + escapeHtml(p.label) + ' <b>' + escapeHtml(formatTokens(p.tokens)) + '</b>'
+        + (g.pages ? ' · reply ' + p.page : '') + '</li>';
+    }
+    const rest = l.parts.slice(LEGEND_PARTS_MAX);
+    if (rest.length) {
+      out += '<li class="bk-it bk-it-part">+ ' + rest.length + ' more <b>'
+        + escapeHtml(formatTokens(rest.reduce((a, p) => a + p.tokens, 0))) + '</b></li>';
+    }
+  }
   if (g.roomState === 'unused' || g.roomState === 'left') out += it('bk-sw-room', escapeHtml(g.roomWords));
   out += it('bk-sw-harness', g.harnessSet ? 'harness (your estimate) <b>' + escapeHtml(formatTokens(g.harness)) + '</b>' : 'harness — not set');
   out += it('bk-sw-free', 'free <b>' + escapeHtml(formatTokens(g.free)) + '</b>');

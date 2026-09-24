@@ -22,6 +22,9 @@
  *   5. PAGED delivery: the total is every page's measured reply (checked
  *      against an independent walk of the pages), and page 2's documents
  *      count as read first — not "on request".
+ *  5b. v3.70.1: the document layer's per-document `entries` (and the kit's
+ *      `parts`) — delivery order, the reply each arrives in, adding up to
+ *      the layer, in a preview too.
  *   6. The routes: GET and preview carry the new fields; a Large/XL/Max
  *      budget is now accepted (the 200 KB route copy refused it); the preview
  *      writes nothing — no state file, no usage-log line, no config.
@@ -300,6 +303,68 @@ section('5. Paged delivery — every page counted, page 2 is not "on request"');
   eq(sumLayers(r), r.bytes.mcp, 'the layers still add up to the paged total (later envelopes are framing)');
   assert(r.meter.delivery.replies === r.delivery.replies, 'meter.delivery.replies is the page count');
   assert(r.delivery.pages.flatMap((p) => p.slugs).sort().join() === 'a.md,b.md,c.md', 'delivery.pages names every document once');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('5b. v3.70.1 — the document layer, one entry per document, in delivery order');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  const layerOf = (r) => r.layers.find((l) => l.key === 'readFirst');
+  const t = await SS.sessionStartReport('alpha', 'two', null, { presets: false });
+  const rf = layerOf(t);
+  eq(typeof rf.documents, 'number', 'the v3.70.0 `documents` COUNT is unchanged (entries are additive)');
+  const real = await tools.getProjectContextHandler({ domain: 'alpha', project: 'two' }, null);
+  eq(JSON.stringify(rf.entries.map((e) => e.slug)), JSON.stringify(real.foundations.documents.map((d) => d.slug)),
+    'DUMB CROSS-CHECK: the entries are the real reply\'s documents, in the order it hands them over');
+  eq(rf.entries.length, rf.documents, '…one entry per counted document');
+  eq(rf.entries.reduce((n, e) => n + e.bytes, 0), rf.bytes, 'the entries ADD UP to the layer (each is the text it is handed)');
+  assert(rf.entries.every((e) => e.tokens === WS.estimateTokens(e.bytes) && e.page === 1 && e.readFirst === true),
+    'each entry\'s tokens is the one estimator; one reply, so every page is 1; each flagged read first', JSON.stringify(rf.entries));
+  const idx = new Map(real.foundations.index.map((r) => [r.slug, r.title]));
+  assert(rf.entries.every((e) => e.title === idx.get(e.slug) && typeof e.title === 'string' && e.title.length > 0),
+    'each entry\'s title is the index row\'s title', JSON.stringify(rf.entries.map((e) => [e.slug, e.title])));
+  eq(JSON.stringify(Object.keys(rf.entries[0]).sort()), JSON.stringify(['bytes', 'page', 'readFirst', 'slug', 'title', 'tokens']),
+    'an entry is exactly {slug, title, bytes, tokens, page, readFirst}');
+  const kit = t.meter.layers.find((l) => l.key === 'read');
+  eq(JSON.stringify(kit.parts), JSON.stringify(rf.entries.map((e) => ({ label: e.slug.replace(/\.md$/, ''), title: e.title, tokens: e.tokens, page: e.page }))),
+    'meter: the kit\'s read layer carries `parts` — the slug without .md, the title, the tokens, the reply');
+  assert(t.meter.layers.filter((l) => l.key !== 'read').every((l) => !('parts' in l)), '…and no other layer does');
+
+  const n = await SS.sessionStartReport('alpha', 'none', null, { presets: false });
+  assert(Array.isArray(layerOf(n).entries) && layerOf(n).entries.length === 0 && !('parts' in n.meter.layers.find((l) => l.key === 'read')),
+    'nothing read first: entries [] and the meter layer has NO parts (the kit draws it as v3.70.0 did)');
+
+  // PAGED: each entry's page is the delivery plan's, checked against an independent walk.
+  const p = await SS.sessionStartReport('alpha', 'paged', null, { presets: false });
+  const pe = layerOf(p).entries;
+  const walk = [];
+  const p1 = await tools.getProjectContextHandler({ domain: 'alpha', project: 'paged' }, null);
+  walk.push(...p1.foundations.documents.map((d) => [d.slug, 1]));
+  for (let pg = 2; pg <= p1.foundations.of; pg++) {
+    const rp = await tools.getProjectContextHandler({ domain: 'alpha', project: 'paged', page: pg }, null);
+    walk.push(...rp.foundations.documents.map((d) => [d.slug, pg]));
+  }
+  eq(JSON.stringify(pe.map((e) => [e.slug, e.page])), JSON.stringify(walk),
+    'DUMB CROSS-CHECK: paged entries are in delivery order, each with the reply it ACTUALLY arrives in');
+  assert(new Set(pe.map((e) => e.page)).size >= 2, `PRECONDITION: the documents span ${new Set(pe.map((e) => e.page)).size} replies`);
+  const planPage = new Map(p.delivery.pages.flatMap((pg) => pg.slugs.map((sl) => [sl, pg.page])));
+  assert(pe.every((e) => planPage.get(e.slug) === e.page), '…and each page agrees with delivery.pages (P1\'s deliveryPlan)', JSON.stringify([...planPage]));
+  eq(pe.reduce((s, e) => s + e.bytes, 0), layerOf(p).bytes, 'paged entries still add up to the layer');
+  eq(JSON.stringify(p.meter.layers.find((l) => l.key === 'read').parts.map((x) => x.page)), JSON.stringify(pe.map((e) => e.page)),
+    'the meter\'s parts carry the same pages, so the kit can mark where reply 2 begins');
+
+  // UNPLANNED: text the owner did not flag is still one entry each, marked not read first.
+  const f = await SS.sessionStartReport('alpha', 'free', null, { presets: false });
+  assert(layerOf(f).entries.length === 1 && layerOf(f).entries[0].readFirst === false,
+    'an unplanned project\'s document text is an entry too, marked readFirst:false', JSON.stringify(layerOf(f).entries));
+
+  // THE PREVIEW: a plan's what-if carries its own entries.
+  const w = await SS.sessionStartReport('alpha', 'two', { startStates: { 'roadmap.md': 'read-first', 'architecture.md': 'on-request' } }, { presets: false, hook: false });
+  const we = layerOf(w).entries.map((e) => e.slug).sort().join();
+  eq(we, 'decisions.md,roadmap.md', 'a preview with a plan carries the PLANNED documents\' entries (roadmap in, architecture out)');
+  assert(w.meter.preview === true && w.meter.layers.find((l) => l.key === 'read').parts.length === 2, '…and its meter is a preview with two parts');
+  const again = await SS.sessionStartReport('alpha', 'two', null, { presets: false });
+  eq(layerOf(again).entries.map((e) => e.slug).join(), rf.entries.map((e) => e.slug).join(), 'the preview wrote nothing: the saved plan is unchanged');
 }
 
 // ═════════════════════════════════════════════════════════════════════════

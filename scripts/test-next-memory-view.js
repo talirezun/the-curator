@@ -1204,14 +1204,16 @@ function constDecl(src, name) {
 // meter.
 const V367_CONSTS = ['READING_BUDGET_WORDS', 'READING_BUDGET_STANDARD', 'START_STATES',
   'CONTEXT_WINDOW_KEY', 'CONTEXT_WINDOWS', 'CONTEXT_WINDOW_CHOICES', 'HARNESS_PRESETS', 'HARNESS_HINT',
-  'SESSION_START_INFO_HTML'];
+  'SESSION_START_INFO_HTML', 'PLANNER_STATES'];
 const V367_FNS = ['fndStartOf', 'fndStartCfg', 'planRowFor', 'fndSuggestCellHtml', 'planFor',
   'planChangeCount', 'planHeadHtml', 'ssSize', 'ssTokens', 'tok', 'budgetWord', 'readContextWindow',
   'contextWindowNow', 'harnessNow', 'windowWord', 'ssPct', 'repliesWord', 'sessionStartFor',
   'presetLabel', 'presetsOf', 'budgetPickerCfg', 'windowPickerCfg', 'harnessPickerCfg', 'ctxEditHtml',
   'meterModel', 'meterSource', 'sessionMeterHtml',
   'sessionNoticesHtml', 'ssDocs', 'sessionReceivesMonitor', 'presetName', 'previewFor', 'budgetPreviewFor',
-  'planPreviewBody', 'planPreviewKey', 'renderSessionStart', 'renderPlanPanel', 'planAiNeedsConfirm'];
+  'planPreviewBody', 'planPreviewKey', 'renderSessionStart', 'renderPlanPanel', 'planAiNeedsConfirm',
+  // v3.70.1: the "Documents at start" planner, composed into step ④.
+  'plannerFor', 'plannerRows', 'plannerBody', 'plannerPreviewFor', 'plannerCountsWord', 'plannerFoldHtml'];
 function v367Lift() {
   return V367_CONSTS.map((n) => constDecl(viewSrc, n)).join('\n') + '\n'
     // Named one by one rather than mapped over V367_FNS, for §17's census: it
@@ -1254,7 +1256,17 @@ function v367Lift() {
     + extractFunction(viewSrc, 'planPreviewKey', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'renderSessionStart', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'renderPlanPanel', 'memory.js') + '\n'
-    + extractFunction(viewSrc, 'planAiNeedsConfirm', 'memory.js') + '\n';
+    + extractFunction(viewSrc, 'planAiNeedsConfirm', 'memory.js') + '\n'
+    // v3.70.1: the planner reads its debounce timer and request in flight
+    // (module lets in the view) to hold the last preview while a newer one is
+    // measured; the harness owns them as idle.
+    + 'let plannerTimer = null;\nlet plannerInFlight = null;\n'
+    + extractFunction(viewSrc, 'plannerFor', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'plannerRows', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'plannerBody', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'plannerPreviewFor', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'plannerCountsWord', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'plannerFoldHtml', 'memory.js') + '\n';
 }
 // The list and the calls above must agree, or a function is lifted and not
 // returned (or the reverse).
@@ -2752,9 +2764,15 @@ const withInit = fetchArgLists.filter((a) => topLevelArgs(a).length > 1);
 //   estimate (decision 4). App settings, never project state: it cannot name
 //   a project, a document, a brief or a handoff, and the route refuses any
 //   field but the two.
-eq('EXACTLY FOURTEEN fetches in the view carry a request init', withInit.length, 14);
+// ── FIFTEEN SINCE v3.70.1 ────────────────────────────────────────────────
+// · `POST …/session-start/preview {plan}` — the "Documents at start" planner's
+//   PREVIEW, a third caller of the same READ. Its writes are NOT new: Apply
+//   goes through `writeStartState`, step ①'s one PATCH call site, below. The
+//   budget picker's preview may now carry the planner's pending `plan` beside
+//   the budget (a what-if the route already takes), never a write field.
+eq('EXACTLY FIFTEEN fetches in the view carry a request init', withInit.length, 15);
 ok('every other fetch is single-argument — structurally a GET, whatever a method string is spelled like',
-  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 14,
+  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 15,
   JSON.stringify(fetchArgLists.map((a) => topLevelArgs(a).length)));
 {
   const inits = withInit.map((a) => ({ url: topLevelArgs(a)[0], init: topLevelArgs(a)[1] }));
@@ -2814,16 +2832,21 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     patches.filter((x) => x.url.includes("'/foundations/'")).length, 1);
   // v3.67.0: two READS carry a body. Named, with their bodies, so neither can
   // grow a write-shaped field.
-  eq('exactly SIX fetches use a LITERAL POST', posts.length, 6);
+  eq('exactly SEVEN fetches use a LITERAL POST', posts.length, 7);
   // v3.70.0: two callers of the preview READ — the plan's `if applied`
   // (`body`) and the budget picker's preview (`{ budgetBytes: bytes }`).
   const previews = posts.filter((x) => x.url.includes("'/session-start/preview'"));
-  eq('...TWO of them are the session-start PREVIEW, a read', previews.length, 2);
-  const budgetPv = previews.find((x) => /body:\s*JSON\.stringify\(\{\s*budgetBytes:\s*bytes\s*\}\)/.test(x.init));
-  ok('...one sends the PREVIEWED BUDGET and nothing else — never a plan, a document or a write field',
-    !!budgetPv && budgetPv.url.includes('/api/memory/') && budgetPv.url.includes('encodeURIComponent'),
+  eq('...THREE of them are the session-start PREVIEW, a read', previews.length, 3);
+  const budgetPv = previews.find((x) => /body:\s*JSON\.stringify\(pending \? \{ budgetBytes: bytes, plan: pending\.plan \} : \{ budgetBytes: bytes \}\)/.test(x.init));
+  ok('...one sends the PREVIEWED BUDGET, with the planner\'s pending plan when there is one — never a document or a write field',
+    !!budgetPv && budgetPv.url.includes('/api/memory/') && budgetPv.url.includes('encodeURIComponent')
+    && !/text:|atStart|readFirst|brief|readingBudgetBytes/.test(budgetPv.init),
     JSON.stringify(previews.map((x) => x.init.slice(0, 140))));
-  const preview = previews.find((x) => x !== budgetPv);
+  const plannerPv = previews.find((x) => /body:\s*JSON\.stringify\(\{\s*plan:\s*body\.plan\s*\}\)/.test(x.init));
+  ok('...one (v3.70.1) sends the PLANNER\'s draft as `plan` and nothing else',
+    !!plannerPv && plannerPv !== budgetPv && plannerPv.url.includes('/api/memory/'),
+    JSON.stringify(previews.map((x) => x.init.slice(0, 140))));
+  const preview = previews.find((x) => x !== budgetPv && x !== plannerPv);
   ok('one POST is the session-start PREVIEW under this project — a read with a plan in its body',
     preview && preview.url.includes('/api/memory/') && /body:\s*JSON\.stringify\(body\)/.test(preview.init),
     preview ? preview.url.slice(0, 200) + preview.init.slice(0, 120) : 'none');
@@ -2972,11 +2995,11 @@ ok('self-test: the argument-count scan does NOT fire on a plain read',
 // transport exists at all.
 {
   const methods = [...viewNoComments.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g)].map((m) => m[1]).sort();
-  ok('exactly FOURTEEN `method:` property keys appear in the view\'s real code, and every one of them '
+  ok('exactly FIFTEEN `method:` property keys appear in the view\'s real code, and every one of them '
     + 'is a LITERAL — so the `\'PO\' + \'ST\'` evasion is refused by construction',
   JSON.stringify(methods) === JSON.stringify(
     ["'DELETE'", "'DELETE'", "'PATCH'", "'PATCH'", "'PATCH'", "'PATCH'",
-      "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'PUT'", "'PUT'"]),
+      "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'PUT'", "'PUT'"]),
   JSON.stringify(methods));
 }
 for (const transport of ['XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource', 'FormData', 'Request(']) {
@@ -11392,8 +11415,8 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
         onRequest: { bytes: 191119, count: 9 } }, bytes: { mcp: 35261, hook: 23049 } });
     const html = makeRenderers(withSS(data, { projectRead: read })).renderSessionStart(read);
     const same = /id="mem-ss-same"[\s\S]*?<\/div>/.exec(html);
-    ok('nothing read first: ONE plain line says why every budget sends the same, with the door to step 1',
-      !!same && /Every reading budget sends the same ≈8\.8k tokens right now\. Nothing is read first, so every budget sends the same — a budget only caps the documents marked read first\. Mark the two or three an agent should never start without in step 1\./.test(same[0])
+    ok('nothing read first: ONE plain line says why every budget sends the same, with the door to step 1 and (v3.70.1) the planner',
+      !!same && /Every reading budget sends the same ≈8\.8k tokens right now\. Nothing is read first, so every budget sends the same — a budget only caps the documents marked read first\. Mark the two or three an agent should never start without in step 1, or plan them under Documents at start below, where the meter previews them first\./.test(same[0])
       && /id="mem-ss-choose">Choose read-first documents<\/button>/.test(same[0]), same ? same[0] : html.slice(0, 1500));
     ok('...unfolded, before the first chevron', html.indexOf('id="mem-ss-same"') < html.indexOf('<details'));
     ok('...and the meter\'s dashed room is EMPTY and says so, against the owner\'s 51.2k budget',
@@ -11754,6 +11777,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
         'loadSessionStart', 'loadContextSettings',
         'let sessionStartInFlight = null;\nlet ctxSettingsInFlight = false;\n'
         + extractFunction(viewSrc, 'planFor', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'plannerFor', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'sessionStartFor', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'maybeLoadSessionStart', 'memory.js')
         + '\nreturn { maybeLoadSessionStart };')(
@@ -11784,6 +11808,15 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     mk(moved).api.maybeLoadSessionStart(1);
     eq('a proposal made on another project is dropped — it belongs to the project it was made on',
       moved.plan, null);
+    // v3.70.1: so is a planner draft, and its preview with it.
+    const movedPl = { ...st, planner: { domain: 'acme', project: 'other', draft: { 'a.md': 'read-first' } },
+      plannerPreview: { domain: 'acme', project: 'other' } };
+    mk(movedPl).api.maybeLoadSessionStart(1);
+    ok('a planner draft made on another project is dropped, with its preview',
+      movedPl.planner === null && movedPl.plannerPreview === null);
+    const herePl = { ...st, planner: { domain: 'acme', project: 'lumina', draft: { 'a.md': 'read-first' } } };
+    mk(herePl).api.maybeLoadSessionStart(1);
+    ok('...and one made on THIS project is kept', herePl.planner && herePl.planner.draft['a.md'] === 'read-first');
     ok('render() asks after it paints — the measurement is never on a switch\'s critical path',
       /wire\(token\);\s*restoreFocus\(\);[\s\S]{0,300}maybeLoadSessionStart\(token\);\s*\}$/.test(
         stripComments(extractFunction(viewSrc, 'render', 'memory.js')).trim()));
@@ -11795,13 +11828,13 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     const run = async (st, respond, active = true) => {
       const calls = { patches: 0, url: null };
       const api = new Function('state', 'keyOf', 'isCurrentMount', 'fetch', 'encodeURIComponent',
-        'patchSessionStart',
+        'patchSessionStart', 'plannerBody', 'previewPlanner',
         'let sessionStartInFlight = null;\n'
         + extractFunction(viewSrc, 'sessionStartFor', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'loadSessionStart', 'memory.js') + '\nreturn { loadSessionStart };')(
         st, (d, p) => d + '/' + p, () => active,
         async (url) => { calls.url = url; return respond(); }, encodeURIComponent,
-        () => { calls.patches++; });
+        () => { calls.patches++; }, () => (st.__pendingPlan || null), () => { calls.replans = (calls.replans || 0) + 1; });
       await api.loadSessionStart('acme', 'lumina', 'S1', 1);
       return calls;
     };
@@ -12085,6 +12118,13 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
         + extractFunction(viewSrc, 'writeContextSettings', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'loadContextSettings', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'setContextSetting', 'memory.js') + '\n'
+        // v3.70.1: the budget preview carries a pending planner draft, read
+        // through the REAL planner functions.
+        + constDecl(viewSrc, 'PLANNER_STATES') + '\n'
+        + extractFunction(viewSrc, 'fndStartOf', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'plannerFor', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'plannerRows', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'plannerBody', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'previewBudget', 'memory.js') + '\n'
         + 'return { loadContextSettings, setContextSetting, writeContextSettings, previewBudget };')(
         st, fetchImpl, localStorageFake, (t) => t === 1, () => { calls.patches++; }, () => { calls.meters++; },
@@ -12215,6 +12255,304 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       m.api.previewBudget(131072, 1);
       await m.flush();
       ok('an answer that lands after the owner switched project is dropped', !moved.budgetPreview);
+    }
+  }
+
+  // ── §25l — v3.70.1: "Documents at start", the planner — driven ────────
+  // A DRAFT of start states, previewed through the preview READ, written only
+  // on Apply through step ①'s own writer, and dropped by Discard.
+  {
+    const plDocs = () => fndPayload([
+      fndDoc({ slug: 'a.md', title: 'Alpha', role: 'decisions', bytes: 40000, atStart: 'on-request' }),
+      fndDoc({ slug: 'b.md', title: 'Beta', role: 'guide', bytes: 20000, atStart: 'read-first', readFirst: true }),
+      fndDoc({ slug: 'c.md', title: '<img src=x onerror=alert(1)>', role: 'other', bytes: 8000, atStart: 'not-at-start', hidden: true }),
+    ], { ownership: 'curator' });
+    const plSt = (over = {}) => withSS(ssData({ budget: { bytes: 65536, tokens: 16384, source: 'owner', defaulted: false,
+      ownerBytes: 65536, preset: 'standard', custom: false, nearest: null, cap: 819200, capTokens: 204800,
+      replyCapBytes: 307200 }, planned: true }), {
+      projectRead: { scopes: [], brief: { present: false }, readingBudgetBytes: 65536, foundations: plDocs() }, ...over });
+    const liftPl = (st, fetchImpl, active = true) => {
+      const calls = { patches: 0, toasts: [], reloads: 0, urls: [] };
+      const timers = [];
+      const api = new Function('state', 'fetch', 'isCurrentMount', 'patchSessionStart', 'showToast',
+        'reloadActive', 'keyOf', 'setTimeout', 'clearTimeout', 'encodeURIComponent',
+        'let plannerTimer = null;\nlet plannerInFlight = null;\nconst budgetPreviewCache = new Map();\n'
+        + constDecl(viewSrc, 'PLANNER_STATES') + '\n' + constDecl(viewSrc, 'START_STATES') + '\n'
+        + extractFunction(viewSrc, 'fndStartOf', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'sessionStartFor', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'writeStartState', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'plannerFor', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'plannerRows', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'plannerBody', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'plannerPreviewFor', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'setPlannerState', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'previewPlanner', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'discardPlanner', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'applyPlanner', 'memory.js') + '\n'
+        + 'return { plannerRows, plannerBody, plannerPreviewFor, setPlannerState, previewPlanner, discardPlanner, applyPlanner };')(
+        st, async (url, init) => { calls.urls.push(url + (init ? ' ' + init.method + ' ' + init.body : '')); return fetchImpl(url, init); },
+        () => active, () => { calls.patches++; }, (o) => calls.toasts.push(o),
+        async () => { calls.reloads++; }, (d, p) => d + '/' + p,
+        (fn) => { timers.push({ fn, live: true }); return timers.length; },
+        (id) => { if (timers[id - 1]) timers[id - 1].live = false; }, encodeURIComponent);
+      return { api, calls, timers, flush: async () => { for (const t of timers.splice(0)) if (t.live) await t.fn(); } };
+    };
+    const pvData = (mcp = 140000, replies = 2) => ssData({ preview: true, bytes: { mcp, hook: 1 }, replies, planned: true,
+      budget: { bytes: 65536, tokens: 16384, source: 'owner', defaulted: false, ownerBytes: 65536, preset: 'standard',
+        custom: false, nearest: null, cap: 819200, capTokens: 204800, replyCapBytes: 307200 } });
+
+    // THE ROWS: saved state from the store's fields, the draft over it.
+    {
+      const st = plSt();
+      const { api } = liftPl(st, async () => ({ ok: true, json: async () => pvData() }));
+      const rows = api.plannerRows(st.projectRead);
+      eq('one planner row per document, in the table\'s order, with its SAVED state',
+        rows.map((r) => r.slug + ':' + r.saved + ':' + r.now + ':' + r.tokens).join(),
+        'a.md:on-request:on-request:10000,b.md:read-first:read-first:5000,c.md:not-at-start:not-at-start:2000');
+      eq('...and with no draft there is nothing to preview', api.plannerBody(), null);
+    }
+    // CHOOSING: a draft stamped to this project; choosing the saved state again leaves it.
+    {
+      const st = plSt();
+      const seen = [];
+      const { api, calls, flush } = liftPl(st, async (url, init) => { seen.push(init.body); return { ok: true, json: async () => pvData() }; });
+      api.setPlannerState('a.md', 'read-first', 1);
+      api.setPlannerState('c.md', 'on-request', 1);
+      api.setPlannerState('nope.md', 'read-first', 1);
+      api.setPlannerState('b.md', 'sideways', 1);
+      ok('a choice goes into a DRAFT stamped to the project on screen — unknown documents and states are ignored',
+        st.planner && st.planner.domain === 'acme' && st.planner.project === 'lumina'
+        && JSON.stringify(st.planner.draft) === '{"a.md":"read-first","c.md":"on-request"}', JSON.stringify(st.planner));
+      ok('...the step repaints at once, and NOTHING is fetched before the debounce',
+        calls.patches >= 2 && seen.length === 0);
+      await flush();
+      eq('the draft is previewed ONCE, after the debounce: POST preview {plan} of the CHANGED rows only',
+        calls.urls.join(' | '), '/api/memory/acme/lumina/session-start/preview POST {"plan":{"a.md":"read-first","c.md":"on-request"}}');
+      ok('...drawn as a preview stamped with the measurement and the plan it was made for',
+        st.plannerPreview && st.plannerPreview.sig === 'x' && st.plannerPreview.changes === 2
+        && st.plannerPreview.key === '{"a.md":"read-first","c.md":"on-request"}' && api.plannerPreviewFor() === st.plannerPreview);
+      const sigWas = st.sessionStart.sig;
+      st.sessionStart.sig = 'newer';
+      ok('a preview made against an OLDER measurement is not shown (a save landed; it is asked again)',
+        api.plannerPreviewFor() === null);
+      st.sessionStart.sig = sigWas;
+      api.setPlannerState('c.md', 'not-at-start', 1);
+      eq('choosing the SAVED state again takes the row out of the draft', JSON.stringify(st.planner.draft), '{"a.md":"read-first"}');
+      ok('...and while the new draft is measured the last preview STAYS on the meter (no flash back)',
+        api.plannerPreviewFor() === st.plannerPreview);
+      await flush();
+      eq('...then the new draft is measured', seen.length, 2);
+      api.setPlannerState('c.md', 'on-request', 1);
+      await flush();
+      eq('coming back to a draft already measured asks nothing (the shared preview cache)', seen.length, 2);
+      ok('...and shows that answer', st.plannerPreview && st.plannerPreview.changes === 2);
+      api.setPlannerState('a.md', 'on-request', 1);
+      api.setPlannerState('c.md', 'not-at-start', 1);
+      await flush();
+      ok('a draft with nothing left in it ends the preview and asks nothing',
+        st.plannerPreview === null && api.plannerBody() === null && seen.length === 2);
+    }
+    // A LATE ANSWER for a draft the owner has moved on from is dropped.
+    {
+      const st = plSt();
+      let release;
+      const gate = new Promise((r) => { release = r; });
+      const { api, flush } = liftPl(st, async () => { await gate; return { ok: true, json: async () => pvData() }; });
+      api.setPlannerState('a.md', 'read-first', 1);
+      const inflight = flush();
+      api.setPlannerState('a.md', 'not-at-start', 1);
+      release();
+      await inflight;
+      ok('an answer for a draft that changed while it was in flight is dropped',
+        !st.plannerPreview || st.plannerPreview.key !== '{"a.md":"read-first"}');
+      const moved = plSt();
+      const m = liftPl(moved, async () => { moved.activeProject = 'elsewhere'; return { ok: true, json: async () => pvData() }; });
+      m.api.setPlannerState('a.md', 'read-first', 1);
+      await m.flush();
+      ok('...and so is one that lands after the owner switched project', !moved.plannerPreview);
+      const refused = plSt();
+      const r = liftPl(refused, async () => ({ ok: false, status: 400, json: async () => ({ ok: false, error: 'bad plan' }) }));
+      r.api.setPlannerState('a.md', 'read-first', 1);
+      await r.flush();
+      ok('a refused preview is said (the route\'s words), never drawn as a measurement',
+        refused.plannerPreview && refused.plannerPreview.data === null && refused.plannerPreview.error === 'bad plan'
+        && r.api.plannerPreviewFor() === null);
+    }
+    // DISCARD writes nothing and returns to the saved plan.
+    {
+      const st = plSt();
+      const { api, calls, flush } = liftPl(st, async () => ({ ok: true, json: async () => pvData() }));
+      api.setPlannerState('a.md', 'read-first', 1);
+      await flush();
+      const before = calls.urls.length;
+      api.discardPlanner(1);
+      ok('Discard drops the draft and its preview, and sends NOTHING',
+        st.planner === null && st.plannerPreview === null && calls.urls.length === before
+        && api.plannerRows(st.projectRead).every((r) => !r.changed));
+    }
+    // APPLY: every changed row through step ①'s writer, one toast, a re-read.
+    {
+      const st = plSt();
+      const { api, calls } = liftPl(st, async (url, init) => ({ ok: true,
+        json: async () => (init && init.method === 'PATCH' ? { ok: true, atStart: JSON.parse(init.body).atStart } : pvData()) }));
+      api.setPlannerState('a.md', 'read-first', 1);
+      api.setPlannerState('c.md', 'on-request', 1);
+      await api.applyPlanner(1);
+      const patches = calls.urls.filter((u) => / PATCH /.test(u));
+      eq('Apply writes EACH changed row through step ①\'s route — PATCH …/foundations/:slug {atStart}, nothing else',
+        patches.join(' | '), '/api/memory/acme/lumina/foundations/a.md PATCH {"atStart":"read-first"} | '
+          + '/api/memory/acme/lumina/foundations/c.md PATCH {"atStart":"on-request"}');
+      ok('...ONE toast, "2 documents updated"', calls.toasts.length === 1 && calls.toasts[0].title === '2 documents updated'
+        && calls.toasts[0].tone === 'success', JSON.stringify(calls.toasts));
+      ok('...the draft and its preview are gone, and the project is RE-READ (step ① and the meter follow the store)',
+        st.planner === null && st.plannerPreview === null && calls.reloads === 1);
+    }
+    {
+      const st = plSt();
+      const { api, calls } = liftPl(st, async (url, init) => (init && init.method === 'PATCH' && /a\.md/.test(url)
+        ? { ok: false, status: 409, json: async () => ({ ok: false, error: 'Another write is in progress.' }) }
+        : { ok: true, json: async () => (init && init.method === 'PATCH' ? { ok: true } : pvData()) }));
+      api.setPlannerState('a.md', 'read-first', 1);
+      api.setPlannerState('c.md', 'on-request', 1);
+      await api.applyPlanner(1);
+      eq('a REFUSAL does not stop the rest: both rows are attempted', calls.urls.filter((u) => / PATCH /.test(u)).length, 2);
+      ok('...the toast counts what LANDED ("1 document updated")', calls.toasts.length === 1 && calls.toasts[0].title === '1 document updated');
+      ok('...the refused row STAYS in the draft, named with the route\'s own words, until applied again or discarded',
+        st.planner && JSON.stringify(st.planner.draft) === '{"a.md":"read-first"}'
+        && st.planner.errors.length === 1 && st.planner.errors[0].title === 'Alpha'
+        && st.planner.errors[0].error === 'Another write is in progress.' && st.planner.applying === false, JSON.stringify(st.planner));
+      const html = makeRenderers(st).renderSessionStart(st.projectRead);
+      ok('...and step ④ shows it, persistent (not a toast)', /id="mem-pl-error"[\s\S]*?“Alpha” — Another write is in progress\./.test(html));
+      const all = plSt();
+      const x = liftPl(all, async (url, init) => (init && init.method === 'PATCH'
+        ? { ok: false, status: 500, json: async () => ({ ok: false, error: 'disk full' }) } : { ok: true, json: async () => pvData() }));
+      x.api.setPlannerState('a.md', 'read-first', 1);
+      await x.api.applyPlanner(1);
+      ok('when nothing lands there is NO toast — only the persistent refusal', x.calls.toasts.length === 0 && all.planner.errors.length === 1);
+      const none = plSt();
+      const y = liftPl(none, async () => ({ ok: true, json: async () => pvData() }));
+      await y.api.applyPlanner(1);
+      ok('Apply with nothing changed sends nothing', y.calls.urls.length === 0);
+    }
+    // THE FOLD, painted.
+    {
+      const st = plSt();
+      const R = makeRenderers(st);
+      const closed = R.plannerFoldHtml(st.projectRead, st.sessionStart.data, false);
+      ok('"Documents at start" is a fold of step ④, CLOSED by default',
+        /^<details class="mem-fold" data-mem-fold="planner">/.test(closed) && /<span>Documents at start<\/span>/.test(closed));
+      ok('...its summary carries WORDS only (no control, no bar): the counts and the budget',
+        /<span class="mem-fold-meta">1 read first · 1 on request · 1 not at start · ≈5\.0k of the ≈16\.4k reading budget<\/span>/.test(closed),
+        (closed.match(/<summary[\s\S]*?<\/summary>/) || [''])[0]);
+      const sum = (closed.match(/<summary[\s\S]*?<\/summary>/) || [''])[0];
+      ok('...and nothing interactive or bar-shaped inside the <summary>', !/<input|<button|cur-depth/.test(sum));
+      eq('one row per document, three radios each', (closed.match(/<tr class="mem-pl-row/g) || []).length, 3);
+      ok('each row\'s CHECKED radio is its state, and every radio is labelled by a legend naming the document',
+        /id="mem-pl-0-on-request" value="on-request" data-pl-slug="a.md" checked/.test(closed)
+        && /id="mem-pl-1-read-first" value="read-first" data-pl-slug="b.md" checked/.test(closed)
+        && /<legend class="visually-hidden">At session start: Alpha<\/legend>/.test(closed));
+      ok('a hostile title is ESCAPED everywhere it lands', !/<img src=x/.test(closed) && /&lt;img src=x onerror=alert\(1\)&gt;/.test(closed));
+      ok('each row\'s tokens are a depth bar — a SHARE of the reading budget, never danger-toned',
+        /≈10k<\/span><span class="visually-hidden"> a share of the ≈16.4k-token reading budget/.test(closed)
+        && !/mem-pl-size"><span class="cur-depth"><span class="cur-depth-bar cur-depth-danger/.test(closed));
+      ok('the totals line measures the read-first set against the budget', /1 read first · ≈5\.0k of the ≈16\.4k reading budget/.test(closed));
+      const lean = plSt();
+      lean.sessionStart.data = { ...lean.sessionStart.data, budget: { ...lean.sessionStart.data.budget, bytes: 32768, tokens: 8192 } };
+      const leanHtml = makeRenderers(lean).plannerFoldHtml(lean.projectRead, lean.sessionStart.data, false);
+      ok('a document LARGER than the budget fills its bar but is never danger-toned (a share, not an over-run)',
+        /≈10k<\/span><span class="visually-hidden"> a share of the ≈8\.2k-token reading budget/.test(leanHtml)
+        && !/mem-pl-size"><span class="cur-depth"><span class="cur-depth-bar cur-depth-danger/.test(leanHtml), leanHtml.slice(0, 200));
+      ok('with nothing pending it says how it works — no Apply, no Discard',
+        /id="mem-pl-idle"/.test(closed) && !/mem-pl-apply/.test(closed));
+      // A draft, previewed.
+      st.planner = { domain: 'acme', project: 'lumina', draft: { 'a.md': 'read-first' }, applying: false, errors: null };
+      st.plannerPreview = { domain: 'acme', project: 'lumina', sig: 'x', key: '{"a.md":"read-first"}', changes: 1, data: pvData(140000, 2) };
+      st.openFolds = { planner: true };
+      const pend = makeRenderers(st).plannerFoldHtml(st.projectRead, st.sessionStart.data, false);
+      ok('an OPEN fold stays open across a repaint', /data-mem-fold="planner" open>/.test(pend));
+      ok('a changed row is tinted AND says what is saved, in words', /<tr class="mem-pl-row is-changed">[\s\S]*?decisions · 39\.1 KB · saved: on request/.test(pend));
+      ok('the pending line: "Preview, not saved." with the preview\'s own tokens, share of the window and replies',
+        /<b>Preview, not saved\.<\/b> 1 change: ≈35k tokens · 17\.5% of 200K · 2 MCP replies/.test(pend), (pend.match(/mem-pl-pending[\s\S]*?<\/div>/) || [''])[0]);
+      ok('...with Discard and "Apply 1 change"', /id="mem-pl-discard"[^>]*>Discard</.test(pend) && /id="mem-pl-apply"[^>]*>Apply 1 change</.test(pend));
+      ok('...and the totals follow the DRAFT: 2 read first, ≈15k of the budget, not over it',
+        /2 read first · ≈15k of the ≈16\.4k reading budget<\/span>/.test(pend) && !/over it by/.test(pend));
+      st.planner.draft = { 'a.md': 'read-first', 'c.md': 'read-first' };
+      st.plannerPreview = null;
+      const over = makeRenderers(st).plannerFoldHtml(st.projectRead, st.sessionStart.data, false);
+      ok('a read-first set over the budget says so in WORDS, and its totals bar is the one danger bar',
+        /3 read first · ≈17k of the ≈16\.4k reading budget — over it by ≈0\.6k/.test(over)
+        && /mem-pl-totals-bar"><span class="cur-depth"><span class="cur-depth-bar cur-depth-danger/.test(over), (over.match(/mem-pl-totals[\s\S]*?<\/div>/) || [''])[0]);
+      ok('...and before its preview lands the pending line says it is measuring', /2 changes: measuring…/.test(over));
+      const ro = makeRenderers(st).plannerFoldHtml(st.projectRead, st.sessionStart.data, true);
+      ok('READ-ONLY: every control disabled, no Apply and no Discard',
+        (ro.match(/<fieldset class="mem-pl-seg" disabled>/g) || []).length === 3 && !/mem-pl-apply|mem-pl-discard/.test(ro));
+      st.planner.applying = true;
+      const busy = makeRenderers(st).plannerFoldHtml(st.projectRead, st.sessionStart.data, false);
+      ok('while applying, the controls and both buttons are disabled and the button says so',
+        /id="mem-pl-apply" disabled>Applying…</.test(busy) && /<fieldset class="mem-pl-seg" disabled>/.test(busy));
+      eq('a project with no documents has no planner', makeRenderers(baseSt()).plannerFoldHtml(
+        { foundations: fndPayload([]) }, st.sessionStart.data, false), '');
+    }
+    // THE METER, and the step it sits in.
+    {
+      const st = plSt({ planner: { domain: 'acme', project: 'lumina', draft: { 'a.md': 'read-first' }, applying: false, errors: null },
+        plannerPreview: { domain: 'acme', project: 'lumina', sig: 'x', key: '{"a.md":"read-first"}', changes: 1, data: pvData(140000, 2) } });
+      const R = makeRenderers(st);
+      const src = R.meterSource(st.sessionStart.data);
+      ok('a planner preview is what the meter shows (kind "planner"), after a budget hover and before the helper',
+        src.kind === 'planner' && src.data.meter.preview === true);
+      const html = R.renderSessionStart(st.projectRead);
+      ok('...the meter is stamped "Preview, not saved" with the preview\'s replies, and says where to apply it',
+        /<b>Preview, not saved<\/b> · ≈35k tokens · 17\.5% of 200k · 2 MCP replies/.test(html)
+        && /Previewing 1 change from Documents at start — Apply or Discard them there\./.test(html));
+      ok('"What an agent receives" gains an "if applied" line for the planner\'s draft, measured, with its replies',
+        /IF APPLIED|if applied/.test(html) && /1 change from Documents at start · 2 MCP replies/.test(html));
+      ok('the planner fold comes FIRST of step ④\'s folds, before "What an agent receives"',
+        html.indexOf('data-mem-fold="planner"') > 0 && html.indexOf('data-mem-fold="planner"') < html.indexOf('data-mem-fold="receives"'));
+      // The "every budget sends the same" line describes the SAVED plan; it
+      // stands down while the planner previews documents read first.
+      const eqSum = { allEqual: true, reason: 'nothing-read-first', readFirstDocuments: 0, readFirstBytes: 0, readFirstTokens: 0 };
+      const eqData = { ...st.sessionStart.data, presetsSummary: eqSum, costLine: { applies: false, documentTextBytes: 0 } };
+      const withDraft = plSt({ planner: st.planner });
+      withDraft.sessionStart.data = eqData;
+      const noDraft = plSt();
+      noDraft.sessionStart.data = eqData;
+      ok('"every budget sends the same" stands down while the planner previews a document read first (it describes the saved plan)',
+        /id="mem-ss-same"/.test(makeRenderers(noDraft).renderSessionStart(noDraft.projectRead))
+        && !/id="mem-ss-same"/.test(makeRenderers(withDraft).renderSessionStart(withDraft.projectRead)));
+      const moved = plSt({ planner: { domain: 'acme', project: 'other', draft: { 'a.md': 'read-first' } } });
+      ok('a draft stamped to another project is never shown here',
+        makeRenderers(moved).plannerFoldHtml(moved.projectRead, moved.sessionStart.data, false).indexOf('is-changed') === -1);
+    }
+    // THE BUDGET HOVER carries the pending draft.
+    {
+      const st = plSt({ planner: { domain: 'acme', project: 'lumina', draft: { 'a.md': 'read-first' } } });
+      const seen = [];
+      const timers = [];
+      const api = new Function('state', 'fetch', 'isCurrentMount', 'patchSessionMeter', 'keyOf', 'setTimeout',
+        'clearTimeout', 'encodeURIComponent',
+        'let budgetPreviewTimer = null;\nlet budgetPreviewInFlight = null;\nconst budgetPreviewCache = new Map();\n'
+        + constDecl(viewSrc, 'PLANNER_STATES') + '\n'
+        + extractFunction(viewSrc, 'fndStartOf', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'sessionStartFor', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'plannerFor', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'plannerRows', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'plannerBody', 'memory.js') + '\n'
+        + extractFunction(viewSrc, 'previewBudget', 'memory.js') + '\nreturn { previewBudget };')(
+        st, async (url, init) => { seen.push(init.body); return { ok: true, json: async () => pvData() }; },
+        () => true, () => {}, (d, p) => d + '/' + p,
+        (fn) => { timers.push({ fn, live: true }); return timers.length; },
+        (id) => { if (timers[id - 1]) timers[id - 1].live = false; }, encodeURIComponent);
+      const flush = async () => { for (const t of timers.splice(0)) if (t.live) await t.fn(); };
+      api.previewBudget(131072, 1);
+      await flush();
+      eq('hovering a budget while a draft is pending previews the budget WITH the draft',
+        seen.join(), '{"budgetBytes":131072,"plan":{"a.md":"read-first"}}');
+      st.planner = null;
+      api.previewBudget(null, 1);
+      api.previewBudget(131072, 1);
+      await flush();
+      eq('...and without one, the budget alone (a separate cache entry)', seen[1], '{"budgetBytes":131072}');
     }
   }
 
@@ -12357,6 +12695,11 @@ const EXECUTED = new Set([
   'writeReadingBudget', 'applyBudgetAnswer', 'setReadingBudget', 'applyPlan', 'bindSessionAndPlan',
   // Moved out of wire() unchanged; the toggle listener is driven in §21 through it.
   'bindFoldToggles',
+  // v3.70.1: the "Documents at start" planner — the pure ones through the
+  // composed step (§6's makeRenderers), the draft, preview, Apply and Discard
+  // against a fake fetch, all in §25l.
+  'plannerFor', 'plannerRows', 'plannerBody', 'plannerPreviewFor', 'setPlannerState', 'previewPlanner',
+  'discardPlanner', 'applyPlanner', 'plannerCountsWord', 'plannerFoldHtml',
   // v3.66.0 (P1): the Documents monitor — driven over both budgets, the
   // applicability rule for danger and the in-place patch in §23.
   'foundationsMonitor',

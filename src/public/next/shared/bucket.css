@@ -133,6 +133,36 @@
 .bk-ly-other   { background: var(--ly-other);   color: var(--ly-other-ink); }
 .bk-bar-zoom .bk-ly { min-width: 2px; }
 
+/* v3.70.1 — ONE SEGMENT PER READ-FIRST DOCUMENT: the same violet step, a
+   THIN separator between documents (the layers keep their 2px gap), and the
+   document that opens a later MCP reply marked by a wider gap — the "reply N"
+   strip under the bar says which reply it is. */
+.bk-part + .bk-part { box-shadow: -1px 0 0 var(--ly-gap); }
+.bk-part.bk-page-start { box-shadow: -3px 0 0 var(--ly-gap); }
+
+.bk-pages {
+  position: relative;
+  height: 16px;
+  margin-top: var(--space-2);
+}
+.bk-page {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: hidden;
+  white-space: nowrap;
+  border-top: 1px solid var(--border-strong);
+  border-left: 1px solid var(--border-strong);
+  font: var(--weight-regular) var(--text-2xs)/1 var(--font-mono);
+  color: var(--text-2);
+  box-sizing: border-box;
+}
+.bk-page.is-later { border-left-style: dashed; border-left-color: var(--accent-border); }
+.bk-page span { overflow: hidden; padding: 0 var(--space-2); }
+
 /* The reading budget not spent: an EMPTY dashed room. */
 .bk-room {
   flex: none;
@@ -225,6 +255,7 @@
 }
 @container bk (max-width: 559px) {
   .bk-seg span { display: none; }
+  .bk-page span { display: none; }
   .bk-figure { margin-left: 0; flex-basis: 100%; }
 }
 
