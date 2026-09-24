@@ -1,0 +1,89 @@
+/* ── Layer ───────────────────────────────────────────────────────────────
+   THE LAYER RAMP (v3.70.0): what The Curator hands an agent at the start of
+   a session, drawn as segments of ONE bar — shared/bucket.js / bucket.css,
+   the segmented depth bar (design rule 6, as amended in v3.70.0).
+
+   ONE HUE. Brand violet means "what The Curator hands over", and every
+   layer is a lightness step of it — never a second hue, never an identity
+   colour (rule 5: identity means WHICH DOMAIN, and a layer is not one).
+   Framing (the JSON keys, the report, the authority note) is not project
+   content, so it is the neutral ink ramp rather than violet.
+
+   ALTERNATING LIGHTNESS, IN THE ORDER THE KIT DRAWS THEM
+   (framing · brief · handoff · journal · document list · read first).
+   Every pair of neighbours measures ≥ 3:1 against each other, in both
+   themes, so two adjacent segments are never told apart by hue alone; the
+   segment's name is also printed on it when it is wide enough, and every
+   layer is in the legend with its figure whatever its width.
+
+   EACH FILL HAS ITS OWN INK (`--ly-<layer>-ink`), picked for ≥ 4.5:1 — a
+   label printed ON a light step is the darkest violet, ON a dark step white.
+   scripts/test-next-bucket-kit.js recomputes all of it from these values.
+
+   NO LITERALS: every value aliases a primitive in tokens/color.css (the
+   violet and ink ramps), so this file adds names, not colours. Because the
+   targets are theme-INVARIANT primitives, every name is restated in the
+   light block — an alias to a primitive declared only at the root would leak
+   its dark value into the light theme (scripts/test-css-tokens.js §11).
+
+   LINK ORDER: after tokens/color.css (index.html). No prefers-color-scheme
+   query: the shell always stamps data-theme both ways.
+   ─────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --ly-framing:      var(--ink-600);
+  --ly-framing-ink:  var(--ink-0);
+  --ly-brief:        var(--violet-400);
+  --ly-brief-ink:    var(--violet-950);
+  --ly-handoff:      var(--violet-800);
+  --ly-handoff-ink:  var(--ink-0);
+  --ly-journal:      var(--violet-200);
+  --ly-journal-ink:  var(--violet-950);
+  --ly-index:        var(--violet-600);
+  --ly-index-ink:    var(--ink-0);
+  --ly-read:         var(--violet-100);
+  --ly-read-ink:     var(--violet-950);
+  /* Any layer key the kit does not know (a future tier) — a mid step. */
+  --ly-other:        var(--violet-500);
+  --ly-other-ink:    var(--ink-0);
+
+  /* The harness is NOT The Curator's and is NOT measured: a hatch built from
+     two neutral ink steps, never violet. */
+  --ly-harness-a:    var(--ink-600);
+  --ly-harness-b:    var(--ink-700);
+  /* Free window, the bar's own track. */
+  --ly-free:         var(--ink-850);
+  /* The gap drawn between two segments. */
+  --ly-gap:          var(--ink-900);
+  /* The dashed "budget left" room and the dashed "on demand" chip. */
+  --ly-room-edge:    var(--violet-400);
+  --ly-room-ink:     var(--violet-300);
+  --ly-ondemand-edge: var(--ink-300);
+}
+
+[data-theme="light"] {
+  --ly-framing:      var(--ink-600);
+  --ly-framing-ink:  var(--ink-0);
+  --ly-brief:        var(--violet-400);
+  --ly-brief-ink:    var(--violet-950);
+  --ly-handoff:      var(--violet-800);
+  --ly-handoff-ink:  var(--ink-0);
+  --ly-journal:      var(--violet-200);
+  --ly-journal-ink:  var(--violet-950);
+  --ly-index:        var(--violet-600);
+  --ly-index-ink:    var(--ink-0);
+  /* violet-100 all but vanishes on a white track (1.2:1); the light theme
+     takes the next step, which still clears 3:1 against its neighbour. */
+  --ly-read:         var(--violet-300);
+  --ly-read-ink:     var(--violet-950);
+  --ly-other:        var(--violet-500);
+  --ly-other-ink:    var(--ink-0);
+
+  --ly-harness-a:    var(--ink-100);
+  --ly-harness-b:    var(--ink-50);
+  --ly-free:         var(--ink-25);
+  --ly-gap:          var(--ink-0);
+  --ly-room-edge:    var(--violet-600);
+  --ly-room-ink:     var(--violet-700);
+  --ly-ondemand-edge: var(--ink-400);
+}

@@ -1901,6 +1901,10 @@ section('11. every TOKEN FILE defines every THEMED name in BOTH themes');
     // themed hex, so a slot missing from the light block would paint its DARK
     // hue on the light theme — the exact defect v3.65.1 measured at 1.85:1.
     { rel: 'src/public/next/tokens/identity.css', themed: true },
+    // v3.70.0: the LAYER ramp. Every --ly-* aliases a theme-INVARIANT
+    // primitive, so each must be restated in the light block or its dark
+    // step leaks into the light theme.
+    { rel: 'src/public/next/tokens/layer.css', themed: true },
     { rel: 'src/public/next/shared/freshness.css', themed: false },
   ];
   const materialRel = TOKEN_FILES[0].rel;
