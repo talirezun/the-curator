@@ -545,6 +545,9 @@ const EXPECTED = [
   // picked and copies (or, on a folder mirror, mirrors) the ticked files; the
   // store enforces every path rule. Declared here before it could ship.
   ['post', '/:domain/:project/foundations/add-local'],
+  // v3.69.0 — "Add from GitHub" on ANY project (per-document sources). A POST:
+  // it reads blobs and writes files; `token` is refused by name.
+  ['post', '/:domain/:project/foundations/add-remote'],
   ['post', '/:domain/:project/foundations/refresh'],
   // v3.65.1 — "Mirror from GitHub instead". A POST, not a PATCH: it fetches
   // blobs and rewrites files. Four segments like the rest of tier 0, and
@@ -1627,8 +1630,9 @@ const FND_SEED = {
   const curated = await call('post', '/:domain/:project/foundations/refresh',
     { params: { domain: 'alpha', project: 'curated' }, body: {} });
   eq('a curator-owned project is refused with 400', curated.status, 400);
-  eq('...under a reason a client can match on', curated.body.reason, 'curator_owned');
-  ok('...and a sentence a person can act on', /written for this project/.test(String(curated.body.error)),
+  // v3.69.0 — sources are per document: the reason is `no_sources` now.
+  eq('...under a reason a client can match on', curated.body.reason, 'no_sources');
+  ok('...and a sentence a person can act on', /Nothing here is mirrored/.test(String(curated.body.error)),
     JSON.stringify(curated.body));
 
   // UNREACHABLE: a 409. Nothing is malformed and nothing is broken -- the
@@ -2039,7 +2043,8 @@ const REPO = join(TMP, 'repo');
   eq('a repo-owned document refuses the write with 400', mirror.status, 400);
   eq('...under its own reason', mirror.body.reason, 'repo_owned');
   ok('...with the sentence the contract names',
-    /mirrored from the repository — edit it there and refresh/.test(String(mirror.body.error)),
+    // v3.69.0 — per document: the sentence names the document and its source.
+    /"architecture\.md" is mirrored from \S+ — edit it there and refresh/.test(String(mirror.body.error)),
     String(mirror.body.error));
   eq('...and the mirrored bytes are untouched',
     readFileSync(join(st, 'mirrored', 'foundations', 'architecture.md'), 'utf8'),
@@ -2488,7 +2493,8 @@ const REPO = join(TMP, 'repo');
     // is counted separately so the tier-0 claim keeps its own number rather
     // than absorbing every later addition.
     const fourFoundations = four.filter((p) => p.includes('/foundations'));
-    ok('every foundations route is four segments deep', fourFoundations.length === 8, JSON.stringify(four));
+    // v3.69.0 — NINE: add-remote ("Add from GitHub" on any project).
+    ok('every foundations route is four segments deep', fourFoundations.length === 9, JSON.stringify(four));
     ok('...and the knowledge-domains write is four segments deep for the same reason',
       four.includes('/:domain/:project/knowledge/domains'), JSON.stringify(four));
     const twoGet = ROUTES.filter((r) => r.method === 'get'
@@ -2540,7 +2546,7 @@ const REPO = join(TMP, 'repo');
     { params: { domain: 'tier0', project: 'tier0' }, body: {} });
   eq('the refresh reaches it too, and answers about its OWNERSHIP rather than '
     + 'about an unaddressable project', ref.status, 400);
-  eq('...under curator_owned', ref.body.reason, 'curator_owned');
+  eq('...under no_sources (v3.69.0; curator_owned before)', ref.body.reason, 'no_sources');
 
   // AND THE SCOPED TWO-SEGMENT READ, for contrast: it works for a project
   // named after its domain (the literal is `projects`, not the domain name),
@@ -2565,7 +2571,10 @@ const REPO = join(TMP, 'repo');
         ['an unusable project', { params: { domain: 'alpha', project: '../x', slug: 'a.md' }, body: { text: 'x' } }, 400],
         ['an unusable slug', { params: { domain: 'alpha', project: 'lumina', slug: 'a/b.md' }, body: { text: 'x' } }, 400],
         ['no text', { params: { domain: 'alpha', project: 'lumina', slug: 'a.md' }, body: {} }, 400],
-        ['a repo-owned project', { params: { domain: 'alpha', project: 'lumina', slug: 'a.md' }, body: { text: 'x' } }, 400]]],
+        // v3.69.0 — per DOCUMENT: the refusal is an edit of a MIRRORED slug
+        // (architecture.md is mirrored in lumina). A NEW slug in the same
+        // project is allowed (D4) — the control below proves it reaches the store.
+        ['a mirrored document', { params: { domain: 'alpha', project: 'lumina', slug: 'architecture.md' }, body: { text: 'x' } }, 400]]],
     ['delete', '/:domain/:project/foundations/:slug', 'removeFoundation',
       [['an unknown domain', { params: { domain: 'nope', project: 'lumina', slug: 'a.md' }, body: { confirm: 'a.md' } }, 404],
         ['a read-only mirror', { params: { domain: 'shared-cohort', project: 'shared-cohort', slug: 'a.md' }, body: { confirm: 'a.md' } }, 403],
@@ -2592,6 +2601,16 @@ const REPO = join(TMP, 'repo');
       eq('...and never reached ' + storeFn + ' (' + label + ')',
         stub.__calls.filter((c) => c.name === storeFn).length, 0);
     }
+  }
+  // v3.69.0 CONTROL (D4): a NEW document in a project that mirrors is not
+  // refused — it reaches saveFoundation exactly once.
+  {
+    const stub = install(FND_SEED);
+    const r = await call('put', '/:domain/:project/foundations/:slug',
+      { params: { domain: 'alpha', project: 'lumina', slug: 'a.md' }, body: { text: '# A\n' } });
+    ok('PUT of a NEW slug into a mirroring project is NOT refused repo_owned (D4)',
+      r.body && r.body.reason !== 'repo_owned', JSON.stringify(r.body).slice(0, 200));
+    eq('...and reaches saveFoundation once', stub.__calls.filter((c) => c.name === 'saveFoundation').length, 1);
   }
   // CONTROL: the same routes DO reach the store when nothing refuses them,
   // so the counts above are not measuring a route that never works.

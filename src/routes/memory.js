@@ -772,8 +772,15 @@ function foundationDocRow(d) {
     sha256: d.sha256 ?? null,
     updatedAt: d.updatedAt ?? null,
     commit: d.commit ?? null,
+    // v3.69.0 — `group` names WHICH source group a mirrored document belongs
+    // to (`s1`…`s99`), or null. The store sends it only when the manifest it
+    // read was version 2, and a v1 mirror's rows read as its one source.
     source: d.source && typeof d.source === 'object'
-      ? { kind: d.source.kind ?? null, path: d.source.path ?? null } : null,
+      ? {
+        kind: d.source.kind ?? null,
+        path: d.source.path ?? null,
+        group: typeof d.source.group === 'string' ? d.source.group.slice(0, 8) : null,
+      } : null,
     authoredBy: d.authoredBy ?? null,
     // COMPUTED, NEVER REMEMBERED (the spec's own invariant 3). Forwarded
     // exactly as the store answered it — including `unreachable`, which is
@@ -804,6 +811,25 @@ function foundationDocRow(d) {
     hidden: d.hidden === true && d.readFirst !== true,
     atStart: d.readFirst === true ? 'read-first' : d.hidden === true ? 'not-at-start' : 'on-request',
   };
+}
+
+/** One source group for the wire (v3.69.0), allow-listed field by field. */
+function sourceGroupWire(g) {
+  const r = g.remote && typeof g.remote === 'object' ? g.remote : null;
+  return {
+    id: String(g.id).slice(0, 8),
+    kind: g.kind === 'github' ? 'github' : 'folder',
+    label: typeof g.label === 'string' ? g.label.slice(0, 200) : null,
+    reachableHere: g.reachableHere === true,
+    remote: r ? { owner: r.owner ?? null, repo: r.repo ?? null, ref: r.ref ?? null, path: r.path ?? null } : null,
+    lastRefreshAt: typeof g.lastRefreshAt === 'string' ? g.lastRefreshAt : null,
+    lastRefreshCommit: typeof g.lastRefreshCommit === 'string' ? g.lastRefreshCommit : null,
+    documentCount: Number.isInteger(g.documentCount) ? g.documentCount : 0,
+  };
+}
+function sourcesWire(v) {
+  return (Array.isArray(v) ? v : []).filter((g) => g && typeof g === 'object' && typeof g.id === 'string')
+    .slice(0, 16).map(sourceGroupWire);
 }
 
 function foundationsWire(out) {
@@ -869,6 +895,15 @@ function foundationsWire(out) {
     readingBudgetSource: out.readingBudgetSource === 'owner' ? 'owner' : 'default',
     planned: out.planned === true,
     manifestNotes: Array.isArray(out.manifestNotes) ? out.manifestNotes.filter((n) => typeof n === 'string').slice(0, 20) : [],
+    // ── THE SOURCE GROUPS (v3.69.0), ALWAYS AN ARRAY ────────────────────
+    // One entry per place documents are mirrored FROM (a folder, or a GitHub
+    // repository): empty for a project whose documents are all kept here,
+    // one (`s1`) for a v1 mirror. ALWAYS present on the app envelope
+    // (CONTRACT addendum 2) — `get_project_context` carries it only for a v2
+    // manifest, so the MCP's v1 output stays byte-identical. The folder's
+    // absolute path is NOT here: `label` is its basename.
+    sources: sourcesWire(out.sources),
+    manifestVersion: Number.isInteger(out.manifestVersion) ? out.manifestVersion : null,
     documents: docs.filter(Boolean).map(foundationDocRow),
     // A `.md` file in the directory with no manifest entry. The manifest is
     // written LAST on every save, so a crash leaves a document without an
@@ -951,6 +986,15 @@ const TIER0_WIRE_REASON = new Map([
   ['invalid-token-source', 'invalid_token_source'],
   // v3.67.0 — the start-state setter's own refusal.
   ['invalid-start-state', 'invalid_at_start'],
+  // v3.69.0 — per-document sources. `no-sources`: nothing in the project is
+  // mirrored; `group-required`/`unknown-group`: a call that must name WHICH
+  // source (and named none, or one that is not there); `too-many-sources`:
+  // the 8-source cap; `invalid-mode`: add-local's copy|mirror.
+  ['no-sources', 'no_sources'],
+  ['group-required', 'group_required'],
+  ['unknown-group', 'unknown_group'],
+  ['too-many-sources', 'too_many_sources'],
+  ['invalid-mode', 'invalid_mode'],
 ]);
 function tier0Reason(reason) {
   return TIER0_WIRE_REASON.get(String(reason || '')) || reason || 'io';
@@ -1017,14 +1061,22 @@ function refreshWire(out) {
  *     nothing is written; the store refuses this too, and refusing here as
  *     well means the message names the file rather than the operation.
  *   · `no_manifest` — ownership has never been chosen. `init` is the call.
- *   · `repo_owned` — the documents are MIRRORED, so the edit belongs in the
- *     folder they are mirrored from. Checked HERE rather than left to the
- *     store's `ownership-mismatch` only because the sentence a person needs
- *     ("edit it there and refresh") is about the app's own two controls.
+ *   · `repo_owned` — THIS DOCUMENT is MIRRORED, so the edit belongs in the
+ *     folder or repository it is mirrored from. Checked HERE rather than left
+ *     to the store's `ownership-mismatch` only because the sentence a person
+ *     needs ("edit it there and refresh") is about the app's own controls.
+ *
+ * ── PER DOCUMENT, NOT PER PROJECT (v3.69.0) ──────────────────────────────
+ * Until v3.68 this refused every write into a repo-owned PROJECT. Sources are
+ * now recorded per document (CONTRACT §0.2): a project may hold documents
+ * written here beside documents mirrored from folders or GitHub, so the one
+ * write this gate still refuses is an edit of a slug whose entry IS a mirror —
+ * the one-writer-per-FILE invariant, checked on the file it protects. A NEW
+ * slug, or a kept one, passes in any project (D4).
  *
  * Returns `{ok: true, index}` or sends the refusal and returns `{ok: false}`.
  */
-async function requireCuratorOwned(res, domain, project) {
+async function requireCuratorOwned(res, domain, project, slug) {
   let index;
   try { index = await fstore().listFoundations(domain, project); }
   catch (err) {
@@ -1057,16 +1109,40 @@ async function requireCuratorOwned(res, domain, project) {
     });
     return { ok: false };
   }
-  if (index.ownership === 'repo') {
+  const row = (Array.isArray(index.documents) ? index.documents : []).find((d) => d && d.slug === slug) || null;
+  if (row && row.source && row.source.kind === 'repo') {
+    const where = mirrorSourceOf(index, row);
     res.status(400).json({
-      ok: false, reason: 'repo_owned', domain, project, ownership: 'repo',
-      error: 'This document is mirrored from the repository — edit it there and refresh. '
-        + 'A mirror is a byte copy of a file whose author is the folder it came from, so an edit '
-        + 'made here would be overwritten by the next refresh.',
+      ok: false, reason: 'repo_owned', domain, project, slug,
+      // PER DOCUMENT now: this row is the mirror, whatever else the project holds.
+      ownership: 'repo',
+      mirrored: where,
+      error: `"${slug}" is mirrored from ${where.label || 'its source'} — edit it there and refresh. `
+        + 'A mirror is a byte copy of a file whose author is the folder or repository it came from, so an '
+        + 'edit made here would be overwritten by the next refresh. Nothing was written. A NEW document '
+        + 'can still be written into this project under another name.',
     });
     return { ok: false };
   }
   return { ok: true, index };
+}
+
+/**
+ * WHERE ONE MIRRORED ROW COMES FROM, for a sentence: `{group, kind, label,
+ * path}`. The row's own `source.group` names its group; a v1 mirror's rows
+ * carry none and belong to the project's one source. The label is a folder
+ * BASENAME or `owner/repo`, never an absolute path.
+ */
+function mirrorSourceOf(index, row) {
+  const groups = Array.isArray(index && index.sources) ? index.sources : [];
+  const id = row && row.source && typeof row.source.group === 'string' ? row.source.group : null;
+  const g = id ? groups.find((x) => x && x.id === id) : (groups.length === 1 ? groups[0] : null);
+  return {
+    group: g ? g.id : id,
+    kind: g ? (g.kind === 'github' ? 'github' : 'folder') : null,
+    label: g && typeof g.label === 'string' ? g.label : null,
+    path: row && row.source && typeof row.source.path === 'string' ? row.source.path : null,
+  };
 }
 
 /**
@@ -1232,15 +1308,107 @@ router.get('/', async (_req, res) => {
 // index makes the reason visible instead of implied. `repo-scan` is a
 // reserved project name for the other half of the same hole.
 //
-// NO DOMAIN, NO PROJECT, NO WRITE. The scan answers "what is in this folder
-// that could become a canonical document" — a question about the user's own
-// disk, asked before a project has chosen anything. It is therefore not
-// guarded by `requireDomain`/`refuseMirror` (there is no domain to guard and
-// nothing to write); the containment that matters is the store's, which
+// NO WRITE, AND A PROJECT ONLY WHEN NAMED. The scan answers "what is in this
+// folder that could become a canonical document" — a question about the
+// user's own disk. From v3.69.0 a caller MAY name `domain` + `project` (and,
+// on the local door, `mode=copy|mirror`), and each candidate then carries the
+// store's `alreadyAdded`/`alreadyAs`/`landsAs` for that project — see
+// `scanContext`; the domain is then checked by `requireDomain`. Unnamed, it
+// is exactly the pre-v3.69 project-free listing plus `inGitCheckout`. It is
+// never guarded by `refuseMirror` (nothing is written, so a read-only mirror
+// may still be listed against); the containment that matters is the store's, which
 // requires an ABSOLUTE path, resolves it through `realpath`, descends no
 // symlinked directory and offers no symlinked file whose target leaves the
 // root. This route adds no second opinion about any of that.
 // ═════════════════════════════════════════════════════════════════════════
+/**
+ * THE CHECKLIST'S CONTEXT (v3.69.0, CONTRACT §4.3 + addendum 1). Optional
+ * `domain` and `project` name the project the listing is FOR; given both, each
+ * candidate comes back annotated by the STORE (`annotateScanCandidates`) with
+ * `alreadyAdded`, `alreadyAs` and `landsAs` — decided on the server, because
+ * "already added" is per SOURCE, not per name (the same file reached through
+ * a folder and through its GitHub repository is one file; a same-named file
+ * from another source is not). `mode` (`copy`|`mirror`, local door only, the
+ * default `copy`) says which listing it is: a copy is "already added" when this
+ * folder's copy of that name is here; a mirror when that path of that source is.
+ *
+ * One of `domain`/`project` without the other is a 400 — a half-named project
+ * is a mistake, never "no project". Returns `{domain, project, mode}` or sends
+ * the refusal and returns null.
+ */
+async function scanContext(req, res) {
+  const q = req.query || {};
+  const domain = typeof q.domain === 'string' && q.domain ? q.domain : null;
+  const project = typeof q.project === 'string' && q.project ? q.project : null;
+  if (q.mode !== undefined && q.mode !== 'copy' && q.mode !== 'mirror') {
+    res.status(400).json({
+      ok: false, reason: 'invalid_mode',
+      error: '`mode` is "copy" (copy once) or "mirror" (keep in sync) — which listing this is.',
+    });
+    return null;
+  }
+  if (!!domain !== !!project) {
+    res.status(400).json({
+      ok: false, reason: 'project_required',
+      error: 'Name both `domain` and `project` to have the listing say what is already added, or neither.',
+    });
+    return null;
+  }
+  if (domain) {
+    if (!await requireDomain(res, domain)) return null;
+    if (!validProjectName(ws(), project)) {
+      res.status(400).json({ ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.` });
+      return null;
+    }
+  }
+  return { domain, project, mode: q.mode === 'mirror' ? 'mirror' : 'copy' };
+}
+
+/**
+ * Send a scan's payload, annotated for the named project (when there is one).
+ * The annotation fields are copied onto each candidate BY NAME, never spread,
+ * so a field the store grows does not reach a client until somebody decides it
+ * should. `inGitCheckout` is top-level on the local arm (the D2 default: a
+ * folder inside a git checkout opens on "Keep in sync"); `mode` echoes which
+ * listing was annotated.
+ */
+async function sendAnnotatedScan(res, ctx, payload, sourceRef) {
+  const isLocal = payload.source !== 'remote';
+  if (!ctx.domain || !sourceRef) {
+    let inGit = null;
+    if (isLocal && payload.root) {
+      const d = await fstore().describeFolderSource(payload.root).catch(() => null);
+      inGit = d && d.ok ? d.inGitCheckout === true : null;
+    }
+    return res.json({ ...payload, mode: isLocal ? ctx.mode : 'mirror', ...(isLocal ? { inGitCheckout: inGit } : {}) });
+  }
+  const ann = await fstore().annotateScanCandidates(ctx.domain, ctx.project, sourceRef, payload.candidates);
+  if (!ann || ann.ok === false) return tier0Refusal(res, ann || { reason: 'io' }, { domain: ctx.domain, project: ctx.project });
+  const byIndex = Array.isArray(ann.candidates) ? ann.candidates : [];
+  const candidates = payload.candidates.map((c, i) => {
+    const a = byIndex[i] && byIndex[i].path === c.path ? byIndex[i] : {};
+    return {
+      path: c.path, bytes: c.bytes, suggestedRole: c.suggestedRole,
+      suggestedSlug: typeof a.suggestedSlug === 'string' ? a.suggestedSlug : c.suggestedSlug,
+      tooLarge: c.tooLarge, matchedBy: c.matchedBy, firstHeading: c.firstHeading, modifiedAt: c.modifiedAt,
+      alreadyAdded: a.alreadyAdded === true,
+      alreadyAs: typeof a.alreadyAs === 'string' ? a.alreadyAs : null,
+      landsAs: typeof a.landsAs === 'string' ? a.landsAs : null,
+    };
+  });
+  const g = ann.group && typeof ann.group === 'object' ? ann.group : null;
+  return res.json({
+    ...payload,
+    candidates,
+    mode: isLocal ? ctx.mode : 'mirror',
+    ...(isLocal ? { inGitCheckout: ann.inGitCheckout === true } : {}),
+    // WHICH SOURCE a mirror commit would join (`id`) or start (`created`).
+    group: g ? { id: typeof g.id === 'string' ? g.id : null,
+      label: typeof g.label === 'string' ? g.label.slice(0, 200) : null, created: g.created === true } : null,
+    ...(typeof ann.manifestError === 'string' ? { manifestError: ann.manifestError } : {}),
+  });
+}
+
 router.get('/repo-scan', async (req, res) => {
   try {
     const root = typeof req.query.root === 'string' ? req.query.root.trim() : '';
@@ -1262,7 +1430,7 @@ router.get('/repo-scan', async (req, res) => {
         // malformed, the folder is simply not here).
         return tier0Refusal(res, out || { reason: 'invalid-root' }, { root: root || null });
       }
-      res.json({
+      const payload = {
         ok: true,
         // THE RESOLVED root, not the one that was typed: a symlinked or
         // `..`-shaped path is answered with where it actually landed, so the
@@ -1297,8 +1465,12 @@ router.get('/repo-scan', async (req, res) => {
         cap: Number.isInteger(out.cap) ? out.cap : null,
         maxDepth: Number.isInteger(out.maxDepth) ? out.maxDepth : null,
         maxDocumentBytes: Number.isInteger(out.maxDocumentBytes) ? out.maxDocumentBytes : null,
-      });
-      return;
+      };
+      // v3.69.0 — annotated for `domain`/`project`/`mode` (scanContext). The
+      // LOCAL arm validates them after its read-only scan (see the header).
+      const ctx = await scanContext(req, res);
+      if (!ctx) return;
+      return sendAnnotatedScan(res, ctx, payload, { mode: ctx.mode, root: out.root });
     }
 
     // ── THE REMOTE ARM (v3.65.0) ────────────────────────────────────────
@@ -1318,6 +1490,10 @@ router.get('/repo-scan', async (req, res) => {
     // NO TOKEN CROSSES THIS ROUTE. `tokenSource` names which file to read it
     // from, exactly as on the init and the refresh.
     {
+      // v3.69.0 — the project is checked BEFORE the GitHub read, so a
+      // mistyped project never spends a rate limit.
+      const ctx = await scanContext(req, res);
+      if (!ctx) return;
       const remote = typeof req.query.remote === 'string' ? req.query.remote.trim().slice(0, 300) : '';
       const scan = await fstore().scanRemoteForFoundations({
         remote: remote || null,
@@ -1335,7 +1511,7 @@ router.get('/repo-scan', async (req, res) => {
         const status = REFRESH_REMOTE_STATUS.get(reason) ?? statusForStoreRefusal({ reason });
         return res.status(status).json(withErrorProse({ ...(scan || {}), ok: false, reason }));
       }
-      return res.json({
+      const payload = {
         ok: true,
         // NULL, and never a path: nothing on this computer was read.
         root: null,
@@ -1362,7 +1538,10 @@ router.get('/repo-scan', async (req, res) => {
         maxDepth: Number.isInteger(scan.maxDepth) ? scan.maxDepth : null,
         maxDocumentBytes: Number.isInteger(scan.maxDocumentBytes) ? scan.maxDocumentBytes : null,
         requests: Number.isInteger(scan.requests) ? scan.requests : null,
-      });
+      };
+      const rr = scan.remote && typeof scan.remote === 'object' ? scan.remote : null;
+      return sendAnnotatedScan(res, ctx, payload,
+        rr ? { remote: { owner: rr.owner, repo: rr.repo, ref: rr.ref ?? null } } : null);
     }
   } catch (err) {
     console.error('Memory repo-scan error:', err);
@@ -2310,7 +2489,7 @@ router.put('/:domain/:project/foundations/:slug', async (req, res) => {
       });
     }
 
-    const gate = await requireCuratorOwned(res, domain, project);
+    const gate = await requireCuratorOwned(res, domain, project, slug);
     if (!gate.ok) return;
 
     // CREATED OR REPLACED, decided BEFORE the write off the manifest this
@@ -2586,18 +2765,41 @@ router.delete('/:domain/:project/foundations/:slug', async (req, res) => {
     // the two-writers argument actually protects.
     const gate = await requireManifest(res, domain, project);
     if (!gate.ok) return;
-    const wasMirrored = gate.index && gate.index.ownership === 'repo';
 
     const out = await fstore().removeFoundation(domain, project, slug);
     if (!out || out.ok === false) return tier0Refusal(res, out || { reason: 'io' }, { domain, project, slug });
+    // ── WHAT KIND OF DOCUMENT IT WAS, FROM THE STORE (v3.69.0) ───────────
+    // Per DOCUMENT, never per project: a project may mix written, copied and
+    // mirrored rows, so `ownership` here is THIS row's (`repo` for a mirror,
+    // `curator` for a kept one) and `origin` names which of the four kinds.
+    const origin = ['written', 'copied', 'folder', 'github'].includes(out.origin) ? out.origin : null;
+    const wasMirrored = origin === 'folder' || origin === 'github';
+    const src = out.source && typeof out.source === 'object' ? out.source : null;
+    const grp = out.group && typeof out.group === 'object' ? out.group : null;
     res.json({
       ok: true, domain, project,
       removed: out.slug || slug,
-      // WHICH OUTCOME THIS WAS. The copy is gone either way; on a mirror the
-      // file it was copied FROM is still in the folder, and saying so is the
-      // difference between "stopped mirroring" and "deleted my document".
+      // WHICH OUTCOME THIS WAS. The copy is gone either way; for a mirror or a
+      // copy, the ORIGINAL is still in its folder or repository, and saying so
+      // is the difference between "stopped mirroring" and "deleted my
+      // document". Only a document WRITTEN here had no other copy.
       ownership: wasMirrored ? 'repo' : 'curator',
-      sourceKept: wasMirrored === true,
+      origin,
+      sourceKept: out.sourceKept === true,
+      // WHERE THE ORIGINAL IS: a folder BASENAME or `owner/repo`, plus the
+      // source-relative path (null for a copy). Never an absolute path.
+      source: src ? {
+        label: typeof src.label === 'string' ? src.label.slice(0, 200) : null,
+        path: typeof src.path === 'string' ? src.path.slice(0, 300) : null,
+      } : null,
+      group: grp ? {
+        id: typeof grp.id === 'string' ? grp.id : null,
+        kind: grp.kind === 'github' ? 'github' : 'folder',
+        label: typeof grp.label === 'string' ? grp.label.slice(0, 200) : null,
+      } : null,
+      // THE LAST DOCUMENT OF A SOURCE takes the source with it, in the same
+      // manifest write (CONTRACT §5.4) — said, so the confirm's clause is true.
+      groupRemoved: out.groupRemoved === true,
       // WHAT IT WAS. An orphan is a file on disk the manifest never listed —
       // the shape a crash between a document write and the manifest write
       // leaves behind — and removing one is a legitimate cleanup, reported
@@ -2734,16 +2936,55 @@ router.post('/:domain/:project/foundations/init', async (req, res) => {
 // POST /api/memory/:domain/:project/foundations/add-local — "Add from this
 // computer" (v3.68.0)
 //
-// `{root, files: [{path, role?}]}` — the folder the owner picked and the files
-// they ticked in it. The STORE decides what that means for this project's one
-// ownership (`addFoundationsFromFolder`: copy into an empty or curator-kept
-// project, mirror into a folder mirror from inside its folder, refuse on a
-// GitHub mirror) and enforces every path rule — absolute root, realpath,
-// inside the root through symlinks, .md/.txt only, a regular file, the
-// per-document cap. This route only shapes the body: a STRICT allow-list, so
-// nothing else rides in, and the refusal numbers ride out.
+// `{root, files: [{path, role?}], mode?}` — the folder the owner picked, the
+// files they ticked in it, and (v3.69.0) WHICH of two things they asked for:
+// `copy` (copy once; the text never changes on its own) or `mirror` (keep in
+// sync; a refresh re-reads the files). Absent `mode` keeps v3.68's answer
+// (the store copies, unless the folder is inside an existing folder source).
+// The STORE decides everything else (`addFoundationsFromFolder`: a mirror is
+// rooted at the checkout's top level and joins a source that contains the
+// folder, or starts a new one up to 8; a name already taken lands under a
+// suffix, named in `landed`) and enforces every path rule — absolute root,
+// realpath, inside the root through symlinks, .md/.txt only, a regular file,
+// the per-document cap. This route only shapes the body: a STRICT allow-list,
+// so nothing else rides in, and the refusal numbers ride out.
 // ═════════════════════════════════════════════════════════════════════════
-export const ADD_LOCAL_BODY_FIELDS = new Set(['root', 'files']);
+export const ADD_LOCAL_BODY_FIELDS = new Set(['root', 'files', 'mode']);
+
+/** A refusal list for the wire — path, reason, and the numbers when there are any. */
+function addRefusedWire(v) {
+  return (Array.isArray(v) ? v : []).slice(0, 200).map((r) => ({
+    path: r && typeof r.path === 'string' ? r.path.slice(0, 200) : null,
+    reason: r && typeof r.reason === 'string' ? r.reason.slice(0, 200) : null,
+    ...(r && typeof r.slug === 'string' ? { slug: r.slug.slice(0, 80) } : {}),
+    ...(r && Number.isInteger(r.bytes) ? { bytes: r.bytes } : {}),
+    ...(r && Number.isInteger(r.cap) ? { cap: r.cap } : {}),
+  }));
+}
+/** `[{path, slug}]` — what landed, and under which name. */
+function addedFilesWire(v) {
+  return (Array.isArray(v) ? v : []).filter((a) => a && typeof a.slug === 'string').slice(0, 200)
+    .map((a) => ({ path: typeof a.path === 'string' ? a.path.slice(0, 300) : null, slug: a.slug.slice(0, 80) }));
+}
+/** `[{slug, from}]` — a ticked file that landed under a name of its own (§4.5). */
+function landedWire(v) {
+  return (Array.isArray(v) ? v : []).filter((x) => x && typeof x.slug === 'string').slice(0, 200)
+    .map((x) => ({ slug: x.slug.slice(0, 80), from: typeof x.from === 'string' ? x.from.slice(0, 300) : null }));
+}
+/** The group an add joined or started, `{id, kind, label}` or null. */
+function addGroupWire(g) {
+  if (!g || typeof g !== 'object' || typeof g.id !== 'string') return null;
+  return { id: g.id.slice(0, 8), kind: g.kind === 'github' ? 'github' : 'folder',
+    label: typeof g.label === 'string' ? g.label.slice(0, 200) : null };
+}
+/** The status of an add's whole-request refusal (both doors). */
+function addRefusalStatus(reason) {
+  if (reason === 'orphans-present' || reason === 'too-many-sources' || reason === 'locked') return 409;
+  if (reason === 'nothing-added') return 422;
+  const remote = REFRESH_REMOTE_STATUS.get(reason);
+  if (remote !== undefined) return remote;
+  return statusForStoreRefusal({ reason });
+}
 router.post('/:domain/:project/foundations/add-local', async (req, res) => {
   try {
     const { domain, project } = req.params;
@@ -2760,36 +3001,49 @@ router.post('/:domain/:project/foundations/add-local', async (req, res) => {
         error: `This route accepts ${[...ADD_LOCAL_BODY_FIELDS].join(', ')}. It was also sent: ${extra.slice(0, 10).join(', ')}.`,
       });
     }
+    // `mode` is one of two words or absent — refused here by name rather than
+    // forwarded, so a typo can never reach the store as "absent".
+    if (body.mode !== undefined && body.mode !== 'copy' && body.mode !== 'mirror') {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_mode',
+        error: '`mode` is "copy" (copy once — the text never changes on its own) or "mirror" (keep in sync '
+          + 'with this folder — Refresh re-reads it). Omit it to let the folder decide. Nothing was added.',
+      });
+    }
     const out = await fstore().addFoundationsFromFolder(domain, project, {
       root: typeof body.root === 'string' ? body.root.slice(0, 4096) : '',
       files: Array.isArray(body.files) ? body.files : [],
+      ...(body.mode === 'copy' || body.mode === 'mirror' ? { mode: body.mode } : {}),
     });
-    const refusedWire = (v) => (Array.isArray(v) ? v : []).slice(0, 200).map((r) => ({
-      path: r && typeof r.path === 'string' ? r.path.slice(0, 200) : null,
-      reason: r && typeof r.reason === 'string' ? r.reason.slice(0, 200) : null,
-      ...(r && Number.isInteger(r.bytes) ? { bytes: r.bytes } : {}),
-      ...(r && Number.isInteger(r.cap) ? { cap: r.cap } : {}),
-    }));
+    const refusedWire = addRefusedWire;
     if (!out || out.ok === false) {
       const reason = (out && out.reason) || 'io';
-      const status = reason === 'source-is-github' || reason === 'outside-mirrored-folder'
-        || reason === 'orphans-present' ? 409
-        : reason === 'nothing-added' ? 422
-          : statusForStoreRefusal({ reason });
+      const status = reason === 'source-is-github' || reason === 'outside-mirrored-folder' ? 409
+        : addRefusalStatus(reason);
       return res.status(status).json(withErrorProse({
         ok: false, domain, project, reason: tier0Reason(reason),
         message: out && typeof out.message === 'string' ? out.message : 'Nothing was added.',
         refused: refusedWire(out && out.refused),
         ...(out && out.mirroredFolder ? { mirroredFolder: out.mirroredFolder } : {}),
         ...(out && out.remote ? { remote: out.remote } : {}),
+        ...(out && Number.isInteger(out.sourceCount) ? { sourceCount: out.sourceCount } : {}),
+        ...(out && Number.isInteger(out.cap) ? { cap: out.cap } : {}),
       }));
     }
     const index = await fstore().listFoundations(domain, project);
     res.status(200).json({
       ok: true, domain, project,
       mode: out.mode === 'mirror' ? 'mirror' : 'copy',
+      // SLUG STRINGS, as since v3.68.0 — `addedFiles` carries `{path, slug}`.
       added: (Array.isArray(out.added) ? out.added : []).filter((x) => typeof x === 'string').slice(0, 200),
+      addedFiles: addedFilesWire(out.addedFiles),
+      // A ticked file that landed under a suffixed name (§4.5), named.
+      landed: landedWire(out.landed),
       refused: refusedWire(out.refused),
+      // THE SOURCE a mirror joined or started (v3.69.0); null for a copy.
+      groupId: typeof out.groupId === 'string' ? out.groupId : null,
+      groupCreated: out.groupCreated === true,
+      group: addGroupWire(out.group),
       rechosen: out.rechosen === true,
       addedBytes: Number.isInteger(out.addedBytes) ? out.addedBytes : null,
       totalBytes: Number.isInteger(out.totalBytes) ? out.totalBytes : null,
@@ -2801,6 +3055,117 @@ router.post('/:domain/:project/foundations/add-local', async (req, res) => {
     });
   } catch (err) {
     console.error('Memory foundations add-local error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// POST /api/memory/:domain/:project/foundations/add-remote — "Add from
+// GitHub" (v3.69.0)
+//
+// `{remote, tokenSource?, files: [{path, role?}], ref?}` — the repository the
+// owner named and the files they ticked in its listing. Before v3.69.0 the
+// GitHub door went through `…/init` (an empty project) or `…/refresh` (a
+// GitHub mirror) and was closed everywhere else; sources are per document
+// now, so this door is open on EVERY project: the files join the GitHub source
+// of the same repository and branch, or start a new one (up to 8 per
+// project), and a name already taken lands under the repository's name
+// (`architecture-lumina.md`), listed in `landed` — never on top of a document
+// that is there.
+//
+// NO TOKEN CROSSES THIS ROUTE, and a `token` key is refused BY NAME rather
+// than ignored. `tokenSource` names WHICH FILE on this computer the credential
+// is read from (`config` = the read-only token in Settings, `sync` = Personal
+// Sync's own), and it is forwarded ONLY when the body names one: a named
+// source is RECORDED on the group, so every later refresh of it reads the same
+// file; an absent one leaves whatever the group already recorded untouched.
+//
+// The store validates the repository, the branch, every path (`..`, a leading
+// `/`, NUL and anything but .md/.txt are refused) and the per-document cap,
+// and reads every blob BEFORE writing anything — one manifest write, last.
+// ═════════════════════════════════════════════════════════════════════════
+export const ADD_REMOTE_BODY_FIELDS = new Set(['remote', 'ref', 'tokenSource', 'files']);
+router.post('/:domain/:project/foundations/add-remote', async (req, res) => {
+  try {
+    const { domain, project } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    if (await refuseMirror(res, domain)) return;
+    if (!validProjectName(ws(), project)) {
+      return res.status(400).json({ ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.` });
+    }
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    const extra = Object.keys(body).filter((k) => !ADD_REMOTE_BODY_FIELDS.has(k));
+    if (extra.length) {
+      return res.status(400).json({
+        ok: false, reason: 'unexpected_fields', fields: extra.slice(0, 10),
+        error: `This route accepts ${[...ADD_REMOTE_BODY_FIELDS].join(', ')}. It was also sent: ${extra.slice(0, 10).join(', ')}.`
+          + (extra.includes('token')
+            ? ' A GitHub token is NEVER sent here: `tokenSource` names which file on this computer to read it from '
+              + '(`config` = the read-only token in Settings, `sync` = Personal Sync’s own).'
+            : ''),
+      });
+    }
+    if (body.tokenSource !== undefined && body.tokenSource !== 'config' && body.tokenSource !== 'sync') {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_token_source',
+        error: '`tokenSource` is "config" (the read-only GitHub token in Settings) or "sync" (Personal Sync’s '
+          + 'own token). Omit it to use the one this repository already records. Nothing was added.',
+      });
+    }
+    const namedRemote = typeof body.remote === 'string' && body.remote.trim()
+      ? body.remote.trim().slice(0, 300)
+      : (body.remote && typeof body.remote === 'object' && !Array.isArray(body.remote) ? {
+        owner: body.remote.owner, repo: body.remote.repo,
+        ...(body.remote.ref !== undefined ? { ref: body.remote.ref } : {}),
+      } : null);
+    const out = await fstore().addFoundationsFromRemote(domain, project, {
+      remote: namedRemote,
+      ...(typeof body.ref === 'string' && body.ref.trim() ? { ref: body.ref.trim().slice(0, 200) } : {}),
+      // FORWARDED ONLY WHEN NAMED (see the header): an absent key must reach
+      // the store as absent, or a default would overwrite the recorded one.
+      ...(body.tokenSource === 'config' || body.tokenSource === 'sync' ? { tokenSource: body.tokenSource } : {}),
+      files: Array.isArray(body.files) ? body.files : [],
+    });
+    if (!out || out.ok === false) {
+      const reason = (out && out.reason) || 'io';
+      return res.status(addRefusalStatus(reason)).json(withErrorProse({
+        ok: false, domain, project, reason: tier0Reason(reason),
+        message: out && typeof out.message === 'string' ? out.message : 'Nothing was added.',
+        refused: addRefusedWire(out && out.refused),
+        ...(out && Number.isInteger(out.sourceCount) ? { sourceCount: out.sourceCount } : {}),
+        ...(out && Number.isInteger(out.cap) ? { cap: out.cap } : {}),
+        ...(out && typeof out.tokenSource === 'string' ? { tokenSource: out.tokenSource } : {}),
+      }));
+    }
+    const index = await fstore().listFoundations(domain, project);
+    const r = out.remote && typeof out.remote === 'object' ? out.remote : null;
+    res.status(200).json({
+      ok: true, domain, project,
+      mode: 'mirror',
+      // `[{path, slug}]` (CONTRACT addendum 3) — the repository path and the
+      // document name it became. `addedFiles` is the same list, under the name
+      // `add-local` uses for it.
+      added: addedFilesWire(out.addedFiles),
+      addedFiles: addedFilesWire(out.addedFiles),
+      landed: landedWire(out.landed),
+      refused: addRefusedWire(out.refused),
+      groupId: typeof out.groupId === 'string' ? out.groupId : null,
+      groupCreated: out.groupCreated === true,
+      group: addGroupWire(out.group),
+      widened: out.widened === true,
+      remote: r ? { owner: r.owner ?? null, repo: r.repo ?? null, ref: r.ref ?? null, path: r.path ?? null } : null,
+      // WHICH FILE the token came from — never the token.
+      tokenSource: typeof out.tokenSource === 'string' ? out.tokenSource : null,
+      commit: out.commit ?? null,
+      totalBytes: Number.isInteger(out.totalBytes) ? out.totalBytes : null,
+      budgetBytes: Number.isInteger(out.budgetBytes) ? out.budgetBytes : null,
+      budgetExceeded: out.budgetExceeded === true,
+      documentCount: Number.isInteger(out.documentCount) ? out.documentCount : null,
+      foundations: index && index.ok !== false ? foundationsWire(index) : null,
+      notes: Array.isArray(out.notes) ? out.notes.filter((n) => typeof n === 'string').slice(0, 20) : [],
+    });
+  } catch (err) {
+    console.error('Memory foundations add-remote error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
@@ -2870,6 +3235,29 @@ const REFRESH_REMOTE_STATUS = new Map([
   ['no-token', 409],
   ['remote-unavailable', 500],
 ]);
+/** THE BODY THE REFRESH ACCEPTS (v3.69.0), and nothing else. */
+export const REFRESH_BODY_FIELDS = new Set(['group', 'source', 'tokenSource', 'repoRoot', 'files', 'remote']);
+
+/** A refresh's `groups[]` for the wire, allow-listed field by field. */
+function refreshGroupsWire(v) {
+  const names = (x) => (Array.isArray(x) ? x.filter((n) => typeof n === 'string').slice(0, 200) : []);
+  return (Array.isArray(v) ? v : []).filter((g) => g && typeof g === 'object').slice(0, 16).map((g) => ({
+    id: typeof g.id === 'string' ? g.id : null,
+    kind: g.kind === 'github' ? 'github' : 'folder',
+    label: typeof g.label === 'string' ? g.label.slice(0, 200) : null,
+    ok: g.ok !== false,
+    source: g.source === 'remote' ? 'remote' : 'local',
+    refreshed: names(g.refreshed),
+    unchanged: names(g.unchanged),
+    missing: names(g.missing),
+    added: names(g.added),
+    refused: addRefusedWire(g.refused),
+    commit: typeof g.commit === 'string' ? g.commit : null,
+    ...(typeof g.reason === 'string' ? { reason: g.reason.slice(0, 80) } : {}),
+    ...(typeof g.message === 'string' ? { message: g.message.slice(0, 400) } : {}),
+  }));
+}
+
 router.post('/:domain/:project/foundations/refresh', async (req, res) => {
   try {
     const { domain, project } = req.params;
@@ -2894,33 +3282,83 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
       });
     }
 
-    // ── CURATOR-OWNED IS A 400, AND IT IS NOT AN ERROR CONDITION ────────
-    // It is a statement about what this project's documents ARE: written by an
-    // agent the owner commissioned, with no upstream file to copy from. There
-    // is nothing to refresh and nothing that could be, so the honest answer is
-    // a refusal naming the reason rather than a no-op reporting success.
-    if (index && index.ownership === 'curator') {
+    // ── A STRICT BODY (v3.69.0) ──────────────────────────────────────────
+    // Every field this route has ever read, and `group`. An unknown key is a
+    // 400, and `token` is refused BY NAME: the credential is read from a FILE
+    // (`tokenSource`), never from anything that crosses this route.
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    const extra = Object.keys(body).filter((k) => !REFRESH_BODY_FIELDS.has(k));
+    if (extra.length) {
       return res.status(400).json({
-        ok: false, reason: 'curator_owned',
-        error: 'These documents were written for this project, not mirrored from a folder on this '
-          + 'computer, so there is nothing to refresh from. Edit one here, or ask your agent to.',
+        ok: false, reason: 'unexpected_fields', fields: extra.slice(0, 10),
+        error: `This route accepts ${[...REFRESH_BODY_FIELDS].join(', ')}. It was also sent: ${extra.slice(0, 10).join(', ')}.`
+          + (extra.includes('token')
+            ? ' A GitHub token is NEVER sent here: `tokenSource` names which file on this computer to read it from '
+              + '(`config` = the read-only token in Settings, `sync` = Personal Sync’s own).'
+            : ''),
       });
     }
 
-    const body = req.body || {};
+    // ── NOTHING MIRRORED IS A 400, AND IT IS NOT AN ERROR CONDITION ──────
+    // (v3.69.0: `no_sources`, replacing v3.61's `curator_owned`.) Sources are
+    // per document now, so the question is not "who owns the project" but
+    // "does anything here come FROM somewhere". A project whose documents are
+    // all written here or copied in has no source to read: a copy was never
+    // kept in sync and a written document has no upstream file. The honest
+    // answer is a refusal naming that, not a no-op reporting success.
+    // A store that predates `sources` (or a test stub of one) is read the
+    // v3.68 way: a curator-owned project is the one with nothing mirrored.
+    const groups = index && Array.isArray(index.sources) ? index.sources : null;
+    const nothingMirrored = groups ? groups.length === 0 : !!(index && index.ownership === 'curator');
+    if (index && index.present === true && nothingMirrored) {
+      return res.status(400).json({
+        ok: false, reason: 'no_sources', domain, project,
+        error: 'Nothing here is mirrored, so there is nothing to refresh. Copies and documents written here '
+          + 'never change on their own.',
+      });
+    }
+
+    // ── WHICH SOURCE (v3.69.0) ───────────────────────────────────────────
+    // `group` names ONE source group; absent means every group (one group:
+    // exactly v3.68's refresh). Its grammar is checked here so a malformed id
+    // is a 400 about the id, and its existence by the store (404).
+    const groupAsked = body.group === undefined || body.group === null || body.group === '' ? null : body.group;
+    if (groupAsked !== null && (typeof groupAsked !== 'string' || !/^s[1-9][0-9]?$/.test(groupAsked))) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_group',
+        error: '`group` names one of this project’s sources by its id (s1, s2, …), as `foundations.sources` '
+          + 'lists them. Omit it to refresh every source. Nothing was refreshed.',
+      });
+    }
+    // With SEVERAL sources, or one named, the per-arm pre-checks below (which
+    // read the project's single `repo`) do not apply: each group has its own
+    // folder and repository, and the store decides each group's arm.
+    const perGroup = groupAsked !== null || (!!groups && groups.length >= 2);
+
     const asked = typeof body.repoRoot === 'string' && body.repoRoot.trim() ? body.repoRoot.trim() : null;
     // The manifest's own `repo.root` is the default, and it is ADVISORY: it
     // records the path on the machine that last refreshed, which on any other
     // machine is a hint and not a fact. An absent or unreachable one is a 409
     // — "the state on this server is not one this request can act on" — never
     // a 500, because nothing is broken: the checkout is simply not here.
-    const root = asked || (index && index.repo && index.repo.root) || null;
+    const root = asked || (!perGroup && index && index.repo && index.repo.root) || null;
 
     // ── WHICH ARM (v3.63.0) ─────────────────────────────────────────────
     // `auto` is the default and is the honest one: prefer the checkout, fall
     // back to GitHub. `local` reproduces every pre-v3.63.0 answer exactly.
     const source = body.source === 'remote' ? 'remote' : body.source === 'local' ? 'local' : 'auto';
-    const tokenSource = body.tokenSource === 'sync' ? 'sync' : 'config';
+    // WHICH TOKEN FILE — forwarded ONLY when the body names one (v3.69.0,
+    // CONTRACT addendum 4): each GitHub source records the file it was first
+    // read with, and a default here would override that record. An
+    // unrecognised value is refused rather than quietly read as `config`.
+    if (body.tokenSource !== undefined && body.tokenSource !== 'config' && body.tokenSource !== 'sync') {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_token_source',
+        error: '`tokenSource` is "config" (the read-only GitHub token in Settings) or "sync" (Personal Sync’s '
+          + 'own token). Omit it to use the one each source already records. Nothing was refreshed.',
+      });
+    }
+    const tokenSource = body.tokenSource === 'config' || body.tokenSource === 'sync' ? body.tokenSource : undefined;
     // A remote is recorded on the manifest OR named in the body. The store
     // validates the shape and answers `invalid-remote`; this route only needs
     // to know whether the arm is even AVAILABLE before it refuses below.
@@ -2935,7 +3373,7 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
     // on. The original sentence is kept WORD FOR WORD as the first clause,
     // because it is the actionable half for the user who has a checkout
     // somewhere and because a client may be matching on it.
-    if (!root && !hasRemote) {
+    if (!perGroup && !root && !hasRemote) {
       return res.status(409).json({
         ok: false, reason: 'repo_unreachable',
         error: 'This project has no folder path recorded on this computer, so there is '
@@ -2950,7 +3388,7 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
     }
     // `local` was asked for by name and there is no path: refuse rather than
     // quietly doing the other thing. Naming an arm is a decision.
-    if (!root && source === 'local') {
+    if (!perGroup && !root && source === 'local') {
       return res.status(409).json({
         ok: false, reason: 'repo_unreachable',
         error: 'This project has no folder path recorded on this computer, so there is '
@@ -2974,17 +3412,26 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
     const out = await store.refreshFoundationsFromRepo(domain, project, root, {
       files,
       source,
-      tokenSource,
+      ...(tokenSource ? { tokenSource } : {}),
+      ...(groupAsked !== null ? { group: groupAsked } : {}),
       // Forwarded ONLY when the body named one — an absent key must reach the
       // store as absent, so the manifest's own remote stays the default.
       ...(namedRemote ? { remote: namedRemote } : {}),
     });
     if (!out || out.ok === false) {
-      const reason = (out && out.reason) || 'repo_unreachable';
-      const status = (reason === 'curator_owned' || reason === 'curator-owned') ? 400
-        : REFRESH_REMOTE_STATUS.get(reason) ?? statusForStoreRefusal({ reason });
+      const storeReason = (out && out.reason) || 'repo_unreachable';
+      // v3.69.0's own refusals cross the wire underscored (`no_sources`,
+      // `group_required`, `unknown_group`); every older one keeps the store's
+      // spelling it has always had here.
+      const V369 = new Set(['no-sources', 'group-required', 'unknown-group']);
+      const reason = V369.has(storeReason) ? tier0Reason(storeReason) : storeReason;
+      const status = (reason === 'curator_owned' || reason === 'curator-owned' || reason === 'no_sources'
+        || reason === 'group_required') ? 400
+        : reason === 'unknown_group' ? 404
+          : REFRESH_REMOTE_STATUS.get(storeReason) ?? statusForStoreRefusal({ reason: storeReason });
       return res.status(status).json(withErrorProse({
-        ok: false, reason, domain, project, repoRoot: root, ...(out || {}),
+        ok: false, domain, project, repoRoot: root, ...(out || {}), reason,
+        ...(Array.isArray(out && out.groups) ? { groups: refreshGroupsWire(out.groups) } : {}),
       }));
     }
     res.json({
@@ -3001,7 +3448,8 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
       // `error`, and a code is what a client can branch on. Both are always
       // present, including on the local arm where they read false/null,
       // because an absence is not an answer.
-      source: out.source === 'remote' ? 'remote' : 'local',
+      // `mixed` when several sources were refreshed by different arms.
+      source: out.source === 'remote' ? 'remote' : out.source === 'mixed' ? 'mixed' : 'local',
       remoteChecked: out.remoteChecked === true,
       remoteCommit: out.remoteCommit ?? null,
       remoteError: out.remoteError ?? null,
@@ -3030,6 +3478,14 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
         reason: r && typeof r.reason === 'string' ? r.reason.slice(0, 200) : null,
       })),
       commit: out.commit ?? null,
+      // ── PER SOURCE (v3.69.0) ─────────────────────────────────────────
+      // One entry per group this refresh touched. A group whose read failed
+      // is `ok: false` with its reason and message, and was left EXACTLY as
+      // it was; the top-level lists above are the aggregate across groups.
+      groups: refreshGroupsWire(out.groups),
+      failedCount: Number.isInteger(out.failedCount) ? out.failedCount : 0,
+      landed: landedWire(out.landed),
+      notes: Array.isArray(out.notes) ? out.notes.filter((n) => typeof n === 'string').slice(0, 20) : [],
     });
   } catch (err) {
     console.error('Memory foundations refresh error:', err);
@@ -3066,7 +3522,7 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
  * default for changing a source, and a named list may add one. Exported so
  * the refusal can PRINT it, exactly as `INIT_BODY_FIELDS` is.
  */
-export const SOURCE_BODY_FIELDS = new Set(['remote', 'tokenSource', 'files']);
+export const SOURCE_BODY_FIELDS = new Set(['group', 'remote', 'tokenSource', 'files']);
 
 router.post('/:domain/:project/foundations/source', async (req, res) => {
   try {
@@ -3097,7 +3553,19 @@ router.post('/:domain/:project/foundations/source', async (req, res) => {
     const namedRemote = typeof body.remote === 'string' && body.remote.trim()
       ? body.remote.trim().slice(0, 300)
       : (body.remote && typeof body.remote === 'object' && !Array.isArray(body.remote) ? body.remote : null);
+    // v3.69.0 — the switch is PER SOURCE GROUP. With several sources the
+    // body must name one (`group_required` otherwise): acting on "the first"
+    // would re-point a source the owner did not pick.
+    const groupAsked = body.group === undefined || body.group === null || body.group === '' ? null : body.group;
+    if (groupAsked !== null && (typeof groupAsked !== 'string' || !/^s[1-9][0-9]?$/.test(groupAsked))) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_group',
+        error: '`group` names one of this project\u2019s sources by its id (s1, s2, …), as `foundations.sources` '
+          + 'lists them. Nothing was changed.',
+      });
+    }
     const out = await fstore().setFoundationsSource(domain, project, {
+      ...(groupAsked !== null ? { group: groupAsked } : {}),
       ...(namedRemote ? { remote: namedRemote } : {}),
       ...(typeof body.tokenSource === 'string' ? { tokenSource: body.tokenSource } : {}),
       ...(Array.isArray(body.files) ? { files: body.files } : {}),
@@ -3118,6 +3586,19 @@ router.post('/:domain/:project/foundations/source', async (req, res) => {
         return res.status(409).json(withErrorProse({
           ...(out || {}), ok: false, domain, project,
           reason: 'ownership_mismatch', ownership: out.ownership ?? null,
+        }));
+      }
+      // v3.69.0 — nothing mirrored (409, the same "state, not input" answer
+      // the ownership refusal above has always had), a source that must be
+      // named (400), or one that is not there (404).
+      if (reason === 'no-sources') {
+        return res.status(409).json(withErrorProse({
+          ...(out || {}), ok: false, domain, project, reason: 'no_sources', ownership: out.ownership ?? null,
+        }));
+      }
+      if (reason === 'group-required' || reason === 'unknown-group') {
+        return res.status(reason === 'group-required' ? 400 : 404).json(withErrorProse({
+          ...(out || {}), ok: false, domain, project, reason: tier0Reason(reason),
         }));
       }
       // Every refusal the GitHub READ can name keeps the status it has
@@ -3143,6 +3624,8 @@ router.post('/:domain/:project/foundations/source', async (req, res) => {
         path: out.remote.path ?? null,
       } : null,
       tokenSource: out.tokenSource ?? null,
+      // WHICH SOURCE GROUP was re-pointed (v3.69.0), `{id, kind, label}`.
+      group: addGroupWire(out.group),
       // THE SWITCH ITSELF. `previousRoot` is the folder this mirror used to
       // copy from — already on the wire through `foundations.repo.root`, and
       // named here so the view can say what changed rather than what is.

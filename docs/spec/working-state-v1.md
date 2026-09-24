@@ -41,9 +41,15 @@ resurrected by Wednesday's write, and a union merge cannot express *no longer tr
    or in a handoff are not errors.
 2. **A writer that round-trips a document preserves fields it does not understand.** The manifest
    gained `skeleton` in v3.61.0 and `readFirst` in v3.62.0 without the version moving; a writer that
-   re-serialises only the fields it knows silently deletes the owner's routing decisions.
-3. **`manifest.json`'s `"version"` stays `1`.** Additive fields do not bump it. A version this
-   implementation does not recognise is refused, not guessed at.
+   re-serialises only the fields it knows silently deletes the owner's routing decisions. (The
+   reference implementation keeps unknown keys from v3.68.1: unknown top-level and per-document
+   manifest keys are re-emitted after the known ones, capped at 32 keys and 4 KB of JSON each, and
+   every drop is named.)
+3. **`manifest.json`'s `"version"` is `1` or `2`.** Additive fields do not bump it. Version 2
+   (v3.69.0) exists for manifests an older reader must not rewrite — a project mixing kept and
+   mirrored documents, or mirroring from more than one source. **A writer writes the lowest version
+   that expresses the manifest.** A version a reader does not recognise is refused, not guessed at,
+   and never removed.
 4. **Booleans added this way are read with `=== true`.** Absent means `false`. A string, a `1` or a
    `"yes"` from a hand edit is **not** evidence; the fail-safe direction is chosen per field and is
    stated where it matters (§8).
@@ -433,8 +439,8 @@ foundations/
 
 | Field | Type | Rules |
 |---|---|---|
-| `version` | integer | exactly `1`. Anything else: refuse the manifest, do not guess |
-| `ownership` | `"repo"` \| `"curator"` \| `null` | **one per project**, set once. A `repo` project's documents are only ever mirrored; a `curator` project's are only ever written for it |
+| `version` | integer | `1` here; `2` for the shape in *manifest.json, version 2* below. Anything else: refuse the manifest, do not guess, and never remove it |
+| `ownership` | `"repo"` \| `"curator"` \| `null` | **v1 only. Derived in v2.** In v1: `repo` when every document is mirrored from the one source in `repo`, `curator` when every document is kept here |
 | `repo.root` | string or `null` | an **advisory** absolute path on the machine that last refreshed. On any other machine it is a hint, never a fact. `null` is ordinary: a mirror created from a GitHub repository (v3.65.0) has never been copied from a folder on any machine |
 | `repo.remote` | object or `null` | `{owner, repo, ref, path}` — GitHub coordinates (v3.63.0). `ref` and `path` may be `null`. An unparseable value reads as `null`, which is what `null` has always meant: no mirror recorded |
 | `repo.lastRefreshAt` | ISO string or `null` | |
@@ -450,7 +456,7 @@ Per document:
 | `slug` | string | the slug grammar above; unique within the manifest |
 | `role` | string | one of `architecture`, `decisions`, `conventions`, `roadmap`, `api`, `guide`, `other` |
 | `title` | string | ≤ `120` characters; defaults to the slug without `.md` |
-| `source` | object | `{kind: "repo", path}` or `{kind: "curator"}`. **`kind` must match `ownership`** |
+| `source` | object | `{kind: "repo", path}` or `{kind: "curator"}` (v2 adds `group` on a `repo` source). **`kind` must match `ownership`** — v1 only |
 | `sha256` | 64 hex | of the **stored bytes**. This is the document's identity |
 | `bytes` | non-negative integer | |
 | `updatedAt` | ISO string or `null` | |
@@ -472,17 +478,90 @@ save of the document's text preserves it, an explicit `readFirst: true` clears i
 refresh preserves it **by slug**. A reader that predates `hidden` drops it on its next rewrite and
 the document reappears at session start: the fail-safe direction.
 
-**One source per project, and it can be RE-CHOSEN (v3.65.1).** A repo-owned mirror records
-`repo.root` (a folder on one machine), `repo.remote` (a GitHub repository), or **both** — and at
-least one of them, or there is nothing to copy from. A mirror **born remote**, or one **switched to
-remote**, carries `root: null`, which is ordinary and **not** an error. Switching the source
-re-copies the bytes, sets `repo.remote` and clears `repo.root` **in the same write** — a second
-write would be a second failure point, able to leave a mirror naming a stale folder and a fresh
-repository at once. `ownership` never moves: it stays `repo`, one ownership per project, and the
-repository is still the author. `readFirst` is preserved **by slug** across the re-copy, for the
-reason §8 gives: the repository owns the bytes, the owner owns the routing. A reader holding both a
-`root` and a `remote` prefers the folder when it is reachable on this machine, and the network
-otherwise.
+**Sources are per document (v3.69.0).** Each document records its own source: it is **kept**
+(`{kind: "curator"}` — written here, or copied in once, with `copiedFrom` naming the folder's
+basename) or **mirrored** (`{kind: "repo", path}`) from a **source group**: one folder, or one GitHub
+repository, that documents are copied FROM. One project may hold kept documents and documents from
+up to **8** groups (`MAX_SOURCES_PER_PROJECT`) at once. The invariant that protects data is **one
+writer per FILE**, not one source per project: a mirrored document's file is written only by a
+refresh or an add from its group (the source is the author), a kept document's only by a save, and a
+save to a slug whose entry is a mirror is refused. A v1 manifest expresses at most one group (its
+`repo`) and one kind of document (its `ownership`); anything more is written as version 2, below.
+
+A group records `root` (a folder on one machine), `remote` (a GitHub repository), or **both** — and
+at least one of them, or there is nothing to copy from. A group **born remote**, or one **switched to
+remote**, carries `root: null`, which is ordinary and **not** an error. A group can be RE-CHOSEN
+(v3.65.1): switching it re-copies its documents' bytes, sets its `remote` and clears its `root`
+**in the same write** — a second write would be a second failure point, able to leave a group naming a
+stale folder and a fresh repository at once. A switch changes no document's kind:
+`ownership` never moves in v1, and a mirrored document stays mirrored in v2. `readFirst` is preserved **by slug** across the
+re-copy, for the reason §8 gives: the source owns the bytes, the owner owns the routing. A reader
+holding both a `root` and a `remote` for a group prefers the folder when it is reachable on this
+machine, and the network otherwise. A group whose last document is removed is removed in the same
+write; a removed mirrored document is **not** brought back by a refresh, because a refresh's work
+list is the manifest's documents plus files a caller names.
+
+### `manifest.json`, version 2
+
+Written only when v1 cannot express the manifest: kept and mirrored documents together, or ≥ 2
+source groups. There is **no `ownership` and no `repo`** — both are derived on read.
+
+```json
+{
+  "version": 2,
+  "sources": [
+    { "id": "s1", "root": "/Users/me/src/second-brain",
+      "remote": { "owner": "talirezun", "repo": "second-brain", "ref": null, "path": null },
+      "lastRefreshAt": "2026-09-24T10:00:00.000Z", "lastRefreshCommit": "…40 hex…" },
+    { "id": "s2", "root": null,
+      "remote": { "owner": "acme", "repo": "lumina", "ref": "main", "path": null },
+      "lastRefreshAt": null, "lastRefreshCommit": null }
+  ],
+  "budgetBytes": 204800,
+  "order": ["architecture", "decisions", "conventions", "roadmap", "api", "guide", "other"],
+  "documents": [
+    { "slug": "decisions-agents.md", "role": "decisions", "title": "Decisions",
+      "source": { "kind": "repo", "path": "docs/dev/decisions-agents.md", "group": "s1" },
+      "sha256": "…64 hex…", "bytes": 1, "updatedAt": "…", "commit": "…40 hex…",
+      "authoredBy": { "kind": "human" }, "skeleton": false, "readFirst": true },
+    { "slug": "lumina-architecture.md", "role": "architecture", "title": "Lumina architecture",
+      "source": { "kind": "repo", "path": "docs/architecture.md", "group": "s2" }, "…": "…" },
+    { "slug": "notes.md", "role": "other", "title": "Notes", "source": { "kind": "curator" },
+      "copiedFrom": "dev", "…": "…" }
+  ]
+}
+```
+
+`sources[]` — at most `8` entries:
+
+| Field | Type | Rules |
+|---|---|---|
+| `id` | string | `^s[1-9][0-9]?$`, unique within the manifest; a new group takes the smallest unused id. It means nothing outside this manifest |
+| `root` | string or `null` | the same **advisory** absolute path as v1's `repo.root` |
+| `remote` | object or `null` | `{owner, repo, ref, path}`, as v1's `repo.remote` |
+| `lastRefreshAt` | ISO string or `null` | |
+| `lastRefreshCommit` | 40 hex or `null` | |
+| *(kind)* | derived, never stored | `root` non-null: a **folder** source (which may also be read over GitHub when `remote` is recorded); `root: null`: a **GitHub** source |
+
+**At least one of `root` / `remote` is non-null**, or the group has nothing to refresh from; a reader
+accepts such a group and reads it as *source not recorded*. A group with zero documents is allowed (a
+*declared* source).
+
+Per document, in addition to the v1 fields: a `repo` source carries **`group`**, which must name an
+existing `sources[].id`; a `curator` source carries none. Within one group one path maps to one slug
+and one slug to one path; the same path in two different groups is allowed. Slugs stay unique across
+the manifest, and the 200-document and 200 KB caps are unchanged.
+
+**How a v1 manifest reads as the same model.** A v1 `repo` manifest is one group `s1` (its `repo`),
+and each of its documents belongs to `s1`; a v1 `curator` manifest, or `repo: null`, has no groups. A
+writer that changes nothing writes nothing, and a project that stops mixing (its last GitHub
+document removed, say) is written as **v1 again**, so an older reader can read it once more.
+
+**An older reader and version 2.** A reader that knows only version 1 refuses the file by rule 3 —
+it reads no documents from it and writes nothing to it, so it can never rewrite a mixed manifest
+under one `repo` (which would copy one repository's `docs/README.md` over another's). The reference
+implementation from v3.68.1 says so as "saved by a newer version of The Curator — update the app",
+and never tells the user to fix or remove the file; v3.68.0 and earlier refuse it as unreadable.
 
 ### Freshness is computed, never remembered
 

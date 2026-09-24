@@ -525,6 +525,8 @@ const EXPECTED_ROUTES = [
   // v3.68.0 — "Add from this computer": a folder the owner picked, the files
   // they ticked; the store enforces every path rule.
   ['post', '/:domain/:project/foundations/add-local'],
+  // v3.69.0 — "Add from GitHub" on any project (per-document sources).
+  ['post', '/:domain/:project/foundations/add-remote'],
   ['post', '/:domain/:project/foundations/refresh'],
   // v3.65.1 — "Mirror from GitHub instead". A POST, not a PATCH: it fetches
   // blobs and rewrites files. Four segments like the rest of tier 0, and

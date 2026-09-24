@@ -40,8 +40,9 @@ domains/[domain]/state/              ← the domain's OWN project (named after t
 ├── project.md                       Tier 1 — standing brief. Rarely changes.
 │                                    Returned on EVERY read.
 ├── foundations/                     Tier 0 (v3.59.0) — canonical documents: architecture,
-│   ├── manifest.json                decisions, conventions, roadmap. Mirrored from a repo,
-│   └── [slug].md                    or written by you on the user's explicit instruction.
+│   ├── manifest.json                decisions, conventions, roadmap. Each written here on the
+│   └── [slug].md                    user's explicit instruction, copied in, or mirrored from a
+│                                    folder or a GitHub repository — one project may mix them.
 ├── [scope]/[machine]/
 │   ├── current.md                   Tier 2 — the handoff. OVERWRITTEN every save.
 │   └── journal.jsonl                Tier 3 — append-only. One line per save.
@@ -237,8 +238,8 @@ Save when any of these happen:
 *next* session's bootstrap knows which foundations have already been read and which changed since,
 so it does not resend a document nothing has touched. If the session read no foundations, send
 nothing; do not fabricate hashes. **Pass `repo_root` too, when the checkout you are working in
-carries a `.curator-project` marker** — the save will refresh the project's mirrored foundations
-from that checkout as a side effect, and report it in the result without ever failing the save
+carries a `.curator-project` marker** — the save will refresh whichever of the project's documents are
+mirrored from that checkout as a side effect, and report it in the result without ever failing the save
 itself if the refresh cannot complete.
 
 ## §5 — The writing standard: record the mechanism, not the noun

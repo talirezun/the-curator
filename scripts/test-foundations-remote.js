@@ -893,7 +893,8 @@ section('11. The ROUTE, over a real Express dispatch, against the real store');
     assert(cur.ok, '(fixture) a curator-owned project exists', cur.message);
     const r6 = await post(`/api/memory/${D}/curproj/foundations/refresh`, { source: 'remote' });
     eq(r6.status, 400, 'curator-owned is still a 400');
-    eq(r6.body.reason, 'curator_owned', '...unchanged by the remote arm');
+    // v3.69.0 — sources are per document: nothing mirrored is `no_sources`.
+    eq(r6.body.reason, 'no_sources', '...unchanged by the remote arm (no_sources since v3.69.0)');
   } finally {
     server.close();
   }
@@ -1504,8 +1505,8 @@ section('16. "MIRROR FROM GITHUB INSTEAD" — the source switch (v3.65.1)');
       eq(unknown.body.reason, 'unexpected_fields', '...under one reason');
       assert(/remote, tokenSource, files/.test(unknown.body.error || ''),
         '...printing the three fields this route DOES accept', unknown.body.error);
-      eq([...routerMod.SOURCE_BODY_FIELDS].join(','), 'remote,tokenSource,files',
-        'SOURCE_BODY_FIELDS is exported and is exactly those three');
+      eq([...routerMod.SOURCE_BODY_FIELDS].join(','), 'group,remote,tokenSource,files',
+        'SOURCE_BODY_FIELDS is exported and is exactly those four (v3.69.0 adds `group`)');
 
       const noRemote = await post(URL_, {});
       eq(noRemote.status, 400, 'no remote is a 400');

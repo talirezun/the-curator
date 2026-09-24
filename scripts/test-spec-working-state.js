@@ -249,6 +249,54 @@ section('§7  Foundations: slug grammar, roles, caps');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+section('§7d  Manifest version 2 — per-document sources (v3.69.0), EXECUTED');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  // THE PINS: both versions, the cap, and the lowest-version rule, in words.
+  ok(ws.FOUNDATIONS_MANIFEST_V2 === 2 && ws.FOUNDATIONS_MANIFEST_MAX_VERSION === 2,
+    'the store knows exactly two manifest versions (1 and 2)');
+  ok(spec.includes('"version": 2') && spec.includes('"version": 1'), 'the spec shows BOTH manifest versions');
+  ok(ws.MAX_SOURCES_PER_PROJECT === 8, `MAX_SOURCES_PER_PROJECT is 8 (got ${ws.MAX_SOURCES_PER_PROJECT})`);
+  ok(spec.includes(`**${ws.MAX_SOURCES_PER_PROJECT}**`) && spec.includes('`MAX_SOURCES_PER_PROJECT`')
+    && /at most `8` entries/.test(spec), 'the spec states the 8-source cap, by name and number');
+  ok(/lowest version\s+that expresses the manifest/.test(spec), 'rule 3 states the lowest-version rule');
+  ok(/never removed/.test(spec) && /never tells the user to fix or remove/.test(spec),
+    'the spec says an unrecognised version is never removed, and the reference reader never says to');
+  ok(/keeps unknown keys from v3\.68\.1/.test(spec), 'rule 2 says the reference implementation keeps unknown keys (v3.68.1)');
+  ok(/\*\*Sources are per document \(v3\.69\.0\)\.\*\*/.test(spec) && !/\*\*One source per project/.test(spec),
+    'the "one source per project" paragraph is rewritten as "Sources are per document"');
+  ok(/v1 only\. Derived in v2\./.test(spec), 'the `ownership` row reads "v1 only. Derived in v2."');
+
+  // EXECUTED: the lowest-version rule is the store's, on four models.
+  const doc = (slug, source, extra = {}) => ({ slug, role: 'other', title: slug, source,
+    sha256: 'a'.repeat(64), bytes: 1, updatedAt: null, commit: null, authoredBy: { kind: 'human' }, ...extra });
+  const g = (id, root, remote) => ({ id, root, remote, lastRefreshAt: null, lastRefreshCommit: null });
+  const base = { budgetBytes: 204800, order: ws.FOUNDATION_ROLES.slice() };
+  const R = { owner: 'acme', repo: 'lumina', ref: null, path: null };
+  const kept = { ...base, sources: [], documents: [doc('a.md', { kind: 'curator' })] };
+  const oneMirror = { ...base, sources: [g('s1', null, R)], documents: [doc('b.md', { kind: 'repo', path: 'b.md', group: 's1' })] };
+  const mixed = { ...base, sources: [g('s1', null, R)],
+    documents: [doc('a.md', { kind: 'curator' }), doc('b.md', { kind: 'repo', path: 'b.md', group: 's1' })] };
+  const twoGroups = { ...base, sources: [g('s1', null, R), g('s2', null, { ...R, repo: 'other' })],
+    documents: [doc('b.md', { kind: 'repo', path: 'b.md', group: 's1' }), doc('c.md', { kind: 'repo', path: 'b.md', group: 's2' })] };
+  const v = (m) => JSON.parse(ws.serialiseManifest(m)).version;
+  ok(v(kept) === 1 && v(oneMirror) === 1, 'EXECUTED: kept-only and one-source manifests are written as version 1');
+  ok(v(mixed) === 2 && v(twoGroups) === 2, 'EXECUTED: kept + mirrored, and two sources, are written as version 2');
+  const onDisk2 = JSON.parse(ws.serialiseManifest(mixed));
+  ok(!('ownership' in onDisk2) && !('repo' in onDisk2) && Array.isArray(onDisk2.sources),
+    'EXECUTED: a version-2 file carries `sources` and neither `ownership` nor `repo`, as the spec says');
+  const back = ws.parseFoundationsManifest(onDisk2);
+  ok(back.ok === true && back.manifest.documents.find((d) => d.slug === 'b.md').source.group === 's1',
+    'EXECUTED: a version-2 file reads back with each mirrored document\'s `group`');
+  const orphan = ws.parseFoundationsManifest({ ...onDisk2,
+    documents: onDisk2.documents.map((d) => (d.slug === 'b.md' ? { ...d, source: { ...d.source, group: 's9' } } : d)) });
+  ok(orphan.ok === false, 'EXECUTED: a `group` that names no source is refused, as the spec says');
+  const newer = ws.parseFoundationsManifest({ ...onDisk2, version: 3 });
+  ok(newer.ok === false && newer.code === 'manifest-newer' && !/\bremove\b(?! it)/i.test(String(newer.error || '').replace(/leave it exactly as it is/, '')),
+    'EXECUTED: a version this reader does not know is refused as newer, not guessed at', JSON.stringify(newer).slice(0, 200));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 section('§7b  project.json: the file, the cap, and the default EXECUTED');
 // ═════════════════════════════════════════════════════════════════════════
 {
@@ -333,7 +381,9 @@ section('§7c  One source per project, RE-CHOSEN — the switch, EXECUTED');
   }, null, 2) + '\n');
   const before = createHash('sha256').update(readFileSync(curManifest)).digest('hex');
   const refused = await ws.setFoundationsSource(DOMAIN, 'srccurator', { remote: 'acme/thing' });
-  ok(refused.ok === false && refused.reason === 'ownership-mismatch',
+  // v3.69.0 — sources are per document; a project whose documents are all
+  // kept here has no source to switch (`no-sources`).
+  ok(refused.ok === false && refused.reason === 'no-sources',
     'EXECUTED: switching a curator-owned project’s source is refused', JSON.stringify(refused).slice(0, 160));
   ok(createHash('sha256').update(readFileSync(curManifest)).digest('hex') === before,
     'EXECUTED: …and its manifest is byte-identical afterwards (sha256)');

@@ -174,10 +174,14 @@ section('3. A second add — another folder — APPENDS and never replaces');
   const r = await WS.addFoundationsFromFolder(D, P1, { root: MORE,
     files: [{ path: 'roadmap.md' }, { path: 'architecture.md' }] });
   ok('the new document is added', r.ok === true && r.added.includes('roadmap.md'), JSON.stringify(r));
-  ok('...a same-named file is REFUSED as already added, named', r.refused.some((x) => /already added/.test(x.reason)
-    && x.path === 'architecture.md'), JSON.stringify(r.refused));
+  // v3.69.0 (CONTRACT §4.5): a same-named file from ANOTHER folder is a
+  // different document — it lands BESIDE the one there under a readable
+  // suffix, named in the outcome; never on top of it.
+  ok('...a same-named file from another folder LANDS as architecture-more.md, named',
+    r.added.includes('architecture-more.md') && (r.landed || []).some((x) => x.slug === 'architecture-more.md' && x.from === 'architecture.md'),
+    JSON.stringify(r));
   eq('...and the document already there is byte-identical', sha(readFileSync(path.join(fdir(P1), 'architecture.md'))), archBefore);
-  eq('the project now holds four', manifestOf(P1).documents.length, 4);
+  eq('the project now holds five', manifestOf(P1).documents.length, 5);
   ok('the second batch records ITS folder', manifestOf(P1).documents.find((d) => d.slug === 'roadmap.md').copiedFrom === 'more');
   await WS.saveFoundation(D, P1, { slug: 'roadmap.md', text: '# Roadmap\n\nRewritten here by the owner.\n' });
   eq('an EDIT in the app makes it written — copiedFrom is cleared',
@@ -191,8 +195,8 @@ section('3. A second add — another folder — APPENDS and never replaces');
     again.ok === false && again.reason === 'nothing-added' && again.refused.length === 1, JSON.stringify(again));
   const dup = await WS.addFoundationsFromFolder(D, P1, { root: folder('dups', { 'x/notes.md': '# a\n', 'y/notes.md': '# b\n' }),
     files: [{ path: 'x/notes.md' }, { path: 'y/notes.md' }] });
-  ok('two ticked files that would land on one name: the first is added, the second refused by name',
-    dup.ok && dup.added.length === 1 && /another ticked file/.test((dup.refused[0] || {}).reason || ''), JSON.stringify(dup));
+  ok('two ticked files with one name: the first takes it, the second lands under the folder\'s suffix (v3.69.0)',
+    dup.ok && dup.added.length === 2 && dup.added.includes('notes-dups.md'), JSON.stringify(dup));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -255,15 +259,19 @@ section('6. A FOLDER MIRROR: adds go through the mirror, from inside its folder'
     m.documents.some((d) => d.slug === 'guide.md' && d.source.kind === 'repo' && d.source.path === 'docs/sub/guide.md'),
     JSON.stringify(m.documents.map((d) => d.source)));
   eq('...and the project is still repo-owned', m.ownership, 'repo');
-  const before = fingerprint(fdir(P));
+  // v3.69.0 — sources are per document: a folder OUTSIDE the mirror is no
+  // longer refused. With no mode it is COPIED (it is not inside a mirrored
+  // folder), and the project now mixes, so it is written at version 2.
   const out = await WS.addFoundationsFromFolder(D, P, { root: OUTSIDE, files: [{ path: 'secret.md' }] });
-  ok('a folder OUTSIDE the mirror is refused by name — a mirror has one source',
-    out.ok === false && out.reason === 'outside-mirrored-folder' && typeof out.mirroredFolder === 'string', JSON.stringify(out));
-  eq('...and nothing was written', fingerprint(fdir(P)), before);
-  // A sibling whose NAME starts with the mirror's folder name is outside it.
+  ok('a folder OUTSIDE the mirror, no mode: copied in beside the mirror',
+    out.ok === true && out.mode === 'copy' && out.added.includes('secret.md'), JSON.stringify(out));
+  eq('...and the manifest is version 2 (kept and mirrored mix)', manifestOf(P).version, 2);
+  // A sibling whose NAME starts with the mirror's folder name is outside it:
+  // mirrored, it starts a NEW source rather than joining the mirror.
   const sib = folder('repo-sibling', { 'x.md': '# x\n' });
-  const s2 = await WS.addFoundationsFromFolder(D, P, { root: sib, files: [{ path: 'x.md' }] });
-  eq('a sibling folder named like the mirror (repo-sibling) is outside it too', s2.reason, 'outside-mirrored-folder');
+  const s2 = await WS.addFoundationsFromFolder(D, P, { root: sib, mode: 'mirror', files: [{ path: 'x.md' }] });
+  ok('a sibling folder named like the mirror (repo-sibling) is a SEPARATE source, not the mirror',
+    s2.ok === true && s2.groupCreated === true && s2.groupId !== manifestOf(P).sources[0].id, JSON.stringify(s2).slice(0, 300));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -277,9 +285,11 @@ section('7. A GITHUB MIRROR: the local door is refused, honestly');
     sha256: sha(Buffer.from('# x\n')), bytes: 4, updatedAt: null, commit: null, authoredBy: null });
   writeFileSync(path.join(fdir(P), 'x.md'), '# x\n');
   writeFileSync(path.join(fdir(P), 'manifest.json'), JSON.stringify(m));
+  // v3.69.0 — both doors are open on every project: a local file is COPIED
+  // in beside the GitHub mirror, and the project mixes (version 2).
   const r = await WS.addFoundationsFromFolder(D, P, { root: NOTES, files: [{ path: 'decisions.md' }] });
-  ok('refused source-is-github, naming the repository', r.ok === false && r.reason === 'source-is-github'
-    && /acme\/thing/.test(r.message), JSON.stringify(r));
+  ok('a local copy joins a GitHub-mirrored project (no source-is-github any more)',
+    r.ok === true && r.mode === 'copy' && r.added.includes('decisions.md') && manifestOf(P).version === 2, JSON.stringify(r).slice(0, 300));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -340,8 +350,10 @@ section('8. An EMPTY project\'s source may be chosen again — and only an empty
     await WS.initFoundations(D, x, { ownership: 'repo', remote: 'acme/docs' });
     return x;
   })()), { root: NOTES, files: [{ path: 'decisions.md' }] });
-  ok('an EMPTY GitHub mirror takes a local add as a copy, re-chosen and SAID so',
-    R.ok === true && R.mode === 'copy' && R.rechosen === true, JSON.stringify(R).slice(0, 300));
+  // v3.69.0 (CONTRACT §5.4) — the DECLARED source survives: the copy lands
+  // beside it and nothing is re-chosen.
+  ok('an EMPTY GitHub mirror takes a local add as a copy, the declared source kept',
+    R.ok === true && R.mode === 'copy' && R.rechosen === false, JSON.stringify(R).slice(0, 300));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
