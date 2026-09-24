@@ -394,6 +394,9 @@ const age = await import('../src/public/next/shared/age.js');
 // module-level import in that file is invisible to a body loaded with
 // `new Function`, so the name has to be provided here or every render throws.
 const sidebarKit = await import('../src/public/next/shared/sidebar.js');
+// v3.71.1: the main header's ⓘ is explainerHtml('ingest.page'). The REAL kit
+// (import-free, headless), for the same reason as the modules above.
+const explainerKit = await import('../src/public/next/shared/explainer.js');
 
 let strippedControlDone = false;
 function loadView(dom) {
@@ -462,6 +465,7 @@ function loadView(dom) {
     ...appStubs, ...listboxStubs, ...memoryStubs,
     ...logic, ...text, ...usd, ...ring, ...gate, ...age,
     identityDotClass: sidebarKit.identityDotClass,
+    explainerHtml: explainerKit.explainerHtml,
     document: dom.document,
     window: dom.window,
     localStorage: null,

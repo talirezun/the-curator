@@ -382,8 +382,11 @@ section('§4  THE TWO NEW ADOPTIONS, AT NAMED SITES');
   // dropping the check — an info-less regression at this exact call site
   // would still be caught (the info clause is mandatory in the pattern, not
   // optional).
-  ok('sync.js centre: the component, eyebrow + title + info (recovery mechanism, relocated in v3.24.0)',
-    /renderViewHeader\(\{\s*eyebrow: 'where it all lives',\s*title: 'Sync',\s*info: '[^']+',?\s*\}\)/.test(s));
+  // v3.71.1: the info is the `sync.page` explainer (still mandatory in the
+  // pattern), rendered as HTML by the kit rather than a string literal.
+  ok('sync.js centre: the component, eyebrow + title + info (the sync.page explainer, recovery route included)',
+    /renderViewHeader\(\{\s*eyebrow: 'where it all lives',\s*title: 'Sync',\s*info: explainerHtml\('sync\.page'\),\s*infoHtml: true,?\s*\}\)/.test(s)
+    && /git client can undo/.test(readFileSync(join(SHARED_DIR, 'explainers.js'), 'utf8')));
   ok('neither view still imports eyebrow() — an unused import is an unadopted component',
     !/\beyebrow\b/.test((m.match(/import \{[\s\S]*?\} from '\.\.\/app\.js';/) || [''])[0])
     && !/\beyebrow\b/.test((s.match(/import \{[\s\S]*?\} from '\.\.\/app\.js';/) || [''])[0]));
@@ -421,8 +424,14 @@ section('§5  WHAT WAS CUT HAS NOT RETURNED, IN EITHER SHAPE');
     !/mem-sidebar-foot/.test(m));
   ok('sync.js: the .view-body sentence is gone and has not come back as a description',
     !/class="view-body"/.test(s) && !/lives on your disk and backs up/.test(s));
-  ok('sync.js: the sidebar sentence is the header’s info, not a .sidebar-hint div',
-    /info: 'Pages, chats and schemas travel/.test(s) && !/class="sidebar-hint"/.test(s));
+  // v3.71.1: NO ⓘ on a sidebar title (the standing rule). The sidebar's
+  // sentence ("what travels") moved into the main header's sync.page
+  // explainer — and it did not come back as a .sidebar-hint either.
+  ok('sync.js: the sidebar header carries no ⓘ, and its sentence is not a .sidebar-hint div',
+    /renderViewHeader\(\{\s*variant: 'sidebar',\s*title: 'Sync',\s*\}\)/.test(s) && !/class="sidebar-hint"/.test(s));
+  ok('sync.js: ...and what travels is said in the sync.page explainer instead',
+    /Pages, chats and project memory travel; source files and keys stay here/.test(
+      readFileSync(join(SHARED_DIR, 'explainers.js'), 'utf8')));
 
   // A WARNING IS NEVER BEHIND THE MARK. sync.js's cross-write refusal explains
   // why every primary action is dead, so it renders unfolded, as a status box.

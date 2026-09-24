@@ -71,7 +71,7 @@ export const DOCS_LINKS = {
   // opening a fold about the menu bar is actually looking for.
   'settings.menu-bar': { file: 'user-guide.md', anchor: '6b-the-menu-bar-icon-mac-app' },
   'settings.system-check': { file: 'system-check.md', anchor: null },
-  'settings.mcp-default-domain': { file: 'user-guide.md', anchor: 'default-domain-for-mcp-writes-v252' },
+  'settings.mcp-default-domain': { file: 'user-guide.md', anchor: 'default-domain-for-mcp-writes' },
   // The caps are the part a user hits and cannot argue with (20,000 pages,
   // the candidate-pair cap, the token ceiling), so the limits anchor points
   // at the numbers rather than at the feature overview.
@@ -179,11 +179,17 @@ export const DOCS_LINKS = {
   'domains.agent-instructions': { file: 'user-guide.md', anchor: 'making-sure-your-agent-actually-does-it' },
   'settings.api-key': { file: 'user-guide.md', anchor: '4-get-your-api-key-gemini-claude-or-openrouter' },
   'settings.connect': { file: 'user-guide.md', anchor: '1--connect-a-provider' },
-  'settings.build': { file: 'user-guide.md', anchor: '2--what-builds-your-wiki' },
+  'settings.build': { file: 'user-guide.md', anchor: '2--your-ai-model' },
   'settings.chat': { file: 'user-guide.md', anchor: 'the-composer--length-and-model-selectors' },
   'settings.all-models': { file: 'user-guide.md', anchor: '4--all-models' },
   'settings.measured': { file: 'user-guide.md', anchor: 'what-a-model-row-tells-you' },
   'settings.fetched-models': { file: 'user-guide.md', anchor: 'test-a-model-on-your-own-wiki' },
+  // v3.71.1 docs retitles: the three sections the report named now have
+  // clean headings, so their cards point at them directly.
+  'settings.mcp-connect': { file: 'user-guide.md', anchor: 'mcp-bridge--connect-a-client' },
+  'chat.project': { file: 'user-guide.md', anchor: 'pin-a-project-and-the-answer-reads-its-context-too' },
+  // A repo (git) install's way back: the user guide's new section.
+  'settings.update-recovery': { file: 'user-guide.md', anchor: 'going-back-to-an-earlier-version' },
   // The packaged install's way back is written in the Mac app guide only.
   'settings.update-recovery-installer': { file: 'mac-app.md', anchor: 'going-back-to-an-earlier-version' },
   // `settings.system-check` above is the whole system-check.md; an explainer

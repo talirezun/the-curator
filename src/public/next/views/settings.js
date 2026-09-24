@@ -146,12 +146,10 @@ import {
 // closed unconditionally by this view's teardown, so navigating away can
 // never leave it mounted behind the next view.
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
-// MCP_GUIDE_URL is DECLARED THERE and is no longer imported here (v3.58.0):
-// this view's copy of the link moved into block ①'s ⓘ, where it is emitted by
-// `docsLinkHtml('settings.mcp-bridge')` — the same key MCP_GUIDE_URL itself
-// resolves, so it is still ONE destination with one checkable table behind it,
-// and there is no second constant to rot. An unused import is an unadopted
-// component, so it goes rather than lingering as a promise.
+// MCP_GUIDE_URL is DECLARED THERE and is not imported here. Block ①'s link
+// lives in its ⓘ: since v3.71.1 that is the `settings.mcp-connect` explainer's
+// guide card (the user guide's "MCP bridge — connect a client", which links on
+// to the MCP guide the wizard opens via `settings.mcp-bridge`).
 import { openMcpWizard, closeMcpWizardIfOpen } from './mcp-wizard.js';
 // D-C / ARCHITECTURE.md R7: "a tour you can never get back is worse than
 // none." This is the one control that re-opens the dismissed first-run
@@ -205,7 +203,7 @@ import { renderViewHeader } from '../shared/text.js';
 // SECTION_INFO — Settings is where setup starts, and nothing said "begin in
 // Providers & keys". Adds exactly that one entry; every other section keeps
 // its own hand-written prose (P4 owns only SECTION_INFO.general).
-import { explainerHtml } from '../shared/explainer.js';
+import { explainerHtml, explainerMark } from '../shared/explainer.js';
 // ── THE SIDEBAR, AND IT IS THE DOMAINS SIDEBAR ───────────────────────────
 // Settings had the app's third answer to "a title, some actions, and a list
 // you select from": rows 48.8px tall against Domains' 63.8, no action in the
@@ -236,12 +234,8 @@ import { depthIdentityClass } from '../shared/depth-bar.js';
 // near-byte copy of the first. One component now, and `views/sync.js` makes
 // the same call shape.
 import { renderMonitor } from '../shared/monitor.js';
-// Every link out of this screen into the user documentation. A key, never a
-// path: `docsUrl`/`docsLinkHtml` THROW on an unknown key, and
-// scripts/test-docs-links.js reads the real markdown in docs/ and reds on a
-// heading that no longer matches — so a fold's "Read more in the guide"
-// cannot quietly start landing at the top of a page.
-import { docsLinkHtml } from '../shared/docs-links.js';
+// (v3.71.1: no direct docs-links import any more — every "Read more" on this
+// screen is the guide card inside an explainer, keyed in shared/explainers.js.)
 // The ONE age vocabulary and the ONE freshness scale (shared/age.js +
 // shared/freshness.css). The tool map paints a dot and a WORD beside it, and
 // the reason both come from here rather than from a table of this view's own
@@ -329,55 +323,17 @@ const SECTION_TITLES = Object.fromEntries(SETTINGS_SECTIONS.map(([id, label]) =>
  * fallback-model banner (a silent change to what the user is billed) and every
  * inline error stay in the body, unfolded, exactly where they were.
  */
-const SECTION_INFO = {
-  // ── EVERY html: true ENTRY IS ONE <p> (v3.65.3) ──────────────────────────
-  // The ⓘ panel (`.tx-vh-panel`, shared/text.css) is a ONE-COLUMN GRID, and a
-  // grid makes every child — and every contiguous run of bare text — its own
-  // row. So "…open it with <em>Open folder as vault</em>." rendered as THREE
-  // rows: the sentence, the italic phrase, and a lone "." — the maintainer's
-  // screenshot of Knowledge base. Providers' three <strong>s and the bridge's
-  // <code> split the same way. One <p> is one grid item, and prose flows in
-  // it. A block-level ⓘ below that mixes prose with an inline element is
-  // wrapped in its own <p> at its source for the same reason (`infoMark`
-  // itself is pinned byte-equal to shared/block.js and does not change).
-  providers: {
-    html: true,
-    // UPDATED with the four-block page: the old text said "there are two jobs
-    // here", which was true of the previous layout and is now one number short
-    // of what the reader sees numbered down the page in front of them.
-    text: '<p>Four steps, in order. <strong>Connect a provider</strong>, then choose the <strong>one '
-        + 'model that builds your wiki</strong> — ingest, Health scans and Compile all share it, '
-        + 'and it has to be one somebody has measured doing that job. <strong>Chat</strong> can '
-        + 'use anything you have connected and you pick it per message, in the composer. The last '
-        + 'block is the whole catalogue, for looking things up.</p>',
-  },
-  mcp: {
-    html: true,
-    text: '<p>Exposes your graph to any MCP client — twenty-four tools: seventeen that read your wiki, '
-        + 'and seven that write to it (compiling a conversation into pages, saving an agent\u2019s '
-        + 'working state or a project\u2019s standing brief, and fixing health issues) without leaving Claude. Write tools refuse '
-        + 'on <code class="mono">shared-*</code> mirrors by design. The Curator does not need '
-        + 'to be running: the bridge is a separate process the client launches on demand.</p>',
-  },
-  health: {
-    text: 'Cost ceilings for the AI scans that run from a domain\u2019s health panel. A scan '
-        + 'refuses to start when its estimate exceeds the ceiling — raise it if a scan will '
-        + 'not run on a large wiki.',
-  },
-  // v3.65.3: this page holds TWO blocks since the GitHub read-only token moved
-  // here (v3.65.2), and the ⓘ described only the first.
-  storage: {
-    html: true,
-    text: '<p>Two things live here. The <strong>vault folder</strong> is where every domain is kept '
-        + 'as plain markdown — open the same folder in Obsidian with <em>Open folder as vault</em> '
-        + 'and the links between your pages become the graph. The <strong>GitHub read-only '
-        + 'token</strong> lets a project\u2019s Documents mirror from a GitHub repository with no '
-        + 'copy on this Mac; it can only read, and it stays on this computer.</p>',
-  },
-};
-// See the docblock above SECTION_INFO for why this is assigned here, outside
-// the literal, rather than written as a `general:` key inside it.
-SECTION_INFO.general = { html: true, text: explainerHtml('settings.general') };
+const SECTION_INFO = Object.freeze({
+  // v3.71.1: every section's ⓘ is a KEY into shared/explainers.js, never
+  // prose — a section cannot carry a panel that is not an explainer. The
+  // MCP entry's old tool count is gone (count tools from mcp/tools/index.js,
+  // never from prose), and Health's entry also replaces its one block's ⓘ.
+  general: 'settings.general',
+  providers: 'settings.providers',
+  mcp: 'settings.mcp',
+  health: 'settings.health',
+  storage: 'settings.storage',
+});
 
 // ── Provider display metadata — 3 of these actually run. The remaining one
 // is rendered clearly inert (see honesty note above). ────────────────────
@@ -1444,149 +1400,16 @@ function renderCrossWriteBanner(consequence) {
     : '';
 }
 
-// ── THE INFO MARK, USED OUTSIDE A VIEW HEADER ───────────────────────────
-//
-// THE DEFECT THIS REMOVES. This app carries explanatory strings that exist
-// ONLY in a `title=` on a NON-FOCUSABLE <span>. That is hover-only: a
-// keyboard user never reaches it, and on touch there is no hover at all, so
-// the information does not exist. v3.20.0 counted 11 such strings and left
-// them; v3.22.0 built the fix for view headers and recorded the rest as
-// still open. This is that fix, applied to two of them.
-//
-// IT IS THE SHARED COMPONENT'S CONTRACT, NOT A SECOND PATTERN. shared/
-// text.js installs ONE delegated document listener at module scope, and that
-// listener is keyed on `[data-tx-info]` + getElementById — it is not coupled
-// to renderViewHeader in any way. So emitting the same two elements here
-// inherits, for free and with nothing to bind per view: toggle on click,
-// Escape closes AND returns focus to the button, outside-click dismisses,
-// click-inside does not, one panel open at a time. `.tx-vh-info` and
-// `.tx-vh-panel` are likewise unscoped in text.css, so no stylesheet changes.
-// settings.js already imports renderViewHeader from that module, so the
-// listener is guaranteed installed before any of this renders.
-//
-// WHY NOT ADD THIS TO shared/text.js. It belongs there and should move there.
-// It is local today because that file is being edited concurrently by another
-// workstream converting the header sites in the other views, and a shared
-// module is the worst place to take a merge conflict. The duplication is ONE
-// glyph constant, and the suite pins it byte-identical to text.js's INFO_GLYPH
-// so the two cannot drift while they are apart.
-//
-// THE BUTTON KEEPS ITS OWN `title=`. That is not the defect: it is a real
-// <button>, so it is focusable, and its accessible name comes from aria-label.
-// The tooltip is a mouse-only convenience ON TOP OF a keyboard-reachable
-// control, which is the opposite of a tooltip that IS the only carrier.
-//
-// WHAT MUST NEVER GO IN `info`: warnings, costs, spend figures,
-// irreversibility. v3.16.1's rule — a warning behind a click is not a warning.
-// Everything routed through here is neutral explanation of a visible label.
-const TX_INFO_GLYPH =
-  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-  'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>';
+// v3.71.1: this view's local `infoMark` and its TX_INFO_GLYPH copy are
+// GONE. Every ⓘ here is `explainerMark` (shared/explainer.js), which is
+// shared/text.js's renderInfoMark — ONE mark, one glyph, one listener.
 
-/**
- * @param {string} id     stable DOM id for the panel (the button gets id + '-btn')
- * @param {string} label  accessible name, e.g. 'About the build lane'
- * @param {string} info   the prose that used to live in a title=
- * @param {{html?: boolean}} [opts]  `{html: true}` treats `info` as a TRUSTED
- *   HTML fragment instead of escaping it, so a fold can carry a link, a
- *   <strong> or a <code>. Mirrors shared/text.js's `infoHtml` option, which is
- *   the same decision taken once already on the view header's fold, down to
- *   the `=== true` — a truthy check would let a stray string through.
- *   DEFAULT IS ESCAPED, and every existing caller passes nothing, so this
- *   option cannot change a single byte of what ships today. The fragment is
- *   the CALLER's responsibility: interpolating anything a user or a provider
- *   typed into it, unescaped, is how this becomes an injection.
- * @returns {{btn: string, panel: string}} two fragments; the caller places each
- *   where its own layout wants them, because a panel is a block and the mark
- *   is inline. They are only ever emitted together.
- */
-function infoMark(id, label, info, opts) {
-  const asHtml = !!opts && opts.html === true;
-  const text = typeof info === 'string' ? info.trim() : '';
-  if (!id || !text) return { btn: '', panel: '' };
-  const name = label || 'More information';
-  return {
-    btn:
-      '<button type="button" class="tx-vh-info" id="' + escapeHtml(id) + '-btn"' +
-        ' data-tx-info="' + escapeHtml(id) + '"' +
-        ' aria-expanded="false" aria-controls="' + escapeHtml(id) + '"' +
-        ' aria-label="' + escapeHtml(name) + '" title="' + escapeHtml(name) + '">' +
-        TX_INFO_GLYPH +
-      '</button>',
-    panel:
-      '<div class="tx-vh-panel" id="' + escapeHtml(id) + '" role="group"' +
-        ' aria-label="' + escapeHtml(name) + '" hidden>' + (asHtml ? text : escapeHtml(text)) + '</div>',
-  };
-}
-
-/**
- * The escape hatch, behind the Software-update info mark.
- *
- * ── EVERY SENTENCE HERE WAS RUN BEFORE IT WAS WRITTEN ──────────────────────
- * This project has a recorded history of shipping revert promises nobody
- * checked: v3.9.1 found "anything can be reverted from the Sync tab" at EIGHT
- * sites for a feature that has never existed, and v3.24.0 cut a "so nothing is
- * lost" line that was false twice over. So each clause below maps to something
- * measured against a clone made the way install.sh makes one
- * (`git clone --depth 1`):
- *
- *   "updating only moves forward"   — updateHandler runs fetch + reset --hard
- *                                     and nothing else; no route in this app
- *                                     exposes a revert.
- *   "the tags are not on disk"      — that clone has 1 commit and 0 tags, and
- *                                     `git checkout <tag>` fails with
- *                                     "pathspec did not match". `git fetch
- *                                     origin main` does NOT deepen it or bring
- *                                     tags, so this step is REQUIRED, not
- *                                     belt-and-braces.
- *   the two commands                — `git fetch --depth 1 origin tag X` then
- *                                     `git checkout X` landed the real
- *                                     historical tree (package.json version
- *                                     matched the tag).
- *   "your data is untouched"        — domains/*, .curator-config.json and
- *                                     .sync-config.json are all in .gitignore,
- *                                     so neither command can reach them.
- *   "checking again brings you back"— from that detached HEAD, the app's OWN
- *                                     two update commands returned the tree to
- *                                     the published version.
- *
- * ── WHY NO VERSION NUMBER APPEARS IN THIS STRING ───────────────────────────
- * Not every release is tagged. When this was written the newest tag on origin
- * was FOUR releases behind the running version, so "go back to the previous
- * version" would have been simply false, and any example tag baked in here
- * goes stale the moment one is pushed. The GitHub tag list is named as the
- * authority instead, which cannot rot.
- */
-const UPDATE_RECOVERY_INFO =
-  'Updating only moves forward — it replaces this copy with the published version, and there is no ' +
-  'in-app way to undo a release. Going back is a Terminal step and it does work. The installer clones ' +
-  'with --depth 1, so the version tags are not on disk yet: from the app folder (~/the-curator by ' +
-  'default) run "git fetch --depth 1 origin tag VERSION", then "git checkout VERSION", then ' +
-  '"npm install", where VERSION is a tag name from github.com/talirezun/the-curator/tags. That page is ' +
-  'the authority on what can be recovered — not every build is tagged, so the newest tag can be ' +
-  'several releases behind this copy. Your knowledge base, API keys and sync settings are ignored by ' +
-  'git and are not touched. Checking for updates again puts this copy back on the published version.';
-
-/**
- * The same panel for a packaged install, where every sentence above is false:
- * there is no app folder, no checkout, and `git` is not how this copy got here.
- *
- * IT PROMISES NOTHING IT CANNOT SHOW. This project has a recorded history of
- * revert copy describing a path that does not exist — v3.9.1 found "anything
- * can be reverted from the Sync tab" at eight sites for a feature that has
- * never shipped. So this does NOT say "you can go back to the previous
- * version": at the time of writing exactly ONE release carries an installer,
- * so there is nothing older to reinstall. It says how to find out, which stays
- * true whether that list has one entry or twenty.
- */
-const UPDATE_RECOVERY_INFO_INSTALLER =
-  'This copy was installed from a downloaded file, so The Curator never replaces its own program ' +
-  'files — updating means downloading the new installer and running it, and it replaces this copy in ' +
-  'place. Going back means installing an older build the same way, and only releases that actually ' +
-  'carry a download can be reinstalled: check github.com/talirezun/the-curator/releases to see which ' +
-  'ones do before relying on it. Your knowledge base, API keys and sync settings are stored outside ' +
-  'the app and are untouched by installing, reinstalling or deleting it.';
+// The "Going back to an earlier version" mark renders `settings.update-recovery`
+// (a git checkout) or `settings.update-recovery-installer` (a packaged
+// install) — chosen by install mode in renderGeneral. v3.71.1 moved the
+// measured caveats this file used to carry (a --depth 1 clone has no tags on
+// disk, so the fetch step is required; not every build is tagged; the data
+// is ignored by git) to the guide's "Going back to an earlier version".
 
 /**
  * How THIS INSTALL receives updates, from the capability record that rides
@@ -2305,13 +2128,13 @@ function renderMain(token, force) {
   else body = renderStorage(state.config ? renderVaultDomains() : '') +
     (state.config ? renderGithubReadToken() : '');
 
-  const info = SECTION_INFO[state.section];
+  const infoKey = SECTION_INFO[state.section];
   const html =
     renderViewHeader({
       eyebrow: 'configuration',
       title,
-      info: info ? info.text : null,
-      infoHtml: !!(info && info.html),
+      info: infoKey ? explainerHtml(infoKey) : null,
+      infoHtml: true,
     }) +
     // ── THE SECTION BODY IS ITS OWN ELEMENT, AND IT IS THIS VIEW'S ──────────
     // A bare `display: block` wrapper (views/settings.css), so it changes
@@ -2392,8 +2215,8 @@ function renderGeneral() {
   // Re-checking mid-install would race the very process being replaced.
   const updatesBusy = updatesAreBusy(state, inAppUpdate);
   const installerMode = installUpdateStyle() === 'download-installer';
-  const recovery = infoMark('settings-update-recovery-info', 'How to go back to an earlier version',
-    installerMode ? UPDATE_RECOVERY_INFO_INSTALLER : UPDATE_RECOVERY_INFO);
+  const recovery = explainerMark('settings-update-recovery-info',
+    installerMode ? 'settings.update-recovery-installer' : 'settings.update-recovery');
   const quick = state.quick;
   const summary = quick && !quick.error
     ? quick.summary
@@ -2424,21 +2247,6 @@ function renderGeneral() {
       : 'Finds the newest build and opens its download page; you run the installer.')
     : 'Installs the published version over this copy.';
 
-  const updateInfo =
-    // FIRST, because it is the question the button raises and the reason the
-    // lede could give it up: an update replaces the program, never the data.
-    '<p>Your knowledge base, your keys and your sync settings are never touched — an update ' +
-    'replaces the program, not what it holds.</p>' +
-    '<p>' + (installerMode
-      ? (updaterAttached === true
-        ? 'The Curator downloads the build, checks it arrived complete and unaltered, and only then restarts into ' +
-          'it — so a download that never finishes leaves this copy working.'
-        : 'This build does not replace its own program files. The check tells you a newer build exists and opens ' +
-          'the release page; running the installer replaces this copy in place.')
-      : 'Installing fetches the published branch and resets this checkout onto it, then restarts the server, so ' +
-        'the app directory ends up matching what is published rather than merging with it.') + '</p>' +
-    '<p>There is one channel: the check compares this copy with whatever is published right now, and there is no ' +
-    'separate preview track to opt into. ' + docsLinkHtml('settings.software-update', 'Read more in the guide') + '</p>';
 
   const updateBody =
     '<div class="settings-field-block" id="block-updates">' +
@@ -2476,16 +2284,6 @@ function renderGeneral() {
   // their paragraphs: 55 words under Text size and 58 under Menu bar, now one
   // measured line each, with the reasoning under this block's own ⓘ.
   const appearanceLede = 'Theme, text size and the menu bar icon. Saved in this browser.';
-  const appearanceInfo =
-    '<p><strong>Text size</strong> scales every piece of text in the app. Icons, controls and the layout keep ' +
-    'their size, so it buys legibility with density rather than zooming the window — your browser’s own zoom ' +
-    'still does that, and this setting is remembered per browser. ' +
-    docsLinkHtml('settings.text-size', 'Read more in the guide') + '</p>' +
-    '<p><strong>Menu bar</strong> puts a small icon in the Mac menu bar showing what your agents have ' +
-    'just saved, so you can glance at it without opening the app. It is off by default — until an agent has ' +
-    'written something there is nothing for it to show — and it applies to the Mac app only, because a browser ' +
-    'install has no menu bar presence at all. ' +
-    docsLinkHtml('settings.menu-bar', 'Read more in the guide') + '</p>';
 
   const appearanceBody =
     '<div class="cur-group cur-group-fields">' +
@@ -2522,12 +2320,6 @@ function renderGeneral() {
   // carries its own price in its own label, which is v3.16.1's rule and the
   // reason `.btn-ai` exists.
   const checkLede = 'Confirms the app is set up. Free, instant, never reads your wiki.';
-  const checkInfo =
-    '<p>It reads the app’s own setup: whether an AI key is present, whether the knowledge folder exists and can ' +
-    'be written to, whether the credential files are locked to your account, and whether sync is configured. It ' +
-    'never opens a wiki page.</p>' +
-    '<p>To clean up wiki content — broken links, orphan pages, near-duplicates — use a domain’s health panel ' +
-    'instead. ' + docsLinkHtml('settings.system-check', 'Read more in the guide') + '</p>';
 
   const checkBody =
     '<div class="settings-field-block">' +
@@ -2566,10 +2358,6 @@ function renderGeneral() {
   // be found again — and exactly one `openOnboardingPanel()` call site, which
   // scripts/test-next-onboarding.js counts.
   const guideLede = 'Re-opens the first-run checklist: AI key, first domain, first source.';
-  const guideInfo =
-    '<p>The checklist shows itself until setup is finished and then stops; dismissing it is never permanent, and ' +
-    'this button is where it can always be found again. ' +
-    docsLinkHtml('settings.setup-guide', 'Read more in the guide') + '</p>';
 
   const guideBody =
     '<div class="settings-btn-row">' +
@@ -2577,10 +2365,12 @@ function renderGeneral() {
     '</div>';
 
   return (
-    settingsBlock(null, 'updates', 'Software update', updateLede, updateBody, updateInfo, null, { html: true }) +
-    settingsBlock(null, 'appearance', 'Appearance', appearanceLede, appearanceBody, appearanceInfo, null, { html: true }) +
-    settingsBlock(null, 'system-check', 'System check', checkLede, checkBody, checkInfo, null, { html: true }) +
-    settingsBlock(null, 'setup-guide', 'Setup guide', guideLede, guideBody, guideInfo, null, { html: true })
+    settingsBlock(null, 'updates', 'Software update', updateLede, updateBody, 'settings.update') +
+    settingsBlock(null, 'appearance', 'Appearance', appearanceLede, appearanceBody, 'settings.appearance') +
+    settingsBlock(null, 'system-check', 'System check', checkLede, checkBody, 'settings.system-check') +
+    // Setup guide: NO ⓘ (v3.71.1, cut) — its lede already says what the one
+    // button does; the rest ("dismissing is never permanent") is in the guide.
+    settingsBlock(null, 'setup-guide', 'Setup guide', guideLede, guideBody, null)
   );
 }
 
@@ -4432,14 +4222,10 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
  * thing it explains cannot be separated by a repaint or by a later edit that
  * moves one of them.
  *
- * `infoText` is PLAIN TEXT BY DEFAULT: `infoMark` escapes it unless
- * `infoOpts` is `{html: true}`, in which case the caller is handing over a
- * TRUSTED fragment and owns escaping anything interpolated into it. The one
- * thing a fold must never contain is a CONTROL — shared/text.js's delegated
- * listener toggles on the button, and a control inside the panel would be
- * reachable only after that toggle — so the licence is for a link, a
- * <strong> or a <code>, not for a <button>. An absent `infoText` renders no
- * mark at all, so a block with nothing to fold is unchanged.
+ * `infoKey` is a key into shared/explainers.js (v3.71.1), rendered by the
+ * shared explainer kit; null renders no mark at all. The panel therefore
+ * never contains a control but the guide link, and never carries a warning,
+ * a cost or an outcome — those stay in the block's own body, unfolded.
  *
  * `num` MAY BE null, and a null is a statement rather than a missing value.
  * The numerals on Providers & keys are an argument: that page reads top to
@@ -4457,8 +4243,13 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
  * break the `.settings-job-block + .settings-job-block` adjacency that is now
  * the page's only source of block-to-block spacing.
  */
-function settingsBlock(num, id, title, ledeHtml, bodyHtml, infoText, noticeHtml, infoOpts) {
-  const info = infoMark('settings-block-info-' + id, 'More about ' + title, infoText, infoOpts);
+function settingsBlock(num, id, title, ledeHtml, bodyHtml, infoKey, noticeHtml) {
+  // v3.71.1: the 6th argument is an EXPLAINER KEY (shared/explainers.js) or
+  // null — never prose — so no block can carry a panel that is not an
+  // explainer. The panel id is unchanged: `settings-block-info-<id>`.
+  const info = infoKey
+    ? explainerMark('settings-block-info-' + id, infoKey)
+    : { btn: '', panel: '' };
   // `== null` on purpose — undefined from a 6-argument call and an explicit
   // null both mean "this block is not a step". A falsy test would swallow 0,
   // and while no block is numbered 0 today, a numbering scheme silently
@@ -4519,9 +4310,6 @@ function renderConnectBlock(k, crossBusy) {
   const lede =
     (anyKey ? '' : '<strong>Start here.</strong> ') +
     'One key per provider — connect as many as you like.';
-  const ledeInfo = 'The Curator calls the provider directly with your key; nothing goes through us. ' +
-    'A provider you connect here can answer chat straight away; whether it can also BUILD your wiki ' +
-    'depends on whether one of its models has been measured for that job, which block 2 states.';
 
   const body =
     // Directly above the key rows, because it exists to explain why the row the
@@ -4540,7 +4328,7 @@ function renderConnectBlock(k, crossBusy) {
       'never sent anywhere except the provider you call.</span>' +
     '</div>';
 
-  return settingsBlock(1, 'connect', 'Connect a provider', lede, body, ledeInfo);
+  return settingsBlock(1, 'connect', 'Connect a provider', lede, body, 'settings.connect');
 }
 
 /**
@@ -4588,9 +4376,6 @@ function renderAllModelsBlock(k, crossBusy) {
       renderModelListsGroup(k, crossBusy);
 
   const lede = 'The full catalogue for every provider you have connected, with search and filters.';
-  const ledeInfo = 'Everything here is available in chat; the ones that can also build your wiki are ' +
-    'marked, and can be chosen from here or from block 2. Nothing in this table is a recommendation — ' +
-    'every column is a fact the provider published or a measurement The Curator ran.';
 
   const shelf =
     '<details class="settings-shelf"' + (state.modelShelfOpen === true ? ' open' : '') +
@@ -4605,7 +4390,7 @@ function renderAllModelsBlock(k, crossBusy) {
       '<div class="settings-shelf-body">' + body + '</div>' +
     '</details>';
 
-  return settingsBlock(4, 'all', 'All models', lede, shelf, ledeInfo);
+  return settingsBlock(4, 'all', 'All models', lede, shelf, 'settings.all-models');
 }
 
 /**
@@ -4902,11 +4687,7 @@ function renderCatalogueSyncDetail(p, k, last) {
     ? '<div class="settings-inline-error catalogue-sync-error" role="alert">' + escapeHtml(errText) + '</div>'
     : '';
 
-  const laneInfo = infoMark('settings-fetched-lane-info-' + p.id,
-    'Why a fetched model cannot build your wiki',
-    p.name + ' tells us what a model costs; only a real run can measure whether it does our job. ' +
-    'Want one of them to build your wiki? Open “Worth testing for this job” above and check it on ' +
-    'your own material first — that is the only way in, and it is yours to run.');
+  const laneInfo = explainerMark('settings-fetched-lane-info-' + p.id, 'settings.fetched-models');
 
   const body =
     '<span class="catalogue-sync-note">Fetched models arrive <strong>chat only</strong> — they have ' +
@@ -5230,17 +5011,10 @@ function renderBuildBlock(k, crossBusy) {
   const lede = spoken
     ? 'Every AI job runs on this one model: ' + escapeHtml(spoken) + '.'
     : 'Every AI job runs on this one model.';
-  // ai-jobs P5's ⓘ, verbatim. Both load-bearing clauses of the old fold
-  // survive in it: "nothing separate to set" stops a reader hunting for a
-  // per-job override that is INEXPRESSIBLE in the code (v3.14.0), and the
-  // second sentence names the consequence of picking across providers.
-  const ledeInfo = 'There is nothing separate to set for each job: one model keeps one bill to read. ' +
-    'Choosing a model from another provider makes that provider the active one, so the bill moves with it. ' +
-    'Chat is the exception: pick any connected model per message, in the composer.';
 
   // The id stays 'build' (anchors, suites and the info-button id key on it);
   // only the title moved, the maintainer's Q2 (v3.67.0).
-  return settingsBlock(2, 'build', 'Your AI model', lede, body, ledeInfo,
+  return settingsBlock(2, 'build', 'Your AI model', lede, body, 'settings.build',
     renderModelGoneBanner(k));
 }
 
@@ -5408,7 +5182,9 @@ function renderBuildCurrent(k, pickDisabled, opts) {
   // model row (up to ~192 of them on a synced OpenRouter catalogue) and is
   // deliberately NOT converted — 192 extra tab stops would be a worse defect
   // than the one being fixed.
-  const chipInfo = infoMark('settings-build-chip-info', 'About the ' + chip.label + ' badge', chip.title);
+  // v3.71.1: ONE static explainer whose table names all three badges, so the
+  // panel reads true whichever badge is showing; the badge itself is the state.
+  const chipInfo = explainerMark('settings-build-chip-info', 'settings.measured');
 
   // ── THREE FACT CHIPS, AND NO CONTEXT CHIP ──────────────────────────────
   // Price, the measured finding, and who measured it. CONTEXT IS DELIBERATELY
@@ -5662,11 +5438,8 @@ function renderChatBlock(k) {
   // block has none — so it is what stays visible; "any model you have
   // connected" survives inside it rather than as a sentence of its own.
   const lede = 'Pick <strong>any</strong> model you have connected — per message, in the composer.';
-  const ledeInfo = 'Every model you have connected can answer chat, including the ones that cannot ' +
-    'build a wiki: nothing is at stake in an answer but the cost of that answer. The composer ' +
-    'choice never touches what builds your wiki, so there is no second control for it here.';
 
-  return settingsBlock(3, 'chat', 'Chat', lede, body, ledeInfo);
+  return settingsBlock(3, 'chat', 'Chat', lede, body, 'settings.chat');
 }
 
 /**
@@ -5928,13 +5701,12 @@ function renderProviderRow(p, k, crossBusy, opts) {
     // place the reason is written. It is now behind a real button. The short
     // form stays visible, because the fact that the control is missing has to
     // be legible without any interaction at all.
-    const noModels = infoMark(
-      'settings-nomodels-info-' + p.id,
-      'Why ' + p.name + ' cannot be active',
-      p.name + ' has no models available in this build yet, so it cannot run ingest, Health scans or Compile. Your key is saved and this will change on its own once models are available.');
+    // v3.71.1: the ⓘ that used to follow this is CUT — its text was a state
+    // and a refusal, which an explainer may not carry, and the visible short
+    // form below already states the fact. (No app caller reaches this
+    // branch: renderConnectBlock passes allowSetActive: false.)
     extraActions.push(
-      '<span class="mono provider-state provider-state-muted">no models yet — cannot be active</span>' +
-      noModels.btn + noModels.panel
+      '<span class="mono provider-state provider-state-muted">no models yet — cannot be active</span>'
     );
   }
   if (allowSetActive && hasKey && !isActive && canBuild) {
@@ -8997,15 +8769,8 @@ function renderMcp() {
   // against the real markdown, so this list cannot drift from what the docs
   // can back.
   //
-  // THE LINK MOVED INTO THE FOLD (v3.58.0), reversing the v3.49.0 decision
-  // recorded here — and reversing it costs nothing, because the two links
-  // were always the SAME destination. `MCP_GUIDE_URL` is
-  // `docsUrl('settings.mcp-bridge')` and so is the fold's trailing "Read more
-  // in the guide", which v3.54.0 filed under KNOWN AND UNFIXED as "MCP ①'s
-  // lede and its fold both link the MCP guide". One destination, named twice,
-  // once on screen and once behind the mark, is one name too many; the fold is
-  // where §3 of docs/design-system-source.md puts a docs link, and the rest of
-  // this block's long version is already there.
+  // THE LINK IS IN THE FOLD: block ①'s ⓘ is the `settings.mcp-connect`
+  // explainer, whose guide card is the one docs link this block carries.
   //
   // "that runs" → "running" is the one word that got the sentence to 13. The
   // claim, the three client names and the ChatGPT exclusion in the fold are
@@ -9013,13 +8778,6 @@ function renderMcp() {
   // docs/mcp-user-guide.md itself, so this list still cannot drift.
   const connectLede =
     'Works with any MCP client running local servers: Claude Desktop, Claude Code, Cursor.';
-  const connectInfo =
-    'ChatGPT’s web app cannot run a local server, so it cannot connect — the limit is the ' +
-    'transport, not the vendor. The bridge is a separate stdio process the client launches on ' +
-    'demand, so The Curator itself does not have to be running for a client to read your wiki. ' +
-    'Setting up writes a launch command into that client’s own config file, which is why it has ' +
-    'to be re-run whenever your knowledge folder, the app, or Node moves. ' +
-    docsLinkHtml('settings.mcp-bridge', 'Read more in the guide');
 
   // ── M7 + M8 — THE BRIDGE MONITOR ─────────────────────────────────
   //
@@ -9087,22 +8845,20 @@ function renderMcp() {
   // lede, and the inverse — which is the interesting half, because it is the
   // safer setting and nobody would guess why — is the fold.
   const domainLede = 'Used when a client says “my wiki” without naming a domain.';
-  const domainInfo =
-    'Leave it unset and a write tool refuses until the model names a domain itself, which is the ' +
-    'safer setting on an install with several domains: a mis-aimed compile writes its pages into ' +
-    'the wrong wiki, and nothing about that is obvious afterwards. ' +
-    docsLinkHtml('settings.mcp-default-domain', 'Read more in the guide');
 
   const domainBody =
     // The shared listbox (shared/listbox.js). No wrapper: the component draws
     // its own indicator INSIDE the trigger, so there is nothing left to
     // position a chevron against.
     renderListboxHtml(defaultDomainCfg) +
-    (state.defaultDomainSaving ? '<span class="mono settings-saving-note">saving…</span>' : '');
+    (state.defaultDomainSaving ? '<span class="mono settings-saving-note">saving…</span>' : '') +
+    // THE CONSEQUENCE IS ON THE PAGE (v3.71.1; it was only in the ⓘ): a
+    // write aimed at the wrong domain is a real, quiet mistake.
+    '<p class="settings-block-footnote">' + escapeHtml(MCP_DOMAIN_CONSEQUENCE) + '</p>';
 
   return (
-    settingsBlock(1, 'mcp-connect', 'Connect a client', connectLede, connectBody, connectInfo, '', { html: true }) +
-    settingsBlock(2, 'mcp-domain', 'Default domain for MCP writes', domainLede, domainBody, domainInfo, '', { html: true }) +
+    settingsBlock(1, 'mcp-connect', 'Connect a client', connectLede, connectBody, 'settings.mcp-connect', '') +
+    settingsBlock(2, 'mcp-domain', 'Default domain for MCP writes', domainLede, domainBody, 'settings.mcp-domain', '') +
     // ── ③ THE TOOL MAP ─────────────────────────────────────────────────────
     // THIRD, AND NUMBERED, BECAUSE THE SEQUENCE IS STILL AN ARGUMENT: you
     // connect a client, you decide where an unqualified write lands, and only
@@ -9606,19 +9362,7 @@ function renderToolMap() {
   // therefore pinned against the module's own export by
   // scripts/test-next-capture-meter.js §5, which fails the day MAX_LINE_BYTES
   // moves and this sentence does not.
-  const info =
-    'Every call the bridge answers appends one line to .mcp-usage.jsonl — a file beside your ' +
-    'settings, never inside your knowledge folder, so nothing here is ever synced. The line ' +
-    'carries the tool’s name, the domain and the project it touched, whether it succeeded, ' +
-    'how long it took, and a random id for the bridge session it belonged to. Never an argument, ' +
-    'never a result, never a file path, never an error message, so a line stays under 300 bytes ' +
-    'however large the call was. Each run of the bridge also writes one session line — that id, ' +
-    'and the harness name the client reported for itself. A line written by the button here ' +
-    'carries one extra field, via, whose only value is self-test — that is what puts the word ' +
-    'self-test on a tile, and why a run never counts as a session start or a save. The file ' +
-    'rotates at 1 MB keeping one previous copy, and deleting it only restarts the map. ' +
-    docsLinkHtml('settings.mcp-tool-map', 'Read more in the guide');
-  return settingsBlock(3, 'mcp-tool-map', 'Tool map', lede, renderToolMapBody(), info, '', { html: true });
+  return settingsBlock(3, 'mcp-tool-map', 'Tool map', lede, renderToolMapBody(), 'settings.mcp-tool-map', '');
 }
 
 /**
@@ -9651,14 +9395,6 @@ function renderToolMap() {
 const ACROSS_PROJECTS_MAX_ROWS = 12;
 function renderAcrossProjects() {
   const lede = 'Which projects’ agent sessions saved a handoff, last 30 days.';
-  const info =
-    '<p>One line per project: the number of agent sessions that saved a handoff in the last ' +
-    '30 days, drawn as a bar against the busiest project, with all its sessions under it. A ' +
-    'session is one run of the bridge; a test run from this page is never one. The counts come ' +
-    'from every usage log on this computer, the same reading the menu bar widget draws, and a ' +
-    'project with no session reads 0 so you can see which ones never save. The last line is ' +
-    'every save in the last 7 days, the widget’s pulse strip as a number.</p>' +
-    docsLinkHtml('settings.mcp-tool-map', 'Read more in the guide');
   let body;
   const P = state.mcpProjects;
   if (!P) {
@@ -9720,7 +9456,7 @@ function renderAcrossProjects() {
       note: notes.join(' '),
     }) + '</div>';
   }
-  return settingsBlock(4, 'mcp-across', 'Across projects', lede, body, info, '', { html: true });
+  return settingsBlock(4, 'mcp-across', 'Across projects', lede, body, 'settings.mcp-across', '');
 }
 
 /**
@@ -9903,6 +9639,10 @@ function stopUsagePoll() {
  * folded. The section's own model ("a ceiling REFUSES, it does not
  * truncate") is in the header's ⓘ, where it already was.
  */
+const SCAN_LIMIT_REFUSAL = 'A scan estimates its cost first, and does not start when the estimate is over the ceiling.';
+const MCP_DOMAIN_CONSEQUENCE = 'Left unset, a write waits for the agent to name a domain. ' +
+  'A write aimed at the wrong domain lands in that wiki and is hard to spot afterwards.';
+
 function renderHealthLimits() {
   if (state.aiHealthError) {
     return '<div class="settings-inline-error">' + escapeHtml(state.aiHealthError) + '</div>';
@@ -9915,13 +9655,6 @@ function renderHealthLimits() {
   // "Semantic-duplicate scan limits" and the second sentence already says
   // Ask AI, so the lede was naming both twice. 14 → 12.
   const lede = 'Caps what one scan may cost. Used by Health → Ask AI scans.';
-  const info =
-    'A scan estimates its own cost before it starts and REFUSES to run when the estimate is over ' +
-    'the ceiling — it does not start and truncate, so nothing is half-scanned and no partial ' +
-    'bill is run up. Raise the ceiling when a scan will not start on a large wiki; lower the pair ' +
-    'cap when you want a cheaper first look at a domain you have not scanned before. Neither ' +
-    'setting affects the free structural health scan. ' +
-    docsLinkHtml('settings.health-limits', 'Read more in the guide');
 
   const body =
     // The two fields as rows of the kit's inset group — the same card and the
@@ -9945,6 +9678,9 @@ function renderHealthLimits() {
         '<div class="settings-input-suffix"><input type="number" min="1" class="mono settings-number-input" id="input-max-pairs" value="' + escapeHtml(state.maxPairsInput) + '"></div>' +
       '</div>' +
     '</div>' +
+    // THE REFUSAL IS ON THE PAGE (v3.71.1): it lived only inside ⓘs, and a
+    // refusal behind a click is not a statement anyone reads (v3.16.1).
+    '<p class="settings-block-footnote">' + escapeHtml(SCAN_LIMIT_REFUSAL) + '</p>' +
     (state.scanLimitsValidationError ? '<div class="settings-inline-error">' + escapeHtml(state.scanLimitsValidationError) + '</div>' : '') +
     // One action, so one primary, at body level and therefore md.
     '<div class="settings-btn-row">' +
@@ -9954,7 +9690,9 @@ function renderHealthLimits() {
       (state.aiHealthSaved ? '<span class="mono settings-saved-note">' + icon('checkAlt', 12) + ' saved</span>' : '') +
     '</div>';
 
-  return settingsBlock(null, 'health-limits', 'Semantic-duplicate scan limits', lede, body, info, '', { html: true });
+  // NO block ⓘ (v3.71.1): the section header's `settings.health` explainer
+  // says what this, the section's only block, would have said.
+  return settingsBlock(null, 'health-limits', 'Semantic-duplicate scan limits', lede, body, null, '');
 }
 
 // ── Knowledge base ────────────────────────────────────────────────────────
@@ -9990,17 +9728,6 @@ function renderStorage(domainsMonitorHtml) {
     : '';
 
   const lede = 'The folder every domain lives in. Point Obsidian at it as a vault.';
-  // The prose is ONE <p> (v3.65.3): the ⓘ panel is a one-column grid, so bare
-  // text around the <em> rendered as four rows — "…in Obsidian with", the
-  // italic phrase, the rest of the sentence, then the link. The link stays its
-  // own trailing row, as on every other block's ⓘ that ends with one.
-  const info =
-    '<p>Every domain is a folder of plain markdown under this path — no database, no index, ' +
-    'nothing the app has to be running to read. Open this same folder in Obsidian with ' +
-    '<em>Open folder as vault</em> and the wikilinks between your pages render as the graph. ' +
-    'Choosing a new folder points The Curator at it; it does not copy or move anything, so the ' +
-    'move itself is yours to make in Finder.</p>' +
-    docsLinkHtml('settings.knowledge-base', 'Read more in the guide');
 
   const body =
     // Row-level buttons, so `btn-xs`: the SIZE is the container's decision.
@@ -10021,9 +9748,8 @@ function renderStorage(domainsMonitorHtml) {
     // v3.66.0: "Domains in this folder", composed by the caller (see renderMain).
     (typeof domainsMonitorHtml === 'string' ? domainsMonitorHtml : '');
 
-  return settingsBlock(null, 'storage-folder', 'Vault folder', lede, body, info,
-    renderCrossWriteBanner('wait for it to finish before changing the knowledge base folder.'),
-    { html: true });
+  return settingsBlock(null, 'storage-folder', 'Vault folder', lede, body, 'settings.vault-folder',
+    renderCrossWriteBanner('wait for it to finish before changing the knowledge base folder.'));
 }
 
 /**
@@ -10050,27 +9776,6 @@ function renderGithubReadToken() {
   const kindWord = st && st.kind ? st.kind : null;
 
   const lede = 'Lets a project\u2019s Documents mirror from a GitHub repository, read-only.';
-  // Each run of prose is its own <p>: the ⓘ panel lays its CHILDREN out on a
-  // grid track, so a bare text node beside an <ol> and a <code> becomes three
-  // grid items and the <code> lands on a line of its own (seen in the browser).
-  const info =
-    '<p>A fine-grained personal access token with read-only access to the repositories you want to ' +
-    'mirror. Not a classic one. In GitHub:</p>' +
-    '<ol class="settings-gh-steps">' +
-      '<li><strong>Settings \u2192 Developer settings \u2192 Personal access tokens \u2192 Fine-grained tokens ' +
-        '\u2192 Generate new token.</strong></li>' +
-      '<li><strong>Resource owner:</strong> the account or organisation that owns the repository.</li>' +
-      '<li><strong>Repository access:</strong> Only select repositories, then pick the repository or ' +
-        'repositories whose documentation you want to mirror. You can pick several with one token.</li>' +
-      '<li><strong>Permissions \u2192 Repository permissions \u2192 Contents: Read-only.</strong> Metadata ' +
-        'read-only is added automatically. Nothing else.</li>' +
-      '<li><strong>Expiry:</strong> fine-grained tokens require one, up to a year. Set a reminder to renew it.</li>' +
-    '</ol>' +
-    '<p>A classic token only works with the <code class="mono">repo</code> scope, which reads every ' +
-    'repository the account owns \u2014 which is why a fine-grained one is recommended, and why ' +
-    'Personal Sync\u2019s token is never the default. The token is kept in ' +
-    '<code class="mono">.curator-config.json</code> on this computer, readable only by you, and is ' +
-    'never shown again after you save it.</p>';
 
   let bodyHtml;
   if (state.ghTokenLoadError && !st) {
@@ -10161,7 +9866,7 @@ function renderGithubReadToken() {
     bodyHtml = row + caution + actionError;
   }
 
-  return settingsBlock(null, 'storage-github-token', 'GitHub read-only token', lede, bodyHtml, info, '', { html: true });
+  return settingsBlock(null, 'storage-github-token', 'GitHub read-only token', lede, bodyHtml, 'settings.github-token', '');
 }
 
 /**

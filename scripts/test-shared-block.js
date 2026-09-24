@@ -31,9 +31,12 @@
  * replacement. Two live implementations of one component is a real hazard and
  * it is named rather than shrugged at: the hazard is that they DRIFT.
  *
- * §1 removes it. It lifts the REAL `settingsBlock` + `infoMark` + the REAL
- * `TX_INFO_GLYPH` out of views/settings.js, with the REAL `escapeHtml` out of
- * app.js, and compares their output to `renderBlock`'s BYTE FOR BYTE over a
+ * (v3.71.1: `infoMark` and `TX_INFO_GLYPH` ARE now deleted from settings.js —
+ * §0 asserts their absence — and the 6th argument is an explainer KEY.)
+ *
+ * §1 removes it. It lifts the REAL `settingsBlock` out of views/settings.js,
+ * with the REAL `escapeHtml` out of app.js and the REAL `explainerMark`
+ * injected, and compares their output to `renderBlock`'s BYTE FOR BYTE over a
  * fixture matrix. Not "both contain a title", not "both look like a block" —
  * identical strings, or red naming the fixture. A stub anywhere on that path
  * would make this file assert the properties of its own fixtures, which is the
@@ -45,7 +48,7 @@
  *   §3  renderInfoMark escapes by default; `{html:true}` is the only opt-out
  *   §4  renderBlock THROWS on a missing id or title — the two values whose
  *       absence renders something that looks nearly right
- *   §5  the escapeHtml copies agree, and the two ⓘ glyphs are the same bytes
+ *   §5  the escapeHtml copies agree; text.js holds the one ⓘ glyph
  *
  * Offline. Reads files off disk and imports two /next shared modules (both
  * import-free of app.js, and text.js guards `typeof document`, so they run
@@ -57,6 +60,10 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { renderBlock } from '../src/public/next/shared/block.js';
 import { renderInfoMark } from '../src/public/next/shared/text.js';
+// v3.71.1: settingsBlock's ⓘ is an explainer by KEY. The REAL kit is injected
+// into the lifted legacy helper — import-free of app.js, so it runs headless.
+import { explainerHtml, explainerMark } from '../src/public/next/shared/explainer.js';
+import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -112,24 +119,38 @@ section('§0  THE LIFT — the real functions, out of the real files');
 // ═══════════════════════════════════════════════════════════════════════════
 
 const settingsBlockSrc = extractFunction(settingsJs, 'settingsBlock', 'views/settings.js');
-const infoMarkSrc = extractFunction(settingsJs, 'infoMark', 'views/settings.js');
 const appEscapeSrc = extractFunction(appJs, 'escapeHtml', 'app.js');
-const glyphM = /const TX_INFO_GLYPH =([\s\S]*?);\n/.exec(settingsJs);
 
 ok(settingsBlockSrc.includes('settings-job-block'),
   'settingsBlock() was lifted out of views/settings.js and carries the wrapper class');
-ok(infoMarkSrc.includes('data-tx-info'),
-  'infoMark() was lifted out of views/settings.js and carries the listener hook');
-ok(!!glyphM, 'TX_INFO_GLYPH is defined in views/settings.js and was lifted with them');
+// v3.71.1: the local `infoMark` + `TX_INFO_GLYPH` copies are DELETED. The mark
+// has ONE implementation, shared/text.js's renderInfoMark (reached through
+// shared/explainer.js's explainerMark). A copy creeping back is drift waiting
+// to happen, so its ABSENCE is the assertion now.
+ok(!/(?:^|\n)\s*(?:export\s+)?function infoMark\s*\(/.test(settingsJs),
+  'views/settings.js carries NO local infoMark() — the copy is gone');
+ok(!/const TX_INFO_GLYPH\b/.test(settingsJs),
+  'views/settings.js carries NO TX_INFO_GLYPH — the glyph lives once, in shared/text.js');
+{
+  const hits = [];
+  const scan = (rel) => {
+    const src = read(rel);
+    if (/(?:^|\n)\s*(?:export\s+)?function (?:infoMark|renderInfoMark)\s*\(/.test(src)) hits.push(rel);
+  };
+  for (const rel of ['views/settings.js', 'views/domains.js', 'views/chat.js', 'views/shared.js',
+                     'views/shared-brain-wizard.js', 'views/sync.js', 'views/ingest.js',
+                     'shared/block.js', 'shared/explainer.js', 'shared/text.js']) scan(rel);
+  ok(hits.length === 1 && hits[0] === 'shared/text.js',
+    'renderInfoMark in shared/text.js is the ONLY ⓘ-mark implementation (found in: ' + hits.join(', ') + ')');
+}
 ok(/[&<>"']/.test(appEscapeSrc) && appEscapeSrc.includes('&amp;'),
   'app.js escapeHtml was lifted — the block helper’s own copy is compared against it in §5');
 
-// The old block, assembled from the real parts and nothing else. TX_INFO_GLYPH
-// arrives as a `const` in the same body (not as a parameter) so the lifted
-// source is executed exactly as it is written in the view.
-const legacyBlock = new Function(
-  [appEscapeSrc, 'const TX_INFO_GLYPH =' + glyphM[1] + ';', infoMarkSrc, settingsBlockSrc,
-   'return settingsBlock;'].join('\n'))();
+// The old block, assembled from the real parts and nothing else: the lifted
+// settingsBlock, app.js's real escapeHtml, and the REAL explainerMark injected
+// under the name the view imports it by.
+const legacyBlock = new Function('explainerMark',
+  [appEscapeSrc, settingsBlockSrc, 'return settingsBlock;'].join('\n'))(explainerMark);
 ok(typeof legacyBlock === 'function', 'CONTROL: the lifted settingsBlock is callable');
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -147,54 +168,59 @@ section('§1  BYTE-EQUALITY — renderBlock emits what settingsBlock emits');
 // behaviour and it is strictly better; the equality claim is about the same
 // INPUTS, so the fixtures supply them.
 
+// v3.71.1: the ⓘ is an explainer KEY (or null / '' for none). Real keys from
+// shared/explainers.js, so the explainer body really renders inside the fold.
 const FIXTURES = [
-  ['numbered, lede, body, no fold',
+  ['numbered, lede, body, no fold (null key)',
     { num: 1, id: 'connect', title: 'Connect a provider',
       ledeHtml: '<strong>Start here.</strong> Paste a key.', bodyHtml: '<div>rows</div>',
-      infoText: '', noticeHtml: '' }],
-  ['numbered, lede, body, escaped fold',
+      infoKey: null, noticeHtml: '' }],
+  ['numbered, lede, body, explainer fold (settings.connect)',
+    { num: 1, id: 'connect', title: 'Connect a provider',
+      ledeHtml: '<strong>Start here.</strong> Paste a key.', bodyHtml: '<div>rows</div>',
+      infoKey: 'settings.connect', noticeHtml: '' }],
+  ['numbered, lede, body, explainer fold (settings.build)',
     { num: 2, id: 'build', title: 'Your AI model',
       ledeHtml: 'One model keeps the bill readable.', bodyHtml: '<table></table>',
-      infoText: 'Costs & limits are measured, not "estimated" <here>.', noticeHtml: '' }],
-  ['numbered, lede, body, HTML fold carrying an <a> and a <code>',
+      infoKey: 'settings.build', noticeHtml: '' }],
+  ['numbered, lede, body, explainer fold (settings.chat)',
     { num: 3, id: 'chat', title: 'Chat',
       ledeHtml: 'Pick the model that answers.', bodyHtml: '<ul><li>a</li></ul>',
-      infoText: 'See <a href="https://example.invalid/g">the guide</a> and <code>.env</code>.',
-      noticeHtml: '', infoHtml: true }],
+      infoKey: 'settings.chat', noticeHtml: '' }],
   ['unnumbered (null), lede, body, fold',
     { num: null, id: 'appearance', title: 'Appearance',
       ledeHtml: 'Light, dark, or whatever the system says.', bodyHtml: '<div>seg</div>',
-      infoText: 'The theme follows the OS until you choose one.', noticeHtml: '' }],
+      infoKey: 'settings.appearance', noticeHtml: '' }],
   ['unnumbered, NO lede — the fold is suppressed with it',
     { num: null, id: 'syscheck', title: 'System check',
       ledeHtml: '', bodyHtml: '<div>checks</div>',
-      infoText: 'This prose has nowhere to hang without a lede.', noticeHtml: '' }],
+      infoKey: 'settings.system-check', noticeHtml: '' }],
   ['numbered, with a notice ABOVE the heading and inside the wrapper',
     { num: 2, id: 'build', title: 'Your AI model',
       ledeHtml: 'One model.', bodyHtml: '<table></table>',
-      infoText: 'Folded.', noticeHtml: '<div class="provider-gone-banner">Model withdrawn</div>' }],
+      infoKey: 'settings.build', noticeHtml: '<div class="provider-gone-banner">Model withdrawn</div>' }],
   ['num 0 — the falsy value a `!= null` test must NOT lose',
     { num: 0, id: 'zero', title: 'Step zero',
-      ledeHtml: 'It exists.', bodyHtml: '', infoText: '', noticeHtml: '' }],
+      ledeHtml: 'It exists.', bodyHtml: '', infoKey: null, noticeHtml: '' }],
   ['num as a STRING, which the helper stringifies either way',
     { num: '12', id: 'twelve', title: 'Twelve',
-      ledeHtml: 'Twelve.', bodyHtml: '<p>b</p>', infoText: 'Folded.', noticeHtml: '' }],
+      ledeHtml: 'Twelve.', bodyHtml: '<p>b</p>', infoKey: 'settings.mcp-connect', noticeHtml: '' }],
   // The apostrophe is deliberate. Mutating block.js’s escapeHtml to drop `'`
   // from its character class left §1 GREEN and only §5 red, because no fixture
   // carried one — and §5 compares the copies to each other, not to what the
   // block RENDERS. Now the rendered markup carries the case too.
   ['an id and a title that both need escaping, apostrophe included',
     { num: 4, id: "a&b\"c'd", title: 'Keys & "models" <all> it\'s',
-      ledeHtml: 'Escaped in the class AND in the fold’s aria-label.',
-      bodyHtml: '<p>b</p>', infoText: 'Folded & escaped.', noticeHtml: '' }],
+      ledeHtml: 'Escaped in the class AND in the fold’s panel id.',
+      bodyHtml: '<p>b</p>', infoKey: 'settings.all-models', noticeHtml: '' }],
   ['everything empty but id and title',
-    { num: null, id: 'bare', title: 'Bare', ledeHtml: '', bodyHtml: '', infoText: '', noticeHtml: '' }],
-  ['a fold whose text is WHITESPACE ONLY — nothing to say is not a fold',
+    { num: null, id: 'bare', title: 'Bare', ledeHtml: '', bodyHtml: '', infoKey: null, noticeHtml: '' }],
+  ['an EMPTY-STRING key — nothing to explain is not a fold',
     { num: 5, id: 'blank', title: 'Blank', ledeHtml: 'A lede.', bodyHtml: '',
-      infoText: '   \n  ', noticeHtml: '' }],
-  ['infoHtml explicitly FALSE — still escaped, and a <script> stays inert',
-    { num: 6, id: 'inert', title: 'Inert', ledeHtml: 'A lede.', bodyHtml: '',
-      infoText: '<script>alert(1)</script>', noticeHtml: '', infoHtml: false }],
+      infoKey: '', noticeHtml: '' }],
+  ['a key with a folded panel on the storage section',
+    { num: 6, id: 'storage-folder', title: 'Vault folder', ledeHtml: 'A lede.', bodyHtml: '',
+      infoKey: 'settings.vault-folder', noticeHtml: '' }],
 ];
 
 ok(FIXTURES.length >= 8, `the matrix has ${FIXTURES.length} fixtures (floor 8)`);
@@ -203,8 +229,7 @@ let allEqual = true;
 for (const [label, f] of FIXTURES) {
   const now = renderBlock(f);
   const then = legacyBlock(
-    f.num, f.id, f.title, f.ledeHtml, f.bodyHtml, f.infoText, f.noticeHtml,
-    f.infoHtml === true ? { html: true } : undefined);
+    f.num, f.id, f.title, f.ledeHtml, f.bodyHtml, f.infoKey, f.noticeHtml);
   const same = now === then;
   if (!same) {
     allEqual = false;
@@ -217,6 +242,28 @@ for (const [label, f] of FIXTURES) {
   ok(same, `byte-identical — ${label}`);
 }
 ok(allEqual, 'EVERY fixture matched — the two live implementations have not drifted');
+
+// Behaviour, not just parity: a keyed fold IS the explainer — panel body is
+// explainerHtml(key) byte for byte, the button's accessible name is the
+// entry's label, and the panel id is unchanged (`settings-block-info-<id>`).
+{
+  const html = renderBlock({ num: 1, id: 'connect', title: 'Connect a provider',
+    ledeHtml: 'Paste a key.', bodyHtml: '', infoKey: 'settings.connect' });
+  const body = explainerHtml('settings.connect');
+  ok(body.length > 0 && html.includes(body),
+    'a keyed fold carries explainerHtml(key) byte for byte — the panel IS the explainer');
+  ok(html.includes('aria-label="' + EXPLAINERS['settings.connect'].label.replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '"'),
+    'the ⓘ accessible name is EXPLAINERS[key].label (“' + EXPLAINERS['settings.connect'].label + '”)');
+  ok(html.includes('id="settings-block-info-connect"') && html.includes('id="settings-block-info-connect-btn"'),
+    'the panel and button ids are unchanged: settings-block-info-<id> and …-btn');
+  const none = renderBlock({ num: 1, id: 'connect', title: 'Connect a provider',
+    ledeHtml: 'Paste a key.', bodyHtml: '', infoKey: null });
+  ok(!none.includes('data-tx-info') && !none.includes('settings-block-info'),
+    'a null key renders NO mark and NO panel wrapper');
+  let threw = false;
+  try { renderBlock({ id: 'x', title: 'X', ledeHtml: 'L', infoKey: 'no.such-key' }); } catch { threw = true; }
+  ok(threw, 'an unknown key THROWS (a typo is loud in development, never a silently empty ⓘ)');
+}
 
 // Anti-vacuity: a comparison that compares nothing passes over anything.
 {
@@ -366,11 +413,10 @@ section('§5  THE COPIES THAT MUST NOT DRIFT — escapeHtml, and the glyph');
   ok(appEscape('<a & b>') === '&lt;a &amp; b&gt;',
     'CONTROL: the comparison is against a real escaper, not three identity functions');
 
+  // v3.71.1: settings.js's TX_INFO_GLYPH copy is gone (asserted absent in §0),
+  // so there is no second glyph to compare — text.js's is the only one.
   const textGlyph = /const INFO_GLYPH =([\s\S]*?);\n/.exec(textJs);
-  ok(!!textGlyph, 'CONTROL: shared/text.js’s INFO_GLYPH was located');
-  ok(textGlyph[1].trim() === glyphM[1].trim(),
-    'shared/text.js’s INFO_GLYPH and views/settings.js’s TX_INFO_GLYPH are the same bytes — ' +
-    'one circled-i, two declarations, and §1 would go red the moment they differed');
+  ok(!!textGlyph, 'CONTROL: shared/text.js’s INFO_GLYPH was located — the one circled-i');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -475,7 +475,7 @@ const E = {
       { icon: 'refresh', text: 'A model from another provider makes that provider the active one.' },
       { icon: 'search', text: '**Chat** is separate: pick any model per message, in the composer.' },
     ],
-    guide: { key: 'settings.build', heading: '2 · What builds your wiki' },
+    guide: { key: 'settings.build', heading: '2 · Your AI model' },
   },
 
   // Block 3 · Chat — `settings-block-info-chat`.
@@ -569,7 +569,7 @@ const E = {
       { icon: 'search', text: 'VERSION is a tag from the project’s tags page on GitHub.' },
       { icon: 'refresh', text: 'Checking for updates again returns you to the newest version.' },
     ],
-    guide: { key: 'settings.software-update', heading: 'Version and updates' },
+    guide: { key: 'settings.update-recovery', heading: 'Going back to an earlier version' },
   },
 
   // The same mark on a packaged install — UPDATE_RECOVERY_INFO_INSTALLER.
@@ -631,7 +631,7 @@ const E = {
       { icon: 'refresh', text: 'Run it again if the knowledge folder or the app moves.' },
       { icon: 'search', text: 'ChatGPT’s web app cannot connect: it cannot run local servers.' },
     ],
-    guide: { key: 'settings.mcp', heading: 'Three ways to talk to your knowledge (Chat · Obsidian · MCP)' },
+    guide: { key: 'settings.mcp-connect', heading: 'MCP bridge — connect a client' },
   },
 
   // MCP block 2 · Default domain for MCP writes — `settings-block-info-mcp-domain`.
@@ -642,7 +642,7 @@ const E = {
     points: [
       { icon: 'check', text: 'Left unset, each agent must name a domain: safest with several.' },
     ],
-    guide: { key: 'settings.mcp', heading: 'Three ways to talk to your knowledge (Chat · Obsidian · MCP)' },
+    guide: { key: 'settings.mcp-default-domain', heading: 'Default domain for MCP writes' },
   },
 
   // MCP block 3 · Tool map — `settings-block-info-mcp-tool-map`.
@@ -822,7 +822,7 @@ const E = {
       { icon: 'search', text: 'Chat treats them as notes to check, never as orders.' },
       { icon: 'lock', text: 'Chat never writes to your project.' },
     ],
-    guide: { key: 'chat.page', heading: 'Chat with your brain' },
+    guide: { key: 'chat.project', heading: 'Pin a project, and the answer reads its context too' },
   },
 };
 

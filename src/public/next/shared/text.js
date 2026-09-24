@@ -639,26 +639,17 @@ export function renderViewHeader(o) {
  * is inline and the panel is a block: the caller places each where its own
  * layout wants it. They are only ever emitted together.
  *
- * This file already owned the MECHANISM (`data-tx-info`, `tx-vh-info`,
- * `tx-vh-panel` and the one delegated listener at the bottom); what it did not
- * own was a way to ask for the affordance outside a header. views/settings.js
- * answered that with a local `infoMark` in v3.53.0 and views/domains.js copied
- * it by hand, so the mechanism had one home and its callers had three.
+ * This file owns the MECHANISM (`data-tx-info`, `tx-vh-info`, `tx-vh-panel`
+ * and the one delegated listener at the bottom) AND, as of v3.71.1, the only
+ * implementation of the mark. views/settings.js and views/domains.js each
+ * carried a local `infoMark` copy (v3.53.0, v3.54.0), chat.js a hand-rolled
+ * button; all three are gone. Every ⓘ in the app now reaches this function,
+ * through shared/explainer.js's `explainerMark` (or `renderViewHeader`'s
+ * `info` for a header), and scripts/test-explainer-adoption.js holds that.
  *
- * ── WHY THE COPIES ARE STILL THERE ─────────────────────────────────────────
- * Four shipped suites LIFT `infoMark` out of views/settings.js by
- * brace-matching and EXECUTE it — test-next-title-affordances.js,
- * test-next-settings-sections.js, test-api-keys-contract.js,
- * test-next-provider-rows.js. Deleting it in the same pass that introduces this
- * one would take those with it. So the copies coexist for now and
- * scripts/test-shared-block.js proves they emit the same BYTES over a fixture
- * matrix, which is the property that matters while both are live. Collapsing
- * them is a later pass, with those four re-pointed at this export.
- *
- * The output is byte-identical to that copy on purpose, down to the `-btn`
- * suffix on the button id: the ids are pinned by name in shipped suites
- * (`data-tx-info="settings-block-info-<id>"`), and the panel is opened by the
- * delegated listener below, which keys on exactly this attribute.
+ * The button id is `id + '-btn'`: the ids are pinned by name in shipped
+ * suites (`data-tx-info="settings-block-info-<id>"`), and the panel is opened
+ * by the delegated listener below, which keys on exactly this attribute.
  *
  * ── WHAT MUST NEVER GO INSIDE THE PANEL ────────────────────────────────────
  * A CONTROL. The listener toggles on the BUTTON, so anything focusable inside

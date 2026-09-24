@@ -154,14 +154,17 @@ function domainsOverview(over) {
     projects: { slug: 'alpha', loading: false, error: null, total: 2, rows: [{}, {}] },
     ...(over || {}),
   };
+  // v3.71.1: the OVERVIEW legend is the `domains.overview` explainer (the
+  // view's threeLayersInfoHtml is gone), so the REAL kit is injected.
   const box = new Function('docsLinkHtml', 'renderOverview', 'escapeHtml', 'state',
+    'explainerHtml', 'explainerLabel',
     'function relTime() { return "3 days ago"; }\n'
     + extractFunction(DOMAINS_JS, 'activeBrowse', 'domains.js') + '\n'
     + extractFunction(DOMAINS_JS, 'activeProjects', 'domains.js') + '\n'
     + extractFunction(DOMAINS_JS, 'projectCount', 'domains.js') + '\n'
-    + extractFunction(DOMAINS_JS, 'threeLayersInfoHtml', 'domains.js') + '\n'
     + extractFunction(DOMAINS_JS, 'renderStatCards', 'domains.js') + '\n'
-    + 'return renderStatCards;')(docsLinkHtml, renderOverview, escapeHtml, state);
+    + 'return renderStatCards;')(docsLinkHtml, renderOverview, escapeHtml, state,
+      XP.explainerHtml, XP.explainerLabel);
   return box({ entities: 3416, concepts: 2717, summaries: 141, other: 0 }, 6274, projectCount(state), {
     sources: true,
     lastIngest: '2026-09-17',
@@ -269,9 +272,14 @@ const CTX = contextOverview();
 
   // THE EYEBROW AND ITS ⓘ — one pattern, one word, one component.
   for (const [name, html, id, label] of [
-    ['Domains', DOM, 'dm-overview-info', 'About these figures'],
+    // v3.71.1: the Domains ⓘ is named by its explainer's own label.
+    ['Domains', DOM, 'dm-overview-info', XP.explainerLabel('domains.overview')],
     ['Context', CTX, 'mem-layers-info', 'About the readings on this page'],
   ]) {
+    if (name === 'Domains') {
+      ok(html.includes('hidden>' + XP.explainerHtml('domains.overview') + '</div>'),
+        'Domains: ...and its panel body IS the domains.overview explainer');
+    }
     ok(new RegExp('class="cur-ov-eyebrow[^"]*">OVERVIEW<').test(html),
       name + ': the card is captioned OVERVIEW', html.slice(0, 200));
     ok(html.includes('data-tx-info="' + id + '"'),

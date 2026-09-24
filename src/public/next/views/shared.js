@@ -185,12 +185,12 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // renderDescription is the ONE description role (13px, --text-2, 68ch). The
 // off-state's two CTA cards used a private `.sb-cta-desc` at 12px, four px
 // under every other description in the app.
-import { renderViewHeader, renderStatus, renderDescription, renderInfoMark } from '../shared/text.js';
+import { renderViewHeader, renderStatus, renderDescription } from '../shared/text.js';
 // SB (v3.71.0, COPY.md §3): the header's own hand-typed prose is REWRITTEN
 // as this view's framing top ⓘ (second brain → Shared Brain → agent memory,
 // "you are here" on shared-brain) — the same shape as Domains' D1/D2 and
 // Chat's G2.
-import { explainerHtml } from '../shared/explainer.js';
+import { explainerHtml, explainerMark } from '../shared/explainer.js';
 // The section body's three kit parts (v3.65.3): the MONITOR for every live
 // reading (design rule 4), the freshness TIER for its time lines, and the
 // IDENTITY dot for every domain it names (rule 5). Imported, never copied —
@@ -908,9 +908,7 @@ function renderMain(token) {
  * machine moves" three functions above.
  */
 function renderDisabled() {
-  const why = renderInfoMark('sb-enable-info', 'What enabling does',
-    'Turning it on doesn’t connect you to anything by itself — it only unlocks this view. ' +
-    'Nothing is sent anywhere until you push a domain to a Shared Brain you’ve configured.');
+  const why = explainerMark('sb-enable-info', 'shared.enable');
   return (
     '<div class="sb-enable-card">' +
       '<div class="sb-enable-title">Shared Brain is off on this install</div>' +
@@ -1237,6 +1235,10 @@ function sectionFoldRow(connId, key, title, reading, bodyHtml, forceOpen) {
   '</details>';
 }
 
+// v3.71.1: the one sentence the token-check ⓘ used to carry that is a
+// CONSEQUENCE, not an explanation — so it renders on the page, unfolded.
+const TOKEN_EXPIRY_NOTE = 'When the token expires, Push and Pull stop working, and GitHub sends no warning.';
+
 const TOKEN_CHECK_READING = Object.freeze({
   ok: 'works', unknown: 'not conclusive', rejected: 'rejected', unreachable: 'check failed',
 });
@@ -1336,16 +1338,18 @@ function renderSectionConnection(conn, last) {
   // ── FOLD ROWS ─────────────────────────────────────────────────────────
   let rows = '';
   if (tokenCheckApplies(conn)) {
-    const why = renderInfoMark('sb-sec-token-info-' + conn.id, 'Why check the token',
-      'The GitHub token you pasted when you joined. Fine-grained tokens expire on the date you chose when you created ' +
-      'one — when that day comes, Push and Pull stop working and GitHub sends no warning. This reads the cohort’s ' +
-      'contribution records with the stored token; it costs no AI credits.');
+    const why = explainerMark('sb-sec-token-info-' + conn.id, 'shared.token-check');
+    // THE CONSEQUENCE IS ON THE PAGE, not in the ⓘ (v3.16.1; v3.71.1 moved it
+    // out): an expired token stops Push and Pull with no word from GitHub.
+    // It is in the row's own reading while the token is unchecked — so it is
+    // visible on the closed row — and beside Check now once the row is open.
     rows += sectionFoldRow(conn.id, 'token', 'Access token',
-      card.tokenChecking ? 'checking…' : (verdict ? (TOKEN_CHECK_READING[verdict.kind] || 'checked') : 'not checked'),
+      card.tokenChecking ? 'checking…' : (verdict ? (TOKEN_CHECK_READING[verdict.kind] || 'checked') : 'not checked · expires without notice'),
       '<div class="sb-sec-row-line">' +
         '<button type="button" class="btn btn-secondary" data-sb-action="token-check"' + (card.tokenChecking ? ' disabled' : '') + '>' +
           (card.tokenChecking ? 'Checking…' : 'Check now') + '</button>' + why.btn +
       '</div>' + why.panel +
+      '<p class="sb-sec-line sb-token-expiry-note">' + escapeHtml(TOKEN_EXPIRY_NOTE) + '</p>' +
       (verdict
         ? '<p class="sb-token-check-verdict sb-token-check-' + escapeHtml(verdict.kind) + '">' + escapeHtml(verdict.message) + '</p>'
         : ''));

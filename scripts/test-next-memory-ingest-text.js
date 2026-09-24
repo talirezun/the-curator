@@ -1228,12 +1228,15 @@ ok('CONTROL: the "no <details> on the estimate" detector fires when one is plant
   }
   // NAMED SITES for the header, so a count cannot mask a single view slipping
   // a paragraph back under its title. Both were literally that paragraph.
+  // v3.71.1: the centre header gained the `ingest.page` explainer as its ⓘ;
+  // the sidebar header lost its ⓘ entirely (the standing rule: no ⓘ on a
+  // sidebar title) — its hint merged into that explainer.
   ok('ingest.js centre: the header is the component, and the deleted sentence has not returned',
-    /renderViewHeader\(\{ eyebrow: 'the way material gets in', title: 'Ingest' \}\)/.test(stripComments(ingSrc))
+    /renderViewHeader\(\{\s*eyebrow: 'the way material gets in', title: 'Ingest',\s*info: explainerHtml\('ingest\.page'\), infoHtml: true,\s*\}\)/.test(stripComments(ingSrc))
     && !/Drop in a ' \+ accepts/.test(stripComments(ingSrc)));
-  ok('ingest.js sidebar: the hint is the header\u2019s info, not a .sidebar-hint div',
-    /renderViewHeader\(\{ variant: 'sidebar', title: 'Ingest', info: hint/.test(stripComments(ingSrc))
-    && !/class="sidebar-hint">' \+ hint/.test(stripComments(ingSrc)));
+  ok('ingest.js sidebar: the header carries no ⓘ, and no .sidebar-hint div brought the hint back',
+    /renderViewHeader\(\{ variant: 'sidebar', title: 'Ingest' \}\)/.test(stripComments(ingSrc))
+    && !/class="sidebar-hint"/.test(stripComments(ingSrc)));
 
   // The exact site the mutation reverted, named so a count cannot mask it.
   //

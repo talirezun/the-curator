@@ -166,7 +166,11 @@ function extractBalancedSpanInner(html, openTagRegex) {
 // FIX 1 — provider row active-state icon
 // ══════════════════════════════════════════════════════════════════════════
 
-section('§1  Extraction sanity — renderProviderRow, infoMark, PROVIDER_ROWS, TX_INFO_GLYPH');
+// v3.71.1: settings.js's local infoMark + TX_INFO_GLYPH are gone, and the one
+// ⓘ renderProviderRow drew (the "no models yet" reason) was cut — so the
+// sandbox now lifts renderProviderRow + PROVIDER_ROWS alone. An ⓘ added back
+// to the row would be a free `explainerMark` here: a named ReferenceError.
+section('§1  Extraction sanity — renderProviderRow, PROVIDER_ROWS');
 
 function escapeHtmlStub(s) {
   return String(s === undefined || s === null ? '' : s)
@@ -185,8 +189,6 @@ let renderProviderRow;
 try {
   const body =
     extractConst(settingsJs, 'PROVIDER_ROWS') + '\n' +
-    extractConst(settingsJs, 'TX_INFO_GLYPH') + '\n' +
-    extractFunction(settingsJs, 'infoMark') + '\n' +
     extractFunction(settingsJs, 'renderProviderRow') + '\n' +
     'return { renderProviderRow, PROVIDER_ROWS };';
   const factory = new Function(

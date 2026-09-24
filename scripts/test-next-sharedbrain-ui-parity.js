@@ -48,7 +48,12 @@ const ROOT = path.join(__dirname, '..');
 
 // shared/text.js takes no imports by design, precisely so a suite can EXECUTE
 // it rather than scan it (see its own "WHY IT HAS NO IMPORTS" header).
-import { renderDescription, renderInfoMark } from '../src/public/next/shared/text.js';
+import { renderDescription } from '../src/public/next/shared/text.js';
+// v3.71.1: every ⓘ in shared.js and the wizard is shared/explainer.js's
+// `explainerMark` (which paints through text.js's renderInfoMark). The REAL
+// kit is injected under that name — import-free and headless.
+import { explainerHtml, explainerMark } from '../src/public/next/shared/explainer.js';
+import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
 // v3.65.3: the section body is built from three kit parts, and they are the
 // REAL ones here — a stub monitor would test a monitor this suite invented.
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
@@ -176,13 +181,13 @@ const SHARED_FNS = [
 // renderDescription is the REAL export of shared/text.js, not a stub: §4 below
 // asserts that the off state's CTA descriptions wear the system's own class,
 // and a stub would let this file certify a class it had itself invented.
-const sharedBox = new Function('renderDescription', 'renderInfoMark',
+const sharedBox = new Function('renderDescription', 'explainerMark',
   'let state = { flagError: null, listError: null, enabling: false, connections: [], cards: {}, expandedSkips: new Set(), expandedAdmin: new Set() };\n' +
   extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' +
   ICON_STUB +
   SHARED_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
   `return { ${SHARED_FNS.join(', ')}, __setState: (s) => { state = s; }, __state: () => state };`
-)(renderDescription, renderInfoMark);
+)(renderDescription, explainerMark);
 
 /** Brace-free sibling of extractFunction: lifts a top-level `const NAME = …;`
  *  out of live source. Needed because panelStep3() now interpolates a real
@@ -214,20 +219,20 @@ function extractConst(src, name, where) {
 }
 
 // wizardShellHtml() composes every panel builder, so all of them are loaded.
-const WIZ_CONSTS = ['PAT_EXPIRY_WARNING'];
+const WIZ_CONSTS = ['PAT_EXPIRY_WARNING', 'ATTRIBUTION_FIXED_NOTE'];
 const WIZ_FNS = [
   'freshState', 'isReadOnlyVerdict', 'wizardShellHtml',
   'panelStep1', 'panelStep2', 'panelStep3', 'panelStep4', 'panelStep5',
   'panelAdminStep1', 'panelAdminStep2',
 ];
-const wizBox = new Function('renderInfoMark',
+const wizBox = new Function('explainerMark',
   'let state = {};\n' +
   extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' +
   ICON_STUB +
   WIZ_CONSTS.map((n) => extractConst(wizard, n, 'shared-brain-wizard.js')).join('\n') + '\n' +
   WIZ_FNS.map((n) => extractFunction(wizard, n, 'shared-brain-wizard.js')).join('\n\n') + '\n' +
   `return { ${WIZ_FNS.join(', ')}, __setState: (s) => { state = s; }, __state: () => state };`
-)(renderInfoMark);
+)(explainerMark);
 
 const {
   formatRelativeTime, composeDoneMessage, renderActions,
@@ -351,7 +356,11 @@ section('1. Phase 1 — the four properties the first deleted block guarded');
     .split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
   ok(visible.length >= 4 && visible.length <= 13,
     `the visible sentence is ${visible.length} words (4..13): "${visible.join(' ')}"`);
-  for (const kept of ['connect you to anything by itself', 'Nothing is sent anywhere until you push']) {
+  // v3.71.1: the two reassurances are the `shared.enable` explainer now —
+  // asserted as the panel that renders, then on what it says.
+  ok(off.includes(explainerMark('sb-enable-info', 'shared.enable').panel),
+    '…and the ⓘ that holds the rest IS the shared.enable explainer, rendered in the card');
+  for (const kept of ['By itself it connects you to nothing', 'Nothing leaves this computer until you push']) {
     ok(off.includes(kept), `…and the reassurance "${kept}…" is still rendered, not cut`);
   }
   ok(/class="tx-vh-panel"[^>]*hidden/.test(off),
@@ -1265,12 +1274,13 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     'renderSectionDoor', 'renderSectionConnection', 'renderPushConfirm', 'renderSynthesizeConfirm',
     'tokenCheckApplies', 'adminAffordances',
   ];
-  const cBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass', 'renderInfoMark',
+  const cBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass', 'explainerMark',
     'let state = { cards: {}, expandedSecRows: new Set(), expandedAdmin: new Set() };\n' +
     'let busyDomains = new Set();\n' +
     'let hostCtx = { mode: "section", el: {}, domain: "research", describeDomain: (s) => ({ index: ["research", "notes", "shared-cohort"].indexOf(s), pages: null }) };\n' +
     extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' + ICON_STUB +
     extractConst(shared, 'TOKEN_CHECK_READING', 'shared.js') + '\n' +
+    extractConst(shared, 'TOKEN_EXPIRY_NOTE', 'shared.js') + '\n' +
     'function ensureCard(id) { return state.cards[id] || (state.cards[id] = { acting: null, message: null, error: false, tokenCheck: null, tokenChecking: false, pushConfirmOpen: false, synthesizeConfirmOpen: false, revokeOpen: false, shownAdminToken: null, adminTokenProvisioned: false }); }\n' +
     'function isDomainWriteBusy(d) { return busyDomains.has(d); }\n' +
     'function getDomainWriteLabel() { return "pull"; }\n' +
@@ -1279,7 +1289,7 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     C_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
     `return { ${C_FNS.join(', ')}, __card: (id) => ensureCard(id), __state: () => state,
        __setBusy: (l) => { busyDomains = new Set(l); } };`
-  )(renderMonitor, freshnessTier, identityDotClass, renderInfoMark);
+  )(renderMonitor, freshnessTier, identityDotClass, explainerMark);
 
   const recent = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
   const c = conn({ id: 'c1', label: 'Research_Group 2026', shared_brain_slug: 'cohort', local_domains: ['research'],
@@ -1321,14 +1331,23 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
   eq(JSON.stringify(rows.map((r) => r[0])), JSON.stringify(['token', 'cohort', 'skips', 'admin', 'leave']),
     'C: fold rows — Access token, Cohort & sharing, Skipped pages, Admin controls, Leave');
   ok(rows.every((r) => !r[1]), 'C: every row ships CLOSED');
-  eq(rows[0][3], 'not checked', 'C: the token row reads "not checked" before any check');
+  // v3.71.1: the consequence left the ⓘ, so the CLOSED row's reading says it.
+  eq(rows[0][3], 'not checked · expires without notice',
+    'C: the token row reads "not checked · expires without notice" before any check — the consequence visible on the closed row');
   eq(rows[1][3], 'you keep copyright', 'C: the cohort row reads the data-handling terms');
   eq(rows[2][3], '3 pages', 'C: the skipped row counts');
   eq(rows[4][3], 'fellow c77a791a…', 'C: the leave row names the fellow id');
   ok(/data-sb-action="leave-confirm"/.test(html) && /Your local wiki files stay exactly as they are/.test(html),
     'C: Leave keeps its sentence, and opening the row IS the confirm step');
-  ok(/tx-vh-panel[^>]*hidden>The GitHub token you pasted when you joined/.test(html),
-    'C: the token explanation lives in the row\'s ⓘ, not inline (rule 3, D19)');
+  // v3.71.1: the ⓘ IS the shared.token-check explainer (id unchanged); the
+  // expiry CONSEQUENCE is printed visibly under it, never folded (v3.16.1).
+  ok(html.includes(explainerMark('sb-sec-token-info-c1', 'shared.token-check').panel)
+    && /id="sb-sec-token-info-c1" role="group" aria-label="Why check the token" hidden>/.test(html)
+    && EXPLAINERS['shared.token-check'].label === 'Why check the token',
+    'C: the token explanation lives in the row\'s ⓘ — the shared.token-check explainer — not inline (rule 3, D19)');
+  ok(/<p class="sb-sec-line sb-token-expiry-note">When the token expires, Push and Pull stop working, and GitHub sends no warning\.<\/p>/.test(html)
+    && !/sb-token-expiry-note/.test(explainerHtml('shared.token-check')),
+    'C: …while what an expired token DOES is printed on the page, outside the fold');
 
   // A plain contributor: no synthesis, no admin row. The route has no admin
   // gate (D10) — this is who USUALLY runs it, and the full view keeps it.

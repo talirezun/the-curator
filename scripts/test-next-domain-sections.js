@@ -167,7 +167,10 @@ const { renderOverview } = await import('../src/public/next/shared/overview.js')
 // v3.71.0 (G3/G4): PAGES_INFO and HEALTH_INFO are module consts computed
 // from the real kit — the same reason docsLinkHtml/renderOverview above are
 // the real modules and not stubs.
-const { explainerMark } = await import('../src/public/next/shared/explainer.js');
+// v3.71.1: INGEST_INFO, the Shared Brain ⓘ and the OVERVIEW legend are all
+// explainers now, so the whole kit is injected — real, never stubbed.
+const { explainerMark, explainerHtml, explainerLabel } = await import('../src/public/next/shared/explainer.js');
+const { EXPLAINERS } = await import('../src/public/next/shared/explainers.js');
 
 const PREAMBLE = `
 let state = {};
@@ -211,7 +214,7 @@ const document = { getElementById: () => null, querySelector: () => null, queryS
 
 let box;
 try {
-  box = new Function('docsLinkHtml', 'renderOverview', 'explainerMark',
+  box = new Function('docsLinkHtml', 'renderOverview', 'explainerMark', 'explainerHtml', 'explainerLabel',
     PREAMBLE +
     // v3.65.0 (R4): section ①'s explanation left the fold's BODY for an ⓘ on
     // its head, and the sentence is a module const so `renderMain` does not
@@ -235,8 +238,6 @@ try {
     extractFunction(SRC, 'browseMoreHtml') + '\n' +
     extractFunction(SRC, 'browseNoteHtml') + '\n' +
     extractFunction(SRC, 'renderBrowsePanel') + '\n' +
-    extractFunction(SRC, 'threeLayersInfoHtml') + '\n' +
-    extractFunction(SRC, 'infoMark') + '\n' +
     extractFunction(SRC, 'sharedJumpReading') + '\n' +
     extractFunction(SRC, 'renderStatCards') + '\n' +
     extractFunction(SRC, 'renderMain') + '\n' +
@@ -246,7 +247,7 @@ try {
        __setState: (s) => { state = s; }, __state: () => state, __calls: () => calls,
        __setRender: (fn) => { render = fn; },
        __reset: () => { calls.setMain.length = 0; calls.jumps.length = 0; } };`
-  )(docsLinkHtml, renderOverview, explainerMark);
+  )(docsLinkHtml, renderOverview, explainerMark, explainerHtml, explainerLabel);
 } catch (err) {
   console.log('FATAL: could not build the renderMain sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -327,10 +328,17 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
         !!sh && !flatten(sh).some((n) => n.tagName === 'SUMMARY' || n.tagName === 'SVG'));
       ok('④\'s head carries an ⓘ, and the reading slot right after it',
         /id="dm-shared-info-btn"[^]*?<\/button><span class="dm-fold-meta dm-section-meta" id="dm-shared-reading">/.test(html));
-      ok('...whose panel explains contribute vs mirror in ONE paragraph',
-        /id="dm-shared-info"[^>]*hidden><p>A Shared Brain is a wiki a cohort writes together\.[^<]*contributes[^<]*mirror[^<]*<\/p>/.test(html)
-        || /id="dm-shared-info"[^>]*hidden>A Shared Brain is a wiki a cohort writes together\./.test(html),
+      // v3.71.1: the panel IS the `domains.shared-brain` explainer, byte for
+      // byte, named by its own label; its table is the Push / Pull contrast.
+      ok('...whose panel IS the domains.shared-brain explainer',
+        html.includes('<div class="tx-vh-panel" id="dm-shared-info" role="group" aria-label="'
+          + EXPLAINERS['domains.shared-brain'].label + '" hidden>' + explainerHtml('domains.shared-brain') + '</div>')
+        && html.includes('id="dm-shared-info-btn" data-tx-info="dm-shared-info" aria-expanded="false" '
+          + 'aria-controls="dm-shared-info" aria-label="' + EXPLAINERS['domains.shared-brain'].label + '"'),
         (/id="dm-shared-info"[^>]*>[^]{0,120}/.exec(html) || ['(none)'])[0]);
+      ok('...which contrasts Push with Pull',
+        /<th scope="row">Push<\/th>/.test(explainerHtml('domains.shared-brain'))
+        && /<th scope="row">Pull<\/th>/.test(explainerHtml('domains.shared-brain')));
     }
     // ── ① IS NOT A FOLD (v3.65.2, I1) ───────────────────────────────────
     // The maintainer: "Ingest is number one but hidden below a drop-down. Get
@@ -372,8 +380,13 @@ section('S1 -- SIX SECTIONS, IN ONE ORDER');
       (/<div class="dm-fold-body">[^]{0,160}/.exec(html) || ['(none)'])[0]);
     ok('...so no description survives inside it',
       !/<div class="dm-fold-body"><p class="tx-desc"/.test(html));
-    ok('the sentence is on the HEAD\'s ⓘ instead, with the same words',
-      /id="dm-ingest-info"[^>]*hidden>Drop a PDF, markdown or text file\./.test(html),
+    // v3.71.1: the words are the `ingest.page` explainer now — the SAME entry
+    // the standalone Ingest view's header carries — so ① and that view say
+    // one thing in one text.
+    ok('the sentence is on the HEAD\'s ⓘ instead, as the ingest.page explainer',
+      html.includes('<div class="tx-vh-panel" id="dm-ingest-info" role="group" aria-label="'
+        + EXPLAINERS['ingest.page'].label + '" hidden>' + explainerHtml('ingest.page') + '</div>')
+      && /PDF, Markdown or text file/.test(explainerHtml('ingest.page')),
       (/<div class="tx-vh-panel" id="dm-ingest-info"[^]{0,160}/.exec(html) || ['(none)'])[0]);
     ok('...and the mark that opens it sits in the head row, beside the title',
       /<div class="dm-section-head-row"><div class="dm-section-hd"><span class="dm-section-num" aria-hidden="true">1<\/span><div class="cur-group-title dm-section-eyebrow" id="dm-sources-title" tabindex="-1">Ingest<\/div><\/div><button type="button" class="tx-vh-info" id="dm-ingest-info-btn"/.test(html),

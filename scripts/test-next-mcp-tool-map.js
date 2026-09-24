@@ -44,6 +44,7 @@ import path from 'node:path';
 import { formatAge, freshnessTier } from '../src/public/next/shared/age.js';
 import { renderReadout } from '../src/public/next/shared/text.js';
 import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
+import { explainerMark } from '../src/public/next/shared/explainer.js';
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -98,7 +99,9 @@ function build(extra, over, alsoReturn) {
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
     icon: () => '<svg/>',
-    TX_INFO_GLYPH: '<svg/>',
+    // v3.71.1: the local infoMark/TX_INFO_GLYPH are gone; every ⓘ is the
+    // REAL shared explainer kit (import-free, runs headless).
+    explainerMark,
     docsLinkHtml,
     formatAge,
     freshnessTier,
@@ -108,7 +111,6 @@ function build(extra, over, alsoReturn) {
     document: undefined,
     Date,
     settingsBlock: null,
-    infoMark: null,
     // v3.61.0 — block ③'s run control. `refreshMcpUsage` RE-BINDS it after it
     // repaints the body (the repaint destroyed the button), so the harness
     // records the call rather than stubbing it away: §11 asserts the re-bind
@@ -118,13 +120,13 @@ function build(extra, over, alsoReturn) {
     TOOL_MAP_BODY_SEL: '.settings-block-mcp-tool-map .settings-block-body',
   };
   Object.assign(deps, over || {});
-  const bodies = [extractFunction(src, 'settingsBlock'), extractFunction(src, 'infoMark')]
+  const bodies = [extractFunction(src, 'settingsBlock')]
     .concat(RENDER_CHAIN.map((n) => extractFunction(src, n)))
     .concat(extra || []);
   // The two lifted-real helpers must not ALSO arrive as parameters: a `const`
   // and a parameter of one name is a SyntaxError, which is the loud failure we
   // want rather than a shadow.
-  delete deps.settingsBlock; delete deps.infoMark;
+  delete deps.settingsBlock;
   const names = Object.keys(deps);
   const fn = new Function(...names, bodies.join('\n') +
     '\nreturn {' + RENDER_CHAIN.concat(alsoReturn || []).join(', ') + '};');
@@ -328,8 +330,13 @@ section('6. The block: numbered ③, one lede, the privacy ⓘ, no title=');
   ok(/settings-block-num" aria-hidden="true">3</.test(block), '…numbered 3');
   ok(/kept on this machine only/.test(block), 'the lede states the privacy fact in the open');
   const info = block.slice(block.indexOf('settings-block-info'));
-  for (const claim of ['Never an argument', 'never a file path', 'rotates at 1 MB',
-    '.mcp-usage.jsonl', 'never inside your knowledge folder']) {
+  // v3.71.1: the ⓘ is the `settings.mcp-tool-map` explainer, byte for byte,
+  // under the unchanged panel id. The file-level detail the old prose carried
+  // (.mcp-usage.jsonl, the 1 MB rotation, the per-line byte bound) moved to
+  // the user guide's "The tool map — what your agents used".
+  ok(info.includes(explainerMark('settings-block-info-mcp-tool-map', 'settings.mcp-tool-map').panel),
+    'the ⓘ panel IS the settings.mcp-tool-map explainer (byte-equal, id unchanged)');
+  for (const claim of ['never what agents read or wrote', 'never synced', 'never counts as a session']) {
     ok(info.includes(claim), `the ⓘ states: "${claim}"`);
   }
   ok(/href="[^"]*user-guide\.md#the-tool-map/.test(block),
@@ -840,11 +847,15 @@ section('11. "Test all N tools": the marker, the control, and the outcome (v3.61
   {
     const block = build(null, { state: { mcpUsage: FIXTURE } }).renderToolMap();
     const info = block.slice(block.indexOf('settings-block-info'));
-    for (const claim of ['via', 'self-test', 'session start']) {
-      ok(info.includes(claim), `the ⓘ states: "${claim}"`);
-    }
-    ok(/never counts as a session start or a save/.test(info),
-      '…and says outright that a run is not a session start — the one reading a false mark would corrupt');
+    // v3.71.1: the ⓘ is the `settings.mcp-tool-map` explainer, which no
+    // longer names the `via: self-test` field itself (a log-format detail);
+    // what it must still say outright is the consequence — a run from this
+    // page is never a session. The self-test marker on a tile is asserted on
+    // the rendered body in 11a–11f.
+    const panel = explainerMark('settings-block-info-mcp-tool-map', 'settings.mcp-tool-map').panel;
+    ok(info.includes(panel), 'the ⓘ panel is the settings.mcp-tool-map explainer');
+    ok(/A test run from this page never counts as a session/.test(panel),
+      '…and says outright that a run is not a session — the one reading a false mark would corrupt');
   }
 }
 

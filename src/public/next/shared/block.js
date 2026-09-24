@@ -39,14 +39,16 @@
 // moved UNCHANGED in value.
 //
 // ── THE OTHER COPY IS STILL ALIVE ──────────────────────────────────────────
-// views/settings.js keeps its own `settingsBlock` and `infoMark` for now:
-// four shipped suites lift them out of that file by brace-matching and
-// EXECUTE them, so deleting them here would take those with it.
+// views/settings.js keeps its own `settingsBlock` for now (its `infoMark`
+// is gone as of v3.71.1): suites lift it out of that file by brace-matching
+// and EXECUTE it, so deleting it here would take those with it.
 // scripts/test-shared-block.js proves the two implementations emit the same
 // BYTES over a fixture matrix, which is the property that matters while both
 // are live. Collapsing them is the same later pass as the rename.
 
-import { renderInfoMark } from './text.js';
+// v3.71.1: the ⓘ is an EXPLAINER, by key — never prose. explainer.js imports
+// only import-free modules, so this file stays executable headless.
+import { explainerMark } from './explainer.js';
 
 // ── escapeHtml ─────────────────────────────────────────────────────────────
 // A byte-for-byte copy of app.js's, for the same reason shared/text.js carries
@@ -99,12 +101,12 @@ function escapeHtml(s) {
  * `.settings-job-block + .settings-job-block` adjacency that is the page's
  * only source of block-to-block spacing.
  *
- * ── `ledeHtml` AND `bodyHtml` ARE TRUSTED HTML; `infoText` IS NOT ──────────
+ * ── `ledeHtml` AND `bodyHtml` ARE TRUSTED HTML; THE ⓘ IS A KEY ──────────────
  * The first two are composed fragments the caller has already escaped — they
- * carry <strong>, <code> and whole cards. `infoText` is PLAIN TEXT BY DEFAULT
- * and is escaped, unless `infoHtml: true` hands the caller the same licence
- * and the same responsibility `renderInfoMark` documents. `id` and `title` are
- * escaped here, because they are values, not markup.
+ * carry <strong>, <code> and whole cards. The ⓘ is `infoKey`, a key into
+ * shared/explainers.js (v3.71.1): the panel is the shared explainer, so a
+ * block cannot carry a prose panel, a warning or a cost behind its mark.
+ * `id` and `title` are escaped here, because they are values, not markup.
  *
  * With no `ledeHtml` there is no lede paragraph AND no ⓘ — the mark lives
  * inline at the end of the lede sentence, so a block with nothing to fold and
@@ -112,8 +114,8 @@ function escapeHtml(s) {
  * existed.
  *
  * @param {{num?: number|string|null, id: string, title: string,
- *          ledeHtml?: string, bodyHtml?: string, infoText?: string,
- *          noticeHtml?: string, infoHtml?: boolean}} o
+ *          ledeHtml?: string, bodyHtml?: string, infoKey?: string|null,
+ *          noticeHtml?: string}} o
  * @returns {string} HTML
  */
 export function renderBlock(o) {
@@ -127,11 +129,11 @@ export function renderBlock(o) {
   const ledeHtml = typeof opts.ledeHtml === 'string' ? opts.ledeHtml : '';
   const bodyHtml = typeof opts.bodyHtml === 'string' ? opts.bodyHtml : '';
   const noticeHtml = typeof opts.noticeHtml === 'string' ? opts.noticeHtml : '';
-  const infoText = typeof opts.infoText === 'string' ? opts.infoText : '';
+  const infoKey = typeof opts.infoKey === 'string' && opts.infoKey ? opts.infoKey : '';
 
-  const info = renderInfoMark(
-    'settings-block-info-' + id, 'More about ' + title, infoText,
-    opts.infoHtml === true ? { html: true } : undefined);
+  const info = infoKey
+    ? explainerMark('settings-block-info-' + id, infoKey)
+    : { btn: '', panel: '' };
   const numbered = num != null;
 
   return (

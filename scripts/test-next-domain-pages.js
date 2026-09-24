@@ -324,10 +324,13 @@ const { renderOverview } = await import('../src/public/next/shared/overview.js')
 // v3.71.0: G3/G4's ⓘ (`PAGES_INFO`, `HEALTH_INFO`) are module consts computed
 // from the real kit, the same reason docsLinkHtml/renderOverview above are
 // the real modules and not stubs.
-const { explainerMark } = await import('../src/public/next/shared/explainer.js');
+// v3.71.1: every ⓘ in the view is the kit's now (INGEST_INFO, the project
+// marks, the OVERVIEW legend), so all three entry points are injected REAL.
+const { explainerMark, explainerHtml, explainerLabel } = await import('../src/public/next/shared/explainer.js');
+const { EXPLAINERS } = await import('../src/public/next/shared/explainers.js');
 
 const FNS = [
-  'activeBrowse', 'activeProjects', 'projectCount', 'infoMark', 'projInfoId',
+  'activeBrowse', 'activeProjects', 'projectCount', 'projInfoId',
   'filterBrowseEntries', 'filterMemoryEntries', 'browseMatches', 'browseWindow',
   'browseRowHtml', 'memoryRowHtml', 'browseMoreHtml', 'browseNoteHtml',
   'renderBrowsePanel', 'renderStatCards', 'renderProjectRow', 'renderCopyOutcome', 'renderProjectsPanel',
@@ -337,18 +340,15 @@ const FNS = [
   // real and a stub would make the facet assertions vacuous.
   'selectBrowseFacet', 'scrollSectionIntoView',
   'healthSection', 'renderMain',
-  // v3.62.0 (P1-14). `renderStatCards` now builds the OVERVIEW block's ⓘ,
-  // so the legend text and the shared docs table are collaborators of it.
-  // Both are lifted rather than stubbed: `docsUrl()` THROWS on a key that is
-  // not in the frozen map, and a stub would let a mistyped key pass here and
-  // blank the panel in the browser.
-  'threeLayersInfoHtml',
+  // v3.71.1: `infoMark` and `threeLayersInfoHtml` are gone from the view —
+  // the OVERVIEW legend is the `domains.overview` explainer, from the real kit.
 ];
 
 let box;
 try {
   box = new Function(
     'COPY_SUCCESS_BANNER', 'docsLinkHtml', 'renderOverview', 'explainerMark',
+    'explainerHtml', 'explainerLabel',
     PREAMBLE +
     // v3.65.0 (R4): section ①'s explanation left the fold's BODY for an ⓘ on
     // its head, and the sentence is a module const so `renderMain` does not
@@ -362,19 +362,15 @@ try {
     extractConstText(SRC, 'BROWSE_EYEBROW') + '\n' +
     extractConstText(SRC, 'BROWSE_RENDER_CAP') + '\n' +
     extractConstArray(SRC, 'BROWSE_FOLDERS') + '\n' +
-    // The three ⓘ texts, lifted whole -- see extractConstString.
-    extractConstString(SRC, 'MARKER_INFO_TEXT') + '\n' +
-    extractConstString(SRC, 'AGENT_INFO_TEXT') + '\n' +
-    extractConstString(SRC, 'PROJECTS_INFO_HTML') + '\n' +
+    // v3.71.1: the three ⓘ text consts are gone (each is an explainer now).
     FNS.map((n) => extractFunction(SRC, n)).join('\n\n') + '\n' +
     `return { ${FNS.join(', ')}, BROWSE_RENDER_CAP, BROWSE_FOLDERS,
-       MARKER_INFO_TEXT, AGENT_INFO_TEXT, PROJECTS_INFO_HTML,
        __state: () => state, __setState: (s) => { state = s; },
        __calls: () => calls, __reset: () => { calls.setMain.length = 0; calls.render = 0;
          calls.reader.length = 0; calls.asyncFailures = 0; },
        __setDocument: (d) => { documentImpl = d; },
        __setFetch: (fn) => { fetchResponder = fn; } };`
-  )(COPY_SUCCESS_BANNER, docsLinkHtml, renderOverview, explainerMark);
+  )(COPY_SUCCESS_BANNER, docsLinkHtml, renderOverview, explainerMark, explainerHtml, explainerLabel);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -841,13 +837,18 @@ section('S3 -- THE PROJECTS PARAGRAPH IS BEHIND AN ⓘ, LIKE THE HEADER’S');
   ok('...and the button’s own id is the panel id plus -btn, the shared convention',
     btn && btn.attrs.id === panelId + '-btn', btn && btn.attrs.id);
 
-  // THE FOLD CARRIES THE PARAGRAPH, and this is the assertion a stubbed
-  // infoMark would have passed while rendering nothing.
+  // THE FOLD CARRIES THE EXPLANATION (v3.71.1: the `domains.projects`
+  // explainer). A stubbed mark would pass "a panel exists" while rendering
+  // nothing, so the fold's content is asserted, not its presence.
   ok('the fold contains the explanation that used to be on screen',
-    panel && /a project is one thing you build inside it/.test(panel.textContent),
+    panel && /A project is one piece of work inside this domain/.test(panel.textContent),
     panel && panel.textContent.slice(0, 80));
-  ok('...and it is long enough to be the paragraph rather than a label',
-    panel && panel.textContent.length > 200, panel && String(panel.textContent.length));
+  ok('...and it is the domains.projects explainer, whole',
+    panel && panel.children.length === 1 && hasClass(panel.children[0], 'xp')
+    && panel.children[0].attrs['data-explainer'] === 'domains.projects',
+    panel && panel.children.map((n) => n.tagName).join('/'));
+  ok('...named by the explainer’s own label',
+    btn && btn.attrs['aria-label'] === EXPLAINERS['domains.projects'].label, btn && btn.attrs['aria-label']);
 
   // ── v3.58.0: THE LOOSE LEDE IS GONE, AND THE ⓘ ANSWERS TWO QUESTIONS ────
   // v3.50.0 cut a four-line paragraph here to one sentence under the eyebrow.
@@ -865,25 +866,19 @@ section('S3 -- THE PROJECTS PARAGRAPH IS BEHIND AN ⓘ, LIKE THE HEADER’S');
     !/\.dm-proj-caption/.test(CSS.replace(/\/\*[\s\S]*?\*\//g, '')));
   // NOTHING A READER NEEDED WAS DELETED, only moved: the definition is the
   // FIRST thing inside the fold.
-  ok('the definition survives, as the fold’s opening words',
-    panel && /A domain is one compounding wiki/.test(panel.textContent), panel && panel.textContent.slice(0, 60));
+  ok('the definition survives, as the fold’s lead',
+    panel && /^\s*Projects\s*A project is one piece of work/.test(panel.textContent), panel && panel.textContent.slice(0, 60));
 
-  // TWO LABELLED PARAGRAPHS, and a word budget. A fold is not a licence to
-  // write an essay -- the v3.54.0 lede rule is 20 visible words for what is
-  // ALWAYS on screen, and this is the deeper layer, capped here at 120.
-  const paras = panel ? panel.children.filter((n) => n.tagName === 'P') : [];
-  eq('the fold is TWO paragraphs', paras.length, 2);
-  ok('...each opening with a bold label', paras.every((q) => q.children[0] && q.children[0].tagName === 'STRONG'),
-    paras.map((q) => q.children[0] && q.children[0].tagName).join('/'));
+  // A WORD BUDGET. A fold is not a licence to write an essay; capped at 120.
   const words = panel ? panel.textContent.trim().split(/\s+/).filter(Boolean).length : 0;
-  ok('...and the whole fold is at most 120 words', words > 0 && words <= 120, words + ' words');
-  // AND IT EXPLAINS THE TWO CONTROLS, which is the half that was missing: the
-  // maintainer, who builds this app, said he did not know what Copy marker
-  // line was from the UI.
-  ok('the fold names Copy marker line and says where the copied text goes',
-    panel && /Copy marker line/.test(panel.textContent) && /\.curator-project/.test(panel.textContent));
-  ok('...and names Copy agent instructions and where THAT goes',
-    panel && /Copy agent instructions/.test(panel.textContent) && /CLAUDE\.md/.test(panel.textContent));
+  ok('the whole fold is at most 120 words', words > 0 && words <= 120, words + ' words');
+  // THE TWO CONTROLS ARE EXPLAINED ON THEIR OWN MARKS (v3.58.0 gave each copy
+  // control an ⓘ; v3.71.1 stopped the section fold repeating them).
+  const ph = box.renderProjectsPanel(false);
+  ok('each row’s Copy marker line carries the domains.marker-line explainer',
+    /data-explainer="domains\.marker-line"/.test(ph), ph.slice(0, 200));
+  ok('...and Copy agent instructions the domains.agent-instructions one',
+    /data-explainer="domains\.agent-instructions"/.test(ph));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -900,76 +895,85 @@ section('S3b -- THE ⓘ TEXTS NAME THE SAME FILES THE BLOCK AND THE DOCS DO');
 //
 // EXECUTED, not scanned: the constants are lifted out of the shipped view and
 // out of the shipped module, and the docs are read off disk.
+// v3.71.1: THE FILE NAMES LEFT THE ⓘ. The two copy controls' marks are the
+// `domains.marker-line` / `domains.agent-instructions` explainers, which say
+// "the file your agent loads every session" and name no harness file. The
+// names now live in exactly two places the user reads — the post-copy banner
+// (COPY_SUCCESS_BANNER) and the user guide's "Making sure your agent actually
+// does it" table — and docs/working-state.md's "Where it goes". So the
+// cross-check is re-pointed at THOSE, both directions, and the marker file
+// name is asserted in the marker explainer's steps.
 {
-  const marker = box.MARKER_INFO_TEXT;
-  const agent = box.AGENT_INFO_TEXT;
-  const fold = box.PROJECTS_INFO_HTML;
+  const marker = explainerHtml('domains.marker-line');
+  const agent = explainerHtml('domains.agent-instructions');
+  const fold = explainerHtml('domains.projects');
   const DOC = readFileSync(join(ROOT, 'docs/working-state.md'), 'utf8');
+  const GUIDE = readFileSync(join(ROOT, 'docs/user-guide.md'), 'utf8');
+  const at = GUIDE.indexOf('### Making sure your agent actually does it');
+  const GUIDE_SEC = at === -1 ? '' : GUIDE.slice(at, GUIDE.indexOf('\n### ', at + 10));
 
-  ok('CONTROL -- all three ⓘ texts were lifted from the shipped view',
-    typeof marker === 'string' && marker.length > 80 &&
-    typeof agent === 'string' && agent.length > 80 &&
-    typeof fold === 'string' && fold.length > 200);
+  ok('CONTROL -- the guide section exists and is non-trivial', GUIDE_SEC.length > 500, String(GUIDE_SEC.length));
 
   // THE MARKER FILE.
-  ok('the marker ⓘ names the file the marker line goes in', /\.curator-project/.test(marker));
-  ok('...and so does the fold', /\.curator-project/.test(fold));
+  ok('the marker explainer’s steps name the file the marker line goes in',
+    (EXPLAINERS['domains.marker-line'].visual.steps || []).some((t) => /`\.curator-project`/.test(t)),
+    JSON.stringify(EXPLAINERS['domains.marker-line'].visual));
+  ok('...and it renders in the panel', /\.curator-project/.test(marker));
   ok('...and docs/working-state.md defines that same file name',
     /###\s+The `\.curator-project` marker/.test(DOC));
   ok('...and the frozen block itself points an agent at it',
     /`\.curator-project`/.test(TEMPLATE), TEMPLATE.slice(0, 60));
-  ok('the marker ⓘ says what the copied text IS, not just what to do with it',
-    /domain\/project/.test(marker), marker);
 
-  // THE FOUR ENTRY FILES. Every name the ⓘ quotes must appear in the shipped
-  // banner AND in the docs table, and the banner must name no file the ⓘ has
-  // forgotten -- both directions, or a fifth harness could be added to one
-  // place and stay missing from the other.
+  // THE ENTRY FILES: every name the banner quotes is in the guide table and in
+  // docs/working-state.md, and the guide names no .md the banner forgot.
   const NAMES = ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md'];
   for (const f of NAMES) {
-    ok('the agent-instructions ⓘ names ' + f, agent.includes(f), agent);
-    ok('...and so does the fold', fold.includes(f));
-    ok('...and COPY_SUCCESS_BANNER, which the user reads seconds later', COPY_SUCCESS_BANNER.includes(f));
+    ok('COPY_SUCCESS_BANNER, which the user reads seconds after copying, names ' + f, COPY_SUCCESS_BANNER.includes(f));
+    ok('...and the guide’s "Making sure your agent actually does it" table', GUIDE_SEC.includes('`' + f + '`'));
     ok('...and docs/working-state.md’s "Where it goes" table', DOC.includes('`' + f + '`'));
   }
-  ok('Cursor is named in all four places too',
-    /Cursor/.test(agent) && /Cursor/.test(fold) && /Cursor/.test(COPY_SUCCESS_BANNER) && /Cursor/.test(DOC));
-  // THE OTHER DIRECTION: no file in the banner is missing from the ⓘ.
+  ok('Cursor is named in the banner, the guide section and the docs',
+    /Cursor/.test(COPY_SUCCESS_BANNER) && /Cursor/.test(GUIDE_SEC) && /Cursor/.test(DOC));
   const inBanner = (COPY_SUCCESS_BANNER.match(/[A-Z]+\.md/g) || []);
   ok('CONTROL -- the banner really does name .md files, so the sweep is not vacuous',
     inBanner.length === 3, inBanner.join(', '));
-  ok('every entry file the post-copy banner names is also in the ⓘ',
-    inBanner.every((f) => agent.includes(f)), inBanner.join(', '));
+  ok('every entry file the post-copy banner names is in the guide section too',
+    inBanner.every((f) => GUIDE_SEC.includes(f)), inBanner.join(', '));
+  // AND THE ⓘ DOES NOT DRIFT BACK INTO A THIRD, HAND-KEPT COPY OF THE LIST.
+  for (const f of NAMES) {
+    ok('the agent-instructions explainer does not re-list ' + f, !agent.includes(f));
+  }
+  ok('...it points at "the file your agent loads every session" instead',
+    /the file your agent loads every session/.test(agent), agent.slice(0, 400));
+  ok('...and its guide card opens that very guide section',
+    /#making-sure-your-agent-actually-does-it"/.test(agent), (agent.match(/href="[^"]*"/) || [''])[0]);
 
-  // WHAT HAPPENS THEN. Each ⓘ is what-it-copies / where-to-paste-it /
-  // what-happens-then, and the third part is the one a reader cannot guess.
-  ok('the marker ⓘ says what an agent does with it',
-    /resume/i.test(marker), marker);
+  // WHAT HAPPENS THEN — the part a reader cannot guess.
+  ok('the marker ⓘ says what an agent does with it', /resumes/i.test(marker), marker.slice(0, 200));
   ok('the agent-instructions ⓘ says what the agent then does',
-    /read/i.test(agent) && /save/i.test(agent) && /handoff/i.test(agent), agent);
+    /reads/i.test(agent) && /saves/i.test(agent), agent.slice(0, 200));
 
-  // NEITHER ⓘ CARRIES A WARNING, A COST OR A REFUSAL. v3.16.1: a warning
-  // behind a click is not a warning, and these two folds ship closed.
+  // NO ⓘ CARRIES A WARNING, A COST OR A REFUSAL (v3.16.1).
   for (const [name, t] of [['marker', marker], ['agent', agent], ['fold', fold]]) {
+    const words = t.replace(/<[^>]*>/g, ' ');
     ok('the ' + name + ' ⓘ carries neutral explanation only -- no cost, no warning',
-      !/\$|cost|spend|warning|cannot be undone|permanent/i.test(t), t.slice(0, 80));
+      !/\$|cost|spend|warning|cannot be undone|permanent/i.test(words), words.slice(0, 80));
   }
 }
 {
-  // THE GLYPH IS THE SHARED ONE, byte for byte. Two copies of a mark that
-  // drift are how one section stops looking like the header it is imitating.
+  // THE GLYPH IS THE SHARED ONE, byte for byte (v3.71.1: via the kit).
   const shared = /const INFO_GLYPH =\n([\s\S]*?);\n/.exec(TEXT_JS);
   ok('CONTROL -- shared/text.js declares INFO_GLYPH', !!shared);
   // eslint-disable-next-line no-new-func
   const sharedSvg = shared ? new Function('return ' + shared[1].trim())() : null;
-  const mark = box.infoMark('x', 'About x', 'body');
+  const mark = explainerMark('x', 'domains.projects');
   ok('this view’s ⓘ glyph is byte-identical to shared/text.js’s',
     !!sharedSvg && mark.btn.includes(sharedSvg), mark.btn);
-  // AND THE HELPER REFUSES AN EMPTY FOLD: a mark with nothing behind it is a
-  // control whose only outcome is an empty panel.
-  eq('an empty body yields no button', box.infoMark('x', 'l', '   ').btn, '');
-  eq('...and no panel', box.infoMark('x', 'l', '').panel, '');
-  eq('...and so does a missing id', box.infoMark('', 'l', 'text').btn, '');
+  ok('...and the view keeps no ⓘ implementation of its own', !/function infoMark\b/.test(SRC));
+  // A MISTYPED KEY IS A THROW, never a silently empty ⓘ.
+  let threw = false;
+  try { explainerMark('x', 'domains.no-such-key'); } catch { threw = true; }
+  ok('an unknown explainer key throws rather than rendering an empty fold', threw);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -1200,7 +1204,8 @@ await (async () => {
   await new Promise((r) => setImmediate(r));
   eq('a brief row asks the project with NO scope', asked[0], '/api/memory/alpha/lumina');
   eq('...and reads the brief half of the answer', box.__calls().reader[1].bodyHtml, '<p class="md"># Brief</p>');
-  eq('...labelled as what it is', box.__calls().reader[1].typeLabel, 'standing brief');
+  // v3.71.1: one noun, "the brief" — the reader's type chip follows the rename.
+  eq('...labelled as what it is', box.__calls().reader[1].typeLabel, 'brief');
 
   // A FILE THAT WENT AWAY BETWEEN THE LIST AND THE CLICK IS SAID, not
   // rendered as an empty page. The listing is a snapshot; an agent writes.

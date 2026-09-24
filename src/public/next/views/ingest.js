@@ -154,6 +154,9 @@ import {
 // separate module precisely because those are frozen to app.js and this
 // fixes a defect in how money is displayed. See ../shared/format-usd.js.
 import { formatUsdHonest } from '../shared/format-usd.js';
+// v3.71.1: the main header's ⓘ is the `ingest.page` explainer — the SAME
+// entry the domain page's ① Ingest carries.
+import { explainerHtml } from '../shared/explainer.js';
 
 // The design system's two-layer progress ring, and the map from the pct
 // src/brain/ingest.js actually sends onto its five REAL phases. Read that
@@ -1629,12 +1632,6 @@ function renderSidebar(token) {
         '<span>A write (' + escapeHtml(getDomainWriteLabel(state.domain) || 'write') +
         ') is already running for <span class="ing-name">' + escapeHtml(state.domain) + '</span>.</span></div>';
 
-  const hint = inQueueMode
-    ? 'Files process one at a time, so a single failure costs one file, not the whole batch. A paused or ' +
-      'interrupted batch picks back up where it left off.'
-    : 'One file at a time, so a failure never costs more than that one file. Each source is decomposed into ' +
-      'entity, concept and summary pages and merged into what already exists.';
-
   const pickerAvailable = isFilePickerAvailable();
   const pickBtn =
     '<button class="btn btn-primary ing-sidebar-pick-btn" id="ing-sidebar-pick-btn"' +
@@ -1788,19 +1785,11 @@ function renderSidebar(token) {
       '<div class="ing-dest-list">' + rows + '</div>'
     : '';
 
-  // RELOCATED. The hint explains the failure-isolation model and, in queue
-  // mode, that an interrupted batch resumes — neither is stated anywhere
-  // else on screen, so it is kept rather than cut. It is no longer a
-  // paragraph floating under the sidebar title: renderViewHeader puts it
-  // behind the info mark, in a panel that is hidden on first paint. It also
-  // left `.sidebar-hint`, which AT THE TIME painted --text-3 — measured 4.27
-  // dark / 4.14 light, under the 4.5 AA floor — for the panel's --text-2.
-  // (That contrast argument has since been retired at the source: shell.css
-  // now paints `.sidebar-hint` --text-2 too, so the relocation stands on the
-  // "no prose floating under a title" reason alone. Recorded rather than
-  // deleted — the number was true when the move was made.)
+  // v3.71.1: NO ⓘ on a sidebar title (the standing rule). The sidebar's two
+  // hint variants (failure isolation; a paused batch resumes) merged into the
+  // MAIN header's `ingest.page` explainer, which the domain page's ① shares.
   setSidebar(
-    renderViewHeader({ variant: 'sidebar', title: 'Ingest', info: hint, infoId: 'tx-vh-info-ingest-sidebar' }) +
+    renderViewHeader({ variant: 'sidebar', title: 'Ingest' }) +
     pickBtn +
     listBlock +
     busyNote,
@@ -1879,7 +1868,10 @@ function renderMain(token) {
   // "a run you started finished somewhere else" is equally true on either
   // host, and it self-suppresses when there is nothing to say.
   hostSetMain(
-    (hostCtx ? '' : renderViewHeader({ eyebrow: 'the way material gets in', title: 'Ingest' })) +
+    (hostCtx ? '' : renderViewHeader({
+      eyebrow: 'the way material gets in', title: 'Ingest',
+      info: explainerHtml('ingest.page'), infoHtml: true,
+    })) +
     renderSettledElsewhere() +
     body,
     token

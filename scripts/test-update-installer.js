@@ -987,11 +987,17 @@ for (const [kind, check] of Object.entries(SCENARIOS)) {
 
 // ── §8d  THE COPY THAT MUST BE RIGHT BEFORE ANY CHECK RUNS ─────────────────
 {
-  const stripped = workSettingsSrc;
-  ok(/UPDATE_RECOVERY_INFO_INSTALLER/.test(stripped),
-    '§8d the "how to go back" panel has an installer variant');
-  const gitInfo = (stripped.match(/const UPDATE_RECOVERY_INFO =\s*([\s\S]*?);\n/) || [])[1] || '';
-  const instInfo = (stripped.match(/const UPDATE_RECOVERY_INFO_INSTALLER =\s*([\s\S]*?);\n/) || [])[1] || '';
+  // v3.71.1: the two recovery consts left settings.js. The panel is now the
+  // `settings.update-recovery` / `settings.update-recovery-installer`
+  // explainer, chosen by install mode — so the checks run over the explainer
+  // text as it RENDERS (tags stripped), and the installer detail that moved
+  // out of the app over docs/mac-app.md "### Going back to an earlier version".
+  const { explainerHtml } = await import('../src/public/next/shared/explainer.js');
+  const toText = (h) => h.replace(/<[^>]*>/g, ' ').replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+  ok(/explainerMark\('settings-update-recovery-info',\s*installerMode \? 'settings\.update-recovery-installer' : 'settings\.update-recovery'\)/.test(workSettingsSrc),
+    '§8d the "how to go back" panel has an installer variant, chosen by install mode');
+  const gitInfo = toText(explainerHtml('settings.update-recovery'));
+  const instInfo = toText(explainerHtml('settings.update-recovery-installer'));
   ok(gitInfo.length > 100 && instInfo.length > 100, '§8d both variants have real text');
   ok(/git checkout|git fetch/.test(gitInfo), '§8d CONTROL: the git variant really is git advice');
   ok(!/git |checkout|npm install|~\/the-curator/.test(instInfo),
@@ -999,7 +1005,12 @@ for (const [kind, check] of Object.entries(SCENARIOS)) {
   // The recorded trap: revert copy describing a path that does not exist.
   ok(!/you can go back to|revert/i.test(instInfo),
     '§8d and it never promises a rollback — only ONE release carries an installer today, so a promise would be false');
-  ok(/releases/.test(instInfo), '§8d it points at the page that is the authority on what can be reinstalled');
+  ok(/releases page/.test(instInfo), '§8d it points at the page that is the authority on what can be reinstalled');
+  const mac = fs.readFileSync(path.join(ROOT, 'docs/mac-app.md'), 'utf8');
+  const at = mac.indexOf('\n### Going back to an earlier version\n');
+  const sec = at >= 0 ? mac.slice(at, mac.indexOf('\n## ', at + 5)) : '';
+  ok(/github\.com\/talirezun\/the-curator\/releases/.test(sec) && !/you can go back to|\brevert/i.test(sec),
+    '§8d …and the guide section its card opens (docs/mac-app.md) names that page, and promises no rollback either');
 }
 {
   const fn = extractLocalFn(workSettingsSrc, 'installUpdateStyle') || '';

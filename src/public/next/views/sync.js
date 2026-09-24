@@ -95,6 +95,8 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // paragraph cannot float under the title; renderStatus carries the cross-write
 // refusal that used to live in a `title=` on a DISABLED button (see below).
 import { renderViewHeader, renderStatus } from '../shared/text.js';
+// v3.71.1: the ONE ⓘ on this view — the main header's `sync.page` explainer.
+import { explainerHtml } from '../shared/explainer.js';
 // ── THE MONITOR ─────────────────────────────────────────────
 // `.sync-status-card` was a HAND COPY of views/settings.js's bridge status
 // card — the same status pill, the same mono `<code>` identity
@@ -349,10 +351,11 @@ function renderSidebar(token) {
     // source files staying local is the design (raw/ is gitignored, so a
     // private repo never carries them), not a loss of anything the user has.
     // The DOMAINS BACKED UP list immediately below is the readout it qualifies.
+    // v3.71.1: NO ⓘ on a sidebar title (the standing rule). What travels is
+    // now a point in the main header's `sync.page` explainer.
     renderViewHeader({
       variant: 'sidebar',
       title: 'Sync',
-      info: 'Pages, chats and schemas travel; source files and keys stay here.',
     }) +
     '<div class="cur-eyebrow" style="margin-top:2px">DOMAINS BACKED UP</div>' +
     '<div class="sync-domain-list">' + domainRows + '</div>' +
@@ -409,7 +412,12 @@ function renderMain(token) {
     renderViewHeader({
       eyebrow: 'where it all lives',
       title: 'Sync',
-      info: 'Every push and pull is a real git commit, and a pull auto-saves your local changes before merging. There is no revert control in the app, but a git client pointed at your knowledge-base folder can browse that history and roll back.',
+      // v3.71.1: the `sync.page` explainer, which carries the recovery route
+      // ("each sync is a git commit that a git client can undo") and what
+      // travels (merged in from the sidebar's retired ⓘ). The pre-merge
+      // auto-save detail is in docs/sync.md.
+      info: explainerHtml('sync.page'),
+      infoHtml: true,
     }) +
     body,
     token

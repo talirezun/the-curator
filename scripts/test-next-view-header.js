@@ -106,6 +106,8 @@ import {
   renderViewHeader, renderStatus, renderDescription,
 } from '../src/public/next/shared/text.js';
 import { explainerHtml } from '../src/public/next/shared/explainer.js';
+// v3.71.1: SECTION_INFO is a map of explainer KEYS; §8 checks each is one.
+import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const NEXT = join(HERE, '..', 'src', 'public', 'next');
@@ -639,11 +641,14 @@ ok('domains.js: the DETAIL header is the component, with the controls in the act
   /renderViewHeader\(\{[\s\S]{0,400}actionsHtml:[\s\S]{0,400}dm-ask-btn/.test(VIEWS['domains.js']));
 ok('shared.js: the centre header is the component',
   /renderViewHeader\(\{[\s\S]{0,120}title: 'Shared Brain',/.test(VIEWS['shared.js']));
-ok('ingest.js: BOTH blocks the report named — centre and sidebar',
-  /renderViewHeader\(\{ eyebrow: 'the way material gets in', title: 'Ingest' \}\)/.test(VIEWS['ingest.js'])
-  && /renderViewHeader\(\{ variant: 'sidebar', title: 'Ingest', info: hint/.test(VIEWS['ingest.js']));
-ok('settings.js: renderMain builds the header, per-section, from SECTION_INFO',
-  /const info = SECTION_INFO\[state\.section\];[\s\S]{0,300}renderViewHeader\(\{/.test(VIEWS['settings.js']));
+// v3.71.1: the sidebar header carries NO ⓘ (the standing rule: no ⓘ on a
+// sidebar title); its hint merged into the centre header's `ingest.page`
+// explainer, which is where the info now is.
+ok('ingest.js: BOTH blocks the report named — centre (with the ingest.page ⓘ) and sidebar (with none)',
+  /renderViewHeader\(\{\s*eyebrow: 'the way material gets in', title: 'Ingest',\s*info: explainerHtml\('ingest\.page'\), infoHtml: true,\s*\}\)/.test(VIEWS['ingest.js'])
+  && /renderViewHeader\(\{ variant: 'sidebar', title: 'Ingest' \}\)/.test(VIEWS['ingest.js']));
+ok('settings.js: renderMain builds the header, per-section, from SECTION_INFO (a key, rendered by the kit)',
+  /const infoKey = SECTION_INFO\[state\.section\];[\s\S]{0,300}renderViewHeader\(\{[\s\S]{0,200}info: infoKey \? explainerHtml\(infoKey\) : null,\s*infoHtml: true,/.test(VIEWS['settings.js']));
 // chat.js — the one both layers of this suite missed. THREE headers: two in
 // the centre column (pre-boot and zero-domain, the identical two-field
 // literal at both) and one in the sidebar.
@@ -665,12 +670,15 @@ ok('chat.js: the sidebar uses the sidebar DENSITY, so the screen keeps one <h1>'
 // still nothing to drift between the two sites.
 ok('chat.js: CHAT_INFO is computed from the real shared explainer kit, once',
   /const CHAT_INFO = explainerHtml\('chat\.page'\);/.test(VIEWS['chat.js']));
+// v3.71.1: the import lists grew (explainerMark joined), so the pin is that
+// explainerHtml comes from the kit module, whatever else is imported beside it.
+const KIT_IMPORT = (name) => new RegExp(`import \\{[^}]*\\b${name}\\b[^}]*\\} from '\\.\\.\\/shared\\/explainer\\.js';`);
 ok('chat.js: imports explainerHtml from the ONE shared kit module',
-  /import \{ explainerHtml \} from '\.\.\/shared\/explainer\.js';/.test(VIEWS['chat.js']));
+  KIT_IMPORT('explainerHtml').test(VIEWS['chat.js']));
 ok('settings.js: `general` NOW has an entry — G5 closes the one section with no ⓘ',
-  /SECTION_INFO\.general = \{ html: true, text: explainerHtml\('settings\.general'\) \};/.test(VIEWS['settings.js']));
+  /\bgeneral: 'settings\.general',/.test(VIEWS['settings.js']));
 ok('settings.js: imports explainerHtml from the ONE shared kit module',
-  /import \{ explainerHtml \} from '\.\.\/shared\/explainer\.js';/.test(VIEWS['settings.js']));
+  KIT_IMPORT('explainerHtml').test(VIEWS['settings.js']));
 
 // ── v3.65.3: AN html ⓘ IS ONE GRID ITEM, NOT A SENTENCE CUT INTO ROWS ─────
 // The ⓘ panel is a one-column grid (shared/text.css), so bare text beside an
@@ -678,12 +686,19 @@ ok('settings.js: imports explainerHtml from the ONE shared kit module',
 // <em>Open folder as vault</em>." rendered as a sentence, an italic line and a
 // lone ".". EXECUTED: the SECTION_INFO literal is evaluated and every html
 // entry is checked for text or inline elements sitting OUTSIDE a block.
+//
+// v3.71.1: SECTION_INFO is now `Object.freeze({ general: 'settings.general',
+// … })` — a map of explainer KEYS, never prose. So the literal is still
+// EVALUATED, but what is checked is that every value is a key of EXPLAINERS,
+// that each section has one, and that rendering it through the REAL header
+// (`info: explainerHtml(key), infoHtml: true`) gives exactly one panel whose
+// body is that explainer — which is also one block, so the grid rule holds.
 {
-  const lit = VIEWS['settings.js'].match(/const SECTION_INFO = (\{[\s\S]*?\n\});/);
+  const lit = VIEWS['settings.js'].match(/const SECTION_INFO = (Object\.freeze\(\{[\s\S]*?\n\}\));/);
   const INFO = lit ? new Function('return ' + lit[1])() : {};
-  const htmlKeys = Object.keys(INFO).filter((k) => INFO[k] && INFO[k].html === true);
-  ok('CONTROL: the SECTION_INFO literal evaluated, with html entries to check',
-    htmlKeys.length >= 3, htmlKeys.join(','));
+  const keys = Object.keys(INFO);
+  ok('CONTROL: the SECTION_INFO literal evaluated, with an entry for every section',
+    ['general', 'providers', 'mcp', 'health', 'storage'].every((k) => keys.includes(k)), keys.join(','));
   // Strip every top-level block element; what remains is what the grid would
   // lay out as rows of its own.
   const outside = (html) => {
@@ -691,20 +706,35 @@ ok('settings.js: imports explainerHtml from the ONE shared kit module',
     for (let guard = 0; guard < 50; guard++) {
       const m = rest.match(/^<(p|ol|ul|dl|div)\b[^>]*>/);
       if (!m) break;
-      const close = '</' + m[1] + '>';
-      const end = rest.indexOf(close);
+      // Balanced close for a nested <div> (the explainer is one .xp div).
+      let end = -1;
+      if (m[1] === 'div') {
+        let depth = 0; const re = /<div\b|<\/div>/g; let t;
+        while ((t = re.exec(rest))) { depth += t[0] === '</div>' ? -1 : 1; if (depth === 0) { end = re.lastIndex; break; } }
+      } else {
+        const close = '</' + m[1] + '>';
+        const i = rest.indexOf(close);
+        end = i < 0 ? -1 : i + close.length;
+      }
       if (end < 0) break;
-      rest = rest.slice(end + close.length).trim();
+      rest = rest.slice(end).trim();
     }
     return rest;
   };
-  for (const k of htmlKeys) {
-    ok('SECTION_INFO.' + k + ': nothing sits outside a block element — one flowing paragraph, not rows',
-      outside(INFO[k].text) === '', JSON.stringify(outside(INFO[k].text).slice(0, 120)));
+  for (const k of keys) {
+    const key = INFO[k];
+    ok('SECTION_INFO.' + k + ' is a KEY of EXPLAINERS, not prose', typeof key === 'string' && !!EXPLAINERS[key], String(key));
+    if (typeof key !== 'string' || !EXPLAINERS[key]) continue;
+    const body = explainerHtml(key);
+    const header = renderViewHeader({ eyebrow: 'configuration', title: k, info: body, infoHtml: true });
+    ok('SECTION_INFO.' + k + ': the real header renders ONE panel, whose body is the explainer',
+      (header.match(/class="tx-vh-panel"/g) || []).length === 1 && header.includes(body));
+    ok('SECTION_INFO.' + k + ': nothing sits outside a block element — one flowing panel, not rows',
+      outside(body) === '', JSON.stringify(outside(body).slice(0, 120)));
   }
-  const kb = INFO.storage ? INFO.storage.text : '';
+  const kb = INFO.storage && EXPLAINERS[INFO.storage] ? explainerHtml(INFO.storage).replace(/<[^>]+>/g, ' ') : '';
   ok('SECTION_INFO.storage describes BOTH blocks on Knowledge base: the vault folder and the GitHub read-only token',
-    /vault folder/i.test(kb) && /Open folder as vault/.test(kb) && /GitHub read-only\s*token/i.test(kb.replace(/<[^>]+>/g, ''))
+    /vault folder/i.test(kb) && /Obsidian/.test(kb) && /GitHub read-only\s*token/i.test(kb)
       && /Documents/.test(kb), kb);
 }
 
@@ -891,15 +921,16 @@ section('§9c  EVERY NEW/REWRITTEN ⓘ (v3.71.0) RENDERS ITS OWN EXPLAINER KEY')
   ok('G4 (domains.js): the Wiki health ⓘ is explainerMark against domains.health',
     /const HEALTH_INFO = explainerMark\('dm-health-info', 'domains\.health'\);/.test(VIEWS['domains.js']));
   ok('D1/D2/G3/G4: domains.js imports explainerHtml AND explainerMark from the ONE shared kit module',
-    /import \{ explainerHtml, explainerMark \} from '\.\.\/shared\/explainer\.js';/.test(VIEWS['domains.js']));
+    KIT_IMPORT('explainerHtml').test(VIEWS['domains.js']) && KIT_IMPORT('explainerMark').test(VIEWS['domains.js']));
 
-  ok('G5 (settings.js): SECTION_INFO.general is explainerHtml against settings.general',
-    /SECTION_INFO\.general = \{ html: true, text: explainerHtml\('settings\.general'\) \};/.test(VIEWS['settings.js']));
+  // v3.71.1: SECTION_INFO holds the KEY; renderMain renders it (§8 executes it).
+  ok('G5 (settings.js): SECTION_INFO.general is the settings.general explainer key',
+    /\bgeneral: 'settings\.general',/.test(VIEWS['settings.js']));
 
   ok('SB (shared.js): the header ⓘ is explainerHtml against shared.page, rendered as HTML',
     /info: explainerHtml\('shared\.page'\),\s*\n\s*infoHtml: true,/.test(shared));
   ok('SB: shared.js imports explainerHtml from the ONE shared kit module',
-    /import \{ explainerHtml \} from '\.\.\/shared\/explainer\.js';/.test(shared));
+    KIT_IMPORT('explainerHtml').test(shared));
 
   // EXECUTED, not just matched: run the real kit against every key these
   // eight marks claim, and prove none of them throws (an unknown key throws

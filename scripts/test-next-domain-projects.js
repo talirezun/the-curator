@@ -124,12 +124,8 @@ function extractConst(source, name) {
 
 const FNS = [
   'activeProjects',
-  // v3.50.0. The section's explanatory paragraph moved behind an ⓘ mark (the
-  // maintainer asked for it "like the domain header's"), and renderProjectsPanel
-  // builds that mark through this helper. LIFTED, never stubbed — S12b asserts
-  // the fold really CARRIES the paragraph, and a stub would let an empty panel
-  // pass that assertion.
-  'infoMark',
+  // v3.71.1: the view's local `infoMark` is GONE — every ⓘ here is the shared
+  // explainer kit (shared/explainer.js), injected REAL below, never stubbed.
   // v3.58.0. Each copy control carries its own ⓘ now, and the DOM id for it
   // is built here -- slug plus row index, so two names that slugify alike
   // cannot ship duplicate ids (v3.54.0's renderViewHeader collision).
@@ -170,12 +166,8 @@ const FNS = [
   // let an empty field pass that assertion.
   'foundationsField',
   'bindProjectListeners',
-  // v3.62.0 (P1-14). The OVERVIEW block's ⓘ — the ONE place in the app that
-  // teaches the three-layer SET (accumulates / supersedes / replaced whole).
-  // Its second paragraph is about PROJECTS, which is this suite's subject, and
-  // §S16 asserts the words a user reads; lifted rather than re-typed for the
-  // reason the five ⓘ texts above are.
-  'threeLayersInfoHtml',
+  // v3.71.1: `threeLayersInfoHtml` is gone; the OVERVIEW ⓘ is the
+  // `domains.overview` explainer, rendered by the real kit.
   // renderStatCards asks it whether there is a list for a facet tile to act
   // on; lifted rather than stubbed so the OVERVIEW assertions run against
   // the real branch a cold card takes.
@@ -254,6 +246,14 @@ const {
 const { docsLinkHtml, DOCS_LINKS } =
   await import('../src/public/next/shared/docs-links.js');
 const { renderOverview } = await import('../src/public/next/shared/overview.js');
+// v3.71.1: THE REAL EXPLAINER KIT. It is import-free of the DOM (headless), so
+// every ⓘ this suite renders is the one the browser renders; the entries
+// themselves are read from shared/explainers.js so a panel can be asserted to
+// BE its explainer, byte for byte.
+const { explainerHtml, explainerMark, explainerLabel } =
+  await import('../src/public/next/shared/explainer.js');
+const { EXPLAINERS } = await import('../src/public/next/shared/explainers.js');
+const { renderInfoMark } = await import('../src/public/next/shared/text.js');
 
 // The two spies the handoff needs. Module-scoped so the assertions below read
 // them directly: what is under test is that the control records the pair
@@ -285,29 +285,15 @@ try {
     // OVERVIEW card are then assertions about the component the app ships,
     // which a stub would quietly stop being.
     'renderOverview',
+    'explainerHtml', 'explainerMark', 'explainerLabel',
     PREAMBLE +
     extractConst(SRC, 'PROJECT_BRIEF_TEMPLATE') + '\n' +
     extractConst(SRC, 'GIT_UNDO_WARN') + '\n' +
-    // The three ⓘ texts. LIFTED, never re-typed: S12b asserts the words a
-    // user reads, and a copy here would assert a copy.
-    extractConst(SRC, 'MARKER_INFO_TEXT') + '\n' +
-    extractConst(SRC, 'AGENT_INFO_TEXT') + '\n' +
-    extractConst(SRC, 'PROJECTS_INFO_HTML') + '\n' +
-    // v3.61.0 — the documents field's own ⓘ. LIFTED for the same reason the
-    // three above are: S5b asserts the words a user reads about where a
-    // project's canonical documents come from, and a copy here would assert a
-    // copy. It is the one place the "a plain folder works as a mirror source"
-    // fact is stated in the app.
-    extractConst(SRC, 'FOUNDATIONS_INFO_HTML') + '\n' +
-    // v3.61.0 (P2-2) — the create card's own ⓘ. Its three sentences used to
-    // sit loose between the title and the first field; the mark holds the
-    // mechanism and the lede holds the one condition. LIFTED for the reason
-    // the four above are: S5c asserts the words a user reads.
-    extractConst(SRC, 'CREATE_INFO_HTML') + '\n' +
+    // v3.71.1: the five ⓘ text consts (MARKER_INFO_TEXT, AGENT_INFO_TEXT,
+    // PROJECTS_INFO_HTML, FOUNDATIONS_INFO_HTML, CREATE_INFO_HTML) are gone;
+    // each mark is now an explainer, asserted against the kit below.
     FNS.map((n) => extractFunction(SRC, n)).join('\n\n') + '\n' +
     `return { ${FNS.join(', ')}, PROJECT_BRIEF_TEMPLATE,
-       MARKER_INFO_TEXT, AGENT_INFO_TEXT, PROJECTS_INFO_HTML, FOUNDATIONS_INFO_HTML,
-       CREATE_INFO_HTML,
        __state: () => state, __setState: (s) => { state = s; },
        __calls: () => calls,
        __reset: () => { calls.render = 0; calls.fetch.length = 0; calls.gates.length = 0;
@@ -325,7 +311,8 @@ try {
     { navigate: (v) => { navigations.push(v); } },
     null,
     docsLinkHtml,
-    renderOverview);
+    renderOverview,
+    explainerHtml, explainerMark, explainerLabel);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js -- ' + err.message);
   process.exit(1);
@@ -335,14 +322,26 @@ const {
   activeProjects, loadProjects, renderProjectRow, renderProjectsPanel,
   renderProjectLifecycleCard, freshProjectLifecycle, openProjectLifecycle, closeProjectLifecycle,
   classifyProjectError, runProjectAction, copyProjectMarker, bindProjectListeners,
-  copyProjectAgentInstructions, renderCopyOutcome, projInfoId, infoMark,
+  copyProjectAgentInstructions, renderCopyOutcome, projInfoId,
   foundationsField, createConsequence, createdOutcomeDetail, renderProjectCreated,
-  threeLayersInfoHtml, activeBrowse, renderStatCards,
-  PROJECT_BRIEF_TEMPLATE, MARKER_INFO_TEXT, AGENT_INFO_TEXT, PROJECTS_INFO_HTML,
-  FOUNDATIONS_INFO_HTML, CREATE_INFO_HTML,
+  activeBrowse, renderStatCards,
+  PROJECT_BRIEF_TEMPLATE,
   __state, __setState, __calls, __reset, __setFetch, __setClipboard, __setMounted,
   __setDocument, __setRenderImpl,
 } = sandbox;
+
+// v3.71.1: THE PANEL IS THE EXPLAINER. `html` carries the ⓘ `id` whose panel
+// body is BYTE-EQUAL to explainerHtml(key), and whose button and panel are
+// named by the entry's own label. Ids are unchanged from v3.71.0.
+const escAttr = (t) => String(t).replace(/[&<>"']/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function isExplainerAt(html, id, key) {
+  const label = escAttr(EXPLAINERS[key].label);
+  return html.includes('<div class="tx-vh-panel" id="' + id + '" role="group" aria-label="'
+      + label + '" hidden>' + explainerHtml(key) + '</div>')
+    && html.includes('id="' + id + '-btn" data-tx-info="' + id + '" aria-expanded="false" aria-controls="'
+      + id + '" aria-label="' + label + '"');
+}
 
 {
   // ── THE SECOND AUDIENCE IS NOT "CODING" (maintainer's correction) ──────
@@ -355,22 +354,22 @@ const {
   // The marker mark may keep it as an EXAMPLE ("most often a coding agent"),
   // because naming a familiar case is how a definition lands. Asserting that
   // ONE mark is the exception is what stops the exception spreading.
+  //
+  // v3.71.1: every ⓘ in this section is now an explainer (shared/explainers.js),
+  // so the audience rule is asserted against the RENDERED explainer bodies.
+  // The marker ⓘ no longer carries the "most often a coding agent" example, so
+  // the view now says "coding agent" nowhere at all.
   ok('the instructions ⓘ says "your agent", not "your coding agent"',
-    /whichever file your agent loads/.test(AGENT_INFO_TEXT)
-    && !/coding/.test(AGENT_INFO_TEXT), AGENT_INFO_TEXT);
-  ok('the marker ⓘ keeps a coding agent only as an EXAMPLE, never as the '
-    + 'definition of who this is for',
-  /an agent that starts there — most often a coding agent —/.test(MARKER_INFO_TEXT),
-  MARKER_INFO_TEXT);
-  ok('...and it is the ONLY place in this view that says "coding"',
-    (SRC.match(/coding agent/g) || []).length === 1,
+    /your agent/.test(explainerHtml('domains.agent-instructions'))
+    && !/coding/.test(explainerHtml('domains.agent-instructions')),
+    explainerHtml('domains.agent-instructions').slice(0, 300));
+  ok('...and this view says "coding agent" nowhere',
+    (SRC.match(/coding agent/g) || []).length === 0,
     JSON.stringify((SRC.match(/.{0,50}coding agent.{0,30}/g) || [])));
-  // AND THE SECTION ⓘ AND THE CREATE ⓘ speak of agents in the plural, with no
-  // trade named.
-  for (const [name, text] of [['the section ⓘ', PROJECTS_INFO_HTML],
-    ['the create-card ⓘ', CREATE_INFO_HTML],
-    ['the documents ⓘ', FOUNDATIONS_INFO_HTML]]) {
-    ok(name + ' names no trade', !/coding/.test(text), text.slice(0, 200));
+  // AND EVERY ⓘ OF THIS SECTION speaks of agents with no trade named.
+  for (const key of ['domains.marker-line', 'domains.projects', 'domains.new-project',
+    'domains.new-project-documents']) {
+    ok(key + ' names no trade', !/coding/.test(explainerHtml(key)), explainerHtml(key).slice(0, 200));
   }
 }
 
@@ -496,7 +495,11 @@ section('S3 -- The row: what it says, and what it never says');
   const html = renderProjectRow(ROW(), true);
   ok('the project name is on the row', html.includes('lumina'));
   // THE PILL IS A PLAIN WORD stating the FACT, never a status vocabulary.
-  ok('a project with a brief wears a plain-word pill', html.includes('Standing brief'));
+  // v3.71.1: 'Standing brief' → 'Brief written' (the one noun is "the brief").
+  ok('a project with a brief wears a plain-word pill', html.includes('Brief written')
+    && !html.includes('Standing brief'), html);
+  ok('...and a project without one says so', renderProjectRow(ROW({ hasBrief: false }), true)
+    .includes('No brief yet'));
   ok('...and never a status vocabulary',
     !/configured|not set|active\b|enabled/i.test(html), html);
   // "work-stream" -> "Handoff" in v3.65.1 (decision 1). `scope` is still the
@@ -650,6 +653,11 @@ section('S5 -- The lifecycle card, and the typed delete confirmation');
   ok('...and which says out loud that more headings are fine',
     /not a schema/i.test(PROJECT_BRIEF_TEMPLATE), PROJECT_BRIEF_TEMPLATE);
   ok('...and says the brief is optional', /optional/i.test(create));
+  // v3.71.1 NOTE: this fact lived in the create card's old ⓘ prose
+  // (CREATE_INFO_HTML). domains.js's own comment says "Saving replaces the
+  // whole brief" stays VISIBLE on the form, but neither the form nor the
+  // `domains.new-project` explainer says it any more — left RED on purpose
+  // and reported as a source defect, not relaxed here.
   ok('...and says saving REPLACES rather than adds', /replaces the whole document/i.test(create));
 
   openProjectLifecycle('rename', 'lumina');
@@ -698,8 +706,15 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
     ok('the card carries its own ⓘ, whose panel ships CLOSED',
       /id="dm-proj-new-info-btn"/.test(create)
       && /id="dm-proj-new-info"[^>]*hidden/.test(create), head.slice(0, 900));
-    ok('...and the mechanics are IN it', /becomes a folder inside/.test(CREATE_INFO_HTML)
-      && /replaces the whole document/.test(CREATE_INFO_HTML), CREATE_INFO_HTML.slice(0, 400));
+    // v3.71.1: the mark's panel IS the `domains.new-project` explainer.
+    ok('...and its panel IS the domains.new-project explainer',
+      isExplainerAt(create, 'dm-proj-new-info', 'domains.new-project'), head.slice(0, 900));
+    ok('...which carries the naming mechanics',
+      /lowercase name/.test(explainerHtml('domains.new-project'))
+      && /nothing in the wiki moves/i.test(explainerHtml('domains.new-project')));
+    ok('the create form labels its textarea "The brief", not "Standing brief"',
+      /for="dm-proj-brief">The brief </.test(create) && !/for="dm-proj-brief">Standing/.test(create),
+      create.slice(0, 1200));
   }
   ok('CREATE asks where the documents live', create.includes('data-fnd-init="dm-proj-fnd"'),
     create.slice(0, 400));
@@ -739,10 +754,16 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
   // once — and a cost that lives only inside the mark is a cost the person who
   // did not open the mark was never told. The MECHANISM stays behind it; this
   // one clause has to be read before pressing.
-  ok('the set-once cost is stated UNFOLDED, above the choice',
-    /Set once — a project is mirrored or kept here, never both/.test(create)
-    && create.indexOf('Set once') < create.indexOf('data-fnd-own='), create.slice(0, 900));
-  ok('...in flow, not behind the mark', !/tx-vh-panel[^>]*>[^<]*Set once/.test(create));
+  //
+  // v3.71.1: that note is GONE — "never both" has been false since v3.69.0
+  // (per-document sources: one project may mix kept, copied and mirrored
+  // documents). A false irreversibility claim is worse than none, so this now
+  // asserts it is absent, from the card AND from its ⓘ.
+  ok('the false "Set once — never both" note is no longer rendered',
+    !/Set once/.test(create) && !/never both/.test(create), create.slice(0, 900));
+  ok('...and no ⓘ on the card claims it either',
+    !/never both|never a mix/.test(explainerHtml('domains.new-project-documents'))
+    && !/never both|never a mix/.test(explainerHtml('domains.new-project')));
 
   // ── v3.61.1: THE SAME RHYTHM AS THE OTHER HOST ────────────────────────
   //
@@ -761,8 +782,9 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
   ok('the documents field is ONE stack, so its three parts have a decided gap',
     /<div class="dm-proj-fnd-stack">/.test(create), create.slice(0, 900));
   ok('...opening before the description and closing after the chooser',
-    create.indexOf('dm-proj-fnd-stack') < create.indexOf('Set once')
-      && create.indexOf('Set once') < create.indexOf('data-fnd-init='), create.slice(0, 900));
+    create.indexOf('dm-proj-fnd-stack') < create.indexOf('Where this project keeps the documents')
+      && create.indexOf('Where this project keeps the documents') < create.indexOf('data-fnd-init='),
+    create.slice(0, 900));
   ok('...and the label with its ⓘ stays OUTSIDE it, because the eyebrow has its own '
     + 'rhythm (`.dm-lc-label`) and gaining a second one would double it',
   create.indexOf('dm-proj-fnd-head') < create.indexOf('dm-proj-fnd-stack'), create.slice(0, 900));
@@ -781,42 +803,20 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
   ok('the field carries an ⓘ mark', create.includes('dm-proj-fnd-info'), create.slice(0, 600));
   ok('...whose panel ships CLOSED', /id="dm-proj-fnd-info"[^>]*hidden/.test(create), create.slice(0, 2000));
 
-  // WHAT THE ⓘ HAS TO CARRY. Each of these is a DEFINITION or a MECHANISM,
-  // which is what puts it behind the mark rather than in the lede — and the
-  // last one is the answer to "will this work on my project?", which is the
-  // question a person with a plain folder and no git actually has.
-  ok('the ⓘ defines what a canonical document is', /architecture, the decisions/i.test(FOUNDATIONS_INFO_HTML));
-  ok('...says a mirror is a BYTE copy with a recorded commit and a compared checksum',
-    /byte-for-byte/i.test(FOUNDATIONS_INFO_HTML) && /checksum/i.test(FOUNDATIONS_INFO_HTML));
-  // ── ANY FOLDER WORKS, AND A CHECKOUT ADDS THE COMMIT (P1-9) ──────────
-  // `resolveRepoRoot` requires only an absolute, reachable DIRECTORY, so every
-  // user-visible LABEL says "folder". What a git checkout adds — the commit
-  // each file came from, recorded and shown — is MECHANISM, which is why it is
-  // here rather than in a label: a person with ~/Documents/lumina-docs reads
-  // the label, not the fold.
-  ok('...says any folder works and that a checkout ADDITIONALLY records the commit (D21)',
-    /Any folder works/i.test(FOUNDATIONS_INFO_HTML)
-    && /does NOT have to be a git checkout/i.test(FOUNDATIONS_INFO_HTML)
-    && /commit each file came from is additionally recorded/i.test(FOUNDATIONS_INFO_HTML),
-  FOUNDATIONS_INFO_HTML.slice(0, 600));
-  ok('...and the ⓘ leads with the word FOLDER, not "repository"',
-    /Mirrored from a folder/.test(FOUNDATIONS_INFO_HTML)
-    && !/Mirrored from a repository/.test(FOUNDATIONS_INFO_HTML));
-  // ── AND IT NAMES THE OWNER BEFORE THE AGENT (P1-12) ──────────────────
-  ok('...and says the OWNER fills a skeleton, with the agent as the second way',
-    FOUNDATIONS_INFO_HTML.indexOf('You fill one in on the Project context page')
-      < FOUNDATIONS_INFO_HTML.indexOf('or ask an agent to'),
-    FOUNDATIONS_INFO_HTML.slice(0, 900));
-  ok('...and that Decide later is the DEFAULT as well as a real answer',
-    /the\s+default one/.test(FOUNDATIONS_INFO_HTML.replace(/\s+/g, ' ')),
-    FOUNDATIONS_INFO_HTML.slice(-400));
-  ok('...says what a SKELETON is — a prompt, not prose', /prompts instead of prose/i.test(FOUNDATIONS_INFO_HTML));
-  ok('...says nothing is uploaded when a file is chosen from disk',
-    /Nothing is uploaded/i.test(FOUNDATIONS_INFO_HTML));
-  ok('...and says the answer is given ONCE, which is the fact that makes the timing matter',
-    /answered once/i.test(FOUNDATIONS_INFO_HTML) && /refuses a change/i.test(FOUNDATIONS_INFO_HTML));
+  // WHAT THE ⓘ CARRIES (v3.71.1): the `domains.new-project-documents`
+  // explainer, byte for byte. Its prose is owned (and length-guarded) by
+  // shared/explainers.js; this asserts the field SHOWS that entry, and the few
+  // facts a person choosing here needs from it.
+  ok('the field’s ⓘ panel IS the domains.new-project-documents explainer',
+    isExplainerAt(create, 'dm-proj-fnd-info', 'domains.new-project-documents'), create.slice(0, 2400));
+  {
+    const xp = explainerHtml('domains.new-project-documents');
+    ok('...which says documents are read word for word', /word for word/.test(xp), xp.slice(0, 400));
+    ok('...that Decide later is an answer', /Decide later/.test(xp));
+    ok('...and that a mirrored document follows its original', /mirrored/i.test(xp) && /original/.test(xp));
+  }
   ok('the ⓘ is the ONLY place any of that is said — the card body carries no second copy',
-    !/byte-for-byte/i.test(create.replace(FOUNDATIONS_INFO_HTML, '')),
+    !/word for word/i.test(create.replace(explainerHtml('domains.new-project-documents'), '')),
     'a definition escaped the fold');
 
   // THE MIRROR ARM: a path, a scan, and a way to name a file the scan missed.
@@ -926,8 +926,10 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
     const words = txt.trim().split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
     ok('...of at most 13 visible words (' + words.length + '): ' + txt, words.length <= 13);
   }
-  ok('...and the mechanism it dropped is in the field’s ⓘ, not lost',
-    /a file you choose is read in this browser/i.test(create), 'FOUNDATIONS_INFO_HTML');
+  // v3.71.1: the "read in this browser" mechanism left with the old ⓘ prose;
+  // the privacy claim itself stays VISIBLE on the note asserted just above.
+  ok('...and the privacy claim stays visible, not folded',
+    /nothing is uploaded/i.test(cur) && !/nothing is uploaded/i.test(explainerHtml('domains.new-project-documents')));
 }
 {
   // THE TYPED CONFIRMATION. The route enforces it independently, so this is
@@ -2005,13 +2007,15 @@ const WRITABLE = () => freshState({
   // throws text away, so `panel.textContent` does not exist here. The panel's
   // own markup is sliced out by id, which is still an assertion about where
   // the sentence went rather than about the string existing somewhere.
-  const rawPanel = (() => {
-    const html = renderProjectsPanel(false);
-    const at = html.indexOf('id="' + panelId + '"');
-    return at === -1 ? '' : html.slice(at, html.indexOf('</div>', at));
-  })();
-  ok('...and the definition survives inside the fold',
-    /A domain is one compounding wiki/.test(rawPanel), rawPanel.slice(0, 80));
+  // v3.71.1: the fold is the `domains.projects` explainer, byte for byte, and
+  // its LEAD is the definition.
+  const panelsHtml = renderProjectsPanel(false);
+  ok('...and the fold IS the domains.projects explainer',
+    panelId === 'dm-proj-info' && isExplainerAt(panelsHtml, 'dm-proj-info', 'domains.projects'),
+    String(panelId));
+  ok('...whose lead is the definition of a project',
+    /<p class="xp-lead">A project is one piece of work inside this domain/
+      .test(explainerHtml('domains.projects')), explainerHtml('domains.projects').slice(0, 600));
   ok('...which still ships CLOSED, so nothing is on screen that was not before',
     panel && panel.attrs.hidden !== undefined);
 }
@@ -2027,6 +2031,20 @@ const WRITABLE = () => freshState({
   const panels = t.all.filter((n) => hasClass(n, 'tx-vh-panel'));
   eq('...and two panels to match', panels.length, 2);
   ok('every panel ships hidden', panels.every((q) => q.attrs.hidden !== undefined));
+  // v3.71.1: each copy control's panel IS its explainer, on the unchanged ids.
+  {
+    const rowHtml = renderProjectRow(ROW(), true, 0);
+    ok('the marker ⓘ IS the domains.marker-line explainer',
+      isExplainerAt(rowHtml, projInfoId('marker', 'lumina', 0), 'domains.marker-line'));
+    ok('the instructions ⓘ IS the domains.agent-instructions explainer',
+      isExplainerAt(rowHtml, projInfoId('agent', 'lumina', 0), 'domains.agent-instructions'));
+    __setState(freshState({ projectLc: { mode: 'created', project: 'lumina', slug: 'alpha' } }));
+    const done = renderProjectCreated({ mode: 'created', project: 'lumina', slug: 'alpha' });
+    ok('...and the created card carries the same two explainers on its own ids',
+      isExplainerAt(done, 'dm-proj-done-marker-info', 'domains.marker-line')
+      && isExplainerAt(done, 'dm-proj-done-agent-info', 'domains.agent-instructions'), done.slice(0, 600));
+    __setState(WRITABLE());
+  }
   ok('...and every mark points at one that exists, with the -btn id convention',
     marks.every((m) => {
       const id = m.attrs['data-tx-info'];
@@ -2070,26 +2088,28 @@ const WRITABLE = () => freshState({
 }
 {
   // ── THE `{html: true}` LICENCE IS `=== true`, NEVER TRUTHY ──────────────
-  // v3.58.0 gave this view's local infoMark the same opt-out shared/text.js's
-  // renderInfoMark carries, because the PROJECTS fold is two labelled
-  // paragraphs. The licence is for markup written in the view; a stray
-  // string, a 1, or an options object built from a query must not switch
-  // escaping off. Driven through the SHIPPED helper.
+  // v3.71.1: this view's local infoMark is GONE — every ⓘ goes through the
+  // explainer kit, which calls shared/text.js's renderInfoMark with the literal
+  // `{ html: true }`. The licence therefore lives in ONE function, and it is
+  // driven here through the REAL one, so a truthy opt-in still cannot switch
+  // escaping off anywhere this view renders an ⓘ.
   const FRAG = '<b>bold</b>';
-  const esc = infoMark('x', 'l', FRAG);
+  const esc = renderInfoMark('x', 'l', FRAG);
   ok('the DEFAULT escapes -- markup arrives as text',
     esc.panel.includes('&lt;b&gt;') && !esc.panel.includes('<b>'), esc.panel);
-  const raw = infoMark('x', 'l', FRAG, { html: true });
+  const raw = renderInfoMark('x', 'l', FRAG, { html: true });
   ok('...and `{html: true}` renders it', raw.panel.includes('<b>bold</b>'), raw.panel);
   for (const truthy of ['yes', 1, {}, [], 'true']) {
-    const out = infoMark('x', 'l', FRAG, { html: truthy });
+    const out = renderInfoMark('x', 'l', FRAG, { html: truthy });
     ok('a truthy-but-not-true `html: ' + JSON.stringify(truthy) + '` still ESCAPES',
       out.panel.includes('&lt;b&gt;') && !out.panel.includes('<b>'), out.panel);
   }
-  ok('no opts at all escapes too', infoMark('x', 'l', FRAG, undefined).panel.includes('&lt;b&gt;'));
-  // AND THE ONE SITE THAT USES IT PASSES THE LITERAL.
-  ok('renderProjectsPanel opts in with the literal `true`, not a variable',
-    /infoMark\('dm-proj-info',[^)]*\{ html: true \}\)/.test(SRC), 'the call site no longer reads `{ html: true }`');
+  ok('no opts at all escapes too', renderInfoMark('x', 'l', FRAG, undefined).panel.includes('&lt;b&gt;'));
+  ok('the view carries no second ⓘ implementation of its own',
+    !/function infoMark\b/.test(SRC) && !/\binfoMark\(/.test(SRC), 'a local infoMark is back');
+  ok('CONTROL -- the explainer mark IS renderInfoMark with the html licence',
+    explainerMark('x', 'domains.projects').panel
+      === renderInfoMark('x', EXPLAINERS['domains.projects'].label, explainerHtml('domains.projects'), { html: true }).panel);
 }
 {
   // THE ROW'S CSS CONTRACT. The tree says the button is a row; these say the
@@ -2135,52 +2155,28 @@ section('S11 -- THE THREE-LAYER LEGEND ON THE OVERVIEW BLOCK (v3.62.0, P1-14)');
 // resolves to the top of a long page. The first two are asserted from the
 // lifted text, the third from the frozen map the view actually asks.
 {
-  const html = threeLayersInfoHtml();
-
-  // ── THE THREE VERBS, each exactly once and each on its own layer ──────
-  // A legend whose value is the contrast has to state all three, and stating
-  // one twice is how the contrast quietly becomes a list.
-  // THE THREE NOUNS MOVED IN v3.65.1 (decision 1) and the three VERBS did
-  // not. The layers are Knowledge · Memory · Documents — the same three words
-  // the Project-context view's three steps carry, which is the continuity the
-  // rename exists for. "the wiki", "working state" and "canonical documents"
-  // are the retired ones, and the assertion below says so by name so a
-  // half-applied rename cannot pass.
-  for (const [verb, layer] of [['accumulates', 'knowledge'],
-    ['supersedes', 'memory'],
-    ['replaced whole', 'documents']]) {
-    ok('the legend names "' + verb + '" — the verb for ' + layer,
-      html.includes(verb), html);
+  // v3.71.1: the legend is the `domains.overview` explainer. Its TABLE names
+  // the three layers and how each changes; the old prose verbs
+  // (accumulates / supersedes / replaced whole) are now the table's
+  // "How it changes" column, in plainer words.
+  const html = explainerHtml('domains.overview');
+  for (const [layer, how] of [['Knowledge', 'grows with each source'],
+    ['Memory', 'each save replaces the last'],
+    ['Documents', 'read word for word']]) {
+    ok('the legend names ' + layer + ' and how it changes: "' + how + '"',
+      new RegExp('<th scope="row">' + layer + '</th><td[^>]*>[^<]*</td><td[^>]*>' + how + '</td>').test(html), html);
   }
-  ok('...and names knowledge, memory and documents by name — the Project-context '
-    + 'view\'s own three step titles',
-    /<strong>knowledge<\/strong>/.test(html)
-    && /<strong>memory<\/strong>/.test(html)
-    && /<strong>documents<\/strong>/.test(html), html);
   ok('...and carries none of the three RETIRED nouns',
-    !/<strong>wiki<\/strong>/.test(html)
+    !/<th scope="row">wiki<\/th>/i.test(html)
     && !/working\s+state/i.test(html)
     && !/canonical\s+documents/i.test(html), html);
-
-  // ── ONE NOUN FOR THE BLOCK (D-K, tightened by v3.65.1) ────────────────
-  // Through v3.65.0 the layer was "canonical documents" and the block that
-  // held it was FOUNDATIONS — two names, and this assertion kept the legend
-  // from introducing a third. Decision 1 collapsed the two into one word,
-  // Documents, so the legend and the block now agree; FOUNDATIONS is the
-  // retired name and must not come back.
   ok('the legend does NOT use the retired block name',
     !/Foundations/i.test(html), html);
-
-  // ── IT IS A DEFINITION, NOT A WARNING (v3.16.1 / design-system §3) ────
-  // Warnings, costs, refusals and outcomes never fold. Nothing in here is
-  // one of those, and asserting so is what keeps the panel from becoming a
-  // place to hide a consequence.
+  // Warnings, costs, refusals and outcomes never fold.
   for (const forbidden of ['delete', 'cannot be undone', 'costs', '$', 'refus']) {
     ok('...and carries no "' + forbidden + '" — an ⓘ may not hold a warning or a cost',
       !html.toLowerCase().includes(forbidden), html);
   }
-  // NO CONTROL. The delegated listener toggles on the BUTTON, so anything
-  // focusable inside the panel is unreachable until the panel is open.
   ok('...and no control: no <button>, no <input>, no id the view would bind',
     !/<button|<input|<select|id=/.test(html), html);
 
@@ -2190,13 +2186,10 @@ section('S11 -- THE THREE-LAYER LEGEND ON THE OVERVIEW BLOCK (v3.62.0, P1-14)');
     href.startsWith('https://github.com/talirezun/the-curator/blob/main/docs/'), href);
   ok('...pointing at the guide’s three-kinds-of-context heading',
     href.endsWith('user-guide.md#the-three-kinds-of-context-it-carries'), href);
-  ok('...and the key it uses is the DOMAINS one, because the prefix names the '
-    + 'surface the link is rendered on',
-  Object.prototype.hasOwnProperty.call(DOCS_LINKS, 'domains.three-layers'),
-  Object.keys(DOCS_LINKS).join(','));
-  ok('...opened safely — target=_blank without rel=noopener hands the opened '
-    + 'page a window.opener handle back into this document',
-  /rel="noopener noreferrer"/.test(html), html);
+  ok('...and the key it uses is the DOMAINS one',
+    EXPLAINERS['domains.overview'].guide.key === 'domains.three-layers'
+    && Object.prototype.hasOwnProperty.call(DOCS_LINKS, 'domains.three-layers'));
+  ok('...opened safely', /rel="noopener noreferrer"/.test(html), html);
 
   // ── AND IT IS ACTUALLY ON THE BLOCK ───────────────────────────────────
   // The text existing proves nothing about the section rendering it. This
@@ -2223,8 +2216,11 @@ section('S11 -- THE THREE-LAYER LEGEND ON THE OVERVIEW BLOCK (v3.62.0, P1-14)');
     SRC.indexOf('Projects in this domain'))), 'renderProjectsPanel head');
   // NO `title=`. This view's ceiling in test-next-title-affordances.js is 0
   // and the mark's accessible name is on the button.
-  ok('the mark carries an aria-label',
-    /aria-label="About these figures"/.test(card), card.slice(0, 900));
+  // v3.71.1: named by the explainer's own label, and the panel IS it.
+  ok('the mark carries the explainer’s aria-label',
+    card.includes('aria-label="' + escAttr(EXPLAINERS['domains.overview'].label) + '"'), card.slice(0, 900));
+  ok('...and the panel body IS the domains.overview explainer',
+    new RegExp('id="dm-overview-info"[^>]*hidden>').test(card) && card.includes(html), card.slice(0, 900));
 }
 
 // ── v3.65.3 — THE CREATE FORM'S READ WITH NAMES THE SAVED TOKEN ──────────

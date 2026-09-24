@@ -67,6 +67,9 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+// v3.71.1: the Sync header's ⓘ is the `sync.page` explainer; §7b reads the
+// REAL rendered explainer (import-free, headless).
+import { explainerHtml } from '../src/public/next/shared/explainer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -468,10 +471,16 @@ ok(!code.sync.includes("'History'"), 'sync: the bare "History" eyebrow that intr
 
 {
   const fnMain = extractFunction(code.sync, 'renderMain');
-  ok(/info:\s*'/.test(fnMain), 'renderMain: renderViewHeader is now called WITH an info field (was header-only before)');
-  ok(/real git commit/.test(fnMain), 'renderMain: the info text names the actual recovery mechanism (a real git commit)');
-  ok(/git client/.test(fnMain), 'renderMain: the info text names how to act on it (a git client)');
-  ok(!/coming soon/i.test(fnMain), 'renderMain: the relocated sentence does not resurrect "coming soon" wording');
+  // v3.71.1: the header's info is the `sync.page` explainer, rendered from
+  // shared/explainers.js — so the PROSE assertions read the explainer the
+  // user is served, and the call site is pinned to that key.
+  ok(/info:\s*explainerHtml\('sync\.page'\),\s*infoHtml:\s*true/.test(fnMain),
+    'renderMain: renderViewHeader is called WITH an info field — the sync.page explainer, as HTML');
+  const syncXp = explainerHtml('sync.page');
+  const syncXpText = syncXp.replace(/<[^>]*>/g, ' ');
+  ok(/git commit/.test(syncXpText), 'sync.page explainer: names the actual recovery mechanism (a git commit)');
+  ok(/git client/.test(syncXpText), 'sync.page explainer: names how to act on it (a git client)');
+  ok(!/coming soon/i.test(fnMain + syncXpText), 'renderMain: the relocated sentence does not resurrect "coming soon" wording');
 
   // ── THE FALSE-REVERT CLASS, GUARDED RATHER THAN RE-FIXED ──────────────
   // CLAUDE.md tracks this class from v3.9.1 (a "revert it from the Sync tab"
@@ -491,15 +500,17 @@ ok(!code.sync.includes("'History'"), 'sync: the bare "History" eyebrow that intr
     /everything is recoverable/i,
   ];
   for (const re of ABSOLUTES) {
-    ok(!re.test(fnMain), `renderMain: the info text makes no absolute safety promise (${re.source})`);
+    ok(!re.test(fnMain + syncXpText), `renderMain: the info text makes no absolute safety promise (${re.source})`);
   }
-  // And the positive half, so the guard above cannot be satisfied by simply
-  // deleting the sentence: the ABSENCE of an in-app revert must be STATED,
-  // which is what stops a user hunting the UI for a button that is not there.
-  ok(/no revert control/i.test(fnMain),
-    'renderMain: the info text says plainly that there is no revert control in the app');
-  ok(/auto-saves/i.test(fnMain),
-    'renderMain: it names the mechanism that makes the recovery path real (pull auto-saves before merging)');
+  // And the positive half. Until v3.71.0 the header said "There is no revert
+  // control in the app" and named the pre-merge auto-save; v3.71.1's explainer
+  // says instead WHO undoes a sync — "a git client" — and the auto-save
+  // detail moved to the docs. What is pinned now: the undo actor named is a
+  // git client, never the app or a button in it.
+  ok(/git client can undo/.test(syncXpText),
+    'sync.page explainer: the one thing that undoes a sync is named — a git client');
+  ok(!/(revert|undo)\s+(button|control)|from (the|this) (app|Sync (tab|view))/i.test(syncXpText),
+    'sync.page explainer: it names no in-app revert control or place to find one');
 }
 
 // ── §8 CLASS-LEVEL: no preview-era vocabulary in user-visible strings ───

@@ -411,19 +411,22 @@ section('§8  The Knowledge base block — rendered for real');
 {
   const { renderMonitor } = await import('../src/public/next/shared/monitor.js');
   const escapeHtml = (x) => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  // v3.71.1: settings.js's local infoMark is gone; the REAL shared explainer
+  // kit (import-free, headless) is injected as `explainerMark`.
+  const { explainerMark, explainerHtml } = await import('../src/public/next/shared/explainer.js');
+  const { EXPLAINERS } = await import('../src/public/next/shared/explainers.js');
   const code = [
-    extractFrom(setSrc, fnRe('infoMark'), 'infoMark'),
     extractFrom(setSrc, fnRe('settingsBlock'), 'settingsBlock'),
     extractFrom(setSrc, fnRe('renderGithubTokenTest'), 'renderGithubTokenTest'),
     extractFrom(setSrc, fnRe('renderGithubReadToken'), 'renderGithubReadToken'),
     'return renderGithubReadToken;',
   ].join('\n');
-  const mk = new Function('state', 'escapeHtml', 'icon', 'TX_INFO_GLYPH', 'renderMonitor', code);
+  const mk = new Function('state', 'escapeHtml', 'icon', 'explainerMark', 'renderMonitor', code);
   const base = () => ({
     ghToken: { present: false, last4: null, kind: null }, ghTokenLoadError: null, ghTokenEditing: false,
     ghTokenValue: '', ghTokenBusy: null, ghTokenActionError: null, ghTokenRepo: '', ghTokenTestBusy: false, ghTokenTest: null,
   });
-  const render = (st) => mk(st, escapeHtml, () => '<svg class="i"></svg>', '<svg class="g"></svg>', renderMonitor)();
+  const render = (st) => mk(st, escapeHtml, () => '<svg class="i"></svg>', explainerMark, renderMonitor)();
 
   let st = base();
   let h = render(st);
@@ -431,12 +434,26 @@ section('§8  The Knowledge base block — rendered for real');
   ok(/id="gh-token-edit"[^>]*>Add token</.test(h), '…the one action is "Add token"');
   ok(!/gh-token-disconnect/.test(h) && !/gh-token-test"/.test(h), '…no Disconnect and no Test (nothing to act on)');
   ok(/settings-block-storage-github-token/.test(h) && /GitHub read-only token/.test(h), 'the block is a settingsBlock titled "GitHub read-only token"');
-  const steps = (h.match(/<li>/g) || []).length;
-  eq(steps, 5, 'the ⓘ carries the five creation steps');
-  ok(/Fine-grained tokens/.test(h) && /Contents: Read-only/.test(h) && /Only select repositories/.test(h) && /Expiry/.test(h) && /Resource owner/.test(h),
-    '…each of the maintainer’s five steps is there');
-  ok(/classic token only works with the <code class="mono">repo<\/code> scope, which reads every repository/.test(h)
-    && /Personal Sync’s token is never the default/.test(h), '…plus the one sentence on why not classic');
+  // v3.71.1: the ⓘ is the `settings.github-token` explainer — byte-equal,
+  // under the unchanged panel id — whose steps visual carries the creation
+  // steps. "Resource owner" and the why-not-classic sentence moved to the
+  // user guide section the explainer's card opens (asserted below).
+  ok(h.includes(explainerMark('settings-block-info-storage-github-token', 'settings.github-token').panel)
+     && h.includes('aria-label="' + EXPLAINERS['settings.github-token'].label + '"'),
+    'the ⓘ panel IS the settings.github-token explainer (byte-equal, id unchanged)');
+  const xh = explainerHtml('settings.github-token');
+  const steps = ((xh.match(/<ol class="xp-steps">([\s\S]*?)<\/ol>/) || [])[1] || '').match(/<li>/g) || [];
+  eq(steps.length, 4, 'the ⓘ carries the four creation steps');
+  ok(/Fine-grained tokens/.test(h) && /Contents: Read-only/.test(h) && /Only select repositories/.test(h) && /expiry/.test(h),
+    '…each step is there (token type, repository access, the one permission, expiry)');
+  {
+    const ug = readFileSync(path.join(ROOT, 'docs/user-guide.md'), 'utf8');
+    const at = ug.indexOf('\n#### GitHub read-only token\n');
+    const sec = at >= 0 ? ug.slice(at, ug.indexOf('\n#', at + 5)) : '';
+    ok(/\*\*Resource owner\*\*/.test(sec) && /classic token/.test(sec) && /`repo` scope/.test(sec)
+       && /Personal Sync's own token/.test(sec),
+      '…and the guide section it links to keeps the resource-owner step and the why-not-classic reasoning');
+  }
   ok(/class="tx-vh-panel"[^>]*hidden/.test(h), 'the steps are behind the ⓘ (a hidden panel), not inline');
 
   st = base(); st.ghToken = { present: true, last4: 'ab12', kind: 'fine-grained' };

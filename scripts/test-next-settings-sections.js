@@ -47,6 +47,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
+import { explainerHtml, explainerMark, explainerLabel } from '../src/public/next/shared/explainer.js';
+import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
 // The tool map's real collaborators. Imported rather than stubbed for the same
 // reason `settingsBlock` and `infoMark` are lifted real below: block ③ is one
 // of the ledes G3 measures and one of the heading→body gaps G3b measures, and
@@ -165,11 +167,15 @@ function constSource(re, what) {
   return m[0];
 }
 const REAL = [
-  constSource(/const UPDATE_RECOVERY_INFO =[\s\S]*?;\n/, 'UPDATE_RECOVERY_INFO'),
-  constSource(/const UPDATE_RECOVERY_INFO_INSTALLER =[\s\S]*?;\n/, 'UPDATE_RECOVERY_INFO_INSTALLER'),
+  // v3.71.1: UPDATE_RECOVERY_INFO(_INSTALLER) are gone (the recovery ⓘ is an
+  // explainer key now); the two footnote consts renderHealthLimits and
+  // renderMcp print VISIBLY are lifted real instead.
+  constSource(/const SCAN_LIMIT_REFUSAL =[\s\S]*?;\n/, 'SCAN_LIMIT_REFUSAL'),
+  constSource(/const MCP_DOMAIN_CONSEQUENCE =[\s\S]*?;\n/, 'MCP_DOMAIN_CONSEQUENCE'),
   constSource(/const BACKGROUND_MODE_LABELS = \{[\s\S]*?\n\};/, 'BACKGROUND_MODE_LABELS'),
   extractFunction(src, 'settingsBlock'),
-  extractFunction(src, 'infoMark'),
+  // (v3.71.1: `infoMark` is gone from settings.js; the REAL explainer kit is
+  // injected in lift() instead — see `explainerMark` there.)
   extractFunction(src, 'deriveMcpStatus'),
   extractFunction(src, 'shouldShowMcpStaleNote'),
   // v3.64.0. Lifted REAL for the same reason its two neighbours are: the
@@ -194,6 +200,10 @@ const REAL = [
   extractFunction(src, 'renderToolMapBody'),
   extractFunction(src, 'renderToolMap'),
 ].join('\n');
+
+// The module's own refusal sentence, read from the source (not retyped here).
+const SCAN_LIMIT_REFUSAL_REAL = new Function(
+  constSource(/const SCAN_LIMIT_REFUSAL =[\s\S]*?;\n/, 'SCAN_LIMIT_REFUSAL') + 'return SCAN_LIMIT_REFUSAL;')();
 
 function baseState() {
   return {
@@ -233,7 +243,11 @@ function lift(name, state, over) {
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
     icon: () => '<svg class="i"></svg>',
-    TX_INFO_GLYPH: '<svg class="g"></svg>',
+    // v3.71.1: every ⓘ is the REAL shared explainer kit (import-free, so it
+    // runs headless) — TX_INFO_GLYPH and the local infoMark are gone.
+    explainerMark,
+    explainerHtml,
+    explainerLabel,
     docsLinkHtml,
     formatAge,
     freshnessTier,
@@ -540,10 +554,13 @@ section('G3b  No loose sentence between a block heading and its body  (EXECUTED)
       '…and CONFIRMED RED: an injected loose paragraph in that same gap IS reported');
   }
   // …and the ⓘ fold, which sits in the same gap legitimately, is NOT reported.
+  // v3.71.1: renderHealthLimits lost its block ⓘ (the section header's
+  // `settings.health` explainer carries it), so the fold control moved to the
+  // Vault folder block, which still has one.
   {
-    const withFold = run('renderHealthLimits', baseState());
+    const withFold = run('renderStorage', baseState());
     ok(/class="settings-block-info"/.test(withFold),
-      'CONTROL: renderHealthLimits really emits an ⓘ fold in the gap under test');
+      'CONTROL: renderStorage really emits an ⓘ fold in the gap under test');
     ok(looseInGap(blockGaps(withFold)[0]) === '',
       '…and the detector does not mistake that fold for a loose sentence');
   }
@@ -608,6 +625,15 @@ function insideHiddenContainer(html, marker) {
   ok(html.includes('must be a whole number'), '…carrying the reason, verbatim');
   ok(insideHiddenContainer(html, 'settings-inline-error') === false,
     '…and it is NOT inside any hidden container or ⓘ fold panel');
+  // v3.71.1: THE REFUSAL ITSELF is a statement, not an explanation, so it
+  // left the ⓘ and renders visibly in the block body — and the block has no ⓘ.
+  const REFUSAL = SCAN_LIMIT_REFUSAL_REAL;
+  ok(REFUSAL.length > 20 && html.includes(REFUSAL),
+    'renderHealthLimits: the scan-limit refusal sentence (SCAN_LIMIT_REFUSAL) renders in the body');
+  ok(insideHiddenContainer(html, 'estimates its cost first') === false,
+    '…and it is NOT inside any hidden container or ⓘ fold panel');
+  ok(!/settings-block-info-health-limits|class="settings-block-info"/.test(html),
+    'renderHealthLimits: the block carries NO ⓘ (the section header\u2019s explainer covers it)');
 }
 {
   // ── GENERAL: THE MENU BAR FAILURE-MODE NOTE ─────────────────────────
@@ -631,7 +657,9 @@ function insideHiddenContainer(html, marker) {
   // Two controls, because this marker can go green for two wrong reasons: a
   // detector that never reports "inside", and a sentence that is not there at
   // all in the state being measured.
-  const FOLDED = 'scales every piece of text in the app';
+  // v3.71.1: the Appearance ⓘ is the `settings.appearance` explainer; its
+  // Text size point reads "scales every word".
+  const FOLDED = 'scales every word';
   ok(html.includes(FOLDED) && insideHiddenContainer(html, FOLDED) === true,
     'CONTROL: the Text size explanation IS inside the Appearance ⓘ fold — so the detector can tell the two apart');
   const off = baseState();
@@ -653,8 +681,10 @@ function insideHiddenContainer(html, marker) {
   // One mode is enough because the sentence is now mode-INDEPENDENT: it was
   // three near-copies inside the three forked ledes and is one sentence in a
   // fold that does not fork. That is the property, so assert it.
+  // v3.71.1: the sentence is now the `settings.update` explainer's first
+  // point ("Your wiki, keys and sync settings are never touched.").
   const MOVED = 'are never touched';
-  ok(html.includes(MOVED) && /replaces the program, not what it holds/.test(html),
+  ok(html.includes(MOVED) && /Your wiki, keys and sync settings are never touched/.test(html),
     'renderGeneral: the "an update does not touch your data" sentence is still rendered somewhere');
   ok(insideHiddenContainer(html, MOVED) === true,
     '…in the Software update ⓘ fold — moved there, not deleted, and not loose beside the lede');
@@ -807,15 +837,18 @@ section('v3.65.3  The Vault folder ⓘ is one paragraph, not four rows  (EXECUTE
 // three rows" on Knowledge base. The panel's CHILDREN are read off the real
 // render: the prose must sit inside ONE <p>, with only a trailing link beside it.
 {
+  // v3.71.1: the panel is no longer hand-written prose but the
+  // `settings.vault-folder` explainer, whose structure (one <p> lead, one
+  // <ul> of points) settles the grid-row defect by construction. So assert
+  // the panel IS that explainer, byte for byte, under the unchanged id.
   const html = run('renderStorage', baseState());
-  const m = html.match(/<div class="tx-vh-panel" id="settings-block-info-storage-folder"[^>]*>([\s\S]*?)<\/div>/);
-  ok(!!m, 'CONTROL: the Vault folder block really emits its ⓘ panel');
-  const inner = m ? m[1] : '';
-  const pm = inner.match(/^<p>([\s\S]*?)<\/p>([\s\S]*)$/);
-  ok(!!pm && /<em>Open folder as vault<\/em>/.test(pm[1]),
-    'the prose, <em> included, is ONE <p> — the grid lays it out as one item', inner.slice(0, 160));
-  ok(!!pm && /^<a [^>]*>[^<]*<\/a>$/.test(pm[2].trim()),
-    '…and nothing but the trailing docs link sits outside it (no stray text row)', pm ? pm[2] : inner);
+  const want = explainerMark('settings-block-info-storage-folder', 'settings.vault-folder').panel;
+  ok(want.includes(explainerHtml('settings.vault-folder')) && html.includes(want),
+    'the Vault folder ⓘ panel IS the settings.vault-folder explainer, byte-equal, id unchanged');
+  ok(html.includes('id="settings-block-info-storage-folder"')
+     && html.includes('aria-label="' + EXPLAINERS['settings.vault-folder'].label + '"'),
+    '…named by the explainer label (dumb cross-check on the raw markup)');
+  ok(/Open folder as vault/.test(html), '…and the Obsidian step still reaches the reader');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

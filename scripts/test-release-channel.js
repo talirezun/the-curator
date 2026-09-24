@@ -412,49 +412,71 @@ section('§6  The recovery text may not make a claim nobody verified');
 // sentence.
 
 const settingsSrc = fs.readFileSync(path.join(ROOT, 'src/public/next/views/settings.js'), 'utf8');
-const recoveryMatch = settingsSrc.match(/const UPDATE_RECOVERY_INFO\s*=\s*([\s\S]*?);\n/);
-ok(!!recoveryMatch, 'UPDATE_RECOVERY_INFO is found in views/settings.js');
-// If the const is renamed or reformatted past this parser, FAIL LOUDLY rather
-// than fall through to "0 claims checked, nothing wrong" — the silent-blindness
-// shape this repo keeps re-learning (test-frontend-null-safety.js).
-const recovery = recoveryMatch ? recoveryMatch[1] : '';
-ok(recovery.length > 200, 'the recovery text was actually extracted (not an empty match reported as a pass)');
+// v3.71.1: the recovery text is no longer a const in settings.js. The ⓘ is the
+// `settings.update-recovery` explainer (git checkout) or
+// `settings.update-recovery-installer` (packaged), and the measured caveats
+// moved to docs/user-guide.md "#### Going back to an earlier version". So the
+// SAME guard now runs over all three: the two explainers as they RENDER
+// (tags stripped — what a reader sees) and the guide section.
+const { explainerHtml } = await import('../src/public/next/shared/explainer.js');
+const toText = (h) => h.replace(/<[^>]*>/g, ' ').replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+const recovery = toText(explainerHtml('settings.update-recovery'));
+const recoveryInstaller = toText(explainerHtml('settings.update-recovery-installer'));
+const ug = fs.readFileSync(path.join(ROOT, 'docs/user-guide.md'), 'utf8');
+const ugAt = ug.indexOf('\n#### Going back to an earlier version\n');
+ok(ugAt >= 0, 'docs/user-guide.md has "#### Going back to an earlier version"');
+const guide = ugAt >= 0 ? ug.slice(ugAt, ug.indexOf('\n### ', ugAt + 5)) : '';
+// If an explainer or the section is renamed past this parser, FAIL LOUDLY
+// rather than fall through to "0 claims checked, nothing wrong" — the
+// silent-blindness shape this repo keeps re-learning (test-frontend-null-safety.js).
+ok(recovery.length > 200 && guide.length > 400,
+  'the recovery text was actually extracted (not an empty match reported as a pass)');
 
-for (const [claim, why] of [
-  [/nothing is lost/i, 'v3.24.0 cut this exact phrasing as false'],
-  [/anything can be reverted/i, 'the v3.9.1 eight-site false promise'],
-  [/revert (it )?from the (sync|settings) tab/i, 'no route in this app exposes a revert'],
-  [/\bone[- ]click\b/i, 'recovery is a Terminal procedure, not a button'],
-  [/\bautomatic(ally)? (roll ?back|revert)/i, 'nothing rolls back automatically'],
-  [/\bprevious version\b/i, 'not every release is tagged — the newest tag can be several releases back'],
-]) {
-  ok(!claim.test(recovery), `the recovery text does NOT claim ${claim} (${why})`);
+for (const [label, text] of [['the recovery ⓘ', recovery], ['the installer recovery ⓘ', recoveryInstaller],
+  ['the guide section', guide]]) {
+  for (const [claim, why] of [
+    [/nothing is lost/i, 'v3.24.0 cut this exact phrasing as false'],
+    [/anything can be reverted/i, 'the v3.9.1 eight-site false promise'],
+    [/revert (it )?from the (sync|settings) tab/i, 'no route in this app exposes a revert'],
+    [/\bone[- ]click\b/i, 'recovery is a Terminal procedure, not a button'],
+    [/\bautomatic(ally)? (roll ?back|revert)/i, 'nothing rolls back automatically'],
+    [/\bprevious version\b/i, 'not every release is tagged — the newest tag can be several releases back'],
+  ]) {
+    ok(!claim.test(text), `${label} does NOT claim ${claim} (${why})`);
+  }
+  // No version number may be baked in: it goes stale the moment a tag is
+  // pushed, and a stale example reads as a claim about what is newest.
+  ok(!/v\d+\.\d+\.\d+/.test(text), `no version number is hardcoded in ${label}`);
 }
 
 // Positive half — the guard must not be satisfiable by saying nothing.
-ok(/no in-app way to undo|only moves forward/i.test(recovery),
-  'the recovery text STATES that updating only moves forward / cannot be undone in-app');
-ok(/--depth 1/.test(recovery),
-  'the recovery text names the shallow-clone step — without it `git checkout <tag>` fails outright');
-ok(/git fetch --depth 1 origin tag/.test(recovery), 'it gives the tag-fetch command that was measured working');
-ok(/git checkout/.test(recovery), 'it gives the checkout command');
-ok(/tags/.test(recovery), 'it points at the tag list as the authority on what can be recovered');
-ok(/not touched|not every build is tagged/i.test(recovery), 'it states the limits rather than only the happy path');
-// No version number may be baked in: it goes stale the moment a tag is pushed,
-// and a stale example reads as a claim about what is newest.
-ok(!/v\d+\.\d+\.\d+/.test(recovery), 'no version number is hardcoded in the recovery text');
+ok(/only move(s)? forward/i.test(recovery) && /only move(s)? forward/i.test(guide),
+  'the recovery ⓘ and the guide STATE that updating only moves forward');
+ok(/--depth 1/.test(guide) && /step 3\s+fetches the one you name/.test(guide),
+  'the guide names the shallow-clone step — without it `git checkout <tag>` fails outright');
+ok(/git fetch --depth 1 origin tag VERSION/.test(recovery) && /git fetch --depth 1 origin tag VERSION/.test(guide),
+  'the ⓘ steps and the guide give the tag-fetch command that was measured working');
+ok(/git checkout VERSION/.test(recovery) && /git checkout VERSION/.test(guide), 'both give the checkout command');
+ok(/tag/.test(recovery) && /github\.com\/talirezun\/the-curator\/tags/.test(guide),
+  'they point at the tag list as the authority on what can be recovered');
+ok(/not every release carries a tag/i.test(guide) && /never touched/.test(guide),
+  'the guide states the limits rather than only the happy path');
+// The installer arm must not hand a packaged install a git procedure.
+ok(!/\bgit\b|Terminal/i.test(recoveryInstaller) && /older build/.test(recoveryInstaller),
+  'the installer ⓘ mentions neither git nor Terminal, and says going back means an older build');
 
 // The mark is rendered where the update flow is, and is a real control.
-ok(settingsSrc.includes("infoMark('settings-update-recovery-info'"),
-  'the recovery text is rendered through infoMark (a focusable button + a hidden panel)');
+ok(/explainerMark\('settings-update-recovery-info',\s*installerMode \? 'settings\.update-recovery-installer' : 'settings\.update-recovery'\)/.test(settingsSrc),
+  'the recovery ⓘ is an explainerMark (a focusable button + a hidden panel), keyed by install mode');
 ok(settingsSrc.includes('recovery.btn') && settingsSrc.includes('recovery.panel'),
   'BOTH fragments are emitted — a btn with no panel is an inert control');
-// settings.js hand-rolls its own infoMark; its ids must stay in the settings-*
-// namespace so they cannot collide with shared/text.js's derived tx-vh-info-*
-// ids (the v3.24.0 duplicate-id defect, where getElementById returned the
-// FIRST match and one panel became unreachable by anyone).
-ok(/infoMark\('settings-/.test(settingsSrc) && !/infoMark\('tx-vh-info-/.test(settingsSrc),
-  'every hand-rolled info panel id stays in the settings-* namespace');
+// Every ⓘ id in settings.js stays in the settings-* namespace so it cannot
+// collide with shared/text.js's derived tx-vh-info-* ids (the v3.24.0
+// duplicate-id defect, where getElementById returned the FIRST match and one
+// panel became unreachable by anyone).
+ok(/explainerMark\('settings-/.test(settingsSrc) && !/explainerMark\('tx-vh-info-/.test(settingsSrc),
+  'every info panel id stays in the settings-* namespace');
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§7  Isolation held');

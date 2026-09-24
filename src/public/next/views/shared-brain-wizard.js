@@ -140,7 +140,7 @@ import { createLoadingGate, loaderHtml } from '../shared/loading-gate.js';
 // The ⓘ mark (v3.58.0). One affordance app-wide: shared/text.js owns the
 // markup AND the single delegated toggle listener, which it installs on
 // import, so a panel rendered here behaves exactly as one in Settings.
-import { renderInfoMark } from '../shared/text.js';
+import { explainerMark } from '../shared/explainer.js';
 // The identity dot (v3.65.1, design rule 5): one domain, one colour,
 // everywhere it is named — step 4's domain list names domains, so it carries
 // them. Imported, never re-implemented; shared/sidebar.js is the kit's.
@@ -1054,11 +1054,7 @@ function panelStep2() {
 }
 
 function panelAdminStep1() {
-  const repoWhy = renderInfoMark('sbw-admin-repo-info', 'What a repository and a collaborator are',
-    'A <strong>repository</strong> is a folder GitHub stores for you, with a history of every change. ' +
-    'Any name works; you’ll paste its full name below. Adding someone as a <strong>collaborator</strong> ' +
-    'is how GitHub grants them the right to write to it. The <strong>brain name</strong> is a friendly ' +
-    'label every member sees — for example “Spring 2026 ML Cohort” or “PhD Reading Group”.', { html: true });
+  const repoWhy = explainerMark('sbw-admin-repo-info', 'shared.wizard-repo');
   return (
     '<div id="sbw-panel-admin-step-1" class="sbw-panel sbw-hidden">' +
       '<h3>Name your Shared Brain and its repository</h3>' +
@@ -1164,10 +1160,7 @@ function panelStep3() {
   // Rule 3 (v3.65.3): the gloss moves into the ⓘ; the visible line is the
   // instruction. "The admin never sees it" is gone from both — in create mode
   // the reader IS the admin, and the sentence read as nonsense there.
-  const tokenWhy = renderInfoMark('sbw-pat-info', 'What this token is',
-    'A <strong>token</strong> is a password-like string GitHub gives you so The Curator can read and write the cohort’s repository on your behalf. ' +
-    'This one is <strong>yours</strong> — it identifies your contributions, and nobody else in the cohort ever sees it. ' +
-    'Checking it also proves the repository exists and that you can write to it.', { html: true });
+  const tokenWhy = explainerMark('sbw-pat-info', 'shared.wizard-token');
   return (
     '<div id="sbw-panel-step-3" class="sbw-panel sbw-hidden">' +
       '<h3>Create your GitHub access token</h3>' +
@@ -1213,13 +1206,15 @@ function panelStep3() {
   );
 }
 
+// What is irreversible about name attribution, said where the choice is made.
+const ATTRIBUTION_FIXED_NOTE = 'Fixed when you join: changing it means leaving and joining again. ' +
+  'It applies only to future pushes and cannot remove a name already published.';
+
 function panelStep4() {
-  // Rule 3 (v3.65.3): 58 words of mechanism moved into the ⓘ.
-  const attrWhy = renderInfoMark('sbw-attribution-info', 'What name attribution changes',
-    'Off by default. Wiki pages always credit a short UUID either way; this controls only whether your name is ' +
-    'stored in the contribution records every collaborator on the repo can read. It is set here, when you join — ' +
-    'changing it later means disconnecting and re-joining. It applies only to future pushes and cannot remove a ' +
-    'name already published.');
+  // v3.71.1: the ⓘ is the `shared.wizard-attribution` explainer. What is
+  // IRREVERSIBLE about this choice is not in it — it is the visible hint
+  // under the checkbox (v3.16.1: irreversibility never folds).
+  const attrWhy = explainerMark('sbw-attribution-info', 'shared.wizard-attribution');
   return (
     '<div id="sbw-panel-step-4" class="sbw-panel sbw-hidden">' +
       '<h3>What to contribute</h3>' +
@@ -1237,7 +1232,7 @@ function panelStep4() {
       '</div>' +
       '<div class="sbw-field">' +
         '<label class="sbw-checkbox-label"><input type="checkbox" class="cur-check" id="sbw-attribute-name"><span>Show my name in my contribution records (default: anonymous UUID)</span></label>' +
-        '<span class="sbw-help">Fixed when you join. ' + attrWhy.btn + '</span>' + attrWhy.panel +
+        '<span class="sbw-help">' + escapeHtml(ATTRIBUTION_FIXED_NOTE) + ' ' + attrWhy.btn + '</span>' + attrWhy.panel +
       '</div>' +
       '<div id="sbw-step4-status" class="sbw-status sbw-hidden" aria-live="polite"></div>' +
       '<div class="sbw-actions">' +

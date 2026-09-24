@@ -66,6 +66,10 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
+// v3.71.1: settings.js's local `infoMark` + `TX_INFO_GLYPH` are DELETED. Every ⓘ
+// there is `explainerMark(id, key)` from shared/explainer.js — injected here as
+// the REAL kit (import-free of app.js, so it runs headless), never a stub.
+import { explainerHtml, explainerMark } from '../src/public/next/shared/explainer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -193,7 +197,7 @@ function escapeHtmlStub(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-const CONSTS = ['PROVIDER_ROWS', 'TX_INFO_GLYPH', 'MODEL_LANES', 'CHAT_LANE_COLLAPSE_AT',
+const CONSTS = ['PROVIDER_ROWS', 'MODEL_LANES', 'CHAT_LANE_COLLAPSE_AT',
   'MODEL_SORTS', 'MODEL_SORT_KEYS', 'MODEL_SORT_UNRANKED_LABEL', 'MODEL_SORT_OPTIONS',
   'MODEL_FILTER_MIN_ROWS', 'MEASUREMENT_CHIPS', 'ACTIVATION_SKIP_REASONS',
   'BUILD_PICK_ERROR_ID', 'QUALIFY_CONFIRM_ID', 'MEASURED_CALL_SECONDS',
@@ -203,7 +207,7 @@ const CONSTS = ['PROVIDER_ROWS', 'TX_INFO_GLYPH', 'MODEL_LANES', 'CHAT_LANE_COLL
   'CATALOGUE_SYNC_PROVIDERS'];
 
 const FNS = [
-  'infoMark', 'providerLabel', 'activeModelLine', 'providerHasSavedKey', 'providerConnected',
+  'providerLabel', 'activeModelLine', 'providerHasSavedKey', 'providerConnected',
   'qualIndex', 'buildModelFacts', 'buildLaneFacts', 'buildModelDisplayName',
   // v3.53.1: the per-model withdrawn verdict and its chip. Registered here
   // because renderModelOption / renderBuildList / renderModelBrowse CALL them;
@@ -253,6 +257,8 @@ const stubState = {
 };
 
 const INJECTED = {
+  explainerMark,
+  explainerHtml,
   escapeHtml: escapeHtmlStub,
   // THE REAL ONE, imported rather than stubbed. `$0.00` is one of the two wrong
   // answers §3 is about, and it is this function that produces it for a 0 — so

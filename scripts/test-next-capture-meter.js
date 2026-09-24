@@ -847,29 +847,43 @@ section('§9 — THE BRIDGE PAGE\'S PRIVACY SENTENCE IS A CONTRACT');
 // The app telling a user a number is a contract — so the sentence is pinned
 // against the module that owns the number, not against a typed copy.
 {
-  // FROM `const info =`, NOT from the function's first line: the comment above
-  // that declaration QUOTES the sentence this release replaced, so a slice that
-  // included it would find "under 200 bytes" in a comment and red for a reason
-  // that is not a defect. Found by writing it the other way first.
+  // v3.71.1: THE SENTENCE LEFT THE APP. The Tool map ⓘ is now the
+  // `settings.mcp-tool-map` explainer (no byte figure, no field list), and the
+  // contract moved to the documentation the explainer's guide card and the
+  // user guide's "The tool map — what your agents used" lead to:
+  // docs/mcp-user-guide.md's "The usage log" paragraphs. So the pin now holds
+  // THAT text to the module's number — and holds the app to stating none.
   const fn = settingsSrc.slice(settingsSrc.indexOf('function renderToolMap()'));
-  const upTo = fn.slice(fn.indexOf('const info ='), fn.indexOf('return settingsBlock'));
+  const toolMapSrc = fn.slice(0, fn.indexOf('\n}\n') + 3)
+    .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  ok(toolMapSrc.includes("'settings.mcp-tool-map'"),
+    'CONTROL: renderToolMap was really located, and its ⓘ is the settings.mcp-tool-map explainer');
+  ok(!/\d+\s*bytes/.test(toolMapSrc),
+    '...and the app itself states no byte figure any more (outside comments) — the number lives in the docs, pinned below');
+  const ugSrc = readFileSync(path.join(ROOT, 'docs/user-guide.md'), 'utf8');
+  const ugTm = ugSrc.slice(ugSrc.indexOf('### The tool map — what your agents used'));
+  ok(ugTm.length > 200 && /\(mcp-user-guide\.md\)/.test(ugTm.slice(0, 1200)),
+    'the user guide\'s tool-map section sends the reader to mcp-user-guide.md for the file\'s details');
+  const mugSrc = readFileSync(path.join(ROOT, 'docs/mcp-user-guide.md'), 'utf8');
+  const a = mugSrc.indexOf('**The usage log.**');
+  const b = mugSrc.indexOf('**Where the run\'s own lines come from.**');
+  const upTo = a >= 0 && b > a ? mugSrc.slice(a, b) : '';
   ok(upTo.length > 200 && upTo.includes('.mcp-usage.jsonl'),
-    'CONTROL: the ⓘ string was really located (the scan is not vacuous)');
+    'CONTROL: the usage-log paragraphs of docs/mcp-user-guide.md were really located (the scan is not vacuous)');
   eq('CONTROL: MAX_LINE_BYTES is the number the module exports', MAX_LINE_BYTES, 300);
   eq('...and its label is derived from it, never typed', MAX_LINE_BYTES_LABEL, '300 bytes');
-  ok(upTo.includes('under ' + MAX_LINE_BYTES + ' bytes'),
-    'the ⓘ quotes the CEILING THE MODULE ENFORCES (' + MAX_LINE_BYTES + ')');
-  ok(!upTo.includes('under 200 bytes'),
+  ok(new RegExp('at\\s+most\\s+\\*\\*' + MAX_LINE_BYTES_LABEL + '\\*\\*').test(upTo),
+    'the docs quote the CEILING THE MODULE ENFORCES (' + MAX_LINE_BYTES + ')');
+  ok(upTo.includes('the same ' + MAX_LINE_BYTES + '-byte\nceiling') || upTo.includes('the same ' + MAX_LINE_BYTES + '-byte ceiling'),
+    '...for the session line too');
+  ok(!upTo.includes('under 200 bytes') && !upTo.includes('at most **200 bytes**'),
     '...and no longer the number that stopped being true in v3.63.0');
-  for (const field of ['the domain and the project it touched', 'a random id for the bridge session',
-    'the harness name the client reported for itself']) {
-    ok(upTo.includes(field), 'the ⓘ names what a line actually carries: "' + field + '"');
+  for (const field of ['the domain it touched', '**session\nid**', '**project** name', '`client`']) {
+    ok(upTo.includes(field), 'the docs name what a line actually carries: "' + field.replace('\n', ' ') + '"');
   }
-  for (const claim of ['Never an argument', 'never a result', 'never a file path',
-    'never an error message']) {
-    ok(upTo.includes(claim), '...and keeps every promise it already made: "' + claim + '"');
-  }
-  ok(upTo.includes('via') && upTo.includes('self-test'),
+  ok(/never records your prompt, the\s+tool's arguments, or what came back/.test(upTo),
+    '...and keep every promise already made: never the prompt, the arguments, or the result');
+  ok(upTo.includes('"via": "self-test"') && /a self-test is not a session start/.test(upTo),
     '...including the self-test field, and that a run is not a session start');
   // WHY A LITERAL AND NOT AN IMPORT, checked rather than asserted in prose:
   // src/brain/mcp-usage.js cannot be loaded in a browser.

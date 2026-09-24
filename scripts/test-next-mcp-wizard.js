@@ -41,6 +41,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { docsUrl, docsLinkHtml } from '../src/public/next/shared/docs-links.js';
+import { explainerHtml, explainerMark } from '../src/public/next/shared/explainer.js';
 // Block ③'s real collaborators — see the deps table in §11(b).
 import { formatAge, freshnessTier } from '../src/public/next/shared/age.js';
 import { renderReadout } from '../src/public/next/shared/text.js';
@@ -91,7 +92,9 @@ function assertStrippedSane(stripped, label, mustContain) {
 const wizCode = assertStrippedSane(stripComments(wiz), 'mcp-wizard.js',
   ["async function getJson(url, init)", "export function openMcpWizard(opts)", "role=\"dialog\""]);
 const settingsCode = assertStrippedSane(stripComments(settings), 'settings.js',
-  ["function wireMcpListeners()", "id=\"btn-mcp-wizard\"", "twenty-four tools"]);
+  // v3.71.1: the "twenty-four tools" prose left settings.js (its MCP ⓘ is an
+  // explainer key now), so the third canary is the key that replaced it.
+  ["function wireMcpListeners()", "id=\"btn-mcp-wizard\"", "mcp: 'settings.mcp'"]);
 // The second canary was `rgba(5,5,10,0.68)` — the scrim darkness, inlined
 // here because `--scrim` was an undefined name baselined at exactly one
 // reference. All five /next overlays now read `--modal-scrim`, a real
@@ -780,9 +783,17 @@ section('8. Tool counts pinned against the REAL mcp/tools/index.js (defect 7)');
   // earlier edit changed the label to "twenty" while the regex still tested
   // "eighteen", so the assertion reported a number it was not checking — a
   // guard that lies about what it verified is worse than no guard.
-  for (const phrase of ['twenty-four tools', 'seventeen that read', 'seven that write']) {
-    ok(new RegExp(phrase, 'i').test(settingsCode), `settings.js says "${phrase}"`);
-  }
+  // v3.71.1: RE-POINTED. The MCP section's ⓘ is now the `settings.mcp`
+  // explainer, which states NO tool count — the standing rule is "count tools
+  // from mcp/tools/index.js, never from prose", and a count spelled out in
+  // words is exactly the prose that went stale twice. So the guard flips from
+  // "the words match the table" to "no count is spelled out at all".
+  const mcpXp = explainerHtml('settings.mcp');
+  const COUNT_WORDS = /\b(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty(?:-\w+)?|\d+)\s+(?:tools|that read|that write)\b/i;
+  ok(!COUNT_WORDS.test(settingsCode), 'settings.js spells out no tool count in prose');
+  ok(!COUNT_WORDS.test(mcpXp), '…and neither does the MCP section\u2019s explainer');
+  ok(COUNT_WORDS.test('Exposes twenty-four tools: seventeen that read'),
+    'CONTROL: the count detector really catches the old sentence');
   ok(!/twenty-two tools/i.test(settingsCode), 'the old, wrong "twenty-two tools" claim is gone');
 
   // REMOVED in v3.41.0, on this block's own instruction. Three assertions
@@ -793,8 +804,9 @@ section('8. Tool counts pinned against the REAL mcp/tools/index.js (defect 7)');
   // file is deleted, so the two stale copies of the count are gone with it
   // and settings.js below is the only place left that states it.
   ok(!/ten read and seven write/i.test(settingsCode), 'the old, wrong read/write split is gone');
-  ok(/compiling a conversation into pages|fixing health issues/i.test(settingsCode),
-    'settings.js now makes the WRITE capability discoverable, not just countable');
+  // v3.71.1: the write capability is stated by the section's explainer.
+  ok(/read and write your wiki/i.test(explainerHtml('settings.mcp')),
+    'the MCP section\u2019s ⓘ makes the WRITE capability discoverable, not just countable');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -1109,7 +1121,10 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
     // a stub would be asserting the stub. They pull in `escapeHtml` and
     // `TX_INFO_GLYPH`, which are injected alongside.
     const blockSrc = extractFunction(settingsCode, 'settingsBlock');
-    const infoSrc = extractFunction(settingsCode, 'infoMark');
+    // v3.71.1: the local infoMark is gone; the REAL explainer kit is
+    // injected as `explainerMark`. MCP_DOMAIN_CONSEQUENCE (the default-domain
+    // footnote renderMcp prints visibly) is lifted from the source.
+    const infoSrc = (settingsCode.match(/const MCP_DOMAIN_CONSEQUENCE =[\s\S]*?;\n/) || [''])[0];
     // Block ③'s chain, lifted REAL for the same reason: `renderMcp` calls
     // `renderToolMap` unconditionally, and a stub of it would let this
     // section go green against a section that had stopped rendering.
@@ -1128,7 +1143,7 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
       // the note has its own suite (scripts/test-mcp-stale-bridge.js §7).
       deriveStaleBridgeNote: () => null,
       escapeHtml: (x) => String(x), icon: () => '',
-      TX_INFO_GLYPH: '<svg/>',
+      explainerMark,
       docsLinkHtml,
       renderListboxHtml: () => '<LISTBOX/>', pendingListboxes: [],
       MCP_GUIDE_URL: GUIDE_URL, myMountToken: 1, onSaveDefaultDomain: () => {},
@@ -1148,8 +1163,21 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
     ok(/Works with any MCP client/.test(mcpHtml),
       'the MCP section carries the same claim — a user who never opens the wizard still reads it');
     for (const c of CLIENTS) ok(mcpHtml.includes(c), `…and names ${c} there too`);
-    ok(/ChatGPT[^.]*cannot run a local server/.test(mcpHtml), '…and the same honest exclusion');
-    ok(mcpHtml.includes('href="' + GUIDE_URL + '"'), '…linking to the same guide as the wizard');
+    ok(/ChatGPT[^.]*cannot run (?:a )?local server/.test(mcpHtml), '…and the same honest exclusion');
+    // v3.71.1: RE-POINTED. Block ①'s ⓘ is the `settings.mcp-connect`
+    // explainer, whose guide card opens the user guide's "MCP bridge —
+    // connect a client" (a new docs-links key) rather than the MCP guide the
+    // wizard links. Still no hand-typed URL: assert the card resolves through
+    // docsUrl, and that the section it lands on links on to the wizard's guide.
+    ok(mcpHtml.includes('href="' + docsUrl('settings.mcp-connect') + '"'),
+      '…linking, through the checkable docs-links table, to the user guide\u2019s connect-a-client section');
+    {
+      const ugAll = readFileSync(path.join(ROOT, 'docs/user-guide.md'), 'utf8');
+      const at = ugAll.indexOf('\n### MCP bridge — connect a client\n');
+      const sec = at >= 0 ? ugAll.slice(at, ugAll.indexOf('\n### ', at + 5)) : '';
+      ok(/\]\(mcp-user-guide\.md\)/.test(sec),
+        '…which links on to the same guide as the wizard (' + GUIDE_URL.split('/').pop() + ')');
+    }
     // RE-POINTED (v3.54.0). The sentence used to be a `.settings-hint-text`
     // paragraph rendered loose in the section body; it is now the block's own
     // LEDE, which is `.settings-job-lede .settings-block-lede` — the same
@@ -1162,6 +1190,20 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
     // FOLD, not a deletion: the panel is in the markup and starts hidden.
     ok(/class="tx-vh-panel"[^>]*hidden/.test(mcpHtml),
       'the long version is a closed fold in the shipped markup, reachable without another request');
+    // v3.71.1: THE DEFAULT-DOMAIN CONSEQUENCE IS ON THE PAGE, not in the ⓘ —
+    // a write aimed at the wrong domain is a real, quiet mistake. It sits
+    // directly under the listbox as the block's footnote.
+    {
+      const cons = new Function((settingsCode.match(/const MCP_DOMAIN_CONSEQUENCE =[\s\S]*?;\n/) || [''])[0]
+        + 'return typeof MCP_DOMAIN_CONSEQUENCE === "string" ? MCP_DOMAIN_CONSEQUENCE : "";')();
+      ok(cons.length > 40 && /wrong domain/.test(cons), 'CONTROL: MCP_DOMAIN_CONSEQUENCE was lifted from settings.js');
+      ok(mcpHtml.includes('<LISTBOX/><p class="settings-block-footnote">' + cons + '</p>'),
+        'the default-domain consequence renders VISIBLY, directly under the listbox');
+      // Byte-adjacent to the listbox, which is itself block-body content,
+      // so the footnote cannot be sitting inside the ⓘ panel.
+      ok(mcpHtml.indexOf('<LISTBOX/>') > mcpHtml.indexOf('id="settings-block-info-mcp-domain"'),
+        '…and the listbox it follows comes AFTER the block\u2019s ⓘ panel, i.e. in the body');
+    }
   }
 
   // (c) ONE URL, TWO SURFACES. Two hand-typed links is how one of them rots.

@@ -65,7 +65,9 @@ const { renderOverview } = await import('../src/public/next/shared/overview.js')
 // v3.71.0: G3/G4's ⓘ (`PAGES_INFO`, `HEALTH_INFO`) are module consts computed
 // from the REAL kit, the same reason docsLinkHtml/renderOverview above are
 // the real modules and not stubs — a mistyped explainer key THROWS.
-const { explainerMark } = await import('../src/public/next/shared/explainer.js');
+// v3.71.1: INGEST_INFO, the Shared Brain ⓘ and the OVERVIEW legend are all
+// explainers now, so the whole kit is injected — real, never stubbed.
+const { explainerMark, explainerHtml, explainerLabel } = await import('../src/public/next/shared/explainer.js');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -216,7 +218,7 @@ const document = { getElementById: () => null, querySelectorAll: () => [] };
 let main;
 try {
   main = new Function(
-    'docsLinkHtml', 'renderOverview', 'explainerMark',
+    'docsLinkHtml', 'renderOverview', 'explainerMark', 'explainerHtml', 'explainerLabel',
     // v3.62.0 (P1-14). `renderStatCards` now builds the OVERVIEW block's ⓘ,
     // so the legend text and the shared docs table are collaborators of it.
     // Both are lifted rather than stubbed: `docsUrl()` THROWS on a key that is
@@ -244,15 +246,13 @@ try {
     extractFunction(SRC, 'browseMoreHtml') + '\n' +
     extractFunction(SRC, 'browseNoteHtml') + '\n' +
     extractFunction(SRC, 'renderBrowsePanel') + '\n' +
-    extractFunction(SRC, 'threeLayersInfoHtml') + '\n' +
-    extractFunction(SRC, 'infoMark') + '\n' +
     extractFunction(SRC, 'renderStatCards') + '\n' +
     extractFunction(SRC, 'renderMain') + '\n' +
     `return { renderMain, renderBrowsePanel, BROWSE_EYEBROW, browseMatches, browseWindow,
        memoryRowHtml, browseRowHtml, browseMoreHtml, browseNoteHtml, projectCount,
        __setState: (s) => { state = s; }, __calls: () => calls,
        __reset: () => { calls.setMain.length = 0; } };`
-  )(docsLinkHtml, renderOverview, explainerMark);
+  )(docsLinkHtml, renderOverview, explainerMark, explainerHtml, explainerLabel);
 } catch (err) {
   console.log('FATAL: could not build the renderMain sandbox from domains.js -- ' + err.message);
   process.exit(1);

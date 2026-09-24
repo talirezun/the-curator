@@ -111,7 +111,6 @@ import {
 // a hardcoded three-file list, so a copy pasted into a fourth view passed
 // unnoticed. It is a tree walk now, and mutation-proven.)
 import { goToChatScoped } from '../shared/chat-scope.js';
-import { docsLinkHtml } from '../shared/docs-links.js';
 // ── THE OVERVIEW CARD (v3.64.2) ────────────────────────────────────────────
 // This page's OVERVIEW is the app's reference design for "the readings ABOUT
 // a screen", and the Project-context view now renders the SAME component —
@@ -222,7 +221,7 @@ import { renderMonitor } from '../shared/monitor.js';
 // v3.71.0: the shared explainer kit — one shape for every ⓘ (MODEL.md). D1/D2
 // rewrite the list and detail headers as the view's framing top ⓘ; G3 and G4
 // are the two gap ⓘ this release adds (Pages, Wiki health).
-import { explainerHtml, explainerMark } from '../shared/explainer.js';
+import { explainerHtml, explainerMark, explainerLabel } from '../shared/explainer.js';
 // ── THE OWNERSHIP CHOOSER, SHARED WITH THE AGENT-MEMORY VIEW (v3.61.0) ────
 //
 // "Where do this project's canonical documents come from" is asked here, on
@@ -407,7 +406,11 @@ const MIRROR_INFO = explainerHtml('domains.page-mirror');
 // brace-matching and executed by four offline suites: a long string in there
 // is a string they all have to carry, and this one is quoted by
 // scripts/test-next-domains-text.js.
-const INGEST_INFO = 'Drop a PDF, markdown or text file. The model turns it into entities, concepts and a summary, and compounds them into the pages you already have.';
+//
+// v3.71.1: the ⓘ is the `ingest.page` explainer — the SAME entry the
+// standalone Ingest view's header carries, so ① and that view explain the one
+// thing with one text. `{btn, panel}`, composed once.
+const INGEST_INFO = explainerMark('dm-ingest-info', 'ingest.page');
 const MIRROR_WARNING = 'Fix issues in your personal contributing domain instead; changes made here are overwritten on the next Pull.';
 
 // ── Module state ───────────────────────────────────────────────────────────
@@ -3499,18 +3502,9 @@ function renderMain(token) {
   // routing it through the header's eyebrow slot would render it in the sans
   // face. It is a location, not prose, so it is not what this change is about.
   //
-  // ④'s ⓘ (v3.65.3) — ONE paragraph, the same in every state; the
-  // explanations its states used to carry inline moved here (rule 3).
-  // WRITTEN INLINE, not as a module const, and composed once: three suites
-  // lift renderMain by brace-matching and execute it against a fixed stub
-  // list, so a new module-level name here is a suite that CRASHES — infoMark
-  // is already on every one of those lists.
-  const sharedInfo = infoMark('dm-shared-info', 'About Shared Brain',
-    'A Shared Brain is a wiki a cohort writes together. A domain takes part in one of two ways: it contributes — ' +
-    'Push summarises the pages you changed with your AI provider and sends them to the cohort’s GitHub repository — ' +
-    'or it is a mirror, the read-only copy of the merged wiki that Pull writes onto this computer. Which domains ' +
-    'contribute is chosen when you join; to change it, leave and join again. Turning the feature on, joining and ' +
-    'setting one up happen in the Shared Brain view.');
+  // ④'s ⓘ — the `domains.shared-brain` explainer (v3.71.1), the same in
+  // every state; the states themselves are said on the page, unfolded.
+  const sharedInfo = explainerMark('dm-shared-info', 'domains.shared-brain');
   const html =
     // A SUCCESSFUL switch lands here, not on the empty card — the whole point
     // is that the list is no longer empty. If the confirmation only rendered
@@ -3639,13 +3633,13 @@ function renderMain(token) {
             '<span class="dm-section-num" aria-hidden="true">1</span>' +
             '<div class="cur-group-title dm-section-eyebrow" id="dm-sources-title" tabindex="-1">Ingest</div>' +
           '</div>' +
-          infoMark('dm-ingest-info', 'About ingest', INGEST_INFO).btn +
+          INGEST_INFO.btn +
           '<span class="dm-fold-meta dm-section-meta">' +
             (domain.lastIngestDate ? 'last ingest ' + escapeHtml(relTime(domain.lastIngestDate))
                                    : 'nothing ingested yet') +
           '</span>' +
         '</div>' +
-        infoMark('dm-ingest-info', 'About ingest', INGEST_INFO).panel +
+        INGEST_INFO.panel +
       '</div>' +
       '<section class="dm-fold dm-sources" id="dm-sources-fold" aria-labelledby="dm-sources-title">' +
         '<div class="dm-fold-body">' +
@@ -3749,120 +3743,16 @@ function renderMain(token) {
 }
 
 
-// ── An ⓘ mark and its fold, for a section that is not a view header ───────
+// ── WHAT THE TWO COPY CONTROLS ACTUALLY DO (v3.71.1) ─────────────────────
 //
-// The domain header already has one (renderViewHeader's `info`), and the
-// maintainer's report of the Projects section was precisely that its
-// explanation should be "under an ⓘ info icon like the domain header's". This
-// is that mark, and it is the SHARED COMPONENT'S CONTRACT rather than a second
-// pattern: shared/text.js installs ONE delegated document listener at module
-// scope keyed on `[data-tx-info]` + getElementById, with no coupling to
-// renderViewHeader at all. Emitting the same two elements inherits, for free
-// and with nothing to bind per render: toggle on click, Escape closes AND
-// returns focus to the button, outside-click dismisses, click-inside does not,
-// one panel open at a time. `.tx-vh-info` and `.tx-vh-panel` are likewise
-// unscoped in text.css, so this view's stylesheet gains no rule for them.
-// views/settings.js reached the same conclusion and carries the same helper;
-// the glyph here is pinned byte-identical to text.js's INFO_GLYPH by this
-// view's suite, so the copies cannot drift while they are apart.
-//
-// WHAT MUST NEVER GO IN `info`: warnings, costs, spend figures,
-// irreversibility. v3.16.1's rule — a warning behind a click is not a warning.
-// What goes here is neutral explanation of a visible label, which is exactly
-// what the Projects paragraph is.
-//
-// `opts.html === true` treats `info` as a TRUSTED fragment instead of escaping
-// it — the same option, spelled the same way, that shared/text.js's
-// `renderInfoMark` and `renderViewHeader` already carry, and added here for the
-// same reason they have it: the Projects fold is two labelled paragraphs, and
-// a labelled paragraph needs a `<strong>` and a `<p>`. The test is `=== true`,
-// never truthy, so a stray string cannot switch escaping off — and the licence
-// is for markup written IN THIS FILE. Nothing a user, a provider or the store
-// typed may be interpolated into a fragment passed here without going through
-// escapeHtml first. NO CONTROL may go inside the panel: the delegated listener
-// toggles on the BUTTON, so anything focusable in the fold is unreachable
-// until the fold is open.
-function infoMark(id, label, info, opts) {
-  const glyph =
-    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-    'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-    '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>';
-  const text = typeof info === 'string' ? info.trim() : '';
-  if (!id || !text) return { btn: '', panel: '' };
-  const name = label || 'More information';
-  const asHtml = !!opts && opts.html === true;
-  return {
-    btn:
-      '<button type="button" class="tx-vh-info" id="' + escapeHtml(id) + '-btn"' +
-        ' data-tx-info="' + escapeHtml(id) + '"' +
-        ' aria-expanded="false" aria-controls="' + escapeHtml(id) + '"' +
-        ' aria-label="' + escapeHtml(name) + '" title="' + escapeHtml(name) + '">' +
-        glyph +
-      '</button>',
-    panel:
-      '<div class="tx-vh-panel" id="' + escapeHtml(id) + '" role="group"' +
-        ' aria-label="' + escapeHtml(name) + '" hidden>' +
-        (asHtml ? text : escapeHtml(text)) + '</div>',
-  };
-}
-
-// ── WHAT THE TWO COPY CONTROLS ACTUALLY DO, IN THE APP ────────────────────
-//
-// Three strings, one subject, and they are module constants so the suite can
-// lift them and cross-check the FILE NAMES they quote against the two places
-// that define them — `shared/agent-instructions.js` (whose COPY_SUCCESS_BANNER
-// is the post-copy confirmation the user sees seconds later) and
-// `docs/working-state.md` (§"Where it goes" and §"The `.curator-project`
-// marker"). A doc-links-style check: rename a file in the block or the docs
-// and `npm test` goes red on the same commit, rather than the app quietly
-// telling people to paste into a file nothing reads.
-//
-// WHAT EACH ONE IS, verified against those sources rather than from memory:
-//
-//   Copy marker line        -> the literal text `<domain>/<project>`, saved as
-//                              a file named `.curator-project` at a repo root.
-//                              NO server code and NO MCP tool reads that file;
-//                              the continuity SKILL does, as step two of its
-//                              three-step ritual (conversation wins, then the
-//                              marker, then ask). docs/working-state.md calls
-//                              it "a convention, not a mechanism".
-//   Copy agent instructions -> composeAgentInstructions({domain, project}) —
-//                              the heading `## Working state` plus the frozen
-//                              measured paragraph — pasted into the file the
-//                              harness auto-loads: CLAUDE.md (Claude Code),
-//                              AGENTS.md (Codex, opencode), GEMINI.md (Gemini
-//                              CLI), or Cursor rules. It exists because a
-//                              harness can decline to activate the skill at
-//                              all: 0/4 headless runs saved on Claude Code
-//                              with the skill alone, 3/4 with the block.
-//
-// The wording is deliberately the SAME in the fold and in the post-copy
-// banner, because they are read seconds apart and a user comparing them must
-// not have to decide which one is right.
-const MARKER_INFO_TEXT =
-  'Copies this project’s marker line — the text domain/project. Save it as a file called ' +
-  '.curator-project at the root of that project’s folder, and an agent that starts there — most ' +
-  'often a coding agent — knows which project to resume instead of asking you.';
-
-const AGENT_INFO_TEXT =
-  'Copies a short paragraph of instructions naming this project. Paste it into CLAUDE.md, ' +
-  'AGENTS.md, GEMINI.md or your Cursor rules — whichever file your agent loads every ' +
-  'session — and it will read your Memory before it starts and save a Handoff before ' +
-  'it stops.';
-
-// The section fold. TWO LABELLED PARAGRAPHS, and the only fragment in this
-// file passed to infoMark with `{html: true}`: every character of it is
-// written here, so nothing user-, provider- or store-supplied is interpolated.
-const PROJECTS_INFO_HTML =
-  '<p><strong>What a project is.</strong> A domain is one compounding wiki; a project is one ' +
-  'thing you build inside it. Each project has a standing brief you write, and Handoffs ' +
-  'your agents save handoffs into, so a new session resumes where the last one stopped. Both ' +
-  'are plain markdown under this domain’s state folder and travel with Personal Sync.</p>' +
-  '<p><strong>The two copy buttons.</strong> Copy marker line copies domain/project; save it ' +
-  'as a file named .curator-project at the root of that project’s repository, and an agent ' +
-  'there knows which project to resume. Copy agent instructions copies a short paragraph ' +
-  'instead — paste it into CLAUDE.md, AGENTS.md, GEMINI.md or your Cursor rules, and agents ' +
-  'read and save its Memory without being asked.</p>';
+// Each copy control carries its own ⓘ, and both now render the shared
+// explainers `domains.marker-line` and `domains.agent-instructions`
+// (shared/explainers.js). The FILE NAMES an agent loads (CLAUDE.md,
+// AGENTS.md, GEMINI.md, Cursor rules) are no longer quoted here: they live in
+// the user guide's "Making sure your agent actually does it", and the
+// post-copy banner (shared/agent-instructions.js COPY_SUCCESS_BANNER) still
+// names them at the moment they are needed. The section ⓘ above is
+// `domains.projects`, which no longer repeats the two buttons' text.
 
 // ── The Projects sub-section ───────────────────────────────────────────────
 
@@ -3870,7 +3760,7 @@ const PROJECTS_INFO_HTML =
  * One project's row in the inset grouped list.
  *
  * THE PILL IS A PLAIN WORD, and it says the FACT rather than a state name:
- * "Standing brief" / "No brief yet", never `configured` / `not set`. The
+ * "Brief written" / "No brief yet", never `configured` / `not set`. The
  * v3.45.0 Providers pass is the precedent and the reason — a person reading
  * this row is asking "is there a brief?", and a status vocabulary makes them
  * translate.
@@ -3894,12 +3784,10 @@ const PROJECTS_INFO_HTML =
  */
 function renderProjectRow(row, canWrite, index) {
   const name = String(row.project == null ? '' : row.project);
-  const markerInfo = infoMark(projInfoId('marker', name, index),
-    'About Copy marker line', MARKER_INFO_TEXT);
-  const agentInfo = infoMark(projInfoId('agent', name, index),
-    'About Copy agent instructions', AGENT_INFO_TEXT);
+  const markerInfo = explainerMark(projInfoId('marker', name, index), 'domains.marker-line');
+  const agentInfo = explainerMark(projInfoId('agent', name, index), 'domains.agent-instructions');
   const brief = row.hasBrief
-    ? renderBadge({ label: 'Standing brief', tone: 'success' })
+    ? renderBadge({ label: 'Brief written', tone: 'success' })
     : renderBadge({ label: 'No brief yet', tone: 'neutral' });
   // relTime takes the ISO string and answers "just now" / "4 hours ago".
   // `lastWriteAt` is the FILE's clock, which git rewrites on checkout, so a
@@ -4116,13 +4004,9 @@ function renderProjectsPanel(readonly) {
         '</button>'
       : '');
 
-  // TWO LABELLED PARAGRAPHS — what a project is, and what the two copy
-  // buttons are for. The text is a module const (PROJECTS_INFO_HTML) rather
-  // than inline, which reverses the earlier note here, and for a reason the
-  // earlier note could not have: the FILE NAMES in the second paragraph are
-  // cross-checked against shared/agent-instructions.js and docs/, so the
-  // suite has to be able to lift the string on its own.
-  const info = infoMark('dm-proj-info', 'About projects', PROJECTS_INFO_HTML, { html: true });
+  // The section ⓘ — the `domains.projects` explainer (v3.71.1). The two copy
+  // buttons each carry their own, so this one no longer repeats them.
+  const info = explainerMark('dm-proj-info', 'domains.projects');
 
   return (
     // A SECTION, and a `.dm-section`, like the three around it. The reported
@@ -4205,7 +4089,7 @@ function renderProjectLifecycleCard() {
     return (
       '<div class="dm-lc-card dm-lc-danger">' +
         '<div class="dm-lc-title">Delete project “' + escapeHtml(f.project) + '”?</div>' +
-        '<div class="dm-lc-body">This removes its standing brief, every Handoff under it, and ' +
+        '<div class="dm-lc-body">This removes the brief, every Handoff under it, and ' +
           'every journal line — the notes your agents left for each other. Those are often the only record ' +
           'of decisions nobody wrote down anywhere else. The wiki in this domain is NOT touched. ' +
           escapeHtml(GIT_UNDO_WARN) +
@@ -4257,8 +4141,7 @@ function renderProjectLifecycleCard() {
   // "Saving replaces the whole document" is deliberately NOT moved: it
   // qualifies the control it sits above, which is the one place it earns its
   // line (the same refusal `renderBriefEditor` records).
-  const cardInfo = infoMark('dm-proj-new-info', 'About creating a project',
-    CREATE_INFO_HTML, { html: true });
+  const cardInfo = explainerMark('dm-proj-new-info', 'domains.new-project');
   return (
     '<div class="dm-lc-card">' +
       '<div class="dm-lc-title dm-proj-new-head">' +
@@ -4269,8 +4152,11 @@ function renderProjectLifecycleCard() {
       '<label class="dm-lc-label" for="dm-proj-name">Name</label>' +
       '<input class="dm-lc-input mono" id="dm-proj-name" type="text" placeholder="e.g. lumina" value="' +
         escapeHtml(f.name) + '"' + (busy ? ' disabled' : '') + ' />' +
-      '<label class="dm-lc-label" for="dm-proj-brief">Standing brief <span class="dm-lc-optional">' +
-        '(optional — you can write it later)</span></label>' +
+      // "Saving replaces the whole document" is ON THE FORM, not in the ⓘ: it
+      // qualifies the control it sits above (v3.71.1 — it had drifted into
+      // the old create-card ⓘ prose only).
+      '<label class="dm-lc-label" for="dm-proj-brief">The brief <span class="dm-lc-optional">' +
+        '(optional — you can write it later; saving replaces the whole document)</span></label>' +
       '<textarea class="dm-lc-textarea mono" id="dm-proj-brief" rows="14"' + (busy ? ' disabled' : '') + '>' +
         escapeHtml(f.brief || '') + '</textarea>' +
       // ── WHERE THE PROJECT'S CANONICAL DOCUMENTS COME FROM (v3.61.0) ─────
@@ -4335,10 +4221,8 @@ function renderProjectLifecycleCard() {
  */
 function renderProjectCreated(f) {
   const name = String(f.project == null ? '' : f.project);
-  const markerInfo = infoMark('dm-proj-done-marker-info',
-    'About Copy marker line', MARKER_INFO_TEXT);
-  const agentInfo = infoMark('dm-proj-done-agent-info',
-    'About Copy agent instructions', AGENT_INFO_TEXT);
+  const markerInfo = explainerMark('dm-proj-done-marker-info', 'domains.marker-line');
+  const agentInfo = explainerMark('dm-proj-done-agent-info', 'domains.agent-instructions');
   const outcome = renderStatus({
     state: 'success',
     title: 'Created ' + name,
@@ -4382,26 +4266,10 @@ function renderProjectCreated(f) {
   );
 }
 
-// ── WHAT THE CREATE CARD'S ⓘ CARRIES (P2-2) ──────────────────────────────
-//
-// A module constant for the same reason `PROJECTS_INFO_HTML` is one: the suite
-// lifts it and asserts the words a user reads, and a copy typed in a test
-// would assert a copy. Every character is written here, so nothing user-,
-// provider- or store-supplied is interpolated into the `{html: true}`
-// fragment — which is also why the FOLDER PATH is not in it: that would need
-// the domain slug, and a mark whose contents vary is a mark the suite cannot
-// pin. The path is said by the field's own placeholder and by the row that
-// appears afterwards.
-const CREATE_INFO_HTML =
-  '<p><strong>Where it goes.</strong> The name becomes a folder inside this domain’s state ' +
-  'folder, so use lowercase letters, digits, dots, hyphens or underscores. Nothing in the wiki ' +
-  'moves or changes.</p>' +
-  '<p><strong>The standing brief is yours.</strong> Every agent read returns it, and saving ' +
-  'replaces the whole document rather than adding to it — so send the complete text each time. ' +
-  'It is optional here and can be written later from Project context.</p>' +
-  '<p><strong>The documents choice is answered once.</strong> A project is all mirrored from a ' +
-  'folder or all kept here, never a mix, and the store refuses a change afterwards. Decide later ' +
-  'is a real answer: the Documents block on the Project context page asks again.</p>';
+// The create card's ⓘ is the `domains.new-project` explainer (v3.71.1). The
+// old text's third paragraph — "a project is all mirrored or all kept here,
+// never a mix" — has been false since per-document sources (v3.69.0) and is
+// gone with it. "Saving replaces the whole brief" stays VISIBLE, on the form.
 
 /**
  * WHAT WAS WRITTEN, IN ONE SENTENCE — from the SERVER'S answer (P1-10).
@@ -4476,104 +4344,15 @@ function createConsequence(f) {
     + ' from that folder.';
 }
 
-// ── THE THREE-LAYER LEGEND (v3.62.0, P1-14) ──────────────────────
-//
-// ONE PLACE TEACHES THE SET; three places teach the members. The five figures
-// this mark sits beside ARE the model in miniature — four that count the wiki
-// and one that counts PROJECTS — so a reader wondering what KIND of thing each
-// figure counts has the question in front of them here and nowhere else in the
-// app. The Project-context view teaches the three verbs one at a time, in the
-// ⓘ of the step that carries each; a second copy of the legend there would be
-// two hand-maintained descriptions of one thing, which is the rule
-// views/memory.js records for why its own header mark exists at all.
-//
-// AND IT CLOSES A NAMED GAP. v3.58.0's heading-and-ⓘ audit recorded three
-// blocks on this view with nothing to explain themselves — OVERVIEW, PAGES ·
-// THE WIKI and WIKI HEALTH. This is the first of the three, and the one worth
-// having first: the other two describe a list and a report, while this one
-// describes the app's data model.
-//
-// A FUNCTION, NOT A MODULE CONSTANT, and that is deliberate: `docsUrl()`
-// THROWS on a key that is not in the map, so composing this at module scope
-// would turn a mistyped key into a blank shell for every user rather than a
-// broken panel on one screen. Same shape views/memory.js uses for its five.
-//
-// WHAT IS NOT IN IT, and why:
-//   · No diagram. `.tx-vh-panel` is a one-column grid and CSS wraps every
-//     contiguous text run in an anonymous grid item, so an inline SVG becomes
-//     a row of its own and the prose breaks around it. The diagram exists and
-//     belongs in the guide (docs/images/curator-context-model.svg).
-//   · No control. The delegated listener toggles on the BUTTON, so anything
-//     focusable inside the fold is unreachable until the fold is open.
-//   · No warning, no cost, no irreversibility (v3.16.1). This is a
-//     DEFINITION, which is exactly what an ⓘ is for and exactly what a lede
-//     is not (docs/design-system-source.md §3).
-//
-// ONE NOUN PER LAYER, AND NO MISMATCH LEFT (v3.65.1, decision 1). Through
-// v3.65.0 this panel said "canonical documents" for a block called
-// FOUNDATIONS, "working state" for the step now called MEMORY, and "wiki" for
-// the layer the Project-context view's third step calls Knowledge — three
-// places where the app used two words for one thing. The UI vocabulary is now
-// Documents · Memory · Handoffs · Journal · Domain, and this panel uses it;
-// the store's own names (`foundations/`, `scope`, `journal.jsonl`) do NOT
-// move, because they are the public on-disk spec.
-//
-// The three nouns here are now EXACTLY the Project-context view's three step
-// titles — Documents · Memory · Knowledge — which is the point: the panel that
-// explains the three layers and the page that shows them say the same three
-// words. "wiki" standing in for a layer (or for a domain) is what decision 1
-// removes; the word survives in the app where it means the artefact, as in
-// "a domain is one compounding wiki".
-//
-// Every character is written HERE, so nothing user-, provider- or
-// store-supplied is interpolated into the `{html: true}` fragment.
-function threeLayersInfoHtml() {
-  return '<p><strong>One domain, three kinds of context.</strong> The four figures on the left '
-    + 'count this domain\u2019s <strong>knowledge</strong> — the pages ingest and chat write. '
-    + 'It <strong>accumulates</strong>: a new source makes an existing page richer rather than '
-    + 'adding a second copy.</p>'
-    + '<p><strong>Projects</strong> counts the other two. A project\u2019s '
-    + '<strong>memory</strong> — its standing brief, its handoffs, its journal — '
-    + '<strong>supersedes</strong>: every save replaces the last, so a problem you solved cannot '
-    + 'come back. A project\u2019s <strong>documents</strong> — its architecture, '
-    + 'decisions, conventions, roadmap — are <strong>replaced whole and read verbatim</strong>, '
-    + 'so an agent gets the document rather than a paraphrase.</p>'
-    + '<p>All three live in this one folder, sync together, and open to your agents in one '
-    + 'call.</p>'
-    + '<p>' + docsLinkHtml('domains.three-layers', 'Read more in the guide') + '</p>';
-}
+// ── THE THREE-LAYER LEGEND ──────────────────────────────────────────────
+// The OVERVIEW's ⓘ is the `domains.overview` explainer (v3.71.1): its table
+// names Knowledge · Memory · Documents, exactly Context's three step titles,
+// so the panel that explains the three layers and the page that shows them
+// say the same three words.
 
 // ── THE ⓘ BESIDE THE DOCUMENTS FIELD ─────────────────────────────────────
-//
-// A module constant for the same reason PROJECTS_INFO_HTML is one: the suite
-// lifts it and asserts the words a user reads, and a copy typed in the test
-// would assert a copy. Every character of it is written here, so nothing user-,
-// provider- or store-supplied is interpolated into the `{html: true}` fragment.
-//
-// WHAT IT CARRIES, and why none of it is a lede: the DEFINITION of a canonical
-// document, the MECHANISM of a mirror (a byte copy, a recorded commit, a
-// checksum compared on every read), the fact that a plain folder with no
-// version control works as a source — which is the answer to "will this work
-// on my project?" and therefore a mechanism question — and the COST, that the
-// answer is set once and the store refuses a mix afterwards.
-const FOUNDATIONS_INFO_HTML =
-  '<p><strong>What these are.</strong> The documents an agent must not act without — the ' +
-  'architecture, the decisions, the conventions, the roadmap. The Curator keeps them VERBATIM, ' +
-  'not as a summary, so an agent reads what you would read, and they travel with the project ' +
-  'the way the standing brief does.</p>' +
-  '<p><strong>Mirrored from a folder.</strong> A byte-for-byte copy of files in a folder on ' +
-  'this computer, with a checksum compared every time the project is read — which is how the app ' +
-  'can tell you a copy has gone out of date. Any folder works; it does NOT have to be a git ' +
-  'checkout, and when it is one, the commit each file came from is additionally recorded and ' +
-  'shown beside the path.</p>' +
-  '<p><strong>Kept by The Curator.</strong> The documents live only here. Setting this up seeds ' +
-  'four SKELETONS — documents that carry prompts instead of prose, which an agent is told to ' +
-  'answer rather than to believe. You fill one in on the Project context page, or ask an agent to; ' +
-  'and you can start from files on this computer instead, or as well. Nothing is uploaded: a ' +
-  'file you choose is read in this browser and shown to you before it is saved.</p>' +
-  '<p><strong>It is answered once.</strong> A project is all mirrored or all kept here, never a ' +
-  'mix, and the store refuses a change afterwards. Decide later is a real answer — and the ' +
-  'default one — because the Documents block on the Project context page asks again.</p>';
+// The `domains.new-project-documents` explainer (v3.71.1). It lives as long
+// as this chooser does; when the form drops the chooser, the entry goes too.
 
 /**
  * THE DOCUMENTS FIELD ON THE CREATE FORM — a label, a mark, and the chooser.
@@ -4586,8 +4365,7 @@ const FOUNDATIONS_INFO_HTML =
 function foundationsField(f, busy) {
   const choice = f.foundations;
   if (!choice) return '';
-  const info = infoMark('dm-proj-fnd-info', 'About Documents',
-    FOUNDATIONS_INFO_HTML, { html: true });
+  const info = explainerMark('dm-proj-fnd-info', 'domains.new-project-documents');
   return (
     '<div class="dm-lc-label dm-proj-fnd-head">' +
       '<span>Documents</span>' + info.btn +
@@ -4603,15 +4381,9 @@ function foundationsField(f, busy) {
     // `tx-` prefix outright and this stylesheet may not declare a rule on one.
     '<div class="dm-proj-fnd-stack">' +
     renderDescription('Where this project keeps the documents agents read first.') +
-    // IRREVERSIBILITY NEVER FOLDS. The same sentence the Agent-memory chooser
-    // carries above itself, in the same treatment and for the same reason: the
-    // store refuses a mismatch on every later write, and a cost that lives
-    // only inside the mark is a cost the person who did not open the mark was
-    // never told. The MECHANISM stays behind it; this is the one clause that
-    // has to be read before pressing.
-    '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' +
-      escapeHtml('Set once — a project is mirrored or kept here, never both.') +
-      '</span></div>' +
+    // v3.71.1: the "Set once — never both" note is GONE. It was false since
+    // per-document sources (v3.69.0): a project can hold documents written
+    // here, copied, and mirrored from folders and GitHub, in any mix.
     renderFoundationsChooser({ id: 'dm-proj-fnd', choice, busy: !!busy }) +
     '</div>'
   );
@@ -4784,8 +4556,8 @@ function renderStatCards(counts, pages, projects, jumps) {
     // child of the column and is what `bindStatCardListeners` scopes itself
     // to and what `patchMainAroundHosts` replaces whole or not at all.
     sectionClass: 'dm-section dm-overview',
-    infoLabel: 'About these figures',
-    infoText: threeLayersInfoHtml(),
+    infoLabel: explainerLabel('domains.overview'),
+    infoText: explainerHtml('domains.overview'),
     infoHtml: true,
     // Every historical `dm-` token, on the same elements. See the kit's own
     // header for why they are aliases rather than names.
@@ -5621,7 +5393,7 @@ async function openMemoryPageFromBrowse(row) {
       slug: row.path,
       title,
       type: 'memory',
-      typeLabel: row.kind === 'handoff' ? 'handoff' : 'standing brief',
+      typeLabel: row.kind === 'handoff' ? 'handoff' : 'brief',
       // The store's own honesty fields, forwarded rather than dropped — this
       // module's recorded dominant defect class is a consumer silently losing
       // a field the store computed. Each renders as a tag chip.

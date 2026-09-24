@@ -72,7 +72,11 @@ import path from 'node:path';
 // nothing. shared/text.js takes no imports and guards on `typeof document`,
 // so it loads headless. Same rule as `settingsBlock` in
 // scripts/test-next-settings-sections.js: lift the thing that paints.
-import { renderInfoMark } from '../src/public/next/shared/text.js';
+// v3.71.1: the wizard's ⓘ marks are shared/explainer.js's `explainerMark`
+// (which renders through shared/text.js's renderInfoMark). The REAL kit, for
+// the same reason: lift the thing that paints. Import-free and headless.
+import { explainerHtml, explainerMark } from '../src/public/next/shared/explainer.js';
+import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -154,6 +158,8 @@ const ESCAPE = extractFunction(appJs, 'escapeHtml', 'app.js');
 const WIZ_CONSTS = [
   'STEP_TOTAL', 'PAT_EXPIRY_WARNING', 'PAT_REFUSAL', 'INVITE_EDIT_RESET_NOTICE',
   'DIRTY_TEXT_FIELD_IDS', 'DEFAULT_BRANCH', 'PRIMARY_BUTTON_IDS',
+  // v3.71.1: step 4's visible hint (what is irreversible about attribution).
+  'ATTRIBUTION_FIXED_NOTE',
 ];
 const PURE_FNS = [
   'stepCountLabel', 'repoOwnerOf', 'resourceOwnerSentence', 'patCheckRequest',
@@ -768,12 +774,12 @@ const MARKUP_FNS = [
   'panelStep1', 'panelStep2', 'panelStep3', 'panelStep4', 'panelStep5',
   'panelAdminStep1', 'panelAdminStep2', 'wizardShellHtml',
 ];
-const markup = new Function('renderInfoMark',
+const markup = new Function('explainerMark',
   ESCAPE + '\n' + ICON_STUB +
   WIZ_CONSTS.map((n) => extractConst(wizard, n, 'wizard')).join('\n') + '\n' +
   MARKUP_FNS.map((n) => extractFunction(wizard, n, 'wizard')).join('\n\n') + '\n' +
   `return { ${MARKUP_FNS.join(', ')} };`
-)(renderInfoMark);
+)(explainerMark);
 {
   const labels = extractConst(wizard, 'STEP_LABELS', 'wizard');
   ok(!/'PAT'/.test(labels), 'no progress pip is labelled "PAT" any more');
@@ -801,13 +807,19 @@ const markup = new Function('renderInfoMark',
   ok(/pushes stop with no notice/.test(p3), '…and says what expiry does, not merely that it exists');
   ok(/fine-grained/.test(p3), '…and says WHICH kind of token, which is the one GitHub page that works');
   ok(/id="sbw-pat-check"/.test(p3) && /Check token/.test(p3), 'and the field has a Check token button beside it');
-  ok(/A <strong>token<\/strong> is a password-like string/.test(p3),
-    'the word "token" is glossed at first use, in one sentence');
+  // v3.71.1: the gloss is the `shared.wizard-token` explainer, in the ⓘ at
+  // first use — asserted as THAT panel, then on what it says.
+  ok(p3.includes(explainerMark('sbw-pat-info', 'shared.wizard-token').panel),
+    'the word "token" is glossed at first use — the shared.wizard-token explainer is in the step');
+  ok(/password-like/.test(explainerHtml('shared.wizard-token')),
+    '…and that explainer says what a token is, in one sentence');
 }
 {
   const p1 = markup.panelStep1(), p2 = markup.panelStep2(), a1 = markup.panelAdminStep1();
-  ok(/<strong>private repository<\/strong>/.test(a1) && /folder GitHub stores for you/.test(a1),
-    '"repository" is glossed where an admin first meets it');
+  // v3.71.1: the glosses are the `shared.wizard-repo` explainer.
+  const repoXp = explainerHtml('shared.wizard-repo');
+  ok(/<strong>private repository<\/strong>/.test(a1) && /folder GitHub keeps for you/.test(repoXp),
+    '"repository" is glossed where an admin first meets it (in the shared.wizard-repo explainer)');
   // ── WHERE THE GLOSS SITS (v3.58.0) ────────────────────────────────────
   // The 54-word paragraph under this panel's heading became a 13-word
   // instruction plus an ⓘ holding the two glosses. Both halves need pinning,
@@ -824,9 +836,15 @@ const markup = new Function('renderInfoMark',
       `…and the sentence above it is ${vis.length} visible words (4..13): "${vis.join(' ')}"`);
     ok(/class="tx-vh-panel"[^>]*hidden/.test(a1),
       '…with the gloss inside a fold that ships CLOSED, present in the markup rather than fetched');
-    const panel = (a1.match(/<div class="tx-vh-panel"[^>]*hidden>([\s\S]*?)<\/div>/) || [, ''])[1];
-    ok(/folder GitHub stores for you/.test(panel) && /right to write to it/.test(panel),
-      '…and it is THAT fold the two glosses are in, not a second copy somewhere visible');
+    // The panel IS the explainer, byte for byte, with its id and name
+    // unchanged; the glosses are in it and NOT in the visible markup.
+    const mark = explainerMark('sbw-admin-repo-info', 'shared.wizard-repo');
+    ok(a1.includes(mark.panel) && a1.includes(mark.btn)
+      && mark.panel.includes('aria-label="' + EXPLAINERS['shared.wizard-repo'].label + '"'),
+      '…and it is THAT fold (the shared.wizard-repo explainer) the glosses are in');
+    ok(/folder GitHub keeps for you/.test(repoXp) && /collaborator lets them write to it/.test(repoXp)
+      && !/folder GitHub keeps for you/.test(a1.replace(mark.panel, '')),
+      '…both glosses, and not a second copy somewhere visible');
   }
   ok(/<strong>collaborator<\/strong>/.test(p2) && /read and write that repository/.test(p2),
     '"collaborator" is glossed where a member first meets it');
@@ -1172,8 +1190,15 @@ section('§13  v3.65.3 — the mirror name, the early refusal, the order, the no
   ok(!/The admin never sees it/.test(p3), 'the sentence that read as nonsense to an admin is gone');
   const p4 = markup.panelStep4();
   ok(/Leave empty to appear as “Anonymous Fellow”/.test(p4), 'D15: the substitution is said at the field');
-  ok(/class="tx-vh-panel"[^>]*hidden>[\s\S]*contribution records every collaborator/.test(p4),
-    'rule 3: the attribution mechanism lives in a closed ⓘ, not inline');
+  // v3.71.1: the mechanism is the `shared.wizard-attribution` explainer in a
+  // closed ⓘ; what is IRREVERSIBLE about it is printed visibly (v3.16.1).
+  ok(/class="tx-vh-panel"[^>]*hidden>/.test(p4)
+    && p4.includes(explainerMark('sbw-attribution-info', 'shared.wizard-attribution').panel),
+    'rule 3: the attribution mechanism lives in a closed ⓘ (the shared.wizard-attribution explainer), not inline');
+  const help = (p4.match(/<span class="sbw-help">([\s\S]*?)<button/) || [, ''])[1];
+  ok(/Fixed when you join: changing it means leaving and joining again\./.test(help)
+    && /cannot remove a name already published/.test(help),
+    '…while what is irreversible (fixed at join; cannot unpublish a name) is VISIBLE in the hint, never folded');
   ok(/import \{ identityDotClass \} from '\.\.\/shared\/sidebar\.js'/.test(wizard), 'D16: the domain list imports the kit\u2019s identity mapping');
   ok(/identityDotClass\(allNames\.indexOf\(name\)\)/.test(stripComments(bodyOf(wizard, 'populateDomains'))),
     '…keyed on the install\u2019s own domain order, not the filtered list');

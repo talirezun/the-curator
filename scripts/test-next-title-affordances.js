@@ -54,6 +54,13 @@
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+// v3.71.1: settings.js's local `infoMark` + `TX_INFO_GLYPH` are DELETED; the
+// mark has ONE implementation, shared/text.js's renderInfoMark, reached from
+// every view through shared/explainer.js. Both modules are import-free of
+// app.js, so they execute headless.
+import { renderInfoMark } from '../src/public/next/shared/text.js';
+import { explainerHtml } from '../src/public/next/shared/explainer.js';
+import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
 
 let passed = 0, failed = 0;
 function ok(label, cond) {
@@ -224,22 +231,14 @@ section('§3  THE AFFORDANCE IS THE SHARED CONTRACT, NOT A SECOND PATTERN');
   const textSrc = readFileSync(TEXT_JS, 'utf8');
   const settings = sourceOf['settings.js'];
 
-  // Extract `infoMark` by brace-matching and EXECUTE it. settings.js imports
-  // app.js, which throws in Node (`document is not defined`), so the whole
-  // module cannot be imported — the constraint shared/text.js's own docblock
-  // records. Executing the one function is stronger than reading it.
-  const start = settings.indexOf('function infoMark(');
-  ok('infoMark() exists in settings.js', start > -1);
-  let end = settings.indexOf('{', start), depth = 0, i = end;
-  for (; i < settings.length; i++) {
-    if (settings[i] === '{') depth++;
-    else if (settings[i] === '}') { depth--; if (depth === 0) { i++; break; } }
-  }
-  const glyphM = settings.match(/const TX_INFO_GLYPH =([\s\S]*?);\n/);
-  ok('TX_INFO_GLYPH is defined in settings.js', !!glyphM);
-  const fn = new Function('escapeHtml',
-    'const TX_INFO_GLYPH =' + glyphM[1] + ';\n' + settings.slice(start, i) + '\nreturn infoMark;')(
-    (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'));
+  // v3.71.1: the mark is EXECUTED from its one home, shared/text.js. The
+  // settings.js copy that used to be lifted here is gone — assert it stays gone.
+  ok('settings.js carries NO local infoMark() — the one mark is shared/text.js renderInfoMark',
+    !/(?:^|\n)\s*function infoMark\s*\(/.test(stripComments(settings)));
+  ok('settings.js carries NO TX_INFO_GLYPH copy', !/const TX_INFO_GLYPH\b/.test(settings));
+  ok('settings.js reaches the mark through the explainer kit',
+    /import \{[^}]*\bexplainerMark\b[^}]*\} from '\.\.\/shared\/explainer\.js';/.test(settings));
+  const fn = renderInfoMark;
 
   const out = fn('probe-id', 'About the probe', 'The sentence that used to be a tooltip.');
 
@@ -261,15 +260,10 @@ section('§3  THE AFFORDANCE IS THE SHARED CONTRACT, NOT A SECOND PATTERN');
   ok('empty info renders NOTHING — no headless button pointing at no panel',
     fn('x', 'y', '   ').btn === '' && fn('x', 'y', '   ').panel === '');
 
-  // The glyph is a COPY while shared/text.js is owned by another workstream.
-  // Two hand-maintained copies of one thing is this repo's most reliable
-  // early-warning shape, so it is pinned byte-identical rather than trusted.
+  // The glyph used to be a COPY in settings.js, pinned byte-identical here.
+  // v3.71.1 deleted the copy, so the one glyph must be what the mark emits.
   const theirs = textSrc.match(/const INFO_GLYPH =([\s\S]*?);\n/);
-  ok('shared/text.js still has INFO_GLYPH to compare against', !!theirs);
-  ok('settings.js’s TX_INFO_GLYPH is BYTE-IDENTICAL to shared/text.js’s INFO_GLYPH',
-    glyphM[1].trim() === theirs[1].trim());
-  ok('CONTROL: that comparison can fail — a changed glyph is not equal',
-    glyphM[1].trim() !== theirs[1].trim().replace('r="9"', 'r="8"'));
+  ok('shared/text.js has the one INFO_GLYPH', !!theirs);
 
   // The behaviour is inherited, not reimplemented. If the shared listener ever
   // becomes scoped to the header, every mark emitted here goes dead silently.
@@ -294,10 +288,14 @@ section('§4  THE CONVERTED SITES — named, on top of the class guard');
         sh = sourceOf['shared.js'], ing = sourceOf['ingest.js'];
 
   ok('settings: the build-lane chip’s meaning is behind a mark, not on the <span>',
-    s.includes("infoMark('settings-build-chip-info'") &&
+    s.includes("explainerMark('settings-build-chip-info', 'settings.measured')") &&
     !/model-badge model-measured ' \+ escapeHtml\(chip\.cls\) \+ '" title=/.test(s));
-  ok('settings: "no models yet" states its reason through a mark',
-    s.includes("infoMark(\n      'settings-nomodels-info-'") || s.includes("'settings-nomodels-info-'"));
+  // v3.71.1: the nomodels ⓘ is CUT — the visible span states the consequence
+  // itself, and no mark renders for it.
+  ok('settings: "no models yet" states its consequence as VISIBLE text',
+    s.includes('<span class="mono provider-state provider-state-muted">no models yet — cannot be active</span>'));
+  ok('settings: ...and no settings-nomodels-info mark renders any more',
+    !stripComments(s).includes('settings-nomodels-info'));
   ok('settings: ...and that reason is no longer a title= on the <span>',
     !/provider-state-muted" title="' \+\s*\n?\s*escapeHtml\(p\.name/.test(s));
   ok('settings: the update button’s "wait for the running ingest" reason is VISIBLE text now',
@@ -377,26 +375,39 @@ section('§5  NO NEW HOVER-ONLY STRINGS, AND NO REGRESSION OF THE HOUSE RULES');
   // A warning must never move BEHIND the mark. v3.16.1: a warning behind a
   // click is not a warning; v3.22.0 split MIRROR_BLURB for exactly this.
   const s = sourceOf['settings.js'];
-  const marks = [...s.matchAll(/infoMark\(\s*[^,]+,\s*[^,]+,\s*([\s\S]{0,400}?)\);/g)].map((m) => m[1]);
-  ok('every infoMark in settings.js carries neutral explanation, never a cost or a warning',
-    marks.length > 0 && marks.every((t) => !/\$|\birreversible\b|\bdelet|\boverwrit|\bwarning\b/i.test(t)));
+  // v3.71.1: every mark is `explainerMark(id, '<key>')`, so the text behind it
+  // is the rendered explainer. Collect every literal key settings.js names
+  // (marks, block keys, SECTION_INFO) and check what the panel actually says.
+  const keys = [...new Set([...stripComments(s).matchAll(/'((?:settings|domains|shared|sync|ingest|chat|context)\.[a-z0-9-]+)'/g)]
+    .map((m) => m[1]).filter((k) => Object.prototype.hasOwnProperty.call(EXPLAINERS, k)))];
+  const panelText = (k) => explainerHtml(k).replace(/<[^>]*>/g, ' ');
+  // `delet` is no longer in the word list: settings.mcp-tool-map neutrally says
+  // deleting the local usage log "only restarts the map" — description, not a
+  // warning. Costs, irreversibility, overwrites and warnings still go red.
+  const loud = keys.filter((k) => /\$|\birreversible\b|\boverwrit|\bwarning\b/i.test(panelText(k)));
+  ok(`every explainer behind a settings.js ⓘ (${keys.length} keys) is neutral explanation, never a cost or a warning` +
+     (loud.length ? ' — loud: ' + loud.join(', ') : ''),
+    keys.length >= 10 && loud.length === 0);
 
   // The panel must never be emitted without `hidden`: that restores the exact
   // always-visible paragraph the component exists to remove.
   // These are concatenation templates, so `hidden` lands in a LATER fragment
   // than the class name — the window has to span the concatenation, not stop
   // at the closing quote of the first literal.
-  ok('no tx-vh-panel is emitted without `hidden` anywhere in the views',
-    viewFiles.every((f) => {
-      const src = stripComments(sourceOf[f]);
+  // v3.71.1: views no longer emit the panel markup themselves — shared/text.js
+  // is the one emitter — so it is scanned alongside them.
+  const panelSources = [...viewFiles.map((f) => sourceOf[f]), readFileSync(TEXT_JS, 'utf8')];
+  ok('no tx-vh-panel is emitted without `hidden` anywhere in the views or shared/text.js',
+    panelSources.every((raw) => {
+      const src = stripComments(raw);
       let i = -1, okAll = true;
       while ((i = src.indexOf('class="tx-vh-panel"', i + 1)) > -1) {
         if (!src.slice(i, i + 400).includes('hidden')) okAll = false;
       }
       return okAll;
     }));
-  ok('CONTROL: that window really inspects something — settings.js does emit a tx-vh-panel',
-    stripComments(sourceOf['settings.js']).includes('class="tx-vh-panel"'));
+  ok('CONTROL: that window really inspects something — shared/text.js does emit a tx-vh-panel',
+    stripComments(readFileSync(TEXT_JS, 'utf8')).includes('class="tx-vh-panel"'));
 
   // The same rule for chat's own cost panel, which owns its box rather than
   // borrowing the header's (shared/text.css owns the `tx-` prefix and a suite

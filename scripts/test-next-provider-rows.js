@@ -283,20 +283,19 @@ const stubState = { replacing: null, keysBusy: null };
 // body)(...args)` binds POSITIONALLY and a hand-aligned name list beside a
 // hand-aligned argument list produces NO ERROR when it slips, just every name
 // bound to the wrong value.
-// TX_INFO_GLYPH + infoMark: the "no models yet — cannot be active" reason used
-// to be a `title=` on a NON-FOCUSABLE <span>, i.e. unreachable by keyboard and
-// absent entirely on touch. It is now behind a real button, and that button is
-// built by infoMark — so the row path calls it and it must be extracted, not
-// stubbed: a stub would prove something about the stub, and this is the one
-// place the reason is written anywhere on that row.
-const ROW_CONSTS = ['PROVIDER_ROWS', 'TX_INFO_GLYPH'];
+// v3.71.1: TX_INFO_GLYPH + infoMark are GONE from settings.js, and the row no
+// longer builds a mark at all — the "no models yet" ⓘ was CUT; the visible
+// span "no models yet — cannot be active" states the consequence itself. The
+// row path therefore needs neither, and §0's callee scan would name either one
+// if it came back unextracted.
+const ROW_CONSTS = ['PROVIDER_ROWS'];
 // v3.45.0: `providerHasSavedKey` + `providerConnected` are EXTRACTED rather
 // than stubbed. The row's status pill is the thing this suite exists to police
 // — a row that shows the wrong provider's credential state is the historical
 // defect — and a stub would prove a property of the stub. `providerConnected`
 // reads the route's own `connected` boolean where it is sent and degrades to
 // `providerHasSavedKey` where it is not, so both arms have to be the real ones.
-const ROW_FN_NAMES = ['infoMark', 'providerHasSavedKey', 'providerConnected', 'renderProviderRow'];
+const ROW_FN_NAMES = ['providerHasSavedKey', 'providerConnected', 'renderProviderRow'];
 // A minimal stand-in for app.js's real icon() (Defect 1 fix: renderProviderRow
 // now calls it for the "active" row's checkAlt reinforcement icon). Real
 // enough for substring assertions: it echoes the requested name so a test can
@@ -739,6 +738,15 @@ section('§3b  "Set active" is hidden for a provider that has NO measured model'
     // …and it is still shown as configured, so this is not "the row vanished".
     ok(noModel.includes(maskFor(p.id)),
       `row "${p.id}" with no default model: still shows its saved key — only the dangerous control is withheld`);
+    // v3.71.1: the reason is VISIBLE text, and the ⓘ that used to sit beside
+    // it (`settings-nomodels-info-<id>`) is CUT — a refusal is not something an
+    // explainer may carry, so no mark renders for it at all.
+    ok(noModel.includes('no models yet — cannot be active'),
+      `row "${p.id}" with no default model: says "no models yet — cannot be active" in visible text`);
+    ok(!noModel.includes('settings-nomodels-info') && !noModel.includes('data-tx-info'),
+      `row "${p.id}" with no default model: renders NO nomodels ⓘ mark`);
+    ok(!withModel.includes('no models yet'),
+      `CONTROL: row "${p.id}" WITH a model does not say "no models yet"`);
   }
   // The empty-string form of the same payload fact (a wire that sends '' for
   // "nothing measured" rather than null) must behave identically.

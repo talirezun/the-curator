@@ -68,6 +68,11 @@ import { identityDotClass } from '../src/public/next/shared/sidebar.js';
 // v3.66.0 P4 — the REAL depth bar, from its public address, so the footer's
 // documents reading is asserted as the markup a user is served.
 import { renderDepthCell } from '../src/public/next/shared/depth-bar.js';
+// v3.71.1 — the project ⓘ is the SHARED mark now (CHAT_PROJECT_INFO =
+// explainerMark('chat-project-info', 'chat.project')), so the REAL kit is
+// injected under the name chat.js imports it by. Import-free and headless.
+import { explainerHtml, explainerMark } from '../src/public/next/shared/explainer.js';
+import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CHAT_JS = path.join(ROOT, 'src/public/next/views/chat.js');
@@ -176,6 +181,14 @@ function classPath(node) {
   for (let n = node; n && n.parent; n = n.parent) out.unshift(n.classes.join('.') || n.tag);
   return out;
 }
+/** v3.71.1: the project ⓘ's rendered panel, wrapper included, as markup. */
+function projectInfoPanelOf(html) {
+  const i = html.indexOf('<div class="chat-project-panel">');
+  if (i === -1) return '';
+  let depth = 0; const re = /<div\b|<\/div>/g; re.lastIndex = i; let m;
+  while ((m = re.exec(html))) { depth += m[0] === '</div>' ? -1 : 1; if (depth === 0) return html.slice(i, re.lastIndex); }
+  return '';
+}
 function ancestorClasses(node) {
   const out = [];
   for (let n = node.parent; n && n.parent; n = n.parent) out.push(...n.classes);
@@ -255,9 +268,9 @@ function render(over = {}) {
     FOOT_HELPERS() +
     extractFunction(chatSrc, 'projectFootHtml') + '\n' +
     extractFunction(chatSrc, 'projectListboxCfg') + '\n' +
-    // v3.71.0 fix: the project ⓘ's typed "ⓘ" character became the app's own
-    // SVG glyph, a module const projectGroupHtml now references.
-    extractConst(chatSrc, 'CHAT_PROJECT_INFO_GLYPH') + '\n' +
+    // v3.71.1: the project ⓘ is the shared mark, a module const
+    // projectGroupHtml and projectInfoPanelHtml both reference.
+    extractConst(chatSrc, 'CHAT_PROJECT_INFO') + '\n' +
     extractFunction(chatSrc, 'projectGroupHtml') + '\n' +
     extractFunction(chatSrc, 'projectInfoPanelHtml') + '\n' +
     extractFunction(chatSrc, 'renderMain') + '\n' +
@@ -269,7 +282,7 @@ function render(over = {}) {
     'renderComposerHtml', 'wireComposer', 'renderThreadOnly', 'renderComposerPickers',
     'startCompile', 'switchDomain', 'reportAsyncActionFailure',
     'renderListboxHtml', 'formatAge', 'freshnessTier', 'selectChatProject', 'mountListbox',
-    'renderReadoutGroup', 'identityDotClass', 'renderDepthCell',
+    'renderReadoutGroup', 'identityDotClass', 'renderDepthCell', 'explainerMark',
     src
   )(
     {
@@ -309,7 +322,7 @@ function render(over = {}) {
        WHICH cfgs were handed over, which is §11's subject. */
     (cfg) => { mounted.push(cfg); },
     /* NOT a stub: the real kit function, imported at the top of this file. */
-    renderReadoutGroup, identityDotClass, renderDepthCell,
+    renderReadoutGroup, identityDotClass, renderDepthCell, explainerMark,
   );
 
   api.renderMain(1);
@@ -764,27 +777,29 @@ section('§7 — THE PROJECT GROUP (v3.64.0): a second group, not a second domai
   /* THE ⓘ IS A REAL DISCLOSURE, not a title attribute: it names the panel it
      controls, says whether it is open, and carries an accessible name of its
      own (the visible glyph is not one). */
-  const info = findByClass(tree, 'chat-project-info');
+  /* v3.71.1: the button is shared/text.js's (through shared/explainer.js's
+     explainerMark), not a hand-rolled `.chat-project-info` — so it is found
+     by its unchanged id and asserted to BE the shared mark. */
+  let info = null;
+  walk(tree, (n) => { if (!info && n.attrs.id === 'chat-project-info-btn') info = n; });
   ok(!!info, 'the group carries an ⓘ');
+  ok(!!info && info.classes.includes('tx-vh-info'),
+    '…and it is shared/text.js\'s mark (class tx-vh-info), not a local copy');
+  ok(!!info && ancestorClasses(info).includes('chat-project-controls'),
+    '…sitting in the project controls row, beside the picker');
   eq(info.attrs['data-tx-info'], 'chat-project-info',
     '…wired to shared/text.js\'s ONE delegated listener, not to a second hand-written handler');
   eq(info.attrs['aria-expanded'], 'false', '…reporting its collapsed state');
   eq(info.attrs['aria-controls'], 'chat-project-info', '…and naming the panel it controls');
-  ok(typeof info.attrs['aria-label'] === 'string' && info.attrs['aria-label'].length > 0,
-    '…with an accessible name, because "ⓘ" is not one');
-  // v3.71.0 fix: INVENTORY.md found this button's "icon" was the literal
-  // TYPED CHARACTER "ⓘ" — the odd one out among the app's five ⓘ emitters,
-  // which otherwise agree on one violet circled-i SVG. It is now a fourth
-  // local copy of that same glyph (shared/text.js takes no imports, so the
-  // real fix — one shared render call — is out of reach here), pinned
-  // byte-identical the same way settings.js's TX_INFO_GLYPH already is.
+  eq(info.attrs['aria-label'], EXPLAINERS['chat.project'].label,
+    '…with the explainer\'s accessible name, because "ⓘ" is not one');
   ok(!html.includes('>ⓘ<'), 'the typed "ⓘ" CHARACTER is gone — the button renders an SVG, not text');
-  const glyphM = chatSrc.match(/const CHAT_PROJECT_INFO_GLYPH = '([^\n]*)';/);
-  ok(!!glyphM, 'chat.js defines CHAT_PROJECT_INFO_GLYPH');
-  const theirs = textSrc.match(/const INFO_GLYPH =([\s\S]*?);\n/);
-  ok(!!theirs, 'shared/text.js still has INFO_GLYPH to compare against');
-  ok(!!glyphM && !!theirs && glyphM[1] === theirs[1].trim().replace(/'\s*\+\s*'/g, '').replace(/^'|'$/g, ''),
-    'chat.js’s CHAT_PROJECT_INFO_GLYPH is BYTE-IDENTICAL to shared/text.js’s INFO_GLYPH');
+  /* v3.71.0 pinned a LOCAL glyph copy (CHAT_PROJECT_INFO_GLYPH) byte-equal
+     to shared/text.js's; v3.71.1 deleted the copy, so the pin becomes: there
+     is no copy to drift. The glyph now comes from the one INFO_GLYPH. */
+  ok(!/CHAT_PROJECT_INFO_GLYPH/.test(chatSrc), 'chat.js carries no local copy of the ⓘ glyph any more');
+  ok(!/<svg/.test(extractFunction(chatSrc, 'projectGroupHtml')),
+    '…and projectGroupHtml hand-writes no SVG — the mark is the shared one');
   const panel = findByClass(tree, 'chat-project-panel');
   ok(!!panel, 'the panel it controls is rendered');
   /* ── UNDER ITS OWN BUTTON. TWO MEASUREMENTS, AND THE SECOND ONE MOVED IT
@@ -828,14 +843,19 @@ section('§7 — THE PROJECT GROUP (v3.64.0): a second group, not a second domai
      vacuously TRUE if someone wrote `hidden="false"`, which is still hidden
      in HTML. The regex pins the real thing: this element, closing with a
      bare `hidden`. */
-  ok(/class="chat-project-panel"[^>]*\shidden>/.test(html),
+  /* v3.71.1: `.chat-project-panel` is now a WRAPPER (chat.css owns it); the
+     disclosure inside it is the shared tx-vh-panel, id unchanged, hidden. */
+  ok(/<div class="chat-project-panel"><div class="tx-vh-panel" id="chat-project-info" role="group"[^>]*\shidden>/.test(html),
     '…and it is rendered HIDDEN, so a browser with no JS never shows a permanently-open panel');
-  /* ≤ 60 words is the brief's ceiling, and the sentence that has to be in
-     there is the one a user cannot infer: nothing is written back. */
-  const words = panel.text.trim().split(/\s+/).filter(Boolean).length;
-  ok(words > 0 && words <= 60, `the ⓘ text is ${words} words, at or under the 60-word ceiling`);
-  ok(/never writes/i.test(panel.text), '…and it says Chat never writes to the project');
-  ok(/recorded data/i.test(panel.text), '…and that what it reads is recorded data');
+  /* THE PANEL IS THE EXPLAINER. Its old prose (≤ 60 words, "never writes",
+     "recorded data") moved into EXPLAINERS['chat.project'], whose shape
+     test-explainers owns; here the pin is that what ships IS that entry. */
+  eq(projectInfoPanelOf(html),
+    '<div class="chat-project-panel">' + explainerMark('chat-project-info', 'chat.project').panel + '</div>',
+    'the panel is the wrapper around the shared mark\'s panel, byte for byte');
+  ok(projectInfoPanelOf(html).includes(explainerHtml('chat.project')),
+    '…whose body byte-equals explainerHtml(\'chat.project\')');
+  ok(/never writes/i.test(explainerHtml('chat.project')), '…and it says Chat never writes to the project');
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -978,8 +998,11 @@ section('§9 — THE BAR WRAPS, SO NO ACTION CAN BE CLIPPED (v3.64.1)');
     'CONTROL: the controls row is still a row, so the picker and its readout stay on one line');
   ok(!/position:\s*absolute/.test(bodyOf('.chat-project-panel')),
     '…IN FLOW: not absolutely positioned, so there is no overlay layer and nothing to clip it');
-  ok(/display:\s*none/.test(bodyOf('.chat-project-panel\[hidden\]')),
-    'CONTROL: the [hidden] counter-rule is still there — an author `display` would otherwise leave it permanently open');
+  // v3.71.1: the [hidden] element is the shared tx-vh-panel INSIDE the
+  // wrapper, so the wrapper's counter-rule is `:has(> [hidden])` — without it
+  // a closed ⓘ would still leave an empty row in the group.
+  ok(/display:\s*none/.test(bodyOf('.chat-project-panel:has(> [hidden])')),
+    'CONTROL: the [hidden] counter-rule is still there — the wrapper takes no row while its panel is closed');
 
   /* ANTI-VACUITY. Run the same three predicates over the PRE-FIX declarations
      and require them to fail, so a green above is evidence rather than a
@@ -1251,7 +1274,7 @@ section('§12 — AN OPEN ⓘ SURVIVES A BACKGROUND REPAINT OF ITS GROUP (v3.64.
       FOOT_HELPERS() +
     extractFunction(chatSrc, 'projectFootHtml') + '\n' +
       extractFunction(chatSrc, 'projectListboxCfg') + '\n' +
-      extractConst(chatSrc, 'CHAT_PROJECT_INFO_GLYPH') + '\n' +
+      extractConst(chatSrc, 'CHAT_PROJECT_INFO') + '\n' +
       extractFunction(chatSrc, 'projectInfoPanelHtml') + '\n' +
       extractFunction(chatSrc, 'projectGroupHtml') + '\n' +
       extractFunction(chatSrc, 'patchProjectGroup') + '\n' +
@@ -1259,7 +1282,7 @@ section('§12 — AN OPEN ⓘ SURVIVES A BACKGROUND REPAINT OF ITS GROUP (v3.64.
     const api = new Function(
       'document', 'state', 'isCurrentMount', 'escapeHtml', 'closeAllListboxes',
       'renderListboxHtml', 'formatAge', 'freshnessTier', 'selectChatProject', 'mountListbox',
-      'renderReadoutGroup', 'renderDepthCell',
+      'renderReadoutGroup', 'renderDepthCell', 'explainerMark',
       src
     )(
       doc, state, () => true, escapeHtmlStub,
@@ -1269,7 +1292,7 @@ section('§12 — AN OPEN ⓘ SURVIVES A BACKGROUND REPAINT OF ITS GROUP (v3.64.
       (sec) => (sec === null ? 'unknown' : 'today'),
       () => {},
       () => { calls.mounted++; },
-      renderReadoutGroup, renderDepthCell,
+      renderReadoutGroup, renderDepthCell, explainerMark,
     );
     return { api, calls };
   }
@@ -1511,7 +1534,8 @@ section('§15 — THE PINNED PROJECT\'S KNOWLEDGE DOMAINS (v3.65.0, P10)');
     ok(/2 domains/.test(foot), 'the footer names how many domains the project reads');
     ok(/research/.test(foot) && /business/.test(foot), '…and names them');
     ok(/chosen for this project/.test(foot), '…and says the owner chose them');
-    ok(/this chat is reading articles/.test(foot),
+    // v3.71.1: this line now carries the sentence the ⓘ used to append.
+    ok(/its knowledge lives in another domain \u2014 this chat reads only articles/.test(foot),
       '★ …and states what THIS conversation is actually reading, which is the fact the mark could be misread as');
     /* TWO READOUTS, NOT ONE LINE. The turn's reading and the project's domains
        are different facts; this file exists because two unrelated facts went
@@ -1580,41 +1604,30 @@ section('§15 — THE PINNED PROJECT\'S KNOWLEDGE DOMAINS (v3.65.0, P10)');
       'a domain with no chip marks nothing — it is skipped, not invented');
     const foot = r.mounted[0].footHtml;
     ok(/gone is not on this computer/.test(foot), '★ …and the footer says the project named a domain that is gone');
-    const panel = findByClass(r.tree, 'chat-project-panel');
-    ok(/not on this computer/.test(panel.text), '★ …and so does the ⓘ');
-    const words = panel.text.trim().split(/\s+/).filter(Boolean).length;
-    ok(words > 46 && words <= 80, `the ⓘ is ${words} words WITH the extra sentence (standing 60 + notes)`);
+    // v3.71.1: the ⓘ no longer repeats it — an explainer carries no STATE,
+    // so the footer is the one place this is said (§15c2 pins the panel).
+    ok(!/not on this computer/.test(projectInfoPanelOf(r.html)),
+      '★ …and the ⓘ does NOT repeat it — the explainer is static; the footer says it');
   }
 
-  // ── §15c2 — EVERY ⓘ VARIANT IS UNDER THE CEILING, not just the base ─────
-  // THE BUDGET, MEASURED IN THREE PARTS rather than as one number: the
-  // STANDING text keeps the 60-word ceiling it has had since v3.64.0, each
-  // conditional note is capped at 15, and the rendered total at 80. A single
-  // ceiling on the total would squeeze the notes into telegraphese for the one
-  // reader who needs them most.
-  const BASE_PANEL = findByClass(render().tree, 'chat-project-panel').text.trim();
-  const baseWords = BASE_PANEL.split(/\s+/).filter(Boolean).length;
-  ok(baseWords > 0 && baseWords <= 60,
-    `the STANDING ⓘ text is ${baseWords} words, at or under its own 60-word ceiling`);
+  // ── §15c2 — THE ⓘ IS THE SAME EXPLAINER IN EVERY STATE (v3.71.1) ───────
+  // Until v3.71.0 the panel appended up to two conditional notes, under a
+  // 60-word standing budget + 15 per note. v3.71.1 made it the shared
+  // explainer, which may carry no state: both notes moved to the footer. So
+  // the word budgets are the explainer's (test-explainers owns them) and the
+  // pin here is that NO project state reaches the panel.
+  const BASE_PANEL = projectInfoPanelOf(render().html);
+  ok(BASE_PANEL.includes(explainerHtml('chat.project')),
+    'CONTROL: the base panel is found and carries the chat.project explainer');
   for (const [label, over] of [
-    ['base', {}],
     ['knowledge elsewhere', { activeProject: 'curator', projectKnowledge: KN({ domains: ['research'], defaulted: false }) }],
     ['a missing domain', { activeProject: 'curator', projectKnowledge: KN({ domains: ['research', 'gone'], defaulted: false, missing: ['gone'] }) }],
     ['both at once', { activeProject: 'curator', projectKnowledge: KN({ domains: ['gone'], defaulted: false, missing: ['gone'] }) }],
   ]) {
-    const panel = findByClass(render(over).tree, 'chat-project-panel');
-    const text = panel.text.trim();
-    const w = text.split(/\s+/).filter(Boolean).length;
-    ok(w > 0 && w <= 80, `ⓘ variant "${label}" is ${w} words, at or under the 80-word rendered total`);
-    ok(text.startsWith(BASE_PANEL.slice(0, 40)),
-      `ⓘ variant "${label}" keeps the standing text — a note is ADDED, never a replacement`);
-    // Each NOTE on its own, so a 15-word cap is a measurement and not a claim.
-    const note = text.slice(BASE_PANEL.length).trim();
-    for (const sentence of note.split('.').map(x => x.trim()).filter(Boolean)) {
-      const sw = sentence.split(/\s+/).filter(Boolean).length;
-      ok(sw <= 15, `ⓘ variant "${label}": the note "${sentence.slice(0, 28)}…" is ${sw} words, at or under 15`);
-    }
-    ok(!/press a chip|switch to/i.test(text),
+    const r = render(over);
+    eq(projectInfoPanelOf(r.html), BASE_PANEL,
+      `ⓘ variant "${label}": the panel is byte-identical to the base — state lives in the footer`);
+    ok(!/press a chip|switch to/i.test(projectInfoPanelOf(r.html) + r.mounted[0].footHtml),
       `ⓘ variant "${label}" never tells the user to press a chip — that would undo the pin (§15d)`);
   }
 
@@ -1655,8 +1668,8 @@ section('§15 — THE PINNED PROJECT\'S KNOWLEDGE DOMAINS (v3.65.0, P10)');
       '★ …and the footer states the failure rather than the list it happens to be holding');
     ok(!/chosen for this project/.test(h.mounted[0].footHtml),
       '★ …and never announces a choice nobody could confirm');
-    ok(!/knowledge lives in another domain/.test(findByClass(h.tree, 'chat-project-panel').text),
-      '★ …and the ⓘ adds no note about a list it does not trust');
+    ok(!/knowledge lives in another domain/.test(projectInfoPanelOf(h.html) + h.mounted[0].footHtml),
+      '★ …and neither the ⓘ nor the footer adds a note about a list it does not trust');
   }
 
   // ── §15c4 — A RECORD FOR A DIFFERENT PROJECT IS NEVER SHOWN ─────────────
@@ -1991,16 +2004,17 @@ section('§15g — THE SEAM: one server answer, the real loader, the real render
   ok(chosenFoot !== defaultFoot,
     'CONTROL: one bit really does change what a user is served');
 
-  /* AND THE ⓘ, whose conditional note also keys off the flag: a DEFAULTED
-     list can never say "its knowledge lives in another domain", because the
-     default IS this domain — even when, as here, the envelope names two
-     others. Pinned so the note cannot start leaking onto the default. */
-  const chosenPanel = findByClass(chosen.tree, 'chat-project-panel').text;
-  const defaultPanel = findByClass(defaulted.tree, 'chat-project-panel').text;
-  ok(/knowledge lives in another domain/.test(chosenPanel),
-    'the ⓘ names the situation on the CHOSEN arm');
-  ok(!/knowledge lives in another domain/.test(defaultPanel),
-    '★ …and stays silent on the DEFAULTED one, from the same two domains');
+  /* AND THE ⓘ. Until v3.71.0 its conditional note keyed off this flag and
+     was pinned silent on the DEFAULTED arm. v3.71.1 made the panel the
+     static explainer, so it cannot differ between the arms; the "knowledge
+     lives in another domain" sentence moved to the footer (§15). NOTE: the
+     footer's version is gated on the domain list only, NOT on `defaulted` —
+     it is not pinned either way on the defaulted arm here; see the v3.71.1
+     wiring report. */
+  eq(projectInfoPanelOf(chosen.html), projectInfoPanelOf(defaulted.html),
+    'the ⓘ is the same static explainer on both arms — it carries no state');
+  ok(/knowledge lives in another domain/.test(chosenFoot),
+    'the FOOTER names the situation on the CHOSEN arm');
 }
 
 section('§20 — P4 (v3.66.0): documents read vs the 40,000-character project budget');

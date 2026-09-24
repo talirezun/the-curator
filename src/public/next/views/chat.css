@@ -865,81 +865,32 @@
    The footer's own type and spacing are shared/listbox.css's `.lb-foot` and
    shared/text.css's `.tx-readout` — neither is re-declared here, because a
    view copy of a kit rung is the drift this pass exists to remove. */
-/* The ⓘ. Same behaviour, same look and the same reasoning as
-   `.chat-msg-cost` further down this file — it is the other `data-tx-info`
-   disclosure in this view, driven by shared/text.js's ONE delegated
-   listener. It is a glyph rather than a word because the eyebrow beside it
-   is already the label, and it carries a real `aria-label` for the name a
-   screen reader needs. Focus is NOT suppressed anywhere here. */
-.chat-project-info {
-  flex: none;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  font: var(--type-body-sm);
-  line-height: 1;
-  color: var(--text-3);
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: color var(--dur-fast, 80ms) var(--ease-out, ease);
-}
-.chat-project-info:hover,
-.chat-project-info[aria-expanded="true"] { color: var(--text); }
-/* `[hidden]` FIRST and on its own selector, for the reason `.chat-cost-panel`
-   records below: a later rule setting `display` on this class would beat the
-   UA's `[hidden] { display: none }` and leave the panel permanently open.
+/* ── THE PROJECT ⓘ (v3.71.1) ──────────────────────────────────────────────
+   The mark and its panel are now the shared ones (shared/text.js's
+   renderInfoMark, via the explainer kit), so this stylesheet declares no rule
+   on the button and none on the tx- panel — shared/text.css owns that prefix.
+   What stays this view's is WHERE the panel sits: in flow, INSIDE
+   `.chat-project-group`, directly under the picker and its ⓘ. The history of
+   that placement (a scroll container that clipped an absolute panel, then a
+   sibling that opened "somewhere on the left") is recorded at
+   projectInfoPanelHtml in chat.js.
 
-   ── IN FLOW, UNDER ITS OWN BUTTON. TWO MEASUREMENTS, IN ORDER. ────────────
-   (1) v3.64.0's first cut put this panel inside `.chat-project-group` and
-   positioned it `absolute; top: calc(100% + 6px); z-index: 4`. In the browser
-   at 1370 px it reported itself OPEN — `hidden: false`, `aria-expanded: true`,
-   a 278x169 rectangle at a sensible place — and drew NOTHING. `.chat-scopebar`
-   was `overflow-x: auto`, and per CSS a box whose overflow-x is not `visible`
-   resolves overflow-y to `auto` as well: the bar was a scroll container and it
-   clipped a descendant hanging below it. No z-index reaches out of that, and
-   no assertion in this repo's offline suites could see it. So it was moved
-   OUT, to a sibling of the bar, in flow — which is what v3.64.0 shipped.
+   `.chat-project-panel` is the WRAPPER the kit's panel sits in. It stretches
+   to the group's width and caps the measure at the bar; while the panel inside
+   is hidden the wrapper takes no row, so the group's `gap` adds nothing.
 
-   (2) That version was then reported from production: "the ⓘ opens somewhere
-   on the left." True, and it is the COST of (1) rather than a bug in it — a
-   block in flow under the bar starts at the column's left margin while its
-   button sits wherever the project group lands, so the panel appeared under
-   the DOMAIN chips and read as belonging to them.
-
-   v3.64.1 removes the cause instead of trading one symptom for the other:
-   `.chat-scopebar` no longer clips anything (it wraps — see its own note), so
-   the panel can live back inside the group WITHOUT being absolutely
-   positioned. `flex-basis: 100%` in a wrapping group makes it take a row of
-   its own, immediately under the picker and the ⓘ, sharing their left edge and
-   the group's hairline. It still cannot be clipped, still needs no stacking
-   context, and still pushes what is below it down exactly as `.tx-vh-panel`
-   does under a view header.
-
-   NOT absolutely positioned and NOT inside the picker's menu: the first would
-   add an overlay layer this shell does not have, and the second is refused by
-   docs/design-system-source.md §3 — a control may never go inside a fold. */
-.chat-project-panel[hidden] { display: none; }
+   A WIDTH, NOT ONLY A CAP: the explainer panel is a size container (its
+   narrow layout is a container query), and a size container contributes NO
+   intrinsic width — so without one the group shrank the panel to the picker
+   row's ~250px. 52ch is the measure the old panel had; `max-width: 100%`
+   still yields to a narrow bar. */
 .chat-project-panel {
-  /* `100%` of a column's cross size, which IS definite here: the group's width
-     is its widest row. NOT a main-axis `flex-basis`, which is what failed in
-     the wrapping-row version — see the group's own note. */
   align-self: stretch;
-  margin: 2px 0 0;
-  /* `min()` so the measure never wins over the space there is: 52ch is the
-     reading width, 100% is the bar. Without the second term the panel was
-     426px inside a 224px bar at 568px and its right-hand words were cut. */
-  max-width: min(52ch, 100%);
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-raised);
-  font: var(--type-body-sm);
-  letter-spacing: var(--track-body);
-  color: var(--text-2);
-  overflow-wrap: anywhere;
+  width: 52ch;
+  max-width: 100%;
+  min-width: 0;
 }
+.chat-project-panel:has(> [hidden]) { display: none; }
 
 /* ── Thread ───────────────────────────────────────────────────────────── */
 

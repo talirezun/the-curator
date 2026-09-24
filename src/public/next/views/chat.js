@@ -41,7 +41,7 @@ import { renderViewHeader, renderReadoutGroup } from '../shared/text.js';
 // chips, the PROJECT pin, Length and Model were unexplained. `CHAT_INFO` is
 // the framing top ⓘ (second brain → Shared Brain → agent memory, "you are
 // here" on second-brain) every other top ⓘ in the app now opens with.
-import { explainerHtml } from '../shared/explainer.js';
+import { explainerHtml, explainerMark } from '../shared/explainer.js';
 import { renderMarkdown } from '../shared/markdown.js';
 // The ONE honest USD renderer for /next. Imported, never re-implemented: a
 // local `'$' + n.toFixed(4)` renders any charge below $0.00005 as the string
@@ -213,22 +213,14 @@ function timeAgo(iso) {
 // in the frame, so no `{ here }` override is needed here.
 const CHAT_INFO = explainerHtml('chat.page');
 
-// ── THE PROJECT ⓘ'S GLYPH (v3.71.0 fix) ──────────────────────────────────
-// INVENTORY.md's survey of every ⓘ in the app found this one a hand-rolled
-// button whose "icon" was the literal TYPED CHARACTER "ⓘ" rather than the
-// app's own violet circled-i SVG every other mark in the app uses — the odd
-// one out among five emitters that otherwise agree on the mark (shared/
-// text.js's INFO_GLYPH, and its two local copies, views/settings.js's
-// TX_INFO_GLYPH and views/domains.js's `infoMark`'s own `glyph`). This is a
-// FOURTH local copy of the same bytes, same reason as those two: `shared/
-// text.js` takes no imports and `app.js`'s icon() cannot be imported here
-// either, so the glyph is data, not a call. `test-next-chat-scopebar.js`
-// proves it byte-equal to `shared/text.js`'s INFO_GLYPH.
-//
-// This is the GLYPH ONLY. The panel's copy (projectInfoPanelHtml, below) is
-// unchanged — rewriting it onto the shared explainer shape is v3.71.1 scope
-// (COPY.md §5: "project ⓘ → shared glyph + model").
-const CHAT_PROJECT_INFO_GLYPH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>';
+// ── THE PROJECT ⓘ (v3.71.1) ─────────────────────────────────────────────
+// Was a hand-rolled button (first a typed "ⓘ" character, then a fourth local
+// copy of the glyph) with its own panel prose. It is now the shared mark —
+// `explainerMark('chat-project-info', 'chat.project')` — so the button, the
+// glyph, the panel and its behaviour come from shared/text.js like every
+// other ⓘ in the app. The ids are unchanged. Composed once: the copy is
+// static; the STATE lines it used to append are in the picker's footer.
+const CHAT_PROJECT_INFO = explainerMark('chat-project-info', 'chat.project');
 
 const PROVIDER_LABELS = Object.assign(Object.create(null), {
   gemini: 'Gemini',
@@ -3841,7 +3833,16 @@ function projectKnowledgeReadout() {
   // the chips are on, is the same fact without the claim.
   const parts = [];
   parts.push(k.defaulted ? 'the default \u2014 nobody has chosen' : 'chosen for this project');
-  if (!k.domains.includes(state.activeDomain)) parts.push('this chat is reading ' + state.activeDomain);
+  // v3.71.1: this line carries the state sentence the ⓘ used to append —
+  // the project's knowledge lives elsewhere and a chat reads only the domain
+  // its chips select — so it is said here, where the reading is, not folded.
+  // Gated on a CHOSEN list, as the old panel note was: a defaulted project's
+  // knowledge IS its own domain, so "lives in another domain" would be false.
+  if (!k.domains.includes(state.activeDomain)) {
+    parts.push(k.defaulted
+      ? 'this chat is reading ' + state.activeDomain
+      : 'its knowledge lives in another domain \u2014 this chat reads only ' + state.activeDomain);
+  }
   if (k.missing.length) {
     parts.push(k.missing.length === 1
       ? k.missing[0] + ' is not on this computer'
@@ -3967,13 +3968,7 @@ function projectGroupHtml() {
     '<div class="chat-project-controls">' +
       '<span class="chat-scope-eyebrow mono">PROJECT</span>' +
       control +
-    // 46 words. It says what is read, that it is recorded data, and — the
-    // sentence a user actually needs — that nothing is written back.
-      '<button type="button" class="chat-project-info" id="chat-project-info-btn"' +
-        ' data-tx-info="chat-project-info" aria-expanded="false"' +
-        ' aria-controls="chat-project-info" aria-label="What a pinned project adds">' +
-        CHAT_PROJECT_INFO_GLYPH +
-      '</button>' +
+      CHAT_PROJECT_INFO.btn +
     '</div>' +
     // ── AND ITS PANEL, BACK INSIDE THE GROUP (v3.64.1) ────────────────────
     // Reported: "the ⓘ opens somewhere on the left." It did — as a sibling of
@@ -4036,48 +4031,12 @@ function projectGroupHtml() {
  * across its own repaint — see its note.
  */
 function projectInfoPanelHtml() {
-  // ── THE TWO CONDITIONAL SENTENCES, AND THE WORD BUDGET THEY EXTEND ──────
-  // THE STANDING TEXT stays at its 60-word ceiling (the brief's, pinned since
-  // v3.64.0) and is 46 words. Both sentences below state something that is
-  // FALSE for most projects — they read their own domain, and every domain
-  // they name is installed — so printing them always would spend a quarter of
-  // the budget telling nearly every reader about a situation they are not in.
-  //
-  // THE RULE THIS EXTENDS TO, stated rather than fudged: 60 words for the
-  // standing explanation, plus at most TWO conditional notes of at most 15
-  // words each, rendered only when true of the project in front of the reader.
-  // A ceiling of 60 on the rendered total would have forced both notes into
-  // telegraphese to save an explanation the reader in that situation needs
-  // least. The suite counts the standing text, each note, and the total, so
-  // every variant is measured rather than only the base.
-  //
-  // A NOTE ON PLACEMENT, because it is a judgement: the missing-domain line
-  // sits behind a disclosure, and the standing rule since v3.16.1 is that a
-  // warning may never sit behind a chevron. It is kept here because it is not
-  // a cost or a loss — the project works, the chat answers, one name in a
-  // list has nothing behind it — and because the footer states it too. If it
-  // is ever reclassified as a warning it belongs unfolded, in the bar.
-  const k = state.projectKnowledge;
-  const relevant = k && !k.error && k.project === state.activeProject && Array.isArray(k.domains) && k.domains.length;
-  let extra = '';
-  if (relevant && !k.defaulted && !k.domains.includes(state.activeDomain)) {
-    // NOT "press a chip to switch". Pressing one is a domain switch, and
-    // `switchDomain` un-pins the project — so an instruction to press would
-    // be an instruction to undo the pin the sentence is about.
-    extra += ' Its knowledge lives in another domain; a chat reads only the domain its chips select.';
-  }
-  if (relevant && k.missing.length) {
-    extra += ' It also names a domain that is not on this computer.';
-  }
-  return (
-    '<div class="chat-project-panel" id="chat-project-info" role="group"' +
-      ' aria-label="What a pinned project adds" hidden>' +
-      'With a project pinned, the answer also draws on its standing brief, its latest Handoff ' +
-      'and the Documents marked read-first — on top of this domain\'s own pages. ' +
-      'All of it is treated as recorded data to verify, never as instructions. ' +
-      'Chat never writes to your project.' + extra +
-    '</div>'
-  );
+  // v3.71.1: the shared explainer panel, in a wrapper this stylesheet owns
+  // (shared/text.css owns the tx- prefix). The two CONDITIONAL sentences it
+  // used to append — the project's knowledge lives in another domain; it
+  // names a domain not on this computer — are STATE, which an explainer may
+  // not carry: both are in the picker's footer (projectKnowledgeReadout).
+  return '<div class="chat-project-panel">' + CHAT_PROJECT_INFO.panel + '</div>';
 }
 
 /**

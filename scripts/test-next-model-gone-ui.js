@@ -41,6 +41,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderStatus } from '../src/public/next/shared/text.js';
+// v3.71.1: settings.js's local `infoMark` + `TX_INFO_GLYPH` are DELETED. Every ⓘ
+// there is `explainerMark(id, key)` from shared/explainer.js — injected here as
+// the REAL kit (import-free of app.js, so it runs headless), never a stub.
+import { explainerHtml, explainerMark } from '../src/public/next/shared/explainer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -120,7 +124,7 @@ function escapeHtmlStub(s) {
 }
 
 const SET_CONSTS = [
-  'PROVIDER_ROWS', 'TX_INFO_GLYPH', 'MODEL_LANES', 'CHAT_LANE_COLLAPSE_AT',
+  'PROVIDER_ROWS', 'MODEL_LANES', 'CHAT_LANE_COLLAPSE_AT',
   'MODEL_SORTS', 'MODEL_SORT_KEYS', 'MODEL_SORT_UNRANKED_LABEL', 'MODEL_SORT_OPTIONS',
   'MODEL_FILTER_MIN_ROWS', 'MEASUREMENT_CHIPS', 'ACTIVATION_SKIP_REASONS',
   'BUILD_PICK_ERROR_ID', 'QUALIFY_CONFIRM_ID', 'MEASURED_CALL_SECONDS',
@@ -128,7 +132,7 @@ const SET_CONSTS = [
   'CATALOGUE_SYNC_PROVIDERS',
 ];
 const SET_FNS = [
-  'infoMark', 'providerLabel', 'activeModelLine', 'providerHasSavedKey', 'providerConnected',
+  'providerLabel', 'activeModelLine', 'providerHasSavedKey', 'providerConnected',
   'qualIndex', 'buildModelFacts', 'buildLaneFacts', 'buildModelDisplayName',
   'modelLiveMissing', 'renderGoneChip',
   'inertPins', 'buildCandidates', 'chatModelCount', 'chatStartFacts',
@@ -163,6 +167,8 @@ const setState = {
 };
 
 const SET_INJECTED = {
+  explainerMark,
+  explainerHtml,
   escapeHtml: escapeHtmlStub,
   formatUsdHonest: (v) => (typeof v === 'number' && Number.isFinite(v)
     ? '$' + (Math.abs(v) < 0.01 ? v.toFixed(4) : v.toFixed(2)) : null),

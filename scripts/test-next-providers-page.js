@@ -34,6 +34,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 // v3.67.0: block 2 derives its lede and its "Used by" row from the registry.
 import { buildLaneJobs, AI_JOBS } from '../src/public/next/shared/ai-jobs.js';
+// v3.71.1: settings.js's local `infoMark` + `TX_INFO_GLYPH` are DELETED. Every ⓘ
+// there is `explainerMark(id, key)` from shared/explainer.js — injected here as
+// the REAL kit (import-free of app.js, so it runs headless), never a stub.
+import { explainerHtml, explainerMark } from '../src/public/next/shared/explainer.js';
+import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -97,7 +102,7 @@ function escapeHtmlStub(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-const CONSTS = ['PROVIDER_ROWS', 'TX_INFO_GLYPH', 'MODEL_LANES', 'CHAT_LANE_COLLAPSE_AT',
+const CONSTS = ['PROVIDER_ROWS', 'MODEL_LANES', 'CHAT_LANE_COLLAPSE_AT',
   'MODEL_SORTS', 'MODEL_SORT_KEYS', 'MODEL_SORT_UNRANKED_LABEL', 'MODEL_SORT_OPTIONS',
   'MODEL_FILTER_MIN_ROWS', 'MEASUREMENT_CHIPS', 'ACTIVATION_SKIP_REASONS',
   'BUILD_PICK_ERROR_ID', 'QUALIFY_CONFIRM_ID', 'MEASURED_CALL_SECONDS',
@@ -109,7 +114,7 @@ const CONSTS = ['PROVIDER_ROWS', 'TX_INFO_GLYPH', 'MODEL_LANES', 'CHAT_LANE_COLL
   'CATALOGUE_SYNC_PROVIDERS'];
 
 const FNS = [
-  'infoMark', 'providerLabel', 'activeModelLine', 'providerHasSavedKey', 'providerConnected',
+  'providerLabel', 'activeModelLine', 'providerHasSavedKey', 'providerConnected',
   'qualIndex', 'buildModelFacts', 'buildLaneFacts', 'buildModelDisplayName',
   // v3.53.1: the per-model withdrawn verdict and its chip. Registered here
   // because renderModelOption / renderBuildList / renderModelBrowse CALL them;
@@ -161,6 +166,8 @@ const stubState = {
 };
 
 const INJECTED = {
+  explainerMark,
+  explainerHtml,
   escapeHtml: escapeHtmlStub,
   formatUsdHonest: (v) => (typeof v === 'number' && Number.isFinite(v) ? '$' + v.toFixed(2) : null),
   formatModelSummary: (m) => (m && typeof m.note === 'string' ? m.note : ''),
@@ -1219,11 +1226,14 @@ section('§12  BLOCK 2 IS "YOUR AI MODEL" — every AI job, derived from AI_JOBS
     'the lede names every AI job the model runs, in the contract’s words');
   ok(!/Ingest, Health scans and Compile all run on this one model/.test(b2),
     'and the three-job lede it replaces is gone');
-  // THE ⓘ — ai-jobs P5, verbatim.
-  okContains(b2, esc('There is nothing separate to set for each job: one model keeps one bill to read. ' +
-    'Choosing a model from another provider makes that provider the active one, so the bill moves with it. ' +
-    'Chat is the exception: pick any connected model per message, in the composer.'),
-    'the ⓘ is P5’s three sentences, verbatim');
+  // THE ⓘ — v3.71.1: no longer P5's prose in settings.js but the
+  // `settings.build` explainer (which carries P5's three points). The panel IS
+  // the explainer, byte for byte, under the entry's own accessible name.
+  okContains(b2, explainerHtml('settings.build'),
+    'the ⓘ panel is the settings.build explainer, byte for byte');
+  okContains(b2, 'id="settings-block-info-build"', '…under the unchanged panel id');
+  okContains(b2, 'aria-label="' + esc(EXPLAINERS['settings.build'].label) + '"',
+    '…and its button is named by the explainer’s label');
 
   // THE CARD — "measured for the build lane", with its own ⓘ.
   const card = b2.slice(b2.indexOf('build-current'), b2.indexOf('build-change') === -1 ? undefined : b2.indexOf('build-change'));
@@ -1231,8 +1241,11 @@ section('§12  BLOCK 2 IS "YOUR AI MODEL" — every AI job, derived from AI_JOBS
     'the current-model card says "measured for the build lane"');
   ok(!card.includes('measured by The Curator'),
     '…and no longer "measured by The Curator" — the evidence is one job’s, which the lane inherits');
-  okContains(card, esc('Measured on the ingest prompt, 9 runs; the other jobs are the same kind of structured-output task.'),
-    'its ⓘ says what "for the build lane" means');
+  // v3.71.1: the chip ⓘ is the STATIC `settings.measured` explainer, whose
+  // table names all three badges — including what "for the build lane" means.
+  okContains(card, explainerHtml('settings.measured'),
+    'its ⓘ is the settings.measured explainer, which says what "for the build lane" means');
+  okContains(card, 'id="settings-build-chip-info"', '…under the unchanged panel id');
   // CONTROL: the per-row chips in the Change… list keep their own words.
   okContains(b2.slice(b2.indexOf('build-change')), 'measured by The Curator',
     'CONTROL: the list rows below keep MEASUREMENT_CHIPS verbatim — only the card is re-worded');
@@ -1243,7 +1256,10 @@ section('§12  BLOCK 2 IS "YOUR AI MODEL" — every AI job, derived from AI_JOBS
     const u = blockOf(renderWith(k));
     okContains(u, '<span class="build-fact build-fact-measured">measured on your wiki</span>',
       'CONTROL: "measured on your wiki" is untouched on the card');
-    ok(!u.includes('>measured for the build lane<'), '…and is not relabelled as the lane’s');
+    // Scoped to the card's own fact span: the static explainer's table names
+    // all three badges (v3.71.1), so the bare phrase is legitimately present.
+    ok(!u.includes('<span class="build-fact build-fact-measured">measured for the build lane</span>'),
+      '…and is not relabelled as the lane’s');
   }
 
   // USED BY — a closed fold row, "6 jobs", one row per build-lane job.

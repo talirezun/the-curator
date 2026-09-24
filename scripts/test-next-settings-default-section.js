@@ -52,6 +52,7 @@ import { stripComments, functionSource } from './test-helpers/source-scan.js';
 // table in shared/docs-links.js, whose keys scripts/test-docs-links.js
 // checks against the actual markdown headings in docs/.
 import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
+import { explainerHtml, explainerMark } from '../src/public/next/shared/explainer.js';
 // The REAL sidebar kit, injected into the lifted `renderSidebar` below.
 import { renderSidebarHead, renderSidebarGroup, renderSidebarRow } from '../src/public/next/shared/sidebar.js';
 
@@ -325,11 +326,11 @@ console.log('\n§6  General uses settingsBlock, and no lede runs past 13 words')
   // everything else is a stub passed in by name, so an unlisted collaborator
   // is a named ReferenceError here rather than a wrong answer in the app.
   const pieces = [
-    constSrc(/const TX_INFO_GLYPH =[\s\S]*?';\n/, 'TX_INFO_GLYPH'),
-    constSrc(/const UPDATE_RECOVERY_INFO =[\s\S]*?;\n/, 'UPDATE_RECOVERY_INFO'),
-    constSrc(/const UPDATE_RECOVERY_INFO_INSTALLER =[\s\S]*?;\n/, 'UPDATE_RECOVERY_INFO_INSTALLER'),
+    // v3.71.1: TX_INFO_GLYPH, UPDATE_RECOVERY_INFO(_INSTALLER) and the local
+    // infoMark are gone from settings.js — every ⓘ is the REAL shared
+    // explainer kit, injected below as `explainerMark`.
     constSrc(/const BACKGROUND_MODE_LABELS = \{[\s\S]*?\n\};/, 'BACKGROUND_MODE_LABELS'),
-    fnSrc('infoMark'), fnSrc('settingsBlock'), fnSrc('installUpdateStyle'),
+    fnSrc('settingsBlock'), fnSrc('installUpdateStyle'),
     fnSrc('renderTextSize'), fnSrc('renderBackgroundMode'), fnSrc('renderGeneral'),
   ].join('\n\n');
 
@@ -342,6 +343,10 @@ console.log('\n§6  General uses settingsBlock, and no lede runs past 13 words')
     // shared/docs-links.js exists to prevent, and docsUrl() THROWS on a key
     // that is not in its table, so a typo reds this suite here.
     docsLinkHtml,
+    // THE REAL explainer kit (import-free, headless): an unknown key THROWS,
+    // so a typo'd block key reds this suite here.
+    explainerMark,
+    explainerHtml,
     icon: () => '<svg aria-hidden="true"></svg>',
     currentTheme: () => 'dark',
     currentFontScale: () => 'default',
@@ -435,8 +440,10 @@ console.log('\n§6  General uses settingsBlock, and no lede runs past 13 words')
     ok(folds.removed + panels.removed >= 4,
       `CONTROL: the fold remover really removed something (${folds.removed} info wrappers + ${panels.removed} loose panels) — ` +
       'without this, "the sentence survived" would be satisfied by a remover that does nothing');
-    ok(!/Read more in the guide/.test(panels.out),
-      'CONTROL: …and what it removed was the folds — every "Read more in the guide" is gone from the remainder');
+    // v3.71.1: a fold's guide link is now the explainer's guide card
+    // (`xp-guide`), not a "Read more in the guide" sentence.
+    ok(/class="xp-guide"/.test(rendered) && !/class="xp-guide"|data-explainer=/.test(panels.out),
+      'CONTROL: …and what it removed was the folds — every explainer (and its guide card) is gone from the remainder');
     ok(panels.out.includes(NEEDLE),
       'the failure-mode sentence SURVIVES the removal of every fold and hidden panel — it is on screen, not behind the ⓘ');
     // ANCHORED INSIDE A TAG. A bare /\shidden/ also matches the sentence's own

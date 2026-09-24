@@ -223,40 +223,19 @@ section('S3 -- Domains -> Projects: the row, the click, the refusal');
 // ═══════════════════════════════════════════════════════════════════════════
 
 const DOMAINS_SRC = read('src/public/next/views/domains.js');
+const { explainerMark, explainerHtml } = await import('../src/public/next/shared/explainer.js');
+const { EXPLAINERS } = await import('../src/public/next/shared/explainers.js');
 
 const DOM_FNS = [
-  // v3.58.0: the row's two copy controls each carry an ⓘ, built through this
-  // view's local infoMark at an id from projInfoId. Both lifted REAL -- a stub
-  // would let the row render its buttons with no explanation beside them and
-  // still pass every assertion below.
-  'infoMark', 'projInfoId',
+  // v3.58.0: the row's two copy controls each carry an ⓘ at an id from
+  // projInfoId. v3.71.1: the mark is the shared explainer kit's
+  // `explainerMark` (injected REAL below — a stub would let the row render its
+  // buttons with no explanation beside them and still pass).
+  'projInfoId',
   'renderProjectRow', 'renderCopyOutcome',
   'copyProjectMarker', 'copyProjectAgentInstructions', 'copyForProject',
   'bindProjectListeners',
 ];
-
-// The two ⓘ texts, lifted whole rather than re-typed. `functionSource` reads
-// functions; these are multi-line string consts, so this scans forward from the
-// `=` for the first `;` outside a string literal.
-function constSource(source, name) {
-  const re = new RegExp(`(?:^|\\n)const ${name} =`);
-  const m = re.exec(source);
-  if (!m) throw new Error(`constSource: "${name}" not found`);
-  const start = m.index + (source[m.index] === '\n' ? 1 : 0);
-  let i = source.indexOf('=', start) + 1;
-  let quote = null;
-  for (; i < source.length; i++) {
-    const c = source[i];
-    if (quote) {
-      if (c === '\\') { i++; continue; }
-      if (c === quote) quote = null;
-      continue;
-    }
-    if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
-    if (c === ';') return source.slice(start, i + 1);
-  }
-  throw new Error(`constSource: "${name}" never terminated`);
-}
 
 const domBox = (() => {
   const PREAMBLE = `
@@ -286,16 +265,14 @@ const navigator = { clipboard: { writeText: async (t) => {
 `;
   return new Function(
     'composeAgentInstructions', 'composeAgentInstructionsFull', 'COPY_SUCCESS_BANNER',
-    'COPY_SUCCESS_TITLE', 'COPY_SUCCESS_LINES', 'showToast',
+    'COPY_SUCCESS_TITLE', 'COPY_SUCCESS_LINES', 'showToast', 'explainerMark',
     PREAMBLE +
-    constSource(DOMAINS_SRC, 'MARKER_INFO_TEXT') + '\n' +
-    constSource(DOMAINS_SRC, 'AGENT_INFO_TEXT') + '\n' +
     DOM_FNS.map((n) => {
       const src = functionSource(DOMAINS_SRC, n);
       if (!src) throw new Error('could not lift ' + n + ' from domains.js');
       return src;
     }).join('\n\n') + '\n' +
-    `return { ${DOM_FNS.join(', ')}, MARKER_INFO_TEXT, AGENT_INFO_TEXT,
+    `return { ${DOM_FNS.join(', ')},
        __state: () => state, __setState: (s) => { state = s; },
        __calls: () => calls,
        __reset: () => { calls.render = 0; calls.clipboard.length = 0; calls.asyncFailures = 0; },
@@ -303,7 +280,8 @@ const navigator = { clipboard: { writeText: async (t) => {
        __setClipboard: (v) => { clipboardOk = v; },
        __setMounted: (v) => { mounted = v; } };`
   )(composeAgentInstructions, composeAgentInstructionsFull, COPY_SUCCESS_BANNER,
-    COPY_SUCCESS_TITLE, COPY_SUCCESS_LINES, (o) => { toasts.push(o); return o && o.key; });
+    COPY_SUCCESS_TITLE, COPY_SUCCESS_LINES, (o) => { toasts.push(o); return o && o.key; },
+    explainerMark);
 })();
 
 const ROW = (over) => ({
@@ -318,6 +296,18 @@ const domState = (over) => ({ activeSlug: 'alpha', copied: null, ...over });
   ok('the row carries the marker action', html.includes('data-proj-marker="lumina"'));
   ok('...AND the agent-instructions action', html.includes('data-proj-agent="lumina"'));
   ok('...labelled in the words the docs use', html.includes('Copy agent instructions'));
+  // v3.71.1: the two ⓘ beside the copy controls are the shared explainers.
+  // The harness FILE NAMES left them (they are in COPY_SUCCESS_BANNER, S2,
+  // and the user guide); the marker file name stays, in the steps.
+  ok('...the instructions control’s ⓘ IS the domains.agent-instructions explainer',
+    html.includes('aria-label="' + EXPLAINERS['domains.agent-instructions'].label + '" hidden>'
+      + explainerHtml('domains.agent-instructions') + '</div>'));
+  ok('...and the marker control’s ⓘ IS the domains.marker-line explainer',
+    html.includes('aria-label="' + EXPLAINERS['domains.marker-line'].label + '" hidden>'
+      + explainerHtml('domains.marker-line') + '</div>'));
+  ok('...whose steps name the `.curator-project` file the block points an agent at',
+    EXPLAINERS['domains.marker-line'].visual.steps.some((t) => t.includes('`.curator-project`'))
+    && TEMPLATE.includes('`.curator-project`'));
 
   // NOT gated. Neither action writes anything, and the two rows that lose the
   // write controls are exactly the two people are most likely to be resuming.
