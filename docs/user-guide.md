@@ -1633,10 +1633,10 @@ the whole page: on this repository's own `curator` project at a 1370px window, t
 open stays open for the next visit, per browser; a private window simply forgets, and they come
 back closed.
 
-**A missing thing is never folded away.** On a fresh project, step ① renders the ownership question
-**unfolded** — it is that step's job — and step ② renders one flat card saying nothing has been
-saved and whether there is a brief. A new project therefore shows a screen with something to *do*
-on it rather than three closed chevrons.
+**A missing thing is never folded away.** On a fresh project, step ① renders **unfolded** with its
+two Add doors open — it is that step's job — and step ② renders one flat card saying nothing has
+been saved and whether there is a brief. A new project therefore shows a screen with something to
+*do* on it rather than three closed chevrons.
 
 Reading one work-stream's handoff is a separate act, and since v3.56.0 it happens in the
 **[reader](#reading-a-handoff)** — the same right-hand panel a wiki page opens in, over a page that
@@ -1725,53 +1725,77 @@ a head row above its rows, the same anatomy Wiki health's Quick maintenance pane
 decisions, conventions, a roadmap — the things a competent new contributor reads *before* touching
 anything. They are **replaced whole** and read **verbatim**: an agent gets the document, not a
 paraphrase of it. → [§13b, Foundations](#foundations--canonical-documents-that-travel) for how
-documents get in and what the two ownership modes mean — the store and that chapter still call this
-tier **foundations**; see [the table above](#the-word-on-screen-and-the-word-on-disk).
+documents get in and what a document's own source means — the store and that chapter still call
+this tier **foundations**; see [the table above](#the-word-on-screen-and-the-word-on-disk).
 
-**The head row above the table always offers two doors, since v3.68.0: Add from this computer and
-Add from GitHub** — at zero documents and at twenty, whatever the project's current source.
-Pressing either opens the same checklist panel under the head row. A **Refresh** button (*"Refresh
-from repo"* or *"Refresh from GitHub"*, matching the project's source) sits beside the doors on a
-project that already mirrors something. **Until a project holds its first document, both doors are
-open and neither is a commitment** — its source is whichever door you press first — and at that
-same empty state the step also offers a quiet **"Or start from four templates to fill"**. Removing
-every document from a project puts it back to this open choice.
+**As of v3.69.0, one project can hold documents from several places at once** — written here,
+copied in from a folder, and mirrored from any number of folders and GitHub repositories (up to
+8 sources, any mix). The source is recorded per **document**, not per project, so there is nothing
+to choose up front and nothing that ever locks a project to one place.
+
+| Document kind | Written by | Edited here? | What Refresh does | What Delete does |
+|---|---|---|---|---|
+| **Written** | You, or an agent you asked | Yes, in the app's editor | Nothing — there is no source copy to re-read | Removes it. Cannot be undone from inside the app |
+| **Copied** | A one-time copy from a folder | Yes — editing it makes it "written by you" from then on | Nothing — it does not track the folder | Removes the copy only; the original file is untouched |
+| **Folder mirror** | A folder you keep in sync | No — the pencil is withheld; edit the file, then refresh | Re-reads the file from the folder and copies over anything changed | Removes this project's copy only; the file in your folder is untouched, and a refresh will not bring it back — re-add it from the checklist if you want it again |
+| **GitHub mirror** | A GitHub repository you keep in sync | No — edit it on GitHub, then refresh | Re-reads the file from the repository and copies over anything changed | Removes this project's copy only; the file on GitHub is untouched, and a refresh will not bring it back — re-add it from the checklist if you want it again |
+
+Deleting a source's *last* document removes that source from the project in the same action —
+there is no separate "remove this source" control, and no orphaned, document-less source is left
+behind.
+
+**The head row above the table always offers two doors: Add from this computer and Add from
+GitHub** — at zero documents and at any number, and both are always enabled. Pressing either opens
+the same checklist panel under the head row. A **sources strip** under the head row lists every
+source this project draws from (once it has one), each with its own **Refresh**; a strip-level
+**Refresh all** refreshes every source under one lock — sources are read first, a source that
+fails is named and left exactly as it was, and the others still refresh, then the manifest is
+written once. **Until a project holds its first document the step also offers a quiet "Or start
+from four templates to fill."**
+
+**One project, several sources — an example.** A `lumina` project can keep `notes.md` written
+here, mirror `architecture.md` and `decisions.md` from your `second-brain` checkout (kept in
+sync), and mirror `roadmap.md` from a teammate's `acme/lumina-planning` GitHub repository — three
+sources, three kinds of document, one project. Adding a file from your checkout whose name would
+collide with one already mirrored from GitHub does not overwrite it — the new one lands as, say,
+`architecture-lumina-planning.md`, named after its source, and the checklist marks it "lands as
+&lt;name&gt;" before you confirm.
 
 The fold's summary line is the decision to open it — *"3 documents · 391 KB · mirrored · 2 read
-first · 1 on request · fresh"*. Inside, one row per document, in eight columns: **ROLE ·
-DOCUMENT · SIZE · READ · SOURCE · COPY · UPDATED**, plus a **Remove**. The READ cell is the control
-— a pill reading `read first` or `on request` that you press to flip it. Press anywhere else on the
-row to read the document in the reader. **As of v3.65.1 the SIZE column carries a depth bar** — a
-tinted bar behind each figure, anchored at the right edge of the cell, its length that document's
-share of the 200 KB project budget; a single document over the budget on its own fills the whole
-cell in the warning colour. The bar is a second way to *see* the same fact the total-over-budget
-warning under the table already states in words — a cost is never only a colour on this screen, so
-the words stay even where the bar makes it obvious at a glance.
+first · 1 on request · fresh"*. Inside, one row per document — its role, size, session-start
+state, and (as of v3.69.0) its **Source** and **Freshness** in a project that mixes kept and
+mirrored documents, or a single **State** column in a project with only one kind, plus a pencil
+(kept documents only) and a trash icon on every row. Pressing the pencil opens the editor; pressing
+anywhere else on the row opens the document in the reader. **As of v3.65.1 the Size column carries
+a depth bar** — a tinted bar behind each figure, anchored at the right edge of the cell, its length
+that document's share of the 200 KB project budget; a single document over the budget on its own
+fills the whole cell in the warning colour. The bar is a second way to *see* the same fact the
+total-over-budget warning under the table already states in words — a cost is never only a colour
+on this screen, so the words stay even where the bar makes it obvious at a glance.
 
-**The table scrolls sideways on a narrow window.** It has eight columns as of v3.62.0 — the
-read-first control is the new one — so on a phone-width window the table scrolls inside its own
-card rather than the page scrolling. That is one column worse than v3.59.0 already recorded, and it
-is the honest cost of putting the control in the row it belongs to.
+**The table scrolls sideways on a narrow window**, so on a phone-width window the table scrolls
+inside its own card rather than the page scrolling — the honest cost of putting each row's own
+controls in the row they belong to.
 
-**A project has one source, and each door does something different depending on what that source
-already is.** The door that cannot work for this project stays visible — never hidden — shown
-`aria-disabled` with the reason as its tooltip; pressing it anyway shows the same reason as a
-toast.
+**Both doors are always enabled, on every project, since v3.69.0.** Neither door is a commitment
+and neither can be "wrong" for the project — a project simply grows another source.
 
 | This project | Add from this computer | Add from GitHub |
 |---|---|---|
-| No documents yet | Copies files in — the project becomes curator-kept | Mirrors from the repository you name — the project becomes a GitHub mirror |
-| Keeps its own copies (curator-kept) | Copies files in, **appended** — never replaces what is already there | Disabled — *"a project has one source. Start a new project to mirror a repository."* |
-| Mirrors a folder | Mirrors more, from **inside that folder only** — a file from elsewhere is refused | Switches the source to GitHub — re-reads the existing documents from the repository by path, and the folder stops being used (this was **"Mirror from GitHub instead"**) |
-| Mirrors a GitHub repository | Disabled, naming the repository | Adds more from that repository; naming a **different** repository switches the source again |
+| No documents yet | Copies or mirrors files in, your choice | Mirrors from the repository you name |
+| Already has documents | Adds more, from the same folder or a new one, **appended** — never replaces what is already there | Adds more, from the same repository or a new one, **appended** |
 
-Choosing GitHub from a folder mirror **re-copies the documents from the repository you name,
-records it, and clears the folder path** — every machine then reads the same source rather than
-only the one that made the mirror. **Ownership does not move** — the repository is still the
-author, exactly as a folder mirror is — and any document you had marked **read first** stays
-marked, by name, across the switch. As with every mirror, there is **no token field on this
-panel**: you name which file on this computer the read-only token is read from — **config**, or
-**sync** (Personal Sync's token) — never paste one here.
+Adding from this computer offers **Keep in sync** (a folder mirror; the default when the folder
+you named is itself inside a git checkout) or **Copy once** (a one-time copy; the default
+otherwise) — both options are always shown, and you choose per add, not once per project. Adding
+from GitHub always mirrors; there is no copy-once option there, because a GitHub file has nothing
+local to copy from. A name already taken by another source lands under a readable suffix rather
+than overwriting it — the checklist shows **"lands as &lt;name&gt;"** before you confirm.
+
+As with every mirror, there is **no token field on either panel**: you name which file on this
+computer the read-only token is read from — **config**, or **sync** (Personal Sync's token) —
+never paste one here. A per-source Refresh, or "Read from GitHub instead" for a source you add
+later, reuses the token that source was first added with.
 
 **A document's SOURCE reading tells you why it isn't fresh, in one of two different ways (since
 v3.67.2).** A document mirrored from GitHub reads **"GitHub · not checked"** — freshness there is
@@ -2251,19 +2275,18 @@ brief** — the handoff and the journal are written by an agent and by nothing e
 > work-streams, a seven-day save pulse, and the standing brief's age — from the menu bar. It is off by default and
 > it is a reader too: nothing in it writes.
 
-The menu bar icon also carries a small honesty check on a project whose documents are
-**repo-owned** (see [Foundations](#foundations--canonical-documents-that-travel), below — the store
-still calls this tier **foundations**; the screen calls it **Documents**): when
-one or more of that project's mirrored documents no longer match the checkout they were copied
-from, its header sublabel gains **`· docs stale`**, or **`· N docs stale`** once there is more
-than one — the same computed-not-remembered freshness check the in-app Documents block already
-runs, surfaced where you are most likely to see it before starting work. Nothing appears when
-every mirrored document is current, and a curator-owned document (one an agent wrote, with
-nothing to compare it against) never triggers the mark. If you see it: either **refresh the
-mirror from the repository** — the same action the in-app Documents block offers, run from
-whichever machine has that checkout, or switch it to read from GitHub directly with **"Mirror from
-GitHub instead"** — or, for a document an agent wrote rather than mirrored,
-**save the fresher version from the checkout** you actually want kept.
+The menu bar icon also carries a small honesty check on a project that has **any mirrored
+document** (see [Foundations](#foundations--canonical-documents-that-travel), below — the store
+still calls this tier **foundations**; the screen calls it **Documents**): when one or more
+mirrored documents, from any of the project's sources, no longer match the folder or repository
+they were copied from, its header sublabel gains **`· docs stale`**, or **`· N docs stale`** once
+there is more than one — the same computed-not-remembered freshness check the in-app Documents
+block already runs, surfaced where you are most likely to see it before starting work. Nothing
+appears when every mirrored document is current, and a written or copied document (nothing to
+compare it against) never triggers the mark. If you see it: **refresh that source** — the sources
+strip offers Refresh per source, and a Refresh all — run from whichever machine has the folder, or
+for a folder source you can also add its repository as a GitHub source instead — or, for a
+document an agent wrote rather than mirrored, **save the fresher version yourself**.
 
 Full detail — the layout, what goes in state versus what belongs on a wiki page, and the safety
 rules — is in **[working-state.md](working-state.md)**.
@@ -4114,17 +4137,20 @@ cannot be honestly trimmed) and a project's foundations are capped at 200 KB in 
 over-budget save is *accepted and disclosed*, never silently refused, for the same reason a
 handoff is never refused: a rejected save loses the document outright).
 
-**Two ownership modes, and a project holds only one.**
+**Every document has its own source, since v3.69.0 — a project is no longer one thing.** Through
+v3.68.0 a project held documents of one "ownership" only. That rule is retired: a project can now
+hold documents **written** here, **copied** in once, and **mirrored** from any number of folders
+and GitHub repositories (up to 8 sources), all at once. What survives unchanged is the single-writer
+rule, now checked per document rather than per project:
 
-| Mode | Who writes it | How it stays fresh | What a "stale" mark means |
+| Kind | Who writes it | How it stays fresh | What a "stale" mark means |
 |---|---|---|---|
-| **Repo-owned** | The repository is the source of truth. The app/MCP only *mirrors* — a byte-for-byte copy, never an edit | A **Refresh from repo** action re-reads each mirrored file from the checkout named in the manifest, compares its sha256 against the stored copy, and copies over anything that changed | The stored copy's sha256 no longer matches the file at the recorded repo path — either it changed there, or that path is no longer reachable from this machine |
-| **Curator-owned** | An agent, and only ever **on your explicit instruction** — the same commissioned-only rule the standing brief follows | Whoever you next ask to update it, again on your instruction. Nothing regenerates a curator-owned document automatically | Not applicable — there is no second copy to compare against, so a curator-owned document is never marked stale |
+| **Written** / **copied** (kept here) | You, or an agent you asked — the same commissioned-only rule the standing brief follows | Whoever you next ask to update it, again on your instruction. Nothing regenerates it automatically | Not applicable — there is no second copy to compare against, so a kept document is never marked stale |
+| **Mirrored**, from a folder or GitHub | Its source is the source of truth. The app/MCP only *mirrors* — a byte-for-byte copy, never an edit | Refreshing that source re-reads each mirrored file, compares its sha256 against the stored copy, and copies over anything that changed | The stored copy's sha256 no longer matches the file at the recorded path — either it changed there, or that source is not reachable from this machine |
 
-A project cannot mix the two: the first document saved into it sets the mode, and a save that
-would mix modes is refused with a clear reason. That is the single-writer rule extended one tier
-further down — a repo-owned document has exactly one legitimate writer (the checkout), and a
-curator-owned one has exactly one (an agent you asked).
+A save to a mirrored document's slug is refused — *"edit it there and refresh"* — but a save under
+a **new** slug always succeeds, in any project, including one that mirrors: `save_foundation` and
+the app's own **Write a document** create, they never overwrite a mirror.
 
 **What an agent actually gets, and how you choose it** *(v3.62.0)*
 
@@ -4198,9 +4224,10 @@ opened table carries a **read first** control and a freshness dot on the same
 row opens that document in the [reader](#reading-a-handoff), the same right-hand panel a handoff or
 a wiki page opens in. **The read-first control works on a mirrored document as well as one kept
 here** — it changes The Curator's own index and never the document, so it cannot make the app a
-second writer of a file your repository owns. A repo-owned project whose repository is reachable from
-this machine gets a **Refresh from repo** action on the block itself; where it is not reachable,
-the action is withheld and a short note says why rather than offering a button that would fail.
+second writer of a file your repository owns. **As of v3.69.0** the block shows a **sources strip**
+listing every source the project draws from, each with its own Refresh; a source that is not
+reachable from this machine shows why in place of a working button, rather than offering a control
+that would fail.
 
 **What this tier does not do.** Nothing selects which documents belong in a project automatically —
 you, or an agent you asked, decide what is canonical. Nothing summarises a document with an LLM on
@@ -4208,8 +4235,8 @@ the way in or out — a foundation is stored and returned verbatim. **Read first
 start is always a choice you make or apply** — nothing changes a document's start state on its own;
 see *Suggest a reading plan*, below, for the one thing that proposes a plan for you to approve. A
 project with nothing marked behaves exactly as it did before v3.62.0 — every document, up to the
-budget. And a **Refresh from repo** still needs the checkout on the machine that has it; the copies
-travel everywhere, the comparison does not. *(Before v3.61.0 the app had no editor for a
+budget. And refreshing a folder source still needs the checkout on the machine that has it; the
+copies travel everywhere, the comparison does not. *(Before v3.61.0 the app had no editor for a
 curator-owned foundation at all — writing one was an agent action, on your instruction, over MCP,
 and only over MCP. The next section is what changed.)*
 
@@ -4251,18 +4278,19 @@ control stays off until at least one document is ticked.
 
 ### Start a project
 
-*New in v3.61.0.* Creating a project — **Domains → Projects → New project** — now asks a second
-question, right below the brief: **where do this project's foundations live?** You are choosing
-the [ownership mode](#foundations--canonical-documents-that-travel) up front, on the one occasion
-it can still be changed for free — a project holds only one, and the first document saved into it
-sets it for good.
+*New in v3.61.0.* Creating a project — **Domains → Projects → New project** — asks a second
+question, right below the brief: **where do this project's first documents come from?** This is a
+convenience for the moment of creation, not a lasting commitment — **since v3.69.0 it no longer
+decides what the project is allowed to hold**: whatever you pick here, both Add doors on step ①
+Documents stay open afterward, and you can add more written, copied or mirrored documents, from
+any number of sources, at any time.
 
 | Choice | What happens | When to pick it |
 |---|---|---|
-| **Curator keeps them** *(the default)* | Four skeleton documents are seeded immediately — `architecture.md`, `decisions.md`, `conventions.md`, `roadmap.md` — each a **prompt to answer**, not a fact. This project is now `curator`-owned. Optionally, on this same form, **start from files** — pick one or more existing `.md`/`.txt` documents from your computer and each becomes a real document alongside the seeds (untick "seed the four skeletons" if you don't want those too) | You have no repository yet, or the project is not code at all — research, a client engagement, a body of reading |
-| **Mirror from a repository on this Mac** | A path field plus **Find documents** scans that checkout for candidate files and offers them as checkboxes, each with a role you can correct — this project is now `repo`-owned, and the checkout, not the app, is the source of truth from here on | You already have an architecture doc, a decisions log, or similar, checked in — or just sitting in a folder, whether or not that folder is a git repository |
-| **Mirror a GitHub repository** *(new in v3.65.0)* | Give it `owner/repo` — the https:// or git@ URL git itself prints works too — and, optionally, a branch and a folder inside it, then press **Find documents**. The Curator lists what it found over the network, sized, with the same running budget total as the local arm and (since v3.65.3) nothing pre-ticked, and copies whichever documents you tick the moment you confirm. This project is now `repo`-owned, with no checkout on this computer required | You want a mirror on a machine that has never cloned the repository — a second Mac, a fresh install, a machine set up for agent work only |
-| **Decide later** | Nothing is written. The same choice reappears the first time you open this project's Foundations block | You are not sure yet, or you are creating several projects at once and do not want to stop for each one |
+| **Curator keeps them** *(the default)* | Four skeleton documents are seeded immediately — `architecture.md`, `decisions.md`, `conventions.md`, `roadmap.md` — each a **prompt to answer**, not a fact. Optionally, on this same form, **start from files** — pick one or more existing `.md`/`.txt` documents from your computer and each becomes a real document alongside the seeds (untick "seed the four skeletons" if you don't want those too) | You have no repository yet, or the project is not code at all — research, a client engagement, a body of reading |
+| **Mirror from a repository on this Mac** | A path field plus **Find documents** scans that checkout for candidate files and offers them as checkboxes, each with a role you can correct — the checkout becomes this project's first source | You already have an architecture doc, a decisions log, or similar, checked in — or just sitting in a folder, whether or not that folder is a git repository |
+| **Mirror a GitHub repository** *(new in v3.65.0)* | Give it `owner/repo` — the https:// or git@ URL git itself prints works too — and, optionally, a branch and a folder inside it, then press **Find documents**. The Curator lists what it found over the network, sized, with the same running budget total as the local arm and (since v3.65.3) nothing pre-ticked, and copies whichever documents you tick the moment you confirm — no checkout on this computer required | You want a mirror on a machine that has never cloned the repository — a second Mac, a fresh install, a machine set up for agent work only |
+| **Decide later** | Nothing is written. The same choice reappears the first time you open this project's Documents step, and both doors are open from the start regardless | You are not sure yet, or you are creating several projects at once and do not want to stop for each one |
 
 **Choosing the folder.** Beside the typed-path field sits a **Choose folder…** button — the same
 native picker Settings uses to point at your knowledge base, opened for reading only: it hands back
@@ -4308,17 +4336,18 @@ anything else.
 the rest of the app uses. It is information only: an old document is still offered, still ticked or
 not by the same rule, and the list is never reordered by age — the sort stays role, then path.
 
-**Removing a mirrored document.** *New in v3.61.1* — before this, a mirrored project's document
-list could not be edited at all. Every row of a mirrored project's table now carries its own labelled
-**Remove** button (a curator-owned table's rows carry a pencil **Edit** instead, opening the editor
-described below, which has its own **Delete**). Pressing a mirrored row's Remove opens a confirm
-strip in place, under the table — never a dialog — naming exactly what happens: *"Stop mirroring
-**decisions.md**? The copy is removed and your agents stop reading it; the file in your folder is
-untouched, and you can mirror it again from the same picker."* Confirming removes that one document
-from the project without touching anything else — there is no bulk removal, so twenty-five unwanted
-rows are twenty-five presses (which is exactly what the new default ticks above exist to prevent).
-The editor's **Delete**, for a curator-owned document, reads differently and means it literally:
-*"It cannot be undone from inside The Curator; if you sync, a git client can still recover it."*
+**Deleting a document.** *New in v3.61.1, a trash icon on every row since v3.69.0.* Every row —
+written, copied or mirrored — carries its own delete icon (a kept document also carries a pencil
+that opens the editor, which has its own **Delete** sharing the same confirmation). Pressing it
+opens a confirm strip in place, under the table — never a dialog — naming exactly what happens: for
+a mirrored document, *"Stop mirroring **decisions.md**? The copy is removed and your agents stop
+reading it; the file at its source is untouched. A refresh will not bring it back — re-add it from
+the checklist if you want it here again."* Confirming removes that one document from the project
+without touching the original, and without touching any other document — there is no bulk removal.
+**Deleting a source's last document removes that source from the project too**, in the same
+action. The editor's **Delete**, for a written or copied document, reads differently and means it
+literally: *"It cannot be undone from inside The Curator; if you sync, a git client can still
+recover it."*
 
 **The GitHub arm never asks you to type a token.** A radio beside the repository field chooses
 *which stored token to read with* — the dedicated, read-only `githubReadToken` in Settings, or
@@ -4330,7 +4359,7 @@ the tree too large to list) and never the token itself. A remote candidate carri
 tree has no last-modified time the way a local file does — so one line above the list says so, once,
 rather than twenty-five rows each carrying a dash where the age would be. **Nothing is written until
 every ticked document has been read successfully:** a wrong owner, repository, branch or folder
-leaves the project exactly as it was, free to try again, because ownership can only be chosen once.
+leaves the project exactly as it was, free to try again.
 
 The banner after creation says which one fired — *"Created project lumina · 4 skeletons seeded"*,
 *"· 3 documents mirrored"*, or *"· documents: decide later"* — and, if the project itself was
@@ -4368,13 +4397,12 @@ flowchart TD
     MIRROR --> STALE["Stays fresh via Refresh from repo —<br/>never edited in place"]
 ```
 
-**Editing a foundation, in the app.** Only a **curator-owned** document can be edited here — a
-repo-owned one is mirrored, so editing it in the app would be immediately overwritten by the next
-refresh; the app says so and points you at the checkout instead. On a curator-owned project, each
-row in the Foundations block's table carries its own **Edit** control, and the block's own header
-carries **Write a document** (renamed from **Add document** in v3.68.0, so it reads as its own
-button rather than a third way to add files beside step ①'s two doors, Add from this computer and
-Add from GitHub). Either one opens an editor **in place of the table**, inside the same
+**Editing a foundation, in the app.** Only a **written or copied** document can be edited here — a
+mirrored one is refreshed from its source, so editing it in the app would be immediately
+overwritten by the next refresh; the app says so and points you at the source instead (the pencil
+is withheld on that row). Every project, mirrored or not, keeps **Write a document** in the block's
+own header (renamed from **Add document** in v3.68.0), so a new document can always be written, no
+matter what else the project already holds. Either one opens an editor **in place of the table**, inside the same
 fold — the standing brief's own pattern — with the document's title and role, a plain-text box that
 renders in the same monospace face as everywhere else code-shaped text appears in this app, and a
 live byte counter. **Save** is disabled past **512 KB** — a canonical document cannot be honestly
@@ -4394,15 +4422,15 @@ same role guess the repository scan uses) and are yours to correct before saving
 whose slug matches an existing skeleton **replaces that skeleton** and clears its mark — the
 banner says so, so you are never left wondering whether you overwrote a document.
 
-**Getting an existing document into a curator-owned project — four ways in, not one.** Before
-v3.61.0 there was exactly one: asking an agent to write it.
+**Getting an existing document into a project — several ways in, not one.** Before v3.61.0 there
+was exactly one: asking an agent to write it.
 
 | Way in | What actually happens | When to use it |
 |---|---|---|
-| **Add from this computer** (step ①'s head row, v3.68.0) | Tick documents from a folder scan and copy them in, appended to what is already there — the ordinary way to bring in several documents at once | You are adding one or more existing files, from anywhere on this computer |
-| **Mirror from a repository** | Scanned from a checkout you point at, copied byte-for-byte, kept fresh by **Refresh from repo** — never edited here | The document already lives in a repository and should keep that repository as its source of truth |
-| **Choose a file…**, inside **Write a document**'s editor | Read from your disk into the editor, shown to you, saved only when you press **Save** — a `curator`-owned copy from here on, with no checkout behind it | You want to review or trim the text before it is saved, not just copy it in whole |
-| **An agent's commissioned save** | An agent writes or updates it with `save_foundation`, **only when you ask** | You want an agent to draft or fill the document from what you've just discussed, rather than typing or pasting it yourself |
+| **Add from this computer** (step ①'s head row) | Tick documents from a folder scan and either copy them in once, or keep the folder in sync — your choice, appended to what is already there | You are adding one or more existing files, from anywhere on this computer |
+| **Add from GitHub** (step ①'s head row) | Tick documents found in a GitHub repository and mirror them in, appended to what is already there | The document already lives in a repository you want The Curator to keep re-reading from |
+| **Choose a file…**, inside **Write a document**'s editor | Read from your disk into the editor, shown to you, saved only when you press **Save** — a kept copy from here on, with no source to refresh from | You want to review or trim the text before it is saved, not just copy it in whole |
+| **An agent's commissioned save** | An agent writes or updates it with `save_foundation`, **only when you ask** — works in any project, including one that mirrors, as long as the slug is new | You want an agent to draft or fill the document from what you've just discussed, rather than typing or pasting it yourself |
 
 **Asking, without composing the request yourself.** The Foundations block's **Copy the drafting
 request** puts a ready-made ask on your clipboard — naming this project, its actual unfilled

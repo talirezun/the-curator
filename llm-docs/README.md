@@ -96,33 +96,26 @@ release checklist:
 > model, label or URL changes — **and then re-upload the changed files to
 > Lumina by hand.**
 
-**Outstanding for v3.68.0** (supersedes the v3.67.1 note below — this documentation sync covers
-v3.67.2 and v3.68.0 together, so this note replaces rather than adds to it): Context → Documents'
-step ① head row now always offers **two doors — Add from this computer and Add from GitHub** — at
-zero documents and at twenty, replacing the old three-control row (*Refresh from repo*, *Add from
-folder*, *Mirror from GitHub instead*); each door is disabled with its reason, never hidden, when
-it cannot work for the project's current one source, and both open the same checklist panel (tick,
-see the live total against the 200 KB budget, commit) — adding always appends, never replaces
-(v3.68.0). The curator-owned editor's own button is renamed **Write a document** (was *Add
-document*), so it reads as its own way in rather than a third door. One app-wide **toast** now
-carries every action confirmation (a copy, for example) — bottom-right, closes on its own after 30
-seconds, pauses on hover — while a warning about cost, anything destructive, a failure, or anything
-still blocking the user stays on the page; Copy agent instructions now says exactly where to paste
-the block — the very top of `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / a `.cursor/rules` file,
-because Codex truncates `AGENTS.md` at 32 KB; a document mirrored from GitHub now reads **"GitHub ·
-not checked"** rather than the false "not on this computer" reading (v3.67.2). The website
-repository's copies (`site/lumina-knowledge/*.md`, `site/llms.txt`) still need updating to match,
-and **Lumina's own live knowledge base still needs the manual upload** described below.
-`curator-links.md` is unchanged — no anchor it points at moved. **`curator-agent-memory.md`
-changed** — see the budget table below for the current token figures — and needs re-uploading;
-remove this note once it is done, and a stale note left here is how this file stops being read.
+**Outstanding for v3.69.0** (supersedes the v3.68.0 note below — this documentation sync covers
+v3.68.1 and v3.69.0 together): project-wide foundations "ownership" is **retired** — a project may
+now hold documents written here, copied in, and mirrored from up to 8 folders and/or GitHub
+repositories at once, checked per document rather than once per project; both Add doors stay
+enabled on every project; Add from this computer offers **Keep in sync** or **Copy once**; a name
+collision lands under a readable suffix rather than overwriting; every row carries a delete icon
+(mirrored rows lose the pencil); deleting a mirrored document never comes back on a refresh, and
+deleting a source's last document removes that source. A v3.68.1+ app reads a project saved by a
+newer version **read-only**, "update The Curator," never suggesting a fix. `curator-agent-memory.md`
+and `curator-overview.md` changed — see the budget table below for the current token figures — and
+need re-uploading; `curator-user-guide.md` and `curator-links.md` are unchanged in substance for
+this release. The website repository's copies (`site/lumina-knowledge/*.md`, `site/llms.txt`) still
+need updating to match, and **Lumina's own live knowledge base still needs the manual upload**
+described below; remove this note once it is done, and a stale note left here is how this file
+stops being read.
 
-*Prior note, v3.67.1* (the GitHub read-only token's READ WITH chooser offering two saved tokens
-since v3.65.3; Ingest and Shared Brain as always-open sections on the domain page since v3.65.2/3;
-one visual language for identity, freshness, depth and tone everywhere, including the Mac menu bar
-widget, v3.66.0/3.66.1; one AI model running every AI job with a cost line before and after,
-v3.67.0; each project's reading budget, third document start state and Suggest a reading plan
-helper, v3.67.0) — folded into the v3.68.0 note above rather than tracked twice.
+*Prior note, v3.68.0* (Context → Documents' step ① head row's two doors, replacing the old
+three-control row; the curator-owned editor's button renamed **Write a document**; one app-wide
+toast for action confirmations; a document mirrored from GitHub reading **"GitHub · not
+checked"**, v3.67.2) — folded into the v3.69.0 note above rather than tracked twice.
 
 **Editing a file here changes nothing on the website.** There is no pipeline, no
 webhook and no sync: Lumina serves the copy it was given, so a release that

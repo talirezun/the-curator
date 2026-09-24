@@ -2565,13 +2565,14 @@ collision (see below the table).
 | `DELETE` | `/api/memory/:domain/projects/:project` | Delete a project — `{confirm}` |
 | `PATCH` | `/api/memory/:domain/:project/knowledge/domains` | **New in v3.65.0.** Which wikis this project's knowledge lives in — `{knowledgeDomains}`, a list or `null` |
 | `GET` | `/api/memory/:domain/:project/foundations/:slug` | One canonical document, verbatim (v3.59.0; gains `?raw=1` in v3.61.0) |
-| `PUT` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0.** Create or replace one curator-owned document, whole — still refused on a mirror. Gains an optional, **tri-state** `readFirst` in v3.62.0 |
-| `PATCH` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.62.0.** The reading plan and nothing else — `{readFirst}` — on **either** ownership |
-| `DELETE` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0**, works on **either** ownership **since v3.61.1**. Remove one document, behind a name confirmation — on a mirror this stops mirroring it, the source file untouched |
-| `POST` | `/api/memory/:domain/:project/foundations/init` | **New in v3.61.0.** Set a project's foundations ownership for the first time, optionally seeding or mirroring in the same call. **v3.65.0** adds a `remote`/`tokenSource` arm — a mirror born from GitHub with no checkout on this machine — and makes the body strict. **v3.68.0** adds `rechooseEmpty: true` — lets the Add from GitHub door re-choose the source of a project whose manifest already lists 0 documents, but only when the folder (if any) holds no unlisted document either; without the flag, or with any document or orphan present, ownership is unchanged as before |
-| `POST` | `/api/memory/:domain/:project/foundations/add-local` | **New in v3.68.0.** *"Add from this computer"* — `{root, files}`. `addFoundationsFromFolder` copies the ticked `.md`/`.txt` files from a folder into an empty or curator-kept project (appended, never replacing), or mirrors them into a folder mirror from **inside that mirror's own folder only**; refused `source-is-github` on a GitHub mirror |
-| `POST` | `/api/memory/:domain/:project/foundations/refresh` | Re-mirror from a checkout (v3.59.0; gains a `files` body in v3.61.0) — **or, in v3.63.0, from the GitHub repository itself** when the checkout is not on this machine |
-| `POST` | `/api/memory/:domain/:project/foundations/source` | **New in v3.65.1.** *"Mirror from GitHub instead"* — re-points an existing **repo-owned** mirror at a GitHub repository, clearing its local folder path in the same write. Ownership never moves. **Since v3.68.0** this is the Add from GitHub door's `switch` mode, reached from a folder mirror |
+| `PUT` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0.** Create or replace one kept (written/copied) document, whole — refused **per document** on a mirrored slug (`ownership-mismatch`, naming the mirror's source) **since v3.69.0**, rather than per project; a new slug always succeeds. Gains an optional, **tri-state** `readFirst` in v3.62.0 |
+| `PATCH` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.62.0.** The reading plan and nothing else — `{readFirst}` — on **any** document, kept or mirrored |
+| `DELETE` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0**, works on any document **since v3.61.1**. Remove one document, behind a name confirmation — on a mirror this stops mirroring it, the source file untouched; **since v3.69.0** also reports `group`/`groupRemoved` (below) |
+| `POST` | `/api/memory/:domain/:project/foundations/init` | **New in v3.61.0.** Sets a project's **first** foundations manifest, optionally seeding or mirroring in the same call — this governs only a project's initial write, not a lasting restriction (**since v3.69.0** more sources can be added afterward through `add-local`/`add-remote`/`source`). **v3.65.0** adds a `remote`/`tokenSource` arm — a mirror born from GitHub with no checkout on this machine — and makes the body strict. **v3.68.0** adds `rechooseEmpty: true` — lets the Add from GitHub door re-choose the source of a project whose manifest already lists 0 documents, but only when the folder (if any) holds no unlisted document either |
+| `POST` | `/api/memory/:domain/:project/foundations/add-local` | **New in v3.68.0**, `mode` added **v3.69.0**. *"Add from this computer"* — `{root, files, mode?: 'copy'\|'mirror'}`. `addFoundationsFromFolder` copies (`mode: 'copy'`) or mirrors (`mode: 'mirror'`) the ticked `.md`/`.txt` files, appended to what is already there; `mode` defaults to `mirror` when the folder is already inside an existing folder source, else `copy`. Refused `too-many-sources` past `MAX_SOURCES_PER_PROJECT = 8` |
+| `POST` | `/api/memory/:domain/:project/foundations/add-remote` | **New in v3.69.0.** *"Add from GitHub"* — `{remote, ref?, tokenSource?, files}`. `addFoundationsFromRemote` mirrors the ticked files, joining an existing GitHub source with the same owner/repo and ref, or opening a new one. Response below |
+| `POST` | `/api/memory/:domain/:project/foundations/refresh` | Re-mirror from a checkout (v3.59.0; gains a `files` body in v3.61.0) — **or, in v3.63.0, from the GitHub repository itself** when the checkout is not on this machine. **v3.69.0**: `{group}` refreshes one source, `{}` refreshes every source under one lock (a failing one named and left untouched); body and response below |
+| `POST` | `/api/memory/:domain/:project/foundations/source` | **New in v3.65.1**, semantics changed **v3.69.0**. Adds or points a GitHub source: joins an existing GitHub source with the same owner/repo and ref, or opens a new one — it no longer clears a project's only folder source, since a project can hold both. Takes `group` once a project has 2+ sources |
 | `GET` | `/api/memory/:domain/:project/capture` | **New in v3.63.0.** The honesty meter — how many bridge sessions ran for this project, how many read, how many saved |
 | `GET` | `/api/memory/:domain/:project` | One project's brief plus its state |
 | `GET` | `/api/memory/:project` | **Deprecated** alias for that domain's default project |
@@ -2955,6 +2956,9 @@ existing project's Foundations block.
 | Parameter | Description |
 |-----------|-------------|
 | `root` | Absolute path to the checkout or folder to scan. Resolved and validated **before** any directory is read — a relative path, or one that does not exist, is refused rather than resolved against the server's own working directory |
+| `domain`, `project` | **New in v3.69.0, optional — both or neither** (`400 project_required` if only one is sent). When named, each candidate is annotated against that project's actual documents: `alreadyAdded`, `alreadyAs`, `landsAs` (below) |
+| `mode` | **New in v3.69.0.** `copy` or `mirror` — required together with `domain`/`project` (`400 invalid_mode` otherwise); changes what "already added" and `landsAs` mean, since a copy and a mirror land differently |
+| `all` | **v3.68.0.** `1` lists every `.md`/`.txt` file found (capped at 200, 4 levels deep, sorted by path) instead of the four-canonical-role heuristic; the checklist panel always sends it |
 
 **Success response** `200 OK`
 
@@ -3000,8 +3004,17 @@ list — the sort stays role rank then path.
 
 | Status | Condition |
 |--------|-----------|
-| `400` | `invalid_root` — `root` is missing, empty, not a string, contains a NUL byte, or is not an absolute path |
+| `400` | `invalid_root` — `root` is missing, empty, not a string, contains a NUL byte, or is not an absolute path. `project_required` — `domain` sent without `project` or vice versa. `invalid_mode` — `mode` sent as something other than `copy`/`mirror` |
 | `409` | `repo_unreachable` — the path does not exist, or is not readable, from this machine |
+
+**With `domain`, `project` and `mode` named (v3.69.0)**, each candidate also carries `alreadyAdded`
+(boolean — true if this exact path, under this mode, is already part of the project),
+`alreadyAs` (the slug it is already added as, or `null`), and `landsAs` (the slug it would land
+as if ticked now — a name already taken by another source gets a readable suffix, e.g.
+`architecture-lumina.md`, rather than colliding). The top-level response also carries
+`inGitCheckout` (boolean — whether `root` is itself inside a git checkout, which the app's local
+Add panel uses to default the Keep in sync / Copy once radio) and `group` (`{id, label, created}`
+— which source group this scan would land in, or a new one).
 
 #### `?source=remote` — the same picker for a machine with no checkout
 
@@ -3232,10 +3245,13 @@ rule every foundations write follows.
 
 ### PUT /api/memory/:domain/:project/foundations/:slug
 
-**New in v3.61.0.** Create or replace **one curator-owned document, whole** — `saveFoundation` over
-HTTP, `authoredBy.kind: 'human'` always (never an agent's provenance; that is what `save_foundation`
-over MCP is for). Backs the Foundations block's editor — **Edit** on an existing row, or **Add
-document** (empty editor or **Choose a file…**) for a new one.
+**New in v3.61.0.** Create or replace **one kept (written or copied) document, whole** —
+`saveFoundation` over HTTP, `authoredBy.kind: 'human'` always (never an agent's provenance; that is
+what `save_foundation` over MCP is for). Backs the Foundations block's editor — **Edit** on an
+existing row, or **Write a document** (empty editor or **Choose a file…**) for a new one. **As of
+v3.69.0** the gate is checked **per document** (the slug's own `source.kind`), not once for the
+whole project — a project that mirrors can still take a `PUT` for a **new** slug; only a save to an
+**existing mirrored slug** is refused.
 
 **Body**
 
@@ -3288,7 +3304,7 @@ document.
 
 | Status | Condition |
 |--------|-----------|
-| `400` | `repo_owned` — the router emits this `error` verbatim: *"This document is mirrored from the repository — edit it there and refresh. A mirror is a byte copy of a file whose author is the folder it came from, so an edit made here would be overwritten by the next refresh."* ("the repository" is the wire word; the mirror source only has to be **an absolute, reachable folder on this machine** — a git checkout is not required, and one with no `.git` at all mirrors exactly the same way). `no_manifest` — no ownership has been set yet ([init](#post-apimemorydomainprojectfoundationsinit) first). `manifest_unreadable` — a manifest exists but this store cannot parse it. `too_large` — over the 512 KB per-document wall; both the document's size and the wall are named. `invalid_slug`, `invalid_role`, `empty` |
+| `400` | `repo_owned` — checked **per document, since v3.69.0** (the slug's own `source.kind`, whatever else the project holds): *`"<slug>" is mirrored from <label> — edit it there and refresh. A mirror is a byte copy of a file whose author is the folder or repository it came from, so an edit made here would be overwritten by the next refresh. Nothing was written. A NEW document can still be written into this project under another name.`* — the response also carries `mirrored: {group, kind, label, path}` naming the source. `no_manifest` — no manifest exists yet ([init](#post-apimemorydomainprojectfoundationsinit) first). `manifest_unreadable` — a manifest exists but this store cannot parse it. `too_large` — over the 512 KB per-document wall; both the document's size and the wall are named. `invalid_slug`, `invalid_role`, `empty` |
 | `403` | `readonly` — a Shared Brain mirror |
 | `404` | Unknown domain or project |
 | `409` | `locked` — another write to this project's foundations is in flight (the cross-process `.write-lock`, the one tier-0 exception to "no lock is taken" — see [working-state.md § 2](working-state.md#concurrency-this-tier-is-the-one-exception-to-no-lock-is-taken)) |
@@ -3296,8 +3312,8 @@ document.
 ### PATCH /api/memory/:domain/:project/foundations/:slug
 
 **New in v3.62.0.** Flag one document **read first**, or unflag it — the reading plan and nothing
-else. `setFoundationReadFirst` over HTTP. **Works on EITHER ownership**, which is the whole reason
-it is not an arm of the `PUT`.
+else. `setFoundationReadFirst` over HTTP. **Works on any document, kept or mirrored**, which is the
+whole reason it is not an arm of the `PUT`.
 
 **Body: `{ readFirst: boolean }`, and nothing else.**
 
@@ -3385,23 +3401,35 @@ the decision to stop mirroring it.
   "project": "lumina",
   "removed": "decisions.md",
   "ownership": "repo",
+  "origin": "folder",
   "sourceKept": true,
+  "source": { "label": "second-brain", "path": "docs/decisions.md" },
+  "group": { "id": "s1", "kind": "folder", "label": "second-brain" },
+  "groupRemoved": false,
   "wasOrphan": false
 }
 ```
 
-`ownership` is `"repo"` or `"curator"` — which kind of removal this was, read from the manifest
-**before** the write. `sourceKept` is `true` exactly when `ownership` is `"repo"`: the copy is gone
-and the file it was mirrored **from** is untouched and can be mirrored again from the same picker.
-On a curator-owned document the copy is the only copy, so `sourceKept` is `false` and the removal
-cannot be undone from inside The Curator (a git client can still recover it if you sync). `wasOrphan`
-is `true` when the file existed on disk with no matching manifest entry (a document `listFoundations`
-would already have disclosed as `orphanFiles`) — deleting one of those still succeeds, and is
-reported as what it was.
+`ownership` is the **row's own** kind (`"repo"` or `"curator"`) — which kind of removal this was,
+read from the manifest **before** the write; on a mixed manifest the project-level `ownership` may
+read `"mixed"`, but this field is always the one document's. `origin` (**v3.69.0**) is
+`"written"` \| `"copied"` \| `"folder"` \| `"github"` \| `null`. `sourceKept` is `true` for any
+mirrored or copied document: the copy is gone and the original — the folder file, the GitHub file,
+or (for a copy) the source it was copied from — is untouched; **a later refresh will NOT bring it
+back**, since the store no longer lists it — re-add it from the checklist. `source` (**v3.69.0**)
+names where it came from — `{label, path}` for a mirror, `{label: copiedFrom, path: null}` for a
+copy, `null` for a written document. On a written document the copy is the only copy, so
+`sourceKept` is `false` and the removal cannot be undone from inside The Curator (a git client can
+still recover it if you sync). `group` (**v3.69.0**) names the source group this document belonged
+to, `null` for a written or copied document; `groupRemoved: true` when this was that source's
+**last** document, so the source itself was removed in the same write. `wasOrphan` is `true` when
+the file existed on disk with no matching manifest entry (a document `listFoundations` would
+already have disclosed as `orphanFiles`) — deleting one of those still succeeds, and is reported as
+what it was.
 
 | Status | Condition |
 |--------|-----------|
-| `400` | `confirm_required` (missing, empty, or not an exact match). `no_manifest` — no ownership has been set yet. `manifest_unreadable` — a manifest exists but this store cannot parse it. `repo_owned` no longer applies here — see above; it still applies to `PUT` |
+| `400` | `confirm_required` (missing, empty, or not an exact match). `no_manifest` — no manifest exists yet. `manifest_unreadable` — a manifest exists but this store cannot parse it. `repo_owned` no longer applies here — see above; it still applies to `PUT` |
 | `403` | `readonly` |
 | `404` | `foundation_not_found` — no document at that slug (and no orphan file either); or unknown domain/project |
 | `409` | `locked` — the same cross-process lock `PUT` takes |
@@ -3671,10 +3699,12 @@ code; see below):
 }
 ```
 
-See [The foundations tier](working-state.md#the-foundations-tier--canonical-documents-that-travel)
-for what each field means and the two ownership modes; a project with no foundations yet reports
-`present: false` and an empty `documents` array, never an omitted key. `repo` is `null` on a
-curator-owned project — there is no checkout to name. **`skeletonCount` and `documents[].skeleton`
+See [Document-level source](working-state.md#document-level-source-and-the-one-writer-rule-project-wide-ownership-retired-in-v3690)
+for what each field means, and [manifest version 2](working-state.md#manifest-version-2--per-document-sources)
+for `sources[]`/`source.group` on a project that mixes kept and mirrored documents or mirrors from
+2+ sources; a project with no foundations yet reports `present: false` and an empty `documents`
+array, never an omitted key. `repo` is `null` (v1) when nothing is mirrored — there is no checkout
+to name. **`skeletonCount` and `documents[].skeleton`
 are new in v3.61.0**: `skeleton` is `true` on a document seeded by
 [project creation or `…/foundations/init`](#post-apimemorydomainprojectfoundationsinit) that has
 never been saved since, and `false` on every other document, **always present** rather than omitted
@@ -3915,11 +3945,26 @@ this document is still an unfilled skeleton — cleared the moment it is saved t
 
 ### POST /api/memory/:domain/:project/foundations/refresh
 
-**New in v3.59.0.** Re-mirrors a repo-owned project's foundations from a checkout —
-`refreshFoundationsFromRepo` over HTTP. The route is a legitimate writer here even though the app
-stays read-only over foundations otherwise: a refresh is a **deterministic byte copy** driven by
-comparing sha256 against a file on disk, never a second author composing content, which is the
-distinction the read-only rule in this file protects.
+**New in v3.59.0, multi-source since v3.69.0.** Re-mirrors one or all of a project's sources from
+their checkout or repository — `refreshFoundationsFromRepo` over HTTP. The route is a legitimate
+writer here even though the app stays read-only over foundations otherwise: a refresh is a
+**deterministic byte copy** driven by comparing sha256 against a file on disk, never a second
+author composing content, which is the distinction the read-only rule in this file protects.
+
+**As of v3.69.0**, the body takes an optional `group` (a source id, e.g. `"s1"`) refreshing that
+one source, or an empty body `{}` refreshing **every** source under one lock — every source is read
+first, a source that fails is named in `groups[]` and left byte-for-byte as it was, the others
+still refresh, and the manifest is written **once**, last. The response gains `groups: [{id, kind,
+label, ok, source, refreshed, unchanged, missing, added, refused, commit, reason?, message?}]` and
+`failedCount`; with two or more sources involved, top-level `source` reads `'mixed'`. A project with
+no manifest at all still answers `409 repo_unreachable`; a present, kept-only manifest (nothing to
+refresh) answers `400 no_sources` with the same prose the UI shows. `group_required` (400) is
+returned when the body has `files` but the project has 2+ sources and does not say which one;
+`unknown_group` (404) when a named `group` does not exist; `invalid_group` (400) for a malformed
+one. `tokenSource` is **no longer defaulted to `'config'`** — a source's own recorded token file
+wins unless the body names a different one, and an unrecognised `tokenSource` value is now `400`
+rather than silently coerced. The single-source shape below is what a project with exactly one
+source still gets, unchanged.
 
 **Body**
 
@@ -3998,9 +4043,9 @@ helper builds the report — inside `POST …/projects` and `POST …/foundation
 
 | Status | Condition |
 |--------|-----------|
-| `400` | The project is **curator-owned** — there is nothing to refresh a mirror of; or `invalid-remote` |
-| `409` | **Both arms are impossible** — no reachable checkout *and* no recorded repository, or `no-token`. The body's `arms` object names the reason for each one separately, because "we could not do it" without "and here is why each way failed" is not actionable |
-| `404` | Unknown domain or project; or `remote-not-found` — the repository, the ref or the path is not there, **or the token cannot see it**, which GitHub answers identically and the message says so |
+| `400` | **v3.69.0:** `no_sources` — the project has a manifest but nothing mirrored to refresh (replaces the old `curator_owned` reason). `group_required`, `invalid_group`, `invalid-remote` |
+| `409` | **Both arms are impossible** for the named/only source — no reachable checkout *and* no recorded repository, or `no-token`. The body's `arms` object names the reason for each one separately, because "we could not do it" without "and here is why each way failed" is not actionable. A project with **no manifest at all** also answers `409 repo_unreachable` |
+| `404` | Unknown domain or project; `unknown_group` — the named `group` does not exist; or `remote-not-found` — the repository, the ref or the path is not there, **or the token cannot see it**, which GitHub answers identically and the message says so |
 | `403` | `unauthorised` — the stored credential cannot read that repository. Not `401`: you are not being asked to authenticate to The Curator |
 | `429` | `rate-limited` — GitHub's limit, not ours, and the one status that means *later* |
 | `502` | `remote-tree-truncated` (GitHub silently truncates a huge recursive tree, and a silent miss would keep a stale copy while reporting success), `remote-http`, `remote-unreachable`, `remote-too-large`. Nothing is malformed and nothing is broken locally, which is what `502` says and `400` would deny |
@@ -4012,93 +4057,81 @@ hand. So *"a truncated tree refuses loudly"* also means *"and changed nothing"*.
 
 ### POST /api/memory/:domain/:project/foundations/source
 
-**New in v3.65.1.** *"Mirror from GitHub instead"* — the control step ① of Project-context offers a
-project that already mirrors documents from a folder. `…/init` makes the ownership decision **once**
-and refuses to re-make it; this route never touches ownership — it stays `repo` — and changes only
-**where the bytes are copied from**. The gap it closes: `refreshFoundationsFromRepo` has always
-*preserved* `repo.root` on a refresh, so a mirror born from a folder went on taking the local arm on
-that machine forever, and *"this project now reads from GitHub"* was inexpressible — including on a
-machine that never had the checkout in the first place, which is exactly the machine that needs this
-control most.
+**New in v3.65.1, semantics changed v3.69.0.** Through v3.68.0 this was *"Mirror from GitHub
+instead"* — it re-pointed a project's one folder mirror to a repository, clearing `repo.root`.
+**Since v3.69.0**, with project-wide ownership retired, this route **adds or points a GitHub
+source** rather than replacing anything: it joins an existing GitHub source that has the same
+owner/repo and ref (a second machine catching up), or opens a new one when none matches. **A
+`POST`, not a `PATCH`**: it fetches blobs and rewrites files, so it joins the mutating-route census
+beside `…/init` and `…/refresh`.
 
-**A `POST`, not a `PATCH`**: it fetches blobs and rewrites files, so it joins the mutating-route
-census beside `…/init` and `…/refresh`.
+**Body** — a strict allow-list: `{remote, tokenSource?, files?, group?}`. `remote` (required) —
+`owner/repo`, an `https://`/`git@` URL, or `{owner, repo, ref, path}`; unparseable is `400
+invalid-remote`. `tokenSource` (optional) — `config` or `sync`; a source that already has one
+recorded reuses it unless this call names a different one. `files` (optional) — defaults to the
+matched source's own existing documents. `group` (**new, v3.69.0**) — required once the project has
+2 or more sources, so the caller says which one this call means; with 0 or 1, it is inferred.
+`no token crosses this route, ever` — `tokenSource` only names *which file* the credential is read
+from.
 
-**Body**
-
-```json
-{
-  "remote": "acme/lumina",
-  "tokenSource": "config",
-  "files": [{ "path": "docs/roadmap.md", "role": "roadmap" }]
-}
-```
-
-The body is a **strict allow-list of exactly these three keys** — anything else is a `400
-unexpected_fields` (with a `fields` array naming what was sent), and a `token` key gets an extra
-sentence spelling out why: **no token crosses this route, ever** — `tokenSource` names *which file
-on this computer* the read-only credential is read from (`config` — `.curator-config.json`'s
-`githubReadToken` — or `sync` — Personal Sync's PAT), never a value in the body.
-
-* **`remote`** (required) — `owner/repo`, an `https://` or `git@` URL, or the `{owner, repo, ref,
-  path}` object. An unparseable value is `400 invalid-remote`.
-* **`tokenSource`** (optional, default `config`) — **refused**, not normalised, when it is neither
-  `config` nor `sync`: this call *records a decision* about which credential authored the copy, the
-  same reasoning `…/init` already applies.
-* **`files`** (optional) — defaults to the mirror's own existing documents, which is the right
-  default for a source switch (same documents, new source). A named list can only **add** a new
-  slug — it cannot re-point an existing one; removing a document first
-  ([`DELETE …/foundations/:slug`](#delete-apimemorydomainprojectfoundationsslug)) and re-adding it
-  is the way to change what an existing slug reads from.
-
-**Success response** `200 OK`
-
-```json
-{ "ok": true, "domain": "acme", "project": "lumina",
-  "remote": { "owner": "acme", "repo": "lumina", "ref": "main", "path": "docs" },
-  "tokenSource": "config",
-  "rootCleared": true, "previousRoot": "/Users/you/code/your-project",
-  "refreshed": [], "unchanged": ["architecture.md", "decisions.md"],
-  "added": [], "missing": [], "refused": [],
-  "totalBytes": 391034, "budgetBytes": 204800, "budgetExceeded": true,
-  "documentCount": 2, "commit": "9f3c1a…", "notes": ["source: acme/lumina"] }
-```
-
-`remote` and `tokenSource` are always read back **from the store**, never echoed from the request —
-a response can never name a source that was not actually used. `rootCleared` is `true` on every
-successful switch and `previousRoot` names the folder path the mirror used to read from (or `null`
-when it had none — a mirror already born remote, or one with no reachable root on this machine).
-Every mirrored document's **`readFirst` flag survives the switch, by slug** — it is curator metadata
-about the document, not part of its bytes, so nothing about the switch needs to re-apply it. A
-project whose documents already fit under the 200 KB budget answers with `budgetExceeded: false`,
-same as `…/refresh`.
-
-**A project with no documents yet still runs the switch.** `refreshFoundationsFromRepo`'s ordinary
-no-op guard (nothing to do, so nothing is written) is skipped here specifically **because a source
-switch with zero documents would otherwise report success and change nothing at all** — the ref and
-tree are still read (proving the repository is reachable) and the manifest is written with the new
-`repo` block, at the cost of the same few read requests any switch makes.
+**Success response** `200 OK` carries `group` (`{id, label, created}`) plus the same
+`refreshed`/`unchanged`/`added`/`missing`/`refused`/`commit`/`totalBytes`/`budgetBytes` shape
+`…/refresh` returns. Every mirrored document's `readFirst` flag **survives**, by slug.
 
 **Error responses**
 
 | Status | `reason` | Condition |
 |--------|----------|-----------|
-| `400` | `unexpected_fields` (+ `fields`) | Any key but the three above — a `token` key gets the extra "never sent here" sentence |
-| `400` | `invalid_project` | The project name |
-| `400` | `invalid-remote` | Missing or unparseable `remote` |
-| `400` | `invalid_token_source` | `tokenSource` is neither `config` nor `sync` |
-| `400` | `no_manifest` | The project has never chosen an ownership at all |
-| `404` | `unknown_domain` | Unknown domain |
-| `404` | `unknown-state-project` | No such project (the store's own hyphenated spelling — matches `…/init`, not the underscored `project_not_found` an earlier design sketch used) |
+| `400` | `unexpected_fields` (+ `fields`) | A field outside the allow-list — a `token` key gets the extra "never sent here" sentence |
+| `400` | `invalid_project` / `invalid-remote` / `invalid_token_source` / `group_required` (2+ sources, none named) / `invalid_group` | |
+| `404` | `unknown_domain` / `unknown-state-project` / `unknown_group` | |
 | `403` | `readonly` | A `shared-*` mirror — refused **before** the store is asked |
-| `409` | `ownership_mismatch` (+ `ownership`) | The project is **curator-owned**, or has chosen no ownership yet. `ownership` carries `'curator'` or `null` so a client can branch without parsing prose. (This route answers `409` here rather than `…/refresh`'s `400 curator_owned` and `…/:slug`'s `400 repo_owned`, because neither existing word is true of this refusal — nothing is malformed, the server's own state simply is not one this request can act on) |
-| `409` | `no-token` | No readable credential for `tokenSource` |
+| `409` | `no_sources` | **v3.69.0** — replaces the old `ownership_mismatch`: the project has no manifest to add a source to yet ([init](#post-apimemorydomainprojectfoundationsinit) first) |
+| `409` | `no-token` / `locked` | No readable credential for `tokenSource`; another tier-0 write holds this project's lock |
 | `429` | `rate-limited` | GitHub's limit |
 | `404` | `remote-not-found` | The repository, ref or path is not there — or the token cannot see it |
 | `502` | `remote-tree-truncated` / `remote-http` / `remote-unreachable` / `remote-too-large` | The same statuses [`…/refresh`](#post-apimemorydomainprojectfoundationsrefresh) gives its own remote arm |
-| `500` | `remote-unavailable` | The GitHub read could not complete and nothing more specific applies |
-| `409` | `locked` | Another tier-0 write holds this project's lock |
-| `500` | `io` | |
+| `500` | `remote-unavailable` / `io` | |
+
+### POST /api/memory/:domain/:project/foundations/add-remote
+
+**New in v3.69.0.** *"Add from GitHub"* on step ①'s head row — mirrors ticked files from a GitHub
+repository into the project, `addFoundationsFromRemote` over HTTP, the GitHub sibling of
+`add-local`.
+
+**Body** — strict allow-list: `{remote, ref?, tokenSource?, files}`. `remote` — `owner/repo`, a
+URL, or `{owner, repo, ref, path}`; `tokenSource` — `config` or `sync`, forwarded only when the
+body names one (an unnamed one reuses the source's own recorded token, or the server default);
+`files` — the ticked candidates, `[{path, role?}]`.
+
+**Success response** `200 OK`
+
+```json
+{ "ok": true, "mode": "mirror",
+  "added": [{ "path": "docs/roadmap.md", "slug": "roadmap.md" }],
+  "addedFiles": [{ "path": "docs/roadmap.md", "slug": "roadmap.md" }],
+  "landed": [], "refused": [],
+  "groupId": "s2", "groupCreated": true, "group": { "id": "s2", "label": "acme/lumina" },
+  "remote": { "owner": "acme", "repo": "lumina", "ref": "main", "path": null },
+  "tokenSource": "config", "commit": "9f3c1a…", "foundations": { "…": "…the wire shape…" } }
+```
+
+Joins an existing GitHub source with the same owner/repo and ref (`groupCreated: false`), or opens
+one (`groupCreated: true`) — up to `MAX_SOURCES_PER_PROJECT = 8`. `added` names each file by its
+path and the slug it landed as (a name already taken by another source lands under a readable
+suffix, e.g. `roadmap-lumina.md` — see `landed`). `refused` lists `{path, reason, slug?}` for
+anything that failed. Nothing is written until every named file is read successfully.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `invalid_project`, `invalid-remote`, `invalid_token_source`, `too_many_sources` (8 sources already), `unexpected_fields` |
+| `403` | `origin` refused by the server's cross-origin guard (proved against the real server) |
+| `404` | Unknown domain or project; `remote-not-found` |
+| `403` | `unauthorised` — the stored credential cannot read that repository |
+| `429` | `rate-limited` |
+| `502` / `500` | The same remote-fetch statuses `…/refresh` and `…/source` give |
 
 **Nothing is written until every blob is in hand**, exactly as `…/refresh`'s remote arm: the ref,
 the tree and every changed blob are read first; a truncated tree refuses *before the first blob is
@@ -4417,10 +4450,11 @@ commissioned-only rule `save_project_brief` already enforces:
 ```
 
 Calls `refuseIfReadonly()` only — foundations sit outside the wiki's graph cache, so this tool does
-**not** call `invalidateGraph`, unlike the wiki-mutating tools above. It is the tool that makes a
-project's foundations **curator-owned** the first time it succeeds against an empty project; against
-a **repo-owned** project it is refused (mixing ownership within one project is never allowed — see
-[The foundations tier § two ownership modes](working-state.md#the-two-ownership-modes-and-the-one-writer-rule)).
+**not** call `invalidateGraph`, unlike the wiki-mutating tools above. **As of v3.69.0** the check is
+per document, not per project: it is refused only when the slug it is asked to write is a
+**mirrored** document's (`ownership-mismatch`, naming the source) — a save under a new slug always
+succeeds, in any project, including one that also mirrors — see
+[Document-level source](working-state.md#document-level-source-and-the-one-writer-rule-project-wide-ownership-retired-in-v3690).
 
 ---
 

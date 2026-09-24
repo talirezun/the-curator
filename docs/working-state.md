@@ -654,14 +654,14 @@ disclosed in `manifestError`, never a crash and never a silent empty result.
 
 | Field | Meaning |
 |---|---|
-| `ownership` | `repo` or `curator` — see [the two ownership modes](#the-two-ownership-modes-and-the-one-writer-rule) below. Set by the *first* document saved into an empty project |
-| `repo.root` | The checkout path on whichever machine last refreshed. **Advisory and machine-specific** — a hint for *this* machine's refresh action, never an error when it does not resolve here |
-| `repo.remote` | The repository's remote URL, if known — for a human reading the manifest, not consulted by any refresh logic |
-| `repo.lastRefreshAt` / `repo.lastRefreshCommit` | When the mirror was last refreshed, and the commit it was refreshed from (`git -C <root> rev-parse HEAD`, or `null` when git is not available) |
+| `ownership` | **v1 only.** `repo` or `curator`, set by the *first* document saved into an empty project. **v2 has no `ownership` field** — it is derived, per document, from each document's own `source`, and may display as `mixed`; see [manifest version 2](#manifest-version-2--per-document-sources) below |
+| `repo.root` | **v1 only** (v2: `sources[].root`, one per source group). The checkout path on whichever machine last refreshed. **Advisory and machine-specific** — a hint for *this* machine's refresh action, never an error when it does not resolve here |
+| `repo.remote` | **v1 only** (v2: `sources[].remote`). The repository's remote URL, if known — for a human reading the manifest, not consulted by any refresh logic |
+| `repo.lastRefreshAt` / `repo.lastRefreshCommit` | **v1 only** (v2: per `sources[]` entry). When the mirror was last refreshed, and the commit it was refreshed from (`git -C <root> rev-parse HEAD`, or `null` when git is not available) |
 | `budgetBytes` | The project's total foundations budget — `200000` (200 KB) by default |
 | `order` | The reading order a bootstrap call uses when it has to stop partway through a budget — architecture first, an uncategorised `other` document last |
 | `documents[].sha256` | Over the **stored bytes** — the identity a freshness check compares against, never a remembered flag |
-| `documents[].source` | `{ kind: 'repo', path: 'docs/architecture.md' }` for a mirrored document, or `{ kind: 'curator' }` for one an agent wrote |
+| `documents[].source` | `{ kind: 'repo', path: 'docs/architecture.md' }` for a mirrored document (v2 also carries `group`, the id of the `sources[]` entry it belongs to), or `{ kind: 'curator' }` for one written or copied in |
 | `documents[].authoredBy` | `{ kind: 'human' \| 'agent', harness, model, commissionedBy }` — the same provenance shape the standing brief already records |
 | `documents[].skeleton` | `true` while the document still carries prompts rather than prose (v3.61.0). Any save clears it |
 | `documents[].readFirst` | **v3.62.0, schema still `1`.** The owner's routing instruction: `true` means a session is handed this document's text every time. Absent, or anything but the literal `true`, reads as `false` — [the reading plan](#the-reading-plan-read-first-documents-and-fetch-by-name) below |
@@ -675,22 +675,81 @@ from a hand edit is not the owner saying a document is required reading, and rea
 too few costs one fetch, while reading the whole set every session costs the budget the flag
 exists to spend deliberately.
 
-### The two ownership modes, and the one-writer rule
+### Document-level source, and the one-writer rule *(project-wide ownership retired in v3.69.0)*
 
-A project holds documents of **one** ownership only. The first document saved into an empty
-project's foundations sets it — `curator` when its `source.kind` is `curator`, `repo` when it is
-`repo` — and a save that would mix the two is **refused**, with the reason named, rather than
-silently accepted. That is the single-writer rule from tiers 2–3, carried one tier further down:
-a repo-owned document has exactly one legitimate writer (the checkout, mirrored byte-for-byte,
-never edited in place), and a curator-owned one has exactly one (an agent, and — as of v3.61.0 —
-*or you, directly, in the app*). **The app never edits a repo-owned document** — see
-[the human edit surface](#the-human-edit-surface-a-second-reader-and-writer-and-why-it-is-still-one-writer-per-file),
-below, for what changed and why it does not add a second writer to either mode.
+Through v3.68.0 a project held documents of **one** ownership only — the first document saved into
+an empty project's foundations set it for the whole project, and a save that would mix the two was
+refused. **v3.69.0 retires that ceiling.** A project may now hold documents written here, copied in
+once, and mirrored from any number of folders and GitHub repositories (up to
+`MAX_SOURCES_PER_PROJECT = 8` source groups) at the same time. What does **not** change is the
+safety invariant underneath it — **one writer per FILE, with provenance that matches** — it is just
+checked per **document** now, on `source.kind`, rather than once per project:
 
-| Mode | Who writes | How it stays fresh | A "stale" mark means |
+| Kind | Who writes | How it stays fresh | A "stale" mark means |
 |---|---|---|---|
-| **Repo-owned** | The repository. The app/MCP **mirrors** — `refreshFoundationsFromRepo` reads `repoRoot/source.path`, compares its sha256 against the stored copy, and copies over anything changed — never an edit in place | A refresh, run by naming a reachable checkout | The stored sha256 no longer matches the file at the recorded path, or that path is not reachable from this machine |
-| **Curator-owned** | An agent, on your explicit instruction — `save_foundation`, the same commissioned-only rule `save_project_brief` already follows — or you, directly, through the app's own editor (v3.61.0) | Whoever you next ask to update it, or you, whenever you next edit it | Not applicable — there is no second copy to compare against |
+| **Mirrored** (`source.kind: 'repo'`) | Its source group — a folder or a GitHub repository. The app/MCP **mirrors** — a refresh reads the file at `source.path` inside that group's root or repository, compares its sha256 against the stored copy, and copies over anything changed — never an edit in place | Refreshing that one source, or every source at once | The stored sha256 no longer matches the file at the recorded path, or that source is not reachable from this machine |
+| **Written / copied** (`source.kind: 'curator'`) | An agent, on your explicit instruction — `save_foundation`, the same commissioned-only rule `save_project_brief` already follows — or you, directly, through the app's own editor (v3.61.0) | Whoever you next ask to update it, or you, whenever you next edit it | Not applicable — there is no second copy to compare against |
+
+A save to a slug whose entry is mirrored is **refused** — `ownership-mismatch`, naming the source —
+but a save to a **new** slug always succeeds, in any project, including one that already mirrors:
+that is the whole of the change, checked one document lower than before. **The app never edits a
+mirrored document's content** — see
+[the human edit surface](#the-human-edit-surface-a-second-reader-and-writer-and-why-it-is-still-one-writer-per-file),
+below, for what changed and why it does not add a second writer.
+
+### Manifest version 2 — per-document sources
+
+`serialiseManifest(model)` always writes the **lowest** version that can express the manifest:
+version 1 (unchanged, byte-for-byte, for anything version 1 can already say — all documents kept,
+or all documents mirrored from at most one source) and version 2 only when the manifest actually
+needs it — kept and mirrored documents mixed, two or more source groups, or kept documents sitting
+beside a *declared* (zero-document) source. An untouched, unmixed project's manifest is therefore
+identical to what v3.68.0 would have written for it.
+
+```json
+{
+  "version": 2,
+  "sources": [
+    { "id": "s1", "root": "/path/to/a/checkout", "remote": {"owner":"…","repo":"…","ref":null,"path":null},
+      "lastRefreshAt": "ISO", "lastRefreshCommit": "sha or null" },
+    { "id": "s2", "root": null, "remote": {"owner":"acme","repo":"lumina","ref":"main","path":null},
+      "lastRefreshAt": null, "lastRefreshCommit": null }
+  ],
+  "budgetBytes": 204800,
+  "order": [ "…" ],
+  "documents": [
+    { "slug": "decisions.md", "source": { "kind": "repo", "path": "docs/decisions.md", "group": "s1" }, "…": "…" },
+    { "slug": "roadmap.md",   "source": { "kind": "repo", "path": "roadmap.md", "group": "s2" }, "…": "…" },
+    { "slug": "notes.md",     "source": { "kind": "curator" }, "…": "…" }
+  ]
+}
+```
+
+- **`sources[]`** — one entry per place documents are mirrored from, at most 8. `id` matches
+  `^s[1-9][0-9]?$`, a new source takes the smallest unused id. `root` non-null makes it a folder
+  source (it can *also* carry a `remote`, once a GitHub add joins it); `root: null` makes it a
+  GitHub source — the kind is always **derived**, never stored twice.
+  Every mirrored document names its group in `source.group`; a written or copied document never
+  carries `group` at all. Within one group, one path maps to one slug; the same path in two
+  different groups is allowed.
+  There is **no `ownership`** field in v2 — it is derived from what the manifest actually holds,
+  and the app may display it as `mixed`.
+- **Forward compatibility (v3.68.1, shipped ahead of this release on purpose).** A pre-v3.68.1 app
+  reading a manifest whose version it does not recognise treated it as malformed. **v3.68.1** added
+  a forward-compatible reader: any app from v3.68.1 on recognises a manifest version *above* the one
+  it knows (an integer greater than the highest version that build understands) and reports it as
+  **"made by a newer version of The Curator — update the app on this machine"**, read-only — no
+  write path touches the file, and the message never suggests fixing or removing it, because the
+  file is fine. That is why v3.68.1 had to reach users before v3.69.0's manifest version 2 could:
+  every machine on v3.68.1+ opening a v2 project sees it read-only and correct; a machine still on
+  v3.68.0 or earlier sees it as a generic parse error instead. Unknown top-level and per-document
+  keys are also carried through a v1 rewrite from this version on, rather than dropped, closing the
+  spec's own round-trip rule (below) for real.
+- **Round-trip identity, both ways.** For a v1 fixture, `serialise(parse(bytes))` with no change
+  reproduces `bytes` exactly, key order included. Unknown top-level and per-document keys — from a
+  hand edit, or a future release — are carried through any rewrite rather than dropped (≤32 keys
+  per object, ≤4 KB JSON per value; anything past the cap, or a dangerous name such as
+  `__proto__`, is dropped and named in `manifestNotes`, never silently).
 
 ### Starting a project: choosing ownership once, and the four skeletons
 
@@ -750,10 +809,13 @@ reached from project creation (`POST /api/memory/:domain/projects` gains an opti
   row is `tooLarge` — the field means one thing on every row rather than "absent = refused" on some
   and "absent = unknown" on others. It is **information, never an order**: the picker renders it as
   an age on the app's one freshness scale, but the sort stays role rank then path.
-- **A project already committed to one ownership mode cannot be re-decided through this call** —
+- **This *initial* choice cannot be re-made through this call once a manifest exists** —
   `initFoundations` refuses (`ownership-set`) the moment **any** manifest already exists, even one
-  with zero documents in it, for the same reason the one-writer rule refuses a mixed save: ownership
-  is a property of the *project*, decided once, not a per-document setting that can quietly drift.
+  with zero documents in it. This is narrower than it once was: **since v3.69.0**, `initFoundations`
+  only governs a project's first manifest write; it is not a lasting, project-wide restriction —
+  once a project has a manifest, `addFoundationsFromFolder`, `addFoundationsFromRemote` and
+  `setFoundationsSource` can each add or change a *source*, and any number of kinds can coexist,
+  checked per document from then on (above).
 - **A project can also legitimately decide nothing yet.** The create form's third option, "decide
   later", writes no manifest at all — the project exists, its foundations do not, and the same
   choice is offered again the first time its Foundations block is opened and finds none.
@@ -864,18 +926,18 @@ lives only in `manifest.json`. No document's bytes change when it is flagged, it
 untouched, and a mirrored document therefore stays byte-for-byte the checkout's — which is what the
 freshness claim `sha(stored) === sha(source)` rests on.
 
-| Writer | Surface | Ownership | Note |
+| Writer | Surface | Document kind | Note |
 |---|---|---|---|
-| `PATCH /api/memory/:domain/:project/foundations/:slug` | the app's *read first* control in step ① | **either** — `repo` or `curator` | Body is `{readFirst: boolean}` and **nothing else**; a second key is a `400 unexpected_fields` |
-| `PUT …/foundations/:slug` | the app's document editor | curator-owned only | `readFirst?` is optional and **tri-state** — omit it and the document's current routing is left alone |
-| `save_foundation` | an agent, commissioned | curator-owned only | `read_first?`, same tri-state rule; the reply's `read_first` / `was_read_first` say where it ended up |
-| `refreshFoundationsFromRepo` | a mirror refresh | repo-owned | **Preserves** the flag across a re-copy |
+| `PATCH /api/memory/:domain/:project/foundations/:slug` | the app's *read first* control in step ① | **either** — mirrored or kept | Body is `{readFirst: boolean}` and **nothing else**; a second key is a `400 unexpected_fields` |
+| `PUT …/foundations/:slug` | the app's document editor | kept (written/copied) only | Refused per document (`ownership-mismatch`) on a mirrored slug; `readFirst?` is optional and **tri-state** — omit it and the document's current routing is left alone |
+| `save_foundation` | an agent, commissioned | kept only, or a **new** slug in any project | `read_first?`, same tri-state rule; the reply's `read_first` / `was_read_first` say where it ended up |
+| `refreshFoundationsFromRepo` | a source refresh | mirrored | **Preserves** the flag across a re-copy |
 
 **Why the PATCH exists at all, rather than one `readFirst?` on the PUT.** The PUT is refused
-`repo_owned` on a mirror — correctly, since an edit there would be overwritten by the next refresh,
-because the folder is the author. A repo-owned project routed only through the PUT would therefore
-have had **no way to flag anything from the app at all**, and mirroring a checkout is the commonest
-way documents arrive. So the flag needs a writer a mirror can reach.
+per document on a mirrored slug — correctly, since an edit there would be overwritten by the next
+refresh, because the source is the author. A project that mirrors, routed only through the PUT,
+would therefore have had **no way to flag a mirrored document from the app at all**, and mirroring
+is the commonest way documents arrive. So the flag needs a writer a mirror can reach.
 
 **And a flag on a mirror is not a second writer.** The property the single-writer rule protects was
 never *"one process may write"* — it is **one writer per FILE, with provenance that matches**
@@ -1032,7 +1094,7 @@ somebody:**
 |---|---|
 | **Foundations live under `state/`, so they SYNC.** Unlike `raw/`, which is gitignored and never travels | The *copies* reach every machine — a mirrored architecture document is readable on a laptop that has never cloned the repository it came from. That is the whole point of the tier |
 | **A refresh needs the source — a checkout here, OR the repository over GitHub** (the second arm is v3.63.0) | With no checkout on this computer the freshness column reads **`source not on this computer`** rather than `stale`, because that is true of this disk. If the project records a `repo.remote`, a refresh can still read the repository itself and the copies update from the commit it names; with neither, both arms are refused **and each one says why** |
-| **Remove on a mirrored document deletes the COPY and its manifest entry — nothing else** (v3.61.1) | It is the decision to **stop mirroring** that document. The file in your checkout is untouched (`sourceKept: true` in the reply), and re-adding it from the folder brings it back |
+| **Delete on a mirrored document removes the COPY and its manifest entry — nothing else** (v3.61.1; a trash icon on every row, v3.69.0) | It is the decision to **stop mirroring** that document. The file in your checkout is untouched (`sourceKept: true` in the reply); a refresh will **not** bring it back — re-add it from the checklist. Deleting a source's last document removes that source (`groupRemoved: true`) in the same write |
 | **Two machines editing one curator-owned document converge to whichever saved LAST** | No machine segment, so `pull -X theirs` has a conflicting hunk to resolve and resolves it silently. Edit rarely, then sync — the same discipline `project.md` needs |
 
 ### Mirroring from GitHub, when the checkout is not here (v3.63.0)
@@ -1109,25 +1171,25 @@ nothing could *start* a mirror without a folder to point at. `POST …/foundatio
 `remote` (`owner/repo`, or the https:// or git@ URL git prints) and a `tokenSource` naming which
 file the read-only token is read from. With documents named, the read happens FIRST and nothing is
 written unless every one of them is in hand — so a wrong owner, repository, branch, folder or
-token leaves the project free to choose again, which matters because ownership is chosen once.
-With no documents named, the mirror is recorded with no network call at all and the first
-**Refresh from repo** copies the files.
+token leaves the project free to try again. With no documents named, the mirror is recorded with
+no network call at all and the first refresh copies the files.
 
-**A mirror's source can be re-chosen, without touching ownership (v3.65.1).** A project mirrored
-from a folder is stuck reading that folder forever, on the one machine that has it — until now:
-**"Mirror from GitHub instead"** — since v3.68.0 this is the **Add from GitHub** door's `switch`
-mode, pressed on a project that already mirrors a folder; step ①'s head row shows two doors, *Add
-from this computer* and *Add from GitHub*, always both, beside *Refresh from repo*/*Refresh from
-GitHub* once a source is set — switches the source to a repository. What changes: the documents are
-re-copied from the repository you name, `repo.remote` is recorded, and `repo.root` is **cleared** —
-so every machine reads the same source afterwards, not only the one that made the mirror. What does
-not change: `ownership` stays `repo` — the switch closes the gap where `refreshFoundationsFromRepo`
-had always *preserved* `repo.root` on an ordinary refresh, so a folder mirror could never stop being
-one; it does not touch the one-ownership-per-project rule at all. Every document's `readFirst` flag
-**survives the switch, by slug**, the same way it already survives an ordinary refresh. As with
-every mirror action, there is no token field — `tokenSource` names which file on this computer the
-credential is read from — and nothing is written until the ref, the tree and every changed blob are
-read, so a failed switch leaves the manifest exactly as it was. → [the API
+**`…/foundations/source` (v3.65.1) adds or points a GitHub source — it no longer "switches away"
+a folder, as of v3.69.0.** Through v3.68.0 this route re-pointed a project's *one* mirror from a
+folder to GitHub, clearing `repo.root`. **Since v3.69.0** a project can hold a folder source and a
+GitHub source side by side, so this route now either **joins** an existing GitHub source with the
+same owner/repo and ref (a second machine's checkout, catching up), or **opens a new one** — it
+takes a `group` once a project has two or more sources, so the caller says which one it means; with
+none or one, the group is inferred. The old switch — moving a project's only mirror off a folder
+entirely — is still reachable: point the door at the same documents and, since nothing forces the
+old folder to be refreshed again, it simply goes unread from then on; deleting its now-orphaned
+documents (which removes that source, since deleting a source's last document removes the source
+itself) is the explicit way to drop it. Every document's `readFirst` flag **survives**, by slug,
+across a join exactly as it survives an ordinary refresh. As with every mirror action, there is no
+token field — `tokenSource` names which file on this computer the credential is read from, and a
+group that already has one recorded reuses it unless the call names a different one — and nothing
+is written until the ref, the tree and every changed blob are read, so a failed call leaves the
+manifest exactly as it was. → [the API
 reference](api-reference.md#post-apimemorydomainprojectfoundationssource) for the request and every
 refusal.
 

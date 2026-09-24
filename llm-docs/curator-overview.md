@@ -22,7 +22,7 @@ Everything The Curator holds for you is one of three kinds. They are all plain m
 |---|---|---|
 | Compounded knowledge — the wiki | Entities, concepts and summaries, cross-linked into a graph | Accumulates: a new source updates existing pages instead of duplicating them |
 | Volatile state — the standing brief, the handoff, the journal | Where a piece of work stands, per project | Supersedes: each save replaces the last, so a resolved blocker cannot come back |
-| Canonical documents — foundations, added in version 3.59.0 | A project's architecture, decisions, conventions and roadmap, held verbatim | Replaced whole: never merged, never paraphrased, never summarised by a model. Mirrored byte-for-byte from a code repository, or written by an agent on your explicit instruction |
+| Canonical documents — foundations, added in version 3.59.0 | A project's architecture, decisions, conventions and roadmap, held verbatim | Replaced whole: never merged, never paraphrased, never summarised by a model. Since v3.69.0 one project can mix documents written here, copied in, and mirrored byte-for-byte from up to 8 folders and code repositories at once |
 
 **Knowledge accumulates, state supersedes, a canonical document is replaced whole and read verbatim.** That is the rule to learn before using it. Put something durable into working state and the next save removes it, and nothing warns you — from the store's point of view, overwriting is correct.
 
