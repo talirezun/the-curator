@@ -194,8 +194,10 @@ section('§1 — the source groups, normalised: v1 and v2 of the same project ag
   ok('the root PATH itself never reaches the model — only its basename, as the label',
     !JSON.stringify(FSRC.sourcesOf(F.v1Folder)).includes('/Users/me'), JSON.stringify(FSRC.sourcesOf(F.v1Folder)));
   eq('MAX_SOURCES_PER_PROJECT is the contract\'s 8', FSRC.MAX_SOURCES_PER_PROJECT, 8);
-  ok('...and the step\'s ⓘ says the same number in words ("up to eight sources")',
-    /from up to eight sources/.test(viewSrc) && FSRC.MAX_SOURCES_PER_PROJECT === 8);
+  // v3.71.0: step ①'s ⓘ is the Documents explainer; the number moved to the
+  // guide's Documents section, which its card opens.
+  ok('...and the user guide says the same number ("up to 8 sources")',
+    /up to 8 sources/.test(readFileSync(join(ROOT, 'docs/user-guide.md'), 'utf8')) && FSRC.MAX_SOURCES_PER_PROJECT === 8);
 }
 
 // ═════════════════════════════════════════════════════════════════════════

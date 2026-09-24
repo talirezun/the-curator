@@ -228,8 +228,14 @@ import {
   // sentence exists for, with every assertion here green.
   commitBlockedReason,
   // v3.65.2 — the first unmet step, the primary's count and the READ WITH ⓘ.
-  nextStepReason, pickedFiles, READ_WITH_INFO_HTML,
+  nextStepReason, pickedFiles,
 } from '../src/public/next/shared/foundations-init.js';
+// ── v3.71.0: THE EXPLAINER KIT AND ITS COPY, REAL ─────────────────────────
+// shared/explainer.js imports only import-free modules, so it runs here. Every
+// Context ⓘ is composed through it now, and a stub would let the adoption
+// guard (§26) agree with itself about a panel the shipped page never drew.
+import { explainerHtml, explainerMark, explainerLabel } from '../src/public/next/shared/explainer.js';
+import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
 // v3.68.0 — the two doors' DOM-free rules and markup, injected REAL.
 import {
   doorsFor, renderDoors, renderAddPanel, startLegendHtml,
@@ -253,6 +259,36 @@ function eq(label, actual, expected) {
   ok(label, Object.is(actual, expected), 'got ' + JSON.stringify(actual) + ', expected ' + JSON.stringify(expected));
 }
 function section(t) { console.log('\n' + t); }
+
+// ── ⓘ PANELS, BALANCED (v3.71.0) ─────────────────────────────────────────
+// A panel's body is an explainer now — nested <div>s — so the old
+// `<div class="tx-vh-panel"…>([\s\S]*?)</div>` stopped at the FIRST inner
+// close. This walks the nesting instead. Returns [{ id, open, body, start, end }]
+// in page order; `outsidePanels` is the page with every panel cut out.
+function panelSpans(page) {
+  const out = [];
+  const re = /<div class="tx-vh-panel(?: tx-vh-panel-wide)?" id="([^"]*)"[^>]*>/g;
+  let m;
+  while ((m = re.exec(page))) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    const tag = /<(\/?)div\b[^>]*>/g;
+    tag.lastIndex = i;
+    let t;
+    while (depth > 0 && (t = tag.exec(page))) { depth += t[1] ? -1 : 1; i = tag.lastIndex; }
+    const bodyEnd = depth === 0 ? i - '</div>'.length : page.length;
+    out.push({ id: m[1], open: m[0], body: page.slice(m.index + m[0].length, bodyEnd),
+      start: m.index, end: i });
+    re.lastIndex = i;
+  }
+  return out;
+}
+function outsidePanels(page) {
+  let o = '';
+  let at = 0;
+  for (const p of panelSpans(page)) { o += page.slice(at, p.start) + ' '; at = p.end; }
+  return o + page.slice(at);
+}
 
 // ── Tempdir domains root ─────────────────────────────────────────────────
 
@@ -1142,11 +1178,6 @@ const CAPTURE_SESSION_LIMIT_SRC = numConst('CAPTURE_SESSION_LIMIT');
 // The drafting-ask ⓘ's own words, off LIVE SOURCE. Typed here they would be a
 // second copy of the sentence that makes this control's privacy claim, which
 // is the one sentence on it a user has to be able to trust.
-const DRAFT_ASK_INFO_SRC = (() => {
-  const m = /const DRAFT_ASK_INFO_HTML =\n([\s\S]*?);\n/.exec(viewSrc);
-  if (!m) throw new Error('DRAFT_ASK_INFO_HTML not found in memory.js — §21 would be a paraphrase');
-  return new Function('return (' + m[1] + ');')();
-})();
 // It is the STORE's wall, not a number of this view's choosing, and it is
 // compared against the real exported constant rather than against a copy typed
 // here. A view refusing at a DIFFERENT figure from the server would either
@@ -1204,7 +1235,7 @@ function constDecl(src, name) {
 // meter.
 const V367_CONSTS = ['READING_BUDGET_WORDS', 'READING_BUDGET_STANDARD', 'START_STATES',
   'CONTEXT_WINDOW_KEY', 'CONTEXT_WINDOWS', 'CONTEXT_WINDOW_CHOICES', 'HARNESS_PRESETS', 'HARNESS_HINT',
-  'SESSION_START_INFO_HTML', 'PLANNER_STATES'];
+  'PLANNER_STATES'];
 const V367_FNS = ['fndStartOf', 'fndStartCfg', 'planRowFor', 'fndSuggestCellHtml', 'planFor',
   'planChangeCount', 'planHeadHtml', 'ssSize', 'ssTokens', 'tok', 'budgetWord', 'readContextWindow',
   'contextWindowNow', 'harnessNow', 'windowWord', 'ssPct', 'repliesWord', 'sessionStartFor',
@@ -1378,7 +1409,6 @@ function makeRenderers(stateObj) {
     // imported at the top of this file: a stubbed mark would let the control
     // ship with no explanation beside it and still pass every assertion here
     // (the §S6-shaped lesson from test-agent-instructions.js).
-    'const DRAFT_ASK_INFO_HTML = ' + JSON.stringify(DRAFT_ASK_INFO_SRC) + ';\n' +
     extractFunction(viewSrc, 'foundationsDraftAsk', 'memory.js') + '\n' +
     // ── THE FOUR NEVER-FOLD NOTICES, LIFTED SEPARATELY (v3.62.0, P1-7) ──
     // They left `renderFoundations`'s body for step ①'s `noticeHtml`, so they
@@ -1434,7 +1464,6 @@ function makeRenderers(stateObj) {
     // here is the function that composes them. It is lifted rather than
     // dropped because the escaping battery below still has to cover it: it is
     // the one string on this page that opts into raw HTML.
-    extractFunction(viewSrc, 'aboutInfoHtml', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderEmptyProject', 'memory.js') + '\n' +
     // `renderNoProjects` MOVED here from NOT_EXECUTED (v3.62.0): it used to be
     // a title and a sentence with no control on it, which is why it was
@@ -1522,7 +1551,7 @@ function makeRenderers(stateObj) {
     + 'renderKnowledgeRow, renderKnowledgePicker, knowledgePickerCfg, ' +
     'captureFacts, renderCaptureMeter, ' +
     'fndStats, fndSlugError, fndShrinkWarn, renderFoundationEditor, renderFoundationsEmpty, addPanelFor, ' +
-    'renderJournal, renderBrief, aboutInfoHtml, ' +
+    'renderJournal, renderBrief, ' +
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
     'unlistedCount, renderCopyOutcome, renderProject, renderProjectSkeleton, renderSaveStatus, freshnessStep, freshnessTier, ' +
     'effectiveSave, briefStats, briefDismissDecision, ' +
@@ -1538,7 +1567,9 @@ function makeRenderers(stateObj) {
     'FOUNDATION_SLUG_RE', 'FOUNDATION_ROLES', 'MAX_FOUNDATION_BYTES',
     'FOUNDATIONS_BUDGET_BYTES', 'freshChooser', 'chooserBody', 'chooserOutcomeWords',
     'renderFoundationsChooser', 'renderRoleOptions', 'renderRefusedList', 'formatBytes',
-    'commitBlockedReason', 'nextStepReason', 'pickedFiles', 'READ_WITH_INFO_HTML',
+    'commitBlockedReason', 'nextStepReason', 'pickedFiles',
+    // v3.71.0: the explainer kit, REAL (see the import).
+    'explainerHtml', 'explainerMark', 'explainerLabel',
     // The real shared text renderers, so §6's escaping battery runs through
     // the component that actually paints these sentences rather than past it.
     'renderDescription', 'renderStatus', 'renderReadout', 'renderReadoutGroup',
@@ -1606,7 +1637,8 @@ function makeRenderers(stateObj) {
     FOUNDATION_SLUG_RE, FOUNDATION_ROLES, MAX_FOUNDATION_BYTES,
     FOUNDATIONS_BUDGET_BYTES, freshChooser, chooserBody, chooserOutcomeWords,
     renderFoundationsChooser, renderRoleOptions, renderRefusedList, formatBytes,
-    commitBlockedReason, nextStepReason, pickedFiles, READ_WITH_INFO_HTML,
+    commitBlockedReason, nextStepReason, pickedFiles,
+    explainerHtml, explainerMark, explainerLabel,
     renderDescription, renderStatus, renderReadout, renderReadoutGroup, renderBadge, renderExplainer,
     renderInfoMark,
     COPY_SUCCESS_BANNER,
@@ -1676,7 +1708,7 @@ const html = [
   handoffHtml(R),
   R.renderJournal(),
   R.renderBrief(hostileState.projectRead),
-  R.aboutInfoHtml(),
+  explainerHtml('context.page', { here: 'agent-memory' }),
   R.renderEmptyProject(),
 ].join('\n');
 
@@ -1760,10 +1792,14 @@ ok('...and the table still names the machine, per row, where there is one per '
   + 'handoff to name', /<th scope="col">Machine<\/th>/.test(
     R.renderWorkStreams([{ scope: 'a', machine: 'boxa', writtenAgeSeconds: 60 }], null)),
 R.renderWorkStreams([{ scope: 'a', machine: 'boxa', writtenAgeSeconds: 60 }], null).slice(0, 300));
-ok('...and the COST of the fact is in step ②\'s ⓘ, where an explanation goes',
-  /local paths and processes may differ|paths, running processes/.test(
-    makeRenderers(hostileState).renderProject()),
-  'the sentence vanished with the line');
+// v3.71.0: step ②'s ⓘ is the `context.memory` explainer, and the caveat moved
+// to the guide's Memory section (COPY.md C4, "moved, not deleted"). So the
+// intent — the page never states it as a reading — holds, and the panel is
+// the explainer whose card opens the guide section that carries it.
+ok('...and the COST of the fact is behind step ②\'s ⓘ: the Memory explainer, whose card opens the guide',
+  makeRenderers(hostileState).renderProject().includes(explainerHtml('context.memory'))
+  && /reading against your own\s+checkout before you act/.test(readFileSync(join(ROOT, 'docs/user-guide.md'), 'utf8')),
+  'the Memory explainer is not step ②\'s panel');
 {
   const same = makeRenderers(hostileState);
   ok('machineIsThisMachine:true says nothing either',
@@ -5551,39 +5587,31 @@ section('§16 — Projects inside a domain (v3.48.0)');
   eq('each step carries its own ⓘ panel, outside the head row',
     (real.match(/<div class="settings-block-info">/g) || []).length, 4);
 
-  // ── THE THREE SENTENCES SURVIVED, BEHIND THE MARKS ───────────────────
-  // Moved, not deleted. Each is asserted inside the panel of ITS OWN step,
-  // so a sentence that landed on the wrong step reds.
+  // ── EACH STEP'S ⓘ IS ITS OWN EXPLAINER (v3.71.0) ──────────────────────
+  // The three sentences that were the ledes (R4) and then the first paragraph
+  // of each panel are the explainers' leads now. Asserted per step, BYTE-EQUAL
+  // to the kit's render of that step's key, so a panel on the wrong step reds.
+  // The "Start here." prefix is GONE: it was a STATE inside a help panel, and
+  // an explainer reads true in every state (MODEL.md); the empty step body
+  // carries the start instead.
   const panelOf = (id) => {
-    const i = real.indexOf('id="settings-block-info-' + id + '"');
-    return i < 0 ? '' : real.slice(i, real.indexOf('</div>', i));
+    const m = new RegExp('<div class="tx-vh-panel" id="settings-block-info-' + id + '"[^>]*hidden>').exec(real);
+    return m ? real.slice(m.index + m[0].length) : '';
   };
-  ok('step ①\'s sentence is the first paragraph of its own ⓘ',
-    /^[\s\S]*?<p>(<b>Start here\.<\/b> )?Add the documents an agent must not act without\.<\/p>/
-      .test(panelOf('context-canonical')), panelOf('context-canonical').slice(0, 200));
-  ok('step ②\'s sentence is the first paragraph of its own ⓘ',
-    /<p>You write the brief; agents write handoffs and the journal\.<\/p>/
-      .test(panelOf('context-state')));
-  ok('step ③\'s sentence is the first paragraph of its own ⓘ',
-    /<p>The domains this project draws on\./.test(panelOf('context-knowledge')));
-  // THE "Start here." PREFIX STILL DROPS. It is the Providers block-1 rule and
-  // it moved into the panel with the sentence rather than being lost with the
-  // lede: this fixture has no foundations, the next one has one document.
-  ok('...and the "Start here." prefix is there while the project has no documents',
-    /<b>Start here\.<\/b> Add the documents/.test(panelOf('context-canonical')));
+  for (const [id, key] of [['context-canonical', 'context.documents'], ['context-state', 'context.memory'],
+    ['context-knowledge', 'context.knowledge']]) {
+    ok('step ' + id + '\'s ⓘ is the `' + key + '` explainer, exactly',
+      panelOf(id).startsWith(explainerHtml(key) + '</div>'), panelOf(id).slice(0, 200));
+  }
   const withDocs = makeRenderers({ ...st,
     projectRead: { ...st.projectRead,
       foundations: { present: true, ownership: 'curator', totalBytes: 100,
         documents: [{ slug: 'architecture', title: 'A', role: 'architecture', bytes: 100 }] } } })
     .renderProject();
-  const i2 = withDocs.indexOf('id="settings-block-info-context-canonical"');
-  ok('...and it is gone the moment one document exists, with the tail unchanged',
-    !/<b>Start here\.<\/b>/.test(withDocs.slice(i2, i2 + 400))
-    && /<p>Add the documents an agent must not act without\.<\/p>/
-      .test(withDocs.slice(i2, i2 + 400)));
-
-  ok('the definition the brief lede used to carry is in step ②\'s ⓘ instead',
-    /rarely changes/.test(real));
+  ok('...and step ①\'s panel is the SAME with no documents and with one — state-independent',
+    withDocs.includes(explainerHtml('context.documents')) && !/Start here\./.test(panelOf('context-canonical')));
+  ok('the brief/handoff/journal definitions are in step ②\'s ⓘ, as the explainer\'s table',
+    /data-explainer="context.memory"[\s\S]*?The brief[\s\S]*?Handoffs[\s\S]*?Journal/.test(real));
 }
 
 // ── 16e2. The keyboard contract, EXECUTED ────────────────────────────────
@@ -6976,20 +7004,23 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   const src = stripComments(readFileSync(join(NEXT, 'views/memory.js'), 'utf8'));
   ok('renderMain builds its header with an `info` panel — "How this works" is the mark now',
     callSiteCount(src, 'renderViewHeader', { within: 'renderMain' }) > 0
-    && /info: aboutInfoHtml\(\)/.test(src), 'no info on the centre header');
+    && /info: explainerHtml\('context\.page', \{ here: 'agent-memory' \}\)/.test(src), 'no info on the centre header');
   ok('...as raw HTML, which is what lets the panel carry its list and its docs link',
     /infoHtml: true/.test(src));
   ok('the explainer component is GONE from this view — not imported, not called',
     !/renderExplainer/.test(src));
   ok('...and no branch of the page emits one',
     !makeRenderers(hostileState).renderProject().includes('tx-explainer'));
-  ok('the About panel ends with a docs link from the frozen table',
-    /docsLinkHtml\('memory\.overview'/.test(src));
-  ok('...and that link really resolves and really renders',
-    /<a href="https:\/\/github\.com\/[^"]*working-state\.md"/.test(makeRenderers(hostileState).aboutInfoHtml()));
+  // v3.71.0: the panel is the `context.page` explainer; its ONE link is the
+  // guide card, whose href the kit takes from the frozen docs-links table.
+  const about = explainerHtml('context.page', { here: 'agent-memory' });
+  ok('the About panel ends with the guide card from the frozen table',
+    /<a class="xp-guide"[^>]*href="https:\/\/github\.com\/[^"]*user-guide\.md#project-context--what-the-screen-shows"/.test(about), about.slice(-600));
+  ok('...and Agent memory is marked "you are here" on its framing',
+    /<li class="xp-node is-here" aria-current="true">[^]*?Agent memory[^]*?you are here/.test(about));
   ok('the sidebar\'s lock CARD is gone and its sentence is behind the rail\'s own mark',
     !/mem-sidebar-foot/.test(src)
-    && /Agents save handoffs here over MCP; you write the standing brief\./.test(src));
+    && /Your agents save \*\*Handoffs\*\*/.test(EXPLAINERS['context.page'].points.map((p) => p.text).join(' ')));
   ok('"Copy agent instructions" is in the header\'s action slot, not floating in the breadcrumb',
     /actionsHtml:[\s\S]{0,240}id="mem-copy-agent"/.test(src)
     && callSiteCount(src, 'renderViewHeader', { within: 'renderMain' }) > 0);
@@ -7320,8 +7351,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // contents rather than by offset: renderBlock emits the fold BEFORE the
   // body, so a positional check reads the wrong way round — found by writing
   // it that way first and watching it fail on correct output.
-  const panels = [...page.matchAll(/<div class="tx-vh-panel"[^>]*hidden>([\s\S]*?)<\/div>/g)]
-    .map((m) => m[1]);
+  const panels = panelSpans(page).filter((p) => / hidden>$/.test(p.open)).map((p) => p.body);
   // FOUR, and each one is named: the three steps and the STRIP's own ⓘ, which
   // explains every age on the page and therefore belongs to the instrument
   // rather than to any one step. The honesty meter's was the fifth through
@@ -8124,7 +8154,10 @@ const fndRead = (payload) => ({
     const at = panel.indexOf('id="settings-block-info-context-canonical"');
     ok('...because the fact is in step ①\'s ⓘ, where the rest of the source '
       + 'explanation already is (v3.69.0: said per document)',
-    at !== -1 && /save to a '?\s*\+?\s*'?<b>mirrored<\/b> document is <b>refused<\/b>/.test(panel.slice(at, at + 4000)),
+    // v3.71.0: the Documents explainer's own point — a mirrored document
+    // follows its original and is changed THERE (the refusal detail is the
+    // guide's, which the card opens).
+    at !== -1 && panel.slice(at, at + 6000).includes('A <b>mirrored</b> document follows its original; change it there.'),
     panel.slice(at, at + 600));
   }
   {
@@ -8508,13 +8541,15 @@ const fndRead = (payload) => ({
   // the other is how a fact leaves the app entirely.
   {
     const whole = F.renderProject();
-    ok('the block’s ⓘ says what a chosen file becomes',
-      /each file[^<]*becomes one document/i.test(whole)
-        || /<b>each file you choose becomes one document<\/b>/i.test(whole), 'memory.js ⓘ');
-    ok('...and that nothing is uploaded, which is the question the control raises',
-      /read in this browser[\s\S]{0,80}never uploaded/i.test(whole), 'memory.js ⓘ');
+    // v3.71.0: the block's ⓘ is the Documents explainer. Its points say
+    // where documents come from and where a MIRRORED one is edited; the file
+    // mechanics are the guide's Documents section, which its card opens.
+    ok('the block’s ⓘ says where documents come from',
+      whole.includes('Add them from this computer or GitHub, or write one here.'), 'memory.js ⓘ');
+    ok('...and opens the guide section that carries the mechanics',
+      /data-explainer="context.documents"[\s\S]*?href="[^"]*#documents--the-files-that-travel-with-a-project"/.test(whole), 'memory.js ⓘ');
     ok('...and where a MIRRORED document is edited instead, which the option card no '
-      + 'longer says', /changed THERE and re-copied here/.test(whole), 'memory.js ⓘ');
+      + 'longer says', whole.includes('change it there.'), 'memory.js ⓘ');
   }
 
   // (b) REPO-OWNED WITH NOTHING MIRRORED: the ownership is settled, so the
@@ -9368,13 +9403,27 @@ const fndRead = (payload) => ({
     !/draws on the domain it/.test(dflt), (dflt.match(/tx-desc[^<]*<[^>]*>[^<]*/g) || []).join(' | '));
   ok('CONTROL: a project that HAS chosen carries no such chip',
     !/mem-badge-quiet">default</.test(full), full.slice(0, 400));
-  ok('...and the sentence lives in step ③\'s ⓘ, verbatim',
-    /draws on the domain it lives in/.test(makeRenderers({
+  // ── v3.71.0: THE DEFECT, FIXED — step ③'s ⓘ said "Nothing has been chosen
+  // yet" in EVERY state, chosen or not. It is the state-independent
+  // `context.knowledge` explainer now, byte-identical in both states; which
+  // domain is inherited is the row's own `default` word (asserted above).
+  const kPanel = (page) => { const m = /<div class="tx-vh-panel" id="settings-block-info-context-knowledge"[^>]*hidden>/.exec(page);
+    return m ? page.slice(m.index + m[0].length, page.indexOf('<div class="settings-block-body">', m.index)) : ''; };
+  const kChosen = kPanel(makeRenderers({
+    activeDomain: 'acme', activeProject: 'l', openFolds: {}, projects: [],
+    journalLimit: 10, detail: null, detailLoading: false, domainList: ['acme', 'beta'],
+    knowledge: kmap({ acme: { data: { pageCount: 5, pageCounts: {} }, error: null } }),
+    projectRead: { knowledgeDomains: ['acme', 'beta'], knowledgeDomainsDefaulted: false },
+  }).renderProject());
+  ok('step ③\'s ⓘ never claims nothing was chosen — with two domains CHOSEN it is the explainer',
+    kChosen.startsWith(explainerHtml('context.knowledge')) && !/Nothing has been chosen/.test(kChosen), kChosen.slice(0, 300));
+  ok('...and it is byte-identical to the panel in the DEFAULTED state — no state in a help panel',
+    kPanel(makeRenderers({
       activeDomain: 'acme', activeProject: 'l', openFolds: {}, projects: [],
       journalLimit: 10, detail: null, detailLoading: false, domainList: ['acme'],
       knowledge: kmap({ acme: { data: { pageCount: 5, pageCounts: {} }, error: null } }),
       projectRead: { knowledgeDomains: ['acme'], knowledgeDomainsDefaulted: true },
-    }).renderProject()), 'the sentence vanished with the paragraph');
+    }).renderProject()) === kChosen, 'the defaulted and chosen panels differ');
 
   // ── A MALFORMED project.json IS LOUD ──────────────────────────────────
   const bad = makeRenderers({ activeDomain: 'acme', activeProject: 'l', openFolds: {},
@@ -9934,11 +9983,12 @@ function realListbox() {
   // THE ADJECTIVE SURVIVES, IN THE ⓘ AND NOWHERE ELSE. Checked over the
   // PANELS' own contents rather than by offset, the same way §18i checks the
   // never-fold rule: renderBlock emits the fold before the body.
-  const panels = [...page.matchAll(/<div class="tx-vh-panel"[^>]*hidden>([\s\S]*?)<\/div>/g)]
-    .map((m) => m[1]).join('\n');
-  const outside = page.split(/<div class="tx-vh-panel"[^>]*hidden>[\s\S]*?<\/div>/).join(' ');
-  ok('"canonical document" is still DEFINED, behind the mark',
-    /canonical document/i.test(panels), panels.slice(0, 200));
+  const panels = panelSpans(page).map((p) => p.body).join('\n');
+  const outside = outsidePanels(page);
+  // v3.71.0: the ⓘ DEFINES the noun in plain words (the Documents explainer's
+  // lead); "canonical document" and its long definition are the guide's.
+  ok('"Documents" is still DEFINED, behind the mark — in the explainer\'s lead',
+    panels.includes('<b>Documents</b> are the files your agents read word for word'), panels.slice(0, 200));
   ok('...and appears NOWHERE outside a panel — not as a heading, not as a label, '
     + 'not in a lede', !/canonical document/i.test(outside),
   (outside.match(/.{0,60}canonical document.{0,60}/i) || [''])[0]);
@@ -10028,6 +10078,16 @@ function realListbox() {
     const pickerCfg = makeRenderers(full).knowledgePickerCfg(['research'], false);
     const copy = visible + ' ' + spoken + ' '
       + pickerCfg.placeholder + ' ' + pickerCfg.ariaLabel;
+    // ── v3.71.0: THE ⓘ PANELS ARE EXPLAINERS, AND THEIR WORDS ARE P2's ────
+    // Every Context panel is an entry of shared/explainers.js, whose own suite
+    // (test-explainers.js) polices its vocabulary against SCREEN_WORDS. The
+    // v3.71.0 framing deliberately calls a domain's pages "the wiki" (Second
+    // brain: "Your reading, turned into a wiki"; Knowledge: "the wiki your
+    // agents search"), so the "wiki" ban below runs over the page OUTSIDE the
+    // panels — which is where D1's rule (a picker, a row, a heading) lives.
+    const copyNoPanels = outsidePanels(both).replace(/<[^>]*>/g, ' ').replace(/&[a-z]+;/g, ' ')
+      + ' ' + (outsidePanels(both).match(/(?:aria-label|title|placeholder|alt)="([^"]*)"/g) || []).join(' ')
+      + ' ' + pickerCfg.placeholder + ' ' + pickerCfg.ariaLabel;
     for (const [word, re] of [
       ['Foundations', /\bfoundations?\b/i],
       ['Working state', /\bworking state\b/i],
@@ -10044,8 +10104,9 @@ function realListbox() {
       // the jump id and every on-disk name keep the old word.
       ['Capture (the retired name)', /\bCapture\b/],
     ]) {
+      const scan = /^wiki/.test(word) ? copyNoPanels : copy;
       ok('the Context view says nothing of "' + word + '" in its copy',
-        !re.test(copy), (copy.match(new RegExp('.{0,70}' + re.source + '.{0,70}', re.flags)) || [''])[0]);
+        !re.test(scan), (copy.match(new RegExp('.{0,70}' + re.source + '.{0,70}', re.flags)) || [''])[0]);
     }
     // ── THE CONTROL IS WHAT MAKES THE SIX BANS MEAN ANYTHING ──────────
     // A scan for an ABSENT word passes on an empty string, so the census has to
@@ -10126,8 +10187,10 @@ function realListbox() {
   const kmapOf = (o) => new Map(Object.entries(o));
   ok('with no figures in hand the KNOWLEDGE cell is omitted, not filled with a '
     + 'dash — no reading, no instrument',
-  !/KNOWLEDGE/.test(F({ knowledge: kmapOf({ acme: { data: null, error: null } }),
-    projectRead: { knowledgeDomains: ['acme'] } }).renderLayerStrip({ scopes: [] })));
+  // v3.71.0: outside the ⓘ panel — the overview explainer's table names all
+  // five readings, so a raw scan would read the help as the instrument.
+  !/KNOWLEDGE/.test(outsidePanels(F({ knowledge: kmapOf({ acme: { data: null, error: null } }),
+    projectRead: { knowledgeDomains: ['acme'] } }).renderLayerStrip({ scopes: [] }))));
   const known = F({ knowledge: kmapOf({ acme: { error: null, data: {
     pageCount: 3445, pageCounts: {}, lastIngestDate: null } } }) })
     .renderLayerStrip({ scopes: [], knowledgeDomains: ['acme'] });
@@ -10198,11 +10261,11 @@ function realListbox() {
   // ── CELL ① WHILE THE READ IS IN FLIGHT ──────────────────────────────
   ok('with no project read the FOUNDATIONS cell is omitted — "not set up yet" '
     + 'is a claim that frame cannot make',
-  !/DOCUMENTS/.test(F({}).renderLayerStrip(null)));
+  !/DOCUMENTS/.test(outsidePanels(F({}).renderLayerStrip(null))));
   ok('...but the MEMORY cell still paints, from the index row the page '
     + 'is already holding',
-  /MEMORY/.test(F({ projects: [{ domain: 'acme', project: 'lumina',
-    writtenAgeSeconds: 300 }] }).renderLayerStrip(null)));
+  /MEMORY/.test(outsidePanels(F({ projects: [{ domain: 'acme', project: 'lumina',
+    writtenAgeSeconds: 300 }] }).renderLayerStrip(null))));
 }
 
 // ── §21f4 — EVERY FOLD SHIPS CLOSED, and it is remembered per fold ──────
@@ -10934,9 +10997,11 @@ function realListbox() {
     && /id="fadd-why" hidden/.test(gh({ remote: 'o/r', hasReadToken: true })));
   ok('each of the three fields is ONE wrapper holding its label then its input',
     count(gh({}), /<div class="fnd-init-field"><label[^>]*for="fadd-(remote|ref|path)"/g) === 3);
-  ok('READ WITH carries an ⓘ with the fine-grained steps and why not classic',
-    /id="fadd-readwith-info-btn"/.test(gh({})) && /fine-grained personal access token/.test(gh({}))
-    && /Why not a classic token/.test(gh({})));
+  // v3.71.0: the `context.read-with` explainer — its four steps, and the
+  // guide's GitHub read-only token section (why not classic) behind the card.
+  ok('READ WITH carries an ⓘ: the read-with explainer, its steps, and the guide card',
+    /id="fadd-readwith-info-btn"/.test(gh({})) && gh({}).includes(explainerHtml('context.read-with'))
+    && /Fine-grained tokens/.test(gh({})) && /#github-read-only-token"/.test(gh({})));
   ok('there is NO token field — a token is never typed or sent here',
     !/type="password"/.test(gh({})) && !/name="token"|id="fadd-token"/.test(gh({})));
 
@@ -11380,12 +11445,18 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('...the meter draws the harness HATCHED, labelled an estimate, and never adds it to The Curator',
       /bk-harness/.test(big) && /harness about 120k \(your estimate, not measured\), The Curator about 13\.2k tokens/.test(big), big.slice(0, 3000));
     // THE ⓘ
-    const info = /id="settings-block-info-context-session"[^>]*>([\s\S]*?)<\/div>/.exec(html);
-    ok('the step\'s ⓘ keeps the design\'s opening sentence and says how tokens are estimated, with its accuracy',
-      !!info && info[1].includes('An agent starting work on this project is handed the standing brief, the latest handoff, a few journal lines, the list of documents, and the text of the documents marked <i>read first</i>, up to the reading budget.')
-      && info[1].includes('Tokens are estimated at four bytes each. For English prose the real count is usually within about ±20%')
-      && info[1].includes('Claude Code’s <code>/context</code>')
-      && info[1].includes('never added to a measured figure'), info ? info[1].slice(0, 300) : html.slice(0, 400));
+    // v3.71.0: the `context.session-start` explainer — the meter drawing, the
+    // three controls named, and `/context` for the harness. The ±20% accuracy
+    // and "never added to a measured figure" moved to the guide's Session
+    // start section, which its card opens; asserted THERE, so moved ≠ deleted.
+    const info = panelSpans(html).find((p) => p.id === 'settings-block-info-context-session');
+    const guide = readFileSync(join(ROOT, 'docs/user-guide.md'), 'utf8');
+    ok('the step\'s ⓘ is the Session start explainer, and the accuracy it dropped is in the guide',
+      !!info && info.body === explainerHtml('context.session-start')
+      && /class="xp-well xp-meter"/.test(info.body)
+      && info.body.includes('<code>/context</code>')
+      && /#session-start-and-the-context-window"/.test(info.body)
+      && /±20%/.test(guide), info ? info.body.slice(0, 300) : html.slice(0, 400));
     // A READ-ONLY MIRROR
     const ro = makeRenderers(withSS(ssData(), { detail: { readonly: true } }))
       .renderSessionStart(st.projectRead);
@@ -11953,25 +12024,26 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       JSON.stringify(calls));
   }
 
-  // ── §25h — the teaching copy, verbatim (CONTRACT §5.1) ────────────────
+  // ── §25h — the teaching copy (CONTRACT §5.1), now the explainers' ─────
+  // v3.71.0: the model the header ⓘ teaches is the `context.page` explainer
+  // (the brief, the Documents, the Handoffs and Journal, and the framing with
+  // Agent memory marked "you are here"); each step's opening line is its
+  // explainer's LEAD. Asserted against the copy file's own entries, so the
+  // pinned words are P2's reviewed ones rather than a second copy typed here.
   {
-    const R = makeRenderers(baseSt());
-    ok('the header ⓘ OPENS on the model: instructions, last state, a little foundation',
-      R.aboutInfoHtml().startsWith('<p>An agent starting work on a project needs three things: its instructions (the standing brief), where things stand (the latest handoff), and a little foundational knowledge (the documents you mark <i>read first</i>). Everything else — other documents, the domain’s pages — stays one request away. Give it just enough, and it keeps its window for the work.</p>'),
-      R.aboutInfoHtml().slice(0, 300));
+    const about = explainerHtml('context.page', { here: 'agent-memory' });
+    ok('the header ⓘ OPENS on the model: what agents read first, and where work stopped',
+      about.includes('<p class="xp-lead">This page is your agents’ memory for one project: what they read first, and where work stopped.</p>'),
+      about.slice(0, 300));
     const page = makeRenderers(withSS(ssData())).renderProject();
-    const panel = (id) => {
-      const at = page.indexOf('id="settings-block-info-' + id + '"');
-      if (at < 0) return '';
-      const rest = page.slice(at);
-      return rest.slice(rest.indexOf('>') + 1);
-    };
-    ok('① opens on "Foundational knowledge"', panel('context-canonical')
-      .startsWith('<p>Foundational knowledge: choose which documents an agent reads at the start and which it opens only when needed.'));
-    ok('② opens on "The last state and the instructions"', panel('context-state')
-      .startsWith('<p>The last state and the instructions: what every agent is handed at the start.'));
-    ok('③ opens on "Knowledge on demand"', panel('context-knowledge')
-      .startsWith('<p>Knowledge on demand: searched when a task needs it, never loaded at the start.'));
+    const panel = (id) => { const p = panelSpans(page).find((x) => x.id === 'settings-block-info-' + id); return p ? p.body : ''; };
+    const lead = (key) => '<p class="xp-lead">' + explainerHtml(key).split('<p class="xp-lead">')[1].split('</p>')[0] + '</p>';
+    ok('① opens on the Documents lead', panel('context-canonical').includes(lead('context.documents'))
+      && /word for word/.test(lead('context.documents')));
+    ok('② opens on the Memory lead', panel('context-state').includes(lead('context.memory'))
+      && /Each save replaces the last/.test(lead('context.memory')));
+    ok('③ opens on the Knowledge lead', panel('context-knowledge').includes(lead('context.knowledge'))
+      && /None of it loads at the start/.test(lead('context.knowledge')));
     ok('④ is the page\'s last step, after ③', page.indexOf('settings-block-context-session')
       > page.indexOf('settings-block-context-knowledge'));
   }
@@ -12612,7 +12684,7 @@ const EXECUTED = new Set([
   // fragments renderWorkStreams composes, both rendered in §6/§6e;
   // `handoffReaderContent` replaces renderHandoff and is driven in §18d.
   'wsShownCount', 'wsRowHtml', 'wsMoreHtml', 'handoffReaderContent', 'selectProject',
-  'renderJournal', 'renderBrief', 'aboutInfoHtml',
+  'renderJournal', 'renderBrief',
   'renderEmptyProject', 'renderStaleNotice', 'renderUnlistedNote', 'renderBriefOnlyNotice',
   'unlistedCount', 'renderCopyOutcome', 'renderProject',
   // v3.65.0 — step ③'s three pieces and the one write it makes. The three
@@ -12906,10 +12978,14 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
     const page = makeRenderers({ activeDomain: 'a', activeProject: 'p', openFolds: {},
       projects: [], journalLimit: 10, detail: null, detailLoading: false })
       .renderProject().replace(/\s+/g, ' ');
-    ok('...and the two-clocks explanation is still on the page, in the overview\'s ⓘ',
-      /TWO clocks behind every age on this page/.test(page)
-      && /that is when the file ARRIVED here/.test(page),
-    'the two-clocks paragraph vanished with the line');
+    // v3.71.0: the overview's ⓘ is the `context.overview` explainer, whose
+    // clock point names BOTH clocks in one line; the full two-clocks text
+    // moved to the guide's freshness section, which the card opens.
+    const guide = readFileSync(join(ROOT, 'docs/user-guide.md'), 'utf8');
+    ok('...and the two clocks are still on the page, in the overview\'s ⓘ, with the long form in the guide',
+      page.includes('Times are when the agent saved, or when the file arrived here.')
+      && /two clocks behind every age on this page/i.test(guide),
+    'the two-clocks point vanished');
     // AND IT NO LONGER DESCRIBES AN AFFORDANCE THE APP HAS DELETED. Through
     // v3.65.0 it ended "a reading that had to fall back says “file time” in its
     // own provenance line" — and v3.65.1 deleted that line with the unfolded
@@ -12917,8 +12993,8 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
     // than the gap, so the gap is stated instead.
     ok('...and it does NOT promise a “file time” marker this screen no longer paints',
       !/file time/.test(page), (page.match(/.{0,80}file time.{0,80}/) || [''])[0]);
-    ok('...it says what to do instead, which is the honest form of the gap',
-      /read an age you did not expect as the moment the file arrived/.test(page),
+    ok('...it says what an unexpected age means — the moment the file ARRIVED',
+      /when the file arrived here/.test(page),
       'the replacement sentence is missing');
   }
 
@@ -13260,6 +13336,112 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
     !/cur-depth-bar/.test(cNull) && /saved before stopping/.test(cNull), cNull.slice(0, 400));
 }
 
+
+// ═════════════════════════════════════════════════════════════════════════
+// §26 — THE ADOPTION GUARD (v3.71.0): EVERY CONTEXT ⓘ IS AN EXPLAINER
+// ═════════════════════════════════════════════════════════════════════════
+//
+// MODEL.md §8: "a Context render contains no `.tx-vh-panel` whose body is not
+// an explainer (so a new inline `<p>` panel fails)". The page is painted with
+// EVERY ⓘ present at once — the header, the overview, the four steps, the
+// drafting request (a kept project) and READ WITH (the GitHub door open) — and
+// every panel body must be BYTE-EQUAL to the kit's render of the `context.*`
+// key it names. Then the source: nothing on this view can compose a panel any
+// other way (no renderInfoMark call, memStep takes a KEY and ignores text).
+{
+  const CONTEXT_KEYS = Object.keys(EXPLAINERS).filter((k) => k.startsWith('context.')).sort();
+  // The one function the guard is: a list of every panel that is NOT a
+  // Context explainer, each with its reason. Empty is the pass.
+  const violations = (html) => panelSpans(html).map((p) => {
+    const m = /^<div class="xp" data-explainer="([^"]+)">/.exec(p.body);
+    if (!m) return { id: p.id, why: 'not an explainer: ' + p.body.slice(0, 80) };
+    const key = m[1];
+    if (!key.startsWith('context.')) return { id: p.id, why: 'a non-Context explainer: ' + key };
+    const want = key === 'context.page' ? explainerHtml(key, { here: 'agent-memory' }) : explainerHtml(key);
+    if (p.body !== want) return { id: p.id, why: key + ' differs from the kit\'s render' };
+    return null;
+  }).filter(Boolean);
+  const keysOf = (html) => panelSpans(html)
+    .map((p) => (/^<div class="xp" data-explainer="([^"]+)">/.exec(p.body) || [])[1]).filter(Boolean);
+
+  // ── THE PAGE, WITH EVERY ⓘ ON IT ──────────────────────────────────────
+  const payload = fndPayload([fndDoc({ skeleton: true, freshness: 'n/a' })], { ownership: 'curator' });
+  const F0 = makeRenderers({});
+  const facts = F0.foundationsFacts(fndRead(payload));
+  const st = {
+    activeDomain: 'acme', activeProject: 'lumina', openFolds: {}, projects: [],
+    detail: null, detailLoading: false, journalLimit: 10, wsWindow: WS_WINDOW_SRC, fnd: null,
+    domainList: ['acme'],
+    projectRead: { ...fndRead(payload), knowledgeDomains: ['acme'], readingBudgetBytes: null },
+    fndAdd: Object.assign(FA.freshAddPanel('github', doorsFor(facts, {}).github, facts),
+      { domain: 'acme', project: 'lumina' }),
+  };
+  // The header is renderMain's, composed exactly as the source composes it
+  // (§18e pins that `info:` expression; the real renderViewHeader draws it).
+  const header = renderViewHeader({ eyebrow: 'your agents’ brain', title: 'Project context',
+    info: explainerHtml('context.page', { here: 'agent-memory' }), infoHtml: true, panelWide: true });
+  const page = header + makeRenderers(st).renderProject();
+
+  eq('the guard finds NO Context ⓘ panel that is not an explainer', JSON.stringify(violations(page)), '[]');
+  ok('CONTROL: all eight Context explainers were really painted — the scan is not vacuous',
+    JSON.stringify([...new Set(keysOf(page))].sort()) === JSON.stringify(CONTEXT_KEYS),
+    JSON.stringify([...new Set(keysOf(page))].sort()) + ' vs ' + JSON.stringify(CONTEXT_KEYS));
+  eq('CONTROL: eight panels, one per key — no ⓘ painted twice', panelSpans(page).length, 8);
+  ok('the header marks Agent memory "you are here" on the framing',
+    /<li class="xp-node is-here" aria-current="true">[\s\S]*?Agent memory[\s\S]*?you are here/.test(header));
+
+  // ── NEGATIVE CONTROLS: the guard reds on the shapes it exists to refuse ──
+  const rogue = renderInfoMark('rogue', 'About rogue', '<p>An inline paragraph.</p>', { html: true });
+  ok('CONTROL: a new inline <p> panel IS flagged',
+    violations(page + rogue.panel).some((v) => v.id === 'rogue'));
+  const foreign = explainerMark('foreign', 'chat.page');
+  ok('CONTROL: another view\'s explainer on this page IS flagged',
+    violations(page + foreign.panel).some((v) => v.id === 'foreign' && /non-Context/.test(v.why)));
+  const tampered = page.replace('<p class="xp-lead">', '<p class="xp-lead">Nothing has been chosen yet. ');
+  ok('CONTROL: an explainer with a state sentence spliced in IS flagged',
+    violations(tampered).length === 1);
+
+  // ── THE v3.67.2 STABILITY CONTRACT, KEPT ───────────────────────────────
+  // An open panel survives a re-render because memory.js's render restores
+  // it BY ID from `data-tx-info`, and the entrance plays only on the press
+  // because nothing ships `data-tx-entering`. Adoption changed the panel's
+  // BODY only; every mark's id is the one it had.
+  const ids = panelSpans(page).map((p) => p.id).sort();
+  eq('every Context panel id is the pre-v3.71.0 one, so the open-panel restore still finds it',
+    JSON.stringify(ids), JSON.stringify(['fadd-readwith-info', 'mem-fnd-ask-info', 'mem-layers-info',
+      'settings-block-info-context-canonical', 'settings-block-info-context-knowledge',
+      'settings-block-info-context-session', 'settings-block-info-context-state',
+      'tx-vh-info-project-context'].sort()));
+  ok('...each has its mark, a button whose data-tx-info names it',
+    ids.every((id) => page.includes('data-tx-info="' + id + '"')));
+  ok('...and no panel ships already entering or already open',
+    !/data-tx-entering/.test(page) && panelSpans(page).every((p) => / hidden>$/.test(p.open)));
+
+  // ── THE SOURCE CANNOT COMPOSE ANOTHER KIND ─────────────────────────────
+  const src = stripComments(readFileSync(join(NEXT, 'views/memory.js'), 'utf8'));
+  eq('memory.js calls renderInfoMark nowhere — every mark goes through the explainer kit',
+    (src.match(/\brenderInfoMark\s*\(/g) || []).length, 0);
+  const calls = [...src.matchAll(/\bexplainer(?:Html|Mark|Label)\s*\(([^)]*)\)/g)].map((m) => m[1]);
+  // memStep's one call passes its `infoKey` through; every `infoKey:` a caller
+  // writes is then held to the same rule.
+  ok('every explainer call names a literal `context.*` key (memStep forwards its infoKey)',
+    calls.length >= 6 && calls.every((a) => /(^|,\s*)'context\.[a-z-]+'/.test(a)
+      || a === "'settings-block-info-' + id, o.infoKey"), JSON.stringify(calls));
+  const infoKeys = [...src.matchAll(/\binfoKey:\s*([^\n,]*)/g)].map((m) => m[1]);
+  ok('...and every infoKey is a literal `context.*` key — four steps, four keys',
+    infoKeys.length === 4 && infoKeys.every((k) => /^'context\.[a-z-]+'$/.test(k)), JSON.stringify(infoKeys));
+  eq('...and the only `infoText:` left is the overview\'s, and it is an explainer',
+    JSON.stringify((src.match(/infoText:\s*[^\n,]*/g) || [])), JSON.stringify(["infoText: explainerHtml('context.overview')"]));
+  const stepWithText = makeRenderers({}).memStep({ num: 9, id: 'x', title: 'T', infoText: '<p>rogue</p>' });
+  ok('memStep IGNORES text — a caller cannot hand it a non-explainer panel',
+    !/tx-vh-panel|rogue/.test(stepWithText), stepWithText);
+  const stepWithKey = makeRenderers({}).memStep({ num: 9, id: 'x', title: 'T', infoKey: 'context.memory' });
+  ok('CONTROL: memStep with a key paints that explainer',
+    violations(stepWithKey).length === 0 && keysOf(stepWithKey).join() === 'context.memory');
+  const fiSrc = readFileSync(join(NEXT, 'shared/foundations-init.js'), 'utf8');
+  ok('shared/foundations-init.js no longer exports an ⓘ body of its own (C8 is the host\'s explainer)',
+    !/export const READ_WITH_INFO_HTML/.test(fiSrc));
+}
 
 // ── Done ─────────────────────────────────────────────────────────────────
 

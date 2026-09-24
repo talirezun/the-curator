@@ -168,12 +168,16 @@ import {
   // every live reading in the app takes. An unused import is an unadopted
   // component, which is the state `fetchOpenRouterCatalogue` shipped in.
   renderDescription, renderStatus, renderReadout,
-  renderViewHeader, renderInfoMark,
+  renderViewHeader,
 } from '../shared/text.js';
-// Every link out of the app into docs/ is a key in ONE table, checked offline
-// against the real markdown (shared/docs-links.js). The "How this works" panel
-// ends with one rather than with a hand-typed URL that nothing can verify.
-import { docsLinkHtml } from '../shared/docs-links.js';
+// ── EVERY ⓘ ON THIS PAGE IS AN EXPLAINER (v3.71.0) ──────────────────────
+// One shape, one copy file (shared/explainers.js, keys `context.*`). A panel
+// on this view is composed ONLY through these three — `memStep` takes an
+// `infoKey`, never text — and scripts/test-next-memory-view.js's adoption
+// guard fails any Context ⓘ panel whose body is not one.
+import { explainerHtml, explainerMark, explainerLabel } from '../shared/explainer.js';
+// (docs-links.js is no longer imported here: every link out of this page is
+// an explainer's guide card, which resolves through that same frozen table.)
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 // THE PAGE RHYTHM, imported rather than re-declared. v3.53.0 built the section
 // block for Providers & keys, v3.54.0 moved the other four Settings sections
@@ -349,7 +353,7 @@ import {
   // Nine store codes, nine sentences, every one naming the token's SOURCE
   // rather than the token — which is the store's own rule and the one a view
   // is in a position to break.
-  remoteRefusalText, READ_WITH_INFO_HTML,
+  remoteRefusalText,
   // The native folder picker (`POST /api/config/pick-path`, which mutates
   // nothing) — the "Add from this computer" door's "Choose folder…".
   pickFolder,
@@ -3396,9 +3400,8 @@ function renderSidebar(token) {
   // the right side beside Copy agent instructions — we definitely don't need
   // it in this small section."* `renderSidebarHead` takes no `info` option at
   // all, so this is enforced by the component rather than remembered by a
-  // caller; the sentence the rail's panel carried is the second paragraph of
-  // the MAIN header's own ⓘ (`aboutInfoHtml`), which is where it was already
-  // half-said.
+  // caller; the sentence the rail's panel carried went to the MAIN header's
+  // own ⓘ, which is the `context.page` explainer since v3.71.0.
   //
   // THE TWO SLOTS MEAN SOMETHING, and that is why the pair swapped rungs. The
   // primary slot is "create the kind of thing this list holds" — `New domain`
@@ -3503,9 +3506,8 @@ function renderMain(token) {
   // paragraph is a DESIGN FACT, not a caution — the store has no endpoint to
   // reach even if the sentence were missed.
   //
-  // `infoHtml: true`, so this call owns escaping. Every byte is a literal
-  // except the docs link, whose URL comes from the frozen table in
-  // shared/docs-links.js and whose label the helper escapes.
+  // `infoHtml: true`, so this call owns escaping — explainerHtml escapes every
+  // copy string first and builds the guide link from docs-links.js's table.
   //
   // THE ACTION SLOT is the component's sanctioned place for a control beside a
   // title — the same slot views/domains.js uses for Rename / Delete / Ask this
@@ -3518,7 +3520,9 @@ function renderMain(token) {
     renderViewHeader({
       eyebrow: 'your agents’ brain',
       title: 'Project context',
-      info: aboutInfoHtml(),
+      // v3.71.0: the explainer, with Agent memory marked "you are here" on
+      // the framing (second brain → Shared Brain → agent memory).
+      info: explainerHtml('context.page', { here: 'agent-memory' }),
       infoHtml: true,
       // THE PANEL RUNS THE COLUMN, like everything under it. This page's five
       // blocks, its table and its two documents all end at one right edge, and
@@ -3853,8 +3857,11 @@ async function copyDraftingAsk(token) {
 // `renderBlock`'s are; `title` is escaped.
 function memStep(o) {
   const id = String(o.id);
-  const info = renderInfoMark(
-    'settings-block-info-' + id, 'More about ' + o.title, o.infoText || '', { html: true });
+  // v3.71.0: a KEY into shared/explainers.js, never text — so no step can
+  // carry a panel that is not an explainer. No key, no mark (the skeleton).
+  const info = o.infoKey
+    ? explainerMark('settings-block-info-' + id, o.infoKey)
+    : { btn: '', panel: '' };
   return (
     '<div class="settings-job-block settings-block settings-block-' + escapeHtml(id) + '">' +
       (o.noticeHtml || '') +
@@ -4136,34 +4143,11 @@ function renderLayerStrip(read) {
     // `min`. A smaller floor silently re-creates exactly that wrap, which is
     // why the number is pinned rather than the arrangement.
     minTrack: 253,
-    infoLabel: 'About the readings on this page',
-    infoText:
-      '<p>The first three are the project’s three layers of context, and pressing one goes to the '
-      + 'step that owns it; AGENT SESSIONS reads whether agents are using them, and SESSION START is what '
-      + 'an agent is handed when it starts, all three together, in tokens. They are READINGS, not a '
-      + 'filter — nothing on this page narrows when '
-      + 'you press one, unlike the figures on a domain page, which also select what the list '
-      + 'below them shows.</p>'
-      + '<p>There are TWO clocks behind every age on this page. The <b>agent’s clock</b> is the time the '
-      + 'agent itself recorded when it saved, taken from the journal line it wrote. The <b>file’s clock</b> '
-      + 'is when the file last changed on this disk — and on a computer that syncs, that is when the file '
-      + 'ARRIVED here, not when it was written. The agent’s clock is used whenever there is one.</p>'
-      // ── AND THE COST OF DELETING THE PROVENANCE LINE, SAID OUT LOUD ────
-      // Through v3.65.0 this paragraph ended *"a reading that had to fall back
-      // says “file time” in its own provenance line"* — and v3.65.1 deleted
-      // that line with the unfolded block it lived in. Leaving the sentence
-      // would have been the app describing an affordance it no longer has,
-      // which is worse than the gap. So the gap is stated, and what to do
-      // about it is stated with it.
-      + '<p>Where no journal line carried a save time, the age you see is the file’s own, and this '
-      + 'screen does not mark which of the two it used. On a computer that syncs, read an age you '
-      + 'did not expect as the moment the file arrived rather than the moment it was written.</p>'
-      + '<p>MEMORY reads when the last save happened, not whether anything has changed since — no '
-      + 'screen can know that — so it never says you ARE saved, and the inference stays with you.</p>'
-      + '<p>Each mark is a COMPARISON that was actually made. Documents kept by The Curator have no '
-      + 'upstream to compare against and carry no mark at all; a reading nobody could take is the dashed '
-      + 'ring and the words beside it, never a zero.</p>'
-      + '<p>' + docsLinkHtml('memory.handoff', 'Read more in the guide') + '</p>',
+    // v3.71.0: the explainer (shared/explainers.js `context.overview`). The
+    // two clocks, what MEMORY does not claim and the readings-not-a-filter
+    // rule moved to the guide's freshness-dot section, which its card opens.
+    infoLabel: explainerLabel('context.overview'),
+    infoText: explainerHtml('context.overview'),
     infoHtml: true,
     cards,
   });
@@ -4560,7 +4544,7 @@ function renderKnowledgeRow(domain, defaulted, count) {
       // ── ONE WORD, NOT A SENTENCE (v3.65.1) ────────────────────────────
       // This row is here because the project lives in this domain, not because
       // anybody chose it. The forty-word version of that fact was a paragraph
-      // under the picker and is now step ③'s ⓘ; what a reader needs ON the row
+      // under the picker and is now step ③'s ⓘ; what a reader needs ON the row (v3.71.0: the guide's)
       // is which of the two it is. The same quiet badge class the documents
       // table uses for "shared mirror".
       + (defaulted === true ? '<span class="mem-badge mem-badge-quiet">default</span>' : '')
@@ -4615,7 +4599,7 @@ function renderKnowledgePicker(chosen, defaulted) {
   // paragraph under a control is the shape he rejected on this very screen.
   //
   // WHERE EACH WENT, and neither is lost:
-  // · THE DEFAULT — into step ③'s ⓘ, VERBATIM, plus a one-word `default`
+  // · THE DEFAULT — into step ③'s ⓘ, VERBATIM, plus a one-word `default` (v3.71.0: the Knowledge explainer instead, state-free)
   //   chip on the row it is about, because a reader who never opens the ⓘ
   //   still has to be able to tell a chosen row from an inherited one. A word
   //   on the row it describes is not a paragraph under the section.
@@ -5414,7 +5398,6 @@ function renderProject() {
   }
 
   const scopes = (read && read.scopes) || [];
-  const fndFacts = foundationsFacts(read);
 
   // ── STEP ① — FOUNDATIONS ─────────────────────────────────────────────────
   //
@@ -5439,53 +5422,12 @@ function renderProject() {
     num: 1,
     id: 'context-canonical',
     title: 'Documents',
-    infoText:
-      // THE LEDE, MOVED (R4). It was the sentence under the title; it is the
-      // first thing behind the mark now, and it keeps the "Start here."
-      // prefix that drops the moment one document exists.
-      // v3.67.0: the step's place in the model goes first (CONTRACT §5.1).
-      '<p>Foundational knowledge: choose which documents an agent reads at the start and which it '
-      + 'opens only when needed.</p>'
-      + '<p>' + (fndFacts.count ? '' : '<b>Start here.</b> ')
-      + 'Add the documents an agent must not act without.</p>'
-      + '<p>These are <b>canonical documents</b> — this project carries each one VERBATIM: the '
-      + 'architecture, the decisions, the conventions, the roadmap. Not a summary of one: the '
-      + 'bytes, so an agent reads what you would read. Each one is <b>replaced whole</b> on every '
-      + 'write and never merged, which is what makes it quotable.</p>'
-      + '<p>Until now those lived only inside a code repository, which meant an agent without a '
-      + 'checkout could not see them, and an ingested copy did not travel because source files are '
-      + 'not synced. These do travel, beside the brief and the handoffs.</p>'
-      // v3.69.0: the "one question once" paragraph was the v3.61.0 rule, and
-      // the maintainer retired it — the source is recorded per document.
-      + '<p>Each document <b>remembers where it came from</b>: written here, copied in once from '
-      + 'a folder, or <b>mirrored</b> from a folder or a GitHub repository. One project can hold all '
-      + 'of them at once, from up to eight sources, and each mirrored '
-      + 'source is refreshed on its own.</p>'
-      + '<p><b>Mirrored</b> means a byte-for-byte copy of a file in a checkout, with the commit it '
-      + 'came from recorded and a checksum compared on every read — that is what the freshness '
-      + 'column reports. A plain folder with no version control in it works perfectly well as a '
-      + 'source; the source line then shows the path with no commit beside it. A mirrored document '
-      + 'belongs to its repository, so it is changed THERE and re-copied here.</p>'
-      + '<p><b>Kept by The Curator</b> means the document lives only here, and there are three ways '
-      + 'one arrives: you write or paste it, you import a file from this computer — <b>each file '
-      + 'you choose becomes one document</b>, read in this browser and shown to you before '
-      + 'anything is saved, never uploaded anywhere — or an '
-      + '<b>agent you ask</b> writes it — a commissioned write, the same permission the standing '
-      + 'brief needs, and nothing writes one on its own. Setting this up seeds four '
-      + '<b>skeletons</b>: documents that carry prompts rather than prose, which an agent is told '
-      + 'to answer rather than to believe.</p>'
-      // THE SENTENCE THAT USED TO SIT UNDER THE TABLE (v3.65.0). A standing
-      // fact, not an outcome — v3.69.0 made it per document (maintainer
-      // decision D4: an agent may create a new document anywhere).
-      + '<p>An agent may write a <b>new</b> document into any project, but its save to a '
-      + '<b>mirrored</b> document is <b>refused</b>: that document belongs to its source, so an agent '
-      + 'asked to change it is told to change it there and refresh. Each row says which kind it is.</p>'
-      + '<p>An edit here is <b>yours</b>, stamped as a human write and never as an agent’s — the '
-      + 'same rule the standing brief follows. One cost comes with it: this tier has no per-machine '
-      + 'copy, so two computers editing one document converge to whichever saved last. Edit rarely, '
-      + 'then sync.</p>'
-      + '<p>' + docsLinkHtml('memory.foundations', 'Read more in the guide') + ' · '
-      + docsLinkHtml('memory.foundations-edit', 'Starting a project') + '</p>',
+    // v3.71.0: the explainer, keyed. The long text (mirror = byte copy +
+    // commit + checksum, skeletons, commissioned writes, last-save-wins across
+    // two computers) is the guide's Documents section, which the card opens.
+    // The old "Start here." prefix was a STATE in a help panel; an explainer
+    // reads true in every state, and the empty step body already says it.
+    infoKey: 'context.documents',
     noticeHtml: foundationsNotices(read),
     bodyHtml: renderFoundations(read),
   });
@@ -5534,89 +5476,10 @@ function renderProject() {
     num: 2,
     id: 'context-state',
     title: 'Memory',
-    infoText:
-      // THE LEDE, MOVED (R4) — after the step's place in the model (v3.67.0).
-      '<p>The last state and the instructions: what every agent is handed at the start.</p>'
-      + '<p>You write the brief; agents write handoffs and the journal.</p>'
-      + '<p>State <b>supersedes</b>. Every save REPLACES the last one rather than being merged into '
-      + 'it, which is the whole point: state has to be able to say “no longer true”, and a store '
-      + 'that only accumulates cannot.</p>'
-      + '<p>You own the <b>standing brief</b> — the one tier a human owns. Agents READ it on every '
-      + 'call and, unless you ask one to, never write it; you edit it here with the pencil, or open '
-      + '<span class="mono">state/&lt;project&gt;/project.md</span> in any text editor. Saving '
-      + 'replaces the whole document, so send the complete brief rather than an addition. It is the '
-      + 'part that <b>rarely changes</b>: the goal, the firm decisions not to re-litigate, the '
-      + 'working model, and pointers to where the depth lives — so an OLD brief is not a stale one, '
-      + 'which is why it carries a date and deliberately no freshness mark.</p>'
-      + '<p>Agents own the rest. A <b>handoff</b> is what the last session left for the next one, one '
-      + 'per thread of work — the files call that thread a <i>scope</i>, and the slug is still shown '
-      + 'as one — and parallel threads get their own, so they never overwrite each other. Press a row '
-      + 'to read it. Each machine writes to its OWN folder, which is what makes two computers safe '
-      + 'over sync: no two of them ever touch one file. So one thread can appear as several rows — '
-      + 'one saved copy per machine — and the count under the table says both numbers.</p>'
-      // ── WHAT "WRITTEN ON ANOTHER MACHINE" COSTS (v3.65.1) ───────────
-      // The sentence that used to ride under a `written on <machine>` line in
-      // an instrument above these rows. The FACT is the table's own MACHINE
-      // column, per row; what it MEANS is an explanation, and an explanation
-      // lives here.
-      + '<p>A handoff written on <b>another machine</b> — the table says which — was observed '
-      + 'there: local paths and processes may differ from what it describes, so read its next '
-      + 'steps against your own checkout before acting on them.</p>'
-      + '<p>Two rows sharing a thread AND a machine cannot happen; two <b>harnesses</b> on one '
-      + 'machine can, and they overwrite each other, because the folder has no harness segment. '
-      + 'This step says so when the journal shows it, and the remedy is to give each tool its own '
-      + 'handoff.</p>'
-      + '<p>The <b>journal</b> is append-only and it accumulates, so any entry MAY SINCE HAVE BEEN '
-      + 'SUPERSEDED — a blocker named in an old headline can have been fixed three saves ago. It '
-      + 'survives what a handoff cannot: two agent tools writing one thread overwrite each '
-      + 'other’s handoff, and both trails are still here.</p>'
-      // ── AND WHAT CAPTURE IS READING (v3.65.1, D4) ───────────────────
-      // Through v3.65.0 these paragraphs sat behind a mark of THEIR OWN, alone
-      // on the first line of the CAPTURE row's body, above the instrument and
-      // the table — three treatments in one row, which is what the maintainer
-      // called *"two different designs"* with a third floating over them. The
-      // words are unchanged, byte for byte; the mark that opens them is step
-      // ②'s, because a step has ONE explanatory mark and a reading inside it
-      // is not a step.
-      //
-      // INLINE, NOT A MODULE-LEVEL CONSTANT, and the reason is mechanical:
-      // this function is lifted by brace-matching and EXECUTED by several
-      // suites against fixed stub lists, and a module-level binding is not
-      // visible inside a lifted body — a free identifier here is a
-      // ReferenceError there, not a failing assertion (BUILDER-RULES rule 10,
-      // and the same wall `renderJournal`'s own count line records one
-      // function up). There is exactly one copy of these words either way.
-      // ── WHAT A CLIPPED SUMMARY IS (v3.65.2, C3) ─────────────────────
-      // The plain-language half of the clipped-save report, moved out of the
-      // report so the report can be a reading rather than a paragraph.
-      + '<p>Each handoff carries a <b>one-line summary</b>. A future session sees only that line in '
-      + 'the list before deciding whether to open the handoff, so the store caps it at 200 '
-      + 'characters and cuts the rest. A cut summary is a less useful label, not lost work.</p>'
-      + '<p>A <b>session</b> is one bridge process — one run of the MCP server, from the moment an '
-      + 'agent connects to the moment its window closes. It is identified by a random id the bridge '
-      + 'mints for itself, so two sessions are never merged and one session is never split in two.</p>'
-      + '<p>A session <b>started with the context</b> when it asked for this project’s brief, '
-      + 'handoff or documents before it saved anything — at any point before that first save, not '
-      + 'necessarily as its first call. It <b>saved before stopping</b> when a save succeeded; a '
-      + 'refused save is not a save.</p>'
-      + '<p><b>What this cannot see.</b> Only calls that came through the bridge are here. A save '
-      + 'written by the command line, by a hook, or by hand in a text editor is a real save and does '
-      + 'not appear in this count unless it went through the bridge. A session that never opened the '
-      + 'bridge at all is not in the denominator either — so this reading is about agent sessions '
-      + 'that used The Curator, and never a claim about your whole week.</p>'
-      + '<p>The <b>harness name</b> beside each session is <b>self-reported</b>: the client chooses '
-      + 'the name it sends, it is matched against a list of harnesses that have actually been '
-      + 'measured, and anything else is shown as unknown. Nothing in the app behaves differently '
-      + 'because of it — it is a label on a row and nothing more.</p>'
-      + '<p>It comes from a local file beside your settings, never inside your knowledge folder, so '
-      + 'nothing here is ever synced. A line carries the tool’s name, the domain and project it '
-      + 'touched, whether it succeeded and how long it took — never an argument, never a result, '
-      + 'never a file path. Calls made by the bridge’s own self-test are excluded.</p>'
-      + '<p><b>Nothing here stops a session.</b> This reading reports; it never refuses, delays or '
-      + 'warns an agent, and no number on it can.</p>'
-      + '<p>' + docsLinkHtml('memory.standing-brief', 'The standing brief') + ' · '
-      + docsLinkHtml('memory.handoff', 'Handoffs') + ' · '
-      + docsLinkHtml('memory.session-journal', 'The journal') + '</p>',
+    // v3.71.0: the explainer, keyed. Supersedes, per-machine folders, the
+    // 200-character summary, what a session is and what the count cannot see
+    // are the guide's Memory section now.
+    infoKey: 'context.memory',
     // EMPTY, AND THAT IS THE POINT (v3.64.1) — nothing renders above this
     // step's heading. The slot stays available; this caller simply has
     // nothing that belongs above a heading.
@@ -5656,27 +5519,11 @@ function renderProject() {
     num: 3,
     id: 'context-knowledge',
     title: 'Knowledge',
-    infoText:
-      // THE LEDE, MOVED (R4) — after the step's place in the model (v3.67.0).
-      '<p>Knowledge on demand: searched when a task needs it, never loaded at the start.</p>'
-      + '<p>The domains this project draws on. Open one in Domains, or ask it in Chat.</p>'
-      + '<p>A domain <b>accumulates</b>. A new source deepens the pages that are already there '
-      + 'rather than adding a copy beside them — which is the difference between this layer and the '
-      + 'two above it, where a save replaces what was there and a document is carried word for '
-      + 'word.</p>'
-      + '<p>Ingest and chat write it; nothing on this page does. It belongs to the <b>domain</b> '
-      + 'rather than to this project, so every project in this domain draws on the same pages and '
-      + 'these figures move when you ingest, not when an agent saves.</p>'
-      // THE SENTENCE THAT LEFT THE BODY (v3.65.1), verbatim. It was a
-      // paragraph under the picker; a step body is rows, and an explanation
-      // lives here.
-      + '<p>Nothing has been chosen yet, so this project draws on the domain it lives in — the '
-      + 'row marked <b>default</b>. Adding a domain keeps it and adds to it; removing the last '
-      + 'one puts the default back.</p>'
-      + '<p>A project draws on at least one domain. Add as many as you like; any of them can be '
-      + 'removed once another is chosen, including the one the project lives in.</p>'
-      + '<p>The counts are taken by walking the folder rather than by reading any page, and no '
-      + 'model is called to draw them — opening this screen costs nothing.</p>',
+    // v3.71.0: the explainer, keyed. It is STATE-INDEPENDENT: the old panel
+    // said "Nothing has been chosen yet" in every state, including after a
+    // domain was chosen (the v3.71.0 inventory's defect). Which domain is
+    // inherited is said on the page, by the row marked `default`.
+    infoKey: 'context.knowledge',
     bodyHtml: renderKnowledge(),
   });
 
@@ -5743,7 +5590,7 @@ function renderProjectSkeleton() {
   // could differ between the two paints rather than one more. The ⓘ panels
   // are deliberately omitted here: a help panel a user could open and have
   // torn away 30ms later is worse than one that arrives with the content —
-  // and `memStep` emits no mark at all when `infoText` is empty, so the head
+  // and `memStep` emits no mark at all when no `infoKey` is passed, so the head
   // row is the numeral and the title in both frames.
   //
   // ── THE STRIP PAINTS FOR REAL, WITH THE HALF OF THE DATA WE HAVE ──────
@@ -5977,7 +5824,7 @@ function renderSaveStatus(read, d) {
       // against its own limit, which `renderDepthCell` turns danger by itself
       // because it is over) and OUTCOME (the head's `ok` word and a quiet
       // loud entry: nothing was lost). The explanation of what a one-line
-      // summary is for moved to step ②'s ⓘ.
+      // summary is for moved to step ②'s ⓘ. (v3.71.0: the guide's Memory section)
       //
       // Still an outcome about a specific save and still UNFOLDED (v3.16.1);
       // still NOT the danger tone `trimmed` gets; still never "missing",
@@ -6069,7 +5916,7 @@ function renderSaveStatus(read, d) {
     // · WHICH MACHINE — the Handoffs table's own MACHINE column, per row,
     //   which is more precise than one line about the open pair; what that
     //   COSTS a reader ("paths and processes may differ") is a sentence in
-    //   step ②'s ⓘ.
+    //   step ②'s ⓘ. (v3.71.0: the guide's Memory section)
     // So `detail` is gone and this function composes warnings only. On a
     // healthy project it returns '' and step ② opens on its Capture row with
     // nothing above it, which is the acceptance picture.
@@ -6120,7 +5967,7 @@ function renderSaveStatus(read, d) {
   // the Handoffs table below names the machine PER ROW in a column of its own
   // — which is both more precise and already on screen. What the fact COSTS a
   // reader — that paths, running processes and local checkouts may not match
-  // what the handoff describes — is one sentence in step ②'s ⓘ.
+  // what the handoff describes — is one sentence in step ②'s ⓘ. (v3.71.0: the guide's Memory section)
   //
   // The positive-evidence rule it carried is unchanged and now lives where the
   // table is built: an explicit `false`, never an absent field.
@@ -8232,7 +8079,7 @@ function renderFoundations(read) {
   const addPanel = addRec && !editing
     ? renderAddPanel(addRec, facts, doors[addRec.door], {
       readWithInfo: addRec.door === 'github'
-        ? renderInfoMark('fadd-readwith-info', 'How to create a read-only token', READ_WITH_INFO_HTML, { html: true })
+        ? explainerMark('fadd-readwith-info', 'context.read-with')
         : null,
     })
     : '';
@@ -8517,12 +8364,14 @@ function foundationsDraftAsk(facts, readonly) {
     // about this project's ownership, which never changes, because ownership
     // is set once and refused afterwards. A standing fact is not an outcome,
     // so v3.16.1 does not hold it on the page — the full sentence is a
-    // paragraph of step ①'s ⓘ, and the row's own summary already reads
+    // paragraph of step ①'s ⓘ, and the row's own summary already reads (v3.71.0: the Documents explainer's "change it there" point)
     // `mirrored`, which is the one-word form of it.
     return { btn: '', panel: '' };
   }
-  const info = renderInfoMark('mem-fnd-ask-info', 'About the drafting request',
-    DRAFT_ASK_INFO_HTML, { html: true });
+  // v3.71.0: the explainer `context.drafting-request` (the privacy claim —
+  // your agent drafts, The Curator sends nothing to a model — is its first
+  // point; the save_foundation refusal rule is the guide's Start a project).
+  const info = explainerMark('mem-fnd-ask-info', 'context.drafting-request');
   return {
     btn: '<button type="button" class="btn btn-ghost btn-xs" id="mem-fnd-ask">' +
       'Copy the drafting request</button>' + info.btn,
@@ -8530,27 +8379,6 @@ function foundationsDraftAsk(facts, readonly) {
   };
 }
 
-// ── THE ⓘ BESIDE IT ──────────────────────────────────────────────────────
-// Definition, then mechanism, then what is and is not saved — the order this
-// app's ⓘ panels follow. A module constant so the suite can lift the words a
-// user reads rather than asserting a copy typed in a test, and every character
-// of it is written here, so nothing user- or store-supplied is interpolated
-// into a fragment that is emitted as HTML.
-//
-// THE PRIVACY CLAIM IS THE POINT OF THE SECOND PARAGRAPH. The drafting model
-// is the HARNESS'S, because the harness has the code and The Curator does not:
-// it holds markdown under one folder and has no checkout, no build and no
-// repository access. Saying so is what stops a reader assuming this button
-// sends their codebase somewhere.
-const DRAFT_ASK_INFO_HTML =
-  '<p><strong>What it copies.</strong> One sentence for your agent, naming this project ' +
-  'and the <code>save_foundation</code> tool. Paste it into any assistant that has the ' +
-  'my-curator bridge installed — Claude Code, Claude Desktop, Cursor.</p>' +
-  '<p><strong>Your agent’s own model does the drafting</strong>, from the code and documents it ' +
-  'can see. The Curator sends nothing to a model for this and has no access to your code; it ' +
-  'only stores what comes back.</p>' +
-  '<p><strong>Nothing is saved until you approve each document.</strong> The sentence asks the ' +
-  'agent to show you first, and the tool refuses unless it is told the owner commissioned it.</p>';
 
 /**
  * THE ADD PANEL OPEN ON THIS PROJECT, or null (v3.68.0). Stamped to the
@@ -11267,27 +11095,6 @@ function planPreviewKey(p) {
   return body ? JSON.stringify(body) : null;
 }
 
-/** The ⓘ of step ④. */
-const SESSION_START_INFO_HTML =
-  '<p>An agent starting work on this project is handed the standing brief, the latest handoff, a '
-  + 'few journal lines, the list of documents, and the text of the documents marked <i>read '
-  + 'first</i>, up to the reading budget. Nothing from the domain’s pages is loaded until the agent '
-  + 'searches. The meter draws that start inside your context window, to scale, and then '
-  + 'enlarged; documents on request and the domain’s pages stay outside it until an agent opens them.</p>'
-  + '<p>Start small. Most sessions need the brief, the handoff and one or two documents: '
-  + 'conventions, a decision log. Everything else stays listed, and the agent opens it by name when '
-  + 'the task calls for it. Lean or Standard is right for most projects. A 200k-token start is almost '
-  + 'never right; the ladder offers it because a few projects on 1M-token windows need it.</p>'
-  + '<p>Tokens are estimated at four bytes each. For English prose the real count is usually within '
-  + 'about ±20%; code, JSON, tables and non-Latin text tokenize denser, so for those this reads low. '
-  + 'Your agent’s tokenizer decides the real number. The MCP figure is the JSON an agent receives, '
-  + 'delivered in replies of at most about 20k tokens each, because Claude Code saves a larger reply '
-  + 'to a file instead of showing it; the session-start hook sends Markdown in one piece.</p>'
-  + '<p>The window size and your harness estimate are set for this computer, and the menu bar widget '
-  + 'reads the same two. The harness — your agent’s own system prompt, tools, CLAUDE.md and skills — '
-  + 'cannot be measured from here: read it from Claude Code’s <code>/context</code>. It is drawn '
-  + 'hatched, labelled as your estimate, and never added to a measured figure.</p>';
-
 /**
  * ④ SESSION START — the sum of steps ①–③, drawn as the context window it
  * lands in (v3.70.0, DESIGN-v3.70.0 concept A+).
@@ -11374,7 +11181,7 @@ function renderSessionStart(read) {
     num: 4,
     id: 'context-session',
     title: 'Session start',
-    infoText: SESSION_START_INFO_HTML,
+    infoKey: 'context.session-start',
     headHtml,
     bodyHtml: '<div class="mem-ss-stack">' + budgetErr + ctxErr + ctxEditHtml()
       + sessionMeterHtml(data, ss && ss.error)
@@ -12561,83 +12368,6 @@ function renderPlanPanel(facts, p) {
     + (p.error ? renderStatus({ state: 'danger', title: 'No suggestion was made', detail: p.error }) : '')
     + result
   + '</div>';
-}
-
-/**
- * THE ONE EXPLANATORY SURFACE — now the header's ⓘ panel, not a card.
- *
- * ── WHAT CHANGED, AND WHAT DID NOT ─────────────────────────────────
- * The WORDS are unchanged. What moved is the container: this was a
- * `renderExplainer` <details> appended to all four content branches, so the
- * widest element on the page was the one read once per lifetime, and it sat
- * hard against the journal above it because .tx-explainer declares no margin.
- * renderMain now passes this HTML as the header's `info`, which is the same
- * component family under the same rules and the shape renderViewHeader
- * documents for exactly this content.
- *
- * BOTH LOAD-BEARING PROPERTIES SURVIVE THE MOVE, because the header keeps
- * them: the panel is a real, keyboard-operable control (a <button> with
- * aria-expanded / aria-controls, Escape to close and focus returned), and it
- * is HIDDEN on first paint — needed once per user, then never again.
- *
- * NOTHING HERE WARNS. No caution, no cost, no refusal; v3.16.1's rule is that
- * a warning behind a click is not a warning, and renderViewHeader has no
- * `state` or `warningTone` field to tempt one in. The read-only rule in the
- * last paragraph is a DESIGN FACT, not a caution — the store has no write
- * endpoint for tiers 2 and 3 even if the sentence were missed.
- *
- * THE LINK IS DATA. `docsLinkHtml('memory.overview', …)` resolves through the
- * frozen table in shared/docs-links.js, which scripts/test-docs-links.js
- * checks against the real markdown in docs/ — so a renamed heading reds a
- * commit rather than silently landing a reader at the top of a page.
- *
- * The caller passes `infoHtml: true` and therefore owns escaping. Every byte
- * returned here is a literal or the helper's own escaped output; nothing
- * user-supplied, machine-supplied or store-supplied reaches it.
- */
-function aboutInfoHtml() {
-  return (
-    // ── THE MODEL, FIRST (v3.67.0, CONTRACT §5.1) ────────────────────────
-    // The maintainer's governing principle: this screen must TEACH what an
-    // agent needs at the start and what it can ask for later, not only expose
-    // the settings that decide it. This paragraph replaced the domain/project
-    // one, whose substance the rest of the panel still carries.
-    '<p>An agent starting work on a project needs three things: its instructions (the standing ' +
-    'brief), where things stand (the latest handoff), and a little foundational knowledge (the ' +
-    'documents you mark <i>read first</i>). Everything else — other documents, the domain’s pages — ' +
-    'stays one request away. Give it just enough, and it keeps its window for the work.</p>' +
-    // ── THE RAIL'S OWN SENTENCE, MOVED HERE (v3.65.0, R2) ─────────────
-    // The sidebar had a second ⓘ carrying this line, and the maintainer
-    // asked for it to go: *"we have an information icon in the Project
-    // context sidebar which should not be here, because we have another one
-    // on the right side beside Copy agent instructions — we definitely
-    // don't need it in this small section."* The MARK went; the SENTENCE
-    // did not, and this is the panel it belongs in — the paragraph below
-    // already says the same thing about the same two writers at length, so
-    // this is the one-line form of it, kept verbatim because it is the form
-    // a reader who opens the panel and reads nothing else gets.
-    '<p>Agents save handoffs here over MCP; you write the standing brief. ' +
-    'This screen re-checks by itself when you come back to it, so Refresh is rarely needed.</p>' +
-    '<ul class="mem-about-list">' +
-      '<li><b>Standing brief</b> — the part that rarely changes: the goal, the firm decisions, the working ' +
-      'model. One per project, returned on every agent read. <b>You write this one</b>, here or in a text ' +
-      'editor; saving replaces the whole document.</li>' +
-      '<li><b>Current handoff</b> — where things stand right now: what an agent leaves for the next ' +
-      'session, so it starts knowing what you already settled. One per thread of work per machine ' +
-      '(the files call that thread a <i>scope</i>), so parallel threads never overwrite each other. ' +
-      'Overwritten on every save, so it never grows stale behind you.</li>' +
-      '<li><b>Session journal</b> — one line per save: when, which harness, which model, and the headline. ' +
-      'It is history and it accumulates, so an old entry can describe something already resolved.</li>' +
-    '</ul>' +
-    '<p>Each machine writes to its own folder, so two machines can never overwrite each ' +
-    'other over sync. Reading a handoff with no machine named gives you the most recently written one, ' +
-    'whichever machine that was.</p>' +
-    '<p>Your agents write the handoff and the journal through the ' +
-    '<span class="mono">my-curator</span> MCP tools, and this screen never does — a handoff is worth ' +
-    'something because an agent observed it. The brief is yours. Everything here is plain markdown, so a ' +
-    'text editor works too.</p>' +
-    '<p>' + docsLinkHtml('memory.overview', 'Read more in the guide') + '</p>'
-  );
 }
 
 // ── Wiring ───────────────────────────────────────────────────────────────

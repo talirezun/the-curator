@@ -1127,14 +1127,8 @@
    readout role, so an
    explanation and a measurement no longer render in the same voice.
 
-   The About list is the one fragment that stays: it is the explainer's BODY
-   content, so it INHERITS that role's size and colour (a <ul> inherits both
-   from the body element the component paints) rather than restating them.
-   Only layout is set here — declaring a font-size or a colour would be the
-   view describing type the system already owns. */
-.mem-about-list { margin: 0 0 10px; padding-left: 18px; }
-.mem-about-list li { margin-bottom: 5px; }
-.mem-about-list b { color: var(--text); font-weight: var(--weight-semibold); }
+   The About list that stayed here left in v3.71.0: the header's ⓘ is the
+   `context.page` explainer, styled once by shared/explainer.css. */
 
 /* ── Journal ─────────────────────────────────────────────────────────── */
 

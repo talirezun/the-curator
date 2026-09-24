@@ -359,7 +359,8 @@ section('§4  THE TWO NEW ADOPTIONS, AT NAMED SITES');
   // same treatment sync.js's centre header got in v3.24.0, three assertions
   // below, for the same reason).
   ok('memory.js centre: the component, eyebrow + title + info (the mechanism, moved behind the mark)',
-    /renderViewHeader\(\{\s*eyebrow: '[^']*',\s*title: 'Project context',\s*info: [A-Za-z][A-Za-z0-9_$]*\(\)/.test(m),
+    // v3.71.0: the info is the `context.page` explainer, marked "you are here".
+    /renderViewHeader\(\{\s*eyebrow: '[^']*',\s*title: 'Project context',\s*info: explainerHtml\('context\.page', \{ here: 'agent-memory' \}\)/.test(m),
     'the centre header no longer carries an info field');
   ok('memory.js centre: ...as raw HTML, which is what lets the panel carry its list and its docs link',
     /infoHtml: true/.test(m));
@@ -406,8 +407,12 @@ section('§5  WHAT WAS CUT HAS NOT RETURNED, IN EITHER SHAPE');
   // is and who writes it) and is a real, keyboard-operable control rather than
   // a floating block. So this pins the wording at its new site and pins that
   // the old card is gone, rather than pinning the container.
-  ok('memory.js: ...and the sidebar\u2019s own ⓘ is where that fact lives now',
-    /Agents save handoffs here over MCP; you write the standing brief\./.test(m));
+  // v3.71.0: the split is the `context.page` explainer's two points, which
+  // the MAIN header is handed (asserted above) — still behind a real control.
+  ok('memory.js: ...and the header\u2019s ⓘ is where that fact lives now',
+    /info: explainerHtml\('context\.page'/.test(m)
+    && /You write \*\*the brief\*\*[\s\S]*Your agents save \*\*Handoffs\*\*/.test(
+      readFileSync(join(SHARED_DIR, 'explainers.js'), 'utf8')));
   ok('memory.js: ...and the floating foot card it replaces is gone',
     !/mem-sidebar-foot/.test(m));
   ok('sync.js: the .view-body sentence is gone and has not come back as a description',
@@ -487,8 +492,11 @@ const TITLE_ALLOW = {
   ok('memory.js: the shared-mirror explanation is a rendered note, not a tooltip',
     /A read-only Shared Brain mirror/.test(SRC['memory.js'])
     && !/title="A read-only Shared Brain mirror/.test(RAW['memory.js']));
-  ok('memory.js: the other-machine caution is a rendered note, not a tooltip',
-    /local paths and processes may differ/.test(SRC['memory.js'])
+  // v3.71.0: the caution left step ②'s ⓘ for the guide's Memory section (the
+  // Memory explainer's card opens it); the page names the machine per row. It
+  // is still never a tooltip.
+  ok('memory.js: the other-machine caution is in the guide, not a tooltip',
+    /reading against your own\s+checkout before you act/.test(readFileSync(join(HERE, '..', 'docs', 'user-guide.md'), 'utf8'))
     && !/title="Saved on a different machine/.test(RAW['memory.js']));
   ok('shared-brain-wizard.js: its one title= duplicates an aria-label, so it hides nothing',
     /title="Show\/hide" aria-label="Show or hide the token"/.test(SRC['shared-brain-wizard.js']));

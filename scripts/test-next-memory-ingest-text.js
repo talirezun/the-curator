@@ -65,6 +65,8 @@ import {
 // on an unknown key, so the About panel's link is proven to resolve rather than
 // merely to have been interpolated.
 import { docsLinkHtml } from '../src/public/next/shared/docs-links.js';
+// v3.71.0: the header's ⓘ body is the explainer kit's `context.page`, real.
+import { explainerHtml } from '../src/public/next/shared/explainer.js';
 // Same contract again: shared/monitor.js takes no imports either, precisely
 // so a suite can run the real component rather than a stand-in for it.
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
@@ -150,7 +152,7 @@ for (const name of ingImports) {
 ok('memory.js: renderMain builds its header with renderViewHeader',
   callSiteCount(memSrc, 'renderViewHeader', { within: 'renderMain' }) > 0);
 ok('memory.js: ...and that header carries the mechanism explanation as its `info`',
-  /info: aboutInfoHtml\(\)/.test(memSrc) && /infoHtml: true/.test(memSrc));
+  /info: explainerHtml\('context\.page', \{ here: 'agent-memory' \}\)/.test(memSrc) && /infoHtml: true/.test(memSrc));
 // ── THE ONE PRIMARY, TOP RIGHT (v3.65.0, §2(5)) ──────────────────────────
 // The maintainer, with both headers side by side: *"The Copy agent
 // instructions button should be on the top right in a violet button like Ask
@@ -309,10 +311,11 @@ function memRenderers(stateObj) {
   // so the mark and the word can never contradict each other. It is lifted
   // from shared/age.js rather than from memory.js, because the freshness scale
   // went app-wide and that is where it lives now; memory.js imports it.
-  // `aboutInfoHtml` replaces `renderAbout`: same words, no <details> around them.
+  // `aboutInfoHtml` (which replaced `renderAbout`) is gone in v3.71.0: the
+  // header's ⓘ is the `context.page` explainer, rendered by the kit.
   const body = liftFrom([
     [['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'handoffReaderContent', 'renderJournal',
-      'renderBriefEditor', 'renderBrief', 'aboutInfoHtml'], memSrc, 'memory.js'],
+      'renderBriefEditor', 'renderBrief'], memSrc, 'memory.js'],
     [['freshnessStep'], read('shared/age.js'), 'shared/age.js'],
   ]);
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
@@ -343,7 +346,7 @@ const baseState = {
 
 {
   const R = memRenderers(baseState);
-  const about = R.aboutInfoHtml();
+  const about = explainerHtml('context.page', { here: 'agent-memory' });
 
   // THE PROPERTIES THE EXPLANATION MUST KEEP, NOW THAT IT IS A PANEL.
   //
@@ -354,17 +357,21 @@ const baseState = {
   // and scripts/test-next-view-header.js is where that component's own
   // behaviour is proven. What is asserted HERE is what this view owes: the
   // words, and the fact that they carry no caution.
-  ok('the explanation still says what the three tiers are',
-    /Standing brief/.test(about) && /Current handoff/.test(about) && /Session journal/.test(about),
+  // v3.71.0: the explainer names the tiers in the screen's own words and
+  // says who writes which; the tiers' definitions are step ②'s table and the
+  // read-only rule's long form is the guide's (the card below opens it).
+  ok('the explanation still says what the tiers are',
+    /<b>the brief<\/b>/.test(about) && /<b>Handoffs<\/b>/.test(about) && /<b>Journal<\/b>/.test(about),
     about.slice(0, 200));
-  ok('...and who writes which — the read-only rule, stated as the design fact it is',
-    /this screen never does/.test(about), about.slice(-400));
+  ok('...and who writes which — you the brief, your agents the Handoffs and the Journal',
+    /You write <b>the brief<\/b>/.test(about) && /Your agents save <b>Handoffs<\/b> and the <b>Journal<\/b>/.test(about),
+    about.slice(-400));
   ok('the panel is CONTENT, not a container — the component owns the disclosure',
     !/<details\b/.test(about) && !/tx-explainer/.test(about), about.slice(0, 200));
   ok('it renders NO warning box — it explains a mechanism and carries no caution',
     !/tx-status/.test(about));
-  ok('...and it ends with a real docs link from the frozen table, not a typed URL',
-    /<a href="https:\/\/github\.com\/[^"]*working-state\.md"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/.test(about),
+  ok('...and it ends with a real guide card from the frozen table, not a typed URL',
+    /<a class="xp-guide" href="https:\/\/github\.com\/[^"]*user-guide\.md#project-context--what-the-screen-shows"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/.test(about),
     about.slice(-300));
 
   // AND IT IS ON THE PAGE. A panel nothing passes to the header is a panel
@@ -1096,10 +1103,15 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
 // cannot come back by a caller forgetting. The SENTENCE did not go with it:
 // it is a paragraph of `aboutInfoHtml`, the MAIN header's panel, which is the
 // one panel on this screen that describes what it is and who writes it.
-ok('the sidebar states the split in the rail header\u2019s own \u24d8, in one sentence',
-  /Agents save handoffs here over MCP; you write the standing brief\./.test(memCode));
-ok('...as part of the MAIN header\u2019s info panel, not as a paragraph beside it',
-  new RegExp("function aboutInfoHtml[\\s\\S]{0,3000}Agents save handoffs here over MCP").test(memCode));
+// v3.71.0: the split is the `context.page` explainer's two points now, and
+// the MAIN header is handed that explainer (asserted above).
+{
+  const about = explainerHtml('context.page', { here: 'agent-memory' });
+  ok('the split is stated in the MAIN header\u2019s \u24d8 — you write the brief, agents save Handoffs',
+    /You write <b>the brief<\/b>/.test(about) && /Your agents save <b>Handoffs<\/b>/.test(about));
+  ok('...as the MAIN header\u2019s info panel, not as a paragraph beside it',
+    /info: explainerHtml\('context\.page'/.test(memCode));
+}
 ok('...and the rail offers NO \u24d8 of its own any more — the component has no such option',
   !/variant: 'sidebar'/.test(memCode) && /renderSidebarHead\(\{/.test(memCode));
 ok('...and the floating foot card it replaces has not come back',

@@ -470,8 +470,12 @@ ok('TIME rides the freshness dot on the `saved` line, cut on the shared tier',
   clippedHtml);
 ok('...the explanation paragraph is NOT in the report any more (it is the ⓘ’s)',
   !/future session/i.test(clippedHtml), clippedHtml);
-ok('...and it IS in step ②’s ⓘ, in the view source the page renders',
-  /Each handoff carries a <b>one-line summary<\/b>\. A future session sees only that line/.test(viewSrc));
+// v3.71.0: step ②'s ⓘ is the `context.memory` explainer (a key, not prose),
+// and the 200-character summary paragraph moved to the guide's Memory section,
+// which that explainer's card opens (COPY.md C4, "moved, not deleted").
+ok('...and it IS behind step ②’s ⓘ: the Memory explainer, whose guide section states the cap',
+  /infoKey: 'context\.memory'/.test(viewSrc)
+  && /summary is capped at 200 characters/.test(readFileSync(join(ROOT, 'docs/user-guide.md'), 'utf8')));
 {
   // EVERY NOTE IS A LINE — the v3.65.1 note showed only the first, and two
   // real clipped pairs carried a second, non-loss note that was invisible.

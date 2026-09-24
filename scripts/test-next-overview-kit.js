@@ -172,6 +172,8 @@ function domainsOverview(over) {
   function projectCount(s) { return s.projects && s.projects.total; }
 }
 
+const XP = await import('../src/public/next/shared/explainer.js');
+
 function contextOverview(over) {
   const state = {
     activeDomain: 'acme',
@@ -209,8 +211,10 @@ function contextOverview(over) {
   // group through shared/foundations-sources.js (`FSRC`), injected REAL.
   const fns = ['skeletonOf', 'copiedFromOf', 'foundationsFacts', 'foundationsWord', 'newestPair',
     'effectiveSave', 'formatAge', 'renderLayerStrip'];
+  // v3.71.0: the strip's ⓘ is the `context.overview` explainer — the kit is
+  // injected REAL (it imports only import-free modules, so it runs here).
   const box = new Function('docsLinkHtml', 'renderOverview', 'escapeHtml', 'state',
-    'formatDayAge', 'freshnessDotHtml', 'freshnessTier', 'FSRC',
+    'formatDayAge', 'freshnessDotHtml', 'freshnessTier', 'FSRC', 'explainerHtml', 'explainerLabel',
     'const READ_FIRST_BUDGET_BYTES = 120 * 1024;\n'
     + 'const FOUNDATIONS_BUDGET_BYTES = ' + FOUNDATIONS_BUDGET_BYTES + ';\n'
     + fns.map((n) => extractFunction(MEMORY_JS, n, 'memory.js')).join('\n')
@@ -218,7 +222,7 @@ function contextOverview(over) {
     docsLinkHtml, renderOverview, escapeHtml, state,
     () => '1 week ago',
     () => '<span class="fresh-dot fresh-week" aria-hidden="true"></span>',
-    freshnessTier, FSRC);
+    freshnessTier, FSRC, XP.explainerHtml, XP.explainerLabel);
   return box(read);
 }
 
@@ -406,8 +410,11 @@ section('§3 — A FILTER HIGHLIGHT ONLY WHERE THERE IS A FILTER');
     '...the one the filter actually names', DOM.slice(0, 900));
   eq('NO Context card carries aria-pressed — there is no filter on that page',
     pressed(CTX).length, 0);
-  ok(CTX.includes('not a filter'),
-    '...and the ⓘ says so in words, rather than leaving the reader to notice');
+  // v3.71.0: the Context ⓘ is the `context.overview` explainer, which says
+  // what a press DOES (it jumps); "readings, not a filter" is the guide's.
+  ok(CTX.includes('Press one to jump to its step.')
+    && /readings, not a filter/.test(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'docs', 'user-guide.md'), 'utf8')),
+    '...and the ⓘ says what a press does in words, rather than leaving the reader to notice');
   // The Domains ⓘ must NOT make that claim, because its figures ARE a filter.
   ok(!DOM.includes('not a filter'), 'CONTROL: the Domains ⓘ makes no such claim');
 

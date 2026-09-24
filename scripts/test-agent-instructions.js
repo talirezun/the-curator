@@ -473,7 +473,12 @@ function renderUnlistedNote() { return '<!--UNLISTED-->'; }
 function renderSaveStatus() { return '<!--SAVESTATUS-->'; }
 function renderStaleNotice() { return '<!--STALE-->'; }
 function renderEmptyProject() { return '<!--EMPTY-->'; }
-function aboutInfoHtml() { return '<!--ABOUT-->'; }
+// v3.71.0: the header's ⓘ body is the explainer kit's (key context.page), and
+// memStep marks through explainerMark. Stubbed with a marker that CARRIES the
+// key, so the control below proves the header was handed THAT explainer.
+function explainerHtml(k) { return '<!--XP:' + k + '-->'; }
+function explainerMark(id, k) { return { btn: '<!--XPBTN:' + k + '-->', panel: '<!--XP:' + k + '-->' }; }
+function explainerLabel(k) { return 'About ' + k; }
 function renderNoProjects() { return '<!--NOPROJECTS-->'; }
 // The REAL component's contract, reduced to what these assertions read: the
 // actions slot and the info panel. Faithful on the one property that matters
@@ -634,7 +639,7 @@ const memState = (over) => ({
   // (2)'s first fold), so the marker that proves the body rendered is the
   // fold's. Same property, one level in.
   ok('CONTROL -- the rest of the page really did render, so the check is not vacuous',
-    html.includes('<!--WSFOLD-->') && html.includes('<!--ABOUT-->'));
+    html.includes('<!--WSFOLD-->') && html.includes('<!--XP:context.page-->'));
   ok('CONTROL -- and the breadcrumb row itself no longer carries it',
     !memBox.renderProject().includes('id="mem-copy-agent"'));
 

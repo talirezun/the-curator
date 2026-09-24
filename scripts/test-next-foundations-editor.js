@@ -184,7 +184,7 @@ const FI = await import('../src/public/next/shared/foundations-init.js');
 const FA = await import('../src/public/next/shared/foundations-add.js');
 // v3.69.0 — per-document sources, one namespace the view imports as `FSRC`.
 const FSRC = await import('../src/public/next/shared/foundations-sources.js');
-const { renderInfoMark: realRenderInfoMark } = await import('../src/public/next/shared/text.js');
+const XP = await import('../src/public/next/shared/explainer.js');
 
 const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1181,7 +1181,9 @@ const renderers = (() => {
     // `renderFoundationsInit` reads the first unmet step through the shared
     // `nextStepReason`, counts the primary with `pickedFiles`, and composes
     // two ⓘ marks. All REAL, appended LAST for the positional reason above.
-    'nextStepReason', 'pickedFiles', 'READ_WITH_INFO_HTML', 'renderInfoMark',
+    // v3.71.0: the ⓘ marks are the explainer kit's (real) — READ_WITH_INFO_HTML
+    // left foundations-init.js for the `context.read-with` explainer.
+    'nextStepReason', 'pickedFiles', 'explainerMark', 'explainerHtml', 'explainerLabel',
     // v3.69.0: the per-document source rules — REAL, appended LAST.
     'FSRC',
     body)(
@@ -1197,7 +1199,7 @@ const renderers = (() => {
     // in this file could agree with every assertion while the shipped block
     // warned at another number.
     READ_FIRST_BUDGET_SRC,
-    FI.nextStepReason, FI.pickedFiles, FI.READ_WITH_INFO_HTML, realRenderInfoMark, FSRC);
+    FI.nextStepReason, FI.pickedFiles, XP.explainerMark, XP.explainerHtml, XP.explainerLabel, FSRC);
 })();
 // The sandbox's `state` is a fixed OBJECT the shipped functions read through,
 // so fields are assigned onto it rather than the binding being replaced.
@@ -1893,7 +1895,7 @@ section('§10 — THE BINDER: wire() grows no new identifier');
     'state', 'mounted', 'clipboardOk', 'calls', 'escapeHtml', 'icon', 'render',
     'isCurrentMount', 'reportAsyncMountFailure', 'renderStatus', 'loadGate', 'gatedLoader',
     'unlistedCount', 'renderUnlistedNote', 'renderSaveStatus', 'renderStaleNotice',
-    'renderEmptyProject', 'aboutInfoHtml', 'renderNoProjects', 'renderViewHeader',
+    'renderEmptyProject', 'explainerHtml', 'explainerMark', 'explainerLabel', 'renderNoProjects', 'renderViewHeader',
     'mainHtml', 'setMain', 'renderBriefOnlyNotice', 'renderWorkStreams', 'workStreamCounts',
     'renderBlock', 'handoffReaderContent', 'bindWorkStreamRows', 'showMoreWorkStreams',
     'openWorkStream', 'wsShownCount', 'workStreamOrder', 'WS_WINDOW', 'renderJournal',

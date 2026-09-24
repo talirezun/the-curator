@@ -864,31 +864,11 @@ export function nextStepReason(choice) {
   return scanBlockedReason(choice) || commitBlockedReason(choice);
 }
 
-/**
- * THE READ-WITH ⓘ — how to create the token this form reads with (v3.65.2).
- *
- * The maintainer's five steps, verbatim, then why not a classic token, then
- * where the token is saved. Static markup, nothing interpolated, exported so a
- * host renders it through the kit's `renderInfoMark` rather than this module
- * growing a second ⓘ of its own.
- */
-export const READ_WITH_INFO_HTML =
-  '<p>A <b>fine-grained personal access token</b> with read-only access to the repositories you '
-  + 'want to mirror. Not a classic one. In GitHub:</p>'
-  + '<ol>'
-  + '<li>Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate '
-  + 'new token.</li>'
-  + '<li>Resource owner: the account or organisation that owns the repository.</li>'
-  + '<li>Repository access: Only select repositories, then pick the repository or repositories '
-  + 'whose documentation you want to mirror. You can pick several with one token.</li>'
-  + '<li>Permissions → Repository permissions → Contents: Read-only. Metadata read-only is added '
-  + 'automatically. Nothing else.</li>'
-  + '<li>Expiry: fine-grained tokens require one, up to a year. Set a reminder to renew it.</li>'
-  + '</ol>'
-  + '<p><b>Why not a classic token:</b> a classic token reads every repository your account can '
-  + 'see. A fine-grained one reads only the repositories you pick, and only their contents.</p>'
-  + '<p>The token is never typed here. This chooses which saved token to read with; you save it '
-  + 'once in Settings → Knowledge base.</p>';
+// THE READ-WITH ⓘ's WORDS LEFT THIS MODULE in v3.71.0: the host renders the
+// `context.read-with` explainer (shared/explainers.js) and passes it in as
+// `readWithInfo`. The long form — resource owner, Metadata added
+// automatically, why not a classic token — is the user guide's "GitHub
+// read-only token" section, which the explainer's card opens.
 
 /**
  * HOW OLD THE SOURCE FILE IS — the shared dot, and the word beside it.
