@@ -20,15 +20,23 @@
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/github/stars/talirezun/the-curator?style=social" alt="GitHub Stars"></a>
 </p>
 
-<p align="center"><strong>The Curator — the context engine</strong><br>
-<em>Your brain. Your team's brain. Your agents' brain.</em></p>
+<p align="center"><strong>Build a second brain from what you read, share it with a team, and give it to your agents.</strong></p>
 
 <p align="center"><strong>Official website: <a href="https://mycurator.xyz">mycurator.xyz</a></strong> — ask its assistant anything about The Curator.</p>
 
 ## What it is, in plain words
 
+One knowledge folder on your own computer, three things you can do with it — always in this
+order, and each one optional past the first:
+
+| | What it is | Where |
+|---|---|---|
+| ① **Second brain** | Your reading, turned into a wiki that compounds with every source | Domains, Chat |
+| ② **Shared Brain** *(optional)* | The same wiki, written together with a team | a domain's Shared Brain section |
+| ③ **Agent memory** *(optional)* | What your agents read at the start of a session, and save as they work | Context |
+
 A local app that turns what you read into a compounding wiki, shares it with a cohort, and holds
-your projects' context — foundations, working state and knowledge — so any agent, in any harness,
+your projects' context — Documents, Memory and Knowledge — so any agent, in any harness,
 resumes where the last one stopped. Plain markdown, in your own repo.
 
 **The Curator is the context engine.** It builds and keeps the context your work runs on — what you

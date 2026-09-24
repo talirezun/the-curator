@@ -97,7 +97,7 @@ paste into an assistant that needs to understand The Curator before it helps you
 
 **Want to sync across computers?** Read the [Sync Guide](sync.md) — a 3-minute setup connects your knowledge to a private GitHub repository. Prefer to let an AI agent do it? See [Set up sync with a coding agent](sync-via-coding-agent.md).
 
-**Working with agents and losing context between sessions?** Read [Working state](working-state.md) — layer 3. Point your agent at a domain over MCP and the handoff survives a change of session, agent, model, harness or machine. Since v3.59.0 the same one call also hands it the project's canonical documents: [the foundations tier](working-state.md#the-foundations-tier--canonical-documents-that-travel), or [the plain-language version](user-guide.md#foundations--canonical-documents-that-travel) in the user guide. Start with the [MCP guide](mcp-user-guide.md) to install the bridge.
+**Working with agents and losing context between sessions?** Read [Working state](working-state.md) — layer 3. Point your agent at a domain over MCP and the handoff survives a change of session, agent, model, harness or machine. Since v3.59.0 the same one call also hands it the project's canonical documents: [the foundations tier](working-state.md#the-foundations-tier--canonical-documents-that-travel), or [the plain-language version](user-guide.md#documents--the-files-that-travel-with-a-project) in the user guide. Start with the [MCP guide](mcp-user-guide.md) to install the bridge.
 
 **Not sure your agent is actually saving anything?** Read
 [Making capture real](user-guide.md#13c-making-capture-real--the-command-the-hooks-and-the-meter) —
