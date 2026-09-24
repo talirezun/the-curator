@@ -3065,7 +3065,7 @@ After ingesting a few sources, you can have a full multi-turn conversation with 
 >
 > **This is what makes chat work on large mature domains** (3,000+ pages, multi-megabyte wikis). Earlier versions hard-truncated wiki content at 90 KB and dropped 98% of pages on large domains; beta.11 added keyword scoring; beta.13 added entity-pivot + author metadata + intent detection.
 
-### Pin a project, and the answer reads its context too (v3.64.0; picker rebuilt in v3.65.0)
+### Pin a project, and the answer reads its context too
 
 The bar above a chat holds two selectors on the left and **Compile to Wiki** pushed to its far
 right. On the left, one chip per knowledge
@@ -3864,7 +3864,7 @@ This install needs re-connecting — its knowledge folder moved since the config
 is why the pill is amber and the primary button reads **Re-connect**. On a healthy install the
 pill is a green **Connected** and **Run self-test** adds a ticked "Bridge responds" line reporting
 the tool count and how many domains the bridge can see. The **Default domain for MCP writes**
-block is covered in [§16](#default-domain-for-mcp-writes-v252).*
+block is covered in [§16](#default-domain-for-mcp-writes).*
 
 You install a tiny local MCP bridge (one-time, under 2 minutes from **Settings → MCP bridge**), and from then on Claude Desktop (or VS Code with an MCP-aware coding agent, or LM Studio with a local model) can:
 
@@ -5284,7 +5284,7 @@ Which buttons a row carries depends on what it has:
 
 **A local model** — Ollama, LM Studio, llama.cpp — appears as one sentence at the foot of the block rather than as a permanently disabled row. It will connect there once there is a base-URL setting to point it at. It is not missing from your install; it does not exist yet.
 
-### 2 · What builds your wiki
+### 2 · Your AI model
 
 Ingest, Wiki Health and Compile **all run on this one model**. They always share one, and there is nothing separate to set for each of them — one model keeps the ingest prompt cache warm and keeps one bill to read.
 
@@ -5576,7 +5576,36 @@ but a menu you have to pull down to read is not a progress display.
 > like for like rather than silently migrating you to another chip's build behind a
 > progress bar.
 
-### MCP bridge — ① Connect a client
+#### Going back to an earlier version
+
+**Updates only move forward.** There is no in-app rollback for either install — going
+back is a step you take yourself, and it depends on which install you have.
+
+**If you run the app from a repository checkout** (the browser install), going back
+means checking out an older tagged version by hand:
+
+| Step | What you do |
+|---|---|
+| 1 | Open a terminal in the app folder — `~/the-curator` unless you installed it elsewhere |
+| 2 | Find the version you want on [the tags page on GitHub](https://github.com/talirezun/the-curator/tags) |
+| 3 | Run `git fetch --depth 1 origin tag VERSION`, replacing `VERSION` with the tag |
+| 4 | Run `git checkout VERSION`, then `npm install` |
+| 5 | Restart the server |
+
+Two things worth knowing before you do this: the installer that first set up this
+checkout clones with `--depth 1`, so most tags are not already on your disk — step 3
+fetches the one you name. And not every release carries a tag, so the newest tag can
+lag a few releases behind the newest commit on `main`. Your knowledge base, API keys
+and sync settings live outside the checkout and are never touched by `git`, so moving
+between versions never risks them. To come back to the newest version afterward, just
+check for updates again — the normal update flow takes you forward from wherever you
+land.
+
+**If you run the packaged Mac app**, going back means installing an older build instead
+of running a git command — see [mac-app.md § Going back to an earlier
+version](mac-app.md#going-back-to-an-earlier-version).
+
+### MCP bridge — connect a client
 
 **Settings → MCP bridge** is two numbered blocks, and the numbers mean what they
 say: you connect a client first, and only then can *"which domain does ‘my wiki’
@@ -5619,7 +5648,7 @@ app itself so it can never drift from what the code can actually do.
 
 Full walkthrough: [mcp-user-guide.md](mcp-user-guide.md).
 
-### Default domain for MCP writes (v2.5.2+)
+### Default domain for MCP writes
 
 Block ②. When you talk to Claude Desktop via My Curator MCP and say *"save this to my wiki"* without naming a domain, Claude needs to know which one to use. **Settings → MCP bridge → Default domain for MCP writes** sets that fallback. Its lede is exactly that one line — *"Used when a client says ‘my wiki’ without naming a domain."*
 

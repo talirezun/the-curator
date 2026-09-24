@@ -144,7 +144,7 @@ A local model — Ollama, LM Studio, llama.cpp — appears as one sentence at th
 
 ## Which model builds my wiki, and how do I change it?
 
-Step 2 of **Settings → Providers & keys** is **What builds your wiki**. Ingest, Wiki Health and Compile all run on this one model; there is nothing separate to set for each. One model keeps the ingest prompt cache warm and keeps one bill to read.
+Step 2 of **Settings → Providers & keys** is **Your AI model**. Ingest, Wiki Health and Compile all run on this one model; there is nothing separate to set for each. One model keeps the ingest prompt cache warm and keeps one bill to read.
 
 The block shows the model by name with its provider and id, three chips — what it costs per million tokens, what the measurement found, and who measured it — and one sentence saying where the choice came from:
 
