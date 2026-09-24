@@ -7355,6 +7355,7 @@ function foundationsFacts(read) {
     budgetBytes: f && Number.isInteger(f.budgetBytes) && f.budgetBytes > 0
       ? f.budgetBytes : FOUNDATIONS_BUDGET_BYTES,
     manifestError: (f && f.manifestError) || null,
+    manifestNewer: !!(f && f.manifestErrorCode === 'manifest-newer'),   // v3.68.2: a newer app wrote it
     orphanFiles: f && Array.isArray(f.orphanFiles) ? f.orphanFiles : [],
     // v3.67.0: documents kept "not at start" — absent from an agent's index.
     // The server's own count where it sent one, the rows' otherwise.
@@ -8203,8 +8204,8 @@ function foundationsNotices(read) {
   let notes = '';
   if (facts.manifestError) {
     notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
-      '<span>This project’s documents manifest could not be read, so nothing below it can be ' +
-      'trusted: ' + escapeHtml(String(facts.manifestError)) + '</span></div>';
+      '<span>' + (facts.manifestNewer ? '' : 'This project’s documents manifest could not be read, so nothing below it can be ' +
+      'trusted: ') + escapeHtml(String(facts.manifestError)) + '</span></div>';
   }
   if (facts.orphanFiles.length) {
     notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
@@ -8420,7 +8421,9 @@ function renderFoundations(read) {
   if (facts.manifestError) {
     return '<div class="mem-fnd-row">' +
         '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
-          renderDescription('Nothing below the manifest can be trusted, so no choice is '
+          renderDescription(facts.manifestNewer
+            ? 'Nothing can be changed here until The Curator on this machine is updated. The file is fine, so leave it as it is.'
+            : 'Nothing below the manifest can be trusted, so no choice is '
             + 'offered here. Fix or remove the manifest file and re-open this project.') +
         '</div></div>' +
       '</div>';

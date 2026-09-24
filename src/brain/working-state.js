@@ -5000,6 +5000,89 @@ function emptyManifest() {
   };
 }
 
+// ── A manifest WRITTEN BY A NEWER VERSION (v3.68.2) ────────────────────────
+// A `version` that is an integer ABOVE the one this store reads is not a
+// broken file: it is a newer app's file (v3.69.0 introduces version 2). It is
+// still refused on every write — `readManifest` keeps `status: 'malformed'`
+// so every existing refusal fires, and nothing ever reads it as absent and
+// rewrites it — but it carries `code: 'manifest-newer'` and a message that
+// says what is actually true. It NEVER suggests fixing or deleting the file:
+// a user on a machine one version behind who obeyed that advice would delete
+// the manifest, and sync would spread the deletion to the machine that wrote it.
+export const MANIFEST_NEWER_CODE = 'manifest-newer';
+export function newerManifestMessage(version) {
+  return `These documents were saved by a newer version of The Curator (documents list version ${version}; `
+    + `this app reads version ${FOUNDATIONS_MANIFEST_VERSION}). Update the app to read and change them — `
+    + 'nothing is wrong with the file, so leave it exactly as it is.';
+}
+/** The one refusal every foundations WRITE path gives a newer manifest. */
+function newerManifestRefusal(mf) {
+  return {
+    ok: false, reason: 'manifest-unreadable', code: MANIFEST_NEWER_CODE, manifestError: mf.error,
+    message: `${mf.error} Nothing was changed.`,
+  };
+}
+
+// ── Fields this store does not understand (v3.68.2, spec §1 rule 2) ────────
+// A writer that round-trips a manifest preserves what it does not recognise:
+// unknown top-level keys and unknown per-document keys are KEPT on read and
+// re-emitted by `writeManifest` after the known keys, in the order read. They
+// ride on a SYMBOL, so they never reach an API response (JSON ignores symbol
+// keys), object spread (`{ ...manifest }`, `{ ...d }`) carries them through
+// every writer, and a manifest with none gets no symbol at all — its parsed
+// shape and its written bytes are exactly what v3.68.0 produced.
+const MANIFEST_EXTRAS = Symbol('curator.manifest.extras');
+const MANIFEST_KNOWN_TOP = new Set(['version', 'ownership', 'repo', 'budgetBytes', 'order', 'documents']);
+const MANIFEST_KNOWN_DOC = new Set(['slug', 'role', 'title', 'source', 'sha256', 'bytes', 'updatedAt', 'commit',
+  'authoredBy', 'skeleton', 'readFirst', 'hidden', 'copiedFrom']);
+export const MAX_MANIFEST_EXTRA_KEYS = 32;
+export const MAX_MANIFEST_EXTRA_VALUE_BYTES = 4096;
+const MANIFEST_EXTRA_KEY_RE = /^[A-Za-z0-9_$.-]{1,64}$/;
+
+/** Collect `raw`'s unknown keys as `[key, value]` pairs, capped; every drop is named in `notes`. */
+function collectExtras(raw, known, where, notes) {
+  const out = [];
+  for (const k of Object.keys(raw)) {
+    if (known.has(k)) continue;
+    const label = `${where}${where ? '.' : ''}${JSON.stringify(k.slice(0, 64))}`;
+    if (!MANIFEST_EXTRA_KEY_RE.test(k) || k === '__proto__' || k === 'constructor' || k === 'prototype') {
+      notes.push(`unknown field ${label} was dropped: not a usable field name`);
+      continue;
+    }
+    if (out.length >= MAX_MANIFEST_EXTRA_KEYS) {
+      notes.push(`unknown field ${label} was dropped: over the ${MAX_MANIFEST_EXTRA_KEYS}-field cap`);
+      continue;
+    }
+    let json;
+    try { json = JSON.stringify(raw[k]); } catch { json = undefined; }
+    if (json === undefined || Buffer.byteLength(json, 'utf8') > MAX_MANIFEST_EXTRA_VALUE_BYTES) {
+      notes.push(`unknown field ${label} was dropped: its value is over ${MAX_MANIFEST_EXTRA_VALUE_BYTES} bytes`);
+      continue;
+    }
+    out.push([k, JSON.parse(json)]);
+  }
+  return out;
+}
+
+/** Attach extras to a parsed object ONLY when there are some. */
+function withExtras(obj, extras) {
+  if (extras.length) obj[MANIFEST_EXTRAS] = extras;
+  return obj;
+}
+
+/** A plain copy of `obj` with its extras appended after the known keys. */
+function emitExtras(obj) {
+  const extras = obj && typeof obj === 'object' ? obj[MANIFEST_EXTRAS] : undefined;
+  if (!Array.isArray(extras) || !extras.length) return obj;
+  const out = { ...obj };
+  delete out[MANIFEST_EXTRAS];
+  for (const [k, v] of extras) {
+    if (Object.prototype.hasOwnProperty.call(out, k)) continue;   // a known key a writer set wins
+    Object.defineProperty(out, k, { value: v, enumerable: true, writable: true, configurable: true });
+  }
+  return out;
+}
+
 function normaliseAuthoredBy(a) {
   if (!a || typeof a !== 'object') return null;
   const raw = String(a.kind || '').toLowerCase();
@@ -5076,6 +5159,9 @@ function normaliseRemote(raw) {
  */
 function validateManifest(obj) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { ok: false, error: 'manifest is not a JSON object' };
+  if (Number.isInteger(obj.version) && obj.version > FOUNDATIONS_MANIFEST_VERSION) {
+    return { ok: false, code: MANIFEST_NEWER_CODE, version: obj.version, error: newerManifestMessage(obj.version) };
+  }
   if (obj.version !== FOUNDATIONS_MANIFEST_VERSION) {
     return { ok: false, error: `manifest version ${JSON.stringify(obj.version)} is not ${FOUNDATIONS_MANIFEST_VERSION}` };
   }
@@ -5141,7 +5227,7 @@ function validateManifest(obj) {
     const sha256 = normaliseSha(d.sha256);
     if (!sha256) return { ok: false, error: `${where}.sha256 is not a 64-hex digest` };
     if (!Number.isInteger(d.bytes) || d.bytes < 0) return { ok: false, error: `${where}.bytes is not a non-negative integer` };
-    documents.push({
+    documents.push(withExtras({
       slug,
       role: d.role,
       title: readTitle(d.title) || slug.replace(/\.md$/, ''),
@@ -5184,12 +5270,14 @@ function validateManifest(obj) {
       // on a curator source; a save of new text clears it (saveFoundation
       // builds a fresh entry), because the owner then HAS written it.
       copiedFrom: kind === 'curator' ? readCopiedFrom(d.copiedFrom) : null,
-    });
+    }, collectExtras(d, MANIFEST_KNOWN_DOC, where, notes)));
     if (d.hidden === true && d.readFirst === true) {
       notes.push(`${where} ("${slug}") is marked both read first and not at start; it reads as read first`);
     }
   }
-  return { ok: true, manifest: { version: FOUNDATIONS_MANIFEST_VERSION, ownership, repo, budgetBytes, order, documents }, notes };
+  const manifest = withExtras({ version: FOUNDATIONS_MANIFEST_VERSION, ownership, repo, budgetBytes, order, documents },
+    collectExtras(obj, MANIFEST_KNOWN_TOP, '', notes));
+  return { ok: true, manifest, notes };
 }
 
 /** Read + validate the manifest. `status` is `absent` | `ok` | `malformed`. */
@@ -5203,7 +5291,11 @@ async function readManifest(manifestAbs) {
     return { status: 'malformed', error: `manifest.json is not valid JSON: ${String(err?.message ?? err).slice(0, 120)}` };
   }
   const v = validateManifest(parsed);
-  return v.ok ? { status: 'ok', manifest: v.manifest, mtime: r.mtime, notes: v.notes || [] } : { status: 'malformed', error: v.error };
+  if (v.ok) return { status: 'ok', manifest: v.manifest, mtime: r.mtime, notes: v.notes || [] };
+  // A newer app's manifest stays `malformed` for every caller that branches
+  // on status (so each one refuses, and none reads it as absent), with the
+  // code that lets a caller say the true thing instead of "fix it".
+  return v.code ? { status: 'malformed', code: v.code, version: v.version, error: v.error } : { status: 'malformed', error: v.error };
 }
 
 /** The manifest is written WHOLE, atomically, and always LAST.
@@ -5217,10 +5309,10 @@ async function writeManifest(manifestAbs, manifest) {
     ? manifest.documents.map((d) => {
       if (!d || typeof d !== 'object') return d;
       const { hidden, ...rest } = d;
-      return hidden === true && rest.readFirst !== true ? { ...rest, hidden: true } : rest;
+      return emitExtras(hidden === true && rest.readFirst !== true ? { ...rest, hidden: true } : rest);
     })
     : manifest.documents;
-  await writeFileAtomic(manifestAbs, `${JSON.stringify({ ...manifest, documents }, null, 2)}\n`, 'utf8');
+  await writeFileAtomic(manifestAbs, `${JSON.stringify(emitExtras({ ...manifest, documents }), null, 2)}\n`, 'utf8');
 }
 
 /** Both locks, released in reverse order, whatever `fn` does. */
@@ -5570,6 +5662,7 @@ export async function listFoundations(domain, project, opts = {}) {
   } catch { names = []; }
   if (mf.status === 'malformed') {
     base.manifestError = mf.error;
+    if (mf.code) base.manifestErrorCode = mf.code;   // v3.68.2: present only for a newer app's manifest
     base.orphanFiles = names.filter((n) => FOUNDATION_SLUG_RE.test(n)).slice(0, 50);
     return base;
   }
@@ -5643,6 +5736,8 @@ async function summariseFoundations(domain, project, meta) {
       readFirstCount: idx.readFirstCount, onRequestCount: idx.onRequestCount,
       budgetExceeded: idx.budgetExceeded,
       orphanFileCount: idx.orphanFiles.length, manifestError: idx.manifestError,
+      // v3.68.2 — only for a newer app's manifest, so every other summary keeps its bytes.
+      ...(idx.manifestErrorCode ? { manifestErrorCode: idx.manifestErrorCode } : {}),
     };
     // v3.67.0 — the reading budget and the "not at start" count, CONDITIONAL
     // on there being something for them to govern: documents, or a budget the
@@ -5714,6 +5809,9 @@ export async function readFoundation(domain, project, slug, opts = {}) {
   const s = normaliseFoundationSlug(slug);
   if (!s) return { ok: false, reason: 'invalid-slug', message: `"${String(slug).slice(0, 80)}" is not a usable document slug (a-z, 0-9, hyphens, ending in .md).` };
   const mf = await readManifest(view.paths.manifestAbs);
+  if (mf.status === 'malformed' && mf.code === MANIFEST_NEWER_CODE) {
+    return { ok: false, reason: 'manifest-unreadable', code: MANIFEST_NEWER_CODE, message: mf.error, manifestError: mf.error };
+  }
   if (mf.status === 'malformed') {
     return { ok: false, reason: 'manifest-unreadable', message: `The foundations manifest could not be read: ${mf.error}`, manifestError: mf.error };
   }
@@ -5798,6 +5896,7 @@ export async function saveFoundation(domain, project, input = {}) {
   return withFoundationsLock(domain, 'save-foundation', async () => {
     const notes = [];
     const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'malformed' && mf.code === MANIFEST_NEWER_CODE) return newerManifestRefusal(mf);
     if (mf.status === 'malformed') {
       return {
         ok: false, reason: 'manifest-unreadable', manifestError: mf.error,
@@ -5884,6 +5983,8 @@ export async function saveFoundation(domain, project, input = {}) {
     // `readFirst: true` clears it (the two are mutually exclusive), and an
     // explicit `false` leaves it where it was.
     entry.hidden = entry.readFirst === true ? false : (prior ? prior.hidden === true : false);
+    // v3.68.2 — fields this store does not understand survive a save (spec §1 rule 2).
+    if (prior && prior[MANIFEST_EXTRAS]) entry[MANIFEST_EXTRAS] = prior[MANIFEST_EXTRAS];
     const documents = prior
       ? manifest.documents.map((d) => (d.slug === slug ? entry : d))
       : [...manifest.documents, entry];
@@ -6021,6 +6122,7 @@ async function rewriteFoundationRouting(domain, project, slug, op, decide, verb)
   if (!paths) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
   return withFoundationsLock(domain, op, async () => {
     const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'malformed' && mf.code === MANIFEST_NEWER_CODE) return newerManifestRefusal(mf);
     if (mf.status === 'malformed') {
       return {
         ok: false, reason: 'manifest-unreadable', manifestError: mf.error,
@@ -6071,6 +6173,7 @@ export async function removeFoundation(domain, project, slug) {
   if (!paths) return { ok: false, reason: 'unsafe-path', message: 'Refusing to write outside the state folder.' };
   return withFoundationsLock(domain, 'remove-foundation', async () => {
     const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'malformed' && mf.code === MANIFEST_NEWER_CODE) return newerManifestRefusal(mf);
     if (mf.status === 'malformed') {
       return { ok: false, reason: 'manifest-unreadable', manifestError: mf.error, message: `The foundations manifest could not be read (${mf.error}). Nothing was removed.` };
     }
@@ -6226,6 +6329,7 @@ async function refreshCore(domain, target, paths, realRoot, files) {
   {
     const notes = [];
     const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'malformed' && mf.code === MANIFEST_NEWER_CODE) return newerManifestRefusal(mf);
     if (mf.status === 'malformed') {
       return { ok: false, reason: 'manifest-unreadable', manifestError: mf.error, message: `The foundations manifest could not be read (${mf.error}). Nothing was refreshed.` };
     }
@@ -6301,6 +6405,7 @@ async function refreshCore(domain, target, paths, realRoot, files) {
         // v3.67.0 — and so is `hidden`, by slug, for the same reason.
         hidden: w.entry ? w.entry.hidden === true : false,
       };
+      if (w.entry && w.entry[MANIFEST_EXTRAS]) entry[MANIFEST_EXTRAS] = w.entry[MANIFEST_EXTRAS];   // v3.68.2
       documents = w.entry ? documents.map((d) => (d.slug === slug ? entry : d)) : [...documents, entry];
       (w.entry ? refreshed : added).push(slug);
     }
@@ -6434,6 +6539,7 @@ function resolveRemoteArg(gh, raw) {
 async function refreshRemoteCore(domain, target, paths, files, opts) {
   const notes = [];
   const mf = await readManifest(paths.manifestAbs);
+  if (mf.status === 'malformed' && mf.code === MANIFEST_NEWER_CODE) return newerManifestRefusal(mf);
   if (mf.status === 'malformed') {
     return { ok: false, reason: 'manifest-unreadable', manifestError: mf.error, message: `The foundations manifest could not be read (${mf.error}). Nothing was refreshed.` };
   }
@@ -6628,6 +6734,7 @@ async function refreshRemoteCore(domain, target, paths, files, opts) {
       readFirst: w.entry ? w.entry.readFirst === true : false,
       hidden: w.entry ? w.entry.hidden === true : false,
     };
+    if (w.entry && w.entry[MANIFEST_EXTRAS]) next[MANIFEST_EXTRAS] = w.entry[MANIFEST_EXTRAS];   // v3.68.2
     documents = w.entry ? documents.map((d) => (d.slug === slug ? next : d)) : [...documents, next];
     (w.entry ? refreshed : added).push(slug);
   }
@@ -6853,6 +6960,7 @@ export async function initFoundations(domain, project, opts = {}) {
 
   const done = await withFoundationsLock(domain, 'init-foundations', async () => {
     const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'malformed' && mf.code === MANIFEST_NEWER_CODE) return newerManifestRefusal(mf);
     if (mf.status === 'malformed') {
       return {
         ok: false, reason: 'manifest-unreadable', manifestError: mf.error,
@@ -7107,6 +7215,7 @@ export async function setFoundationsSource(domain, project, opts = {}) {
     // OWNERSHIP IS READ UNDER THE LOCK, so the manifest this refuses on is
     // the manifest the copy would rewrite.
     const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'malformed' && mf.code === MANIFEST_NEWER_CODE) return newerManifestRefusal(mf);
     if (mf.status === 'malformed') {
       return {
         ok: false, reason: 'manifest-unreadable', manifestError: mf.error,
@@ -7590,6 +7699,7 @@ export async function addFoundationsFromFolder(domain, project, opts = {}) {
 
   return withFoundationsLock(domain, 'add-foundations', async () => {
     const mf = await readManifest(paths.manifestAbs);
+    if (mf.status === 'malformed' && mf.code === MANIFEST_NEWER_CODE) return newerManifestRefusal(mf);
     if (mf.status === 'malformed') {
       return { ok: false, reason: 'manifest-unreadable', manifestError: mf.error, message: `The foundations manifest could not be read (${mf.error}). Nothing was added.` };
     }
@@ -7752,6 +7862,9 @@ async function maybeRefreshFoundations(domain, projectSlug, prefix, repoRoot) {
     if (!paths) return skip('the foundations folder resolves outside the state folder');
     const mf = await readManifest(paths.manifestAbs);
     if (mf.status === 'absent') return skip('this project has no foundations manifest yet — nothing to refresh');
+    if (mf.status === 'malformed' && mf.code === MANIFEST_NEWER_CODE) {
+      return { attempted: false, skipped: 'the foundations were saved by a newer version of The Curator; update this app to refresh them', code: MANIFEST_NEWER_CODE, manifestError: mf.error };
+    }
     if (mf.status === 'malformed') return { attempted: false, skipped: 'the foundations manifest could not be read', manifestError: mf.error };
     if (mf.manifest.ownership !== 'repo') return skip('this project\'s foundations are curator-authored, not a repository mirror');
     const r = await refreshFoundationsFromRepo(domain, projectSlug, root.realRoot);
@@ -7999,6 +8112,8 @@ export async function getProjectContext(domain, project, opts = {}) {
       ownership: index.ownership,
       repo: index.repo,
       manifestError: index.manifestError,
+      // v3.68.2 — only for a newer app's manifest, so every other envelope keeps its bytes.
+      ...(index.manifestErrorCode ? { manifestErrorCode: index.manifestErrorCode } : {}),
       orphanFiles: index.orphanFiles,
       count: index.count,
       totalBytes: index.totalBytes,

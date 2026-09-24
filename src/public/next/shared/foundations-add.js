@@ -72,7 +72,9 @@ export function doorsFor(facts, opts) {
     return { local: off(why), github: off(why) };
   }
   if (f.manifestError) {
-    const why = 'The documents list for this project cannot be read, so nothing can be added until it is fixed.';
+    const why = f.manifestNewer   // v3.68.2: a newer app wrote it; nothing is broken
+      ? 'These documents were saved by a newer version of The Curator, so nothing can be added until this app is updated.'
+      : 'The documents list for this project cannot be read, so nothing can be added until it is fixed.';
     return { local: off(why), github: off(why) };
   }
   const count = Number.isInteger(f.count) ? f.count : 0;

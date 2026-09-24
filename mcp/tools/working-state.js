@@ -1575,7 +1575,10 @@ function contextReport(out, project) {
     : ' No work-stream has been saved yet.';
   const briefClause = out.brief?.present ? ' The standing brief IS present — read `brief.text` first.' : ' No standing brief yet.';
   let fClause;
-  if (f.manifestError) {
+  if (f.manifestError && f.manifestErrorCode === 'manifest-newer') {
+    // v3.68.2 — a newer app's manifest is not broken; never tell the user to fix or delete it.
+    fClause = ` Foundations: ${f.manifestError} NO documents were returned; tell the user to update The Curator on this machine, and do not touch the file.`;
+  } else if (f.manifestError) {
     fClause = ` Foundations: the manifest could not be read (${f.manifestError}) — NO documents were returned; tell the user the file needs fixing.`;
   } else if (!f.present || !f.count) {
     fClause = ' Foundations: none yet.';
@@ -1830,6 +1833,7 @@ export async function saveFoundationHandler(args, storage) {
     if (result.existing) { out.existing = result.existing; out.incoming = result.incoming; }
     if (result.ownership) out.ownership = result.ownership;
     if (result.manifestError) out.manifestError = result.manifestError;
+    if (result.code === 'manifest-newer') out.code = result.code;   // v3.68.2
     return out;
   }
   try {

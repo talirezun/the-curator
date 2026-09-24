@@ -876,6 +876,8 @@ function foundationsWire(out) {
     // only thing that says so.
     orphanFiles: Array.isArray(out.orphanFiles) ? out.orphanFiles.slice(0, 20) : [],
     manifestError: out.manifestError ?? null,
+    // v3.68.2 — only for a manifest a NEWER app wrote ('manifest-newer'); absent otherwise.
+    ...(out.manifestErrorCode === 'manifest-newer' ? { manifestErrorCode: 'manifest-newer' } : {}),
   };
 }
 
@@ -1030,6 +1032,14 @@ async function requireCuratorOwned(res, domain, project) {
     return { ok: false };
   }
   if (index && index.ok === false) { tier0Refusal(res, index, { domain, project }); return { ok: false }; }
+  if (index && index.manifestError && index.manifestErrorCode === 'manifest-newer') {
+    // v3.68.2 — a newer app's manifest is not broken: never "fix or remove" it.
+    res.status(400).json({
+      ok: false, reason: 'manifest_unreadable', code: 'manifest-newer', domain, project, manifestError: index.manifestError,
+      error: `${index.manifestError} Nothing was written.`,
+    });
+    return { ok: false };
+  }
   if (index && index.manifestError) {
     res.status(400).json({
       ok: false, reason: 'manifest_unreadable', domain, project, manifestError: index.manifestError,
@@ -1089,6 +1099,14 @@ async function requireManifest(res, domain, project) {
     return { ok: false };
   }
   if (index && index.ok === false) { tier0Refusal(res, index, { domain, project }); return { ok: false }; }
+  if (index && index.manifestError && index.manifestErrorCode === 'manifest-newer') {
+    // v3.68.2 — a newer app's manifest is not broken: never "fix or remove" it.
+    res.status(400).json({
+      ok: false, reason: 'manifest_unreadable', code: 'manifest-newer', domain, project, manifestError: index.manifestError,
+      error: `${index.manifestError} Nothing was changed.`,
+    });
+    return { ok: false };
+  }
   if (index && index.manifestError) {
     res.status(400).json({
       ok: false, reason: 'manifest_unreadable', domain, project, manifestError: index.manifestError,
@@ -2861,6 +2879,16 @@ router.post('/:domain/:project/foundations/refresh', async (req, res) => {
 
     const store = fstore();
     const index = await store.listFoundations(domain, project);
+
+    // v3.68.2 — a manifest a NEWER app wrote: say so before the arm checks
+    // below read its absent `repo` as "nothing recorded". The store refuses
+    // the same way under its lock; this is only the honest first answer.
+    if (index && index.manifestErrorCode === 'manifest-newer') {
+      return res.status(400).json({
+        ok: false, reason: 'manifest_unreadable', code: 'manifest-newer', manifestError: index.manifestError,
+        error: `${index.manifestError} Nothing was refreshed.`,
+      });
+    }
 
     // ── CURATOR-OWNED IS A 400, AND IT IS NOT AN ERROR CONDITION ────────
     // It is a statement about what this project's documents ARE: written by an
