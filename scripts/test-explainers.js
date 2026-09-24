@@ -240,6 +240,13 @@ for (const k of keys) {
       (probs.length ? ' — ' + probs.join('; ') : ''));
 }
 
+{
+  const p3 = (EXPLAINERS['context.knowledge'].points[2] || {}).text;
+  ok(p3 === 'This project’s own domain stays chosen, even after you add others.',
+    'context.knowledge point 3 states the true rule — adding domains never drops the project\'s own '
+    + '(working-state.js: chosen list defaults to [<containing domain>] and an add appends to it)');
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 section('§5  EVERY GUIDE CARD LANDS ON THE HEADING IT PRINTS');
 

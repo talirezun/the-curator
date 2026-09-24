@@ -324,6 +324,11 @@ section('§8  THE STYLESHEET');
   ok(/\.xp-flow li \+ li::before \{ content: "↓"/.test(narrow), '…the flow\'s arrows turn downward');
   ok(!/overflow-x:\s*(auto|scroll)/.test(css) && /overflow-wrap:\s*anywhere/.test(css), 'no horizontal scroll: nothing scrolls sideways, long words wrap');
   ok(!/@keyframes|animation:/.test(css), 'no motion inside the explainer (the panel\'s entrance stays text.css\'s)');
+  {
+    const eb = (css.match(/\.xp-guide-eb\s*\{([^}]*)\}/) || [])[1] || '';
+    ok(/white-space:\s*nowrap/.test(eb) && /text-overflow:\s*ellipsis/.test(eb) && /overflow:\s*hidden/.test(eb),
+      'the guide card\'s "User guide" label never wraps — it is a one-line eyebrow that truncates, not `.xp`\'s inherited overflow-wrap: anywhere breaking it letter by letter at a narrow width');
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════

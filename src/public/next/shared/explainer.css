@@ -326,11 +326,23 @@
   color: var(--accent-text);
 }
 .xp-guide-tx { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+/* The eyebrow is two short words ("User guide") but sits inside a chain of
+   `min-width: 0` flex items, under `.xp`'s own `overflow-wrap: anywhere`
+   (line 39) meant for long unbroken URLs and slugs elsewhere in the panel.
+   At a narrow column (~224px) that combination shrank this label's box to
+   near nothing and broke it one letter per line. An eyebrow is a label, not
+   prose: it never wraps — it stays one line and truncates instead, which
+   only degrades width, never height, and never pushes the card wider than
+   its column. */
 .xp-guide-eb {
   font: var(--type-eyebrow);
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
 }
 .xp-guide-t { font: var(--type-label); color: var(--text); }
 .xp-guide-sub { font-size: var(--text-xs); color: var(--text-3); }

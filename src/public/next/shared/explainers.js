@@ -126,7 +126,7 @@ const E = {
     points: [
       { icon: 'grow', text: 'A domain grows: each new source deepens the pages already there.' },
       { icon: 'search', text: 'Agents search it by topic; they never read it all.' },
-      { icon: 'folder', text: 'This project’s own domain is used unless you add others.' },
+      { icon: 'folder', text: 'This project’s own domain stays chosen, even after you add others.' },
     ],
     guide: { key: 'context.knowledge', heading: 'The three layers, and the one rule that separates them' },
   },

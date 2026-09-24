@@ -4534,8 +4534,9 @@ occasional skeleton you decide the project does not need.
 
 **Write a document** offers two ways to start that editor, side by side: an **empty editor**, or
 **Choose a file…**, which reads a `.md`/`.txt` file straight off your computer into the editor's
-text box so you can review it before anything is saved — nothing is uploaded until you press
-**Save**, and a file over the 512 KB wall is refused before it is even read, naming both sizes.
+text box so you can review it before anything is saved. That file is read in your browser and
+never uploaded — **Save** sends only the text in the box, the same way it would for anything you
+typed — and a file over the 512 KB wall is refused before it is even read, naming both sizes.
 The slug, title and role are guessed from the file (its basename, its first `# ` heading, and the
 same role guess the repository scan uses) and are yours to correct before saving. Picking a file
 whose slug matches an existing skeleton **replaces that skeleton** and clears its mark — the
