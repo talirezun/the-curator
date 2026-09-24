@@ -58,10 +58,15 @@ to the project's own containing domain. It's how Claude knows where to `search_w
 **Neither tool writes it** — choosing a project's knowledge domains is your decision, made in the
 app only.
 
-**`get_project_context` honours your reading budget (v3.67.0).** Its default `max_bytes` is now
-**your reading budget** — set in Context, step ④ — or 120 KB when you have not set one. The reply's
-`foundations.budget.source` names whose budget applied: `owner` (yours), `default` (nobody has
-set one) or `caller` (you passed `max_bytes` explicitly, which always wins). `foundations.planned`
+**`get_project_context` honours your reading budget (v3.67.0), now a 7-step token ladder
+(v3.70.0).** Its default `max_bytes` is now **your reading budget** — set in Context, step ④, as
+Index only (0) · Lean (8k tokens / 32 KB) · Standard (16k / 64 KB) · Deep (32k / 128 KB) · Large
+(64k / 256 KB) · Extra large (128k / 512 KB) · Max (200k / 800 KB) — or 120 KB when you have not
+set one. `max_bytes` still moves in bytes on the wire; the ladder is a token name over the same
+bytes value, and `CONTEXT_MAX_BYTES_CAP` is now 800 KB (was 200 KB). A project holding an older
+120 KB or 200 KB budget is untouched and reads as a custom value nearest one of the presets. The
+reply's `foundations.budget.source` names whose budget applied: `owner` (yours), `default` (nobody
+has set one) or `caller` (you passed `max_bytes` explicitly, which always wins). `foundations.planned`
 is `true` once you have set a budget; `foundations.hiddenCount` counts documents kept **not at
 start** — mirrored, but not even listed in the index at session start (see
 [working-state.md](working-state.md#the-reading-plan-read-first-documents-and-fetch-by-name)).
@@ -69,6 +74,23 @@ start** — mirrored, but not even listed in the index at session start (see
 the default is already correct. `get_working_state`'s own `foundations` summary carries
 `readingBudgetBytes`, `readingBudgetDefaulted` and `hiddenCount` too, whenever the project has
 documents or a budget.
+
+**A large bootstrap arrives in PAGES (v3.70.0), and this is the part that matters most for an
+agent driving this tool.** Claude Code — and likely other harnesses — shows an MCP reply of at most
+≈25,000 tokens by default and silently **saves anything larger to a file**, handing the model a
+file reference instead of the text; a budget that "fit" the old 120–800 KB ceiling could
+previously spill out of the window this way without any warning. `get_project_context` now bounds
+**each whole reply** at ≈80 KB (≈20k tokens), whole documents only, in reading order. Page 1 always
+carries the brief, the handoff, the journal and the full document index; a reply that is not the
+last one carries `foundations.continuation: {page, of, remaining, slugs}`, and the `report` field
+spells out the next call in words. **Call `get_project_context` again with the same arguments plus
+`page: <n>` and keep calling until there is no `continuation` left — read every page before you
+start work.** Do not pass `page`'s `seen` back as `seen_hashes` between pages; record page 1's
+`seen` as `foundations_read` on your next `save_working_state`. A single document larger than one
+page arrives alone on its own page, still bounded by the 300 KB per-reply guard
+(`RESPONSE_BUDGET_BYTES`, itself under the general 400 KB MCP cap) — one over that guard is listed
+in the index, not sent. A reply that already fits in one page is returned exactly as before
+v3.70.0, byte-identical.
 
 **Brief authority is the same verdict everywhere (v3.66.0).** `get_project_context`,
 `get_working_state`, the `my-curator context` CLI Markdown and every session-start hook now carry
