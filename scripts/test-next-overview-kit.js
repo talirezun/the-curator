@@ -74,6 +74,7 @@ import { freshnessTier } from '../src/public/next/shared/age.js';
 // The REAL budget, from the module that owns it — a literal typed here
 // would be this suite asserting against its own copy.
 import { FOUNDATIONS_BUDGET_BYTES } from '../src/public/next/shared/foundations-init.js';
+import * as FSRC from '../src/public/next/shared/foundations-sources.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -204,10 +205,12 @@ function contextOverview(over) {
   // `freshnessTier` is shared/age.js's, imported by the view — injected REAL
   // here, because the tier a reading paints is the reading.
   // v3.67.2: `foundationsWord` asks whether a mirror is read from GitHub.
-  const fns = ['skeletonOf', 'copiedFromOf', 'foundationsFacts', 'foundationsRemoteSource', 'foundationsWord', 'newestPair',
+  // v3.69.0: per DOCUMENT now — `foundationsFacts` reads each row's own source
+  // group through shared/foundations-sources.js (`FSRC`), injected REAL.
+  const fns = ['skeletonOf', 'copiedFromOf', 'foundationsFacts', 'foundationsWord', 'newestPair',
     'effectiveSave', 'formatAge', 'renderLayerStrip'];
   const box = new Function('docsLinkHtml', 'renderOverview', 'escapeHtml', 'state',
-    'formatDayAge', 'freshnessDotHtml', 'freshnessTier',
+    'formatDayAge', 'freshnessDotHtml', 'freshnessTier', 'FSRC',
     'const READ_FIRST_BUDGET_BYTES = 120 * 1024;\n'
     + 'const FOUNDATIONS_BUDGET_BYTES = ' + FOUNDATIONS_BUDGET_BYTES + ';\n'
     + fns.map((n) => extractFunction(MEMORY_JS, n, 'memory.js')).join('\n')
@@ -215,7 +218,7 @@ function contextOverview(over) {
     docsLinkHtml, renderOverview, escapeHtml, state,
     () => '1 week ago',
     () => '<span class="fresh-dot fresh-week" aria-hidden="true"></span>',
-    freshnessTier);
+    freshnessTier, FSRC);
   return box(read);
 }
 

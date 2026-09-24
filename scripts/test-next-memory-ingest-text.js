@@ -935,9 +935,12 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
   // it: the paths are inside a repository the manifest already names, and the
   // bytes are the repository's. v3.59.0 shipped this route with no file list
   // at all, which is why a mirror could only be created from a test.
-  ok('...carrying at most a FILE LIST, never a document body',
-    /body: JSON\.stringify\(Array\.isArray\(files\)[^\n]*\{ files \}/.test(memCode)
-    && !/body: JSON\.stringify\(\{ files[^\n]*text/.test(memCode), 'the refresh body is not a bare file list');
+  // v3.69.0: the refresh names a SOURCE GROUP or nothing — `files` left with
+  // the doors, whose commits go to add-local / add-remote.
+  ok('...carrying at most a source group, never a file list or a document body',
+    /const rootPart = one \? \{ group: one \} : \{\};/.test(memCode)
+    && /body: JSON\.stringify\(rootPart\)/.test(memCode)
+    && !/body: JSON\.stringify\(\{ files[^\n]*text/.test(memCode), 'the refresh body is not a group-or-nothing');
   ok('...the templates POST aimed at the foundations INIT endpoint, curator-owned and nothing else',
     /'\/foundations\/init'/.test(memCode)
     && /JSON\.stringify\(facts\.present \? \{ ownership: 'curator', rechooseEmpty: true \} : \{ ownership: 'curator' \}\)/.test(memCode));
@@ -1031,8 +1034,13 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
     // `authoredBy.kind` whether a curator-owned document was written by the
     // owner or by an agent they commissioned, which is a fact the STORE
     // stamped and the row's only variable.
+    // v3.69.0: the READ moved with the row's word into
+    // shared/foundations-sources.js (`keptWord`), which the view imports.
     ok('CONTROL: the view does read the stamped provenance, which is why the '
-      + 'scan above is scoped to bodies', /d\.authoredBy && d\.authoredBy\.kind/.test(memCode));
+      + 'scan above is scoped to bodies',
+    /d\.authoredBy && d\.authoredBy\.kind/.test(memCode)
+      || /const a = doc && doc\.authoredBy;[\s\S]{0,80}a\.kind === 'human'/.test(
+        readFileSync(new URL('../src/public/next/shared/foundations-sources.js', import.meta.url), 'utf8')));
   }
   ok('...and the DELETE sending the slug as its own typed confirmation, which the route re-checks',
     /body: JSON\.stringify\(\{ confirm: slug \}\)/.test(memCode));

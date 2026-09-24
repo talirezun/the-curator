@@ -7,22 +7,29 @@
 //
 // So step ① always shows two doors — **Add from this computer** and **Add
 // from GitHub** — at 0 documents and at 20, and both lead to the SAME
-// checklist: list what is there, tick, add. What a door DOES depends on the
-// one ownership the project already has, and the store decides it; this
-// module only says it honestly, before the press:
+// checklist: list what is there, tick, add.
 //
-//   project state                 this computer              GitHub
-//   ─────────────────────────────  ─────────────────────────  ───────────────────────────
-//   no documents yet               copy in (curator-kept)     mirror (repo, from GitHub)
-//   kept here (curator)            copy in, appended          NOT AVAILABLE — one source
-//   mirrors a folder               mirror more, from inside   switch the source to GitHub
-//                                  that folder only
-//   mirrors a GitHub repository    NOT AVAILABLE — one source add more from that repository
-//                                                             (another repository = switch)
+// ── v3.69.0: ONE PROJECT, MANY SOURCES ──────────────────────────────────
+// Through v3.68.0 what a door DID depended on the one ownership the project
+// already had, and a door that could not work was disabled ("a project has
+// one source"). The maintainer retired that rule: the source is recorded PER
+// DOCUMENT, and one project may hold written documents, copies and mirrors of
+// several folders and GitHub repositories at once (up to 8 source groups). So
+// both doors are ALWAYS enabled — the only exceptions are a read-only Shared
+// Brain mirror and an unreadable manifest — and what a commit does is chosen
+// INSIDE the panel:
 //
-// A door that cannot work is shown DISABLED WITH ITS REASON, never hidden
-// (the app's "disabled, never hidden" rule): pressing it answers with the
-// sentence as a toast, and the same sentence is its tooltip.
+//   this computer   Keep in sync (a folder mirror) or Copy once — the radio
+//                   defaults to Keep in sync when the folder is inside a git
+//                   checkout, Copy once otherwise (maintainer decision D2)
+//   GitHub          mirror the ticked files; a repository this project
+//                   already mirrors takes them into the same source, any
+//                   other becomes a new source
+//
+// "Already added" and the name each file would land on are the SERVER's
+// answers (`alreadyAdded`, `alreadyAs`, `landsAs` on every scanned candidate,
+// CONTRACT §4.3): the view reads them and derives nothing. A cap reached (200
+// documents, 8 sources) is a refusal at commit, listed, never a disabled door.
 //
 // DOM-FREE, like shared/foundations-init.js, so a plain Node suite imports it
 // and drives every rule here without a browser. It imports only from the
@@ -44,24 +51,19 @@ function escapeHtml(s) {
 // WHAT EACH DOOR DOES FOR THIS PROJECT
 // ═════════════════════════════════════════════════════════════════════════
 
-/** `{owner, repo, ref, path}` recorded on a mirror, or null. */
-function recordedRemote(facts) {
-  const r = facts && facts.repo && facts.repo.remote;
-  if (!r || typeof r !== 'object' || !r.owner || !r.repo) return null;
-  return { owner: String(r.owner), repo: String(r.repo), ref: r.ref || null, path: r.path || null };
-}
-
 /**
- * THE TWO DOORS, AS FACTS — `{local, github}`, each
- * `{available, mode, why}`. `mode` is what a commit will do:
- *   local:  'copy' | 'mirror'
- *   github: 'init' | 'add' | 'switch'
- * `why` is the sentence for a door that is not available (and null for one
- * that is). `note` is the honest one-line description the open panel leads
- * with.
+ * THE TWO DOORS, AS FACTS — `{local, github}`, each `{available, mode, why,
+ * note}`. v3.69.0: both are available on every project; `why` is set only on
+ * a read-only mirror and on an unreadable manifest. The local door's mode is
+ * chosen in the panel (the Keep in sync / Copy once radio), so it is `null`
+ * here; the GitHub door always ADDS (`mode: 'add'`) — naming another
+ * repository adds a source rather than switching one.
+ *
+ * NEVER READS `ownership` (CONTRACT §1.6): what a door does no longer depends
+ * on what the project already holds.
  *
  * @param {object} facts   the view's `foundationsFacts(read)`
- * @param {{readonly?: boolean, sourceMissing?: boolean}} [opts]
+ * @param {{readonly?: boolean}} [opts]
  */
 export function doorsFor(facts, opts) {
   const f = facts && typeof facts === 'object' ? facts : {};
@@ -77,81 +79,65 @@ export function doorsFor(facts, opts) {
       : 'The documents list for this project cannot be read, so nothing can be added until it is fixed.';
     return { local: off(why), github: off(why) };
   }
-  const count = Number.isInteger(f.count) ? f.count : 0;
-  const remote = recordedRemote(f);
-  const root = f.repo && typeof f.repo.root === 'string' && f.repo.root ? f.repo.root : null;
-  // ── NOTHING IN IT YET: BOTH DOORS, NOTHING DECIDED ──────────────────────
-  if (!f.present || count === 0) {
-    return {
-      local: { available: true, mode: 'copy', why: null,
-        note: 'Pick a folder, tick the documents, add them. They are copied into this project; '
-          + 'add more later from the same folder or another one.' },
-      github: { available: true, mode: 'init', why: null, rechoose: !!f.present,
-        note: 'Name the repository, tick the documents, mirror them. They are re-read from GitHub '
-          + 'whenever you refresh.' },
-    };
-  }
-  if (f.ownership === 'curator') {
-    return {
-      local: { available: true, mode: 'copy', why: null,
-        note: 'Pick a folder, tick the documents, add them. They are copied in beside the ones '
-          + 'already here; nothing is replaced.' },
-      github: off('This project keeps its own copies of its documents, so it cannot also mirror a '
-        + 'GitHub repository — a project has one source. Start a new project to mirror a repository.'),
-    };
-  }
-  // REPO-OWNED — a mirror.
-  if (root) {
-    const github = { available: true, mode: 'switch', why: null,
-      note: 'This project mirrors the folder ' + root + '. Mirroring from GitHub makes the '
-        + 'repository its source instead: its ' + count + ' document' + (count === 1 ? ' is' : 's are')
-        + ' re-read from there by the same paths, and the folder stops being used.' };
-    if (o.sourceMissing) {
-      return {
-        local: off('The folder this project mirrors (' + root + ') is not on this computer, so '
-          + 'nothing can be added from it here. Add from GitHub instead, or open the project on the '
-          + 'machine that has the folder.'),
-        github,
-      };
-    }
-    return {
-      local: { available: true, mode: 'mirror', why: null, fixedRoot: root,
-        note: 'This project mirrors the folder ' + root + '. Documents are added from inside it '
-          + 'and stay in step with it on every refresh; a file from another folder cannot join a mirror.' },
-      github,
-    };
-  }
-  const label = remote ? remote.owner + '/' + remote.repo : 'a GitHub repository';
   return {
-    local: off('This project mirrors ' + label + ' on GitHub, so its documents come from there — '
-      + 'add more with Add from GitHub. A project has one source.'),
-    github: { available: true, mode: 'add', why: null, remote,
-      note: 'This project mirrors ' + label + '. Add more documents from it; naming a different '
-        + 'repository switches the project’s source to that one.' },
+    local: { available: true, mode: null, why: null, note: null },
+    github: { available: true, mode: 'add', why: null,
+      note: 'Name the repository, tick the documents, mirror them. They are re-read from GitHub whenever '
+        + 'you refresh that source. A repository this project already mirrors takes them into the same '
+        + 'source; any other repository becomes a new source beside the ones already here.' },
   };
+}
+
+/**
+ * THE LOCAL PANEL'S LEAD SENTENCE — the chosen outcome, in one sentence (§4.2).
+ */
+export function localModeNote(rec) {
+  const r = rec && typeof rec === 'object' ? rec : {};
+  const auto = r.modeChosen !== true && r.inGitCheckout === true && r.mode === 'mirror';
+  if (r.mode === 'mirror') {
+    return (auto ? 'This folder is inside a git checkout, so the files are kept in sync: ' : 'Kept in sync: ')
+      + 'the ticked files are mirrored, and every Refresh re-reads them from this folder.';
+  }
+  return 'Copied once: the ticked files are copied into this project and never change on their own.';
 }
 
 // ═════════════════════════════════════════════════════════════════════════
 // THE PANEL'S STATE
 // ═════════════════════════════════════════════════════════════════════════
 
-/** A fresh panel record for one door. */
+/**
+ * A fresh panel record for one door.
+ *
+ * `info.mode === 'switch'` (with `info.group` and `info.remote`) is the
+ * sources strip's "Read from GitHub instead" — v3.65.1's switch, now per
+ * source group: the GitHub panel opens on that group's recorded repository and
+ * its commit re-reads the group's documents from there (`…/foundations/source
+ * {group, remote, tokenSource}`). Nothing is listed or ticked in that mode.
+ */
 export function freshAddPanel(door, info, facts) {
   const d = door === 'github' ? 'github' : 'local';
   const i = info && typeof info === 'object' ? info : {};
   const remote = d === 'github' && i.remote ? i.remote : null;
+  const switching = d === 'github' && i.mode === 'switch';
   return {
     door: d,
-    mode: i.mode || (d === 'github' ? 'init' : 'copy'),
+    // local: 'copy' | 'mirror' (the radio); github: 'add' | 'switch'
+    mode: d === 'github' ? (switching ? 'switch' : 'add') : (i.mode === 'mirror' ? 'mirror' : 'copy'),
+    // THE RADIO WAS PRESSED — once true, a listing never changes the mode
+    // again (the D2 default applies only until the owner chooses).
+    modeChosen: false,
+    inGitCheckout: null,
+    group: switching && typeof i.group === 'string' ? i.group : null,
+    groupLabel: switching && typeof i.groupLabel === 'string' ? i.groupLabel : null,
+    groupCount: switching && Number.isInteger(i.groupCount) ? i.groupCount : null,
     // local
-    root: d === 'local' && i.fixedRoot ? String(i.fixedRoot) : '',
-    fixedRoot: d === 'local' && i.fixedRoot ? String(i.fixedRoot) : null,
+    root: '',
     listedRoot: null,
     picking: false, pickError: null, pickUnavailable: null,
     // github
     remote: remote ? remote.owner + '/' + remote.repo : '',
     ref: remote && remote.ref ? remote.ref : '',
-    path: remote && remote.path ? remote.path : '',
+    path: '',
     tokenSource: null, hasReadToken: undefined, readTokenLast4: null, hasSyncToken: undefined,
     // the list
     scanning: false, scanError: null,
@@ -182,74 +168,72 @@ function cleanPath(s) { return String(s || '').trim().replace(/^\.?\/+/, '').rep
 /**
  * WHICH LISTED PATHS ARE ALREADY IN THE PROJECT — shown ticked and disabled.
  *
- *   · a COPY is keyed by the document name it would land on (the server's
- *     `suggestedSlug`, the same derivation the copy uses): a second file of
- *     that name would be refused "already added", so it is never tickable;
- *   · a folder MIRROR by source path, rebased from the listed folder to the
- *     mirrored one;
- *   · a GitHub mirror by repository path.
+ * v3.69.0: a READER of the server's `alreadyAdded` field, and nothing else
+ * (CONTRACT §4.3). Through v3.68.0 this module derived it — a copy by the
+ * document NAME it would land on, a mirror by source path — and a name is the
+ * wrong key once a project holds several sources: `architecture.md` from
+ * repository B is not "already added" because repository A's
+ * `architecture.md` is. The store knows which group a path came through and
+ * which other group reaches the same repository path; the view does not.
  * @returns {Set<string>}
  */
-export function alreadyAdded(rec, facts) {
+export function alreadyAdded(rec) {
   const out = new Set();
   const r = rec && typeof rec === 'object' ? rec : null;
-  const docs = facts && Array.isArray(facts.docs) ? facts.docs : [];
   const cands = r && Array.isArray(r.candidates) ? r.candidates : [];
-  if (!r || !cands.length) return out;
-  if (r.door === 'local' && r.mode === 'copy') {
-    const slugs = new Set(docs.map((d) => String(d && d.slug || '')));
-    for (const c of cands) if (c && c.suggestedSlug && slugs.has(c.suggestedSlug)) out.add(c.path);
-    return out;
-  }
-  const srcPaths = new Set(docs
-    .map((d) => (d && d.source && typeof d.source.path === 'string' ? d.source.path : null))
-    .filter(Boolean));
-  let prefix = '';
-  if (r.door === 'local' && r.mode === 'mirror') {
-    const base = String(r.fixedRoot || '').replace(/\/+$/, '');
-    const listed = String(r.listedRoot || '').replace(/\/+$/, '');
-    if (base && listed && listed !== base && listed.startsWith(base + '/')) prefix = listed.slice(base.length + 1) + '/';
-  }
-  for (const c of cands) if (c && srcPaths.has(prefix + c.path)) out.add(c.path);
+  for (const c of cands) if (c && c.alreadyAdded === true && typeof c.path === 'string') out.add(c.path);
   return out;
 }
 
+/** The document name a listed file would arrive under if nothing collided. */
+export function naturalSlug(cand) {
+  if (cand && typeof cand.suggestedSlug === 'string' && cand.suggestedSlug) return cand.suggestedSlug;
+  const p = String(cand && cand.path || '');
+  return p.slice(p.lastIndexOf('/') + 1).toLowerCase();
+}
+
+/**
+ * THE NAME A TICKED FILE WILL LAND ON WHEN IT IS NOT ITS OWN — the server's
+ * `landsAs` (§4.5), shown before the commit so a collision is never a silent
+ * rename. `null` when it lands under its natural name.
+ */
+export function landsAsBadge(cand) {
+  const l = cand && typeof cand.landsAs === 'string' && cand.landsAs ? cand.landsAs : null;
+  if (!l) return null;
+  return l !== naturalSlug(cand) ? l : null;
+}
+
 /** The ticked, addable paths, in list order. */
-export function tickedPaths(rec, facts) {
+export function tickedPaths(rec) {
   const r = rec && typeof rec === 'object' ? rec : null;
   if (!r || !Array.isArray(r.candidates)) return [];
-  const done = alreadyAdded(r, facts);
+  const done = alreadyAdded(r);
   return r.candidates
     .filter((c) => c && r.picks[c.path] === true && !c.tooLarge && !done.has(c.path))
     .map((c) => c.path);
 }
 
 /** Bytes of the ticked rows. */
-export function tickedBytes(rec, facts) {
+export function tickedBytes(rec) {
   const r = rec && typeof rec === 'object' ? rec : null;
   if (!r || !Array.isArray(r.candidates)) return 0;
-  const on = new Set(tickedPaths(r, facts));
+  const on = new Set(tickedPaths(r));
   return r.candidates.reduce((n, c) => n + (c && on.has(c.path) && Number.isFinite(c.bytes) ? c.bytes : 0), 0);
 }
 
-/** Does the GitHub panel name the repository this project already mirrors? */
-export function namesRecordedRemote(rec, facts) {
-  const rem = recordedRemote(facts);
-  const typed = parseRepoInput(rec && rec.remote);
-  if (!rem || !typed) return false;
-  return rem.owner.toLowerCase() === typed.owner.toLowerCase()
-    && rem.repo.toLowerCase() === typed.repo.toLowerCase()
-    && cleanRef(rec.ref) === String(rem.ref || '')
-    && cleanPath(rec.path) === String(rem.path || '');
-}
-
-/** The primary's words: "Add 3 documents" / "Mirror 1 document". */
-export function commitWord(rec, facts) {
-  const n = tickedPaths(rec, facts).length;
+/** The primary's words: "Copy 3 documents" / "Mirror 1 document" (§4.2). */
+export function commitWord(rec) {
+  const r = rec && typeof rec === 'object' ? rec : {};
+  if (r.door === 'github' && r.mode === 'switch') {
+    if (r.busy) return 'Reading from GitHub…';
+    const n = Number.isInteger(r.groupCount) ? r.groupCount : null;
+    return n === null ? 'Read from GitHub' : 'Read ' + n + ' document' + (n === 1 ? '' : 's') + ' from GitHub';
+  }
+  const n = tickedPaths(r).length;
   const docs = n ? n + ' document' + (n === 1 ? '' : 's') : 'documents';
-  if (rec && rec.busy) return rec.door === 'github' ? 'Mirroring…' : 'Adding…';
-  if (rec && rec.door === 'github') return 'Mirror ' + docs;
-  return (rec && rec.mode === 'mirror' ? 'Mirror ' : 'Add ') + docs;
+  if (r.busy) return r.door === 'local' && r.mode === 'copy' ? 'Copying…' : 'Mirroring…';
+  if (r.door === 'github') return 'Mirror ' + docs;
+  return (r.mode === 'mirror' ? 'Mirror ' : 'Copy ') + docs;
 }
 
 /** Why the LIST step cannot run yet, or null. */
@@ -268,25 +252,28 @@ export function listBlockedReason(rec) {
 }
 
 /** Why the COMMIT cannot run yet, or null. */
-export function commitBlockedReason(rec, facts) {
+export function commitBlockedReason(rec) {
   const r = rec && typeof rec === 'object' ? rec : {};
+  // THE SWITCH lists nothing: it re-reads the group's own documents, so the
+  // only thing it needs is the token to read them with.
+  if (r.door === 'github' && r.mode === 'switch') return listBlockedReason(r);
   if (!Array.isArray(r.candidates)) return listBlockedReason(r) || 'List the documents first.';
-  if (!tickedPaths(r, facts).length) return 'Tick at least one document.';
+  if (!tickedPaths(r).length) return 'Tick at least one document.';
   return null;
 }
 
 /** The count line: ticks and bytes, and the project total against its budget. */
-export function countLine(rec, facts) {
-  const n = tickedPaths(rec, facts).length;
-  const b = tickedBytes(rec, facts);
+export function countLine(rec) {
+  const n = tickedPaths(rec).length;
+  const b = tickedBytes(rec);
   const total = (rec.projectBytes || 0) + b;
   return n + ' ticked · ' + formatBytes(b) + ' — the project would hold '
     + formatBytes(total) + ' of its ' + formatBytes(rec.budgetBytes || PROJECT_BUDGET_BYTES) + ' budget';
 }
 
 /** The over-budget sentence (with the numbers), or ''. A cost: never folds. */
-export function budgetWarning(rec, facts) {
-  const b = tickedBytes(rec, facts);
+export function budgetWarning(rec) {
+  const b = tickedBytes(rec);
   const total = (rec.projectBytes || 0) + b;
   const budget = rec.budgetBytes || PROJECT_BUDGET_BYTES;
   if (!b || total <= budget) return '';
@@ -299,7 +286,14 @@ export function budgetWarning(rec, facts) {
 // THE REQUESTS
 // ═════════════════════════════════════════════════════════════════════════
 
-/** The list request's URL. */
+/**
+ * The list request's URL. With the project named (`rec.domain`,
+ * `rec.project`) the server annotates every candidate with `alreadyAdded`,
+ * `alreadyAs` and `landsAs` (§4.3); the local door also says which listing
+ * it is (`mode=copy|mirror`), because "already added" means a different thing
+ * for a copy (a copy of this file from this folder) than for a mirror (this
+ * path, through any source of the same repository).
+ */
 export function listUrl(rec) {
   const q = ['all=1'];
   if (rec.door === 'github') {
@@ -311,47 +305,61 @@ export function listUrl(rec) {
     q.push('tokenSource=' + (selectedTokenSource(rec) === 'sync' ? 'sync' : 'config'));
   } else {
     q.push('root=' + encodeURIComponent(String(rec.root || '').trim()));
+    q.push('mode=' + (rec.mode === 'mirror' ? 'mirror' : 'copy'));
+  }
+  if (rec.domain && rec.project) {
+    q.push('domain=' + encodeURIComponent(rec.domain));
+    q.push('project=' + encodeURIComponent(rec.project));
   }
   return '/api/memory/repo-scan?' + q.join('&');
 }
 
 /**
- * THE COMMIT, as `{url, body}` — one of four routes, chosen by the door's
- * mode and the facts. NO TOKEN is ever in a body: `tokenSource` names which
- * saved file the server reads it from.
+ * THE COMMIT, as `{url, body}` — one of three routes (v3.69.0):
+ *
+ *   this computer             POST …/add-local  {root, files, mode}
+ *   GitHub                    POST …/add-remote {remote, tokenSource, files}
+ *   "Read from GitHub instead"  POST …/source   {group, remote, tokenSource}
+ *
+ * NO TOKEN is ever in a body: `tokenSource` names which saved file the server
+ * reads it from. `remote` carries owner, repo and the typed ref; the typed
+ * folder is a LISTING scope only (the scan returns repository-relative paths,
+ * §3.2), so it never rides on the commit.
  */
 export function buildAddCommit(rec, facts, domain, project) {
   const base = '/api/memory/' + encodeURIComponent(domain) + '/' + encodeURIComponent(project) + '/foundations/';
-  const files = tickedPaths(rec, facts).map((p) => ({ path: p }));
+  const files = tickedPaths(rec).map((p) => ({ path: p }));
   if (rec.door === 'local') {
-    return { url: base + 'add-local', body: { root: String(rec.listedRoot || rec.root || '').trim(), files } };
+    return { url: base + 'add-local', body: {
+      root: String(rec.listedRoot || rec.root || '').trim(), files, mode: rec.mode === 'mirror' ? 'mirror' : 'copy' } };
   }
   const p = parseRepoInput(rec.remote) || { owner: '', repo: String(rec.remote || '').trim() };
   const remote = { owner: p.owner, repo: p.repo };
   if (cleanRef(rec.ref)) remote.ref = cleanRef(rec.ref);
-  if (cleanPath(rec.path)) remote.path = cleanPath(rec.path);
   const tokenSource = selectedTokenSource(rec) === 'sync' ? 'sync' : 'config';
-  if (rec.mode === 'init') {
-    const body = { ownership: 'repo', remote, tokenSource, files };
-    if (facts && facts.present) body.rechooseEmpty = true;
-    return { url: base + 'init', body };
+  if (rec.mode === 'switch') {
+    return { url: base + 'source', body: { group: String(rec.group || ''), remote, tokenSource } };
   }
-  if (rec.mode === 'add' && namesRecordedRemote(rec, facts)) {
-    return { url: base + 'refresh', body: { source: 'remote', tokenSource, files } };
-  }
-  return { url: base + 'source', body: { remote, tokenSource, files } };
+  return { url: base + 'add-remote', body: { remote, tokenSource, files } };
+}
+
+/** An `added`/`refreshed` entry as a document name: a slug string, or `{slug}`/`{path}`. */
+function nameOf(x) {
+  if (typeof x === 'string') return x;
+  if (x && typeof x === 'object') return typeof x.slug === 'string' ? x.slug : (typeof x.path === 'string' ? x.path : null);
+  return null;
 }
 
 /**
- * WHAT CAME BACK, from any of the four routes, as `{added, refused, error}`.
+ * WHAT CAME BACK, from any of the three routes, as `{added, refused, error}`.
  * `error` is set for a refusal of the whole request, in plain words.
  */
 export function readCommitResponse(status, data, rec) {
   const d = data && typeof data === 'object' ? data : {};
   const list = (v) => (Array.isArray(v) ? v : []);
   const refresh = d.refresh && typeof d.refresh === 'object' ? d.refresh : null;
-  const added = list(d.added).concat(refresh ? list(refresh.added) : []).filter((x) => typeof x === 'string');
-  const refreshed = list(d.refreshed).concat(refresh ? list(refresh.refreshed) : []).filter((x) => typeof x === 'string');
+  const added = list(d.added).concat(refresh ? list(refresh.added) : []).map(nameOf).filter((x) => typeof x === 'string');
+  const refreshed = list(d.refreshed).concat(refresh ? list(refresh.refreshed) : []).map(nameOf).filter((x) => typeof x === 'string');
   const refused = list(d.refused).concat(refresh ? list(refresh.refused) : [])
     .filter((r) => r && typeof r === 'object')
     .map((r) => ({ path: String(r.path || ''), reason: String(r.reason || '') }));
@@ -367,17 +375,29 @@ export function readCommitResponse(status, data, rec) {
   return { ok: okStatus && !error, added, refreshed, refused, error };
 }
 
-/** The toast after a commit: "3 documents added". */
+/**
+ * The toast after a commit: "3 documents mirrored from acme/lumina", plus one
+ * line per ticked file that landed under a name of its own (`landsAs`) — the
+ * rename was shown before the press and is said again after it.
+ */
 export function outcomeToast(rec, out) {
-  const n = out.added.length;
+  const n = rec && rec.mode === 'switch' ? out.refreshed.length + out.added.length : out.added.length;
   const what = n + ' document' + (n === 1 ? '' : 's');
+  const renamed = (Array.isArray(rec && rec.candidates) ? rec.candidates : [])
+    .filter((c) => c && rec.picks && rec.picks[c.path] === true && landsAsBadge(c))
+    .map((c) => c.path + ' landed as ' + c.landsAs);
   if (rec.door === 'github') {
     const p = parseRepoInput(rec.remote);
-    return { title: what + ' mirrored' + (p ? ' from ' + p.owner + '/' + p.repo : ''),
-      lines: rec.mode === 'switch' || (rec.mode === 'add' && out.refreshed.length)
-        ? ['The project now reads its documents from GitHub.'] : [] };
+    if (rec.mode === 'switch') {
+      return { title: what + ' now read from GitHub' + (p ? ' (' + p.owner + '/' + p.repo + ')' : ''),
+        lines: [(rec.groupLabel ? 'The folder ' + rec.groupLabel : 'The folder') + ' is no longer used for them.'] };
+    }
+    return { title: what + ' mirrored' + (p ? ' from ' + p.owner + '/' + p.repo : ''), lines: renamed };
   }
-  return { title: what + (rec.mode === 'mirror' ? ' mirrored from the folder' : ' added'), lines: [] };
+  const folder = String(rec.listedRoot || rec.root || '').replace(/[\\/]+$/, '');
+  const base = folder.slice(Math.max(folder.lastIndexOf('/'), folder.lastIndexOf('\\')) + 1);
+  return { title: what + (rec.mode === 'mirror' ? ' mirrored from ' + (base || 'the folder') : ' copied in'),
+    lines: renamed };
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -464,11 +484,15 @@ function candidateRow(rec, cand, done, dis) {
   const path = String(cand && cand.path || '');
   const size = '<span class="fnd-init-cand-size">' + escapeHtml(formatBytes(cand && cand.bytes)) + '</span>';
   if (done) {
+    // "already added", and — when the server says it arrived under a name of
+    // its own — which name, so the owner can find the row in the table.
+    const as = cand && typeof cand.alreadyAs === 'string' && cand.alreadyAs && cand.alreadyAs !== naturalSlug(cand)
+      ? cand.alreadyAs : null;
     return '<div class="fnd-init-cand is-mirrored" data-fadd-row="' + escapeHtml(path) + '">'
       + '<label class="fnd-init-cand-main">'
       + '<input type="checkbox" class="cur-check" checked disabled aria-label="' + escapeHtml(path + ' — already added') + '" />'
       + '<span class="fnd-init-cand-path">' + escapeHtml(path) + '</span>'
-      + '<span class="mem-badge mem-badge-quiet">already added</span>'
+      + '<span class="mem-badge mem-badge-quiet">' + escapeHtml(as ? 'already added as ' + as : 'already added') + '</span>'
       + '</label>' + size + '</div>';
   }
   if (cand && cand.tooLarge) {
@@ -482,13 +506,40 @@ function candidateRow(rec, cand, done, dis) {
       + '</div>';
   }
   const on = rec.picks[path] === true;
+  // THE NAME IT WILL LAND ON, when that is not its own (§4.5) — a quiet badge
+  // BEFORE the commit, never a silent rename after it.
+  const lands = landsAsBadge(cand);
   return '<div class="fnd-init-cand" data-fadd-row="' + escapeHtml(path) + '">'
     + '<label class="fnd-init-cand-main">'
     + '<input type="checkbox" class="cur-check" data-fadd-pick="' + escapeHtml(path) + '"'
     + (on ? ' checked' : '') + (dis ? ' disabled' : '') + ' />'
     + '<span class="fnd-init-cand-path">' + escapeHtml(path) + '</span>'
+    + (lands ? '<span class="mem-badge mem-badge-quiet fnd-lands-as">' + escapeHtml('lands as ' + lands) + '</span>' : '')
     + (cand && cand.firstHeading ? '<span class="fnd-init-cand-head">' + escapeHtml(String(cand.firstHeading)) + '</span>' : '')
     + '</label>' + size + '</div>';
+}
+
+/**
+ * THE KEEP IN SYNC / COPY ONCE CONTROL (§4.2, maintainer decision D2). Both
+ * options always visible; the default is Keep in sync when the listed folder
+ * is inside a git checkout (the scan's `inGitCheckout`) and Copy once
+ * otherwise, until the owner presses one.
+ */
+function modeRadios(rec, dis) {
+  const opt = (value, name, what) =>
+    '<label class="fnd-init-token-opt mem-fnd-add-mode-opt">'
+    + '<input type="radio" name="fadd-mode" value="' + value + '" data-fadd-mode="' + value + '"'
+    + (rec.mode === value ? ' checked' : '') + (dis ? ' disabled' : '') + ' />'
+    + '<span class="fnd-init-token-text"><span class="fnd-init-token-head">'
+    + '<span class="fnd-init-token-name">' + escapeHtml(name) + '</span>'
+    + '<span class="fnd-init-token-where">' + escapeHtml(what) + '</span>'
+    + '</span></span></label>';
+  return '<div class="fnd-init-field">'
+    + '<span class="fnd-init-label cur-eyebrow" id="fadd-mode-label">What the files become</span>'
+    + '<div class="fnd-init-tokens mem-fnd-add-mode" role="radiogroup" aria-labelledby="fadd-mode-label">'
+    + opt('mirror', 'Keep in sync with this folder', '— a mirror: Refresh re-reads the files')
+    + opt('copy', 'Copy once', '— the text is copied in and never changes on its own')
+    + '</div></div>';
 }
 
 /**
@@ -502,26 +553,20 @@ export function renderAddPanel(rec, facts, door, host) {
   const busy = rec.busy === true;
   const dis = busy;
   const gh = rec.door === 'github';
-  const note = door && door.note ? door.note : '';
-  const switching = gh && (rec.mode === 'switch' || (rec.mode === 'add' && String(rec.remote || '').trim()
-    && !namesRecordedRemote(rec, facts)));
+  const switching = gh && rec.mode === 'switch';
+  const note = switching
+    ? 'These ' + (Number.isInteger(rec.groupCount) ? rec.groupCount + ' ' : '') + 'documents are re-read from '
+      + 'GitHub by the same paths, and the folder' + (rec.groupLabel ? ' ' + rec.groupLabel : '')
+      + ' is no longer used for them. Nothing is written unless every document can be read.'
+    : gh ? (door && door.note ? door.note : '') : localModeNote(rec);
 
   let source;
   if (gh) {
     source = '<div class="fnd-init-remote-fields">'
-      + field('fadd-remote', 'Repository', 'owner/repo', rec.remote, dis)
-      + field('fadd-ref', 'Branch or tag', 'the default branch', rec.ref, dis)
-      + field('fadd-path', 'Folder', 'the whole repository', rec.path, dis)
+      + field('fadd-remote', 'Repository', 'owner/repo', rec.remote, dis || switching)
+      + field('fadd-ref', 'Branch or tag', 'the default branch', rec.ref, dis || switching)
+      + (switching ? '' : field('fadd-path', 'Folder', 'the whole repository', rec.path, dis))
       + '</div>' + tokenRadios(rec, dis, host);
-  } else if (rec.mode === 'mirror') {
-    source = '<div class="fnd-init-field">'
-      + '<label class="fnd-init-label cur-eyebrow" for="fadd-root">Folder (inside the mirrored folder)</label>'
-      + '<div class="fnd-init-row">'
-      + '<input class="fnd-init-path" id="fadd-root" type="text" autocomplete="off" spellcheck="false"'
-      + ' value="' + escapeHtml(rec.root) + '"' + (dis ? ' disabled' : '') + ' />'
-      + (rec.pickUnavailable ? '' : '<button type="button" class="btn btn-secondary btn-xs" id="fadd-pick"'
-        + (dis || rec.picking ? ' disabled' : '') + '>' + (rec.picking ? 'Choosing…' : 'Choose folder…') + '</button>')
-      + '</div></div>';
   } else {
     source = '<div class="fnd-init-field">'
       + '<label class="fnd-init-label cur-eyebrow" for="fadd-root">Folder on this computer</label>'
@@ -531,10 +576,10 @@ export function renderAddPanel(rec, facts, door, host) {
       + (dis ? ' disabled' : '') + ' />'
       + (rec.pickUnavailable ? '' : '<button type="button" class="btn btn-secondary btn-xs" id="fadd-pick"'
         + (dis || rec.picking ? ' disabled' : '') + '>' + (rec.picking ? 'Choosing…' : 'Choose folder…') + '</button>')
-      + '</div></div>';
+      + '</div></div>' + modeRadios(rec, dis);
   }
   const listBlocked = listBlockedReason(rec);
-  const listBtn = '<div class="fnd-init-row">'
+  const listBtn = switching ? '' : '<div class="fnd-init-row">'
     + '<button type="button" class="btn btn-secondary btn-xs" id="fadd-list"'
     + (dis || rec.scanning || listBlocked ? ' disabled' : '') + '>'
     + (rec.scanning ? 'Looking…' : (Array.isArray(rec.candidates) ? 'List again' : 'List documents')) + '</button>'
@@ -549,9 +594,9 @@ export function renderAddPanel(rec, facts, door, host) {
     .join('');
 
   let list = '';
-  if (Array.isArray(rec.candidates)) {
+  if (!switching && Array.isArray(rec.candidates)) {
     const cands = rec.candidates;
-    const done = alreadyAdded(rec, facts);
+    const done = alreadyAdded(rec);
     if (!cands.length) {
       list = '<div class="tx-note"><span>' + escapeHtml(gh
         ? 'No .md or .txt documents in that repository' + (cleanPath(rec.path) ? ' folder' : '') + '.'
@@ -564,15 +609,15 @@ export function renderAddPanel(rec, facts, door, host) {
         + '<label class="cur-check-label mem-fnd-add-all"><input type="checkbox" class="cur-check" id="fadd-all"'
         + (allOn ? ' checked' : '') + (dis || !selectable.length ? ' disabled' : '') + ' />'
         + '<span>Select all (' + selectable.length + ')</span></label>'
-        + '<span class="mem-fnd-add-count" id="fadd-count">' + escapeHtml(countLine(rec, facts)) + '</span>'
+        + '<span class="mem-fnd-add-count" id="fadd-count">' + escapeHtml(countLine(rec)) + '</span>'
         + '</div>'
         + '<div class="fnd-init-cands" id="fadd-cands">'
         + cands.map((c) => candidateRow(rec, c, done.has(c && c.path), dis)).join('')
         + '</div>'
         + (rec.truncated ? '<div class="tx-note"><span>Only the first ' + cands.length
           + ' documents are listed. Name a folder inside it to see the rest.</span></div>' : '')
-        + '<div class="fnd-init-note fnd-init-note-loud mem-fnd-add-loud" id="fadd-budget"' + (budgetWarning(rec, facts) ? '' : ' hidden') + '>'
-        + '<span>' + escapeHtml(budgetWarning(rec, facts)) + '</span></div>';
+        + '<div class="fnd-init-note fnd-init-note-loud mem-fnd-add-loud" id="fadd-budget"' + (budgetWarning(rec) ? '' : ' hidden') + '>'
+        + '<span>' + escapeHtml(budgetWarning(rec)) + '</span></div>';
     }
   }
 
@@ -583,25 +628,24 @@ export function renderAddPanel(rec, facts, door, host) {
         + escapeHtml(r.path) + '</span> — ' + escapeHtml(r.reason) + '</li>').join('') + '</ul>'
     : '';
   const error = rec.error ? loud('fadd-error', rec.error) : '';
-  const blocked = commitBlockedReason(rec, facts);
+  const blocked = commitBlockedReason(rec);
+  const showGo = switching || (Array.isArray(rec.candidates) && rec.candidates.length);
   const actions = '<div class="mem-fnd-init-actions">'
-    + (Array.isArray(rec.candidates) && rec.candidates.length
+    + (showGo
       ? '<button type="button" class="btn btn-primary" id="fadd-go"' + (busy || blocked ? ' disabled' : '') + '>'
-        + escapeHtml(commitWord(rec, facts)) + '</button>' : '')
+        + escapeHtml(commitWord(rec)) + '</button>' : '')
     + '<button type="button" class="btn btn-ghost btn-xs" id="fadd-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>'
     + '</div>';
-  const why = '<div class="tx-note fnd-init-why" id="fadd-why"'
-    + ((Array.isArray(rec.candidates) ? blocked : listBlocked) ? '' : ' hidden') + '><span>'
-    + escapeHtml((Array.isArray(rec.candidates) ? blocked : listBlocked) || '') + '</span></div>';
+  const whyText = (switching || Array.isArray(rec.candidates)) ? blocked : listBlocked;
+  const why = '<div class="tx-note fnd-init-why" id="fadd-why"' + (whyText ? '' : ' hidden') + '><span>'
+    + escapeHtml(whyText || '') + '</span></div>';
 
   return '<div class="mem-fnd-panel mem-fnd-add" id="fadd-panel" data-fadd-door="' + rec.door + '">'
-    + '<div class="mem-fnd-panel-eyebrow cur-group-title">' + (gh ? 'ADD FROM GITHUB' : 'ADD FROM THIS COMPUTER') + '</div>'
+    + '<div class="mem-fnd-panel-eyebrow cur-group-title">'
+    + (switching ? 'READ FROM GITHUB INSTEAD' : gh ? 'ADD FROM GITHUB' : 'ADD FROM THIS COMPUTER') + '</div>'
     + '<div class="mem-fnd-init-body">'
-    + (note ? '<p class="tx-desc mem-fnd-add-note">' + escapeHtml(note) + '</p>' : '')
+    + (note ? '<p class="tx-desc mem-fnd-add-note" id="fadd-note">' + escapeHtml(note) + '</p>' : '')
     + source + listBtn + notes + list
-    + (switching ? '<div class="tx-note"><span>' + escapeHtml('Mirroring from a repository this project does not '
-      + 'mirror yet switches its source: its existing documents are re-read from there by the same paths. '
-      + 'Nothing is written unless every document can be read.') + '</span></div>' : '')
     + error + refused + actions + why
     + '</div></div>';
 }

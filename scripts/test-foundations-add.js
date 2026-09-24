@@ -399,80 +399,98 @@ section('9. The route: strict body, honest statuses, the numbers ride out');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('10. The doors (DOM-free): always both, and each says what it will do');
+section('10. The doors (DOM-free): always both, always enabled (v3.69.0)');
 {
+  // v3.69.0 (CONTRACT §4.1): the source is per DOCUMENT, so neither door
+  // depends on what the project already holds. Disabled only on a read-only
+  // mirror and an unreadable manifest, each with its reason.
   const empty = { present: false, count: 0, docs: [] };
-  const d0 = FA.doorsFor(empty);
-  ok('0 documents, no manifest: BOTH doors available', d0.local.available && d0.github.available);
-  eq('...the local door copies', d0.local.mode, 'copy');
-  eq('...the GitHub door inits', d0.github.mode, 'init');
-  const emptyCurator = FA.doorsFor({ present: true, ownership: 'curator', count: 0, docs: [] });
-  ok('0 documents in an EXISTING manifest: BOTH doors, and GitHub re-chooses',
-    emptyCurator.local.available && emptyCurator.github.available && emptyCurator.github.rechoose === true);
-  const cur = FA.doorsFor({ present: true, ownership: 'curator', count: 3, docs: [] });
-  ok('N curator documents: the local door appends', cur.local.available && cur.local.mode === 'copy');
-  ok('...GitHub is DISABLED with its reason (one source)', !cur.github.available && /one source/.test(cur.github.why));
-  const mir = FA.doorsFor({ present: true, ownership: 'repo', count: 2, docs: [], repo: { root: '/r', remote: null } });
-  ok('N in a folder mirror: local mirrors more from /r, GitHub switches',
-    mir.local.mode === 'mirror' && mir.local.fixedRoot === '/r' && mir.github.mode === 'switch'
-    && /folder stops being used/.test(mir.github.note));
-  const miss = FA.doorsFor({ present: true, ownership: 'repo', count: 2, docs: [], repo: { root: '/r' } }, { sourceMissing: true });
-  ok('...its folder not on this computer: local DISABLED with the reason, GitHub still offered',
-    !miss.local.available && /not on this computer/.test(miss.local.why) && miss.github.available);
-  const gh = FA.doorsFor({ present: true, ownership: 'repo', count: 2, docs: [], repo: { root: null, remote: { owner: 'o', repo: 'r' } } });
-  ok('N in a GitHub mirror: local DISABLED naming the repo, GitHub adds (prefilled)',
-    !gh.local.available && /o\/r/.test(gh.local.why) && gh.github.mode === 'add' && gh.github.remote.owner === 'o');
+  const cur = { present: true, ownership: 'curator', count: 3, docs: [] };
+  const mir = { present: true, ownership: 'repo', count: 2, docs: [], repo: { root: '/r', remote: null } };
+  const gh = { present: true, ownership: 'repo', count: 2, docs: [], repo: { root: null, remote: { owner: 'o', repo: 'r' } } };
+  const mixed = { present: true, ownership: 'mixed', count: 4, docs: [] };
+  for (const [name, f] of [['empty', empty], ['curator', cur], ['folder mirror', mir], ['github mirror', gh], ['mixed', mixed]]) {
+    const d = FA.doorsFor(f);
+    ok(`[${name}] BOTH doors available, neither with a reason`,
+      d.local.available && d.github.available && !d.local.why && !d.github.why);
+    eq(`[${name}] the GitHub door ADDS — naming another repository adds a source`, d.github.mode, 'add');
+    eq(`[${name}] the local door's mode is chosen in the panel`, d.local.mode, null);
+  }
+  ok('the GitHub note says another repository becomes a NEW source, never that it switches',
+    /becomes a new source/.test(FA.doorsFor(cur).github.note) && !/switch/i.test(FA.doorsFor(cur).github.note));
   const ro = FA.doorsFor(empty, { readonly: true });
   ok('a read-only mirror: both disabled, with the reason', !ro.local.available && !ro.github.available && !!ro.local.why);
-  for (const [name, dd] of [['empty', d0], ['curator', cur], ['mirror', mir], ['github', gh], ['readonly', ro]]) {
+  const bad = FA.doorsFor({ present: true, manifestError: 'x' });
+  ok('an unreadable manifest: both disabled, with the reason', !bad.local.available && !bad.github.available && !!bad.github.why);
+  for (const [name, dd] of [['empty', FA.doorsFor(empty)], ['curator', FA.doorsFor(cur)], ['readonly', ro]]) {
     const h = FA.renderDoors(dd);
     ok(`renderDoors [${name}] ALWAYS emits both doors`, h.includes('id="mem-fnd-door-local"') && h.includes('id="mem-fnd-door-github"'));
   }
+  ok('an enabled door is a real button with no reason attribute',
+    !/aria-disabled|data-fnd-door-why/.test(FA.renderDoors(FA.doorsFor(cur))));
   ok('a disabled door is aria-disabled (the press still arrives) and carries its reason',
-    /id="mem-fnd-door-github"[^>]*aria-disabled="true"[^>]*data-fnd-door-why="[^"]+"/.test(FA.renderDoors(cur)));
+    /id="mem-fnd-door-github"[^>]*aria-disabled="true"[^>]*data-fnd-door-why="[^"]+"/.test(FA.renderDoors(ro)));
   ok('the reason is escaped into the attribute', !/data-fnd-door-why="[^"]*<[^"]*"/.test(
     FA.renderDoors({ local: { available: false, why: '<img onerror=x>' }, github: { available: true } })));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('11. The checklist and the commit, DOM-free');
+section('11. The checklist and the commit, DOM-free (v3.69.0)');
 {
   const facts = { present: true, ownership: 'curator', count: 1, bytes: 1000, budgetBytes: 204800,
     docs: [{ slug: 'architecture.md', source: { kind: 'curator' } }] };
   const rec = Object.assign(FA.freshAddPanel('local', FA.doorsFor(facts).local, facts), {
-    root: '/typed/n', listedRoot: '/n',
-    candidates: [{ path: 'architecture.md', bytes: 10, suggestedSlug: 'architecture.md' },
-      { path: 'b.md', bytes: 20, suggestedSlug: 'b.md' }, { path: 'big.md', bytes: 600000, suggestedSlug: 'big.md', tooLarge: true }],
+    domain: 'd', project: 'p', root: '/typed/n', listedRoot: '/n',
+    candidates: [
+      { path: 'architecture.md', bytes: 10, suggestedSlug: 'architecture.md', alreadyAdded: true, alreadyAs: 'architecture.md', landsAs: 'architecture.md' },
+      { path: 'b.md', bytes: 20, suggestedSlug: 'b.md', alreadyAdded: false, landsAs: 'b.md' },
+      { path: 'big.md', bytes: 600000, suggestedSlug: 'big.md', tooLarge: true }],
     picks: { 'architecture.md': true, 'b.md': true, 'big.md': true } });
-  ok('an already-added row is never counted as ticked, even if its tick is set',
-    JSON.stringify(FA.tickedPaths(rec, facts)) === JSON.stringify(['b.md']));
-  ok('...nor is a too-large row', !FA.tickedPaths(rec, facts).includes('big.md'));
-  eq('commitWord counts', FA.commitWord(rec, facts), 'Add 1 document');
+  eq('a fresh local panel starts on Copy once', FA.freshAddPanel('local', {}, facts).mode, 'copy');
+  ok('an already-added row (the SERVER\'s field) is never counted as ticked, even if its tick is set',
+    JSON.stringify(FA.tickedPaths(rec)) === JSON.stringify(['b.md']));
+  ok('...nor is a too-large row', !FA.tickedPaths(rec).includes('big.md'));
+  eq('commitWord says Copy', FA.commitWord(rec), 'Copy 1 document');
+  eq('...and Mirror in Keep in sync', FA.commitWord(Object.assign({}, rec, { mode: 'mirror' })), 'Mirror 1 document');
+  ok('alreadyAdded reads the server field ONLY — a same-named file the server does not mark stays tickable',
+    FA.alreadyAdded({ candidates: [{ path: 'x/architecture.md', suggestedSlug: 'architecture.md' }] }).size === 0);
   const req = FA.buildAddCommit(rec, facts, 'd', 'p');
   eq('the local commit posts to add-local', req.url, '/api/memory/d/p/foundations/add-local');
-  eq('...with the LISTED root and the ticked paths only', JSON.stringify(req.body), JSON.stringify({ root: '/n', files: [{ path: 'b.md' }] }));
-  const g = Object.assign(FA.freshAddPanel('github', { mode: 'add', remote: { owner: 'o', repo: 'r', ref: null, path: null } }, facts), {
-    candidates: [{ path: 'x.md', bytes: 1 }], picks: { 'x.md': true } });
-  const ghFacts = { present: true, ownership: 'repo', count: 1, docs: [], repo: { root: null, remote: { owner: 'o', repo: 'r', ref: null, path: null } } };
-  eq('GitHub, same repository: a refresh with the files', FA.buildAddCommit(g, ghFacts, 'd', 'p').url, '/api/memory/d/p/foundations/refresh');
-  eq('...sending the source arm, the token FILE and the files — nothing else',
-    JSON.stringify(FA.buildAddCommit(g, ghFacts, 'd', 'p').body), JSON.stringify({ source: 'remote', tokenSource: 'config', files: [{ path: 'x.md' }] }));
-  const g2 = Object.assign({}, g, { remote: 'o/other' });
-  eq('GitHub, another repository: the source switch', FA.buildAddCommit(g2, ghFacts, 'd', 'p').url, '/api/memory/d/p/foundations/source');
+  eq('...with the LISTED root, the ticked paths and the mode — nothing else',
+    JSON.stringify(req.body), JSON.stringify({ root: '/n', files: [{ path: 'b.md' }], mode: 'copy' }));
+  eq('...and `mirror` when Keep in sync is chosen',
+    FA.buildAddCommit(Object.assign({}, rec, { mode: 'mirror' }), facts, 'd', 'p').body.mode, 'mirror');
+  ok('the listing names its mode and this project, so the server can annotate',
+    /&mode=copy&domain=d&project=p$/.test(FA.listUrl(rec)), FA.listUrl(rec));
+  const g = Object.assign(FA.freshAddPanel('github', { mode: 'add' }, facts), {
+    remote: 'o/r', path: 'docs', candidates: [{ path: 'docs/x.md', bytes: 1 }], picks: { 'docs/x.md': true } });
+  eq('GitHub, any repository: add-remote', FA.buildAddCommit(g, facts, 'd', 'p').url, '/api/memory/d/p/foundations/add-remote');
+  eq('...sending the repository (never the listing folder), the token FILE and the files — nothing else',
+    JSON.stringify(FA.buildAddCommit(g, facts, 'd', 'p').body),
+    JSON.stringify({ remote: { owner: 'o', repo: 'r' }, tokenSource: 'config', files: [{ path: 'docs/x.md' }] }));
+  const sw = Object.assign(FA.freshAddPanel('github', { mode: 'switch', group: 's2',
+    remote: { owner: 'o', repo: 'r', ref: 'main' }, groupLabel: 'notes', groupCount: 3 }, facts), { tokenSource: 'sync' });
+  eq('"Read from GitHub instead" posts to source', FA.buildAddCommit(sw, facts, 'd', 'p').url, '/api/memory/d/p/foundations/source');
+  eq('...naming ITS group, the repository and the token file',
+    JSON.stringify(FA.buildAddCommit(sw, facts, 'd', 'p').body),
+    JSON.stringify({ group: 's2', remote: { owner: 'o', repo: 'r', ref: 'main' }, tokenSource: 'sync' }));
+  eq('...and needs no listing to commit', FA.commitBlockedReason(sw), null);
+  eq('...its primary counts the group', FA.commitWord(sw), 'Read 3 documents from GitHub');
   ok('a URL is accepted as the repository', JSON.stringify(FA.parseRepoInput('https://github.com/o/r.git')) === JSON.stringify({ owner: 'o', repo: 'r' }));
   ok('garbage is not', FA.parseRepoInput('o/r/x') === null && FA.parseRepoInput('') === null);
   ok('no request body anywhere carries a token',
-    [req, FA.buildAddCommit(g, facts, 'd', 'p'), FA.buildAddCommit(g2, facts, 'd', 'p')].every((x) => !/token"\s*:/.test(JSON.stringify(x.body).replace(/tokenSource/g, ''))));
+    [req, FA.buildAddCommit(g, facts, 'd', 'p'), FA.buildAddCommit(sw, facts, 'd', 'p')]
+      .every((x) => !/token"\s*:/.test(JSON.stringify(x.body).replace(/tokenSource/g, ''))));
   const over = Object.assign({}, rec, { projectBytes: 204000, picks: { 'b.md': true },
     candidates: [{ path: 'b.md', bytes: 2000, suggestedSlug: 'b.md' }] });
-  ok('the budget warning carries the numbers', /201 KB, over its 200 KB budget by 1 KB/.test(FA.budgetWarning(over, facts)),
-    FA.budgetWarning(over, facts));
+  ok('the budget warning carries the numbers', /201 KB, over its 200 KB budget by 1 KB/.test(FA.budgetWarning(over)),
+    FA.budgetWarning(over));
   const read = FA.readCommitResponse(422, { ok: false, reason: 'nothing-added', error: 'None…', refused: [{ path: 'a', reason: 'r' }] }, rec);
   ok('a refusal reads as an error with its refused list', read.ok === false && read.error === 'None…' && read.refused.length === 1);
   const readGh = FA.readCommitResponse(429, { ok: false, reason: 'rate-limited' }, g);
   ok('a GitHub rate limit becomes a sentence, never the code', /rate-limiting/.test(readGh.error), readGh.error);
-  const readInit = FA.readCommitResponse(201, { ok: true, refresh: { ok: true, added: ['a.md'], refused: [] } }, g);
-  ok('an init answer is read through its nested refresh', readInit.ok && readInit.added[0] === 'a.md');
+  const readObj = FA.readCommitResponse(201, { ok: true, added: [{ path: 'docs/x.md', slug: 'x-r.md' }], refused: [] }, g);
+  ok('an added list of {path, slug} objects is read as the landed names', readObj.ok && readObj.added[0] === 'x-r.md');
 }
 
 // ═════════════════════════════════════════════════════════════════════════

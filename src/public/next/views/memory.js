@@ -328,6 +328,15 @@ import {
   commitBlockedReason, listBlockedReason, countLine, budgetWarning, commitWord,
   alreadyAdded,
 } from '../shared/foundations-add.js';
+// ── ONE PROJECT, MANY SOURCES (v3.69.0) ─────────────────────────────────
+// Every per-document rule — what a row IS (written, copied, a folder mirror,
+// a GitHub mirror), the word its freshness cell says, the sentence its delete
+// confirm says, the summary's origin clause and the sources strip — lives in
+// the DOM-free module, and is imported as ONE namespace so a lifted renderer
+// needs ONE injected name in the suites that execute it. `ownership` is
+// display-only from here on (CONTRACT v3.69.0 §1.6): no decision in this file
+// branches on it, and scripts/test-foundations-sources-view.js counts.
+import * as FSRC from '../shared/foundations-sources.js';
 import {
   FOUNDATION_SLUG_RE, FOUNDATION_ROLES, MAX_FOUNDATION_BYTES, FOUNDATIONS_BUDGET_BYTES,
   renderRoleOptions, renderRefusedList,
@@ -602,14 +611,12 @@ function freshState() {
     // is what withholds it — so a switch back to the project that was actually
     // refreshed still shows its own result.
     fnd: null,
-    // ── THE OWNERSHIP CHOICE, WHILE IT IS BEING MADE (v3.61.0) ───────────
-    //   { domain, project, choice, busy, error, refused }
-    // `choice` is shared/foundations-init.js's own state shape — this view
-    // never reads inside it except to hand it back to that module. STAMPED
-    // for the reason every other record here is: this view switches project
-    // without unmounting, and an ownership choice half-made for one project
-    // must not be posted against the next.
-    fndInit: null,
+    // (v3.69.0: `fndInit` is gone. It held the v3.61.0 ownership chooser's
+    // state and, after v3.68.0, only a refresh's `refused[]` — which now rides
+    // on the refresh's own outcome, `fnd.result.refused`.)
+    // ── THE ROW DELETE, WHILE IT IS BEING ASKED (v3.61.1; v3.69.0 every row) ─
+    //   { domain, project, slug, busy, error }
+    fndStop: null,
     // ── THE FOUNDATION EDITOR, or null when nothing is being edited ──────
     //   { domain, project, slug, isNew, loading, loaded, text, title, role,
     //     busy, error, preview, confirmDiscard, confirmShrink, confirmDelete,
@@ -877,7 +884,9 @@ const FOCUSABLE_IDS = [
   // "Refresh from repo". It survives its own click (it is disabled while the
   // copy runs and comes back enabled), so it needs no fallback below — but it
   // DOES need to be captured, because the click causes two renders.
-  'mem-fnd-refresh',
+  // v3.69.0: the sources strip's "Refresh all" (per-group Refresh buttons
+  // carry no id — a group id is not a stable page id across projects).
+  'mem-fnd-refresh-all',
   // ── TIER 0'S OWN EDITOR (v3.61.0) ─────────────────────────────────────
   // Every control here that REMOVES itself on click also has an entry in
   // FOCUS_FALLBACK below; the ones that survive their own click are captured
@@ -898,6 +907,8 @@ const FOCUSABLE_IDS = [
   'mem-fnd-discard', 'mem-fnd-keep',
   'mem-fnd-delete', 'mem-fnd-delete-go', 'mem-fnd-delete-no',
   'mem-fnd-shrink-go', 'mem-fnd-shrink-no',
+  // v3.69.0: the row delete strip's two controls — both remove the strip.
+  'mem-fnd-stop-go', 'mem-fnd-stop-no',
   // ── WP-V2's NEW CONTROLS ──────────────────────────────────────────────
   // `mem-fnd-file-btn` and `mem-fnd-init-files-btn` are the real <button>s
   // that click a `hidden` file input (P1-7): the input itself is out of the
@@ -997,6 +1008,8 @@ const FOCUS_FALLBACK = {
   'mem-fnd-delete-no': '#mem-fnd-text',
   'mem-fnd-shrink-go': '#mem-fold-foundations',
   'mem-fnd-shrink-no': '#mem-fnd-text',
+  'mem-fnd-stop-go': '#mem-fold-foundations',
+  'mem-fnd-stop-no': '#mem-fold-foundations',
 };
 
 // Same mount-token discipline as chat.js / domains.js / sync.js: captured as
@@ -1689,12 +1702,18 @@ function screenSignature() {
   const fndMark = fnd
     ? [fnd.ownership || null, fnd.manifestError || null,
       (Array.isArray(fnd.orphanFiles) ? fnd.orphanFiles.length : 0),
+      // v3.69.0: the source groups the strip paints, one line each.
+      (Array.isArray(fnd.sources) ? fnd.sources.map((g) => [g && g.id, (g && g.label) || null,
+        g && g.reachableHere === true, (g && g.documentCount) || 0, (g && g.lastRefreshAt) || null]) : null),
       (Array.isArray(fnd.documents) ? fnd.documents : []).map((d) => [
         d && d.slug, (d && d.title) || null, (d && d.role) || null,
         (d && d.freshness) || null, (d && d.bytes) || 0,
         // v3.67.0: the routing, so a change made elsewhere repaints the cell.
         d && d.readFirst === true, d && d.hidden === true,
         (d && d.commit) || null,
+        // v3.69.0: where the row came from decides its word and its controls.
+        d && d.source ? [d.source.kind || null, d.source.group || null, d.source.path || null] : null,
+        (d && d.copiedFrom) || null,
         d && d.updatedAt ? formatAge(effectiveSave({ savedAt: d.updatedAt }).seconds) : null,
       ])]
     : null;
@@ -1702,7 +1721,7 @@ function screenSignature() {
   // which is a different set of pixels. Stamped, so a result belonging to
   // another project cannot hold this one's paint.
   const fndActionMark = state.fnd
-    ? [state.fnd.domain, state.fnd.project, !!state.fnd.busy, state.fnd.error || null,
+    ? [state.fnd.domain, state.fnd.project, !!state.fnd.busy, state.fnd.group || null, state.fnd.error || null,
       state.fnd.result ? Object.keys(state.fnd.result).map((k) => [k, state.fnd.result[k].length]) : null]
     : null;
   // ── TIER 0'S EDITOR AND ITS CHOOSER ARE PANES TOO (v3.61.0) ────────────
@@ -1737,21 +1756,6 @@ function screenSignature() {
       fe.error || null, !!fe.preview, !!fe.confirmDiscard, !!fe.confirmShrink,
       !!fe.confirmDelete, !!fe.deleting, fe.importError || null,
       fe.role || null, (fe.text || '').length, (fe.title || '').length, (fe.slug || '').length]
-    : null;
-  const fi = state.fndInit;
-  const fndInitMark = fi
-    ? [fi.domain, fi.project, !!fi.busy, fi.error || null,
-      fi.choice ? [fi.choice.ownership, !!fi.choice.seed, !!fi.choice.scanning,
-        fi.choice.scanError || null,
-        Array.isArray(fi.choice.candidates) ? fi.choice.candidates.length : null,
-        Object.keys(fi.choice.picks || {}).length,
-        Object.keys(fi.choice.roles || {}).map((k) => [k, fi.choice.roles[k]]),
-        fi.choice.roleOpenFor || null,
-        (fi.choice.extras || []).map((e) => [e.path, e.role]),
-        fi.choice.extraRole || null,
-        (fi.choice.imports || []).map((f) => [f.slug || f.name, f.role || null, f.error || null]),
-        fi.choice.importError || null] : null,
-      Array.isArray(fi.refused) ? fi.refused.map((r) => [r.path, r.reason]) : null]
     : null;
 
   // THE EDITOR IS A PANE TOO, and the same rule applies to it as to the
@@ -1907,7 +1911,6 @@ function screenSignature() {
     fndActionMark,
     fndForceMark,
     fndEditMark,
-    fndInitMark,
     knowledgeMark,
     captureMark,
     sessionMark,
@@ -3668,7 +3671,9 @@ async function copyDraftingAsk(token) {
   const project = state.activeProject;
   const facts = foundationsFacts(state.projectRead);
   const unfilled = facts.docs.filter((d) => skeletonOf(d));
-  const documents = (unfilled.length ? unfilled : facts.docs).map((d) => ({
+  // v3.69.0: never a MIRRORED document — an agent's save to one is refused.
+  const kept = facts.docs.filter((d) => FSRC.isKept(d));
+  const documents = (unfilled.length ? unfilled : kept).map((d) => ({
     slug: d.slug, role: d.role, title: d.title,
   }));
   let text = '';
@@ -5384,10 +5389,12 @@ function renderProject() {
       + '<p>Until now those lived only inside a code repository, which meant an agent without a '
       + 'checkout could not see them, and an ingested copy did not travel because source files are '
       + 'not synced. These do travel, beside the brief and the handoffs.</p>'
-      + '<p>Every project answers <b>one question once</b>: does The Curator keep these documents, '
-      + 'or are they <b>mirrored</b> from a repository on this computer? The store refuses a mix, '
-      + 'and the answer cannot be changed afterwards — so a project that has not answered it yet '
-      + 'shows the choice here rather than an empty table.</p>'
+      // v3.69.0: the "one question once" paragraph was the v3.61.0 rule, and
+      // the maintainer retired it — the source is recorded per document.
+      + '<p>Each document <b>remembers where it came from</b>: written here, copied in once from '
+      + 'a folder, or <b>mirrored</b> from a folder or a GitHub repository. One project can hold all '
+      + 'of them at once, from up to eight sources, and each mirrored '
+      + 'source is refreshed on its own.</p>'
       + '<p><b>Mirrored</b> means a byte-for-byte copy of a file in a checkout, with the commit it '
       + 'came from recorded and a checksum compared on every read — that is what the freshness '
       + 'column reports. A plain folder with no version control in it works perfectly well as a '
@@ -5402,12 +5409,11 @@ function renderProject() {
       + '<b>skeletons</b>: documents that carry prompts rather than prose, which an agent is told '
       + 'to answer rather than to believe.</p>'
       // THE SENTENCE THAT USED TO SIT UNDER THE TABLE (v3.65.0). A standing
-      // fact about ownership, not an outcome, and ownership is set once — so
-      // it belongs where the rest of the ownership explanation is.
-      + '<p>On a <b>mirrored</b> project an agent’s save here is <b>refused</b>: the documents '
-      + 'belong to the folder they are copied from, so an agent asked to write one is told to '
-      + 'change it there and refresh. The row’s own summary says <b>mirrored</b>, which is the '
-      + 'one-word form of the same fact.</p>'
+      // fact, not an outcome — v3.69.0 made it per document (maintainer
+      // decision D4: an agent may create a new document anywhere).
+      + '<p>An agent may write a <b>new</b> document into any project, but its save to a '
+      + '<b>mirrored</b> document is <b>refused</b>: that document belongs to its source, so an agent '
+      + 'asked to change it is told to change it there and refresh. Each row says which kind it is.</p>'
       + '<p>An edit here is <b>yours</b>, stamped as a human write and never as an agent’s — the '
       + 'same rule the standing brief follows. One cost comes with it: this tier has no per-machine '
       + 'copy, so two computers editing one document converge to whichever saved last. Edit rarely, '
@@ -7226,18 +7232,20 @@ function renderBrief(read) {
 // that: what is here, how big, where each one came from, and — for a mirror —
 // whether the copy still matches the file it was copied from.
 //
-// ── TWO OWNERSHIP MODES, AND THE APP WRITES NEITHER ──────────────────────
-// A project's documents are all CURATOR-owned or all REPO-owned, never mixed.
+// ── FOUR KINDS OF DOCUMENT, ONE PROJECT (v3.69.0) ─────────────────────────
+// Through v3.68.0 a project's documents were all CURATOR-owned or all
+// REPO-owned. The maintainer retired that: the source is recorded PER
+// DOCUMENT, and one project may hold all four kinds at once —
 //
-//   · CURATOR-owned — written by an agent the owner commissioned, through the
-//     `save_foundation` MCP tool. Nothing in this view writes one, and there
-//     is no route that could: the single-writer property that protects a
-//     handoff protects these the same way.
-//   · REPO-owned — a MIRROR of a file in a code repository. "Refresh from
-//     repo" re-copies the bytes, compares sha256 and stamps the commit. That
-//     is a copy, not an authorship, which is the whole argument for the one
-//     control on this block that reaches a write route (src/routes/memory.js
-//     records it at the route).
+//   · WRITTEN here (the owner's pen, or an agent they commissioned);
+//   · COPIED in once from a folder ("Copy once") — never refreshed;
+//   · a FOLDER mirror ("Keep in sync") — re-copied by Refresh;
+//   · a GITHUB mirror — re-read from the repository by Refresh.
+//
+// The two mirrored kinds belong to a SOURCE GROUP (a folder or a repository,
+// up to 8 per project), and each group refreshes on its own. The rules — what
+// a row is, what it says, what deleting it does — live in
+// shared/foundations-sources.js (`FSRC`); `ownership` is display-only.
 //
 // ── FRESHNESS IS COMPUTED, NOT REMEMBERED ────────────────────────────────
 // `fresh` / `stale` / `unreachable` come off a sha256 comparison the store
@@ -7285,6 +7293,18 @@ function foundationsFacts(read) {
   let readFirst = 0;
   let readFirstBytes = 0;
   let hidden = 0;
+  // ── v3.69.0: THE SOURCE GROUPS, AND EACH ROW'S OWN UNCHECKED WORD ──────
+  // An `unreachable` document is "GitHub · not checked" or "source not here"
+  // by ITS group, never by the project's (§3.4) — so the two are counted
+  // apart, through the same function the row's cell paints with.
+  const sources = FSRC.sourcesOf(f);
+  let notChecked = 0;
+  let notHere = 0;
+  for (const d of docs) {
+    const w = FSRC.rowFreshWord(d, sources).word;
+    if (w === FSRC.NOT_CHECKED) notChecked++;
+    else if (w === FSRC.NOT_HERE) notHere++;
+  }
   for (const d of docs) {
     // v3.67.0: "not at start". `readFirst` wins a hand-edited contradiction,
     // the store's own rule (`validateManifest`), so it is counted only here.
@@ -7315,8 +7335,13 @@ function foundationsFacts(read) {
   }
   return {
     present: !!(f && f.present),
+    // DISPLAY-ONLY since v3.69.0 (it may read `mixed`): nothing branches on it.
     ownership: (f && f.ownership) || null,
     repo: (f && f.repo) || null,
+    sources,
+    kinds: FSRC.kindCounts(docs, sources),
+    notChecked,
+    notHere,
     docs,
     count: docs.length,
     bytes: f && Number.isInteger(f.totalBytes) && f.totalBytes > 0
@@ -7378,10 +7403,15 @@ function foundationsFacts(read) {
  * `null` when there is no manifest: an absent mode is not a third mode, and
  * the no-manifest summary (`foundationsSummaryMeta`) says so in its own words.
  */
+//
+// ── v3.69.0: FROM THE DOCUMENTS, NEVER FROM `ownership` ──────────────────
+// A project may mix written documents, copies and mirrors of several sources
+// now, so "who owns these" is an ORIGIN clause read off the rows: `kept
+// here`, `mirrored`, `mirrored from 3 sources`, or a mix such as `written,
+// copied and mirrored` / `written and 3 from GitHub` (FSRC.originWord). The
+// name is kept because every suite that drives the summary lifts it by name.
 function foundationsOwnershipWord(facts) {
-  if (facts.ownership === 'repo') return 'mirrored';
-  if (facts.ownership === 'curator') return 'kept here';
-  return null;
+  return FSRC.originWord(facts);
 }
 
 /**
@@ -7408,9 +7438,10 @@ function foundationsSummaryMeta(facts) {
   if (!facts.present) return 'not set up · choose how documents arrive';
   const own = foundationsOwnershipWord(facts);
   if (!facts.count) {
-    if (facts.ownership === 'repo') return 'mirrored · no documents copied yet';
-    if (facts.ownership === 'curator') return 'kept here · no documents yet';
-    return 'not set up · choose how documents arrive';
+    // v3.69.0: a DECLARED source with nothing copied from it yet is the one
+    // empty state that still names where documents will come from.
+    if (facts.sources && facts.sources.length) return 'mirrored · no documents copied yet';
+    return 'kept here · no documents yet';
   }
   // ── WHICH BUDGET THE SIZE CLAUSE IS ABOUT (v3.62.0) ────────────────
   //
@@ -7602,7 +7633,9 @@ function foundationsWord(facts) {
   if (facts.stale) return facts.stale + ' stale';
   // v3.67.2: a GitHub mirror records no folder, so its documents read
   // `unreachable` on every read — "not checked" is what is true of them.
-  if (facts.unreachable) return foundationsRemoteSource(facts.repo) ? 'GitHub · not checked' : 'source unreachable';
+  // v3.69.0: by each document's own group — "source unreachable" only when
+  // some folder really is not here and has no GitHub route either.
+  if (facts.unreachable) return facts.notHere ? 'source unreachable' : 'GitHub · not checked';
   // ── SKELETONS RANK BELOW A BROKEN COMPARISON AND ABOVE "Curator-authored"
   //    (v3.61.0) ───────────────────────────────────────────────────────────
   // A skeleton is not a fault and it is not a document either: it is a set of
@@ -7617,10 +7650,13 @@ function foundationsWord(facts) {
     return facts.skeletons + ' skeleton' + (facts.skeletons === 1 ? '' : 's') + ' to fill';
   }
   if (facts.fresh) return 'fresh';
-  // v3.68.0 — a curator-kept project's documents are WRITTEN here or COPIED
-  // in from a folder, and the word says which rather than calling a copy
-  // "written".
-  if (facts.ownership === 'curator') {
+  // v3.68.0 — a project of KEPT documents says whether they were WRITTEN here
+  // or COPIED in from a folder, rather than calling a copy "written".
+  // v3.69.0 — decided by the documents' kinds, never by `ownership`; a
+  // project that mixes kept documents with mirrors says so in the origin
+  // clause before this one, so the state word here is about the kept ones.
+  const k = facts.kinds || { written: 0, copied: 0, folder: 0, github: 0 };
+  if (k.written + k.copied === facts.count) {
     const copied = Number.isInteger(facts.copied) ? facts.copied : 0;
     if (copied && copied >= facts.count) return 'copied';
     if (copied) return 'written and copied';
@@ -7629,150 +7665,25 @@ function foundationsWord(facts) {
   return 'no freshness reading';
 }
 
-// ── `foundationsRefreshOffer` IS GONE (v3.61.0, P1-4) ────────────────────
-// It answered "may this project be refreshed, and if not why not" for ONE head
-// slot. The head now carries up to three controls and the question became
-// "which of them does this state get", which is the function below — and a
-// helper kept alive only because a suite pinned it is worse than no helper:
-// scripts/test-next-memory-view.js drives the successor instead.
-
-/**
- * WHICH HEAD CONTROLS THIS STATE GETS — one table, five rows (P1-4, §3.5).
- *
- * ── WHY "NEVER BOTH" WAS WRONG ──────────────────────────────────────────
- * The first cut gave the head ONE slot filled by ownership: a mirror got
- * "Refresh from repo", a curator-owned project got "Add document". That closes
- * the door on the ordinary case: a mirror set up with three documents can be
- * re-copied for ever and never EXTENDED, so the only way to add a fourth
- * becomes an agent's `save_working_state({repo_root})` — which is exactly the
- * "the app writes nothing on this tier" complaint this release exists to fix.
- *
- * Two secondaries and no primary is the correct taxonomy here: neither
- * completes a step in front of the owner, and both act.
- *
- * | state                                     | controls                    |
- * |-------------------------------------------|-----------------------------|
- * | curator-owned                             | Add document                |
- * | repo-owned, >= 1 document, root reachable | Refresh from repo · Add from folder |
- * | repo-owned, 0 documents, root reachable   | Add from folder             |
- * | repo-owned, root unreachable              | none; the withheld reason   |
- * | read-only mirror                          | none; the mirror note       |
- */
-/**
- * IS THIS MIRROR READ FROM GITHUB RATHER THAN FROM A FOLDER? (v3.67.2)
- *
- * ── THE SENTENCE THAT WAS FALSE ON THE MAINTAINER'S OWN PROJECT ────────
- * Every document of a repo-owned mirror reads `unreachable` whenever the
- * manifest records NO local folder (`repo.root: null`), because the store
- * only ever re-hashes against that folder and never compares over the
- * network on a read (working-state.js `computeFreshness`; the memory layer's
- * "freshness is never compared over the network on a read" invariant). A
- * mirror whose last refresh ran over the GITHUB arm is written exactly that
- * way — `refreshRemoteCore` / a source switch clear `root` and set `remote` —
- * so on the very machine that holds the checkout, this screen told its owner
- * "the folder these were copied from is not on this computer". It was never
- * copied from a folder at all.
- *
- * So the two cases are told apart HERE, from the manifest the route already
- * sends, and the store is not touched:
- *   · no `root` AND a recorded `remote` → mirrored from GitHub; freshness is
- *     simply not checked until the next refresh (this function's answer);
- *   · a recorded `root` that is now missing, or neither → the folder really
- *     is not on this computer (null; the old sentence stands, and is true).
- *
- * @returns {{label: string, refreshedAt: string|null, commit: string|null}|null}
- */
-function foundationsRemoteSource(repo) {
-  if (!repo || typeof repo !== 'object') return null;
-  if (typeof repo.root === 'string' && repo.root) return null;
-  const r = repo.remote;
-  if (!r || typeof r !== 'object') return null;
-  const owner = typeof r.owner === 'string' ? r.owner.trim() : '';
-  const name = typeof r.repo === 'string' ? r.repo.trim() : '';
-  if (!owner || !name) return null;
-  return {
-    label: owner + '/' + name,
-    refreshedAt: typeof repo.lastRefreshAt === 'string' ? repo.lastRefreshAt : null,
-    commit: typeof repo.lastRefreshCommit === 'string' ? repo.lastRefreshCommit.slice(0, 7) : null,
-  };
-}
+// ── `foundationsRefreshOffer`, `foundationsControlOffer` AND
+//    `foundationsRemoteSource` ARE GONE (v3.61.0, v3.69.0) ───────────────
+// The last two answered "which head controls does this project's ONE source
+// get" and "is that one source read from GitHub". A project has many sources
+// now, so the refresh controls moved to the SOURCES STRIP — one Refresh per
+// group (FSRC.sourcesStripModel) — and "is this read from GitHub" is a
+// question about a document's own group (FSRC.rowFreshWord). The v3.67.2
+// "disabled, never hidden" folder controls went with them: both doors are
+// always enabled (§4.1), and a group whose folder is not here still refreshes
+// over GitHub when it has a remote recorded.
 
 /**
  * WHY A DOCUMENT READS "source not here" / "GitHub · not checked" — the one
- * sentence the toast shows when the owner presses that word, or a folder
- * control this state withholds (v3.67.2). Through v3.67.1 the first of these
- * stood permanently under the table as a floating note; the row's own word is
- * now the persistent indicator and the explanation arrives on the press.
+ * sentence the toast shows when the owner presses that word (v3.67.2), now
+ * from the DOCUMENT's own source group (v3.69.0, §3.4).
  */
-function foundationsUncheckedWhy(facts) {
-  const remote = foundationsRemoteSource(facts && facts.repo);
-  if (remote) {
-    return {
-      title: 'Mirrored from GitHub (' + remote.label + ')',
-      lines: [
-        'Freshness is not checked on a read — only when the documents are refreshed.',
-        'Refresh from GitHub to re-copy them, or refresh from this computer\u2019s checkout to compare it live.',
-      ],
-    };
-  }
-  return {
-    title: 'The source folder is not on this computer',
-    lines: [
-      'So these documents can neither be re-copied nor added to here.',
-      'Mirror it from GitHub instead, or open the project on the machine that has the folder.',
-    ],
-  };
-}
-
-function foundationsControlOffer(facts, readonly) {
-  // A READ-ONLY SHARED BRAIN MIRROR GETS NOTHING (P1-3). Every route this
-  // block can reach answers 403 (`refuseMirror`), and a control whose only
-  // outcome is a refusal is worse than none (v3.16.1). The reason is a note,
-  // not an absence (v3.17.1).
-  if (readonly) {
-    return {
-      refresh: false, add: false, mirror: false,
-      reason: 'A read-only mirror — documents here are copied in, never edited.',
-    };
-  }
-  if (facts.manifestError) return { refresh: false, add: false, mirror: false, reason: null };
-  if (!facts.present) return { refresh: false, add: false, mirror: false, reason: null };
-  if (facts.ownership === 'curator') return { refresh: false, add: true, mirror: false, reason: null };
-  // REPO-OWNED. Reachability is read off the DOCUMENTS, never off `repo.root`
-  // — the manifest records a path on the machine that last refreshed, which on
-  // any other machine is a hint, while each document's own `freshness` is what
-  // the store actually measured.
-  const reachable = !facts.count
-    || facts.docs.some((d) => d.freshness === 'fresh' || d.freshness === 'stale');
-  if (!reachable && foundationsRemoteSource(facts.repo)) {
-    // ── MIRRORED FROM GITHUB, NOT FROM A MISSING FOLDER (v3.67.2) ─────────
-    // See `foundationsRemoteSource`: no local folder is recorded because the
-    // documents came over the GitHub arm. Nothing is withheld — Refresh takes
-    // the store's `auto` arm, which reads GitHub when no checkout is named —
-    // so there is no reason to state, and "Mirror from GitHub instead" would
-    // offer the source the project already has.
-    return {
-      refresh: facts.count > 0, add: false, mirror: false, reason: null,
-      remote: foundationsRemoteSource(facts.repo).label,
-    };
-  }
-  if (!reachable) {
-    // ── AND THIS IS THE ARM THAT MOST NEEDS THE GITHUB CONTROL ──────────
-    // Through v3.65.0 this arm offered NOTHING — and it is exactly the machine
-    // the store's remote arm was built for: `refreshFoundationsFromRepo` takes
-    // the remote path when the checkout is not reachable
-    // (src/brain/working-state.js:5856-5869), so the app had a shipped
-    // capability with no control on the only computer that needs it. The
-    // reason still stands beside it: the FOLDER is not here, and that is why
-    // the two folder controls are withheld.
-    return {
-      refresh: false, add: false, mirror: true, sourceMissing: true,
-      reason: 'The folder these were copied from is not on this computer, so they can neither '
-        + 'be re-copied nor added to here. Mirror it from GitHub instead, or open the '
-        + 'project on the machine that has the folder.',
-    };
-  }
-  return { refresh: facts.count > 0, add: true, mirror: true, reason: null };
+function foundationsUncheckedWhy(facts, slug) {
+  const doc = (facts && Array.isArray(facts.docs) ? facts.docs : []).find((d) => String(d.slug || '') === slug);
+  return FSRC.uncheckedWhy(doc || null, facts && facts.sources);
 }
 
 /**
@@ -7804,23 +7715,22 @@ function skeletonOf(d) {
 }
 
 /**
- * "STOP MIRRORING THIS DOCUMENT?" — the confirm strip for a row Remove.
+ * "DELETE THIS DOCUMENT?" — the confirm strip for a row's trash icon.
  *
  * ── IN FLOW, UNDER THE TABLE, NEVER A DIALOG (v3.61.1) ──────────────────
  * The same rule the editor's own delete strip and the brief's unsaved-draft
  * bar follow: the thing under discussion has to stay on screen while the owner
  * decides about it. A modal would cover the row they are looking at.
  *
- * ── AND IT NAMES THE OUTCOME, WHICH IS NOT "DELETED" ────────────────────
- * On a mirror the copy goes and the SOURCE FILE DOES NOT. That is the whole
- * difference between this strip and the editor's, and it is the sentence
- * somebody needs before pressing: "are you sure?" over 25 rows is a question
- * about none of them, and "cannot be undone" would be false here — the file is
- * still in the folder and can be mirrored again from the same picker.
+ * ── ONE SENTENCE, SHARED WITH THE EDITOR'S DELETE (v3.69.0, §5.2) ───────
+ * The words come from `FSRC.deleteConfirmCopy`, which the editor's strip
+ * calls too, so the row and the editor say the SAME thing about the same
+ * document. What that sentence exists to say: only THIS project's copy goes;
+ * the original — in the folder, or on GitHub — is not touched and is named;
+ * and for a mirror, a refresh does NOT bring it back.
  *
  * `.btn-danger-solid` is the taxonomy's one sanctioned filled-danger use: a
- * confirm whose primary action IS the destruction. The row's own opener stays
- * tinted.
+ * confirm whose primary action IS the destruction.
  */
 function renderFoundationStop(facts) {
   const st = state.fndStop;
@@ -7829,89 +7739,84 @@ function renderFoundationStop(facts) {
   // A SLUG THAT IS NO LONGER IN THE TABLE IS NOT A QUESTION. A refresh that
   // dropped the document, or a second tab, would otherwise leave a confirm
   // about a row nobody can see — answered against a document already gone.
-  if (!facts.docs.some((d) => String(d.slug || '') === slug)) return '';
-  const mirrored = facts.ownership === 'repo';
+  const row = facts.docs.find((d) => String(d.slug || '') === slug);
+  if (!row) return '';
+  const copy = FSRC.deleteConfirmCopy(row, facts.sources);
   return (
-    '<div class="mem-fnd-delete-bar" role="alertdialog" aria-label="Stop mirroring this document">' +
-      '<span>' + (mirrored
-    ? 'Stop mirroring <b>' + escapeHtml(slug) + '</b>? The copy is removed and your agents '
-          + 'stop reading it; the file in your folder is untouched, and you can mirror it again '
-          + 'from the same picker.'
-    : 'Remove <b>' + escapeHtml(slug) + '</b>? The document is removed from this project and '
-          + 'from your agents\u2019 next session. It cannot be undone from inside The Curator; if '
-          + 'you sync, a git client can still recover it.') + '</span>' +
+    '<div class="mem-fnd-delete-bar" role="alertdialog" aria-label="Delete this document"'
+      + ' data-fnd-delete-kind="' + escapeHtml(copy.kind) + '">' +
+      '<span>' + copy.html + '</span>' +
       '<button type="button" class="btn btn-danger-solid btn-xs" id="mem-fnd-stop-go"' +
         (st.busy ? ' disabled' : '') + '>' +
-        escapeHtml(st.busy ? 'Removing\u2026' : (mirrored ? 'Stop mirroring' : 'Remove permanently')) +
+        escapeHtml(st.busy ? 'Deleting…' : copy.primary) +
       '</button>' +
       '<button type="button" class="btn btn-ghost btn-xs" id="mem-fnd-stop-no"' +
         (st.busy ? ' disabled' : '') + '>Keep it</button>' +
       (st.error
-        ? '<span class="mem-fnd-stop-error">' + escapeHtml(String(st.error)) + '</span>'
+        ? '<span class="mem-fnd-stop-error" role="alert">' + escapeHtml(String(st.error)) + '</span>'
         : '') +
     '</div>'
   );
 }
 
-function fndRowHtml(d, editable, readonly, budgetBytes, suggest, remoteLabel) {
+/**
+ * ONE DOCUMENT ROW.
+ *
+ * `keptOnly` is the TABLE VARIANT (P2-1): true when every document is kept
+ * here (written or copied), which keeps v3.68.0's five-column curator table
+ * exactly as it was. Any mirrored row switches the whole table to the unified
+ * variant (§7): one Source cell — the kind word, or the mirrored path — plus a
+ * Freshness cell whose word comes from the row's OWN source group.
+ *
+ * The edit cell carries the PENCIL on a kept row only (a mirror is changed at
+ * its source) and the TRASH ICON on every row (§5.1).
+ */
+function fndRowHtml(d, keptOnly, readonly, budgetBytes, suggest, sources) {
   const slug = String(d.slug || '');
   const rowId = 'mem-fnd-' + slug.replace(/[^a-z0-9]+/gi, '-');
+  const kind = FSRC.rowKind(d, sources);
+  const kept = kind === 'written' || kind === 'copied';
+  const group = FSRC.groupOf(d, sources);
   // `.fnd-src-path`, NOT the shared `.mono` utility span. The work-stream slug
   // one table up takes the code face through a class of its own for the same
   // reason: this is a piece of DATA with a role, not a fragment of prose that
   // happens to be monospaced, and scripts/test-next-views-kit.js ratchets this
   // view's `.mono` spans precisely so a table of them cannot accumulate.
-  const src = d.source && d.source.kind === 'repo' && d.source.path
-    ? '<span class="fnd-src-path">' + escapeHtml(d.source.path) + '</span>'
+  // v3.69.0: with two or more sources a path alone is ambiguous, so the
+  // group's label rides under it.
+  const many = Array.isArray(sources) && sources.length >= 2;
+  const src = kept
+    ? escapeHtml(FSRC.sourceWord(d))
+    : '<span class="fnd-src-path">' + escapeHtml(FSRC.sourceWord(d)) + '</span>'
       + (d.commit ? '<span class="fnd-commit"> @ ' + escapeHtml(String(d.commit).slice(0, 7)) + '</span>' : '')
-    : 'Curator-authored';
-  // ── WHAT A CURATOR-OWNED ROW SAYS INSTEAD (P2-1) ───────────────────────
-  // Not "Curator-authored" and "—" in two columns whose every cell says the
-  // same thing: on a curator-owned project `Source` has one value and `Copy`
-  // has one value, and a column with one value is the table equivalent of a
-  // flag on 100 % of a list (v3.53.1). The two columns collapse into ONE that
-  // carries the row's only variable fact — is this written, and by whom, or is
-  // it still a set of prompts.
-  const stateWord = skeletonOf(d) ? 'skeleton · to fill'
-    // v3.68.0 — COPIED from a folder, not written by anybody here.
-    : copiedFromOf(d) ? 'copied from ' + copiedFromOf(d)
-    : (d.authoredBy && d.authoredBy.kind === 'human') ? 'written by you'
-      : (d.authoredBy && d.authoredBy.kind) ? 'written by an agent' : 'written';
-  // THE SHARED SCALE, AND ONLY ON THE TIERS THAT HAVE A READING. fresh and
-  // stale are the two ends of a comparison that was actually made;
-  // `unreachable` is the dashed unknown ring, which is exactly what it means
-  // everywhere else in the app. A curator-authored document gets NO dot: there
-  // is no upstream to be fresh against, and a grey dot beside "—" would read
-  // as a stale one at a glance.
-  //
-  // ── A SKELETON READS "skeleton · to fill", AND IT TAKES NO DOT (v3.61.0)
-  // A skeleton is a curator-owned document, so it has no upstream and would
-  // have got the em dash. The dash is right for a written one and wrong here:
-  // an unfilled prompt IS the one fact on this row somebody needs, and "—"
-  // says nothing. It stays dotless for the reason a written curator document
-  // is: the scale paints a COMPARISON, and there is nothing to compare this
-  // against. The word carries it instead.
+      + (many && group ? '<span class="fnd-src-group">' + escapeHtml((kind === 'github' ? 'GitHub · ' : 'Folder · ')
+        + (group.label || 'source not recorded')) + '</span>' : '');
+  // ── THE ROW'S WORD, FROM ITS OWN GROUP (§3.4) ─────────────────────────
+  // fresh and stale are the two ends of a comparison that was actually made;
+  // `unknown` is the dashed ring for a comparison that could not be made here.
+  // A KEPT document — written, copied or a skeleton — gets its state word and
+  // NO dot: there is no upstream to be fresh against, and a grey dot beside
+  // it would read as a stale one at a glance.
+  const fw = FSRC.rowFreshWord(d, sources);
   const skeleton = skeletonOf(d);
-  const tier = skeleton ? null
-    : d.freshness === 'fresh' ? 'recent'
-      : d.freshness === 'stale' ? 'week'
-        : d.freshness === 'unreachable' ? 'unknown' : null;
-  const word = skeleton ? 'skeleton · to fill'
-    : d.freshness === 'fresh' ? 'fresh'
-      : d.freshness === 'stale' ? 'stale'
-        : d.freshness === 'unreachable'
-          // v3.67.2: a GitHub mirror has no local folder to compare against —
-          // that is "not checked", never "not here" (foundationsRemoteSource).
-          ? (remoteLabel ? 'GitHub · not checked' : 'source not here') : '—';
   const ageSecs = d.updatedAt
     ? Math.max(0, Math.round((Date.now() - Date.parse(d.updatedAt)) / 1000)) : null;
   const age = Number.isFinite(ageSecs) ? formatAge(ageSecs) : null;
   const bytes = Number.isInteger(d.bytes) ? d.bytes : 0;
   const size = bytes < 1024 ? bytes + ' bytes' : Math.round(bytes / 1024).toLocaleString('en-US') + ' KB';
   return (
-    '<tr class="fnd-row">' +
-      '<td class="fnd-cell-role"><span class="fnd-role">' + escapeHtml(d.role || 'other') + '</span></td>' +
+    '<tr class="fnd-row" data-fnd-kind="' + escapeHtml(kind) + '">' +
+      // ── THE UNIFIED TABLE IS SIX COLUMNS, NOT EIGHT (v3.69.0) ──────────
+      // MEASURED against the stub harness at a 1400px window: the documents
+      // box is 566px wide, and Role · Document · Size · At start · Source ·
+      // Freshness · Updated · Actions came to 715px — the trash icon, the one
+      // control every row now has, sat behind a horizontal scroll. So in the
+      // unified variant the role rides above the title and the age under the
+      // freshness word, in the cells whose facts they qualify. The kept-only
+      // table is v3.68.0's, unchanged.
+      (keptOnly ? '<td class="fnd-cell-role"><span class="fnd-role">' + escapeHtml(d.role || 'other') + '</span></td>' : '') +
       '<td class="fnd-cell-title">' +
+        (keptOnly ? '' : '<span class="fnd-role fnd-role-inline">' + escapeHtml(d.role || 'other') + '</span>') +
         '<button type="button" class="fnd-open" id="' + escapeHtml(rowId) + '"' +
           ' aria-label="' + escapeHtml('Open ' + (d.title || slug)) + '"' +
           ' data-fnd-slug="' + escapeHtml(slug) + '">' +
@@ -7928,102 +7833,67 @@ function fndRowHtml(d, editable, readonly, budgetBytes, suggest, remoteLabel) {
       // IT IS NOT THE 120 KB BOOTSTRAP BUDGET, and the two must stay named
       // apart (CLAUDE.md's own invariant): `CONTEXT_MAX_BYTES_DEFAULT` is the
       // READING budget and applies only to the `readFirst` subset, while this
-      // column lists EVERY document. Measuring every row against the reading
-      // budget would paint an ordinary project's third document red.
-      //
-      // A DOCUMENT WHOSE OWN BYTES EXCEED THE BUDGET takes the whole cell in
-      // the danger tone — the component's one automatic tone, and the only
-      // condition that may set it. v3.16.1 still holds: the same fact is in
-      // words, unfolded, in `#mem-fnd-budget` under the row.
+      // column lists EVERY document.
       '<td class="fnd-cell-size">' + renderDepthCell({
         value: size,
         amount: bytes,
         budget: budgetBytes,
         label: fndSize(bytes) + ' of a ' + fndSize(budgetBytes) + ' project budget',
       }) + '</td>' +
-      // ── "READ FIRST" — WHAT AN AGENT IS HANDED WITHOUT ASKING ────────
-      //
-      // A flagged document's BODY arrives with every session; an unflagged one
-      // rides as an index line the agent opens BY NAME on the brief's
-      // instruction. That is the one fact on this row a person changes their
-      // mind about, so it is a control rather than a reading.
-      //
-      // ALLOWED ON BOTH OWNERSHIPS. The flag is curator METADATA ABOUT a
-      // document, never part of it, so setting it on a mirror writes nothing
-      // into the copy and cannot make the app a second author of the file. It
-      // is withheld only on a read-only Shared Brain mirror, where every route
-      // answers 403 and a control whose only outcome is a refusal is worse
-      // than none (v3.16.1).
-      //
-      // `aria-pressed` rather than a checkbox: it is a toggle that stays
-      // pressed, which is exactly what that attribute means — and unlike the
-      // OVERVIEW tiles' case, this one really does stay. The WORD is the
-      // reading; the tick is the affordance, and neither carries it alone.
-      //
-      // ── v3.67.0: THREE STATES, IN THE SAME CELL ─────────────────────────
-      // The two-way toggle became the shared listbox — read first · on request
-      // · not at start — in this cell and this column, so the one fact a person
-      // changes their mind about is still set in one place. Each option's
-      // secondary line is the model, taught in the control that sets it.
-      // `data-fnd-first` rides on the cell so "Choose documents" still finds
-      // the first one.
+      // ── "AT SESSION START" — THREE STATES (v3.67.0) ─────────────────────
+      // Curator METADATA ABOUT a document, never part of it, so it is set on
+      // every kind, mirrors included. Withheld only on a read-only Shared
+      // Brain mirror, where every route answers 403.
       (readonly ? '' : '<td class="fnd-cell-first" data-fnd-first="' + escapeHtml(slug) + '">'
         + renderListboxHtml(fndStartCfg(d, state.startSaving === slug))
         + '</td>') +
       // ── THE SUGGESTED COLUMN, WHILE A PROPOSAL IS PENDING (v3.67.0) ─────
-      // Transient: it exists only while the helper's proposal does, and a
-      // row the proposal says nothing about gets an empty cell so the columns
-      // still line up. `suggest` undefined means no column at all.
       (suggest === undefined ? '' : fndSuggestCellHtml(d, suggest)) +
-      // THE COLUMN VARIANT (P2-1). `editable` is the curator-owned arm, and it
-      // is the same flag that decides whether this row gets a pencil — one
-      // condition, so the head and the body cannot disagree about which table
-      // this is.
-      (editable
-        ? '<td class="fnd-cell-state">' + escapeHtml(stateWord) + '</td>'
+      // THE COLUMN VARIANT (P2-1, v3.69.0). A project of kept documents keeps
+      // its ONE State column; any mirror makes it Source + Freshness.
+      (keptOnly
+        ? '<td class="fnd-cell-state">' + escapeHtml(fw.word) + '</td>'
         : '<td class="fnd-cell-source">' + src + '</td>' +
       // THE DOT AND THE WORD IN ONE WRAPPER, and the wrapper is what this view
-      // styles. shared/freshness.css owns the `.fresh-` prefix outright — no
-      // other stylesheet may declare a rule on it (scripts/test-freshness-scale.js
-      // fails one that does) — so the gap between mark and word belongs to a
-      // class of this view's own rather than to a `.fresh-dot` selector here.
+      // styles. shared/freshness.css owns the `.fresh-` prefix outright.
       '<td class="fnd-cell-fresh"><span class="fnd-fresh">' +
-        (tier ? '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' : '') +
+        (fw.tier ? '<span class="fresh-dot fresh-' + fw.tier + '" aria-hidden="true"></span>' : '') +
         // THE PERSISTENT INDICATOR, AND THE DOOR TO ITS REASON (v3.67.2). An
-        // unchecked source's word is a button: pressing it shows why as a
-        // toast (`data-fnd-why`, wired in bindFoundationRows). Every other
-        // word stays plain text — it has nothing more to say.
-        (d.freshness === 'unreachable' && !skeleton
+        // unchecked word is a button: pressing it shows why, for THIS row's
+        // group, as a toast (`data-fnd-why`, wired in bindFoundationRows).
+        (fw.why && !skeleton
           ? '<button type="button" class="fnd-fresh-word fnd-fresh-why" data-fnd-why="' + escapeHtml(slug) + '"'
-            + ' aria-label="' + escapeHtml(word + ' — why?') + '">' + escapeHtml(word) + '</button>'
-          : '<span class="fnd-fresh-word">' + escapeHtml(word) + '</span>') +
-      '</span></td>') +
+            + ' aria-label="' + escapeHtml(fw.word + ' — why?') + '">' + escapeHtml(fw.word) + '</button>'
+          : '<span class="fnd-fresh-word">' + escapeHtml(fw.word) + '</span>') +
+      '</span>' +
+      // The age, under the word (unified variant) — the same tickAges hook.
+      '<span class="fnd-fresh-age"' +
+        (age && d.updatedAt ? ' data-mem-age-at="' + escapeHtml(d.updatedAt) + '"' : '') + '>' +
+        '<span class="mem-age-words">' + escapeHtml(age || 'unknown') + '</span></span>' +
+      '</td>') +
       // The same hook every other age on this page carries, so tickAges
-      // rewrites it once a second without a render. No stamp, no hook — an
-      // unknown age has nothing to move.
-      '<td class="fnd-cell-age"' +
+      // rewrites it once a second without a render.
+      (keptOnly ? '<td class="fnd-cell-age"' +
         (age && d.updatedAt ? ' data-mem-age-at="' + escapeHtml(d.updatedAt) + '"' : '') + '>' +
         '<span class="mem-age-words">' + escapeHtml(age || 'unknown') + '</span>' +
-      '</td>' +
-      // ── THE EDIT CONTROL, ON CURATOR-OWNED ROWS ONLY (v3.61.0) ─────────
+      '</td>' : '') +
+      // ── THE ROW'S CONTROLS: PENCIL ON A KEPT ROW, TRASH ON EVERY ROW ────
       //
-      // VISIBLE AT REST, never hover-only: touch has no hover, and v3.58.0
-      // recorded a guard that went green while a later `opacity: 0` made a
-      // copy control hover-only. `aria-label` carries the meaning because the
-      // glyph carries none, and there is NO `title=` — this view's tooltip
-      // budget is 1 and may not grow (scripts/test-next-header-adoption.js).
+      // VISIBLE AT REST, never hover-only: touch has no hover. `aria-label`
+      // carries the meaning because the glyph carries none, and there is NO
+      // `title=` — this view's tooltip budget may not grow
+      // (scripts/test-next-header-adoption.js).
       //
-      // A MIRRORED ROW GETS NO CONTROL AT ALL. The route answers 400
-      // `repo_owned` on a PUT to one, and a control whose only outcome is a
-      // refusal is worse than no control (v3.16.1) — the reader's own note
-      // says where that document IS edited instead.
-      // THE CELL ITSELF IS WITHHELD, not merely emptied (v3.61.0, P2-1). The
-      // head emits no `<th>` for it on the mirrored arm, so an empty `<td>`
-      // here would make a six-column head sit over a seven-cell body — the
-      // browser tolerates it and the columns quietly stop lining up, which is
-      // exactly the class of defect only a rendered look finds.
+      // THE PENCIL ONLY ON A KEPT ROW: the route answers 400 `repo_owned` on a
+      // PUT to a mirrored one, and a control whose only outcome is a refusal
+      // is worse than no control (v3.16.1).
+      //
+      // THE TRASH ICON ON EVERY ROW (v3.69.0, §5.1). It replaces v3.61.1's
+      // labelled "Remove" on mirrored rows — the maintainer asked for an icon,
+      // and the confirm strip under the table carries the meaning the label
+      // used to: what is removed, what is kept, and what the next refresh does.
       (readonly ? '' : '<td class="fnd-cell-edit">' +
-        (editable
+        (kept
           ? '<button type="button" class="btn btn-ghost btn-xs fnd-edit"' +
             ' data-fnd-edit="' + escapeHtml(slug) + '"' +
             ' aria-label="' + escapeHtml('Edit ' + (d.title || slug)) + '">' +
@@ -8031,28 +7901,8 @@ function fndRowHtml(d, editable, readonly, budgetBytes, suggest, remoteLabel) {
             'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
           '<path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 6.5l3 3"/></svg>' +
           '</button>'
-          // ── STOP MIRRORING, ON A MIRRORED ROW (v3.61.1) ────────────────
-          //
-          // THE DEFECT: a mirrored project's document list could not be
-          // edited AT ALL. The maintainer mirrored his own repository, got 25
-          // rows including files he never meant to carry, and had no way to
-          // remove one — the route answered 400 `repo_owned` on a DELETE, a
-          // refusal v3.61.0 itself recorded as "arguably wrong".
-          //
-          // It is a `.btn-danger` and not a ghost because the taxonomy is
-          // explicit that the tinted danger face means DESTROYS DATA, and
-          // this destroys the copy. It is LABELLED rather than a glyph, for
-          // the reason this table's own header records: a pencil on a
-          // document is unambiguous and "stop copying this file across from a
-          // folder" is not, so a mark for it would be a guess.
-          //
-          // The word is "Remove" and not "Delete", because what goes is the
-          // COPY: the file in the folder is untouched, which the confirm
-          // strip says in full before anything happens.
-          : '<button type="button" class="btn btn-danger btn-xs fnd-stop"' +
-            ' data-fnd-stop="' + escapeHtml(slug) + '"' +
-            ' aria-label="' + escapeHtml('Stop mirroring ' + (d.title || slug)) + '">' +
-            'Remove</button>') +
+          : '') +
+        FSRC.deleteIconHtml(d) +
         '</td>') +
     '</tr>'
   );
@@ -8070,18 +7920,18 @@ function fndRowHtml(d, editable, readonly, budgetBytes, suggest, remoteLabel) {
 // browser write there would be a SECOND writer stamping a human edit with the
 // last agent's provenance line.
 //
-// Tier 0 splits on OWNERSHIP instead, and the store enforces it before any
-// write: a project's documents are all curator-owned or all repo-owned, and a
-// mismatch is refused. So
+// Tier 0 splits PER DOCUMENT (v3.69.0; per project before it), and the store
+// enforces it before any write: a save to a slug whose entry is a MIRROR is
+// refused, whatever else the project holds. So
 //
-//   · on a MIRROR the app is a COPIER, never an author — "Refresh from repo"
-//     re-copies bytes the repository already wrote, and two copiers of one
-//     byte string converge rather than conflict (the v3.59.0 argument);
-//   · on a CURATOR-OWNED document the app is the OWNER'S PEN, exactly as it
-//     is on the standing brief: the write carries `authoredBy.kind: 'human'`,
-//     so it can never be mistaken for a commissioned agent's, and it is
-//     structurally impossible for it to land on a mirror because the store
-//     refuses the ownership mismatch;
+//   · on a MIRRORED document the app is a COPIER, never an author — Refresh
+//     re-copies bytes the source already wrote, and two copiers of one byte
+//     string converge rather than conflict (the v3.59.0 argument);
+//   · on a KEPT document (written or copied here) the app is the OWNER'S PEN,
+//     exactly as it is on the standing brief: the write carries
+//     `authoredBy.kind: 'human'`, so it can never be mistaken for a
+//     commissioned agent's, and it cannot land on a mirror because the store
+//     refuses a save to a mirrored slug;
 //   · on tiers 2 and 3 it is NEITHER, and those stay agent-only.
 //
 // THE COST, STATED. Tier 0 has no `<machine>` segment, so two machines editing
@@ -8231,15 +8081,21 @@ function foundationsNotices(read) {
     if (r.refreshed.length) said.push(r.refreshed.length + ' re-copied');
     if (r.added.length) said.push(r.added.length + ' added');
     if (r.unchanged.length) said.push(r.unchanged.length + ' already current');
-    if (r.missing.length) said.push(r.missing.length + ' no longer in that folder (the copy is kept)');
+    if (r.missing.length) said.push(r.missing.length + ' no longer at the source (the copy is kept)');
     notes += '<div class="mem-note">' + icon('check', 13) +
       '<span>' + escapeHtml(said.length ? said.join(' · ') : 'Nothing to copy.') + '</span></div>';
+    // ── v3.69.0: A GROUP THAT FAILED IS SAID BY NAME, AND IT IS UNCHANGED ─
+    // "Refresh all" refreshes every source in one lock; a source whose read
+    // failed is left exactly as it was (§3.1). Its line is a refusal, so it
+    // stays until the next refresh rather than fading as a toast would.
+    for (const line of (Array.isArray(r.failed) ? r.failed : [])) {
+      notes += '<div class="mem-note">' + icon('alertTriangle', 13) +
+        '<span>' + escapeHtml(line) + '</span></div>';
+    }
+    // WHAT THE STORE WOULD NOT COPY, KEPT SEPARATE FROM WHAT IT DID.
+    if (Array.isArray(r.refused) && r.refused.length) notes += renderRefusedList(r.refused);
   }
 
-  // ── THE OWNERSHIP CHOICE'S OWN OUTCOME (v3.61.0) ──────────────────────
-  // Stamped like every other outcome on this screen, and never folded: a
-  // refusal from `…/foundations/init` is the reason nothing happened, and the
-  // `refused[]` a mirror comes back with names the files that were NOT copied.
   // v3.67.0: a refused start-state write says WHICH document and that
   // nothing changed — and the next successful one clears it (`setStartState`),
   // which is the v3.66.0 stale-note defect: a read-first refusal used to leave
@@ -8252,25 +8108,6 @@ function foundationsNotices(read) {
       '<span>' + escapeHtml('“' + se.slug + '” was not changed: ' + se.error) + '</span></div>';
   }
 
-  const ini = state.fndInit && state.fndInit.domain === state.activeDomain
-    && state.fndInit.project === state.activeProject ? state.fndInit : null;
-  if (ini && ini.error) {
-    // TWO TITLES, BECAUSE THEY ARE TWO REFUSALS (v3.65.1). "Nothing was set up"
-    // is the init arm's — an ownership that was not recorded. A refused SWITCH
-    // set nothing up either way: the project keeps the source it had, and
-    // saying so is what tells the owner nothing is half-done. The store makes
-    // that true rather than this sentence: `refreshRemoteCore` writes nothing
-    // until every blob is in hand, so a failed read leaves the mirror exactly
-    // as it was.
-    notes += renderStatus({
-      state: 'danger',
-      title: ini.switching ? 'The source was not changed' : 'Nothing was set up',
-      detail: ini.error,
-    });
-  }
-  if (ini && Array.isArray(ini.refused) && ini.refused.length) {
-    notes += renderRefusedList(ini.refused);
-  }
   return notes;
 }
 
@@ -8297,54 +8134,28 @@ function renderFoundations(read) {
   const busy = !!(fnd && fnd.busy);
   const editing = !!(state.fndEdit && state.fndEdit.domain === state.activeDomain
     && state.fndEdit.project === state.activeProject);
-  const curator = facts.ownership === 'curator';
-  const controls = foundationsControlOffer(facts, readonly);
-  const refreshBtn = controls.refresh
-    ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-refresh" id="mem-fnd-refresh"' +
-      (busy ? ' disabled aria-disabled="true"' : '') + '>' +
-      escapeHtml(busy ? 'Refreshing…' : (controls.remote ? 'Refresh from GitHub' : 'Refresh from repo')) + '</button>'
-    // ── WITHHELD, BUT NOT HIDDEN (v3.67.2) ─────────────────────────────
-    // The folder is not on this computer, so the two folder controls cannot
-    // work. Through v3.67.1 they vanished and a permanent note floated under
-    // the table to say why. Now they stay in the row, DISABLED, and pressing
-    // one answers with the reason as a toast (`data-fnd-blocked`, wired in
-    // bindFoundationRows) — the same "disabled, never hidden" rule the AI
-    // buttons follow. `aria-disabled` rather than `disabled`, so the press
-    // still arrives and can be answered.
-    : controls.sourceMissing && !editing
-      ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-blocked" id="mem-fnd-refresh-blocked"' +
-        ' aria-disabled="true" data-fnd-blocked="1">Refresh from repo</button>'
-      : '';
-  // "Add from folder" on a MIRROR and "Add document" on a curator-owned
-  // project are the same control with the reader's own word for what arrives:
-  // one copies a file that is already on disk, the other opens an empty
-  // document. Both are `btn-secondary btn-xs` — neither completes a step.
-  //
-  // OFFERED AT COUNT 0 TOO, on both arms: a curator-owned project whose owner
-  // unticked the seeding, and a mirror whose ownership was set a second ago,
-  // are exactly the two states in which the one action that puts a document in
-  // must be reachable — the mistake v3.59.0 made with Refresh, one arm over.
-  // ── v3.68.0: THE MIRROR'S "Add from folder" IS THE LOCAL DOOR NOW ─────
-  // Only the curator arm's in-app editor keeps a button of its own, and it
-  // says what it opens — an empty document to WRITE — so it cannot be read as
-  // a third way to add files beside the two doors.
-  const addBtn = controls.add && curator
+  // ── THE TABLE VARIANT, FROM THE DOCUMENTS (v3.69.0) ───────────────────
+  // Every row KEPT here (written or copied) keeps v3.68.0's five-column table
+  // exactly; any mirrored row makes it the unified Source + Freshness table.
+  // Read off the rows — `ownership` is display-only now (§1.6).
+  const keptOnly = facts.count > 0 && facts.kinds.folder + facts.kinds.github === 0;
+  const writable = !readonly && !facts.manifestError;
+  // ── "Write a document" — THE OWNER'S PEN, ON ANY PROJECT (v3.69.0) ─────
+  // Through v3.68.0 only a curator-owned project had it. A new document is
+  // written here whatever else the project mirrors (maintainer decision D4
+  // gives agents the same), so it is offered on every present, writable
+  // project. It says what it opens — an empty document to WRITE — so it
+  // cannot be read as a third way to add files beside the two doors.
+  const addBtn = writable && facts.present
     ? '<button type="button" class="btn btn-secondary btn-xs mem-fnd-action" id="mem-fnd-add"' +
       (busy ? ' disabled aria-disabled="true"' : '') + '>Write a document</button>'
     : '';
-  // ── "Mirror from GitHub instead" (v3.65.1, D6) ────────────────────────
-  // ONE SOURCE PER PROJECT, and this is how it moves: the ownership stays
-  // `repo` — the store's one-ownership-per-project rule is untouched — and
-  // what changes is WHERE the bytes are read from. `repo.root` is cleared and
-  // `repo.remote` is set, in the same manifest write the re-copy performs.
-  //
-  // Offered on BOTH repo-owned arms, including the one where the checkout is
-  // not on this computer: see `foundationsControlOffer`.
-  // ── THE TWO DOORS (v3.68.0) — always both, at 0 documents and at 20 ────
-  // "Mirror from GitHub instead" is the GitHub door's `switch` mode now, and
-  // "Add from folder" the local door's `mirror` mode: one pair of doors, whose
-  // open panel says honestly what a press will do for THIS project.
-  const doors = doorsFor(facts, { readonly, sourceMissing: !!controls.sourceMissing });
+  // ── THE TWO DOORS (v3.68.0) — ALWAYS BOTH, ALWAYS ENABLED (v3.69.0) ────
+  // What a commit does is chosen INSIDE the panel (Keep in sync / Copy once
+  // on this computer; GitHub adds to the matching source or makes a new one),
+  // so neither door depends on what the project already holds. Disabled only
+  // on a read-only mirror or an unreadable manifest, each with its reason.
+  const doors = doorsFor(facts, { readonly });
   const addRec = addPanelFor();
   const doorsHtml = editing ? '' : renderDoors(doors, { busy, open: addRec ? addRec.door : null });
   const addPanel = addRec && !editing
@@ -8354,21 +8165,28 @@ function renderFoundations(read) {
         : null,
     })
     : '';
+  // ── THE SOURCES STRIP (v3.69.0, §4.4) ──────────────────────────────────
+  // One line per source group under the head row, each with its own Refresh
+  // (and "Read from GitHub instead" on a folder with a remote recorded), plus
+  // "Refresh all" with two or more. It REPLACES the project-level refresh
+  // control, which could only ever mean the project's one source. Copies and
+  // written documents never refresh, so a project of kept documents has no
+  // strip at all. Withheld while an editor is open, like the doors.
+  const strip = writable && !editing
+    ? FSRC.renderSourcesStrip(FSRC.sourcesStripModel(facts.sources), {
+      busy, busyGroup: fnd && fnd.busy ? (fnd.group || null) : null })
+    : '';
   const askBtn = foundationsDraftAsk(facts, readonly);
   // v3.67.0: "Suggest a reading plan" — or, while a proposal is pending, the
   // two controls that settle it. See `planHeadHtml`.
   const planHead = facts.count && !readonly && !facts.manifestError ? planHeadHtml() : '';
-  const action = editing ? '' : (doorsHtml + refreshBtn + addBtn + askBtn.btn + planHead);
+  const action = editing ? '' : (doorsHtml + addBtn + askBtn.btn + planHead);
   // A WITHHELD CONTROL SAYS WHY (v3.17.1). A read-only mirror's reason is
   // `.tx-note`, unfolded: every control is gone there and nothing on the page
-  // would say so otherwise. The "folder is not on this computer" reason is
-  // NOT painted here any more (v3.67.2): the maintainer found it floating out
-  // of the layout, permanently. Its state is still on screen, persistently —
-  // every row reads "source not here" and the two folder controls stand
-  // disabled in the head row — and the sentence itself arrives as a toast the
-  // moment the owner presses either (see `foundationsUncheckedWhy`).
-  const withheld = controls.reason && !controls.sourceMissing
-    ? '<div class="tx-note">' + icon('alertCircle', 13) + '<span>' + escapeHtml(controls.reason) + '</span></div>'
+  // would say so otherwise.
+  const withheld = readonly && facts.present
+    ? '<div class="tx-note">' + icon('alertCircle', 13) + '<span>'
+      + escapeHtml('A read-only mirror — documents here are copied in, never edited.') + '</span></div>'
     : '';
 
   // ── NOTHING CHOSEN YET: THE CHOOSER, WHERE THE ANSWER IS MISSING ───────
@@ -8410,7 +8228,7 @@ function renderFoundations(read) {
     // / "Mirror a folder" / "Mirror a GitHub repository"); the maintainer read
     // it as "you must first add a local document, then GitHub appears". Now
     // the question is only "from where?", and the answer IS the ownership.
-    return renderFoundationsEmpty(facts, action, addPanel, askBtn, withheld, editing, true);
+    return renderFoundationsEmpty(facts, action, addPanel, askBtn, withheld, editing, true, strip);
   }
   // ── AND WITHHELD ON AN UNREADABLE MANIFEST (P1-3) ────────────────────
   // An unreadable manifest is a PRESENT manifest: `…/foundations/init`
@@ -8442,7 +8260,7 @@ function renderFoundations(read) {
   // explains what is missing behind a chevron is "the missing thing has to be
   // missing where you looked for it" read backwards.
   if (!facts.count) {
-    return renderFoundationsEmpty(facts, action, addPanel, askBtn, withheld, editing, !readonly);
+    return renderFoundationsEmpty(facts, action, addPanel, askBtn, withheld, editing, !readonly, strip);
   }
 
   const summary =
@@ -8457,9 +8275,9 @@ function renderFoundations(read) {
   const plan = readonly ? null : planFor();
   const proposal = plan && plan.result && Array.isArray(plan.result.proposals) ? plan : null;
   const rows = facts.docs.map(
-    (d) => fndRowHtml(d, curator, readonly, facts.budgetBytes,
+    (d) => fndRowHtml(d, keptOnly, readonly, facts.budgetBytes,
       proposal ? planRowFor(proposal, d.slug) : undefined,
-      (foundationsRemoteSource(facts.repo) || {}).label || null)).join('');
+      facts.sources)).join('');
   // ── THE EDITOR REPLACES THE TABLE, IT DOES NOT SIT UNDER IT ────────────
   // The standing brief's own precedent one block up, and the same reason: two
   // views of one set of documents on screen at once, one of them describing a
@@ -8482,7 +8300,8 @@ function renderFoundations(read) {
       + foundationsMonitor(facts) + (readonly ? '' : startLegendHtml())
       + '<div class="fnd-wrap"><table class="fnd-table">' +
         '<thead><tr>' +
-          '<th scope="col">Role</th>' +
+          // v3.69.0: the unified table carries the role above the title.
+          (keptOnly ? '<th scope="col">Role</th>' : '') +
           '<th scope="col">Document</th>' +
           '<th scope="col">Size</th>' +
           // Withheld on a read-only mirror, where the toggle is too — a head
@@ -8491,34 +8310,26 @@ function renderFoundations(read) {
           // rendered look finds (v3.61.0's own note, one column over).
           (readonly ? '' : '<th scope="col">At session start</th>') +
           (proposal ? '<th scope="col">Suggested</th>' : '') +
-          // ── FIVE COLUMNS OR SIX, BY OWNERSHIP (P2-1) ─────────────────
-          // A curator-owned project's `Source` is always "Curator-authored"
-          // and its `Copy` is always "—", so the two collapse into one State
-          // column carrying the row's real variable: written by whom, or
-          // still a prompt. Three things follow at once — two dead columns
-          // go, the pencil gets a cell without a seventh column, and the
-          // curator-owned table comes in UNDER the 568 px overflow v3.59.0
-          // recorded (5 columns, not 6). The REPO-owned table keeps its six
-          // and keeps that overflow; `overflow-x: auto` still carries it and
-          // this release does not claim to have fixed it.
-          (curator
+          // ── FIVE COLUMNS OR SIX, BY THE DOCUMENTS (P2-1, v3.69.0) ────
+          // A project of kept documents has ONE State column (written by
+          // whom, copied from where, or still a prompt) — v3.68.0's table,
+          // unchanged. Any mirrored row makes it the unified table: Source
+          // (the kind word, or the mirrored path) plus Freshness (the row's
+          // own group's reading, §3.4).
+          (keptOnly
             ? '<th scope="col">State</th>'
-            : '<th scope="col">Source</th><th scope="col">Copy</th>') +
-          '<th scope="col">Updated</th>' +
+            : '<th scope="col">Source</th><th scope="col">Freshness</th>') +
+          // …and the age under the freshness word, so no Updated column there.
+          (keptOnly ? '<th scope="col">Updated</th>' : '') +
           // A COLUMN WITH A BLANK HEADER WOULD BE A COLUMN NOBODY NAMED. It
           // holds an icon-only control, so the heading is visually hidden
           // rather than absent: a screen reader reading the row still hears
           // which column the button is in. Emitted only on the arm that HAS
           // a row control — a column reserved for nothing is furniture.
-          // ── AND ON THE MIRRORED ARM TOO, SINCE v3.61.1 ───────────────
-          // It used to be curator-only, because a mirror had no row control:
-          // the DELETE route refused one. It has a control now — Remove,
-          // meaning stop mirroring — so the column exists on both arms and is
-          // withheld only where NOTHING may be written, which is a read-only
-          // Shared Brain mirror. The cost is stated rather than hidden: the
-          // repo-owned table is seven columns wide now and still scrolls
-          // horizontally under ~600 px, which `overflow-x: auto` carries and
-          // this release does not claim to have fixed.
+          // ── ON EVERY ARM (v3.61.1; v3.69.0 the trash icon) ────────────
+          // Every row has a control — the trash icon, and the pencil on a
+          // kept row — so the column is withheld only where NOTHING may be
+          // written, which is a read-only Shared Brain mirror.
           (readonly ? '' : '<th scope="col"><span class="visually-hidden">Actions</span></th>') +
         '</tr></thead>' +
         '<tbody>' + rows + '</tbody>' +
@@ -8578,7 +8389,7 @@ function renderFoundations(read) {
   // the section's siblings, and nothing else — `setStartState` still patches
   // `#mem-fnd-budget` in place by id.
   return '<div class="mem-fnd-row">' +
-      '<div class="mem-fnd-head-controls">' + action + '</div>' + addPanel +
+      '<div class="mem-fnd-head-controls">' + action + '</div>' + strip + addPanel +
       '<details class="mem-fold" data-mem-fold="foundations"' + open + '>' +
         summary +
         '<div class="mem-fold-body">' + body + '</div>' +
@@ -8622,7 +8433,11 @@ function foundationsDraftAsk(facts, readonly) {
   if (readonly) return { btn: '', panel: '' };
   if (!facts.present) return { btn: '', panel: '' };
   if (facts.manifestError) return { btn: '', panel: '' };
-  if (facts.ownership !== 'curator') {
+  // v3.69.0: decided by the DOCUMENTS, not by `ownership` — withheld only on
+  // a project whose every document is mirrored, where the request would name
+  // documents an agent's save is refused on. A project that mixes kept and
+  // mirrored documents keeps it, and it names the kept ones only.
+  if (facts.count && facts.kinds.written + facts.kinds.copied === 0) {
     // ── IT LEAVES THE STEP BODY (v3.65.0) ──────────────────────────────
     // The maintainer, pointing at it: *"then we have some clarification below
     // — 'an agent's save here is refused, this project is mirrored from a
@@ -8684,11 +8499,15 @@ function addPanelFor() {
  * `canSeed` is false on a read-only mirror and on an empty MIRROR, whose
  * owner chose a source already (both doors still re-choose it).
  */
-function renderFoundationsEmpty(facts, action, addPanel, askBtn, withheld, editing, canSeed) {
+function renderFoundationsEmpty(facts, action, addPanel, askBtn, withheld, editing, canSeed, strip) {
   const tpl = state.fndTpl && state.fndTpl.domain === state.activeDomain
     && state.fndTpl.project === state.activeProject ? state.fndTpl : null;
-  const seedable = canSeed && (!facts.present || facts.ownership === 'curator');
-  const bodyText = facts.present && facts.ownership === 'repo'
+  // v3.69.0: from the SOURCES, never from `ownership` — a project with a
+  // declared source (a mirror chosen, nothing copied yet) is not offered the
+  // templates, whose init would re-choose it; every other empty project is.
+  const declared = Array.isArray(facts.sources) && facts.sources.length > 0;
+  const seedable = canSeed && !declared;
+  const bodyText = declared
     ? 'Nothing mirrored yet. Add documents from this computer or from GitHub.'
     : 'No documents yet. Add them from this computer or from a GitHub repository.';
   const seedRow = seedable
@@ -8704,7 +8523,7 @@ function renderFoundationsEmpty(facts, action, addPanel, askBtn, withheld, editi
         : '')
     : '';
   return '<div class="mem-fnd-row">' +
-      '<div class="mem-fnd-head-controls">' + action + '</div>' + addPanel +
+      '<div class="mem-fnd-head-controls">' + action + '</div>' + (strip || '') + addPanel +
       '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">' +
         (editing ? renderFoundationEditor(facts) : renderDescription(bodyText) + seedRow) +
       '</div></div>' +
@@ -8897,27 +8716,27 @@ function renderFoundationEditor(facts) {
   // document, because "are you sure?" over six rows is a question about none
   // of them, and the request carries the slug as its own confirmation so a
   // client that skipped the strip still deletes nothing.
+  // v3.69.0 (§5.2): THE SAME WORDS AS THE ROW'S TRASH ICON, from ONE
+  // function — `FSRC.deleteConfirmCopy` — so the editor's Delete and the row's
+  // cannot describe the same document two ways. The editor only ever holds a
+  // KEPT document (the pencil is withheld on a mirror), so this reads
+  // "written" or "copied", or "template" for an unfilled skeleton.
+  const delRow = facts.docs.find((d) => String(d.slug || '') === String(e.slug || ''))
+    || { slug: e.slug || '', source: { kind: 'curator' } };
+  const delCopy = FSRC.deleteConfirmCopy(delRow, facts.sources);
   const deleteBar = e.confirmDelete
-    ? '<div class="mem-fnd-delete-bar" role="alertdialog" aria-label="Delete this document">' +
+    ? '<div class="mem-fnd-delete-bar" role="alertdialog" aria-label="Delete this document"'
+        + ' data-fnd-delete-kind="' + escapeHtml(delCopy.kind) + '">' +
         // NOT "are you sure?" — the document is NAMED, because a question
         // about six rows is a question about none of them. And it says what
-        // recovery there is: "cannot be undone" alone is false for a user with
-        // Personal Sync configured and true for everyone else, so both halves
-        // are stated rather than one of them guessed at.
-        '<span>Delete <b>' + escapeHtml(e.slug || '') + '</b>? The document is removed from this ' +
-        'project and from your agents’ next session. It cannot be undone from inside The ' +
-        'Curator; if you sync, a git client can still recover it.</span>' +
+        // recovery there is, and what is NOT touched.
+        '<span>' + delCopy.html + '</span>' +
         // ── THE ONE SANCTIONED USE OF THE FILLED DANGER FACE (P1-5) ─────
         // `.btn-danger-solid` is reserved by the taxonomy for a confirm whose
-        // PRIMARY ACTION IS THE DELETION, which is exactly this strip: the
-        // question has been asked, the document is named, and this is the
-        // control that answers yes. The opener in the footer stays tinted.
-        // Never a hand-built colour override — `domains.js`'s surviving
-        // `.dm-delete-btn { color: var(--danger-text) }` is the last of that
-        // pattern and this release does not extend it.
+        // PRIMARY ACTION IS THE DELETION, which is exactly this strip.
         '<button type="button" class="btn btn-danger-solid btn-xs" id="mem-fnd-delete-go"' +
           (e.deleting ? ' disabled' : '') + '>' +
-          escapeHtml(e.deleting ? 'Deleting…' : 'Delete permanently') + '</button>' +
+          escapeHtml(e.deleting ? 'Deleting…' : delCopy.primary) + '</button>' +
         '<button type="button" class="btn btn-ghost btn-xs" id="mem-fnd-delete-no"' +
           (e.deleting ? ' disabled' : '') + '>Keep it</button>' +
       '</div>'
@@ -9139,18 +8958,18 @@ function foundationReaderContent(doc, project, remote) {
   // `doc.ownership` alone made every curator-owned document in the app print
   // the MIRROR sentence — found in the browser, and invisible offline because
   // a hand-written payload carries the field the server never sends. An
-  // explicit `ownership` still wins where a build provides one, so the two
-  // payload shapes cannot resolve to two different answers.
-  const curatorOwned = doc.ownership
-    ? doc.ownership === 'curator'
-    : !(doc.source && doc.source.kind === 'repo');
+  // v3.69.0: `source.kind` ALONE. The explicit `ownership` used to win where a
+  // build sent one, but a project's ownership may read `mixed` now, which
+  // would have painted the mirror sentence on every document kept here.
+  const curatorOwned = FSRC.isKept(doc);
   const notes = [];
   if (doc.freshness === 'stale') {
     notes.push('This copy no longer matches the file it was copied from. Refresh from the '
       + 'folder to bring it up to date — what is below is what your agents currently read.');
   }
-  // v3.67.2: a GitHub mirror has no folder to be missing — see
-  // `foundationsRemoteSource`. Saying "not on this computer" there was false.
+  // v3.67.2: a GitHub mirror has no folder to be missing — saying "not on
+  // this computer" there was false. v3.69.0: `remote` is the DOCUMENT's own
+  // source group's repository (see `openFoundation`), never the project's.
   const fromGitHub = !!(remote && typeof remote.label === 'string' && remote.label);
   if (doc.freshness === 'unreachable' && fromGitHub) {
     notes.push('Mirrored from GitHub (' + remote.label + '). Freshness is not checked on a read — '
@@ -9266,10 +9085,19 @@ async function openFoundation(slug, token) {
   // single-document route does not carry, so it is read off the project read
   // here and passed in — the payload builder stays pure (it is lifted and
   // executed by scripts/test-next-foundations-editor.js).
-  const content = data
-    ? foundationReaderContent(data, project,
-      foundationsRemoteSource(foundationsFacts(state.projectRead).repo))
-    : null;
+  // v3.69.0: from THIS document's own group — a project may mirror a folder
+  // and a repository at once, and only a row whose word is "GitHub · not
+  // checked" is read from GitHub on this computer.
+  let remote = null;
+  if (data) {
+    const facts = foundationsFacts(state.projectRead);
+    const row = facts.docs.find((d) => String(d.slug || '') === String(slug)) || data;
+    const g = FSRC.groupOf(row, facts.sources);
+    if (g && FSRC.rowFreshWord(row, facts.sources).word === FSRC.NOT_CHECKED) {
+      remote = { label: g.remote ? g.remote.owner + '/' + g.remote.repo : (g.label || 'GitHub') };
+    }
+  }
+  const content = data ? foundationReaderContent(data, project, remote) : null;
   if (content) openReader(content, token);
   else {
     openReader({
@@ -9295,21 +9123,33 @@ async function openFoundation(slug, token) {
  * when the selection is still the one it was asked for.
  *
  * ── THE FAILURE IS INLINE, NEVER AN ALERT ───────────────────────────────
- * The two refusals this can legitimately get — a curator-owned project, a
- * checkout that is not on this computer — are both facts about the project in
- * front of the user, and they belong on it. `alert()` would put a fact about a
+ * The refusals this can legitimately get — nothing here is mirrored
+ * (`no_sources`), a source that cannot be read — are facts about the project
+ * in front of the user, and they belong on it. `alert()` would put a fact about a
  * project into a modal the user must dismiss before they can look at it.
  */
-async function refreshFoundations(token, files, repoRoot) {
+async function refreshFoundations(token, group) {
   const domain = state.activeDomain;
   const project = state.activeProject;
   if (!domain || !project) return;
   if (state.fnd && state.fnd.busy) return;
   const key = keyOf(domain, project);
-  state.fnd = { domain, project, busy: true, error: null, result: null };
+  // WHICH SOURCE, or every source (v3.69.0, §3.1). `group` is a strip line's
+  // id; absent is "Refresh all", which the store runs inside ONE lock — every
+  // group read first, a failed one left exactly as it was, the manifest
+  // written once.
+  const one = typeof group === 'string' && group ? group : null;
+  state.fnd = { domain, project, busy: true, group: one, error: null, result: null };
   render(token);
 
-  const rootPart = typeof repoRoot === 'string' && repoRoot.trim() ? { repoRoot: repoRoot.trim() } : {};
+  // ── THE BODY NAMES A SOURCE OR NOTHING — NEVER A DOCUMENT (v3.69.0) ────
+  // Through v3.68.0 it could carry `files` (and v3.65.2's `repoRoot`); both
+  // left with the doors, whose commits go to add-local / add-remote. What is
+  // left is the one fact a refresh needs: WHICH group. No document BODY
+  // crosses on this route in either direction — that is what keeps "the app
+  // is a copier on a mirror, never an author" true of it. The empty case is a
+  // literal empty object.
+  const rootPart = one ? { group: one } : {};
   let data = null;
   let error = null;
   try {
@@ -9317,29 +9157,7 @@ async function refreshFoundations(token, files, repoRoot) {
       encodeURIComponent(project) + '/foundations/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // ── THE ONE FIELD THAT MAY CROSS, AND ONLY WHEN THE OWNER PICKED ────
-      // Until v3.61.0 this body was the literal '{}' and the guard on it was
-      // that NOTHING crossed at all. `files` is the one field the mirror needs
-      // in order to be created or extended from the app: an ARRAY OF PATHS
-      // INSIDE THE REPOSITORY the manifest already names, which the store
-      // validates with its own `sourceDigest` rules (inside the root, no
-      // symlink out, markdown, under the per-document cap) and reports back in
-      // `refused[]`. No document BODY crosses on this route in either
-      // direction — that is what keeps "the app is a copier, never an author"
-      // true of it. A curator document's bytes go through the PUT, which is a
-      // different route with a different ownership.
-      //
-      // ── AND `repoRoot`, EXACTLY WHEN THE FIELD WAS SHOWN (v3.65.2, C2) ──
-      // Through v3.65.1 the add panel scanned the folder TYPED in its field
-      // and then sent only `files`, which the route resolves against the
-      // manifest's RECORDED root (`asked || index.repo.root`) — so a folder
-      // scanned was not the folder copied from. The field now appears only
-      // when the recorded folder is not on this computer, and then the path
-      // in it rides here: the path you scan is the path you copy from.
-      // Written as one expression over `{ files }` because
-      // scripts/test-next-memory-ingest-text.js pins the refresh body's shape
-      // (a file list or nothing, never a document body) off this line.
-      body: JSON.stringify(Array.isArray(files) && files.length ? Object.assign({ files }, rootPart) : rootPart),
+      body: JSON.stringify(rootPart),
     });
     const body = await res.json();
     if (!res.ok || !body.ok) error = body.error || body.message || ('HTTP ' + res.status);
@@ -9350,47 +9168,31 @@ async function refreshFoundations(token, files, repoRoot) {
   if (!isCurrentMount(token) || activeKey() !== key) return;
 
   if (error) {
-    state.fnd = { domain, project, busy: false, error, result: null };
+    // A REFUSAL IS PERSISTENT AND IN FLOW (v3.16.1): `no_sources` — "Nothing
+    // here is mirrored…" — and every other refusal carry their route prose.
+    state.fnd = { domain, project, busy: false, group: one, error, result: null };
     render(token);
     return;
   }
+  const facts = foundationsFacts(state.projectRead);
+  const out = FSRC.refreshOutcome(data, facts.sources);
   state.fnd = {
     domain,
     project,
     busy: false,
+    group: one,
     error: null,
     result: {
       refreshed: Array.isArray(data.refreshed) ? data.refreshed : [],
       added: Array.isArray(data.added) ? data.added : [],
       unchanged: Array.isArray(data.unchanged) ? data.unchanged : [],
       missing: Array.isArray(data.missing) ? data.missing : [],
+      // WHAT THE STORE WOULD NOT COPY, KEPT SEPARATE FROM WHAT IT DID, and
+      // each source that failed, by name (it was left exactly as it was).
+      refused: Array.isArray(data.refused) ? data.refused : [],
+      failed: out.failed,
     },
   };
-  // WHAT THE STORE WOULD NOT COPY, KEPT SEPARATE FROM WHAT IT DID (v3.61.0).
-  // A refusal is not a result: a path the owner typed that turned out to be
-  // outside the root, a symlink pointing out of it, or a file over the
-  // per-document cap each come back with the store's own reason, and they are
-  // rendered unfolded beside the outcome rather than counted into it. Held on
-  // `fndInit` because that is where the picker's own state lives, so a typed
-  // path and the refusal it earned are on one record.
-  {
-    const refused = Array.isArray(data.refused) ? data.refused : [];
-    if (refused.length) {
-      state.fndInit = state.fndInit && state.fndInit.domain === domain
-        && state.fndInit.project === project
-        ? { ...state.fndInit, busy: false, refused }
-        : { domain, project, choice: null, busy: false, error: null, refused };
-    } else if (state.fndInit && state.fndInit.domain === domain
-        && state.fndInit.project === project) {
-      // A COPY THAT WENT THROUGH WHOLE CLOSES ITS PANEL (v3.65.2, C2). The
-      // outcome note above the table says what arrived; a panel left open on
-      // a list whose ticks are now mirrored rows would describe a state that
-      // no longer exists.
-      state.fndInit = state.fndInit.choice && state.fndInit.choice.addMode
-        ? { domain, project, choice: null, busy: false, error: null, refused: [] }
-        : { ...state.fndInit, busy: false, refused: [] };
-    }
-  }
   // THE CACHED READ IS NOW WRONG — bytes on disk changed — so it goes before
   // the request rather than after it, exactly as `reloadActive` drops it.
   forgetProject(domain, project);
@@ -9430,27 +9232,40 @@ async function loadAddTokenFacts(rec, token) {
  */
 const LAST_ADD_FOLDER = new Map();
 
-/** OPEN A DOOR (v3.68.0). The same door pressed again closes its panel. */
-function openAddDoor(door, token) {
+/**
+ * OPEN A DOOR (v3.68.0). The same door pressed again closes its panel.
+ *
+ * v3.69.0: `switchGroup` opens the GitHub panel as the sources strip's "Read
+ * from GitHub instead" for ONE folder group — prefilled with the repository
+ * that group recorded, re-reading its documents from there on commit.
+ */
+function openAddDoor(door, token, switchGroup) {
   const facts = foundationsFacts(state.projectRead);
   const readonly = !!(state.detail && state.detail.readonly) || !!(state.projectRead && state.projectRead.readonly);
-  const doors = doorsFor(facts, { readonly, sourceMissing: !!foundationsControlOffer(facts, readonly).sourceMissing });
-  const info = doors[door];
+  const doors = doorsFor(facts, { readonly });
+  let info = doors[door];
   if (!info || !info.available) return;
+  const g = switchGroup ? (facts.sources || []).find((x) => x && x.id === switchGroup) : null;
+  if (switchGroup && !(g && g.remote)) return;
+  if (g) {
+    info = Object.assign({}, info, { mode: 'switch', group: g.id, remote: g.remote,
+      groupLabel: g.label || null, groupCount: g.documentCount });
+  }
   const cur = addPanelFor();
-  if (cur && cur.door === door && !cur.busy) { state.fndAdd = null; render(token); return; }
+  if (cur && cur.door === door && !cur.busy && (cur.group || null) === (g ? g.id : null)) {
+    state.fndAdd = null; render(token); return;
+  }
   const rec = Object.assign(freshAddPanel(door, info, facts),
     { domain: state.activeDomain, project: state.activeProject });
-  // Prefill the copy door with the folder this project last added from.
-  if (door === 'local' && rec.mode === 'copy' && !rec.root) {
+  // Prefill the local door with the folder this project last added from.
+  if (door === 'local' && !rec.root) {
     rec.root = LAST_ADD_FOLDER.get(keyOf(state.activeDomain, state.activeProject)) || '';
   }
   state.fndAdd = rec;
   state.fndEdit = null;
   render(token);
   if (door === 'github') loadAddTokenFacts(rec, token).catch((err) => reportAsyncMountFailure(token, err));
-  // A folder mirror's folder is a FACT, and a remembered folder is the one
-  // the owner used last — list either straight away.
+  // A remembered folder is the one the owner used last — list it straight away.
   if (door === 'local' && rec.root) {
     listAddDocuments(token).catch((err) => reportAsyncMountFailure(token, err));
   }
@@ -9502,10 +9317,30 @@ async function listAddDocuments(token) {
       || (data && (data.error || data.message)) || ('HTTP ' + status);
     rec.candidates = null;
   } else {
+    const before = rec.picks || {};
     rec.candidates = Array.isArray(data.candidates) ? data.candidates : [];
     rec.truncated = data.truncated === true;
     rec.listedRoot = typeof data.root === 'string' ? data.root : null;
+    // A RE-LIST KEEPS THE TICKS that still name a listed file (v3.69.0): the
+    // Keep in sync / Copy once radio re-lists, because "already added" and
+    // "lands as" are different answers for a copy and a mirror (§4.3), and a
+    // press of the radio must not throw the owner's choices away.
     rec.picks = {};
+    for (const c of rec.candidates) if (c && before[c.path] === true) rec.picks[c.path] = true;
+    // ── THE D2 DEFAULT (maintainer decision): Keep in sync inside a git
+    // checkout, Copy once otherwise — until the owner presses the radio.
+    // The scan says which (`inGitCheckout`); a change of mode re-lists once,
+    // so the annotations are the ones for the mode that is showing.
+    if (rec.door === 'local') {
+      rec.inGitCheckout = data.inGitCheckout === true;
+      const want = rec.inGitCheckout ? 'mirror' : 'copy';
+      if (!rec.modeChosen && rec.mode !== want) {
+        rec.mode = want;
+        render(token);
+        await listAddDocuments(token);
+        return;
+      }
+    }
   }
   render(token);
 }
@@ -9541,8 +9376,9 @@ async function commitAdd(token) {
     // A REFUSAL IS PERSISTENT AND IN FLOW, never a toast (v3.16.1).
     rec.error = out.error;
   }
-  const changed = out.added.length > 0 || out.refreshed.length > 0;
-  if (changed && rec.door === 'local' && rec.mode === 'copy') {
+  const changed = out.added.length > 0 || out.refreshed.length > 0
+    || (rec.mode === 'switch' && out.ok);
+  if (changed && rec.door === 'local') {
     LAST_ADD_FOLDER.set(key, String(rec.listedRoot || rec.root || ''));
   }
   if (changed) {
@@ -9662,6 +9498,24 @@ function bindAddDoors(root, token) {
   text('fadd-path', 'path');
   root.querySelectorAll('[data-fadd-token]').forEach((r) => {
     r.addEventListener('change', () => { rec.tokenSource = r.getAttribute('data-fadd-token'); patch(); });
+  });
+  // ── KEEP IN SYNC / COPY ONCE (v3.69.0, §4.2) ──────────────────────────
+  // A press is the OWNER's choice, and from then on a listing never moves it
+  // (the D2 default applies only until then). A listed folder is listed
+  // again, because "already added" and "lands as" differ between a copy and
+  // a mirror; the ticks survive the re-list.
+  root.querySelectorAll('[data-fadd-mode]').forEach((r) => {
+    r.addEventListener('change', () => {
+      const m = r.getAttribute('data-fadd-mode') === 'mirror' ? 'mirror' : 'copy';
+      rec.modeChosen = true;
+      if (rec.mode === m) return;
+      rec.mode = m;
+      if (Array.isArray(rec.candidates) && !listBlockedReason(rec)) {
+        listAddDocuments(token).catch((err) => reportAsyncMountFailure(token, err));
+      } else {
+        render(token);
+      }
+    });
   });
   const tokDoor = byId('fadd-token-door');
   if (tokDoor) {
@@ -9899,7 +9753,7 @@ async function stopMirroringFoundation(token) {
 
   let ok = false;
   let error = null;
-  let sourceKept = false;
+  let data = null;
   try {
     const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
       encodeURIComponent(project) + '/foundations/' + encodeURIComponent(slug), {
@@ -9907,10 +9761,8 @@ async function stopMirroringFoundation(token) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ confirm: slug }),
     });
-    let data = null;
     try { data = await res.json(); } catch { /* non-JSON error page */ }
     ok = res.ok && !!(data && data.ok);
-    sourceKept = !!(data && data.sourceKept);
     if (!ok) error = (data && (data.message || data.error)) || ('HTTP ' + res.status);
   } catch (err) {
     error = err.message;
@@ -9929,25 +9781,38 @@ async function stopMirroringFoundation(token) {
     return;
   }
   state.fndStop = null;
+  // ── THE CONFIRMATION IS A TOAST (v3.69.0) ─────────────────────────────
+  // An outcome of the owner's own press, so it goes away on its own; what it
+  // says is the route's own account (§5.4) — the source was not touched, and
+  // whether the source went with its last document — never a guess.
+  showToast({ key: 'fnd-deleted', tone: 'success', ...fndDeletedToast(slug, data) });
   // The table is re-read rather than patched: the manifest's totals, the
-  // summary's four clauses and the freshness of every remaining row are the
-  // store's answers, and a client that subtracted one row from its own copy
-  // would be publishing an arithmetic result as a measurement.
+  // summary's clauses and every remaining row's freshness are the store's.
   forgetProject(domain, project);
-  // THE SAME TWO CALLS THE EDITOR'S DELETE MAKES, and no invented banner. The
-  // outcome is on screen already: the row is gone and the summary's counts
-  // move with it. The one fact a banner could add — that the SOURCE FILE was
-  // not touched — is said in the confirm strip BEFORE the press, which is
-  // where somebody deciding needs it rather than after the decision.
-  // `sourceKept` is read off the response all the same, because a route that
-  // stopped reporting it would be a silent change to what this control means.
-  void sourceKept;
   if (activeKey() === keyOf(domain, project)) {
     await reloadActive(token);
     refreshIndex(token).catch((err) => reportAsyncMountFailure(token, err));
   } else {
     render(token);
   }
+}
+
+/**
+ * THE TOAST AFTER A DELETE, from the route's answer (§5.4): `sourceKept`,
+ * `source: {label, path}`, `groupRemoved`. Pure, so a suite drives it.
+ */
+function fndDeletedToast(slug, data) {
+  const d = data && typeof data === 'object' ? data : {};
+  const src = d.source && typeof d.source === 'object' ? d.source : null;
+  const label = src && typeof src.label === 'string' && src.label ? src.label : null;
+  const lines = [];
+  if (d.sourceKept === true) {
+    lines.push('The original' + (label ? ' in ' + label : '') + ' is not touched.');
+  }
+  if (d.groupRemoved === true) {
+    lines.push((label || 'Its source') + ' is no longer a source of this project.');
+  }
+  return { title: 'Deleted ' + slug, lines };
 }
 
 async function deleteFoundation(token) {
@@ -9961,6 +9826,7 @@ async function deleteFoundation(token) {
 
   let ok = false;
   let error = null;
+  let data = null;
   try {
     const res = await fetch('/api/memory/' + encodeURIComponent(e.domain) + '/' +
       encodeURIComponent(e.project) + '/foundations/' + encodeURIComponent(slug), {
@@ -9968,7 +9834,6 @@ async function deleteFoundation(token) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ confirm: slug }),
     });
-    let data = null;
     try { data = await res.json(); } catch { /* non-JSON error page */ }
     ok = res.ok && !!(data && data.ok);
     if (!ok) error = (data && (data.message || data.error)) || ('HTTP ' + res.status);
@@ -9989,6 +9854,9 @@ async function deleteFoundation(token) {
   }
   const domain = state.fndEdit.domain;
   const project = state.fndEdit.project;
+  // v3.69.0: the same confirmation the row's delete gives, from the same
+  // route answer.
+  showToast({ key: 'fnd-deleted', tone: 'success', ...fndDeletedToast(slug, data) });
   forgetProject(domain, project);
   state.fndEdit = null;
   if (activeKey() === keyOf(domain, project)) {
@@ -10032,11 +9900,35 @@ function bindFoundationRows(root, token) {
   // The reason used to stand permanently under the table; the state itself
   // stays on screen (the row word, the disabled controls), and the sentence
   // arrives when the owner asks — and again every time they ask.
-  root.querySelectorAll('[data-fnd-why], [data-fnd-blocked]').forEach((el) => {
+  // v3.69.0: the reason is THIS ROW's group's, not the project's.
+  root.querySelectorAll('[data-fnd-why]').forEach((el) => {
     el.addEventListener('click', () => {
-      const why = foundationsUncheckedWhy(foundationsFacts(state.projectRead));
+      const slug = el.getAttribute('data-fnd-why') || '';
+      const why = foundationsUncheckedWhy(foundationsFacts(state.projectRead), slug);
       showToast({ key: 'fnd-unchecked-why', tone: 'neutral', title: why.title, lines: why.lines });
     });
+  });
+
+  // ── THE SOURCES STRIP (v3.69.0, §4.4) ──────────────────────────────────
+  // One Refresh per source group — the request names that group — and
+  // "Refresh all", which names none. "Read from GitHub instead" opens the
+  // GitHub panel on that group's recorded repository (v3.65.1's switch, now
+  // per group), where the token it reads with is chosen before anything moves.
+  root.querySelectorAll('[data-fnd-refresh]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const g = btn.getAttribute('data-fnd-refresh');
+      if (!g) return;
+      refreshFoundations(token, g).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  });
+  const refreshAll = root.getElementById ? root.getElementById('mem-fnd-refresh-all') : null;
+  if (refreshAll) {
+    refreshAll.addEventListener('click', () => {
+      refreshFoundations(token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  }
+  root.querySelectorAll('[data-fnd-read-gh]').forEach((btn) => {
+    btn.addEventListener('click', () => openAddDoor('github', token, btn.getAttribute('data-fnd-read-gh')));
   });
 
   // The start-state cells (v3.67.0, three states where the read-first toggle
@@ -10078,15 +9970,17 @@ function bindFoundationRows(root, token) {
     });
   });
 
-  // ── THE ROW REMOVE CONTROLS (v3.61.1) ──────────────────────────────────
+  // ── THE ROW DELETE CONTROLS (v3.61.1; every row since v3.69.0) ─────────
   // A press only ASKS: it records which row and re-renders, which paints the
   // confirm strip under the table with that document named. Nothing is
   // requested until the strip's own primary is pressed, and the request
   // carries the slug as its own confirmation so a client that skipped the
   // strip still removes nothing.
-  root.querySelectorAll('[data-fnd-stop]').forEach((btn) => {
+  // v3.69.0: the TRASH ICON on every row (§5.1), replacing v3.61.1's
+  // labelled "Remove" on mirrored rows — the same strip, now for every kind.
+  root.querySelectorAll('[data-fnd-delete]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const slug = btn.dataset ? btn.dataset.fndStop : btn.getAttribute('data-fnd-stop');
+      const slug = btn.getAttribute('data-fnd-delete');
       if (!slug) return;
       state.fndStop = {
         domain: state.activeDomain, project: state.activeProject, slug,
@@ -12069,9 +11963,8 @@ function wire(token) {
   // nothing for the capture/restore pass to put back.
   bindFoundationRows(document, token);
 
-  document.getElementById('mem-fnd-refresh')?.addEventListener('click', () => {
-    refreshFoundations(token).catch((err) => reportAsyncMountFailure(token, err));
-  });
+  // (v3.69.0: the project-level "Refresh from repo" is gone — the sources
+  // strip's per-group controls are bound in `bindFoundationRows`.)
 
   // ── "CHOOSE DOCUMENTS" — A DOOR, NOT A SECOND WRITE PATH (v3.65.0) ────
   // The budget warning named a consequence and offered nothing to do about
