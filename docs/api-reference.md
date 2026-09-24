@@ -2443,7 +2443,7 @@ log on this machine** (a checkout and the installed app can each keep their own 
 [working-state.md](working-state.md)); `sessions`/`sessionsRead`/`sessionsSaved` are counted over
 the last 30 days. `sessionsSaved` is `null` when there is no usage log at all, and a measured `0`
 when there is a log and genuinely no session — the same "no log" vs "a measured zero" distinction
-the menubar widget and the Context Capture row both make. `byProjectWindow.busiestSaved` is the
+the menubar widget and the Context Agent sessions row both make. `byProjectWindow.busiestSaved` is the
 denominator every project row's depth bar is measured against. `savePulse.events` is the count of
 saves in the last 7 days — the same number the [menubar widget's](user-guide.md#reading-the-save-pulse)
 pulse strip reads. The parameter is opt-in because this half walks the whole working-state store,
@@ -2573,7 +2573,7 @@ collision (see below the table).
 | `POST` | `/api/memory/:domain/:project/foundations/add-remote` | **New in v3.69.0.** *"Add from GitHub"* — `{remote, ref?, tokenSource?, files}`. `addFoundationsFromRemote` mirrors the ticked files, joining an existing GitHub source with the same owner/repo and ref, or opening a new one. Response below |
 | `POST` | `/api/memory/:domain/:project/foundations/refresh` | Re-mirror from a checkout (v3.59.0; gains a `files` body in v3.61.0) — **or, in v3.63.0, from the GitHub repository itself** when the checkout is not on this machine. **v3.69.0**: `{group}` refreshes one source, `{}` refreshes every source under one lock (a failing one named and left untouched); body and response below |
 | `POST` | `/api/memory/:domain/:project/foundations/source` | **New in v3.65.1**, semantics changed **v3.69.0**. Adds or points a GitHub source: joins an existing GitHub source with the same owner/repo and ref, or opens a new one — it no longer clears a project's only folder source, since a project can hold both. Takes `group` once a project has 2+ sources |
-| `GET` | `/api/memory/:domain/:project/capture` | **New in v3.63.0.** The honesty meter — how many bridge sessions ran for this project, how many read, how many saved |
+| `GET` | `/api/memory/:domain/:project/capture` | **New in v3.63.0.** The honesty meter, shown on screen as **Agent sessions** since v3.70.0 (the route and the store's `captureFacts` keep the old name) — how many bridge sessions ran for this project, how many read, how many saved |
 | `GET` | `/api/memory/:domain/:project` | One project's brief plus its state |
 | `GET` | `/api/memory/:project` | **Deprecated** alias for that domain's default project |
 
@@ -3654,11 +3654,12 @@ save is trimmed and disclosed in the handoff, never refused, so a handoff can ne
 read as over its own budget.
 
 **`readingBudgetBytes` / `readingBudgetDefaulted` / `readingBudgetError` (v3.67.0)** name the
-project's session-start reading budget: `0` for Index only, or `8192`–`204800`; absent means "not
-set" and the effective 120 KB default applies. `readingBudgetDefaulted` is `true` whenever the
-owner has not chosen one. It is written only by the app (`PATCH …/reading/budget`, above) — no
-agent tool or CLI command writes it. A hand-edited invalid value reads as "not set" rather than
-throwing, with `readingBudgetError` naming the defect found.
+project's session-start reading budget: `0` for Index only, or `8192`–`819200` (the cap moved
+200 KB → 800 KB in v3.70.0, with the ladder itself now seven presets); absent means "not set" and
+the effective 120 KB default applies. `readingBudgetDefaulted` is `true` whenever the owner has not
+chosen one. It is written only by the app (`PATCH …/reading/budget`, above) — no agent tool or CLI
+command writes it. A hand-edited invalid value reads as "not set" rather than throwing, with
+`readingBudgetError` naming the defect found.
 
 **New in v3.59.0: `foundations`.** Both the scope-less and the scope-targeted response gain a
 `foundations` field — the **index only**, never document bodies, matching `listFoundations` through
@@ -4142,27 +4143,39 @@ no window where a failure could leave a stale root beside a fresh remote.
 
 ### PATCH /api/memory/:domain/:project/reading/budget
 
-**New in v3.67.0.** A strict one-field body: `{readingBudgetBytes: int|null}`. `0` means **Index
-only**; otherwise a whole number of bytes from the store's minimum up to its 200 KB cap (the five
-presets the app offers are 0, 32768, 65536, 122880 and 204800 — Index only, Lean, Standard, Deep,
-Max); `null` clears it back to "not set", the pre-v3.67.0 behaviour. Any other key in the body, or
+**New in v3.67.0; a 7-preset token ladder since v3.70.0.** A strict one-field body:
+`{readingBudgetBytes: int|null}`. `0` means **Index only**; otherwise a whole number of bytes from
+the store's minimum up to its cap, now **800 KB** (was 200 KB). The seven presets the app offers,
+in bytes: `0` (Index only, 0 tokens), `32768` (Lean, 8k), `65536` (Standard, 16k), `131072` (Deep,
+32k — was 122880/120 KB through v3.69.0), `262144` (Large, 64k), `524288` (Extra large, 128k),
+`819200` (Max, 200k — was 204800/200 KB). `null` clears it back to "not set". A project already
+holding an older value (e.g. `122880` or `204800`) is untouched — it is still valid, and reads back
+as a **Custom** value with its nearest preset named, never migrated. Any other key in the body, or
 an out-of-range value, is a 400 naming exactly what was wrong. Writes only `project.json` — curator
 metadata about the project, never a document's own content.
 
 ### GET /api/memory/:domain/:project/session-start
 
-**New in v3.67.0.** Reports what an agent is actually handed at the start of a session against
-every named limit: the brief, the latest handoff, journal lines, the document list and the text of
-whichever documents are marked **read first**, up to the effective reading budget (`ownerBytes` —
-the owner's own budget, or the 120 KB default when none is set). Each part carries its own size and
-limit so a client can draw the same depth bars the app does.
+**New in v3.67.0; rebuilt around the window meter in v3.70.0.** Reports what an agent is actually
+handed at the start of a session against every named limit: the brief, the latest handoff, journal
+lines, the document list and the text of whichever documents are marked **read first**, up to the
+effective reading budget (`ownerBytes` — the owner's own budget, or the 120 KB default when none is
+set). Each part carries its own size **and token estimate** (bytes ÷ 4) so a client can draw the
+same meter the app does. Since v3.70.0 the response also carries: `layers[{key, label, bytes,
+tokens}]` (the drawing order for the meter); `budget{bytes, tokens, source, preset, custom,
+nearest}`; `onDemand{documents, tokens}` (what is read-first or on-request but outside the reading
+budget's room — "on demand, outside the window"); `delivery{replies, paged, pageTokens}` (how many
+MCP replies this bootstrap actually takes, from the same paging plan `get_project_context` uses);
+`window{tokens, set}` and `harness{tokens, set}` (this computer's own settings, read from
+`GET /api/config/context-window`, never written here); and `meter`, the same shape the bucket kit
+(`shared/bucket.js`) renders directly. It is a pure read: nothing is written, ever.
 
 ### POST /api/memory/:domain/:project/session-start/preview
 
 **New in v3.67.0.** Same report as the `GET` above, but takes a `plan` — a proposed
-`{slug: 'read-first'|'on-request'|'not-at-start'}` map — and answers **as if** that plan were
-applied, without writing anything. This is what powers "Suggest a reading plan"'s live preview
-before you press Apply.
+`{slug: 'read-first'|'on-request'|'not-at-start'}` map, or since v3.70.0 a `budgetBytes` override —
+and answers **as if** that were applied, without writing anything. This is what powers "Suggest a
+reading plan"'s live preview and step ④'s hover-a-preset preview before you press Apply / choose.
 
 ### GET /api/reading-plan/:domain/:project/estimate
 
@@ -4196,8 +4209,14 @@ body names no brain at all.
 
 ### GET /api/memory/:domain/:project/capture
 
-**New in v3.63.0.** The **honesty meter**: *did this project's agent sessions start by reading its
-state, and did they save before they stopped?* It reads the local, content-free
+**New in v3.63.0; shown on screen as Agent sessions since v3.70.0** (the route, and the store's
+`captureFacts`, keep the old name — the same on-disk/on-screen split v3.65.1 gave Documents/Memory).
+The **honesty meter**: *did this project's agent sessions start by reading its
+state, and did they save before they stopped?* It counts only sessions that reached this project
+**through the my-curator MCP bridge** — a session started only by the SessionStart hook or by
+`my-curator context` at the command line reads the context without ever calling this route's
+underlying tool, so it is not counted, and a zero reading can be an honest answer on a busy
+project. It reads the local, content-free
 [MCP usage log](mcp-user-guide.md) and groups it into sessions by the `sid` field v3.63.0 added,
 filtered to one project by the `project` field it added beside it.
 
@@ -4424,6 +4443,20 @@ bootstrap carries only what has moved since it last recorded reading.
   "report": "Loaded the brief, the latest handoff, and 1 of 6 foundations that changed since you last read them; 5 were already current."
 }
 ```
+
+**Paged delivery (v3.70.0).** Add `"page": 2` (a whole number ≥ 1; anything else is a 400-style
+`invalid-page` refusal) to fetch page 2 onward of a bootstrap too large for one reply. A reply that
+is not the last one carries `foundations.continuation: {page, of, remaining, slugs}`, and `report`
+is prefixed `"PAGED: this project context arrives in N replies of at most ≈20k tokens each…"` with
+the exact next call spelled out. **Call again with the same arguments plus that `page` number, and
+keep going until a reply carries no `continuation` — read every page before you start work.** Do
+not pass a later page's `seen` back as `seen_hashes` between pages; record **page 1's** `seen` as
+`foundations_read` on your next `save_working_state`. A reply that already fits in one page (≈80 KB,
+`CONTEXT_PAGE_BYTES`) carries no `page`/`continuation` at all and is byte-identical to v3.69.0. This
+exists because Claude Code — and likely other harnesses — shows an MCP reply of at most ≈25,000
+tokens and silently saves anything larger to a file instead of putting it in the model's window;
+paging keeps every reply inside that cap so nothing sent "arrives" only in a file the agent never
+opens.
 
 The envelope order mirrors `get_working_state` exactly — `ok`, `project`, `domain`, `resolved_by`,
 `content_is_data`, then `brief` with `authority_note`/`brief_authority` first inside it — because a

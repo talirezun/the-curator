@@ -1007,7 +1007,8 @@ brought to the one surface that is not a web page:
 |---|---|---|
 | **Per-project saved bar** | Each project's group header | How many agent sessions saved a handoff in the last 30 days, against the busiest project |
 | **Domains bar** | The Domains section | Each domain's page count, in that domain's own [identity colour](#reading-the-screen), against the largest domain |
-| **Documents bar** | The first line under the *open* project's own heading | That project's documents against whichever budget the app is applying — the 120 KB an agent reads in one call once any document is flagged read first, or the 200 KB a project may store when none is |
+| **Documents bar** | The first line under the *open* project's own heading | Since v3.70.0: *"Read first · N documents · N replies"* with a bar sharing the meter's own reading-budget room when something is marked read first, or plainly *"Documents · 9 · 187 KB stored"* with **no bar and no "of 200 KB"** when nothing is — the 200 KB project figure stopped being an alarm in v3.70.0, so the widget stopped drawing it as one |
+| **Session start bar** | Directly under the Documents line, for the *open* project only *(v3.70.0)* | *"Session start ≈22.7k tok · 2 replies · 2.3% of 1M"* with a small segmented gutter PNG — the same window-and-harness meter step ④ draws, at menu-bar scale: the window read from this computer's own setting, the harness hatched when one is entered, and per-document segments inside the enlargement |
 
 A bar turns red only when its own budget is actually exceeded, and the line then also says *"over"*
 in words — the same rule as everywhere else a depth bar appears. With **no usage log on this
@@ -1017,9 +1018,9 @@ session** in the 30-day window reads a real, measured empty bar, and its tooltip
 for this project"* — a different fact from having no log at all, worded differently on purpose so
 the two are never mistaken for each other.
 
-Click a project line or the documents line to open Context on that project; click a domain line to
-open Settings, where **Domains in this folder** ([above](#knowledge-base-folder)) lists every
-domain the same way.
+Click a project line, the documents line or the session-start line to open Context on that project;
+click a domain line to open Settings, where **Domains in this folder** ([above](#knowledge-base-folder))
+lists every domain the same way.
 
 > ### What the darkness is NOT
 >
@@ -1469,6 +1470,11 @@ keep in The Curator rather than in a repository, and which documents are marked 
 
 Since v3.62.0 the page is numbered steps, read top to bottom, under an **overview card** — three
 through v3.66.0, and **four since v3.67.0**, which adds step ④ **Session start**.
+**The overview card itself grew a fifth tile in v3.70.0, SESSION START, in tokens** — e.g. *"≈8.8k
+tokens · 1 reply"*, hidden until the measurement lands, carrying no bar of its own (a reading, not
+a share; the share lives in step ④'s own meter, one press away). The fourth tile, **CAPTURE**, is
+now labelled **AGENT SESSIONS** — see [the rename](#the-meter-did-the-session-read-and-did-it-save),
+below.
 **Since v3.64.2 that card is the same component the domain page draws its own OVERVIEW figures
 in** ([§7b](#7b-the-three-places--ask-knowledge-context)) — through v3.64.1 this page built its own
 separate three-cell strip. Both places open the same way: a card of readings *about* the screen,
@@ -1487,18 +1493,21 @@ confusing.
 
 ![A wireframe of the Project context screen. A breadcrumb at the top carries the domain's own
 identity dot, the same colour that domain has in the Domains sidebar, in the Context sidebar and
-on every row below that names it. Under it, a four-tile overview card — the same component Domains
+on every row below that names it. Under it, a five-tile overview card — the same component Domains
 uses — reading DOCUMENTS "3 documents · fresh", MEMORY "saved 14 min ago", KNOWLEDGE "391 pages ·
-3 days ago" and CAPTURE "1 session · 30 days", each with a freshness dot. Below it, three numbered
-steps separated by hairlines, each heading carrying only a numeral, a Title-case title and an ⓘ
-mark — no sentence beneath any of them — and each section's controls sitting in a head row beneath
-its heading, above its rows, aligned to the rows' own left edge. Step 1, Documents: the controls
-"Refresh from repo", "Add from folder" and "Mirror from GitHub instead", then one row, "The
-documents — 3 documents · 391 KB · mirrored · 2 read first", whose SIZE column carries a depth bar
-— a tinted bar behind each figure, anchored at the right, its length that document's share of the
-200 KB project budget — and a warning line beneath the table, in words, when the total is over
-budget. Step 2, Memory: four closed rows, each one instrument — Capture, Handoffs, The brief and
-Journal. Step 3, Knowledge: the control "+ Add a domain", then one row per domain this project
+3 days ago", AGENT SESSIONS "1 session · 30 days" and SESSION START "≈8.8k tokens · 1 reply", each
+with a freshness dot (SESSION START carries none — it is a reading, not a share). Below it, four
+numbered steps separated by hairlines, each heading carrying only a numeral, a Title-case title and
+an ⓘ mark — no sentence beneath any of them — and each section's controls sitting in a head row
+beneath its heading, above its rows, aligned to the rows' own left edge. Step 1, Documents: the
+controls "Refresh from repo", "Add from folder" and "Mirror from GitHub instead", then one row,
+"The documents — 3 documents · 391 KB · mirrored · 2 read first", whose SIZE column carries a depth
+bar — a tinted bar behind each figure, anchored at the right, its length that document's share of
+the project's own 200 KB total, shown plainly and never as an alarm. Step 2, Memory: four closed
+rows, each one instrument — Agent sessions, Handoffs, The brief and Journal. Step 4, Session start:
+a head row with the reading budget, the Window and the Harness pickers, then the segmented meter —
+your window to scale, the harness hatched at the left, The Curator's own layers, and a dashed room
+the width of the reading budget. Step 3, Knowledge: the control "+ Add a domain", then one row per domain this project
 draws on, each carrying that domain's own identity dot — here "projects — 391 pages · 3 days ago"
 — opening to a monospace panel of entities, concepts and summaries (each with its own depth bar
 against that domain's page count), the last-ingest age, two doors beneath it, Open in Domains and
@@ -1529,9 +1538,9 @@ The wireframe below is the same shape with the labels called out.
 | | Step | The question it answers | Cost to read it |
 |---|---|---|---|
 | ① | **Documents** | *What is this project built against, and which of it does an agent get automatically?* | A summary line. Open the fold for the table |
-| ② | **Memory** | *Where did the last session stop, and what standing instructions does every agent read?* | Four summary rows, one per fold — Capture, Handoffs, The brief, Journal. Open one to read it |
+| ② | **Memory** | *Where did the last session stop, and what standing instructions does every agent read?* | Four summary rows, one per fold — Agent sessions, Handoffs, The brief, Journal. Open one to read it |
 | ③ | **Knowledge** | *What can an agent look things up in?* | One summary row per domain. Open a fold for its figures and its two doors |
-| ④ | **Session start** *(v3.67.0)* | *What does an agent actually receive when it starts work here, and how much of its context window does that use?* | A head row to pick the reading budget, and one row, **What an agent receives**, showing each part against its own limit |
+| ④ | **Session start** *(v3.67.0; a window meter since v3.70.0)* | *What does an agent actually receive when it starts work here, and how much of your context window does that use?* | A head row for the reading budget, the window and the harness estimate, and a segmented meter showing the bootstrap to scale inside your window |
 
 ### How to choose the right context
 
@@ -1552,50 +1561,94 @@ something up.
 | **Not at start** | It should be kept and mirrored, but never even listed at the start — name it in the brief's *"Read before you…"* if an agent should still find it | reference material, an archived proposal, a large appendix |
 | **Leave in the wiki** | It is compounded knowledge — searchable, cross-linked, growing with every ingest — not a canonical document at all | entities, concepts, summaries from Ingest |
 
-**A short recipe:**
+**A short recipe, worked in curator-like numbers:**
 
 1. **Mark two or three documents read first.** Not twelve — the marked set is what every session
    pays for, and two or three is a reading plan; a dozen is the old behaviour with extra steps.
-2. **Pick Standard (64 KB)** in step ④, unless you already know you need more or less.
-3. **Check step ④'s "What an agent receives"** and the context-window share underneath it — aim
-   for **well under 10–15% of your agent's context window**. If it is higher, mark fewer documents
-   read first or choose a smaller preset.
+2. **Pick Standard (16k tokens)** in step ④, unless you already know you need more or less.
+3. **Read the meter.** Say your window is 1M tokens (Claude in Claude Code) and you have entered a
+   Typical (≈50k) harness estimate. Step ④'s bar shows the harness hatched at the left, then The
+   Curator's own share — brief ≈1.2k, handoff ≈2.1k, journal ≈0.4k, index ≈0.3k, two read-first
+   documents ≈12k — for a session start of **≈16k tokens, about 1.6% of the window**. Aim for
+   **well under 10–15%** of the window on the meter; the harness bar reminds you that figure is
+   never the whole picture. If your share is higher, mark fewer documents read first or choose a
+   smaller preset.
 
-### Step ④ — Session start, and choosing a reading budget
+### Step ④ — Session start, and the context-window meter
 
-**New in v3.67.0.** Session start is what an agent is handed the moment it starts work on this
-project: the standing brief, the latest handoff, a few journal lines, the list of documents, and
-the text of whichever documents are marked **read first** — up to a **reading budget**. Choose the
-budget in the step's own head row, from five presets:
+**New in v3.67.0; rebuilt around a window meter in v3.70.0.** Session start is what an agent is
+handed the moment it starts work on this project: the standing brief, the latest handoff, a few
+journal lines, the list of documents, and the text of whichever documents are marked **read
+first** — up to a **reading budget**. Step ④ draws that bootstrap as one bar: **your whole
+context window, to scale**, your agent's harness at the left (hatched, since it is an estimate,
+never measured), then The Curator's own part — one violet shade per layer, each named on hover —
+and free space after it. A **dashed room** the width of your reading budget shows how much more
+The Curator is allowed to send before it would spill; whatever a reading budget does not use is
+free space too. Read-first and on-request documents beyond the room are labelled **"on demand —
+outside the window"**: they exist, but nothing sends them until an agent asks by name.
 
-| Preset | Size |
-|---|---|
-| **Index only** | 0 — no document text at all, titles and roles only |
-| **Lean** | 32 KB |
-| **Standard** *(recommended)* | 64 KB |
-| **Deep** | 120 KB |
-| **Max** | 200 KB |
+**Choose the reading budget in the step's head row, from seven presets, named in tokens:**
 
-**Until you choose one, nothing changes** — every project keeps behaving exactly as it always
-has, sending read-first documents within the old 120 KB ceiling. Once a project has a reading
-budget it is *planned*: only the marked documents arrive with their text at the start, and
-everything else is listed for the agent to open by name. When every session is being handed more
-than 32 KB of documents and no budget is set yet, a line says so, with **Set a reading budget**
-beside it.
+| Preset | Tokens | Meaning |
+|---|---|---|
+| **Index only** | 0 | the list only; an agent opens documents by name |
+| **Lean** | 8k | one or two short documents |
+| **Standard** *(recommended)* | 16k | a handful of core documents |
+| **Deep** | 32k | a design held in mind |
+| **Large** | 64k | a big project, on a 1M-window model |
+| **Extra large** | 128k | a whole design set, 1M only |
+| **Max** | 200k | the ceiling — almost never right; offered for the rare 1M-window project that genuinely needs it |
 
-The row **What an agent receives** shows each part of the bootstrap — brief, handoff, journal,
-documents — against its own limit, each with a depth bar, and the whole thing again as one share
-of **your agent's context window**. That window size (200k or 1M tokens) is a setting for this
-browser only, since the app cannot know which model or harness will actually read the bootstrap;
-tokens are estimated at four characters each.
+Each row in the picker states its own reading, e.g. *"an agent starts with ≈16k tokens · 1 MCP
+reply"*, and a row whose start would run over a quarter of your chosen window says so in words
+— it is never disabled, because you may know better than the meter does. **Hover a preset to
+preview it on the meter before you choose** — the bar repaints live, tagged *"Preview, not
+saved"*, and reverts the moment you close the menu without picking. **A project holding an older
+120 KB or 200 KB budget keeps it, unchanged, and reads as "Custom" with its nearest preset named**
+(*"Custom · ≈30.7k tokens, nearest Large"*) — nothing here rewrites a stored value.
+
+**Window and Harness sit beside the reading budget**, both set **per computer** (in the app's
+config file, not per browser), so the app and the menu bar widget always agree:
+
+- **Window** — 200K, 400K, 1M, or a custom size — the context window of the model you actually
+  run.
+- **Harness** — **Not set** by default, or **Light ≈20k**, **Typical ≈50k**, **Heavy ≈120k**, or
+  an exact number. Read your own harness's overhead from Claude Code's `/context`, which breaks
+  out system prompt, system tools, MCP tools, memory files and skills as separate figures. The
+  harness estimate is drawn **hatched** and labelled **"your estimate"** everywhere it appears,
+  and it is **never added to any measured figure** — The Curator only ever measures its own part.
+
+**When nothing is read first, every reading budget sends the same bootstrap**, and the step says
+so in one line — there is nothing yet for a bigger budget to spend itself on. Mark the documents
+an agent should never start without in step ①.
+
+**Paged delivery (v3.70.0), and why.** Claude Code shows an MCP reply of at most ≈25,000 tokens
+and silently saves anything larger to a file, handing the agent a file reference instead of the
+text — so a large bootstrap that "fit" the old 120–200 KB ceiling was often never actually in the
+model's window. `get_project_context` now delivers a large bootstrap in **pages of at most ≈80 KB
+(≈20k tokens) each**, whole documents only, in reading order; page 1 always carries the brief, the
+handoff, the journal and the full document list. A reply that names a `continuation` is not the
+whole answer — **an agent must call again with that `page` number and keep going until there is no
+continuation left**, then record page 1's `seen` map as `foundations_read` on its next save. The
+Deep, Large, Extra large and Max presets, and any untouched project with roughly 75 KB or more of
+read-first documents, deliver in more than one reply; the picker's own row states how many.
+
+**Token estimate = bytes ÷ 4, always shown with "≈".** The Curator has no tokenizer for every
+model, so every figure on the meter, the picker and the widget is bytes divided by four, rounded.
+That estimate is usually within about ±20% for ordinary English prose; it reads **low** for dense
+code, JSON or tables, where real tokens run shorter than four characters each — so treat a code-
+heavy project's figure as a floor, not a ceiling.
 
 **The overview card is the "am I saved?" answer, in one line each.** It sits above step ① —
 DOCUMENTS, MEMORY and KNOWLEDGE, the same three nouns the steps use, each with its figure,
 the qualifier under it and a freshness mark **and** the word beside it, because the colour never
 carries a reading on its own. Press a card and the page goes to the step that owns it — **they are
 readings, not a filter: nothing narrows when you press one**, which is the one difference from the
-same card's use on a domain page, where the figures also filter the page list beneath them. CAPTURE
-joins the card's row as a fourth door once the session reading described [below](#the-meter-did-the-session-read-and-did-it-save) has landed.
+same card's use on a domain page, where the figures also filter the page list beneath them.
+AGENT SESSIONS joins the card's row as a fourth door once the session reading described
+[below](#the-meter-did-the-session-read-and-did-it-save) has landed, and **SESSION START joins as a
+fifth, in tokens**, once step ④'s own measurement lands — a reading with no bar of its own, since
+the share it stands for lives in the meter, one press away.
 An unknown age is drawn as a **dashed ring** and the words *nothing written yet* / *no documents
 yet* / *nothing ingested yet* — never as age zero, which would read as *just now*. While a project's
 own read is still in flight the first card is **left out** rather than filled with a guess; you get
@@ -1883,7 +1936,7 @@ carries.
 
 ##### ② Memory — what the last session left
 
-**Four closed rows, in this order: Capture, Handoffs, The brief, Journal.** This layer
+**Four closed rows, in this order: Agent sessions, Handoffs, The brief, Journal.** This layer
 **supersedes** — every save replaces the last, so a blocker you fixed on Tuesday cannot reappear on
 Wednesday. **Every row's body is the same recessed, monospace instrument** (v3.65.0) — one fact per
 line, key left, reading right — used everywhere a live reading appears in the app: every row here,
@@ -1897,12 +1950,12 @@ one clock, told once each in the two places that need it, instead of a third.
 
 | Row | Summary line | Whose it is |
 |---|---|---|
-| **Capture** | *1 session in the last 30 days · 1 saved before stopping*, five monitor lines inside — see [the meter](#the-meter-did-the-session-read-and-did-it-save), below | Your agents'. No table — the body is the monitor only |
+| **Agent sessions** | *1 session in the last 30 days · 1 saved before stopping*, five monitor lines inside — see [the meter](#the-meter-did-the-session-read-and-did-it-save), below | Your agents'. No table — the body is the monitor only |
 | **Handoffs** | *3 handoffs · saved 14 min ago* | Your agents'. One row per saved copy; press a row to read its handoff in the [reader](#reading-a-handoff). See [the table below](#the-handoffs-table) |
 | **The brief** | *updated 14 min ago · 126 words*, with a **pencil** | Yours — see [Editing the standing brief](#editing-the-standing-brief) |
 | **Journal** | *17 saves · showing 10 · latest 14 min ago* | Your agents'. One line per save, newest first: when, which harness, which model, the headline, and any notes the store recorded. A **"Show N more"** row extends it in place — the same control the Handoffs table uses, not a separate footer card |
 
-**Capture leads now that Last saved is gone** — it already sat directly under that row, so nothing
+**Agent sessions leads now that Last saved is gone** — it already sat directly under that row, so nothing
 about the reading order changed, only what used to be above it. Handoffs follows, because the
 question a returning session actually opens with is *what did the last one leave*. The brief comes
 next, because it is the one tier a human owns and an agent reads it on every single call. The
@@ -2295,7 +2348,7 @@ rules — is in **[working-state.md](working-state.md)**.
 never a grade.** The **Handoffs** row's **Size** column shows each handoff's size against the
 48 KB a handoff is trimmed to; it never turns red, because a save over that budget is trimmed and
 the trim is noted in the handoff itself, never refused — there is nothing left to warn about once
-the trim has already happened. Inside the **Capture** row, *started with the context* and *saved
+the trim has already happened. Inside the **Agent sessions** row, *started with the context* and *saved
 before stopping* are drawn as a share of every session in the window, e.g. *"4 of 6"* — a share of
 a whole, not a target against which a bar can fail: nothing here is a grade, and neither bar ever
 turns red.
@@ -2361,7 +2414,7 @@ agree. They now do, everywhere: one component per kind of content, not per scree
 | **The overview card** | *What does this hold, and where do I go?* | The top of Domains and of Project context — identical tile size, identical 22px figures on both |
 | **A sidebar row** | *Which one am I on?* | The Domains, Context and Settings sidebars — one identity dot, name, figure, freshness mark, clock and age, and a last line, with the current one shown as a filled row |
 | **A fold row** | *What is inside, without opening it?* | Every collapsible section in the app — a title on the left, a one-line summary on the right, a chevron |
-| **The monitor** | *What is true right now?* | An MCP connection, a Capture session count, a Sync status, a Wiki health scan — a recessed, monospace panel with its state as a coloured word, and any warning inside it always visible, never behind the chevron |
+| **The monitor** | *What is true right now?* | An MCP connection, an Agent sessions count, a Sync status, a Wiki health scan — a recessed, monospace panel with its state as a coloured word, and any warning inside it always visible, never behind the chevron |
 
 **The rule that survives every one of them, restated for the last time here because it is the one
 that matters most:** a warning, a cost or an outcome never sits behind a chevron. Everything else
@@ -2377,7 +2430,7 @@ Once you know what each one means, you can read a row without opening it.
 |---|---|---|
 | **Identity dot** | *Which domain?* | One colour per domain, the same colour everywhere that domain is named — a sidebar row, a Chat domain chip, a Knowledge row, the Context breadcrumb, the menubar widget. Never a second mapping or palette on any screen |
 | **Freshness dot** (with a clock glyph and an age) | *How recent?* | Every time-based reading in the app — a sidebar row's last save, a Handoffs row, a document's last update, the MCP bridge's connection strip |
-| **Depth bar** | *How much, against what total?* | A tinted bar behind a figure, right-anchored, its length a **named** denominator — never a guess. Today: a document's size against the project's 200 KB budget; the running total in Add-from-folder against that same budget; a domain's entity/concept/summary counts against its own page count; a clipped save's character count against its 200-character field limit; the Context Documents monitor (stored vs 200 KB, read first vs the per-session reading budget); Handoffs' Size column (vs 48 KB); Capture's saved/read share of all sessions in the window; Chat's project footer (documents vs the 40,000-character document budget); an Ingest batch's spend against its cap; Wiki health's issues-per-category row; the MCP bridge's Busiest-tools and Across-projects rows; Settings → Knowledge base's Domains-in-this-folder rows |
+| **Depth bar** | *How much, against what total?* | A tinted bar behind a figure, right-anchored, its length a **named** denominator — never a guess. Today: a document's size against the project's own stored total (v3.70.0: stated plainly, never as an alarm); the running total in Add-from-folder against that same total; a domain's entity/concept/summary counts against its own page count; a clipped save's character count against its 200-character field limit; Handoffs' Size column (vs 48 KB); Agent sessions' saved/read share of all sessions in the window; step ④'s own **segmented window meter** (v3.70.0 — a special case: one violet hue in lightness steps, one segment per layer, every segment named, and it never takes the danger tone even when a reading budget runs past a quarter of the window); Chat's project footer (documents vs the 40,000-character document budget); an Ingest batch's spend against its cap; Wiki health's issues-per-category row; the MCP bridge's Busiest-tools and Across-projects rows; Settings → Knowledge base's Domains-in-this-folder rows |
 | **Tone** (colour, never alone) | *What was the outcome?* | A monitor's head word (ok / danger), a `loud` line for a warning or a cost — always paired with words, since colour alone never carries a reading in this app |
 
 **The depth bar turns danger-toned only when its budget is actually exceeded, and the same fact is
@@ -3736,7 +3789,7 @@ Use **My Curator** when you want a frontier model — Claude Opus, Sonnet, or an
 *The bridge screen, in the shape every Settings section now takes: a numbered block, a one-line
 lede with an **ⓘ** beside it, then the controls. The alt text above describes the v3.65.0 shape —
 the unified sidebar and the connection strip rebuilt as a monitor, the same terminal-like component
-Project context's Capture row and the Sync view's own status use — but the photograph itself
+Project context's Agent sessions row and the Sync view's own status use — but the photograph itself
 predates both and is due a re-shoot. The two blocks really are steps — you connect a
 client, and only then does "which domain does *my wiki* mean?" become a question you can have.
 The four buttons are the [button family](#buttons--what-the-look-tells-you): one filled primary
@@ -4213,7 +4266,7 @@ correctly all the way through never has to call it.
 
 **How the Foundations block reads, in the app.** Since v3.62.0 it is **step ①**, now called
 **Documents**, on the Project-context screen
-— the first thing on the page, above step ② *Memory* and its four rows (*Capture*,
+— the first thing on the page, above step ② *Memory* and its four rows (*Agent sessions*,
 *Handoffs*, *The brief*, *Journal* — since v3.65.0 all built from the same
 instrument, and since v3.65.1 the "Last saved" row that used to lead them is gone) — and its own fold is closed
 by default like theirs. Its summary
@@ -4689,12 +4742,26 @@ a teammate without `my-curator` on their `PATH` would otherwise experience your 
 
 ### The meter: did the session read, and did it save?
 
-Project context → step ② **Memory** carries this reading as its **first** row, **Capture** — the
-question this whole layer exists for is answered without opening anything but that one fold.
+Project context → step ② **Memory** carries this reading as its **first** row, **Agent sessions**
+(called **Capture** through v3.69.0) — the question this whole layer exists for is answered without
+opening anything but that one fold.
+
+**The rename, and what it does and doesn't count.** "Capture" described the mechanism; "Agent
+sessions" describes what you actually read off the row — how many agent sessions reached this
+project through the my-curator MCP, whether they read the context first, and whether they saved
+before stopping. The on-disk word is unchanged (the route is still `…/capture`, the store function
+is still `captureFacts`), exactly as v3.65.1 kept **foundations** and **working state** on disk
+under the screen's own **Documents** and **Memory**. It counts only sessions that reached this
+project **through the MCP bridge**: a session started by the SessionStart **hook**, or by
+`my-curator context` at the command line, reads the context without ever calling
+`get_project_context` over MCP, so it is **not counted** here, and a zero row can be an honest
+answer even on a project you use every day. A one-line explanation sits under the row whenever the
+count is zero, so a quiet number never reads as "nothing is happening" when the truth is "nothing
+here goes through the bridge."
 
 ![The Project context screen, dark theme, scrolled to step 2 "Memory" (numeral, Title-case
-title and an ⓘ beside it — no sentence under the heading). Four closed rows follow: "Capture" ·
-"Handoffs" · "The brief" · "Journal". Capture's own row reads, at its right
+title and an ⓘ beside it — no sentence under the heading). Four closed rows follow: "Agent
+sessions" · "Handoffs" · "The brief" · "Journal". Agent sessions' own row reads, at its right
 edge, "6 sessions in the last 30 days · 4 started with the context · 4 saved before stopping · 2
 read and did not save", with a green dot. Opening it reveals a recessed, monospace panel — the
 same instrument every live reading in the app now uses — up to six lines, no table, in this order:
@@ -4702,10 +4769,13 @@ sessions in the last 30 days, started with the context, saved before stopping, r
 save (in the warning tone once it is non-zero), the tool calls made across the window, and the
 newest session's age with the harness that wrote it as a sub-line. Two lines sit below the row,
 never behind its chevron: "412 lines predate session ids and are not counted", and a quieter "25
-self-test calls excluded". The word "Sessions" appears nowhere on the page outside the
-ⓘ.](images/curator-capture-meter.png)
+self-test calls excluded". At zero, a further line reads "Counts sessions that used the MCP tools
+here; sessions started only through the hook or `my-curator context` are not counted." The word
+"Sessions" appears nowhere on the page outside the
+ⓘ.](images/curator-capture-meter.png) *(the image predates the v3.70.0 rename; the alt text above
+describes the current row)*
 
-*As of v3.65.0, Capture became one row among the other four, not a card sitting above a separate
+*As of v3.65.0, this row became one row among the other four, not a card sitting above a separate
 "Sessions" fold. **As of v3.65.1 its body dropped the per-session table entirely** — the maintainer's
 own reading was that a row plus a table plus a floating ⓘ was three designs answering one question —
 and the six facts the table used to carry now live as six monitor lines, so nothing measured is
@@ -4715,7 +4785,8 @@ pre-session-id count, the excluded self-test calls, and — further down — the
 that logged saves with no session) stay outside the row, unfolded, because a note about what the
 meter cannot see is exactly
 the kind of thing the standing rule says must never sit behind a chevron: a warning, a cost or an
-outcome is never one click further away than the row it qualifies.*
+outcome is never one click further away than the row it qualifies. **As of v3.70.0 the row itself is
+titled Agent sessions**, for the reason above.*
 
 **Three words, defined once so the reading cannot be misread:**
 

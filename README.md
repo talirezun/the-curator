@@ -56,9 +56,12 @@ document **read first** and its text reaches every session, and everything else 
 an agent opens by name when the work calls for it. A project's standing brief carries a
 *"Read before you…"* section for saying which document suits which kind of work. Since v3.67.0
 each document has a third state too, **not at start**, and each project has its own reading
-budget — five presets from Index only to Max 200 KB — under the governing rule **"the right
-context, not all of it": an agent gets its foundations, the last state and the standing brief at
-the start; everything else is on demand.**
+budget — since v3.70.0, seven presets named in tokens, Index only (0) through Max (200k) — under
+the governing rule **"the right context, not all of it": an agent gets its foundations, the last
+state and the standing brief at the start; everything else is on demand.** Step ④ draws that
+bootstrap as a **context-window meter** — your window to scale, your harness estimate hatched, and
+The Curator's own share broken out layer by layer — so "the right context" is something you can
+actually see next to "all of it."
 
 Knowledge accumulates, state supersedes, a canonical document is replaced whole and read verbatim.
 Which of the three a thing belongs in is the most useful distinction in the product, and the one

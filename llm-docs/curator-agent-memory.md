@@ -124,7 +124,7 @@ What it sends of the foundations is the part you control, since v3.62.0. The **i
 
 An index row with no text means a document waiting to be asked for. It never means a document that does not exist, and the tool says so in as many words, because an agent that reported "this project has no decision log" while `decisions.md` sat in the index would have told you something false about your own project.
 
-If you have marked nothing, the older behaviour is unchanged: a first session gets every document up to a budget, and a returning session sends back the sha256 of each document it already read — recorded on its previous save, in a `Foundations read` section of the handoff — and gets only what changed since. That budget is 120 KB by default, and, since version 3.67.0, it is the project's own reading budget once you set one — see the next two sections for the tri-state per-document control and the presets.
+If you have marked nothing, the older behaviour is unchanged: a first session gets every document up to a budget, and a returning session sends back the sha256 of each document it already read — recorded on its previous save, in a `Foundations read` section of the handoff — and gets only what changed since. That budget is 120 KB by default, and, since version 3.67.0, it is the project's own reading budget once you set one — see the next two sections for the tri-state per-document control and the presets. **Since version 3.70.0, a bootstrap too large for one MCP reply arrives in pages** — see "What is a project's reading budget?" below.
 
 Reads never write. The bootstrap does not mark anything as seen on your behalf; the agent records what it read on its next save. A session that reads a document and then crashes has recorded nothing, so the next start correctly treats that document as unseen.
 
@@ -146,21 +146,37 @@ You can also ask an agent to set read-first, through `save_foundation`'s optiona
 
 ## What is a project's reading budget?
 
-Since version 3.67.0 each project has a reading budget: how much document text an agent is handed at the start of a session. The governing rule, in the maintainer's own words, is *"the right context, not all of it"* — an agent needs its foundations, the last state and the standing brief at the start; everything else is on demand.
+Since version 3.67.0 each project has a reading budget: how much document text an agent is handed at the start of a session. The governing rule, in the maintainer's own words, is *"the right context, not all of it"* — an agent needs its foundations, the last state and the standing brief at the start; everything else is on demand. **Since version 3.70.0 the budget is named in tokens, drawn as a context-window meter, and a large bootstrap is delivered in pages.**
 
 Until you set one, nothing changes — every session still receives up to 120 KB of document text, in reading order, exactly as before v3.67.0. Choose a budget and the project becomes **planned**: from then on, only the **read-first** set arrives as text; everything else is listed by name and opened on request.
 
 Five presets, all owner-written only — no MCP tool, no CLI flag and no hook ever sets one:
 
-| Preset | Size |
-|---|---|
-| Index only | 0 — the list only; no document text at all |
-| Lean | 32 KB |
-| Standard | 64 KB — the recommended default |
-| Deep | 120 KB |
-| Max | 200 KB |
+| Preset | Tokens | Bytes |
+|---|---|---|
+| Index only | 0 | 0 — the list only; no document text at all |
+| Lean | 8k | 32 KB |
+| Standard | 16k | 64 KB — the recommended default |
+| Deep | 32k | 128 KB |
+| Large | 64k | 256 KB |
+| Extra large | 128k | 512 KB |
+| Max | 200k | 800 KB |
 
-The **Session start** step of the Project context screen (step ④, new in version 3.67.0) shows a **"what an agent receives"** monitor — the standing brief, the latest handoff, a few journal lines, the document index, and the read-first text, each measured against its own limit, with the total drawn as a share of your agent's own context window (a per-browser setting: 200k or 1M tokens; tokens are estimated at four characters each). When every session is handed more than 32 KB of documents, a line says so, with **Set a reading budget** beside it.
+A project already holding an older 120 KB or 200 KB value keeps it, unchanged, and reads as
+**Custom** with its nearest preset named.
+
+The **Session start** step of the Project context screen (step ④, new in version 3.67.0; rebuilt
+as a **context-window meter** in version 3.70.0) draws that bootstrap as one bar: your whole
+context window to scale, your harness estimate hatched at the left (an owner-entered number, never
+measured, never added to what The Curator itself sends), then The Curator's own layers — brief,
+handoff, journal, document index, read-first text — each named, and a dashed room the width of
+your reading budget. **Window** and **Harness** are set once per computer (not per browser), and
+the menu bar widget reads the same two settings. Every figure is a token estimate, bytes ÷ 4,
+shown with "≈". When every session is handed more than 32 KB of documents, a line says so, with
+**Set a reading budget** beside it. **A bootstrap larger than about 80 KB (≈20k tokens) arrives in
+more than one MCP reply — the picker's own row states how many** — because Claude Code shows an
+MCP reply of at most ≈25,000 tokens and silently saves anything larger to a file instead of
+putting it in the model's window.
 
 ## Can The Curator suggest which documents to mark?
 
@@ -403,7 +419,7 @@ A hook never writes CLAUDE.md, AGENTS.md, GEMINI.md or your Cursor rules. That p
 
 ## How do I know whether my agents are actually saving?
 
-The Project context screen's Memory step opens with a row called **Capture** that answers exactly that. It is built from the same recessed, monospace, terminal-like reading component — a "monitor" — the app uses for every live-state display. Its closed summary already carries the count and the three qualifying clauses:
+The Project context screen's Memory step opens with a row called **Agent sessions** (called *Capture* through version 3.69.0; on-disk name unchanged) that answers exactly that. It is built from the same recessed, monospace, terminal-like reading component — a "monitor" — the app uses for every live-state display. Its closed summary already carries the count and the three qualifying clauses:
 
 ```
 CAPTURE   6 sessions in the last 30 days
@@ -583,9 +599,9 @@ The **Context** item on the rail — one of three, since version 3.64.0 — open
 - **The header carries Copy agent instructions**, beside a breadcrumb naming the domain and project.
 - **The overview card** answers the question people actually arrive with: where does this project stand? One reading per layer — DOCUMENTS, MEMORY, KNOWLEDGE, CAPTURE and, since version 3.67.0, **SESSION START** (the same total step ④ shows: what an agent is handed at the start) — each with its figure, a qualifier under it, and a freshness dot and the word beside it, because colour never carries a reading on its own. Press one and the page jumps to the step it names; unlike the same card on a domain page, nothing here filters — these are readings, not a filter. An unknown age is drawn as a dashed ring and the words, never as age zero.
 - **Step ①, Documents** holds the canonical documents. Its head row always carries two doors, **Add from this computer** and **Add from GitHub**, both always enabled — since v3.69.0 a project can mix written, copied and mirrored documents from up to 8 sources at once — plus a sources strip with per-source Refresh once the project has one, and, since version 3.67.0, **Suggest a reading plan** / **Suggest with AI**. Its table's SIZE column carries a small tinted bar behind each figure, showing that document's share of the 200 KB project budget, and its **At session start** column, since v3.67.0, is a real tri-state control — read first, on request, or not at start — see "How do I choose which documents an agent gets automatically?" above.
-- **Step 2, Memory** holds four collapsed rows, in this order: Capture (the honesty meter, below), Handoffs (your agents'; one right-aligned summary line — handoff count and the newest one's age, nothing under the title while closed; press a row to read that handoff in the reader, where its own headline lives), The brief (yours, with a pencil beside it), and Journal — the session journal, with an inline "Show N more". Only genuinely loud outcomes about one specific save sit above the four rows, unfolded, and only when they fire: content that had to be trimmed, a label that was shortened, a deliberately replaced handoff, two tools sharing one file, newer state elsewhere, another machine that saved after this one. **There is no "Last saved" row as of v3.65.1**, and — also new in v3.65.1 — no unfolded line naming which clock an age came from or which machine wrote the open handoff either: the first is explained once in the overview's own info panel, the second is the Handoffs table's own MACHINE column per row. A healthy save renders nothing above the four rows at all.
+- **Step 2, Memory** holds four collapsed rows, in this order: Agent sessions (the honesty meter, below — called *Capture* through v3.69.0), Handoffs (your agents'; one right-aligned summary line — handoff count and the newest one's age, nothing under the title while closed; press a row to read that handoff in the reader, where its own headline lives), The brief (yours, with a pencil beside it), and Journal — the session journal, with an inline "Show N more". Only genuinely loud outcomes about one specific save sit above the four rows, unfolded, and only when they fire: content that had to be trimmed, a label that was shortened, a deliberately replaced handoff, two tools sharing one file, newer state elsewhere, another machine that saved after this one. **There is no "Last saved" row as of v3.65.1**, and — also new in v3.65.1 — no unfolded line naming which clock an age came from or which machine wrote the open handoff either: the first is explained once in the overview's own info panel, the second is the Handoffs table's own MACHINE column per row. A healthy save renders nothing above the four rows at all.
 - **Step 3, Knowledge** is one row per domain the project draws on — the project's own domain is always listed, since v3.65.1 — each reading "domain · N pages · last ingest age" with that domain's own colour dot, and opening to five figures (entity/concept/summary each with a small bar against that domain's page count) and two doors: Open in Domains, and Ask this domain, plus its own Remove. A **"+ Add a domain"** picker in the step's head row lets you add up to twelve domains a project draws on, including a read-only Shared Brain mirror. A small **default** badge marks a row only while nothing has been explicitly chosen yet, and disappears the moment you add one — curator metadata about the project (`project.json`), written by the app, never by an agent. Version 3.65.2 fixed the picker and Remove themselves, which had not actually worked in v3.65.1 despite being on screen: adding and removing a domain now go through the real route end to end. Remove is withheld with a reason on a single default row, live on every row once there are two or more, and live with a stated outcome on a single explicitly-chosen row.
-- **Step ④, Session start (new in version 3.67.0)** is what an agent is actually handed when it starts work on this project: the standing brief, the latest handoff, a few journal lines, the document index, and the text of every document marked read first — up to the reading budget. Its head row holds the budget picker (Index only, Lean, Standard, Deep, Max — see "What is a project's reading budget?" above); until you choose, it reads "Default · 120 KB." Below that, the **"what an agent receives"** monitor breaks the total down part by part, each against its own limit, with the whole drawn as a share of your agent's context window (a per-browser Context window setting: 200k or 1M tokens). When the total is large, the line carries a **Set a reading budget** action.
+- **Step ④, Session start (new in version 3.67.0; a context-window meter since version 3.70.0)** is what an agent is actually handed when it starts work on this project: the standing brief, the latest handoff, a few journal lines, the document index, and the text of every document marked read first — up to the reading budget. Its head row holds the budget picker (seven presets, Index only through Max — see "What is a project's reading budget?" above) plus **Window** and **Harness**, both set per computer. Below that, the meter draws your window to scale, the harness hatched, and The Curator's own layers named, with a dashed room the width of your reading budget. When the total is large, the line carries a **Set a reading budget** action.
 - **Every fold starts closed and remembers whether you left it open.** Each summary line carries the figure that decides whether to open it. Step ④'s "what an agent receives" monitor is the one exception — it opens by default.
 
 The qualifying lines that can appear above the Memory step's rows — as of v3.65.1, only outcomes about one specific save, never which clock or which machine (both moved to the overview's info panel and the Handoffs table respectively):
@@ -615,7 +631,7 @@ The menu shows, in this order:
 
 - **Working on** — which project, and how long ago, with the harness and model that wrote it.
 - **A save pulse** — a small chart of saves over the last seven days, with how many days are known, how many saves, and how many tools.
-- **The open project's documents line (since version 3.66.1)** — its own group's first line, under the project's header, before its work-stream rows: document size drawn as a depth bar against whichever budget applies (the 120 KB an agent reads in one call once anything is marked read first, otherwise the 200 KB a project may store), red and the word "over" only on an actual over-run.
+- **The open project's documents line (since version 3.66.1)** — its own group's first line, under the project's header, before its work-stream rows: document size drawn as a depth bar against whichever budget applies (the 120 KB an agent reads in one call once anything is marked read first, otherwise the project's own stored total, shown plainly and never as an alarm since v3.70.0), red and the word "over" only on an actual over-run. **A second line, Session start (since v3.70.0), draws the same context-window meter the app does, at menu-bar scale.**
 - **Up to five recent work-streams**, grouped under a project header, newest first, each with a recency dot and a submenu. At most two rows per project group, so one busy project cannot fill the menu. **Since version 3.66.0 each project header is itself an enabled, clickable item**, drawn with its own depth bar — sessions that saved a handoff in the last 30 days, against the busiest project — so it reads sessions the same way "Across projects" does in Settings → MCP bridge. With no usage log on this computer a project header reads "no sessions logged"; with a log but nothing in the last 30 days it reads "no logged sessions · 30 d" (a measured zero, not a missing measurement — the two are worded apart on purpose).
 - **A Domains · pages section (since version 3.66.1)**, at most four lines (a fifth collapses to "…and N more"): each domain's page count against the largest domain, drawn in that domain's own identity colour — the same colour it carries everywhere else it is named. Clicking a domain line opens Settings, where Knowledge base's "Domains in this folder" is its full app twin.
 - **More in Project Context…**, carrying the number not shown.
@@ -673,7 +689,7 @@ Reads are capped at the source, so a hand-edited or synced oversized file cannot
 
 ## What does this deliberately not do?
 
-- **Nothing forces a save.** A hook can ask for one and can never write it, and there is no scheduler. Capture is guided by the skill layer and by the block you paste, and it is advisory.
+- **Nothing forces a save.** A hook can ask for one and can never write it, and there is no scheduler. Saving is guided by the skill layer and by the block you paste, and it is advisory. On screen, the reading of it is called **Agent sessions** (*Capture* through v3.69.0); it counts only sessions that reached the project through the MCP bridge — a session started only by the hook or `my-curator context` is not counted, and the row says so at zero.
 - **Nothing saves periodically or automatically.** Every save is an agent deciding to make one.
 - **The app writes the standing brief, curator-owned canonical documents, and the project's own metadata — and nothing else.** The handoff and the journal are written by an agent and by nothing else — in the app, in the menu bar icon, and everywhere else.
 - **There are no rollups.** Nothing composes a Done, Decided or Blocked view across work-streams or projects.
