@@ -7589,15 +7589,18 @@ export async function addFoundationsFromFolder(domain, project, opts = {}) {
       if (!recorded.ok) {
         return { ...recorded, message: 'The folder this project mirrors is not on this computer, so nothing can be added from it here. Nothing was written.' };
       }
-      const rel = path.relative(recorded.realRoot, pickedRoot);
-      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      // Both sides are already realpath'd, so this compares where the folders
+      // ACTUALLY are — a symlink to somewhere else cannot pass as "inside".
+      const relToMirror = path.relative(recorded.realRoot, pickedRoot);
+      const outside = relToMirror === '..' || relToMirror.startsWith(`..${path.sep}`) || path.isAbsolute(relToMirror);
+      if (outside) {
         return {
           ok: false, reason: 'outside-mirrored-folder', mirroredFolder: recorded.realRoot,
           message: `This project mirrors ${recorded.realRoot}. A mirror has one source, so documents can be added only `
             + 'from inside that folder. Nothing was written.',
         };
       }
-      const prefix = rel ? `${rel.split(path.sep).join('/')}/` : '';
+      const prefix = relToMirror ? `${relToMirror.split(path.sep).join('/')}/` : '';
       const rebased = files.map((f) => (f && typeof f === 'object' && typeof f.path === 'string'
         ? { path: prefix + f.path.replace(/\\/g, '/').replace(/^\.\//, ''), ...(f.role ? { role: f.role } : {}) }
         : f));

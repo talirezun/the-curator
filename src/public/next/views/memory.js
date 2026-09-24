@@ -324,7 +324,7 @@ import { composeDraftingAsk } from '../shared/agent-instructions.js';
 // plain Node suite drives them; this view owns only state and wiring.
 import {
   doorsFor, freshAddPanel, renderDoors, renderAddPanel, startLegendHtml,
-  listUrl, commitRequest, readCommitResponse, outcomeToast, tickedPaths,
+  listUrl, buildAddCommit, readCommitResponse, outcomeToast, tickedPaths,
   commitBlockedReason, listBlockedReason, countLine, budgetWarning, commitWord,
   alreadyAdded,
 } from '../shared/foundations-add.js';
@@ -884,20 +884,26 @@ const FOCUSABLE_IDS = [
   // only because the click causes a render that would otherwise drop focus to
   // <body>. `mem-fnd-add` and `mem-fnd-addrepo` open something in their own
   // place; the three confirm strips replace themselves with an outcome.
-  'mem-fnd-add', 'mem-fnd-addrepo', 'mem-fnd-mirror',
+  'mem-fnd-add',
+  // ── THE TWO DOORS AND THEIR PANEL (v3.68.0) ────────────────────────────
+  // Each door survives its own click (it opens the panel beneath it); the
+  // panel's fields must keep focus through the render the token facts and a
+  // list cause; `fadd-go`, `fadd-cancel` and the templates control remove
+  // themselves and fall back below.
+  'mem-fnd-door-local', 'mem-fnd-door-github',
+  'fadd-root', 'fadd-remote', 'fadd-ref', 'fadd-path', 'fadd-pick', 'fadd-list',
+  'fadd-all', 'fadd-go', 'fadd-cancel', 'mem-fnd-templates',
   'mem-fnd-slug', 'mem-fnd-title', 'mem-fnd-text',
   'mem-fnd-save', 'mem-fnd-cancel', 'mem-fnd-preview',
   'mem-fnd-discard', 'mem-fnd-keep',
   'mem-fnd-delete', 'mem-fnd-delete-go', 'mem-fnd-delete-no',
   'mem-fnd-shrink-go', 'mem-fnd-shrink-no',
-  // The ownership chooser's own commit, on a project that has no manifest.
-  'mem-fnd-init-go',
   // ── WP-V2's NEW CONTROLS ──────────────────────────────────────────────
   // `mem-fnd-file-btn` and `mem-fnd-init-files-btn` are the real <button>s
   // that click a `hidden` file input (P1-7): the input itself is out of the
   // tab order, so the BUTTON is what focus can be on when the file dialog
   // returns and a render repaints the pane.
-  'mem-fnd-file-btn', 'mem-fnd-init-files-btn',
+  'mem-fnd-file-btn',
   // The drafting ask and the Domains pointer. Neither removes itself, but each
   // causes a render (a copy outcome; a view change), and a render replaces the
   // pane they sit in.
@@ -971,8 +977,11 @@ const FOCUS_FALLBACK = {
   // open, so restoring by id would drop focus every time they WORKED. The
   // field the person asked for is where they should land.
   'mem-fnd-add': '#mem-fnd-text',
-  'mem-fnd-addrepo': '.fnd-init-path',
-  'mem-fnd-mirror': '.fnd-init-remote-fields .fnd-init-path',
+  // v3.68.0 — the add panel closes on a clean add or a Cancel, and the
+  // templates control is replaced by the documents it wrote.
+  'fadd-go': '#mem-fnd-door-local',
+  'fadd-cancel': '#mem-fnd-door-local',
+  'mem-fnd-templates': '#mem-fnd-door-local',
   // Save and Cancel both dismiss the editor; the row's own Edit control is
   // gone with the row that is about to be re-read, so the nearest stable
   // thing that does the same KIND of thing is the fold the table sits in.
@@ -988,8 +997,6 @@ const FOCUS_FALLBACK = {
   'mem-fnd-delete-no': '#mem-fnd-text',
   'mem-fnd-shrink-go': '#mem-fold-foundations',
   'mem-fnd-shrink-no': '#mem-fnd-text',
-  // Choosing an ownership replaces the whole block body with a table.
-  'mem-fnd-init-go': '#mem-fold-foundations',
 };
 
 // Same mount-token discipline as chat.js / domains.js / sync.js: captured as
@@ -3212,6 +3219,12 @@ function restoreFocus() {
     // the browser scroll to it would undo the reading position that the
     // re-render preserved.
     try { el.focus({ preventScroll: true }); } catch { /* non-focusable in some engines */ }
+    // A text field of the add panel (v3.68.0) keeps typing where it left
+    // off: a render rebuilt the field, and a caret at 0 would put the next
+    // keystroke at the front of the path.
+    if (/^fadd-/.test(String(el.id || '')) && el.type === 'text' && typeof el.setSelectionRange === 'function') {
+      try { const n = String(el.value || '').length; el.setSelectionRange(n, n); } catch { /* ignore */ }
+    }
     return;
   }
   // Nothing to restore to. Keep the target only while another render is
@@ -9463,7 +9476,7 @@ async function commitAdd(token) {
   const domain = state.activeDomain;
   const project = state.activeProject;
   const key = keyOf(domain, project);
-  const req = commitRequest(rec, facts, domain, project);
+  const req = buildAddCommit(rec, facts, domain, project);
   rec.busy = true; rec.error = null; rec.refused = [];
   render(token);
   let status = 0;

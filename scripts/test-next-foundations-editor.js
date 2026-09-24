@@ -181,6 +181,7 @@ function extractFunction(source, name) {
   }
 }
 const FI = await import('../src/public/next/shared/foundations-init.js');
+const FA = await import('../src/public/next/shared/foundations-add.js');
 const { renderInfoMark: realRenderInfoMark } = await import('../src/public/next/shared/text.js');
 
 const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
@@ -1149,11 +1150,11 @@ const renderers = (() => {
     extractFunction(viewSrc, 'fndShrinkWarn') + '\n' +
     extractFunction(viewSrc, 'briefDismissDecision') + '\n' +
     extractFunction(viewSrc, 'renderFoundationEditor') + '\n' +
-    extractFunction(viewSrc, 'renderFoundationsInit') + '\n' +
+    extractFunction(viewSrc, 'renderFoundationsEmpty') + '\n' +
     extractFunction(viewSrc, 'foundationReaderContent') + '\n' +
     extractFunction(viewSrc, 'formatAge') + '\n' +
     'return { foundationsFacts, skeletonOf, fndStats, fndSlugError, fndShrinkWarn, '
-    + 'briefDismissDecision, renderFoundationEditor, renderFoundationsInit, '
+    + 'briefDismissDecision, renderFoundationEditor, renderFoundationsEmpty, '
     + 'foundationReaderContent };';
   // eslint-disable-next-line no-new-func
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'renderStatus',
@@ -1459,66 +1460,33 @@ const anEdit = (over) => ({ domain: 'acme', project: 'lumina', slug: 'architectu
   ok('every interpolated string is escaped', !renderers.renderFoundationEditor(facts).includes('<img src=x'));
 }
 {
-  // ── THE CHOOSER, INSIDE THE BLOCK ─────────────────────────────────────
-  setState({ activeDomain: 'acme', activeProject: 'lumina', fndInit: null });
-  const unchosen = renderers.renderFoundationsInit(
-    renderers.foundationsFacts({ foundations: { present: false, ownership: null, documents: [] } }));
-  ok('a project that has never answered gets the chooser, painted from NOTHING — the block '
-    + 'renders its own first frame without a click',
-  unchosen.includes('data-fnd-init="mem-fnd-init"'), unchosen.slice(0, 200));
-  // ── THE PRIMARY IS THE HOST'S, AND IT NAMES THE STEP (v3.61.0, P2-6) ─
-  // The shared chooser emits NO primary of its own, because the other host —
-  // the "New project" form — already has one ("Create project") and a card
-  // with two primaries has not decided what it is asking for. Here the commit
-  // belongs to this block, so this block emits it, and it is labelled for the
-  // STEP rather than for whichever arm happens to be selected: a label that
-  // changes as the form is answered moves the control the person is aiming at.
-  ok('...with the block\u2019s own commit, labelled for the step',
-    /Set up documents<\/button>/.test(unchosen), unchosen.slice(-500));
-  ok('...and exactly one primary on the card',
-    (unchosen.match(/btn-primary/g) || []).length === 1, unchosen.slice(-700));
-  // IRREVERSIBILITY NEVER FOLDS (§3.10): the store refuses a mismatch on every
-  // later write, so the set-once clause is painted in flow above the chooser.
-  ok('...and the set-once cost is stated unfolded, above the choice',
-    /Set once — a project is mirrored or kept here, never both/.test(unchosen)
-    && unchosen.indexOf('Set once') < unchosen.indexOf('data-fnd-own='), unchosen.slice(0, 500));
-  ok('...enabled, because the curator arm needs nothing typed',
-    !/id="mem-fnd-init-go" disabled/.test(unchosen));
-
-  setState({ activeDomain: 'acme', activeProject: 'lumina', fndInit: {
-    domain: 'acme', project: 'lumina', busy: false, error: null, refused: [],
-    choice: { ...FI.freshChooser({}), ownership: 'repo', repoRoot: '' } } });
-  const needsRoot = renderers.renderFoundationsInit(
-    renderers.foundationsFacts({ foundations: { present: false, ownership: null, documents: [] } }));
-  ok('the mirror arm cannot be committed with no root typed',
-    /id="mem-fnd-init-go" disabled/.test(needsRoot), needsRoot.slice(-500));
-
+  // ── AN EMPTY PROJECT (v3.68.0) — the two doors live in the head row the
+  // caller passes in; the body is ONE sentence naming both ways in, plus the
+  // four templates as a quiet third answer where nothing is mirrored. The
+  // v3.61.0 ownership chooser ("Set up documents") is gone from this block.
+  const none = renderers.foundationsFacts({ foundations: { present: false, ownership: null, documents: [] } });
+  const ask = { btn: '', panel: '' };
+  setState({ activeDomain: 'acme', activeProject: 'lumina' });
+  const unchosen = renderers.renderFoundationsEmpty(none, '<DOORS>', '<PANEL>', ask, '', false, true);
+  ok('a project that has never answered shows the head row it was given, then the panel',
+    unchosen.indexOf('<DOORS>') > 0 && unchosen.indexOf('<DOORS>') < unchosen.indexOf('<PANEL>'), unchosen.slice(0, 300));
+  ok('...one sentence naming BOTH ways in', /Add them from this computer or from a GitHub repository/.test(unchosen));
+  ok('...the four templates offered as a quiet ghost control, not a card',
+    /id="mem-fnd-templates"/.test(unchosen) && /btn-ghost/.test(unchosen));
+  ok('...and no ownership chooser, and no "Set up documents" primary',
+    !/data-fnd-init=/.test(unchosen) && !/Set up documents/.test(unchosen) && !/btn-primary/.test(unchosen));
   const mirrorFacts = renderers.foundationsFacts({
     foundations: { present: true, ownership: 'repo', documents: [] } });
-  setState({ activeDomain: 'acme', activeProject: 'lumina', fndInit: null });
-  const armOnly = renderers.renderFoundationsInit(mirrorFacts);
-  ok('an already-owned mirror shows the arm and NOT the question',
-    !armOnly.includes('data-fnd-own=') && armOnly.includes('id="mem-fnd-init-root"'));
-  // P1-9: the word is FOLDER. `resolveRepoRoot` requires only an absolute,
-  // reachable DIRECTORY, so "repository" turns away everybody whose documents
-  // live in ~/Documents/lumina-docs.
-  ok('...labelled for what it does', /Add from folder<\/button>/.test(armOnly), armOnly.slice(-400));
-  ok('...and its lede is an instruction, not a definition',
-    /Point at the folder/.test(armOnly));
-  ok('...and nothing in this arm says "repository"', !/repositor/i.test(armOnly), armOnly.slice(0, 900));
-  // AND THE SET-ONCE CLAUSE IS WITHHELD HERE: the ownership is already
-  // settled, so restating that it cannot be changed is a warning about a
-  // decision nobody is about to take.
-  ok('...and the set-once note is withheld, because the answer is already given',
-    !/Set once/.test(armOnly));
-
-  setState({ activeDomain: 'acme', activeProject: 'lumina', fndInit: {
-    domain: 'acme', project: 'lumina', busy: true, error: null, refused: [],
-    choice: FI.freshChooser({}) } });
-  ok('while it is working the commit says so and is disabled',
-    /id="mem-fnd-init-go" disabled>Setting up…/.test(
-      renderers.renderFoundationsInit(renderers.foundationsFacts(
-        { foundations: { present: false, ownership: null, documents: [] } }))));
+  const emptyMirror = renderers.renderFoundationsEmpty(mirrorFacts, '<DOORS>', '', ask, '', false, true);
+  ok('an empty MIRROR says nothing is mirrored yet, and offers no templates (its owner chose a source)',
+    /Nothing mirrored yet/.test(emptyMirror) && !/mem-fnd-templates/.test(emptyMirror));
+  ok('a read-only mirror is offered no templates', !/mem-fnd-templates/.test(
+    renderers.renderFoundationsEmpty(none, '', '', ask, '', false, false)));
+  setState({ activeDomain: 'acme', activeProject: 'lumina',
+    fndTpl: { domain: 'acme', project: 'lumina', busy: false, error: 'boom <b>' } });
+  const failedTpl = renderers.renderFoundationsEmpty(none, '', '', ask, '', false, true);
+  ok('a failed templates write is said in flow, escaped, and persists',
+    /The templates were not written: boom &lt;b&gt;/.test(failedTpl));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -1599,29 +1567,33 @@ section('§9 — THE FOUR WRITES, DRIVEN (a fake fetch, the shipped functions)')
 // ═════════════════════════════════════════════════════════════════════════
 
 function writeRig(responder) {
-  const calls = { render: 0, urls: [], inits: [], forgot: [], reloaded: 0, refreshed: 0 };
+  const calls = { render: 0, urls: [], inits: [], forgot: [], reloaded: 0, refreshed: 0, toasts: [] };
   const st = { activeDomain: 'acme', activeProject: 'lumina', fndEdit: null, fndInit: null,
-    fnd: null, projectRead: null, openFolds: {} };
+    fnd: null, projectRead: null, openFolds: {}, fndAdd: null, fndTpl: null };
   const body =
     extractFunction(viewSrc, 'keyOf') + '\n' +
     extractFunction(viewSrc, 'activeKey') + '\n' +
     extractFunction(viewSrc, 'fndStats') + '\n' +
     extractFunction(viewSrc, 'fndSlugError') + '\n' +
+    extractFunction(viewSrc, 'skeletonOf') + '\n' +
+    extractFunction(viewSrc, 'foundationsFacts') + '\n' +
+    extractFunction(viewSrc, 'addPanelFor') + '\n' +
     extractFunction(viewSrc, 'loadFoundationDraft') + '\n' +
     extractFunction(viewSrc, 'saveFoundation') + '\n' +
     extractFunction(viewSrc, 'deleteFoundation') + '\n' +
-    extractFunction(viewSrc, 'initFoundations') + '\n' +
-    'return { loadFoundationDraft, saveFoundation, deleteFoundation, initFoundations };';
+    // v3.68.0 — the two doors' writes replace the chooser's `initFoundations`.
+    extractFunction(viewSrc, 'listAddDocuments') + '\n' +
+    extractFunction(viewSrc, 'commitAdd') + '\n' +
+    extractFunction(viewSrc, 'seedTemplates') + '\n' +
+    'return { loadFoundationDraft, saveFoundation, deleteFoundation, listAddDocuments, commitAdd, seedTemplates };';
   // eslint-disable-next-line no-new-func
   const api = new Function('state', 'render', 'isCurrentMount', 'fetch', 'forgetProject',
     'reloadActive', 'refreshIndex', 'reportAsyncMountFailure', 'refreshFoundations',
     'fetchState', 'localStorage', 'FOUNDATION_ROLES', 'FOUNDATION_SLUG_RE',
-    // THE REAL REFUSAL VOCABULARY (v3.65.0). `initFoundations` maps a store
-    // refusal code to a sentence naming the token's SOURCE before it prints
-    // one; injected real rather than stubbed, because the whole property
-    // under test is which words reach the screen.
-    'MAX_FOUNDATION_BYTES', 'freshChooser', 'chooserBody', 'remoteRefusalText',
-    'JSON', 'TextEncoder', body)(
+    'MAX_FOUNDATION_BYTES', 'remoteRefusalText', 'JSON', 'TextEncoder',
+    // The DOM-free rules the doors' writes call — REAL, not stubbed.
+    'buildAddCommit', 'commitBlockedReason', 'readCommitResponse', 'outcomeToast',
+    'listBlockedReason', 'listUrl', 'showToast', 'READ_FIRST_BUDGET_BYTES', 'FOUNDATIONS_BUDGET_BYTES', body)(
     st,
     () => { calls.render++; },
     () => true,
@@ -1636,7 +1608,10 @@ function writeRig(responder) {
     async () => ({ data: { scopes: [], brief: { present: false } } }),
     { getItem: () => null, setItem: () => {} },
     FI.FOUNDATION_ROLES, FI.FOUNDATION_SLUG_RE, FI.MAX_FOUNDATION_BYTES,
-    FI.freshChooser, FI.chooserBody, FI.remoteRefusalText, JSON, TextEncoder);
+    FI.remoteRefusalText, JSON, TextEncoder,
+    FA.buildAddCommit, FA.commitBlockedReason, FA.readCommitResponse, FA.outcomeToast,
+    FA.listBlockedReason, FA.listUrl, (o) => { calls.toasts.push(o); }, READ_FIRST_BUDGET_SRC,
+    FI.FOUNDATIONS_BUDGET_BYTES);
   return { api, st, calls };
 }
 
@@ -1798,91 +1773,85 @@ function writeRig(responder) {
     isNew.calls.urls.length, 0);
 }
 {
-  // ── THE INIT ──────────────────────────────────────────────────────────
-  const { api, st, calls } = writeRig(() => ({ ok: true, json: async () => ({
-    ok: true, seeded: ['architecture.md', 'decisions.md', 'conventions.md', 'roadmap.md'],
-    foundations: { present: true, ownership: 'curator', documents: [] } }) }));
-  st.fndInit = { domain: 'acme', project: 'lumina', busy: false, error: null, refused: [],
-    choice: FI.freshChooser({}) };
-  await api.initFoundations(1, { present: false, ownership: null });
+  // ── THE TWO DOORS' WRITES (v3.68.0) — driven through the shipped functions
+  const rec = (over) => Object.assign(FA.freshAddPanel('local', { mode: 'copy' }, null),
+    { domain: 'acme', project: 'lumina' }, over || {});
+  const { api, st, calls } = writeRig((url) => ({ ok: true, status: 200, json: async () => (
+    /repo-scan/.test(url)
+      ? { ok: true, root: '/real/notes', candidates: [
+        { path: 'a.md', bytes: 4, suggestedSlug: 'a.md' }, { path: 'b.txt', bytes: 5, suggestedSlug: 'b.md' }] }
+      : { ok: true, mode: 'copy', added: ['a.md', 'b.md'], refused: [] }) }));
+  st.projectRead = { foundations: { present: false, documents: [] } };
+  st.fndAdd = rec({ root: '/Users/me/notes' });
+  await api.listAddDocuments(1);
+  eq('LIST asks for every document in the folder', calls.urls[0],
+    '/api/memory/repo-scan?all=1&root=%2FUsers%2Fme%2Fnotes');
+  eq('...and holds the RESOLVED folder the server read', st.fndAdd.listedRoot, '/real/notes');
+  eq('...with nothing ticked by default', Object.keys(st.fndAdd.picks).length, 0);
+  st.fndAdd.picks = { 'a.md': true, 'b.txt': true };
+  await api.commitAdd(1);
+  eq('ADD posts to add-local', calls.urls[1], '/api/memory/acme/lumina/foundations/add-local');
+  eq('...a POST', calls.inits[1].method, 'POST');
+  eq('...carrying the folder that was LISTED and the ticked paths — nothing else',
+    calls.inits[1].body, JSON.stringify({ root: '/real/notes', files: [{ path: 'a.md' }, { path: 'b.txt' }] }));
+  ok('a clean add toasts the count and closes the panel',
+    calls.toasts.length === 1 && calls.toasts[0].title === '2 documents added' && st.fndAdd === null,
+    JSON.stringify(calls.toasts));
+  eq('...and drops the cached read', calls.forgot[0], 'acme/lumina');
+}
+{
+  // A REFUSAL IS PERSISTENT AND IN FLOW, NEVER A TOAST — and the ticks stay.
+  const { api, st, calls } = writeRig(() => ({ ok: false, status: 409, json: async () => ({
+    ok: false, reason: 'source-is-github', error: 'This project mirrors o/r on GitHub.' }) }));
+  st.projectRead = { foundations: { present: false, documents: [] } };
+  st.fndAdd = Object.assign(FA.freshAddPanel('local', { mode: 'copy' }, null), { domain: 'acme', project: 'lumina',
+    root: '/n', listedRoot: '/n', candidates: [{ path: 'a.md', bytes: 1, suggestedSlug: 'a.md' }], picks: { 'a.md': true } });
+  await api.commitAdd(1);
+  ok('the refusal is on the panel', /mirrors o\/r on GitHub/.test(String(st.fndAdd && st.fndAdd.error)));
+  eq('...no toast for a failure', calls.toasts.length, 0);
+  eq('...and the ticks survive', st.fndAdd && st.fndAdd.picks['a.md'], true);
+}
+{
+  // PARTIAL: some added, some refused → the toast for what arrived, and the
+  // refused list stays on the panel with each reason.
+  const { api, st, calls } = writeRig(() => ({ ok: true, status: 200, json: async () => ({
+    ok: true, mode: 'copy', added: ['a.md'], refused: [{ path: 'big.md', reason: '600000 bytes is over the 524288-byte (512 KB) per-document cap' }] }) }));
+  st.projectRead = { foundations: { present: false, documents: [] } };
+  st.fndAdd = Object.assign(FA.freshAddPanel('local', { mode: 'copy' }, null), { domain: 'acme', project: 'lumina',
+    root: '/n', listedRoot: '/n', candidates: [{ path: 'a.md', bytes: 1 }, { path: 'big.md', bytes: 2 }],
+    picks: { 'a.md': true, 'big.md': true } });
+  await api.commitAdd(1);
+  ok('the arrival is toasted', calls.toasts.length === 1 && /1 document added/.test(calls.toasts[0].title));
+  ok('...the refused file stays on the panel WITH its numbers',
+    !!st.fndAdd && st.fndAdd.refused.length === 1 && /512 KB/.test(st.fndAdd.refused[0].reason));
+}
+{
+  // THE GITHUB DOOR ON AN EMPTY PROJECT → init; the TOKEN is never in a body.
+  const { api, st, calls } = writeRig(() => ({ ok: false, status: 403, json: async () => ({
+    ok: false, reason: 'unauthorised', error: 'unauthorised' }) }));
+  st.projectRead = { foundations: { present: true, ownership: 'curator', documents: [] } };
+  st.fndAdd = Object.assign(FA.freshAddPanel('github', { mode: 'init' }, null), { domain: 'acme', project: 'lumina',
+    remote: 'o/r', tokenSource: 'sync', candidates: [{ path: 'docs/a.md', bytes: 1 }], picks: { 'docs/a.md': true } });
+  await api.commitAdd(1);
   eq('...at the init route', calls.urls[0], '/api/memory/acme/lumina/foundations/init');
-  eq('...as a POST', calls.inits[0].method, 'POST');
-  eq('the body is the one the SHARED module built, not one composed here',
-    calls.inits[0].body, JSON.stringify({ ownership: 'curator' }));
-  eq('the choice is dropped once it has been taken',
-    st.fndInit ? st.fndInit.choice : '<record gone>', null);
-  eq('...the cache with it, because a manifest and four documents now exist that did not',
-    calls.forgot[0], 'acme/lumina');
+  eq('...re-choosing the EMPTY project\'s source, naming the token FILE and never a token',
+    calls.inits[0].body, JSON.stringify({ ownership: 'repo', remote: { owner: 'o', repo: 'r' },
+      tokenSource: 'sync', files: [{ path: 'docs/a.md' }], rechooseEmpty: true }));
+  const msg = String(st.fndAdd && st.fndAdd.error);
+  ok('a remote refusal is a SENTENCE naming which stored token was used',
+    /refused by GitHub/.test(msg) && /Personal Sync’s token/.test(msg), msg);
 }
 {
-  // A REFUSAL KEEPS THE CHOICE. A path typed, a scan read and eight boxes
-  // ticked are not thrown away because the server said no.
-  const { api, st } = writeRig(() => ({ ok: false, status: 400, json: async () => ({
-    ok: false, error: 'ownership_set', message: 'this project already has a manifest' }) }));
-  const choice = { ...FI.freshChooser({}), ownership: 'repo', repoRoot: '/r',
-    candidates: [{ path: 'a.md', bytes: 1, suggestedRole: 'other' }], picks: { 'a.md': true } };
-  st.fndInit = { domain: 'acme', project: 'lumina', busy: false, error: null, refused: [], choice };
-  await api.initFoundations(1, { present: false, ownership: null });
-  ok('the refusal is reported', /already has a manifest/.test(String(st.fndInit && st.fndInit.error)));
-  // ── A REMOTE REFUSAL NAMES THE TOKEN'S SOURCE, NEVER THE TOKEN (v3.65.0)
-  // The store answers a failed remote read with one of nine codes; printing
-  // the code would show a person a word from a protocol. And the ONE thing a
-  // view is in a position to get wrong here is putting a credential on
-  // screen — so the sentence names the FILE and the assertion says so.
-  {
-    const r2 = writeRig(() => ({ ok: false, status: 403, json: async () => ({
-      ok: false, error: 'unauthorised', message: 'unauthorised' }) }));
-    r2.st.fndInit = { domain: 'acme', project: 'lumina', busy: false, error: null, refused: [],
-      choice: { ...FI.freshChooser({}), ownership: 'remote', remote: 'o/r', tokenSource: 'sync',
-        candidates: [{ path: 'a.md', bytes: 1, suggestedRole: 'other' }], picks: { 'a.md': true } } };
-    await r2.api.initFoundations(1, { present: false, ownership: null });
-    const msg = String(r2.st.fndInit && r2.st.fndInit.error);
-    ok('a remote refusal is a SENTENCE, not the store\'s code',
-      !/unauthorised$/.test(msg) && /refused by GitHub/.test(msg), msg);
-    ok('...naming WHICH stored token was used', /Personal Sync’s token/.test(msg), msg);
-    ok('...and the request carried the token SOURCE and no token',
-      /"tokenSource":"sync"/.test(String(r2.calls.inits[0].body))
-      && !/"token"/.test(String(r2.calls.inits[0].body)), String(r2.calls.inits[0].body));
-    ok('...and the repository, as the store\'s own argument',
-      /"remote":"o\/r"/.test(String(r2.calls.inits[0].body)), String(r2.calls.inits[0].body));
-    // A CODE THIS TABLE DOES NOT KNOW falls back to the PRODUCER's message
-    // rather than to a guess — the collapse this repo keeps paying for is a
-    // consumer inventing an answer where the producer already gave one.
-    const r3 = writeRig(() => ({ ok: false, status: 400, json: async () => ({
-      ok: false, error: 'something_new', message: 'the producer said this' }) }));
-    r3.st.fndInit = { domain: 'acme', project: 'lumina', busy: false, error: null, refused: [],
-      choice: { ...FI.freshChooser({}), ownership: 'remote', remote: 'o/r',
-        candidates: [{ path: 'a.md', bytes: 1, suggestedRole: 'other' }], picks: { 'a.md': true } } };
-    await r3.api.initFoundations(1, { present: false, ownership: null });
-    eq('an unrecognised code falls back to the producer\'s own sentence',
-      String(r3.st.fndInit && r3.st.fndInit.error), 'the producer said this');
-  }
-  eq('...and the scan the person read is STILL THERE',
-    st.fndInit && st.fndInit.choice ? st.fndInit.choice.candidates.length : '<choice gone>', 1);
-  eq('...with their ticks',
-    st.fndInit && st.fndInit.choice ? st.fndInit.choice.picks['a.md'] : '<choice gone>', true);
-}
-{
-  // AN ALREADY-OWNED MIRROR TAKES THE REFRESH ROUTE, which has its own outcome
-  // rendering and its own stamped record — so this hands off rather than
-  // duplicating it.
-  const { api, st, calls } = writeRig(() => ({ ok: true, json: async () => ({ ok: true }) }));
-  st.fndInit = { domain: 'acme', project: 'lumina', busy: false, error: null, refused: [],
-    choice: { ...FI.freshChooser({}), ownership: 'repo', repoRoot: '/r',
-      candidates: [{ path: 'docs/a.md', bytes: 1, suggestedRole: 'guide' }],
-      picks: { 'docs/a.md': true } } };
-  await api.initFoundations(1, { present: true, ownership: 'repo' });
-  eq('an already-owned mirror never reaches the init route', calls.urls.length, 0);
-  eq('...it goes through the REFRESH, which is the only route that may touch it', calls.refreshed, 1);
-  eq('...carrying the files the owner chose',
-    JSON.stringify(calls.refreshFiles), JSON.stringify([{ path: 'docs/a.md', role: 'guide' }]));
-  eq('"decide later" commits nothing at all', await (async () => {
-    const r = writeRig(() => ({ ok: true, json: async () => ({ ok: true }) }));
-    r.st.fndInit = { domain: 'acme', project: 'lumina', busy: false, error: null, refused: [],
-      choice: { ...FI.freshChooser({ allowLater: true }), ownership: 'later' } };
-    await r.api.initFoundations(1, { present: false, ownership: null });
-    return r.calls.urls.length;
-  })(), 0);
+  // THE TEMPLATES — curator-owned, re-choosing only an EMPTY project.
+  const { api, st, calls } = writeRig(() => ({ ok: true, status: 201, json: async () => ({ ok: true }) }));
+  st.projectRead = { foundations: { present: false, documents: [] } };
+  await api.seedTemplates(1);
+  eq('templates post the curator ownership and nothing else', calls.inits[0].body, JSON.stringify({ ownership: 'curator' }));
+  const r2 = writeRig(() => ({ ok: true, status: 201, json: async () => ({ ok: true }) }));
+  r2.st.projectRead = { foundations: { present: true, ownership: 'repo', documents: [] } };
+  await r2.api.seedTemplates(1);
+  eq('...and ask to re-choose when an EMPTY manifest exists',
+    r2.calls.inits[0].body, JSON.stringify({ ownership: 'curator', rechooseEmpty: true }));
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -1972,12 +1941,14 @@ section('§10 — THE BINDER: wire() grows no new identifier');
   // AND THE TIER-0 BINDER IS WHERE THE NEW WIRING WENT.
   const binderSrc = extractFunction(viewSrc, 'bindFoundationRows');
   for (const id of ['mem-fnd-add', 'mem-fnd-save', 'mem-fnd-cancel', 'mem-fnd-delete',
-    'mem-fnd-delete-go', 'mem-fnd-shrink-go', 'mem-fnd-init-go', 'mem-fnd-file',
+    'mem-fnd-delete-go', 'mem-fnd-shrink-go', 'mem-fnd-file',
     'mem-fnd-text', 'mem-fnd-title', 'mem-fnd-slug', 'mem-fnd-preview']) {
     ok('bindFoundationRows binds ' + id, binderSrc.includes("'" + id + "'"), 'not bound');
   }
   ok('...and the row Edit controls', binderSrc.includes('[data-fnd-edit]'));
-  ok('...and the shared chooser', binderSrc.includes('bindFoundationsChooser('));
+  // v3.68.0: the ownership chooser is gone from this view; the two doors'
+  // panel is bound by ONE call from inside this binder.
+  ok('...and the two doors\' panel', binderSrc.includes('bindAddDoors(root, token)'));
   ok('wire() itself still names only the two tier-0 entry points it always did',
     /bindFoundationRows\(document, token\)/.test(wireSrc)
     && /refreshFoundations\(token\)/.test(wireSrc));
@@ -1992,17 +1963,20 @@ section('§10 — THE BINDER: wire() grows no new identifier');
   const fbk = /const FOCUS_FALLBACK = \{([\s\S]*?)\n\};/.exec(viewSrc);
   ok('FOCUSABLE_IDS and FOCUS_FALLBACK were both found (the scan is not vacuous)',
     !!ids && !!fbk);
-  const CAPTURED = ['mem-fnd-add', 'mem-fnd-addrepo', 'mem-fnd-slug', 'mem-fnd-title',
+  const CAPTURED = ['mem-fnd-add', 'mem-fnd-slug', 'mem-fnd-title',
     'mem-fnd-text', 'mem-fnd-save', 'mem-fnd-cancel', 'mem-fnd-preview', 'mem-fnd-discard',
     'mem-fnd-keep', 'mem-fnd-delete', 'mem-fnd-delete-go', 'mem-fnd-delete-no',
-    'mem-fnd-shrink-go', 'mem-fnd-shrink-no', 'mem-fnd-init-go'];
+    'mem-fnd-shrink-go', 'mem-fnd-shrink-no',
+    // v3.68.0 — the doors and the add panel's controls.
+    'mem-fnd-door-local', 'mem-fnd-door-github', 'fadd-root', 'fadd-remote', 'fadd-go', 'fadd-cancel'];
   for (const id of CAPTURED) {
     ok('FOCUSABLE_IDS knows ' + id, ids && ids[1].includes("'" + id + "'"));
   }
   // The ones that genuinely disappear when pressed.
-  const REMOVES_ITSELF = ['mem-fnd-add', 'mem-fnd-addrepo', 'mem-fnd-save', 'mem-fnd-cancel',
+  const REMOVES_ITSELF = ['mem-fnd-add', 'mem-fnd-save', 'mem-fnd-cancel',
     'mem-fnd-discard', 'mem-fnd-keep', 'mem-fnd-delete', 'mem-fnd-delete-go',
-    'mem-fnd-delete-no', 'mem-fnd-shrink-go', 'mem-fnd-shrink-no', 'mem-fnd-init-go'];
+    'mem-fnd-delete-no', 'mem-fnd-shrink-go', 'mem-fnd-shrink-no',
+    'fadd-go', 'fadd-cancel', 'mem-fnd-templates'];
   for (const id of REMOVES_ITSELF) {
     ok('...and FOCUS_FALLBACK has somewhere for ' + id + ' to send focus',
       fbk && fbk[1].includes("'" + id + "'"), 'no fallback');
@@ -3119,25 +3093,9 @@ section('§18 — v3.65.2: THE HOST-OWNED REASON, THE DOOR, AND ADD MODE, DRIVEN
   ok('a refusal whose CODE is in `reason` and whose PROSE is in `error` becomes the sentence '
     + 'for the code — the wire\'s real shape', /no token to read with/.test(got.error), got.error);
 }
-{
-  // ── (6) THE COPY IS SENT AGAINST THE FOLDER THAT WAS SCANNED ─────────────
-  const run = async (over) => {
-    const { api, st, calls } = writeRig(() => ({ ok: true, json: async () => ({ ok: true }) }));
-    const choice = { ...FI.freshChooser({}), ownership: 'repo', addMode: true, fixedRoot: '/rec',
-      repoRoot: '/rec', candidates: [{ path: 'docs/b.md', bytes: 1, suggestedRole: 'other' }],
-      picks: { 'docs/b.md': true }, ...over };
-    st.fndInit = { domain: 'acme', project: 'lumina', choice, busy: false, adding: true };
-    await api.initFoundations(1, { present: true, ownership: 'repo' });
-    return calls;
-  };
-  const fixed = await run({});
-  eq('the recorded folder: the refresh carries the files and NO repoRoot — the route reads the manifest\'s',
-    JSON.stringify([fixed.refreshFiles, fixed.refreshRoot]),
-    JSON.stringify([[{ path: 'docs/b.md', role: 'other' }], undefined]));
-  const typed = await run({ rootEditable: true, repoRoot: '/my/copy' });
-  eq('a folder TYPED because the recorded one is missing is SENT — the path scanned is the path copied from',
-    typed.refreshRoot, '/my/copy');
-}
+// (6) — v3.68.0: the copy is sent against the folder that was LISTED; that
+// property is now driven in §9 through `commitAdd` ("carrying the folder that
+// was LISTED").
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§19 — v3.65.3: READ WITH NAMES EACH TOKEN, AND THE DEFAULT IS DERIVED');

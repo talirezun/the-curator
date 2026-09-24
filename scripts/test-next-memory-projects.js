@@ -541,6 +541,10 @@ const EXPECTED = [
   ['patch', '/:domain/:project/foundations/:slug'],
   ['delete', '/:domain/:project/foundations/:slug'],
   ['post', '/:domain/:project/foundations/init'],
+  // v3.68.0 — "Add from this computer". A POST that reads a folder the owner
+  // picked and copies (or, on a folder mirror, mirrors) the ticked files; the
+  // store enforces every path rule. Declared here before it could ship.
+  ['post', '/:domain/:project/foundations/add-local'],
   ['post', '/:domain/:project/foundations/refresh'],
   // v3.65.1 — "Mirror from GitHub instead". A POST, not a PATCH: it fetches
   // blobs and rewrites files. Four segments like the rest of tier 0, and
@@ -2479,12 +2483,12 @@ const REPO = join(TMP, 'repo');
   // pattern can match a four-segment path, so the collision cannot reach here.
   {
     const four = ROUTES.filter((r) => r.path.split('/').filter(Boolean).length === 4).map((r) => r.path);
-    // SEVEN tier-0 rows (v3.65.1 added the source switch), plus v3.65.0's
+    // EIGHT tier-0 rows (v3.65.1 added the source switch, v3.68.0 add-local), plus v3.65.0's
     // knowledge-domains PATCH, which is four segments for the same reason and
     // is counted separately so the tier-0 claim keeps its own number rather
     // than absorbing every later addition.
     const fourFoundations = four.filter((p) => p.includes('/foundations'));
-    ok('every foundations route is four segments deep', fourFoundations.length === 7, JSON.stringify(four));
+    ok('every foundations route is four segments deep', fourFoundations.length === 8, JSON.stringify(four));
     ok('...and the knowledge-domains write is four segments deep for the same reason',
       four.includes('/:domain/:project/knowledge/domains'), JSON.stringify(four));
     const twoGet = ROUTES.filter((r) => r.method === 'get'

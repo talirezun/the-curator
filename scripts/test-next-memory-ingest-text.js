@@ -895,12 +895,16 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
   // knowledgeDomains class), and two READS that carry a body: the session-start
   // PREVIEW and the reading-plan helper's proposal. test-next-memory-view.js §8
   // names each by URL and body.
-  ok('memory.js issues exactly ELEVEN mutating-shaped HTTP method keys',
-    methods.length === 11, methods.join(','));
-  ok('...and they are DELETE x2, PATCH x4, POST x4 and PUT, every one a LITERAL',
+  // v3.68.0: TWELVE. The ownership chooser's POST is gone; the two doors
+  // add ONE commit POST (to `add-local`, `init`, `refresh` or `source` — the
+  // URL and body are composed by shared/foundations-add.js's `buildAddCommit`,
+  // pinned by test-foundations-add.js) and the "four templates" POST to init.
+  ok('memory.js issues exactly TWELVE mutating-shaped HTTP method keys',
+    methods.length === 12, methods.join(','));
+  ok('...and they are DELETE x2, PATCH x4, POST x5 and PUT, every one a LITERAL',
     methods.join(',') === "method: 'DELETE',method: 'DELETE',method: 'PATCH',method: 'PATCH',"
       + "method: 'PATCH',method: 'PATCH',method: 'POST',method: 'POST',method: 'POST',method: 'POST',"
-      + "method: 'PUT'",
+      + "method: 'POST',method: 'PUT'",
     methods.join(','));
   ok('...the reading-budget PATCH sends ONE field, to the four-segment route',
     /'\/reading\/budget'/.test(memCode)
@@ -934,8 +938,12 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
   ok('...carrying at most a FILE LIST, never a document body',
     /body: JSON\.stringify\(Array\.isArray\(files\)[^\n]*\{ files \}/.test(memCode)
     && !/body: JSON\.stringify\(\{ files[^\n]*text/.test(memCode), 'the refresh body is not a bare file list');
-  ok('...the other POST aimed at the foundations INIT endpoint, which sets the ownership once',
-    /'\/foundations\/' \+ \(keepSwitching \? 'source' : 'init'\)/.test(memCode));
+  ok('...the templates POST aimed at the foundations INIT endpoint, curator-owned and nothing else',
+    /'\/foundations\/init'/.test(memCode)
+    && /JSON\.stringify\(facts\.present \? \{ ownership: 'curator', rechooseEmpty: true \} : \{ ownership: 'curator' \}\)/.test(memCode));
+  ok('...and the doors\' commit POSTs exactly what `buildAddCommit` composed',
+    /const req = buildAddCommit\(rec, facts, domain, project\)/.test(memCode)
+    && /fetch\(req\.url, \{\s*method: 'POST', headers: \{ 'Content-Type': 'application\/json' \}, body: JSON\.stringify\(req\.body\)/.test(memCode));
   ok('...the PUT and the DELETE aimed at ONE document under foundations/',
     /'\/foundations\/' \+ encodeURIComponent\(slug\)/.test(memCode));
   // THE PUT IS THE ONE WRITE THAT CARRIES BYTES, and it carries three fields:

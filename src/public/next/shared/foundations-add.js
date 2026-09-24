@@ -318,7 +318,7 @@ export function listUrl(rec) {
  * mode and the facts. NO TOKEN is ever in a body: `tokenSource` names which
  * saved file the server reads it from.
  */
-export function commitRequest(rec, facts, domain, project) {
+export function buildAddCommit(rec, facts, domain, project) {
   const base = '/api/memory/' + encodeURIComponent(domain) + '/' + encodeURIComponent(project) + '/foundations/';
   const files = tickedPaths(rec, facts).map((p) => ({ path: p }));
   if (rec.door === 'local') {

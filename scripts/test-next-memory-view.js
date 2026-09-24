@@ -229,6 +229,11 @@ import {
   // v3.65.2 — the first unmet step, the primary's count and the READ WITH ⓘ.
   nextStepReason, pickedFiles, READ_WITH_INFO_HTML,
 } from '../src/public/next/shared/foundations-init.js';
+// v3.68.0 — the two doors' DOM-free rules and markup, injected REAL.
+import {
+  doorsFor, renderDoors, renderAddPanel, startLegendHtml,
+} from '../src/public/next/shared/foundations-add.js';
+import * as FA from '../src/public/next/shared/foundations-add.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -514,6 +519,9 @@ const EXPECTED_ROUTES = [
   ['patch', '/:domain/:project/foundations/:slug'],
   ['delete', '/:domain/:project/foundations/:slug'],
   ['post', '/:domain/:project/foundations/init'],
+  // v3.68.0 — "Add from this computer": a folder the owner picked, the files
+  // they ticked; the store enforces every path rule.
+  ['post', '/:domain/:project/foundations/add-local'],
   ['post', '/:domain/:project/foundations/refresh'],
   // v3.65.1 — "Mirror from GitHub instead". A POST, not a PATCH: it fetches
   // blobs and rewrites files. Four segments like the rest of tier 0, and
@@ -1360,7 +1368,11 @@ function makeRenderers(stateObj) {
     extractFunction(viewSrc, 'fndSlugError', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fndShrinkWarn', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderFoundationEditor', 'memory.js') + '\n' +
-    extractFunction(viewSrc, 'renderFoundationsInit', 'memory.js') + '\n' +
+    // v3.68.0: the chooser renderer is gone; an empty project is painted by
+    // `renderFoundationsEmpty`, and the open door's panel is found by
+    // `addPanelFor` — both lifted, the doors' markup injected real.
+    extractFunction(viewSrc, 'renderFoundationsEmpty', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'addPanelFor', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderJournal', 'memory.js') + '\n' +
     // The v3.48.0 brief editor. Lifted WITH renderBrief, because renderBrief
     // calls it in both of its branches — a stub would leave §6's escaping
@@ -1474,7 +1486,7 @@ function makeRenderers(stateObj) {
     'memStep, renderLayerStrip, projectHeadline, renderWorkStreamsFold, renderKnowledge, '
     + 'renderKnowledgeRow, renderKnowledgePicker, knowledgePickerCfg, ' +
     'captureFacts, renderCaptureMeter, ' +
-    'fndStats, fndSlugError, fndShrinkWarn, renderFoundationEditor, renderFoundationsInit, ' +
+    'fndStats, fndSlugError, fndShrinkWarn, renderFoundationEditor, renderFoundationsEmpty, addPanelFor, ' +
     'renderJournal, renderBrief, aboutInfoHtml, ' +
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
     'unlistedCount, renderCopyOutcome, renderProject, renderProjectSkeleton, renderSaveStatus, freshnessStep, freshnessTier, ' +
@@ -1541,7 +1553,9 @@ function makeRenderers(stateObj) {
     'renderListboxHtml',
     // v3.67.0: the run line kit, real (see the import).
     'renderRunsOn', 'renderSpent', 'aiActionDisabledAttrs',
-    'renderOverview', body)(
+    'renderOverview',
+    // v3.68.0 — the two doors, real.
+    'doorsFor', 'renderDoors', 'renderAddPanel', 'startLegendHtml', body)(
     stateObj, escapeHtml, () => '<svg></svg>', renderMarkdown, () => '<div class="loader"></div>', null, 10, 50,
     // The REAL shared block, imported rather than stubbed: renderProject
     // composes all five of this page's sections through it, so a stub would
@@ -1567,7 +1581,8 @@ function makeRenderers(stateObj) {
         value: cfg.value === undefined ? null : cfg.value,
         label: cfg.ariaLabel || null })) + '"></button>',
     renderRunsOn, renderSpent, aiActionDisabledAttrs,
-    realRenderOverview);
+    realRenderOverview,
+    doorsFor, renderDoors, renderAddPanel, startLegendHtml);
 }
 
 const hostileDetail = {
@@ -2694,9 +2709,14 @@ const withInit = fetchArgLists.filter((a) => topLevelArgs(a).length > 1);
 // · `POST /api/reading-plan/…/suggest {arm}` is a READ too: the helper
 //   proposes and never writes (H's suite fingerprints it). It is the one fetch
 //   outside /api/memory, named below rather than admitted by a prefix.
-eq('EXACTLY ELEVEN fetches in the view carry a request init', withInit.length, 11);
+// ── TWELVE SINCE v3.68.0 ─────────────────────────────────────────────────
+// The ownership chooser's init/source POST is gone. The two doors bring ONE
+// commit POST whose URL and body `buildAddCommit` composes (add-local, init,
+// refresh or source — driven below and in test-foundations-add.js), and the
+// "four templates" POST to init.
+eq('EXACTLY TWELVE fetches in the view carry a request init', withInit.length, 12);
 ok('every other fetch is single-argument — structurally a GET, whatever a method string is spelled like',
-  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 11,
+  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 12,
   JSON.stringify(fetchArgLists.map((a) => topLevelArgs(a).length)));
 {
   const inits = withInit.map((a) => ({ url: topLevelArgs(a)[0], init: topLevelArgs(a)[1] }));
@@ -2753,7 +2773,7 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     patches.filter((x) => x.url.includes("'/foundations/'")).length, 1);
   // v3.67.0: two READS carry a body. Named, with their bodies, so neither can
   // grow a write-shaped field.
-  eq('exactly FOUR fetches use a LITERAL POST', posts.length, 4);
+  eq('exactly FIVE fetches use a LITERAL POST', posts.length, 5);
   const preview = posts.find((x) => x.url.includes("'/session-start/preview'"));
   ok('one POST is the session-start PREVIEW under this project — a read with a plan in its body',
     preview && preview.url.includes('/api/memory/') && /body:\s*JSON\.stringify\(body\)/.test(preview.init),
@@ -2764,8 +2784,6 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     && /body:\s*JSON\.stringify\(\{\s*arm\s*\}\)/.test(suggest.init),
     suggest ? suggest.url.slice(0, 200) + suggest.init.slice(0, 120) : 'none');
   const refresh = posts.find((x) => x.url.includes("'/foundations/refresh'"));
-  // TWO ENDPOINTS IN ONE EXPRESSION SINCE v3.65.1 — see the assertion below.
-  const init = posts.find((x) => x.url.includes("'init'"));
   ok('one POST targets the foundations REFRESH endpoint',
     !!refresh, JSON.stringify(posts.map((x) => x.url.slice(0, 120))));
   // ── THE REFRESH BODY IS A FILE LIST OR NOTHING, NEVER A DOCUMENT ───────
@@ -2786,24 +2804,41 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
   ok('...and the empty case is still a literal empty object, so the ordinary refresh sends nothing',
     refresh && /:\s*rootPart\s*\)/.test(refresh.init)
     && /const rootPart = [^\n]*: \{\};/.test(viewNoComments), refresh ? refresh.init.slice(0, 220) : 'none');
-  // TWO ENDPOINTS, ONE EXPRESSION (v3.65.1). `…/foundations/init` sets an
-  // ownership and runs once; `…/foundations/source` moves an already-settled
-  // mirror to GitHub, leaving `ownership: 'repo'` where it is. They are
-  // composed in one fetch rather than two, so the assertion names both and
-  // proves the SWITCH is what picks between them — a second fetch would be a
-  // second copy of the stamping, the refusal mapping and the re-read.
-  ok('the other POST targets the foundations INIT endpoint, which sets the ownership once',
-    !!init && /'\/foundations\/' \+ \(keepSwitching \? 'source' : 'init'\)/.test(init.url),
+  // ── v3.68.0: THE TWO DOORS' COMMIT, AND THE TEMPLATES ───────────────
+  // The commit's URL and body are composed by `buildAddCommit` in the DOM-free
+  // module, so the view's fetch carries them through verbatim — asserted here
+  // by shape, and the composition itself driven right below.
+  const doorCommit = posts.find((x) => x.url === 'req.url');
+  ok('one POST is the two doors\' commit, sending exactly what buildAddCommit composed',
+    !!doorCommit && /body:\s*JSON\.stringify\(req\.body\)/.test(doorCommit.init),
     JSON.stringify(posts.map((x) => x.url.slice(0, 140))));
-  ok('...carrying the chooser\'s OWN body, built by the shared module rather than here',
-    init && /body:\s*JSON\.stringify\(keepSwitching/.test(init.init)
-      && /:\s*body\)/.test(init.init), init ? init.init.slice(0, 400) : 'none');
-  ok('...and the SOURCE arm sends the three fields that route allows and no fourth '
-    + '— `ownership` would be a 400 `unexpected_fields` there, and there is no '
-    + 'token field on this form',
-  init && /remote: body\.remote/.test(init.init) && /tokenSource: body\.tokenSource/.test(init.init)
-    && !/token:/.test(init.init) && !/ownership:/.test(init.init),
-  init ? init.init.slice(0, 400) : 'none');
+  {
+    const facts0 = { present: false, count: 0, docs: [] };
+    const cases = [
+      ['local copy', Object.assign(FA.freshAddPanel('local', { mode: 'copy' }, facts0), {
+        root: '/n', listedRoot: '/n', candidates: [{ path: 'a.md', bytes: 1 }], picks: { 'a.md': true } }), facts0],
+      ['github init', Object.assign(FA.freshAddPanel('github', { mode: 'init' }, facts0), {
+        remote: 'o/r', tokenSource: 'sync', candidates: [{ path: 'a.md', bytes: 1 }], picks: { 'a.md': true } }), facts0],
+      ['github switch', Object.assign(FA.freshAddPanel('github', { mode: 'switch' }, facts0), {
+        remote: 'o/r', candidates: [{ path: 'a.md', bytes: 1 }], picks: { 'a.md': true } }), facts0],
+    ];
+    for (const [name, rec, f] of cases) {
+      const req = FA.buildAddCommit(rec, f, 'a d', 'p/x');
+      ok('the ' + name + ' commit is under /api/memory with BOTH segments escaped',
+        req.url.startsWith('/api/memory/a%20d/p%2Fx/foundations/'), req.url);
+      ok('...and its body carries no token and no document text',
+        !/"token"|"text"/.test(JSON.stringify(req.body)), JSON.stringify(req.body));
+    }
+    ok('the SOURCE (switch) body carries the three fields that route allows and no ownership',
+      JSON.stringify(Object.keys(FA.buildAddCommit(cases[2][1], facts0, 'd', 'p').body).sort())
+        === JSON.stringify(['files', 'remote', 'tokenSource']));
+  }
+  const init = posts.find((x) => x.url.includes("'/foundations/init'"));
+  ok('the templates POST targets the foundations INIT endpoint',
+    !!init, JSON.stringify(posts.map((x) => x.url.slice(0, 140))));
+  ok('...curator-owned, re-choosing only an EMPTY manifest, and nothing else',
+    init && /ownership: 'curator', rechooseEmpty: true/.test(init.init) && !/token|remote|files/.test(init.init),
+    init ? init.init.slice(0, 300) : 'none');
   // ── THE PUT IS THE ONE WRITE THAT CARRIES BYTES ───────────────────────
   // A curator-owned document, verbatim, under a slug. THREE fields and no
   // more: the text, its title and its role. `authoredBy` is deliberately
@@ -2842,9 +2877,10 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     JSON.stringify(dels.map((d) => d.init.slice(0, 160))));
   ok('every one of them is under /api/memory — the helper\'s one proposal read under '
     + '/api/reading-plan — and escapes its segments',
-    inits.every((x) => (x.url.includes("'/api/memory/'")
+    inits.every((x) => (x === doorCommit)
+      || ((x.url.includes("'/api/memory/'")
       || (x === suggest && x.url.includes("'/api/reading-plan/'")))
-      && x.url.includes('encodeURIComponent')),
+      && x.url.includes('encodeURIComponent'))),
     JSON.stringify(inits.map((x) => x.url.slice(0, 90))));
   // NONE of the five can reach a work-stream handoff or a journal: neither
   // path fragment appears in any of their URLs.
@@ -2865,11 +2901,11 @@ ok('self-test: the argument-count scan does NOT fire on a plain read',
 // transport exists at all.
 {
   const methods = [...viewNoComments.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g)].map((m) => m[1]).sort();
-  ok('exactly ELEVEN `method:` property keys appear in the view\'s real code, and every one of them '
+  ok('exactly TWELVE `method:` property keys appear in the view\'s real code, and every one of them '
     + 'is a LITERAL — so the `\'PO\' + \'ST\'` evasion is refused by construction',
   JSON.stringify(methods) === JSON.stringify(
     ["'DELETE'", "'DELETE'", "'PATCH'", "'PATCH'", "'PATCH'", "'PATCH'",
-      "'POST'", "'POST'", "'POST'", "'POST'", "'PUT'"]),
+      "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'PUT'"]),
   JSON.stringify(methods));
 }
 for (const transport of ['XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource', 'FormData', 'Request(']) {
@@ -7597,99 +7633,64 @@ const fndRead = (payload) => ({
   ok('a read-only Shared Brain mirror is not offered it either',
     offer([fndDoc()], {}, true).mirror === false,
     JSON.stringify(offer([fndDoc()], {}, true)));
-  ok('and the control reaches the BLOCK, under its own id',
-    /id="mem-fnd-mirror"/.test(populated), populated.slice(0, 600));
-  ok('CONTROL: and it is absent from a curator-owned block, so the offer and '
-    + 'the markup cannot disagree',
-  !/id="mem-fnd-mirror"/.test(block([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' })));
+  // ── v3.68.0: THE GITHUB DOOR IS THE SWITCH NOW ─────────────────────
+  // "Mirror from GitHub instead" became the "Add from GitHub" door's `switch`
+  // mode. It is on EVERY block — enabled on a mirror, and on a curator-owned
+  // one present but aria-disabled with its reason, never hidden.
+  ok('the GitHub door reaches a mirror\'s block, enabled',
+    /id="mem-fnd-door-github" data-fnd-door="github"/.test(populated), populated.slice(0, 600));
+  ok('CONTROL: on a curator-owned block it is present but DISABLED, carrying its reason',
+    /id="mem-fnd-door-github"[^>]*aria-disabled="true"[^>]*data-fnd-door-why="[^"]*one source/.test(
+      block([fndDoc({ freshness: 'n/a' })], { ownership: 'curator' })));
+  ok('...and neither "Mirror from GitHub instead" nor "Add from folder" survives as a head control',
+    !/id="mem-fnd-mirror"|id="mem-fnd-addrepo"/.test(populated));
 
-  // ── (3) "Nothing mirrored yet" ON A PROJECT THAT MIRRORS THREE ──────
-  // MEASURED on the maintainer's own fixture: 1 document, 116 KB, and the
-  // Add-from-folder panel said nothing was mirrored. The sentence splits on
-  // the COUNT; both arms ride the same renderDescription call.
-  const adding = (docs) => makeRenderers({
-    activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
-    fndInit: { domain: 'acme', project: 'lumina', adding: true, choice: null, busy: false },
-  }).renderFoundations(fndRead(fndPayload(docs)));
-  ok('a mirror that already has documents is asked for MORE, not told it is empty',
-    /Add more files from the folder this project mirrors\./.test(adding([fndDoc()]))
-    && !/Nothing mirrored yet/.test(adding([fndDoc()])),
-    (adding([fndDoc()]).match(/class="tx-desc">[^<]*/) || [''])[0]);
+  // ── (3) THE LOCAL DOOR ON A MIRROR SAYS WHAT IT DOES ────────────────
+  const withPanel = (docs, door, over, payloadOver) => {
+    const facts = F.foundationsFacts(fndRead(fndPayload(docs, payloadOver)));
+    const info = doorsFor(facts, {})[door];
+    return makeRenderers({
+      activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+      fndAdd: Object.assign(FA.freshAddPanel(door, info, facts), { domain: 'acme', project: 'lumina' }, over || {}),
+    }).renderFoundations(fndRead(fndPayload(docs, payloadOver)));
+  };
+  const adding = (docs) => withPanel(docs, 'local');
+  ok('the local door on a folder mirror names the folder and says a file from elsewhere cannot join',
+    /This project mirrors the folder \/somewhere\/repo/.test(adding([fndDoc()]))
+    && /cannot join a mirror/.test(adding([fndDoc()])),
+    (adding([fndDoc()]).match(/mem-fnd-add-note">[^<]*/) || [''])[0]);
+  ok('...its folder field is prefilled with the mirrored folder',
+    /id="fadd-root"[^>]*value="\/somewhere\/repo"/.test(adding([fndDoc()])));
   ok('CONTROL: and a mirror with nothing in it still says so',
     /Nothing mirrored yet/.test(block([], {})), (block([], {}).match(/class="tx-desc">[^<]*/) || [''])[0]);
 
-  // ── (4) THE SWITCH SELECTS THE GITHUB ARM, IN BOTH PASSES ───────────
-  // FOUND BY MUTATION: the renderer's forcing and the WIRING pass's forcing are
-  // two writers of one field, and breaking either one alone was green. The
-  // defect that taught this is real and was measured: through the first draft
-  // of this package the wiring pass re-forced `ownership = 'repo'` AFTER the
-  // render, so the remote arm painted while `scanBlockedReason` answered out of
-  // its `repoRoot` branch and the scan stayed disabled saying "Type or choose
-  // the folder first." over a field asking for a repository.
+  // ── (4) THE GITHUB DOOR ON A FOLDER MIRROR IS A SWITCH, AND SAYS SO ──
   {
-    const switching = makeRenderers({
-      activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
-      fndInit: { domain: 'acme', project: 'lumina', adding: true, switching: true,
-        choice: null, busy: false },
-    }).renderFoundations(fndRead(fndPayload([fndDoc()])));
-    ok('the switch panel renders the REMOTE arm, not the folder one',
-      /class="fnd-init-remote-fields"/.test(switching)
-      && !/class="fnd-init-path"[^>]*placeholder="\/Users/.test(switching),
-    switching.slice(switching.indexOf('fnd-init'), switching.indexOf('fnd-init') + 400));
-    ok('...under its own eyebrow, so the panel says which of the three it is',
-      /class="mem-fnd-panel-eyebrow[^"]*">MIRROR FROM GITHUB</.test(switching),
-      (switching.match(/mem-fnd-panel-eyebrow[^<]*<\/div>[^<]*/) || [''])[0]);
-    // AND THE OTHER TWO ARMS KEEP THEIR OWN WORDS. Three states, three labels,
-    // and a mutation collapsing any two of them must red — FOUND BY MUTATION,
-    // which collapsed "Set up documents" into "Add from folder" and was green.
-    ok('the no-manifest chooser commits with "Set up documents"',
-      />Set up documents</.test(makeRenderers({
-        activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
-      }).renderFoundations(fndRead(fndPayload([], { present: false, ownership: null })))),
-    'the chooser lost its own word');
-    ok('...and a mirror being added to commits with "Add from folder"',
-      />Add from folder</.test(makeRenderers({
-        activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
-        fndInit: { domain: 'acme', project: 'lumina', adding: true, choice: null, busy: false },
-      }).renderFoundations(fndRead(fndPayload([fndDoc()])))),
-    'the add arm lost its own word');
-    // v3.65.2: BEFORE A SCAN THERE IS NO PRIMARY — the step it needs has not
-    // happened, and the one reason line says so. After a scan it commits the
-    // switch, with the count.
-    ok('...and before a scan its primary is NOT RENDERED — the reason line says why',
-      !/id="mem-fnd-init-go"/.test(switching) && />Name the repository first\.</.test(switching),
-      (switching.match(/id="mem-fnd-init-why"[\s\S]{0,160}/) || [''])[0]);
-    const scannedSwitch = makeRenderers({
-      activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
-      fndInit: { domain: 'acme', project: 'lumina', adding: true, switching: true, busy: false,
-        choice: { ...freshChooser({}), ownership: 'remote', remote: 'o/r', hasReadToken: true,
-          candidates: [{ path: 'docs/architecture.md', bytes: 4096, suggestedRole: 'architecture' }],
-          picks: { 'docs/architecture.md': true } } },
-    }).renderFoundations(fndRead(fndPayload([fndDoc()])));
-    ok('...and after one its primary commits the switch rather than the copy, counted',
-      /id="mem-fnd-init-go">Mirror 1 document from GitHub</.test(scannedSwitch),
-      (scannedSwitch.match(/id="mem-fnd-init-go"[\s\S]{0,120}/) || [''])[0]);
-    ok('...with the ownership OPTIONS withheld, because the store settled that '
-      + 'question and this call does not move it',
-    !/data-fnd-own="curator"/.test(switching), switching.slice(0, 400));
+    const switching = withPanel([fndDoc()], 'github');
+    ok('the GitHub panel renders the REMOTE fields, not the folder one',
+      /class="fnd-init-remote-fields"/.test(switching) && !/id="fadd-root"/.test(switching));
+    ok('...under its own eyebrow', /class="mem-fnd-panel-eyebrow[^"]*">ADD FROM GITHUB</.test(switching));
     ok('...and the consequence stated UNFOLDED, at the moment of acting (v3.16.1)',
-      /mem-fnd-switch-note/.test(switching)
-      && /stops being this project’s source/.test(switching),
-    (switching.match(/mem-fnd-switch-note[\s\S]{0,240}/) || [''])[0]);
-    // AND THE WIRING PASS AGREES WITH THE RENDERER. One predicate, written
-    // twice because the two passes cannot share a local — so both are asserted.
-    ok('the WIRING pass forces the same ownership the renderer does, or the arm '
-      + 'on screen and the choice behind it disagree',
-    /if \(state\.fndInit\.switching\) state\.fndInit\.choice\.ownership = 'remote';/.test(viewSrc)
-      && /if \(switching\) choice\.ownership = 'remote';/.test(viewSrc),
-    'one of the two forcings is missing');
+      /makes the repository its source instead/.test(switching) && /folder stops being used/.test(switching));
+    ok('...before a list its primary is NOT RENDERED — the reason line says why',
+      !/id="fadd-go"/.test(switching) && /Name the repository first/.test(switching));
+    const listed = withPanel([fndDoc()], 'github', { remote: 'o/r', hasReadToken: true,
+      candidates: [{ path: 'docs/architecture.md', bytes: 4096 }, { path: 'docs/new.md', bytes: 10 }],
+      picks: { 'docs/new.md': true } });
+    ok('...after one, it counts what it will mirror', /id="fadd-go">Mirror 1 document</.test(listed),
+      (listed.match(/id="fadd-go"[\s\S]{0,80}/) || [''])[0]);
+    ok('...and the document ALREADY mirrored from that path is ticked and disabled, never tickable',
+      /data-fadd-row="docs\/architecture\.md"[^>]*>[\s\S]{0,120}checked disabled/.test(listed)
+      && /already added/.test(listed));
   }
 
   // ── (5) ONE BOX, AND ITS EYEBROW ────────────────────────────────────
-  ok('the panel is ONE box on Quick maintenance\'s anatomy, never a card nested '
-    + 'in a row nested in a stack', /class="mem-fnd-panel"/.test(adding([fndDoc()]))
-    && !/mem-fold-flat/.test(adding([fndDoc()]).slice(adding([fndDoc()]).indexOf('mem-fnd-init-wrap'))),
-  adding([fndDoc()]).slice(adding([fndDoc()]).indexOf('mem-fnd-init-wrap'), 400));
+  ok('the panel is ONE box, never a card nested in a row nested in a stack',
+    /class="mem-fnd-panel mem-fnd-add"/.test(adding([fndDoc()]))
+    && !/mem-fold-flat/.test(adding([fndDoc()]).slice(adding([fndDoc()]).indexOf('fadd-panel'),
+      adding([fndDoc()]).indexOf('data-mem-fold="foundations"'))));
+  ok('...and it sits ABOVE the table, which stays on screen behind it',
+    adding([fndDoc()]).indexOf('fadd-panel') < adding([fndDoc()]).indexOf('data-mem-fold="foundations"'));
 }
 
 // ── §21b1d — v3.65.1 §9: THE DEPTH BAR'S TWO PLACEMENTS ────────────────
@@ -8251,23 +8252,17 @@ const fndRead = (payload) => ({
   //     missing, with the commit that sets it. `present: false` is the state
   //     a project is in before anything has been decided.
   const unchosen = F.renderFoundations(fndRead(fndPayload([], { present: false, ownership: null })));
-  ok('a project that has never answered the ownership question gets the CHOOSER',
-    unchosen.includes('data-fnd-init="mem-fnd-init"'), unchosen.slice(0, 300));
-  // ── THE PANEL, NOT A FLAT CARD (v3.65.1) ────────────────────────────
-  // The chooser sat in a `.mem-fold-flat` card inside a `.mem-fnd-row` inside
-  // the wrap — three boxes, measured at 405 / 421 / 436 at a 1370px window,
-  // with the innermost tinted arm carrying zero right padding. It is ONE box
-  // now, on Wiki health's Quick-maintenance anatomy, and the assertion moves
-  // with it rather than being dropped: what it has always proved is that this
-  // state HAS a container of its own and does not paint bare.
-  ok('...in ONE box — the panel — rather than a card nested in a row nested in a stack',
-    unchosen.includes('mem-fnd-panel') && !unchosen.includes('mem-fold-flat'),
-    unchosen.slice(0, 300));
-  ok('...captioned by the eyebrow that says which of the three panels it is',
-    /class="mem-fnd-panel-eyebrow[^"]*">SET UP DOCUMENTS</.test(unchosen), unchosen.slice(0, 400));
-  ok('...with both answers on screen at once rather than in a dropdown',
-    unchosen.includes('data-fnd-own="curator"') && unchosen.includes('data-fnd-own="repo"'),
-    unchosen.slice(0, 600));
+  // ── v3.68.0: THE TWO DOORS, NOT A THREE-WAY OWNERSHIP CHOICE ─────────
+  // The maintainer read the chooser as "you must first add a local document,
+  // then GitHub appears". The question is now only "from where?".
+  ok('a project that has never answered gets BOTH doors, side by side in the head row',
+    /id="mem-fnd-door-local" data-fnd-door="local"/.test(unchosen)
+    && /id="mem-fnd-door-github" data-fnd-door="github"/.test(unchosen)
+    && unchosen.indexOf('mem-fnd-head-controls') < unchosen.indexOf('mem-fnd-door-local'),
+    unchosen.slice(0, 400));
+  ok('...both ENABLED at the empty state', !/aria-disabled/.test(unchosen.slice(0, unchosen.indexOf('</div>'))));
+  ok('...and no ownership chooser at all',
+    !unchosen.includes('data-fnd-init=') && !unchosen.includes('data-fnd-own='));
   ok('...and NO "decide later" — this screen IS the later',
     !unchosen.includes('data-fnd-own="later"'));
   // ── §8(e), CORRECTED (v3.62.0): NO POINTER HERE ANY MORE ──────────────
@@ -8345,79 +8340,38 @@ const fndRead = (payload) => ({
     roFull.slice(-700));
     ok('...and no row carries an Edit control', !/data-fnd-edit/.test(roFull));
   }
-  ok('...and the commit that sets the ownership, which is the block\'s one primary',
-    unchosen.includes('id="mem-fnd-init-go"')
-    && (unchosen.match(/btn-primary/g) || []).length === 1, unchosen.slice(0, 900));
+  ok('...and NO primary until a door is opened — nothing is decided by a glance',
+    !/btn-primary/.test(unchosen), unchosen.slice(0, 900));
   ok('...and emits no table at all', !unchosen.includes('fnd-table'));
 
-  // ── v3.61.1: "VERY CRAMPED TOGETHER" — THE STRUCTURE THE RHYTHM NEEDS ──
-  //
-  // The maintainer's words, with a screenshot of THIS state. Measured in a
-  // browser at 1370px before the change: the "Set once" note and the card
-  // below it were 0px apart, the card's question line and the option cards
-  // 0px, the arm and the action row 4px. Six elements, six unrelated
-  // spacings, none of them anybody's decision — because none of a `.tx-note`,
-  // a `<p>` in a block body or an option grid carries a bottom margin.
-  //
-  // The px are CSS and are measured in the browser pass. What this suite
-  // holds is the STRUCTURE those rules need, which is the part a future edit
-  // can silently remove: two named stacks, each with one gap.
-  ok('the no-manifest state is ONE stack, so the note and the card have a decided gap',
-    /<div class="mem-fnd-init-wrap">/.test(unchosen), unchosen.slice(0, 200));
-  ok('...with the never-folded "Set once" note as its first child and the panel second',
-    unchosen.indexOf('mem-fnd-init-wrap') < unchosen.indexOf('Set once')
-      && unchosen.indexOf('Set once') < unchosen.indexOf('mem-fnd-panel'), unchosen.slice(0, 600));
-  ok('...and the panel’s own contents are a second stack, so the question line, the '
-    + 'chooser and the action row are spaced by one rule rather than three',
-  /class="mem-fnd-init-body"/.test(unchosen), unchosen.slice(0, 700));
-  // The 46px right reserve `.mem-fold-flat` keeps for the brief's pencil is
-  // dropped here BY CLASS, because this card has no control in that corner —
-  // it was 32px of the chooser's own width spent on nothing (measured: the
-  // chooser rendered 908px inside a 970px card).
-  ok('...and that class is what drops the pencil reserve this card has no pencil for',
-    /mem-fnd-init-body/.test(unchosen));
-
-  // ── v3.61.1: THE COMMIT CARRIES ITS OWN REASON ────────────────────────
-  //
-  // A mirror that has been SCANNED with nothing ticked would set the ownership
-  // and copy no documents, because `chooserBody` omits an empty `files` — a
-  // decision nobody made, reaching the wire. The button is off in that state
-  // and says why, and the note is EMITTED AND HIDDEN rather than
-  // conditionally emitted, because a tick patches this node in place (a
-  // re-render would throw a reader of a 44-row list back to its top).
-  ok('the commit’s reason note is always in the DOM, ready to be patched',
-    /id="mem-fnd-init-why"/.test(unchosen), unchosen.slice(-500));
-  ok('...and `hidden` while the commit is live, never omitted',
-    /id="mem-fnd-init-why" hidden/.test(unchosen), unchosen.slice(-500));
-  ok('...carrying the `.fnd-init-why` class that brings the `[hidden]` counter-rule '
-    + '`.tx-note`’s own `display: flex` would otherwise defeat (design-system §9)',
-  /class="tx-note fnd-init-why" id="mem-fnd-init-why"/.test(unchosen), unchosen.slice(-500));
+  // ── v3.68.0: THE OPEN PANEL CARRIES ITS OWN REASON ─────────────────
+  // With a list on screen and nothing ticked, the primary is off and says
+  // why; the note is EMITTED AND HIDDEN rather than conditionally emitted,
+  // because a tick patches it in place (a re-render would throw a reader of a
+  // long list back to its top — v3.61.1's measured defect).
   {
-    // THE STATE THE SENTENCE EXISTS FOR, driven through the real renderer: a
-    // scan with candidates and nothing ticked.
-    const R = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+    const none0 = F.foundationsFacts(fndRead(fndPayload([], { present: false, ownership: null })));
+    const panelWith = (picks) => makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
       fnd: null,
-      fndInit: { domain: 'acme', project: 'lumina', busy: false,
-        choice: { ...freshChooser({ allowLater: false }), ownership: 'repo', repoRoot: '/r',
-          candidates: [{ path: 'docs/a.md', bytes: 10, suggestedRole: 'architecture' }],
-          picks: {} } } });
-    const blocked = R.renderFoundations(fndRead(fndPayload([], { present: false, ownership: null })));
-    ok('with a scan on screen and nothing ticked, the commit is DISABLED',
-      /id="mem-fnd-init-go" disabled/.test(blocked), blocked.slice(-700));
+      fndAdd: Object.assign(FA.freshAddPanel('local', doorsFor(none0, {}).local, none0),
+        { domain: 'acme', project: 'lumina', root: '/r', listedRoot: '/r',
+          candidates: [{ path: 'docs/a.md', bytes: 10 }], picks }) })
+      .renderFoundations(fndRead(fndPayload([], { present: false, ownership: null })));
+    const blocked = panelWith({});
+    ok('with a list on screen and nothing ticked, the commit is DISABLED',
+      /id="fadd-go" disabled/.test(blocked), blocked.slice(-900));
     ok('...and the reason is visible, not hidden',
-      /id="mem-fnd-init-why"><span>Tick at least one document\./.test(blocked),
-      blocked.slice(-700));
-    // CONTROL: one tick and both come back. Same renderer, same state shape.
-    const R2 = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
-      fnd: null,
-      fndInit: { domain: 'acme', project: 'lumina', busy: false,
-        choice: { ...freshChooser({ allowLater: false }), ownership: 'repo', repoRoot: '/r',
-          candidates: [{ path: 'docs/a.md', bytes: 10, suggestedRole: 'architecture' }],
-          picks: { 'docs/a.md': true } } } });
-    const live = R2.renderFoundations(fndRead(fndPayload([], { present: false, ownership: null })));
-    ok('CONTROL: one tick arms the commit again',
-      !/id="mem-fnd-init-go" disabled/.test(live), live.slice(-700));
-    ok('...and hides the reason', /id="mem-fnd-init-why" hidden/.test(live), live.slice(-700));
+      /id="fadd-why"><span>Tick at least one document\./.test(blocked), blocked.slice(-700));
+    ok('...carrying the `.fnd-init-why` class whose `[hidden]` counter-rule `.tx-note`’s '
+      + '`display: flex` would otherwise defeat (design-system §9)',
+    /class="tx-note fnd-init-why" id="fadd-why"/.test(blocked));
+    const live = panelWith({ 'docs/a.md': true });
+    ok('CONTROL: one tick arms the commit again, counted',
+      /id="fadd-go">Add 1 document</.test(live), (live.match(/id="fadd-go"[\s\S]{0,60}/) || [''])[0]);
+    ok('...and hides the reason', /id="fadd-why" hidden/.test(live), live.slice(-700));
+    ok('the panel sits between the head row and the empty-state body',
+      live.indexOf('mem-fnd-head-controls') < live.indexOf('fadd-panel')
+      && live.indexOf('fadd-panel') < live.indexOf('No documents yet'));
   }
 
   // ── v3.61.1: THE MECHANICS THE FILE HINT GAVE UP ARE IN THE ⓘ ──────────
@@ -8442,15 +8396,14 @@ const fndRead = (payload) => ({
   //     offered on its own. v3.59.0 hid the only action that puts documents
   //     in at exactly the count where it was needed.
   const mirrorEmpty = F.renderFoundations(fndRead(fndPayload([], { ownership: 'repo' })));
-  ok('a repo-owned project with nothing mirrored gets the scan arm',
-    mirrorEmpty.includes('id="mem-fnd-init-root"'), mirrorEmpty.slice(0, 400));
+  // v3.68.0: an EMPTY mirror gets the same two doors as every empty project
+  // — its source may be chosen again, because nothing is at stake.
+  ok('a repo-owned project with nothing mirrored gets BOTH doors, enabled',
+    /id="mem-fnd-door-local" data-fnd-door="local"/.test(mirrorEmpty)
+    && /id="mem-fnd-door-github" data-fnd-door="github"/.test(mirrorEmpty), mirrorEmpty.slice(0, 400));
   ok('...and NOT a choice it is no longer allowed to make',
     !mirrorEmpty.includes('data-fnd-own='), mirrorEmpty.slice(0, 400));
-  ok('...labelled for what it does rather than for what it decides — and the '
-    + 'word is FOLDER, because `resolveRepoRoot` needs only a reachable '
-    + 'directory (P1-9)',
-  mirrorEmpty.includes('Add from folder') && !/repositor/i.test(mirrorEmpty),
-  mirrorEmpty.slice(0, 1200));
+  ok('...and says nothing is mirrored yet', /Nothing mirrored yet/.test(mirrorEmpty));
 
   // (c) CURATOR-OWNED WITH NOTHING IN IT — the owner unticked the seeding.
   //     The one action that puts a document in must be reachable here too.
@@ -8462,9 +8415,11 @@ const fndRead = (payload) => ({
   // write the first document by hand — a first-class path, not a fallback — so
   // no string may presume an agent, and where both ways in are named the
   // owner's comes first.
-  ok('...and names BOTH ways in, the owner\u2019s first',
-    /Write the first one yourself, or ask an agent to draft them/.test(curatorEmpty),
-    curatorEmpty.slice(0, 600));
+  // v3.68.0: the body names the two doors; writing one by hand is the head
+  // row's "Write a document", and asking an agent is the drafting request.
+  ok('...and names BOTH ways in',
+    /Add them from this computer or from a GitHub repository/.test(curatorEmpty)
+    && />Write a document</.test(curatorEmpty), curatorEmpty.slice(0, 600));
   ok('...and does not presume an agent exists',
     !/an agent you ask/i.test(curatorEmpty), curatorEmpty.slice(0, 600));
   ok('...and offers the drafting request, which is the other way in (P2-8)',
@@ -8761,18 +8716,23 @@ const fndRead = (payload) => ({
 
   // ── (1) A FOLDER THAT REALLY IS MISSING ────────────────────────────────
   const missing = F.renderFoundations(fndRead(fndPayload(unreach)));
+  // (v3.68.0: the disabled local door CARRIES that sentence as its tooltip
+  // and its press-answer — an attribute, not a note — so attributes are
+  // stripped before looking for a painted one.)
+  const missingPainted = missing.replace(/(title|data-fnd-door-why)="[^"]*"/g, '');
   ok('a missing folder paints NO permanent "not on this computer" note under the table',
-    !/not on this computer/.test(missing), (missing.match(/tx-note[\s\S]{0,200}/) || [''])[0]);
+    !/not on this computer/.test(missingPainted), (missingPainted.match(/tx-note[\s\S]{0,200}/) || [''])[0]);
   ok('...its STATE stays on every row, as the persistent indicator',
     (missing.match(/>source not here</g) || []).length === 2, missing.slice(0, 300));
   ok('...and each row word is a button that answers "why?"',
     (missing.match(/<button[^>]*data-fnd-why="/g) || []).length === 2);
   ok('the two folder controls it withholds stay in the head row, DISABLED (aria-disabled, so a press still answers)',
     /id="mem-fnd-refresh-blocked"[^>]*aria-disabled="true"[^>]*data-fnd-blocked/.test(missing)
-    && /id="mem-fnd-addrepo-blocked"[^>]*aria-disabled="true"/.test(missing));
+    && /id="mem-fnd-door-local"[^>]*aria-disabled="true"[^>]*data-fnd-door-why="[^"]*not on this computer/.test(missing));
   ok('CONTROL: they are not the working controls, whose ids the refresh binder listens on',
     !/id="mem-fnd-refresh"/.test(missing) && !/id="mem-fnd-addrepo"/.test(missing));
-  ok('...and the GitHub switch is still offered there', /id="mem-fnd-mirror"/.test(missing));
+  ok('...and the GitHub door (the switch) is still offered there, enabled',
+    /id="mem-fnd-door-github" data-fnd-door="github"/.test(missing));
   const whyMissing = F.foundationsUncheckedWhy(F.foundationsFacts(fndRead(fndPayload(unreach))));
   ok('the reason the press shows is the one the maintainer read, truthfully here',
     /not on this computer/.test(whyMissing.title) && /Mirror it from GitHub/.test(whyMissing.lines.join(' ')),
@@ -10644,6 +10604,9 @@ function realListbox() {
     // is driven in §21c2 and by scripts/test-next-foundations-editor.js.
     'copyDraftingAsk', 'navigate',
     'MAX_FOUNDATION_BYTES', 'FOUNDATION_ROLES', 'localStorage',
+    // v3.68.0: the two doors' panel binder — STUBBED, driven for real in
+    // scripts/test-next-foundations-editor.js and test-foundations-add.js.
+    'bindAddDoors',
     // Named one by one rather than mapped over a list: §17's census requires
     // every function it claims is EXECUTED to appear in a real
     // `extractFunction(viewSrc, '<name>')` call somewhere in this file, which is
@@ -10686,7 +10649,7 @@ function realListbox() {
     () => 'close',
     async () => {}, () => {},
     MAX_FOUNDATION_BYTES, FOUNDATION_ROLES,
-    { getItem: () => null, setItem: () => {} });
+    { getItem: () => null, setItem: () => {} }, () => {});
   api.bindFoundationRows(doc, 1);
   ok('SETUP: the row\'s click handler was bound', typeof btn._click === 'function');
 
@@ -10752,217 +10715,110 @@ function realListbox() {
   !('domain' in c));
 }
 
-// ── §21m — THE TWO PANELS STEP ① OPENS, AS THE HOST RENDERS THEM (v3.65.2) ──
+// ── §21m — THE TWO DOORS' PANEL, AS THE HOST RENDERS IT (v3.68.0) ────────
 // ═════════════════════════════════════════════════════════════════════════
 //
-// C1 — "Mirror from GitHub instead". The maintainer: "this is not finished — I
-// cannot enter the token here, I don't have an option." Measured by the design
-// pass: labels laid out beside and below their inputs, a tinted arm inside the
-// tinted panel, "Name the repository first." printed twice from two nodes
-// sharing one id, and a READ WITH row whose two state words were blank
-// because no host ever set the facts.
-//
-// C2 — "Add from folder". "Kind of rusty": the folder the app already knew had
-// to be typed again, the typed folder was scanned but IGNORED by the copy,
-// eight rows arrived ticked (the one already mirrored among them), and a
-// second path field sat beside the list with no word on what it was for.
+// The maintainer, on v3.67.1: "add foundational files to context locally from
+// a computer OR from GitHub … choose a folder, select files from it, drop them
+// in, that's it." One panel per door, one checklist, one primary, one reason
+// line — and the token row keeps every v3.65.2/.3 property it had.
 {
-  const panel = (choiceOver, fndInitOver, docs) => makeRenderers({
-    activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
-    fndInit: { domain: 'acme', project: 'lumina', adding: true, busy: false,
-      ...fndInitOver,
-      choice: { ...freshChooser({}), ...choiceOver } },
-  }).renderFoundations(fndRead(fndPayload(docs || [fndDoc()])));
+  const panel = (door, recOver, docs, payloadOver) => {
+    const facts = makeRenderers({}).foundationsFacts(fndRead(fndPayload(docs || [], payloadOver)));
+    const info = doorsFor(facts, {})[door];
+    return makeRenderers({
+      activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
+      fndAdd: Object.assign(FA.freshAddPanel(door, info, facts), { domain: 'acme', project: 'lumina' }, recOver || {}),
+    }).renderFoundations(fndRead(fndPayload(docs || [], payloadOver)));
+  };
+  const none = { present: false, ownership: null };
   const count = (html, re) => (html.match(re) || []).length;
+  const gh = (over) => panel('github', over, [], none);
 
-  // ── C1: ONE REASON LINE, ONE ID ─────────────────────────────────────────
-  const sw = (over) => panel({ ownership: 'remote', ...over }, { switching: true });
+  // ── ONE REASON LINE, ONE ID ────────────────────────────────────────────
   for (const [name, over] of [['empty', {}], ['named, no token', { remote: 'o/r', hasReadToken: false }],
     ['named, token', { remote: 'o/r', hasReadToken: true }]]) {
-    eq('C1 [' + name + ']: exactly ONE node carries id="mem-fnd-init-why" — two was the defect',
-      count(sw(over), /id="mem-fnd-init-why"/g), 1);
+    eq('GitHub [' + name + ']: exactly ONE node carries id="fadd-why"', count(gh(over), /id="fadd-why"/g), 1);
   }
-  eq('...and no chooser reason node at all in this host (`reasons: \'host\'`)',
-    count(sw({}), /class="tx-note fnd-init-why" id="mem-fnd-init-why"/g), 1);
-  ok('...its words are the FIRST unmet step: the repository, then the token, then the scan',
-    />Name the repository first\.</.test(sw({}))
-    && />No read-only token yet — add one in Settings, or read with Personal Sync’s token\.</
-      .test(sw({ remote: 'o/r', hasReadToken: false }))
-    && />Find the documents first\.</.test(sw({ remote: 'o/r', hasReadToken: true })),
-  (sw({ remote: 'o/r', hasReadToken: true }).match(/id="mem-fnd-init-why"[^>]*><span>[^<]*/) || [''])[0]);
-  ok('...and "Name the repository first." is printed ONCE, not twice',
-    count(sw({}), /Name the repository first\./g) === 1);
+  ok('...its words are the FIRST unmet step: the repository, then the token',
+    />Name the repository first — owner\/repo, or its URL\.</.test(gh({}))
+    && />Choose which saved token to read the repository with\.</.test(gh({ remote: 'o/r', hasReadToken: false }))
+    && /id="fadd-why" hidden/.test(gh({ remote: 'o/r', hasReadToken: true })));
+  ok('each of the three fields is ONE wrapper holding its label then its input',
+    count(gh({}), /<div class="fnd-init-field"><label[^>]*for="fadd-(remote|ref|path)"/g) === 3);
+  ok('READ WITH carries an ⓘ with the fine-grained steps and why not classic',
+    /id="fadd-readwith-info-btn"/.test(gh({})) && /fine-grained personal access token/.test(gh({}))
+    && /Why not a classic token/.test(gh({})));
+  ok('there is NO token field — a token is never typed or sent here',
+    !/type="password"/.test(gh({})) && !/name="token"|id="fadd-token"/.test(gh({})));
 
-  // ── C1: LABELS ABOVE INPUTS, ONE BOX ──────────────────────────────────
-  const empty = sw({});
-  eq('each of the three fields is ONE wrapper holding its label then its input',
-    count(empty, /<div class="fnd-init-field"><label class="fnd-init-label cur-eyebrow" for="mem-fnd-init-remote[a-z-]*">[^<]+<\/label><input /g), 3);
-  ok('...and the arm has no frame of its own inside the panel (`fnd-init-arm-flat`)',
-    /class="fnd-init-arm fnd-init-arm-flat"/.test(empty), (empty.match(/class="fnd-init-arm[^"]*"/) || [''])[0]);
-
-  // ── C1: READ WITH IS TRUE ─────────────────────────────────────────────
-  ok('READ WITH carries an ⓘ, and it holds the five fine-grained steps and why not classic',
-    /class="fnd-init-readwith"><span class="fnd-init-label cur-eyebrow">Read with<\/span><button type="button" class="tx-vh-info" id="mem-fnd-readwith-info-btn"/.test(empty)
-    && /Fine-grained tokens → Generate new token/.test(empty)
-    && /Contents: Read-only/.test(empty) && /Why not a classic token/.test(empty), empty.slice(empty.indexOf('fnd-init-readwith'), empty.indexOf('fnd-init-readwith') + 300));
-  ok('...and the in-flow "never typed here" note moved into it (one place, not two)',
-    count(empty, /The token is never typed here/g) === 1
-    && !/<p class="fnd-init-note"><span>The token is never typed here/.test(empty));
-  const absent = sw({ remote: 'o/r', hasReadToken: false, hasSyncToken: false });
-  ok('token ABSENT: the read-only option says "not saved yet", nothing is checked, and a door opens Settings',
-    /fnd-init-token-name">Read-only token<\/span><span class="fnd-init-token-where">— Settings › Knowledge base<\/span><span class="fnd-init-token-sep" aria-hidden="true">·<\/span><span class="fnd-init-token-state">not saved yet</.test(absent)
-    && !/data-fnd-token="(?:config|sync)"[^>]*\bchecked\b/.test(absent)
-    && /<button type="button" class="btn btn-secondary btn-xs fnd-init-token-door" id="mem-fnd-init-token-door">Add one in Settings<\/button>/.test(absent),
-    absent.slice(absent.indexOf('fnd-init-tokens'), absent.indexOf('fnd-init-tokens') + 700));
+  // ── THE TOKEN ROW'S FOUR STATES (v3.65.2/.3, kept) ─────────────────────
+  const absent = gh({ hasReadToken: false, hasSyncToken: false });
+  ok('token ABSENT: "not saved yet", nothing checked, and a door opens Settings',
+    /Read-only token[\s\S]{0,200}not saved yet/.test(absent) && !/data-fadd-token="config" checked/.test(absent)
+    && /id="fadd-token-door"/.test(absent));
   ok('...the door sits OUTSIDE the radio\'s <label>, so pressing it never toggles the radio',
-    /<\/label><button type="button" class="btn btn-secondary btn-xs fnd-init-token-door"/.test(absent));
+    /<\/label><button type="button" class="btn btn-secondary btn-xs" id="fadd-token-door"/.test(absent));
   ok('...and a Personal Sync that is not connected is DISABLED with its reason as its state word',
-    /value="sync" data-fnd-token="sync" disabled \/><span class="fnd-init-token-text"><span class="fnd-init-token-head"><span class="fnd-init-token-name">Personal Sync’s token<\/span><span class="fnd-init-token-where">— the one that syncs your knowledge base<\/span><span class="fnd-init-token-sep" aria-hidden="true">·<\/span><span class="fnd-init-token-state">not connected</.test(absent),
-    (absent.match(/value="sync"[\s\S]{0,200}/) || [''])[0]);
-  const present = sw({ remote: 'o/r', hasReadToken: true, readTokenLast4: 'ab12', hasSyncToken: true });
-  ok('token PRESENT: the read-only option names it by its last four, is CHECKED, and there is no door',
-    /value="config" data-fnd-token="config" checked \/>[\s\S]{0,200}fnd-init-token-name">Read-only token<[\s\S]{0,200}fnd-init-token-state">ends in …ab12</.test(present)
-    && !/fnd-init-token-door/.test(present));
-  ok('...and a connected Personal Sync says "connected", never "available"',
-    /fnd-init-token-state">connected</.test(present) && !/>available</.test(present));
-  const hostile = sw({ remote: 'o/r', hasReadToken: true, readTokenLast4: '<b>x' });
-  ok('a last-four that is not four token characters is NOT printed at all',
-    /fnd-init-token-state">saved</.test(hostile) && !/&lt;b&gt;x|<b>x/.test(hostile));
-  ok('UNKNOWN (nobody asked yet): the read-only option is checked with NO state word, and no door',
-    /value="config" data-fnd-token="config" checked \/>[\s\S]{0,200}fnd-init-token-where">— Settings › Knowledge base<\/span><\/span>/.test(empty)
-    && !/fnd-init-token-door/.test(empty));
+    /data-fadd-token="sync" disabled[\s\S]{0,400}not connected/.test(absent));
+  const present = gh({ hasReadToken: true, readTokenLast4: 'ab12', hasSyncToken: true });
+  ok('token PRESENT: named by its last four, CHECKED, no door',
+    /data-fadd-token="config" checked/.test(present) && /ends in …ab12/.test(present)
+    && !/fadd-token-door/.test(present));
+  ok('...and a connected Personal Sync says "connected"', /connected/.test(present) && !/available/.test(present));
+  ok('a last-four that is not four token characters is NOT printed',
+    !/&lt;x&gt;|<x>/.test(gh({ hasReadToken: true, readTokenLast4: '<x>' })));
+  const unknown = gh({});
+  ok('UNKNOWN (nobody asked yet): read-only checked, NO state word, no door',
+    /data-fadd-token="config" checked/.test(unknown) && !/not saved yet|ends in/.test(unknown)
+    && !/fadd-token-door/.test(unknown));
 
-  // ── C2: THE FOLDER IS A FACT ──────────────────────────────────────────
-  const add = (over, docs) => panel({ ownership: 'repo', addMode: true, fixedRoot: '/somewhere/repo',
-    repoRoot: '/somewhere/repo', mirrored: ['docs/architecture.md'], projectBytes: 118784, ...over },
-  {}, docs);
-  const opened = add({ scanning: true });
-  ok('C2: the recorded folder is a monitor line — "from" → the path — never a field',
-    /<span class="cur-mon-key">from<\/span><span class="cur-mon-value">\/somewhere\/repo<\/span>/.test(opened)
-    && !/id="mem-fnd-init-root"/.test(opened), opened.slice(opened.indexOf('ADD FROM FOLDER'), opened.indexOf('ADD FROM FOLDER') + 900));
-  ok('...there is no "Find documents" while there is nothing to wait for',
-    !/id="mem-fnd-init-scan"/.test(opened));
-  ok('...and the panel carries an ⓘ saying what the scan looks for',
-    /id="mem-fnd-add-info-btn"/.test(opened) && /The scan looks in docs folders and at files named like a role/.test(opened));
-  const cands = [
-    { path: 'docs/architecture.md', bytes: 12345, suggestedRole: 'architecture' },
-    { path: 'docs/decisions.md', bytes: 51200, suggestedRole: 'decisions', firstHeading: 'Decisions' },
-  ];
-  const listed = add({ candidates: cands, picks: {} });
-  ok('the list heading says a tick means COPY',
-    />Tick the files to copy into this project\.</.test(listed));
-  ok('an already-mirrored row is listed WITHOUT a checkbox, badged `mirrored`',
-    /data-fnd-cand-row="docs\/architecture\.md"><span class="fnd-init-cand-main"><span class="fnd-init-cand-path">docs\/architecture\.md<\/span><span class="mem-badge mem-badge-quiet fnd-init-mirrored">mirrored<\/span>/.test(listed)
-    && !/data-fnd-cand="docs\/architecture\.md"/.test(listed),
-    listed.slice(listed.indexOf('fnd-init-cands'), listed.indexOf('fnd-init-cands') + 500));
+  // ── THE CHECKLIST ──────────────────────────────────────────────────────
+  const listed = (picks, docs, payloadOver, extra) => panel('local', Object.assign({
+    root: '/n', listedRoot: '/n', picks,
+    candidates: [{ path: 'docs/architecture.md', bytes: 12345, suggestedSlug: 'architecture.md' },
+      { path: 'notes/b.md', bytes: 100, suggestedSlug: 'b.md' },
+      { path: 'huge.md', bytes: 600 * 1024, suggestedSlug: 'huge.md', tooLarge: true }],
+  }, extra || {}), docs, payloadOver);
+  const curatorArch = [fndDoc({ freshness: 'n/a', source: { kind: 'curator', path: null } })];
+  const l0 = listed({}, curatorArch, { ownership: 'curator' });
+  ok('a document ALREADY in the project is listed ticked AND disabled, badged',
+    /data-fadd-row="docs\/architecture\.md"[\s\S]{0,160}checked disabled[\s\S]{0,300}already added/.test(l0));
   ok('...while a new one has its checkbox, UNticked by default',
-    /<input type="checkbox" class="cur-check" data-fnd-cand="docs\/decisions\.md" \/>/.test(listed));
-  ok('"+ A file that isn’t listed" is the LAST row of the list, and the old second form is gone',
-    /id="mem-fnd-init-extra-row"><button type="button" class="btn btn-ghost btn-xs fnd-init-extra-open" id="mem-fnd-init-extra-open" data-fnd-extra-open="1">\+ A file that isn’t listed<\/button><\/div><\/div>/.test(listed)
-    && !/Add a file the scan missed/.test(listed) && !/fnd-init-extra-as/.test(listed));
-  ok('with nothing ticked the ONE primary is "Copy documents", disabled, and the ONE reason says why',
-    /id="mem-fnd-init-go" disabled>Copy documents</.test(listed)
-    && /id="mem-fnd-init-why"><span>Tick at least one file\.</.test(listed)
-    && /id="mem-fnd-init-cancel">Cancel</.test(listed), (listed.match(/mem-fnd-init-actions[\s\S]{0,420}/) || [''])[0]);
-  const ticked = add({ candidates: cands, picks: { 'docs/decisions.md': true } });
-  ok('one ticked: "Copy 1 document", live, and no reason',
-    /id="mem-fnd-init-go">Copy 1 document</.test(ticked) && /id="mem-fnd-init-why" hidden>/.test(ticked));
-  ok('the total is the PROJECT\'s — mirrored plus ticked — as a depth bar against 200 KB',
-    /<span class="fnd-init-count-words">1 ticked · 50 KB<\/span><span class="fnd-init-count-total"><span class="fnd-init-count-key">project total<\/span><span class="cur-depth"><span class="cur-depth-bar" style="width:83%" aria-hidden="true"><\/span><span class="cur-depth-value">166 KB of 200 KB<\/span>/.test(ticked),
-    (ticked.match(/fnd-init-count[\s\S]{0,500}/) || [''])[0]);
-  const over = add({ candidates: cands.concat([{ path: 'docs/big.md', bytes: 90000, suggestedRole: 'guide' }]),
-    picks: { 'docs/decisions.md': true, 'docs/big.md': true } });
-  ok('...and OVER the budget it turns danger by itself (rule 6) AND says so in words, unfolded',
-    /cur-depth-bar cur-depth-danger" style="width:100%"/.test(over)
-    && /id="mem-fnd-init-budget"><span>Over the 200 KB project budget\. Agents are handed up to 120 KB/.test(over),
-    (over.match(/fnd-init-count[\s\S]{0,900}/) || [''])[0]);
-  ok('...a stale pick on an already-mirrored path is never sent',
-    pickedFiles({ ...freshChooser({}), ownership: 'repo', addMode: true, candidates: cands,
-      mirrored: ['docs/architecture.md'], picks: { 'docs/architecture.md': true } }).length === 0);
-  const before = add({ candidates: null });
-  ok('a bare folder never arms the copy: before the scan the reason is "Find the documents first."',
-    /id="mem-fnd-init-go" disabled>/.test(before) && />Find the documents first\.</.test(before));
-  const missing = add({ rootEditable: true, scanError: 'not a directory' });
-  ok('the recorded folder NOT on this computer: the field comes back PREFILLED with it',
-    /id="mem-fnd-init-root" type="text"[^>]*value="\/somewhere\/repo"/.test(missing),
-    (missing.match(/id="mem-fnd-init-root"[^>]*>/) || [''])[0]);
-  ok('...with the one reason naming the one thing to do',
-    />That folder is not on this computer\. Point at your copy of it\.</.test(missing));
-  ok('...and a DIFFERENT folder typed there asks to be scanned, not copied blind',
-    />Find the documents first\.</.test(add({ rootEditable: true, repoRoot: '/elsewhere' })));
+    /data-fadd-pick="notes\/b\.md" \/>/.test(l0));
+  ok('a file over the per-document limit is shown, disabled, WITH its numbers',
+    /data-fadd-row="huge\.md"[\s\S]{0,400}600 KB is over the 512 KB per-document limit/.test(l0));
+  ok('with nothing ticked the ONE primary is disabled and the ONE reason says why',
+    /id="fadd-go" disabled>Add documents</.test(l0) && />Tick at least one document\.</.test(l0));
+  const l1 = listed({ 'notes/b.md': true }, curatorArch, { ownership: 'curator' });
+  ok('one ticked: "Add 1 document", live, and no reason',
+    /id="fadd-go">Add 1 document</.test(l1) && /id="fadd-why" hidden/.test(l1));
+  ok('the count line is the PROJECT\'s total against its budget',
+    /1 ticked · 100 bytes — the project would hold 12 KB of its 195 KB budget/.test(l1),
+    (l1.match(/id="fadd-count">[^<]*/) || [''])[0]);
+  const big = listed({ 'notes/b.md': true }, curatorArch, { ownership: 'curator', totalBytes: 250 * 1024, budgetBytes: 204800 });
+  ok('...and OVER the budget it says so in words, WITH the numbers, unfolded',
+    /id="fadd-budget"><span>These bring the project to 250 KB, over its 200 KB budget by 50 KB\./.test(big),
+    (big.match(/id="fadd-budget"[^>]*><span>[^<]*/) || [''])[0]);
+  ok('select-all counts only the rows that can be ticked',
+    /Select all \(1\)/.test(l0));
+  ok('a refusal from the server is persistent and in flow, never behind a chevron',
+    /role="alert"[\s\S]{0,200}The folder is gone/.test(listed({}, [], none, { error: 'The folder is gone' })));
+  ok('...and a partial add lists each refused file with its reason',
+    /1 not added:[\s\S]{0,300}big\.md<\/span> — over the cap/.test(
+      listed({}, [], none, { refused: [{ path: 'big.md', reason: 'over the cap' }] })));
+  ok('a bare folder never arms the add: before the list the reason is the list step',
+    !/id="fadd-go"/.test(panel('local', { root: '' }, [], none))
+    && /Choose a folder first\./.test(panel('local', { root: '' }, [], none)));
 }
 
-// ── §21m3 — THE FIRST-TIME CHOOSER READS THE TOKEN TOO (v3.65.3) ───────
-// Orchestrator screen review: a project with no documents → "Mirror a GitHub
-// repository" showed "Read-only token — Settings › Knowledge base" with no
-// last four and no state, and the note "Add a read-only token in Settings"
-// under it, with a token SAVED. The render half and the binder half.
-{
-  const first = (choiceOver) => makeRenderers({
-    activeDomain: 'acme', activeProject: 'lumina', openFolds: {},
-    fndInit: { domain: 'acme', project: 'lumina', busy: false,
-      choice: { ...freshChooser({ allowLater: false }), ownership: 'remote', remote: 'o/r', ...choiceOver } },
-  }).renderFoundations(fndRead(fndPayload([], { present: false, ownership: null })));
-  const saved = first({ hasReadToken: true, readTokenLast4: 'ab12', hasSyncToken: true });
-  ok('CONTROL: this is the FIRST-TIME chooser (ownership cards), not the switch panel',
-    /data-fnd-own="remote"/.test(saved) && !/MIRROR FROM GITHUB/.test(saved));
-  ok('first-time, token saved: the read-only option carries its last four and is checked',
-    /value="config" data-fnd-token="config" checked \/>(?:(?!<\/label>)[\s\S]){0,600}fnd-init-token-state">ends in …ab12</.test(saved),
-    (saved.match(/fnd-init-tokens[\s\S]{0,500}/) || [''])[0]);
-  ok('...Personal Sync carries its own state word', /fnd-init-token-state">connected</.test(saved));
-  ok('...and NO "Add a read-only token in Settings" and no door — the false promise is gone',
-    !/Add a read-only token in Settings/.test(saved) && !/fnd-init-token-door/.test(saved));
-  ok('...and the READ WITH ⓘ is there, as on the switch panel',
-    /id="mem-fnd-readwith-info-btn"/.test(saved));
-  const none = first({ hasReadToken: false, hasSyncToken: false });
-  ok('first-time, NO token: the door to Settings is offered, and nothing is checked',
-    /id="mem-fnd-init-token-door">Add one in Settings</.test(none)
-      && !/data-fnd-token="(?:config|sync)"[^>]*\bchecked\b/.test(none));
-
-  // THE BINDER: the SHIPPED `bindFoundationRows`, with the chooser mounted.
-  const calls = { facts: [], bound: 0 };
-  const initBox = {};
-  const doc = { querySelector: (sel) => (sel === '[data-fnd-init="mem-fnd-init"]' ? initBox : null),
-    querySelectorAll: () => [] };
-  const st = { activeDomain: 'acme', activeProject: 'lumina', fndInit: null };
-  const api = new Function(
-    'state', 'render', 'reportAsyncMountFailure', 'openReader', 'isCurrentReader', 'isCurrentMount',
-    'fetch', 'escapeHtml', 'icon', 'renderMarkdown', 'renderReadout',
-    'foundationsFacts', 'freshChooser', 'bindFoundationsChooser', 'initFoundations',
-    'loadFoundationDraft', 'readPickedFile', 'saveFoundation', 'deleteFoundation',
-    'fndShrinkWarn', 'fndStats', 'briefDismissDecision',
-    'copyDraftingAsk', 'navigate',
-    'MAX_FOUNDATION_BYTES', 'FOUNDATION_ROLES', 'localStorage',
-    'loadTokenFacts', 'requestSettingsSection', 'pickedFiles',
-    extractFunction(viewSrc, 'bindFoundationRows', 'memory.js') + '\nreturn { bindFoundationRows };')(
-    st, () => {}, () => {}, () => 0, () => false, () => true,
-    async () => ({ ok: false }), escapeHtml, () => '', renderMarkdown, renderReadout,
-    () => ({ present: false, ownership: null, docs: [], count: 0 }),
-    freshChooser, () => { calls.bound++; }, async () => {},
-    async () => {}, async () => {}, async () => {}, async () => {},
-    () => null, () => ({ bytes: 0, words: 0, over: false }), () => 'close',
-    async () => {}, () => {},
-    MAX_FOUNDATION_BYTES, FOUNDATION_ROLES, { getItem: () => null, setItem: () => {} },
-    async (rec) => { calls.facts.push(rec); }, () => {}, () => []);
-  api.bindFoundationRows(doc, 1);
-  eq('SETUP: the chooser was bound', calls.bound, 1);
-  eq('the default (curator) card asks for NO token facts — nothing on screen needs them',
-    calls.facts.length, 0);
-  st.fndInit.choice.ownership = 'remote';
-  api.bindFoundationRows(doc, 1);
-  eq('choosing the GitHub card reads the token facts, for THIS panel record',
-    calls.facts.length === 1 && calls.facts[0] === st.fndInit, true);
-  api.bindFoundationRows(doc, 1);
-  eq('...ONCE: the repaint that answer causes does not ask again', calls.facts.length, 1);
-}
-
-// ── §21m2 — THE TOKEN FACTS, READ ONCE PER OPEN (v3.65.2, C1) ──────────
+// ── §21m2 — THE TOKEN FACTS, READ ONCE PER OPEN (v3.65.2's reads, v3.68.0's panel)
 {
   const mk = (responses) => {
     const calls = { urls: [], render: 0 };
     const st = {};
     const api = new Function('state', 'fetch', 'isCurrentMount', 'render',
-      extractFunction(viewSrc, 'loadTokenFacts', 'memory.js') + '\nreturn { loadTokenFacts };')(
+      extractFunction(viewSrc, 'loadAddTokenFacts', 'memory.js') + '\nreturn { loadAddTokenFacts };')(
       st,
       async (url) => { calls.urls.push(url); const r = responses[url];
         if (r instanceof Error) throw r;
@@ -10970,53 +10826,39 @@ function realListbox() {
       () => true, () => { calls.render++; });
     return { api, st, calls };
   };
+  const fresh = () => FA.freshAddPanel('github', { mode: 'init' }, null);
   {
     const r = mk({ '/api/config/github-read-token': { ok: true, present: true, last4: 'ab12' },
       '/api/sync/status': { configured: false } });
-    const rec = { choice: freshChooser({}) };
-    r.st.fndInit = rec;
-    await r.api.loadTokenFacts(rec, 1);
+    const rec = fresh(); r.st.fndAdd = rec;
+    await r.api.loadAddTokenFacts(rec, 1);
     eq('it reads the two facts, and only those two',
       r.calls.urls.slice().sort().join(' '), '/api/config/github-read-token /api/sync/status');
-    eq('...presence', rec.choice.hasReadToken, true);
-    eq('...the last four, and never more', rec.choice.readTokenLast4, 'ab12');
-    eq('...Personal Sync', rec.choice.hasSyncToken, false);
+    eq('...presence', rec.hasReadToken, true);
+    eq('...the last four, and never more', rec.readTokenLast4, 'ab12');
+    eq('...Personal Sync', rec.hasSyncToken, false);
     eq('...and one repaint', r.calls.render, 1);
   }
   {
-    const r = mk({ '/api/config/github-read-token': { ok: true, present: false, last4: null },
-      '/api/sync/status': 500 });
-    const rec = { choice: freshChooser({}) };
-    r.st.fndInit = rec;
-    await r.api.loadTokenFacts(rec, 1);
-    eq('absent is FALSE — the state that shows the door', rec.choice.hasReadToken, false);
-    eq('...and a read that FAILED leaves the other fact UNKNOWN, never "not connected"',
-      rec.choice.hasSyncToken, undefined);
-  }
-  {
-    const r = mk({ '/api/config/github-read-token': new Error('offline'),
-      '/api/sync/status': { configured: true } });
-    const rec = { choice: freshChooser({}) };
-    r.st.fndInit = rec;
-    await r.api.loadTokenFacts(rec, 1);
-    eq('a token read that throws leaves presence UNKNOWN — no door in front of a fine token',
-      rec.choice.hasReadToken, undefined);
+    const r = mk({ '/api/config/github-read-token': new Error('offline'), '/api/sync/status': 500 });
+    const rec = fresh(); r.st.fndAdd = rec;
+    await r.api.loadAddTokenFacts(rec, 1);
+    eq('a read that FAILED leaves presence UNKNOWN — no door in front of a fine token', rec.hasReadToken, undefined);
+    eq('...and Personal Sync UNKNOWN, never "not connected"', rec.hasSyncToken, undefined);
   }
   {
     const r = mk({ '/api/config/github-read-token': { ok: true, present: true, last4: '<x>' },
       '/api/sync/status': { configured: true } });
-    const rec = { choice: freshChooser({}) };
-    r.st.fndInit = rec;
-    await r.api.loadTokenFacts(rec, 1);
-    eq('a last-four that is not four token characters is dropped', rec.choice.readTokenLast4, null);
+    const rec = fresh(); r.st.fndAdd = rec;
+    await r.api.loadAddTokenFacts(rec, 1);
+    eq('a last-four that is not four token characters is dropped', rec.readTokenLast4, null);
   }
   {
     const r = mk({ '/api/config/github-read-token': { ok: true, present: true, last4: 'ab12' },
       '/api/sync/status': { configured: true } });
-    const rec = { choice: freshChooser({}) };
-    r.st.fndInit = { choice: freshChooser({}) };   // the panel was closed and reopened
-    await r.api.loadTokenFacts(rec, 1);
-    eq('an answer for a panel that is no longer open is DROPPED', rec.choice.hasReadToken, undefined);
+    const rec = fresh(); r.st.fndAdd = fresh();   // the panel was closed and reopened
+    await r.api.loadAddTokenFacts(rec, 1);
+    eq('an answer for a panel that is no longer open is DROPPED', rec.hasReadToken, undefined);
     eq('...and paints nothing', r.calls.render, 0);
   }
 }
@@ -11880,7 +11722,8 @@ const EXECUTED = new Set([
   'bindKnowledgeRows',
   // v3.65.2 — the GitHub panel's two token facts, read once per open;
   // driven in §21m2 (presence, last four, unknown-on-failure, a stale answer).
-  'loadTokenFacts',
+  // v3.68.0: the GitHub door's token facts (the v3.65.2 reads, new panel) — §21m2.
+  'loadAddTokenFacts',
   // v3.65.0 — the install's domain list. One cheap read per mount, with two
   // readers: the rail's identity colour and step ③'s picker. Driven in §16d
   // (the list as an argument, and the fallback when it has not arrived).
@@ -11953,7 +11796,10 @@ const EXECUTED = new Set([
   // let this suite agree with itself that the counter, the wall and the Save
   // button describe one draft while the shipped editor described three.
   'fndStats', 'fndSlugError', 'fndShrinkWarn',
-  'renderFoundationEditor', 'renderFoundationsInit',
+  'renderFoundationEditor',
+  // v3.68.0 — an empty project's block and the open door's record, lifted by
+  // makeRenderers and driven through renderFoundations in §21 and §21m.
+  'renderFoundationsEmpty', 'addPanelFor',
   // The age clock (§18). Lifted and driven against a fake document, with a
   // render spy proving it never reaches for one.
   'tickAges',
@@ -12012,7 +11858,15 @@ const NOT_EXECUTED = {
   // same split §21k already makes for `refreshFoundations`, one suite over —
   // and the reason it is over there rather than here is that this file already
   // runs 1,000 assertions and the editor's own battery is a section of its own.
-  initFoundations: 'async orchestration over the init POST plus a re-read; EXECUTED against a fake fetch in test-next-foundations-editor.js, which asserts the body the chooser built, the refusal keeping the choice, and the hand-off to refreshFoundations on an already-owned mirror',
+  // v3.68.0 — the two doors' orchestration. The pure halves (which door does
+  // what, the request, the reading of the answer, the markup) are in
+  // shared/foundations-add.js and EXECUTED in §21/§21m and test-foundations-add.js.
+  listAddDocuments: 'async orchestration over the list GET; EXECUTED against a fake fetch in test-next-foundations-editor.js §9 (the all=1 URL, the resolved root, nothing ticked)',
+  commitAdd: 'async orchestration over the commit POST plus a re-read; EXECUTED against a fake fetch in test-next-foundations-editor.js §9 (the add-local body, the toast, the persistent refusal, the partial add, the GitHub init body with no token)',
+  seedTemplates: 'async orchestration over the templates init POST; EXECUTED in test-next-foundations-editor.js §9 (the curator body, rechooseEmpty only on an empty manifest)',
+  openAddDoor: 'reads live state and renders; its inputs (doorsFor, freshAddPanel) are EXECUTED in §21m and test-foundations-add.js, and the browser pass opened both doors',
+  pickAddFolder: 'a native dialog through POST /api/config/pick-path; pickFolder itself is driven in test-next-foundations-editor.js, and the browser pass measured the no-dialog/typed-path fallback',
+  bindAddDoors: 'addEventListener wiring on a live DOM; every rule it applies (commitBlockedReason, countLine, budgetWarning, alreadyAdded) is EXECUTED in test-foundations-add.js and the browser pass ticked, selected all and committed',
   loadFoundationDraft: 'async orchestration over the `?raw=1` read; EXECUTED in test-next-foundations-editor.js, which asserts the RAW query, the byte-exact draft and that a second Edit press wins the race',
   saveFoundation: 'async orchestration over the PUT plus a re-read; EXECUTED in test-next-foundations-editor.js, which asserts the three fields, the stamp, the late-reply drop and that a failure keeps the draft',
   stopMirroringFoundation: 'async orchestration over the SAME DELETE deleteFoundation uses, from the row control (v3.61.1); the request shape is asserted over EVERY DELETE call site in the fetch census above (one URL, one body, the slug as its own confirmation), the strip it drives is executed over five states, and the route arm it depends on — removal allowed on a mirror, PUT still refused — is driven end to end in test-next-memory-projects.js',
