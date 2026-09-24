@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.68.0` | Answers the maintainer's own gap report: a project couldn't mirror what was already on GitHub without first adding a local copy, couldn't add a second file once it held one, and had no multi-select. Context step ① gained two doors — Add from this computer and Add from GitHub — each opening a checklist panel with select-all and per-file size limits. |
 | `v3.67.2` | The maintainer's own v3.67.1 test feedback (2026-09-24): one app-wide toast, honest copy about where agent instructions go, a false "not on this computer" note removed from Context, and the Context ⓘ that blinked on every auto-refresh. |
 | `v3.67.1` | v3.67.0 reached `main` and got tagged although its own release-branch CI had failed — the release chain printed the run's conclusion but never gated on it. |
 | `v3.67.0` | "The right context, not all of it" — the maintainer's own principle, and the release's governing rule for every screen and every doc sentence: at the start of a session an agent gets its foundations, the last state and the standing brief; everything else is on demand; the magic is just enough. |
