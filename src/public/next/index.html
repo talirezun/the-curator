@@ -60,6 +60,12 @@
      material.css so its [data-theme="light"] block wins the (0,1,0) tie in
      the right order; scripts/test-css-tokens.js §11 grades its theme parity. -->
 <link rel="stylesheet" href="/next/tokens/identity.css">
+<!-- tokens/layer.css — the LAYER ramp (v3.70.0): one violet hue by lightness
+     steps, one per layer of what The Curator hands an agent at session start,
+     plus the harness hatch, the free track and the dashed room. Aliases of
+     color.css primitives only, restated in both themes; linked after
+     color.css. Drawn by shared/bucket.css. -->
+<link rel="stylesheet" href="/next/tokens/layer.css">
 
 <link rel="stylesheet" href="/next/shell.css">
 
@@ -247,6 +253,14 @@
      may not depend on the stylesheet of a component it does not draw. It owns
      the whole `cur-depth-` prefix and declares no `.fresh-` rule. -->
 <link rel="stylesheet" href="/next/shared/depth-bar.css">
+
+<!-- shared/bucket.css — the WINDOW METER (v3.70.0), the SEGMENTED depth bar:
+     the context window to scale (harness hatched as "your estimate", The
+     Curator in violet, free), and The Curator's part enlarged with the
+     reading budget as a dashed room. Rendered by shared/bucket.js; owns the
+     whole `bk-` prefix. Linked here because scripts/test-css-tokens.js §5
+     discovers /next stylesheets only from this file's <link> tags. -->
+<link rel="stylesheet" href="/next/shared/bucket.css">
 
 <!-- shared/ai-run.css — the RUN LINE (v3.67.0): one line under every AI action
      naming the model that runs it, roughly what it takes and — after the run —

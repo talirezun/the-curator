@@ -1,0 +1,230 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   shared/bucket.css — THE WINDOW METER (v3.70.0), the SEGMENTED depth bar
+
+   Rendered by shared/bucket.js (renderBucket and its pieces). Design rule 6,
+   as amended in v3.70.0: several shares of ONE named denominator, stacked —
+   the window to scale on top, The Curator's part enlarged below it.
+
+   THE CHANNELS, SO COLOUR IS NEVER THE ONLY ONE
+     · layers      one violet hue by LIGHTNESS steps (tokens/layer.css), each
+                   neighbour ≥ 3:1 against the next, each name printed on its
+                   segment when it fits and ALWAYS in the legend
+     · harness     a HATCH of two ink steps — not violet, not measured
+     · free        the bar's own track
+     · room        a DASHED outline: the reading budget not spent
+     · on demand   a DASHED chip in the legend: outside the window, never in it
+
+   NEVER DANGER-TONED. A window is not a budget the owner set. An over-full
+   window is said in words by the kit (`.bk-note`).
+
+   NARROW WIDTH: the meter is its own inline-size container. Under 560px of
+   bar the inline names drop (bucket.js only places a name that fits at
+   560px) and the legend, which wraps, carries every one. The bars stay full
+   width at every size.
+
+   THE TINY SHARE: The Curator in a 1M window is often under one pixel. Its
+   segment has a min-width so it is always visible; the head line says "to
+   scale" and states the true share in words.
+
+   Owns the whole `bk-` prefix. No colour literal (test-next-design-kit §10),
+   no `.fresh-` and no `.tx-` rule, no prefers-color-scheme query.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.bk {
+  container-type: inline-size;
+  container-name: bk;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+
+.bk-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin-bottom: var(--space-4);
+}
+.bk-label {
+  font: var(--type-eyebrow);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.bk-scale,
+.bk-preview {
+  font: var(--weight-regular) var(--text-2xs)/1 var(--font-mono);
+  color: var(--text-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  padding: var(--space-1) var(--space-2);
+}
+.bk-preview {
+  color: var(--accent-text);
+  border-style: dashed;
+  border-color: var(--accent-border);
+}
+.bk-figure {
+  margin-left: auto;
+  font: var(--weight-regular) var(--text-sm)/var(--leading-snug) var(--font-mono);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.bk-enlarged .bk-figure { color: var(--text-2); font-size: var(--text-xs); }
+
+/* ── THE BAR ─────────────────────────────────────────────────────────────── */
+.bk-bar {
+  display: flex;
+  height: 30px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--ly-free);
+  border: 1px solid var(--border-strong);
+}
+.bk-seg {
+  height: 100%;
+  flex: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font: var(--weight-medium) var(--text-xs)/1 var(--font-mono);
+  transition: width var(--dur-slower) var(--ease-out);
+}
+.bk-seg + .bk-seg { box-shadow: -2px 0 0 var(--ly-gap); }
+.bk-seg span { overflow: hidden; text-overflow: clip; padding: 0 var(--space-3); }
+
+.bk-harness {
+  background: repeating-linear-gradient(135deg, var(--ly-harness-a) 0 3px, var(--ly-harness-b) 3px 7px);
+  justify-content: flex-start;
+  color: var(--text);
+}
+.bk-harness span {
+  background: var(--surface-inset);
+  border-radius: var(--radius-xs);
+  padding: var(--space-1) var(--space-3);
+  margin-left: var(--space-3);
+}
+/* The Curator on the window scale: one segment, the ramp as a gradient, and
+   a floor so a 0.3% share is still a visible mark. */
+.bk-curator {
+  background: linear-gradient(180deg, var(--ly-brief), var(--ly-read));
+  min-width: 3px;
+}
+.bk-free {
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  color: var(--text-2);
+  font-weight: var(--weight-regular);
+}
+.bk-free span { padding-right: var(--space-5); }
+
+/* The layers — one hue, lightness steps, each with its own ink. */
+.bk-ly-framing { background: var(--ly-framing); color: var(--ly-framing-ink); }
+.bk-ly-brief   { background: var(--ly-brief);   color: var(--ly-brief-ink); }
+.bk-ly-handoff { background: var(--ly-handoff); color: var(--ly-handoff-ink); }
+.bk-ly-journal { background: var(--ly-journal); color: var(--ly-journal-ink); }
+.bk-ly-index   { background: var(--ly-index);   color: var(--ly-index-ink); }
+.bk-ly-read    { background: var(--ly-read);    color: var(--ly-read-ink); }
+.bk-ly-other   { background: var(--ly-other);   color: var(--ly-other-ink); }
+.bk-bar-zoom .bk-ly { min-width: 2px; }
+
+/* The reading budget not spent: an EMPTY dashed room. */
+.bk-room {
+  flex: none;
+  background: transparent;
+  outline: 1.5px dashed var(--ly-room-edge);
+  outline-offset: -4px;
+  color: var(--ly-room-ink);
+  font-weight: var(--weight-regular);
+}
+.bk-room.is-unused { justify-content: center; }
+
+/* Preview: the same bars, marked as a what-if by a dashed frame. */
+.is-preview .bk-bar { border-style: dashed; border-color: var(--accent-border); }
+
+/* ── THE AXIS, THE ZOOM LINES ────────────────────────────────────────────── */
+.bk-axis {
+  display: flex;
+  justify-content: space-between;
+  font: var(--weight-regular) var(--text-2xs)/1 var(--font-mono);
+  color: var(--text-2);
+  margin-top: var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+.bk-zoom { height: 22px; position: relative; }
+.bk-zoom svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.bk-zoom path {
+  fill: none;
+  stroke: var(--accent-border);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+
+/* ── NOTES, LEGEND, DELIVERY ─────────────────────────────────────────────── */
+.bk-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-4);
+  font: var(--type-body-sm);
+  color: var(--text-2);
+}
+.bk-axis + .bk-note { margin: var(--space-4) 0 0; }
+.bk-legend {
+  list-style: none;
+  margin: var(--space-5) 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-8);
+  font: var(--weight-regular) var(--text-xs)/var(--leading-snug) var(--font-mono);
+  color: var(--text-2);
+}
+.bk-it { display: inline-flex; align-items: center; gap: var(--space-3); }
+.bk-it b { color: var(--text); font-weight: var(--weight-medium); }
+.bk-sw {
+  flex: none;
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-xs);
+}
+.bk-sw-harness { background: repeating-linear-gradient(135deg, var(--ly-harness-a) 0 3px, var(--ly-harness-b) 3px 6px); border: 1px solid var(--border-strong); }
+.bk-sw-free { background: var(--ly-free); border: 1px solid var(--border-strong); }
+.bk-sw-room { background: transparent; border: 1.5px dashed var(--ly-room-edge); }
+.bk-sw-ondemand { background: transparent; border: 1.5px dashed var(--ly-ondemand-edge); }
+
+.bk-delivery {
+  margin: var(--space-5) 0 0;
+  font: var(--weight-regular) var(--text-sm)/var(--leading-normal) var(--font-mono);
+  color: var(--text-2);
+}
+.bk-delivery.is-preview {
+  color: var(--text);
+  border: 1px dashed var(--accent-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-5);
+}
+.bk-delivery b { font-weight: var(--weight-semibold); }
+
+/* ── NARROW: names drop to the legend, the bars stay full width ──────────── */
+/* Two label lengths: the long one from 880px of bar, the short one below. */
+.bk-l-short { display: none; }
+@container bk (max-width: 879px) {
+  .bk-l-wide { display: none; }
+  .bk-l-short { display: inline; }
+}
+@container bk (max-width: 559px) {
+  .bk-seg span { display: none; }
+  .bk-figure { margin-left: 0; flex-basis: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bk-seg { transition: none; }
+}
