@@ -1021,7 +1021,7 @@ already has: `CLAUDE.md`'s v3.29.0 row says 25, and the object declares 30.
 |---|---|
 | `bad-version` | not plain `X.Y.Z` — the `-beta` line was retired in v3.0.2 after 27 "previews" shipped straight to production |
 | `wrong-branch` | not on `main` |
-| `dirty-tree` | any modified or untracked file outside `package.json`, `package-lock.json`, `CLAUDE.md`, `CHANGELOG-ARCHIVE.md`, `CONTRIBUTING.md` — unfinished work must not be swept into a release commit |
+| `dirty-tree` | any modified or untracked file outside `package.json`, `package-lock.json`, `CLAUDE.md`, `CHANGELOG-ARCHIVE.md`, `docs/dev/release-index.md`, `CONTRIBUTING.md` — unfinished work must not be swept into a release commit |
 | `behind-remote` / `diverged` | `origin/main` moved; a release must be a fast-forward |
 | `version-not-forward` | the target is not greater than `package.json`'s current version |
 | `tag-exists` | `vX.Y.Z` already exists locally or on `origin` — the script never moves or deletes a tag |
@@ -1029,7 +1029,7 @@ already has: `CLAUDE.md`'s v3.29.0 row says 25, and the object declares 30.
 | `ci-not-reachable` | the workflow would not run on a release branch, so the gate would wait on a run that never starts |
 | `changelog-row-missing` | `CLAUDE.md` has no FULL row for the version (an index line is a pointer, never the record) |
 | `version-fields-disagree` | `package.json`, **both** `package-lock.json` fields and `CLAUDE.md`'s `**Version:**` line do not all read one version. Two starting states are accepted and nothing between them: all on the old version (the script bumps all three), or all on the target (someone pre-bumped). A half-bumped tree is what makes `npm test` go red mid-release for a reason that reads like a test failure. v3.24.1 found the lock six releases stale in both fields |
-| `leanness-cap-exceeded` | more full changelog rows than `test-changelog-completeness.js`'s cap. At the cap it **warns** — *"the next release must archive first"* — rather than letting someone discover it mid-release |
+| `leanness-cap-exceeded` | more full changelog rows than `test-changelog-completeness.js`'s cap — 3, since 2026-09-23. At the cap it **warns** — *"the next release must archive first"* — rather than letting someone discover it mid-release. Archiving first means: move the OLDEST full row to the top of `CHANGELOG-ARCHIVE.md`'s table byte-for-byte, add that row's one-line index entry to the top of `docs/dev/release-index.md`, and update the kept/archived counts in both `CLAUDE.md` and the archive's header |
 | `suite-counts-stale` | `scripts/check-doc-suite-counts.js` fails. Correct the **doc** to the measured numbers; never do that arithmetic by hand and never edit `run-tests.js` to match the doc |
 | `lock-diff-too-large` | the bump changed more of `package-lock.json` than the two version lines, i.e. npm re-resolved the tree. v3.24.1 hand-edited the lock for exactly this reason |
 | `claude-rewrite-failed` | the `CLAUDE.md` version-line rewrite did not produce exactly a one-line change, or did not survive a read-back |
