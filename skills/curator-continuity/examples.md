@@ -134,6 +134,8 @@ report: "Saved working state for 'curator' / scope 'track-7' (machine: studio).
 
 Say one line to the user and carry on: *"Saved a checkpoint under `track-7` — the stubbed save handler is recorded as the top next step."*
 
+**Had you left `scope` out** (v3.76.0), the save would not have gone to `main`: with `harness: "Claude Code"` it goes to your tool's own scope, and the reply says so — `scope: "claude-code"`, `scope_chosen_by: "harness"`, and a report sentence beginning *"No scope was given, so it was saved under your tool's own scope `claude-code`"*. That keeps two tools on one computer out of each other's file. Name the scope when the work already has one (here, `track-7`); an explicit `main` is always honoured.
+
 ---
 
 ## Example 3 — Resuming on a different machine

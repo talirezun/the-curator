@@ -193,6 +193,8 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // question was the whole brief: "how are these the same?" They are one
 // component now, and the domain page's card is the design that won.
 import { renderOverview } from '../shared/overview.js';
+// v3.76.0 (F4): the app's ONE age clock, run from this view's own interval.
+import { tickAges as tickSharedAges } from '../shared/age-ticker.js';
 // ── THE SIDEBAR IS THE KIT'S NOW (v3.65.0, R2) ──────────────────────────────
 // The maintainer, with both rails in front of him: *"We have two middle menus,
 // Domains and Context, in totally different designs ... I suggest we go with
@@ -1101,6 +1103,9 @@ let pollTimer = null;
 // The 1-second age clock (see AGE_TICK_MS). Held here, beside pollTimer, so
 // the teardown that disarms one is the obvious place to disarm the other.
 let ageTimer = null;
+// v3.76.0 (F4): `sidebarBandSignature` as of the rail's last paint. The tick
+// repaints the rail only when the clock alone has moved it (see there).
+let sidebarBandSig = null;
 let wakeHandler = null;
 // The signature of what render() last painted. Compared against a freshly
 // computed one so a revalidation that changed nothing costs no render at
@@ -1329,6 +1334,7 @@ registerView('memory', {
       // walking a DOM that belongs to whatever view mounted next, once a
       // second, for the life of the page.
       if (ageTimer !== null) { clearInterval(ageTimer); ageTimer = null; }
+      sidebarBandSig = null;
       // ── ONE POPOVER TO CLOSE AGAIN (v3.65.0) ───────────────────────
       // The scope and machine pickers were deleted in v3.55.0 and this step
       // went with them; step ③'s wiki picker brings it back, and the reason
@@ -1429,11 +1435,13 @@ function schedulePoll(token) {
  * elements the last paint left behind and writes text into them, exactly as
  * views/ingest.js's elapsed-clock does.
  *
- * ── AND WHAT IT DELIBERATELY DOES NOT TOUCH ─────────────────────────────
- * The PIP. Its class is cut on formatAge's own unit bands (freshnessStep), so
- * the instant the word changes band is the instant screenSignature changes and
- * the pane repaints with the right mark. Re-deriving the class here would be a
- * second implementation of that rule, free to disagree with the first.
+ * ── THE DOTS, SINCE v3.76.0 ─────────────────────────────────────────────
+ * It used to leave the freshness dots alone, on the theory that the pane
+ * repaints when screenSignature changes band — but that repaint waits for a
+ * poll, and the rail's dots and its Active/Idle grouping waited for one too
+ * (truth audit F4). A dot now carries the stamp it was banded on and is
+ * re-banded here through the SAME `freshnessTier` call that painted it — one
+ * rule, called twice, not a second copy of it.
  *
  * ── THE TARGETS, PLURAL SINCE v3.55.0 ───────────────────────────────────
  * `data-mem-age-at` carries the ISO stamp that effectiveSave resolved, and it
@@ -1483,6 +1491,39 @@ function tickAges() {
     // for the browser and, on a screen reader watching a live region, still
     // reads. Most of the 60 ticks in a minute have nothing to say.
     if (target && target.textContent !== words) target.textContent = words;
+  }
+  // v3.76.0 (truth audit F4): the rest of the screen's clock-bound readings.
+  tickRest(now);
+}
+
+/**
+ * THE REST OF THE SCREEN'S CLOCK (v3.76.0, truth audit F4), run by tickAges
+ * on the same one-second interval. Three things tickAges' own targets never
+ * reached, each of which read the paint they were drawn in as current:
+ *   1. the ages that follow the SHARED clock's contract (`data-age-at`,
+ *      shared/age-ticker.js) — the MEMORY tile, the Handoffs fold summary and
+ *      every rail row — run here rather than on a second timer;
+ *   2. the freshness DOTS, re-banded from the stamp they carry;
+ *   3. the rail's Active / Idle cut, repainted (the rail only, never render())
+ *      only when the clock alone has moved a project across 24 hours.
+ */
+function tickRest(now) {
+  tickSharedAges(document, now);
+  // The DOTS. Each carries the stamp it was banded on (`freshDotHtml`), and is
+  // re-banded through the same `freshnessTier` — a class write, only on change.
+  const dots = document.querySelectorAll('[data-mem-fresh-at]');
+  for (let i = 0; i < dots.length; i++) {
+    const t = Date.parse(dots[i].getAttribute('data-mem-fresh-at') || '');
+    if (!Number.isFinite(t)) continue;
+    const want = 'fresh-dot fresh-' + freshnessTier(Math.max(0, Math.round((now - t) / 1000)));
+    if (dots[i].getAttribute('class') !== want) dots[i].setAttribute('class', want);
+  }
+  // THE GROUPING. Active/Idle is a function of the clock: a project crosses
+  // into Idle at 24 h with no save anywhere. The rail is repainted — the rail
+  // only, never render() — when, and only when, that cut moved.
+  if (sidebarBandSig !== null && Array.isArray(state.projects) && myMountToken
+    && sidebarBandSignature(state.projects, now) !== sidebarBandSig) {
+    renderSidebar(myMountToken);
   }
 }
 
@@ -1789,7 +1830,12 @@ function screenSignature() {
   // trip it. Erring towards one extra repaint is the fail-safe direction; a
   // figure that has quietly stopped being true is not.
   const briefMark = pr && pr.brief && pr.brief.present
-    ? [formatAge(effectiveSave({ savedAt: pr.brief.updatedAt }).seconds),
+    ? [formatAge(effectiveSave({ writtenAt: pr.brief.writtenAt || null, savedAt: pr.brief.updatedAt }).seconds),
+      // v3.76.0 (F2): the FILE's clock too, as words — the fold shows it as a
+      // second clock when it differs, so a hand edit that leaves the stamp
+      // alone must still repaint. Words, not the raw stamp: a stamp would make
+      // every two reads of one unchanged brief differ.
+      formatAge(effectiveSave({ savedAt: pr.brief.updatedAt }).seconds),
       (pr.brief.text || '').length] : null;
 
   // ── TIER 0 IS A PANE, AND ITS FRESHNESS IS A COMPUTED READING ──────────
@@ -3165,10 +3211,18 @@ export function effectiveSave(row, now = Date.now()) {
     return Number.isFinite(t) ? Math.max(0, Math.round((now - t) / 1000)) : null;
   };
   // The agent's clock wins whenever it is there at all.
-  const wAge = secs(row.writtenAgeSeconds) ?? fromStamp(row.writtenAt);
+  //
+  // THE STAMP BEFORE THE SERVER'S PRECOMPUTED AGE (v3.76.0, truth audit F4).
+  // `writtenAgeSeconds` / `ageSeconds` are the server's `now − stamp` at the
+  // moment it answered, and a payload is KEPT — the per-project cache hands
+  // the last one back on re-entry, and a paint made from it an hour later
+  // said "saved 2 min ago". The stamp is the fact; the age is arithmetic on
+  // it, done here against THIS clock at every paint. The precomputed figure
+  // is only the fallback for a row that carries no usable stamp.
+  const wAge = fromStamp(row.writtenAt) ?? secs(row.writtenAgeSeconds);
   if (wAge !== null) return { seconds: wAge, at: row.writtenAt || null, source: 'agent' };
   const fsAt = row.savedAt || row.arrivedAt || row.lastWriteAt || null;
-  const fAge = secs(row.ageSeconds) ?? fromStamp(fsAt);
+  const fAge = fromStamp(fsAt) ?? secs(row.ageSeconds);
   if (fAge !== null) return { seconds: fAge, at: fsAt, source: 'filesystem' };
   return none;
 }
@@ -3387,6 +3441,68 @@ function restoreFocus() {
  * Pure and exported through __testing: this is the function the grouping
  * assertions drive.
  */
+/**
+ * A freshness dot that the view's tick can re-band (v3.76.0, truth audit F4).
+ * `data-mem-fresh-at` carries the stamp its age was taken from; tickAges
+ * recomputes the class from it through the SAME `freshnessTier`, so a dot
+ * cannot go on saying "live" an hour after the save the way a paint-once dot
+ * did. `eff` is effectiveSave's result, or null for "no reading".
+ */
+function freshDotHtml(eff) {
+  const tier = eff ? freshnessTier(eff.seconds) : 'unknown';
+  return '<span class="fresh-dot fresh-' + tier + '"'
+    + (eff && eff.at ? ' data-mem-fresh-at="' + escapeHtml(eff.at) + '"' : '')
+    + ' aria-hidden="true"></span>';
+}
+
+const ACTIVE_TIERS = ['live', 'recent', 'today'];
+function isActiveAge(secs) {
+  return ACTIVE_TIERS.includes(freshnessTier(secs));
+}
+
+/**
+ * The tool line of a sidebar row (v3.74.0; lifted out in v3.76.0 so the tick
+ * can re-derive it). An ACTIVE project names every tool whose newest save is
+ * inside 24 hours — `tools[]` is built by the route from the JOURNAL, so a
+ * tool whose handoff another tool overwrote is still named (truth audit F7);
+ * an idle one names the tool of its newest save. '' when no save named one.
+ */
+function projectToolsText(p, eff) {
+  const tools = Array.isArray(p.tools) ? p.tools.filter((t) => t && typeof t.label === 'string' && t.label) : [];
+  const toolLabels = isActiveAge(eff.seconds)
+    ? tools.filter((t) => isActiveAge(effectiveSave(t).seconds)).map((t) => t.label)
+    : [];
+  if (!toolLabels.length) {
+    const newest = typeof p.harnessLabel === 'string' && p.harnessLabel ? p.harnessLabel
+      : (tools.length ? tools[0].label : '');
+    if (newest) toolLabels.push(newest);
+  }
+  return toolLabels.join(' + ');
+}
+
+/**
+ * WHAT THE RAIL'S GROUPING DEPENDS ON, AS ONE STRING (v3.76.0, truth audit F4).
+ * Active/Idle and the Active row's tool list are functions of the CLOCK, not
+ * only of the data: a project saved 23 h 59 min ago crosses into Idle with no
+ * new save anywhere. The rail used to regroup only when a poll happened to
+ * repaint it. The tick compares this against the value taken at the last
+ * sidebar paint and repaints the rail only when it moved — at most a few
+ * times a day, never once a second.
+ */
+export function sidebarBandSignature(projects, now = Date.now()) {
+  return (Array.isArray(projects) ? projects : []).filter(Boolean).map((p) => {
+    const eff = effectiveSave(p, now);
+    const toolsNow = Array.isArray(p.tools) ? p.tools.map((t) => ({ ...t })) : p.tools;
+    // projectToolsText reads Date.now() through effectiveSave; the tools are
+    // re-aged against `now` explicitly so a test can drive the clock.
+    const tools = Array.isArray(toolsNow)
+      ? toolsNow.filter((t) => t && typeof t.label === 'string' && t.label && isActiveAge(effectiveSave(t, now).seconds))
+        .map((t) => t.label).join('+')
+      : '';
+    return p.domain + '/' + p.project + ':' + (isActiveAge(eff.seconds) ? 'A' : 'I') + ':' + tools;
+  }).join('|');
+}
+
 export function renderProjectGroups(projects, activeDomain, activeProject, domainOrder) {
   const rows = Array.isArray(projects) ? projects.filter(Boolean) : [];
   const order = [];
@@ -3427,8 +3543,6 @@ export function renderProjectGroups(projects, activeDomain, activeProject, domai
   // never re-sorted by recency, for the reason at this function's head. And
   // the domain, which the group heading used to name, is now the first half
   // of the row's figure ("projects · 3 scopes"), so no row loses it.
-  const ACTIVE_TIERS = ['live', 'recent', 'today'];
-  const isActiveAge = (secs) => ACTIVE_TIERS.includes(freshnessTier(secs));
   const activeRows = [];
   const idleRows = [];
   for (const domain of order) {
@@ -3448,7 +3562,6 @@ export function renderProjectGroups(projects, activeDomain, activeProject, domai
       // cut on, so a project row and its own newest work-stream can never
       // disagree about how fresh it is. It is aria-hidden: the words beside
       // it say the same thing.
-      const tier = freshnessTier(eff.seconds);
       // ── WHICH TOOL, NORMALISED (v3.74.0) ───────────────────────────────
       // The widget names the tool on every project row, compared and shown
       // through ONE normaliser (src/brain/harness-names.js) — so the route
@@ -3458,16 +3571,7 @@ export function renderProjectGroups(projects, activeDomain, activeProject, domai
       // on one project are both visible ("Claude Code + Antigravity"); an
       // idle one names the tool of its newest save. Omitted when no save
       // named a tool — never a guess.
-      const tools = Array.isArray(p.tools) ? p.tools.filter((t) => t && typeof t.label === 'string' && t.label) : [];
-      const toolLabels = isActiveAge(eff.seconds)
-        ? tools.filter((t) => isActiveAge(effectiveSave(t).seconds)).map((t) => t.label)
-        : [];
-      if (!toolLabels.length) {
-        const newest = typeof p.harnessLabel === 'string' && p.harnessLabel ? p.harnessLabel
-          : (tools.length ? tools[0].label : '');
-        if (newest) toolLabels.push(newest);
-      }
-      const toolsText = toolLabels.join(' + ');
+      const toolsText = projectToolsText(p, eff);
       // THE FIGURE AND THE AGE ARE TWO SLOTS, NOT ONE SENTENCE — and that is
       // the whole of what the maintainer was pointing at. `projectMetaLine`
       // composes "18 scopes · 15 hr ago" as a STRING, so there was nowhere
@@ -3488,7 +3592,7 @@ export function renderProjectGroups(projects, activeDomain, activeProject, domai
         // class already says it, in the name's own ink.
         dotClass: has && slot >= 0 ? identityDotClass(slot) : '',
         figure,
-        markHtml: '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>',
+        markHtml: freshDotHtml(eff),
         age: formatAge(eff.seconds),
         // A PROJECT WITH NO SAVE HAS NO AGE, and says so rather than
         // borrowing "nothing written yet" from a domain that has no pages.
@@ -3506,7 +3610,10 @@ export function renderProjectGroups(projects, activeDomain, activeProject, domai
         active,
         stateClass: has ? '' : 'mem-row-quiet',
         ariaCurrent: active,
-        data: { 'mem-domain': domain, 'mem-project': p.project },
+        // v3.76.0 (F4): the row's age ticks on the shared clock (the kit's
+        // `.cur-sb-age` is its named target). No stamp, no hook.
+        data: { 'mem-domain': domain, 'mem-project': p.project,
+          'age-at': eff.at && formatAge(eff.seconds) ? eff.at : null },
       });
   };
   // THE GROUP HEADS ARE THE WIDGET'S OWN WORDS. `.cur-eyebrow` upper-cases
@@ -3584,6 +3691,8 @@ function renderSidebar(token) {
   // no longer fit on a screen is a call whose token is easy to drop.
   const rows = renderProjectGroups(
     state.projects, state.activeDomain, state.activeProject, state.domainList);
+  // v3.76.0 (F4): what the grouping was cut on, for the tick to compare.
+  sidebarBandSig = sidebarBandSignature(state.projects);
 
   // NO FOOT CARD, and no `.mem-projects-head` either. The first was a lock
   // glyph and a sentence under the list, belonging to nothing; the second was
@@ -4093,8 +4202,12 @@ function renderLayerStrip(read) {
     // beside it is the reading the work-stream fold had to be opened to
     // resolve; it is one field on the row that produced the age.
     sub: newest && typeof newest.scope === 'string' && newest.scope ? newest.scope : null,
-    markHtml: '<span class="fresh-dot fresh-'
-      + (savedAge ? freshnessTier(savedEff.seconds) : 'unknown') + '" aria-hidden="true"></span>',
+    // v3.76.0 (F4): the age and its dot TICK. `ageAt` hands the stamp to the
+    // shared clock (the words), `data-mem-fresh-at` to this view's tick (the
+    // dot's band) — so neither reads a cached or hour-old paint as current.
+    markHtml: freshDotHtml(savedAge ? savedEff : null),
+    ageAt: savedAge && savedEff.at ? savedEff.at : undefined,
+    agePrefix: 'saved',
     jump: 'context-state',
     name: 'Memory, ' + savedValue + ' — go to step 2',
   });
@@ -4411,17 +4524,25 @@ function renderWorkStreamsFold(read, d) {
   // overview tile uses, so the tile and this line can never name different
   // saves. `M saved copies` stays in the body's own count line, uncapped.
   const newestWs = newestPair(scopes);
-  const savedAge = newestWs ? formatAge(effectiveSave(newestWs).seconds) : null;
+  const newestEff = newestWs ? effectiveSave(newestWs) : null;
+  const savedAge = newestEff ? formatAge(newestEff.seconds) : null;
+  // v3.76.0 (F4): the age is a TICKING span on the shared clock, so a closed
+  // fold does not go on saying "saved 3 min ago" for an hour.
   const meta = [
-    streams === null ? null : streams + ' handoff' + (streams === 1 ? '' : 's'),
-    savedAge ? 'saved ' + savedAge : null,
+    streams === null ? null : escapeHtml(streams + ' handoff' + (streams === 1 ? '' : 's')),
+    savedAge
+      ? (newestEff.at
+        ? '<span data-age-at="' + escapeHtml(newestEff.at) + '" data-age-prefix="saved" data-age-text>'
+          + escapeHtml('saved ' + savedAge) + '</span>'
+        : escapeHtml('saved ' + savedAge))
+      : null,
   ].filter(Boolean).join(' · ');
   const open = (state.openFolds && state.openFolds.streams) ? ' open' : '';
   return (
     '<details class="mem-fold" data-mem-fold="streams"' + open + '>'
       + '<summary class="mem-fold-summary" id="mem-fold-streams">' + icon('chevronRight', 14)
         + '<span>Handoffs</span>'
-        + '<span class="mem-fold-meta">' + escapeHtml(meta) + '</span>'
+        + '<span class="mem-fold-meta">' + meta + '</span>'
       + '</summary>'
       + '<div class="mem-fold-body">'
         + delOutcome + delCard
@@ -6695,11 +6816,22 @@ function renderWorkStreams(scopes, open, windowSize = WS_WINDOW, budgetBytes = n
 function wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes, canDelete = false) {
   {
     const eff = effectiveSave(s);
-    const tier = freshnessTier(eff.seconds);
     const age = formatAge(eff.seconds);
     const isOpen = s.scope === openScope && (s.machine || null) === (openMachine || null);
     const mine = !!(mineMachine && s.machine === mineMachine);
-    const who = [s.harness, s.model].filter(Boolean).map((x) => escapeHtml(x)).join(' · ');
+    // THE TOOL, NORMALISED (v3.76.0, truth audit F10). `harnessLabel` is the
+    // route's one normaliser's label, so one product is one word down this
+    // column ("Claude Code", never "claude-code" on the next row). The
+    // agent's own spelling is kept — as visually-hidden text rather than a
+    // `title=`, because this file's hover-only budget may not grow
+    // (test-next-header-adoption.js) and a tooltip is out of reach of keyboard
+    // and touch anyway. An older server sends no label: the raw name stands.
+    const label = typeof s.harnessLabel === 'string' && s.harnessLabel ? s.harnessLabel : null;
+    const toolHtml = label
+      ? escapeHtml(label) + (typeof s.harness === 'string' && s.harness.trim() !== label
+        ? '<span class="visually-hidden"> (saved as “' + escapeHtml(s.harness) + '”)</span>' : '')
+      : (s.harness ? escapeHtml(s.harness) : '');
+    const who = [toolHtml, s.model ? escapeHtml(s.model) : ''].filter(Boolean).join(' · ');
     // THE SIZE CELL'S TWO INPUTS (v3.66.0, P2) — see the cell itself.
     const sizeText = Number.isInteger(s.bytes) && s.bytes >= 0
       ? (s.bytes < 1024 ? s.bytes + ' bytes'
@@ -6725,7 +6857,7 @@ function wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes, canDelet
             (isOpen ? ' id="mem-ws-active"' : '') +
             ' data-mem-scope="' + escapeHtml(s.scope) + '"' +
             ' data-mem-machine="' + escapeHtml(s.machine || '') + '">' +
-            '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>' +
+            freshDotHtml(eff) +
             '<span class="mem-ws-slug">' + escapeHtml(s.scope) + '</span>' +
           '</button>' +
         '</td>' +
@@ -7448,14 +7580,49 @@ export const BRIEF_TEMPLATE = [
  * backend answers 403, and a control whose only outcome is a refusal is worse
  * than no control.
  */
+/**
+ * THE BRIEF'S TWO CLOCKS (v3.76.0, truth audit F2).
+ *
+ * "The brief · updated 7 hr ago" was the FILE's mtime — and a restore, a pull
+ * or a copy moves that without a word of the brief changing. The store now
+ * sends the brief's OWN stamp as `writtenAt` (its provenance `on=` or its
+ * `_Updated:_` line; null for a brief typed by hand), and this is what leads.
+ * The file's time follows ONLY when the two differ by more than two minutes —
+ * a hand edit outside the app keeps the old stamp, so the file's time is the
+ * honest second clock, worded "changed on disk" rather than "edited" because a
+ * pull moves it too — and it is named as the file's, never as the brief's.
+ * A brief with no stamp at all says the file's time as what it is.
+ *
+ * Pure (exported via __testing): `{ written, file }`, each an ISO string or null.
+ */
+export function briefClocks(b) {
+  if (!b || typeof b !== 'object') return { written: null, file: null };
+  const iso = (v) => (typeof v === 'string' && v && Number.isFinite(Date.parse(v)) ? v : null);
+  const written = iso(b.writtenAt);
+  const fileAt = iso(b.updatedAt);
+  const differ = !!(written && fileAt && Math.abs(Date.parse(fileAt) - Date.parse(written)) > 120000);
+  return { written, file: written ? (differ ? fileAt : null) : fileAt };
+}
+
+/** The clocks as the fold's words, each age its own ticking span. */
+function briefClocksHtml(c) {
+  const tick = (at, lead) => {
+    const age = formatAge(Math.max(0, Math.round((Date.now() - Date.parse(at)) / 1000)));
+    return '<span data-mem-age-at="' + escapeHtml(at) + '">' + lead
+      + '<span class="mem-age-words">' + escapeHtml(age || 'at an unknown time') + '</span></span>';
+  };
+  if (c.written) {
+    return tick(c.written, 'written ') + (c.file ? ' · ' + tick(c.file, 'changed on disk ') : '');
+  }
+  return c.file ? tick(c.file, 'file changed ') : 'written at an unknown time';
+}
+
 function renderBrief(read) {
   const readonly = !!(state.detail && state.detail.readonly) || !!(read && read.readonly);
   const has = !!(read && read.brief && read.brief.present);
   const b = has ? read.brief : null;
   const editing = !!state.briefEdit;
-  const age = b && b.updatedAt
-    ? formatAge(Math.max(0, Math.round((Date.now() - Date.parse(b.updatedAt)) / 1000)))
-    : null;
+  const clocks = briefClocks(b);
 
   const pencil = (readonly || editing) ? '' :
     '<button type="button" class="btn btn-ghost btn-xs mem-brief-edit" id="mem-brief-edit"' +
@@ -7487,12 +7654,9 @@ function renderBrief(read) {
   const summary =
     '<summary class="mem-fold-summary" id="mem-fold-brief">' + icon('chevronRight', 14) +
       '<span>The brief</span>' +
-      '<span class="mem-fold-meta"' +
-        (has && b.updatedAt ? ' data-mem-age-at="' + escapeHtml(b.updatedAt) + '"' : '') + '>' +
+      '<span class="mem-fold-meta">' +
         (has
-          ? (age
-            ? 'updated <span class="mem-age-words">' + escapeHtml(age) + '</span>'
-            : 'updated at an unknown time')
+          ? briefClocksHtml(clocks)
             + ' · ' + escapeHtml(Number(words).toLocaleString('en-US')) +
             ' word' + (words === 1 ? '' : 's')
           : 'not written yet') +
@@ -11081,13 +11245,19 @@ function sessionStartFor() {
   return ss && ss.domain === state.activeDomain && ss.project === state.activeProject ? ss : null;
 }
 
-/** A preset's name: "Standard 16k", "Index only". The number is the store's
- *  own token figure in whole thousands of 1,024 — the ladder's names. */
+/** A preset's name: "Standard ≈16.4k", "Index only".
+ *
+ *  ONE CONVERSION, ONE FORMATTER (v3.76.0, truth audit F11). The number was
+ *  the store's token figure in thousands of 1,024 ("Extra large 128k") while
+ *  the meter beside it drew the same 524,288-byte budget as bytes ÷ 4 in
+ *  thousands of 1,000 ("≈131k") — one budget, two numbers on one screen. It
+ *  now goes through `tok`, the meter's own formatter, so the picker, the
+ *  meter and every "N tokens" line say the same figure the same way. */
 function presetLabel(p) {
   if (!p) return 'Custom';
   const w = READING_BUDGET_WORDS[p.id];
   const name = w ? w.label : String(p.id);
-  return Number.isInteger(p.tokens) && p.tokens > 0 ? name + ' ' + Math.round(p.tokens / 1024) + 'k' : name;
+  return Number.isInteger(p.tokens) && p.tokens > 0 ? name + ' ' + tok(p.tokens) : name;
 }
 
 /** The route's seven presets, validated. [] before the measurement lands. */
@@ -13828,4 +13998,6 @@ export const __testing = {
   // same reason `initialPick` is: each is the only part of a path that makes a
   // decision, and the rest around it is I/O or markup.
   briefStats, briefDismissDecision, newerOnAnotherMachine,
+  // v3.76.0 truth fixes (F2, F4): the brief's two clocks, and the save clock.
+  briefClocks, effectiveSave,
 };

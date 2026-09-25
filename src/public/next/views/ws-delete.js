@@ -92,6 +92,28 @@ function machineLine(m, nowMs) {
 }
 
 /**
+ * MACHINE FOLDERS THAT ARE PROBABLY ONE COMPUTER (v3.76.0, truth audit F15).
+ * A machine folder is `<host>-<install id>`, and the host part changes when a
+ * computer is renamed while the install id does not — measured:
+ * `talis-macbook-pro-17d23c` and `mac-17d23c`, counted as two machines. The
+ * folders ARE two copies (both go, and the count stays the store's), so they
+ * are not merged; the card says which ones share an id. Pure; exported.
+ * @returns {Array<{id: string, machines: string[]}>}
+ */
+export function sharedInstallIds(machines) {
+  const by = new Map();
+  for (const m of Array.isArray(machines) ? machines : []) {
+    const name = m && typeof m.machine === 'string' ? m.machine : '';
+    const hit = /-([0-9a-f]{6})$/.exec(name);
+    if (!hit) continue;
+    if (!by.has(hit[1])) by.set(hit[1], []);
+    by.get(hit[1]).push(name);
+  }
+  return [...by.entries()].filter(([, names]) => names.length > 1)
+    .map(([id, names]) => ({ id, machines: names }));
+}
+
+/**
  * THE CONFIRM CARD. `del` is memory.js's `state.wsDelete`:
  *   { domain, project, scope, preview, loading, loadError, confirmText, busy, error }
  */
@@ -120,6 +142,9 @@ export function wsDeleteCardHtml(del, nowMs = Date.now()) {
           ' of <span class="mem-wsdel-name">' + escapeHtml(scope) + '</span>, one per machine, each with its Journal:') +
       '</div>' +
       '<ul class="mem-wsdel-list">' + machines.map((m) => machineLine(m, nowMs)).join('') + '</ul>' +
+      sharedInstallIds(machines).map((g) => '<div class="mem-wsdel-body">' +
+        escapeHtml(g.machines.join(' and ') + ' share one install id (' + g.id +
+          ') — probably the same computer under two names.') + '</div>').join('') +
       (pv.truncated ? '<div class="mem-wsdel-body">…and ' + escapeHtml(String(total - machines.length)) +
         ' more not listed here. All of them go.</div>' : '') +
       (pv.unlistedMachines ? '<div class="mem-wsdel-body">' +

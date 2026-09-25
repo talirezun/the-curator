@@ -457,7 +457,10 @@ find the name.
 
 A scope is a workstream inside a project — `main`, `auth-refactor`, `v4-migration`.
 Scopes are independent: each has its own handoff and its own journal per machine. If you
-save without naming one, it goes to `main`.
+save without naming one, it goes to **your tool's own scope** when the save names its `harness`
+(`Claude Code` → `claude-code`, `Antigravity` → `antigravity`; since v3.76.0 — two tools falling
+back to one shared `main` overwrote each other), and to `main` when it names no harness either. The
+reply says which scope it chose. A scope you name — `main` included — always wins.
 
 So the full address of a handoff is four parts — **domain → project → scope → machine** — and
 each level answers a different question: which knowledge, which build, which piece of work,
@@ -1391,8 +1394,8 @@ Claude Code, Claude Desktop, Cursor, or anything else that speaks MCP over stdio
 | Tool | What it does |
 |---|---|
 | `list_projects` | Every project that has state — in one domain, or across all of them. Each row carries its domain, its newest work-stream and how long ago that was written, which harness wrote it, and whether it has a standing brief. Newest first, capped, and the cap is disclosed |
-| `get_working_state` | Returns the project brief always; with a scope, also that scope's handoff and recent journal entries; without one, an index of the scopes that have state, capped at 60. **New in v3.59.0:** also a `foundations` summary — `{present, count, totalBytes, staleCount}`. **New in v3.65.0:** also `knowledgeDomains` (which wikis this project's knowledge lives in) and `knowledgeDomainsDefaulted` (whether the owner chose the list or it defaulted to the domain the project lives in) |
-| `save_working_state` | Overwrites the handoff for one (project, scope, machine) and appends one journal line. **New in v3.59.0:** accepts `foundations_read` (the sha256 of every foundation this session read) and `repo_root` (advisory; triggers a mirror refresh when the checkout is reachable) |
+| `get_working_state` | Returns the project brief always; with a scope, also that scope's handoff and recent journal entries; without one, an index of the scopes that have state, capped at 60. **New in v3.59.0:** also a `foundations` summary — `{present, count, totalBytes, staleCount}`. **New in v3.65.0:** also `knowledgeDomains` (which wikis this project's knowledge lives in) and `knowledgeDomainsDefaulted` (whether the owner chose the list or it defaulted to the domain the project lives in). **v3.76.0:** the `report` names an opened handoff's **written** time (`current.writtenAt`, the agent's clock) and adds *"arrived on this disk <savedAt>"* only when the file's time differs by more than two minutes — it used to say *"saved <savedAt>"*, the file's mtime, which after a pull or a restore is not the save; the brief carries `writtenAt` (its own stamp) beside `updatedAt` (the file's mtime) |
+| `save_working_state` | Overwrites the handoff for one (project, scope, machine) and appends one journal line. **New in v3.59.0:** accepts `foundations_read` (the sha256 of every foundation this session read) and `repo_root` (advisory; triggers a mirror refresh when the checkout is reachable). **New in v3.76.0:** with no `scope`, the save goes to the `harness`'s own normalised scope (`claude-code`, `antigravity`), else `main`; the reply's `scope_chosen_by` (`given` / `harness` / `default`) and `report` say which |
 | `save_project_brief` | Replaces one project's standing brief and records who wrote it. **For use on your explicit instruction only** — see [§4](#the-brief-can-be-commissioned-and-it-says-so) |
 | `get_project_context` | The one-call session start (v3.59.0): the brief, the latest handoff (or the `scope` named) and the project's **foundations** — an index of every canonical document with its role, size, source, content hash and freshness, plus the document text in reading order within `max_bytes` (default 120 KB). On a first session every document is included; afterwards only those whose hash differs from `seen_hashes`, which defaults to what the latest handoff recorded. Returns `seen`, the map to record as `foundations_read` on the next save. **New in v3.65.0:** also returns `knowledgeDomains` (which wikis this project's knowledge lives in) and `knowledgeDomainsDefaulted` (whether the owner chose the list or it defaulted to the domain the project lives in). **New in v3.70.0:** a reply over ≈80 KB is delivered in **pages** — call again with `page` until `foundations.continuation` is absent; see [Paged delivery](#paged-delivery-v3700), above. Never writes. Arguments: `project`, `domain`, `scope`, `include` (`index` / `changed` / `all`), `max_bytes`, `seen_hashes`, `journal_limit`, `page` |
 | `save_foundation` | Writes or replaces ONE canonical document (tier 0), whole, verbatim, up to 512 KB, and records that an agent wrote it on the owner's instruction. **Refused without `commissioned_by_owner: true`**, refused for a project whose foundations are mirrored from a repository, and refused when it would shrink a stored document under 10 % without `replace: true`. Arguments: `project`, `domain`, `slug`, `role` (`architecture` / `decisions` / `conventions` / `roadmap` / `api` / `guide` / `other`), `title`, `text`, `commissioned_by_owner`, `replace`, `harness`, `model` |
@@ -1578,7 +1581,9 @@ Measured on 2026-09-25: Antigravity saved to `main` and replaced Claude Code's 3
 with its own 2.4 KB one; neither guard fired (the body was not near-empty, and a single
 handover is not the alternation `harnessShared` needs), and the reply said only *"This
 OVERWROTE the previous save"*, which every save says. The owner's decision is **warn, never
-refuse** — `main` stays the default scope.
+refuse**. (Since v3.76.0 a save that names no scope but names its `harness` defaults to that tool's
+own scope rather than `main` — see [Scopes](#scopes) — which keeps the common case out of this
+collision; an explicit shared scope still reaches it, and this guard is unchanged.)
 
 So when a save replaces a handoff whose newest journal line names a **different tool** —
 compared after normalising the free-text label (`src/brain/harness-names.js`: `Claude Code`,

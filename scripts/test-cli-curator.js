@@ -532,6 +532,21 @@ const BODY = {
   ok(before === after, '--dry-run wrote NOTHING — the whole state tree is byte-identical');
 }
 {
+  // v3.76.0 — NO SCOPE + A HARNESS: the tool's own scope, the store's rule,
+  // and the CLI's dry run and its reply both say so.
+  const dry = run(['save', '--project', `${D1}/lumina`, '--harness', 'Claude Code', '--dry-run', '--json'],
+    { input: JSON.stringify({ headline: 'no scope named' }) });
+  ok(parseOut(dry)?.scope === 'claude-code', '★ a dry run with no --scope and --harness "Claude Code" names claude-code, as the real save will');
+  const real = run(['save', '--project', `${D1}/lumina`, '--harness', 'Antigravity'],
+    { input: JSON.stringify({ headline: 'saved under the tool scope', now_state: 'x' }) });
+  ok(real.code === 0 && /scope 'antigravity'/.test(real.stdout)
+    && /No scope was given, so it was saved under your tool's own scope `antigravity`/.test(real.stdout),
+  '★ the real save lands in the tool\'s scope and says why', real.stdout + real.stderr);
+  const main = run(['save', '--project', `${D1}/lumina`, '--scope', 'main', '--harness', 'Antigravity', '--json'],
+    { input: JSON.stringify({ headline: 'explicit main', now_state: 'y' }) });
+  ok(parseOut(main)?.scope === 'main' && parseOut(main)?.scopeChosenBy === 'given', 'an explicit --scope main is honoured');
+}
+{
   // The store's own refusal, surfaced verbatim, with exit 1 — a DIFFERENT code
   // from a usage error, so a script can tell "you asked wrong" from "the store
   // said no".

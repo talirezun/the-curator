@@ -84,6 +84,7 @@ import {
   // v3.74.0 — the "you replaced another tool's handoff" sentence; the CLI
   // prints the same one.
   otherToolReplaceSentence,
+  scopeChoiceSentence,
 } from '../../src/brain/working-state.js';
 import { getDefaultDomain } from '../../src/brain/config.js';
 import { resolveDomainArg, refuseIfReadonly } from '../util.js';
@@ -551,6 +552,34 @@ function isMachineMiss(state, out) {
  * derived from the same `present` flags the response itself carries, so the two
  * cannot drift.
  */
+/**
+ * WHEN A HANDOFF WAS WRITTEN, IN WORDS THAT CANNOT MEAN TWO THINGS (v3.76.0,
+ * truth audit F1).
+ *
+ * `current.savedAt` is the FILE's mtime — the moment the bytes ARRIVED on this
+ * disk, which after a pull, a restore or a copy is not the save. The report
+ * said "saved <savedAt>" in the same reply that carried `writtenAt` weeks
+ * older: measured, "saved 2026-09-25T08:51Z" (a restore that morning) over a
+ * handoff written 2026-09-16. The agent's own clock is `writtenAt`; the file's
+ * is added only when the two DIFFER (by more than two minutes — a save stamps
+ * the journal and writes the file a few milliseconds apart, and some
+ * filesystems keep whole seconds), the CLI handoff header's two named clocks.
+ * With no agent stamp at all, the file's time is named as what it is.
+ */
+const CLOCKS_DIFFER_MS = 120 * 1000;
+export function handoffWhen(cur) {
+  const c = cur && typeof cur === 'object' ? cur : {};
+  const w = typeof c.writtenAt === 'string' && c.writtenAt ? c.writtenAt : null;
+  const a = (typeof c.arrivedAt === 'string' && c.arrivedAt) ? c.arrivedAt
+    : (typeof c.savedAt === 'string' && c.savedAt ? c.savedAt : null);
+  if (w) {
+    const differ = a && Number.isFinite(Date.parse(a)) && Number.isFinite(Date.parse(w))
+      && Math.abs(Date.parse(a) - Date.parse(w)) > CLOCKS_DIFFER_MS;
+    return `written ${w}` + (differ ? ` (arrived on this disk ${a})` : '');
+  }
+  return a ? `no save time recorded; the file arrived on this disk ${a}` : 'no save time recorded';
+}
+
 function buildReport(project, state, out, missing) {
   const briefHere = out.brief?.present === true;
   const briefClause = briefHere
@@ -561,7 +590,7 @@ function buildReport(project, state, out, missing) {
   if (state.scope) {
     if (out.current?.present) {
       return `Working state for '${project}' / scope '${state.scope}'`
-        + `${state.machine ? ` (machine: ${state.machine})` : ''}, saved ${out.current.savedAt}.`
+        + `${state.machine ? ` (machine: ${state.machine})` : ''}, ${handoffWhen(out.current)}.`
         + briefClause;
     }
 
@@ -1023,7 +1052,7 @@ export const saveWorkingStateDefinition = {
       domain: { type: 'string', description: DOMAIN_ARG_DESC },
       scope: {
         type: 'string',
-        description: "Work-stream, e.g. 'auth'. Default 'main'; reuse it to update. If another tool made the newest save there and the brief sets no scope rule, use a scope named for your tool and say so.",
+        description: "Work-stream, e.g. 'auth'; reuse to update. Omitted: your tool's own scope (from `harness`), else 'main'. If another tool made the newest save there, use a scope named for your tool.",
       },
       headline: {
         type: 'string',
@@ -1173,6 +1202,10 @@ export async function saveWorkingStateHandler(args, storage) {
     project: result.project,
     domain: result.domain,
     scope: result.scope,
+    // v3.76.0 — how that scope was chosen: 'given', 'harness' (no scope was
+    // sent, so the save went to the tool's own scope) or 'default' (no scope
+    // and no harness: `main`). `report` says it in words.
+    scope_chosen_by: result.scopeChosenBy || 'given',
     machine: result.machine,
     saved_at: result.savedAt,
     path: result.path,
@@ -1217,6 +1250,7 @@ export async function saveWorkingStateHandler(args, storage) {
     overwrote: result.overwrote ?? null,
     report:
       `Saved working state for project '${result.project}' in domain '${result.domain}' / scope '${result.scope}' (machine: ${result.machine}). ` +
+      scopeChoiceSentence(result) +
       `This OVERWROTE the previous save for that scope — save again as the work moves.` +
       otherToolReplaceSentence(result.overwrote, result.scope) +
       (notes.length ? ` ${notes.length} ${result.overwrote && saveKind === 'noted' ? 'note(s) — see `notes`.' : saveReportTail(saveKind, identityOnly)}` : '') +
@@ -1258,7 +1292,7 @@ function refreshReportTail(fr) {
 // SAVES over it. This is what makes asking cheap.
 
 const PROJECT_ROW_KEYS = [
-  'domain', 'project', 'isDefaultProject', 'hasBrief', 'briefUpdatedAt', 'briefAuthoredBy',
+  'domain', 'project', 'isDefaultProject', 'hasBrief', 'briefUpdatedAt', 'briefWrittenAt', 'briefAuthoredBy',
   'scopeCount', 'savedCopies', 'lastWriteAt', 'ageSeconds', 'writtenAt', 'writtenAgeSeconds',
   'headline', 'newestScope', 'newestMachine', 'harness', 'model', 'lastSaveKind',
 ];
@@ -1634,7 +1668,7 @@ function boundContextResponse(out) {
 function contextReport(out, project) {
   const f = out.foundations;
   const scopeClause = out.scope
-    ? ` Opened scope '${out.scope}'${out.scopeResolvedBy === 'latest' ? ' (the newest)' : ''}` + (out.current?.present ? `, saved ${out.current.savedAt}.` : ', which has no handoff yet.')
+    ? ` Opened scope '${out.scope}'${out.scopeResolvedBy === 'latest' ? ' (the newest)' : ''}` + (out.current?.present ? `, ${handoffWhen(out.current)}.` : ', which has no handoff yet.')
     : ' No work-stream has been saved yet.';
   const briefClause = out.brief?.present ? ' The standing brief IS present — read `brief.text` first.' : ' No standing brief yet.';
   let fClause;
@@ -2019,7 +2053,7 @@ export const saveFoundationDefinition = {
     "Write or replace ONE of a project's canonical documents (tier 0, the foundations): architecture, decisions, conventions, roadmap, API notes, a guide. "
     + "ONLY CALL THIS WHEN THE USER EXPLICITLY ASKS YOU TO WRITE OR UPDATE SUCH A DOCUMENT, and pass `commissioned_by_owner: true` to record that instruction — the call is refused without it. Every later session is handed these documents, so writing one unasked edits what every later agent is told. "
     + "Do NOT use it for where the work stands, decisions made this session, or things you tried: that is save_working_state. "
-    + "It REPLACES the whole document (send the COMPLETE text, up to 512 KB), records that an agent wrote it on the owner's instruction, and is refused for a document that is MIRRORED from a folder or a GitHub repository (its index row has `source.kind: \"repo\"`) — that one is refreshed from its source, never edited here. A new document can be written into any project, including one that also mirrors a repository; if the name is taken by a mirrored document the save is refused, so choose another slug. Headings are stored verbatim. "
+    + `It REPLACES the whole document (send the COMPLETE text, up to ${Math.round(MAX_FOUNDATION_BYTES / 1024)} KB), ` + "records that an agent wrote it on the owner's instruction, and is refused for a document that is MIRRORED from a folder or a GitHub repository (its index row has `source.kind: \"repo\"`) — that one is refreshed from its source, never edited here. A new document can be written into any project, including one that also mirrors a repository; if the name is taken by a mirrored document the save is refused, so choose another slug. Headings are stored verbatim. "
     + "It also FILLS a skeleton (a seeded document of prompts): answer the prompts from what you have established, never from invention; `was_skeleton` says whether this save filled one.",
   inputSchema: {
     type: 'object',

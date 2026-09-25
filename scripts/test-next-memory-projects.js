@@ -841,6 +841,40 @@ routerMod.__setWorkingStateStoreForTest(null);
   eq('the newest save\'s tool is sent NORMALISED as well as raw', lum.harnessLabel, 'Claude Code');
   eq('...raw kept', lum.harness, 'claude-code');
 
+  // ── v3.76.0 (truth audit F7): A TOOL WHOSE HANDOFF WAS OVERWRITTEN IS STILL NAMED ──
+  // Measured: conduit/main, Claude Code saved at 12:15Z, Antigravity saved over
+  // it at 13:28Z, and the rail named Antigravity alone — `tools[]` read current
+  // copies only. The journal keeps both saves; the row must name both.
+  const mk2 = await call('post', '/:domain/projects', { params: { domain: 'alpha' }, body: { project: 'overtaken' } });
+  eq('CONTROL: a project for the overwrite case', mk2.status, 201);
+  const o1 = await realStore.saveWorkingState('alpha', { project: 'overtaken', scope: 'main',
+    harness: 'Claude Code', headline: 'claude first', now: 'n', next: 'x' });
+  const o2 = await realStore.saveWorkingState('alpha', { project: 'overtaken', scope: 'main',
+    harness: 'Antigravity', headline: 'antigravity over it', now: 'n', next: 'x' });
+  ok('CONTROL: two tools, ONE pair — the second save replaced the first tool\'s handoff',
+    o1.ok && o2.ok && o1.machine === o2.machine && o2.overwrote && o2.overwrote.harnessLabel === 'Claude Code');
+  const ovIdx = await call('get', '/');
+  const ov = (ovIdx.body.projects || []).find((r) => r.domain === 'alpha' && r.project === 'overtaken') || {};
+  eq('★ F7: the row still names BOTH tools, newest first — the overwritten one comes from the journal',
+    JSON.stringify((ov.tools || []).map((t) => t.id)), '["antigravity","claude-code"]');
+  ok('...each with its OWN save clock (the journal line\'s `at`), inside 24 h',
+    (ov.tools || []).every((t) => typeof t.writtenAt === 'string' && Date.now() - Date.parse(t.writtenAt) < 60_000),
+    JSON.stringify(ov.tools));
+  ok('...and nothing else on the row changed: the speaker is still the newest save\'s tool',
+    ov.harnessLabel === 'Antigravity' && ov.headline === 'antigravity over it');
+  ok('...and the journal arrays themselves never reach the wire (allow-list)',
+    !('saveTimes' in ov) && (ov.tools || []).every((t) => !('saveTimes' in t)));
+
+  // ── v3.76.0 (truth audit F10): EVERY WORK-STREAM ROW CARRIES THE NORMALISED TOOL ──
+  const det = await call('get', '/:domain/:project', { params: { domain: 'alpha', project: 'twotools' }, query: { open: 'newest' } });
+  const wsRows = det.body.scopes || [];
+  ok('★ F10: each scopes[] row carries harnessLabel — `claude-code` and `Claude Code (desktop)` both read "Claude Code"',
+    wsRows.length >= 3 && wsRows.filter((r) => /claude/i.test(r.harness || '')).every((r) => r.harnessLabel === 'Claude Code'),
+    JSON.stringify(wsRows.map((r) => [r.harness, r.harnessLabel])));
+  ok('...the raw spelling is kept beside it', wsRows.some((r) => r.harness === 'claude-code'));
+  ok('...and `open` carries the same rows, so it stays what the scoped read answers',
+    det.body.open && (det.body.open.scopes || []).every((r) => 'harnessLabel' in r));
+
   // ── v3.74.0: THE REPLACED HANDOFF (previous.md) ──────────────────────────
   // Antigravity now saves into Claude Code's `ui` folder: the store keeps
   // Claude Code's text once as previous.md. The scoped read carries its

@@ -535,7 +535,9 @@ section('§5 — The freshness mark is the READ\'s own time, never `now`');
   // while the entry sat in the Map: `refreshIndex` compares the index's
   // `lastWriteAt` against `detailFetchedAt` to decide whether to offer Reload.
   let clock = 1_000_000;
-  const FakeDate = { now: () => clock };
+  // `parse` is the real one: v3.76.0 (F4) takes every age from its stamp at
+  // paint time, so the fake clock has to read stamps as well as tell time.
+  const FakeDate = { now: () => clock, parse: Date.parse };
   const st = freshStateStub();
   const s = makeSwitcher(st, respond([
     ['/acme/alpha', payload('alpha', PAIRS_A, OPEN_A)],
@@ -808,6 +810,7 @@ section('§8 — patchOpenPair writes what a full render would paint');
     + lift('formatAge') + '\n'
     + lift('workStreamOrder') + '\n'
     + lift('wsShownCount') + '\n'
+    + lift('freshDotHtml') + '\n'
     + lift('wsRowHtml') + '\n'
     + lift('wsMoreHtml') + '\n'
     + lift('renderWorkStreams') + '\n'

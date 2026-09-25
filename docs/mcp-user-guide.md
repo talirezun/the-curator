@@ -60,8 +60,9 @@ app only.
 
 **`get_project_context` honours your reading budget (v3.67.0), now a 7-step token ladder
 (v3.70.0).** Its default `max_bytes` is now **your reading budget** — set in Context, step ④, as
-Index only (0) · Lean (8k tokens / 32 KB) · Standard (16k / 64 KB) · Deep (32k / 128 KB) · Large
-(64k / 256 KB) · Extra large (128k / 512 KB) · Max (200k / 800 KB) — or 120 KB when you have not
+Index only (0) · Lean (≈8.2k tokens / 32 KB) · Standard (≈16.4k / 64 KB) · Deep (≈32.8k / 128 KB) ·
+Large (≈65.5k / 256 KB) · Extra large (≈131k / 512 KB) · Max (≈205k / 800 KB), each figure bytes ÷ 4 as
+the app shows it since v3.76.0 — or 120 KB when you have not
 set one. `max_bytes` still moves in bytes on the wire; the ladder is a token name over the same
 bytes value, and `CONTEXT_MAX_BYTES_CAP` is now 800 KB (was 200 KB). A project holding an older
 120 KB or 200 KB budget is untouched and reads as a custom value nearest one of the presets. The

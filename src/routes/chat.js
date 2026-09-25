@@ -4,6 +4,7 @@ import {
   listConversations,
   readConversation,
   deleteConversation,
+  citedPagesOnDisk,
 } from '../brain/chat.js';
 import { assertKnownDomain, isDomainReadonly, listAllConversations } from '../brain/files.js';
 // IMPORTED, never re-implemented. isAbortError is llm.js's own classifier for
@@ -184,6 +185,16 @@ router.get('/:domain/:id', async (req, res) => {
     }
     const conversation = await readConversation(req.params.domain, req.params.id);
     if (!conversation) return res.status(404).json({ error: 'Conversation not found' });
+    // v3.76.0 (truth audit F9): an answer saved before `citedPages` existed is
+    // given `citedPagesNow` — which of its citations are wiki pages on disk
+    // NOW — so the Sources list counts pages, not every `[source: …]`. On the
+    // response only; the conversation file is never rewritten.
+    if (Array.isArray(conversation.messages)) {
+      conversation.messages = conversation.messages.map((m) => (
+        m && m.role === 'assistant' && !Array.isArray(m.citedPages) && Array.isArray(m.citations) && m.citations.length
+          ? { ...m, citedPagesNow: citedPagesOnDisk(req.params.domain, m.citations) }
+          : m));
+    }
     res.json(conversation);
   } catch (err) {
     sendError(res, err);

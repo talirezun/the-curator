@@ -58,6 +58,16 @@ export async function classifyContextAuthority(ctx) {
   }
 }
 
+/** " · written X", plus " · changed on this disk Y" when the two clocks
+ *  differ by more than two minutes (see briefStampOf in working-state.js). */
+function briefClocks(b) {
+  const w = b && typeof b.writtenAt === 'string' && b.writtenAt ? b.writtenAt : null;
+  const f = b && typeof b.updatedAt === 'string' && b.updatedAt ? b.updatedAt : null;
+  if (!w) return f ? ` · file last changed on this disk ${f} (no written stamp)` : '';
+  const differ = f && Number.isFinite(Date.parse(f)) && Math.abs(Date.parse(f) - Date.parse(w)) > 120000;
+  return ` · written ${w}` + (differ ? ` · changed on this disk ${f}` : '');
+}
+
 /**
  * The verdict a rendering is allowed to use. A caller that did not classify
  * (or passed something that is not one of the five values) gets `unverified`
@@ -116,7 +126,12 @@ export function renderContextMarkdown(ctx, opts = {}) {
           .filter(Boolean).join(' · ') || null
         : null;
     const byText = byLabel || (authority === 'owner' ? 'the owner (hand-authored)' : 'no provenance stamp');
-    L.push(`_Authored by: ${byText}${ctx.brief.updatedAt ? ` · updated ${ctx.brief.updatedAt}` : ''}_`);
+    // v3.76.0 (F2) — TWO CLOCKS, NAMED. `writtenAt` is the time the brief
+    // itself says it was written (its provenance stamp or `Updated:` line);
+    // `updatedAt` is the file's mtime, which a hand edit, a pull or a restore
+    // all move. "updated <mtime>" read a week-old brief restored this morning
+    // as written this morning. The file's time is added only when it differs.
+    L.push(`_Authored by: ${byText}${briefClocks(ctx.brief)}_`);
     L.push('');
     L.push(briefAuthorityNote(authority));
     L.push('');

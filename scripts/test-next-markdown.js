@@ -268,7 +268,7 @@ function declaredTopLevelFunctions(src) {
 // `icon` is the only thing the renderer closes over from the shell. The stub
 // is deliberately marked (`data-icon`) so an assertion can tell "the citation
 // chip carries its dot icon" from "some other svg happened to be there".
-const FNS = ['escHtml', 'unescHtml', 'formatSegment', 'citationMarkup', 'legacyCitationTag', 'renderInline',
+const FNS = ['escHtml', 'unescHtml', 'formatSegment', 'looksLikePath', 'splitCitationParts', 'citationMarkup', 'legacyCitationTag', 'renderInline',
   'splitTableRow', 'isTableDelimiterCell', 'tableAlignClass',
   // v3.72.0 block helpers (blockquote, rule, nesting).
   'indentWidth', 'isRule', 'isQuoteLine', 'stripQuoteMarker', 'isAttribution',

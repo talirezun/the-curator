@@ -341,6 +341,8 @@ function projectRow(domain, r) {
     hasBrief: r.hasBrief === true,
     briefBytes: Number.isInteger(r.briefBytes) ? r.briefBytes : 0,
     briefUpdatedAt: r.briefUpdatedAt ?? null,
+    // v3.76.0 (F2): the brief's OWN stamp; `briefUpdatedAt` is the file's mtime.
+    briefWrittenAt: r.briefWrittenAt ?? null,
     briefAuthoredBy: r.briefAuthoredBy ?? null,
     scopeCount: Number.isInteger(r.distinctScopeCount) ? r.distinctScopeCount
       : (Number.isInteger(r.scopeCount) ? r.scopeCount : 0),
@@ -567,24 +569,48 @@ function toolsOf(scopes) {
     }
     return null;
   };
-  for (const p of Array.isArray(scopes) ? scopes : []) {
-    if (!p || typeof p !== 'object' || typeof p.harness !== 'string' || !p.harness.trim()) continue;
-    const n = normaliseHarness(p.harness);
-    if (!n) continue;
-    const ms = msOf(p);
+  const offer = (harness, ms, fields) => {
+    if (typeof harness !== 'string' || !harness.trim()) return;
+    const n = normaliseHarness(harness);
+    if (!n) return;
     const prev = byId.get(n.id);
     // Absence never displaces a reading; a newer reading wins.
-    if (prev && (ms === null || (prev.ms !== null && prev.ms >= ms))) continue;
-    byId.set(n.id, {
-      id: n.id,
-      label: n.label,
-      raw: p.harness,
-      ms,
+    if (prev && (ms === null || (prev.ms !== null && prev.ms >= ms))) return;
+    byId.set(n.id, { id: n.id, label: n.label, raw: harness, ms, ...fields });
+  };
+  for (const p of Array.isArray(scopes) ? scopes : []) {
+    if (!p || typeof p !== 'object') continue;
+    // THE CURRENT COPY'S TOOL — what this function read alone until v3.76.0.
+    offer(p.harness, msOf(p), {
       writtenAt: p.writtenAt ?? null,
       writtenAgeSeconds: Number.isFinite(p.writtenAgeSeconds) ? p.writtenAgeSeconds : null,
       lastWriteAt: p.lastWriteAt ?? null,
       ageSeconds: Number.isFinite(p.ageSeconds) ? p.ageSeconds : null,
     });
+    // ── AND EVERY SAVE IN THE PAIR'S JOURNAL (v3.76.0, truth audit F7) ───
+    // A handoff is ONE file per (scope, machine), so when a second tool saves
+    // into the same pair the first tool's copy is replaced — and a list read
+    // off current copies alone dropped that tool from the rail while it had
+    // saved minutes earlier (measured: conduit/main, Claude Code at 12:15Z,
+    // Antigravity over it at 13:28Z; the rail named Antigravity only). The
+    // journal keeps every save with its own tool and its own clock
+    // (`saveTimes` / `saveHarnesses`, index-aligned, the agent's `at` only —
+    // never mtime), so each save is offered here as a reading of its own. The
+    // view's 24-hour test then decides who is ACTIVE from these stamps.
+    const times = Array.isArray(p.saveTimes) ? p.saveTimes : null;
+    const who = Array.isArray(p.saveHarnesses) ? p.saveHarnesses : null;
+    if (times && who && times.length === who.length) {
+      for (let i = 0; i < times.length; i++) {
+        const ms = Number.isFinite(times[i]) ? times[i] : null;
+        if (ms === null) continue;
+        offer(who[i], ms, {
+          writtenAt: new Date(ms).toISOString(),
+          writtenAgeSeconds: Math.max(0, Math.round((now - ms) / 1000)),
+          lastWriteAt: null,
+          ageSeconds: null,
+        });
+      }
+    }
   }
   return [...byId.values()]
     .sort((a, b) => (a.ms === null ? 1 : 0) - (b.ms === null ? 1 : 0)
@@ -627,7 +653,10 @@ async function withScopeFacts(store, rows) {
   const out = [];
   for (const row of rows) {
     let idx = null;
-    try { idx = await store.listWorkingScopes(row.domain, { project: row.project }); }
+    // `withSaveTimes` (v3.76.0, F7): the journal's per-save tool and clock,
+    // read from the tail this call already reads, for toolsOf. Nothing else
+    // on this row reads them, and they never reach the wire (allow-list).
+    try { idx = await store.listWorkingScopes(row.domain, { project: row.project, withSaveTimes: true }); }
     catch { idx = null; }
     const scopes = idx && idx.ok && Array.isArray(idx.scopes) ? idx.scopes : [];
     const speaker = agentNewestPair(scopes);
@@ -4042,6 +4071,27 @@ router.get('/:project', async (req, res) => {
   await handleDetail(req, res, domain, defaultProjectOf(domain), true);
 });
 
+/**
+ * THE TOOL, NORMALISED, ON EVERY WORK-STREAM ROW (v3.76.0, truth audit F10).
+ * The Handoffs table's HARNESS column printed the agent's free text, so one
+ * product read "claude-code" on one row and "Claude Code" on the next. Each
+ * row gains `harnessLabel` — the ONE normaliser's label (harness-names.js),
+ * null when the save named no tool — beside `harness`, which stays the raw
+ * spelling (the view puts it in the cell's tooltip). Applied to the envelope
+ * AND to `open`, so `open` stays byte-for-byte what the scoped read answers.
+ */
+function withHarnessLabels(body) {
+  if (!body || !Array.isArray(body.scopes)) return body;
+  return {
+    ...body,
+    scopes: body.scopes.map((sc) => {
+      if (!sc || typeof sc !== 'object') return sc;
+      const n = typeof sc.harness === 'string' && sc.harness.trim() ? normaliseHarness(sc.harness) : null;
+      return { ...sc, harnessLabel: n ? n.label : null };
+    }),
+  };
+}
+
 async function handleDetail(req, res, domain, project, deprecated) {
   try {
     if (!await requireDomain(res, domain)) return;
@@ -4136,9 +4186,9 @@ async function handleDetail(req, res, domain, project, deprecated) {
     // test-mcp-working-state §D7. Redefining either one breaks a guard that
     // is load-bearing somewhere else, so neither is touched. Both routes
     // offer the SAME unambiguous pair-count name instead.
-    const withCounts = (typeof state.scopeCount === 'number')
+    const withCounts = withHarnessLabels((typeof state.scopeCount === 'number')
       ? { ...state, savedCopies: state.scopeCount }
-      : state;
+      : state);
 
     // ── THE OPENED PAIR RIDES ALONG, IN THE SHAPE IT WOULD HAVE HAD ──────
     //
@@ -4202,7 +4252,7 @@ async function handleDetail(req, res, domain, project, deprecated) {
         const sub = await readState(store, domain, project, inner);
         if (sub && sub.ok) {
           open = {
-            ...((typeof sub.scopeCount === 'number') ? { ...sub, savedCopies: sub.scopeCount } : sub),
+            ...withHarnessLabels((typeof sub.scopeCount === 'number') ? { ...sub, savedCopies: sub.scopeCount } : sub),
             domain, project, readonly, foundations, stateBudgetBytes,
           };
         }

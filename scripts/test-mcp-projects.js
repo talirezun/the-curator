@@ -233,7 +233,8 @@ section('§2  list_projects — the "which project" answer');
   // carry no path to find. What the allow-list actually promises is that
   // NOTHING travels except these names, and only a key-set assertion says that.
   const WIRE_ROW_KEYS = new Set([
-    'domain', 'project', 'isDefaultProject', 'hasBrief', 'briefUpdatedAt', 'briefAuthoredBy',
+    // v3.76.0 (F2): `briefWrittenAt`, the brief's own stamp beside the file's mtime.
+    'domain', 'project', 'isDefaultProject', 'hasBrief', 'briefUpdatedAt', 'briefWrittenAt', 'briefAuthoredBy',
     'scopeCount', 'savedCopies', 'lastWriteAt', 'ageSeconds', 'writtenAt', 'writtenAgeSeconds',
     'headline', 'newestScope', 'newestMachine', 'harness', 'model', 'lastSaveKind',
   ]);

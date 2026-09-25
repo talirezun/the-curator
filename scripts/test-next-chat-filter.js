@@ -212,6 +212,9 @@ function makeSandbox(over = {}) {
     extractFunction(chatSrc, 'clearConversationFilter') + '\n' +
     extractFunction(chatSrc, 'askFilterTextInNewChat') + '\n' +
     extractFunction(chatSrc, 'startNewChat') + '\n' +
+    // v3.76.0 (F13): a new chat goes back to the per-domain pin. Lifted real;
+    // with no restored project in this sandbox it returns at its first line.
+    extractFunction(chatSrc, 'restorePinnedProject') + '\n' +
     extractFunction(chatSrc, 'focusComposer') + '\n' +
     extractFunction(chatSrc, 'autosize') + '\n' +
     // v3.72.0 (P3): the row, list, bar and their wiring are

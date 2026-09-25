@@ -1490,6 +1490,14 @@ function makeRenderers(stateObj) {
     // The rail's grouping renderer, so §14's grouping assertions and §6's
     // escaping battery both drive the shipped one.
     extractFunction(viewSrc, 'projectMetaLine', 'memory.js') + '\n' +
+    // v3.76.0 (F4/F7/F2): the rail's dot, its Active test and its tool line,
+    // and the brief's two clocks — lifted, not stubbed, for the reason above.
+    'const ACTIVE_TIERS = ' + (viewSrc.match(/const ACTIVE_TIERS = (\[[^\]]*\]);/) || [])[1] + ';\n' +
+    extractFunction(viewSrc, 'freshDotHtml', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'isActiveAge', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'projectToolsText', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'briefClocks', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'briefClocksHtml', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderProjectGroups', 'memory.js') + '\n' +
     // `renderAbout` is GONE. Its words are the header's ⓘ panel now
     // (aboutInfoHtml, passed to renderViewHeader as `info`), so what is lifted
@@ -3694,6 +3702,9 @@ function makeRevalidator(stateObj, responder, opts = {}) {
 }
 
 /** A state shaped exactly like the live one at the moment of the defect. */
+// One clock for every liveState() in this file, so two of them are
+// byte-identical (§11b compares their project rows as JSON).
+const LIVE_NOW = Date.now();
 function liveState(over = {}) {
   const T0 = 1_000_000;
   const detail = { scope: 'memory-view', machine: 'm1', machines: [{ machine: 'm1', ageSeconds: 5 }],
@@ -3701,7 +3712,8 @@ function liveState(over = {}) {
   return {
     loading: false, refreshing: false,
     projects: [{ project: 'projects', hasBrief: true, scopeCount: 2, savedCopies: 2,
-      lastWriteAt: new Date(T0).toISOString(), ageSeconds: 30, headline: 'Second scope' }],
+      lastWriteAt: new Date(T0).toISOString(), ageSeconds: 30, headline: 'Second scope',
+      writtenAt: new Date(LIVE_NOW - 30_000).toISOString() }],
     indexError: null,
     activeProject: 'projects',
     projectRead: { scopes: [{ scope: 'memory-view' }, { scope: 'main' }], savedCopies: 2 },
@@ -3840,6 +3852,10 @@ function unchangedIndex(ageSeconds) {
   return (url) => url === '/api/memory'
     ? { ok: true, json: async () => ({ ok: true, projects: [{ project: 'projects', hasBrief: true,
         scopeCount: 2, savedCopies: 2, lastWriteAt: new Date(999_000).toISOString(),
+        // v3.76.0 (F4): the AGE is arithmetic on a stamp at paint time, so the
+        // fixture carries the agent's stamp consistent with its age — a bare
+        // `ageSeconds` over a 1970 file time is a payload no server sends.
+        writtenAt: new Date(LIVE_NOW - ageSeconds * 1000).toISOString(),
         ageSeconds, headline: 'Second scope' }] }) }
     : { ok: true, json: async () => ({ ok: true, scopes: [] }) };
 }
@@ -6109,12 +6125,13 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   const b = mkPair(new Date(NOW - 45_000).toISOString(), 'just now');
   const bad = mkPair('not a date', 'untouched');
 
-  const box = new Function('document', 'Date', 'render', 'formatAge',
+  const box = new Function('document', 'Date', 'render', 'formatAge', 'tickRest',
     extractFunction(viewSrc, 'tickAges', 'memory.js') + '\nreturn tickAges;')(
     { querySelectorAll: () => [a.node, b.node, bad.node] },
     { now: () => NOW, parse: Date.parse },
     () => { renders.push(1); },
-    new Function(extractFunction(viewSrc, 'formatAge', 'memory.js') + '\nreturn formatAge;')());
+    new Function(extractFunction(viewSrc, 'formatAge', 'memory.js') + '\nreturn formatAge;')(),
+    () => {});
 
   box();
   eq('the tick rewrote a stale reading into the right words', a.value.textContent, '2 hr ago');
@@ -6163,12 +6180,13 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   };
   const cell = mk(new Date(NOW - 7200_000).toISOString(), 'stale words');
   const fresh = mk(new Date(NOW - 30_000).toISOString(), 'just now');
-  const box = new Function('document', 'Date', 'render', 'formatAge',
+  const box = new Function('document', 'Date', 'render', 'formatAge', 'tickRest',
     extractFunction(viewSrc, 'tickAges', 'memory.js') + '\nreturn tickAges;')(
     { querySelectorAll: () => [cell.node, fresh.node] },
     { now: () => NOW, parse: Date.parse },
     () => { throw new Error('the tick called render()'); },
-    new Function(extractFunction(viewSrc, 'formatAge', 'memory.js') + '\nreturn formatAge;')());
+    new Function(extractFunction(viewSrc, 'formatAge', 'memory.js') + '\nreturn formatAge;')(),
+    () => {});
   box();
   eq('the tick reaches a TABLE cell through .mem-age-words', cell.inner.textContent, '2 hr ago');
   eq('...writing it exactly once', cell.inner.writes, 1);
@@ -6189,12 +6207,13 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     getAttribute: bare.getAttribute,
     querySelector: bare.querySelector,
   };
-  new Function('document', 'Date', 'render', 'formatAge',
+  new Function('document', 'Date', 'render', 'formatAge', 'tickRest',
     extractFunction(viewSrc, 'tickAges', 'memory.js') + '\nreturn tickAges;')(
     { querySelectorAll: () => [wrapped] },
     { now: () => NOW, parse: Date.parse },
     () => {},
-    new Function(extractFunction(viewSrc, 'formatAge', 'memory.js') + '\nreturn formatAge;')())();
+    new Function(extractFunction(viewSrc, 'formatAge', 'memory.js') + '\nreturn formatAge;')(),
+    () => {})();
   eq('a node with NEITHER named child is left entirely alone — an unnamed '
     + 'fallback would delete the visually-hidden stamp beside the words',
     bare.writes, 0);
@@ -6654,7 +6673,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       // that the press really reaches openReader through the real chain, so a
       // stub anywhere along it would be this suite testing its own harness.
       [...['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'workStreamOrder',
-        'wsShownCount', 'wsRowHtml', 'wsMoreHtml', 'workStreamCounts',
+        'wsShownCount', 'freshDotHtml', 'wsRowHtml', 'wsMoreHtml', 'workStreamCounts',
         'handoffReaderContent', 'previousHandoffHtml', 'openHandoffReader', 'bindWorkStreamRows', 'openWorkStream',
         'showMoreWorkStreams', 'bindFoldToggles', 'wire']]
         .map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n')
@@ -7341,7 +7360,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // where `workStreamCounts` still prints both numbers uncapped.
   ok('...and the closed line is the count and the AGE — the pair a closed row '
     + 'has to carry to be worth opening',
-  /class="mem-fold-meta">1 handoff · saved 2 min ago</.test(foldHtml), foldHtml.slice(0, 500));
+  /class="mem-fold-meta">1 handoff · <span data-age-at="[^"]+" data-age-prefix="saved" data-age-text>saved 2 min ago<\/span></.test(foldHtml), foldHtml.slice(0, 500));
   // ── AND THE AGE IS THE PROJECT'S NEWEST, NOT THE LAST ROW'S ─────────
   // `newestPair` is the same derivation `renderLayerStrip`'s MEMORY card uses,
   // so the tile and this line can never name different saves. FOUND BY
@@ -12016,16 +12035,19 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
         ? '>0 KB<' : (ws.READING_BUDGET_PRESETS[i].bytes / 1024) + ' KB<')));
     ok('...and the view holds NO byte copy of the ladder any more',
       !/READING_BUDGET_PRESETS\s*=/.test(viewSrc) && !/bytes:\s*204800|bytes:\s*819200|bytes:\s*131072/.test(viewSrc));
-    eq('TOKEN-FIRST names, the ladder\'s own: Index only · Lean 8k · … · Max 200k',
+    // v3.76.0 (truth audit F11): ONE conversion — the meter's (bytes ÷ 4, in
+    // thousands of 1,000, through `tok`). It was thousands of 1,024 here
+    // ("Extra large 128k") beside a meter reading "≈131k" for the same budget.
+    eq('TOKEN-FIRST names, on the METER\'s own figure: Index only · Lean ≈8.2k · … · Max ≈205k',
       JSON.stringify(untouched.options.map((o) => o.label)),
-      JSON.stringify(['Index only', 'Lean 8k', 'Standard 16k', 'Deep 32k', 'Large 64k', 'Extra large 128k', 'Max 200k']));
+      JSON.stringify(['Index only', 'Lean ≈8.2k', 'Standard ≈16.4k', 'Deep ≈32.8k', 'Large ≈65.5k', 'Extra large ≈131k', 'Max ≈205k']));
     eq('untouched: the trigger says what is TRUE — the default applies, in tokens', untouched.triggerText,
       'Default · ≈30.7k');
     ok('...Standard is PRESELECTED, and is an action row so choosing it still writes',
       untouched.value === 'standard' && JSON.stringify(untouched.actionValues) === '["standard"]'
       && untouched.options.find((o) => o.value === 'standard').action === true
       && untouched.options.filter((o) => o.action).length === 1);
-    ok('...and marked "recommended"', /Standard 16k · recommended/.test(
+    ok('...and marked "recommended"', /Standard ≈16\.4k · recommended/.test(
       untouched.options.find((o) => o.value === 'standard').html));
     ok('each row carries what an agent would START with under it, in tokens, and in how many replies',
       /an agent starts with ≈7\.0k tokens · 1 MCP reply/.test(untouched.options.find((o) => o.value === 'standard').html)
@@ -12044,7 +12066,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       untouched.options.every((o) => /mem-bp-hint">[^<]{8,}</.test(o.html)));
     const set = R.budgetPickerCfg({ readingBudgetBytes: 65536 }, ssData(), false);
     ok('set to Standard: the value is Standard, the trigger names it, and no row is an action',
-      set.value === 'standard' && set.triggerText === 'Standard 16k'
+      set.value === 'standard' && set.triggerText === 'Standard ≈16.4k'
       && set.actionValues.length === 0 && !set.options.some((o) => o.action));
     eq('Index only reads as itself', R.budgetPickerCfg({ readingBudgetBytes: 0 }, ssData(), false).triggerText,
       'Index only');
@@ -12092,7 +12114,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('a previewed budget repaints the meter as a PREVIEW, with "Preview, not saved · … · N MCP replies"',
       /class="bk-preview">preview</.test(html)
       && /<b>Preview, not saved<\/b> · ≈37\.5k tokens · 18\.8% of 200k · 2 MCP replies/.test(html), html.slice(0, 4000));
-    ok('...and names the preset being previewed', /Previewing the Deep 32k reading budget/.test(html));
+    ok('...and names the preset being previewed', /Previewing the Deep ≈32\.8k reading budget/.test(html));
     ok('...while the monitor below keeps the MEASURED figures — a preview is not saved',
       /≈13\.2k tokens · 51\.7 KB · 6\.6% of 200K/.test(html));
     const stale = withSS(ssData(), { budgetPreview: { domain: 'acme', project: 'lumina', sig: 'older',
@@ -12269,7 +12291,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('the proposal\'s one-line summary, as the picture words it',
       /Suggested plan · 2 read first · 30\.7 KB of the 64 KB reading budget · 1 on request · nothing applied yet/.test(html), html);
     ok('...and, with no budget set, the tick that sets the one it was planned against — ticked',
-      /id="mem-plan-budget-tick" checked><span>Also set the reading budget to Standard 16k · 64 KB<\/span>/.test(html), html);
+      /id="mem-plan-budget-tick" checked><span>Also set the reading budget to Standard ≈16\.4k · 64 KB<\/span>/.test(html), html);
     ok('after an AI run, the AFTER line — what ran and what it cost',
       /Ran on/.test(html) && /5,812 in \/ 640 out/.test(html) && /\$0\.0008/.test(html));
     const F = makeRenderers(st);
@@ -12288,7 +12310,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
           budget: { bytes: 65536, source: 'whatif', defaulted: false, ownerBytes: null, cap: 204800, replyCapBytes: 307200 } }) } };
     const ss = makeRenderers(withPrev).renderSessionStart(withPrev.projectRead);
     ok('④ reads the pending proposal as an `if applied` line, measured by the store',
-      /if applied<\/span><span class="cur-mon-value">[\s\S]*?≈15\.6k · 7\.8%[\s\S]*?Standard 16k reading budget, with the suggestion/.test(ss), ss.slice(-2500));
+      /if applied<\/span><span class="cur-mon-value">[\s\S]*?≈15\.6k · 7\.8%[\s\S]*?Standard ≈16\.4k reading budget, with the suggestion/.test(ss), ss.slice(-2500));
     ok('...and the METER draws that proposal as a preview, naming it — nothing is applied yet',
       /class="bk-preview">preview</.test(ss) && /Previewing the suggested reading plan — apply it in step 1\./.test(ss));
     const stale = { ...withPrev, sessionPreview: { ...withPrev.sessionPreview, key: '{"plan":{}}' } };
@@ -13310,6 +13332,11 @@ const EXECUTED = new Set([
   // The age clock (§18). Lifted and driven against a fake document, with a
   // render spy proving it never reaches for one.
   'tickAges',
+  // v3.76.0 truth fixes (F2, F4, F7), each driven in §31: the clock's second
+  // half, the re-bandable dot, the rail's Active test and tool line and its
+  // band signature, and the brief's two clocks.
+  'tickRest', 'freshDotHtml', 'isActiveAge', 'projectToolsText', 'sidebarBandSignature',
+  'briefClocks', 'briefClocksHtml',
   // v3.61.0: whether "Copy the drafting request" is offered, withheld with a
   // reason, or absent \u2014 driven over all five states in \u00a721c2.
   'foundationsDraftAsk',
@@ -13986,6 +14013,146 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
   const fiSrc = readFileSync(join(NEXT, 'shared/foundations-init.js'), 'utf8');
   ok('shared/foundations-init.js no longer exports an ⓘ body of its own (C8 is the host\'s explainer)',
     !/export const READ_WITH_INFO_HTML/.test(fiSrc));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§31 — v3.76.0 truth fixes: ages from stamps, a clock that reaches every age, the brief\'s own time, tools from the journal, one tool name');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  const AGE = await import('../src/public/next/shared/age.js');
+  const TICKER = await import('../src/public/next/shared/age-ticker.js');
+  // The pure pieces, lifted off LIVE SOURCE with the REAL age scale injected.
+  const L = new Function('freshnessTier', 'escapeHtml', 'formatAge', 'Date',
+    'const ACTIVE_TIERS = ' + (viewSrc.match(/const ACTIVE_TIERS = (\[[^\]]*\]);/) || [])[1] + ';\n' +
+    extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'freshDotHtml', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'isActiveAge', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'projectToolsText', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'sidebarBandSignature', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'briefClocks', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'briefClocksHtml', 'memory.js') + '\n' +
+    '\nreturn { effectiveSave, freshDotHtml, isActiveAge, projectToolsText, sidebarBandSignature, briefClocks, briefClocksHtml };')(
+    AGE.freshnessTier, (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]),
+    AGE.formatAge, Date);
+
+  // ── F4 · THE STAMP BEATS THE SERVER'S PRECOMPUTED AGE ──────────────────
+  // A payload kept in the cache said `writtenAgeSeconds: 120` when it was
+  // fetched; an hour later its stamp says an hour. The stamp is the fact.
+  const now = Date.now();
+  const cached = { writtenAt: new Date(now - 3_600_000).toISOString(), writtenAgeSeconds: 120 };
+  eq('★ F4: a cached row\'s age comes from its STAMP at paint time, not the server\'s old figure',
+    AGE.formatAge(L.effectiveSave(cached, now).seconds), '1 hr ago');
+  eq('...the file clock too', AGE.formatAge(L.effectiveSave(
+    { lastWriteAt: new Date(now - 7_200_000).toISOString(), ageSeconds: 5 }, now).seconds), '2 hr ago');
+  eq('CONTROL: with no stamp at all the server\'s figure is still used, never nothing',
+    L.effectiveSave({ writtenAgeSeconds: 42 }, now).seconds, 42);
+
+  // ── F4 · EVERY AGE THE AUDIT NAMED CARRIES THE SHARED CLOCK'S HOOK ─────
+  const at2 = new Date(now - 120_000).toISOString();
+  const R31 = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', projects: [], openFolds: {},
+    wsWindow: WS_WINDOW_SRC, detail: null, staleWrite: false, journalLimit: 10 });
+  const read31 = { scopes: [{ scope: 'main', machine: 'boxa', writtenAt: at2, writtenAgeSeconds: 120 }],
+    brief: { present: false }, savedCopies: 1, distinctScopeCount: 1 };
+  const strip = R31.renderLayerStrip(read31);
+  ok('★ F4: the MEMORY tile\'s age is a ticking span on the shared clock (data-age-at + prefix "saved")',
+    new RegExp('<span data-age-at="' + at2 + '" data-age-prefix="saved" data-age-text>saved 2 min ago</span>').test(strip), strip.slice(0, 800));
+  ok('...and its dot carries the stamp it was banded on', /class="fresh-dot fresh-recent" data-mem-fresh-at="/.test(strip));
+  const fold = R31.renderWorkStreamsFold(read31, null);
+  ok('★ F4: the Handoffs fold summary\'s age ticks too',
+    new RegExp('1 handoff · <span data-age-at="' + at2 + '" data-age-prefix="saved" data-age-text>saved 2 min ago</span>').test(fold), fold.slice(0, 500));
+  const rail = R31.renderProjectGroups([{ domain: 'acme', project: 'lumina', scopeCount: 1, writtenAt: at2 }], 'acme', 'lumina', ['acme']);
+  ok('★ F4: every rail row carries data-age-at, so the kit\'s .cur-sb-age ticks',
+    new RegExp('data-age-at="' + at2 + '"').test(rail) && /class="cur-sb-age[^"]*">2 min ago</.test(rail), rail.slice(0, 600));
+  // THE SHARED CLOCK REALLY MOVES THEM — driven with a fake DOM over the
+  // markup above: an hour later every one of them says so.
+  const fakeTarget = (text) => ({ textContent: text });
+  const tile = { t: fakeTarget('saved 2 min ago'), el: null };
+  tile.el = { getAttribute: (k) => ({ 'data-age-at': at2, 'data-age-prefix': 'saved' })[k] ?? null,
+    hasAttribute: (k) => k === 'data-age-text', set textContent(v) { tile.t.textContent = v; }, get textContent() { return tile.t.textContent; } };
+  const row = { t: fakeTarget('2 min ago') };
+  row.el = { getAttribute: (k) => (k === 'data-age-at' ? at2 : null), hasAttribute: () => false,
+    querySelector: (sel) => (sel === '.cur-sb-age' ? row.t : null) };
+  TICKER.tickAges({ querySelectorAll: () => [tile.el, row.el] }, now + 3_600_000);
+  eq('...the shared clock, an hour on: the tile reads "saved 1 hr ago"', tile.t.textContent, 'saved 1 hr ago');
+  eq('...and the rail row "1 hr ago"', row.t.textContent, '1 hr ago');
+
+  // ── F4 · tickRest: dots re-band, the rail regroups when (and only when) the clock moves it ──
+  const mkDot = (at, cls) => {
+    const d = { cls, writes: 0 };
+    return { d, el: { getAttribute: (k) => (k === 'data-mem-fresh-at' ? at : k === 'class' ? d.cls : null),
+      setAttribute: (k, v) => { if (k === 'class') { d.cls = v; d.writes++; } } } };
+  };
+  const young = new Date(now - 60_000).toISOString();
+  const dot = mkDot(young, 'fresh-dot fresh-' + AGE.freshnessTier(60));
+  const sidebarRenders = [];
+  const sharedTicks = [];
+  const st31 = { projects: [{ domain: 'acme', project: 'p', writtenAt: new Date(now - (24 * 3600 - 30) * 1000).toISOString() }] };
+  const tr = new Function('document', 'tickSharedAges', 'freshnessTier', 'state', 'sidebarBandSignature',
+    'renderSidebar', 'myMountToken', 'Date', 'let sidebarBandSig = arguments[8];\n' +
+    extractFunction(viewSrc, 'tickRest', 'memory.js') + '\nreturn tickRest;');
+  const sig0 = L.sidebarBandSignature(st31.projects, now);
+  const tickRest = tr({ querySelectorAll: (sel) => (sel === '[data-mem-fresh-at]' ? [dot.el] : []) },
+    (root, t) => { sharedTicks.push(t); }, AGE.freshnessTier, st31, L.sidebarBandSignature,
+    (tok) => { sidebarRenders.push(tok); }, 7, Date, sig0);
+  tickRest(now);
+  eq('CONTROL: at the paint\'s own moment nothing moves — no dot write, no rail repaint', dot.d.writes + sidebarRenders.length, 0);
+  eq('...and the shared clock ran on this view\'s tick', sharedTicks.length, 1);
+  tickRest(now + 3_600_000);
+  eq('★ F4: an hour on, the dot is re-banded through the same freshnessTier', dot.d.cls, 'fresh-dot fresh-' + AGE.freshnessTier(3660));
+  eq('★ F4: the project crossed 24 h with no save anywhere — the RAIL is repainted (once, with the mount token)',
+    JSON.stringify(sidebarRenders), '[7]');
+  // AND tickAges REALLY RUNS IT — the interval is armed with tickAges, so a
+  // tickRest nothing calls would be three fixes that never happen.
+  const restCalls = [];
+  new Function('document', 'Date', 'render', 'formatAge', 'tickRest',
+    extractFunction(viewSrc, 'tickAges', 'memory.js') + '\nreturn tickAges;')(
+    { querySelectorAll: () => [] }, { now: () => 42, parse: Date.parse }, () => {}, AGE.formatAge,
+    (t) => { restCalls.push(t); })();
+  eq('★ F4: the view\'s one-second tick runs tickRest, with the same clock reading', JSON.stringify(restCalls), '[42]');
+  ok('...because the band signature really moved: Active → Idle',
+    /:A:/.test(sig0) && /:I:/.test(L.sidebarBandSignature(st31.projects, now + 3_600_000)));
+
+  // ── F7 (view half) · the Active row names every tool inside 24 h ─────────
+  const tools = [
+    { id: 'antigravity', label: 'Antigravity', writtenAt: new Date(now - 60_000).toISOString() },
+    { id: 'claude-code', label: 'Claude Code', writtenAt: new Date(now - 4_380_000).toISOString() },
+    { id: 'codex', label: 'OpenAI Codex CLI', writtenAt: new Date(now - 3 * 86_400_000).toISOString() },
+  ];
+  const pT = { harnessLabel: 'Antigravity', tools };
+  eq('★ F7: an active project names every tool that saved in the last 24 h, newest first — not the 3-day-old one',
+    L.projectToolsText(pT, L.effectiveSave({ writtenAt: tools[0].writtenAt }, now)), 'Antigravity + Claude Code');
+  eq('...an idle one names its newest save\'s tool only',
+    L.projectToolsText(pT, { seconds: 3 * 86_400 }), 'Antigravity');
+
+  // ── F2 · THE BRIEF'S OWN CLOCK, AND THE FILE'S ONLY WHEN IT DIFFERS ─────
+  const written = '2026-09-16T10:00:00.000Z';
+  eq('★ F2: a brief restored today keeps its own written time, and the file time follows as a SECOND clock',
+    JSON.stringify(L.briefClocks({ writtenAt: written, updatedAt: '2026-09-25T08:51:00.000Z' })),
+    JSON.stringify({ written, file: '2026-09-25T08:51:00.000Z' }));
+  eq('...the two within two minutes (a save writes both) are ONE clock',
+    JSON.stringify(L.briefClocks({ writtenAt: written, updatedAt: '2026-09-16T10:00:00.900Z' })),
+    JSON.stringify({ written, file: null }));
+  eq('...a hand-typed brief with no stamp says the FILE\'s time, as the file\'s',
+    JSON.stringify(L.briefClocks({ writtenAt: null, updatedAt: '2026-09-25T08:51:00.000Z' })),
+    JSON.stringify({ written: null, file: '2026-09-25T08:51:00.000Z' }));
+  const b1 = R31.renderBrief({ brief: { present: true, text: 'x', writtenAt: new Date(now - 9 * 86_400_000).toISOString(),
+    updatedAt: new Date(now - 7 * 3_600_000).toISOString() } });
+  ok('★ F2: the fold says "written 1 week ago · changed on disk 7 hr ago" — never "updated 7 hr ago"',
+    /written <span class="mem-age-words">1 week ago<\/span><\/span> · <span data-mem-age-at="[^"]+">changed on disk <span class="mem-age-words">7 hr ago</.test(b1)
+      && !/updated/.test(b1), b1.slice(0, 700));
+  const b2 = R31.renderBrief({ brief: { present: true, text: 'x', updatedAt: new Date(now - 7 * 3_600_000).toISOString() } });
+  ok('...no stamp: "file changed 7 hr ago", named as the file\'s', /file changed <span class="mem-age-words">7 hr ago</.test(b2), b2.slice(0, 500));
+
+  // ── F10 · ONE TOOL, ONE NAME DOWN THE HARNESS COLUMN ────────────────────
+  const rowA = R31.wsRowHtml({ scope: 'a', machine: 'm', writtenAt: at2, harness: 'claude-code', harnessLabel: 'Claude Code', model: 'opus' }, null, null, null, null);
+  const rowB = R31.wsRowHtml({ scope: 'b', machine: 'm', writtenAt: at2, harness: 'Claude Code', harnessLabel: 'Claude Code', model: 'opus' }, null, null, null, null);
+  const whoOf = (h) => ((/<td class="mem-ws-cell-who">([\s\S]*?)<\/td>/.exec(h) || [])[1] || '');
+  ok('★ F10: "claude-code" and "Claude Code" read the SAME in the column',
+    whoOf(rowA).startsWith('Claude Code') && whoOf(rowB).startsWith('Claude Code') && !/>claude-code</.test(rowA), whoOf(rowA));
+  ok('...the raw spelling is kept, as screen-reader text (no new title= — the tooltip budget)',
+    /visually-hidden"> \(saved as “claude-code”\)/.test(whoOf(rowA)) && !/title=/.test(whoOf(rowA)) && !/saved as/.test(whoOf(rowB)));
+  ok('CONTROL: an older server with no label shows the raw name', /<td class="mem-ws-cell-who">claude-code · opus</.test(
+    R31.wsRowHtml({ scope: 'c', machine: 'm', writtenAt: at2, harness: 'claude-code', model: 'opus' }, null, null, null, null)));
 }
 
 // ── Done ─────────────────────────────────────────────────────────────────

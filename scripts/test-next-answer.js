@@ -39,14 +39,14 @@ const mdText = read('shared/markdown.js');
 const mdImport = /^import\s+\{\s*icon\s*\}\s+from\s+'\.\.\/app\.js';\s*$/m;
 if (!mdImport.test(mdText)) throw new Error('markdown.js no longer imports exactly { icon } from ../app.js — update this loader');
 const MD = new Function('icon', mdText.replace(mdImport, '').replace(/^export\s+/gm, '') +
-  '\nreturn { renderMarkdown, escHtml };')(() => '<svg data-icon="dot"></svg>');
+  '\nreturn { renderMarkdown, escHtml, splitCitationParts };')(() => '<svg data-icon="dot"></svg>');
 
 const anText = read('shared/answer.js');
-const anImport = /^import\s+\{\s*renderMarkdown,\s*escHtml\s*\}\s+from\s+'\.\/markdown\.js';\s*$/m;
-if (!anImport.test(anText)) throw new Error('answer.js no longer imports { renderMarkdown, escHtml } from ./markdown.js — update this loader');
+const anImport = /^import\s+\{\s*renderMarkdown,\s*escHtml,\s*splitCitationParts\s*\}\s+from\s+'\.\/markdown\.js';\s*$/m;
+if (!anImport.test(anText)) throw new Error('answer.js no longer imports { renderMarkdown, escHtml, splitCitationParts } from ./markdown.js — update this loader');
 if (/^import\s/m.test(anText.replace(anImport, ''))) throw new Error('answer.js gained a second import — it is meant to be pure');
-const A = new Function('renderMarkdown', 'escHtml', anText.replace(anImport, '').replace(/^export\s+/gm, '') +
-  '\nreturn { renderAnswer, sourcesHtml, sourceByNumber, pageTypeOf };')(MD.renderMarkdown, MD.escHtml);
+const A = new Function('renderMarkdown', 'escHtml', 'splitCitationParts', anText.replace(anImport, '').replace(/^export\s+/gm, '') +
+  '\nreturn { renderAnswer, sourcesHtml, sourceByNumber, pageTypeOf };')(MD.renderMarkdown, MD.escHtml, MD.splitCitationParts);
 
 const realTags = (h) => String(h).match(/<[^>]*>/g) || [];
 const attrNames = (h) => realTags(h).flatMap((t) => [...t.matchAll(/\s([a-zA-Z:-]+)=/g)].map((m) => m[1]));
@@ -96,8 +96,13 @@ section('2. The server\'s citation list, titles and types');
   ok(sources[1].title === 'X' && sources[2].title === 'Y', 'no title (or a blank one) → the humanised basename (the shipped fallback)');
   ok(A.renderAnswer('[source: summaries/how-i-built-it.md]').sources[0].title === 'How I Built It',
     'the fallback is character-for-character citationLabel\'s (views/chat.js)');
-  const proto = A.renderAnswer('[source: constructor]', { titles: {} }).sources[0];
+  // v3.76.0 (F9): a bare word is a PAGE only when the server says so (`pages`)
+  // — so the prototype probe names it one, and checks both halves.
+  const proto = A.renderAnswer('[source: constructor]', { titles: {}, pages: ['constructor'] }).sources[0];
   ok(proto.title === 'Constructor', 'a path named `constructor` does not read a function off the prototype');
+  const protoLegacy = A.renderAnswer('[source: constructor]', { titles: {} });
+  ok(protoLegacy.sources.length === 0 && JSON.stringify(protoLegacy.mentions) === '["constructor"]',
+    '...and with no `pages`, an empty title map\'s PROTOTYPE does not make `constructor` a page');
 
   const t = (p) => JSON.stringify(A.pageTypeOf(p));
   ok(t('entities/a.md') === '{"folder":"entities","type":"entity"}', 'pageTypeOf: entities');
@@ -226,6 +231,72 @@ section('6. Styles — answer.css, page-chip.css, the reader chip block');
     'shell.css no longer declares the reader chips (one declaration, not two kept in step)');
   ok(/\.reader-tags\s*\{/.test(shell) && /\.reader-type-dot\s*\{/.test(shell),
     'CONTROL: shell.css\'s neighbouring reader rules are untouched');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('9. v3.76.0 (truth audit F9) — only a citation that resolves to a page is a source');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  // THE MEASURED ANSWER: "SOURCES · 6 PAGES", four of them not pages.
+  const raw = 'The plan [source: concepts/rag.md] and the brief [source: handoff state]. ' +
+    'Rows [source: CLAUDE.md rows v3.69.0, v3.68.1] and [source: catalogue]. ' +
+    'Also [source: entities/tali-rezun.md].';
+  const pages = ['concepts/rag.md', 'entities/tali-rezun.md'];
+  const r = A.renderAnswer(raw, { pages });
+  ok(JSON.stringify(r.sources.map((x) => x.path)) === JSON.stringify(pages),
+    '★ only the two citations that ARE pages are sources (was six)');
+  ok(JSON.stringify(r.mentions) === JSON.stringify(['handoff state', 'CLAUDE.md rows v3.69.0, v3.68.1', 'catalogue']),
+    '★ the rest are unverified mentions, in order — and the version list is ONE mention, not split on its comma: ' + JSON.stringify(r.mentions));
+  const html = A.sourcesHtml(r.sources, r.mentions);
+  ok(/Sources · 2 pages/.test(html), '★ the head counts PAGES only: "Sources · 2 pages"');
+  ok(/3 unverified mentions — not a wiki page: /.test(html) && (html.match(/class="answer-mention"/g) || []).length === 3,
+    '...and the mentions are listed apart, plain spans, never buttons');
+  ok((html.match(/data-source-n=/g) || []).length === 2, '...only the pages are controls');
+  ok(!/page page/.test(html.replace(/<[^>]*>/g, '')), 'no chip is read as "page page"');
+  const nums = [...r.html.matchAll(/data-cite-n="(\d+)"/g)].map((m) => +m[1]);
+  ok(JSON.stringify(nums) === '[1,2]', 'inline, only pages get a number (' + nums + ')');
+  ok(/chat-cite-unresolved">handoff state</.test(r.html), '...a mention stays in the text, inert');
+
+  // A mention is escaped on the way to the list.
+  const x = A.renderAnswer('[source: <b>x</b> & y]', { pages: [] });
+  const xh = A.sourcesHtml(x.sources, x.mentions);
+  ok(!/<b>/.test(xh) && !liveAttr(xh), 'a hostile mention is escaped and inert in the list');
+  ok(/Sources · no wiki page/.test(A.sourcesHtml([], ['catalogue'])), 'mentions but no page: the head says "no wiki page", not "0 pages"');
+  ok(A.sourcesHtml([], []) === '', 'neither: no block');
+
+  // THE COMMA RULE, both ways, and the server's copy agrees with the renderer's.
+  const table = [
+    ['entities/a.md, concepts/b.md', ['entities/a.md', 'concepts/b.md']],
+    ['a.md, b.md', ['a.md', 'b.md']],
+    ['CLAUDE.md rows v3.69.0, v3.68.1', ['CLAUDE.md rows v3.69.0, v3.68.1']],
+    ['entities/a.md, the brief', ['entities/a.md, the brief']],
+    [' , ', []],
+    ['single', ['single']],
+  ];
+  for (const [inp, want] of table) {
+    ok(JSON.stringify(MD.splitCitationParts(inp)) === JSON.stringify(want), 'split(' + JSON.stringify(inp) + ') → ' + JSON.stringify(want));
+  }
+}
+{
+  const chat = await import('../src/brain/chat.js');
+  const table = ['entities/a.md, concepts/b.md', 'a.md, b.md', 'CLAUDE.md rows v3.69.0, v3.68.1',
+    'entities/a.md, the brief', ' , ', 'single', 'x/y, z'];
+  ok(table.every((t) => JSON.stringify(chat.citationParts(t)) === JSON.stringify(MD.splitCitationParts(t))),
+    '★ the server\'s citationParts and the renderer\'s splitCitationParts are ONE rule (dumb cross-check over a table)');
+  const wiki = [{ path: 'concepts/rag.md', content: '# RAG' }, { path: 'entities/a.md', content: '# A' },
+    { path: 'concepts/b.md', content: '# B' }];
+  ok(JSON.stringify(chat.buildCitedPages(['concepts/rag.md', 'handoff state', 'entities/a.md, concepts/b.md',
+    'CLAUDE.md rows v3.69.0, v3.68.1', 'concepts/ghost.md'], wiki))
+    === '["concepts/rag.md","entities/a.md","concepts/b.md"]',
+  '★ buildCitedPages keeps only parts that are real page paths in the wiki read — a hallucinated slug is not a page');
+  ok(JSON.stringify(chat.buildCitedPages(['catalogue'], wiki)) === '[]', '...nothing resolved is [] (a record), not null');
+  const t = chat.buildCitationTitles(['entities/a.md, concepts/b.md'], wiki);
+  ok(t && t['entities/a.md'] === 'A' && t['concepts/b.md'] === 'B', 'a comma-joined capture of paths is titled per path');
+  const msg = chat.buildAssistantMessage('x', [], null, null, null, null, { project: null, citedPages: ['concepts/rag.md'] });
+  ok(JSON.stringify(msg.citedPages) === '["concepts/rag.md"]' && Object.keys(msg).pop() === 'citedPages',
+    'citedPages is persisted on the message, appended last');
+  ok(!('citedPages' in chat.buildAssistantMessage('x', [], null, null, null, null)),
+    'CONTROL: an older call site writes no citedPages key');
 }
 
 console.log(`\n${'─'.repeat(60)}`);

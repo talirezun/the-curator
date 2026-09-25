@@ -423,7 +423,7 @@ try {
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   {
     const row = new Function('escapeHtml', 'icon', 'freshnessTier', 'renderDepthCell',
-      lift('formatAge') + '\n' + lift('effectiveSave') + '\n' + lift('wsRowHtml') + '\nreturn wsRowHtml;')(
+      lift('formatAge') + '\n' + lift('effectiveSave') + '\n' + lift('freshDotHtml') + '\n' + lift('wsRowHtml') + '\nreturn wsRowHtml;')(
       escapeHtml, (n) => '<svg data-icon="' + n + '"></svg>', () => 'fresh', () => '');
     const s = { scope: 'a"b', machine: 'm1', writtenAgeSeconds: 60, bytes: 10 };
     const w = row(s, null, null, null, null, true);

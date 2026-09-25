@@ -314,13 +314,34 @@ function formatSegment(t, cite) {
 // hook it keeps the legacy single tag (byte-identical, inert on every reader
 // surface). With a hook it becomes inert text with no marker, so nothing ever
 // opens a comma-joined or label-derived path.
+// ── WHEN A COMMA SEPARATES TWO CITATIONS, AND WHEN IT DOES NOT (v3.76.0) ──
+// `[source: a.md, b.md]` is two pages; `[source: CLAUDE.md rows v3.69.0,
+// v3.68.1]` is ONE mention whose text happens to hold a comma. Splitting every
+// comma turned the second into two "sources" — "CLAUDE.Md Rows V3.69.0" and
+// "V3.68.1" — and counted both as pages (truth audit F9). A capture is split
+// ONLY when every part looks like a path (it names a folder or ends in .md);
+// otherwise it is one mention, whole. Escaping does not touch `,` `/` or
+// `.md`, so this reads the same over raw text and over escaped text. The
+// server (src/brain/chat.js `citationParts`) applies the same rule and a
+// suite holds the two to one table.
+function looksLikePath(s) {
+  return /\.md$/i.test(s) || s.indexOf('/') !== -1;
+}
+export function splitCitationParts(text) {
+  const whole = String(text == null ? '' : text).trim();
+  if (!whole) return [];
+  const parts = whole.split(',').map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return [];   // only commas: nothing was cited
+  return parts.length > 1 && parts.every(looksLikePath) ? parts : [whole];
+}
+
 function citationMarkup(p, cite) {
   const hooked = typeof cite === 'function';
   if (p.indexOf('<') !== -1) {
     if (hooked) return '<span class="chat-cite-unresolved">[source:' + p + ']</span>';
     return legacyCitationTag(p.trim());
   }
-  const parts = p.split(',').map((s) => s.trim()).filter(Boolean);
+  const parts = splitCitationParts(p);
   if (!hooked) {
     // One part (the overwhelming case) or none: exactly the old output.
     if (parts.length <= 1) return legacyCitationTag(p.trim());

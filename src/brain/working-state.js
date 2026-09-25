@@ -563,6 +563,34 @@ export function finaliseNotes(notes, max = MAX_NOTES) {
 const DEFAULT_SCOPE = 'main';
 
 /**
+ * THE SCOPE A SAVE GETS WHEN IT NAMES NONE (v3.76.0 — the maintainer's
+ * decision, on a live measurement).
+ *
+ * A handoff is ONE file per (scope, machine), so two tools saving into the
+ * same scope on one computer overwrite each other. Measured with Claude Code
+ * headless on Haiku 4.5, given the per-tool instructions: agents set
+ * `harness` correctly but left out `scope` in 5 of 7 saves, which defaulted
+ * every one of them to the shared `main` — exactly where the tools collide.
+ * So when `scope` is omitted AND `harness` is given, the default is the
+ * tool's own scope: its NORMALISED id through harness-names.js (the one table
+ * the app compares tools with), so `Claude Code`, `claude-code` and
+ * `Claude Code (desktop)` all land in `claude-code`, and `Antigravity` in
+ * `antigravity`. An unknown tool gets its own name, slugified. With no
+ * harness — or one that slugifies to nothing, or to a reserved name — it is
+ * `main`, exactly as before. An explicit scope, `main` included, is never
+ * touched; reads are unchanged (no scope → the newest work-stream).
+ *
+ * @returns {{scope: string, by: 'harness'|'default'}}
+ */
+export function defaultScopeFor(harness) {
+  const text = typeof harness === 'string' ? neutraliseProtocol(harness).trim().slice(0, MAX_META_CHARS) : '';
+  const id = text ? harnessId(text) : null;
+  const slug = id ? slugSegment(id) : null;
+  if (slug && !RESERVED_SCOPE_NAMES.has(slug)) return { scope: slug, by: 'harness' };
+  return { scope: DEFAULT_SCOPE, by: 'default' };
+}
+
+/**
  * D3 — what the read-side filter did, stated so it cannot be misread as an
  * assurance.
  *
@@ -1909,6 +1937,29 @@ export function parseBriefProvenance(text) {
   };
 }
 
+/**
+ * THE BRIEF'S OWN CLOCK (v3.76.0, truth audit F2) — the time the brief SAYS it
+ * was written, or null. Two stamps exist and are read in this order:
+ *   1. the provenance comment's `on=` (every brief written through the app's
+ *      editor, `save_project_brief` with a body, or the commissioned door);
+ *   2. the structured door's `_Updated: <ISO>_` line in the document header.
+ * A brief typed by hand carries neither, and gets null — never the file's
+ * mtime, which is a DIFFERENT fact: when the bytes last changed on this disk
+ * (a hand edit, but equally a `git pull` or a restore). Consumers show this
+ * one first and the file's time beside it only when the two differ, so a
+ * restore that morning can no longer make a week-old brief read "updated 7 hr
+ * ago". Only the first 1 KB is looked at — the header — so it costs the index
+ * nothing extra (summariseProject reads exactly that much).
+ */
+const BRIEF_UPDATED_LINE_RE = /^_?Updated:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+(?:Z|[+-][0-9]{2}:?[0-9]{2}))_?\s*$/m;
+export function briefStampOf(text) {
+  if (typeof text !== 'string' || !text) return null;
+  const prov = parseBriefProvenance(text);
+  if (prov && prov.at) return prov.at;
+  const m = BRIEF_UPDATED_LINE_RE.exec(text.slice(0, 1024));
+  return m && isIsoish(m[1]) ? new Date(m[1]).toISOString() : null;
+}
+
 /** Strip a leading provenance comment, so a re-save cannot stack them. */
 function stripBriefProvenance(text) {
   return typeof text === 'string' ? text.replace(BRIEF_PROVENANCE_RE, '') : '';
@@ -2146,7 +2197,7 @@ async function summariseProject(domain, project, now) {
   const row = {
     domain, project,
     isDefaultProject: isDefaultProject(domain, project),
-    hasBrief: false, briefBytes: 0, briefUpdatedAt: null, briefAuthoredBy: null,
+    hasBrief: false, briefBytes: 0, briefUpdatedAt: null, briefWrittenAt: null, briefAuthoredBy: null,
     // `scopeCount` is DISTINCT work-streams and `savedCopies` is (scope,
     // machine) PAIRS. Both are returned because they answer different
     // questions and this repo has already paid twice for a consumer deriving
@@ -2169,6 +2220,9 @@ async function summariseProject(domain, project, now) {
     row.hasBrief = true;
     row.briefBytes = briefHead.bytes;
     row.briefUpdatedAt = briefHead.mtime;
+    // The brief's OWN stamp (see briefStampOf) — `briefUpdatedAt` stays the
+    // file's mtime, the name the MCP contract has always carried.
+    row.briefWrittenAt = briefStampOf(briefHead.text);
     row.briefAuthoredBy = parseBriefProvenance(briefHead.text);
   }
 
@@ -2512,6 +2566,11 @@ export async function readProjectBrief(domain, project) {
   out.duplicateHeadings = dups;
   out.headingsSuspect = dups.length > 0;
   out.authoredBy = parseBriefProvenance(clean);
+  // v3.76.0 (F2) — the brief's own clock, APPENDED LAST so every key above
+  // keeps its place. `updatedAt` is the file's mtime (when the bytes last
+  // changed on this disk); this is when the brief says it was written, or
+  // null for a hand-typed brief with no stamp.
+  out.writtenAt = briefStampOf(clean);
   return out;
 }
 
@@ -3379,7 +3438,10 @@ export async function saveWorkingState(project, input = {}) {
   const projectSlug = check.project;
 
   const scopeSupplied = !(input.scope === undefined || input.scope === null || input.scope === '');
-  const scopeRaw = scopeSupplied ? String(input.scope) : DEFAULT_SCOPE;
+  // v3.76.0 — NO SCOPE, A NAMED TOOL: the tool's own scope (see
+  // defaultScopeFor). An explicit scope, `main` included, always wins.
+  const scopeDefault = scopeSupplied ? null : defaultScopeFor(input.harness);
+  const scopeRaw = scopeSupplied ? String(input.scope) : scopeDefault.scope;
   const scope = slugSegment(scopeRaw);
   if (!scope) {
     return { ok: false, reason: 'invalid-scope', message: `"${input.scope}" is not a usable scope name.` };
@@ -3660,6 +3722,11 @@ export async function saveWorkingState(project, input = {}) {
     // unchanged — and `domain` is added beside it rather than either being
     // redefined.
     ok: true, project: projectSlug, domain: project, scope, machine, savedAt,
+    // v3.76.0 — HOW the scope was chosen: 'given' (the caller named it),
+    // 'harness' (none given; the tool's own scope, see defaultScopeFor) or
+    // 'default' (none given and no tool named: `main`, as before). Always
+    // present, so a reply can say which scope a save went to and why.
+    scopeChosenBy: scopeSupplied ? 'given' : scopeDefault.by,
     // Null when no `repoRoot` was offered; otherwise `{attempted, …}` — see
     // maybeRefreshFoundations. Always present so a consumer can tell "not
     // asked" from "asked and skipped" from "asked and done".
@@ -3681,6 +3748,24 @@ export async function saveWorkingState(project, input = {}) {
     overwrote,
     notes: finalNotes,
   };
+}
+
+/**
+ * v3.76.0 — WHICH SCOPE A SAVE WENT TO, AND WHY, when the caller named none.
+ * The MCP reply and the CLI (src/cli/save.js) print this one sentence, so the
+ * two surfaces say one thing. Empty when the caller named the scope.
+ */
+export function scopeChoiceSentence(result) {
+  const by = result && result.scopeChosenBy;
+  if (by === 'harness') {
+    return `No scope was given, so it was saved under your tool's own scope \`${result.scope}\` — `
+      + 'pass the same `scope` next time, or another one to keep a separate work-stream. ';
+  }
+  if (by === 'default') {
+    return 'No scope and no harness were given, so it was saved under `main` — pass `harness` (your tool) '
+      + 'or a `scope` so two tools on this computer do not overwrite each other. ';
+  }
+  return '';
 }
 
 /**
@@ -4706,6 +4791,9 @@ export async function readWorkingState(project, opts = {}) {
         // hand-authored brief (and for every brief written before v3.48.0),
         // which is exactly the reading `owner` authority is granted on.
         authoredBy: parseBriefProvenance(clean),
+        // v3.76.0 (F2): the brief's OWN stamp, appended last. `updatedAt`
+        // above is the file's mtime — see briefStampOf.
+        writtenAt: briefStampOf(clean),
       };
     }
   }

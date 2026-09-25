@@ -171,6 +171,16 @@ because the caller will otherwise read back with a name that matches nothing.
 One file per `(project, scope, machine)`. **A save overwrites it.** There is no merge, no delta and
 no append: a writer sends the complete state every time, or the previous save's content is gone.
 
+**The default scope (v3.76.0).** A save that names a scope uses it — `main` included. A save that
+names **no** scope but names a `harness` goes to that tool's own scope: the harness's normalised
+tool id (the same normalisation §6b compares tools with), made a safe path segment — `Claude Code`,
+`claude-code` and `Claude Code (desktop)` all resolve to `claude-code`, `Antigravity` to
+`antigravity`, and an unknown tool to its own name, slugified. With no harness (or one that yields
+no usable or only a reserved segment) the scope is `main`. The reason is this section's own rule:
+two tools on one machine that fall back to one shared default overwrite each other. A writer's reply
+should say which scope a defaulted save went to. Reads are unaffected — a read that names no scope
+still opens the newest work-stream.
+
 ### The document
 
 ```markdown

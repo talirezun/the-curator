@@ -730,7 +730,10 @@ section('§8 — The strip answers the other three questions, and only when true
     ...baseRead,
     scopes: [{ scope: 'main', machine: 'boxa', writtenAgeSeconds: 7200 },
       { scope: 'side-quest', machine: 'boxa', writtenAgeSeconds: 120 }],
-  }, baseDetail({ current: { writtenAgeSeconds: 7200 } }));
+  // v3.76.0 (F4): the age is taken from the STAMP at paint time, so the
+  // override carries the stamp its age implies (a 7200 s age over a 2-minute
+  // stamp is a payload no server sends).
+  }, baseDetail({ current: { writtenAgeSeconds: 7200, writtenAt: new Date(Date.now() - 7200_000).toISOString() } }));
   ok('a newer scope elsewhere in the project is named',
     /Newer state in this project:[\s\S]*side-quest/.test(elsewhere), elsewhere.slice(0, 1200));
   ok('CONTROL: when the scope on screen IS the newest, nothing is said',
