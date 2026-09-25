@@ -1309,6 +1309,8 @@ console.log('\n§14  A running ingest is reachable whatever domain is selected')
     // the same reason §13's does. Two sandboxes, one dependency: the second
     // crash after fixing the first is exactly why the guard below counts.
     'unackedSettledRecords', 'settledActivityRecords',
+    // v3.72.1 (F5): refreshActivity calls it to spot a run that settled.
+    'settledSinceLastPoll',
   ];
   const bBodies = {};
   let bFatal = false;
@@ -1558,10 +1560,13 @@ console.log('\n§14  A running ingest is reachable whatever domain is selected')
     // bug. So refreshActivity itself is driven here, with its collaborators
     // stubbed, and the assertions are about what ends up on `state`.
     {
-      async function drive(activity, initial) {
+      async function drive(activity, initial, prevRunning) {
         const src =
           'return (async () => {' +
           'let state = ' + JSON.stringify(initial) + ';' +
+          'let activityRunningIds = new Set(' + JSON.stringify(prevRunning || []) + ');' +
+          'let statsRefreshes = 0;' +
+          'const refreshDomainStats = async () => { statsRefreshes++; };' +
           // v3.64.0: adoptDestination reads the host seam. VIEW mode here —
           // this section is about the full-page host's own reconciliation,
           // and §14b2 drives the section-mode arm separately.
@@ -1578,9 +1583,10 @@ console.log('\n§14  A running ingest is reachable whatever domain is selected')
           bBodies.pickAdoptableDestination + bBodies.adoptDestination +
           bBodies.runningActivityDomains + bBodies.settledActivityRecords +
           bBodies.unackedSettledRecords + bBodies.activitySignature +
+          bBodies.settledSinceLastPoll +
           bBodies.refreshActivity +
           'await refreshActivity(1);' +
-          'return { state, renders };' +
+          'return { state, renders, statsRefreshes, running: [...activityRunningIds] };' +
           '})()';
         return new Function('window', 'ACTIVITY', src)(
           { localStorage: { getItem: () => null, setItem: () => {} } },
@@ -1622,6 +1628,23 @@ console.log('\n§14  A running ingest is reachable whatever domain is selected')
       const r4 = await drive([], fresh());
       ok(r4.state.domain === 'articles' && r4.state.destinationAdoptionPending === false,
         '§14g CONTROL — an empty activity list leaves the selection alone and still spends the adoption');
+
+      // ── v3.72.1 (truth audit F5): a run that SETTLES between two polls
+      // re-fetches the destination rows' page count and "x ago". Before, only
+      // this mount's own single-file done, a row click, "Show me" and batch
+      // exit did, so another tab's ingest left "96 pages · 3 days ago" stale.
+      const doneNow = [{ ...twoReal[0], status: 'done', pct: 100 }];
+      const f5a = await drive(doneNow, fresh(), ['p1']);
+      eq(f5a.statsRefreshes, 1, '★ §14h F5 a record seen RUNNING last poll and DONE now re-fetches /api/domains/stats');
+      const f5b = await drive([{ ...twoReal[0], status: 'error' }], fresh(), ['p1']);
+      eq(f5b.statsRefreshes, 1, '§14h F5 …and so does one that settled as an ERROR (a failed ingest can still have written pages)');
+      const f5c = await drive([], fresh(), ['p1']);
+      eq(f5c.statsRefreshes, 1, '§14h F5 …and one that settled AND aged out between two polls');
+      const f5d = await drive([twoReal[0]], fresh(), ['p1']);
+      eq(f5d.statsRefreshes, 0, '§14h F5 CONTROL — still running: no refetch');
+      eq(JSON.stringify(f5d.running), JSON.stringify(['p1']), '§14h F5 …and the running id is remembered for the next poll');
+      const f5e = await drive(doneNow, fresh(), []);
+      eq(f5e.statsRefreshes, 0, '§14h F5 CONTROL — a settled record never seen running (the mount loaded stats itself) is not a transition');
     }
 
     // ── 14f  CONTROLS: these scans can fail ────────────────────────────
@@ -2506,7 +2529,7 @@ console.log('\n§ 17  Confirm gate — one column measure, two columns');
       const renderQueueRejectedItem = () => '<li data-stub="rejected"></li>';
       const renderQueueFileListItem = () => '<li data-stub="file"></li>';
       const formatQueueBytes = (b) => b + ' B';
-      const formatUsdRange = (lo, hi) => '$' + lo + '-$' + hi;
+      const estimateCostText = (e) => '$' + e.usdLow + '-$' + e.usdHigh;
       const formatTokenRange = (lo, hi) => lo + '-' + hi;
       // v3.67.0 — the run-line kit's two calls, as MARKER stubs like every
       // other leaf here (§20 drives the real kit through the same body).
@@ -2787,14 +2810,17 @@ console.log('\n§ 18  The v3.64.0 host seam — additive by rule, not by intenti
   const logic = await import('../src/public/next/shared/ingest-queue-logic.js');
   const esc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const names = ['queueBudgetFacts', 'queueBudgetSpendHtml', 'queueCapSentence', 'renderQueueOutcomeBanner',
-    'renderQueuePausedBanner', 'renderQueuePanel', 'renderQueueDoneSummary', 'isQueueTerminal'];
+    'renderQueuePausedBanner', 'renderQueuePanel', 'renderQueueDoneSummary', 'isQueueTerminal',
+    // v3.72.1: the one spend reading (F1/F8), the page counts (F13), the
+    // ran-on line (F12) and the paused copy (F14), all executed here.
+    'queueSpendReading', 'queueSpendHtml', 'queueItemPageCounts', 'queueRanOnLine', 'queuePausedCopy'];
   const bodies = names.map((n) => extractFunction(js, n));
   ok(bodies.every(Boolean), '§21-pre every lifted function was found (' + names.join(', ') + ')');
   const api = new Function(
     'state', 'escapeHtml', 'renderDepthCell', 'renderStatus', 'formatUsdHonest', 'progressRingHtml',
     'computeQueueSpentLabel', 'computeQueueStatusCounts', 'formatHealthCounts',
     'pausedReasonCopy', 'computeQueueInFlight', 'renderQueueItemRow',
-    bodies.join('\n') + '\nreturn { queueBudgetFacts, renderQueuePanel, renderQueueDoneSummary };',
+    bodies.join('\n') + '\nreturn { queueBudgetFacts, renderQueuePanel, renderQueueDoneSummary, queueItemPageCounts, queuePausedCopy, renderQueueOutcomeBanner };',
   )(
     { queueStreamError: null, queueDropIgnored: false, queueCancelConfirmOpen: false, queueActionBusy: null },
     esc, renderDepthCell, renderStatus, formatUsdHonest, progressRingHtml,
@@ -2866,7 +2892,11 @@ console.log('\n§ 18  The v3.64.0 host seam — additive by rule, not by intenti
   // ── NO CAP → NO BAR; FIRST FILE PENDING → NO BAR ─────────────────────
   const nocap = api.renderQueuePanel(job({ budgetUsd: null }));
   ok(!/cur-depth/.test(nocap), '★ §21d no cap set → NO bar anywhere (no denominator)');
-  ok(/\$0\.0410 spent/.test(head(nocap)), '§21d …and the head line is the shipped spend label, unchanged');
+  // v3.72.1 (F8): the no-cap head line goes through the SAME honest reading
+  // as the summary — 2 dp by formatUsdHonest, qualifier kept — not the
+  // byte-pinned 4-dp label.
+  ok(/<span class="ing-num">\$0\.04<\/span> spent/.test(head(nocap)), '§21d …and the head line is the honest reading ($0.04, not $0.0410)');
+  ok(!/\$\d+\.\d{4}\b/.test(head(nocap)), '★ §21d F8 no 4-decimal figure on the no-cap head line');
   const pending = api.renderQueuePanel(job({ spentUsd: 0, items: [{ status: 'running' }] }));
   ok(!/cur-depth/.test(pending), '★ §21d before the first file charges anything → NO bar (v3.3.1: an empty bar would read as a measured zero)');
   ok(/pending first file/.test(head(pending)) && /\$0\.05<\/span> cap/.test(head(pending)),
@@ -3070,8 +3100,9 @@ console.log('\n§22  v3.67.0 — the run line on Ingest');
   }
 
   // ── The batch estimate: the line beside the readouts; Start disabled with no key
-  const b22b = ['renderConfirmGrid', 'renderQueueEstimate'].map((n) => extractFunction(js, n));
-  const batch = new Function('state', 'renderRunsOn', 'aiActionDisabledAttrs', `
+  const b22b = ['renderConfirmGrid', 'renderQueueEstimate', 'estimateCostText'].map((n) => extractFunction(js, n));
+  const { formatUsdHonest: fuh22 } = await import('../src/public/next/shared/format-usd.js');
+  const batch = new Function('state', 'renderRunsOn', 'aiActionDisabledAttrs', 'formatUsdHonest', `
     const escapeHtml = (s) => String(s == null ? '' : s);
     const icon = () => '<svg></svg>';
     const renderStatus = (o) => '<div data-stub="status">' + o.title + '</div>';
@@ -3081,7 +3112,6 @@ console.log('\n§22  v3.67.0 — the run line on Ingest');
     const renderQueueRejectedItem = () => '';
     const renderQueueFileListItem = () => '<li></li>';
     const formatQueueBytes = (b) => b + ' B';
-    const formatUsdRange = (lo, hi) => '$' + lo + '-$' + hi;
     const formatTokenRange = (lo, hi) => lo + '-' + hi;
     ${b22b.join('\n')}
     return renderQueueEstimate;
@@ -3090,7 +3120,7 @@ console.log('\n§22  v3.67.0 — the run line on Ingest');
   const EST = { ok: true, files: { count: 1, totalBytes: 10, rejected: [] }, provider: 'gemini', model: 'gemini-2.5-flash-lite',
     estimate: { usdLow: 0.01, usdHigh: 0.02, inputTokensLow: 1, inputTokensHigh: 2, outputTokensLow: 3, outputTokensHigh: 4 }, warnings: [] };
   {
-    const out = batch(qs, aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs)({ ...EST, runsOn: { ...PRICED, usdLow: 0.01, usdHigh: 0.02 } });
+    const out = batch(qs, aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs, fuh22)({ ...EST, runsOn: { ...PRICED, usdLow: 0.01, usdHigh: 0.02 } });
     const est = out.indexOf('class="ing-queue-estimate"');
     const readout = out.indexOf('data-stub="readout"');
     const line = out.indexOf('id="ing-queue-runline"');
@@ -3098,12 +3128,12 @@ console.log('\n§22  v3.67.0 — the run line on Ingest');
       '§22i the batch estimate carries the run line INSIDE the estimate card, right after its two readouts');
     ok(/data-stub="readout"/.test(out), '§22i …and the readout group itself is untouched (the cap and banner figures key on it)');
     ok(!/id="ing-queue-start-btn"[^>]*disabled/.test(out), '§22i a priced model leaves Start batch enabled');
-    const nk = batch(qs, aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs)({ ...EST, runsOn: NO_KEY });
+    const nk = batch(qs, aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs, fuh22)({ ...EST, runsOn: NO_KEY });
     ok(/id="ing-queue-start-btn" disabled aria-disabled="true" aria-describedby="ing-queue-runline"/.test(nk),
       '§22j NO KEY: Start batch is DISABLED (never hidden), described by the no-key line');
-    const sub = batch({ ...qs, queueSubmitting: true }, aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs)({ ...EST, runsOn: NO_KEY });
+    const sub = batch({ ...qs, queueSubmitting: true }, aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs, fuh22)({ ...EST, runsOn: NO_KEY });
     eq((sub.match(/id="ing-queue-start-btn"[^>]*/)[0].match(/ disabled/g) || []).length, 1, '§22j uploading AND no key → one `disabled`');
-    const old = batch(qs, aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs)(EST);
+    const old = batch(qs, aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs, fuh22)(EST);
     ok(!/class="ai-run"/.test(old) && !/id="ing-queue-start-btn"[^>]*disabled/.test(old),
       '§22k an estimate with no runsOn (an older server) renders exactly as before');
   }
@@ -3114,6 +3144,140 @@ console.log('\n§22  v3.67.0 — the run line on Ingest');
     '§22l the door is wired on #view-root (the shell\'s stable container) with the shell\'s two functions INJECTED');
   ok(/import \{[^}]*requestSettingsSection[^}]*\} from '\.\.\/app\.js'/.test(js),
     '§22l …requestSettingsSection comes from the shell, like navigate');
+}
+
+// ── §23 — v3.72.1: THE TRUTH AUDIT'S INGEST FINDINGS, EXECUTED ────────────
+// Every renderer below is lifted from the REAL source and run with the REAL
+// shared kit (readout group, honest formatter, progress ring, run line).
+{
+  console.log('\n§23 v3.72.1 — the truth audit (Ingest F2 F3 F9 F11 F12 F13 F14 F15)');
+  const code23 = (t) => (t || '').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  const { renderReadoutGroup, renderStatus } = await import('../src/public/next/shared/text.js');
+  const { formatUsdHonest } = await import('../src/public/next/shared/format-usd.js');
+  const logic = await import('../src/public/next/shared/ingest-queue-logic.js');
+  const ring = await import('../src/public/next/shared/progress-ring.js');
+  const aiRun = await import('../src/public/next/shared/ai-run.js');
+  const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const textOf = (h) => String(h).replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+
+  // ── The estimate card, through the real readout group ────────────────
+  const eb = ['renderConfirmGrid', 'renderQueueEstimate', 'estimateCostText'].map((n) => extractFunction(js, n));
+  ok(eb.every(Boolean), '§23-pre the estimate renderers were extracted');
+  const card = new Function('state', 'renderRunsOn', 'aiActionDisabledAttrs', 'formatUsdHonest', 'renderReadoutGroup',
+    'renderStatus', 'formatTokenRange', 'escapeHtml', `
+    const icon = () => '<svg></svg>';
+    const renderInfoMark = () => ({ btn: '', panel: '' });
+    const resolveEstimateFileList = (e, sel) => sel;
+    const renderQueueRejectedItem = () => '';
+    const renderQueueFileListItem = () => '<li></li>';
+    const formatQueueBytes = (b) => b + ' B';
+    ${eb.join('\n')}
+    return renderQueueEstimate;
+  `)({ selectedFiles: [{ name: 'a.md' }], queueBudgetInput: '', queueOverwriteInput: false, queueSubmitting: false },
+    aiRun.renderRunsOn, aiRun.aiActionDisabledAttrs, formatUsdHonest, renderReadoutGroup, renderStatus, logic.formatTokenRange, esc);
+  const readoutOf = (html, label) => {
+    const m = new RegExp(label + '[\\s\\S]*?tx-readout-value">([^<]*)<').exec(html);
+    return m ? m[1] : null;
+  };
+  const RO_BASE = { job: 'ingest', jobLabel: 'Ingest', needsKey: false, provider: 'openrouter', providerLabel: 'OpenRouter',
+    model: 'minimax/minimax-m3:free', modelLabel: 'MiniMax M3 (free)' };
+  const FREE_EST = { ok: true, provider: 'openrouter', model: 'minimax/minimax-m3:free', files: { count: 2, totalBytes: 10, rejected: [] },
+    estimate: { usdLow: null, usdHigh: null, inputTokensLow: 12000, inputTokensHigh: 12000, outputTokensLow: 3000, outputTokensHigh: 3000, calls: 5 },
+    warnings: ['"minimax/minimax-m3:free" is free to use — this batch will not cost anything, so no dollar estimate is shown. The token and AI-call counts below still apply.'],
+    runsOn: { ...RO_BASE, free: true, priceKnown: true, costNote: 'free', inputTokensLow: 12000, inputTokensHigh: 12000, outputTokensLow: 3000, outputTokensHigh: 3000 } };
+  const freeOut = card(FREE_EST);
+  eq(readoutOf(freeOut, 'Estimated cost'), 'free', '★ F2 a FREE model\'s cost readout says "free" — the run line and the warning beside it say so too');
+  ok(!/cost unknown/.test(freeOut), '★ F2 …and "cost unknown for this model" is gone from a card whose model is free');
+  eq(readoutOf(freeOut, 'Estimated tokens'), '12,000 in / 3,000 out · 5 AI calls',
+    '★ F3 the token AND AI-call counts the warning points to are actually shown below it');
+  ok(/Batch ingest[\s\S]*OpenRouter · MiniMax M3 \(free\)/.test(freeOut) && !/openrouter · minimax\/minimax-m3:free/.test(freeOut),
+    '★ F15 the confirm header spells the model the run line\'s way ("OpenRouter · MiniMax M3 (free)"), not the raw ids');
+
+  const UNPRICED_EST = { ...FREE_EST, model: 'zz-x', warnings: [],
+    runsOn: { ...RO_BASE, model: 'zz-x', modelLabel: 'zz-x', free: false, priceKnown: false, costNote: 'price-not-published' } };
+  eq(readoutOf(card(UNPRICED_EST), 'Estimated cost'), 'price not published', 'F2 an UNPRICED model reads "price not published" — the single-file words');
+
+  const PRICED_RO = { ...RO_BASE, model: 'g', modelLabel: 'G', free: false, priceKnown: true, costNote: 'priced', usdLow: 0.0142, usdHigh: 0.0167 };
+  const priced = card({ ...FREE_EST, estimate: { ...FREE_EST.estimate, usdLow: 0.0142, usdHigh: 0.0167 }, runsOn: PRICED_RO });
+  eq(readoutOf(priced, 'Estimated cost'), '≈$0.01 – $0.02', '★ F9 the cost readout is marked ≈ and uses the honest formatter (the run line\'s own rounding, not a 4-dp second format)');
+  const tiny = card({ ...FREE_EST, estimate: { ...FREE_EST.estimate, usdLow: 0.00001, usdHigh: 0.00002 }, runsOn: { ...PRICED_RO, usdLow: 0.00001, usdHigh: 0.00002 } });
+  ok(!/\$0\.0000/.test(tiny) && readoutOf(tiny, 'Estimated cost') === '≈&lt; $0.0001',
+    '★ F9 a sub-$0.00005 batch reads "≈< $0.0001" in the readout, never "$0.0000" (the run line\'s form)');
+  const legacy = card({ ...FREE_EST, runsOn: undefined, estimate: { ...FREE_EST.estimate, calls: undefined } });
+  eq(readoutOf(legacy, 'Estimated cost'), 'cost unknown for this model', 'F2 CONTROL — an older server with no runsOn and no dollars keeps the old honest words');
+  ok(/openrouter · minimax\/minimax-m3:free/.test(legacy), 'F15 CONTROL — …and its header falls back to the raw ids it has');
+
+  // ── F11: the progress sublabel names its clock ───────────────────────
+  const rp = extractFunction(js, 'renderProgress');
+  const prog = new Function('state', 'escapeHtml', 'progressRingHtml', 'INGEST_STAGES', 'mapIngestPctToStage', 'ringAria',
+    extractFunction(js, 'formatElapsedMs') + '\n' + rp + '\nreturn renderProgress;');
+  const st = { progress: null };
+  const renderP = prog(st, esc, ring.progressRingHtml, ring.INGEST_STAGES, ring.mapIngestPctToStage, ring.ringAria);
+  const t0 = Date.now();
+  st.progress = { pct: 60, label: 'Phase 2: writing content, batch 3 of 12…', waiting: false, phaseStartedAt: t0 - 3000, startedAt: t0 - 184000 };
+  const running = textOf(renderP());
+  ok(/this step 3s/.test(running), '★ F11 while running, the phase clock is LABELLED "this step" (it restarts at every batch message)');
+  st.progress = { pct: 100, labelHtml: 'Wrote 3 new pages', waiting: false, phaseStartedAt: t0 - 3000, startedAt: t0 - 184000, finishedAt: t0 };
+  const fin = renderP();
+  ok(/finished in 3m 4s/.test(textOf(fin)), '★ F11 at "finished" the figure is the WHOLE run (3m 4s), not the last step (3s)');
+  ok(!/id="ing-elapsed"/.test(fin), 'F11 …and it carries no #ing-elapsed id, so the 1 s ticker cannot overwrite the total with the phase clock');
+  const rsub = extractFunction(js, 'renderRemoteProgress');
+  ok(/this step <span class="ing-num" id="ing-remote-elapsed">/.test(code23(rsub)), 'F11 the remote (another tab) clock says "this step" too');
+
+  // ── F12 / F13: the batch summary and rows ────────────────────────────
+  const names = ['queueItemPageCounts', 'queueRanOnLine', 'queueSpendReading', 'queueSpendHtml', 'queueBudgetFacts',
+    'renderQueueDoneSummary', 'renderQueueItemRow', 'queuePausedCopy', 'renderQueuePausedBanner'];
+  const bodies23 = names.map((n) => extractFunction(js, n));
+  ok(bodies23.every(Boolean), '§23-pre the batch renderers were extracted');
+  const q = new Function('escapeHtml', 'formatUsdHonest', 'computeQueueStatusCounts', 'formatHealthCounts', 'pausedReasonCopy',
+    'statusPillMeta', 'sanitizeDisplayName', 'formatQueueBytes', 'renderStatus', 'progressRingHtml', 'INGEST_STAGES', `
+    const icon = () => '<svg></svg>';
+    ${bodies23.join('\n')}
+    return { renderQueueDoneSummary, renderQueueItemRow, renderQueuePausedBanner, queueItemPageCounts };
+  `)(esc, formatUsdHonest, logic.computeQueueStatusCounts, logic.formatHealthCounts, logic.pausedReasonCopy,
+    logic.statusPillMeta, logic.sanitizeDisplayName, logic.formatQueueBytes, renderStatus, ring.progressRingHtml, ring.INGEST_STAGES);
+
+  const reIngest = { status: 'done', idx: 0, name: 'a.md', result: { title: 'A', pagesWritten: 14, warningCount: 0, changeCounts: { created: 0, updated: 0, unchanged: 14 } } };
+  const mixed = { status: 'done', idx: 1, name: 'b.md', result: { title: 'B', pagesWritten: 5, warningCount: 0, changeCounts: { created: 2, updated: 1, unchanged: 2 } },
+    ranOn: { provider: 'openrouter', providerLabel: 'OpenRouter', model: 'upstage/solar-pro4', modelLabel: 'Solar Pro 4', fallbackFrom: null } };
+  const doneJob = { status: 'done', items: [reIngest, mixed], spentUsd: 0.01 };
+  const sum = textOf(q.renderQueueDoneSummary(doneJob));
+  ok(/3 pages written/.test(sum) && !/19 pages written/.test(sum),
+    '★ F13 "pages written" counts CHANGED pages (2 new + 1 updated = 3), not every path writePage touched (19)');
+  ok(/16 unchanged/.test(sum), 'F13 …and the untouched ones are stated separately ("16 unchanged")');
+  const row = textOf(q.renderQueueItemRow(reIngest, { jobTerminal: true }));
+  ok(/no changes — every page was already up to date/.test(row) && !/14 page/.test(row),
+    '★ F13 a re-ingest that changed nothing says so on its row — the single-file path\'s words — not "14 pages"');
+  ok(/2 new · 1 updated · 2 unchanged/.test(textOf(q.renderQueueItemRow(mixed, { jobTerminal: true }))), 'F13 a mixed row names each count');
+  const legacyRow = { status: 'done', idx: 2, name: 'c.md', result: { title: 'C', pagesWritten: 4, warningCount: 0 } };
+  ok(/— 4 pages/.test(textOf(q.renderQueueItemRow(legacyRow, { jobTerminal: true }))), 'F13 CONTROL — a manifest from before changeCounts keeps its raw count');
+
+  ok(/Ran on Solar Pro 4/.test(sum), '★ F12 the done summary says which model ACTUALLY ran, by its human label');
+  const fb = textOf(q.renderQueueDoneSummary({ ...doneJob, items: [{ ...mixed, ranOn: { ...mixed.ranOn, fallbackFrom: 'x/y' } },
+    { ...reIngest, ranOn: { provider: 'gemini', providerLabel: 'Gemini', model: 'g', modelLabel: 'Flash' } }] }));
+  ok(/Ran on Solar Pro 4, Flash \(your model was unavailable for some files\)/.test(fb),
+    'F12 two models are both named, and a fallback says so in the single-file path\'s words');
+  ok(!/Ran on/.test(textOf(q.renderQueueDoneSummary({ status: 'done', items: [reIngest], spentUsd: 0 }))),
+    'F12 CONTROL — an older manifest with no ranOn prints no model rather than a guessed one');
+
+  // ── F1 in the rendered summary ───────────────────────────────────────
+  const unk = textOf(q.renderQueueDoneSummary({ status: 'done', items: [mixed], spentUsd: 0, spendIsEstimated: true, spendUnknown: true }));
+  ok(/spend: price not published/.test(unk) && !/\$0\.00/.test(unk), '★ F1 the rendered done summary of an unpriced batch never says $0.00');
+
+  // ── F14: the paused title's count is the server's constant ───────────
+  const p5 = textOf(q.renderQueuePausedBanner({ pausedReason: 'consecutive_failures', consecutiveFailureLimit: 5 }));
+  ok(/Paused — 5 files failed in a row/.test(p5), '★ F14 the consecutive-failure title states the server\'s limit (5 here), not the pinned literal 3');
+  ok(/Paused — 3 files failed in a row/.test(textOf(q.renderQueuePausedBanner({ pausedReason: 'consecutive_failures' }))),
+    'F14 CONTROL — an older server with no limit on the wire keeps the pinned copy');
+
+  // ── F10: the pre-ingest run line is invalidated by the write ─────────
+  // A SOURCE guard, stated as one: runIngest's success branch is a 200-line
+  // streaming function with no seam to drive offline. The assertion is scoped
+  // to the success branch (between `state.file = null` and the result paint).
+  const ri = code23(extractFunction(js, 'runIngest'));
+  const succ = ri.slice(ri.indexOf('state.file = null;'), ri.indexOf('state.result = {'));
+  ok(succ.length > 0 && /clearSingleRunLine\(\);/.test(succ),
+    'F10 the success branch clears the cached pre-ingest estimate (its index + page list just changed) — source guard');
 }
 
 // ── Summary ─────────────────────────────────────────────────────────────

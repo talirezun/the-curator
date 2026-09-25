@@ -2491,6 +2491,15 @@ const MULTI_PHASE_INPUT_THRESHOLD = 15_000;
  *
  *   With no `opts.signal`, every branch behaves exactly as it did before.
  */
+/**
+ * `YYYY-MM-DD` for the LOCAL calendar day of `d` — the shape shared/age.js's
+ * dayDelta assumes when it ages a log heading. Exported for the suite.
+ */
+export function localDateStamp(d = new Date()) {
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+}
+
 export async function ingestFile(domain, filePath, originalName, isOverwrite = false, onProgress = null, opts = {}) {
   const progress = makeProgress(onProgress);
   const signal = (opts && opts.signal && typeof opts.signal.aborted === 'boolean') ? opts.signal : null;
@@ -2988,7 +2997,14 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   const warningSection = reportWarnings.length
     ? `\nWarnings:\n${reportWarnings.map(w => `  - ${w}`).join('\n')}`
     : '';
-  const logEntry = `## [${today}] ingest | ${result.title}\nPages created or updated:\n${pageList}${warningSection}\n`;
+  // The heading's date is the LOCAL calendar day the write finished (v3.72.1,
+  // truth audit F6), not `today` — which is the UTC date the prompts carry.
+  // The reader (shared/age.js dayDelta, the sidebar's "x ago" and freshness
+  // dot) reads this date as a local calendar day, so a UTC stamp made an
+  // ingest at 00:30 in UTC+2 read "yesterday", and an evening ingest west of
+  // Greenwich read "dated ahead". `today` itself is left alone: it is inside
+  // the batch prompt's byte-stable prefix.
+  const logEntry = `## [${localDateStamp()}] ingest | ${result.title}\nPages created or updated:\n${pageList}${warningSection}\n`;
   await appendLog(domain, logEntry);
 
   // v3.0.16: real token spend for this ingest. stderr, never stdout — this

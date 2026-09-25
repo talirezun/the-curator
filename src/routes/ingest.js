@@ -26,6 +26,8 @@ import {
   settleAbandoned,
   listActivity,
 } from '../brain/ingest-activity.js';
+// ONE per-file cap for single-file and batch ingest, and the words that state it.
+import { MAX_FILE_BYTES, MAX_FILE_MB } from '../brain/ingest-queue.js';
 
 const router = Router();
 
@@ -113,7 +115,7 @@ const upload = multer({
   // MulterError with code LIMIT_FIELD_ARRAY_INDEX, which the error middleware
   // below returns as a 400 like every other multer rejection.
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB
+    fileSize: MAX_FILE_BYTES,
     fieldNestingDepth: 1,
     fieldArrayIndexLimit: 0,
   },
@@ -414,7 +416,7 @@ router.use((err, req, res, next) => {
   // itself was invalid, not a server fault.
   if (isMulterError && err.code === 'LIMIT_FILE_SIZE') {
     return res.status(413).json({
-      error: 'That file is too large (max 50 MB). Split it into smaller documents and ingest each one.',
+      error: `That file is too large (max ${MAX_FILE_MB} MB). Split it into smaller documents and ingest each one.`,
     });
   }
 

@@ -630,40 +630,47 @@ ok(/toFixed\(4\)/.test(sharedLogicCode),
 // exact; and then, once it read one, it drew "at least" over an estimate
 // share that can read ABOVE real spend.
 {
+  // v3.72.1: the qualifier moved out of renderQueueDoneSummary into
+  // queueSpendReading — ONE reading for the done summary AND the panel's head
+  // line (truth audit F8: the head line printed the same spend as `$0.0123`,
+  // 4 dp and unqualified, above the summary's `approx. $0.01`). Both callers
+  // are asserted to use it; the precedence is EXECUTED over every flag
+  // combination, including the new `spendUnknown` (F1).
   const doneSummary = extractFunction(ingestViewCode, 'renderQueueDoneSummary', 'views/ingest.js');
-  ok(/job\.spendIsEstimated === true/.test(doneSummary),
-     'the batch done-summary reads spendIsEstimated');
-  ok(/job\.spendIsLowerBound === true/.test(doneSummary),
-     '...and spendIsLowerBound, which is the flag the "at least" claim actually belongs to');
-  ok(/'at least '/.test(doneSummary), 'it can qualify a figure as a lower bound');
-  ok(/'approx\. '/.test(doneSummary),
-     '...and separately as an approximation, because an estimate share is not a floor');
-  ok(/formatUsdHonest\(spentUsd\)/.test(doneSummary),
-     'and renders the figure through the honest formatter');
+  const panel = extractFunction(ingestViewCode, 'renderQueuePanel', 'views/ingest.js');
+  const readingSrc = extractFunction(ingestViewCode, 'queueSpendReading', 'views/ingest.js');
+  ok(/queueSpendReading\(job, true\)/.test(doneSummary), 'the batch done-summary reads the one spend reading');
+  ok(/queueSpendReading\(job, isTerminal\)/.test(panel), '...and so does the panel head line (F8: one fact, one format)');
+  ok(!/computeQueueSpentLabel\(/.test(ingestViewCode), 'the byte-pinned 4-dp computeQueueSpentLabel is no longer CALLED from /next');
+  ok(/job\.spendIsEstimated === true/.test(readingSrc) && /job\.spendIsLowerBound === true/.test(readingSrc),
+     'the reading consumes spendIsEstimated AND spendIsLowerBound');
+  ok(/formatUsdHonest\(spent\)/.test(readingSrc), 'and renders the figure through the honest formatter');
 
-  // ── THE PRECEDENCE, EXECUTED ─────────────────────────────────────────
-  // A source guard proves both strings are present; it cannot prove which
-  // one a given job gets. Extract the real expression and run it over all
-  // four flag combinations.
-  const qualifierSrc = doneSummary.match(/const spentQualifier =[\s\S]*?;\n/);
-  ok(!!qualifierSrc, 'the qualifier expression is extractable from the real source');
-  if (qualifierSrc) {
-    const pick = new Function('job', 'spentFigure',
-      qualifierSrc[0] + 'return spentQualifier;');
-    eq(pick({ spendIsEstimated: false, spendIsLowerBound: false }, '$0.0500'), '',
-       'measured + complete -> no qualifier at all (the figure is exact)');
-    eq(pick({ spendIsEstimated: false, spendIsLowerBound: true }, '$0.0500'), 'at least ',
-       'MEASURED PARTIAL -> "at least" (every counted dollar was billed; only the in-flight call is missing)');
-    eq(pick({ spendIsEstimated: true, spendIsLowerBound: false }, '$0.0500'), 'approx. ',
-       'ESTIMATE SHARE -> "approx.", NOT "at least" — usdHigh is not a bound and can read ~50% above real spend');
-    eq(pick({ spendIsEstimated: true, spendIsLowerBound: true }, '$0.0500'), 'approx. ',
-       'BOTH (an unpriced partial) -> "approx." wins; asserting a floor over a possibly-inflated number is the reading we must never produce');
-    eq(pick({ spendIsEstimated: true, spendIsLowerBound: true }, null), '',
-       'no figure -> no qualifier (a bare "approx." with an em-dash would be nonsense)');
-    // Defensive: a job object from an older manifest has neither field.
-    eq(pick({}, '$0.0500'), '', 'a job predating both flags renders unqualified, not crashed');
-    eq(pick(null, '$0.0500'), '', 'a null job renders unqualified, not crashed');
-  }
+  const read = new Function('formatUsdHonest', readingSrc + '\nreturn queueSpendReading;')(formatUsdHonest);
+  const q = (job) => { const r = read(Object.assign({ spentUsd: 0.05, items: [{ status: 'done' }] }, job), true); return r.qualifier; };
+  eq(q({ spendIsEstimated: false, spendIsLowerBound: false }), '',
+     'measured + complete -> no qualifier at all (the figure is exact)');
+  eq(q({ spendIsEstimated: false, spendIsLowerBound: true }), 'at least ',
+     'MEASURED PARTIAL -> "at least" (every counted dollar was billed; only the in-flight call is missing)');
+  eq(q({ spendIsEstimated: true, spendIsLowerBound: false }), 'approx. ',
+     'ESTIMATE SHARE -> "approx.", NOT "at least" — usdHigh is not a bound and can read ~50% above real spend');
+  eq(q({ spendIsEstimated: true, spendIsLowerBound: true }), 'approx. ',
+     'BOTH (an estimate-share partial) -> "approx." wins; asserting a floor over a possibly-inflated number is the reading we must never produce');
+  eq(q({}), '', 'a job predating the flags renders unqualified, not crashed');
+
+  // ── F1: A BILLED BATCH ON AN UNPRICED MODEL IS NEVER "$0.00" ─────────
+  const unk = read({ spentUsd: 0, spendIsEstimated: true, spendUnknown: true, items: [{ status: 'done' }] }, true);
+  eq(unk.text, 'spend: price not published', '★ F1 an unpriced batch with nothing measured reads "price not published", never $0.00');
+  ok(unk.figure === undefined, '★ F1 …and carries NO dollar figure at all');
+  const unkRun = read({ spentUsd: 0, spendIsEstimated: true, spendUnknown: true, items: [{ status: 'done' }, { status: 'running' }] }, false);
+  eq(unkRun.text, 'spend: price not published', '★ F1 …and while it runs too — not "pending first file" after files have billed');
+  const mixed = read({ spentUsd: 0.02, spendIsEstimated: true, spendUnknown: true, items: [{ status: 'done' }] }, true);
+  ok(mixed.qualifier === 'at least ' && mixed.figure === '$0.02' && /no published price/.test(mixed.note),
+     'F1 a measured part plus an unpriced part -> "at least $0.02" with the unpriced part NAMED');
+  const pend = read({ spentUsd: 0, items: [{ status: 'running' }] }, false);
+  eq(pend.text, 'spend so far: pending first file', 'CONTROL: before any file settles, a running zero is still "pending first file" (v3.3.1)');
+  const freeZero = read({ spentUsd: 0, items: [{ status: 'done' }, { status: 'running' }] }, false);
+  eq(freeZero.figure, '$0.00', 'CONTROL: a MEASURED zero (a free model, a file settled) is shown as $0.00 — known, not unknown');
 }
 
 // ── THE WIRE ALLOW-LIST: A FLAG THE UI NEVER RECEIVES IS DEAD DATA ───────

@@ -540,6 +540,46 @@ console.log('\n§12  Source guards on the route wiring');
     'and neither does the activity store');
 }
 
+// ── §F4  v3.72.1 — "Finished while you were away" keeps the cost ─────────
+// Truth audit F4: the record kept `tokenUsage` only, so the restored panel had
+// no cost, the raw provider/model id, and an "in" figure without cached
+// tokens — for the ingest the live panel had just described with all three.
+// Driven with the ROUTE'S OWN done event (ingestDoneEvent), so the record is
+// fed exactly what production feeds it.
+console.log('\n§F4  v3.72.1 — the restored record carries the live run line\'s `spent`');
+{
+  const { ingestDoneEvent } = await import('../src/routes/ingest.js');
+  const usage = { provider: 'gemini', model: 'gemini-2.5-flash-lite', calls: 5, inputTokens: 10000, outputTokens: 678, cachedReadTokens: 2000, cacheWriteTokens: 345 };
+  const ev = ingestDoneEvent({ title: 'T', pagesWritten: ['entities/a.md'], changes: [], warnings: [], truncated: false, tokenUsage: usage }, 'false');
+  ok(ev.spent && typeof ev.spent === 'object', 'CONTROL: the route\'s live done event carries `spent`');
+  __resetActivityForTests();
+  const id = startActivity('articles', 'away.pdf');
+  observeActivity(id, ev);
+  const rec = listActivity().activity[0];
+  const sp = rec && rec.result && rec.result.spent;
+  ok(!!sp, '★ F4 the settled record KEEPS `spent` (it was dropped, so the restored panel had no cost)');
+  if (sp) {
+    eq(sp.usd, ev.spent.usd, 'F4 …the same dollar figure the live panel showed');
+    eq(sp.modelLabel, ev.spent.modelLabel, 'F4 …the same human model label, not the raw id');
+    eq(sp.cachedReadTokens, 2000, 'F4 …and the cached tokens the live "in" figure counts');
+    ok(!('stagedPath' in sp) && Object.keys(sp).every((k) => ['provider', 'providerLabel', 'model', 'modelLabel', 'inputTokens', 'outputTokens',
+      'cachedReadTokens', 'cacheWriteTokens', 'calls', 'usd', 'estimated', 'fallbackFrom'].includes(k)),
+      'F4 the wire copy is an explicit allow-list (no field leaks by default)');
+  }
+  // An unpriced model: usd stays NULL on the wire, never a zero.
+  __resetActivityForTests();
+  const id2 = startActivity('articles', 'unpriced.pdf');
+  observeActivity(id2, { ...ev, spent: { ...ev.spent, usd: null } });
+  const sp2 = listActivity().activity[0].result.spent;
+  eq(sp2.usd, null, '★ F4 an unpriced run keeps usd NULL ("price not published"), never 0');
+  // An older route (no `spent`) degrades to null, not a crash.
+  __resetActivityForTests();
+  const id3 = startActivity('articles', 'old.pdf');
+  const { spent: _drop, ...noSpent } = ev;
+  observeActivity(id3, noSpent);
+  eq(listActivity().activity[0].result.spent, null, 'F4 a done event with no `spent` stores null');
+}
+
 console.log(`\n  ────────────────────────────────────────`);
 console.log(`  Passed: ${passed}   Failed: ${failed}`);
 console.log(`  ────────────────────────────────────────\n`);

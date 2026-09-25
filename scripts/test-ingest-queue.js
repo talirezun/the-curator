@@ -1778,6 +1778,165 @@ async function testRunsOnOnTheEstimateRoute() {
     'no key: runsOn is exactly {job, jobLabel, needsKey:true}');
 }
 
+/**
+ * v3.72.1 — the "true numbers" truth audit, Ingest findings F1, F2, F3, F7,
+ * F12, F13 (server half), F14, F15. Every assertion is on what reaches the
+ * wire or the estimate body, driven through the real functions.
+ */
+async function testTruthAuditV3721() {
+  // ── F1: a billed batch on an unpriced model is FLAGGED unknown, never a
+  //        silent $0 the view prints as "approx. $0.00 spent".
+  {
+    const { userDataDir } = await freshEnv({ withProviderKey: true, model: 'zz-v3721-unpriced-model' });
+    try {
+      const domain = await makeDomain();
+      const files = [await makeUpload('u0.md', 30_000, userDataDir), await makeUpload('u1.md', 20_000, userDataDir)];
+      const usage = { calls: 3, inputTokens: 9000, outputTokens: 800, provider: 'gemini', model: 'zz-v3721-unpriced-model' };
+      const fake = makeFakeIngestFile(domain, { 'u0.md': 'ok', 'u1.md': 'ok' }, { tokenUsage: usage });
+      const job = await createJob({ domain, uploadedFiles: files });
+      await startOrResumeJob(job.jobId, { ingestFile: fake });
+      const final = await waitTerminal(job.jobId);
+      const w = toWire(final);
+      assertEq(w.status, 'done', 'F1 sanity: the unpriced batch ran to done');
+      assertEq(w.spentUsd, 0, 'F1 sanity: nothing could be priced, so the running total is 0');
+      assertEq(w.spendUnknown, true, '★ F1 …and the wire SAYS the 0 is unknown (spendUnknown), so no reader can print it as free');
+      // F12: the model that actually billed, by the run line's names.
+      const r0 = w.items.find(i => i.status === 'done');
+      assert(r0 && r0.ranOn && r0.ranOn.model === 'zz-v3721-unpriced-model',
+        '★ F12 each finished item carries ranOn — the model that ACTUALLY billed, not the estimate-time one');
+      assert(r0 && r0.ranOn && typeof r0.ranOn.modelLabel === 'string' && r0.ranOn.providerLabel === 'Gemini',
+        'F12 …with the run line\'s own labels (providerLabel "Gemini", not the raw "gemini")');
+      // F14: the breaker's threshold is on the wire, from the constant.
+      assertEq(w.consecutiveFailureLimit, CONSECUTIVE_FAILURE_LIMIT, '★ F14 consecutiveFailureLimit on the wire IS the constant');
+    } finally { delete process.env.LLM_MODEL; }
+  }
+  // CONTROL: a PRICED batch never raises the flag.
+  {
+    const { userDataDir } = await freshEnv({ withProviderKey: true });
+    const domain = await makeDomain();
+    const files = [await makeUpload('p0.md', 30_000, userDataDir)];
+    const info = (await import('../src/brain/llm.js')).getProviderInfo();
+    const usage = { calls: 2, inputTokens: 9000, outputTokens: 800, provider: info.provider, model: info.model };
+    const fake = makeFakeIngestFile(domain, { 'p0.md': 'ok' }, { tokenUsage: usage });
+    const job = await createJob({ domain, uploadedFiles: files });
+    await startOrResumeJob(job.jobId, { ingestFile: fake });
+    const w = toWire(await waitTerminal(job.jobId));
+    assert(w.spentUsd > 0 && w.spendUnknown === false, 'F1 CONTROL — a priced batch has a real figure and spendUnknown false');
+    // F13 (server half): the change counts the view now uses are on the wire.
+    const it = w.items[0];
+    assert(it.result && it.result.changeCounts && it.result.changeCounts.created === 1 && it.result.changeCounts.updated === 1,
+      'F13 the per-item change counts (created/updated/unchanged) reach the wire for the view to count WRITTEN pages from');
+  }
+  // chargeForItem directly: the flag is set ONLY on the no-number branch.
+  {
+    const job = { items: [{ status: 'done' }], estimate: { usdHigh: null }, spendIsEstimated: false };
+    const add = __testing.chargeForItem(job, { tokenUsage: null });
+    assert(add === 0 && job.spendUnknown === true, '★ F1 chargeForItem: no price AND no estimate number -> 0 AND spendUnknown');
+    const job2 = { items: [{ status: 'done' }], estimate: { usdHigh: 0.2 }, spendIsEstimated: false };
+    const add2 = __testing.chargeForItem(job2, { tokenUsage: null });
+    assert(add2 === 0.2 && job2.spendUnknown !== true && job2.spendIsEstimated === true,
+      'F1 CONTROL — with an estimate number the share is charged, flagged ESTIMATED (approx.), not unknown');
+  }
+
+  // ── F2/F3: tokens and calls survive a FREE or UNPRICED model.
+  const batch = [{ name: 'note.md', size: 4000 }, { name: 'big.pdf', size: 60000 }];
+  for (const [label, model] of [['FREE', 'minimax/minimax-m3:free'], ['UNPRICED', 'zz-v3721-unpriced-model']]) {
+    await freshEnv({ withProviderKey: true, model });
+    try {
+      const domain = await makeDomain();
+      const est = await estimateIngestQueueCost(domain, batch);
+      const E = est.estimate;
+      assert(E.usdLow === null && E.usdHigh === null, `F2 ${label}: the DOLLAR fields stay null (the chargeForItem contract)`);
+      assert(Number.isFinite(E.inputTokensLow) && E.inputTokensLow > 0 && Number.isFinite(E.outputTokensHigh) && E.outputTokensHigh > 0,
+        `★ F2 ${label}: the token sums are PRESENT — they never depended on the price (got ${E.inputTokensLow} in / ${E.outputTokensHigh} out)`);
+      assert(Number.isInteger(E.calls) && E.calls >= 2,
+        `★ F3 ${label}: the planned AI-call count is on the estimate (got ${E.calls}) — the warning's "counts below" now exist`);
+      assert(est.warnings.some(w => /token and AI-call counts below/.test(w)),
+        `F3 ${label}: the warning names what is actually shown below it`);
+      if (label === 'FREE') {
+        assert(/free to use/.test(E.basis) && !/No published price is on file/.test(E.basis),
+          '★ F15 FREE: the basis says the model is free, not that its price is missing');
+      }
+    } finally { delete process.env.LLM_MODEL; }
+  }
+
+  // ── F15: the basis spells the provider the run line's way.
+  {
+    await freshEnv({ withProviderKey: true });
+    const domain = await makeDomain();
+    const r = await driveEstimateRoute(domain, batch);
+    const basis = r.body.estimate.basis;
+    const R = r.body.runsOn || {};
+    assert(basis.includes(`Estimated for ${R.providerLabel} "${R.modelLabel}"`),
+      `★ F15 the basis names "${R.providerLabel} \"${R.modelLabel}\"" — the run line's own spelling (got: ${basis.slice(0, 80)})`);
+    assert(!/Estimated for (Claude|AI provider) /.test(basis), 'F15 …never the old private map\'s "Claude" / "AI provider"');
+
+    // ── F7: the run line's wait is for the WHOLE run, not one call.
+    const { ingestRunsOn } = await import('../src/routes/ingest-queue.js');
+    const fakeResult = { files: { count: 2 }, estimate: { ...r.body.estimate } };
+    const ro = ingestRunsOn(fakeResult);
+    if (ro.perCallLatencyMs !== undefined || ro.medianLatencyMs !== undefined) {
+      assertEq(ro.medianLatencyMs, ro.perCallLatencyMs * fakeResult.estimate.calls,
+        '★ F7 the shown wait = the measured per-call median × the estimate\'s planned calls');
+    } else {
+      assert(true, 'F7 (this model has no measured latency, so there is no wait figure to scale)');
+    }
+  }
+  // F7 driven directly with a measured-latency stand-in, so it cannot pass vacuously.
+  {
+    const aiRun = await import('../src/brain/ai-run.js');
+    const route = await import('../src/routes/ingest-queue.js');
+    // Find an offerable model with a measured median; drive the route helper under it.
+    const llm = await import('../src/brain/llm.js');
+    let measured = null;
+    for (const p of ['openrouter', 'gemini', 'anthropic']) {
+      try { for (const e of llm.listOfferableModels(p)) if (e && e.medianLatencyMs > 0) { measured = { p, e }; break; } } catch { /* none */ }
+      if (measured) break;
+    }
+    assert(!!measured, 'F7 ANTI-VACUITY — the catalogue has at least one model with a measured per-call latency');
+    if (measured) {
+      const { userDataDir } = await freshEnv({ withProviderKey: false });
+      const key = measured.p === 'openrouter' ? 'openrouterApiKey' : measured.p === 'anthropic' ? 'anthropicApiKey' : 'geminiApiKey';
+      await writeFile(path.join(userDataDir, '.curator-config.json'), JSON.stringify({ [key]: 'offline-placeholder', activeProvider: measured.p }));
+      process.env.LLM_MODEL = measured.e.id;
+      try {
+        const one = aiRun.describeRun({ job: 'ingest' });
+        if (one.medianLatencyMs === measured.e.medianLatencyMs) {
+          const ro = route.ingestRunsOn({ files: { count: 3 }, estimate: { inputTokensLow: 10, inputTokensHigh: 10, outputTokensLow: 5, outputTokensHigh: 5, calls: 7 } });
+          assertEq(ro.medianLatencyMs, measured.e.medianLatencyMs * 7, '★ F7 7 planned calls -> 7 × the per-call median (was shown as the whole wait)');
+          assertEq(ro.perCallLatencyMs, measured.e.medianLatencyMs, 'F7 …and the per-call figure is kept beside it, named');
+          const noCalls = route.ingestRunsOn({ files: { count: 3 }, estimate: { inputTokensLow: 10, inputTokensHigh: 10 } });
+          assert(!('medianLatencyMs' in noCalls), 'F7 with no call count the per-call figure is DROPPED, never shown as the run\'s length');
+        } else {
+          assert(true, `F7 (describeRun resolved a different model than ${measured.e.id}; direct scaling not driven)`);
+        }
+      } finally { delete process.env.LLM_MODEL; }
+    }
+  }
+
+  // ── F14: the size messages are built from the one constant.
+  {
+    const q = await import('../src/brain/ingest-queue.js');
+    assertEq(q.MAX_FILE_BYTES, q.MAX_FILE_MB * 1024 * 1024, 'F14 MAX_FILE_MB is derived from MAX_FILE_BYTES');
+    await freshEnv({ withProviderKey: true });
+    const domain = await makeDomain();
+    const est = await estimateIngestQueueCost(domain, [{ name: 'huge.md', size: q.MAX_FILE_BYTES + 1 }]);
+    assert(est.files.rejected.length === 1 && est.files.rejected[0].reason.includes(`max ${q.MAX_FILE_MB} MB`),
+      '★ F14 the too-large reason states the constant\'s own figure');
+    const routesSrc = (await readFile(new URL('../src/routes/ingest.js', import.meta.url), 'utf8')) +
+      (await readFile(new URL('../src/routes/ingest-queue.js', import.meta.url), 'utf8'));
+    const code = routesSrc.split('\n').filter(l => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+    assert(!/50 \* 1024 \* 1024/.test(code) && !/max 50 MB/.test(code),
+      'F14 neither route re-declares the cap or hard-codes "max 50 MB" (dumb cross-check of the class)');
+    // The byte-pinned paused copy's literal must equal the constant, so a
+    // change to the constant is caught even in the pinned shipping copy.
+    const logic = await readFile(new URL('../src/public/next/shared/ingest-queue-logic.js', import.meta.url), 'utf8');
+    const m = /Paused — (\d+) files failed in a row/.exec(logic);
+    assert(m && Number(m[1]) === CONSECUTIVE_FAILURE_LIMIT,
+      `F14 the byte-pinned fallback title's count (${m && m[1]}) equals CONSECUTIVE_FAILURE_LIMIT (${CONSECUTIVE_FAILURE_LIMIT})`);
+  }
+}
+
 async function testSpentOnTheSingleIngestDoneEvent() {
   await freshEnv({ withProviderKey: true });
   const { ingestDoneEvent } = await import('../src/routes/ingest.js');
@@ -2329,6 +2488,7 @@ async function testAccountingUnderRandomSequences() {
   await section('14b. estimate input validation and an honest basis (L1/L3)', testEstimateValidation);
   await section('14c. v3.67.0 — runsOn on the estimate route (additive only)', testRunsOnOnTheEstimateRoute);
   await section('14d. v3.67.0 — spent on the single-file ingest done event (additive only)', testSpentOnTheSingleIngestDoneEvent);
+  await section('14e. v3.72.1 — the truth audit\'s Ingest findings (F1 F2 F3 F7 F12 F13 F14 F15)', testTruthAuditV3721);
   await section('15. Two files sharing a name do not collapse into one page (M5)', testInBatchDuplicateNames);
   await section('16. Staged files and job directories are collected (M6)', testGarbageCollection);
   await section('17. createJob is serialised (H2)', testConcurrentCreates);

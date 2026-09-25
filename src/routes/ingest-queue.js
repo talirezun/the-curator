@@ -27,6 +27,8 @@ import {
   deleteJobEverything,
   subscribeToJob,
   scrubPaths,
+  MAX_FILE_BYTES,
+  MAX_FILE_MB,
 } from '../brain/ingest-queue.js';
 import { listDomains } from '../brain/files.js';
 import { describeRun } from '../brain/ai-run.js';
@@ -45,10 +47,17 @@ const router = Router();
  * the same screen as the batch panel's. Two numbers for one batch is the
  * defect the one shape exists to end.
  *
- * What the estimate does not carry stays ABSENT: the batch estimate leaves
- * its token sums null when the model is unpriced or free, so the run line
- * then names the model and its price state with no token figures, and a
- * batch with no accepted file carries no figures at all.
+ * What the estimate does not carry stays ABSENT: a batch with no accepted
+ * file carries no figures at all. (Since v3.72.1 the token sums are present
+ * for free and unpriced models too — they never depended on the price.)
+ *
+ * THE WAIT IS FOR THE WHOLE RUN (v3.72.1, truth audit F7). describeRun's
+ * `medianLatencyMs` is measured for ONE ingest outline call, and the kit
+ * prints it as "about 48 s" — beside a 20-file batch, or one long document
+ * the estimator itself plans at 21 calls. The calls are sequential, so the
+ * honest whole-run figure is that per-call median times the estimate's own
+ * planned call count (`estimate.calls`). With no call count the per-call
+ * figure is DROPPED rather than shown as if it were the run's length.
  */
 export function ingestRunsOn(result) {
   const E = (result && result.estimate && typeof result.estimate === 'object') ? result.estimate : {};
@@ -66,10 +75,20 @@ export function ingestRunsOn(result) {
     runsOn.usdLow = E.usdLow;
     runsOn.usdHigh = E.usdHigh;
   }
+  if (runsOn.medianLatencyMs !== undefined) {
+    const calls = num(E.calls);
+    if (calls !== undefined && calls >= 1) {
+      runsOn.perCallLatencyMs = runsOn.medianLatencyMs;
+      runsOn.medianLatencyMs = runsOn.medianLatencyMs * calls;
+      runsOn.plannedCalls = calls;
+    } else {
+      delete runsOn.medianLatencyMs;
+    }
+  }
   return runsOn;
 }
 
-const MAX_FILE_BYTES = 50 * 1024 * 1024;         // matches routes/ingest.js's single-file cap
+// MAX_FILE_BYTES is imported: ONE cap for single-file and batch (v3.72.1).
 const MAX_FILES_PER_BATCH = 100;
 // multer enforces `fileSize` PER FILE only — there is no built-in cap on the
 // total size of a multipart request, so 100 files x 50MB is a 2GB-plus,
@@ -350,7 +369,7 @@ router.use((err, req, res, next) => {
 
   if (isMulterError && err.code === 'LIMIT_FILE_SIZE') {
     return res.status(413).json({
-      error: 'One of those files is too large (max 50 MB each). Split it into smaller documents and try again.',
+      error: `One of those files is too large (max ${MAX_FILE_MB} MB each). Split it into smaller documents and try again.`,
     });
   }
   if (isMulterError && err.code === 'LIMIT_FILE_COUNT') {

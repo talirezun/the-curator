@@ -251,7 +251,15 @@ const MAX_STAGED_BASENAME = 180;
 
 /** Mirrors routes/ingest.js's multer fileFilter — kept in sync by hand. */
 const ACCEPTED_EXTENSIONS = new Set(['.txt', '.md', '.pdf']);
-const MAX_FILE_BYTES = 50 * 1024 * 1024;
+/**
+ * THE one per-file size cap for ingest, single-file and batch (v3.72.1, truth
+ * audit F14): routes/ingest.js and routes/ingest-queue.js import it for their
+ * multer limits AND build their "max N MB" messages from MAX_FILE_MB, so the
+ * limit and the sentence that states it cannot drift apart. It used to be
+ * three separate `50 * 1024 * 1024` constants and three literal "50 MB"s.
+ */
+export const MAX_FILE_BYTES = 50 * 1024 * 1024;
+export const MAX_FILE_MB = MAX_FILE_BYTES / 1024 / 1024;
 
 /**
  * `/estimate` takes metadata only, so nothing upstream bounds how many
@@ -532,6 +540,15 @@ function wireItem(item) {
       cachedReadTokens: wireNum(u.cachedReadTokens),
       cacheWriteTokens: wireNum(u.cacheWriteTokens),
     } : null,
+    // v3.72.1 (F12): see describeRanOn. Null on an item that never finished,
+    // and on a manifest written before the field existed.
+    ranOn: item.ranOn && typeof item.ranOn === 'object' ? {
+      provider: wireStr(item.ranOn.provider, 64),
+      providerLabel: wireStr(item.ranOn.providerLabel, 64),
+      model: wireStr(item.ranOn.model, 128),
+      modelLabel: wireStr(item.ranOn.modelLabel, 128),
+      fallbackFrom: wireStr(item.ranOn.fallbackFrom, 128),
+    } : null,
   };
 }
 
@@ -577,12 +594,20 @@ export function toWire(job) {
     spentUsd: wireNum(job.spentUsd),
     spendIsEstimated: wireBool(job.spendIsEstimated),
     spendIsLowerBound: wireBool(job.spendIsLowerBound),
+    // v3.72.1: some billed item had no price at all, so `spentUsd` is missing
+    // that item's cost — see chargeForItem. `=== true` so an older manifest
+    // (no field) reads false rather than null.
+    spendUnknown: wireBool(job.spendUnknown),
+    // v3.72.1 (F14): the breaker's real threshold, so the paused banner's
+    // title is built from the constant instead of a literal "3".
+    consecutiveFailureLimit: CONSECUTIVE_FAILURE_LIMIT,
     order: wireStr(job.order, 64),
     estimate: est ? {
       inputTokensLow: wireNum(est.inputTokensLow),
       inputTokensHigh: wireNum(est.inputTokensHigh),
       outputTokensLow: wireNum(est.outputTokensLow),
       outputTokensHigh: wireNum(est.outputTokensHigh),
+      calls: wireNum(est.calls),
       usdLow: wireNum(est.usdLow),
       usdHigh: wireNum(est.usdHigh),
       basis: wireStr(est.basis, 4000),
@@ -904,12 +929,22 @@ function estimateOneFile({ f, promptFiles, index, today, price }) {
  * replace it with a constant you derived from a sample, this comment is
  * addressed to you.
  */
-function buildBasisString({ domain, provider, model, price, stats, indexBytes, sizeMultiplier }) {
-  const providerLabel = provider === 'gemini' ? 'Gemini' : provider === 'anthropic' ? 'Claude' : 'AI provider';
+function buildBasisString({ domain, provider, model, price, stats, indexBytes, sizeMultiplier, labels, free }) {
+  // v3.72.1 (truth audit F15): the SAME spelling as the run line on the same
+  // card — describeRun's providerLabel/modelLabel, handed in by the caller —
+  // never this function's own map, which called Anthropic "Claude" and every
+  // OpenRouter model "AI provider". The raw id stays the fallback when no
+  // label resolved (no key, or a model the catalogue does not list).
+  const providerLabel = (labels && labels.providerLabel) || provider || 'AI provider';
+  const modelName = (labels && labels.modelLabel) || model;
   const domainSize = stats
     ? `${stats.pageCounts?.entities ?? '?'} entities, ${stats.pageCounts?.concepts ?? '?'} concepts, ${(indexBytes / 1024).toFixed(0)} KB index`
     : 'a wiki whose current size could not be read';
-  const priceNote = price ? '' : ' No published price is on file for this model, so a dollar figure cannot be shown — see MODEL_PRICES_USD_PER_MTOK in src/brain/llm.js.';
+  // A FREE model has no price by design, not by omission — saying "no
+  // published price is on file" for it contradicted the run line's "free".
+  const priceNote = price ? ''
+    : free ? ' This model is free to use, so there is no dollar figure to show.'
+    : ' No published price is on file for this model, so a dollar figure cannot be shown — see MODEL_PRICES_USD_PER_MTOK in src/brain/llm.js.';
 
   // Quoted only when it was actually computed for these files AND the wiki is
   // big enough for the answer to mean anything. A near-empty domain yields
@@ -924,7 +959,7 @@ function buildBasisString({ domain, provider, model, price, stats, indexBytes, s
     : '';
 
   return (
-    `Estimated for ${providerLabel} "${model || '(no model configured)'}" against the "${domain}" domain, ` +
+    `Estimated for ${providerLabel} "${modelName || '(no model configured)'}" against the "${domain}" domain, ` +
     `currently ${domainSize}. Cost depends heavily on how large this wiki ALREADY is, not just on the files ` +
     `being ingested: every AI call re-sends the existing page list so the model can link to (not duplicate) ` +
     `what is already there.${overheadNote} This estimate is not a flat rate — it is derived from this domain's ` +
@@ -1004,7 +1039,7 @@ export async function estimateIngestQueueCost(domain, files) {
       continue;
     }
     if (size > MAX_FILE_BYTES) {
-      rejected.push({ name, reason: `File is too large (${(size / 1024 / 1024).toFixed(1)} MB, max 50 MB).` });
+      rejected.push({ name, reason: `File is too large (${(size / 1024 / 1024).toFixed(1)} MB, max ${MAX_FILE_MB} MB).` });
       continue;
     }
     accepted.push({ name, size });
@@ -1018,6 +1053,17 @@ export async function estimateIngestQueueCost(domain, files) {
     model = info.model;
     price = getModelPrice(model);
   } catch { /* no key configured — degrades to nulls below */ }
+
+  // The run line's own labels for this model (F15). A DYNAMIC import, on
+  // purpose: ai-run.js → compile-estimate.js → this module is a static cycle,
+  // and resolving it at call time keeps module evaluation order untouched.
+  // Used only when describeRun resolved the SAME model this estimate prices.
+  let labels = null;
+  try {
+    const { describeRun } = await import('./ai-run.js');
+    const r = describeRun({ job: 'ingest' });
+    if (r && r.model === model) labels = { providerLabel: r.providerLabel || null, modelLabel: r.modelLabel || null };
+  } catch { /* labels are cosmetic; the raw ids remain */ }
 
   const warnings = [];
   if (!provider) warnings.push('No AI provider is configured — add an API key in Settings to see a cost estimate.');
@@ -1033,8 +1079,8 @@ export async function estimateIngestQueueCost(domain, files) {
   // chargeForItem's estimate share silently "work" for a free model instead of
   // being explicitly bypassed. Null keeps the rule intact: no dollar figure to
   // render, with the reason stated in words instead.
-  else if (isFreeModel(model)) warnings.push(`"${model}" is free to use — this batch will not cost anything, so no dollar estimate is shown. The file and call counts below still apply.`);
-  else if (!price) warnings.push(`No published price is on file for "${model}" — cost cannot be estimated in dollars, but the file/call counts below are still shown.`);
+  else if (isFreeModel(model)) warnings.push(`"${model}" is free to use — this batch will not cost anything, so no dollar estimate is shown. The token and AI-call counts below still apply.`);
+  else if (!price) warnings.push(`No published price is on file for "${model}" — cost cannot be estimated in dollars, but the token and AI-call counts below are still shown.`);
 
   const wikiDir = wikiPath(domain);
   const existingFiles = {
@@ -1070,14 +1116,24 @@ export async function estimateIngestQueueCost(domain, files) {
   const sizeMultiplier = freshInputTokens > 0 ? matureInputTokens / freshInputTokens : null;
 
   const sum = (key) => perFile.reduce((n, e) => n + (e[key] || 0), 0);
+  // TOKENS AND CALLS DO NOT DEPEND ON THE PRICE (v3.72.1, truth audit F2/F3).
+  // They were nulled whenever `price` was null — which is also every FREE
+  // model — so the card read "unknown in / unknown out" beside warnings that
+  // promised "the file and call counts below still apply", while the counts
+  // had been computed a few lines up and thrown away. Only the DOLLAR fields
+  // stay null without a price; that null is the free/unpriced contract
+  // chargeForItem relies on (see the warnings above).
+  const counted = accepted.length > 0;
   const estimate = {
-    inputTokensLow: price ? sum('inputTokens') : null,
-    inputTokensHigh: price ? sum('inputTokens') : null,
-    outputTokensLow: price ? sum('outputTokens') : null,
-    outputTokensHigh: price ? sum('outputTokens') : null,
+    inputTokensLow: counted ? sum('inputTokens') : null,
+    inputTokensHigh: counted ? sum('inputTokens') : null,
+    outputTokensLow: counted ? sum('outputTokens') : null,
+    outputTokensHigh: counted ? sum('outputTokens') : null,
+    // The planned number of AI calls, summed from estimateOneFile's own plan.
+    calls: counted ? sum('totalCalls') : null,
     usdLow: price ? round6(perFile.reduce((n, e) => n + (e.usdLow || 0), 0)) : null,
     usdHigh: price ? round6(perFile.reduce((n, e) => n + (e.usdHigh || 0), 0)) : null,
-    basis: buildBasisString({ domain, provider, model, price, stats, indexBytes: index.length, sizeMultiplier }),
+    basis: buildBasisString({ domain, provider, model, price, stats, indexBytes: index.length, sizeMultiplier, labels, free: !!(model && isFreeModel(model)) }),
     // The visible half of the same account. `basis` is unchanged, byte for
     // byte — scripts/test-ingest-queue.js pins six substrings and the
     // per-batch multiple in it, and the ⓘ panel shows it in full.
@@ -1330,6 +1386,7 @@ async function createJobInner({ domain, uploadedFiles, overwrite = false, budget
     // successfully can make that total exact again.
     spendIsEstimated: false,   // additive — flips true if any item's cost had to be estimate-charged
     spendIsLowerBound: false,  // additive — flips true if any charge was a measured PARTIAL
+    spendUnknown: false,       // additive (v3.72.1) — flips true if any billed item had NO price to charge at all
     order: 'largest-first',
     estimate: estimate.estimate,
     currentIndex: null,
@@ -1452,7 +1509,9 @@ function cacheMultipliers(provider) {
  *
  * NOT ENFORCED, deliberately: with NO cap set, an unpriced model still
  * accrues 0 and `spentUsd` stays 0. Nothing depends on it in that case, and
- * inventing a number to display would be worse than showing none.
+ * inventing a number to display would be worse than showing none. What IS
+ * enforced (v3.72.1): that 0 is flagged `spendUnknown`, because the view used
+ * to print it as "approx. $0.00 spent" — a billed batch shown as free.
  *
  * NOT ENFORCED, and this is the one to understand before trusting the cap:
  * THE FALLBACK CHARGE IS APPROXIMATE AND CAN UNDER-COUNT. It is a share of
@@ -1530,8 +1589,19 @@ function chargeForItem(job, item) {
   }
   job.spendIsEstimated = true;
   const plannedCount = job.items.filter(i => i.status !== 'skipped').length || 1;
-  const perFileHigh = (job.estimate && typeof job.estimate.usdHigh === 'number') ? job.estimate.usdHigh : 0;
-  return perFileHigh / plannedCount;
+  // v3.72.1 (truth audit, Ingest F1): with no number to share, the charge is
+  // not "zero" — it is UNKNOWN. Adding 0 here is harmless to the arithmetic
+  // (nothing is capped: createJob refuses a cap it cannot price), but a UI
+  // that only has `spentUsd` then prints "approx. $0.00 spent" over a batch
+  // the provider really billed. `spendUnknown` is the fact that says so, so a
+  // reader renders "price not published" — the single-file path's words —
+  // instead of a dollar figure. Sticky for the same reason as the two flags
+  // above: it describes the cumulative total, which now holds an unpriced part.
+  if (!(job.estimate && typeof job.estimate.usdHigh === 'number')) {
+    job.spendUnknown = true;
+    return 0;
+  }
+  return job.estimate.usdHigh / plannedCount;
 }
 
 /**
@@ -1848,6 +1918,29 @@ async function finishJobDone(jobId) {
   return settleJob(jobId, { status: 'done', scanHealth: true });
 }
 
+/**
+ * The run line's names for the model a finished item billed — spentFromUsage's
+ * provider/model labels and its `fallbackFrom` — or null when the item names
+ * no model. Dynamic import for the reason estimateIngestQueueCost gives (a
+ * static ai-run.js import closes a module cycle). Never throws.
+ */
+async function describeRanOn(usage) {
+  if (!usage || typeof usage !== 'object' || typeof usage.model !== 'string' || !usage.model) return null;
+  try {
+    const { spentFromUsage } = await import('./ai-run.js');
+    const s = spentFromUsage(usage);
+    return {
+      provider: s.provider || null,
+      providerLabel: s.providerLabel || null,
+      model: s.model || null,
+      modelLabel: s.modelLabel || null,
+      fallbackFrom: s.fallbackFrom || null,
+    };
+  } catch {
+    return { provider: usage.provider || null, providerLabel: null, model: usage.model, modelLabel: null, fallbackFrom: null };
+  }
+}
+
 function summarizeChangeCounts(changes) {
   const out = { created: 0, updated: 0, unchanged: 0 };
   if (Array.isArray(changes)) {
@@ -2065,6 +2158,12 @@ async function processItemInner(jobId, itemIdx, ingestFileImpl) {
       changeCounts: summarizeChangeCounts(result?.changes),
     };
     it.tokenUsage = result && result.tokenUsage ? result.tokenUsage : null;
+    // v3.72.1 (truth audit F12): the model that ACTUALLY answered, by the run
+    // line's own names, captured now — the fallback status it reads is live
+    // state, so "your model was unavailable" is only knowable at this moment.
+    // The batch panel showed only the estimate-time model, so a fallback walk
+    // stayed invisible for the whole batch.
+    it.ranOn = await describeRanOn(it.tokenUsage);
     if (it.stagedPath) { try { await unlink(it.stagedPath); } catch { /* best-effort */ } it.stagedPath = null; }
 
     j.consecutiveFailures = 0;

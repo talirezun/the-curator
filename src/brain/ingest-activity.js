@@ -258,6 +258,13 @@ export function observeActivity(id, event) {
         truncated: !!event.truncated,
         wasOverwrite: !!event.wasOverwrite,
         tokenUsage: event.tokenUsage,
+        // v3.72.1 (truth audit F4): the live `done` event's own `spent`
+        // (spentFromUsage, computed once by the route at the moment the
+        // ingest finished — its fallback note is only knowable then). Without
+        // it the restored "Finished while you were away" panel had no cost,
+        // the raw provider/model id, and an "in" figure without cached
+        // tokens, for the same ingest the live panel had just described.
+        spent: (event.spent && typeof event.spent === 'object') ? event.spent : null,
       };
       return;
     }
@@ -346,6 +353,27 @@ function wireTokenUsage(u) {
   };
 }
 
+// The run line's after-the-run shape (spentFromUsage), allow-listed field by
+// field like everything else here. `usd` stays null when it was null — "price
+// not published" is a fact the view renders, never a zero.
+function wireSpent(sp) {
+  if (!sp || typeof sp !== 'object') return null;
+  return {
+    provider: wireStr(sp.provider, 64),
+    providerLabel: wireStr(sp.providerLabel, 64),
+    model: wireStr(sp.model, 128),
+    modelLabel: wireStr(sp.modelLabel, 128),
+    inputTokens: wireNum(sp.inputTokens),
+    outputTokens: wireNum(sp.outputTokens),
+    cachedReadTokens: wireNum(sp.cachedReadTokens),
+    cacheWriteTokens: wireNum(sp.cacheWriteTokens),
+    calls: wireNum(sp.calls),
+    usd: wireNum(sp.usd),
+    estimated: wireBool(sp.estimated),
+    fallbackFrom: wireStr(sp.fallbackFrom, 128),
+  };
+}
+
 function wireRecord(rec) {
   const r = rec.result;
   return {
@@ -371,6 +399,7 @@ function wireRecord(rec) {
       truncated: wireBool(r.truncated),
       wasOverwrite: wireBool(r.wasOverwrite),
       tokenUsage: wireTokenUsage(r.tokenUsage),
+      spent: wireSpent(r.spent),
     } : null,
   };
 }

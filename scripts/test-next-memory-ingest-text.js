@@ -73,6 +73,7 @@ import { renderMonitor } from '../src/public/next/shared/monitor.js';
 // v3.67.0 — the REAL run-line kit, injected into the lifted batch estimate
 // (a module-level import in views/ingest.js is invisible inside a lifted body).
 import { renderRunsOn, aiActionDisabledAttrs } from '../src/public/next/shared/ai-run.js';
+import { formatUsdHonest } from '../src/public/next/shared/format-usd.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const NEXT = join(__dirname, '..', 'src', 'public', 'next');
@@ -522,18 +523,20 @@ function ingRenderers(stateObj) {
   const body =
     functionSource(ingSrc, 'renderConfirmGrid').replace(/^export\s+/, '') + '\n' +
     functionSource(ingSrc, 'renderQueueEstimate').replace(/^export\s+/, '') + '\n' +
+    functionSource(ingSrc, 'estimateCostText').replace(/^export\s+/, '') + '\n' +
+    functionSource(ingSrc, 'queuePausedCopy').replace(/^export\s+/, '') + '\n' +
     functionSource(ingSrc, 'renderQueuePausedBanner').replace(/^export\s+/, '') + '\n' +
     'return { renderQueueEstimate, renderQueuePausedBanner, renderConfirmGrid };';
   return new Function('state', 'escapeHtml', 'icon',
     'resolveEstimateFileList', 'renderQueueRejectedItem', 'renderQueueFileListItem',
-    'formatQueueBytes', 'formatUsdRange', 'formatTokenRange', 'pausedReasonCopy',
+    'formatQueueBytes', 'formatUsdHonest', 'formatTokenRange', 'pausedReasonCopy',
     'renderStatus', 'renderReadoutGroup', 'renderInfoMark',
     'renderRunsOn', 'aiActionDisabledAttrs', body)(
     stateObj, (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
     () => '<svg></svg>',
     (est, sel) => sel, () => '<li>r</li>', () => '<li>f</li>',
-    (b) => b + ' B', (lo, hi) => '$' + lo + ' – $' + hi, (lo, hi) => lo + '–' + hi,
+    (b) => b + ' B', formatUsdHonest, (lo, hi) => lo + '–' + hi,
     (r) => ({ title: 'Paused — ' + r, body: 'Recoverable. Resume when ready.' }),
     renderStatus, renderReadoutGroup, renderInfoMark,
     renderRunsOn, aiActionDisabledAttrs);
@@ -559,7 +562,9 @@ function ingRenderers(stateObj) {
   const out = R.renderQueueEstimate(est);
 
   ok('the cost estimate renders as a READOUT GROUP', /class="tx-readout-group"/.test(out), out.slice(0, 400));
-  ok('...with the cost as a figure', /tx-readout-value">\$0\.01 – \$0\.05</.test(out), out.slice(0, 900));
+  // v3.72.1 (F9): through the honest formatter, marked as an estimate (≈) —
+  // the run line's own form for the same two numbers.
+  ok('...with the cost as a figure', /tx-readout-value">≈\$0\.01 – \$0\.05</.test(out), out.slice(0, 900));
   ok('...and the estimator’s LEDE as PROVENANCE on the cost it qualifies',
     /tx-readout-prov">Sized against this wiki/.test(out), out.slice(0, 1200));
 

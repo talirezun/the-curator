@@ -121,10 +121,10 @@ import {
 // returned) had fallen on the wrong side of it. Do not reintroduce local
 // copies of these two — see the shared module's own header comment.
 import {
-  queueBusyTransition, formatQueueBytes, formatUsdRange, formatTokenRange,
+  queueBusyTransition, formatQueueBytes, formatTokenRange,
   pausedReasonCopy, statusPillMeta, resolveEstimateFileList, dedupeQueueFiles,
   extractConflictJobId, formatHealthCounts, sanitizeDisplayName,
-  computeQueueStatusCounts, computeQueueSpentLabel,
+  computeQueueStatusCounts,
 } from '../shared/ingest-queue-logic.js';
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
 // Context's one-shot "open this project on your next arrival" request (v3.65.2,
@@ -367,6 +367,12 @@ let remoteElapsedTimerId = null;
 // new must not re-render — views/memory.js's screenSignature, same reason: a
 // rebuild would disturb an open fold and the scroll position for no change.
 let renderedActivitySignature = null;
+// Ids of activity records last seen `running` (v3.72.1, truth audit F5). A
+// record that was running on one poll and is settled on the next is a write
+// this view learned about by polling — another tab, or a run this mount only
+// watched — so the destination rows' page count and "x ago" are re-fetched.
+// Reset per mount: the mount itself loads fresh stats.
+let activityRunningIds = new Set();
 
 // ── Batch queue module-level tracking (Phase 2) ───────────────────────────
 // Deliberately module-level, NOT `state` fields — they track a live network
@@ -532,6 +538,7 @@ function startIngest(mountToken, ctx) {
   if (hostCtx) stopIngest();
   hostCtx = ctx || null;
   state = freshState();
+  activityRunningIds = new Set();
   myMountToken = mountToken;
   loadGate = createLoadingGate({
     onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
@@ -665,6 +672,7 @@ function stopIngest() {
   // dead token — for the life of the page.
   if (removeDocumentDragGuards) { removeDocumentDragGuards(); removeDocumentDragGuards = null; }
   renderedActivitySignature = null;
+  activityRunningIds = new Set();
 
   // Write-gate subscription cleanup — a torn-down mount must stop
   // reacting to gate changes.
@@ -932,6 +940,29 @@ function settledElsewhere() {
  * for domains it lists, so the intersection happens for free at render time,
  * and keeping the raw set means this function answers exactly one question.
  */
+/**
+ * Pure: which records settled since the last poll. Returns `{ settled, running }`
+ * — `settled` true when any id in `prevRunning` is now done/error (or gone from
+ * the server's list: a record that settled and aged out between two polls also
+ * moved the wiki), `running` the ids to remember for the next poll.
+ */
+function settledSinceLastPoll(prevRunning, activity) {
+  const list = Array.isArray(activity) ? activity : [];
+  const running = new Set();
+  const byId = new Map();
+  for (const a of list) {
+    if (!a || typeof a.id !== 'string') continue;
+    byId.set(a.id, a);
+    if (a.status === 'running') running.add(a.id);
+  }
+  let settled = false;
+  for (const id of (prevRunning || [])) {
+    const now = byId.get(id);
+    if (!now || now.status !== 'running') { settled = true; break; }
+  }
+  return { settled, running };
+}
+
 function runningActivityDomains(activity) {
   return (activity || [])
     .filter((a) => a && a.status === 'running' && typeof a.domain === 'string' && a.domain)
@@ -1096,6 +1127,14 @@ async function refreshActivity(token) {
     // sidebar rows are marked from. Recomputed on every fetch, so a run
     // finishing clears its marker on the next poll.
     state.runningDomains = runningActivityDomains(got.activity);
+
+    // A run finished since the last poll: the wiki moved, so the destination
+    // rows' figures are stale. UI refreshes after every mutation — including
+    // the ones this view only hears about by polling. Not awaited;
+    // refreshDomainStats re-checks the mount and repaints only on change.
+    const transition = settledSinceLastPoll(activityRunningIds, got.activity);
+    activityRunningIds = transition.running;
+    if (transition.settled) refreshDomainStats(token).catch(() => {});
 
     // Every settled record, RAW — the acknowledgement filter is applied at read
     // time (see settledActivity in freshState) so a dismissal repaints at once
@@ -2331,11 +2370,19 @@ function renderProgress() {
   // reported as hung on) is exactly that. The figures now agree because they
   // share a derivation, not because motion was invented to make them line up.
   const shownPct = ringAria({ stages: INGEST_STAGES, stage, stageProgress }).valueNow;
+  // TWO CLOCKS, EACH NAMED (v3.72.1, truth audit F11). The live figure is
+  // the time since the last progress step — it restarts at every "batch N of
+  // M" on purpose (a stalled step must LOOK stalled) — so it says "this step".
+  // At "finished" the figure is the WHOLE run, from `startedAt`, frozen at
+  // `finishedAt`; it was the last phase's few seconds, read as the total.
+  // The finished figure carries no #ing-elapsed id, so the 1 s ticker (which
+  // writes the phase clock into that id) cannot overwrite it.
+  const totalMs = (Number.isFinite(p.startedAt) && Number.isFinite(p.finishedAt)) ? p.finishedAt - p.startedAt : null;
   const sublabelHtml =
     (pct >= 100
-      ? 'finished'
-      : 'stage <span class="ing-num">' + stageOrdinal + '</span> of <span class="ing-num">' + INGEST_STAGES.length + '</span>') +
-    ' · <span class="ing-num" id="ing-elapsed">' + escapeHtml(elapsedNow) + '</span>' +
+      ? 'finished' + (totalMs === null ? '' : ' in <span class="ing-num">' + escapeHtml(formatElapsedMs(totalMs)) + '</span>')
+      : 'stage <span class="ing-num">' + stageOrdinal + '</span> of <span class="ing-num">' + INGEST_STAGES.length + '</span>' +
+        ' · this step <span class="ing-num" id="ing-elapsed">' + escapeHtml(elapsedNow) + '</span>') +
     ' · <span class="ing-num">' + shownPct + '%</span>';
 
   return (
@@ -2431,7 +2478,8 @@ function renderRemoteProgress() {
   const shownPct = ringAria({ stages: INGEST_STAGES, stage, stageProgress }).valueNow;
   const sublabelHtml =
     'stage <span class="ing-num">' + stageOrdinal + '</span> of <span class="ing-num">' + INGEST_STAGES.length + '</span>' +
-    ' · <span class="ing-num" id="ing-remote-elapsed">' + escapeHtml(elapsedNow) + '</span>' +
+    // The server's phase clock, like the live path's: "this step" (F11).
+    ' · this step <span class="ing-num" id="ing-remote-elapsed">' + escapeHtml(elapsedNow) + '</span>' +
     ' · <span class="ing-num">' + shownPct + '%</span>';
 
   return (
@@ -3411,7 +3459,11 @@ async function runIngest(token, overwrite) {
   state.errorCode = null;
   state.duplicate = null;
   phaseStartedAt = Date.now();
-  state.progress = { pct: 2, label: 'Starting…', waiting: false, phaseStartedAt };
+  // The whole run's clock (v3.72.1, truth audit F11), separate from the
+  // phase clock that restarts on every progress event. The sublabel labels
+  // the phase figure "this step" and shows THIS one at "finished".
+  const ingestStartedAt = phaseStartedAt;
+  state.progress = { pct: 2, label: 'Starting…', waiting: false, phaseStartedAt, startedAt: ingestStartedAt };
   render(token);
 
   // Registers this write with the shell-wide gate so Sync/Domains/Settings
@@ -3453,7 +3505,7 @@ async function runIngest(token, overwrite) {
     // this file (and like every write in sync.js/domains.js) — never write
     // to `state` before checking isCurrentMount(token).
     if (!isCurrentMount(token)) return;
-    state.progress = { pct, label, waiting: !!waiting, phaseStartedAt };
+    state.progress = { pct, label, waiting: !!waiting, phaseStartedAt, startedAt: ingestStartedAt };
     render(token);
   };
 
@@ -3527,6 +3579,8 @@ async function runIngest(token, overwrite) {
         labelHtml: formatIngestDoneLabelHtml(finalData.changes),
         waiting: false,
         phaseStartedAt,
+        startedAt: ingestStartedAt,
+        finishedAt: Date.now(),
       };
       render(token);
     }
@@ -3535,6 +3589,11 @@ async function runIngest(token, overwrite) {
     if (isCurrentMount(token)) {
       state.progress = null;
       state.file = null;
+      // v3.72.1 (truth audit F10): the pre-ingest estimate was sized against
+      // the wiki BEFORE this write (its index and page list). Keyed only on
+      // domain + name + size, picking the same file again would have shown
+      // it from cache. The mutation invalidates it.
+      clearSingleRunLine();
       state.fileError = null;
       state.result = {
         title: finalData.title,
@@ -4230,6 +4289,34 @@ function renderQueueConfirmGate() {
 }
 
 /**
+ * The "Estimated cost" readout (v3.72.1, truth audit F2/F9). ONE quantity, ONE
+ * set of words across the card:
+ *   · free model            -> "free" (the run line and the warning say so too;
+ *                              "cost unknown" beside them was a contradiction)
+ *   · both ends priced      -> "≈$a – $b" through formatUsdHonest, the run
+ *                              line's own formatter, so a sub-cent batch never
+ *                              reads "$0.0000" here while the run line reads
+ *                              "≈< $0.0001"
+ *   · a model with no price -> "price not published", the single-file words
+ *   · nothing to go on      -> "cost unknown for this model"
+ * The byte-pinned formatUsdRange is no longer called from /next; its app.js
+ * original is untouched.
+ */
+function estimateCostText(e, runsOn) {
+  const ro = (runsOn && typeof runsOn === 'object') ? runsOn : {};
+  if (ro.free === true) return 'free';
+  const isNum = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+  const est = e || {};
+  if (isNum(est.usdLow) && isNum(est.usdHigh)) {
+    const lo = formatUsdHonest(est.usdLow);
+    const hi = formatUsdHonest(est.usdHigh);
+    return lo === hi ? '≈' + lo : '≈' + lo + ' – ' + hi;
+  }
+  if (ro.costNote === 'price-not-published' || ro.priceKnown === false) return 'price not published';
+  return 'cost unknown for this model';
+}
+
+/**
  * @param {object} est   the /estimate payload
  * @param {{inputFields?: string, submitError?: string}} [opts]
  *   The left column's head and any start-failure box. DEFAULTED, and that is
@@ -4242,12 +4329,20 @@ function renderQueueEstimate(est, opts) {
   const rejected = Array.isArray(est.files && est.files.rejected) ? est.files.rejected : [];
   const count = (est.files && Number.isFinite(est.files.count)) ? est.files.count : fileList.length;
   const totalBytes = est.files && est.files.totalBytes;
-  const provider = escapeHtml(est.provider || 'unknown provider');
-  const model = escapeHtml(est.model || 'unknown model');
+  // ONE SPELLING OF THE MODEL (v3.72.1, truth audit F15): the run line's own
+  // labels when the server sent them, so the header, the run line and the ⓘ
+  // basis name the same model the same way. The raw ids are the fallback for
+  // a server that sends no `runsOn`.
+  const ro = (est.runsOn && typeof est.runsOn === 'object') ? est.runsOn : {};
+  const provider = escapeHtml(ro.providerLabel || est.provider || 'unknown provider');
+  const model = escapeHtml(ro.modelLabel || est.model || 'unknown model');
   const est2 = est.estimate || {};
-  const costRange = formatUsdRange(est2.usdLow, est2.usdHigh);
+  const costRange = estimateCostText(est2, est.runsOn);
   const tokIn = formatTokenRange(est2.inputTokensLow, est2.inputTokensHigh);
   const tokOut = formatTokenRange(est2.outputTokensLow, est2.outputTokensHigh);
+  const callsN = (typeof est2.calls === 'number' && Number.isFinite(est2.calls) && est2.calls >= 0) ? est2.calls : null;
+  const tokensValue = tokIn + ' in / ' + tokOut + ' out' +
+    (callsN === null ? '' : ' · ' + callsN.toLocaleString('en-US') + ' AI call' + (callsN === 1 ? '' : 's'));
   const warnings = Array.isArray(est.warnings) ? est.warnings : [];
 
   const rejectedHtml = rejected.length
@@ -4329,15 +4424,14 @@ function renderQueueEstimate(est, opts) {
     // mono at full --text and steps the label back by SIZE and FAMILY, so the
     // cost stops competing with the sentence above it.
     //
-    // ABSENT IS NOT ZERO: formatUsdRange already returns an honest "unknown"
-    // string rather than a fabricated $0.00 (test-ingest-queue-frontend.js
-    // pins that), and renderReadout drops a provenance line that was never
-    // supplied rather than printing "—". Neither behaviour is re-implemented
-    // here; both are inherited.
+    // ABSENT IS NOT ZERO: estimateCostText returns "free", "price not
+    // published" or "cost unknown for this model" rather than a fabricated
+    // $0.00 (v3.72.1; test-next-ingest-view.js §23), and renderReadout drops a
+    // provenance line that was never supplied rather than printing "—".
       '<div class="ing-queue-estimate">' +
         renderReadoutGroup([
           { label: 'Estimated cost', value: costRange, provenance },
-          { label: 'Estimated tokens', value: tokIn + ' in / ' + tokOut + ' out' },
+          { label: 'Estimated tokens', value: tokensValue },
         ]) +
         // THE RUN LINE, BESIDE THE READOUTS (v3.67.0). It adds what the two
         // readouts do not say — the model by its human label, and the one
@@ -4452,6 +4546,52 @@ function renderQueueRejectedItem(entry) {
 //
 // Returns null when there is no cap, so every caller has one test for "no
 // denominator".
+/**
+ * THE batch spend reading, for the panel's head line AND the done summary
+ * (v3.72.1, truth audit F1 + F8). Before this the head line used the byte-
+ * pinned computeQueueSpentLabel (`$0.0123 spent`, 4 dp, no qualifier) while
+ * the summary under it said `approx. $0.01 spent` — one fact, two formats,
+ * and only one of them honest. Now both read this.
+ *
+ * Returns `{ pending, text }` when there is no figure to show, else
+ * `{ qualifier, figure, note }`:
+ *   · `job.spendUnknown` and nothing measured -> "spend: price not published" — the
+ *     single-file path's words. A billed batch on a model with no published
+ *     price used to read "approx. $0.00 spent", i.e. free.
+ *   · `job.spendUnknown` with a measured part -> "at least $X" + a note: the
+ *     counted dollars were billed, the unpriced items' cost is missing.
+ *   · otherwise the honest figure, "approx." for an estimate share, "at
+ *     least" for a measured partial (estimated wins), exactly as before.
+ *   · a zero on a RUNNING batch before any item has settled -> "spend so far:
+ *     pending first file" (v3.3.1). Once an item HAS settled, a zero is a
+ *     measured zero and is shown as one.
+ */
+function queueSpendReading(job, isTerminal) {
+  const items = Array.isArray(job && job.items) ? job.items : [];
+  const spent = (job && typeof job.spentUsd === 'number' && Number.isFinite(job.spentUsd)) ? job.spentUsd : null;
+  const unknown = !!(job && job.spendUnknown === true);
+  if (unknown && !(spent > 0)) return { pending: false, text: 'spend: price not published' };
+  const anySettled = items.some((i) => i && (i.status === 'done' || i.status === 'failed' || i.status === 'cancelled'));
+  if (!isTerminal && !anySettled && !(spent > 0)) return { pending: true, text: 'spend so far: pending first file' };
+  if (spent === null) return { pending: false, text: '—' };
+  const qualifier = unknown ? 'at least '
+    : (job && job.spendIsEstimated === true) ? 'approx. '
+    : (job && job.spendIsLowerBound === true) ? 'at least '
+    : '';
+  return {
+    qualifier,
+    figure: formatUsdHonest(spent),
+    note: unknown ? 'some files ran on a model with no published price' : '',
+  };
+}
+
+/** The reading as HTML: the qualifier and note are prose, the figure is mono. */
+function queueSpendHtml(r) {
+  if (r.text !== undefined) return escapeHtml(r.text);
+  return escapeHtml(r.qualifier) + '<span class="ing-num">' + escapeHtml(r.figure) + '</span> spent' +
+    (r.note ? ' (' + escapeHtml(r.note) + ')' : '');
+}
+
 function queueBudgetFacts(job) {
   const budget = (job && typeof job.budgetUsd === 'number' && Number.isFinite(job.budgetUsd) && job.budgetUsd > 0)
     ? job.budgetUsd : null;
@@ -4479,7 +4619,9 @@ function queueBudgetFacts(job) {
 // secret.
 function queueBudgetSpendHtml(facts, isTerminal, pendingLabel) {
   const cap = '<span class="ing-num">' + escapeHtml(facts.capText) + '</span>';
-  const charged = facts.spent !== null && (facts.spent > 0 || isTerminal);
+  // `pendingLabel` is queueSpendReading's pending text, or null once a file
+  // has settled (a measured zero then draws as one).
+  const charged = facts.spent !== null && (facts.spent > 0 || isTerminal || !pendingLabel);
   if (!charged) {
     return '<span class="ing-num">' + escapeHtml(pendingLabel) + '</span> · ' + cap + ' cap';
   }
@@ -4535,8 +4677,25 @@ function renderQueueOutcomeBanner(job, facts) {
   return '';
 }
 
-function renderQueuePausedBanner(job) {
+/**
+ * pausedReasonCopy (byte-pinned to app.js) with ONE correction (v3.72.1,
+ * truth audit F14): the consecutive-failure title's count comes from the
+ * server's own CONSECUTIVE_FAILURE_LIMIT (`job.consecutiveFailureLimit`), not
+ * the pinned literal "3" — which a change to the constant would have left
+ * telling the user the old number. An older server sends no field and the
+ * pinned copy stands.
+ */
+function queuePausedCopy(job) {
   const copy = pausedReasonCopy(job && job.pausedReason);
+  const limit = job && job.consecutiveFailureLimit;
+  if (job && job.pausedReason === 'consecutive_failures' && typeof limit === 'number' && Number.isInteger(limit) && limit > 0) {
+    return { title: 'Paused — ' + limit + ' files failed in a row', body: copy.body };
+  }
+  return copy;
+}
+
+function renderQueuePausedBanner(job) {
+  const copy = queuePausedCopy(job);
   const extra = (job && typeof job.pausedMessage === 'string' && job.pausedMessage.trim())
     ? ' ' + job.pausedMessage.trim() : '';
   return renderStatus({
@@ -4568,7 +4727,20 @@ function renderQueueDoneSummary(job) {
     .join('');
   const notStartedSpan = notStartedN > 0 ? '<span><span class="ing-num">' + notStartedN + '</span> not started</span>' : '';
 
-  const pages = items.reduce((sum, i) => sum + (i && i.result && Number.isFinite(i.result.pagesWritten) ? i.result.pagesWritten : 0), 0);
+  // PAGES WRITTEN MEANS CHANGED (v3.72.1, truth audit F13). The raw path
+  // count included every page writePage reported `unchanged`, so a re-ingest
+  // that changed nothing said "14 pages written" here while the same file
+  // ingested alone said every page was already up to date.
+  const pageTally = items.reduce((t, i) => {
+    const c = queueItemPageCounts(i);
+    if (c) { t.written += c.written; t.unchanged += c.unchanged; }
+    return t;
+  }, { written: 0, unchanged: 0 });
+  const pages = pageTally.written;
+  const unchangedSpan = pageTally.unchanged > 0
+    ? '<span><span class="ing-num">' + pageTally.unchanged + '</span> unchanged</span>'
+    : '';
+  const ranOnLine = queueRanOnLine(items);
   const warningsN = items.reduce((sum, i) => sum + (i && i.result && Number.isFinite(i.result.warningCount) ? i.result.warningCount : 0), 0);
   // COST HONESTY, two changes on one line's worth of readout:
   //
@@ -4605,13 +4777,10 @@ function renderQueueDoneSummary(job) {
   // The qualifier sits OUTSIDE the <span class="ing-num"> below: it is prose,
   // and this view's rule is that the NUMBER is monospace, not the sentence
   // around it (same reasoning as the per-count spans beside it).
-  const spentUsd = (job && typeof job.spentUsd === 'number' && Number.isFinite(job.spentUsd)) ? job.spentUsd : null;
-  const spentFigure = formatUsdHonest(spentUsd);
-  const spent = spentFigure === null ? '—' : spentFigure;
-  const spentQualifier = spentFigure === null ? ''
-    : (job && job.spendIsEstimated === true) ? 'approx. '
-    : (job && job.spendIsLowerBound === true) ? 'at least '
-    : '';
+  //
+  // v3.72.1: the words now come from queueSpendReading, the SAME reading the
+  // head line uses — including "price not published" for an unpriced batch.
+  const spentHtml = queueSpendHtml(queueSpendReading(job, true));
   const capFacts = queueBudgetFacts(job);
   const capSpan = capFacts ? '<span>of the <span class="ing-num">' + escapeHtml(capFacts.capText) + '</span> cap</span>' : '';
   const healthStr = formatHealthCounts(job && job.health && job.health.counts);
@@ -4640,15 +4809,56 @@ function renderQueueDoneSummary(job) {
         notStartedSpan +
         otherSpans +
         '<span><span class="ing-num">' + pages + '</span> page' + (pages === 1 ? '' : 's') + ' written</span>' +
+        unchangedSpan +
         '<span><span class="ing-num">' + warningsN + '</span> warning' + (warningsN === 1 ? '' : 's') + '</span>' +
-        '<span>' + spentQualifier + '<span class="ing-num">' + spent + '</span> spent</span>' +
+        '<span>' + spentHtml + '</span>' +
         // The cap, in WORDS, when one was set (P5). The BAR is drawn once, on
         // the panel's head line above this summary — one fact, one bar.
         capSpan +
       '</div>' +
+      ranOnLine +
       healthLine +
     '</div>'
   );
+}
+
+/**
+ * One item's page counts from the writePage change records the queue already
+ * summarised (`result.changeCounts`): written = created + updated. A manifest
+ * from before changeCounts existed falls back to the raw `pagesWritten`,
+ * which is all it knows. null for an item with no result.
+ */
+function queueItemPageCounts(item) {
+  const r = item && item.result;
+  if (!r || typeof r !== 'object') return null;
+  const c = r.changeCounts;
+  const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
+  if (c && typeof c === 'object') {
+    return { created: n(c.created), updated: n(c.updated), written: n(c.created) + n(c.updated), unchanged: n(c.unchanged), exact: true };
+  }
+  const raw = n(r.pagesWritten);
+  return { created: null, updated: null, written: raw, unchanged: 0, exact: false };
+}
+
+/**
+ * "Ran on <model>" for the batch (v3.72.1, truth audit F12), from the model
+ * each finished item ACTUALLY billed (`item.ranOn`), not the estimate-time
+ * model in the confirm header. Every distinct model is named, and a fallback
+ * says so in the single-file path's words. '' when no item recorded one.
+ */
+function queueRanOnLine(items) {
+  const seen = new Set();
+  let fellBack = false;
+  for (const i of items) {
+    const r = i && i.ranOn;
+    if (!r || !r.model) continue;
+    seen.add(r.modelLabel || r.model);
+    if (r.fallbackFrom) fellBack = true;
+  }
+  if (!seen.size) return '';
+  const names = [...seen].map((label) => '<span class="ing-name">' + escapeHtml(label) + '</span>');
+  return '<div class="ing-queue-done-ranon">Ran on ' + names.join(', ') +
+    (fellBack ? ' (your model was unavailable for some files)' : '') + '</div>';
 }
 
 // Defect #2 fix, ported: cancelRequested/pauseRequested are read straight
@@ -4723,9 +4933,23 @@ function renderQueueItemRow(item, opts) {
     : ((isFailedItem || isCancelledItem) && item.error)
     ? '<div class="ing-queue-item-error' + (isCancelledItem ? ' ing-queue-item-stopped-msg' : '') + '">' + escapeHtml(item.error) + '</div>'
     : '';
-  const pages = item && item.result && Number.isFinite(item.result.pagesWritten) ? item.result.pagesWritten : null;
+  // Per row, the SAME change counts as the summary (F13): new / updated /
+  // unchanged, never one raw path count that includes untouched pages.
+  const pc = queueItemPageCounts(item);
+  let pagesHtml;
+  if (pc && pc.exact) {
+    const bits = [];
+    if (pc.created) bits.push('<span class="ing-num">' + pc.created + '</span> new');
+    if (pc.updated) bits.push('<span class="ing-num">' + pc.updated + '</span> updated');
+    if (pc.unchanged) bits.push('<span class="ing-num">' + pc.unchanged + '</span> unchanged');
+    pagesHtml = (pc.written === 0 && pc.unchanged > 0) ? 'no changes — every page was already up to date'
+      : bits.length ? bits.join(' · ') : '<span class="ing-num">0</span> pages';
+  } else {
+    const w = pc ? pc.written : 0;
+    pagesHtml = '<span class="ing-num">' + w + '</span> page' + (w === 1 ? '' : 's');
+  }
   const resultLine = (item && item.status === 'done' && item.result)
-    ? '<div class="ing-queue-item-result">' + escapeHtml(sanitizeDisplayName(item.result.title || item.name || '')) + ' — <span class="ing-num">' + (pages == null ? 0 : pages) + '</span> page' + (pages === 1 ? '' : 's') + '</div>'
+    ? '<div class="ing-queue-item-result">' + escapeHtml(sanitizeDisplayName(item.result.title || item.name || '')) + ' — ' + pagesHtml + '</div>'
     : '';
   return (
     '<li class="ing-queue-item-row" data-queue-idx="' + idx + '">' +
@@ -4765,7 +4989,7 @@ function renderQueuePanel(job) {
   const isTerminal = isQueueTerminal(job.status);
   const items = Array.isArray(job.items) ? job.items : [];
   const settledCount = items.filter((i) => i && (i.status === 'done' || i.status === 'failed' || i.status === 'skipped' || i.status === 'cancelled')).length;
-  const spentLabel = computeQueueSpentLabel(job.spentUsd, isTerminal);
+  const spendReading = queueSpendReading(job, isTerminal);
   const budgetFacts = queueBudgetFacts(job);
 
   const itemProgressText = isTerminal
@@ -4777,10 +5001,10 @@ function renderQueuePanel(job) {
   // 0 — a real zero, not an unknown — so `value` is a number rather than
   // null, and the orbit is what says the batch is alive.
   //
-  // The spend label keeps computeQueueSpentLabel's honesty verbatim: an
-  // in-progress zero reads "spend so far: pending first file", never a
-  // misleading $0.0000 (v3.3.1), and formatUsdHonest's "at least $X" lower
-  // bound is untouched. The ring sits BESIDE that line, it does not
+  // The spend reading is queueSpendReading's (v3.72.1): an in-progress zero
+  // before any file settles reads "spend so far: pending first file", never a
+  // misleading $0.0000 (v3.3.1); an unpriced batch reads "price not
+  // published", never $0.00. The ring sits BESIDE that line, it does not
   // replace it.
   const overallValue = items.length > 0 ? (settledCount / items.length) * 100 : 0;
   const headerHtml =
@@ -4802,8 +5026,8 @@ function renderQueuePanel(job) {
         '<div class="ing-queue-panel-sub">' +
           itemProgressText +
           ' · ' + (budgetFacts
-            ? queueBudgetSpendHtml(budgetFacts, isTerminal, spentLabel)
-            : '<span class="ing-num">' + escapeHtml(spentLabel) + '</span>') +
+            ? queueBudgetSpendHtml(budgetFacts, isTerminal, spendReading.pending ? spendReading.text : null)
+            : queueSpendHtml(spendReading)) +
         '</div>' +
       '</div>' +
     '</div>';

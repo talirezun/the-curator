@@ -815,8 +815,11 @@ section('§11  Adoption — ingest.js');
   ok(uq.includes('size: 20'), '…at the design\'s 20px row size');
   ok(ingestCode.includes('complete: isTerminal'),
     'the overall batch ring stops orbiting when the job is terminal, even if settled/total never reaches 100');
-  ok(ingestCode.includes('computeQueueSpentLabel'),
-    'the honest spend label ("spend so far: pending first file" on an in-progress zero) is untouched');
+  // v3.72.1: the head line reads queueSpendReading (executed in
+  // test-next-cost-honesty.js and test-next-ingest-view.js §21/§23), which
+  // keeps "spend so far: pending first file" for an in-progress zero.
+  ok(ingestCode.includes('queueSpendReading(job, isTerminal)'),
+    'the honest spend reading ("spend so far: pending first file" on an in-progress zero) drives the head line');
   ok(ingestCode.includes('formatUsdHonest'), 'and so is the "at least $X" lower-bound renderer');
 }
 
