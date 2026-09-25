@@ -3703,7 +3703,7 @@ function makeRevalidator(stateObj, responder, opts = {}) {
 /** A state shaped exactly like the live one at the moment of the defect. */
 // One clock for every liveState() in this file, so two of them are
 // byte-identical (§11b compares their project rows as JSON).
-const LIVE_NOW = Date.now();
+let LIVE_NOW = Date.now(); // re-taken by the §11d blocks that compare ages (see there)
 function liveState(over = {}) {
   const T0 = 1_000_000;
   const detail = { scope: 'memory-view', machine: 'm1', machines: [{ machine: 'm1', ageSeconds: 5 }],
@@ -3854,7 +3854,9 @@ function unchangedIndex(ageSeconds) {
         // v3.76.0 (F4): the AGE is arithmetic on a stamp at paint time, so the
         // fixture carries the agent's stamp consistent with its age — a bare
         // `ageSeconds` over a 1970 file time is a payload no server sends.
-        writtenAt: new Date(LIVE_NOW - ageSeconds * 1000).toISOString(),
+        // Stamped when the poll READS it, not when the suite started: on a slow
+        // CI runner seconds pass between the two and 52 s crossed 60 s (v3.76.0 gate).
+        writtenAt: new Date(Date.now() - ageSeconds * 1000).toISOString(),
         ageSeconds, headline: 'Second scope' }] }) }
     : { ok: true, json: async () => ({ ok: true, scopes: [] }) };
 }
@@ -3875,6 +3877,7 @@ function unchangedIndex(ageSeconds) {
   // claim, pinned. An age that moved but still READS the same must not
   // re-render (it would close a <select> the user has open); one that crossed
   // a wording boundary must.
+  LIVE_NOW = Date.now(); // a slow runner must not age the fixtures past a wording boundary
   const quiet = liveState();
   const rq = makeRevalidator(quiet, unchangedIndex(52));       // 30s -> 52s, both "just now"
   await rq.refreshIndex(1);
