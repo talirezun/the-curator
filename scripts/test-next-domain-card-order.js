@@ -212,6 +212,9 @@ function bindStatCardListeners() {}
 // fold summaries read it too. Stubbed to a constant so the ORDER assertions
 // below do not depend on a clock.
 function relTime() { return 'just now'; }
+// v3.72.1 (F2/F3): ① meta and the SOURCES tile come from the REAL
+// lastWriteReading (lifted below); only its day clock is fixed here.
+function formatDayAge(d) { return d ? 'today' : null; }
 const document = { getElementById: () => null, querySelectorAll: () => [] };
 `;
 
@@ -247,6 +250,7 @@ try {
     extractFunction(SRC, 'browseNoteHtml') + '\n' +
     extractFunction(SRC, 'renderBrowsePanel') + '\n' +
     extractFunction(SRC, 'renderStatCards') + '\n' +
+    extractFunction(SRC, 'lastWriteReading') + '\n' +
     extractFunction(SRC, 'renderMain') + '\n' +
     `return { renderMain, renderBrowsePanel, BROWSE_EYEBROW, browseMatches, browseWindow,
        memoryRowHtml, browseRowHtml, browseMoreHtml, browseNoteHtml, projectCount,
@@ -534,7 +538,8 @@ section('S3 -- "Scan wiki health" vs "Rescan"');
       scanTag !== '' && !/\sopen(\s|>)/.test(scanTag), scanTag || '(no scan row)');
     ok('...while its own summary still says so, so the reading survives the fold rather than '
       + 'being hidden by it',
-      /dm-group-meta">2 open issue[s]? \u00b7 10s ago</.test(settled),
+      // v3.72.1 (F12): the age is a ticking [data-age-at] span.
+      /dm-group-meta">2 open issue[s]? \u00b7 <span data-age-at="[^"]+" data-age-text>10s ago<\/span></.test(settled),
       (/<span class="dm-group-meta">[^<]*/.exec(settled) || ['(none)'])[0]);
   }
 
@@ -615,6 +620,8 @@ function render() {}
 function isCurrentMount() { return true; }
 function reportAsyncActionFailure() {}
 function settleGate(_g, fn) { fn(); }
+// v3.72.1 (F9): inert here; see scripts/test-domains-true-numbers.js §11.
+function staleHealthSlugs() { return []; }
 function loadHealth(slug, token, opts) { calls.health.push({ slug, token, opts }); return Promise.resolve(); }
 function loadProjects(slug, token) { calls.projects.push({ slug, token }); return Promise.resolve(); }
 function loadBrowse(slug, token) { calls.browse.push({ slug, token }); return Promise.resolve(); }

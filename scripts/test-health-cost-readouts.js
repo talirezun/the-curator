@@ -113,7 +113,7 @@ section('6. costReadout — known-price rendering is UNCHANGED (control)');
 {
   const priced = { estimatedUsd: 0.0042, priceKnown: true, costNote: null };
   eq(costReadout(priced), '$0.0042', 'known sub-cent price → formatUsd(0.0042) unchanged');
-  eq(costReadout(priced, { compact: true }), '$0.0042', 'known price is identical in compact mode (the $ figure is always short)');
+  eq(costReadout(priced, { compact: true }), '\u2248 $0.0042', 'known price in compact mode is the same figure, marked "≈" (v3.72.1: the badge is an estimate)');
   const bigPrice = { estimatedUsd: 1.5, priceKnown: true };
   eq(costReadout(bigPrice), '$1.50', 'known price >= 1c uses the 2-decimal formatUsd branch, unchanged');
 
@@ -304,7 +304,7 @@ section('17. A key → one run line under the bar; the per-button cost badges st
     'ONE line under the bar, the kit\'s group form (region B)');
   ok(/title="Gemini · gemini-2\.5-flash-lite"/.test(line), '…the model by its label, Provider · id in the title');
   eq((html.match(/class="ai-run"/g) || []).length, 1, 'exactly one run line for the three actions, never one per button');
-  ok(/<span class="dm-quick-cost">\$0\.0040<\/span>/.test(html) && /<span class="dm-quick-cost">\$0\.0020<\/span>/.test(html),
+  ok(/<span class="dm-quick-cost">≈ \$0\.0040<\/span>/.test(html) && /<span class="dm-quick-cost">≈ \$0\.0020<\/span>/.test(html),
     'each button keeps its compact cost badge (costReadout)');
   ok(!/<details/.test(html), 'the line is not behind a chevron (v3.16.1)');
   // The route may not have sent runsOn (an older backend): the probe then

@@ -110,7 +110,13 @@ router.get('/:domain', async (req, res) => {
     const { domain } = req.params;
     await assertDomain(domain);
     const report = await scanWiki(domain);
-    res.json(report);
+    // v3.72.1, additive: how many dismissal RECORDS are on disk — what the
+    // Dismissed list shows. `counts.dismissed` is a different figure (current
+    // scan issues a dismissal hid; semantic Skips and records whose issue is
+    // gone are not in it), and the view needs both.
+    let dismissedRecords = null;
+    try { dismissedRecords = (await listDismissed(domain)).length; } catch { dismissedRecords = null; }
+    res.json(dismissedRecords === null ? report : { ...report, dismissedRecords });
   } catch (err) {
     console.error('[health scan]', err);
     res.status(err.status || 500).json({ error: err.message });
@@ -218,6 +224,10 @@ router.get('/:domain/semantic-dupes/estimate', async (req, res) => {
     const estimate = await estimateSemanticDuplicateScan(domain, settings.semanticDupeMaxPairs);
     res.json({
       ok: true, ...estimate, costCeilingTokens: settings.costCeilingTokens,
+      // v3.72.1, additive: the max-pairs setting the estimate was cut to, so
+      // the confirm can name the cap as the user's setting ("capped at your
+      // 500-pair limit") rather than as a local pre-filter.
+      maxPairs: settings.semanticDupeMaxPairs,
       // v3.67.0, additive: the run line, priced on the estimate's own split.
       runsOn: await describeHealthRun('semanticDupes', estimate.estimatedTokens),
     });

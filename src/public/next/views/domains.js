@@ -208,7 +208,8 @@ import {
 // see shared/age.js. The KNOWLEDGE rows and the DESTINATION rows list the same
 // domains and answer the same question about them, so they say it in the same
 // words rather than in two.
-import { formatDayAge, freshnessDotHtml, clockGlyph, freshnessTier } from '../shared/age.js';
+import { formatDayAge, freshnessDotHtml, clockGlyph, freshnessTier, formatAge } from '../shared/age.js';
+import { subscribeAgeTicker, tickAgesNow } from '../shared/age-ticker.js';
 // ── THE MONITOR (v3.65.0) ────────────────────────────────────────────────
 // The ONE treatment for a live-state reading anywhere in the app. The
 // maintainer found four of them wearing four designs — the bridge's
@@ -292,6 +293,40 @@ function domainLastEventText(d) {
   const verb = kind === 'compile' ? 'Compiled' : kind === 'ingest' ? 'Ingested' : 'Last write';
   const title = (typeof d.lastIngestTitle === 'string' && d.lastIngestTitle) ? d.lastIngestTitle : null;
   return title ? (verb + ' · ' + title) : verb;
+}
+
+/**
+ * ① Ingest's head reading and the OVERVIEW's SOURCES tile, from ONE place
+ * (v3.72.1, F2 + F3). Pure: `d` is a stats row, `now` a millisecond clock.
+ *
+ * DAY PRECISION, because that is all the data has (F2). `lastIngestDate` is
+ * a bare `YYYY-MM-DD` off a log.md heading. It was fed to relTime, which
+ * parses it as UTC midnight and answered in HOURS — "23 hours ago" a moment
+ * after an evening ingest — while the sidebar row, reading the same field
+ * through formatDayAge, said "today". Both now use formatDayAge.
+ *
+ * THE VERB IS THE LOG'S (F3). The date is the newest entry of kind ingest OR
+ * compile, so after a chat was compiled in, ① read "last ingest …" about a
+ * compile. The meta now says what the entry was; the SOURCES tile shows an
+ * age only when the newest entry IS an ingest, because on a compile the last
+ * ingest's date is not in this row and a dash is the honest reading.
+ */
+function lastWriteReading(d, now) {
+  const date = d && d.lastIngestDate;
+  const age = date ? formatDayAge(date, now) : null;
+  if (!age) {
+    return { meta: 'nothing ingested yet', tile: 'nothing yet',
+      tileName: 'Sources \u2014 nothing ingested yet \u2014 open the Ingest section' };
+  }
+  const kind = d.lastIngestKind === 'ingest' || d.lastIngestKind === 'compile' ? d.lastIngestKind : null;
+  if (kind === 'ingest') {
+    return { meta: 'last ingest ' + age, tile: age,
+      tileName: 'Sources, last ingest ' + age + ' \u2014 open the Ingest section' };
+  }
+  const what = kind === 'compile' ? 'compile' : 'write';
+  return { meta: 'last ' + what + ' ' + age, tile: '\u2014',
+    tileName: 'Sources \u2014 the newest entry in the log is a ' + what + ' (' + age +
+      '), so the last ingest date is not shown \u2014 open the Ingest section' };
 }
 
 // ── Health category definitions ───────────────────────────────────────────
@@ -1524,7 +1559,16 @@ function formatUsd(n) {
 // estimate to report (matching every existing caller's prior null-check).
 function costReadout(est, { compact = false } = {}) {
   if (!est || est.error) return null;
-  if (typeof est.estimatedUsd === 'number') return formatUsd(est.estimatedUsd);
+  // THE BADGE SAYS IT IS AN ESTIMATE (v3.72.1, F10). Every token figure
+  // behind it is a heuristic (health-ai.js's per-pair / per-page budgets), and
+  // a bare "$0.03" on a button reads as a price. The full sentence already
+  // says "Estimated cost …", so only the compact badge gains the "≈".
+  // A zero is a free model's exact cost, and "< $0.0001" is already a bound,
+  // so neither gains the mark.
+  if (typeof est.estimatedUsd === 'number') {
+    const usd = formatUsd(est.estimatedUsd);
+    return compact && est.estimatedUsd > 0 && usd.charAt(0) !== '<' ? '\u2248 ' + usd : usd;
+  }
   // A FREE model's cost is KNOWN and it is zero — `priceKnown: true` with a null
   // `estimatedUsd`. Before this, the compact branch returned before ever reading
   // the note, so the spend button read "cost unknown" on the ONE model whose cost
@@ -1536,18 +1580,16 @@ function costReadout(est, { compact = false } = {}) {
   return (typeof est.costNote === 'string' && est.costNote) || 'cost unknown';
 }
 
+// For a full ISO TIMESTAMP only — never a bare `YYYY-MM-DD` (that is
+// formatDayAge's; see lastWriteReading). v3.72.1 (F12): the words are the app
+// clock's own (shared/age.js formatAge, which shared/age-ticker.js writes on
+// every tick), so an age painted here and the same age a second later from
+// the ticker are one vocabulary, not "4 minutes ago" turning into "4 min ago".
 function relTime(iso) {
   if (!iso) return 'never';
-  const ms = Date.now() - new Date(iso).getTime();
-  const sec = Math.floor(ms / 1000);
-  if (sec < 5) return 'just now';
-  if (sec < 60) return sec + 's ago';
-  const min = Math.floor(sec / 60);
-  if (min < 60) return min + (min === 1 ? ' minute ago' : ' minutes ago');
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return hr + (hr === 1 ? ' hour ago' : ' hours ago');
-  const day = Math.floor(hr / 24);
-  return day + (day === 1 ? ' day ago' : ' days ago');
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return 'never';
+  return formatAge(Math.max(0, Math.round((Date.now() - t) / 1000))) || 'never';
 }
 
 function pluralize(n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); }
@@ -1634,7 +1676,12 @@ async function loadDomainsList(token) {
     const data = await fetchJSON('/api/domains/stats');
     if (!isCurrentMount(token)) return; // H1 fix
     commit = () => {
-      state.domains = Array.isArray(data.domains) ? data.domains : [];
+      const nextRows = Array.isArray(data.domains) ? data.domains : [];
+      // F9 (v3.72.1): a sidebar dot scanned earlier this session is dropped
+      // for every domain whose stats moved since — an ingest elsewhere, a
+      // sync, an MCP compile. See staleHealthSlugs.
+      for (const s of staleHealthSlugs(state.domains, nextRows)) delete state.healthSummary[s];
+      state.domains = nextRows;
       state.readonlySet = new Set(data.readonlyDomains || []);
       // ── THE REQUESTED DOMAIN IS CHECKED HERE, AND ONLY HERE (P1-9) ────
       //
@@ -2453,9 +2500,25 @@ function openLifecycle(mode, domain) {
       busy: false,
       error: null,
       refusal: null,
+      // THE DELETE CONFIRM'S PAGE COUNT IS READ WHEN IT OPENS (v3.72.1, F1).
+      // It used to quote the list's row, which could be as old as the page
+      // mount — an ingest or a merge later, "all 4 pages" over a domain of
+      // 7, the v3.2.0 class. `undefined` = still counting (no number shown),
+      // `null` = could not be read (no number shown), a number = fresh.
+      pages: undefined,
     };
   }
   render(myMountToken);
+  if (mode === 'delete') {
+    const token = myMountToken;
+    const slug = domain.slug;
+    refreshDomainFigures(slug, token).then((fresh) => {
+      const f = state.lifecycle;
+      if (!isCurrentMount(token) || !f || f.mode !== 'delete' || f.slug !== slug) return;
+      f.pages = fresh && typeof fresh.pageCount === 'number' ? fresh.pageCount : null;
+      render(token);
+    }).catch(reportAsyncActionFailure);
+  }
 }
 
 function closeLifecycle() {
@@ -2577,6 +2640,131 @@ async function runDeleteDomain() {
   if (!isCurrentMount(token)) return;
   if (succeeded) await reloadAfterLifecycleChange(token); // outside the try — see runCreateDomain
   else { render(token); revealMessage('.dm-lc-refusal, .dm-lc-error'); }
+}
+
+// ── THE PAGE'S FIGURES FOLLOW EVERY WRITE MADE ON IT (v3.72.1, F1) ─────────
+//
+// THE DEFECT. `GET /api/domains/stats` was read on entry, on a folder switch
+// and after create/rename/delete — and nowhere else. An ingest in ① on this
+// same page, "Fix all N hyphen variants", "Merge and delete", a semantic
+// merge: each changed the wiki and left the OVERVIEW tiles, the sidebar row
+// (pages, age, "Ingested · title"), ① "last ingest" and ② Pages as they were
+// before the write — deleted pages still listed, opening one failing. And the
+// Delete-domain confirm quoted "all N pages in it" from that same stale row,
+// the v3.2.0 "promise 4, delete 7" class brought back by staleness rather
+// than by a narrowed formula.
+//
+// THE FIX IS STRUCTURAL, NOT A CALL AT EACH SITE. Every write this page (or a
+// panel it hosts) makes holds the shell's write gate, `beginDomainWrite`, and
+// releases it when the write is over. So the page watches the gate: when a
+// domain goes from busy to idle, its stats row is re-read, and for the domain
+// on screen the page list is revalidated (signature-diffed — an identical
+// answer repaints nothing). A write path added tomorrow is covered the day it
+// takes the gate, which it must do anyway.
+//
+// WHO RESCANS HEALTH. The Health write paths already reload the report
+// themselves once their write lands (each ends in `loadHealth`), so a second
+// scan would only repaint twice. Every OTHER write — an ingest, a batch, a
+// Shared Brain pull or revoke — changes pages Health knows nothing about, so
+// for those the report is rescanned too. Rename/delete reload the whole list
+// themselves (reloadAfterLifecycleChange) and are left to it.
+const WRITES_THAT_RESCAN_THEMSELVES = new Set([
+  'health-fix-all-safe', 'health-fix', 'broken-links-apply', 'orphan-rescue-apply',
+  'semantic-dupe-merge', 'semantic-dupes-merge-batch',
+]);
+const WRITES_THAT_RELOAD_THE_LIST = new Set(['rename-domain', 'delete-domain']);
+// slug -> Set of write labels seen while that domain's gate was held. Module
+// scoped like the mount bookkeeping above it; cleared on teardown.
+const writesInFlight = new Map();
+
+/** Did anything a reader can see change between two stats rows? */
+function statsRowChanged(prev, next) {
+  if (!prev || !next) return true;
+  const pc = (r) => JSON.stringify(r.pageCounts || null);
+  return prev.pageCount !== next.pageCount || pc(prev) !== pc(next)
+    || prev.lastIngestDate !== next.lastIngestDate || prev.lastIngestKind !== next.lastIngestKind
+    || prev.lastIngestTitle !== next.lastIngestTitle || prev.displayName !== next.displayName
+    || prev.conversationCount !== next.conversationCount;
+}
+
+/**
+ * The slugs whose sidebar health dot is no longer about the wiki on disk
+ * (v3.72.1, F9). `state.healthSummary` is a count from whenever that domain
+ * was last SCANNED this session; once its stats have moved (pages, the newest
+ * log entry) the count is about a wiki that no longer exists, and an absent
+ * entry — no dot, "not checked" — is the honest reading until it is rescanned.
+ */
+function staleHealthSlugs(prevRows, nextRows) {
+  const before = new Map();
+  for (const r of prevRows || []) if (r && r.slug) before.set(r.slug, r);
+  const out = [];
+  for (const r of nextRows || []) {
+    if (!r || !r.slug) continue;
+    const p = before.get(r.slug);
+    if (p && statsRowChanged(p, r)) out.push(r.slug);
+  }
+  return out;
+}
+
+/**
+ * Re-read ONE domain's stats row and patch it into the list; for the domain
+ * on screen, revalidate the page list and (when `rescan`) the Health report.
+ * Returns the fresh row, or null when it could not be read — a caller that
+ * quotes a figure from it (the Delete confirm) must then quote none.
+ */
+async function refreshDomainFigures(slug, token, opts) {
+  const rescanHealth = !!(opts && opts.rescan);
+  let fresh = null;
+  try {
+    fresh = await fetchJSON('/api/domains/' + encodeURIComponent(slug) + '/stats');
+  } catch {
+    fresh = null;
+  }
+  if (!isCurrentMount(token)) return null;
+  if (!fresh || typeof fresh !== 'object' || fresh.slug !== slug) return null;
+  const i = state.domains.findIndex((d) => d && d.slug === slug);
+  if (i === -1) return fresh; // the domain left the list meanwhile (a delete); nothing to patch
+  const changed = statsRowChanged(state.domains[i], fresh);
+  if (changed) {
+    const next = state.domains.slice();
+    next[i] = fresh;
+    state.domains = next;
+    // A dot for a domain NOT on screen is dropped rather than recomputed:
+    // only a scan can say what its count is now (F9). The active domain's is
+    // rewritten by the rescan below or by its own Health path's loadHealth.
+    if (slug !== state.activeSlug) delete state.healthSummary[slug];
+    render(token);
+  }
+  if (slug === state.activeSlug) {
+    loadBrowse(slug, token).catch(reportAsyncActionFailure);
+    if (rescanHealth && changed) rescan(slug);
+  }
+  return fresh;
+}
+
+/** The write-gate watcher. Called on EVERY gate change (any domain). */
+function onWriteGateEdge(token) {
+  if (!isCurrentMount(token)) return;
+  const busyNow = (s) => { try { return !!shell.isDomainWriteBusy(s); } catch { return false; } };
+  const labelNow = (s) => { try { return shell.getDomainWriteLabel(s); } catch { return null; } };
+  for (const d of state.domains) {
+    const slug = d && d.slug;
+    if (!slug) continue;
+    if (busyNow(slug)) {
+      const seen = writesInFlight.get(slug) || new Set();
+      const label = labelNow(slug);
+      seen.add(typeof label === 'string' && label ? label : 'write');
+      writesInFlight.set(slug, seen);
+      continue;
+    }
+    const seen = writesInFlight.get(slug);
+    if (!seen) continue;
+    writesInFlight.delete(slug);
+    const labels = [...seen];
+    if (labels.every((l) => WRITES_THAT_RELOAD_THE_LIST.has(l))) continue;
+    const rescanToo = !labels.every((l) => WRITES_THAT_RESCAN_THEMSELVES.has(l) || WRITES_THAT_RELOAD_THE_LIST.has(l));
+    refreshDomainFigures(slug, token, { rescan: rescanToo }).catch(reportAsyncActionFailure);
+  }
 }
 
 // Shared tail for all three: re-fetch the list (page counts, display names
@@ -3210,6 +3398,7 @@ function selectDomain(slug) {
       slug, loading: false, error: null,
       rows: cached.projects.rows, truncated: cached.projects.truncated,
       canWrite: cached.projects.canWrite, readonly: cached.projects.readonly,
+      total: cached.projects.total,
     };
   }
   // The scan is DECLARED here rather than a moment later inside loadHealth,
@@ -3347,6 +3536,11 @@ async function loadProjects(slug, token) {
       error: null,
       rows: Array.isArray(body && body.projects) ? body.projects : [],
       truncated: !!(body && body.truncated === true),
+      // THE STORE'S COUNT, taken before the route's 200 cap (v3.72.1, F7).
+      // It was dropped here, so projectCount() fell back to `rows.length`
+      // and the PROJECTS tile read 200 on a domain with 240. A missing or
+      // junk figure stays null, and projectCount() then falls back as before.
+      total: (body && Number.isInteger(body.total) && body.total >= 0) ? body.total : null,
       // The SERVER says whether it can write, and the controls render from
       // that rather than from a version string: a capability is a fact about
       // the server that answered.
@@ -3355,7 +3549,7 @@ async function loadProjects(slug, token) {
     };
     // The whole answer, serialised — not a digest of the fields someone
     // thought the renderer reads. See browseSignature for why.
-    const sig = JSON.stringify([next.rows, next.truncated, next.canWrite, next.readonly]);
+    const sig = JSON.stringify([next.rows, next.truncated, next.canWrite, next.readonly, next.total]);
     const slot = (state.cache && (state.cache[slug] || (state.cache[slug] = {}))) || {};
     // An identical revalidation repaints nothing: setMain() rebuilds the
     // whole column, and a column that comes back identical is pure cost.
@@ -3363,6 +3557,7 @@ async function loadProjects(slug, token) {
     state.projects = next;
     slot.projects = {
       rows: next.rows, truncated: next.truncated, canWrite: next.canWrite, readonly: next.readonly,
+      total: next.total,
     };
     slot.projectsSig = sig;
   } catch (err) {
@@ -3533,7 +3728,7 @@ function renderMain(token) {
       // scrolls to nothing is the control-with-no-outcome this card already
       // refuses to draw for a facet with no list.
       sources: !readonly,
-      lastIngest: domain.lastIngestDate || null,
+      lastWrite: lastWriteReading(domain, Date.now()),
       shared: state.sharedJump,
     }) +
     // ── INGEST, ABOVE THE INDEX OF WHAT IT ADDED (v3.64.0) ───────────────
@@ -3635,8 +3830,7 @@ function renderMain(token) {
           '</div>' +
           INGEST_INFO.btn +
           '<span class="dm-fold-meta dm-section-meta">' +
-            (domain.lastIngestDate ? 'last ingest ' + escapeHtml(relTime(domain.lastIngestDate))
-                                   : 'nothing ingested yet') +
+            escapeHtml(lastWriteReading(domain, Date.now()).meta) +
           '</span>' +
         '</div>' +
         INGEST_INFO.panel +
@@ -3797,8 +3991,12 @@ function renderProjectRow(row, canWrite, index) {
   // answer and is never rendered as an age.
   const savedIso = row.writtenAt || row.lastWriteAt || null;
   const saved = savedIso ? relTime(savedIso) : null;
+  // The save age TICKS (v3.72.1, F12): it is a `[data-age-at]` span the one
+  // app clock rewrites in place; every other fact on the line is escaped text.
+  const savedHtml = saved
+    ? 'last save <span data-age-at="' + escapeHtml(savedIso) + '" data-age-text>' + escapeHtml(saved) + '</span>'
+    : 'no saves yet';
   const facts = [
-    saved ? 'last save ' + saved : 'no saves yet',
     row.newestScope ? 'newest Handoff ' + row.newestScope : null,
     // The store's own word, and its own claim: this is where the domain's
     // OWN project lives, permanently — not a pre-v3.48.0 leftover waiting
@@ -3811,7 +4009,7 @@ function renderProjectRow(row, canWrite, index) {
     '<div class="cur-group-row dm-proj-row">' +
       '<div class="cur-group-label">' +
         '<b>' + escapeHtml(name) + ' ' + brief + '</b>' +
-        '<span>' + escapeHtml(facts) + '</span>' +
+        '<span>' + savedHtml + (facts ? ' · ' + escapeHtml(facts) : '') + '</span>' +
       '</div>' +
       '<div class="cur-group-control">' +
         '<button class="btn btn-ghost dm-proj-btn" data-proj-marker="' + escapeHtml(name) + '">' +
@@ -4497,8 +4695,17 @@ function renderStatCards(counts, pages, projects, jumps) {
   const cards = [
     // PAGES is the RESET, not a narrowing, so its name says so rather than
     // reading "Pages, 3,445 pages — filter the list".
+    // "EVERY PAGE" WAS NOT TRUE WITH OTHER FILES PRESENT (v3.72.1, F8): the
+    // total counts `other` (a stray root note, a nested page) and the list
+    // lists only entities, concepts and summaries, so PAGES 412 opened
+    // "All 409". The name now says how many the list holds and how many it
+    // does not.
     facet('PAGES', pagesText, '', 'all',
-      'Pages, ' + pagesText + ' \u2014 show every page in the list'),
+      otherCount > 0
+        ? 'Pages, ' + pagesText + ' \u2014 show the ' + (pages - otherCount).toLocaleString()
+          + ' listed pages; ' + otherCount.toLocaleString() + ' other '
+          + (otherCount === 1 ? 'file is' : 'files are') + ' not in the list'
+        : 'Pages, ' + pagesText + ' \u2014 show every page in the list'),
     facet('ENTITIES', entText, 'dm-stat-entity', 'entities',
       'Entities, ' + entText + ' pages \u2014 filter the list'),
     facet('CONCEPTS', conText, 'dm-stat-concept', 'concepts',
@@ -4540,9 +4747,12 @@ function renderStatCards(counts, pages, projects, jumps) {
   // nothing is the control-with-no-outcome this card already refuses to draw
   // for a facet with no list.
   if (jumps && jumps.sources) {
+    // The reading is built by lastWriteReading (v3.72.1, F2/F3): day
+    // precision, and an age only when the newest log entry is an ingest.
+    const lw = jumps.lastWrite && typeof jumps.lastWrite === 'object' ? jumps.lastWrite : null;
     cards.push({ label: 'SOURCES', jump: 'sources',
-      value: jumps.lastIngest ? relTime(jumps.lastIngest) : 'nothing yet',
-      name: 'Sources \u2014 open the Ingest section' });
+      value: lw ? lw.tile : '\u2014',
+      name: lw ? lw.tileName : 'Sources \u2014 open the Ingest section' });
     cards.push({ label: 'SHARED', jump: 'shared',
       value: (jumps.shared && jumps.shared.value) || '\u2014',
       hidden: !(jumps.shared && jumps.shared.show),
@@ -5443,18 +5653,20 @@ function renderLifecycleCard() {
     (f.error ? '<div class="dm-lc-error">' + icon('alertCircle', 14) + '<span>' + escapeHtml(f.error) + '</span></div>' : '');
 
   if (f.mode === 'delete') {
-    const domain = state.domains.find((d) => d.slug === f.slug);
     // pageCount is the RECURSIVE total (files.js's stated invariant:
     // entities + concepts + summaries + other). v3.2.0 recorded that
     // narrowing it made the shipping delete dialog promise 4 pages and then
-    // delete 7 — so the number quoted here is deliberately that one.
-    const pages = domain && typeof domain.pageCount === 'number' ? domain.pageCount : null;
+    // delete 7 — so the number quoted here is deliberately that one, and
+    // (v3.72.1, F1) it is the one read when this form OPENED, never the list
+    // row, which can predate a write made on this page. Until that read
+    // lands — or if it fails — no number is quoted at all.
+    const pages = typeof f.pages === 'number' ? f.pages : null;
     const readonly = state.readonlySet.has(f.slug);
     return (
       '<div class="dm-lc-card dm-lc-danger">' +
         '<div class="dm-lc-title">Delete “' + escapeHtml(f.displayName || f.slug) + '”?</div>' +
         '<div class="dm-lc-body">This permanently removes <span class="mono">domains/' + escapeHtml(f.slug) + '/</span>' +
-          (pages === null ? '' : ' and all ' + pluralize(pages, 'page') + ' in it') +
+          (pages === null ? ' and every page in it' : ' and all ' + pluralize(pages, 'page') + ' in it') +
           ', including its raw sources and saved conversations. It cannot be undone from inside The Curator.' +
           (readonly ? ' This is a Shared Brain mirror — deleting it removes only your local copy, and a future Pull recreates it.' : '') +
         '</div>' +
@@ -6644,9 +6856,18 @@ function renderHealthPanel(domain, readonly) {
       { key: 'entities', value: report.counts.entities },
       { key: 'concepts', value: report.counts.concepts },
       { key: 'summaries', value: report.counts.summaries },
-      { key: 'dismissed', value: report.counts.dismissed, tone: 'quiet' },
+      // NOT the Dismissed list's size (v3.72.1, F5): this is how many of
+      // THIS scan's issues a dismissal hid. The list below counts every
+      // dismissal on disk — semantic-pair Skips and records whose issue has
+      // since gone included — so the two are named apart.
+      { key: 'hidden by a dismissal', value: report.counts.dismissed, tone: 'quiet' },
       ...(report.scannedAt
         ? [{ key: 'scanned', value: relTime(report.scannedAt),
+             // The absolute time beside the relative one (F12): the monitor's
+             // value is escaped text and does not tick, so the reading it
+             // gives is anchored to a clock time that stays true.
+             sub: 'at ' + new Date(report.scannedAt).toLocaleString([], {
+               month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
              markHtml: '<span class="fresh-dot fresh-' + freshnessTier(scannedSec) +
                '" aria-hidden="true"></span>' }]
         : []),
@@ -6680,8 +6901,12 @@ function renderHealthPanel(domain, readonly) {
         icon('chevronRight', 13) +
         '<span class="dm-group-label">Scan</span>' +
         '<span class="dm-group-meta">' +
-          escapeHtml(pluralize(total, 'open issue') +
-            (report.scannedAt ? ' · ' + relTime(report.scannedAt) : '')) +
+          escapeHtml(pluralize(total, 'open issue')) +
+          // Ticks (F12): the ONE clock rewrites this span's text in place.
+          (report.scannedAt
+            ? ' · <span data-age-at="' + escapeHtml(report.scannedAt) + '" data-age-text>' +
+                escapeHtml(relTime(report.scannedAt)) + '</span>'
+            : '') +
         '</span>' +
       '</summary>' +
       '<div class="dm-group-body dm-scan-body">' +
@@ -6994,8 +7219,13 @@ function renderConfirmCard() {
       (typeof c.runLineHtml === 'string' ? c.runLineHtml : '') +
       '<div class="dm-confirm-body">' + escapeHtml(c.body) + '</div>' +
       '<div class="dm-confirm-actions">' +
-        '<button class="btn btn-primary" id="dm-confirm-yes">' + escapeHtml(c.confirmLabel || 'Confirm') + '</button>' +
-        '<button class="btn btn-ghost" id="dm-confirm-no">Cancel</button>' +
+        // A REFUSED confirm (v3.72.1, F4) has no yes button: the action it
+        // describes would be refused by the server, so the one forward door
+        // is to the setting that decides it.
+        (c.refused
+          ? '<button class="btn btn-secondary" id="dm-confirm-settings">' + escapeHtml(c.settingsLabel || 'Open settings') + '</button>'
+          : '<button class="btn btn-primary" id="dm-confirm-yes">' + escapeHtml(c.confirmLabel || 'Confirm') + '</button>') +
+        '<button class="btn btn-ghost" id="dm-confirm-no">' + (c.refused ? 'Close' : 'Cancel') + '</button>' +
       '</div>' +
     '</div>'
   );
@@ -7075,7 +7305,13 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
 
   return (
     '<div class="dm-plan-card">' +
-      '<div class="dm-plan-title">' + pluralize(s.pairs.length, 'candidate pair') + ' found</div>' +
+      // "CANDIDATE PAIRS" NAMED TWO QUANTITIES (v3.72.1, F11): the confirm
+      // used it for the pre-filtered INPUT ("Scans 180 candidate pairs") and
+      // this header for the model's medium/high verdicts. These are the
+      // verdicts; the input count is stated beside them when the scan
+      // reported it.
+      '<div class="dm-plan-title">' + pluralize(s.pairs.length, 'likely duplicate pair') + ' found' +
+        (Number.isInteger(s.checked) ? ' (of ' + s.checked.toLocaleString('en-US') + ' checked)' : '') + '</div>' +
       '<div class="dm-plan-summary">Each merge deletes one page and repoints every [[wikilink]] to it across the domain. ' +
       'Preview a pair to enable its Merge button; Flip swaps which side survives; Skip dismisses the pair so it stops ' +
       'coming back on future scans. The scan pairs every candidate, so several versions of one page produce several ' +
@@ -7170,16 +7406,31 @@ function renderSemanticPreview(preview) {
         '<div>' + (d.totalLinksRewritten || 0) + ' link rewrites across ' + pluralize(d.affectedCount || 0, 'file') + '</div>' +
       '</div>' +
       (files.length ? '<ul class="dm-sem-preview-files">' + shown + more + '</ul>' : '') +
-      '<div class="cur-eyebrow">MERGED CONTENT (FIRST 4 KB)</div>' +
+      // THE CAP IS THE SERVER'S AND IT IS CHARACTERS (v3.72.1, tray F8). It
+      // read "FIRST 4 KB" over a String#slice(0, 4000) — characters, not
+      // bytes — and retyped 4000 for the truncation test. Now the label
+      // names the server's own `mergedPreviewCap`, and "truncated" is decided
+      // by comparing the text actually sent with the full length.
+      '<div class="cur-eyebrow">MERGED CONTENT' +
+        (Number.isInteger(d.mergedPreviewCap) && d.mergedPreviewCap > 0
+          ? ' (FIRST ' + d.mergedPreviewCap.toLocaleString('en-US') + ' CHARACTERS)' : '') + '</div>' +
       '<pre class="dm-sem-preview-body">' + escapeHtml(d.mergedPreview || '') +
-        ((d.mergedLength || 0) > 4000 ? '\n…(truncated)' : '') + '</pre>' +
+        ((d.mergedLength || 0) > String(d.mergedPreview || '').length ? '\n…(truncated)' : '') + '</pre>' +
     '</div>'
   );
 }
 
 function renderIssueGroups(report, readonly, crossMountBusy) {
   const groups = HEALTH_CATEGORIES.map((cat) => renderIssueGroup(cat, report[cat.key] || [], readonly, crossMountBusy)).join('');
-  const dismissedGroup = renderDismissedGroup(report.counts.dismissed);
+  // THE GROUP COUNTS THE LIST IT OPENS (v3.72.1, F5). `counts.dismissed` is
+  // the number of current-scan issues a dismissal hid, which excludes every
+  // semantic-pair Skip and every record whose issue is gone — so the pill
+  // read 2 over a list of 7, and a domain whose only dismissals were Skips
+  // had no group at all, leaving them unrestorable here. The route now sends
+  // the record count (`dismissedRecords`); an older server's report falls
+  // back to the old figure.
+  const dismissedGroup = renderDismissedGroup(
+    Number.isInteger(report.dismissedRecords) ? report.dismissedRecords : report.counts.dismissed);
   return '<div class="dm-groups">' + groups + dismissedGroup + '</div>';
 }
 
@@ -7284,7 +7535,8 @@ function renderDismissedGroup(count) {
       '<summary class="dm-group-summary">' +
         icon('chevronRight', 13) +
         '<span class="dm-group-label dm-dismissed-label">Dismissed</span>' +
-        '<span class="dm-group-pill">' + count + '</span>' +
+        '<span class="dm-group-pill">' +
+          (open && Array.isArray(state.dismissedRecords) ? state.dismissedRecords.length : count) + '</span>' +
       '</summary>' +
       '<div class="dm-group-body">' + body + '</div>' +
     '</details>'
@@ -7356,6 +7608,11 @@ function bindHealthListeners(domain, readonly) {
     if (run) Promise.resolve().then(() => run()).catch(reportAsyncActionFailure);
   });
   document.getElementById('dm-confirm-no')?.addEventListener('click', () => { state.confirm = null; render(myMountToken); });
+  document.getElementById('dm-confirm-settings')?.addEventListener('click', () => {
+    state.confirm = null;
+    requestSettingsSection('health');
+    navigate('settings');
+  });
 
   document.getElementById('dm-plan-apply-btn')?.addEventListener('click', () => {
     Promise.resolve().then(() => applyPendingPlan(domain.slug)).catch(reportAsyncActionFailure);
@@ -7568,12 +7825,20 @@ function onQuickAction(slug, action) {
 
 function confirmFixSafe(slug) {
   const total = countSafeFixable(state.health);
+  // THE SAME DELETIONS, SAID THE SAME WAY (v3.72.1, F6). fixAllSafe runs the
+  // two page-DELETING types first (health.js), and this confirm used to call
+  // them "deterministic repairs" with the soft undo note, while the per-type
+  // "Fix all" for the very same issues counted the pages and warned. The
+  // count comes from the same deletedPageCount the per-type confirm uses.
+  const deletes = safeFixDeletedPages(state.health);
   state.confirm = {
     title: 'Fix ' + pluralize(total, 'safe issue') + '?',
     body: 'Applies deterministic repairs only — cross-folder duplicates, hyphen variants, folder-prefix links, ' +
       'missing backlinks, and broken links that already have a known target. Nothing here spends AI tokens. ' +
-      GIT_UNDO_NOTE,
-    confirmLabel: 'Fix now',
+      (deletes > 0
+        ? 'The duplicates and hyphen variants are MERGED: ' + pluralize(deletes, 'page') + ' will be deleted. ' + GIT_UNDO_WARN
+        : GIT_UNDO_NOTE),
+    confirmLabel: deletes > 0 ? 'Fix and delete' : 'Fix now',
     run: () => runFixSafe(slug),
   };
   render(myMountToken);
@@ -7672,6 +7937,15 @@ function deletedPageCount(type, issues) {
   }
   // crossFolderDupes (and any future strict pair type): one page per issue.
   return issues.length;
+}
+
+/** Pages "Fix N safe issues" will delete — the two DESTRUCTIVE types, counted
+ *  by the same deletedPageCount the per-type confirm uses. */
+function safeFixDeletedPages(report) {
+  if (!report) return 0;
+  let n = 0;
+  for (const type of DESTRUCTIVE_FIX_TYPES) n += deletedPageCount(type, report[type] || []);
+  return n;
 }
 
 function confirmFixAllOfType(slug, type) {
@@ -8060,18 +8334,67 @@ async function confirmSemanticScan(slug) {
 
   const provider = state.aiProvider || 'the configured provider';
   const model = state.aiModel || '';
-  const cost = costReadout(est);
+  const reading = semanticScanConfirmText(est, provider + (model ? '/' + model : ''), costReadout(est));
   state.confirm = {
-    title: 'Scan for duplicate pages?',
-    body: 'Scans ' + est.candidatePairs + ' candidate pairs' +
-      (est.totalCandidates ? ' (pre-filtered locally from ' + est.totalCandidates + ' total)' : '') +
-      ' using ' + provider + (model ? '/' + model : '') + '. Estimated cost ' + (cost || 'unknown') +
-      '. This only finds pairs — nothing is merged yet.',
-    confirmLabel: 'Scan now',
+    title: reading.title,
+    body: reading.body,
+    // A REFUSED run gets no "Scan now" at all (v3.72.1, F4): the server
+    // refuses before any LLM call when the estimate is over the ceiling, so a
+    // button beside a price would be a control whose only outcome is an error
+    // banner. The confirm's other door goes to the limits instead.
+    confirmLabel: reading.refused ? null : 'Scan now',
+    refused: reading.refused,
+    settingsLabel: reading.refused ? 'Open scan limits' : null,
     runLineHtml: renderRunsOn((est && est.runsOn) || state.aiRunsOn, { id: 'dm-confirm-runs-on' }),
-    run: () => runSemanticScan(slug),
+    run: reading.refused ? null : () => runSemanticScan(slug),
   };
   render(token);
+}
+
+/**
+ * The duplicate-scan confirm's words, from the estimate the server returned —
+ * PURE, so a suite executes it (v3.72.1, F4).
+ *
+ * THE CEILING IS COMPARED HERE, BEFORE THE CLICK. The estimate route returns
+ * `costCeilingTokens` beside `estimatedTokens`, and the scan refuses whenever
+ * the second is over the first (health-ai.js, OVER_COST_CEILING). The view
+ * never compared them, so it offered "Scan now" with a price and the click
+ * produced "Could not scan … exceeds your AI Health cost ceiling". Now the
+ * refusal is the confirm's body and there is no Scan button to press.
+ *
+ * "PRE-FILTERED LOCALLY FROM N" DESCRIBED THE WRONG THING. `totalCandidates`
+ * is every live candidate the local pre-filter found; `candidatePairs` is that
+ * list CUT to the user's max-pairs setting when it was longer. So the cut is
+ * named as the setting it is, with the setting's own number when the route
+ * sends it.
+ */
+function semanticScanConfirmText(est, runsOnName, cost) {
+  const n = (v) => Number(v).toLocaleString('en-US');
+  const pairs = est.candidatePairs;
+  const scope = est.truncated
+    ? n(pairs) + ' candidate pairs — the most similar of ' + n(est.totalCandidates) +
+      ' found locally, capped at your ' +
+      (Number.isInteger(est.maxPairs) ? n(est.maxPairs) + '-pair ' : '') + 'limit'
+    : n(pairs) + ' candidate ' + (pairs === 1 ? 'pair' : 'pairs') + ' found locally';
+  const ceiling = est.costCeilingTokens;
+  const tokens = est.estimatedTokens;
+  const refused = Number.isFinite(ceiling) && Number.isFinite(tokens) && tokens > ceiling;
+  if (refused) {
+    return {
+      refused: true,
+      title: 'This scan is over your cost ceiling',
+      body: 'It would send ' + scope + ' to ' + runsOnName + ': an estimated ' + n(tokens) +
+        ' tokens, over your AI Health cost ceiling of ' + n(ceiling) +
+        ' tokens, so it will not start. Raise the ceiling or lower the maximum candidate pairs in ' +
+        'Settings › Health & scan limits. Nothing has been sent and nothing was spent.',
+    };
+  }
+  return {
+    refused: false,
+    title: 'Scan for duplicate pages?',
+    body: 'Scans ' + scope + ', using ' + runsOnName + '. Estimated cost ' + (cost || 'unknown') +
+      '. This only finds pairs — nothing is merged yet.',
+  };
 }
 
 async function runSemanticScan(slug) {
@@ -8082,7 +8405,11 @@ async function runSemanticScan(slug) {
   render(token);
   try {
     let result = null;
+    // How many pairs the model was actually asked about — the scan's own
+    // `start` frame. The header names both quantities (v3.72.1, F11).
+    let checked = null;
     await streamSSE('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/scan', {}, (type, ev) => {
+      if (type === 'start' && ev && Number.isInteger(ev.candidatePairs)) checked = ev.candidatePairs;
       if (type === 'progress') { noteAiProgress('semanticDupesScan', ev); render(token); }
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Scan failed');
@@ -8102,6 +8429,7 @@ async function runSemanticScan(slug) {
           status: 'open',
         })),
         cost: result.cost,
+        checked,
         previewed: new Set(),
         preview: null,
       };
@@ -8298,6 +8626,9 @@ async function skipSemanticPair(slug, pair) {
       }),
     });
     if (isCurrentMount(token)) markSemanticPairStatus(pair, 'skipped');
+    // A Skip IS a dismissal record: the loaded Dismissed list is stale now,
+    // exactly as it is after dismissIssue (v3.72.1, F5).
+    state.dismissedRecords = null;
   } catch (err) {
     if (isCurrentMount(token)) {
       const c = classifyDomainError(err);
@@ -8654,7 +8985,23 @@ registerView('domains', {
       onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
     });
     loadGate.begin();
-    loadDomainsList(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
+    // F1 (v3.72.1): the figures follow every write. Subscribed BEFORE the
+    // list loads, and the gate is read once more when it has — a write that
+    // was already running when this page mounted is recorded then, so its
+    // release is not missed. Reached through the namespace import and
+    // guarded, for the reason that import's comment gives.
+    const unsubscribeWriteGate = typeof shell.onWriteGateChange === 'function'
+      ? shell.onWriteGateChange(() => onWriteGateEdge(mountToken)) : null;
+    loadDomainsList(mountToken)
+      .then(() => onWriteGateEdge(mountToken))
+      .catch((err) => reportAsyncMountFailure(mountToken, err));
+    // F12 (v3.72.1): the relative ages on this page ("scanned 4 min ago",
+    // "last save …") tick, through the ONE app clock (shared/age-ticker.js),
+    // which rewrites only `[data-age-at]` text and never re-renders. A local
+    // day change repaints, so day-precision ages ("today") roll over too.
+    const unsubscribeAges = subscribeAgeTicker({
+      onDayChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
+    });
 
     // The knowledge-folder path, for "Looking in <path>". Deliberately NOT
     // awaited and deliberately NOT a mount failure: it only makes the copy
@@ -8696,6 +9043,9 @@ registerView('domains', {
     // (expandedGroups, dismissedRecords, the health report itself) is left
     // exactly as it was, matching this file's persist-across-mounts design.
     return () => {
+      if (typeof unsubscribeWriteGate === 'function') unsubscribeWriteGate();
+      writesInFlight.clear();
+      unsubscribeAges();
       // ── THE TWO HOSTED PANELS COME DOWN WITH THE PAGE (v3.64.0) ──────
       // Both unmounts are idempotent and both run the panel's FULL
       // teardown, in its own order. For Shared Brain it is load-bearing

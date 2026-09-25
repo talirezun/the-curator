@@ -28,6 +28,7 @@ import { findSemanticCandidatePairs, SEMANTIC_DUPE_DEFAULT_CAP, scanWiki } from 
 // accumulator is the ingest pipeline's own (src/brain/ingest.js), so a Health
 // run and an ingest are summed and priced by the same code.
 import { makeUsageAccumulator } from './ingest.js';
+import { DEFAULT_AI_HEALTH } from './config.js';
 
 // src/brain/ai-run.js is reached at CALL TIME, never by a static import.
 // This module sits inside ingest.js's own import subtree
@@ -359,7 +360,7 @@ export async function suggestOrphanHomes(domain, issue) {
 
 const SEMANTIC_BATCH_SIZE = 20;
 const FIRST_PARA_MAX = 500;     // per-page content sample sent to the LLM
-const EST_TOKENS_PER_PAIR = 400; // rough input+output budget per pair in a batch
+export const EST_TOKENS_PER_PAIR = 400; // rough input+output budget per pair in a batch
 
 /**
  * How each Health estimate splits its one token figure into input and output
@@ -577,7 +578,10 @@ export async function estimateSemanticDuplicateScan(domain, maxPairs = SEMANTIC_
  * with type: 'semanticDupe'.
  */
 export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => {}) {
-  const { maxPairs = SEMANTIC_DUPE_DEFAULT_CAP, costCeilingTokens = 50_000 } = opts;
+  // The ceiling's default is config's own (v3.72.1) — every production caller
+  // passes the user's setting, and a second literal here is how the two
+  // defaults came to disagree in the first place.
+  const { maxPairs = SEMANTIC_DUPE_DEFAULT_CAP, costCeilingTokens = DEFAULT_AI_HEALTH.costCeilingTokens } = opts;
   // v3.67.0: `opts.generateText` is a TEST-ONLY seam (the compile.js
   // precedent; null in production, where the routes pass `{}`), and every
   // provider call reports into one accumulator so the done event can say

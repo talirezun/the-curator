@@ -96,7 +96,7 @@ import {
   renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass,
 } from '../src/public/next/shared/sidebar.js';
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
-import { freshnessTier } from '../src/public/next/shared/age.js';
+import { freshnessTier, formatAge } from '../src/public/next/shared/age.js';
 // v3.67.0 (package SD): Quick maintenance renders the shared run line.
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs } from '../src/public/next/shared/ai-run.js';
 // v3.71.0 (G3/G4): HEALTH_INFO and PAGES_INFO are module consts computed
@@ -368,6 +368,8 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
     // here would let the figures say anything while this section asserts
     // exactly which ones reach the panel.
     renderMonitor, freshnessTier,
+    // v3.72.1 (F12): the view's relTime speaks the age clock's own words.
+    formatAge,
     // v3.71.0 (G4): healthSection's own ⓘ, `HEALTH_INFO`, is a module const
     // computed from the real kit — `explainerMark` injected for the same
     // reason renderMonitor/freshnessTier are.
@@ -430,7 +432,8 @@ section('§3  THE REPORTED DEFECT — the health panel is a report, not a senten
        'the report sits in a `Scan` fold row, like every other part of this section');
     ok(settled.indexOf('data-group-key="scan"') < settled.indexOf('class="cur-mon"'),
        '…and the monitor is the row\'s BODY, not a block above it');
-    ok(/dm-group-meta">3 open issue[s]? · 10s ago</.test(settled),
+    // v3.72.1 (F12): the age is a ticking [data-age-at] span inside the meta.
+    ok(/dm-group-meta">3 open issue[s]? · <span data-age-at="[^"]+" data-age-text>10s ago<\/span></.test(settled),
        '…whose summary reads the headline and the age, so a closed row still answers the '
        + 'question the section is for',
        (/<span class="dm-group-meta">[^<]*/.exec(settled) || ['(none)'])[0]);
@@ -590,6 +593,8 @@ section('§4  ABSENT IS NOT ZERO — at this call site, not just in the module')
     // here would let the figures say anything while this section asserts
     // exactly which ones reach the panel.
     renderMonitor, freshnessTier,
+    // v3.72.1 (F12): the view's relTime speaks the age clock's own words.
+    formatAge,
     // v3.71.0 (G4) — see the §3 harness above.
     explainerMark,
   };

@@ -148,6 +148,14 @@ function createLoadingGate(o) {
 function settleGate(gate, fn) { fn(); }
 function gatedLoader() { return ''; }
 function loadUiState() { return Promise.resolve({}); }
+// v3.72.1: onEnter watches the write gate (F1) and the one age clock (F12);
+// loadDomainsList drops stale health dots (F9). Inert here — their behaviour
+// is scripts/test-domains-true-numbers.js's.
+const shell = {};
+const writesInFlight = new Map();
+function staleHealthSlugs() { return []; }
+function onWriteGateEdge() {}
+function subscribeAgeTicker() { return () => {}; }
 function disarmSemanticScan() {}
 function shouldKeepSemanticScanOnReload() { return false; }
 function shouldKeepHealthOnReload() { return false; }
