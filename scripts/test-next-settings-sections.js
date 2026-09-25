@@ -199,11 +199,17 @@ const REAL = [
   extractFunction(src, 'renderSessionStrip'),
   extractFunction(src, 'renderToolMapBody'),
   extractFunction(src, 'renderToolMap'),
+  // v3.72.1 (truth audit F7): the scan-limits hint reads the default and its
+  // price off the route; formatTokenCount groups the figure.
+  extractFunction(src, 'scanCeilingHint'),
+  extractFunction(src, 'formatTokenCount'),
 ].join('\n');
 
 // The module's own refusal sentence, read from the source (not retyped here).
 const SCAN_LIMIT_REFUSAL_REAL = new Function(
   constSource(/const SCAN_LIMIT_REFUSAL =[\s\S]*?;\n/, 'SCAN_LIMIT_REFUSAL') + 'return SCAN_LIMIT_REFUSAL;')();
+
+const { formatUsdHonest: FORMAT_USD_HONEST } = await import('../src/public/next/shared/format-usd.js');
 
 function baseState() {
   return {
@@ -248,6 +254,8 @@ function lift(name, state, over) {
     explainerMark,
     explainerHtml,
     explainerLabel,
+    // v3.72.1 — the hint's price is an AMOUNT, so the shared amount formatter.
+    formatUsdHonest: FORMAT_USD_HONEST,
     docsLinkHtml,
     formatAge,
     freshnessTier,
@@ -749,7 +757,9 @@ function linesBlockOf(html) {
 {
   const html = run('renderMcp', baseState());
   ok(html.includes('cur-mon'), 'renderMcp: the connection strip is a MONITOR, not a hand-built status card');
-  ok(html.includes('cur-mon-state') && html.includes('Connected'),
+  // v3.72.1 (truth audit F13): the pill says "Configured" — the saved config
+  // is current — not "Connected", which nothing here observes.
+  ok(html.includes('cur-mon-state') && html.includes('Configured'),
     '\u2026whose head word is the pill\u2019s own label');
   ok(/cur-mon-state cur-mon-ok/.test(html),
     '\u2026carrying the tone deriveMcpStatus derived (connected \u2192 ok)');

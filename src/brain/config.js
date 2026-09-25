@@ -811,10 +811,20 @@ export function setSelectedModel(provider, modelId) {
 
 // ── AI Health settings (v2.4.5+) ─────────────────────────────────────────────
 
-const DEFAULT_AI_HEALTH = {
-  costCeilingTokens:    50_000, // hard-stops semantic-dupe scan before LLM calls
-  semanticDupeMaxPairs: 500,    // candidate-pair cap out of the pre-filter
-};
+// THE TWO DEFAULTS MUST AGREE (v3.72.1). The ceiling hard-stops a semantic-
+// duplicate scan before any LLM call when `pairs × 400` (health-ai.js
+// EST_TOKENS_PER_PAIR) is over it. It was 50,000 beside a 500-pair cap —
+// 500 × 400 = 200,000, four times the ceiling — so on a default install
+// every domain with more than 125 candidate pairs was offered a scan the
+// server then refused. The ceiling now admits a full default-cap scan
+// (≈ $0.03 on Gemini Flash Lite, the figure the docs and the MCP tool
+// description already quote for a 500-pair scan); the confirm still shows
+// the price before anything is spent. scripts/test-domains-true-numbers.js
+// pins costCeilingTokens >= semanticDupeMaxPairs × EST_TOKENS_PER_PAIR.
+export const DEFAULT_AI_HEALTH = Object.freeze({
+  costCeilingTokens:    200_000, // hard-stops semantic-dupe scan before LLM calls
+  semanticDupeMaxPairs: 500,     // candidate-pair cap out of the pre-filter
+});
 
 /**
  * Returns the persisted AI Health settings, falling back to defaults for

@@ -127,8 +127,7 @@ const SET_CONSTS = [
   'PROVIDER_ROWS', 'MODEL_LANES', 'CHAT_LANE_COLLAPSE_AT',
   'MODEL_SORTS', 'MODEL_SORT_KEYS', 'MODEL_SORT_UNRANKED_LABEL', 'MODEL_SORT_OPTIONS',
   'MODEL_FILTER_MIN_ROWS', 'MEASUREMENT_CHIPS', 'ACTIVATION_SKIP_REASONS',
-  'BUILD_PICK_ERROR_ID', 'QUALIFY_CONFIRM_ID', 'MEASURED_CALL_SECONDS',
-  'ALL_MODELS_SCOPE', 'MODEL_LANE_FACETS', 'MODEL_PRICE_BANDS', 'BUILD_WORKING_SET_TOKENS',
+  'BUILD_PICK_ERROR_ID', 'QUALIFY_CONFIRM_ID', 'ALL_MODELS_SCOPE', 'MODEL_LANE_FACETS', 'MODEL_PRICE_BANDS', 'BUILD_WORKING_SET_TOKENS',
   'CATALOGUE_SYNC_PROVIDERS',
 ];
 const SET_FNS = [
@@ -140,7 +139,7 @@ const SET_FNS = [
   'measurementChip', 'renderMeasurementChip',
   'modelLaneOf', 'laneBuildsWiki', 'qualificationFor', 'isCuratorMeasured', 'modelSearchText',
   'splitSentences', 'withoutLaneClaim', 'formatIsoDay', 'formatTokenCount', 'formatModelPrice',
-  'formatSyncedAt', 'formatDuration', 'measuredCallSeconds',
+  'formatSyncedAt', 'formatDuration', 'qualBaselineFor', 'priceAsOfText', 'livePriceText',
   'modelSortKey', 'countUnrankedForSort', 'orderModels', 'setModelFilter', 'cssEscapeAttr',
   'modelFilterFor', 'renderModelFilterBar', 'renderModelFilterEmpty', 'renderModelLanes',
   'renderModelOption', 'renderEmptyModelPicker', 'renderQualification', 'renderQualifyPanel',
@@ -170,6 +169,9 @@ const SET_INJECTED = {
   explainerMark,
   explainerHtml,
   escapeHtml: escapeHtmlStub,
+  // v3.72.1: the price-per-1M formatter settings.js now imports from
+  // shared/model-row.js — the REAL one, so exact prices are what is asserted.
+  formatPricePerM: (await import('../src/public/next/shared/model-row.js')).formatPricePerM,
   formatUsdHonest: (v) => (typeof v === 'number' && Number.isFinite(v)
     ? '$' + (Math.abs(v) < 0.01 ? v.toFixed(4) : v.toFixed(2)) : null),
   formatModelSummary: (m) => (m && typeof m.note === 'string' ? m.note : ''),

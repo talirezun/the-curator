@@ -668,7 +668,8 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
    * field on 2026-08-26, the same probe run that measured the notes.
    */
   const HAND_TYPED_CEILINGS = Object.freeze({
-    'minimax/minimax-m3:free':        943718,
+    // 'minimax/minimax-m3:free' (943718) REMOVED 2026-09-25 with its offer —
+    // OpenRouter withdrew the free route (llm.js FREE_MODELS).
     'ibm-granite/granite-4.0-h-micro': 117900,
     'upstage/solar-pro4':              131072,
     // Added 2026-08-28, read from `top_provider.max_completion_tokens` on the
@@ -962,7 +963,12 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
     // figure computed 0.00000315 — a third of the truth, on the surface whose
     // whole job is telling a user what a model costs before they pick it.
     'upstage/solar-pro4':              { input: 0.09,  output: 0.36  },
-    'z-ai/glm-5.3-flash':              { input: 0.075, output: 0.25  },
+    // ⚠ CHANGED 2026-09-25, the gate again doing its job. Three cold calls (41-42
+    // prompt + 64 completion tokens) were served by InferenceNet and billed
+    // upstream_inference_prompt_cost 1.845e-6 for 41 tokens (= $0.045/1M) and
+    // ..._completions_cost 8.96e-6 for 64 (= $0.14/1M). It read 0.075 / 0.25
+    // (DeepInfra's rate, still published, no longer the endpoint that answers).
+    'z-ai/glm-5.3-flash':              { input: 0.045, output: 0.14  },
     'moonshotai/kimi-k2-0905':         { input: 0.60,  output: 2.50  },
   });
   {
@@ -1058,7 +1064,7 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
     // OpenRouter, measured 2026-08-27 across 9 runs each on the real ingest
     // outline prompt; deterministic to the token on a byte-identical prompt.
     'ibm-granite/granite-4.0-h-micro': 1.036,
-    'minimax/minimax-m3:free':         1.015,
+    // 'minimax/minimax-m3:free' (1.015) REMOVED 2026-09-25 with its offer.
     // Measured 2026-08-28 in a SECOND session whose prompt was 343,716 chars,
     // not the first session's 341,005 — the `articles` domain grew between
     // them. The factor is a RATIO against that session's own upstage/solar-pro4
@@ -2284,7 +2290,7 @@ section('19. Promoted measurements — the fields both pickers summarise from');
 {
   const ALL = [];
   for (const [prov, list] of Object.entries(OFFERABLE_MODELS)) for (const e of list) ALL.push({ prov, e });
-  ok(ALL.length >= 19, `corpus: ${ALL.length} static offerable entries`);
+  ok(ALL.length >= 18, `corpus: ${ALL.length} static offerable entries`);
 
   // ── 19a. THE FIELD AND THE NOTE BENEATH IT CANNOT DISAGREE ────────────
   // The strongest guard available, and it is mechanical rather than a promise:
@@ -2306,7 +2312,7 @@ section('19. Promoted measurements — the fields both pickers summarise from');
     ok(re.test(e.note), `${e.id}: the ${lo}-${hi} page range in the FIELD also appears in its own note`);
     rangeChecked++;
   }
-  ok(rangeChecked >= 18, `corpus: ${rangeChecked} entries carry a page range — 19a is not vacuous`);
+  ok(rangeChecked >= 17, `corpus: ${rangeChecked} entries carry a page range — 19a is not vacuous`);
 
   let medianChecked = 0;
   for (const { e } of ALL) {
@@ -2318,7 +2324,7 @@ section('19. Promoted measurements — the fields both pickers summarise from');
       `${e.id}: the median lies inside its own measured range`);
     medianChecked++;
   }
-  ok(medianChecked >= 5, `corpus: ${medianChecked} entries carry a median — the median assertions are not vacuous`);
+  ok(medianChecked >= 4, `corpus: ${medianChecked} entries carry a median — the median assertions are not vacuous`);
 
   // NOT ENFORCED, and said plainly rather than implied away: there is no
   // equivalent note-anchor for latency. Two of the three figures were recorded
@@ -2452,7 +2458,7 @@ section('20. Two PUBLISHED facts — optional, additive, and never derived');
 {
   const ALL = [];
   for (const [prov, list] of Object.entries(OFFERABLE_MODELS)) for (const e of list) ALL.push({ prov, e });
-  ok(ALL.length >= 19, `control: ${ALL.length} static entries BUILT — the module loaded with the fields added`);
+  ok(ALL.length >= 18, `control: ${ALL.length} static entries BUILT — the module loaded with the fields added`);
 
   // ── 20a. ADDITIVE: every hand-typed entry carries them as UNKNOWN ──────
   ok(ALL.every(({ e }) => Object.hasOwn(e, 'createdUnixSec') && Object.hasOwn(e, 'contextLength')),

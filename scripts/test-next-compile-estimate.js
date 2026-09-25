@@ -440,7 +440,16 @@ section('4. An unknown cost is SAID, never rendered as zero');
   // (c) A FREE MODEL. Reached by the same route, and it must NOT inherit the
   //     unpriced wording: "this costs nothing" and "we cannot tell you what
   //     this costs" are opposite statements.
-  const free = await run({ GEMINI_API_KEY: FAKE_GEMINI_KEY, LLM_MODEL: 'minimax/minimax-m3:free' });
+  //     v3.72.1: this used 'minimax/minimax-m3:free', the one SHIPPED free id,
+  //     which OpenRouter withdrew (removed 2026-09-25). A synthetic `:free` id
+  //     registered through the real offer factory carries the same membership.
+  const FREE_FIXTURE = 'zz-vendor/zz-free-fixture:free';
+  (await import('../src/brain/llm.js')).__testing.defineOfferableModel('openrouter', {
+    id: FREE_FIXTURE, label: 'Free Fixture', thinks: false, tokenizerFactor: 1.0,
+    suitability: 'chat-only', maxOutput: 32768, free: true,
+    note: 'Synthetic free id for the free-model estimate arm.',
+  });
+  const free = await run({ GEMINI_API_KEY: FAKE_GEMINI_KEY, LLM_MODEL: FREE_FIXTURE });
   eq((free.estimate || {}).costUnknown, 'free-model', 'a free model reports free-model, not no-price');
   eq((free.estimate || {}).usdLow, null, 'usdLow stays NULL for a free model (a truthy 0 on the money path is the trap FREE_MODELS refuses)');
   ok(free.warnings.some(w => /free to use/i.test(w)), 'and the warning says it is free');

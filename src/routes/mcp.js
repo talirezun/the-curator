@@ -837,6 +837,10 @@ async function acrossProjects() {
       // A lower bound when any work-stream's journal ran past the 16 KB tail.
       lowerBound: pulse.pairsTruncated > 0,
       coversWholeWindow: pulse.coversWholeWindow,
+      // v3.72.1 (truth audit F10), additive: where the record begins, so a
+      // store younger than the window can say "records begin <date>" instead
+      // of reading as a whole observed week.
+      oldestEventAt: typeof pulse.oldestEventAt === 'string' ? pulse.oldestEventAt : null,
     } : null,
   };
 }

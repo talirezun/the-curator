@@ -52,6 +52,8 @@ const { __testing: queueTesting } = await import('../src/brain/ingest-queue.js')
 const brainJobs = await import('../src/brain/ai-jobs.js');
 const servedJobs = await import('../src/public/next/shared/ai-jobs.js');
 const { describeRun, spentFromUsage } = await import('../src/brain/ai-run.js');
+// v3.72.1 — a synthetic free id, registered in §3f (see there for why).
+const FREE_FIXTURE = 'zz-vendor/zz-free-fixture:free';
 const { AI_JOBS, AI_UNROUTED, buildLaneJobs, aiJob } = brainJobs;
 const { chargeForItem } = queueTesting;
 
@@ -293,8 +295,16 @@ section('3. describeRun — one estimate shape, absent means omitted');
 
   // 3f. FREE: zero is the measurement.
   useConfig({ openrouterApiKey: 'zz-test-dummy-key-not-real', activeProvider: 'openrouter' });
-  process.env.LLM_MODEL = 'minimax/minimax-m3:free';
-  ok(isFreeModel('minimax/minimax-m3:free'), 'fixture: minimax/minimax-m3:free is free by membership');
+  // v3.72.1: 'minimax/minimax-m3:free' was the one SHIPPED free id; OpenRouter
+  // withdrew it and it left the table (2026-09-25). A synthetic `:free` id
+  // registered through the real offer factory is the same membership.
+  llm.__testing.defineOfferableModel('openrouter', {
+    id: FREE_FIXTURE, label: 'Free Fixture', thinks: false, tokenizerFactor: 1.0,
+    suitability: 'chat-only', maxOutput: 32768, free: true,
+    note: 'Synthetic free id for the free-cost arm.',
+  });
+  process.env.LLM_MODEL = FREE_FIXTURE;
+  ok(isFreeModel(FREE_FIXTURE), 'fixture: the synthetic :free id is free by membership');
   const fr = describeRun({ job: 'reading-plan', inputChars: 24000, outputTokensLow: 400, outputTokensHigh: 900 });
   eq(fr.free, true, 'free: free');
   eq(fr.usdLow, 0, 'free: usdLow 0');
@@ -319,7 +329,7 @@ section('4. spentFromUsage === the batch queue\'s chargeForItem, over the same t
   const MODELS = [
     ['gemini', 'gemini-2.5-flash-lite'], ['gemini', 'gemini-2.5-flash'],
     ['anthropic', 'claude-haiku-4-5'], ['anthropic', 'claude-sonnet-5'],
-    ['openrouter', 'upstage/solar-pro4'], ['openrouter', 'minimax/minimax-m3:free'],
+    ['openrouter', 'upstage/solar-pro4'], ['openrouter', FREE_FIXTURE],
   ];
   const SHAPES = [
     { inputTokens: 5812, outputTokens: 640 },
@@ -349,7 +359,7 @@ section('4. spentFromUsage === the batch queue\'s chargeForItem, over the same t
   eq(a.usd, getModelPrice('claude-haiku-4-5').input * 0.1, 'Anthropic cached reads bill at 0.1x input');
   eq(g.usd, getModelPrice('gemini-2.5-flash-lite').input * 1, 'every other provider\'s cached reads bill at full input');
 
-  const free = spentFromUsage({ calls: 1, inputTokens: 999, outputTokens: 99, provider: 'openrouter', model: 'minimax/minimax-m3:free' });
+  const free = spentFromUsage({ calls: 1, inputTokens: 999, outputTokens: 99, provider: 'openrouter', model: FREE_FIXTURE });
   eq(free.usd, 0, 'free model: usd 0 (membership, first)');
   const up = spentFromUsage({ calls: 2, inputTokens: 999, outputTokens: 99, provider: 'openrouter', model: 'zz-unpriced/model' });
   eq(up.usd, null, 'unpriced: usd null (never a number nobody published)');

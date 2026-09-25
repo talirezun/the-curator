@@ -419,7 +419,7 @@ section('9. Doc-drift guard — costNote consumers exist and stale "not wired" c
     const cases = [
       { p: '/:domain/broken-links/estimate', kind: 'brokenLinks', direct: () => estimateBrokenLinkFix(domain), extra: {} },
       { p: '/:domain/orphans/estimate', kind: 'orphans', direct: () => estimateOrphanRescue(domain), extra: {} },
-      { p: '/:domain/semantic-dupes/estimate', kind: 'semanticDupes', direct: () => estimateSemanticDuplicateScan(domain, 500), extra: { costCeilingTokens: 50_000 } },
+      { p: '/:domain/semantic-dupes/estimate', kind: 'semanticDupes', direct: () => estimateSemanticDuplicateScan(domain, 500), extra: { costCeilingTokens: 200_000 } },
     ];
     const SPLIT = healthAiTesting.HEALTH_TOKEN_SPLIT || {};
     for (const c of cases) {

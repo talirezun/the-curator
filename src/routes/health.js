@@ -26,7 +26,7 @@ import {
 import { describeRun } from '../brain/ai-run.js';
 import { previewSemanticDuplicateMerge, fixSemanticDuplicatesBatch, applyBrokenLinkFixes, applyOrphanRescue, fixAllSafe } from '../brain/health.js';
 import { getProviderInfo } from '../brain/llm.js';
-import { getAiHealthSettings, setAiHealthSettings } from '../brain/config.js';
+import { getAiHealthSettings, setAiHealthSettings, DEFAULT_AI_HEALTH } from '../brain/config.js';
 import { addDismissal, removeDismissal, listDismissed } from '../brain/health-dismissed.js';
 import { domainPath } from '../brain/files.js';
 import {
@@ -66,15 +66,29 @@ router.get('/ai-available', (_req, res) => {
 
 // AI Health settings (cost ceiling, candidate-pair cap). Defined BEFORE
 // `/:domain` so `ai-settings` isn't matched as a domain name.
-router.get('/ai-settings', (_req, res) => {
-  try { res.json(getAiHealthSettings()); }
+//
+// v3.72.1 (truth audit Settings F7 / tray-copy F4), ADDITIVE: `defaults` is
+// config.js's DEFAULT_AI_HEALTH itself, so Settings' hint states the default
+// from the ONE constant instead of a typed second copy ("Default 50,000 tokens"
+// outlived the constant it copied). `defaultRunsOn` prices that default on the
+// model that builds the wiki NOW, through the same `describeHealthRun` the
+// scan's own confirm uses — never "≈ $0.01 on Gemini Flash Lite", a figure true
+// for one model the scan may not run on.
+async function aiSettingsPayload(settings) {
+  let defaultRunsOn = null;
+  try { defaultRunsOn = await describeHealthRun('semanticDupes', DEFAULT_AI_HEALTH.costCeilingTokens); }
+  catch { defaultRunsOn = null; }
+  return { ...settings, defaults: { ...DEFAULT_AI_HEALTH }, defaultRunsOn };
+}
+router.get('/ai-settings', async (_req, res) => {
+  try { res.json(await aiSettingsPayload(getAiHealthSettings())); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.post('/ai-settings', (req, res) => {
+router.post('/ai-settings', async (req, res) => {
   try {
     const { costCeilingTokens, semanticDupeMaxPairs } = req.body || {};
     const updated = setAiHealthSettings({ costCeilingTokens, semanticDupeMaxPairs });
-    res.json(updated);
+    res.json(await aiSettingsPayload(updated));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

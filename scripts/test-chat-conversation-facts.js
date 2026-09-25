@@ -61,6 +61,20 @@ writeFileSync(path.join(USERDATA, '.curator-config.json'), JSON.stringify({
 const { __setDomainsDirOverride } = await import('../src/brain/config.js');
 __setDomainsDirOverride(DOMAINS);
 const llm = await import('../src/brain/llm.js');
+
+// v3.72.1 — a synthetic `:free` id registered through the REAL offer factory.
+// The shipped free id (minimax/minimax-m3:free) was withdrawn by OpenRouter and
+// removed, so FREE_MODELS is empty; membership is what these assertions need.
+function freeFixtureId() {
+  const id = 'zz-vendor/zz-free-fixture:free';
+  if (!llm.isFreeModel(id)) {
+    llm.__testing.defineOfferableModel('openrouter', {
+      id, label: 'Free Fixture', thinks: false, tokenizerFactor: 1.0,
+      suitability: 'chat-only', maxOutput: 32768, free: true, note: 'Synthetic free id.',
+    });
+  }
+  return id;
+}
 const chat = await import('../src/brain/chat.js');
 const files = await import('../src/brain/files.js');
 const { spentFromUsage } = await import('../src/brain/ai-run.js');
@@ -215,7 +229,7 @@ async function main() {
     ok(after.input > promoToday.input,
       `CONTROL: the same model re-priced after the promotion ends is dearer ($${after.input} vs $${promoToday.input}) — the defect this record prevents`);
 
-    const freeId = [...llm.__testing.FREE_MODELS][0];
+    const freeId = freeFixtureId(); // v3.72.1: FREE_MODELS is empty since the withdrawn minimax id left it
     eq(JSON.stringify(Object.keys((await priceServedAnswer(freeId, usage)) || {})), '["free","costUsd","at"]',
       `a FREE model (${freeId}) is recorded as free with cost 0 — membership first, no rates`);
     eq(await priceServedAnswer('zz-no-such-model', usage), null, 'an unpriced model records NOTHING (never $0)');
@@ -426,7 +440,7 @@ async function main() {
         eq(got.outPerM, pr ? pr.output : null, `${provider}: the rung's output rate is its catalogue price`);
       }
     }
-    const freeId = [...llm.__testing.FREE_MODELS][0];
+    const freeId = freeFixtureId(); // v3.72.1: FREE_MODELS is empty since the withdrawn minimax id left it
     eq(est.compileFallbackRung('openrouter', freeId), null,
       'a FREE head names no paid rung — the free-head rule is llm.js\'s, not re-derived');
     const self = llm.__testing.FALLBACK_CHAINS.anthropic[0];

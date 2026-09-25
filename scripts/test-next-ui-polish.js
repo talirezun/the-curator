@@ -345,7 +345,10 @@ section('§5  deriveMcpStatus() — the pill, unchanged in behaviour by this fix
 {
   const s = deriveMcpStatus({ installed: true, stale: false, claude_config_parse_error: false });
   ok(s.connected === true, 'installed + not stale -> connected');
-  ok(s.pillLabel === 'Connected', 'pillLabel "Connected"');
+  // v3.72.1 (truth audit F13): the word says what was checked — the saved
+  // config is current — not that a client connected.
+  ok(s.pillLabel === 'Configured', 'pillLabel "Configured"');
+  ok(s.pillLabel !== 'Connected', 'never "Connected": nothing here observed a client connecting');
   ok(s.wizardLabel === 'Re-run setup', 'wizardLabel "Re-run setup"');
 }
 {
