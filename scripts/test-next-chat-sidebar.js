@@ -264,7 +264,7 @@ section('§5 — the ONE row/list/bulk builder (views/chat-list.js), executed');
 {
   const NOW = Date.parse('2026-09-25T15:00:00');
   const ctx = (over = {}) => Object.assign({
-    domains: [{ slug: 'demo', displayName: 'Demo' }, { slug: 'biz', displayName: 'Business' }],
+    domains: [{ slug: 'demo', displayName: 'Demo', identitySlot: 6 }, { slug: 'biz', displayName: 'Business', identitySlot: 11 }],
     activeDomain: 'demo', activeConversationId: null, conversations: [],
     selectMode: false, selectedKeys: new Set(), searchQuery: '', loadError: null, now: NOW,
   }, over);
@@ -283,8 +283,8 @@ section('§5 — the ONE row/list/bulk builder (views/chat-list.js), executed');
   const rowB = LIST.conversationRowHtml(B, ctx());
   ok(rowB.includes('12 messages'), 'a multi-message row is pluralised');
   ok(rowB.includes('matched in a message'), 'a row that matched in a body says so, so the match is not a mystery');
-  ok(/cur-sb-dot cur-sb-dot-2/.test(rowB) && /cur-sb-dot cur-sb-dot-1/.test(rowA),
-    '★ each row carries ITS domain\'s identity dot, from the install\'s domain index');
+  ok(/cur-sb-dot cur-sb-dot-11"/.test(rowB) && /cur-sb-dot cur-sb-dot-6"/.test(rowA),
+    '★ each row carries ITS domain\'s identity dot, from the domain\'s RECORDED slot (v3.76.0), not its position');
   ok(rowB.includes('>Business'), '…and the domain in words, so colour is never the only carrier');
 
   const sel = ctx({ selectMode: true, selectedKeys: new Set(['demo/a']) });

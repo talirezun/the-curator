@@ -58,7 +58,7 @@ import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 // REAL shared/age.js helpers are injected into the sandbox rather than stubbed.
 // A stub would let the row's wording drift from the module that owns it, and
 // this suite executes renderSidebar for real precisely to avoid that class.
-import { formatDayAge, freshnessDotHtml, clockGlyph } from '../src/public/next/shared/age.js';
+import { formatDayAge, freshnessDotHtml, clockGlyph, formatAge } from '../src/public/next/shared/age.js';
 // ── THE REAL SIDEBAR KIT (v3.65.0) ────────────────────────────────────────
 // `renderSidebar` is LIFTED and EXECUTED below, and since it builds its head,
 // its group and its rows through shared/sidebar.js those three names are free
@@ -67,7 +67,7 @@ import { formatDayAge, freshnessDotHtml, clockGlyph } from '../src/public/next/s
 // rather than asserts. They are injected through the sandbox's constructor,
 // and they are the REAL functions, so every assertion below stays an
 // assertion about the shipped component.
-import { renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass }
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow, identitySlotClass }
   from '../src/public/next/shared/sidebar.js';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -226,6 +226,8 @@ const FNS = [
   'bindSidebarButtons',
   'bindKnowledgeListeners',
   'renderSidebar',
+  // v3.76.0: the row's health mark (not checked / issues / clean), lifted.
+  'domainHealthBadgeHtml',
   // The KNOWLEDGE row's event line. Extracted, not stubbed, for the reason
   // above: renderSidebar calls it and a stub would hide a real change to it.
   'domainLastEventText',
@@ -308,12 +310,12 @@ let sandbox;
 try {
   sandbox = new Function(
     'formatDayAge', 'freshnessDotHtml', 'clockGlyph',
-    // identityDotClass joins the injected kit (v3.65.1): views/domains.js's
+    // identityDotClass (identitySlotClass since v3.76.0) joins the injected kit (v3.65.1): views/domains.js's
     // own domainDotClass was a second copy of the same mapping and is gone,
     // so the lifted renderSidebar calls this one. A module-level import is
     // NOT visible inside a lifted body, so it is a PARAMETER, and it is the
     // REAL function rather than a stub returning a fixed slot.
-    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow', 'identityDotClass',
+    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow', 'identitySlotClass', 'formatAge',
     PREAMBLE +
     FNS.map((n) => extractFunction(src, n)).join('\n\n') + '\n' +
     `return { ${FNS.join(', ')},
@@ -332,7 +334,7 @@ try {
       __node: makeNode,
       __nodes: () => domNodes };`
   )(formatDayAge, freshnessDotHtml, clockGlyph,
-    renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass);
+    renderSidebarHead, renderSidebarGroup, renderSidebarRow, identitySlotClass, formatAge);
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js — ' + err.message);
   process.exit(1);

@@ -206,7 +206,7 @@ function scalar(v) {
 // v3.65.1 recorded that a module of its own is correct "the moment a third
 // host outside a monitor appears". v3.66.0 has four (the Documents table, the
 // Handoffs table, the Chat footer, the Ingest panel), so hosts import
-// `renderDepthCell` — and the identity tone, `depthIdentityClass` — from
+// `renderDepthCell` — and the identity tone, `depthIdentitySlotClass` — from
 // shared/depth-bar.js. The FUNCTION still lives here, and that is a measured
 // constraint, not a preference: scripts/test-next-foundations-editor.js pins
 // this file to ZERO import statements (the proof that the add panel's second

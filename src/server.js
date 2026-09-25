@@ -31,6 +31,7 @@ import { planRestart } from './brain/restart.js';
 import { recoverOnBoot as recoverIngestQueueOnBoot } from './brain/ingest-queue.js';
 import { logInfo, logWarn, logError, getLogFilePath } from './brain/logger.js';
 import { ensureMcpLauncherShim } from './brain/mcp-launcher.js';
+import { recordDomainIdentities } from './brain/domain-identity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // APP_ROOT is the CODE root (read-only in a packaged .app). Used for the
@@ -470,6 +471,20 @@ function startListen(retriesLeft = MAX_BIND_RETRIES) {
     } catch (err) {
       logWarn('server', `MCP launcher generation failed unexpectedly: ${err.message}`);
     }
+
+    // ── Record each domain's identity colour (v3.76.0) ──────────────────────
+    //
+    // A domain's colour is RECORDED in its own folder, once, so adding or
+    // deleting another domain never recolours it (src/brain/domain-identity.js).
+    // The first boot of this version records every existing domain in name
+    // order; afterwards this writes only for a domain that arrived without one
+    // (made by hand, or by an older version on another Mac). Fire-and-forget;
+    // it never throws.
+    recordDomainIdentities()
+      .then((written) => {
+        if (written.length) logInfo('server', `Recorded identity colour for ${written.length} domain(s)`);
+      })
+      .catch(() => {});
 
     // Auto-open the browser when server starts (skip during restart — frontend reloads itself)
     if (!process.env.CURATOR_NO_OPEN) {

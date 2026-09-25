@@ -58,7 +58,7 @@ import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
 // REAL ones here — a stub monitor would test a monitor this suite invented.
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
 import { freshnessTier, formatAge } from '../src/public/next/shared/age.js';
-import { identityDotClass } from '../src/public/next/shared/sidebar.js';
+import { identitySlotClass } from '../src/public/next/shared/sidebar.js';
 
 const R = (rel) => readFileSync(path.join(ROOT, rel), 'utf8');
 const shared = R('src/public/next/views/shared.js');
@@ -805,11 +805,11 @@ const SEC_FNS = [
   // v3.72.1
   'ageTickAttrs',
 ];
-const secBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass', 'formatAge',
+const secBox = new Function('renderMonitor', 'freshnessTier', 'identitySlotClass', 'formatAge',
   'let state = {};\n' +
   'let loadGate = null;\n' +
   'let busyDomains = new Set();\n' +
-  'let hostCtx = { mode: "section", el: {}, domain: "", describeDomain: (s) => ({ index: ["research", "notes", "shared-cohort"].indexOf(s), pages: s === "shared-cohort" ? 42 : null }) };\n' +
+  'let hostCtx = { mode: "section", el: {}, domain: "", describeDomain: (s) => ({ slot: ({ research: 7, notes: 4, "shared-cohort": 10 })[s], pages: s === "shared-cohort" ? 42 : null }) };\n' +
   extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' +
   ICON_STUB +
   'function gatedLoader() { return "<div class=\\"STUB-loader\\"></div>"; }\n' +
@@ -823,7 +823,7 @@ const secBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass'
   SEC_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
   `return { ${SEC_FNS.join(', ')}, __setState: (s) => { state = s; }, __setDomain: (d) => { hostCtx.domain = d; },
      __setBusy: (list) => { busyDomains = new Set(list); }, __setDescribe: (fn) => { hostCtx.describeDomain = fn; } };`
-)(renderMonitor, freshnessTier, identityDotClass, formatAge);
+)(renderMonitor, freshnessTier, identitySlotClass, formatAge);
 
 {
   // ── D-H: the lens, EXECUTED over every shape the wire can send ────────
@@ -1281,10 +1281,10 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     // v3.72.1
     'ageTickAttrs', 'sectionPushedLine', 'pendingReading',
   ];
-  const cBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass', 'explainerMark', 'formatAge',
+  const cBox = new Function('renderMonitor', 'freshnessTier', 'identitySlotClass', 'explainerMark', 'formatAge',
     'let state = { cards: {}, expandedSecRows: new Set(), expandedAdmin: new Set() };\n' +
     'let busyDomains = new Set();\n' +
-    'let hostCtx = { mode: "section", el: {}, domain: "research", describeDomain: (s) => ({ index: ["research", "notes", "shared-cohort"].indexOf(s), pages: null }) };\n' +
+    'let hostCtx = { mode: "section", el: {}, domain: "research", describeDomain: (s) => ({ slot: ({ research: 7, notes: 4, "shared-cohort": 10 })[s], pages: null }) };\n' +
     extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' + ICON_STUB +
     extractConst(shared, 'TOKEN_CHECK_READING', 'shared.js') + '\n' +
     extractConst(shared, 'TOKEN_EXPIRY_NOTE', 'shared.js') + '\n' +
@@ -1296,7 +1296,7 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     C_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
     `return { ${C_FNS.join(', ')}, __card: (id) => ensureCard(id), __state: () => state,
        __setBusy: (l) => { busyDomains = new Set(l); } };`
-  )(renderMonitor, freshnessTier, identityDotClass, explainerMark, formatAge);
+  )(renderMonitor, freshnessTier, identitySlotClass, explainerMark, formatAge);
 
   const recent = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
   const c = conn({ id: 'c1', label: 'Research_Group 2026', shared_brain_slug: 'cohort', local_domains: ['research'],
@@ -1316,9 +1316,9 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     'C: a time line carries the app\'s fresh-dot with the age in words, in a ticking span');
   ok(/cur-mon-key">pushed<\/span><span class="cur-mon-value">never</.test(html),
     'C: a time that never happened reads "never" with NO dot');
-  ok(/cur-mon-key">mirror<\/span><span class="cur-mon-value"><span class="cur-sb-dot cur-sb-dot-3" aria-hidden="true"><\/span>shared-cohort/.test(html),
-    'C: the mirror domain is named WITH its identity dot, keyed on the install\'s own index (rule 5)');
-  ok(/cur-mon-key">contributes<\/span><span class="cur-mon-value"><span class="cur-sb-dot cur-sb-dot-1"/.test(html),
+  ok(/cur-mon-key">mirror<\/span><span class="cur-mon-value"><span class="cur-sb-dot cur-sb-dot-10" aria-hidden="true"><\/span>shared-cohort/.test(html),
+    'C: the mirror domain is named WITH its identity dot, keyed on its RECORDED slot, not its position (rule 5, v3.76.0)');
+  ok(/cur-mon-key">contributes<\/span><span class="cur-mon-value"><span class="cur-sb-dot cur-sb-dot-7"/.test(html),
     '…and so is the contributing domain');
   // LOUD: the cost and the skips — always rendered, never behind a chevron.
   const loudPart = html.split('<div class="sb-sec-rows">')[0];
@@ -1401,14 +1401,14 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
   ok(/<div class="sb-sec-empty"><p class="sb-sec-line sb-sec-empty-text">Shared Brain is off on this install\. Turning it on connects you to nothing — it lets you join a cohort or set one up\.<\/p><button type="button" class="btn btn-secondary sb-sec-door-btn" id="btn-sb-open-view">/.test(A),
     'A: Quick-maintenance empty anatomy — the sentence left, the door right, secondary md');
   const B = at({}, 'lectures');
-  ok(/This domain isn’t part of a Shared Brain\. Your 1 Shared Brain draws on <span class="sb-sec-dom"><span class="cur-sb-dot cur-sb-dot-1"[^>]*><\/span>research<\/span>, <span class="sb-sec-dom"><span class="cur-sb-dot cur-sb-dot-2"/.test(B),
+  ok(/This domain isn’t part of a Shared Brain\. Your 1 Shared Brain draws on <span class="sb-sec-dom"><span class="cur-sb-dot cur-sb-dot-7"[^>]*><\/span>research<\/span>, <span class="sb-sec-dom"><span class="cur-sb-dot cur-sb-dot-4"/.test(B),
     'B: names the domains this install\'s brains draw on, each with its identity dot');
   ok(/fixed when you join/.test(B) && !/Contribute this domain/.test(B),
     'B: says contributing domains are fixed at join — and offers no button the store cannot honour');
   // A domain the host cannot place gets NO dot — never a guessed colour
   // (found green-first by mutation: index -1 fell through to a real slot).
   eq(secBox.sectionDotHtml('nowhere'), '', 'a domain the host did not index carries no identity dot, never a guessed one');
-  ok(/cur-sb-dot-1/.test(secBox.sectionDotHtml('research')), '(control) …while an indexed one does');
+  ok(/cur-sb-dot-7"/.test(secBox.sectionDotHtml('research')), '(control) …while one with a recorded slot does — slot 7, its own');
   const E = at({}, 'shared-gone');
   ok(/This is a Shared Brain mirror with no connection on this install, so Pull can’t refresh it\./.test(E) && !/isn’t part of/.test(E),
     'E: an orphaned shared-* mirror says so — never "not part of any Shared Brain" (D20)');
@@ -1416,7 +1416,7 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
   ok(/cur-mon-key">pages<\/span><span class="cur-mon-value">42</.test(D), 'D: the mirror\'s monitor reads its local page count from the host');
   ok(/cur-mon-key">folder<\/span><span class="cur-mon-value">collective\/mkt\/wiki\//.test(D), 'D: …the repository folder');
   ok(/cur-mon-key">fed by<\/span><span class="cur-mon-value">research, notes/.test(D), 'D: …and what feeds it from this install');
-  ok(/sb-sec-id-name"><span class="cur-sb-dot cur-sb-dot-3"/.test(D), 'D: the identity line carries THIS domain\'s own dot');
+  ok(/sb-sec-id-name"><span class="cur-sb-dot cur-sb-dot-10"/.test(D), 'D: the identity line carries THIS domain\'s own dot');
   secBox.__setBusy(['shared-cohort']);
   const Dbusy = at({}, 'shared-cohort');
   ok(/data-sb-action="pull" disabled/.test(Dbusy) && /role="status">Another write \(pull\) is already running for shared-cohort/.test(Dbusy),

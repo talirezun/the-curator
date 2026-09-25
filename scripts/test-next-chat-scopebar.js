@@ -46,7 +46,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderViewHeader, renderReadoutGroup } from '../src/public/next/shared/text.js';
-import { identityDotClass } from '../src/public/next/shared/sidebar.js';
+import { identitySlotClass } from '../src/public/next/shared/sidebar.js';
 import { renderDepthCell } from '../src/public/next/shared/depth-bar.js';
 import { explainerHtml } from '../src/public/next/shared/explainer.js';
 import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
@@ -195,7 +195,7 @@ function render(over = {}) {
   const state = Object.assign({
     booted: true,
     loadError: null,
-    domains: [{ slug: 'articles', displayName: 'Articles', pageCount: 1406 }],
+    domains: [{ slug: 'articles', displayName: 'Articles', pageCount: 1406, identitySlot: 7 }],
     activeDomain: 'articles',
     activeConversationId: 'conv-1',
     conversations: [{ id: 'conv-1', domain: 'articles', title: 'Give me 10 quotes', createdAt: '2026-09-25T08:00:00.000Z', messageCount: 2 }],
@@ -226,7 +226,7 @@ function render(over = {}) {
     'renderViewHeader', 'gatedLoader', 'bootGate', 'emptyCard', 'navigate',
     'renderComposerHtml', 'wireComposer', 'renderThreadOnly', 'tickAgesNow',
     'startCompile', 'reportAsyncActionFailure', 'onThreadCitationClick',
-    'identityDotClass', 'ageWordsFor', 'explainerHtml',
+    'identitySlotClass', 'ageWordsFor', 'explainerHtml',
     src,
   )(
     { getElementById: () => null, querySelectorAll: () => [] },
@@ -238,7 +238,7 @@ function render(over = {}) {
     () => '<div class="empty-card-stub"></div>', () => {},
     () => '<div class="composer-stub"></div>', () => {}, () => {}, () => 0,
     () => {}, () => {}, () => {},
-    identityDotClass, ageWordsFor, explainerHtml,
+    identitySlotClass, ageWordsFor, explainerHtml,
   );
   api.renderMain(1);
   return { state, api, html: captured.html, tree: parseTree(captured.html || '') };
@@ -253,9 +253,9 @@ const FOOT_FNS = ['activeProjectRow', 'projectFigureText', 'projectKnowledgeRead
 function picker(over = {}) {
   const state = Object.assign({
     domains: [
-      { slug: 'articles', displayName: 'Articles', pageCount: 1406 },
-      { slug: 'projects', displayName: 'Projects', pageCount: 30 },
-      { slug: 'mirror', displayName: 'Team', pageCount: 9, readonly: true },
+      { slug: 'articles', displayName: 'Articles', pageCount: 1406, identitySlot: 3 },
+      { slug: 'projects', displayName: 'Projects', pageCount: 30, identitySlot: 12 },
+      { slug: 'mirror', displayName: 'Team', pageCount: 9, readonly: true, identitySlot: 1 },
     ],
     activeDomain: 'articles',
     activeConversationId: 'conv-1',
@@ -277,10 +277,10 @@ function picker(over = {}) {
     'pending: pendingListboxes, peekProjectLbCfg: () => projectLbCfg };';
   const api = new Function(
     'state', 'escapeHtml', 'formatAge', 'freshnessTier', 'renderReadoutGroup', 'renderDepthCell',
-    'identityDotClass', 'ageWordsFor', 'renderListboxHtml', 'selectChatProject', 'switchDomain',
+    'identitySlotClass', 'ageWordsFor', 'renderListboxHtml', 'selectChatProject', 'switchDomain',
     src,
   )(state, escapeHtmlStub, formatAge, freshnessTier, renderReadoutGroup, renderDepthCell,
-    identityDotClass, ageWordsFor,
+    identitySlotClass, ageWordsFor,
     (cfg) => '<span class="lb" data-lb-root="' + cfg.id + '"><button class="lb-btn" id="' + cfg.id + '"></button></span>',
     (v) => { calls.selectProject.push(v); }, (v) => { calls.switchDomain.push(v); });
   return { state, api, calls };
@@ -328,7 +328,7 @@ section('§1 — The header: the one heading rule, the page ⓘ, Compile, one me
   ok(!!meta, 'ONE meta line under the title');
   const metaText = meta.children.map((c) => c.text + c.children.map((k) => k.text).join('')).join(' ');
   ok(/Articles/.test(metaText), 'it names the domain in words');
-  ok(/cur-sb-dot cur-sb-dot-1/.test(r.html.slice(r.html.indexOf('chat-head-meta'))), '…beside its identity dot (the one mapping)');
+  ok(/cur-sb-dot cur-sb-dot-7"/.test(r.html.slice(r.html.indexOf('chat-head-meta'))), '…beside its identity dot (the one mapping: its RECORDED slot, 7)');
   ok(/1,406 pages/.test(r.html), 'the domain\'s REAL page count');
   ok(/1 question · 1 answer/.test(r.html), 'the thread\'s real counts');
   ok(/data-age-at="2026-09-25T08:00:00.000Z" data-age-prefix="started"/.test(r.html),
@@ -417,11 +417,11 @@ section('§3b — the header\'s facts TICK with the thread, and nothing repaints
     getElementById: (id) => (id === 'chat-head-meta' ? meta : id === 'chat-compile-caption' ? cap : null),
     querySelector: (sel) => (sel === '#chat-head .tx-vh-title' ? title : null),
   };
-  const api = new Function('document', 'state', 'escapeHtml', 'identityDotClass', 'ageWordsFor', 'renderMain',
+  const api = new Function('document', 'state', 'escapeHtml', 'identitySlotClass', 'ageWordsFor', 'renderMain',
     ['activeConversationRow', 'chatHeadTitle', 'lastAnswerProject', 'turnCountsText', 'chatHeadMetaHtml',
       'compileTurnCounts', 'compileCaptionText', 'refreshCompileCaption', 'patchChatHead']
       .map((n) => extractFunction(chatSrc, n)).join('\n') + '\nreturn { patchChatHead };',
-  )(doc, state, escapeHtmlStub, identityDotClass, ageWordsFor, () => { renders++; });
+  )(doc, state, escapeHtmlStub, identitySlotClass, ageWordsFor, () => { renders++; });
   state.thread.push({ role: 'user', content: 'q2' }, { role: 'assistant', content: 'a2', project: 'curator' });
   api.patchChatHead();
   ok(/2 questions · 2 answers/.test(meta.innerHTML), '★ the meta line states the new counts');
@@ -463,13 +463,13 @@ section('§5 — F1: a compile\'s fresh page count reaches every place it is pri
     querySelector: (sel) => (sel === '.chat-empty-body' ? empty : null),
   };
   let renders = 0;
-  const api = new Function('document', 'state', 'escapeHtml', 'identityDotClass', 'ageWordsFor', 'renderMain',
+  const api = new Function('document', 'state', 'escapeHtml', 'identitySlotClass', 'ageWordsFor', 'renderMain',
     'domainLbCfg', 'domainLbApi', 'switchDomain',
     ['activeConversationRow', 'chatHeadTitle', 'lastAnswerProject', 'turnCountsText', 'chatHeadMetaHtml',
       'compileTurnCounts', 'compileCaptionText', 'refreshCompileCaption', 'patchChatHead',
       'emptyThreadBodyText', 'domainPickerCfg', 'patchScopeCount']
       .map((n) => extractFunction(chatSrc, n)).join('\n') + '\nreturn { patchScopeCount };',
-  )(doc, state, escapeHtmlStub, identityDotClass, ageWordsFor, () => { renders++; },
+  )(doc, state, escapeHtmlStub, identitySlotClass, ageWordsFor, () => { renders++; },
     lbCfg, { setOptions: (o) => setOptionsCalls.push(o) }, () => {});
   state.domains = [{ slug: 'articles', displayName: 'Articles', pageCount: 1411 }];
   api.patchScopeCount();
@@ -512,7 +512,8 @@ section('§7 — The composer\'s DOMAIN pill: the conversation\'s container');
   ok(/^1,406 pages$/.test(opts[0].detail) && /^new chat · 30 pages$/.test(opts[1].detail),
     '★ the current domain shows its pages; every other reads "new chat" — it can never look like a filter over the thread');
   ok(/read-only/.test(opts[2].detail), 'a Shared Brain mirror says it is read-only');
-  ok(opts.every((o, i) => o.html.includes('cur-sb-dot ' + identityDotClass(i))), 'each option carries its domain\'s identity dot');
+  ok([3, 12, 1].every((slot, i) => opts[i].html.includes('cur-sb-dot ' + identitySlotClass(slot) + '"')),
+    '★ each option carries its domain\'s identity dot — the RECORDED slot (v3.76.0), not its position');
   ok(/Domain: Articles\. This conversation is in Articles/.test(fixed.ariaLabel), 'the fixed state is in the accessible name too');
   const open = picker({ activeConversationId: null }).api.domainPickerCfg();
   ok(!/is-fixed/.test(open.triggerClass) && open.footHtml === '', 'a NEW chat\'s pill is a plain choice, with no foot');

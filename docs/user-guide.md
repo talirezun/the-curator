@@ -2701,8 +2701,16 @@ issues-per-category, the MCP bridge's Busiest tools, Across projects and Domains
 compare against the *largest visible row*, not a ceiling, and never turn danger-toned; the largest
 bar there is simply the biggest pile, never a warning.
 
-**There are twelve identity colours.** Each domain's colour is fixed by its position in your
-domain list — the same position, the same colour, on every screen and in the menubar widget. None
+**There are twelve identity colours.** Each domain's colour is **its own, and it stays put**
+(*v3.76.0*): the first time the app sees a domain it records the domain's colour in a small file
+inside that domain's folder, `domains/<name>/.curator-identity.json`, and every screen and the
+menubar widget read it from there. Adding or deleting another domain never recolours this one; a
+new domain takes the lowest colour nobody is using; renaming a domain keeps its colour, because the
+file moves with the folder; and because the file syncs with the rest of the folder, two Macs show
+the same domain in the same colour. (Before v3.76.0 the colour was the domain's *position* in the
+list, so deleting a domain shifted the colour of every domain after it.) **After updating to
+v3.76.0, colours may change once**: the first start records every existing domain in alphabetical
+order, which on most Macs is exactly the order the colours already had. None
 of the twelve is green, teal, amber, red or grey, so a domain's dot can never be mistaken for a
 freshness dot or a tone. The first eight are fully distinct from one another; the last four are
 each told apart from a same-family neighbour by lightness alone.
@@ -3792,7 +3800,19 @@ Three separate marks can appear on a row, and they answer three different questi
 |---|---|
 | The **coloured dot on the left** | Which domain is this? (identity — each domain keeps its colour) |
 | The **freshness dot in the status line** | How current is it? |
-| A small **dot on the right** | Does it have open health issues? |
+| A small **filled dot on the right** | It has open health issues (the row's screen-reader name gives the count and how long ago it was checked) |
+| A small **hollow ring on the right** | Its health has **not been checked yet** this session — open the domain and its scan runs (*new in v3.76.0*) |
+| **No mark on the right** | Checked, and no open health issues |
+
+**No mark never means "not checked".** Until v3.76.0 a domain nobody had scanned showed nothing
+on the right — exactly what a clean domain shows — so "no issues" and "we don't know" looked the
+same. Now a domain without a scan result wears the hollow ring, and the row's screen-reader name
+says *"Health not checked yet — open this domain to run a scan"* (or *"Health check running"* while
+the open domain's scan is under way). A clean result is only ever stated with a scan in hand:
+*"No open health issues, checked 5 min ago"*. The scan is local and free; opening a domain runs it,
+and a domain's result is forgotten when its pages change, so the ring comes back until it is
+scanned again. Results are kept for the app session — after a restart every domain you have not
+opened yet shows the ring.
 
 And one badge:
 

@@ -124,7 +124,7 @@
    (b) the neighbour: a freshness mark always sits before an age in words
    (plus the clock glyph on a row), an identity dot always before a NAME.
    (b) is the backstop for a reader with a colour-vision deficiency. Its
-   COLOUR comes from the host's own class — see identityDotClass(). */
+   COLOUR comes from the host's own class — see identitySlotClass(). */
 .cur-sb-dot {
   flex: none;
   width: 8px;
@@ -133,8 +133,9 @@
 }
 
 /* ── THE IDENTITY PALETTE — TWELVE SLOTS, ONE COPY, ONE MAPPING ───────────
-   `identityDotClass(i)` in shared/sidebar.js is the ONLY function that turns
-   an install's domain index into one of these names; the slot count is ONE
+   `identitySlotClass(slot)` in shared/sidebar.js is the ONLY function a view
+   uses to turn a domain's RECORDED slot (v3.76.0, never its list position)
+   into one of these names; the slot count is ONE
    constant, `IDENTITY_SLOTS` in shared/identity-palette.js. `.dm-row-dot-N`
    survives in the MARKUP as an alias only and resolves NO background
    anywhere (scripts/test-next-domain-dots.js).

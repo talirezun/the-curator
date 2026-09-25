@@ -308,7 +308,7 @@ section('§4  THE CONVERTED SITES — named, on top of the class guard');
     d.includes('<span class="visually-hidden">Read-only Shared Brain mirror</span>') &&
     !d.includes('dm-row-mirror" title='));
   ok('domains: the attention badge — an EMPTY span whose whole content was a tooltip — now names its count',
-    /visually-hidden">' \+ issueCount \+ ' open health issue/.test(d) &&
+    /visually-hidden">' \+ count \+ ' open health issue/.test(d) &&
     !d.includes('dm-row-attn" title='));
   ok('domains: the semantic-merge refusal is not a tooltip on a disabled button',
     !d.includes("gate.allowed ? 'Merge this pair' : gate.reason"));

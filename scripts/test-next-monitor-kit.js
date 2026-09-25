@@ -67,7 +67,7 @@ import {
   renderMonitor, renderDepthCell, TONES, TONE_WORDS, normalizeTone,
 } from '../src/public/next/shared/monitor.js';
 import * as DEPTH from '../src/public/next/shared/depth-bar.js';
-import { identityDotClass } from '../src/public/next/shared/sidebar.js';
+import { identityDotClass, identitySlotClass } from '../src/public/next/shared/sidebar.js';
 import { IDENTITY_SLOTS } from '../src/public/next/shared/identity-palette.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -748,8 +748,15 @@ section('§10 — shared/depth-bar.js IS THE BAR\'S ADDRESS, AND ITS IDENTITY TO
 {
   ok(DEPTH.renderDepthCell === renderDepthCell,
     'depth-bar.js re-exports THE SAME function object — one implementation, two addresses');
-  eq('depth-bar.js exports exactly the cell and the identity tone',
-    Object.keys(DEPTH).sort().join(','), 'depthIdentityClass,renderDepthCell');
+  eq('depth-bar.js exports exactly the cell and the identity tone (index arithmetic + the recorded-slot form views use, v3.76.0)',
+    Object.keys(DEPTH).sort().join(','), 'depthIdentityClass,depthIdentitySlotClass,renderDepthCell');
+  let slotAgree = true;
+  for (let slot = 1; slot <= 12; slot++) {
+    if (DEPTH.depthIdentitySlotClass(slot).replace('cur-depth-id-', '') !== identitySlotClass(slot).replace('cur-sb-dot-', '')) slotAgree = false;
+  }
+  ok(slotAgree, 'depthIdentitySlotClass(slot) names the SAME slot as identitySlotClass(slot), 1..12');
+  ok([0, 13, -1, 2.5, null, undefined, '3'].every((v) => DEPTH.depthIdentitySlotClass(v) === '' && identitySlotClass(v) === ''),
+    'an invalid slot is NO tone and NO dot — never a guessed one');
   // The identity tone and the dot are ONE mapping.
   let agree = true;
   for (let i = 0; i < 40; i++) {

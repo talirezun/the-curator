@@ -65,6 +65,7 @@ import { pushDomain, pullCollective, computePendingBreakdown, listMembers } from
 import { runLocalSynthesis }          from '../brain/sharedbrain-synthesis.js';
 import { revokeContributor, hashAdminToken } from '../brain/sharedbrain-revoke.js';
 import { domainPath } from '../brain/files.js';
+import { recordDomainIdentities } from '../brain/domain-identity.js';
 import {
   registerWrite,
   acquireFileLock,
@@ -562,6 +563,9 @@ router.post('/:id/pull', gate, async (req, res) => {
     const result = await pullCollective(conn, {
       onProgress: (stage, message, meta) => emit({ type: stage, message, ...meta }),
     });
+    // v3.76.0: a first pull creates the `shared-*` mirror — give it its
+    // identity colour now. Never throws.
+    await recordDomainIdentities();
     if (result && result.ok === false) {
       emit({ type: 'error', message: result.error || 'Pull failed' });
     } else {

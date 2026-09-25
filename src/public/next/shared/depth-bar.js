@@ -21,7 +21,7 @@
 // monitors — the bar takes that domain's colour, from the SAME palette and
 // the SAME mapping as the dot beside it (design rule 5), never a second one.
 
-import { identitySlot } from './identity-palette.js';
+import { identitySlot, isValidIdentitySlot } from './identity-palette.js';
 
 export { renderDepthCell } from './monitor.js';
 
@@ -40,4 +40,14 @@ export { renderDepthCell } from './monitor.js';
  */
 export function depthIdentityClass(index) {
   return 'cur-depth-id-' + identitySlot(index);
+}
+
+/**
+ * A domain's RECORDED identity slot (1-based) -> the depth bar's identity tone
+ * class, or '' (v3.76.0). What a view calls — the same slot its dot is
+ * painted from with `identitySlotClass` (shared/sidebar.js); never a list
+ * position. '' leaves renderDepthCell on its neutral tone.
+ */
+export function depthIdentitySlotClass(slot) {
+  return isValidIdentitySlot(slot) ? 'cur-depth-id-' + slot : '';
 }

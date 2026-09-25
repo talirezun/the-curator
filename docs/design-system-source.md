@@ -1361,11 +1361,13 @@ component.
 
 ### 18. Identity — one palette, one mapping, one glyph (v3.65.1)
 
-A domain is the same colour everywhere it is named. The mapping is `identityDotClass(i)` in
-`shared/sidebar.js`, where `i` is the **install's domain index** — `GET /api/domains` and
-`GET /api/domains/stats` both answer out of `listDomains()`, so position N is position N on every
-screen, and a caller holding a slug finds its position in that same list rather than inventing one
-from a hash of the name. The colours are the twelve `.cur-sb-dot-N` rules in `shared/sidebar.css`
+A domain is the same colour everywhere it is named. **Since v3.76.0 the mapping is
+`identitySlotClass(slot)` in `shared/sidebar.js`, where `slot` is the domain's own RECORDED slot**
+(`domains/<slug>/.curator-identity.json`, carried by `GET /api/domains` as `identity: {slug: slot}`
+and by the stats routes as `identitySlot`), never its position in a list — the position rule
+(`identityDotClass(i)`, still the palette arithmetic) recoloured every domain after a deleted one.
+The full rule and why a file per domain beat a hash is in
+[decisions-app.md](dev/decisions-app.md#product-shape-and-ui). The colours are the twelve `.cur-sb-dot-N` rules in `shared/sidebar.css`
 (six slots × two themes), which also carries the three derived light rungs `--id-ink-1/-2/-3` — the
 only three values in `/next` with no token behind them, because the design bundle defines nothing
 darker than `-600` in the entity, concept and summary families. The glyph is `.cur-sb-dot`: **8px,

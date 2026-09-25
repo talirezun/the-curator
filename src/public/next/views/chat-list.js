@@ -19,7 +19,7 @@
 //
 // ── WHAT A ROW SAYS (maintainer decision M1, 2026-09-25) ──────────────────
 // The list spans ALL domains (GET /api/chat), so each row carries:
-//   · the domain's IDENTITY DOT (`identityDotClass(index)`, the one palette —
+//   · the domain's IDENTITY DOT (`identitySlotClass(identitySlot)`, the one palette —
 //     rule 5, continuity by identity) — it only means something because the
 //     list is no longer one domain's;
 //   · the title;
@@ -46,7 +46,7 @@
 // row button inside `.chat-conv-item`, so each is a real, separately
 // focusable control and none of them passes through the row's own click.
 
-import { renderSidebarRow, renderSidebarGroup, identityDotClass } from '../shared/sidebar.js';
+import { renderSidebarRow, renderSidebarGroup, identitySlotClass } from '../shared/sidebar.js';
 import { ageWordsFor } from '../shared/age-ticker.js';
 
 // A byte-for-byte copy of app.js's escapeHtml, for the reason shared/sidebar.js
@@ -175,6 +175,8 @@ export function conversationRowHtml(c, ctx) {
   // BOTH fields, because an id is unique only within one domain's folder.
   const answering = !!x.answeringConvId && x.answeringConvId === c.id && x.answeringDomain === domain;
   const idx = domainIndexOf(x.domains, domain);
+  // The domain's RECORDED slot (v3.76.0), carried on its stats row — never idx.
+  const slot = idx >= 0 && x.domains[idx] ? x.domains[idx].identitySlot : null;
   const t = rowTime(c);
   const now = typeof x.now === 'number' ? x.now : Date.now();
   const prefix = t.lastUse ? '' : 'started';
@@ -184,7 +186,7 @@ export function conversationRowHtml(c, ctx) {
 
   const row = renderSidebarRow({
     name: title,
-    dotClass: idx >= 0 ? identityDotClass(idx) : '',
+    dotClass: identitySlotClass(slot),
     figure: count + ' message' + (count === 1 ? '' : 's'),
     // The live "answering" state, in WORDS — `role="status"` because it
     // appears without the user doing anything to this row. No animation.

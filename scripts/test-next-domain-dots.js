@@ -536,29 +536,49 @@ if (slotCount) {
   // picker is still called from the row builder, and that what is passed is a
   // name and not a style.
   const rowFn = functionSource(js, 'renderSidebar') || js;
-  ok(/identityDotClass\(/.test(js), 'identityDotClass has a call site in views/domains.js');
-  ok(/dotClass:\s*identityDotClass\(/.test(rowFn),
-    'the row hands the kit a class NAME from identityDotClass — inside renderSidebar, so the '
-    + 'picker still has a real caller and not merely a definition');
-  ok(/identityDotClass\s*\}?\s*from '\.\.\/shared\/sidebar\.js'/.test(js)
-    || /identityDotClass[\s\S]{0,120}from '\.\.\/shared\/sidebar\.js'/.test(js),
+  // v3.76.0: THE SLOT IS THE DOMAIN'S RECORDED ONE. Views paint through
+  // `identitySlotClass(slot)` (or `domainIdentityClass(map, slug)`), and the
+  // slot comes off the server's `identitySlot` / `identity` fields — never a
+  // position in a list, which moves when a domain is added or deleted.
+  ok(/dotClass:\s*identitySlotClass\(d\.identitySlot\)/.test(rowFn),
+    'the row hands the kit a class NAME from identitySlotClass(d.identitySlot) — inside renderSidebar, '
+    + 'the domain\'s RECORDED slot, so the picker has a real caller and not merely a definition');
+  ok(/identitySlotClass\s*\}?\s*from '\.\.\/shared\/sidebar\.js'/.test(js)
+    || /identitySlotClass[\s\S]{0,120}from '\.\.\/shared\/sidebar\.js'/.test(js),
     '...and it is IMPORTED from the kit rather than redefined here');
-  // THE OTHER THREE SURFACES THAT NAME A DOMAIN (v3.65.1, decision 7). Each
-  // takes the SAME function; a view that hand-wrote a slot class, or reached
-  // for `--accent` again, would break continuity silently — which is exactly
-  // what Chat's chips did (every chip violet) and what Ingest's rows did (no
-  // mark at all).
+  // EVERY SURFACE THAT NAMES A DOMAIN (v3.65.1 decision 7, re-keyed v3.76.0).
   for (const [rel, what] of [
     ['src/public/next/views/chat.js', "Chat's domain chips"],
+    ['src/public/next/views/chat-list.js', "Chat's conversation rows"],
     ['src/public/next/views/ingest.js', "Ingest's DESTINATION rows"],
     ['src/public/next/views/memory.js', "the Context rail's project rows"],
+    ['src/public/next/views/settings.js', "Settings' per-domain lines"],
+    ['src/public/next/views/shared.js', "the Shared Brain section"],
+    ['src/public/next/views/shared-brain-wizard.js', "the Shared Brain wizard's domain list"],
   ]) {
     const src = readFileSync(path.join(ROOT, rel), 'utf8');
-    ok(/from '\.\.\/shared\/sidebar\.js'/.test(src) && /identityDotClass\(/.test(src),
-      `${what} take their colour from the kit's identityDotClass (${rel})`);
-    const code = src.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const code = stripComments(src);
+    ok(/from '\.\.\/shared\/sidebar\.js'/.test(src) && /(identitySlotClass|domainIdentityClass)\(/.test(code),
+      `${what} take their colour from the kit's recorded-slot mapping (${rel})`);
     ok(!/cur-sb-dot-\d/.test(code),
-      `...and ${rel} hardcodes no slot class — the index goes through the mapping`);
+      `...and ${rel} hardcodes no slot class — the slot goes through the mapping`);
+  }
+  // ★ THE GUARD FOR THE 2026-09-25 DEFECT: no view may colour a domain by a
+  // POSITION. `identityDotClass(index)` / `depthIdentityClass(index)` are the
+  // palette arithmetic only; a view that calls either is keying a colour on
+  // where a domain sits in some list. Enumerated FROM DISK, so a new view is
+  // covered without an edit here.
+  {
+    const viewsDir = path.join(ROOT, 'src/public/next/views');
+    const offenders = readdirSync(viewsDir).filter((f) => f.endsWith('.js'))
+      .filter((f) => /\b(identityDotClass|depthIdentityClass|identitySlot)\s*\(/.test(
+        stripComments(readFileSync(path.join(viewsDir, f), 'utf8'))));
+    ok(offenders.length === 0,
+      '★ NO view calls a position-keyed identity mapping (identityDotClass / depthIdentityClass / identitySlot) — '
+      + 'a colour keyed on a list position is how deleting one domain recoloured another',
+      offenders.join(', '));
+    ok(/\bidentityDotClass\s*\(/.test('x = identityDotClass(i);'),
+      'CONTROL: that detector DOES fire on a position-keyed call');
   }
   {
     // COMMENTS STRIPPED FIRST, and that is not tidiness: views/chat.js's own
@@ -572,7 +592,7 @@ if (slotCount) {
       + '`style="background:var(--accent)"` on every chip, one violet for every domain');
     ok(/chat-type-dot[^>]*style\s*=/.test('<span class="chat-type-dot" style="background:var(--accent)">'),
       'CONTROL: that detector DOES fire on the markup this release deleted');
-    ok(/cur-sb-dot[\s\S]{0,40}identityDotClass\(/.test(chat),
+    ok(/cur-sb-dot[\s\S]{0,40}identitySlotClass\(/.test(chat),
       "...and the chip's dot is the kit's glyph, coloured by the one mapping");
   }
   ok(!/dm-row-dot[^>]*style\s*=/.test(js), 'the dot span carries no style attribute at all');

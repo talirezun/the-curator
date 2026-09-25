@@ -235,7 +235,7 @@ function makeSandbox(over = {}) {
     'renderViewHeader', 'renderShell', 'loadConversationList',
     'scheduleConversationSearch', 'deleteConversationRow', 'deleteSelectedConversations',
     'selectConversation', 'reportAsyncActionFailure', 'navigate', 'MESSAGES_PER_TURN_UNUSED',
-    'conversationPaneHtml', 'wireConversationPane', 'convKey', 'identityDotClass',
+    'conversationPaneHtml', 'wireConversationPane', 'convKey', 'identitySlotClass',
     'renderListboxHtml', 'mountListbox', 'tickAgesNow',
     src
   )(
@@ -252,7 +252,7 @@ function makeSandbox(over = {}) {
     (e) => { throw e; },
     (v) => { calls.navigate.push(v); },
     null,
-    LIST.conversationPaneHtml, LIST.wireConversationPane, LIST.convKey, SIDEBAR.identityDotClass,
+    LIST.conversationPaneHtml, LIST.wireConversationPane, LIST.convKey, SIDEBAR.identitySlotClass,
     () => '<span data-lb-stub></span>', () => null, () => 0,
   );
 

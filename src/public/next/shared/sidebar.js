@@ -70,7 +70,7 @@
 // slot becomes an attribute injection.
 
 import { clockGlyph } from './age.js';
-import { IDENTITY_SLOTS, identitySlot } from './identity-palette.js';
+import { IDENTITY_SLOTS, identitySlot, isValidIdentitySlot } from './identity-palette.js';
 
 // ── escapeHtml ─────────────────────────────────────────────────────────────
 // A byte-for-byte copy of app.js's, for the reason shared/text.js,
@@ -180,30 +180,44 @@ function aliasSet(alias) {
 export const IDENTITY_DOT_SLOTS = IDENTITY_SLOTS;
 
 /**
- * index -> the class NAME that paints an identity dot.
+ * palette index (0-based) -> the class NAME that paints an identity dot.
  *
- * THIS FUNCTION IS THE WHOLE POINT OF EXPORTING IT: views/domains.js had the
- * only copy, and a second view may not import from a view. It returns the
- * KIT's name (`cur-sb-dot-N`), so an adopting view emits no foreign token.
- *
- * THE HOST OWES IT NOTHING SINCE v3.65.1. The COLOURS are one block of
- * rules in shared/sidebar.css reading tokens/identity.css (v3.66.0), so
- * this function and the values it selects are one unit — CONTINUITY BY IDENTITY: the same
- * domain is the same colour on the Domains rail, the Context rail, the
- * Context breadcrumb, Chat's domain chips and Ingest's destination rows,
- * because every one of them asks THIS function and is painted by THAT block.
- * views/domains.js's `domainDotClass`, a second copy of this arithmetic under
- * a second family of names, is deleted; `dm-row-dot-N` survives in the markup
- * as an alias only (see ALIASES.dm.dotSlot) and resolves no background.
- *
- * THE INDEX IS THE INSTALL'S DOMAIN INDEX, and that is what makes the system
- * work at all: GET /api/domains and GET /api/domains/stats both answer out of
- * listDomains(), so position N is position N on every screen. A caller that
- * has a SLUG and not a position must find the position in the same list
- * (`state.domains.findIndex(...)`), never invent one from a hash of the name.
+ * THE ARITHMETIC ONLY. Since v3.76.0 NO VIEW CALLS THIS: a view never knows a
+ * domain by its position (a position moves when a domain is added or
+ * deleted, which is exactly how "Research" went from olive to blue on
+ * 2026-09-25). Views call `identitySlotClass(slot)` below with the domain's
+ * RECORDED slot, which the server sends with every domain list
+ * (`identity` / `identitySlot`, src/brain/domain-identity.js).
+ * scripts/test-next-domain-dots.js pins that no view calls this function.
  */
 export function identityDotClass(index) {
   return 'cur-sb-dot-' + identitySlot(index);
+}
+
+/**
+ * A domain's RECORDED identity slot (1-based) -> the class NAME that paints
+ * its dot (`cur-sb-dot-N`). THE ONE FUNCTION EVERY VIEW PAINTS A DOMAIN'S
+ * COLOUR WITH (continuity by identity, design rule 5).
+ *
+ * The slot comes from the server, never from a list position: GET
+ * /api/domains answers `identity: {slug: slot}`, and GET /api/domains/stats
+ * (and /:domain/stats) carry `identitySlot` on each row. Both are one read of
+ * src/brain/domain-identity.js, and the menubar widget reads the same.
+ *
+ * '' for anything that is not a valid slot — a list that has not answered, a
+ * domain it does not name. Identity has no states: a placeholder colour would
+ * be SOME OTHER domain's colour, which is worse than no mark.
+ */
+export function identitySlotClass(slot) {
+  return isValidIdentitySlot(slot) ? 'cur-sb-dot-' + slot : '';
+}
+
+/** `{slug: slot}` (the `identity` field of GET /api/domains) + a slug -> the
+ *  dot class, or ''. A convenience over identitySlotClass, not a second rule. */
+export function domainIdentityClass(identity, slug) {
+  const slot = identity && typeof identity === 'object' && typeof slug === 'string'
+    && Object.prototype.hasOwnProperty.call(identity, slug) ? identity[slug] : null;
+  return identitySlotClass(slot);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

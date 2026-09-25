@@ -81,6 +81,7 @@
 
 import { stat } from 'fs/promises';
 import { listDomains, getDomainStats } from './files.js';
+import { readDomainIdentities } from './domain-identity.js';
 // v3.66.0 — the usage log, for the per-project capture reading. Pure reads of
 // content-free lines; this module reaches neither `sync.js` nor
 // `child_process` (`paths.js`, `mcp-clients.js` and Node's `fs`/`crypto`
@@ -365,9 +366,13 @@ async function readCapture(now, usage) {
 }
 
 /**
- * Every domain's page count, in `listDomains()` order — the install's own
- * domain index, which is what `identityDotClass(i)` in the app keys its colour
- * on, so `index` here is the slot the widget colours the bar with.
+ * Every domain's page count, in `listDomains()` order. `slot` is the domain's
+ * RECORDED identity slot (v3.76.0, src/brain/domain-identity.js) — the one the
+ * app's `identitySlotClass(slot)` paints its dot with, so the widget's bar
+ * wears the same colour. `index` stays as the list position (a tie-break
+ * only); it is NOT the colour, because a position moves when a domain is
+ * added or deleted. `slot` is null when the identity files could not be read
+ * — the bar is then neutral, never a guessed colour.
  *
  * THE SAME FUNCTION THE APP READS. `getDomainStats` is what
  * `GET /api/domains/stats` answers with, so the widget's "687 pages" and the
@@ -391,6 +396,8 @@ async function readDomainPages(warnings, statsFn = getDomainStats) {
     });
     return null;
   }
+  let slots = null;
+  try { slots = (await readDomainIdentities(names)).slots; } catch { slots = null; }
   const out = [];
   for (let i = 0; i < names.length; i++) {
     const domain = names[i];
@@ -400,6 +407,7 @@ async function readDomainPages(warnings, statsFn = getDomainStats) {
     out.push({
       domain,
       index: i,
+      slot: slots && Number.isInteger(slots.get(domain)) ? slots.get(domain) : null,
       displayName: st && typeof st.displayName === 'string' ? st.displayName : domain,
       pageCount: int(st && st.pageCount),
       entities: int(st && st.pageCounts && st.pageCounts.entities),

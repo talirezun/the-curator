@@ -202,7 +202,7 @@ import { renderOverview } from '../shared/overview.js';
 // as an ALIAS on the same elements, so the four suites that address this
 // rail's rows by name keep addressing them.
 import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
-  identityDotClass } from '../shared/sidebar.js';
+  identitySlotClass, domainIdentityClass } from '../shared/sidebar.js';
 // ── EVERY LIVE READING ON THIS PAGE IS ONE COMPONENT (v3.65.0) ──────────────
 // The maintainer, with three screenshots of three different report cards:
 // *"these active-state cards ... show specific data, the data that is
@@ -619,6 +619,10 @@ function freshState() {
     // mirror is an allowed knowledge domain and a refused ingest target, and
     // conflating the two is how a picker comes to hide a legitimate choice.
     domainList: null,
+    // `{slug: slot}` from GET /api/domains (v3.76.0) — what every identity dot
+    // on this screen is painted from. Null until it answers: no dot, never a
+    // guessed colour.
+    domainIdentity: null,
     domainListReadonly: [],
     // TRUE only once a read has been ATTEMPTED and refused. `domainList`
     // stays null in both cases — "not asked yet" and "asked and refused" —
@@ -3387,7 +3391,7 @@ function restoreFocus() {
  * Pure and exported through __testing: this is the function the grouping
  * assertions drive.
  */
-export function renderProjectGroups(projects, activeDomain, activeProject, domainOrder) {
+export function renderProjectGroups(projects, activeDomain, activeProject, identityMap) {
   const rows = Array.isArray(projects) ? projects.filter(Boolean) : [];
   const order = [];
   const byDomain = new Map();
@@ -3396,23 +3400,21 @@ export function renderProjectGroups(projects, activeDomain, activeProject, domai
     if (!byDomain.has(d)) { byDomain.set(d, []); order.push(d); }
     byDomain.get(d).push(p);
   }
-  // ── THE IDENTITY COLOUR IS THE DOMAIN'S OWN, NOT THIS LIST'S POSITION ──
+  // ── THE IDENTITY COLOUR IS THE DOMAIN'S OWN, NOT ANY LIST'S POSITION ──
   //
-  // `identityDotClass(i)` is the SAME mapping views/domains.js paints its
-  // KNOWLEDGE rows with, so a domain has one colour across the whole app —
-  // which is the entire value of an identity mark and is the reason it is a
-  // kit function rather than a second copy. The index has to be the domain's
-  // place in the INSTALL's list, not in this screen's: a domain with no
-  // project context at all is absent here and present there, and taking the
-  // local position would slide every colour below it by one.
+  // `identitySlotClass(slot)` is the SAME mapping views/domains.js paints its
+  // KNOWLEDGE rows with, so a domain has one colour across the whole app.
+  // Since v3.76.0 the slot is RECORDED per domain (src/brain/domain-identity.js)
+  // and `identity` is `GET /api/domains`' own `{slug: slot}` map. It used to
+  // be a position in that list, and a position moves when a domain is added
+  // or deleted.
   //
-  // `domainOrder` is that list, from `GET /api/domains` (the same
-  // `listDomains()` order `GET /api/domains/stats` hands the Domains page).
-  // It is a PARAMETER rather than a read of module state because this
-  // function is lifted and executed by four suites; when it has not arrived
-  // yet the local order stands in, which is right far more often than not and
-  // is never wrong about which SET of colours is in use.
-  const slots = Array.isArray(domainOrder) && domainOrder.length ? domainOrder : order;
+  // A PARAMETER rather than a read of module state because this function is
+  // lifted and executed by several suites. Until the map has arrived there
+  // is NO dot — identity has no states, and a guessed colour would be some
+  // other domain's.
+  const identity = identityMap && typeof identityMap === 'object' && !Array.isArray(identityMap)
+    ? identityMap : null;
   // ── ACTIVE / IDLE, THE WIDGET'S SPLIT (v3.74.0, the parity rule) ─────────
   //
   // The menubar widget leads with "ACTIVE · LAST 24 H" and folds the rest
@@ -3432,7 +3434,7 @@ export function renderProjectGroups(projects, activeDomain, activeProject, domai
   const activeRows = [];
   const idleRows = [];
   for (const domain of order) {
-    const slot = slots.indexOf(domain);
+    const slot = identity && Object.prototype.hasOwnProperty.call(identity, domain) ? identity[domain] : null;
     for (const p of byDomain.get(domain)) {
       const eff = effectiveSave(p);
       (isActiveAge(eff.seconds) ? activeRows : idleRows).push({ p, domain, slot, eff });
@@ -3486,7 +3488,7 @@ export function renderProjectGroups(projects, activeDomain, activeProject, domai
         // hollow ring `.mem-row-mark-off` painted was a SECOND state on the
         // identity mark, and identity does not have states. The quiet row
         // class already says it, in the name's own ink.
-        dotClass: has && slot >= 0 ? identityDotClass(slot) : '',
+        dotClass: has ? identitySlotClass(slot) : '',
         figure,
         markHtml: '<span class="fresh-dot fresh-' + tier + '" aria-hidden="true"></span>',
         age: formatAge(eff.seconds),
@@ -3583,7 +3585,7 @@ function renderSidebar(token) {
   // 12-line window of the call, and it is right to — a call whose arguments
   // no longer fit on a screen is a call whose token is easy to drop.
   const rows = renderProjectGroups(
-    state.projects, state.activeDomain, state.activeProject, state.domainList);
+    state.projects, state.activeDomain, state.activeProject, state.domainIdentity);
 
   // NO FOOT CARD, and no `.mem-projects-head` either. The first was a lock
   // glyph and a sentence under the list, belonging to nothing; the second was
@@ -4536,11 +4538,11 @@ function renderKnowledge() {
 /**
  * ONE DOMAIN'S IDENTITY DOT — the mapping, never a second palette (v3.65.1, D7).
  *
- * `identityDotClass` is `shared/sidebar.js`'s, imported rather than copied, and
- * the index is the domain's place in the INSTALL's list (`GET /api/domains`,
- * which answers out of the same `listDomains()` the Domains page's own rows are
- * numbered by). That is what makes `projects` the same colour in the Domains
- * rail, in the Context rail, in this page's breadcrumb and on this row.
+ * `domainIdentityClass` is `shared/sidebar.js`'s, imported rather than copied, and
+ * the slot is the domain's RECORDED one (v3.76.0) from `GET /api/domains`'
+ * `identity` map — the same one the Domains page's rows carry. That is what
+ * makes `projects` the same colour in the Domains rail, in the Context rail,
+ * in this page's breadcrumb and on this row, whatever else is added or deleted.
  *
  * '' RATHER THAN A FALLBACK COLOUR when the list has not arrived or the domain
  * is not in it — identity has no states, and a placeholder here would be some
@@ -4551,10 +4553,9 @@ function renderKnowledge() {
  * colour rules are declared once, outside this view.
  */
 function knowledgeDotHtml(domain) {
-  const list = Array.isArray(state.domainList) ? state.domainList : [];
-  const slot = list.indexOf(String(domain || ''));
-  return slot >= 0
-    ? '<span class="cur-sb-dot mem-k-dot ' + identityDotClass(slot) + '" aria-hidden="true"></span>'
+  const cls = state.domainIdentity ? domainIdentityClass(state.domainIdentity, String(domain || '')) : '';
+  return cls
+    ? '<span class="cur-sb-dot mem-k-dot ' + cls + '" aria-hidden="true"></span>'
     : '';
 }
 
@@ -4868,15 +4869,13 @@ function knowledgePickerCfg(options, busy, adding) {
  * page calls) walks every wiki folder to count pages, and this view needs
  * only the NAMES and their ORDER, so it asks for the cheaper of the two.
  *
- * WHY THE ORDER MATTERS AND IS NOT INCIDENTAL: both routes answer out of
- * `listDomains()`, so position N here is position N on the Domains page, and
- * `identityDotClass(N)` therefore paints one domain the same colour on both
- * screens. Deriving the index from THIS view's own grouping instead would
- * slide every colour below a domain that has no project context yet.
+ * THE COLOUR IS THE `identity` MAP, NOT THE ORDER (v3.76.0): each domain's
+ * recorded slot, the same one GET /api/domains/stats hands the Domains page,
+ * so one domain is one colour on both screens.
  *
- * NEVER THROWS, and a failure leaves `domainList` null rather than empty: the
- * rail then falls back to its local order (right far more often than not) and
- * step ③'s picker says it could not read the list instead of offering none.
+ * NEVER THROWS, and a failure leaves `domainList` and `domainIdentity` null
+ * rather than empty: the rail then draws no identity dots, and step ③'s
+ * picker says it could not read the list instead of offering none.
  */
 async function loadDomainList(token) {
   if (state.domainList || domainListInFlight) return;
@@ -4887,6 +4886,9 @@ async function loadDomainList(token) {
     if (!isCurrentMount(token)) return;
     if (res.ok && Array.isArray(data.domains)) {
       state.domainList = data.domains.filter((d) => typeof d === 'string');
+      // v3.76.0: each domain's RECORDED identity slot — the dot's only key.
+      state.domainIdentity = data.identity && typeof data.identity === 'object' && !Array.isArray(data.identity)
+        ? data.identity : null;
       state.domainListReadonly = Array.isArray(data.readonlyDomains)
         ? data.readonlyDomains.filter((d) => typeof d === 'string') : [];
       render(token);
@@ -5621,7 +5623,7 @@ function renderProject() {
       // the rail three inches to the left.
       //
       // CONTINUITY BY IDENTITY: one palette, one mapping, one glyph. The
-      // mapping is `identityDotClass` from shared/sidebar.js — imported, never
+      // mapping is `domainIdentityClass` from shared/sidebar.js — imported, never
       // a second copy — and the index is the domain's place in the INSTALL's
       // list, which is what makes the colour the same on every screen.
       //
@@ -5629,10 +5631,11 @@ function renderProject() {
       // states (the rail's own rule, `dotClass: ''` on a project with nothing
       // saved): a placeholder colour would be a different domain's.
       (() => {
-        const list = Array.isArray(state.domainList) ? state.domainList : [];
-        const slot = list.indexOf(String(state.activeDomain || ''));
-        return slot >= 0
-          ? '<span class="cur-sb-dot mem-project-mark ' + identityDotClass(slot) + '"'
+        // Only once the map has answered (no map, no mark — and no call).
+        const cls = state.domainIdentity
+          ? domainIdentityClass(state.domainIdentity, String(state.activeDomain || '')) : '';
+        return cls
+          ? '<span class="cur-sb-dot mem-project-mark ' + cls + '"'
             + ' aria-hidden="true"></span>'
           : '';
       })() +
