@@ -1182,7 +1182,11 @@ async function refreshTraySummary() {
     return;
   }
   try {
-    traySnapshot = await getTraySummary({ limit: TRAY_ROW_LIMIT });
+    // `sessionStart: false` (v3.74.0, D7): the widget no longer draws a
+    // Session start line — that reading lives in the Context view's step ④ —
+    // and computing it ran the whole `get_project_context` handler on every
+    // tray refresh. The field arrives null, which the model renders as no line.
+    traySnapshot = await getTraySummary({ limit: TRAY_ROW_LIMIT, sessionStart: false });
   } catch (err) {
     // A throw here must not take the tray down: a menubar app that vanished is
     // indistinguishable from one that was never installed.

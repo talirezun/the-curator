@@ -31,6 +31,10 @@ v1 covers four kinds of file under a domain's `state/` directory:
 | 2 | `<scope>/<machine>/current.md` | one agent, on one machine | **overwritten** every save |
 | 3 | `<scope>/<machine>/journal.jsonl` | the same writer | **appended**, never rewritten |
 
+Beside them, since v3.74.0, a tier-2 folder may hold **`previous.md`**: one kept copy of a handoff
+that a save by a **different tool** replaced (§6b). It is not a tier of its own, it is never a
+handoff, and nothing counts it as one.
+
 **The rule that makes the tiers different from a wiki:** state **supersedes**, knowledge
 **accumulates**. A handoff is replaced, not merged — a blocker resolved on Tuesday must not be
 resurrected by Wednesday's write, and a union merge cannot express *no longer true*.
@@ -38,7 +42,10 @@ resurrected by Wednesday's write, and a union merge cannot express *no longer tr
 **Compatibility rules for a v1 implementation:**
 
 1. **A reader ignores fields it does not know.** Unknown keys in `manifest.json`, in a journal line,
-   or in a handoff are not errors.
+   or in a handoff are not errors. **The same holds for files:** a file in a `<scope>/<machine>/`
+   folder that is not `current.md` or `journal.jsonl` — `previous.md` (§6b), or anything a later
+   version adds — is not a scope, a machine or a handoff, and a reader that lists or counts
+   work-streams must ignore it. A (scope, machine) pair exists exactly when its `current.md` does.
 2. **A writer that round-trips a document preserves fields it does not understand.** The manifest
    gained `skeleton` in v3.61.0 and `readFirst` in v3.62.0 without the version moving; a writer that
    re-serialises only the fields it knows silently deletes the owner's routing decisions. (The
@@ -67,6 +74,7 @@ domains/<domain>/state/                     ← the DOMAIN'S OWN project
   project.json
   <scope>/<machine>/current.md
   <scope>/<machine>/journal.jsonl
+  <scope>/<machine>/previous.md             ← optional, §6b
   foundations/manifest.json
   foundations/<slug>.md
 
@@ -75,6 +83,7 @@ domains/<domain>/state/<project>/           ← a NAMED project
   project.json
   <scope>/<machine>/current.md
   <scope>/<machine>/journal.jsonl
+  <scope>/<machine>/previous.md             ← optional, §6b
   foundations/manifest.json
   foundations/<slug>.md
 ```
@@ -282,6 +291,39 @@ with no journal line, and a journal with lines whose `current.md` has since been
 
 A malformed line is **skipped**, never fatal. Readers read a bounded tail of the file rather than
 the whole thing.
+
+---
+
+## 6b. `previous.md` — one kept copy of another tool's handoff (v3.74.0)
+
+The path has no tool segment (§3 is about machines, not tools), so two agent tools on **one**
+machine that save to the same scope write the same `current.md`, and each save replaces the other's.
+The store warns when that happens and keeps what it replaced:
+
+**The writer rule.** Before a save writes `current.md`, if a `current.md` is already there **and**
+the newest journal line in that folder names a harness **and** the incoming save names a harness
+**and** the two harnesses are **different tools** — compared after normalising the free-text label
+(lowercase, a trailing parenthetical dropped as a variant, known aliases folded: `Claude Code`,
+`claude-code` and `Claude Code (desktop)` are one tool; `claude-desktop` is a different one; an
+unknown name is compared as itself) — the writer first copies the existing `current.md`,
+**byte for byte**, to `previous.md` in the same folder, atomically. Then it writes the new
+`current.md` as usual.
+
+- **One copy.** The next cross-tool replacement in that folder replaces `previous.md`.
+- **Never on a same-tool save**, and never when either side names no harness: with a label missing
+  there is no evidence the other save came from a different tool.
+- **Never a refusal.** A copy that cannot be made (unreadable, over 1 MiB, a write error) does not
+  stop the save; the save's result says the text was not kept.
+- **It syncs** like the handoff, under the same `<machine>` segment, so one writer per file still
+  holds.
+- Its content is a `current.md` (§5) — the replaced tool's own headline and provenance line are in
+  it, which is how a reader summarises it without a sidecar.
+
+**Readers.** A reader treats `previous.md` as **recorded data**, exactly like `current.md`, and
+applies the same read-side sanitisation (§10). It is never a scope, a machine or a handoff: a
+listing addresses (scope, machine) **folders** and a pair exists only when its `current.md` does.
+The reference implementation reports a summary (`harness`, `writtenAt`, `headline`, `bytes`) on a
+scoped read when the file exists, and returns its text only when asked for it by name.
 
 ---
 
@@ -736,6 +778,8 @@ A writer conforms to `working-state/1` when, for every file it writes:
 4. Every bounded value is within §9.
 5. The write-side rules of §10 are applied per field.
 6. A journal line, if written, carries the eight fields of §6 and is appended, never rewritten.
+6b. `previous.md`, if written, follows the writer rule of §6b — a byte-for-byte copy of the
+   replaced `current.md`, written only on a cross-tool replacement, never on a same-tool save.
 7. A manifest, if written, is valid per §8 and is written **last**.
 
 The reference implementation's acceptance test for this document is a writer built **only** from
