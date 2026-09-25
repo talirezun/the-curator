@@ -3934,7 +3934,7 @@ exists, and creating one is a click away. Six controls:
 | **New project** | The **last row of the Projects group**, reading `+ New project` — press it and the create form opens **in place of that row, inside the group**, so you never lose sight of the projects you already have. Name it, and optionally write its **standing brief** in the editor that opens — seeded from the [project brief template](project-brief-template.md), so you are editing a skeleton rather than facing an empty box. The name follows the same rule as a work-stream name: lowercase letters, digits, dot, hyphen and underscore |
 | **Edit brief** | Opens the same editor on an existing project. This is the **one** part of agent memory the app writes; the handoff and the journal are still written only by an agent ([§13b](#what-it-does-not-do)) |
 | **Rename** | Renames the folder under `state/`. It is refused if a project of the new name already exists, if the new name is one a project may not have, and — see below — if the project you are renaming is the domain's own |
-| **Delete** | Removes the project's brief, handoffs and journals. It asks you to **type the project's name** to confirm, because there is no undo inside the app — if you sync, a git client can still recover it |
+| **Delete** | Removes the project's brief, handoffs and journals from the project list. It asks you to **type the project's name** to confirm. Since v3.73.0 the folder is **moved** to `.curator-trash/projects/`, not erased — see [Deleting a domain](#creating-renaming-deleting) above for how to restore it — and if you sync, GitHub carries the deletion too |
 | **Copy marker line** | Puts one line on your clipboard — always `domain/project`, `acme/acme` included for a domain's own project — to paste into a `.curator-project` file at the root of the repository this project is about. An agent that starts in that folder then knows which project it is in without asking ([§13b](#resuming--the-one-line-to-learn)) |
 | **Copy agent instructions** | Puts a short **paste-into-your-entry-file block** on your clipboard, with this project's names already filled in. It tells an agent to read your working state when a session opens and to save it as it goes. It exists because on some harnesses the continuity skill is installed and **never activates** — measured, an agent on Claude Code saved in **0 of 4** headless runs with the skill alone and **3 of 4** with this block in `CLAUDE.md` ([§13b](#making-sure-your-agent-actually-does-it)) |
 
@@ -3966,7 +3966,18 @@ the wiki, in the same commit, with no separate step.
 
 - **New domain** — give it a **Name**, an optional **Description**, and pick a **Template**: **Generic** (a balanced starting schema, the good default) · **Tech** · **Business** · **Personal**. The template writes the domain's starting schema, which tells the AI how to categorise what you ingest — you can edit it later. Nothing is written until you click **Create domain**.
 - **Rename** — changes the display name immediately. The folder name is chosen by the server and only changes if your new name produces a different one; wiki pages, conversations, and Obsidian links are preserved either way. A **read-only Shared Brain mirror cannot be renamed** — its name is not yours to set, it comes from the Shared Brain it mirrors, and its folder name is also what marks it as a mirror — and the app says so instead of letting you try. There is no rename control on the Shared Brain page either; the name changes when the cohort's does.
-- **Delete** — the confirmation names the folder and the exact page count: *"This permanently removes `domains/articles/` and all 3,336 pages in it, including its raw sources and saved conversations. It cannot be undone from inside The Curator."* The button is **Delete permanently**.
+- **Delete** — open the domain and click **Delete** next to its title. The confirmation counts what goes with it — its pages, the Memory of its projects (briefs, Handoffs and Journals), its saved conversations and its raw sources — and names where it will go. Type the domain's folder name exactly as shown beside the box (for example `projects`); **Delete domain** stays disabled until it matches.
+
+*Since v3.73.0,* a deleted domain is **moved to The Curator's trash, not erased**: a hidden `.curator-trash` folder in your Curator data folder. The message after the delete shows its full path.
+
+| What | Where it goes | How to restore |
+|---|---|---|
+| A deleted **domain** | `.curator-trash/domains/<folder name>--<date and time>/` | Move that folder back into your domains folder and rename it to the original folder name (drop the `--<date and time>` part); it reappears in **Domains** on the next refresh |
+| A deleted **project** | `.curator-trash/projects/<domain>--<project>--<date and time>/` | Move that folder back into `domains/<domain>/state/` and rename it to the project name |
+
+In Finder, press **⇧⌘.** to show hidden folders, or use **Go → Go to Folder…** with the path from the message. Nothing empties the trash automatically — delete a folder from it yourself when you are sure.
+
+If GitHub Sync is on, a delete still reaches GitHub on your next Sync, and from there your other computers. The trash copy exists only on the computer where you deleted it, and raw sources are never sent to GitHub, so for them the trash holds the only copy.
 
 If one of these is refused because something else is writing to that domain right now (an ingest, a sync, an MCP write), you get a clearly-marked **"Not done — the server refused this."** message in the same card — not a silent failure. Wait for the other operation to finish and try again.
 
