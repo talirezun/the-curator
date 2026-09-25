@@ -2086,7 +2086,7 @@ all tier 1:
 |---|---|
 | `POST /api/memory/:domain/projects` | Create a project — its folder and its `project.md`, seeded from the template when you typed no brief |
 | `PATCH /api/memory/:domain/projects/:project` | Rename it, replace its standing brief, or both |
-| `DELETE /api/memory/:domain/projects/:project` | Delete it, behind a typed confirmation enforced at the route rather than only in the view |
+| `DELETE /api/memory/:domain/projects/:project` | Delete it, behind a typed confirmation enforced at the route rather than only in the view; since v3.73.0 the folder is moved to `<user data>/.curator-trash/projects/`, not erased |
 | *(reads)* `GET /api/memory`, `…/:domain/projects`, `…/:domain/:project` | Every tier, read-only |
 
 Nothing in that file calls `saveWorkingState` — the one store function that would reach tier 2 or

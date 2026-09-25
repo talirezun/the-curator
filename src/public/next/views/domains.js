@@ -514,6 +514,10 @@ const state = {
   //   { mode: 'create'|'rename'|'delete', slug?, displayName, description,
   //     template, busy, error, refusal }
   lifecycle: null,
+  // v3.73.0: the outcome of a domain delete — where it went and how to
+  // restore it — shown where the confirm card stood, at the top of the
+  // column. Cleared by the next lifecycle form or a domain switch.
+  lifecycleOutcome: null,
 
   // Wiki page browser for the active domain. Stamped with its slug for the
   // same reason semanticScan is — see activeBrowse().
@@ -2492,6 +2496,7 @@ function revealMessage(selector) {
 
 function openLifecycle(mode, domain) {
   state.banner = null;
+  state.lifecycleOutcome = null;
   state.confirm = null;
   if (mode === 'create') {
     state.lifecycle = { mode: 'create', slug: null, displayName: '', description: '', template: 'generic', busy: false, error: null, refusal: null };
@@ -2511,19 +2516,56 @@ function openLifecycle(mode, domain) {
       // 7, the v3.2.0 class. `undefined` = still counting (no number shown),
       // `null` = could not be read (no number shown), a number = fresh.
       pages: undefined,
+      // v3.73.0: the TYPED confirmation. The Delete button stays disabled
+      // until this equals the slug exactly, and it is SENT — the route
+      // refuses a DELETE whose body does not carry it (400 confirm_required).
+      confirmText: '',
+      // v3.73.0: the rest of what a delete takes — projects, conversations,
+      // raw sources — plus where it goes and whether Sync propagates it,
+      // read from GET …/delete-preview when the form opens. Same three
+      // states as `pages`: undefined = still reading, null = unreadable
+      // (no figure quoted), an object = fresh.
+      preview: undefined,
     };
   }
   render(myMountToken);
   if (mode === 'delete') {
     const token = myMountToken;
     const slug = domain.slug;
-    refreshDomainFigures(slug, token).then((fresh) => {
+    const stillOpen = () => {
       const f = state.lifecycle;
-      if (!isCurrentMount(token) || !f || f.mode !== 'delete' || f.slug !== slug) return;
+      return isCurrentMount(token) && f && f.mode === 'delete' && f.slug === slug ? f : null;
+    };
+    refreshDomainFigures(slug, token).then((fresh) => {
+      const f = stillOpen();
+      if (!f) return;
       f.pages = fresh && typeof fresh.pageCount === 'number' ? fresh.pageCount : null;
       render(token);
     }).catch(reportAsyncActionFailure);
+    loadDeletePreview(slug).then((preview) => {
+      const f = stillOpen();
+      if (!f) return;
+      f.preview = preview && typeof preview === 'object' && preview.slug === slug ? preview : null;
+      render(token);
+    }).catch(reportAsyncActionFailure);
   }
+}
+
+/** GET …/delete-preview, or null when it cannot be read. A failure here must
+ *  never block the delete — it only means fewer figures are quoted. */
+async function loadDeletePreview(slug) {
+  try {
+    return await fetchJSON('/api/domains/' + encodeURIComponent(slug) + '/delete-preview');
+  } catch {
+    return null;
+  }
+}
+
+/** The ONE predicate for "the typed confirmation matches" — used by the card's
+ *  render, by the input handler that flips the button live, and by
+ *  runDeleteDomain, so the three cannot disagree. Exact: no trim, no case. */
+function deleteConfirmMatches(f) {
+  return !!f && typeof f.confirmText === 'string' && f.confirmText === f.slug;
 }
 
 function closeLifecycle() {
@@ -2618,21 +2660,30 @@ async function runDeleteDomain() {
   const token = myMountToken;
   const form = state.lifecycle;
   if (!form || form.mode !== 'delete' || form.busy) return;
+  if (!deleteConfirmMatches(form)) return;
   const target = form.slug;
   form.busy = true; form.error = null; form.refusal = null;
   render(token);
   let succeeded = false;
   const releaseGate = beginDomainWrite(target, 'delete-domain');
   try {
-    const result = await fetchJSON('/api/domains/' + encodeURIComponent(target), { method: 'DELETE' });
+    // THE TYPED CONFIRMATION IS SENT, not merely checked here (v3.73.0). The
+    // route refuses unless it matches, so a client that skipped the box
+    // still cannot delete anything.
+    const result = await fetchJSON('/api/domains/' + encodeURIComponent(target), {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: form.confirmText }),
+    });
     if (!isCurrentMount(token)) return;
     applyDeleteResult(target);
     state.lifecycle = null;
-    state.banner = {
-      tone: 'success',
-      text: 'Deleted “' + (form.displayName || target) + '”.' +
-        (result && result.syncWarning ? ' The deletion propagates to GitHub on your next Sync.' : ''),
-    };
+    // v3.73.0: its OWN slot, at the top of the column where the confirm
+    // card stood — not state.banner, which renders inside the next domain's
+    // Health section (measured: 3,800px below the fold on a 425px pane), so
+    // the one message saying where the domain went was never on screen.
+    state.banner = null;
+    state.lifecycleOutcome = { tone: 'success', text: deleteDomainOutcome(form, result) };
     succeeded = true;
   } catch (err) {
     if (!isCurrentMount(token)) return;
@@ -2645,6 +2696,25 @@ async function runDeleteDomain() {
   if (!isCurrentMount(token)) return;
   if (succeeded) await reloadAfterLifecycleChange(token); // outside the try — see runCreateDomain
   else { render(token); revealMessage('.dm-lc-refusal, .dm-lc-error'); }
+}
+
+/**
+ * The success banner after a domain delete (v3.73.0): what happened, WHERE it
+ * went, how to bring it back, and — when Sync is configured — that the
+ * deletion still reaches GitHub. An outcome, so it is never behind a chevron.
+ */
+function deleteDomainOutcome(form, result) {
+  const name = form.displayName || form.slug;
+  const where = result && typeof result.trashPath === 'string' && result.trashPath ? result.trashPath : null;
+  return 'Deleted “' + name + '”.' +
+    (where
+      ? ' It was moved to The Curator’s trash, at ' + where + '. To restore it, move that folder back into ' +
+        'your domains folder and rename it ' + form.slug + '.'
+      : '') +
+    (result && result.syncWarning
+      ? ' The deletion propagates to GitHub on your next Sync, and from there to your other computers — ' +
+        'the trash copy exists only on this one.'
+      : '');
 }
 
 // ── THE PAGE'S FIGURES FOLLOW EVERY WRITE MADE ON IT (v3.72.1, F1) ─────────
@@ -2799,8 +2869,10 @@ function onWriteGateEdge(token) {
 // is now active. Never assumes the local list is already correct.
 async function reloadAfterLifecycleChange(token) {
   const keepBanner = state.banner;
+  const keepOutcome = state.lifecycleOutcome;
   await loadDomainsList(token);
   if (!isCurrentMount(token)) return;
+  state.lifecycleOutcome = keepOutcome;
   // loadDomainsList -> loadHealth renders several times; re-assert the
   // outcome banner afterwards so the result of a destructive action is not
   // scrolled off or repainted away before the user reads it.
@@ -3358,6 +3430,7 @@ function selectDomain(slug) {
   state.activeSlug = slug;
   state.confirm = null;
   state.banner = null;
+  state.lifecycleOutcome = null;
   state.expandedGroups = new Set();
   // A create/rename/delete form opened for the PREVIOUS domain must not
   // survive a domain switch. Rename and delete both carry a target slug, so
@@ -3457,9 +3530,9 @@ function selectDomain(slug) {
 // WHAT A PROJECT COSTS TO DELETE, stated because the button is right here:
 // its standing brief, every work-stream handoff under it and every journal
 // line. Those are frequently the only record of decisions that were never
-// written down anywhere else, and there is no in-app undo (see GIT_UNDO_WARN
-// — with Personal Sync configured a git client recovers them, and without it
-// nothing does). So Delete takes a TYPED confirmation, and the route
+// written down anywhere else. There is no in-app undo, but since v3.73.0 the
+// folder is MOVED to The Curator's trash rather than erased, and the outcome
+// says where. Delete still takes a TYPED confirmation, and the route
 // enforces the same confirmation independently: a confirmation that lives
 // only in a view is a confirmation every other client skips.
 
@@ -3647,6 +3720,11 @@ function renderMain(token) {
       domainsHeader() +
       renderKnowledgeNotice() +
       renderLifecycleCard() +
+      // v3.73.0: deleting the LAST domain lands here, and this branch used to
+      // drop state.banner — so the one outcome that names where the deleted
+      // domain went, and how to restore it, was never shown.
+      (state.banner ? renderBanner() : '') +
+      (state.lifecycleOutcome ? renderBanner(state.lifecycleOutcome) : '') +
       emptyCard({
         title: 'No domains here yet',
         // ── WHY THE EXISTING USER IS ADDRESSED FIRST ──────────────────────
@@ -3749,6 +3827,7 @@ function renderMain(token) {
     // the domain on screen, so it renders in the body and not behind the mark.
     (readonly ? renderStatus({ state: 'attention', title: 'Edits here are not kept', detail: MIRROR_WARNING }) : '') +
     renderLifecycleCard() +
+    (state.lifecycleOutcome ? renderBanner(state.lifecycleOutcome) : '') +
     renderStatCards(counts, pages, projectCount(), {
       // A `shared-*` mirror gets NO Ingest section (views/ingest.js refuses a
       // mirror as a destination), so it gets neither jump tile — a tile that
@@ -4291,12 +4370,12 @@ function renderProjectsPanel(readonly) {
  * same job in two visual languages on one screen is how a user learns that
  * one of them is more dangerous than it is.
  *
- * DELETE TAKES A TYPED CONFIRMATION and domain delete does not, and that
- * asymmetry is the point rather than an inconsistency: deleting a domain
- * quotes a page count the user can weigh, while a project's handoffs and
- * journals have no equivalent number — they are the notes nobody wrote down
- * anywhere else. The route enforces the same typed confirmation, so this is
- * not the only thing standing between a click and the loss.
+ * DELETE TAKES A TYPED CONFIRMATION, and since v3.73.0 so does domain
+ * delete. The old asymmetry — "a domain quotes a page count the user can
+ * weigh" — was the reasoning that let one click delete the maintainer's
+ * largest domain on 2026-09-25: a count is information, not a brake. The
+ * route enforces the same typed confirmation, and both deletes now MOVE the
+ * folder to The Curator's trash rather than erasing it.
  */
 function renderProjectLifecycleCard() {
   const f = state.projectLc;
@@ -4317,7 +4396,8 @@ function renderProjectLifecycleCard() {
         '<div class="dm-lc-body">This removes the brief, every Handoff under it, and ' +
           'every journal line — the notes your agents left for each other. Those are often the only record ' +
           'of decisions nobody wrote down anywhere else. The wiki in this domain is NOT touched. ' +
-          escapeHtml(GIT_UNDO_WARN) +
+          'The project’s folder is moved to The Curator’s trash, not erased, and can be restored by ' +
+          'moving it back. With GitHub Sync on, your next Sync still removes it from GitHub.' +
         '</div>' +
         '<label class="dm-lc-label" for="dm-proj-confirm">Type <span class="mono">' + escapeHtml(f.project) +
           '</span> to confirm</label>' +
@@ -4327,7 +4407,7 @@ function renderProjectLifecycleCard() {
         '<div class="dm-lc-actions">' +
           '<button class="btn btn-danger-solid" id="dm-proj-submit"' +
             (busy || f.confirmText !== f.project ? ' disabled' : '') + '>' +
-            (busy ? 'Deleting…' : 'Delete permanently') + '</button>' +
+            (busy ? 'Deleting…' : 'Delete project') + '</button>' +
           '<button class="btn btn-ghost" id="dm-proj-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
         '</div>' +
       '</div>'
@@ -5687,20 +5767,57 @@ function renderLifecycleCard() {
     // (v3.72.1, F1) it is the one read when this form OPENED, never the list
     // row, which can predate a write made on this page. Until that read
     // lands — or if it fails — no number is quoted at all.
+    //
+    // v3.73.0: the card now says EVERYTHING the delete takes, from the
+    // preview read at open (projects with working state, conversations, raw
+    // sources — raw/ singled out because GitHub Sync never carries it, which
+    // is what the 2026-09-25 incident actually lost), says it is RECOVERABLE
+    // and from where, and takes a TYPED confirmation. The button is disabled
+    // until the input equals the slug exactly (deleteConfirmMatches), and the
+    // route re-checks it. The slug and not the display name is typed because
+    // it is the folder that goes, and it is printed right beside the input.
     const pages = typeof f.pages === 'number' ? f.pages : null;
+    const pv = f.preview && typeof f.preview === 'object' ? f.preview : null;
     const readonly = state.readonlySet.has(f.slug);
+    const num = (k) => (pv && typeof pv[k] === 'number' ? pv[k] : null);
+    const rest = [];
+    const projects = num('projects');
+    if (projects) rest.push('the Memory of ' + pluralize(projects, 'project') + ' (briefs, Handoffs and Journals)');
+    const convs = num('conversationCount');
+    if (convs) rest.push(pluralize(convs, 'saved conversation'));
+    const raw = num('rawSources');
+    if (raw) rest.push(pluralize(raw, 'raw source file'));
+    const joined = rest.length > 1 ? rest.slice(0, -1).join(', ') + ' and ' + rest[rest.length - 1] : (rest[0] || '');
+    const tail = pv
+      ? (joined ? ', together with ' + joined : '')
+      : ', together with its projects’ Memory, its saved conversations and its raw sources';
+    const trashDir = pv && typeof pv.trashDir === 'string' && pv.trashDir ? pv.trashDir : null;
+    const matches = deleteConfirmMatches(f);
     return (
       '<div class="dm-lc-card dm-lc-danger">' +
         '<div class="dm-lc-title">Delete “' + escapeHtml(f.displayName || f.slug) + '”?</div>' +
-        '<div class="dm-lc-body">This permanently removes <span class="mono">domains/' + escapeHtml(f.slug) + '/</span>' +
+        '<div class="dm-lc-body">This removes <span class="mono">domains/' + escapeHtml(f.slug) + '/</span>' +
           (pages === null ? ' and every page in it' : ' and all ' + pluralize(pages, 'page') + ' in it') +
-          ', including its raw sources and saved conversations. It cannot be undone from inside The Curator.' +
+          escapeHtml(tail) + '.' +
+          (raw ? ' Raw sources are never sent to GitHub Sync, so the trash holds their only copy.' : '') +
+        '</div>' +
+        '<div class="dm-lc-body">It is moved to The Curator’s trash' +
+          (trashDir ? ', <span class="mono">' + escapeHtml(trashDir) + '/domains/</span>' : '') +
+          ', not erased — you can restore it by moving the folder back into your domains folder. ' +
+          'Nothing empties the trash automatically.' +
+          (pv && pv.syncConfigured
+            ? ' GitHub Sync is on: your next Sync removes it from GitHub and from your other computers.'
+            : '') +
           (readonly ? ' This is a Shared Brain mirror — deleting it removes only your local copy, and a future Pull recreates it.' : '') +
         '</div>' +
+        '<label class="dm-lc-label" for="dm-lc-confirm">Type <span class="mono">' + escapeHtml(f.slug) +
+          '</span> to confirm</label>' +
+        '<input class="dm-lc-input mono" id="dm-lc-confirm" type="text" autocomplete="off" spellcheck="false" value="' +
+          escapeHtml(f.confirmText || '') + '"' + (busy ? ' disabled' : '') + ' />' +
         messages +
         '<div class="dm-lc-actions">' +
-          '<button class="btn btn-danger-solid" id="dm-lc-submit"' + (busy ? ' disabled' : '') + '>' +
-            (busy ? 'Deleting…' : 'Delete permanently') + '</button>' +
+          '<button class="btn btn-danger-solid" id="dm-lc-submit"' + (busy || !matches ? ' disabled' : '') + '>' +
+            (busy ? 'Deleting…' : 'Delete domain') + '</button>' +
           '<button class="btn btn-ghost" id="dm-lc-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
         '</div>' +
       '</div>'
@@ -5979,6 +6096,12 @@ async function runProjectAction() {
     if (failed.length) {
       detailParts.push(failed.length + ' file' + (failed.length === 1 ? '' : 's') +
         ' could not be saved: ' + failed.join(' · '));
+    }
+    // v3.73.0: a deleted project is MOVED to the trash; the outcome says
+    // where and how to put it back, from the SERVER's answer.
+    if (f.mode === 'delete' && body && typeof body.trashPath === 'string' && body.trashPath) {
+      detailParts.push('It was moved to The Curator’s trash, at ' + body.trashPath +
+        '. To restore it, move that folder back to domains/' + slug + '/state/ and rename it ' + f.project + '.');
     }
     if (f.mode === 'create') {
       // ── PHASE 2 TAKES THE SLOT (P1-10) ──────────────────────────────────
@@ -6278,6 +6401,16 @@ function bindLifecycleListeners() {
   nameEl?.addEventListener('input', () => { f.displayName = nameEl.value; });
   const descEl = document.getElementById('dm-lc-desc');
   descEl?.addEventListener('input', () => { f.description = descEl.value; });
+  // v3.73.0: the Delete confirmation. Same pattern as the project delete's
+  // (bindProjectLifecycleListeners): write into state, flip ONLY the button's
+  // disabled state on the live node, never repaint — a repaint would rebuild
+  // the input and lose the caret.
+  const confirmEl = document.getElementById('dm-lc-confirm');
+  confirmEl?.addEventListener('input', () => {
+    f.confirmText = confirmEl.value;
+    const gated = document.getElementById('dm-lc-submit');
+    if (gated) gated.disabled = !!f.busy || !deleteConfirmMatches(f);
+  });
 
   document.querySelectorAll('.dm-lc-template[data-template]').forEach((btn) => {
     btn.addEventListener('click', () => { f.template = btn.dataset.template; render(myMountToken); });
@@ -6996,8 +7129,8 @@ function renderHealthPanel(domain, readonly) {
   );
 }
 
-function renderBanner() {
-  const b = state.banner;
+function renderBanner(banner) {
+  const b = banner || state.banner;
   const cls = b.tone === 'error' ? 'dm-banner-error' : (b.tone === 'info' ? 'dm-banner-info' : 'dm-banner-success');
   const ic = b.tone === 'error' ? icon('alertCircle', 14) : icon('check', 14);
   // ── A SECOND LINE, FOR WHAT PARTLY DID NOT HAPPEN (v3.61.0) ────────────
@@ -9103,6 +9236,7 @@ registerView('domains', {
       // be sitting there — armed — the next time the user opens Domains,
       // above whatever domain happens to be selected then.
       state.lifecycle = null;
+      state.lifecycleOutcome = null;   // v3.73.0 — a finished outcome is stale news on re-entry
       state.busyKey = null;
       // Same two reasons the fields above are cleared. `kbBusy` would
       // otherwise leave both folder buttons disabled on the next mount

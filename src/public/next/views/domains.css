@@ -998,6 +998,9 @@
   line-height: var(--leading-relaxed);
   max-width: 70ch;
 }
+/* v3.73.0: the Delete confirm says what goes, then (a second paragraph)
+   where it goes and what Sync does — two facts, two paragraphs. */
+.dm-lc-body + .dm-lc-body { margin-top: var(--space-4); }
 .dm-lc-label {
   display: block;
   margin: 14px 0 5px;
@@ -1007,6 +1010,12 @@
   color: var(--text-2);
 }
 .dm-lc-optional { text-transform: none; letter-spacing: 0; }
+/* v3.73.0: the word a typed confirmation must match sits INSIDE this
+   uppercase eyebrow ("Type <slug> to confirm"). The eyebrow uppercased it, so
+   the label printed DEMO while the only accepted input is `demo` — the screen
+   showed a word the gate refuses. The literal keeps its real case. (The
+   project delete's label had the same defect since v3.48.0; this fixes both.) */
+.dm-lc-label .mono { text-transform: none; letter-spacing: 0; }
 /* The documents field's label carries an ⓘ mark, so the label becomes a ROW
    rather than a block — the eyebrow's own type and colour are untouched
    (`.dm-lc-label` above still owns them) and this adds only the axis, which is

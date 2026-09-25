@@ -45,7 +45,7 @@ function forceProvider(p) {
   writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
 }
 async function fresh(domain) {
-  try { await files.deleteDomain(domain); } catch {}
+  try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch {}
   await files.createDomain(domain, 'ZZ beta17', 'throwaway', 'generic');
 }
 
@@ -95,7 +95,7 @@ async function orphanSuite(provider) {
     // INVARIANT either way: the rescue must NEVER introduce broken links.
     ok((after.brokenLinks || []).length === 0, `[${provider}] no broken links introduced by rescue`);
   } finally {
-    try { await files.deleteDomain(domain); } catch {}
+    try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch {}
   }
 }
 
@@ -132,7 +132,7 @@ async function securitySuite() {
     const links = (target.match(/\[\[[^\]]+\]\]/g) || []);
     ok(links.every(l => l === '[[real-orphan]]'), `only [[real-orphan]] present (found: ${links.join(', ')})`);
   } finally {
-    try { await files.deleteDomain(domain); } catch {}
+    try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch {}
   }
 }
 
@@ -160,7 +160,7 @@ async function fixAllSafeSuite() {
     const hub = readFileSync(path.join(wiki, 'concepts', 'hub.md'), 'utf8');
     ok(/\[\[real-page\]\]/.test(hub) && !/\[\[concepts\/real-page\]\]/.test(hub), 'prefix stripped → [[real-page]]');
   } finally {
-    try { await files.deleteDomain(domain); } catch {}
+    try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch {}
   }
 }
 
@@ -181,7 +181,7 @@ async function fixAllSafeSuite() {
   } finally {
     if (configBackup !== null) writeFileSync(CONFIG_FILE, configBackup, 'utf8');
     for (const d of ['zztest-beta17-gemini', 'zztest-beta17-anthropic', 'zztest-beta17-sec', 'zztest-beta17-safe']) {
-      try { await files.deleteDomain(d); } catch {}
+      try { await (await import('fs/promises')).rm(files.domainPath(d), { recursive: true, force: true }); } catch {}
     }
     console.log('\n🧹 cleanup done — config restored, throwaway domains removed.');
   }

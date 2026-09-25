@@ -254,10 +254,13 @@ section('3. F1 — the Delete confirm quotes the count read when it opened');
     readonlySet: new Set(), lifecycle: null, banner: null, confirm: null,
   };
   let renders = 0;
-  const fns = sandbox(['openLifecycle', 'renderLifecycleCard'], {
+  const fns = sandbox(['openLifecycle', 'renderLifecycleCard', 'deleteConfirmMatches'], {
     state, myMountToken: 1, render: () => { renders++; },
     isCurrentMount: () => true, reportAsyncActionFailure: (e) => { throw e; },
     refreshDomainFigures: () => new Promise((r) => { resolveFresh = r; }),
+    // v3.73.0: the confirm's OTHER figures (projects, conversations, raw) —
+    // unreadable here, so only the page count is in play, as before.
+    loadDeletePreview: () => Promise.resolve(null),
     icon: () => '', escapeHtml, pluralize,
   });
   fns.openLifecycle('delete', state.domains[0]);

@@ -188,7 +188,7 @@ try {
   const { compileConversation } = await import('../src/brain/compile.js');
 
   // Clean any leftover from a prior aborted run, then create fresh.
-  try { await files.deleteDomain(TEST_DOMAIN); } catch { /* none */ }
+  try { await (await import('fs/promises')).rm(files.domainPath(TEST_DOMAIN), { recursive: true, force: true }); } catch { /* none */ }
   await files.createDomain(TEST_DOMAIN, 'ZZ Test Anthropic beta14', 'Throwaway test domain', 'generic');
 
   section('LIVE 3 — full single-pass ingest on Anthropic (65536 budget path)');
@@ -246,7 +246,7 @@ try {
   // Cleanup: delete throwaway domain + tmp source, restore config exactly.
   try {
     const files = await import('../src/brain/files.js');
-    await files.deleteDomain(TEST_DOMAIN);
+    await (await import('fs/promises')).rm(files.domainPath(TEST_DOMAIN), { recursive: true, force: true });
   } catch { /* best effort */ }
   if (tmpDir) { try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* */ } }
   if (configBackup !== null) writeFileSync(CONFIG_FILE, configBackup, 'utf8');

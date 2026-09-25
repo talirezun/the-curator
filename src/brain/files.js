@@ -5,6 +5,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDomainsDir } from './config.js';
 import { writeFileAtomic } from './atomic-write.js';
+import { acquireFileLock } from './write-registry.js';
+import { moveToTrash, countFiles } from './trash.js';
 
 // v3.0.1-beta.8: every wiki write goes through writeFileAtomic so a
 // process-kill mid-write (e.g. /api/restart killing the old process while
@@ -1796,14 +1798,57 @@ export async function createDomain(slug, displayName, description, template) {
   }
 }
 
-export async function deleteDomain(slug) {
+/**
+ * Delete a domain — RECOVERABLY, and only with a typed confirmation (v3.73.0).
+ *
+ * On 2026-09-25 the maintainer lost the `projects` domain to one click: this
+ * function was `rm -rf`, and its only confirmation lived in the view. Now:
+ *
+ *   · `opts.confirm` must equal the slug exactly — the same rule
+ *     `deleteProject` has always had. It is checked HERE as well as at the
+ *     route, so a caller that bypasses the route still cannot delete by
+ *     accident. A thrown error carries `code: 'CONFIRM_REQUIRED'`.
+ *   · The folder is MOVED to `<user data>/.curator-trash/domains/
+ *     <slug>--<UTC stamp>/` (see trash.js and paths.js's getTrashDir), never
+ *     removed. Returns `{ slug, trashPath }` so the caller can say where.
+ *   · The cross-process file lock is taken first, so a write the MCP (a
+ *     separate process) has in flight refuses the delete rather than racing
+ *     it. A thrown error carries `code: 'LOCKED'`. The lock file travels with
+ *     the folder and is removed from the trash copy afterwards, so a restored
+ *     domain never arrives holding a lock.
+ */
+export async function deleteDomain(slug, opts = {}) {
   if (!slug || slug.includes('..') || slug.includes('/') || slug.includes('\\') || slug.startsWith('.')) {
     throw new Error('Invalid domain name');
   }
   if (!existsSync(domainPath(slug))) {
     throw new Error('Domain not found');
   }
-  await rm(domainPath(slug), { recursive: true, force: true });
+  if (typeof opts.confirm !== 'string' || opts.confirm !== slug) {
+    throw Object.assign(new Error(`Type the domain's folder name to confirm. Expected "${slug}".`),
+      { code: 'CONFIRM_REQUIRED' });
+  }
+  const src = domainPath(slug);
+  const release = await acquireFileLock(src, { op: 'delete-domain' });
+  if (!release) {
+    throw Object.assign(new Error(`Another write is in progress on "${slug}". Nothing was deleted.`),
+      { code: 'LOCKED' });
+  }
+  let trashPath;
+  try {
+    trashPath = await moveToTrash(src, 'domains', slug);
+  } finally {
+    await release();   // a no-op once the lock has moved with the folder
+  }
+  try { await unlink(path.join(trashPath, '.write-lock')); } catch { /* best-effort */ }
+  return { slug, trashPath };
+}
+
+/** Files under a domain's raw/ (dot-files skipped). For the Delete confirm:
+ *  raw/ is gitignored, so it is the one part of a domain GitHub Sync never
+ *  carried — the part the 2026-09-25 incident actually lost. */
+export async function countRawSources(slug) {
+  return countFiles(rawPath(slug));
 }
 
 export async function renameDomain(oldSlug, newSlug, newDisplayName) {

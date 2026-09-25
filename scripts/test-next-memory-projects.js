@@ -139,6 +139,12 @@ function section(t) { console.log('\n' + t); }
 const TMP = mkdtempSync(join(tmpdir(), 'curator-memproj-'));
 const DOMAINS = join(TMP, 'domains');
 mkdirSync(DOMAINS, { recursive: true });
+// v3.73.0: a deleted project is MOVED to <user data>/.curator-trash/, so the
+// user-data dir must be isolated too — with only the domains override, the
+// §-delete below wrote its trash into the real checkout's user-data dir.
+const USER_DATA = join(TMP, 'userdata');
+mkdirSync(USER_DATA, { recursive: true });
+process.env.CURATOR_TEST_USER_DATA_DIR = USER_DATA;
 
 // Cleaned up on every exit path. `finally` runs BEFORE process.exit, which is
 // the ordering v3.9.1's 37,353 stale temp directories came from.

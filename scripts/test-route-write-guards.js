@@ -645,8 +645,12 @@ async function put(routePath, body) {
   return { status: res.status, ok: res.ok, body: json };
 }
 
-async function del(routePath) {
-  const res = await fetch(BASE + routePath, { method: 'DELETE' });
+async function del(routePath, body) {
+  const res = await fetch(BASE + routePath, body === undefined ? { method: 'DELETE' } : {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
   let json = null;
   try { json = await res.json(); } catch { /* non-JSON body */ }
   return { status: res.status, ok: res.ok, body: json };
@@ -953,7 +957,9 @@ console.log('\n=== 6. Source guards — shape of the fix ===');
     'domains.js PUT /:domain guards with isDomainActive(req.params.domain)');
   assert(!/hasActiveWrites\(/.test(putBody),
     'domains.js PUT /:domain does NOT use the global hasActiveWrites()');
-  assert(/isDomainActive\(/.test(domSrc.slice(delStart, delStart + 800)),
+  // v3.73.0: the handler grew a typed-confirmation check ahead of the guard,
+  // so the window is the whole handler rather than its first 800 characters.
+  assert(/isDomainActive\(/.test(domSrc.slice(delStart, domSrc.indexOf('export default router'))),
     'domains.js DELETE /:domain still guards with isDomainActive (unchanged)');
   // The guard must precede the work, not sit after it.
   assert(putBody.indexOf('isDomainActive') < putBody.indexOf('renameDomain('),
@@ -1545,7 +1551,7 @@ console.log('\n=== 11. POST /api/health/:domain/fix is guarded like /fix-all ===
     if (active.some(a => a.domain === 'hbusy')) {
       seenOps = active.find(a => a.domain === 'hbusy').ops;
       syncDuring = await post('/api/sync/push', {});
-      deleteDuring = await del('/api/domains/hbusy');
+      deleteDuring = await del('/api/domains/hbusy', { confirm: 'hbusy' });
       break;
     }
     await new Promise(r => setTimeout(r, 2));
@@ -1625,7 +1631,7 @@ console.log('\n=== 11. POST /api/health/:domain/fix is guarded like /fix-all ===
     if (activeAll.some(a => a.domain === 'hfaall')) {
       seenOpsAll = activeAll.find(a => a.domain === 'hfaall').ops;
       syncDuringAll = await post('/api/sync/push', {});
-      deleteDuringAll = await del('/api/domains/hfaall');
+      deleteDuringAll = await del('/api/domains/hfaall', { confirm: 'hfaall' });
       break;
     }
     await new Promise(r => setTimeout(r, 2));
@@ -2519,6 +2525,142 @@ console.log('\n=== 16. RE-CONFIRM: a present-but-inert WRITABILITY guard IS caug
       'pick-path: the prompt key ' + JSON.stringify(key) + ' falls back to the frozen default ' +
       'rather than reaching the dialog (' + JSON.stringify(seen) + ')');
   }
+}
+
+console.log('\n=== 18. v3.73.0: DELETE /api/domains/:domain — typed confirmation, and RECOVERABLE ===');
+{
+  // The 2026-09-25 incident: one click through the view's confirm `rm -rf`'d
+  // the maintainer's largest domain, and this route took no confirmation at
+  // all. Driven over the real router and a real socket, in the isolated
+  // TMP_DOMAINS / TMP_USER — never the real tree.
+  const { readdirSync, statSync } = await import('fs');
+  const filesMod = await import('../src/brain/files.js');
+  const trashMod = await import('../src/brain/trash.js');
+  const TRASH = path.join(TMP_USER, '.curator-trash');
+  const FIXTURE = {
+    'CLAUDE.md': '# Domain: Del Alpha\n',
+    'wiki/index.md': '# Wiki Index — Del Alpha\n',
+    'wiki/entities/ada.md': '---\ntype: entity\n---\n# Ada\n',
+    'wiki/concepts/graphs.md': '---\ntype: concept\n---\n# Graphs\n',
+    'conversations/11111111-1111-4111-8111-111111111111.json': '{"messages":[]}',
+    'raw/source.txt': 'the only copy of a raw source',
+    'raw/nested/deep.md': 'a nested raw source',
+    'state/lumina/project.md': '# lumina\n\nThe standing brief.\n',
+  };
+  const mk = (slug) => {
+    for (const [rel, body] of Object.entries(FIXTURE)) {
+      const abs = path.join(TMP_DOMAINS, slug, rel);
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, body);
+    }
+  };
+  const trashEntries = () => { try { return readdirSync(path.join(TRASH, 'domains')); } catch { return []; } };
+
+  mk('delalpha');
+  const pv = await (await fetch(BASE + '/api/domains/delalpha/delete-preview')).json();
+  eq(pv.pageCount, 2, 'preview: the page count (getDomainStats\' own, index.md excluded) is read fresh');
+  eq(pv.conversationCount, 1, 'preview: conversations counted');
+  eq(pv.rawSources, 2, 'preview: raw sources counted RECURSIVELY — the part GitHub Sync never carries');
+  eq(pv.projects, 1, 'preview: the project with Memory under state/ is counted');
+  eq(pv.trashDir, TRASH, 'preview: names the trash folder, under the user-data dir');
+  eq((await fetch(BASE + '/api/domains/nope/delete-preview')).status, 404, 'preview of an unknown domain is a 404');
+
+  const noBody = await del('/api/domains/delalpha');
+  eq(noBody.status, 400, 'DELETE with NO body is refused (400)');
+  eq(noBody.body && noBody.body.reason, 'confirm_required', '...with reason confirm_required, the project route\'s shape');
+  assert(noBody.body && /Expected "delalpha"/.test(noBody.body.error || ''), '...and names the exact word to send');
+  for (const bad of ['Del Alpha', 'DELALPHA', 'delalpha ', ' delalpha', 'delalph', '', true, 1, null, ['delalpha']]) {
+    const r = await del('/api/domains/delalpha', { confirm: bad });
+    eq(r.status, 400, 'DELETE with confirm ' + JSON.stringify(bad) + ' is refused (400)');
+  }
+  assert(existsSync(path.join(TMP_DOMAINS, 'delalpha', 'raw', 'source.txt')),
+    'after every refusal the domain folder is still there, raw sources included');
+  eq(trashEntries().length, 0, 'and nothing was moved to the trash by a refusal');
+  eq((await del('/api/domains/ghost', { confirm: 'ghost' })).status, 404, 'a confirmed delete of an unknown domain is a 404');
+
+  // The ROUTE's own check, observable apart from deleteDomain()'s re-check:
+  // it runs BEFORE the busy guard, so an unconfirmed request against a busy
+  // domain is refused for the missing word (400), never answered with a 409
+  // that invites "wait and try again" — the project route's order too.
+  registry.__testing._resetActiveWrites();
+  const releaseBusy = registry.registerWrite('delalpha', 'ingest');
+  const busyNoConfirm = await del('/api/domains/delalpha');
+  eq(busyNoConfirm.status, 400, 'an UNCONFIRMED delete of a BUSY domain is a 400 confirm_required, not a 409');
+  eq(busyNoConfirm.body && busyNoConfirm.body.reason, 'confirm_required', '...naming the missing confirmation');
+  const busyConfirmed = await del('/api/domains/delalpha', { confirm: 'delalpha' });
+  eq(busyConfirmed.status, 409, 'a CONFIRMED delete of a busy domain is still the 409 write guard');
+  releaseBusy();
+  assert(existsSync(path.join(TMP_DOMAINS, 'delalpha', 'CLAUDE.md')), '...and neither moved anything');
+
+  // The cross-process lock: a live holder (this pid) means another process is writing.
+  writeFileSync(path.join(TMP_DOMAINS, 'delalpha', '.write-lock'), JSON.stringify({
+    pid: process.pid, op: 'mcp:compile_to_wiki', startedAt: Date.now(), hostname: 'test', nonce: 'x',
+  }));
+  const lockedDel = await del('/api/domains/delalpha', { confirm: 'delalpha' });
+  eq(lockedDel.status, 409, 'a confirmed delete is REFUSED while another process holds the file lock');
+  eq(lockedDel.body && lockedDel.body.conflict, 'file_lock', "...with conflict: 'file_lock'");
+  assert(existsSync(path.join(TMP_DOMAINS, 'delalpha', 'wiki', 'entities', 'ada.md')), '...and nothing moved');
+  rmSync(path.join(TMP_DOMAINS, 'delalpha', '.write-lock'));
+
+  const good = await del('/api/domains/delalpha', { confirm: 'delalpha' });
+  eq(good.status, 200, 'DELETE with confirm === slug succeeds');
+  assert(good.body && good.body.deleted === true, '...and says deleted: true');
+  const tp = good.body && good.body.trashPath;
+  assert(typeof tp === 'string' && path.dirname(tp) === path.join(TRASH, 'domains')
+    && /^delalpha--\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$/.test(path.basename(tp)),
+    'trashPath is <user data>/.curator-trash/domains/<slug>--<UTC stamp> (got ' + tp + ')');
+  assert(!existsSync(path.join(TMP_DOMAINS, 'delalpha')), 'the domain folder is GONE from domains/');
+  assert(!(await filesMod.listDomains()).includes('delalpha'), '...so it is no longer listed as a domain');
+  let intact = true;
+  for (const [rel, body] of Object.entries(FIXTURE)) {
+    const abs = path.join(tp || '/nonexistent', rel);
+    if (!existsSync(abs) || readFileSync(abs, 'utf8') !== body) { intact = false; console.log('      missing/changed in trash: ' + rel); }
+  }
+  assert(intact, 'EVERY file is in the trash byte-for-byte — wiki, conversations, working state AND raw sources');
+  assert(!existsSync(path.join(tp || '/nonexistent', '.write-lock')),
+    'the lock the delete took did NOT travel into the trash (a restored domain must not arrive locked)');
+  assert(path.relative(TMP_DOMAINS, tp || '').startsWith('..'),
+    'the trash is OUTSIDE the domains folder — Personal Sync\'s work-tree never sees it');
+
+  // Same slug again, within the same second: never a collision, never an overwrite.
+  mk('delalpha');
+  const again = await del('/api/domains/delalpha', { confirm: 'delalpha' });
+  eq(again.status, 200, 'the same slug can be deleted again');
+  assert(again.body && again.body.trashPath !== tp && existsSync(again.body.trashPath) && existsSync(tp),
+    '...into a DIFFERENT trash folder, and the first one is untouched');
+
+  // Brain level — a caller that bypasses the route still needs the word.
+  mk('delbeta');
+  let code = null;
+  try { await filesMod.deleteDomain('delbeta'); } catch (e) { code = e.code; }
+  eq(code, 'CONFIRM_REQUIRED', 'files.deleteDomain() with no confirm throws CONFIRM_REQUIRED');
+  code = null;
+  try { await filesMod.deleteDomain('delbeta', { confirm: true }); } catch (e) { code = e.code; }
+  eq(code, 'CONFIRM_REQUIRED', '...and a boolean true is not a confirmation');
+  assert(existsSync(path.join(TMP_DOMAINS, 'delbeta', 'CLAUDE.md')), '...and the folder is still there');
+
+  // The other-volume path (EXDEV) — forced through the test seam, since no
+  // single-volume machine can produce it for real.
+  mk('delgamma');
+  const src = path.join(TMP_DOMAINS, 'delgamma');
+  const dest = path.join(TRASH, 'domains', 'delgamma--exdev');
+  const exdev = async () => { throw Object.assign(new Error('cross-device link not permitted'), { code: 'EXDEV' }); };
+  let moved;
+  try { moved = await trashMod.__moveDirectory(src, dest, { rename: exdev }); }
+  catch (e) { moved = { method: 'threw ' + (e && e.code) }; }
+  eq(moved.method, 'copy', 'EXDEV falls back to copy-then-remove');
+  assert(!existsSync(src) && readFileSync(path.join(dest, 'raw', 'nested', 'deep.md'), 'utf8') === FIXTURE['raw/nested/deep.md'],
+    '...the copy is complete (nested raw source included) and only then is the original removed');
+  mk('deldelta');
+  const src2 = path.join(TMP_DOMAINS, 'deldelta');
+  let threw = null;
+  try {
+    await trashMod.__moveDirectory(src2, path.join(TRASH, 'domains', 'deldelta--eperm'),
+      { rename: async () => { throw Object.assign(new Error('nope'), { code: 'EPERM' }); } });
+  } catch (e) { threw = e.code; }
+  eq(threw, 'EPERM', 'any other rename failure is thrown, not swallowed');
+  assert(existsSync(path.join(src2, 'raw', 'source.txt')), '...and leaves the original exactly where it was');
+  void statSync;
 }
 
 // ── Teardown ─────────────────────────────────────────────────────────────

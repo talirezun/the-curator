@@ -1893,6 +1893,9 @@ router.patch('/:domain/projects/:project', async (req, res) => {
 // the whole point of which is that they are the only record of decisions
 // that were never written down anywhere else. A confirmation that lives only
 // in a view is a confirmation any other client skips.
+//
+// RECOVERABLE since v3.73.0: the project's folder is moved to The Curator's
+// trash (`<user data>/.curator-trash/projects/`), and `trashPath` says where.
 // ═════════════════════════════════════════════════════════════════════════
 router.delete('/:domain/projects/:project', async (req, res) => {
   try {
@@ -1921,7 +1924,8 @@ router.delete('/:domain/projects/:project', async (req, res) => {
 
     const out = await store.deleteProject(domain, project, { confirm });
     if (out && out.ok === false) return res.status(statusForStoreRefusal(out)).json(withErrorProse(out));
-    res.json({ ok: true, domain, project, deleted: true });
+    // v3.73.0: the project was MOVED to the trash; say where, so the view can.
+    res.json({ ok: true, domain, project, deleted: true, trashPath: out && out.trashPath ? out.trashPath : null });
   } catch (err) {
     console.error('Memory delete-project error:', err);
     res.status(500).json({ ok: false, error: err.message });

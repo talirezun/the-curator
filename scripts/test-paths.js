@@ -142,6 +142,19 @@ const ignoreLines = read('.gitignore').split('\n').map(l => l.trim());
 ok(ignoreLines.includes('.mcp-usage.jsonl') && ignoreLines.includes('.mcp-usage.jsonl.1'),
   'the usage log AND its rotated generation are excluded from the app repo (repo mode puts them beside tracked source)');
 
+// v3.73.0 — the trash. Deleted domains and projects are MOVED here, so the
+// same two properties, and a third: the domains folder's own .gitignore rules
+// carry it too, for an install whose domainsPath IS the user-data dir.
+eq(paths.getTrashDir(), path.join(OLD_ROOT, '.curator-trash'),
+  'getTrashDir() resolves under the user-data dir');
+ok(path.relative(getDomainsDir(), paths.getTrashDir()).startsWith('..'),
+  'the trash is OUTSIDE the domains folder (Personal Sync\'s work-tree)');
+ok(ignoreLines.includes('.curator-trash/'),
+  'the trash is excluded from the app repo — it holds a user\'s whole deleted wiki, and the repo is public');
+const DGR = (await import(path.join(ROOT, 'src/brain/sync.js'))).__testing.DOMAINS_GITIGNORE_RULES;
+ok(Array.isArray(DGR) && DGR.includes('.curator-trash/'),
+  'DOMAINS_GITIGNORE_RULES carries .curator-trash/ for the pathological domainsPath === user-data-dir install');
+
 // ═══════════════════════════════════════════════════════════════════════════
 section('§2  Install-form detection — against a REALISTICALLY built tree');
 // ═══════════════════════════════════════════════════════════════════════════
@@ -422,7 +435,7 @@ ok(rootDerivers.length === 0,
 // `.mcp-usage.jsonl` (v3.60.0) joins the list for the same reason as the rest:
 // it is a user-data path, and a second module joining it onto a root of its own
 // is how the two would end up pointing at different files.
-const DATA_FILES = ['.curator-config.json', '.sync-config.json', '.sharedbrain-config.json', '.knowledge-git', '.mcp-usage.jsonl'];
+const DATA_FILES = ['.curator-config.json', '.sync-config.json', '.sharedbrain-config.json', '.knowledge-git', '.mcp-usage.jsonl', '.curator-trash'];
 const joiners = [];
 for (const f of serverFiles) {
   if (f.rel === path.join('src', 'brain', 'paths.js')) continue;
@@ -452,7 +465,7 @@ ok(joiners.length === 0,
 const SNAPSHOTTABLE = [
   'getCuratorConfigFile', 'getSyncConfigFile', 'getSyncGitDir',
   'getSharedBrainConfigFile', 'getDefaultDomainsDir', 'getUserDataDir', 'userDataPath',
-  'getMcpUsageLogPath',
+  'getMcpUsageLogPath', 'getTrashDir',
 ];
 const snapshots = [];
 for (const f of serverFiles) {

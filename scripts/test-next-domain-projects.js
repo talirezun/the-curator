@@ -944,7 +944,10 @@ section('S5b -- WHERE THE PROJECT\'S CANONICAL DOCUMENTS COME FROM (v3.61.0)');
   ok('...and the card says what is destroyed, in the model words',
     /every Handoff under it/.test(empty) && /journal/.test(empty), empty);
   ok('...and that the wiki is NOT touched', /wiki in this domain is NOT touched/i.test(empty));
-  ok('...and that there is no in-app undo', /no Undo button/i.test(empty));
+  // v3.73.0: the project folder is MOVED to the trash, and the card says so
+  // — the old "no Undo button … cannot be undone" copy would now be false.
+  ok('...and that it goes to the trash, recoverable, not erased',
+    /moved to The Curator’s trash, not erased/.test(empty) && /restored/.test(empty), empty);
 
   f.confirmText = 'lumin';
   ok('a PREFIX does not arm it', /id="dm-proj-submit" disabled/.test(renderProjectLifecycleCard()));

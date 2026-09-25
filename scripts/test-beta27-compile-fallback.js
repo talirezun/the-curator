@@ -123,7 +123,7 @@ async function compileWith(domain, behaviors) {
 
 const domain = 'zztest-beta27';
 try {
-  try { await files.deleteDomain(domain); } catch {}
+  try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch {}
   await files.createDomain(domain, 'ZZ beta27', 'Throwaway beta27 fallback test', 'generic');
 
   // ── 2. Happy path — full attempt succeeds, no warnings ──
@@ -190,7 +190,7 @@ try {
     ok(calls.join(',') === 'full,concise', `escalated on parse failure (calls: ${calls.join(',')})`);
   }
 } finally {
-  try { await files.deleteDomain(domain); } catch {}
+  try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch {}
 }
 
 // ── 8. v3.67.0 — `spent`: what the WHOLE ladder cost ───────────────────────────
@@ -292,7 +292,7 @@ section('8. spent — summed across every ladder rung (v3.67.0)');
     ok(missing.ok === false && missing.reason && !('spent' in missing),
       'a refusal before any call carries no spent');
   }
-  try { await files.deleteDomain(domain); } catch {}
+  try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch {}
 }
 
 // ── Report ──────────────────────────────────────────────────────────────────────

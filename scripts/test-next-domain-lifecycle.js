@@ -131,6 +131,7 @@ const FNS = [
   'openLifecycle',
   'closeLifecycle',
   'renderLifecycleCard',
+  'deleteConfirmMatches',
   'selectDomain',
   // Lifted from shared/chat-scope.js, not from domains.js — see the
   // CHAT_SCOPE_SRC note above. It is in this list because the sandbox's
@@ -177,6 +178,12 @@ function refreshDomainFigures(slug) {
   const row = (state.domains || []).find((d) => d.slug === slug);
   return Promise.resolve(row || null);
 }
+// v3.73.0: GET …/delete-preview, answered from a per-test table the suite
+// sets through __setPreview (null = unreadable, the default).
+let previewFor = {};
+function loadDeletePreview(slug) {
+  return Promise.resolve(Object.prototype.hasOwnProperty.call(previewFor, slug) ? previewFor[slug] : null);
+}
 `;
 
 let sandbox;
@@ -192,7 +199,8 @@ try {
        __calls: () => calls,
        __resetCalls: () => { calls.render = 0; calls.loadHealth.length = 0; calls.navigate.length = 0; calls.chatScope.length = 0; calls.order.length = 0; },
        __setEscape: (fn) => { escapeHtml = fn; },
-       __setShell: (s) => { Object.keys(shell).forEach(k => delete shell[k]); Object.assign(shell, s); } };`
+       __setShell: (s) => { Object.keys(shell).forEach(k => delete shell[k]); Object.assign(shell, s); },
+       __setPreview: (m) => { previewFor = m || {}; } };`
   )();
 } catch (err) {
   console.log('FATAL: could not build the sandbox from domains.js — ' + err.message);
@@ -201,7 +209,7 @@ try {
 
 const {
   validateDomainForm, createRequestBody, applyRenameResult, applyDeleteResult,
-  classifyDomainError, openLifecycle, closeLifecycle, renderLifecycleCard,
+  classifyDomainError, openLifecycle, closeLifecycle, renderLifecycleCard, deleteConfirmMatches, __setPreview,
   selectDomain, goToChatScoped, filterBrowseEntries,
   DOMAIN_TEMPLATE_VALUES, BROWSE_RENDER_CAP,
   __setState, __state, __calls, __resetCalls, __setEscape, __setShell,
@@ -356,10 +364,160 @@ html = renderLifecycleCard();
 ok(html.includes('7 pages'),
    'the delete card quotes pageCount (7) — the RECURSIVE total, so it cannot promise 4 and delete 7 (v3.2.0 L1)');
 ok(html.includes('domains/alpha/'), 'it names the folder being removed');
-ok(html.includes('cannot be undone'), 'it says the deletion is irreversible');
+// v3.73.0: it is no longer irreversible — the folder is MOVED to the trash —
+// and the card must say so rather than keep the old "cannot be undone".
+ok(/moved to The Curator’s trash/.test(html) && /not erased/.test(html) && !html.includes('cannot be undone'),
+   'it says the domain goes to the trash, recoverable — and no longer claims it cannot be undone');
 // pageCounts.entities+concepts+summaries would be 6, not 7 — pin that the
 // narrowed number is NOT the one being shown.
 ok(!html.includes('6 pages'), 'it does NOT quote the narrowed entities+concepts+summaries subtotal');
+
+console.log('\n=== 7b. v3.73.0 — the TYPED confirmation gates the Delete button ===');
+{
+  __setState(freshState());
+  openLifecycle('delete', { slug: 'alpha', displayName: 'Alpha' });
+  await new Promise((r) => setTimeout(r, 0));
+  const f = __state().lifecycle;
+  ok(f.confirmText === '', 'the confirmation starts EMPTY — nothing is pre-filled');
+  let card = renderLifecycleCard();
+  ok(/id="dm-lc-submit" disabled/.test(card), 'the Delete button starts DISABLED');
+  ok(/id="dm-lc-confirm"/.test(card), 'the card carries the confirmation input');
+  ok(/Type <span class="mono">alpha<\/span> to confirm/.test(card),
+     'the label prints the exact word to type — the SLUG, the thing that is deleted');
+  for (const wrong of ['alph', 'Alpha', 'ALPHA', ' alpha', 'alpha ', 'alpha\n', 'domains/alpha']) {
+    f.confirmText = wrong;
+    ok(!deleteConfirmMatches(f) && /id="dm-lc-submit" disabled/.test(renderLifecycleCard()),
+       'still disabled for ' + JSON.stringify(wrong) + ' — exact match only (no trim, no case-folding, not the display name)');
+  }
+  f.confirmText = 'alpha';
+  card = renderLifecycleCard();
+  ok(deleteConfirmMatches(f) && !/id="dm-lc-submit" disabled/.test(card),
+     'ENABLED once the input equals the slug exactly');
+  f.busy = true;
+  ok(/id="dm-lc-submit" disabled/.test(renderLifecycleCard()), 'and disabled again while the delete is in flight');
+  f.busy = false;
+  ok(/Delete domain</.test(card) && !/Delete permanently/.test(card),
+     'the button no longer says "permanently" — the delete is recoverable now');
+}
+
+console.log('\n=== 7c. v3.73.0 — the confirm states everything that goes, from the preview ===');
+{
+  __setPreview({ alpha: {
+    slug: 'alpha', pageCount: 7, projects: 3, conversationCount: 12, rawSources: 40,
+    trashDir: '/tmp/ud/.curator-trash', syncConfigured: true,
+  } });
+  __setState(freshState());
+  openLifecycle('delete', { slug: 'alpha', displayName: 'Alpha' });
+  await new Promise((r) => setTimeout(r, 0));
+  const card = renderLifecycleCard();
+  ok(card.includes('all 7 pages in it'), 'pages, from the fresh read');
+  ok(card.includes('the Memory of 3 projects'), 'projects with Memory, from the preview');
+  ok(card.includes('12 saved conversations'), 'conversations, from the preview');
+  ok(card.includes('40 raw source files'), 'raw sources, from the preview');
+  ok(/never sent to GitHub Sync/.test(card), 'and that raw sources are not in any Sync backup — what the incident lost');
+  ok(card.includes('/tmp/ud/.curator-trash/domains/'), 'it names the trash folder the domain goes to');
+  ok(/GitHub Sync is on/.test(card), 'Sync configured → it says the delete still propagates');
+
+  __setPreview({ alpha: { slug: 'alpha', pageCount: 7, projects: 0, conversationCount: 0, rawSources: 0, trashDir: '/t', syncConfigured: false } });
+  __setState(freshState());
+  openLifecycle('delete', { slug: 'alpha', displayName: 'Alpha' });
+  await new Promise((r) => setTimeout(r, 0));
+  const zero = renderLifecycleCard();
+  ok(!/\b0 (raw|saved|project)/.test(zero) && !/never sent to GitHub Sync/.test(zero) && !/GitHub Sync is on/.test(zero),
+     'zero counts are not listed, and no Sync sentence without Sync');
+
+  // A preview answered for a DIFFERENT domain (a stale response) is ignored.
+  __setPreview({ alpha: { slug: 'beta', projects: 99, conversationCount: 99, rawSources: 99, trashDir: '/x' } });
+  __setState(freshState());
+  openLifecycle('delete', { slug: 'alpha', displayName: 'Alpha' });
+  await new Promise((r) => setTimeout(r, 0));
+  ok(__state().lifecycle.preview === null && !renderLifecycleCard().includes('99'),
+     'a preview naming another domain is discarded, not quoted');
+  __setPreview({});
+}
+
+console.log('\n=== 7d. v3.73.0 — runDeleteDomain SENDS the confirmation, and never without it ===');
+{
+  // runDeleteDomain lifted into its own sandbox with every collaborator
+  // stubbed and RECORDED, so the request it makes is read off the call, not
+  // off the source.
+  const RUN_FNS = ['deleteConfirmMatches', 'deleteDomainOutcome', 'runDeleteDomain'];
+  const mk = new Function('stubs', `
+    let state = stubs.state; let myMountToken = 1;
+    const { fetchJSON, beginDomainWrite, applyDeleteResult, classifyDomainError, reloadAfterLifecycleChange,
+            revealMessage, render, isCurrentMount } = stubs;
+    ${RUN_FNS.map((n) => extractFunction(src, n)).join('\n\n')}
+    return { runDeleteDomain };`);
+  const fetches = [];
+  let fetchReply = { deleted: true, trashPath: '/tmp/ud/.curator-trash/domains/alpha--2026-09-25T10-00-00Z', syncWarning: true };
+  const stubs = {
+    state: { lifecycle: null, banner: null },
+    fetchJSON: async (url, opts) => { fetches.push({ url, opts }); return fetchReply; },
+    beginDomainWrite: () => () => {},
+    applyDeleteResult: () => {},
+    classifyDomainError: (e) => ({ error: e.message, refusal: null }),
+    reloadAfterLifecycleChange: async () => {},
+    revealMessage: () => {}, render: () => {}, isCurrentMount: () => true,
+  };
+  const { runDeleteDomain } = mk(stubs);
+
+  stubs.state.lifecycle = { mode: 'delete', slug: 'alpha', displayName: 'Alpha', confirmText: 'Alpha', busy: false };
+  await runDeleteDomain();
+  ok(fetches.length === 0, 'a confirmation that does not match sends NO request at all');
+
+  stubs.state.lifecycle.confirmText = 'alpha';
+  await runDeleteDomain();
+  ok(fetches.length === 1 && fetches[0].opts.method === 'DELETE' && fetches[0].url === '/api/domains/alpha',
+     'a matching confirmation sends exactly one DELETE to the domain');
+  let sent = null;
+  try { sent = JSON.parse(fetches[0].opts.body); } catch { /* reported below */ }
+  ok(sent && sent.confirm === 'alpha' && /json/i.test(String(fetches[0].opts.headers && fetches[0].opts.headers['Content-Type'])),
+     'the typed word travels in the JSON body as `confirm` — the route re-checks it');
+  ok(stubs.state.banner === null && stubs.state.lifecycleOutcome && stubs.state.lifecycleOutcome.tone === 'success',
+     'the outcome goes in its own top slot (lifecycleOutcome), not state.banner — which renders deep in Health, off screen');
+  const banner = stubs.state.lifecycleOutcome && stubs.state.lifecycleOutcome.text;
+  ok(banner && banner.includes('/tmp/ud/.curator-trash/domains/alpha--2026-09-25T10-00-00Z'),
+     'the success banner names WHERE the domain went (the server’s trashPath)');
+  ok(banner && /moved to The Curator’s trash/.test(banner), 'and says it was MOVED to the trash, not erased');
+  ok(banner && /To restore it/.test(banner) && /rename it alpha/.test(banner), 'and how to restore it');
+  ok(banner && /propagates to GitHub/.test(banner), 'and, with Sync on, that the deletion still reaches GitHub');
+}
+
+{
+  __setState(freshState({ lifecycleOutcome: { tone: 'success', text: 'Deleted x' } }));
+  openLifecycle('create');
+  ok(__state().lifecycleOutcome === null, 'opening the next lifecycle form clears the previous delete outcome');
+  __setState(freshState({ activeSlug: 'alpha', lifecycleOutcome: { tone: 'success', text: 'Deleted x' } }));
+  selectDomain('beta');
+  ok(__state().lifecycleOutcome === null, 'switching domains clears it too');
+}
+
+console.log('\n=== 7e. v3.73.0 — typing flips the LIVE button, with no repaint ===');
+{
+  const els = {};
+  const mkEl = (id, extra) => (els[id] = Object.assign({ id, value: '', disabled: false, handlers: {},
+    addEventListener(t, fn) { (this.handlers[t] = this.handlers[t] || []).push(fn); } }, extra || {}));
+  mkEl('dm-lc-confirm'); mkEl('dm-lc-submit', { disabled: true }); mkEl('dm-lc-cancel');
+  const doc = { getElementById: (id) => els[id] || null, querySelectorAll: () => [] };
+  let renders = 0;
+  const mk = new Function('stubs', `
+    let state = stubs.state; let myMountToken = 1; const document = stubs.document;
+    const render = stubs.render; const closeLifecycle = () => {}; const reportAsyncActionFailure = () => {};
+    const runCreateDomain = () => {}, runRenameDomain = () => {}, runDeleteDomain = () => {};
+    ${['deleteConfirmMatches', 'bindLifecycleListeners'].map((n) => extractFunction(src, n)).join('\n\n')}
+    return { bindLifecycleListeners };`);
+  const st = { lifecycle: { mode: 'delete', slug: 'alpha', displayName: 'Alpha', confirmText: '', busy: false } };
+  mk({ state: st, document: doc, render: () => { renders++; } }).bindLifecycleListeners();
+  const type = (v) => { els['dm-lc-confirm'].value = v; (els['dm-lc-confirm'].handlers.input || []).forEach((h) => h()); };
+  ok((els['dm-lc-confirm'].handlers.input || []).length === 1, 'the confirmation input has exactly one input handler');
+  type('alph');
+  ok(els['dm-lc-submit'].disabled === true && st.lifecycle.confirmText === 'alph', 'a partial word leaves the live button disabled');
+  type('alpha');
+  ok(els['dm-lc-submit'].disabled === false, 'the exact slug enables the live button');
+  type('alphas');
+  ok(els['dm-lc-submit'].disabled === true, 'typing past it disables it again');
+  ok(renders === 0, 'no repaint on a keystroke — a repaint would rebuild the input and lose the caret');
+}
 
 console.log('\n=== 8. User-controlled strings are escaped at every sink ===');
 __setEscape((s) => 'ESC[' + String(s) + ']');

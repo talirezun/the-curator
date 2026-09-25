@@ -175,16 +175,51 @@ Rename a domain — changes the folder name and updates all internal references.
 
 ---
 
+## GET /api/domains/:domain/delete-preview
+
+**New in v3.73.0.** What a delete of this domain would take, read fresh — the Delete confirm calls it when it opens so every figure it quotes is the one on disk at that moment. Not polled, and deliberately not folded into `/stats`: the raw-source walk and the project scan are paid once per confirm.
+
+**Success response** `200 OK`
+
+```json
+{
+  "slug": "projects",
+  "displayName": "Projects",
+  "readonly": false,
+  "pageCount": 412,
+  "conversationCount": 23,
+  "rawSources": 58,
+  "projects": 6,
+  "trashDir": "/path/to/user-data/.curator-trash",
+  "syncConfigured": true
+}
+```
+
+`rawSources` counts the files under `raw/` recursively (dot-files skipped) — the one part of a domain GitHub Sync never carries. `projects` is the working-state store's own project total (`listProjects`). A figure that could not be read is `null`, never `0`. `404` for an unknown domain.
+
+---
+
 ## DELETE /api/domains/:domain
 
-Permanently delete a domain and all its contents (wiki pages, conversations, source files).
+Delete a domain and everything in it (wiki pages, projects' working state, conversations, raw sources) — **with a typed confirmation, and recoverably** (both since v3.73.0).
 
-**Concurrency:** refuses with `409` while this domain has an active write (same per-domain `isDomainActive` check as the rename above) — deleting the folder mid-write would race the ingest's own `writePage` calls.
+**Request body** `Content-Type: application/json` — **required**
+
+```json
+{ "confirm": "health-and-wellness" }
+```
+
+`confirm` must equal the domain's **slug** (its folder name) exactly — case-sensitive, untrimmed, a string. Not the display name: the slug is the folder that is removed, it is unique where display names need not be, and it carries no case/whitespace/Unicode ambiguity. The confirmation is enforced **at the route** (and again in `deleteDomain()` itself), not only in the view: a confirmation that lives only in a view is a confirmation any other client skips. A request without it changes nothing on disk.
+
+**Recoverable.** The folder is **moved**, never erased, to `<user data>/.curator-trash/domains/<slug>--<UTC stamp>/` (e.g. `health-and-wellness--2026-09-25T14-03-22Z`; a second delete in the same second gets `-2`). The trash lives outside the domains folder, so Personal Sync never sees it and `GET /api/domains` never lists it. Nothing empties it automatically. There is no Restore endpoint in this release — **to restore, move the folder back into the domains folder and rename it to the slug** (if that slug is taken meanwhile, rename the live one first, or restore under another name and use Rename). If the domains folder is on another volume, the move is a copy followed by removal of the original, only once the copy completed.
+
+**Concurrency:** refuses with `409` (`conflict: "write_in_progress"`) while this domain has an active write in this process (per-domain `isDomainActive`), and with `409` (`conflict: "file_lock"`) while another process — the MCP — holds the domain's file lock. The lock taken for the move does not travel into the trash.
 
 **Example (curl)**
 
 ```bash
-curl -X DELETE http://localhost:3333/api/domains/health-and-wellness
+curl -X DELETE http://localhost:3333/api/domains/health-and-wellness \
+  -H 'Content-Type: application/json' -d '{"confirm":"health-and-wellness"}'
 ```
 
 **Success response** `200 OK`
@@ -192,20 +227,22 @@ curl -X DELETE http://localhost:3333/api/domains/health-and-wellness
 ```json
 {
   "deleted": true,
+  "trashPath": "/path/to/user-data/.curator-trash/domains/health-and-wellness--2026-09-25T14-03-22Z",
   "syncWarning": true
 }
 ```
 
-`syncWarning` is `true` when sync is configured — the deletion will propagate to GitHub on the next sync.
+`syncWarning` is `true` when sync is configured — the deletion still propagates to GitHub on the next Sync, and from there to your other computers. The trash copy exists only on the computer where the delete happened.
 
 **Error responses**
 
 | Status | Condition |
 |--------|-----------|
+| `400` | `{ ok: false, reason: "confirm_required" }` — `confirm` missing, not a string, or not exactly the slug |
 | `400` | Invalid slug (path traversal attempt) |
 | `404` | Domain not found |
-| `409` | This domain has an active write (ingest, batch item, Sync, Shared Brain pull, etc.) in progress |
-| `500` | Filesystem error |
+| `409` | This domain has an active write (`write_in_progress`), or another process holds its file lock (`file_lock`) |
+| `500` | Filesystem error — the original folder is left where it was |
 
 ---
 
@@ -3667,8 +3704,11 @@ the box when that is true, and the route cannot see it.
 
 Delete a project: its standing brief, every work-stream handoff under it, and every journal line.
 Those are frequently the only record of decisions nobody wrote down anywhere else. The domain's
-**wiki is not touched**, and there is no in-app undo — with Personal Sync configured a git client
-recovers them, and without it nothing does.
+**wiki is not touched**. There is no in-app undo, but since v3.73.0 the project's folder is **moved**,
+not erased, to `<user data>/.curator-trash/projects/<domain>--<project>--<UTC stamp>/`, and the
+success response carries it as `trashPath`: `{ ok, domain, project, deleted: true, trashPath }`. To
+restore, move that folder back to `domains/<domain>/state/` and rename it to the project name. With
+Personal Sync configured the deletion still reaches GitHub on the next Sync.
 
 **Body: `{ confirm }`, and it must equal the project name exactly** — case-sensitive, untrimmed.
 The confirmation is enforced **at the route**, not only in the view: a confirmation that lives

@@ -78,7 +78,7 @@ try {
 
   // ── Seed a throwaway domain with a LARGE index + real entity/concept files ──
   section('Seed: large-index domain (replicates the production failure trigger)');
-  try { await files.deleteDomain(domain); } catch { /* none */ }
+  try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch { /* none */ }
   await files.createDomain(domain, 'ZZ beta25 large index', 'Throwaway beta25 test', 'generic');
 
   // A ~90 KB index table, like the dev machine's real `articles` index (96 KB).
@@ -168,7 +168,7 @@ try {
 } catch (e) {
   ok(false, `unexpected failure: ${(e.message || e)}`);
 } finally {
-  try { await files.deleteDomain(domain); } catch { /* best effort */ }
+  try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch { /* best effort */ }
   if (cfgBackup !== null) writeFileSync(CONFIG_FILE, cfgBackup, 'utf8');
 }
 

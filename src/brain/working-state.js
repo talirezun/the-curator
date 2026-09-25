@@ -194,6 +194,7 @@ import { resolveInsideWiki } from './wiki-read.js';
 // segment, so two processes on one machine — the app and the MCP child — can
 // target the SAME file and the same manifest. See the FOUNDATIONS block.
 import { acquireFileLock, registerWrite } from './write-registry.js';
+import { moveToTrash } from './trash.js';
 // v3.61.0: the four SKELETON documents `initFoundations` seeds a curator-owned
 // project with. ONE copy, reached by the store, the routes and the MCP alike
 // — a template copied per surface is this repo's most-repeated defect class
@@ -2804,8 +2805,9 @@ export async function deleteProject(domain, project, opts = {}) {
   if (opts.confirm !== slug) {
     return {
       ok: false, reason: 'confirm-required',
-      message: `Deleting "${slug}" removes its standing brief, every handoff and every journal under it, `
-        + 'permanently — the journal is the only history there is, and it goes too. Repeat the call with '
+      message: `Deleting "${slug}" removes its standing brief, every handoff and every journal under it `
+        + 'from the project list — the journal is the only history there is, and it goes too. The folder is '
+        + 'moved to The Curator\'s trash, not erased. Repeat the call with '
         + `confirm: "${slug}" to proceed.`,
     };
   }
@@ -2815,15 +2817,20 @@ export async function deleteProject(domain, project, opts = {}) {
 
   const release = await acquireFileLock(domainPath(domain), { op: 'delete-project' });
   if (!release) return { ok: false, reason: 'locked', message: `Another write is in progress on "${domain}". Nothing was deleted.` };
+  // RECOVERABLE (v3.73.0): MOVED to `<user data>/.curator-trash/projects/
+  // <domain>--<project>--<stamp>/`, never `rm -rf`'d — the same treatment a
+  // deleted domain gets (see trash.js). The trash is outside the domains
+  // folder, so Sync sees exactly what it saw before: the project is gone.
+  let trashPath;
   try {
-    await rm(abs, { recursive: true, force: false });
+    trashPath = await moveToTrash(abs, 'projects', `${domain}--${slug}`);
   } catch (err) {
     return { ok: false, reason: 'io', message: `Could not delete the project: ${scrubPaths(String(err?.message ?? err))}` };
   } finally {
     await release();
   }
   return {
-    ok: true, domain, project: slug,
+    ok: true, domain, project: slug, trashPath,
     removedScopes: summary.scopeCount,
     removedCopies: summary.savedCopies,
     hadBrief: summary.hasBrief,

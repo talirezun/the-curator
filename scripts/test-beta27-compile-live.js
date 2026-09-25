@@ -72,7 +72,7 @@ async function runProvider(provider) {
 
   const domain = `zztest-beta27-${provider}`;
   try {
-    try { await files.deleteDomain(domain); } catch {}
+    try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch {}
     await files.createDomain(domain, `ZZ beta27 ${provider}`, 'Throwaway beta27 live test', 'generic');
 
     // ── A. NO REGRESSION: a normal conversation compiles via the full path ──
@@ -123,7 +123,7 @@ async function runProvider(provider) {
       ok(false, `[${provider}] summary-only prompt failed: ${(e.message || '').slice(0, 160)}`);
     }
   } finally {
-    try { await files.deleteDomain(domain); } catch {}
+    try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch {}
   }
 }
 

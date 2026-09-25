@@ -1,6 +1,9 @@
 import { Router } from 'express';
-import { listDomains, createDomain, deleteDomain, renameDomain, getDomainStats, generateUniqueSlug, isDomainReadonly } from '../brain/files.js';
+import { existsSync } from 'fs';
+import { listDomains, createDomain, deleteDomain, renameDomain, getDomainStats, generateUniqueSlug, isDomainReadonly, domainPath, countRawSources } from '../brain/files.js';
 import { isConfigured } from '../brain/sync.js';
+import { listProjects } from '../brain/working-state.js';
+import { getTrashDir } from '../brain/paths.js';
 import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
 
 const router = Router();
@@ -178,19 +181,94 @@ router.put('/:domain', async (req, res) => {
   }
 });
 
-// DELETE /api/domains/:domain — delete a domain
+// GET /api/domains/:domain/delete-preview — what a delete would take (v3.73.0)
+//
+// Read when the Delete confirm OPENS, so every figure it quotes is the one on
+// disk at that moment (the v3.72.1 F1 rule, extended from pages to the rest):
+// pages, conversations, raw sources, projects with working state. Also says
+// where the domain will go (the trash) and whether Sync is configured, which
+// decides whether the delete propagates to GitHub. Not polled, and not folded
+// into /stats: the raw walk and the project scan are one-off costs, paid once
+// per confirm, never per poll.
+router.get('/:domain/delete-preview', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    const domains = await listDomains();
+    if (!domains.includes(domain)) {
+      return res.status(404).json({ error: `Unknown domain: ${domain}` });
+    }
+    // A figure that cannot be read is `null` (shown as nothing), never 0 —
+    // "0 raw sources" over a folder we failed to read is a false promise.
+    const [stats, rawSources, projects] = await Promise.all([
+      getDomainStats(domain),
+      countRawSources(domain).catch(() => null),
+      listProjects(domain).then((r) => (r && r.ok ? r.total : null)).catch(() => null),
+    ]);
+    res.json({
+      slug: domain,
+      displayName: stats.displayName,
+      readonly: !!stats.readonly,
+      pageCount: stats.pageCount,
+      conversationCount: stats.conversationCount,
+      rawSources,
+      projects,
+      trashDir: getTrashDir(),
+      syncConfigured: isConfigured(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/domains/:domain — delete a domain (v3.73.0: confirmed, recoverable)
+//
+// TYPED CONFIRMATION, at the ROUTE and not only in the view — the rule the
+// project route (routes/memory.js) has stated since it shipped: "A
+// confirmation that lives only in a view is a confirmation any other client
+// skips." Until v3.73.0 this route took none, and the domain was `rm -rf`'d;
+// on 2026-09-25 that lost the maintainer's `projects` domain to one click.
+//
+// Body: `{ "confirm": "<slug>" }` — the folder name, exactly. The SLUG and not
+// the display name, because it is the thing that is deleted (`domains/<slug>/`),
+// it is unique where display names need not be, it has no case, whitespace or
+// Unicode-normalisation ambiguity to argue about, and it is what the confirm
+// shows next to the input. Anything else is a 400 `confirm_required`, in the
+// project route's shape, and nothing on disk changes.
+//
+// The folder is MOVED to the trash (see deleteDomain in files.js), and the
+// response names where: `{ deleted, trashPath, syncWarning }`.
 router.delete('/:domain', async (req, res) => {
+  const domain = req.params.domain;
+  if (!domain || domain.includes('..') || domain.includes('/') || domain.includes('\\') || domain.startsWith('.')) {
+    return res.status(400).json({ error: 'Invalid domain name' });
+  }
+  if (!existsSync(domainPath(domain))) {
+    return res.status(404).json({ error: 'Domain not found' });
+  }
+  const confirm = req.body && typeof req.body.confirm === 'string' ? req.body.confirm : '';
+  if (confirm !== domain) {
+    return res.status(400).json({
+      ok: false, reason: 'confirm_required',
+      error: `Type the domain's folder name to confirm. Expected "${domain}".`,
+    });
+  }
   // v3.0.1-beta.8: refuse to delete a domain that has an active write
-  // operation. The `rm -rf` of the domain folder would race the ingest's
-  // writePage calls and produce undefined behaviour.
-  if (isDomainActive(req.params.domain)) {
-    const { status, body } = conflictResponse(`delete domain "${req.params.domain}"`);
+  // operation in THIS process; deleteDomain() takes the cross-process file
+  // lock for writes in another one (the MCP).
+  if (isDomainActive(domain)) {
+    const { status, body } = conflictResponse(`delete domain "${domain}"`);
     return res.status(status).json(body);
   }
   try {
-    await deleteDomain(req.params.domain);
-    res.json({ deleted: true, syncWarning: isConfigured() });
+    const { trashPath } = await deleteDomain(domain, { confirm });
+    res.json({ deleted: true, trashPath, syncWarning: isConfigured() });
   } catch (err) {
+    if (err.code === 'CONFIRM_REQUIRED') {
+      return res.status(400).json({ ok: false, reason: 'confirm_required', error: err.message });
+    }
+    if (err.code === 'LOCKED') {
+      return res.status(409).json({ error: `Another process is already writing to "${domain}" (file lock held). Nothing was deleted.`, conflict: 'file_lock' });
+    }
     const status = err.message.includes('not found') ? 404
                  : err.message.includes('Invalid') ? 400 : 500;
     res.status(status).json({ error: err.message });

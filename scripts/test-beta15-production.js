@@ -69,7 +69,7 @@ function forceProvider(provider) {
 }
 
 async function freshDomain(slug, display) {
-  try { await files.deleteDomain(slug); } catch { /* none */ }
+  try { await (await import('fs/promises')).rm(files.domainPath(slug), { recursive: true, force: true }); } catch { /* none */ }
   await files.createDomain(slug, display, 'Throwaway beta15 production test', 'generic');
 }
 
@@ -151,7 +151,7 @@ async function runProviderSuite(provider) {
       ok(false, `[${provider}] 1-message compile threw: ${(e.message || '').slice(0, 200)}`);
     }
   } finally {
-    try { await files.deleteDomain(domain); } catch { /* best effort */ }
+    try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch { /* best effort */ }
     try { rmSync(tmp, { recursive: true, force: true }); } catch { /* */ }
   }
 }
@@ -251,7 +251,7 @@ async function runBatchMergeSuite(provider) {
       ok(!anyDangling, 'no surviving [[link]] to any merged-away slug');
     }
   } finally {
-    try { await files.deleteDomain(domain); } catch { /* best effort */ }
+    try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch { /* best effort */ }
   }
 }
 
@@ -285,7 +285,7 @@ async function runProseSuite() {
     // No duplicated headings.
     ok((finalContent.match(/## Definition/g) || []).length === 1, 'Definition heading appears exactly once');
   } finally {
-    try { await files.deleteDomain(domain); } catch { /* best effort */ }
+    try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch { /* best effort */ }
   }
 }
 
@@ -322,7 +322,7 @@ let configBackup = null;
     if (configBackup !== null) writeFileSync(CONFIG_FILE, configBackup, 'utf8');
     // Belt-and-suspenders cleanup of any throwaway domains.
     for (const d of ['zztest-beta15-gemini', 'zztest-beta15-anthropic', 'zztest-beta15-merge', 'zztest-beta15-prose']) {
-      try { await files.deleteDomain(d); } catch { /* */ }
+      try { await (await import('fs/promises')).rm(files.domainPath(d), { recursive: true, force: true }); } catch { /* */ }
     }
     console.log('\n🧹 cleanup done — config restored, throwaway domains removed.');
   }

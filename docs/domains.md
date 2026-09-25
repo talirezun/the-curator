@@ -87,9 +87,15 @@ Open the domain, click **Rename** next to its title, type the new display name, 
 
 ### Deleting a domain
 
-Open the domain and click **Delete** next to its title. The confirmation names the folder and how many wiki pages go with it, and says its raw sources and saved conversations go too. Click **Delete permanently** to commit.
+Open the domain and click **Delete** next to its title. The confirmation names the folder and counts what goes with it: its wiki pages, the Memory of its projects (briefs, Handoffs and Journals), its saved conversations and its raw sources. To go ahead, **type the domain's folder name** (shown beside the box, e.g. `projects`) exactly, then click **Delete domain**. The button stays disabled until the name matches.
 
-> ⚠️ **Deletion is permanent — there is no undo.** If sync is configured, the domain is removed from GitHub on the next **Sync now**.
+Since v3.73.0 a deleted domain is **moved to The Curator's trash, not erased**. The trash is a `.curator-trash` folder in your Curator data folder (the app's folder for a browser install, `~/Library/Application Support/The Curator/` for the Mac app), and the confirmation and the message afterwards show its full path. Each deleted domain sits in `.curator-trash/domains/` as `<folder name>--<date and time>`.
+
+**To restore a deleted domain:** with the app open or closed, move that folder from `.curator-trash/domains/` back into your domains folder and rename it to the original folder name (drop the `--<date and time>` part). It reappears in **Domains** on the next refresh. If a domain with that name exists by then, give the restored folder a different name, or rename the other one first. (`.curator-trash` is a hidden folder: in Finder press **⇧⌘.** to show hidden files, or use **Go → Go to Folder…** with the path from the message.)
+
+Nothing empties the trash automatically. When you are sure you no longer need a deleted domain, delete its folder from `.curator-trash/domains/` in Finder.
+
+> ⚠️ **If sync is configured**, the deletion still reaches GitHub on the next **Sync now**, and from there your other computers — the trash copy exists only on the computer where you deleted it. Raw sources are never sent to GitHub, so for them the trash is the only copy.
 
 ### Manual setup (advanced)
 

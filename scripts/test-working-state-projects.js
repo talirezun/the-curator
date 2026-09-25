@@ -36,7 +36,7 @@
 
 import {
   mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync,
-  statSync, utimesSync,
+  statSync, utimesSync, readdirSync,
 } from 'fs';
 import { tmpdir, homedir } from 'os';
 import path from 'path';
@@ -53,6 +53,19 @@ const { __setDomainsDirOverride } = await import('../src/brain/config.js');
 const TMP = mkdtempSync(path.join(tmpdir(), 'curator-wsproj-'));
 const USER_DATA = path.join(TMP, 'userdata');
 const DOMAINS = path.join(TMP, 'domains');
+/** Relative path + bytes of every file under `dir`, sorted — for proving a move kept everything. */
+function readdirRecursive(dir) {
+  const out = [];
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const abs = path.join(d, e.name);
+      if (e.isDirectory()) walk(abs);
+      else out.push(path.relative(dir, abs) + ':' + readFileSync(abs, 'utf8'));
+    }
+  };
+  walk(dir);
+  return out.sort();
+}
 mkdirSync(USER_DATA, { recursive: true });
 mkdirSync(DOMAINS, { recursive: true });
 __setUserDataDirOverride(USER_DATA);
@@ -666,10 +679,21 @@ section('9. create / rename / delete, and every refusal they owe');
   assert(wrongConfirm.ok === false && wrongConfirm.reason === 'confirm-required',
     'a boolean `true` is NOT a confirmation — one stray truthy value must not delete a project');
   assert(existsSync(statePath('admindom', 'beta')), 'nothing was deleted by either refusal');
+  const betaFiles = readdirRecursive(statePath('admindom', 'beta'));
   const del = await deleteProject('admindom', 'beta', { confirm: 'beta' });
   assert(del.ok === true && del.removedCopies >= 1,
     'the typed confirmation deletes it and reports what went', JSON.stringify(del).slice(0, 140));
   assert(!existsSync(statePath('admindom', 'beta')), 'the directory is gone');
+  // v3.73.0: RECOVERABLE — moved to <user data>/.curator-trash/projects/, not erased.
+  const TRASH_PROJECTS = path.join(USER_DATA, '.curator-trash', 'projects');
+  assert(typeof del.trashPath === 'string' && path.dirname(del.trashPath) === TRASH_PROJECTS
+    && /^admindom--beta--\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$/.test(path.basename(del.trashPath)),
+    'deleteProject reports trashPath = <user data>/.curator-trash/projects/<domain>--<project>--<stamp>', String(del.trashPath));
+  const movedFiles = del.trashPath ? readdirRecursive(del.trashPath) : [];
+  assert(betaFiles.length > 0 && JSON.stringify(movedFiles) === JSON.stringify(betaFiles),
+    'every file of the project is in the trash — the brief, the handoff, the journal', JSON.stringify(movedFiles).slice(0, 200));
+  assert(path.relative(DOMAINS, del.trashPath || '').startsWith('..'),
+    'and the trash is OUTSIDE the domains folder, so Sync sees the project as gone');
   assert((await deleteProject('admindom', 'admindom', { confirm: 'admindom' })).reason === 'default-project',
     'the domain\'s own project cannot be deleted here — its folder holds every named project too');
   assert(existsSync(statePath('admindom', 'legacyscope', M, CURRENT_FILENAME)),

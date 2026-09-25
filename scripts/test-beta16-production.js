@@ -49,7 +49,7 @@ let configBackup = null;
 
   const domain = 'zztest-beta16-brokenlinks';
   try {
-    try { await files.deleteDomain(domain); } catch {}
+    try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch {}
     await files.createDomain(domain, 'ZZ beta16 broken links', 'Throwaway', 'generic');
     const wiki = files.wikiPath(domain);
 
@@ -115,7 +115,7 @@ let configBackup = null;
     console.log(`     ↳ broken links: ${beforeCount} → ${afterCount}`);
     ok(afterCount === 0, `all broken links resolved (after=${afterCount})`);
   } finally {
-    try { await files.deleteDomain(domain); } catch {}
+    try { await (await import('fs/promises')).rm(files.domainPath(domain), { recursive: true, force: true }); } catch {}
     if (configBackup !== null) writeFileSync(CONFIG_FILE, configBackup, 'utf8');
     console.log('\n🧹 cleanup done — config restored, throwaway domain removed.');
   }

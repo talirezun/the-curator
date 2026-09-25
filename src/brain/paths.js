@@ -575,6 +575,35 @@ export function getMcpUsageLogPath() {
 }
 
 /**
+ * The Curator's trash (v3.73.0) — where a deleted DOMAIN or a deleted PROJECT
+ * goes instead of being `rm -rf`'d. Two subfolders, created on first use:
+ *
+ *   <this>/domains/<slug>--<UTC stamp>/              a whole domain folder
+ *   <this>/projects/<domain>--<project>--<UTC stamp>/ one project's state folder
+ *
+ * WHY IT EXISTS: on 2026-09-25 one click through the Delete-domain confirm
+ * removed the maintainer's largest domain — hundreds of wiki pages, several
+ * projects' working state, every conversation and every raw source. A GitHub
+ * Sync backup brought back what Sync carries; `raw/` is gitignored and was
+ * gone. A delete now MOVES the folder here, and the success message says where.
+ *
+ * WHY IT IS NOT UNDER THE DOMAINS FOLDER — the same reason as the ingest queue
+ * and the usage log above: `getDomainsDir()` is Personal Sync's git
+ * WORK-TREE, and `listDomains()` reads it. A trash inside it would be pushed to
+ * GitHub on the next Sync (the whole deleted domain, raw sources aside), and a
+ * folder in it could be mistaken for a live domain. `.curator-trash/` is also
+ * in DOMAINS_GITIGNORE_RULES and the app's .gitignore, for the pathological
+ * install whose domainsPath IS the user-data dir.
+ *
+ * Nothing empties it automatically. Emptying it is the user's call, in Finder.
+ *
+ * Pure resolver — never creates the directory.
+ */
+export function getTrashDir() {
+  return userDataPath('.curator-trash');
+}
+
+/**
  * Files that must be owner-only (0600), as {rel, abs} pairs.
  *
  * Single source of truth for BOTH the startup chmod sweep in server.js and the

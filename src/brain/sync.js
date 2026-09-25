@@ -388,6 +388,12 @@ const DOMAINS_GITIGNORE_RULES = [
   // files (which can be large, and are mid-batch operational state, not wiki
   // content) must not get swept into a sync commit.
   '.ingest-queue/',
+  // v3.73.0: The Curator's trash (paths.js getTrashDir). Same reasoning as
+  // the queue above, word for word: outside getDomainsDir() by construction,
+  // and this rule exists only for an install whose domainsPath IS the
+  // user-data dir — where a deleted domain moved to the trash would otherwise
+  // be committed right back to GitHub on the next Sync.
+  '.curator-trash/',
   // v3.5.1: Obsidian's workspace state — rewritten on essentially every pane
   // move/resize/tab switch, so tracking it produces a pending change on
   // almost every Obsidian interaction (same class of noise as .DS_Store).

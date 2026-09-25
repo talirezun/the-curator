@@ -618,8 +618,16 @@ section('7. The monospace face is spent on LITERALS, not on facts');
          · 1 `mono dm-browse-path` on a MEMORY row — the path of a standing
            brief or a work-stream handoff under `state/`, which is the same
            case as the wiki row's path directly beside it, and it is the fact
-           that tells a reader where the file sits in their synced folder. */
-    'views/domains.js': 25,
+           that tells a reader where the file sits in their synced folder.
+           v3.73.0 RAISED IT FROM 25 TO 27 (measured 24 → 27: three spans,
+           one of them absorbed by the slack the old budget carried), all on
+           the Delete-domain confirm and all under the same rule: it now takes
+           a TYPED confirmation, so the slug it must match is printed in the
+           code face in the label, and the input the user types it into is in
+           the code face — both exactly what the project delete's confirm
+           already does; and the trash folder the domain goes to is named in
+           the code face (the path a user opens to restore it). */
+    'views/domains.js': 27,
     'views/ingest.js': 1,     // the accepted extensions: .txt .md .pdf
     'views/sync.js': 3,       // two setup inputs (repo URL, PAT) + the <code> repo readout
     'views/shared.js': 8,     // repo URL, fellow id, both one-shot tokens, two revoke inputs, the retype string
