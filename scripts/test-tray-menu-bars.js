@@ -1,7 +1,10 @@
 /**
  * test-tray-menu-bars.js — OFFLINE guard for the menubar widget's DEPTH BARS
- * (v3.66.0): `desktop/lib/menu-bars.js` (the drawing), the three readings in
- * `desktop/lib/tray-model.js`, and their placement in `desktop/lib/tray-menu.js`.
+ * (v3.66.0): `desktop/lib/menu-bars.js` (the drawing), the reading in
+ * `desktop/lib/tray-model.js`, and its placement in `desktop/lib/tray-menu.js`.
+ * From v3.74.0 (Layout A) one reading remains on the menu — each domain's
+ * pages, inside the `Knowledge · N domains` submenu; the capture and
+ * documents bars left with their lines (§6 proves they are gone).
  *
  * ── METHOD ──────────────────────────────────────────────────────────────────
  *
@@ -19,11 +22,11 @@
  *   §3   THE ALPHA CHANNEL ALONE — length, empty-vs-absent, over-run as SHAPE
  *   §4   contrast of every fill against every menu band, with a failing control
  *   §5   which ink is drawn (neutral · danger · identity) — decoded
- *   §6   (1) capture per project: numerator, NAMED denominator, absent ≠ 0
- *   §7   (3) documents: the app's own applicability rule, danger only on over-run
- *   §8   (2) domains: largest first, the kit's identity mapping, the cap
- *   §9   the menu template: placement, enabled-ness, clicks, the icon seam
- *   §10  width: no bar item can widen the menu, under a fuzz of long names
+ *   §6   the capture and documents bars LEFT the menu — domain bars only
+ *   §7   stale documents survive as a notice, only when true
+ *   §8   domains: largest first, the kit's identity mapping, every domain
+ *   §9   the menu template: one Knowledge row, its submenu, clicks, the seam
+ *   §10  width: no domain bar label passes the budget, under a fuzz
  *   §11  main.js wiring — SOURCE SCAN, weak by construction, labelled so
  *
  * ── NOT ENFORCED, stated rather than implied away ───────────────────────────
@@ -266,133 +269,61 @@ section('§5 which ink is drawn — decoded');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§6 (1) capture per project — numerator, NAMED denominator, absent ≠ 0');
+section('§6 the capture and documents bars LEFT the menu (v3.74.0) — the domain bars are the only bars');
 {
-  const m = build(summary(), { dark: true });
-  const [cur, alpha] = m.groups;
-  eq(cur.captureFrac, 9 / 18, 'curator: 9 saved ÷ the BUSIEST project\'s 18 — atlas, which is not even on screen');
-  eq(alpha.captureFrac, 1 / 18, 'alpha: 1 ÷ 18');
-  ok(cur.bar && cur.bar.frac === 0.5 && !cur.bar.danger, 'the bar is drawn, neutral — a share of the busiest is never a warning');
-  ok(cur.label.includes('9 of 11 saved') && cur.label.length <= M.BAR_LABEL_CHARS,
-    `the label carries the reading within ${M.BAR_LABEL_CHARS}: "${cur.label}"`);
-  ok(/busiest project \(18 saved\)/.test(cur.toolTip) && /last 30 days/.test(cur.toolTip),
-    'the tooltip NAMES the denominator and the window');
-  // No log → no bar, no invented zero, said in words.
-  const none = build(summary({
-    projects: summary().projects.map((p) => ({ ...p, capture: null })),
-    capture: { logPresent: false, windowDays: 30, busiestSaved: null },
-  }));
-  ok(none.groups.every((g) => g.bar === null && g.captureFrac === null),
-    'NO usage log → NO bar on any header (absent is not an empty bar)');
-  ok(none.groups.every((g) => !/\b0 of\b/.test(g.label) && g.toolTip.includes('no usage log')),
-    '… no "0 of" is printed, and the tooltip says there is no log');
-  // A measured zero: a log exists, nobody saved anything anywhere.
-  const zero = build(summary({
-    projects: summary().projects.map((p) => ({ ...p, capture: { sessions: 2, sessionsRead: 2, sessionsSaved: 0, lastSessionAt: null, domainMismatch: false } })),
-    capture: { logPresent: true, windowDays: 30, busiestSaved: 0 },
-  }));
-  ok(zero.groups.every((g) => g.bar && g.captureFrac === 0 && opaqueRun(g.bar) === 0),
-    'a MEASURED zero (busiest 0) is an EMPTY TRACK — drawn, never divided by zero');
-  const idle = build(summary({
-    projects: summary().projects.map((p, i) => (i === 0 ? { ...p, capture: { sessions: 0, sessionsRead: 0, sessionsSaved: 0, lastSessionAt: null, domainMismatch: false } } : p)),
-  }));
-  ok(idle.groups[0].bar && idle.groups[0].captureFrac === 0 && opaqueRun(idle.groups[0].bar) === 0,
-    'a project with a log and no session in 30 days draws an EMPTY TRACK (a measured zero)');
-  // The clause is the LAST one, so here (name · age · harness is already 34
-  // characters of a 38 budget) it goes whole to the tooltip.
-  eq(idle.groups[0].label, 'curator · 10 min ago · claude-code',
-    '… and the clause "no logged sessions · 30 d" is LAST and cuttable: the identity, the age and the harness come first');
-  eq(M.appendLastClause('ab', M.CAPTURE_NONE_IN_WINDOW, 38), 'ab · no logged sessions · 30 d',
-    'where it fits, the clause is appended whole, as the last one');
-  eq(M.appendLastClause('abcdefghijk', M.CAPTURE_NONE_IN_WINDOW, 38), 'abcdefghijk',
-    '… where it does not, it is dropped WHOLE (never "· no logged sessions · 3…" and never split at its inner " · ")');
-  eq(M.appendLastClause('curator · 10 min…', M.CAPTURE_NONE_IN_WINDOW, 80), 'curator · 10 min…',
-    '… and never appended after a head that was itself clipped');
-  eq(M.CAPTURE_NONE_IN_WINDOW, 'no logged sessions · 30 d', 'the wording the maintainer\'s photo review asked for');
-  ok(!/(^|· )no sessions( ·|$)/.test(idle.groups[0].label) && idle.groups[0].label.startsWith('curator · 10 min ago'),
-    '… never the bare "no sessions" that read as a contradiction beside a saved handoff, and the identity and age come first');
-  ok(/none logged for this project/.test(idle.groups[0].toolTip) && /logged no session line/.test(idle.groups[0].toolTip),
-    '… and the tooltip keeps the full sentence, including why a save can exist with no logged session');
-  // The clause is cuttable and ATOMIC: a long name drops it whole, never "· 30…".
-  const idleLong = build(summary({
-    scopes: [scope('projects', 'a-very-long-project-name-that-fills', 10)],
-    projects: [{ domain: 'projects', project: 'a-very-long-project-name-that-fills', projectLabel: 'x',
-      capture: { sessions: 0, sessionsRead: 0, sessionsSaved: 0, lastSessionAt: null, domainMismatch: false }, documents: null }],
-  }));
-  ok(!idleLong.groups[0].label.includes('logged') && idleLong.groups[0].label.length <= M.BAR_LABEL_CHARS
-    && idleLong.groups[0].toolTip.includes('none logged'),
-    `where it does not fit, the clause goes WHOLE to the tooltip: "${idleLong.groups[0].label}"`);
-  ok(M.CAPTURE_NONE_IN_WINDOW !== M.CAPTURE_NOT_LOGGED,
-    'a measured zero and an absent log never share a wording');
-  // A long name gives way; the reading does not.
-  const longName = 'an-unreasonably-long-project-name-for-a-menu';
-  const lm = build(summary({
-    scopes: [scope('projects', longName, 5)],
-    projects: [{ domain: 'projects', project: longName, projectLabel: 'projects / ' + longName,
-      capture: { sessions: 11, sessionsRead: 9, sessionsSaved: 9, lastSessionAt: null, domainMismatch: false }, documents: null }],
-  }));
-  ok(lm.groups[0].label.endsWith('9 of 11 saved') && lm.groups[0].label.length <= M.BAR_LABEL_CHARS,
-    `a long name is clipped so the figure survives: "${lm.groups[0].label}"`);
-  // capture comes from projects[] first, falls back to the row's own record.
-  const fb = build(summary({ projects: null, scopes: [scope('projects', 'curator', 10,
-    { capture: { sessions: 4, sessionsRead: 4, sessionsSaved: 2, lastSessionAt: null, domainMismatch: false } })] }));
-  eq(fb.groups[0].captureFrac, 2 / 18, 'with no projects[], the row\'s own capture reading is used');
+  // The fixture still SUPPLIES a capture reading on every project and a
+  // documents reading on one — the data layer keeps computing them for the
+  // app. The menu must draw neither: D5 measured that "N of M saved" counts
+  // MCP process ids, not sessions, and the Documents line is configuration,
+  // not activity (the maintainer's decision).
+  const seen = [];
+  const m = build(summary({ projects: [{ ...summary().projects[0], documents: docs({ readFirstCount: 2, readFirstBytes: 30 * KB }) },
+    ...summary().projects.slice(1)] }), { dark: true, renderBar: (o) => { seen.push(o); return BARS.renderGutterBar(o); } });
+  ok(summary().projects.every((p) => p.capture && Number.isInteger(p.capture.sessionsSaved)),
+    'CONTROL — every project in the fixture carries a capture reading, so its absence below is a decision');
+  const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(m, { ...NOOPS, makeIcon: (sp) => sp }));
+  const words = flat.map((i) => [i.label, i.sublabel, i.toolTip].filter(Boolean).join('\n')).join('\n');
+  ok(!/\bof \d+ saved\b|no logged sessions|no sessions logged|Agent sessions/.test(words),
+    'no label, sublabel or tooltip anywhere in the menu states a capture reading');
+  ok(!/^(Documents|Read first)\b/m.test(flat.map((i) => i.label || '').join('\n')),
+    'no Documents or Read first line, although the headline project has a documents reading');
+  ok(seen.length === m.domains.rows.length && seen.every((o) => o.danger !== true),
+    `the bar renderer was asked for exactly the ${m.domains.rows.length} domain bars and nothing else — no capture bar, no documents bar`);
+  const barred = flat.filter((i) => i.icon && Object.prototype.hasOwnProperty.call(i.icon, 'frac'));
+  ok(barred.length === m.domains.rows.length && barred.every((i) => String(i.id).startsWith('tray-domain-')),
+    'and every item carrying a bar is a domain row');
+  ok(!['groups', 'documents', 'capture'].some((k) => Object.prototype.hasOwnProperty.call(m, k)),
+    'the model carries no groups, documents or capture fields a later surface could quietly start drawing again');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§7 (3) documents — read first against the READING budget; stored is neutral (v3.70.0)');
+section('§7 stale documents survive as a NOTICE — only when true');
 {
-  const withDocs = (d) => build(summary({
-    projects: [{ ...summary().projects[0], documents: d }, ...summary().projects.slice(1)],
-  }), { dark: true }).documents;
-  const stored = withDocs(docs({ totalBytes: 88 * KB }));
-  eq(stored.label, 'Documents · 5 · 88 KB stored', 'nothing flagged → the stored total, NEUTRALLY (no "of 200 KB")');
-  eq([stored.basis, stored.frac, stored.over, stored.bar], ['stored', null, false, null],
-    '… basis stored, NO bar (no named denominator is left to draw it against), never over');
-  ok(!/200/.test(stored.label + stored.toolTip) && /Session start line/.test(stored.toolTip),
-    '… the retired 200 KB project budget appears nowhere, and the tooltip points at the Session start line');
-  const rf = withDocs(docs({ totalBytes: 1980 * KB, budgetExceeded: true, readFirstCount: 3, readFirstBytes: 64 * KB }));
-  eq(rf.label, 'Read first · 64 of 120 KB',
-    'once anything is flagged → read-first bytes against the READING budget (120 KB here)');
-  ok(!rf.over && !rf.bar.danger && rf.toolTip.includes('1,980 KB stored') && !rf.toolTip.includes('(over)'),
-    '… not danger, and a stored total over 200 KB is stated NEUTRALLY — no "(over)" anywhere');
-  const owner = withDocs(docs({ readFirstCount: 2, readFirstBytes: 40 * KB, readFirstBudgetBytes: 64 * KB }));
-  eq([owner.label, owner.frac], ['Read first · 40 of 64 KB', 40 / 64],
-    'the denominator is the project\'s OWN reading budget when the store says so (Standard, 64 KB)');
-  const rfOver = withDocs(docs({ readFirstCount: 3, readFirstBytes: 151 * KB, readFirstBudgetExceeded: true }));
-  eq(rfOver.label, 'Read first · over · 151 of 120 KB', 'an OVER-RUN of the reading budget says "over" in words, before the figures');
-  ok(rfOver.over && rfOver.bar.danger && rfOver.bar.over, '… and only then is the bar danger, and over-run in shape');
-  const stOver = withDocs(docs({ totalBytes: 1980 * KB, budgetExceeded: true }));
-  eq([stOver.label, stOver.over, stOver.bar], ['Documents · 5 · 1,980 KB stored', false, null],
-    'a stored total over 200 KB is NOT an alarm any more — no "over", no danger bar (en-US grouping kept)');
-  const idx = withDocs(docs({ readFirstCount: 1, readFirstBytes: 10 * KB, readFirstBudgetBytes: 0, readFirstBudgetExceeded: true }));
-  ok(idx.over && idx.bar.over && idx.label === 'Read first · over · 10 of 0 KB',
-    'an "Index only" (0 KB) budget with read-first text → an over-run SHAPE, never a division by zero');
-  ok(rfOver.label.length <= M.BAR_LABEL_CHARS && stOver.label.length <= M.BAR_LABEL_CHARS,
-    'both labels fit the bar budget, so no clip can ever take "over" away');
-  eq(withDocs(docs({ count: 0, totalBytes: 0 })).label, 'Documents · none', 'no documents → "none"');
-  eq(withDocs(docs({ totalBytes: 300 })).label, 'Documents · 5 · <1 KB stored', '300 bytes is "<1", never a rounded-down "0"');
-  eq(withDocs(null), null, 'documents null (index refused / manifest unreadable) → NO item, never a zero');
-  eq(build(summary({ scopes: [], projects: [] })).documents, null, 'an empty store has no documents item');
-  ok(stored.route === 'projects/curator', 'the item routes to the HEADLINE project');
-  eq(M.kbFigure(0), '0', 'kbFigure(0) is a real zero');
-  eq(M.kbFigure(null), null, 'kbFigure(null) is no figure');
+  const stale = (n, u) => ({ staleCount: n, unreachableCount: u });
+  const withStale = build(summary({ scopes: [scope('projects', 'curator', 10, { foundations: stale(2, 1) }), scope('business', 'alpha', 60 * 26, { foundations: stale(4, 0) })] }));
+  const n = withStale.notices.filter((x) => x.kind === 'docs-stale');
+  eq(n.map((x) => x.text), ['curator · 3 docs stale'],
+    'an ACTIVE project with stale or unreachable documents gets one notice, the two counts summed under "stale"');
+  ok(/not known to be current/.test(n[0].full), '… and its tooltip says what "stale" means here');
+  ok(!n.some((x) => x.project === 'alpha'), 'an IDLE project\'s stale documents are not a notice — it is not being worked on');
+  const clean = build(summary({ scopes: [scope('projects', 'curator', 10, { foundations: stale(0, 0) })] }));
+  eq(clean.notices.filter((x) => x.kind === 'docs-stale').length, 0, 'CONTROL — nothing stale → no notice (only when true)');
+  eq(M.staleDocsText('ott', 1), 'ott · 1 doc stale', 'one document is singular');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§8 (2) domains — largest first, the KIT\'S identity mapping, the cap');
+section('§8 (2) domains — largest first, the KIT\'S identity mapping, EVERY domain');
 {
   const m = build(summary(), { dark: true });
   const d = m.domains;
-  eq(d.header, 'Domains · pages', 'the section is headed "Domains · pages"');
+  eq(d.header, 'Domains · pages', 'the submenu is headed "Domains · pages"');
+  eq(d.label, 'Knowledge · 3 domains', 'the parent row names its unit and count: "Knowledge · 3 domains"');
   eq(d.rows.map((r) => r.domain), ['posts', 'business', 'projects'], 'largest first');
   eq(d.rows.map((r) => r.frac), [1, 120 / 687, 30 / 687], 'each against the LARGEST domain (687)');
   eq(d.rows.map((r) => r.ink), [0, 2, 1].map((i) => PALETTE.identityHex(i, 'dark')),
     'each bar wears identityHex(its install index) — the app\'s ONE mapping, not a second one');
   const light = build(summary()).domains;
   eq(light.rows.map((r) => r.ink), [0, 2, 1].map((i) => PALETTE.identityHex(i, 'light')), '… in the light ramp on a light menu');
-  // Past the old six slots: domain 8 and domain 12 must wear slots 8 and 12,
-  // not a wrapped copy of slots 2 and 6 (a second, six-slot mapping).
   const high = build(summary({ domains: [
     { domain: 'h', index: 7, pageCount: 9 }, { domain: 'l', index: 11, pageCount: 3 }] }), { dark: true }).domains;
   eq(high.rows.map((r) => r.ink), [PALETTE.identityHex(7, 'dark'), PALETTE.identityHex(11, 'dark')],
@@ -401,24 +332,23 @@ section('§8 (2) domains — largest first, the KIT\'S identity mapping, the cap
     'CONTROL — those slots differ from the ones a six-slot wrap would pick, so the check above can fail');
   eq(d.rows[0].label, 'posts · 687 pages', 'the label is the figure');
   ok(/largest domain, posts \(687 pages\)/.test(d.rows[1].toolTip), 'the tooltip NAMES the denominator');
-  // The cap: > 4 domains → 3 rows + "…and N more", largest over ALL of them.
+  // NO CAP: the submenu has room, so "…and N more" is gone (the approved mockup).
   const many = build(summary({ domains: [
     { domain: 'a', index: 0, pageCount: 10 }, { domain: 'b', index: 1, pageCount: 900 },
     { domain: 'c', index: 2, pageCount: 50 }, { domain: 'd', index: 3, pageCount: 40 },
     { domain: 'e', index: 4, pageCount: 30 }, { domain: 'f', index: 5, pageCount: null },
   ] })).domains;
-  eq([many.rows.length, many.moreLabel, many.hidden], [3, '…and 3 more', 3],
-    'six domains → three rows and "…and 3 more" — the section never exceeds four items');
-  eq(many.rows.map((r) => r.domain), ['b', 'c', 'd'], 'the three largest');
-  const exactlyFour = build(summary({ domains: summary().domains.concat([{ domain: 'z', index: 3, pageCount: 1 }]) })).domains;
-  eq([exactlyFour.rows.length, exactlyFour.moreLabel], [4, null], 'exactly four → all four, no "more" line');
+  eq(many.rows.map((r) => r.domain), ['b', 'c', 'd', 'e', 'a', 'f'],
+    'six domains → all six rows, largest first, the unreadable one last — no "…and N more" line');
+  eq([many.label, many.total], ['Knowledge · 6 domains', 6], 'and the parent counts all six');
+  ok(/1,030 pages counted \(1 could not be read\)/.test(many.toolTip), 'the parent\'s tooltip totals the pages and says one count is missing, never adding a zero');
+  eq(build(summary({ domains: [{ domain: 'a', index: 0, pageCount: 5 }] })).domains.label, 'Knowledge · 1 domain', 'one domain is singular');
   // Absent ≠ 0.
   const unk = build(summary({ domains: [{ domain: 'a', index: 0, pageCount: 5 }, { domain: 'b', index: 1, pageCount: null }] })).domains;
   ok(unk.rows[1].bar === null && unk.rows[1].label.includes('pages unknown'),
     'a domain whose count could not be read has NO bar and says so');
   const empty = build(summary({ domains: [{ domain: 'a', index: 0, pageCount: 0 }, { domain: 'b', index: 1, pageCount: 0 }] })).domains;
   ok(empty.rows.every((r) => r.bar && r.frac === 0), 'every domain empty → empty tracks, never a division by zero');
-  // No palette handed in, or an unindexed domain → neutral, never a guessed colour.
   const bare = M.buildTrayModel(summary(), { now: NOW, dark: true }).domains;
   ok(bare.rows.every((r) => r.ink === null && r.bar.ink === BARS.BAR_PALETTE.dark.neutral),
     'with no identityHex handed in, every domain bar is NEUTRAL — a missing colour is never guessed');
@@ -430,89 +360,56 @@ section('§8 (2) domains — largest first, the KIT\'S identity mapping, the cap
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§9 the menu template — placement, clicks, and the icon seam');
+section('§9 the menu template — Knowledge is ONE row with a submenu; clicks; the icon seam');
 {
   const seen = [];
-  const calls = { scope: [], settings: 0 };
-  // Something flagged read first, so the documents line carries a bar (a
-  // stored-only reading carries none since v3.70.0 — §7).
-  const m = build(summary({ projects: [{ ...summary().projects[0], documents: docs({ readFirstCount: 2, readFirstBytes: 30 * KB }) },
-    ...summary().projects.slice(1)] }), { dark: true });
-  const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(m, {
+  const calls = { settings: 0 };
+  const m = build(summary(), { dark: true });
+  const tpl = MENU.buildTrayMenuTemplate(m, {
     ...NOOPS,
-    onOpenScope: (r) => calls.scope.push(r && r.route),
     onOpenSettings: () => { calls.settings++; },
     makeIcon: (sp) => { seen.push(sp); return { fake: 'image', from: sp }; },
-  }));
-  const ids = flat.map((i) => i.id);
-  const byId = (id) => flat.find((i) => i.id === id);
-  const doc = byId(MENU.ID_DOCUMENTS);
-  ok(doc && doc.enabled === true && doc.icon && doc.icon.from === m.documents.bar,
-    'the documents item is ENABLED and carries its bar through makeIcon');
-  ok(ids.indexOf(MENU.ID_HEADER_PULSE) > 0, 'CONTROL — the fixture draws a pulse, so the ordering below compares two real positions');
-  // The top keeps v3.66.0's order exactly: headline, its sub-line, the pulse.
-  const top = flat.filter((i) => i.type !== 'separator').slice(0, 4).map((i) => i.id);
-  eq(top, [MENU.ID_HEADLINE, MENU.ID_HEADLINE_WHERE, MENU.ID_HEADER_PULSE, MENU.ID_PULSE],
-    'the menu opens headline · sub-line · Save pulse header · pulse, with nothing between them');
-  // The documents line is the FIRST line under the OPEN project's header.
-  const g0i = ids.indexOf('tray-group-0');
-  eq(m.groups[0].project, m.headline.project, 'CONTROL — group 0 is the open project in this fixture');
-  eq(ids[g0i + 1], MENU.ID_DOCUMENTS,
-    '… and the documents line sits directly under the open project\'s header, before its scope rows');
-  ok(ids.indexOf(MENU.ID_DOCUMENTS) < ids.indexOf('tray-row-0'), '… before the first scope row');
-  eq(flat.filter((i) => i.id === MENU.ID_DOCUMENTS).length, 1, '… exactly once — only the open project\'s group carries it');
-  // The open project has no group on screen → omitted, never moved to the top.
-  const offscreen = { ...m, groups: m.groups.slice(1) };
-  const offIds = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(offscreen, NOOPS)).map((i) => i.id);
-  ok(!offIds.includes(MENU.ID_DOCUMENTS) && offscreen.groups.length > 0,
-    'with the open project\'s group off screen, the documents line is OMITTED — not moved back under the headline');
-  doc.click();
-  eq(calls.scope.pop(), 'projects/curator', '… and its click opens Context on the headline project');
-  const g0 = byId('tray-group-0');
-  ok(g0.enabled === true && g0.icon && g0.icon.from === m.groups[0].bar && g0.type !== MENU.MENU_HEADER_TYPE,
-    'a project header is an ENABLED item carrying its capture bar (a disabled one greys its icon)');
-  const dh = byId(MENU.ID_HEADER_DOMAINS);
-  ok(dh && dh.type === MENU.MENU_HEADER_TYPE && dh.enabled === false && !dh.icon,
-    'the domains header is a real header — it carries no picture to grey');
-  const drows = flat.filter((i) => String(i.id || '').startsWith('tray-domain-'));
-  ok(drows.length === 3 && drows.every((r) => r.enabled === true && r.icon), 'three enabled domain rows, each with its bar');
+  });
+  const top = tpl.map((i) => i.id);
+  const k = tpl.find((i) => i.id === MENU.ID_KNOWLEDGE);
+  ok(k && Array.isArray(k.submenu) && !k.click && k.label === 'Knowledge · 3 domains',
+    'the top level carries ONE Knowledge row, a submenu parent with no click of its own');
+  ok(!top.some((id) => String(id || '').startsWith('tray-domain-')) && !top.includes(MENU.ID_HEADER_DOMAINS),
+    'no domain row and no domains header on the top level — they are folded, saving the one surface with no height');
+  const dh = k.submenu[0];
+  ok(dh && dh.id === MENU.ID_HEADER_DOMAINS && dh.type === MENU.MENU_HEADER_TYPE && dh.enabled === false && !dh.icon,
+    'the submenu opens on a real header — it carries no picture to grey');
+  const drows = k.submenu.slice(1);
+  ok(drows.length === 3 && drows.every((r) => r.enabled === true && r.icon && String(r.id).startsWith('tray-domain-')),
+    'three enabled domain rows, each with its bar (a disabled item greys its icon)');
   drows.forEach((r) => r.click());
   eq(calls.settings, 3, '… each opening Settings, where the Vault folder monitor is the app twin');
-  const lastRow = Math.max(...flat.map((i, k) => (String(i.id || '').startsWith('tray-row-') ? k : -1)));
-  ok(lastRow < ids.indexOf(MENU.ID_HEADER_DOMAINS) && ids.indexOf(MENU.ID_HEADER_DOMAINS) < ids.indexOf(MENU.ID_OPEN_MEMORY),
-    'the domains section closes the reading block: after the last scope row, before the commands');
-  ok(seen.includes(m.documents.bar) && m.domains.rows.every((r) => seen.includes(r.bar)),
-    'every bar SPEC reaches the injected seam unchanged (template flag and all)');
-  // A throwing seam costs the pictures, never the menu.
+  const ki = top.indexOf(MENU.ID_KNOWLEDGE);
+  ok(ki > top.indexOf(MENU.ID_HEADER_ACTIVE) && ki < top.indexOf(MENU.ID_OPEN_MEMORY),
+    'the Knowledge row closes the reading block: after the activity, before the commands');
+  ok(m.domains.rows.every((r) => seen.includes(r.bar)), 'every bar SPEC reaches the injected seam unchanged');
   const safe = MENU.buildTrayMenuTemplate(m, { ...NOOPS, makeIcon: () => { throw new Error('boom'); } });
-  ok(Array.isArray(safe) && MENU.flattenTrayMenu(safe).some((i) => i.id === MENU.ID_DOCUMENTS && !i.icon),
-    'a makeIcon that throws costs the bar, never the item or the menu');
-  const more = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(build(summary({ domains: [
-    { domain: 'a', index: 0, pageCount: 1 }, { domain: 'b', index: 1, pageCount: 2 }, { domain: 'c', index: 2, pageCount: 3 },
-    { domain: 'd', index: 3, pageCount: 4 }, { domain: 'e', index: 4, pageCount: 5 }] })), NOOPS)).find((i) => i.id === MENU.ID_DOMAINS_MORE);
-  ok(more && more.label === '…and 2 more' && more.enabled === true && typeof more.click === 'function',
-    '"…and N more" is enabled and routed — a line naming a place you cannot reach is worse than none');
+  const sk = safe.find((i) => i.id === MENU.ID_KNOWLEDGE);
+  ok(sk && sk.submenu.length === 4 && sk.submenu.slice(1).every((r) => !r.icon && r.label),
+    'a makeIcon that throws costs the bars, never the rows or the menu');
+  const none = MENU.buildTrayMenuTemplate(build(summary({ domains: null })), NOOPS);
+  ok(!none.some((i) => i.id === MENU.ID_KNOWLEDGE), 'no domains reading → no Knowledge row (not "0 domains")');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§10 width — no bar item can widen the menu, under a fuzz of long names');
+section('§10 width — no domain bar item can widen its submenu past the budget, under a fuzz of long names');
 {
   const long = 'x'.repeat(70);
   const m = build(summary({
-    scopes: [scope(long, long, 5), scope('b', long + 'y', 9)],
-    projects: [{ domain: long, project: long, projectLabel: long + ' / ' + long,
-      capture: { sessions: 99999, sessionsRead: 1, sessionsSaved: 99999, lastSessionAt: null, domainMismatch: true },
-      documents: docs({ readFirstCount: 9, readFirstBytes: 9999 * KB }) }],
-    capture: { logPresent: true, windowDays: 30, busiestSaved: 99999 },
-    domains: [{ domain: long, index: 0, displayName: long, pageCount: 1234567 }],
+    domains: [{ domain: long, index: 0, displayName: long, pageCount: 1234567 }, { domain: 'b', index: 1, displayName: long + 'y', pageCount: 3 }],
   }), { dark: true });
-  const barItems = [m.documents, ...m.groups.filter((g) => g.bar), ...m.domains.rows.filter((r) => r.bar)];
-  ok(barItems.length >= 3, `CONTROL — ${barItems.length} bar items were built, so the check below is not vacuous`);
+  const barItems = m.domains.rows.filter((r) => r.bar);
+  ok(barItems.length === 2, `CONTROL — ${barItems.length} bar items were built, so the check below is not vacuous`);
   ok(barItems.every((b) => b.label.length <= M.BAR_LABEL_CHARS),
     `every bar item's label ≤ ${M.BAR_LABEL_CHARS} (${barItems.map((b) => b.label.length).join(', ')})`);
-  ok(m.groups[0].label.endsWith('99999 of 99999 saved') && m.domains.rows[0].label.endsWith('1,234,567 pages')
-    && m.documents.label === 'Read first · over · 9,999 of 120 KB',
+  ok(m.domains.rows[0].label.endsWith('1,234,567 pages') && m.domains.rows[1].label.endsWith('3 pages'),
     'the FIGURE survives on every one — the name is what gives way');
+  ok(m.domains.label.length <= M.PLAIN_LABEL_CHARS, 'and the parent row is short by construction');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

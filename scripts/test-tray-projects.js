@@ -44,9 +44,12 @@
  * ── SECTIONS ────────────────────────────────────────────────────────────────
  *   §0  positive control on the imports and on the fake store itself
  *   §1  the four fixtures, driven through the REAL data layer
- *   §2  grouping: which rows, under which header, in which order
- *   §3  the caps, the arithmetic, and the top-up that stops rows being wasted
- *   §4  what a header says, and what its tooltip keeps
+ *   §2  Layout A (v3.74.0): one row per (project × harness) saved in 24 h,
+ *       everything else folded into Idle
+ *   §3  the caps: five rows, whole projects, an overflow that names its unit
+ *   §3b the shell asks for 40 and the face shows five
+ *   §3c one stream per work-stream per computer; two tools, two rows
+ *   §4  what a row says, what its submenu holds, the icon's tooltip
  *   §5  the routing string the shell emits
  *   §6  the resume prompt and the Finder path, over both on-disk layouts
  *   §7  the width budget, over every label the four fixtures emit
@@ -333,43 +336,37 @@ ok(twoInOne.summary.lastSave && twoInOne.summary.lastSave.domain === 'workshop'
   'and `lastSave` names BOTH — it is a re-projection of scopes[0], so a drop there would be silent');
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§2 grouping — which rows, under which header, in which order');
+section('§2 Layout A — one row per (project × harness) saved in 24 h; the rest folds into Idle');
 // ═══════════════════════════════════════════════════════════════════════════
 
-eq(twoInOne.model.groups.map((g) => g.projectLabel), ['workshop / lumina', 'workshop / atlas'],
-  'one domain with two projects: two groups, and BOTH headers qualify with the domain');
-eq(twoInOne.model.groups.map((g) => g.rows.length), [3, 1],
-  '…newest project first, and the rows are shared out between them');
-ok(twoInOne.model.groups[0].rows.every((r) => r.project === 'lumina'),
-  '…every row under a header belongs to that header\'s project');
-eq(twoInOne.model.groups[0].rows.map((r) => r.scope),
-  ['session-2026-09-07-widget', 'session-2026-09-06-router', 'session-2026-09-05-notes'],
-  '…and inside a group the newest scope comes first');
+eq(twoInOne.model.active.rows.map((r) => r.label),
+  ['lumina · Claude Code · 12 min ago', 'atlas · OpenCode · 1 hr ago'],
+  'two active projects: one row each, newest first — `project · harness · age`, where, who and when on line one');
+eq(twoInOne.model.active.header, 'Active · last 24 h', 'under the header "Active · last 24 h"');
+ok(twoInOne.model.active.rows.every((r, i, a) => i === 0 || r.ageSeconds >= a[i - 1].ageSeconds),
+  '…strictly newest first');
+eq(twoInOne.model.active.rows[0].streams.map((s) => s.scope),
+  ['session-2026-09-06-router', 'session-2026-09-05-notes'],
+  'lumina\'s OTHER scopes are not rows on the face — they are its row\'s "Other work-streams", newest first');
+eq(twoInOne.model.idle, null, 'nothing is idle in that fixture, so there is no Idle row at all');
 
-eq(oneEach.model.groups.map((g) => g.projectLabel), ['lumina', 'field-notes'],
-  'two domains with one project each: NEITHER header names its domain, because neither domain has a second project to be told apart from');
-eq(oneEach.model.rows.map((r) => r.showsDomain), [false, false],
-  '…and the rows say so, rather than leaving it to be inferred from the string');
-eq(oneEach.model.rows.map((r) => r.domain), ['workshop', 'articles'],
+eq(oneEach.model.active.rows.map((r) => r.projectName), ['lumina', 'field-notes'],
+  'two domains with one project each: the rows name the BARE project');
+eq(oneEach.model.active.rows.map((r) => r.domain), ['workshop', 'articles'],
   '…while the domain is still CARRIED on every row, because the route needs it');
 
-eq(legacyOnly.model.groups.length, 1, 'a legacy-only store draws exactly one group…');
-eq(legacyOnly.model.groups[0].projectLabel, 'articles', '…named for the domain, which IS the default project\'s slug');
-ok(legacyOnly.model.rows.every((r) => r.isDefaultProject === true),
-  '…and every row is marked as the domain\'s own project, which is what decides its on-disk path');
-
-// ── THE GROUPS AND THE ROWS ARE THE SAME OBJECTS ────────────────────────
-//
-// Not equal — IDENTICAL. A header and the rows under it describing different
-// saves is the failure this binding exists to make inexpressible, and it is the
-// same argument `lastSave` and `scopes[0]` already share in the data layer.
-ok(monopoly.model.groups.flatMap((g) => g.rows).every((r) => monopoly.model.rows.includes(r)),
-  'every row in a group is the SAME OBJECT as the row in the flat list — not a copy that could drift');
-eq(monopoly.model.groups.flatMap((g) => g.rows).length, monopoly.model.rows.length,
-  '…and between them the groups hold every row, so nothing is rendered outside a header');
-
-// TWO DOMAINS HOLDING A PROJECT OF THE SAME NAME must not become one group,
-// and must not draw two identical headers.
+// THE DOMAIN PREFIX IS DROPPED EVEN WHERE THE PRODUCER QUALIFIES. The
+// producer calls lumina `workshop / lumina` (its domain holds two projects);
+// on a line that says `lumina · Claude Code · 12 min ago` the domain is the
+// drop-constant rule again — it comes back only when two listed projects share
+// a bare name. The submenu header and the tooltip always carry the pair.
+eq(twoInOne.summary.scopes[0].projectLabel, 'workshop / lumina', 'CONTROL — the producer qualifies lumina with its domain');
+eq(twoInOne.model.active.rows[0].projectName, 'lumina', '…and line one does not');
+eq(twoInOne.model.active.rows[0].submenuHeader, 'lumina · session-2026-09-07-widget',
+  '…the submenu header names the work-stream — here without the domain, because the qualified form is 45 characters and the plain budget is 42');
+eq(oneEach.model.active.rows[0].submenuHeader, 'workshop / lumina · main', '…and WITH it wherever it fits');
+ok(twoInOne.model.active.rows[0].toolTip.startsWith('workshop / lumina · session-2026-09-07-widget'),
+  '…and so does the tooltip, first line');
 {
   const clash = await drive({
     projects: [
@@ -379,102 +376,102 @@ eq(monopoly.model.groups.flatMap((g) => g.rows).length, monopoly.model.rows.leng
         scopes: [{ scope: 's', machine: 'mac-a1b2c3', age: 200, harness: 'claude-code', headline: 'a' }] },
     ],
   });
-  eq(clash.model.groups.length, 2,
-    'two domains each holding a project called `main` are TWO groups — grouping on the project alone would file one project\'s saves under another\'s header');
-  eq(new Set(clash.model.groups.map((g) => g.projectLabel)).size, 2,
-    '…and their headers are told apart');
-  eq(clash.model.groups.map((g) => g.projectLabel), ['workshop / main', 'articles / main'],
-    '…by the domain, restored on BOTH of them even though neither domain holds a second project');
+  eq(clash.model.active.rows.map((r) => r.projectName), ['workshop / main', 'articles / main'],
+    'two domains each holding a project called `main` are TWO rows, told apart by the domain — restored on both');
 }
 
+eq(legacyOnly.model.active.rows.length, 1, 'a legacy-only store: ONE active row — one project, one tool');
+eq(legacyOnly.model.active.rows[0].label, 'articles · Claude Code · 2 min ago', '…named for the domain, which IS the default project\'s slug');
+eq(legacyOnly.model.active.rows[0].streams.length, 5, '…and its five other scopes are its Other work-streams');
+ok(legacyOnly.model.rows.every((r) => r.isDefaultProject === true),
+  '…every row, streams included, marked as the domain\'s own project, which decides its on-disk path');
+
+// ── IDLE: one row per project, folded ───────────────────────────────────
+eq(monopoly.model.active.rows.map((r) => r.projectName), ['lumina', 'atlas', 'field-notes'],
+  'the busy project takes ONE row, not twelve: a row is a (project × tool), and its eleven other scopes are streams');
+eq(monopoly.model.idle.label, 'Idle · 1 project', 'the fourth project, saved a day ago, is folded into "Idle · 1 project"');
+eq(monopoly.model.idle.sublabel, 'archive 1 d', '…whose second line names it with a compact age');
+eq(monopoly.model.idle.rows.map((r) => r.label), ['archive · OpenCode · 1 day ago'],
+  '…and whose submenu holds it in the SAME row shape as Active');
+ok(monopoly.model.idle.toolTip.includes('articles / archive · 1 day ago'), 'the Idle tooltip lists every idle project, fully qualified, with its age');
+
 // ═══════════════════════════════════════════════════════════════════════════
-section('§3 the caps, the arithmetic, and the top-up');
+section('§3 the caps — five rows, WHOLE projects, and an overflow that names its unit');
 // ═══════════════════════════════════════════════════════════════════════════
 
-eq(M.MAX_ROWS, 5, 'five rows in total');
-eq(M.MAX_GROUPS, 3, 'at most three groups');
-eq(M.MAX_ROWS_PER_GROUP, 2, 'at most two rows per group in the first allocation');
-ok(M.MAX_GROUPS * M.MAX_ROWS_PER_GROUP > M.MAX_ROWS,
-  `THE ARITHMETIC: ${M.MAX_GROUPS} x ${M.MAX_ROWS_PER_GROUP} = ${M.MAX_GROUPS * M.MAX_ROWS_PER_GROUP} exceeds ${M.MAX_ROWS}, so on a busy store the ROW budget binds and the per-group quota cannot decide the total`);
-
-// THE MONOPOLY CASE — the one the quota exists for.
-eq(monopoly.model.rows.length, 5, 'a store with a busy project still fills exactly five rows');
-eq(monopoly.model.groups.map((g) => [g.projectLabel, g.rows.length]),
-  [['workshop / lumina', 3], ['workshop / atlas', 1], ['articles / field-notes', 1]],
-  'the busy project takes THREE of the five, not twelve — its two neighbours have one row each to give, and rows the quota freed but nobody can use go back to the newest project rather than staying blank');
-ok(monopoly.model.groups[0].rows.length < 12,
-  'CONTROL — without the quota it had twelve rows to give and would have taken all five');
-eq(monopoly.model.groupsOnDisk, 4, 'the TRUE number of projects with state is reported…');
-eq(monopoly.model.groupsHidden, 1, '…and so is how many did not fit, taken before the cut');
-eq(monopoly.model.hiddenRows, 10, 'and the rows the caps hid are counted against the store\'s true total');
-ok(monopoly.model.truncatedNote && /\(10\)/.test(monopoly.model.truncatedNote),
-  `the overflow names that true remainder — ${monopoly.model.truncatedNote}`);
-
-// ── AND THE 2 + 2 + 1 SHAPE, WHICH NEEDS THREE PROJECTS THAT CAN ALL FILL ──
+eq(M.MAX_ROWS, 5, 'five active rows on the face');
 {
-  const threeBusy = await drive({
-    projects: ['a', 'b', 'c'].map((n, gi) => ({
+  // Six projects saved today, one of them by TWO tools — seven rows' worth.
+  const six = await drive({
+    projects: ['a', 'b', 'c', 'd', 'e', 'f'].map((n, i) => ({
       domain: 'w', project: n,
-      scopes: Array.from({ length: 4 }, (_, i) => ({
-        scope: n + '-' + i, machine: 'm-a1b2c3', age: 100 + gi * 1000 + i * 10,
-        harness: 'h', headline: 'x',
-      })),
+      scopes: [{ scope: 'main', machine: 'm-a1b2c3', age: 100 + i * 600, harness: 'claude-code', headline: n },
+        ...(n === 'b' ? [{ scope: 'side', machine: 'm-a1b2c3', age: 150, harness: 'antigravity', headline: 'b2' }] : [])],
     })),
   });
-  eq(threeBusy.model.groups.map((g) => g.rows.length), [2, 2, 1],
-    'THE SHIPPED SHAPE on a store where three projects could each fill the list: 2 + 2 + 1');
-  eq(threeBusy.model.rows.length, M.MAX_ROWS, '…which is exactly the row budget, with none wasted');
-  eq(threeBusy.model.groups.length, M.MAX_GROUPS, '…and exactly the group cap');
-}
-
-// THE TOP-UP — and it is the case almost every user is in today.
-eq(legacyOnly.model.rows.length, 5,
-  'a store with ONE project still fills all five rows: the quota is a floor for the OTHER groups, never a ceiling on the only one');
-ok(legacyOnly.model.groups[0].rows.length === 5,
-  '…all five under its single header');
-eq(legacyOnly.model.hiddenRows, 1, '…with the sixth disclosed rather than dropped silently');
-
-// Two groups, five rows: the leftover goes to the newest, and it is round-robin
-// rather than "the first takes everything left".
-{
-  const twoBusy = await drive({
+  eq(six.model.active.rows.map((r) => r.projectName + '/' + r.harness),
+    ['a/Claude Code', 'b/Antigravity', 'b/Claude Code', 'c/Claude Code', 'd/Claude Code'],
+    'five rows, spent a whole project at a time: b\'s two tools are adjacent, newest first');
+  eq(six.model.overflow.label, '+2 more active projects',
+    'the rest is ONE item that names its unit — projects (D8), never a bare "(46)" of (scope, machine) pairs');
+  eq(six.model.overflow.rows.map((r) => r.projectName), ['e', 'f'], '…and holds those rows, same shape');
+  const t = MENU.buildTrayMenuTemplate(six.model, NOOPS);
+  const ov = t.find((i) => i.id === MENU.ID_OVERFLOW);
+  ok(ov && Array.isArray(ov.submenu) && ov.submenu.length === 2 && !ov.click,
+    'in the menu the overflow is a submenu parent holding exactly the hidden rows');
+  // A project that does not fit whole is not split, and nothing older jumps ahead of it.
+  const splitRisk = await drive({
     projects: [
-      { domain: 'w', project: 'a',
-        scopes: Array.from({ length: 6 }, (_, i) => ({ scope: 'a' + i, machine: 'm-a1b2c3', age: 60 + i, harness: 'h', headline: 'x' })) },
-      { domain: 'w', project: 'b',
-        scopes: Array.from({ length: 6 }, (_, i) => ({ scope: 'b' + i, machine: 'm-a1b2c3', age: 5000 + i, harness: 'h', headline: 'y' })) },
+      { domain: 'w', project: 'a', scopes: [{ scope: 'main', machine: 'm-a1b2c3', age: 100, harness: 'h1', headline: 'x' }] },
+      { domain: 'w', project: 'b', scopes: [1, 2, 3, 4, 5].map((k) => ({ scope: 's' + k, machine: 'm-a1b2c3', age: 200 + k, harness: 'tool-' + k, headline: 'x' })) },
+      { domain: 'w', project: 'c', scopes: [{ scope: 'main', machine: 'm-a1b2c3', age: 900, harness: 'h1', headline: 'x' }] },
     ],
   });
-  eq(twoBusy.model.groups.map((g) => g.rows.length), [3, 2],
-    'with two busy projects and five rows the newest gets the odd one — 3 + 2, never 5 + 0');
+  eq(splitRisk.model.active.rows.map((r) => r.projectName), ['a'],
+    'b\'s five tools do not fit beside a — b goes WHOLE to the overflow rather than being split …');
+  eq(splitRisk.model.overflow.rows.map((r) => r.projectName), ['b', 'b', 'b', 'b', 'b', 'c'],
+    '… and c, OLDER than b, does not jump ahead of it onto the face');
+  eq(splitRisk.model.overflow.label, '+2 more active projects', '… and the overflow counts two projects, not six rows');
+  // The pathological first project: more tools in a day than the whole cap.
+  const oneHuge = await drive({
+    projects: [{ domain: 'w', project: 'a', scopes: [1, 2, 3, 4, 5, 6, 7].map((k) => ({ scope: 's' + k, machine: 'm-a1b2c3', age: 100 + k, harness: 'tool-' + k, headline: 'x' })) }],
+  });
+  eq(oneHuge.model.active.rows.length, 5, 'one project with seven tools today shows five rows (the first project always shows) …');
+  eq(oneHuge.model.overflow.label, '+2 more tools on a shown project',
+    '… and the overflow says what the two rows ARE — not "2 more projects", which would be false');
 }
-
-// A smaller budget still honours the group cap before the row cap.
 {
+  // A tighter budget is honoured, and the cap never rises.
   const tight = M.buildTrayModel(monopoly.summary, { now: NOW, maxRows: 2 });
-  eq(tight.rows.length, 2, 'a tighter row budget is honoured…');
-  eq(tight.groups.length, 1, '…and it is spent on the newest project rather than sprinkled one row each');
+  eq(tight.active.rows.length, 2, 'a tighter row budget is honoured …');
+  eq(M.buildTrayModel(monopoly.summary, { now: NOW, maxRows: 40 }).active.rows.length, 3,
+    '… and the FETCH limit handed in as `maxRows` cannot raise it (the v3.50.0 call; monopoly has three active rows)');
+  eq(M.buildTrayModel(monopoly.summary, { now: NOW, maxRows: 0 }).active.rows.length, 3, 'a nonsense budget falls back to the cap');
+}
+{
+  // THE IDLE CAP, named in PROJECTS.
+  const many = await drive({
+    projects: Array.from({ length: 15 }, (_, i) => ({ domain: 'w', project: 'p' + String(i).padStart(2, '0'),
+      scopes: [{ scope: 'main', machine: 'm-a1b2c3', age: 2 * 86400 + i * 3600, harness: 'claude-code', headline: 'x' }] })),
+  });
+  eq(many.model.idle.label, 'Idle · 15 projects', 'fifteen idle projects → "Idle · 15 projects"');
+  eq(many.model.idle.rows.length, M.MAX_IDLE_ROWS, `the submenu lists the ${M.MAX_IDLE_ROWS} most recent`);
+  eq(many.model.idle.moreLabel, '3 more projects in Project Context…', '… and names the true remainder, in projects');
+  eq(many.model.idle.sublabel, 'p00 2 d · p01 2 d · +13 more', 'the Idle row\'s second line: two names, compact ages, the rest counted');
+  const t = MENU.buildTrayMenuTemplate(many.model, NOOPS);
+  const idle = t.find((i) => i.id === MENU.ID_IDLE);
+  const more = idle.submenu.find((i) => i.id === MENU.ID_IDLE_MORE);
+  ok(more && typeof more.click === 'function' && more.enabled !== false, 'the remainder item is ENABLED and routed — the only way to the hidden projects');
+  eq(many.model.active.rows.length, 0, 'CONTROL — nothing is active');
+  const noActive = t.find((i) => i.id === MENU.ID_NO_ACTIVE);
+  ok(noActive && noActive.label === 'No saves in the last 24 h' && noActive.enabled === false,
+    'with projects but none active, the Active header is followed by a statement, not left empty over the Idle row');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§3b the display cap binds — v3.51.0, and this is the shape he saw');
+section('§3b the shell asks for 40 and the face shows five — v3.51.0, kept');
 // ═══════════════════════════════════════════════════════════════════════════
-//
-// ── THE DEFECT ────────────────────────────────────────────────────────────
-//
-// v3.50.0's menu listed EVERY work-stream — 23 rows under three project
-// headers on the maintainer's own Tray. `main.js` holds ONE constant for two
-// different numbers: `TRAY_FETCH_ROWS` (40) is what the DATA layer is asked
-// for, because the model cannot group what it was never given, and it was also
-// being passed to `buildTrayModel` as `maxRows`, which is the DISPLAY cap. The
-// model obeyed. Five rows, and the "quarter of a screen" v3.37.0 measured and
-// removed, both went out through one argument.
-//
-// The fix is in the MODEL, not in the caller's discipline: `maxRows` is a
-// shrink-only seam now. A test that only checked main.js's argument list would
-// pass the day someone passes 40 from somewhere else.
 {
-  // THE MAINTAINER'S SHAPE: three projects with 13, 7 and 3 work-streams.
   const BIG = {
     projects: [
       { domain: 'workshop', project: 'curator',
@@ -495,217 +492,118 @@ section('§3b the display cap binds — v3.51.0, and this is the shape he saw');
     ],
   };
   const big = await drive(BIG);
-  eq(big.summary.scopes.length, 23,
-    'CONTROL — the data layer really did hand over all 23 rows, which is what grouping needs and what the menu must not print');
-
-  // THE FIX, ASSERTED WHERE IT LIVES: the shell's fetch limit passed as the
-  // display cap changes nothing. This is the v3.50.0 call, verbatim.
-  const asShipped = M.buildTrayModel(big.summary, { now: NOW, maxRows: M.TRAY_FETCH_ROWS });
-  eq(asShipped.rows.length, M.MAX_ROWS,
-    'the FETCH limit handed to the model as `maxRows` cannot raise the display cap — this is the v3.50.0 call and it now renders five');
-  eq(asShipped.groups.length, M.MAX_GROUPS, '…under at most three headers');
-  eq(asShipped.groups.map((g) => g.rows.length), [2, 2, 1],
-    '…in the documented 2 + 2 + 1 shape');
-  eq(asShipped.truncatedNote, 'More in Project Context… (18)',
-    'and the 18 rows the cap hid are COUNTED, not dropped: the overflow is the only route to them');
-  eq(asShipped.hiddenRows, 18, '…which is 23 minus the five on screen');
-
-  // AND WITHOUT THE OPTION AT ALL — the call main.js makes from v3.51.0.
-  const bare = M.buildTrayModel(big.summary, { now: NOW });
-  eq(bare.rows.map((r) => r.scope), asShipped.rows.map((r) => r.scope),
-    'passing nothing and passing 40 now produce the IDENTICAL five rows, so the caller cannot move this number in either direction');
-  // CONTROL — the clamp is a MINIMUM, not an "ignore the option": a caller
-  // asking for FEWER rows is still obeyed, and two suites depend on it.
-  eq(M.buildTrayModel(big.summary, { now: NOW, maxRows: 2 }).rows.length, 2,
-    'CONTROL — a budget BELOW the cap is still honoured, so the clamp is min(opt, MAX_ROWS) rather than a deleted seam');
-  eq(M.buildTrayModel(big.summary, { now: NOW, maxRows: 0 }).rows.length, M.MAX_ROWS,
-    '…while a nonsense budget falls back to the cap rather than emptying the menu');
-
-  // ── SCAN ONLY, and it says so: main.js cannot be imported (no Electron) ──
+  eq(big.summary.scopes.length, 23, 'CONTROL — the data layer handed over all 23 rows');
+  const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(big.model, NOOPS));
+  const topLevel = flat.filter((i) => !String(i.path || '').includes(' › '));
+  ok(topLevel.filter((i) => String(i.id || '').startsWith('tray-row-')).length <= M.MAX_ROWS,
+    `at most ${M.MAX_ROWS} rows on the face of the menu, from 23 work-streams`);
+  const hiddenStreams = big.model.rows.reduce((a, r) => a + (r.streamsHidden || 0), 0);
+  eq(big.model.rows.length + hiddenStreams, 23,
+    `… while EVERY one of the 23 is a row somewhere in the menu (${big.model.rows.length}) or COUNTED in a row's "N more in Project Context…" (${hiddenStreams}) — nothing a cap removed is unreachable`);
+  eq(new Set(big.model.rows.map((r) => r.id)).size, big.model.rows.length, '… each drawn row with its own id');
+  const flatAll = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(big.model, NOOPS));
+  eq(flatAll.filter((i) => /^\d+ more in Project Context…$/.test(i.label || '')).map((i) => i.label),
+    big.model.rows.filter((r) => r.streamsHidden > 0).map((r) => r.streamsHidden + ' more in Project Context…'),
+    '… and every hidden remainder is an item in the menu, with its true count');
   const mainSrc = readFileSync(path.join(DESKTOP, 'main.js'), 'utf8');
   const call = mainSrc.slice(mainSrc.indexOf('buildTrayModel(traySnapshot'));
-  ok(!/maxRows/.test(call.slice(0, 200)),
-    'SCAN ONLY: the shell no longer hands the model a row budget at all');
-  ok(/getTraySummary\(\{\s*limit:\s*TRAY_ROW_LIMIT\s*\}\)/.test(mainSrc),
-    'SCAN ONLY: while the FETCH still asks for all 40, which is what grouping needs');
+  ok(!/maxRows/.test(call.slice(0, 200)), 'SCAN ONLY: the shell hands the model no row budget');
+  // The data package (v3.74.0, D7) adds `sessionStart: false` to this call;
+  // either form is accepted so the two branches stay green together.
+  ok(/getTraySummary\(\{\s*limit:\s*TRAY_ROW_LIMIT\s*(,\s*sessionStart:\s*false\s*)?\}\)/.test(mainSrc),
+    'SCAN ONLY: the FETCH still asks for all 40 (optionally with sessionStart:false)');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§3c one row per work-stream — the newest machine copy wins');
+section('§3c one stream per work-stream per COMPUTER; two tools on one project are two rows');
 // ═══════════════════════════════════════════════════════════════════════════
-//
-// The data layer's unit is the (SCOPE, MACHINE) pair, which is right for the
-// store: two copies are two files. It is wrong for a two-row group. The
-// maintainer's menu showed one work-stream twice — the same topic, the same
-// `handoff trimmed · claude-code` on both lines two — spending both slots of a
-// group to say one thing. v3.48.1 records the condition that produces it: his
-// installed app and his repo checkout stamp the same Mac with two install ids.
 {
+  // The maintainer's installed app and his repo checkout stamp ONE Mac with two
+  // install ids (v3.48.1); a hostname that flapped does the same. One scope,
+  // two folders, one computer: it is one work-stream.
   const twoCopies = await drive({
     projects: [
       { domain: 'workshop', project: 'curator',
         scopes: [
-          { scope: 'session-2026-09-07-widget', machine: 'mac-a1b2c3', age: 720,
-            harness: 'claude-code', model: 'opus-4-6', headline: 'the newest copy' },
-          { scope: 'session-2026-09-07-widget', machine: 'mac-9f3c1a', age: 5400,
-            harness: 'claude-code', model: 'opus-4-6', headline: 'the older copy' },
+          { scope: 'session-2026-09-07-widget', machine: 'mac-a1b2c3', age: 720, harness: 'claude-code', headline: 'the newest copy' },
+          { scope: 'session-2026-09-06-other', machine: 'mac-a1b2c3', age: 3000, harness: 'claude-code', headline: 'another' },
+          { scope: 'session-2026-09-06-other', machine: 'alices-mbp-a1b2c3', age: 5400, harness: 'claude-code', headline: 'older copy, same Mac' },
         ] },
     ],
   });
-  eq(twoCopies.summary.scopes.length, 2,
-    'CONTROL — the store really does hold TWO pairs for this one work-stream, which is the shape being collapsed');
-  eq(twoCopies.model.rows.length, 1,
-    'a group with two machine copies of ONE scope shows ONE row');
-  eq(twoCopies.model.rows[0].machine, 'mac-a1b2c3',
-    '…and it is the NEWEST copy, which is the one a reader would resume from');
-  eq(twoCopies.model.hiddenRows, 1,
-    '…with the older copy counted against the store\'s true total rather than silently dropped');
-  ok(twoCopies.model.truncatedNote && /\(1\)/.test(twoCopies.model.truncatedNote),
-    `…and reachable through the overflow — ${twoCopies.model.truncatedNote}`);
-
-  // AND THE SLOT IT FREES GOES TO A REAL WORK-STREAM, which is the whole
-  // point: the quota counts SCOPES now, so a duplicate cannot crowd one out.
-  const crowded = await drive({
+  eq(twoCopies.summary.scopes.length, 3, 'CONTROL — the store holds THREE pairs');
+  eq(twoCopies.model.rows.map((r) => r.headline), ['the newest copy', 'another'],
+    'the two folders of `other` share an install id — ONE computer — so the newest copy is the one stream shown');
+  const twoMacs = await drive({
     projects: [
       { domain: 'workshop', project: 'curator',
         scopes: [
-          { scope: 'session-a', machine: 'mac-a1b2c3', age: 600, harness: 'claude-code', headline: 'a' },
-          { scope: 'session-a', machine: 'mac-9f3c1a', age: 900, harness: 'claude-code', headline: 'a-older' },
-          { scope: 'session-b', machine: 'mac-a1b2c3', age: 1200, harness: 'claude-code', headline: 'b' },
+          { scope: 'main', machine: 'mac-a1b2c3', age: 720, harness: 'claude-code', headline: 'here' },
+          { scope: 'side', machine: 'mac-a1b2c3', age: 1000, harness: 'claude-code', headline: 'here too' },
+          { scope: 'side', machine: 'studio-9f8e7d', age: 1500, harness: 'claude-code', headline: 'there' },
         ] },
-      { domain: 'workshop', project: 'lumina',
-        scopes: Array.from({ length: 4 }, (_, i) => ({
-          scope: 'lum-' + i, machine: 'mac-a1b2c3', age: 40000 + i * 60, harness: 'claude-code', headline: 'l' + i,
-        })) },
     ],
   });
-  eq(crowded.model.groups[0].rows.map((r) => r.scope), ['session-a', 'session-b'],
-    'the busy group\'s two slots go to two DIFFERENT work-streams, never to two copies of one');
-  eq(new Set(crowded.model.rows.map((r) => r.scope)).size, crowded.model.rows.length,
-    'and no scope appears twice anywhere on the menu');
+  eq(twoMacs.model.rows.map((r) => r.headline), ['here', 'here too', 'there'],
+    'the same scope on ANOTHER computer is kept — that copy is the news');
 
-  // A row with NO scope name is never folded into another: an absent name is
-  // not evidence of sameness. Driven at the model, because the data layer
-  // refuses a row whose scope is not a string.
-  const nameless = M.buildTrayModel({
-    ok: true, total: 2,
-    scopes: [
-      { project: 'p', domain: 'd', machine: 'mac-a1b2c3', harness: 'h', ageSource: 'agent',
-        writtenAgeSeconds: 600, headline: 'one' },
-      { project: 'p', domain: 'd', machine: 'mac-9f3c1a', harness: 'h', ageSource: 'agent',
-        writtenAgeSeconds: 900, headline: 'two' },
-    ],
-  }, { now: NOW });
-  eq(nameless.rows.length, 2,
-    'two rows with no scope name at all stay two rows — an absent name is not a match');
+  // TWO TOOLS ON ONE PROJECT — the case the maintainer is building toward.
+  const twoTools = await drive({
+    projects: [{ domain: 'projects', project: 'ott', scopes: [
+      { scope: 'main', machine: 'mac-a1b2c3', age: 480, harness: 'Claude Code', model: 'claude-opus-5-5', headline: 'v1.3.0 shipped' },
+      { scope: 'roadmap', machine: 'mac-a1b2c3', age: 3 * 3600, harness: 'Antigravity', model: 'gemini-3.7-flash', headline: 'Roadmap drafted' },
+      { scope: 'older', machine: 'mac-a1b2c3', age: 5 * 3600, harness: 'Claude Code (desktop)', model: 'claude-opus-5-5', headline: 'older work' },
+    ] }],
+  });
+  eq(twoTools.model.active.rows.map((r) => r.label),
+    ['ott · Claude Code · 8 min ago', 'ott · Antigravity · 3 hr ago'],
+    'two ADJACENT rows, newest first — the repeated project name IS the handover signal');
+  eq(twoTools.model.active.rows[0].streams.map((s) => s.scope), ['older'],
+    '`Claude Code (desktop)` is Claude Code (normalised): its save is a stream under the Claude Code row, not a third tool');
+  eq(twoTools.model.active.rows.map((r) => r.latest), [true, false],
+    'ONLY the project\'s newest save may claim `latest`; the second tool\'s row is NOT latest');
+  const p2 = RP.composeResumePrompt(twoTools.model.active.rows[1], { domainsDir: '/k' });
+  ok(p2.includes('scope "roadmap"') && !p2.includes('"latest"'),
+    '… so its resume prompt names ITS scope — "latest" would resume the other tool\'s work-stream');
+  eq(twoTools.model.active.rows.map((r) => r.modelFamily), ['opus-5.5', 'gemini-3.7-flash'], 'line two carries the model family (D2: the minor version survives)');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§4 what a header says, and what its tooltip keeps');
+section('§4 what a row says, what its submenu holds, and what the icon\'s tooltip keeps');
 // ═══════════════════════════════════════════════════════════════════════════
-
 {
-  const g = twoInOne.model.groups[0];
-  ok(g.toolTip.startsWith('workshop / lumina · 12 min ago · claude-code'),
-    'the header reads `<project> · <age> · <harness>` — the identity, when it was last touched, and by what');
-  // v3.66.0: this fixture carries NO usage log, so the capture reading is the
-  // ABSENCE, said once, last — never an invented zero and never a bar.
-  ok(g.toolTip.endsWith('Agent sessions: no usage log on this computer') && g.bar === null && g.capture === null,
-    'with no usage log the header draws NO bar and says so in words — absent is not zero (v3.66.0)');
-  eq(g.ageText, '12 min ago', '…and the age is the group\'s NEWEST save, which is the one the reader is asking about');
-  eq(g.harness, 'claude-code', '…and the harness is that save\'s');
-  // ── A MEASURED COST, RECORDED RATHER THAN HIDDEN ─────────────────────
-  //
-  // That reading is 44 characters and the plain-item budget is 42, so on THIS
-  // fixture the harness clause is the one that gives way — clause by clause,
-  // never mid-token, so the reader never sees `claude-c…` and wonders whether
-  // that is what the field said. The identity and the age, which are the two
-  // things a header exists for, always survive.
-  eq(g.label, 'workshop / lumina · 12 min ago…',
-    'and where it will not fit, the HARNESS clause goes whole — the identity and the age are never the ones cut');
-  ok(g.label.length <= M.PLAIN_LABEL_CHARS && g.toolTip.length > M.PLAIN_LABEL_CHARS,
-    `CONTROL — the reading really is over the ${M.PLAIN_LABEL_CHARS}-character budget (${g.toolTip.length}), so the clip above is doing work`);
-  // AND WHERE IT FITS, IT IS THERE. Otherwise the assertion above would be
-  // indistinguishable from a header that never carries a harness at all.
-  {
-    const short = await drive({
-      projects: [{ domain: 'w', project: 'app',
-        scopes: [{ scope: 'main', machine: 'm-a1b2c3', age: 720, harness: 'zed', headline: 'h' }] }],
-    });
-    ok(short.model.groups[0].label.startsWith('app · 12 min ago · zed'),
-      'a header that fits carries all three clauses on the label itself — the no-log clause, LAST, is the one a budget takes');
-  }
-  eq(g.projectFull, 'workshop / lumina', 'the fully-qualified identity is carried beside the label');
-
-  // v3.66.0: the header is an ENABLED item — it carries the capture depth bar,
-  // and a disabled item's icon is tinted grey by macOS — whose click opens
-  // Context on that project. Never a submenu parent, never a `header` type.
+  const r = twoInOne.model.active.rows[0];
+  eq(r.sublabel, 'opus-4.6 — grouped the tray rows by project', 'line two: the model family, then the agent\'s own sentence');
+  eq(r.tier, 'recent', 'the dot is the app\'s tier for 12 minutes: recent');
+  ok(/harness: Claude Code \(recorded as “claude-code”\)/.test(r.toolTip), 'the tooltip keeps the RAW harness string beside the normalised name');
+  ok(r.toolTip.includes('model: opus-4-6'), '… and the exact model id');
   const opened = [];
-  const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(twoInOne.model,
-    { ...NOOPS, onOpenScope: (r) => opened.push(r && r.route) }));
-  const headers = flat.filter((i) => i.id && String(i.id).startsWith('tray-group-'));
-  eq(headers.length, 2, 'both group headers reach the menu');
-  ok(headers.every((h) => h.type !== MENU.MENU_HEADER_TYPE && h.enabled === true && !h.submenu),
-    '…as ENABLED ordinary items (v3.66.0) — a disabled header would grey the depth bar it carries');
-  headers.forEach((h) => h.click());
-  eq(opened, twoInOne.model.groups.map((g) => g.route),
-    '…and each click opens Context on ITS OWN project (the group\'s route), never another\'s');
-  const ids = flat.filter((i) => i.type !== 'separator').map((i) => i.id);
-  ok(ids.indexOf('tray-group-0') < ids.indexOf('tray-row-0'),
-    'the header comes BEFORE the rows it heads');
-  ok(ids.indexOf('tray-row-2') < ids.indexOf('tray-group-1'),
-    '…and a group\'s rows all come before the next header');
-  ok(!flat.some((i) => i.id === MENU.ID_HEADER_ROWS),
-    'the generic "Recent scopes" caption is NOT also drawn — a caption above a caption is a line spent twice');
-
-  // ── AND IT IS BACK IN THE EMPTY STATE ────────────────────────────────
-  const emptyFlat = MENU.flattenTrayMenu(
-    MENU.buildTrayMenuTemplate(M.buildTrayModel({ ok: true, scopes: [] }, { now: NOW }), NOOPS));
-  ok(emptyFlat.some((i) => i.id === MENU.ID_HEADER_ROWS),
-    '…and it IS drawn in the empty state, where there is no project to name and the section still has to exist');
+  const t = MENU.buildTrayMenuTemplate(twoInOne.model, { ...NOOPS, onOpenScope: (x) => opened.push(x && x.route) });
+  const item = t.find((i) => i.id === r.id);
+  ok(item && !item.click && Array.isArray(item.submenu), 'a row is a submenu parent with no click of its own');
+  eq(item.submenu[0].label, r.submenuHeader, 'its submenu opens on the work-stream\'s header');
+  eq(item.submenu.slice(1, 5).map((i) => i.label), MENU.ROW_ACTIONS.map(([, l]) => l), '… then the four actions, in order');
+  eq(item.submenu[6].label, 'Other work-streams', '… then, because there are some, an "Other work-streams" header');
+  const streams = item.submenu.slice(7);
+  eq(streams.map((s) => s.label), ['router · 2 hr ago', 'notes · 1 day ago'],
+    'each stream is `scope · age` — the harness is omitted because it is the row\'s own tool');
+  ok(streams.every((s) => Array.isArray(s.submenu) && s.submenu.length === 5 && !s.click),
+    'and each stream is itself a submenu parent with the same four actions — a SECOND level, to be photographed');
+  streams[0].submenu[1].click();
+  item.submenu[1].click();
+  eq(opened, ['workshop/lumina', 'workshop/lumina'], 'Open in The Curator on a stream or the row opens the project');
+  const atlas = t.find((i) => i.id === twoInOne.model.active.rows[1].id);
+  ok(!atlas.submenu.some((i) => i.label === 'Other work-streams'), 'a row with no other streams has no such header');
 }
-
-// A header that a budget clipped keeps its whole reading on its tooltip.
 {
-  const long = await drive({
-    projects: [
-      { domain: 'a-deliberately-long-domain-name', project: 'a-deliberately-long-project-name',
-        scopes: [{ scope: 'main', machine: 'mac-a1b2c3', age: 300,
-          harness: 'a-long-harness-name', headline: 'h' }] },
-      { domain: 'a-deliberately-long-domain-name', project: 'second-project-here',
-        scopes: [{ scope: 'main', machine: 'mac-a1b2c3', age: 900, harness: 'h2', headline: 'h' }] },
-    ],
-  });
-  const g = long.model.groups[0];
-  ok(g.label.length <= M.PLAIN_LABEL_CHARS,
-    `a long header is inside the ${M.PLAIN_LABEL_CHARS}-character budget — got ${g.label.length}`);
-  ok(g.label.length < g.toolTip.length,
-    'CONTROL — it really was shortened, so the tooltip assertion below is not vacuous');
-  ok(g.toolTip.includes('a-deliberately-long-project-name') && g.toolTip.includes('a-long-harness-name'),
-    'NOTHING A BUDGET REMOVED BECOMES UNREACHABLE — the tooltip carries the identity and the dropped harness in full');
-  ok(g.label.includes('a-deliberately-long-project-name') || g.label.endsWith('…'),
-    'and what survives on the label is the identity, never an ellipsis in place of it');
-  const item = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(long.model, NOOPS))
-    .find((i) => i.id === 'tray-group-0');
-  eq(item.toolTip, g.toolTip, '…and the menu item carries that tooltip');
-}
-
-// ── THE MENU'S FIRST LINE NAMES THE MOST RECENT PROJECT ────────────────────
-eq(twoInOne.model.headline.text, 'Working on: workshop / lumina · 12 min ago',
-  'the headline names the MOST RECENT project and its age');
-eq(twoInOne.model.headline.project, 'lumina', '…and carries the project as a field, not only inside a sentence');
-eq(twoInOne.model.headline.domain, 'workshop', '…and the domain beside it');
-eq(twoInOne.model.headline.who, 'claude-code · opus-4',
-  'provenance stays on the SECOND line, exactly as it was');
-eq(twoInOne.model.headline.where, 'widget',
-  '…and the "where" line is the SCOPE now, because line one already carries the project');
-eq(twoInOne.model.headline.whereFull, 'workshop / lumina · session-2026-09-07-widget',
-  '…with the fully-qualified pair kept beside it for the tooltip');
-{
-  const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(twoInOne.model, NOOPS));
-  const first = flat.filter((i) => i.type !== 'separator')[0];
-  eq(first.id, MENU.ID_HEADLINE, 'and it is still the first item in the menu');
-  eq(first.label, 'Working on: workshop / lumina · 12 min ago', '…rendered verbatim');
+  // The icon's tooltip keeps the fast answer, worded as what it is.
+  eq(twoInOne.model.headline.text, 'Last save: lumina · Claude Code · 12 min ago',
+    'the headline is "Last save: …" — the past tense for a past event, and the menu itself no longer draws it');
+  ok(MENU.trayToolTip(twoInOne.model).startsWith('The Curator — Last save: lumina · Claude Code · 12 min ago'),
+    '… and the icon\'s hover says it before anything is clicked');
+  ok(!MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(twoInOne.model, NOOPS)).some((i) => /^Working on/.test(i.label || '')),
+    'no "Working on" line anywhere in the menu');
+  eq(twoInOne.model.headline.route, 'workshop/lumina', 'it still carries the route of the newest project');
 }
 
 // ── THE BRIEF CLAUSE IS PER PROJECT, AND NAMES AN AGENT AUTHOR ────────────
@@ -722,6 +620,7 @@ eq(legacyOnly.model.brief.authoredBy, null,
 eq(legacyOnly.model.brief.text, 'Brief updated 2 weeks ago',
   '…and its clause says nothing about one, rather than guessing "you wrote it"');
 
+
 // ═══════════════════════════════════════════════════════════════════════════
 section('§5 the routing string the shell emits');
 // ═══════════════════════════════════════════════════════════════════════════
@@ -734,12 +633,10 @@ section('§5 the routing string the shell emits');
 eq(twoInOne.model.rows[0].route, 'workshop/lumina',
   'THE ROUTING STRING IS `<domain>/<project>` — a project name alone stopped identifying a row the moment one domain could hold two');
 eq(twoInOne.model.rows.map((r) => r.route),
-  ['workshop/lumina', 'workshop/lumina', 'workshop/lumina', 'workshop/atlas'],
-  '…on every row, taken from that row\'s own pair');
+  ['workshop/lumina', 'workshop/atlas', 'workshop/lumina', 'workshop/lumina'],
+  '…on every row — the face, then the streams — taken from that row\'s own pair');
 eq(legacyOnly.model.rows[0].route, 'articles/articles',
   'a legacy default project routes as `<domain>/<domain>`, because its project slug IS the domain — the route is machine-read and does not collapse');
-eq(twoInOne.model.headline.route, 'workshop/lumina',
-  'and the headline carries one too, for the item that opens the app on the newest project');
 
 // THE MARKER, which is the same pair written for a HUMAN to type.
 //
@@ -754,7 +651,7 @@ eq(twoInOne.model.rows[0].marker, 'workshop/lumina', 'the `.curator-project` mar
 eq(legacyOnly.model.rows[0].marker, 'articles/articles',
   '…on a legacy default project too: the marker NEVER collapses to a bare domain, because the app\'s own Copy marker line does not and the bare form is the one that can be refused as ambiguous');
 eq(twoInOne.model.rows.map((r) => r.marker),
-  ['workshop/lumina', 'workshop/lumina', 'workshop/lumina', 'workshop/atlas'],
+  ['workshop/lumina', 'workshop/atlas', 'workshop/lumina', 'workshop/lumina'],
   '…on every row, from that row\'s own pair');
 // AND THE TWO PRODUCERS AGREE. The app composes `state.activeSlug + '/' +
 // project` in views/domains.js (copyProjectMarker) and the store returns
@@ -771,9 +668,10 @@ for (const r of [...twoInOne.model.rows, ...legacyOnly.model.rows]) {
   // asserted by driving the real submenu item's click.
   let got = null;
   const t = MENU.buildTrayMenuTemplate(twoInOne.model, { ...NOOPS, onOpenScope: (r) => { got = r; } });
-  MENU.flattenTrayMenu(t).find((i) => i.id === MENU.rowActionId('tray-row-3', MENU.ID_ROW_OPEN)).click();
+  const atlasRow = twoInOne.model.rows.find((r) => r.project === 'atlas');
+  MENU.flattenTrayMenu(t).find((i) => i.id === MENU.rowActionId(atlasRow.id, MENU.ID_ROW_OPEN)).click();
   ok(got && got.route === 'workshop/atlas',
-    'clicking `Open in The Curator` on the fourth row hands the shell THAT row\'s route, not the first one\'s');
+    'clicking `Open in The Curator` on the atlas row hands the shell THAT row\'s route, not the first one\'s');
 
   // AND THE SHELL REALLY READS IT. main.js cannot be imported by `npm test`, so
   // this is a SOURCE SCAN and is weak by construction — it proves the line was
@@ -808,9 +706,9 @@ section('§6 the resume prompt and the Finder path, over both layouts');
   ok(p.includes('workshop/lumina') && /\.curator-project/.test(p),
     '…and the marker line, so a session started in the wrong repo can be pointed at the right project');
 
-  // THE SECOND ROW OF A GROUP IS NOT "latest", and the prompt must not say so.
-  const second = twoInOne.model.rows[1];
-  eq(second.latest, false, 'CONTROL — the second row of a group is not its project\'s newest');
+  // A STREAM IS NOT "latest", and the prompt must not say so.
+  const second = twoInOne.model.rows.find((r) => r.scope === 'session-2026-09-06-router');
+  eq(second.latest, false, 'CONTROL — an Other work-streams row is not its project\'s newest');
   const p2 = RP.composeResumePrompt(second, { domainsDir: '/knowledge' });
   ok(p2.includes('scope "session-2026-09-06-router"') && !p2.includes('"latest"'),
     'so its prompt names that scope and never `latest` — "latest" there would resume a DIFFERENT work-stream than the row the user clicked');
@@ -852,13 +750,12 @@ section('§6 the resume prompt and the Finder path, over both layouts');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§7 the width budget, over every label the four fixtures emit');
+section('§7 the width budget, over every label the four fixtures emit — at every depth');
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// The menu was MEASURED at 363.5 points from a 2x capture (v3.42.0), and every
-// label is budgeted against it. A group header is a NEW line on that menu, so
-// it is measured with the rest rather than assumed to fit.
-
+// The menu was MEASURED at 363.5 points (v3.42.0) and every label is budgeted
+// against it. Layout A moves the harness onto line one and nests two submenu
+// levels; each line is measured where it is drawn.
 {
   let lines = 0, widest = 0, widestText = '';
   const over = [];
@@ -873,37 +770,26 @@ section('§7 the width budget, over every label the four fixtures emit');
         if (!it[key]) continue;
         lines++;
         if (it[key].length > widest) { widest = it[key].length; widestText = `${name}: ${it[key]}`; }
-        const cap = key === 'sublabel' ? M.MAX_HEADLINE_CHARS : M.PLAIN_LABEL_CHARS;
+        const isRow = /^tray-row-\d+$/.test(String(it.id || ''));
+        const cap = key === 'sublabel' ? M.MAX_HEADLINE_CHARS : (isRow ? M.ROW_LABEL_CHARS : M.PLAIN_LABEL_CHARS);
         if (it[key].length > cap) over.push(`${name} ${key} (${it[key].length} > ${cap}): ${it[key]}`);
       }
     }
   }
   ok(lines >= 60, `CONTROL: ${lines} rendered lines were measured across four fixtures, so the sweep is not looking at an empty menu`);
   ok(widest > 24, `CONTROL: the widest of them is ${widest} characters, a real line rather than a stub`);
-  eq(over, [], 'every label and sublabel the four fixtures emit is inside its budget');
+  eq(over, [], 'every label (a row\'s against its 13pt-dot budget) and every sublabel is inside its budget, submenus included');
   console.log(`    widest rendered line: ${widest} characters — "${widestText}"`);
-  console.log(`    ≈${(M.MENU_CHROME_POINTS + widest * M.MENU_CHAR_POINTS).toFixed(0)}pt against the measured ${M.MENU_WIDTH_POINTS}pt menu`);
-  // The header is a PLAIN item — no icon gutter — so it is charged at the plain
-  // rate. Asserted as arithmetic rather than trusted: an icon on a header would
-  // silently make every one of them over budget.
-  ok(M.PLAIN_LABEL_CHARS * M.MENU_CHAR_POINTS + M.MENU_CHROME_POINTS <= M.MENU_WIDTH_POINTS,
-    `a full-width plain item fits the measured menu: ${M.PLAIN_LABEL_CHARS} x ${M.MENU_CHAR_POINTS} + ${M.MENU_CHROME_POINTS} <= ${M.MENU_WIDTH_POINTS}`);
-  const headerItems = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(monopoly.model, {
-    ...NOOPS, makeIcon: () => ({ fake: 'image' }),
-  })).filter((i) => i.id && String(i.id).startsWith('tray-group-'));
-  ok(headerItems.length > 0 && headerItems.every((h) => !h.icon),
-    'CONTROL — and no header carries an icon, so charging it at the plain rate is right');
 }
 
 // ── AND THE HEIGHT, STATED AS ARITHMETIC ────────────────────────────────
 {
-  const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(monopoly.model, NOOPS))
-    .filter((i) => i.type !== 'separator' && !String(i.path || '').includes(' › '));
-  const rowsSection = flat.filter((i) => String(i.id || '').startsWith('tray-group-')
-    || String(i.id || '').startsWith('tray-row-'));
-  eq(rowsSection.length, M.MAX_ROWS + monopoly.model.groups.length,
-    `the rows section is ${monopoly.model.groups.length} headers plus ${M.MAX_ROWS} rows — two items taller than the single caption it replaced, which is what the grouping costs`);
+  const top = MENU.buildTrayMenuTemplate(monopoly.model, NOOPS).filter((i) => i.type !== 'separator');
+  eq(top.map((i) => i.id), [MENU.ID_PULSE, MENU.ID_HEADER_ACTIVE, ...monopoly.model.active.rows.map((r) => r.id), MENU.ID_IDLE,
+    MENU.ID_OPEN_MEMORY, MENU.ID_OPEN_APP, MENU.ID_SETTINGS, MENU.ID_UPDATED_STAMP, MENU.ID_QUIT],
+    'the monopoly store\'s whole top level: the pulse, one header, three active rows, the Idle fold, the commands, the stamp and Quit — fifteen work-streams in six reading lines');
 }
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§8 state-watch reaches one level deeper, and it always did');
@@ -1054,125 +940,50 @@ section('§9 cross-file pins — duplicated on purpose, asserted against the ori
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§10 the stale-foundations mark on the project header (v3.60.0)');
+section('§10 stale documents are a NOTICE now (v3.74.0) — only when true');
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Tier 0 is the set of canonical documents that travel with a project. The one
-// thing that can go wrong with a MIRROR is that the repository has moved on —
-// the copy an agent will read is no longer the document in the checkout — and
-// that is a fact about the project the menu's header names, so it rides on the
-// header's own second line.
-//
-// THREE PROPERTIES, and they are the whole feature: the word appears ONCE, it
-// is clipped inside the line's existing budget, and it is ABSENT when nothing
-// is stale. A `notices` entry is NOT added: the widget's standing rule is that
-// it must never become a quarter of the screen (v3.37.0, v3.51.0), and a
-// notice is a whole line that pushes every row down.
+// Until v3.72 the mark rode on the headline's grey second line — "three words
+// on a line that already exists". Layout A removed that line, and the design
+// turns the one part of the Documents reading worth an alert into a notice:
+// `<project> · N docs stale`, for an ACTIVE project, only when true.
 {
-  const base = (foundations) => ({
+  const base = (foundations, age = 720) => ({
     ok: true,
     scopes: [{
       domain: 'workshop', project: 'lumina', projectLabel: 'lumina', projectsInDomain: 1,
       scope: 'session-2026-09-07-widget', machine: 'mac-a1b2c3',
-      writtenAt: ago(720), ageSource: 'agent',
+      writtenAt: ago(age), ageSource: 'agent',
       harness: 'claude-code', model: 'opus-4-6', headline: 'grouped the tray rows by project',
       foundations,
     }],
-    lastSave: {
-      domain: 'workshop', project: 'lumina', projectLabel: 'lumina', projectsInDomain: 1,
-      scope: 'session-2026-09-07-widget', machine: 'mac-a1b2c3',
-      writtenAt: ago(720), ageSource: 'agent',
-      harness: 'claude-code', model: 'opus-4-6',
-      foundations,
-    },
   });
-  const lineOf = (model) => {
-    const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(model, NOOPS));
-    const item = flat.find((i) => i.id === MENU.ID_HEADLINE_WHERE);
-    return item ? item.label.trim() : null;
-  };
-
-  // FRESH — and the control that matters, because a mark that is always there
-  // is not a mark. Run FIRST so the assertions below are a difference.
+  const staleOf = (m) => m.notices.filter((n) => n.kind === 'docs-stale').map((n) => n.text);
   const fresh = M.buildTrayModel(base({ present: true, count: 4, staleCount: 0, unreachableCount: 0 }), { now: NOW });
-  const freshLine = lineOf(fresh);
-  ok(freshLine === 'claude-code · opus-4', `CONTROL: fresh foundations leave the line untouched (${freshLine})`);
-  // Over the RENDERED strings only. The row still carries its `foundations`
-  // object (whose field is called `staleCount`), and it should: a later surface
-  // that wants to draw stale and unreachable apart needs it. What must be
-  // absent is the WORD, on anything a person reads.
+  eq(staleOf(fresh), [], 'CONTROL: fresh foundations → no notice');
   const freshText = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(fresh, NOOPS))
     .map((i) => [i.label, i.sublabel, i.toolTip].filter(Boolean).join(' ')).join(' ');
   ok(!/stale/i.test(freshText), '…and the word "stale" appears on nothing a person reads');
-
-  // THREE STALE.
-  const stale = M.buildTrayModel(base({ present: true, count: 4, staleCount: 3, unreachableCount: 0 }), { now: NOW });
-  const staleLine = lineOf(stale);
-  ok(/3 docs stale$/.test(staleLine), `the mark lands on the header's second line (${staleLine})`);
-  ok((staleLine.match(/docs stale/g) || []).length === 1, '…exactly once');
-  ok(staleLine.startsWith('claude-code'), '…after the harness, which keeps its place');
-  ok(stale.notices.every((n) => !/stale/.test(String(n && n.message || n))),
-    '…and NOT as a notice: a widget never spends a whole line on three words');
-
-  // ONE is singular. A count that reads "1 docs stale" is the tell that nobody
-  // rendered it.
-  const one = M.buildTrayModel(base({ present: true, count: 2, staleCount: 1, unreachableCount: 0 }), { now: NOW });
-  ok(/· 1 doc stale$/.test(lineOf(one)), `one stale document is "1 doc stale" (${lineOf(one)})`);
-
-  // UNREACHABLE COUNTS TOO. "the source has changed" and "the source could not
-  // be read" are different facts; what they share is the one this line has room
-  // for — the stored copy is NOT KNOWN to be current.
-  const unreachable = M.buildTrayModel(base({ present: true, count: 2, staleCount: 1, unreachableCount: 2 }), { now: NOW });
-  ok(/· 3 docs stale$/.test(lineOf(unreachable)),
-    `a stale one and two unreachable ones read as 3 (${lineOf(unreachable)})`);
-
-  // THE SECOND ARM. The headline is built from `lastSave` when the store
-  // supplies one and from the newest ROW when it does not — and a summary
-  // without a `lastSave` is not hypothetical, it is what an older producer
-  // sends. The mark must survive that path, which it can only do if the counts
-  // are carried onto the row rather than read off `lastSave` alone.
-  const noLastSave = base({ present: true, count: 4, staleCount: 2, unreachableCount: 0 });
-  delete noLastSave.lastSave;
-  ok(/· 2 docs stale$/.test(lineOf(M.buildTrayModel(noLastSave, { now: NOW }))),
-    `the mark survives the rows[0] fallback arm (${lineOf(M.buildTrayModel(noLastSave, { now: NOW }))})`);
-
-  // NO FOUNDATIONS AT ALL — a project with no tier 0, and a producer too old to
-  // report one. Both must be silent rather than "0 docs stale".
-  ok(lineOf(M.buildTrayModel(base(null), { now: NOW })) === 'claude-code · opus-4',
-    'a project with no foundations says nothing');
-  ok(lineOf(M.buildTrayModel(base(undefined), { now: NOW })) === 'claude-code · opus-4',
-    '…and so does a summary from a producer that does not report them');
-
-  // THE BUDGET. A long harness plus a long model plus the mark must still fit
-  // the line's own cap, and the MARK is what survives — it is the tail, and the
-  // tail is never the thing cut (the ordering `headlineTextFor` settled for the
-  // age, for the same reason).
-  const long = base({ present: true, count: 9, staleCount: 9, unreachableCount: 0 });
-  long.scopes[0].harness = 'a-harness-with-an-extremely-long-name-indeed';
-  long.lastSave.harness = long.scopes[0].harness;
-  long.scopes[0].model = 'some-vendor/an-extremely-long-model-name-4-turbo';
-  long.lastSave.model = long.scopes[0].model;
-  const longLine = lineOf(M.buildTrayModel(long, { now: NOW }));
-  ok(longLine.length <= M.WHERE_LABEL_CHARS,
-    `the composed line stays inside its budget (${longLine.length} <= ${M.WHERE_LABEL_CHARS})`);
-  ok(/9 docs stale$/.test(longLine), `…and the MARK is what survives the clip (${longLine})`);
-  ok(!/stale…|stal…|doc…|docs…/.test(longLine),
-    '…never a half-cut mark, which would read as a different fact');
+  eq(staleOf(M.buildTrayModel(base({ present: true, count: 4, staleCount: 3, unreachableCount: 0 }), { now: NOW })),
+    ['lumina · 3 docs stale'], 'three stale → one notice, naming the project');
+  eq(staleOf(M.buildTrayModel(base({ present: true, count: 2, staleCount: 1, unreachableCount: 0 }), { now: NOW })),
+    ['lumina · 1 doc stale'], 'one is singular');
+  eq(staleOf(M.buildTrayModel(base({ present: true, count: 2, staleCount: 1, unreachableCount: 2 }), { now: NOW })),
+    ['lumina · 3 docs stale'], 'stale and unreachable are summed: the stored copy is NOT KNOWN to be current');
+  eq(staleOf(M.buildTrayModel(base(null), { now: NOW })), [], 'no foundations → silent');
+  eq(staleOf(M.buildTrayModel(base(undefined), { now: NOW })), [], '…and so is a producer that does not report them');
+  eq(staleOf(M.buildTrayModel(base({ staleCount: 3, unreachableCount: 0 }, 3 * 86400), { now: NOW })), [],
+    'an IDLE project\'s stale documents are not a notice — nobody is working on it');
+  const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(
+    M.buildTrayModel(base({ present: true, count: 4, staleCount: 3, unreachableCount: 0 }), { now: NOW }), NOOPS));
+  const n = flat.find((i) => i.label === 'lumina · 3 docs stale');
+  ok(n && n.enabled === false && /not known to be current/.test(n.toolTip || ''),
+    'in the menu it is a disabled statement whose tooltip says what "stale" means');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§11 the PRODUCER, not just the consumer — real rows into the real composer');
 // ═══════════════════════════════════════════════════════════════════════════
-//
-// §10 above proves `buildTrayModel` renders `row.foundations` correctly — but
-// every one of its fixtures is a summary object HAND-BUILT with the field
-// already on it. That is exactly the gap this section closes: it drives the
-// same fake store §1-§9 already use through the REAL `TS.getTraySummary`
-// (the field's actual producer, `src/brain/tray-summary.js`), and only THEN
-// into the real `M.buildTrayModel` and `MENU.buildTrayMenuTemplate` — the
-// same "data layer → model → menu" chain `drive()` uses everywhere else in
-// this file. If the producer stopped attaching the field, or attached it to
-// the wrong rows, this is the section that would go red; §10 could not.
 {
   const spec = {
     projects: [
@@ -1183,52 +994,24 @@ section('§11 the PRODUCER, not just the consumer — real rows into the real co
           { scope: 'session-2026-09-06-b', machine: 'mac-a1b2c3', age: 9000, harness: 'claude-code', model: 'opus-4-6', headline: 'two' },
           { scope: 'session-2026-09-05-c', machine: 'mac-a1b2c3', age: 90000, harness: 'claude-code', model: 'opus-4-6', headline: 'three' },
         ] },
-      // NO `foundations` key at all — the absent-tier case, from a project
-      // that IS on the store.
       { domain: 'workshop', project: 'atlas',
         scopes: [{ scope: 'main', machine: 'mac-a1b2c3', age: 4200, harness: 'opencode', headline: 'quiet' }] },
     ],
   };
   const store = fakeStore(spec);
   const summary = await TS.getTraySummary({ store, limit: M.TRAY_FETCH_ROWS, now: NOW_MS });
-
-  // The producer, over real store output — nothing hand-built from here on.
   const luminaRows = summary.scopes.filter((r) => r.project === 'lumina');
   eq(luminaRows.length, 3, 'PRECONDITION: three lumina rows came back from the real producer');
   ok(luminaRows.every((r) => r.foundations && r.foundations.staleCount === 1 && r.foundations.unreachableCount === 0),
-    'every lumina row carries the counts the store reported — not hand-set, PRODUCED');
+    'every lumina row carries the counts the store reported — PRODUCED, not hand-set');
   const atlasRow = summary.scopes.find((r) => r.project === 'atlas');
-  ok(atlasRow && atlasRow.foundations && atlasRow.foundations.staleCount === 0 && atlasRow.foundations.unreachableCount === 0,
-    'the project with no foundations key at all still gets a zeroed object, from the producer itself');
-  ok(summary.lastSave && summary.lastSave.project === 'lumina' && summary.lastSave.foundations
-    && summary.lastSave.foundations.staleCount === 1,
-    'lastSave, the headline\'s own source, carries the producer\'s counts too');
-
-  // listFoundations was called ONCE for lumina despite three rows — the
-  // producer's memoisation, proven over the fake store's own call log.
+  ok(atlasRow && atlasRow.foundations && atlasRow.foundations.staleCount === 0,
+    'the project with no foundations key still gets a zeroed object, from the producer itself');
   eq(store.__foundationsCalls.filter((k) => k === 'workshop\u0000lumina').length, 1,
     `the producer called listFoundations exactly once for lumina (log: ${JSON.stringify(store.__foundationsCalls)})`);
-
-  // ── THEN THE REAL COMPOSER, over rows this section did not write ─────────
   const model = M.buildTrayModel(summary, { now: NOW });
-  const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(model, NOOPS));
-  const headlineWhere = flat.find((i) => i.id === MENU.ID_HEADLINE_WHERE);
-  ok(headlineWhere != null, 'the headline\'s second line exists in the real menu template');
-  const line = headlineWhere.label.trim();
-  ok(/· 1 doc stale$/.test(line), `the sublabel carries the mark, built from a REAL producer summary, not a fixture (${line})`);
-  ok((line.match(/doc stale/g) || []).length === 1, '…exactly once');
-
-  // §10's control, re-run over the real producer: a project the store
-  // reports as having no foundations must stay silent all the way through —
-  // not merely when the test hand-writes `foundations: null`.
-  const atlasOnly = {
-    projects: [{ domain: 'workshop', project: 'atlas', scopes: spec.projects[1].scopes }],
-  };
-  const atlasSummary = await TS.getTraySummary({ store: fakeStore(atlasOnly), limit: M.TRAY_FETCH_ROWS, now: NOW_MS });
-  const atlasModel = M.buildTrayModel(atlasSummary, { now: NOW });
-  const atlasFlat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(atlasModel, NOOPS));
-  const atlasLine = (atlasFlat.find((i) => i.id === MENU.ID_HEADLINE_WHERE) || {}).label || '';
-  ok(!/stale/i.test(atlasLine), `a real producer summary with nothing stale prints no mark (${atlasLine.trim()})`);
+  eq(model.notices.filter((n) => n.kind === 'docs-stale').map((n) => n.text), ['lumina · 1 doc stale'],
+    'the notice is built from a REAL producer summary — lumina only, once');
 }
 
 console.log(`\n${failed === 0 ? '✓' : '✗'} test-tray-projects: ${passed} passed, ${failed} failed`);

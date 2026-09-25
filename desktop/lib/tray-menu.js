@@ -18,58 +18,46 @@
  * the two Electron calls it cannot give away. This is the same split, and the
  * same reason, as `lib/menu.js` and `lib/quit-decision.js`.
  *
- * ── THE ORDER OF THE MENU IS THE DESIGN ────────────────────────────────────
+ * ── THE ORDER OF THE MENU IS THE DESIGN (Layout A, v3.74.0) ────────────────
  *
- *   1  the headline answer          "Working on: lumina · 12 min ago"
- *   2  who wrote it                 "claude-code · opus-4"
- *   -  header                       "Save pulse"
- *   2b the save pulse               a drawn strip + "5 days known · 79 saves · 2 tools"
- *   -  project header               "articles / lumina · 9 of 11 saved · 12 min ago"
- *                                   ENABLED since v3.66.0, carrying the capture
- *                                   depth bar; a click opens Context on it
- *   3a the open project's documents "Read first · 64 of 120 KB" + a depth bar
- *                                   (or "Documents · 9 · 187 KB stored", no bar,
- *                                   when nothing is read first — v3.70.0) — the
- *                                   FIRST line of the open project's own group
- *                                   only (v3.66.0), before its scope rows
- *   3a' its session start           "Session start ≈22.7k tok · 2.3% of 1M" + the
- *                                   window meter (v3.70.0), under 3a
- *   3  up to TWO rows               newest scope first, each with a recency mark
- *                                   in its icon gutter and a four-item submenu
- *   -  … up to THREE such groups, five rows in total
- *   3b the overflow                 "More in Project Context… (6)" — clickable
- *   -  header                       "Domains · pages" (v3.66.0)
- *   3c up to FOUR domain rows       "posts · 687 pages" + a bar in the domain's
- *                                   identity colour; the fourth is "…and N more"
+ *   1  the save pulse               a drawn strip + "7 days · 192 saves ·
+ *                                   Claude Code" › SAVES BY TOOL — one strip
+ *                                   per harness (a plain item when the data
+ *                                   layer supplies no per-tool lanes)
  *   -  separator
- *   4  notices, only when true      waiting handoffs; a machine that saved
- *                                   after this one; harness collisions
+ *   -  header                       "Active · last 24 h"
+ *   2  one row per (project ×       "ott · Claude Code · 8 min ago"
+ *      harness) saved in 24 h       sublabel "opus-5.5 — v1.3.0 shipped…"
+ *                                   the app's freshness dot in the gutter;
+ *                                   › the four actions + OTHER WORK-STREAMS
+ *                                   (each › the same four actions)
+ *   2b the overflow, when capped    "+2 more active projects" › the same rows
+ *   3  notices, only when true,     handoffs waiting on GitHub; a machine that
+ *      between separators           saved after this one; "Two tools are
+ *                                   writing ott / main" (ONE per work-stream,
+ *                                   enabled: opens the project); stale docs
+ *   4  the Idle fold                "Idle · 4 projects" / "field-notes 1 wk ·
+ *                                   lumina 2 wk · +2 more" › one row per project
+ *   5  "Knowledge · 6 domains"      › every domain's page bar, in its identity
+ *                                   colour (design rule 5, unchanged)
  *   -  separator
- *   5  Open Project Context…  ·  Open The Curator  ·  Settings…
+ *   6  Open Project Context…  ·  Open The Curator  ·  Settings…
  *   -  separator
- *   6  "Updated 14:32"              the reading's own freshness
+ *   7  "Updated 14:32"              when the figures were READ
  *   -  separator
- *   7  Quit The Curator
+ *   8  Quit The Curator
  *
- * The two headers are what make this read as a WIDGET rather than a list of
- * items, which was the maintainer's verdict on the version before it ("it does
- * not look like a widget yet"). They replace the separators that used to sit in
- * the same two places, so the menu gained structure without gaining height.
+ * REMOVED FROM THE MENU, KEPT IN THE APP (the maintainer's decision): the
+ * "Working on" headline and its grey harness · model line (the first Active
+ * row says it once, with a noun for each fact; the icon's hover keeps the
+ * fast answer), the Session start line, the Documents line, and the
+ * "N of M saved" capture bars (D5: they counted MCP process ids, not
+ * sessions).
  *
- * The headline is FIRST because it is the question the maintainer actually
- * asks — "am I approaching the end of the context window, and did we update the
- * scope?" — and it must be answerable without reading past the first line.
- *
- * ── WHY THE HEADLINE IS AN ENABLED ITEM AND NOT A DIMMED ONE ───────────────
- *
- * A disabled menu item is drawn at reduced contrast. Putting the one line the
- * whole widget exists for into the least legible style available would be the
- * exact shape of defect this project has already fixed twice in its own CSS
- * (nested opacities compounding to 2.05:1). It is enabled, drawn at full
- * contrast, and clicking it does the obvious thing — opens the app on that
- * project. Items that are genuinely statements rather than actions (the
- * notices, the freshness stamp) ARE disabled, which is the standard menu idiom
- * for a status line and keeps the actionable items distinguishable.
+ * A click opens the menu on the snapshot the last read produced and refreshes
+ * afterwards (main.js); the filesystem watch keeps that snapshot close. So the
+ * menu is NOT "fresh on click", and nothing here says it is — the Updated
+ * stamp says when the figures were read.
  *
  * ── QUIT IS `role: 'quit'`, AND THAT IS A SAFETY PROPERTY ──────────────────
  *
@@ -101,14 +89,12 @@
  *  3. The bit worth carrying is presence plus one state, and the template
  *     glyph carries it (see lib/tray-icon.js).
  *
- * So the headline answer lives at the TOP OF THE MENU, one click away, at full
- * contrast, beside the absolute stamp that says how fresh the reading is.
+ * So the answer to "what just happened" is the first Active row, one click
+ * away, beside the absolute stamp that says how fresh the reading is.
  */
 
 /** Item ids, so a caller can address an item without matching on its label.
  *  Labels are user-visible copy and will change; ids are a contract. */
-export const ID_HEADLINE = 'tray-headline';
-export const ID_HEADLINE_WHERE = 'tray-headline-where';
 
 /**
  * ── THE PER-ROW SUBMENU: THE ROUTE THE MENU ACTUALLY HAS ───────────────────
@@ -151,34 +137,27 @@ export const ROW_ACTIONS = [
 export function rowActionId(rowId, action) {
   return String(rowId) + ':' + String(action);
 }
-export const ID_HEADER_PULSE = 'tray-header-pulse';
-/**
- * The generic "Recent scopes" caption.
- *
- * ── IT IS THE EMPTY STATE'S HEADER NOW, AND ONLY THAT ─────────────────────
- *
- * v3.48.0 groups the rows under PROJECT headers (`buildTrayModel`'s `groups`),
- * so a store with anything in it draws one header per project instead of this
- * one. Rendering both would put a caption above a caption on the one surface
- * with no vertical space, and the project header says strictly more.
- *
- * It stays for the EMPTY state, where there is no project to name and the
- * section still needs to exist — an empty menu whose "nothing yet" line sits
- * under no heading at all reads as a broken menu rather than an empty one.
- */
-export const ID_HEADER_ROWS = 'tray-header-rows';
 export const ID_PULSE = 'tray-pulse';
+export const ID_HEADER_PULSE_TOOLS = 'tray-header-pulse-tools';
+export const ID_HEADER_ACTIVE = 'tray-header-active';
+export const ID_NO_ACTIVE = 'tray-no-active';
+export const ID_OVERFLOW = 'tray-overflow';
+export const ID_IDLE = 'tray-idle';
+export const ID_IDLE_MORE = 'tray-idle-more';
+export const ID_KNOWLEDGE = 'tray-knowledge';
+export const ID_HEADER_STREAMS = 'streams-header';
+export const ID_STREAMS_MORE = 'streams-more';
+/** The EMPTY state's caption — a store with no project context at all. An
+ *  empty menu whose "nothing yet" line sits under no heading reads as a
+ *  broken menu rather than an empty one. */
+export const ID_HEADER_ROWS = 'tray-header-rows';
 export const ID_OPEN_MEMORY = 'tray-open-memory';
 export const ID_OPEN_APP = 'tray-open-app';
 export const ID_SETTINGS = 'tray-settings';
 export const ID_UPDATED_STAMP = 'tray-updated-stamp';
-export const ID_TRUNCATED = 'tray-truncated';
 export const ID_EMPTY = 'tray-empty';
 export const ID_QUIT = 'tray-quit';
-export const ID_DOCUMENTS = 'tray-documents';
-export const ID_SESSION_START = 'tray-session-start';
 export const ID_HEADER_DOMAINS = 'tray-header-domains';
-export const ID_DOMAINS_MORE = 'tray-domains-more';
 
 /** The empty state is the first thing a new user sees, and it must not read
  *  like an error. It says what the surface is for and how something gets into
@@ -222,9 +201,10 @@ export const UNREADABLE_HINT = 'Open The Curator to see what went wrong';
 export const MENU_HEADER_TYPE = 'header';
 
 /** Section captions. Nouns, not sentences — a header that explains is a header
- *  that costs a line of a surface with no vertical space. */
-export const HEADER_PULSE = 'Save pulse';
-export const HEADER_ROWS = 'Recent scopes';
+ *  that costs a line of a surface with no vertical space. The Active header's
+ *  words live on the model (`HEADER_ACTIVE`), beside the rule that fills it. */
+export const HEADER_ROWS = 'Project context';
+export const HEADER_STREAMS = 'Other work-streams';
 
 /**
  * One image spec through the injected seam, or null.
@@ -245,30 +225,26 @@ function header(id, label) {
 const sep = { type: 'separator' };
 
 /**
- * One row's submenu.
+ * The four actions on one work-stream, under a header naming it.
  *
- * The header names the work-stream, because a submenu that opens beside five
- * near-identical rows has to say which one it belongs to — and the row's own
- * label is off to the left, under the pointer, not in the submenu.
+ * The header names the work-stream (`domain / project · scope`) because a
+ * submenu that opens beside several near-identical rows has to say which one
+ * it belongs to — and the row's own label is off to the left.
  *
  * `Reveal current.md in Finder` is offered on EVERY row including a foreign
- * one, and that is correct rather than sloppy: a handoff pulled from another
- * computer is a real file in this checkout's own `state/` folder, which is
- * exactly the file somebody debugging a sync question wants to open. The shell
- * decides what to do when the path is not there; a menu that hid the item would
- * be answering a filesystem question it has not asked.
+ * one: a handoff pulled from another computer is a real file in this
+ * checkout's own `state/` folder. The shell decides what to do when the path
+ * is not there.
  */
-function rowSubmenu(row, onOpenScope, onRowAction) {
-  const items = [header(rowActionId(row.id, 'header'), row.scopeShort || row.scope || '')];
+function actionItems(row, onOpenScope, onRowAction) {
+  const items = [header(rowActionId(row.id, 'header'), row.submenuHeader || row.scopeShort || row.scope || '')];
   for (const [action, label] of ROW_ACTIONS) {
     items.push({
       id: rowActionId(row.id, action),
       label,
       // `Open` keeps its own dedicated handler rather than being routed through
       // `onRowAction`: it is the one action that existed before this submenu
-      // did, it has a shell function of its own, and putting it through a
-      // string-dispatched channel would make an existing behaviour depend on a
-      // switch statement matching a constant.
+      // did, and a string-dispatched channel would make it depend on a switch.
       click: action === ID_ROW_OPEN
         ? () => onOpenScope(row)
         : () => onRowAction(row, action),
@@ -278,18 +254,65 @@ function rowSubmenu(row, onOpenScope, onRowAction) {
 }
 
 /**
+ * One drawn row as a menu item: label, sublabel, the freshness dot in the
+ * gutter, and a submenu. A submenu parent carries NO `click` — on macOS a
+ * click on it opens the submenu, and a handler beside it fires or not
+ * depending on the AppKit path. `Open in The Curator` is the first action.
+ */
+function rowItem(row, makeIcon, submenu) {
+  const dot = image(makeIcon, row.dot);
+  return {
+    id: row.id,
+    label: row.label,
+    ...(row.sublabel ? { sublabel: row.sublabel } : {}),
+    ...(dot ? { icon: dot } : {}),
+    ...(row.toolTip ? { toolTip: row.toolTip } : {}),
+    submenu,
+  };
+}
+
+/**
+ * A primary row's submenu: its four actions, then — only when there are any —
+ * OTHER WORK-STREAMS, each a row of its own with the same four actions.
+ *
+ * TWO LEVELS OF SUBMENU (row › stream › actions). Submenus on a tray menu
+ * have been photographed (v3.42.0); a second level has NOT. It is ordinary
+ * NSMenu nesting and Electron's template takes it as data, but it is listed
+ * among the things to photograph before tagging.
+ */
+function rowSubmenu(row, onOpenScope, onRowAction, onOpenMemory, makeIcon) {
+  const items = actionItems(row, onOpenScope, onRowAction);
+  const streams = Array.isArray(row.streams) ? row.streams : [];
+  if (streams.length || row.streamsHidden > 0) {
+    items.push(sep);
+    items.push(header(rowActionId(row.id, ID_HEADER_STREAMS), HEADER_STREAMS));
+    for (const s of streams) {
+      items.push(rowItem(s, makeIcon, actionItems(s, onOpenScope, onRowAction)));
+    }
+    if (row.streamsHidden > 0) {
+      // ENABLED: it is the only route to the streams the cap hid.
+      items.push({
+        id: rowActionId(row.id, ID_STREAMS_MORE),
+        label: row.streamsHidden + ' more in Project Context…',
+        click: onOpenMemory,
+      });
+    }
+  }
+  return items;
+}
+
+/**
  * @param {object} model  a `buildTrayModel()` result.
  * @param {object} o
  * @param {string}   [o.appName]
- * @param {Function} o.onOpenScope   (row) => void   — open the app on that scope
- * @param {Function} o.onOpenMemory  () => void      — open the Agent memory view
+ * @param {Function} o.onOpenScope   (row) => void   — open the app on that project
+ * @param {Function} o.onOpenMemory  () => void      — open Project Context
  * @param {Function} o.onOpenApp     () => void      — reveal the window
  * @param {Function} o.onOpenSettings () => void
+ * @param {Function} o.onRowAction   (row, action) => void
  * @param {Function} [o.makeIcon]  (spec) => NativeImage|null — the ONE Electron
- *   call the drawn images need, injected rather than imported. A spec is
- *   `{buffer, buffer2x, widthPoints, heightPoints, template}`; the seam is
- *   expected to honour `spec.template` and is never asked to invent it. See the
- *   pulse block below for why it is a parameter and not a build step in main.js.
+ *   call the drawn images need, injected rather than imported, so every
+ *   decision about the menu stays in a module `npm test` executes.
  * @returns {Array} a `Menu.buildFromTemplate` template
  */
 export function buildTrayMenuTemplate(model, o = {}) {
@@ -299,12 +322,8 @@ export function buildTrayMenuTemplate(model, o = {}) {
   } = o;
 
   // Every handler is required. A menu item wired to `undefined` throws at
-  // CLICK time — i.e. in front of the user, weeks later — so it is refused
-  // here, at build time, where the suite sees it. Same rule as lib/menu.js.
-  //
-  // `onRowAction` joins them rather than being optional: an OPTIONAL handler
-  // means a submenu that silently does nothing, which is worse than a menu that
-  // refuses to build in front of a developer.
+  // CLICK time — in front of the user, weeks later — so it is refused here,
+  // at build time, where the suite sees it. Same rule as lib/menu.js.
   for (const [name, fn] of Object.entries({
     onOpenScope, onOpenMemory, onOpenApp, onOpenSettings, onRowAction,
   })) {
@@ -314,252 +333,96 @@ export function buildTrayMenuTemplate(model, o = {}) {
   }
 
   const m = model && typeof model === 'object' ? model : null;
-  const rows = m && Array.isArray(m.rows) ? m.rows : [];
   const notices = m && Array.isArray(m.notices) ? m.notices : [];
-  const headline = m && m.headline ? m.headline : null;
-
+  const active = m && m.active && Array.isArray(m.active.rows) ? m.active : null;
+  const overflow = m && m.overflow && Array.isArray(m.overflow.rows) && m.overflow.rows.length ? m.overflow : null;
+  const idle = m && m.idle && Array.isArray(m.idle.rows) ? m.idle : null;
+  const empty = !m || m.empty === true || (!active && !idle);
   const template = [];
+  const primary = (row) => rowItem(row, makeIcon, rowSubmenu(row, onOpenScope, onRowAction, onOpenMemory, makeIcon));
 
-  // ── 1 + 2. The headline answer ──────────────────────────────────────────
-  template.push({
-    id: ID_HEADLINE,
-    label: headline ? headline.text : 'Project context could not be read',
-    // Enabled even in the empty state: it is the route to the screen that
-    // explains the emptiness, and a dimmed first line reads as a broken app.
-    enabled: true,
-    click: onOpenMemory,
-  });
-  // ── THE HEADLINE'S SECOND LINE IS `harness · model` ─────────────────────
+  // ── 1. The save pulse, on top, with SAVES BY TOOL ───────────────────────
   //
-  // It used to be `project · scope`, which the first ROW below it already shows
-  // in full — the drop-constant rule, applied to the one line whose whole job
-  // is to add something the line above it does not have. `harness · model`
-  // answers "which agent, and which LLM, last touched anything", which nothing
-  // else in this menu answers.
-  //
-  // `where` is the FALLBACK, not a second line: a store whose newest save named
-  // neither tool nor model has nothing to say here, and `project · scope` is
-  // better than a blank. The project and scope remain on this item's TOOLTIP
-  // either way, which is where they were already reachable.
-  const secondLine = headline ? (headline.who || headline.where) : null;
-  if (secondLine) {
-    const full = headline.whereFull && headline.whereFull !== secondLine
-      ? headline.whereFull : null;
-    template.push({
-      id: ID_HEADLINE_WHERE,
-      label: '    ' + secondLine,
-      // A statement about the line above it, not a second action.
-      enabled: false,
-      // The uncompacted project · scope this save belongs to.
-      ...(full ? { toolTip: full } : {}),
-    });
-  }
-
-  // ── 2b. The save pulse ──────────────────────────────────────────────────
-  //
-  // ONE item under its own section header, carrying a drawn strip in its icon
-  // gutter and the reading in words on its label.
-  //
-  // ── WHY ONE STRIP AND NOT ONE PER ROW ──────────────────────────────────
-  //
-  // A per-row sparkline was considered and REFUSED on legibility: five to
-  // eleven independent bands, each a few points tall, in a menu this release is
-  // making NARROWER, and each drawn from a single scope's handful of saves —
-  // most would be one mark and a lot of empty. One strip over the whole store is
-  // a reading somebody can take at a glance, which is the only thing a menu bar
-  // surface is for.
-  //
-  // ── AND WHY IT IS NOW ENABLED ──────────────────────────────────────────
-  //
-  // It shipped `enabled: false`, reasoned as "a statement, not an action", and
-  // the maintainer's first words about it were that the pulse "is barely
-  // visible". A disabled item is drawn at REDUCED CONTRAST — so the one piece
-  // of graphics he asked for was put in the dimmest style macOS offers, which is
-  // the compounding-opacity defect this repo has already fixed twice in its own
-  // CSS. The reasoning was sound and the outcome was the known bad one.
-  //
-  // Enabling it needs a destination, and it has the same one as the headline
-  // above it: the Agent memory view, which is where the saves this strip counts
-  // are actually listed. A picture of the last seven days that opens the list of
-  // the last seven days is not a stretch.
-  //
-  // ── WHY `makeIcon` IS INJECTED ─────────────────────────────────────────
-  //
-  // `nativeImage.createFromBuffer` is an Electron call, and this module must
-  // stay importable by `npm test`, where Electron does not exist. Passing it in
-  // keeps EVERY decision here — whether there is a strip at all, what it says,
-  // where it sits, whether it is actionable — inside a module the suite runs
-  // for real, and leaves main.js the two lines it cannot give away.
-  //
-  // The seam takes a whole SPEC and reads `spec.template` for whether macOS
-  // should tint the image or draw it as authored, so this module never has an
-  // opinion about a pixel. With no `makeIcon` the item still appears with its
-  // label and its tooltip and simply carries no picture: a missing image must
-  // not cost the reading.
+  // ENABLED: a disabled item is drawn at reduced contrast and macOS greys its
+  // icon — the "barely visible" strip the maintainer reported at v3.47. With
+  // per-tool lanes it is a submenu parent (no click); without them it opens
+  // Project Context, as before.
   const pulse = m && m.pulse ? m.pulse : null;
   if (pulse && pulse.label) {
     const icon = image(makeIcon, pulse.strip);
-    template.push(header(ID_HEADER_PULSE, HEADER_PULSE));
-    template.push({
+    const tools = Array.isArray(pulse.tools) ? pulse.tools.filter((t) => t && t.label) : [];
+    const item = {
       id: ID_PULSE,
       label: pulse.label,
       enabled: true,
-      click: onOpenMemory,
       ...(icon ? { icon } : {}),
       ...(pulse.toolTip ? { toolTip: pulse.toolTip } : {}),
-    });
+    };
+    if (tools.length) {
+      item.submenu = [header(ID_HEADER_PULSE_TOOLS, pulse.toolsHeader || 'Saves by tool')];
+      for (const t of tools) {
+        const s = image(makeIcon, t.strip);
+        item.submenu.push({
+          id: t.id,
+          label: t.label,
+          // Enabled for the strip's sake (a disabled item's icon is greyed);
+          // it opens Project Context, where the saves it counts are listed.
+          enabled: true,
+          click: onOpenMemory,
+          ...(s ? { icon: s } : {}),
+          ...(t.toolTip && t.toolTip !== t.label ? { toolTip: t.toolTip } : {}),
+        });
+      }
+    } else {
+      item.click = onOpenMemory;
+    }
+    template.push(item);
+    template.push(sep);
   }
 
-  // ── 3. The rows, under their project ────────────────────────────────────
-  //
-  // GROUPED BY PROJECT, newest project first and newest scope first inside each.
-  //
-  // It was flat until v3.48.0, and the argument for flat was sound at the time:
-  // "an agent works in one scope at a time, so what has just happened is a
-  // recency question", with the project riding as a token on each row. What
-  // changed is what a project IS. A domain had exactly one state tree, so the
-  // token was usually constant and usually dropped; a domain now holds many
-  // projects, the token would be on every row, and five rows of `· lumina`
-  // spend five lines of WIDTH — the scarcest thing on this menu — to say once
-  // what a header says once.
-  //
-  // The quota that came with it is the other half. v3.42.0 accepted that "one
-  // busy project can monopolise all five rows" because a per-project quota was
-  // "cleverness that produces two behaviours and one bug". That trade inverts
-  // when a project is an afternoon's work rather than a whole domain: the
-  // monopoly becomes the ordinary case, and the overflow item would be the only
-  // thing on screen that ever mentioned the other projects. See MAX_GROUPS in
-  // tray-model.js for the arithmetic and for what it costs in menu height.
-  if (rows.length) {
-    // ── GROUPED, AND THE GROUPING IS THE DATA'S, NOT THIS FILE'S ────────
-    //
-    // `model.groups` holds the SAME row objects `model.rows` does, so a header
-    // and the rows beneath it can never describe different saves. This loop
-    // draws what it is handed and decides nothing: which projects, how many
-    // rows each, what a header says and how it is clipped are all in
-    // `buildTrayModel`, where the offline suite executes them.
-    //
-    // The fallback is one unnamed group holding every row, for a model built
-    // before `groups` existed — a menu that rendered nothing because a field
-    // was missing would be the worst possible reading of "defensive".
-    const groups = m && Array.isArray(m.groups) && m.groups.length
-      ? m.groups
-      : [{ id: ID_HEADER_ROWS, label: HEADER_ROWS, toolTip: null, rows }];
-    for (const group of groups) {
-      const gRows = Array.isArray(group.rows) ? group.rows : [];
-      if (!gRows.length) continue;
-      // ── A PROJECT HEADER IS AN ENABLED ITEM NOW (v3.66.0) ──────────────
-      //
-      // It carries the capture depth bar — sessions that saved in 30 days
-      // against the busiest project. A `type: 'header'` item is DISABLED, and
-      // macOS tints a disabled item's icon to the disabled-text grey (the pulse
-      // strip's measured defect); an icon on a header has also never been
-      // rendered anywhere. So the header becomes the least risky thing that can
-      // carry a picture: an ordinary ENABLED item with no submenu, whose click
-      // opens Context on that project (`group.route`) — the same reasoning that
-      // made the headline and the pulse enabled. The section styling is the
-      // price; the grouping survives because the rows beneath keep their dots
-      // and indent past this line's text start.
-      //
-      // A group built without `route` (a model that predates it) is kept as
-      // the old disabled header: a click with nowhere to go is worse than none.
-      const bar = image(makeIcon, group.bar);
-      const tip = group.toolTip && group.toolTip !== group.label ? { toolTip: group.toolTip } : {};
-      if (group.route) {
-        template.push({
-          id: group.id || ID_HEADER_ROWS,
-          label: group.label || HEADER_ROWS,
-          enabled: true,
-          click: () => onOpenScope(group),
-          ...(bar ? { icon: bar } : {}),
-          // NOTHING A BUDGET REMOVED BECOMES UNREACHABLE: the fully-qualified
-          // `domain / project`, the age, the harness and the capture reading.
-          ...tip,
-        });
-      } else {
-        template.push({ ...header(group.id || ID_HEADER_ROWS, group.label || HEADER_ROWS), ...tip });
-      }
-      // ── 3a. The open project's documents, INSIDE ITS OWN GROUP (v3.66.0) ─
-      //
-      // One ENABLED item carrying the depth bar: the headline project's
-      // documents against the budget the APP applies (read-first bytes against
-      // the project's reading budget once any document is flagged; otherwise
-      // the stored total, neutrally and with no bar — v3.70.0 retired the
-      // 200 KB project budget as an alarm). Enabled for the pulse's reason: a
-      // disabled item's icon is tinted grey.
-      //
-      // WHERE, AND WHY THERE. It first shipped directly under the headline,
-      // and the maintainer's photograph read it as having pushed the Save pulse
-      // out of its place. The top of the menu keeps its v3.66.0 order
-      // (headline, sub-line, Save pulse), and the line is a fact ABOUT one
-      // project, so it sits under that project's header, before its scope
-      // rows. Only the matching group carries it. If the open project has no
-      // group on screen (the row limit), the line is OMITTED, never moved back
-      // to the top.
-      const documents = m && m.documents ? m.documents : null;
-      if (documents && documents.label && documents.project
-        && group.project === documents.project
-        && (group.domain || null) === (documents.domain || null)) {
-        const icon = image(makeIcon, documents.bar);
-        template.push({
-          id: documents.id || ID_DOCUMENTS,
-          label: documents.label,
-          enabled: true,
-          click: () => onOpenScope(documents),
-          ...(icon ? { icon } : {}),
-          ...(documents.toolTip ? { toolTip: documents.toolTip } : {}),
-        });
-      }
-      // ── 3a'. The open project's SESSION START (v3.70.0) ────────────────
-      //
-      // Directly under the documents line, in the group of the project it
-      // measured (`sessionStart.domain/project`, the data layer's lastSave),
-      // and nowhere else: off screen, it is omitted, as the documents line is.
-      // Its gutter is the meter — the window lane over the enlargement. A
-      // failed measurement is a line too ("could not measure"), with no
-      // picture, because a picture of nothing would read as a measured zero.
-      const ss = m && m.sessionStart ? m.sessionStart : null;
-      if (ss && ss.label && ss.project
-        && group.project === ss.project
-        && (group.domain || null) === (ss.domain || null)) {
-        const icon = image(makeIcon, ss.bar);
-        template.push({
-          id: ss.id || ID_SESSION_START,
-          label: ss.label,
-          enabled: true,
-          click: () => onOpenScope(ss),
-          ...(icon ? { icon } : {}),
-          ...(ss.toolTip ? { toolTip: ss.toolTip } : {}),
-        });
-      }
-      for (const row of gRows) {
-        const dot = image(makeIcon, row.dot);
-        template.push({
-          id: row.id,
-          label: row.label,
-          // macOS draws `sublabel` as a dimmer second line. A platform that
-          // does not simply drops it, which is why the two facts a person
-          // cannot do without — the work-stream and its age — are on the LABEL.
-          ...(row.sublabel ? { sublabel: row.sublabel } : {}),
-          ...(dot ? { icon: dot } : {}),
-          ...(row.toolTip ? { toolTip: row.toolTip } : {}),
-          // ── A SUBMENU PARENT CARRIES NO `click` ───────────────────────
-          //
-          // On macOS, clicking an item that has a submenu OPENS THE SUBMENU; a
-          // `click` beside it is either ignored or fires on hover-through
-          // depending on the AppKit path, and either way it is a handler nobody
-          // can predict. `Open in The Curator` is the FIRST submenu item so the
-          // old one-click behaviour is one keystroke away, in the position the
-          // pointer is already travelling to.
-          submenu: rowSubmenu(row, onOpenScope, onRowAction),
-        });
-      }
+  // ── 2. Active · last 24 h, the overflow, and the Idle fold ──────────────
+  if (!empty) {
+    template.push(header(ID_HEADER_ACTIVE, (active && active.header) || 'Active'));
+    const rows = active ? active.rows : [];
+    for (const row of rows) template.push(primary(row));
+    if (!rows.length) {
+      // A MEASURED nothing: projects exist, none saved in 24 hours. Said,
+      // rather than an empty header over the Idle row.
+      template.push({ id: ID_NO_ACTIVE, label: (active && active.emptyLabel) || 'No saves in the last 24 h', enabled: false });
     }
-    if (m.truncatedNote) {
-      // ENABLED. It is the only route to the rows the cap hid, and a disabled
-      // line that names a place you cannot go from it is worse than no line.
+    if (overflow) {
       template.push({
-        id: ID_TRUNCATED, label: m.truncatedNote, enabled: true, click: onOpenMemory,
+        id: overflow.id || ID_OVERFLOW,
+        label: overflow.label,
+        submenu: overflow.rows.map(primary),
+      });
+    }
+    // ── 3. Notices — only when true, DIRECTLY UNDER THE ACTIVE ROWS ───────
+    //
+    // They were below the domains, greyed and clipped, where the maintainer's
+    // own photograph showed a collision said twice and missed both times.
+    // They are about the work above them, so they sit under it, set off by a
+    // separator on each side. A notice that names a PROJECT (a collision)
+    // is ENABLED and opens that project in Project Context; the rest are
+    // statements and stay disabled.
+    if (notices.length) {
+      pushNotices();
+      if (idle && idle.rows.length) template.push(sep);
+    }
+    if (idle && idle.rows.length) {
+      const dot = image(makeIcon, idle.dot);
+      const sub = idle.rows.map(primary);
+      if (idle.moreLabel) {
+        // ENABLED: the only route to the projects the cap hid.
+        sub.push({ id: ID_IDLE_MORE, label: idle.moreLabel, click: onOpenMemory });
+      }
+      template.push({
+        id: idle.id || ID_IDLE,
+        label: idle.label,
+        ...(idle.sublabel ? { sublabel: idle.sublabel } : {}),
+        ...(dot ? { icon: dot } : {}),
+        ...(idle.toolTip ? { toolTip: idle.toolTip } : {}),
+        submenu: sub,
       });
     }
   } else {
@@ -569,26 +432,42 @@ export function buildTrayMenuTemplate(model, o = {}) {
       label: (m && m.ok === false) ? UNREADABLE_HINT : EMPTY_HINT,
       enabled: false,
     });
+    // A failed read's own reason is a notice, and an empty menu still says it.
+    if (notices.length) pushNotices();
+  }
+  function pushNotices() {
+    template.push(sep);
+    for (const n of notices) {
+      // NOTHING A BUDGET REMOVED BECOMES UNREACHABLE: a clipped notice
+      // carries its whole sentence on the tooltip; one that fits, none.
+      const full = n.full && n.full !== n.text ? { toolTip: n.full } : {};
+      if (n.kind === 'collision' && n.route) {
+        template.push({ id: 'tray-notice-' + n.route + ':' + n.scope, label: n.text, enabled: true,
+          click: () => onOpenScope(n), ...full });
+      } else {
+        template.push({ label: n.text, enabled: false, ...full });
+      }
+    }
+    if (m && m.noticesHidden > 0) {
+      template.push({ label: '…and ' + m.noticesHidden + ' more', enabled: false });
+    }
   }
 
-  // ── 3c. Domains · pages (v3.66.0) ────────────────────────────────────────
+  // ── 4. Knowledge · N domains ────────────────────────────────────────────
   //
-  // Each domain's page count against the LARGEST domain's, the bar in that
-  // domain's identity colour — the first time this widget carries design rule
-  // 5, one domain one colour. The header stays a real `header` (it has no
-  // picture to grey); the rows are ENABLED so their bars are drawn at full
-  // colour, and a click opens Settings, where the Vault folder monitor lists
-  // every domain against the same denominator (the app twin). The widget has
-  // no route to the Domains view: main.js reaches views only through the two
-  // rail selectors it already carries, and a third is a new process-boundary
-  // coupling this release does not add.
+  // Every domain's pages against the largest domain's, in the domain's
+  // identity colour (design rule 5), unchanged — only folded into one row,
+  // which gives the one surface with no vertical space five lines back. The
+  // rows are ENABLED so their bars are drawn at full colour; a click opens
+  // Settings, where the Vault folder monitor lists every domain against the
+  // same denominator (the app twin).
   const domains = m && m.domains && Array.isArray(m.domains.rows) && m.domains.rows.length
     ? m.domains : null;
   if (domains) {
-    template.push(header(ID_HEADER_DOMAINS, domains.header || 'Domains'));
+    const sub = [header(ID_HEADER_DOMAINS, domains.header || 'Domains')];
     for (const d of domains.rows) {
       const icon = image(makeIcon, d.bar);
-      template.push({
+      sub.push({
         id: d.id,
         label: d.label,
         enabled: true,
@@ -597,35 +476,20 @@ export function buildTrayMenuTemplate(model, o = {}) {
         ...(d.toolTip ? { toolTip: d.toolTip } : {}),
       });
     }
-    if (domains.moreLabel) {
-      template.push({
-        id: ID_DOMAINS_MORE, label: domains.moreLabel, enabled: true, click: onOpenSettings,
-      });
-    }
-  }
-
-  // ── 4. Notices — only when they have something to say ───────────────────
-  if (notices.length) {
     template.push(sep);
-    for (const n of notices) {
-      // NOTHING A BUDGET REMOVED BECOMES UNREACHABLE — the same absolute rule
-      // the rows are held to. A notice long enough to be clipped carries its
-      // whole sentence on the tooltip; one that fits carries no tooltip at all,
-      // because a tooltip repeating the label verbatim is noise.
-      const full = n.full && n.full !== n.text ? n.full : null;
-      template.push({ label: n.text, enabled: false, ...(full ? { toolTip: full } : {}) });
-    }
-    if (m.noticesHidden > 0) {
-      template.push({ label: '…and ' + m.noticesHidden + ' more', enabled: false });
-    }
+    template.push({
+      id: domains.id || ID_KNOWLEDGE,
+      label: domains.label || 'Knowledge',
+      ...(domains.toolTip ? { toolTip: domains.toolTip } : {}),
+      submenu: sub,
+    });
   }
 
   // ── 5. The commands ─────────────────────────────────────────────────────
   //
   // "Open The Curator" is always present and "Quit" is always last, whatever
-  // the state above them. That is what makes the tray safe to opt into: there
-  // is no arrangement of data in which the menu stops offering a way back to
-  // the app or a way to quit it.
+  // the state above them: there is no arrangement of data in which the menu
+  // stops offering a way back to the app or a way to quit it.
   template.push(sep);
   template.push({ id: ID_OPEN_MEMORY, label: 'Open Project Context…', click: onOpenMemory });
   template.push({ id: ID_OPEN_APP, label: 'Open ' + appName, click: onOpenApp });
@@ -633,14 +497,9 @@ export function buildTrayMenuTemplate(model, o = {}) {
 
   // ── 6. How fresh this reading is ────────────────────────────────────────
   //
-  // ABSOLUTE, and distinct from the rows' RELATIVE ages: they answer different
-  // questions — how old is this event, versus how old is this reading — and
-  // conflating them is how a widget comes to display a confidently stale list.
-  // It also makes a silently-dead filesystem watch visible rather than
-  // invisible, which is the one failure this design cannot otherwise detect.
-  // v3.72.1 (truth audit tray F7): the stamp is the time the figures were
-  // READ (`readAtText`), not the time of this render — a hover re-renders
-  // from memory, and page counts / capture numbers stay as of the read.
+  // ABSOLUTE, and distinct from the rows' RELATIVE ages: how old is this
+  // event, versus how old is this reading. v3.72.1 (F7): the time the figures
+  // were READ (`readAtText`), not the time of this render.
   const stampText = m && (m.readAtText || m.renderedAtText);
   if (stampText) {
     template.push(sep);
@@ -652,6 +511,42 @@ export function buildTrayMenuTemplate(model, o = {}) {
   template.push({ id: ID_QUIT, role: 'quit', label: 'Quit ' + appName });
 
   return template;
+}
+
+/**
+ * The menu as TEXT — a static render, for review and for the suites.
+ *
+ * Electron is not an offline dependency, so no suite can draw the menu. This
+ * prints the TEMPLATE — the exact data `Menu.buildFromTemplate` receives —
+ * one item per line: submenus indented, headers as `── Header ──`, disabled
+ * items in parentheses, a sublabel on the line below, the gutter picture in
+ * the margin (a freshness dot with its tier named at the end of the line,
+ * `▂▅▇` a pulse strip, `▬` a depth bar), a submenu parent marked `›`. Pass a `makeIcon` of `(spec) => spec` when
+ * building the template so the pictures reach this function as specs.
+ */
+export function renderTrayMenuText(template, depth = 0) {
+  const pad = '      '.repeat(depth);
+  const lines = [];
+  const mark = (icon) => {
+    if (!icon || typeof icon !== 'object') return '   ';
+    if (icon.kind === 'dot') return ({ live: '◉', recent: '●', today: '◐', week: '◑', dormant: '○', unknown: '◌' }[icon.tier] || '•') + '  ';
+    if (Object.prototype.hasOwnProperty.call(icon, 'frac')) return '▬  ';
+    if (icon.heightPoints === 15) return '▂▅▇';
+    return '▫  ';
+  };
+  for (const item of template || []) {
+    if (!item || typeof item !== 'object') continue;
+    if (item.type === 'separator') { lines.push(pad + '────────────'); continue; }
+    if (item.type === MENU_HEADER_TYPE) { lines.push(pad + '── ' + String(item.label || '') + ' ──'); continue; }
+    const icon = mark(item.icon);
+    const tier = item.icon && item.icon.kind === 'dot' ? '   [' + item.icon.tier + ']' : '';
+    const label = item.role === 'quit' ? (item.label || 'Quit') + '   ⌘Q' : (item.label || item.role || '');
+    const body = item.enabled === false ? '(' + label + ')' : label;
+    lines.push(pad + icon + ' ' + body + (Array.isArray(item.submenu) ? '  ›' : '') + tier);
+    if (item.sublabel) lines.push(pad + '    ' + item.sublabel);
+    if (Array.isArray(item.submenu)) lines.push(renderTrayMenuText(item.submenu, depth + 1));
+  }
+  return lines.filter((l) => l !== '').join('\n');
 }
 
 /**
@@ -675,8 +570,9 @@ export function flattenTrayMenu(template, trail = []) {
 
 /**
  * The icon's own tooltip — what hovering the glyph says before anything is
- * clicked. It carries the headline, because a hover is cheaper than a click
- * and this is the one place the answer can arrive without one.
+ * clicked. It carries the LAST SAVE (`Last save: ott · Claude Code · 8 min
+ * ago`), because a hover is cheaper than a click and, since Layout A removed
+ * the menu's headline, this is the one place that answer is one line.
  *
  * It is NOT the tray TITLE (see this file's header for why the title is
  * empty): a tooltip costs no menu bar width and appears only on demand.
@@ -685,7 +581,7 @@ export function flattenTrayMenu(template, trail = []) {
  *
  * The maintainer's stated need is two questions, not one: "I'm always
  * wondering if we have updated the scope, AND if the standing brief is up to
- * date." The menu's first line answers the first. The second has a computed
+ * date." The first Active row answers the first. The second has a computed
  * answer — `getTraySummary()` pays a `stat` for it on every read — and until
  * now nothing rendered it, so the app was paying for a fact it threw away.
  *
@@ -706,24 +602,14 @@ export function flattenTrayMenu(template, trail = []) {
 export function trayToolTip(model, appName = 'The Curator') {
   const headline = model && model.headline ? model.headline : null;
   if (!headline) return appName;
-  // The WORK-STREAM, not the second line the menu draws. A hover on the icon is
-  // answering "where am I", and `harness · model` answers a different question
-  // that the menu itself is one click away from showing.
-  const where = headline.where ? ' (' + headline.where + ')' : '';
+  // `Last save: ott · Claude Code · 8 min ago` — the newest save in the store,
+  // worded as what it is (v3.74.0). The scope is not repeated here: the menu
+  // one click away names it on the row's submenu header.
   const brief = model && model.brief ? model.brief : null;
-  // Only when the age is actually known. A brief whose age could not be
-  // derived contributes nothing rather than "Brief · time unknown", which
-  // would spend the clause to say we do not know something nobody asked.
-  // ── THE CLAUSE IS COMPOSED BY THE MODEL, NOT HERE ─────────────────────
-  //
-  // It used to be `' · Brief · ' + brief.ageText`, assembled at this call site.
-  // From v3.48.0 the clause also has to say WHO wrote the brief — an agent may
-  // now write one on the owner's explicit instruction, and the tier a model is
-  // told to FOLLOW rather than verify is exactly the one where that matters —
-  // so the sentence is `brief.text`, built once in `buildTrayModel`. A second
-  // surface assembling its own would be a second sentence about one fact.
+  // Only when the age is actually known. The clause is composed by the model
+  // (`brief.text`), which also says when an agent wrote the brief.
   const briefPart = brief && brief.text && brief.ageSeconds !== null
     ? ' · ' + brief.text
     : '';
-  return appName + ' — ' + headline.text + where + briefPart;
+  return appName + ' — ' + headline.text + briefPart;
 }

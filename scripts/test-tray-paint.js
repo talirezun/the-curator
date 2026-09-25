@@ -31,11 +31,12 @@
  *   §5   the height ladder — the signal that survives without colour
  *   §5b  the axis, the day ruler and the handover caps — decoded
  *   §6   cadence is in the HEIGHT, is capped, and never claims more
- *   §7   the recency dots: five buckets, three colours, one ink ladder
+ *   §7   the freshness dots: the APP'S six tiers and marks (v3.74.0)
  *   §8   the dots' pixels, decoded, in both themes
+ *   §8b  the shapes in the alpha channel — halo, hollow, dashes
  *   §9   1x and 2x are one drawing at two resolutions
  *   §10  the spec shape, exactly as contracted
- *   §11  COLOUR DISCARDED — every state readable in the alpha channel alone
+ *   §11  COLOUR DISCARDED — the strip's states and the dots' four shapes
  *   §12  the merge, and the width budget it was bought with
  *
  * ── NOT ENFORCED, stated rather than implied away ───────────────────────────
@@ -65,6 +66,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -581,275 +583,158 @@ section('§6 cadence is in the ramp, is capped, and never claims more');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§7 the recency dots: five buckets, three colours, one ink ladder');
+section('§7 the freshness dots: THE APP\'S SCALE, and the app\'s marks (v3.74.0)');
 {
-  // The bucket names come from tray-model.js, which is the module that computes
-  // them. A second opinion about what "warm" means is the drift this project
-  // keeps recording, so they are READ rather than restated.
+  // The tier names come from tray-model.js's pinned copy of the app's
+  // `freshnessTier` — derived HERE by calling it, so a tier this module draws
+  // that the model never produces, or the reverse, reds.
   const model = await import(path.join(DESKTOP, 'lib', 'tray-model.js'));
   const derived = [
-    model.ageBucket(1), model.ageBucket(600), model.ageBucket(3 * 3600),
-    model.ageBucket(3 * 86400), model.ageBucket(30 * 86400),
+    model.freshnessTier(1), model.freshnessTier(600), model.freshnessTier(3 * 3600),
+    model.freshnessTier(3 * 86400), model.freshnessTier(30 * 86400), model.freshnessTier(null),
   ];
   eq(derived, dots.DOT_ORDER,
-    'DOT_ORDER is exactly what ageBucket() actually returns across its five drawable ranges');
+    'the six tiers freshnessTier produces (live, recent, today, week, dormant, unknown) are exactly the six this module draws, in order');
   eq(Object.keys(dots.DOT_INK).sort(), [...dots.DOT_ORDER].sort(), 'and every one of them has ink');
-
-  // `unknown` has NO mark. An age we do not have is not an old one.
-  eq(model.ageBucket(null), 'unknown', 'ageBucket returns "unknown" for a missing age');
-  eq(dots.renderRecencyDot('unknown', {}), null, 'and an unknown bucket renders NOTHING — not the coldest dot');
-  for (const junk of [undefined, null, 42, '', 'LIVE', 'ancient', {}]) {
+  // The old ladder's names are GONE — a row still asking for `warm` gets
+  // nothing rather than a mark from a scale that no longer exists.
+  for (const old of ['warm', 'cool', 'cold']) {
+    eq(dots.renderRecencyDot(old, {}), null, `the retired pie name "${old}" renders nothing`);
+  }
+  for (const junk of ['', 'LIVE', 'nope', undefined, null, 42, '__proto__', 'toString']) {
     eq(dots.renderRecencyDot(junk, {}), null, `and so does ${JSON.stringify(junk) ?? String(junk)}`);
   }
-  ok(dots.renderRecencyDot('cold', {}) !== null, 'CONTROL: a real bucket DOES render, so the refusals above mean something');
+  ok(dots.renderRecencyDot('unknown', {}) !== null,
+    'an UNKNOWN age IS drawn — the app\'s dashed ring, a different KIND of mark (freshness.css), never the coldest one and never a gap');
 
-  // FIVE BUCKETS ONTO THREE COLOURS. The collapse is deliberate; the ladder is
-  // what keeps all five separable when the colour does not separate them.
-  eq(dots.DOT_ORDER.map((b) => dots.DOT_INK[b].tone), ['hot', 'hot', 'mid', 'cold', 'cold'],
-    'green covers live+warm (under 30 min), amber covers today, grey covers cool+cold');
-  const areas = dots.DOT_ORDER.map((b) => dots.dotInkArea(b));
-  ok(areas.every((v, i) => i === 0 || v < areas[i - 1]),
-    `the ink ladder is STRICTLY decreasing (${areas.map((a) => a.toFixed(1)).join(' > ')} pt²) — the signal that survives without colour`);
-  // -- REVISED: rings became SECTORS, so `stroke` became `turns` ---------
-  //
-  // WAS: `live.stroke === null && warm.stroke !== null` — a filled disc against
-  // a ring. Three of the five states were rings differing by 0.5pt of radius,
-  // which is ONE DEVICE PIXEL at 1x, so the ladder existed in the arithmetic
-  // and not on the screen. The disc now DRAINS by quarter turns, and the same
-  // property is asserted over the fraction drawn.
-  eq(dots.DOT_ORDER.map((b) => dots.DOT_INK[b].turns), [1, 0.75, 0.5, 0.25, 1],
-    'the disc drains a quarter at a time, and COLD returns to a solid shape at a smaller radius');
-  ok(dots.DOT_INK.live.turns === 1 && dots.DOT_INK.live.radius > dots.DOT_INK.cold.radius,
-    'LIVE is the only FULL disc at full size, so the one state that changes what you do next is separable by shape alone');
-  ok(dots.DOT_ORDER.slice(0, 4).every((b, i, a) => i === 0 || dots.DOT_INK[b].turns < dots.DOT_INK[a[i - 1]].turns),
-    'and the four sector states are a strictly draining clock, each a whole quadrant apart rather than half a point of radius');
-  // -- REVISED: 0.25 -> 0.30, AND THE RIM IS WHY -------------------------
-  //
-  // WAS: `cold < live * 0.25`, which held at 12.6 against 78.5 when a `cold`
-  // dot was drawn alone in an empty box. The first photograph of the menu
-  // showed what "alone in an empty box" costs — a quarter-disc read as a
-  // sliver rather than as a quarter of anything, because a fraction needs a
-  // whole to be a fraction OF — so every mark is now drawn inside a faint face
-  // ring. `cold` gains the most ink from it (its dot covers none of the rim)
-  // and `live` gains none at all (its disc covers all of it), which is exactly
-  // the direction that compresses this ratio: 22.5 against 78.5, or 0.286.
-  //
-  // The threshold moves rather than the assertion being dropped, because what
-  // it is protecting is unchanged: the coldest mark must stay unmistakable for
-  // the full disc. It is asserted alongside the strict monotonicity above and
-  // the decoded-alpha ladder in §8b, so a rim that swallowed the ladder would
-  // still red.
-  ok(dots.dotInkArea('cold') < dots.dotInkArea('live') * 0.30,
-    `and COLD, which is also filled, is under a third of LIVE's area (${dots.dotInkArea('cold').toFixed(1)} against ${dots.dotInkArea('live').toFixed(1)}, ratio ${(dots.dotInkArea('cold') / dots.dotInkArea('live')).toFixed(3)})`);
-  ok(dots.dotInkArea('cold') > dots.dotInkArea('live') * 0.20,
-    'CONTROL: and it is not arbitrarily small either — this pair of bounds brackets the shipped ratio, so a geometry change in EITHER direction reds');
+  // The app's mapping of tier → ink role and shape (shared/freshness.css):
+  eq(dots.DOT_ORDER.map((b) => dots.DOT_INK[b].tone), ['hot', 'hot', 'mid', 'cold', 'cold', 'cold'],
+    'live and recent hot, today mid, week and dormant cold — freshness.css\'s roles');
+  eq(dots.DOT_ORDER.map((b) => dots.DOT_INK[b].shape), ['disc', 'disc', 'disc', 'disc', 'ring', 'dashed'],
+    'filled everywhere except dormant (hollow) and unknown (dashed) — freshness.css\'s shapes');
+  eq(dots.DOT_ORDER.map((b) => dots.DOT_INK[b].halo), [true, false, false, false, false, false],
+    'and only live carries the halo');
+  // Pinned against the CSS the app ships, read as text: the same three claims.
+  const css = readFileSync(path.join(ROOT, 'src', 'public', 'next', 'shared', 'freshness.css'), 'utf8');
+  ok(/\.fresh-live\s*\{[^}]*--fresh-hot[^}]*box-shadow/.test(css) && /\.fresh-recent\s*\{[^}]*--fresh-hot/.test(css)
+    && /\.fresh-today\s*\{[^}]*--fresh-mid/.test(css) && /\.fresh-week\s*\{[^}]*--fresh-cold/.test(css)
+    && /\.fresh-dormant\s*\{[^}]*inset[^}]*--fresh-cold/.test(css) && /\.fresh-unknown\s*\{[^}]*dashed/.test(css),
+    'CROSS-FILE: freshness.css still paints live hot+halo, recent hot, today mid, week cold, dormant as an inset ring, unknown dashed');
+  eq(dots.DOT_RADIUS * 2, 8, 'the dot is 8pt across — the app\'s 8px `.fresh-dot`');
+  ok(dots.HALO_OUTER <= dots.DOT_POINTS / 2, `the halo (r ${dots.HALO_OUTER}) stays inside the ${dots.DOT_POINTS}pt canvas`);
+  eq(dots.HOLLOW_STROKE, 2, 'the hollow ring is 2pt — the app\'s `inset 0 0 0 2px`');
 
-  // ── THE FACE RING — the mark the photograph asked for ─────────────────
-  //
-  // The rendered `cool` state was the finding: a quarter-wedge, 19.6pt² of ink
-  // with nothing around it, on three of the five rows. It read as damage. The
-  // rim gives the sector a whole to be a part of, and these are the properties
-  // it was required not to break.
-  eq(dots.FACE_RADIUS, 5.0, 'the clock face is r 5.0 — the radius the sectors drain inside');
-  eq(dots.DOT_ORDER.slice(0, 4).map((b) => dots.DOT_INK[b].radius), [5, 5, 5, 5],
-    'and all four SECTOR states are drawn at exactly that radius, so the sector and its face are one circle rather than two');
-  ok(dots.DOT_INK.cold.radius < dots.FACE_RADIUS - dots.RIM_POINTS,
-    `COLD's dot (r ${dots.DOT_INK.cold.radius}) sits entirely inside the rim's inner edge (r ${dots.FACE_RADIUS - dots.RIM_POINTS}), so it reads as a drained clock with a hub rather than as a smaller filled disc`);
-  ok(dots.RIM_POINTS >= 1, 'the rim is at least one point, so it has a rendering at 1x rather than none');
-  ok(dots.RIM_ALPHA > 0 && dots.RIM_ALPHA < 0.5,
-    `the rim carries ${(dots.RIM_ALPHA * 100).toFixed(0)}% of the mark's alpha — present enough to establish the face, subordinate enough that it is never mistaken for the filled part`);
-  eq(dots.dotInkArea('live'), Math.PI * 25,
-    'LIVE\'s area is the bare disc — its rim adds NOTHING, because the full disc already covers every pixel of it');
-  const rimGain = dots.DOT_ORDER.map((b) => dots.dotInkArea(b) - dots.DOT_INK[b].turns * Math.PI * dots.DOT_INK[b].radius ** 2);
-  ok(rimGain.every((v, i) => i === 0 || v > rimGain[i - 1]),
-    `and the rim's contribution GROWS as the sector shrinks (${rimGain.map((v) => v.toFixed(1)).join(' < ')} pt²) — it is the same ring on every state, so what varies is how much of it is still uncovered`);
-
-  // -- REVERSED, AND THIS ONE IS A DELIBERATE WEAKENING OF THE PALETTE ---
-  //
-  // WAS: `hot > mid > cold` in contrast, in both themes, so a warmer row was a
-  // heavier mark. That was the right rule when all five marks were nearly the
-  // same SIZE and colour was doing the ladder's work.
-  //
-  // The sector geometry now carries weight explicitly — 78.5pt² of ink down to
-  // 12.6, a 6:1 range, asserted above and again in section 11 in the ALPHA
-  // CHANNEL, where it survives a viewer who cannot resolve the colours at all.
-  // Requiring a luminance ordering ON TOP of that is a second, far weaker
-  // ladder pointed at the same fact, and it rules out the design system's own
-  // hues for a reason that has stopped applying: in dark, summary-400 (6.43) is
-  // brighter than teal-400 (6.05), and nothing about that makes `today` read
-  // heavier than `warm` when `warm` is drawn with 50% more ink.
-  //
-  // What is required instead is a FLOOR — checked in section 2 for every value
-  // — plus the three tones being genuinely DIFFERENT, so the palette
-  // accelerates the ladder rather than contradicting it.
-  for (const theme of ['light', 'dark']) {
-    const bg = hex(rgba.MENU_BG[theme]);
-    const r = ['hot', 'mid', 'cold'].map((t) => contrast.contrastRatio(hex(dots.DOT_PALETTE[theme][t]), bg));
-    ok(r.every((v) => v >= rgba.CONTRAST_FLOOR_NON_TEXT),
-      `${theme}: all three tones clear the floor (${r.map((v) => contrast.round2(v).toFixed(2)).join(', ')}) — a floor, not an ordering`);
-    eq(new Set(['hot', 'mid', 'cold'].map((t) => dots.DOT_PALETTE[theme][t])).size, 3,
-      `${theme}: and the three tones are three different colours, so the palette accelerates the ink ladder rather than flattening it`);
-  }
-  // The INK ladder is the one that has to be monotone, and it is asserted above
-  // from the shipped geometry. Restated here as the replacement for what was
-  // removed, so the section does not merely lose an assertion.
-  ok(dots.dotInkArea('warm') > dots.dotInkArea('today')
-    && dots.dotInkArea('today') > dots.dotInkArea('cool'),
-    'the WEIGHT ladder is carried by ink area, which is theme-independent and colour-independent');
-
-  // Every band has words, so the colour is never the only way to learn it.
   for (const b of dots.DOT_ORDER) {
     ok(typeof dots.dotToolTipLine(b) === 'string' && dots.dotToolTipLine(b).length > 8,
-      `"${b}" has a tooltip line, so the band is reachable without seeing colour`);
+      `${b}: has a tooltip line, so the colour is never the only way to learn what it means`);
   }
-  eq(dots.dotToolTipLine('unknown'), null, 'and an unknown bucket has no line to offer');
-  eq(new Set(dots.DOT_ORDER.map(dots.dotToolTipLine)).size, 5, 'all five lines are different sentences');
+  eq(new Set(dots.DOT_ORDER.map(dots.dotToolTipLine)).size, 6, 'all six lines are different sentences');
+  eq(dots.dotToolTipLine('warm'), null, 'and a retired name has no line to offer');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§8 the dots\' pixels, decoded, in both themes');
 {
+  const mid = (dots.DOT_POINTS - 1) / 2;
   for (const dark of [false, true]) {
     const theme = dark ? 'dark' : 'light';
     const seen = new Set();
     for (const b of dots.DOT_ORDER) {
       const spec = dots.renderRecencyDot(b, { dark });
       const d = png.decodePng(spec.buffer);
-      const d2 = png.decodePng(spec.buffer2x);
       eq([d.width, d.height, d.channels], [dots.DOT_POINTS, dots.DOT_POINTS, 4],
         `${theme} ${b}: decodes to an ${dots.DOT_POINTS}x${dots.DOT_POINTS} RGBA image`);
       eq(spec.template, false, `${theme} ${b}: and is NOT a template image`);
-
-      // -- REVISED: the centre is a COVERAGE ladder, not a binary ------
-      //
-      // WAS: filled-or-hollow, because the marks were a disc and three rings.
-      // A SECTOR covers the centre pixel in proportion to how much of the disc
-      // it draws, so the centre alpha is itself the ladder — and that is a
-      // stronger assertion than the old one, because it distinguishes all four
-      // sector states rather than only disc-versus-ring.
-      //
-      // The even-canvas argument the old assertion was protecting is unchanged
-      // and is asserted below on `cold`: on an even canvas the centre lands on
-      // a pixel CORNER and the smallest filled dot has no opaque pixel at all.
-      const mid = (dots.DOT_POINTS - 1) / 2;
-      const centre = pixel(d, mid, mid);
-      if (dots.DOT_INK[b].turns === 1) {
-        eq(centre[3], 255, `${theme} ${b}: a FULL disc has a solid centre pixel — the odd-canvas guarantee`);
+      const centre = pixel(d, mid, mid)[3];
+      if (dots.DOT_INK[b].shape === 'disc') {
+        eq(centre, 255, `${theme} ${b}: a filled dot has a SOLID centre pixel — the odd-canvas guarantee`);
       } else {
-        ok(centre[3] > 0 && centre[3] < 255,
-          `${theme} ${b}: a sector covers its centre pixel PARTIALLY (alpha ${centre[3]}), in proportion to the fraction drawn`);
+        eq(centre, 0, `${theme} ${b}: a ${dots.DOT_INK[b].shape} dot has a TRANSPARENT centre — hollow, as the app draws it`);
       }
-
-      // EVERY inked pixel carries the shipped RGB; only alpha varies, because
-      // `paintShape` writes the colour and puts coverage in alpha alone. That
-      // is what lets §2's contrast figures describe what is actually drawn.
+      // EVERY inked pixel carries the shipped RGB; only alpha varies, so §2's
+      // contrast figures describe what is actually drawn — the halo included.
       const tone = dots.DOT_PALETTE[theme][dots.DOT_INK[b].tone];
       const rgbWanted = hex(tone).join(',');
-      let inked = 0, wrong = 0, opaque2x = 0;
+      let inked = 0, wrong = 0;
       for (let y = 0; y < d.height; y++) for (let x = 0; x < d.width; x++) {
         const p = pixel(d, x, y);
         if (p[3] === 0) continue;
         inked++;
         if (p.slice(0, 3).join(',') !== rgbWanted) wrong++;
       }
-      for (let y = 0; y < d2.height; y++) for (let x = 0; x < d2.width; x++) {
-        if (pixel(d2, x, y)[3] === 255) opaque2x++;
-      }
       ok(inked > 0 && wrong === 0,
-        `${theme} ${b}: all ${inked} inked pixels are exactly ${tone} — only alpha varies, so the contrast figure describes the ink`);
-      ok(opaque2x > 0,
-        `${theme} ${b}: and at 2x the mark has ${opaque2x} FULLY OPAQUE pixels, so the colour is drawn at full strength somewhere`);
+        `${theme} ${b}: all ${inked} inked pixels are exactly ${tone} — only alpha varies`);
       seen.add(d.data.toString('base64'));
     }
-    eq(seen.size, 5, `${theme}: all five dots are DIFFERENT images — none of the five states renders as another`);
-
-    // THE CENTRE-COVERAGE LADDER, over the four sector states. This is the
-    // draining clock, measured in decoded pixels rather than asserted from the
-    // geometry that produced it.
-    const mid = (dots.DOT_POINTS - 1) / 2;
-    const centres = ['live', 'warm', 'today', 'cool'].map(
-      (b) => pixel(png.decodePng(dots.renderRecencyDot(b, { dark }).buffer), mid, mid)[3]);
-    ok(centres.every((v, i) => i === 0 || v < centres[i - 1]),
-      `${theme}: the centre coverage drains strictly (${centres.join(' > ')}) — the disc emptying, in real pixels`);
+    eq(seen.size, 6, `${theme}: all six tiers are DIFFERENT images (in colour)`);
   }
-
-  // CONTROL on that set comparison: the same bucket twice IS one image.
   const a = png.decodePng(dots.renderRecencyDot('today', { dark: true }).buffer);
   const b = png.decodePng(dots.renderRecencyDot('today', { dark: true }).buffer);
-  ok(a.data.equals(b.data), 'CONTROL: the same bucket rendered twice is byte-identical, so the set comparison above can fail');
-  const lightToday = png.decodePng(dots.renderRecencyDot('today', { dark: false }).buffer);
-  ok(!a.data.equals(lightToday.data), 'and the two themes are genuinely different drawings');
+  ok(a.data.equals(b.data), 'CONTROL: the same tier rendered twice is byte-identical, so the set comparison above can fail');
+  ok(!a.data.equals(png.decodePng(dots.renderRecencyDot('today', { dark: false }).buffer).data),
+    'and the two themes are genuinely different drawings');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§8b the ink ladder READ BACK OUT of the alpha channel, and the rim\'s cost');
-//
-// `dotInkArea` is arithmetic over the shipped geometry, and arithmetic can be
-// right about a drawing that is wrong. This measures the ladder the way a
-// viewer meets it: the sum of the decoded alpha channel, which is the ink
-// actually on the canvas, at BOTH representations. If the rim were painting
-// over the sector, or the sector were cutting a seam through the rim, the two
-// numbers would part company here rather than in a comment.
+section('§8b the SHAPES, measured in the alpha channel — the halo, the hollow, the dashes');
 {
-  const inkOf = (buffer, scale) => {
-    const d = png.decodePng(buffer);
+  const alphaAt = (d, x, y) => pixel(d, x, y)[3];
+  const inkBeyond = (d, r) => {
+    // Ink strictly outside radius r (in points, at 1x) of the centre.
+    const c = dots.DOT_POINTS / 2;
     let sum = 0;
-    for (let y = 0; y < d.height; y++) for (let x = 0; x < d.width; x++) sum += pixel(d, x, y)[3] / 255;
-    return sum / (scale * scale);           // device pixels -> square POINTS
-  };
-
-  for (const dark of [false, true]) {
-    const theme = dark ? 'dark' : 'light';
-    const measured = [];
-    for (const b of dots.DOT_ORDER) {
-      const spec = dots.renderRecencyDot(b, { dark });
-      const at1 = inkOf(spec.buffer, 1), at2 = inkOf(spec.buffer2x, 2);
-      const claimed = dots.dotInkArea(b);
-      measured.push(at1);
-      // 3% of tolerance, which is antialiasing over a 13-point canvas and
-      // nothing else — a rim that failed to draw would be 25-45% low on the
-      // cold end, and a rim painted over the sector would be high.
-      ok(Math.abs(at1 - claimed) / claimed < 0.03 && Math.abs(at2 - claimed) / claimed < 0.03,
-        `${theme} ${b}: decoded ink is ${at1.toFixed(1)}pt² at 1x and ${at2.toFixed(1)}pt² at 2x against the ${claimed.toFixed(1)} the geometry claims`);
+    for (let y = 0; y < d.height; y++) for (let x = 0; x < d.width; x++) {
+      const dx = x + 0.5 - c, dy = y + 0.5 - c;
+      if (dx * dx + dy * dy > r * r) sum += alphaAt(d, x, y);
     }
-    ok(measured.every((v, i) => i === 0 || v < measured[i - 1]),
-      `${theme}: and the ladder is STRICTLY decreasing in the decoded alpha channel (${measured.map((v) => v.toFixed(1)).join(' > ')} pt²) — the reading a viewer gets with the palette discarded`);
+    return sum;
+  };
+  const d2 = (t) => png.decodePng(dots.renderRecencyDot(t, { dark: false }).buffer2x);
+  const d1 = (t) => png.decodePng(dots.renderRecencyDot(t, { dark: false }).buffer);
+  ok(inkBeyond(d1('live'), dots.DOT_RADIUS + 0.75) > 0, 'LIVE has ink beyond the dot\'s edge — the halo is really drawn');
+  eq(inkBeyond(d1('recent'), dots.DOT_RADIUS + 0.75), 0, 'CONTROL — RECENT has none: the halo is the only difference, as in the app');
+  // The halo is quieter than the dot: its opaque-most pixel is under half.
+  const liveRing = [];
+  const c = dots.DOT_POINTS / 2;
+  const L = d1('live');
+  for (let y = 0; y < L.height; y++) for (let x = 0; x < L.width; x++) {
+    const dx = x + 0.5 - c, dy = y + 0.5 - c;
+    const q = Math.sqrt(dx * dx + dy * dy);
+    if (q > dots.DOT_RADIUS + 0.75 && q < dots.HALO_OUTER - 0.75) liveRing.push(alphaAt(L, x, y));
   }
+  ok(liveRing.length > 0 && Math.max(...liveRing) <= Math.ceil(255 * dots.HALO_ALPHA) + 1,
+    `the halo is drawn at ${dots.HALO_ALPHA * 100}% alpha (max ${Math.max(...liveRing)}/255) — a glow, not a second ring`);
+  // DASHED: going round the ring, the alpha falls to zero between dashes.
+  const U = d2('unknown');
+  const R = (dots.DOT_RADIUS - dots.DASH_STROKE / 2) * 2;
+  const around = [];
+  for (let k = 0; k < 64; k++) {
+    const a = (k / 64) * 2 * Math.PI;
+    around.push(alphaAt(U, Math.floor(U.width / 2 + R * Math.cos(a)), Math.floor(U.height / 2 + R * Math.sin(a))));
+  }
+  const on = around.filter((v) => v > 200).length, off = around.filter((v) => v === 0).length;
+  ok(on > 16 && off > 16, `UNKNOWN is DASHED: round its ring, ${on} of 64 samples are ink and ${off} are empty`);
+  const D = d2('dormant');
+  const aroundD = [];
+  for (let k = 0; k < 64; k++) {
+    const a = (k / 64) * 2 * Math.PI;
+    const Rd = (dots.DOT_RADIUS - dots.HOLLOW_STROKE / 2) * 2;
+    aroundD.push(alphaAt(D, Math.floor(D.width / 2 + Rd * Math.cos(a)), Math.floor(D.height / 2 + Rd * Math.sin(a))));
+  }
+  ok(aroundD.every((v) => v > 0), 'CONTROL — DORMANT\'s ring is CONTINUOUS all the way round, so "dashed" above is a real difference');
 
-  // ── THE CONTRAST, AND WHAT THE RIM DOES AND DOES NOT CHANGE ───────────
-  //
-  // THE RIM INTRODUCES NO COLOUR. It is the mark's own hue at a lower alpha, so
-  // §2's figures still describe every pixel drawn, and the marks themselves are
-  // untouched by this change — asserted rather than assumed, by recomputing
-  // them here from the shipped palette.
-  //
-  // Its OWN composited ratio is reported and is NOT held to the 3:1 floor, on
-  // purpose. 3:1 is WCAG 2.2 1.4.11, the floor for a graphic a viewer must be
-  // able to DETECT in order to get the information. Nobody is asked to detect
-  // the rim: it is the ground the sector is read against, and the sector — the
-  // signal — clears the floor by 4.1 to 6.4 times. A rim at 3:1 would be a
-  // second mark competing with the first.
+  // The contrast: every ink is the palette's; the halo's composite is
+  // reported, not floored — it is a glow around a mark that already clears it.
   const compose = (fg, bg, alpha) => fg.map((v, i) => Math.round(v * alpha + bg[i] * (1 - alpha)));
   for (const theme of ['light', 'dark']) {
     const band = rgba.MENU_BG_BAND[theme];
-    for (const tone of ['hot', 'mid', 'cold']) {
-      const fg = hex(dots.DOT_PALETTE[theme][tone]);
-      const solid = band.map((b) => contrast.contrastRatio(fg, hex(b)));
-      const rim = band.map((b) => contrast.contrastRatio(compose(fg, hex(b), dots.RIM_ALPHA), hex(b)));
-      ok(Math.min(...solid) >= rgba.CONTRAST_FLOOR_NON_TEXT,
-        `${theme} ${tone}: the MARK still clears the non-text floor across the whole band (worst ${contrast.round2(Math.min(...solid)).toFixed(2)}) — the rim changed no colour, only where ink is put`);
-      console.log(`    ${theme} ${tone.padEnd(5)} mark ${contrast.round2(Math.min(...solid)).toFixed(2)}:1 worst   rim ${rim.map((v) => contrast.round2(v).toFixed(2)).join(' / ')} (reported, not floored)`);
-      ok(Math.min(...rim) < Math.min(...solid),
-        `${theme} ${tone}: CONTROL — the rim really is quieter than the mark it frames, so this is scaffolding and not a second signal`);
-    }
-  }
-
-  // ANTI-VACUITY, THE THIRD ONE: a rim at full alpha would be a ring, not a
-  // face, and this proves the measurement above can tell the difference.
-  {
-    const fg = hex(dots.DOT_PALETTE.light.cold), bg = hex(rgba.MENU_BG.light);
-    ok(contrast.contrastRatio(compose(fg, bg, 1), bg) > contrast.contrastRatio(compose(fg, bg, dots.RIM_ALPHA), bg) * 2,
-      'CONTROL: the same composite at full alpha is more than twice the ratio, so the alpha term in that arithmetic is live');
+    const fg = hex(dots.DOT_PALETTE[theme].hot);
+    const solid = band.map((b) => contrast.contrastRatio(fg, hex(b)));
+    const halo = band.map((b) => contrast.contrastRatio(compose(fg, hex(b), dots.HALO_ALPHA), hex(b)));
+    ok(Math.min(...solid) >= rgba.CONTRAST_FLOOR_NON_TEXT,
+      `${theme}: the live DOT clears the non-text floor across the band (worst ${contrast.round2(Math.min(...solid)).toFixed(2)})`);
+    console.log(`    ${theme} halo ${halo.map((v) => contrast.round2(v).toFixed(2)).join(' / ')} (reported, not floored)`);
+    ok(Math.min(...halo) < Math.min(...solid), `${theme}: CONTROL — the halo is quieter than the dot it surrounds`);
   }
 }
 
@@ -933,12 +818,17 @@ section('§10 the spec shape, exactly as contracted');
 // a menu build.
 {
   const want = ['buffer', 'buffer2x', 'heightPoints', 'template', 'widthPoints'];
-  for (const [name, spec] of [
-    ['renderPulseStrip', strip.renderPulseStrip(mixedPulse(), { dark: false })],
-    ['renderRecencyDot', dots.renderRecencyDot('warm', { dark: false })],
+  // v3.74.0: the dot spec also says WHAT it is — `kind: 'dot'` and its `tier`
+  // — so a text rendering of the menu (`renderTrayMenuText`) can name the
+  // mark without re-deriving it. Electron reads neither; the bar spec already
+  // carried its own descriptive fields (`frac`, `ink`) the same way.
+  for (const [name, spec, keys] of [
+    ['renderPulseStrip', strip.renderPulseStrip(mixedPulse(), { dark: false }), want],
+    ['renderRecencyDot', dots.renderRecencyDot('recent', { dark: false }), [...want, 'kind', 'tier'].sort()],
   ]) {
-    eq(Object.keys(spec).sort(), want, `${name} returns exactly {buffer, buffer2x, widthPoints, heightPoints, template}`);
+    eq(Object.keys(spec).sort(), keys, `${name} returns exactly {${keys.join(', ')}}`);
     ok(Buffer.isBuffer(spec.buffer) && Buffer.isBuffer(spec.buffer2x), `${name}: both representations are Buffers`);
+    if (name === 'renderRecencyDot') eq([spec.kind, spec.tier], ['dot', 'recent'], 'the dot names its kind and its tier');
     ok(Number.isInteger(spec.widthPoints) && Number.isInteger(spec.heightPoints), `${name}: the declared size is in whole points`);
     eq(spec.template, false, `${name}: template is the literal false, never merely falsy`);
   }
@@ -995,7 +885,12 @@ section('§11 COLOUR DISCARDED — every state readable in the alpha channel alo
   eq(digest(sil(true)), digest(sil(false)),
     'the strip\'s SILHOUETTE is byte-identical in light and dark — the theme changes the ink, never the reading');
 
-  // The same test for the dots: all five states separable with no colour at all.
+  // THE DOTS, WITH THE COLOUR DISCARDED — and here the claim is NARROWER,
+  // stated as the app states it. The app's scale differs in SHAPE at its two
+  // ends (the halo, the hollow ring, the dashed ring) and in HUE only between
+  // recent, today and week — every mark sits beside its age in words
+  // (freshness.css). So four silhouettes, not six, and that is asserted
+  // rather than claimed away.
   const dotSil = (b, dark) => {
     const d = png.decodePng(dots.renderRecencyDot(b, { dark }).buffer);
     const out = [];
@@ -1003,9 +898,12 @@ section('§11 COLOUR DISCARDED — every state readable in the alpha channel alo
     return out.join(',');
   };
   const sils = dots.DOT_ORDER.map((b) => dotSil(b, false));
-  eq(new Set(sils).size, 5,
-    'all FIVE recency dots have different silhouettes — the five buckets are separable with the palette discarded entirely');
-  ok(sils[0] === dotSil('live', false), 'CONTROL: the same bucket twice has the same silhouette, so the set comparison can fail');
+  eq(new Set(sils).size, 4,
+    'FOUR silhouettes: live (halo), filled (recent · today · week), dormant (hollow), unknown (dashed)');
+  ok(dotSil('recent', false) === dotSil('today', false) && dotSil('today', false) === dotSil('week', false),
+    'recent, today and week share ONE silhouette — they differ in hue only, exactly as in the app; the words beside them carry the rest');
+  ok(new Set([dotSil('live', false), dotSil('recent', false), dotSil('dormant', false), dotSil('unknown', false)]).size === 4,
+    'and live, filled, dormant and unknown are separable with the palette discarded entirely');
   for (const b of dots.DOT_ORDER) {
     eq(dotSil(b, true), dotSil(b, false), `${b}: and its silhouette does not change with the theme`);
   }
@@ -1101,8 +999,15 @@ section('§12 the merge, and the width budget it was bought with');
   const longest = strip.longestPulseLabel();
   ok(typeof longest === 'string' && longest.length > photographed.length,
     `the longest reading it can emit is ${longest.length} characters: "${longest}"`);
-  ok(/at least/.test(longest) && /tools/.test(longest),
-    '…and it is the one where every caveat fires at once, which is precisely the reading a budget must not be allowed to eat');
+  // v3.74.0: the longest reading now ends on ONE NAMED TOOL at the name cap
+  // (`· Claude Code` when exactly one tool saved), which is longer than
+  // `· 99 tools` — the floor caveat still fires in it.
+  ok(/at least/.test(longest) && longest.endsWith(' · ' + 'W'.repeat(strip.PULSE_TOOL_NAME_CHARS)),
+    '…and it is the one where every caveat fires at once with the longest tool name the clause will carry, which is precisely the reading a budget must not be allowed to eat');
+  const manyTools = strip.pulseLabel(pulseFixture({ windowSeconds: undefined, events: 9999, harnessCount: 99, pairsTruncated: 1,
+    buckets: new Array(28).fill(1) }));
+  ok(/99 tools$/.test(manyTools) && manyTools.length <= longest.length,
+    `CONTROL — the "99 tools" reading (${manyTools.length}) is not longer than the measured longest (${longest.length}), so the budget covers it too`);
   // NOT a second composition of the sentence: every candidate is a PULSE handed
   // to the real `pulseLabel`, so a reworded clause moves this number on its own.
   for (const shape of [{}, { clock: 'none' }, { events: 0 }]) {

@@ -273,8 +273,14 @@ section('§2 the row model: order, the two-meaning slot, and null is never zero'
   // identity got the remainder. The slot itself is unchanged in MEANING; it is
   // on the SUBLABEL, which macOS draws in a smaller face and which therefore
   // has the room the label did not.
-  ok(m.rows[0].sublabel.includes('harness-one'), 'a LOCAL row shows the harness — on line two');
-  ok(!m.rows[0].label.includes('harness-one'), '…and never on line one, which is identity and time only');
+  // ── LAYOUT A (v3.74.0): THE HARNESS IS ON LINE ONE, ALWAYS ────────────
+  //
+  // A row IS a (project × harness) now, so the harness is part of its identity
+  // and is never dropped by a drop-constant rule: `alpha · harness-one · just
+  // now`. Line two carries the model and the agent's sentence; a foreign
+  // row's machine rides there, exactly as before.
+  ok(m.rows[0].label === 'alpha · harness-one · just now', 'a row names project, harness and age on LINE ONE');
+  ok(!m.rows[0].sublabel.includes('harness-one'), '…and does not repeat the harness on line two');
   ok(!m.rows[0].sublabel.includes('laptop'), 'a LOCAL row does NOT show the machine — it is constant, and therefore noise');
   ok(m.rows[2].sublabel.includes('studio'), 'a REMOTE row shows the machine');
   // ── REVERSED, AND THE ARGUMENT IS THE LAYOUT ─────────────────────────
@@ -291,10 +297,8 @@ section('§2 the row model: order, the two-meaning slot, and null is never zero'
   //
   // The rule that survives verbatim: the machine on a foreign row is decided by
   // `isThisHost` and is never dropped while the rows disagree about it.
-  ok(m.rows[2].sublabel.includes('harness-two'),
-    'a REMOTE row may ALSO name its harness, because the machine beside it removes the ambiguity that rule protected against');
-  ok(m.rows[2].sublabel.indexOf('studio') < m.rows[2].sublabel.indexOf('harness-two') === false,
-    '…and the harness leads, with the machine after it — the order the drop rule ranks them in');
+  ok(m.rows[2].label.startsWith('beta · harness-two · '),
+    'a REMOTE row names its harness on line one too — the machine on line two removes the "that tool runs HERE" ambiguity');
 
   // THE PRECONDITION THE FOUR ASSERTIONS ABOVE NOW CARRY, made explicit so a
   // future fixture edit cannot make them vacuous in silence. Since the width
@@ -328,7 +332,7 @@ section('§2 the row model: order, the two-meaning slot, and null is never zero'
   // v3.48.0: the identity survives an unknown age. Which PROJECT is being built
   // is known even when when it was last saved is not, and reporting the absence
   // of one fact as the absence of both would be the honesty rule inverted.
-  eq(withNull.headline.text, 'Working on: gamma · time unknown', 'in words, not as a blank');
+  eq(withNull.headline.text, 'Last save: gamma · unknown tool · time unknown', 'in words, not as a blank — and a save that named no tool says so');
 
   // A row with no age sorts LAST rather than being asserted to be the newest.
   const mixed = model.buildTrayModel(summary({
@@ -382,8 +386,8 @@ section('§2b ages are RE-DERIVED at the render clock, not read out of the snaps
 
   ok(a.renderedAtText !== b.renderedAtText,
     'CONTROL — the absolute stamp really does move between the two renders');
-  eq(a.headline.text, 'Working on: alpha · just now', 'at the first clock the headline reads the true age');
-  eq(b.headline.text, 'Working on: alpha · 40 min ago',
+  eq(a.headline.text, 'Last save: alpha · harness-one · just now', 'at the first clock the headline reads the true age');
+  eq(b.headline.text, 'Last save: alpha · harness-one · 40 min ago',
     'FORTY MINUTES LATER, from the SAME snapshot, the headline has moved — this is the defect');
   ok(a.headline.text !== b.headline.text,
     '…so the age under the stamp can no longer be stale while the stamp is fresh');
@@ -486,9 +490,9 @@ section('§2c a collision is announced ONCE, and the match is STRUCTURAL');
   const collisionLines = withReal.notices.filter((n) =>
     /writing/.test(noticeText(n)) && /alpha/.test(noticeText(n)) && /research/.test(noticeText(n)));
   eq(collisionLines.length, 1, 'the REAL producer warning now suppresses the derived line — exactly ONE notice');
-  eq(collisionLines.length ? noticeText(collisionLines[0]) : '(no collision notice at all)',
-    'Two agent tools are writing alpha · research.',
-    '…and the SUPPLIED one is the survivor, because the data layer saw the whole store');
+  eq(collisionLines.length ? collisionLines[0].text : '(no collision notice at all)',
+    'Two tools are writing alpha / research',
+    '…in the APP\'s words (v3.74.0) — composed from the fields, whichever source said it');
 
   // A collision warning about a DIFFERENT scope must not suppress anything.
   const other = model.buildTrayModel(summary({
@@ -511,17 +515,18 @@ section('§2c a collision is announced ONCE, and the match is STRUCTURAL');
       writtenAt: atAge(i * 60), writtenAgeSeconds: i * 60, ageSource: 'agent', isThisMachine: true,
     })),
   }), { now: NOW });
-  ok(truncated.truncatedNote !== null, 'CONTROL — the cap IS disclosed, on its own item under the last row');
-  eq(truncated.notices.filter((n) => n.code === 'scopes-truncated').length, 0,
-    '…so the scopes-truncated warning is dropped from the notices — the cap is stated once, where it belongs');
-
-  // …but only when the note is actually there to state it.
-  const truncWarnNoNote = model.buildTrayModel(summary({
+  // v3.74.0: the rows come from `projects[].latest` when the producer
+  // supplies it, and then the 40-pair window the warning is about is not what
+  // the menu draws — so it is not said. Without `latest` the rows ARE that
+  // window, and the warning stays.
+  eq(truncated.notices.filter((n) => n.code === 'scopes-truncated').length, 1,
+    'rows read from the truncated scopes[] window → the scopes-truncated warning IS said');
+  const withLatest = model.buildTrayModel(summary({
     warnings: [{ code: 'scopes-truncated', message: 'Showing the 8 most recent of 40 saved work-streams.' }],
+    projects: summary().scopes.map((sc) => ({ domain: null, project: sc.project, latest: [{ ...sc, harnessId: sc.harness, harnessRaw: sc.harness }] })),
   }), { now: NOW });
-  ok(truncWarnNoNote.truncatedNote === null, 'CONTROL — with nothing truncated there is no note');
-  eq(truncWarnNoNote.notices.filter((n) => n.code === 'scopes-truncated').length, 1,
-    '…and then the warning DOES get through, because nothing else is saying it');
+  eq(withLatest.notices.filter((n) => n.code === 'scopes-truncated').length, 0,
+    '…and when every listed project came with `latest`, it is not — the truncation hides nothing the menu draws');
 
   // A coded warning this model has no opinion about passes through untouched.
   const passthrough = model.buildTrayModel(summary({
@@ -582,7 +587,7 @@ section('§2d the standing brief reaches a surface, and it is the tooltip');
   const tip = menu.trayToolTip(withBrief);
   // v3.48.0: the headline names the PROJECT, because "which thing am I
   // building" stopped having one answer per domain.
-  ok(tip.includes('Working on:'), 'the tooltip still leads with the headline answer');
+  ok(tip.startsWith('The Curator — Last save: alpha · harness-one'), 'the tooltip leads with the last save, worded as one');
   ok(tip.includes('Brief updated 1 month ago'), '…and now also answers the second question the maintainer asks');
   ok(!/by an agent/.test(tip),
     'a brief with no recorded author says nothing about one — an absent provenance is not "you wrote it"');
@@ -662,19 +667,14 @@ section('§4 caps, notices, and "did not check" versus "nothing waiting"');
       writtenAgeSeconds: i * 60, ageSource: 'agent', isThisMachine: true,
     })),
   }), { now: NOW });
-  eq(many.rows.length, model.MAX_ROWS, 'the row list is capped');
-  eq(many.hiddenRows, 40 - model.MAX_ROWS,
-    'and the TRUE remainder is measured against the supplied total, not against what was visible');
-  ok(many.truncatedNote && many.truncatedNote.includes(String(40 - model.MAX_ROWS)),
-    '…and the note carries that number rather than a re-derived one');
-
-  const noTotal = model.buildTrayModel(summary({
-    scopes: Array.from({ length: 12 }, (_, i) => ({
-      project: 'p', scope: 's' + i, machine: 'laptop-a1b2c3', writtenAgeSeconds: i, ageSource: 'agent', isThisMachine: true,
-    })),
-  }), { now: NOW });
-  eq(noTotal.hiddenRows, 12 - model.MAX_ROWS,
-    'with no supplied total the remainder falls back to what was handed over');
+  // Twenty scopes of one project by one tool: ONE row on the face; five of
+  // its other scopes are its streams, and the other fourteen are COUNTED on
+  // the row's "N more in Project Context…" — never silently dropped.
+  eq(many.active.rows.length, 1, 'one project × one tool is ONE row, however many scopes it has');
+  eq([many.active.rows[0].streams.length, many.active.rows[0].streamsHidden], [model.MAX_OTHER_STREAMS, 20 - 1 - model.MAX_OTHER_STREAMS],
+    'its other scopes: five shown as streams, the rest counted');
+  ok(menu.flattenTrayMenu(menu.buildTrayMenuTemplate(many, NOOPS)).some((i) => i.label === (20 - 1 - model.MAX_OTHER_STREAMS) + ' more in Project Context…' && typeof i.click === 'function'),
+    '…and the count is an enabled item routed to Project Context');
 
   // THE FACT AND ITS ABSENCE.
   eq(model.remoteNotice(null), null, 'remote:null renders NOTHING — "we did not check" is not "you are up to date"');
@@ -691,7 +691,7 @@ section('§4 caps, notices, and "did not check" versus "nothing waiting"');
 
   // Collisions.
   const coll = model.buildTrayModel(summary(), { now: NOW });
-  ok(coll.notices.some((n) => n.kind === 'collision' && (n.full || n.text).includes('alpha · research')),
+  ok(coll.notices.some((n) => n.kind === 'collision' && n.text === 'Two tools are writing alpha / research'),
     'harnessShared produces a collision line naming the scope');
   ok(coll.notices.every((n) => !/rename|split|should/i.test(n.full || n.text)),
     'and it proposes NO remedy — the fix is the user\'s and does not fit in six words');
@@ -739,14 +739,11 @@ section('§5 the glyph, and why its corrector is not a poll');
   ok(filePulled.rows[0].label.includes('changed'),
     'a freshly-PULLED file still says "changed", so a git checkout cannot masquerade as an agent at work');
 
-  eq(model.ageBucket(0), 'live', 'bucket: 0s is live');
-  eq(model.ageBucket(119), 'live', 'bucket: just inside the window');
-  eq(model.ageBucket(120), 'warm', 'bucket: the boundary is exclusive');
-  eq(model.ageBucket(29 * 60), 'warm', 'bucket: warm');
-  eq(model.ageBucket(31 * 60), 'today', 'bucket: today');
-  eq(model.ageBucket(13 * 3600), 'cool', 'bucket: cool');
-  eq(model.ageBucket(8 * 86400), 'cold', 'bucket: cold');
-  eq(model.ageBucket(null), 'unknown', 'bucket: unknown is its own value, not "cold"');
+  // THE GLYPH'S WINDOW IS ITS OWN (120 s), and deliberately not the app's
+  // 60-second `live` tier: see glyphLiveAge. The ROW's dot is the app's scale.
+  eq([0, 59, 60, 119].map(model.glyphLiveAge), [true, true, true, true], 'glyph: live through 119 s — past the dot\'s 60 s live tier');
+  eq([120, 600, null, -1].map(model.glyphLiveAge), [false, false, false, false], 'glyph: the 120 s boundary is exclusive, and no age is never live');
+  eq(model.freshnessTier(90), 'recent', 'CONTROL — at 90 s the DOT says recent while the glyph still says live: two questions, two numbers');
 
   eq(model.liveExpiresInMs(remoteOnly), null, 'an IDLE glyph arms NOTHING — no timer exists in the state the app is in almost always');
   const ms = model.liveExpiresInMs(live);
@@ -763,21 +760,20 @@ section('§6 the menu template: order, the always-present items, and Quit');
   const flat = menu.flattenTrayMenu(t);
   const items = flat.filter((i) => i.type !== 'separator');
 
-  // THE HEADLINE ANSWER IS FIRST. This is the maintainer's stated need — "am I
-  // approaching the end of the context window, and did we update the scope?" —
-  // and it must be answerable without reading past the first line.
-  eq(items[0].id, menu.ID_HEADLINE, 'the first item is the headline answer');
-  // v3.48.0: it names the PROJECT and then the age. "Last save · 4 min ago"
-  // could not say WHICH thing was saved, because a domain had exactly one state
-  // tree and there was never more than one answer.
-  ok(new RegExp('^' + model.HEADLINE_PREFIX).test(items[0].label),
-    `and it reads "${items[0].label}"`);
-  ok(/ · (just now|\d+ (min|hr|day|days|week|weeks|month|months|year|years) ago|time unknown)$/.test(items[0].label),
-    '…and ends in the age, which is the token a clip may never take');
-  eq(items[0].enabled, true,
-    'the headline is ENABLED, so it is drawn at full contrast — the one line the widget exists for is not put in the dimmest style available');
-  eq(items[1].id, menu.ID_HEADLINE_WHERE, 'the scope it happened in is the second line');
-  eq(items[1].enabled, false, 'and that line is a statement about the one above it, not a second action');
+  // ── LAYOUT A (v3.74.0): THE NEWEST SAVE IS THE FIRST ROW, SAID ONCE ────
+  //
+  // The "Working on" headline and its grey harness · model line are gone:
+  // they said the newest save a second and third time, in the present tense
+  // for a past event. With no pulse in this fixture, the Active header is the
+  // first item and the newest save is the line under it — where, who, when.
+  ok(!flat.some((i) => i.id === 'tray-headline' || i.id === 'tray-headline-where' || /^Working on/.test(i.label || '')),
+    'no headline and no grey who-line anywhere in the menu');
+  eq([items[0].id, items[0].type, items[0].label], [menu.ID_HEADER_ACTIVE, menu.MENU_HEADER_TYPE, 'Active · last 24 h'],
+    'the first item is the "Active · last 24 h" header (the pulse sits above it when there is one)');
+  eq(items[1].id, m.rows[0].id, 'the second is the NEWEST save\'s row');
+  ok(/ · (just now|\d+ (min|hr|day|days|week|weeks|month|months|year|years) ago|time unknown)$/.test(items[1].label),
+    `…"${items[1].label}", ending in the age, which is the token a clip may never take`);
+  ok(items[1].enabled !== false, '…drawn at full contrast (never disabled)');
 
   // Always present, whatever the data does.
   for (const state of [summary(), null, { ok: false, scopes: [] }, summary({ scopes: [] })]) {
@@ -838,7 +834,7 @@ section('§6 the menu template: order, the always-present items, and Quit');
   {
     let got = null;
     const t2 = menu.buildTrayMenuTemplate(m, { ...NOOPS, onOpenScope: (r) => { got = r; } });
-    menu.flattenTrayMenu(t2).find((i) => i.id === menu.rowActionId('tray-row-2', menu.ID_ROW_OPEN)).click();
+    menu.flattenTrayMenu(t2).find((i) => i.id === menu.rowActionId(m.rows[2].id, menu.ID_ROW_OPEN)).click();
     eq(got && [got.project, got.scope], ['beta', 'main'],
       'clicking a row hands the shell THAT row — the third one, not the first');
   }
@@ -859,8 +855,8 @@ section('§6 the menu template: order, the always-present items, and Quit');
   ok(items.some((i) => i.id === menu.ID_UPDATED_STAMP && i.label === 'Updated 14:32'),
     'the menu carries its own "Updated HH:MM" stamp, so a stale reading is visible AS stale');
 
-  // The tooltip carries the headline, so a hover answers without a click.
-  ok(menu.trayToolTip(m).includes(model.HEADLINE_PREFIX), 'the icon tooltip carries the headline answer');
+  // The icon's tooltip keeps the fast answer, so a hover answers without a click.
+  ok(menu.trayToolTip(m).includes(model.HEADLINE_PREFIX), 'the icon tooltip carries the last save');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1375,8 +1371,6 @@ section('§14 the width budget — arithmetic, and what it is sensitive to');
   ok(B(10, 6.5) < B(0, 6.5), 'CONTROL: so the icon really does reduce the budget');
   eq(B(0, 6.5), model.PLAIN_LABEL_CHARS, 'PLAIN_LABEL_CHARS is that formula, not a second number');
   eq(B(model.ROW_ICON_POINTS, 6.5), model.ROW_LABEL_CHARS, 'and so is ROW_LABEL_CHARS');
-  eq(model.WHERE_LABEL_CHARS, model.PLAIN_LABEL_CHARS - 4,
-    'the "where" line pays for its own four-space indent');
 
   // The sublabel is drawn in a SMALLER face, so the same points buy MORE
   // characters — which is why the headline cap comes out LARGER than the row
@@ -1510,37 +1504,35 @@ section('§15 the READER\'S view — the configuration the maintainer actually r
   eq(model.machineIdentityKey({ machine: 'build-box' }), 'name:build-box',
     'CONTROL — with NEITHER fact it is a foreign folder, so the two assertions above are not vacuous');
 
+  // ── LAYOUT A OVER THE READER'S VIEW ────────────────────────────────────
+  //
+  // One project, one tool: ONE row on the face, the other work-streams under
+  // it. What this fixture exists to prove is unchanged: no row names a
+  // machine, because every record is one computer.
   const reader = model.buildTrayModel(readerStore(), { now: NOW });
-  eq(reader.rows.length, 5, 'CONTROL — five rows were built, so the assertions below are not vacuous');
+  eq(reader.active.rows.length, 1, 'one project × one tool is one face row');
+  eq(reader.rows.length, 5, 'CONTROL — five rows were built (the face row and four streams: six pairs, one of them the DHCP duplicate), so the assertions below are not vacuous');
   ok(reader.rows.every((r) => r.isThisMachine === false),
     'CONTROL — and every one of them is classified as a FOREIGN machine, which is the whole point of this fixture');
-  ok(reader.rows.every((r) => !/laptop|notebook|a1b2c3/.test(r.label)),
-    'NO row names a machine — the component is identical across every visible row, so it carries nothing');
-  ok(reader.rows.every((r) => r.showsMachine === false), '…and the model says so rather than leaving it to be inferred');
-  ok(reader.rows.every((r) => !/claude-code/.test(r.label)),
-    'nor a harness, by the same rule and for the same reason');
-  ok(reader.rows.every((r) => !/^projects/.test(r.label)),
-    'nor the project token, which one project makes constant');
+  ok(reader.rows.every((r) => !/laptop|notebook|a1b2c3/.test(r.label + '\n' + (r.sublabel || ''))),
+    'NO row names a machine on either line — one computer in the whole store, so the name carries nothing');
+  ok(reader.rows.every((r) => r.showsMachine !== true), '…and the model says so rather than leaving it to be inferred');
+  ok(reader.rows.filter((r) => r.place === 'stream').every((r) => !/Claude Code|claude-code/.test(r.label)),
+    'a stream under the row does not repeat the row\'s own tool');
 
-  // ── THE DHCP PAIR IS ONE ROW NOW (v3.51.0) ─────────────────────────────
-  //
-  // Two folders, one laptop, one work-stream: the second copy said nothing the
-  // first did not, and on a five-row menu it cost a whole slot. The newest copy
-  // is kept and the older one is reachable through the overflow item.
+  // ── THE DHCP PAIR IS ONE STREAM ──────────────────────────────────────
   const pair = reader.rows.filter((r) => r.scope.includes('design-conformance'));
-  eq(pair.length, 1, 'the DHCP pair is ONE row — a second machine copy of a shown work-stream is the same work-stream twice');
+  eq(pair.length, 1, 'the DHCP pair is ONE stream — two folders of one laptop are one work-stream saved twice');
   eq(pair[0].machine, 'laptop-a1b2c3', '…and it is the NEWER copy that survived');
   eq(new Set(reader.rows.map((r) => r.scope)).size, reader.rows.length,
     'so every row on this menu is a different work-stream');
   ok(reader.rows.some((r) => r.scope.includes('chat-streaming')),
-    'CONTROL — and the freed slot went to the next work-stream down rather than shortening the menu');
+    'CONTROL — and the oldest work-stream is still listed');
 
-  // ── AND WHERE A COLLISION IS STILL REACHABLE, IT IS STILL THE AGE ───────
-  //
-  // One scope NAME in two PROJECTS, saved from two folders of one laptop, at
-  // two ages that round to the same words. That is the shape the resolver's own
-  // docblock records from the photograph, and it survives the distinct-scope
-  // rule because the two rows are two work-streams in two groups.
+  // ── ONE SCOPE NAME IN TWO PROJECTS IS TWO ROWS, BY PROJECT ─────────────
+  // The collision resolver that escalated ages (`1271 min ago`) is gone: two
+  // face rows are two (project × tool) pairs, so line one differs by the
+  // project name, which is the fact that separates them.
   const collide = model.buildTrayModel({
     ok: true, total: 2,
     scopes: [
@@ -1550,12 +1542,8 @@ section('§15 the READER\'S view — the configuration the maintainer actually r
         scope: 'session-2026-08-30-design-conformance-pre-native', machine: 'notebook-a1b2c3' }),
     ],
   }, { now: NOW });
-  eq(collide.rows.length, 2, 'CONTROL — the colliding pair is present');
-  ok(collide.rows.every((r) => !/laptop|notebook|a1b2c3/.test(r.label)),
-    'neither row names a machine folder');
-  ok(collide.rows[0].label !== collide.rows[1].label, 'the two rows read differently');
-  ok(collide.rows.every((r) => r.agePrecision === 'hour'),
-    '…and they were separated by escalating the AGE, which costs no width and makes no claim about hardware');
+  eq(collide.idle.rows.map((r) => r.label), ['projects · Claude Code · 1 day ago', 'posts · Claude Code · 1 day ago'],
+    'the two read differently by their PROJECT, with the ordinary age — no escalation, no machine');
 
   // AND THE MOMENT A SECOND COMPUTER APPEARS, THE NAME COMES BACK.
   const twoMachines = model.buildTrayModel(readerStore([
@@ -1563,15 +1551,13 @@ section('§15 the READER\'S view — the configuration the maintainer actually r
       harness: 'claude-code', writtenAt: atAge(400), writtenAgeSeconds: 400,
       ageSource: 'agent', headline: 'h', isThisMachine: false },
   ]), { now: NOW });
-  // REVERSED ONLY IN WHICH LINE IT READS: the machine moved to the sublabel
-  // with every other provenance token. The RULE — a second computer brings the
-  // name back — is unchanged and is the point of the assertion.
-  ok(twoMachines.rows.some((r) => /studio/.test(r.sublabel)),
-    'a genuinely second computer brings the machine name straight back — on line two');
+  eq(twoMachines.active.rows[0].machine, 'studio-9f8e7d', 'CONTROL — the studio save is the newest, so it is the face row');
+  ok(/^studio\b/.test(twoMachines.active.rows[0].sublabel),
+    'a genuinely second computer brings the machine name straight back — on line two, even on a face whose only row is the studio\'s');
   ok(twoMachines.rows.every((r) => !/studio|laptop|notebook/.test(r.label)),
-    '…and never onto line one, which no amount of provenance may reach');
-  ok(twoMachines.rows.filter((r) => r.showsMachine).length === twoMachines.rows.length,
-    '…on every row, because "which computer" is only answerable if every row answers it');
+    '…and never onto line one, which is where, who and when');
+  ok(twoMachines.rows.every((r) => r.showsMachine === true || r.sublabel.startsWith(r.machineShort)),
+    '…on every row, because "which computer" is only answerable if every row answers it (none is this Mac here)');
 
   // NOTHING THE RULE REMOVED IS UNREACHABLE. Checked per row against the RAW
   // input, which is the absolute rule of every lever in this file.
@@ -1617,9 +1603,7 @@ section('§16 every label fits the budget, and nothing it removed is unreachable
   ok(m.rows.some((r) => r.label.endsWith(' ago') && /…/.test(r.label)),
     'a clipped row still ENDS in its age — the budget is spent on the scope, never on the one token the widget exists to show');
   ok(m.rows.every((r) => /ago|unknown/.test(r.label)), 'and no row lost its age to a clip at all');
-  ok(m.headline.text.length <= model.PLAIN_LABEL_CHARS, 'the headline is budgeted too');
-  ok(m.headline.where === null || m.headline.where.length <= model.WHERE_LABEL_CHARS,
-    'and so is the line under it');
+  ok(m.headline.text.includes('projects'), 'the headline — the icon\'s TOOLTIP now, never a menu line — keeps the project whole');
 
   // The whole rendered menu, every line, against the budget it belongs to.
   const NOOPS2 = { ...NOOPS, makeIcon: () => ({ fake: 'image' }) };
@@ -1648,7 +1632,9 @@ section('§16 every label fits the budget, and nothing it removed is unreachable
     ok(r.toolTip.includes(src.machine), `row ${checked}: and so does the machine`);
     checked++;
   }
-  eq(checked, model.MAX_ROWS, `all ${checked} rows checked`);
+  eq(checked, m.rows.length, `all ${checked} rows checked`);
+  ok(checked === 1 + model.MAX_OTHER_STREAMS && m.active.rows[0].streamsHidden === 2,
+    'CONTROL — one face row, five streams, and the other two COUNTED on the row');
 
   // ── A NOTICE IS A SENTENCE, AND SENTENCES DO NOT COMPRESS ────────────
   //
@@ -1658,20 +1644,26 @@ section('§16 every label fits the budget, and nothing it removed is unreachable
   // useful clipped at 34 characters — so the budget is met by clipping the
   // LABEL and carrying the sentence on the tooltip, and that pairing is the
   // thing worth guarding.
-  const longNotice = 'Two agent tools are writing projects · session-2026-08-30-a-long-one.';
+  // A COLLISION LINE clips the SCOPE'S TAIL, never the verb or the project.
+  const longScope = 'session-2026-08-30-a-deliberately-long-work-stream';
   const noticed = model.buildTrayModel({
     ok: true, scopes: [],
-    warnings: [{ code: 'harness-collision', message: longNotice, project: 'projects', scope: 'x' }],
+    warnings: [{ code: 'harness-collision', message: 'Two agent tools are writing projects / field-notes · ' + longScope + '.',
+      domain: 'projects', project: 'field-notes', scope: longScope, harnesses: ['claude-code', 'Antigravity'] }],
   }, { now: NOW });
-  const nItem = menu.flattenTrayMenu(menu.buildTrayMenuTemplate(noticed, NOOPS))
-    .find((i) => i.label && i.label.startsWith('Two agent tools'));
-  ok(nItem, 'CONTROL — the notice reached the menu');
+  let opened = null;
+  const nItem = menu.flattenTrayMenu(menu.buildTrayMenuTemplate(noticed, { ...NOOPS, onOpenScope: (r) => { opened = r.route; } }))
+    .find((i) => i.label && i.label.startsWith('Two tools are writing'));
+  ok(nItem, 'CONTROL — the notice reached the menu (an empty store still says its notices)');
   ok(nItem && nItem.label.length <= model.PLAIN_LABEL_CHARS,
-    `the notice label is inside the ${model.PLAIN_LABEL_CHARS}-character budget`);
-  ok(nItem && nItem.label.length < longNotice.length,
-    'CONTROL — it really was clipped, so the tooltip assertion below is not vacuous');
-  eq(nItem ? nItem.toolTip : null, longNotice,
-    '…and the WHOLE sentence is on its tooltip — the absolute rule that nothing a budget removed becomes unreachable');
+    `the notice label is inside the ${model.PLAIN_LABEL_CHARS}-character budget: "${nItem && nItem.label}"`);
+  ok(nItem && nItem.label.startsWith('Two tools are writing field-notes / a-del') && nItem.label.endsWith('…'),
+    '…and what was clipped is the SCOPE\'s tail: the verb and the project are whole');
+  ok(nItem && nItem.toolTip.includes(longScope) && nItem.toolTip.includes('Claude Code and Antigravity'),
+    '…with the WHOLE work-stream and both tools named on its tooltip');
+  ok(nItem && nItem.enabled === true && typeof nItem.click === 'function', 'a collision line is ENABLED — it names a project, so it can open it');
+  if (nItem && nItem.click) nItem.click();
+  eq(opened, 'projects/field-notes', '…and a click opens THAT project in Project Context');
   const shortNotice = model.buildTrayModel({
     ok: true, scopes: [], warnings: [{ code: 'x', message: 'short enough' }],
   }, { now: NOW });
@@ -1742,9 +1734,9 @@ section('§17 sections, the two pictures, and the items that are now reachable')
   const noClock = model.buildTrayModel({
     ok: true, scopes: [{ project: 'p', scope: 's', machine: 'laptop-a1b2c3', isThisMachine: true }],
   }, { now: NOW, renderDot });
-  eq(noClock.rows[0].bucket, 'unknown', 'CONTROL — a row with no timestamp buckets as unknown');
-  eq(noClock.rows[0].dot, null,
-    'and gets NO dot at all — the coldest colour would assert "old" about a row whose own label reads "time unknown"');
+  eq(noClock.rows[0].tier, 'unknown', 'CONTROL — a row with no timestamp is in the tier `unknown`');
+  eq(dots[dots.length - 1].bucket, 'unknown',
+    'and the renderer is asked for the UNKNOWN mark (the app\'s dashed ring) — never the coldest tier, which would assert "old" about a row whose own label reads "time unknown"');
   ok(built.rows.every((r) => r.dot !== null), 'CONTROL — rows that DO have a clock all carry one');
 
   // A renderer that throws costs a picture and never the menu.
@@ -1759,29 +1751,20 @@ section('§17 sections, the two pictures, and the items that are now reachable')
   }));
   const byId = (id) => flat.find((i) => i.id === id);
 
-  // ── THE ROWS' HEADER IS A PROJECT HEADER NOW ─────────────────────────
+  // ── ONE SECTION HEADER, AND NO PROJECT HEADERS (Layout A, v3.74.0) ───
   //
-  // `ID_HEADER_ROWS` / "Recent scopes" is the EMPTY state's caption from
-  // v3.48.0; a store with anything in it draws one header per project instead
-  // (see `groups` in tray-model.js). Drawing both would put a caption above a
-  // caption on the surface with no vertical space. The section header
-  // PROPERTIES asserted here — header type, inert, no click — are the ones that
-  // matter, so they are asserted over whichever header this menu actually has.
-  const rowsHeader = flat.find((i) => i.id === 'tray-group-0');
-  for (const [id, label] of [[menu.ID_HEADER_PULSE, menu.HEADER_PULSE]]) {
-    const h = byId(id) || {};
-    ok(byId(id), `the ${label} section header is in the menu`);
+  // The v3.66 project header — an enabled item carrying a capture bar — is
+  // gone: a row IS a (project × tool), so the project is on its own line one.
+  // The one section header left on the face is "Active · last 24 h".
+  {
+    const h = byId(menu.ID_HEADER_ACTIVE) || {};
+    ok(byId(menu.ID_HEADER_ACTIVE), 'the Active section header is in the menu');
     eq(h.type, menu.MENU_HEADER_TYPE, '…as a header type, which is what makes it read as a section');
     eq(h.enabled, false, '…drawn inert, so on macOS below 14 its worst case is a dimmed caption rather than a live item that does nothing');
     ok(!h.click, '…and carrying no click handler at all, so no macOS version can make it actionable');
   }
-  // v3.66.0: a PROJECT header carries the capture depth bar, so it is an
-  // ENABLED ordinary item (a disabled one greys its icon) with a click that
-  // opens Context on that project — never a header type, never a submenu.
-  ok(rowsHeader, 'the first project header is in the menu');
-  ok(rowsHeader && rowsHeader.type !== menu.MENU_HEADER_TYPE && rowsHeader.enabled === true
-    && typeof rowsHeader.click === 'function' && !rowsHeader.submenu,
-    '…as an ENABLED item with a click and no submenu (v3.66.0) — the least risky shape that can carry a picture');
+  ok(!flat.some((i) => /^tray-group-/.test(String(i.id || '')) || i.id === 'tray-header-pulse'),
+    'no project header and no "Save pulse" header — the rows name their project, the pulse row reads as a sentence');
   eq(menu.MENU_HEADER_TYPE, 'header', 'the type is the one verified present in Electron 43.5.0\'s accepted union');
 
   // The pulse row is now an ACTION at full contrast.
@@ -1797,13 +1780,13 @@ section('§17 sections, the two pictures, and the items that are now reachable')
   // Guarded rather than dereferenced: a mutation that makes one of these items
   // VANISH must red on a named assertion, not crash the suite two lines later —
   // the shape v3.24.1 recorded, and one this file has now reproduced once.
-  for (const id of [menu.ID_PULSE, menu.ID_TRUNCATED]) {
+  for (const id of [menu.ID_PULSE]) {
     const item = routed.find((i) => i.id === id);
     ok(item && typeof item.click === 'function', `${id} is present and clickable`);
     if (item && typeof item.click === 'function') item.click();
   }
-  eq(clicks, ['memory', 'memory'],
-    'both land on Project Context — the same destination as the headline, which is where the saves this strip counts are actually listed');
+  eq(clicks, ['memory'],
+    'with no per-tool lanes it lands on Project Context, which is where the saves this strip counts are actually listed');
   ok(pulseItem.toolTip && pulseItem.toolTip.length > 20, 'the full reading, including everything the label budget dropped, is on its tooltip');
   // ── THE READING IS NEVER THE THING THAT DOES NOT FIT ─────────────────
   //
@@ -1928,22 +1911,18 @@ section('§17 sections, the two pictures, and the items that are now reachable')
     '…while a form that DOES fit passes through the clause clip untouched');
 
   ok(!/^Save pulse/.test(pulseItem.label || ''),
-    'the constant noun comes off the label, because the section header above it now carries that word');
+    'the constant noun stays off the label: "7 days · 69 saves" reads as a sentence about saves on the menu\'s first line');
   eq(model.stripPulseNoun(model.PULSE_LABEL_NOUN + '7 days · 69 saves'), '7 days · 69 saves',
     'CONTROL — the noun is stripped as a LITERAL prefix');
   eq(model.stripPulseNoun('7 days · 69 saves'), '7 days · 69 saves',
     '…and a label that never carried it is untouched, so this is a no-op rather than a corruption if the producer reworded');
 
-  // The overflow is a destination.
-  const more = byId(menu.ID_TRUNCATED) || {};
-  ok(byId(menu.ID_TRUNCATED), 'the overflow item is present');
-  eq(more.enabled, true, 'ENABLED — at five rows it is on screen constantly, and its "…" promises a destination');
-  eq(typeof more.click, 'function', '…which it now has');
-  ok(/\(\d+\)/.test(more.label || ''), 'and it carries the count');
-  eq(built.hiddenRows, 12 - built.rows.length,
-    'the count is the TRUE remainder, taken against the supplied TOTAL rather than against what happened to be visible');
-  ok(built.hiddenRows > summary().scopes.length - built.rows.length,
-    'CONTROL — it exceeds anything derivable from the scopes handed over, so it really is the producer\'s uncapped count');
+  // No overflow when everything fits — and no "More in Project Context… (N)"
+  // counting (scope, machine) pairs (D8): the retired item is gone.
+  eq(built.overflow, null, 'three rows fit the five-row face, so there is no overflow item');
+  ok(!flat.some((i) => /^More in Project Context/.test(i.label || '')), 'and the pair-counting "More in Project Context… (N)" is gone');
+  ok(!['truncatedNote', 'hiddenRows', 'groups', 'groupsOnDisk'].some((k) => Object.prototype.hasOwnProperty.call(built, k)),
+    'the model carries none of the retired cap fields');
 
   // Icons: one per row plus the strip, each handed the SPEC ITSELF.
   const rowItems = built.rows.map((r) => byId(r.id));
@@ -2033,20 +2012,17 @@ section('§19 cross-file pins against the modules that DRAW the two pictures');
       '…and does not over-reserve, which would silently spend the label budget on empty space');
     pins += 2;
 
-    // THE BUCKET VOCABULARY IS ONE VOCABULARY. `ageBucket()` is the only
+    // THE TIER VOCABULARY IS ONE VOCABULARY. `freshnessTier()` is the only
     // producer of these names and the dot renderer is the only consumer; a
     // rename or a collapse on either side is a dot that silently stops being
     // drawn, with no error anywhere.
-    const produced = new Set([0, 200, 3600, 100000, 10000000].map(model.ageBucket));
+    const produced = new Set([0, 200, 3600 * 2, 100000, 10000000, null].map(model.freshnessTier));
     eq([...produced].sort(), [...dotsMod.DOT_ORDER].sort(),
-      'every bucket ageBucket() can produce from a real age is one menu-dots.js draws — and no more');
-    eq(model.ageBucket(null), 'unknown', 'CONTROL — and the sixth value is the absence');
-    ok(dotsMod.NO_DOT_BUCKETS.includes('unknown'),
-      '…which that module also declines to draw, so the two files agree that an unknown age has no colour');
-    eq(dotsMod.renderRecencyDot('unknown', { dark: true }), null,
-      '…and it really returns null for it, executed rather than read off a constant');
-    ok(dotsMod.DOT_ORDER.length === 5, `CONTROL: ${dotsMod.DOT_ORDER.length} buckets were compared, so the set equality above is not over an empty set`);
-    pins += 5;
+      'every tier freshnessTier() can produce — the absence included — is one menu-dots.js draws, and no more');
+    ok(dotsMod.renderRecencyDot('unknown', { dark: true }) !== null,
+      'and the absence IS drawn — the app\'s dashed ring, a different kind of mark, executed rather than read off a constant');
+    ok(dotsMod.DOT_ORDER.length === 6, `CONTROL: ${dotsMod.DOT_ORDER.length} tiers were compared, so the set equality above is not over an empty set`);
+    pins += 3;
 
     // The spec shape this model carries onto a row is the one that module emits.
     const real = dotsMod.renderRecencyDot('live', { dark: true });
@@ -2079,6 +2055,47 @@ section('§19 cross-file pins against the modules that DRAW the two pictures');
     console.log('          field, so the three strip pins did not run. They go live on merge.');
   }
 
+  // ── THE APP'S FRESHNESS SCALE, EXECUTED (v3.74.0, D6) ───────────────────
+  //
+  // `freshnessStep` / `freshnessTier` are COPIED into tray-model.js (it may not
+  // import src/). shared/age.js touches no DOM, so the REAL ones are imported
+  // and both copies run over one matrix that crosses every boundary.
+  {
+    const age = await import(path.join(ROOT, 'src', 'public', 'next', 'shared', 'age.js'));
+    const matrix = [-1, 0, 1, 59, 60, 61, 3599, 3600, 3601, 86399, 86400, 86401, 604799, 604800, 604801,
+      30 * 86400, null, undefined, NaN, Infinity, '60', {}];
+    const diff = matrix.filter((v) => age.freshnessTier(v) !== model.freshnessTier(v) || age.freshnessStep(v) !== model.freshnessStep(v));
+    eq(diff.map(String), [], `the tray's freshnessTier/freshnessStep agree with the app's on all ${matrix.length} inputs`);
+    ok(age.freshnessTier(30) === 'live' && age.freshnessTier(7200) === 'today' && age.freshnessTier(null) === 'unknown',
+      'CONTROL — the app\'s function returns real, different answers, so agreement means something');
+    eq(model.ACTIVE_TIERS, ['live', 'recent', 'today'], 'Active is exactly the app\'s tiers under 24 h — one cut, two surfaces');
+    pins += 3;
+  }
+
+  // ── THE HARNESS NORMALISER, EXECUTED — once the data package is merged ──
+  //
+  // tray-model.js carries a copy of src/brain/harness-names.js's
+  // `normaliseHarness` for the fallback path. When that module exists in this
+  // tree the two run over one matrix; before the merge it cannot, and that is
+  // SAID rather than passed silently.
+  {
+    let hn = null;
+    try { hn = await import(path.join(ROOT, 'src', 'brain', 'harness-names.js')); } catch { hn = null; }
+    if (hn && typeof hn.normaliseHarness === 'function') {
+      const matrix = ['Claude Code', 'Claude Code (desktop)', 'Claude Code (desktop app)', 'Claude Code (worker agent)',
+        'claude-code', 'claudecode', 'CLAUDE_CODE', 'claude-desktop', 'Claude Desktop', 'claude-ai', 'Antigravity',
+        'google antigravity', 'OpenAI Codex CLI', 'codex', 'codex-cli', 'Windsurf / Devin Desktop', 'goose-desktop',
+        'harness-two', 'Harness Two', '  spaced   name  ', 'x'.repeat(120), 'A (b) c', '(only parens)', '', '   ', null, 42];
+      const diff = matrix.filter((v) => JSON.stringify(hn.normaliseHarness(v)) !== JSON.stringify(model.normaliseHarness(v)));
+      eq(diff.map(String), [], `the tray's normaliseHarness agrees with src/brain/harness-names.js on all ${matrix.length} inputs`);
+      ok(hn.normaliseHarness('claude-desktop').id !== hn.normaliseHarness('claude-code').id,
+        'CONTROL — the real normaliser keeps Claude Desktop and Claude Code apart, so agreement is about a real distinction');
+      pins += 2;
+    } else {
+      console.log('    NOTE: src/brain/harness-names.js is not in this tree — the normaliser pin goes live on merge.');
+    }
+  }
+
   if (pins === 0) {
     console.log('    NOTE: neither drawing module carries the contract in this tree, so §19 pinned NOTHING.');
     console.log('          These pins are live only once menu-dots.js and pulse-strip.js are merged alongside.');
@@ -2089,20 +2106,16 @@ section('§19 cross-file pins against the modules that DRAW the two pictures');
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-section('§20 the topic-first budget, over three fixtures including the READER\'S');
+section('§20 line one under Layout A — the budget over three fixtures, including the READER\'S and an ADVERSARIAL one');
 //
-// ── THE PHOTOGRAPH THIS SECTION EXISTS FOR ─────────────────────────────────
-//
-// The maintainer's own menu rendered `project…` — eight characters of a scope
-// name — beside an intact 22-character machine tag. The arithmetic was not
-// subtle: the old composer built the TAIL at full length and handed the
-// identity whatever was left, floored at 8. A 12-character harness survived
-// because it was IN the tail; the scope was annihilated because it was not.
-//
-// Line one is now identity and time, and nothing else may stand there. This
-// section measures that over three row sets, and the third is the one that
-// matters most: every tray fixture before v3.38.0 took the WRITER'S view, which
-// is the single configuration in which the reader's-view defect is invisible.
+// Layout A moves the HARNESS onto line one (`ott · Claude Code · 8 min ago`),
+// which is up to 14 more characters on the line that sets the menu's width.
+// The rule: the AGE and the harness token are never clipped; the PROJECT (or,
+// in a submenu, the scope) is, down to PROJECT_MIN_CHARS. Measured here over
+// the three row sets that found every earlier width defect: the real rows, an
+// adversarial set (two projects × four tools × three machines, a file-clock
+// age), and the READER'S view (isThisMachine false on every row — the
+// configuration v3.38.0 was judged in and no fixture had taken).
 {
   const at = (sec) => new Date(NOW.getTime() - sec * 1000).toISOString();
   const R = (over) => ({
@@ -2110,7 +2123,8 @@ section('§20 the topic-first budget, over three fixtures including the READER\'
     model: 'demo-4-6', ageSource: 'agent', isThisMachine: true, isThisHost: true, ...over,
   });
   const build = (scopes) => model.buildTrayModel({ ok: true, scopes, total: scopes.length }, { now: NOW });
-  const widest = (m) => Math.max(...m.rows.map((r) => r.label.length));
+  const lineOne = (m) => m.rows.filter((r) => r.place !== 'stream');
+  const widest = (rows) => Math.max(...rows.map((r) => r.label.length));
 
   // ── FIXTURE 1: the real rows, reconstructed from the photograph ────────
   const REAL = [
@@ -2131,27 +2145,16 @@ section('§20 the topic-first budget, over three fixtures including the READER\'
       headline: 'Wrote docs/product-overview.md end to end' }),
   ];
   const real = build(REAL);
-  eq(real.rows.length, 5, 'CONTROL — five real rows were built');
-  ok(widest(real) <= model.ROW_LABEL_CHARS,
-    `real rows: the widest label is ${widest(real)}, inside the ${model.ROW_LABEL_CHARS}-character budget`);
-  ok(real.rows.every((r) => !/macbook|notebook|harness-|demo-4-6|projects/.test(r.label)),
-    'and NO provenance token of any kind reached line one');
+  eq(real.active.rows.map((r) => r.label), ['projects · harness-one · 10 min ago', 'projects · harness-two · 18 hr ago'],
+    'one project, two tools today: two face rows, where · who · when');
+  eq(real.rows.length, 5, 'CONTROL — and all five work-streams are rows (two on the face, three as streams)');
+  ok(widest(real.rows) <= model.ROW_LABEL_CHARS,
+    `real rows: the widest label is ${widest(real.rows)}, inside the ${model.ROW_LABEL_CHARS}-character budget`);
+  ok(real.rows.every((r) => !/macbook|notebook|demo-4-6/.test(r.label)), 'no machine and no model on line one');
+  ok(real.active.rows[1].sublabel.startsWith('harness-two ← harness-one'),
+    `the handover is on line two, whole — a token that never drops (${real.active.rows[1].sublabel})`);
 
-  // THE DEFECT, MEASURED, and deliberately measured over the READER'S rows
-  // below rather than these: `isThisMachine` was FALSE on every one of the
-  // maintainer's rows, so every one of them printed a machine name, and that is
-  // the configuration the photograph was taken in. Reconstructed here — tail
-  // first at full length, identity gets the remainder, floored at 8, at the old
-  // 32-character budget — so the improvement is measured against what shipped
-  // rather than against a memory of it.
-  const legacyLabel = (raw, names, ageText) => {
-    const tail = ' — ' + (names.get(raw.machine) || raw.machine) + ' · ' + ageText;
-    const identity = model.scopeCandidates(raw.scope)[0];
-    const room = 32 - tail.length;              // ROW_LABEL_CHARS at 260pt / 11pt dot
-    return (identity.length <= room ? identity : model.clip(identity, Math.max(8, room))) + tail;
-  };
-
-  // ── FIXTURE 2: adversarial — 2 projects x 2 harnesses x 2 machines ─────
+  // ── FIXTURE 2: adversarial ─────────────────────────────────────────────
   const ADV = [
     R({ project: 'alpha', scope: 'session-2026-09-02-tray-widget-redesign', writtenAt: at(120),
       headline: 'Row budget rewritten to lead with the topic' }),
@@ -2161,117 +2164,89 @@ section('§20 the topic-first budget, over three fixtures including the READER\'
       machine: 'buildbox-9f31aa', isThisMachine: false, isThisHost: false,
       harness: 'harness-three', model: 'third-4-6',
       headline: 'Retry budget lands; idempotency keys still open' }),
-    R({ project: 'beta', scope: 'session-2026-08-31-settlement-reconciliation', writtenAt: at(2 * 86400),
+    R({ project: 'beta', scope: 'session-2026-08-31-settlement-reconciliation', writtenAt: at(20 * 3600),
       machine: 'studio-c40b17', isThisMachine: false, isThisHost: false, ageSource: 'file',
       harness: 'harness-four', model: 'other-3-flash', headline: 'Settlement reconciliation spike' }),
     R({ project: 'alpha', scope: 'session-2026-08-30-design-conformance-pre-native', writtenAt: at(3 * 86400),
       machine: 'alpha-macbook-pro-9f3c1a', isThisMachine: false, headline: 'Design conformance pass' }),
   ];
   const adv = build(ADV);
-  eq(adv.rows.length, 5, 'CONTROL — five adversarial rows were built');
-  ok(widest(adv) <= model.ROW_LABEL_CHARS,
-    `adversarial rows: the widest label is ${widest(adv)}, still inside the budget — with an 18-character age on one of them`);
+  eq(adv.active.rows.length, 4, 'CONTROL — four (project × tool) rows are active');
   ok(adv.rows.some((r) => r.ageText.startsWith('changed ')),
-    'CONTROL — one row really does carry the long "changed N days ago" form, which is the worst case for the budget');
-  ok(adv.rows.every((r) => r.label.endsWith(r.ageText)),
-    'the AGE is never clipped on any row — it is the one token the widget exists to show');
+    'CONTROL — one row carries the long "changed N hr ago" form, the worst ordinary case for the budget');
+  ok(widest(lineOne(adv)) <= model.ROW_LABEL_CHARS,
+    `adversarial face rows: the widest label is ${widest(lineOne(adv))}, inside the budget`);
+  ok(adv.rows.every((r) => r.label.endsWith(r.ageText)), 'the AGE is never clipped, on any row');
+  ok(adv.rows.filter((r) => r.foreign && r.place !== 'stream').every((r) => r.showsMachine === true),
+    'the two foreign rows name their machines — on line two');
 
-  // ── FIXTURE 3: THE READER'S VIEW, and it is REQUIRED ───────────────────
+  // ── THE PATHOLOGICAL LINE, BOUNDED AND MEASURED ────────────────────────
   //
-  // The app's own installation id is NOT the id its agents write under. On this
-  // configuration `isThisMachine` is false on every row, which is exactly the
-  // configuration v3.38.0 was judged in and no fixture had ever taken.
+  // A 40-character project, an unknown 40-character harness an agent typed,
+  // and a file-clock age of months. The project clips to its floor, the
+  // harness token to HARNESS_TOKEN_CHARS (a known product never clips: the
+  // three long labels have short forms), and the age stays whole — so the line
+  // runs over the budget by a BOUNDED amount, stated here in points.
+  const worst = build([R({ project: 'p'.repeat(40), harness: 'h'.repeat(40), ageSource: 'file',
+    scope: 'main', writtenAt: at(300 * 86400) })]);
+  const w = worst.rows[0].label;
+  const bound = model.PROJECT_MIN_CHARS + 3 + model.HARNESS_TOKEN_CHARS + 3 + 'changed 11 months ago'.length;
+  ok(w.endsWith(' · ' + worst.rows[0].ageText) && /^p+…/.test(w) && w.length <= bound,
+    `the worst line keeps its age and is ${w.length} characters, within the stated bound of ${bound}: "${w}"`);
+  const pts = (n) => n * model.MENU_CHAR_POINTS + model.ROW_ICON_POINTS + model.MENU_ICON_GAP_POINTS + model.MENU_CHROME_POINTS;
+  console.log(`    budget row ${model.ROW_LABEL_CHARS} chars ≈ ${pts(model.ROW_LABEL_CHARS).toFixed(0)}pt; worst bounded row ${bound} chars ≈ ${pts(bound).toFixed(0)}pt (the menu is ${model.MENU_WIDTH_POINTS}pt)`);
+  eq(['codex', 'copilot-cli', 'dsh', 'windsurf'].map((id) => model.harnessToken(id, model.HARNESS_LABELS[id])),
+    ['Codex CLI', 'Copilot CLI', 'DeepSeek', 'Windsurf'], 'the known products whose labels are long get SHORT forms, never an ellipsis');
+  ok(Object.entries(model.HARNESS_LABELS).every(([id, l]) => model.harnessToken(id, l).length <= model.HARNESS_TOKEN_CHARS
+    && !model.harnessToken(id, l).endsWith('…')), 'every known product fits the harness token whole');
+  eq(model.harnessToken(null, null), model.UNKNOWN_HARNESS, 'a save that named no tool says "unknown tool" — absent is not blank');
+
+  // ── FIXTURE 3: THE READER'S VIEW ───────────────────────────────────────
   const READER = REAL.map((r) => ({ ...r, isThisMachine: false }));
   const reader = build(READER);
-  eq(reader.rows.length, 5, 'CONTROL — five reader-view rows were built');
   ok(reader.rows.every((r) => r.isThisMachine === false),
-    'CONTROL — and every one of them is a FOREIGN installation, which is the whole point of this fixture');
-  ok(reader.rows.some((r) => r.isThisHost === true),
-    'CONTROL — while at least one is this HOST, which is the distinction that rescues it');
-  eq(reader.rows.map((r) => r.showsMachine), [false, false, false, false, false],
+    'CONTROL — every row is a FOREIGN installation, the whole point of this fixture');
+  ok(reader.rows.some((r) => r.isThisHost === true), 'CONTROL — while every one is this HOST');
+  ok(reader.rows.every((r) => r.showsMachine !== true && !/macbook|notebook/.test(r.sublabel || '')),
     'NO row names a machine: one computer, two installations, and `isThisHost` is what says so');
-  ok(widest(reader) <= model.ROW_LABEL_CHARS,
-    `reader's view: the widest label is ${widest(reader)} — the same budget, from the side that reads it`);
-  eq(widest(reader), widest(real),
-    'and the two views measure IDENTICALLY, which is the property v3.38.0 did not have');
+  eq(reader.rows.map((r) => r.label), real.rows.map((r) => r.label),
+    'and the two views render IDENTICALLY, which is the property v3.38.0 did not have');
 
-  // ── THE TWO-INSTALLATION CASE, WHICH IS WHAT `localIds` IS FOR ────────
-  //
-  // CHASED FROM A MUTATION THAT CAME BACK GREEN. Replacing `localInstallIds`
-  // with an empty set, and deleting the `localIds` arm of `machineIdentityKey`,
-  // both passed every fixture in this file — because no fixture had TWO
-  // DIFFERENT installation ids that are both this Mac. That is the maintainer's
-  // own configuration (an installed .app and a repo checkout, one computer) and
-  // it is the whole reason the arm exists.
-  //
-  // The observable is the COLLISION RESOLVER: two rows for one scope at one
-  // coarse age. If the menu thinks they are one computer it separates them by a
-  // FINER AGE; if it thinks they are two, it puts machine names back on line
-  // one — reasserting a computer that does not exist, on the two widest lines
-  // in the menu. That is the v3.37.0 defect, and this is the fixture for it.
-  //
-  // THE TWO ROWS SIT IN TWO PROJECTS (v3.51.0). A group's slots go to distinct
-  // scopes now, so one scope name in one project would render ONE row and this
-  // fixture would have nothing to resolve. The two-installation question it
-  // exists to ask is untouched by that: `machineIdentityKey` is a fact about
-  // the FOLDER, and the resolver still compares the rendered pair.
+  // ── TWO INSTALLATIONS, ONE MAC — what `localIds` is for ────────────────
   const twoInstalls = build([
     R({ scope: 'session-2026-08-30-shared', writtenAt: at(122400),
       machine: 'alpha-macbook-pro-acb035', isThisMachine: false, isThisHost: true, headline: 'h' }),
-    R({ scope: 'session-2026-08-30-shared', writtenAt: at(129600), project: 'posts',
+    R({ scope: 'session-2026-08-30-other', writtenAt: at(129600), harness: 'harness-two',
       machine: 'alpha-macbook-pro-9f3c1a', isThisMachine: true, isThisHost: true, headline: 'h' }),
+    R({ scope: 'session-2026-08-30-remote', writtenAt: at(140000), harness: 'harness-two',
+      machine: 'studio-c40b17', isThisMachine: false, isThisHost: false, headline: 'h' }),
   ]);
-  eq(new Set(twoInstalls.rows.map((r) => model.installIdPart(r.machine))).size, 2,
-    'CONTROL — the two rows really do carry two DIFFERENT installation ids');
-  eq(new Set(twoInstalls.rows.map((r) => model.machineIdentityKey(
-    r, model.localInstallIds(twoInstalls.rows)))).size, 1,
-    '…and both resolve to ONE identity, because both are this Mac');
-  ok(twoInstalls.rows.every((r) => !/acb035|9f3c1a|macbook/.test(r.label)),
-    'so NEITHER row names a machine — one computer is not two');
-  ok(twoInstalls.rows[0].label !== twoInstalls.rows[1].label,
-    'the two rows still read differently, which is the whole reason the resolver runs');
-  ok(twoInstalls.rows.every((r) => r.agePrecision === 'hour'),
-    '…and they were separated by escalating the AGE, not by naming hardware');
-  // AND THE CONTROL THAT MAKES IT NON-VACUOUS: with the ids NOT marked local,
-  // the same key really does split them, which is what the mutation did.
-  eq(new Set(twoInstalls.rows.map((r) => model.machineIdentityKey(r))).size, 2,
-    'CONTROL — with no localIds the same two rows are TWO identities, so the arm above is doing real work');
-
-  // AND THE BEFORE-AND-AFTER, on those same reader rows.
-  const names = model.shortMachineNames(READER.map((r) => r.machine));
-  const legacy = reader.rows.map((r) => legacyLabel(
-    READER.find((x) => x.scope === r.scope && x.machine === r.machine), names, r.ageText));
-  const wasWidest = Math.max(...legacy.map((l) => l.length));
-  ok(wasWidest > widest(reader),
-    `the same rows composed the OLD way run to ${wasWidest} characters against ${widest(reader)} now`);
-  ok(legacy.some((l) => l.includes('…')) && reader.rows.every((r) => r.label.length <= model.ROW_LABEL_CHARS),
-    'and the rows whose SCOPE the old arithmetic clipped are inside the budget now without one');
-  ok(legacy.filter((l) => /^\S{1,8}…/.test(l)).length > 0,
-    `CONTROL — the old arithmetic really did clip a scope to its 8-character floor (${legacy.filter((l) => /^\S{1,8}…/.test(l)).length} of ${legacy.length} rows), which is the photograph`);
+  eq(new Set(twoInstalls.rows.slice(0, 2).map((r) => model.installIdPart(r.machine))).size, 2,
+    'CONTROL — the first two rows carry two DIFFERENT installation ids');
+  ok(twoInstalls.rows.filter((r) => r.isThisHost).every((r) => r.showsMachine !== true),
+    'both are this Mac, so NEITHER names a machine — while a genuinely remote row in the same store does…');
+  ok(twoInstalls.rows.some((r) => r.machine === 'studio-c40b17' && r.showsMachine === true),
+    '…the studio row names itself, so the store really is multi-computer and the rule above is doing work');
 
   // ── NOTHING A BUDGET REMOVED IS UNREACHABLE ────────────────────────────
-  //
-  // Per row, against the RAW input rather than against the model's own copy of
-  // it. This is the absolute rule every lever in this file is held to.
   let checked = 0;
-  for (const set of [[REAL, real], [ADV, adv], [READER, reader]]) {
-    const [raw, m] = set;
+  for (const [raw, m] of [[REAL, real], [ADV, adv], [READER, reader]]) {
     for (const r of m.rows) {
       const src = raw.find((x) => x.scope === r.scope && x.machine === r.machine);
       ok(r.toolTip.includes(src.machine), `row ${checked}: the full machine folder is in the tooltip`);
       ok(r.toolTip.includes(src.scope), `row ${checked}: the FULL scope, date prefix and all`);
       ok(r.toolTip.includes(src.harness), `row ${checked}: the harness`);
       ok(r.toolTip.includes(src.project), `row ${checked}: the project`);
-      ok(r.toolTip.includes('model: ' + src.model),
-        `row ${checked}: and the EXACT model string, not the family token the label carries`);
+      ok(r.toolTip.includes('model: ' + src.model), `row ${checked}: and the EXACT model string, not the family token`);
       checked++;
     }
   }
   eq(checked, 15, `all ${checked} rows across three fixtures were checked, so the loop is not vacuous`);
 }
 
+
 // ═══════════════════════════════════════════════════════════════════════════
-section('§21 line two: whole-token dropping, and the two warnings that outrank prose');
+section('§21 line two: `[warnings ·][machine ·]model — headline`, whole-token dropping, and D1/D2');
 {
   const at = (sec) => new Date(NOW.getTime() - sec * 1000).toISOString();
   const R = (over) => ({
@@ -2281,146 +2256,104 @@ section('§21 line two: whole-token dropping, and the two warnings that outrank 
   });
   const build = (scopes) => model.buildTrayModel({ ok: true, scopes, total: scopes.length }, { now: NOW });
 
-  // EVERY sublabel is inside the budget, on every fixture in this file.
   const mixed = build([
     R({ scope: 'a' }), R({ scope: 'b', harness: 'harness-two', model: 'other-3-pro' }),
     R({ scope: 'c', project: 'other', machine: 'studio-9f8e7d', isThisMachine: false, isThisHost: false }),
   ]);
   ok(mixed.rows.every((r) => r.sublabel.length <= model.MAX_HEADLINE_CHARS),
     `every sublabel fits the ${model.MAX_HEADLINE_CHARS}-character budget the smaller face buys`);
+  eq(mixed.rows[0].sublabel, 'demo-4.6 — a reasonably long agent sentence a…', 'an ordinary line two: the model family, then the agent\'s sentence, visibly clipped');
+  ok(mixed.rows.every((r) => !new RegExp('\\b' + r.harness + '\\b').test(r.sublabel)),
+    'the harness is NOT repeated on line two — it is on line one, where the row\'s identity is');
 
   // ── TOKENS GO WHOLE, LOWEST PRIORITY FIRST ─────────────────────────────
-  //
-  // `son…` is not a shorter `sonnet-4`; it is a different string, and a reader
-  // cannot tell whether it was shortened or is what the field said.
   const crowded = build([
     R({ scope: 'a', project: 'payments-reconciliation', headline: 'x'.repeat(200) }),
     R({ scope: 'b', project: 'settlement-adapter', harness: 'harness-two', model: 'other-3-pro',
       machine: 'buildbox-9f8e7d', isThisMachine: false, isThisHost: false, headline: 'y'.repeat(200) }),
   ]);
-  ok(crowded.rows.every((r) => r.showsProvenance),
-    'CONTROL — both rows really do carry provenance, so the drop assertions below are not about empty lines');
-  ok(crowded.rows.every((r) => r.showsHarness),
-    'under pressure the HARNESS survives on every row — it is the last token to go');
-  // ── THE DROP ORDER, ASSERTED ON THE ROW THAT IS ACTUALLY UNDER PRESSURE ─
-  //
-  // v3.48.0 took the PROJECT token off line two (it is on the group header
-  // above the row now), which removed 20-plus characters of pressure from every
-  // row that carried one. So `every(!showsModel)` stopped being a statement
-  // about the drop ORDER and became a statement about how long the old project
-  // names happened to be. The property worth guarding is the order itself:
-  // the row that cannot fit everything drops the MODEL and keeps the machine
-  // and the harness, and the row that CAN fit everything keeps all three.
   const pressured = crowded.rows.find((r) => r.showsMachine);
   const roomy = crowded.rows.find((r) => !r.showsMachine);
-  ok(pressured && roomy, 'CONTROL — the fixture holds one crowded row and one roomy one');
-  ok(pressured && !pressured.showsModel,
-    'the MODEL is the first to be dropped, because it is interesting and never decisive');
-  ok(pressured && pressured.showsMachine && pressured.showsHarness,
-    '…while the machine and the harness, which outrank it, both survive on that same row');
-  ok(roomy && roomy.showsModel,
-    'CONTROL — and a row with room keeps its model, so the drop above is pressure and not a deletion');
-  // AND THE PROJECT IS NOT THERE AT ALL any more — on either row.
-  ok(crowded.rows.every((r) => !new RegExp('\\b' + r.project + '\\b').test(r.sublabel || '')),
-    'no row repeats its project on line two — the group header above it says it once');
-  ok(crowded.groups.every((g) => g.label.includes(g.project)),
-    'CONTROL — and the header really does say it, so the token was moved rather than lost');
-  ok(crowded.rows.every((r) => r.toolTip.includes('model: ')),
-    'while the tooltip still names it in full, which is what makes dropping it safe');
-  // NO TOKEN IS LEFT AS A FRAGMENT. Measured over the WHO half of the line —
-  // everything before the em dash — because the headline after it is prose and
-  // is legitimately clipped with a visible ellipsis.
-  ok(crowded.rows.every((r) => !r.sublabel.split(' — ')[0].includes('…')),
-    'no token is left as a FRAGMENT — a dropped token leaves nothing behind, and never an ellipsis mid-word');
-  ok(crowded.rows.every((r) => r.sublabel.includes('…')),
-    'CONTROL — the sublabel IS being clipped somewhere, so the assertion above is about where and not about whether');
-
-  // ── THE HANDOVER MARK IGNORES THE DROP-CONSTANT RULE, ON PURPOSE ───────
-  //
-  // Two rows can both END on the same harness while one of them changed hands,
-  // so `showHarness` is false and the token would be dropped — taking the only
-  // evidence of the handover with it.
-  const handover = build([
+  ok(pressured && roomy, 'CONTROL — the fixture holds one row carrying a machine and one that does not');
+  ok(pressured && pressured.showsModel === true && roomy.showsModel === true,
+    'with room, both keep the model — the machine (8 chars) does not push the headline under its floor');
+  const tight = build([
+    R({ scope: 'b', harness: 'harness-two', model: 'some-vendor/an-extremely-long-model-name-4-turbo',
+      machine: 'a-very-long-build-machine-9f8e7d', isThisMachine: false, isThisHost: false, headline: 'y'.repeat(200) }),
     R({ scope: 'a' }),
+  ]).rows.find((r) => r.showsMachine);
+  ok(tight && !tight.showsModel && tight.showsMachine,
+    'under real pressure the MODEL goes first and the MACHINE, which outranks it, survives');
+  ok(tight && !tight.sublabel.split(' — ')[0].includes('…'),
+    'no token is left as a FRAGMENT — a dropped token leaves nothing behind');
+  ok(tight && tight.toolTip.includes('model: some-vendor/an-extremely-long-model-name-4-turbo'),
+    'and the tooltip still names the model in full, which is what makes dropping it safe');
+  ok(crowded.rows.every((r) => !new RegExp('\\b' + r.project + '\\b').test(r.sublabel || '')),
+    'no row repeats its project on line two — line one says it');
+
+  // ── THE HANDOVER MARK, COMPARED BY TOOL (D1) ───────────────────────────
+  const handover = build([
     R({ scope: 'b', previousHarness: 'harness-two', writtenAt: at(900) }),
   ]);
-  ok(handover.rows.every((r) => r.harness === 'harness-one'),
-    'CONTROL — both rows END on the same harness, so the drop-constant rule would remove it');
-  ok(!handover.rows[0].sublabel.includes('harness-one'),
-    'and on the row with no handover it IS removed');
-  ok(handover.rows[1].sublabel.includes('harness-one ← harness-two'),
-    'but the row that changed hands draws the mark anyway — the fact this whole widget exists for');
-  ok(handover.rows[1].toolTip.includes('the save before it came from harness-two'),
-    'with the same fact spelled out in the tooltip, where there is room for a sentence');
+  ok(handover.rows[0].sublabel.startsWith('harness-one ← harness-two'),
+    'a row that changed hands draws `now ← before` on line two — whole, and never dropped');
+  ok(handover.rows[0].toolTip.includes('the save before it came from harness-two'), '…and says it in a sentence in the tooltip');
+  const sameTool = build([R({ scope: 'b', harness: 'Claude Code (desktop)', previousHarness: 'Claude Code' })]);
+  ok(!sameTool.rows[0].sublabel.includes('←') && sameTool.rows[0].previousHarness === null,
+    'D1: `Claude Code (desktop)` after `Claude Code` is ONE tool typed two ways — no handover mark');
+  ok(sameTool.rows[0].label.includes('Claude Code') && /recorded as “Claude Code \(desktop\)”/.test(sameTool.rows[0].toolTip),
+    '…the row says `Claude Code`, and the agent\'s own spelling stays in the tooltip');
+  const realHandover = build([R({ scope: 'b', harness: 'Claude Desktop', previousHarness: 'claude-code' })]);
+  ok(realHandover.rows[0].sublabel.startsWith('Claude Desktop ← Claude Code'),
+    'CONTROL — Claude Desktop after Claude Code IS a handover: two products, never merged');
 
   // ── `handoff trimmed`, AND ONLY FOR `trimmed` ──────────────────────────
-  //
-  // v3.39.0 built five verdicts to say whether a save lost content and the tray
-  // rendered none of them. Only `trimmed` means content did not fit; `clipped`
-  // is a shortened one-line SUMMARY over a handoff stored in full, and badging
-  // it would re-commit the defect that release fixed.
   const kinds = build([
     R({ scope: 'a', kind: 'trimmed' }), R({ scope: 'b', kind: 'clipped', writtenAt: at(700) }),
     R({ scope: 'c', kind: 'complete', writtenAt: at(800) }),
     R({ scope: 'd', kind: null, writtenAt: at(900) }),
   ]);
-  ok(kinds.rows[0].sublabel.startsWith(model.SUBLABEL_TRIMMED),
-    'a TRIMMED save is badged, and the badge leads the line');
-  ok(kinds.rows.slice(1).every((r) => !r.sublabel.includes(model.SUBLABEL_TRIMMED)),
+  const byScope = (m, sc) => m.rows.find((r) => r.scope === sc);
+  ok(byScope(kinds, 'a').sublabel.startsWith(model.SUBLABEL_TRIMMED), 'a TRIMMED save is badged, and the badge leads the line');
+  ok(['b', 'c', 'd'].every((sc) => !byScope(kinds, sc).sublabel.includes(model.SUBLABEL_TRIMMED)),
     'and clipped, complete and unknown are all silent — a shortened summary is not lost content');
-  ok(kinds.rows[0].toolTip.includes('part of the handoff was not stored'),
-    'with the tooltip saying what it means rather than leaving two words to be interpreted');
+  ok(byScope(kinds, 'a').toolTip.includes('part of the handoff was not stored'), 'with the tooltip saying what it means');
 
   // ── THE FLOOR: warnings outrank the sentence ───────────────────────────
   const squeezed = build([
-    R({ scope: 'a', kind: 'trimmed', previousHarness: 'harness-two',
-      harness: 'harness-one', project: 'alpha', headline: 'z'.repeat(200) }),
-    R({ scope: 'b', project: 'beta', harness: 'other', writtenAt: at(700), headline: 'w'.repeat(200) }),
+    R({ scope: 'a', kind: 'trimmed', previousHarness: 'harness-two', harness: 'harness-one', headline: 'z'.repeat(200) }),
   ]);
-  ok(squeezed.rows[0].sublabel.includes(model.SUBLABEL_TRIMMED)
-    && squeezed.rows[0].sublabel.includes('←'),
+  ok(squeezed.rows[0].sublabel.includes(model.SUBLABEL_TRIMMED) && squeezed.rows[0].sublabel.includes('←'),
     'when the line will not hold everything, BOTH warnings stay and the HEADLINE gives way');
-  ok(!squeezed.rows[0].sublabel.includes('zzz'),
-    '…which is what "gives way" means: the agent\'s sentence is not on this row at all');
-  ok(squeezed.rows[0].sublabel.length <= model.MAX_HEADLINE_CHARS,
-    '…and the line is still inside its budget');
-  ok(squeezed.rows[0].toolTip.length > squeezed.rows[0].sublabel.length,
-    '…with the tooltip carrying more than the row could');
+  ok(!squeezed.rows[0].sublabel.includes('zzz') && squeezed.rows[0].sublabel.length <= model.MAX_HEADLINE_CHARS,
+    '…the agent\'s sentence is not on the row at all, and the line is still inside its budget');
+  const absurd = build([R({ scope: 'a', kind: 'trimmed', harness: 'h'.repeat(40), previousHarness: 'g'.repeat(40) })]);
+  ok(absurd.rows[0].sublabel.length <= model.MAX_HEADLINE_CHARS && absurd.rows[0].sublabel.endsWith('…')
+    && absurd.rows[0].sublabel.startsWith(model.SUBLABEL_TRIMMED),
+    'a pathological harness name never renders unbounded; the badge leads and the clip is visible');
+  ok(absurd.rows[0].toolTip.includes('the save before it came from'), '…and the handover is still in the tooltip');
 
-  // ── AND THE PATHOLOGICAL CASE, STATED RATHER THAN ENGINEERED AROUND ────
-  //
-  // The store caps a harness name at MAX_META_CHARS = 80. Two of those plus the
-  // trimmed badge cannot fit any menu row, and `clipClauses` then drops from the
-  // END — which is where the handover mark is. So a store with absurd harness
-  // names loses the ARROW from the row and keeps it in the tooltip. That is the
-  // honest degradation for an input no real harness produces (the longest in
-  // the wild is `claude-code`, at eleven characters), and it is asserted rather
-  // than left to be discovered.
-  const absurd = build([
-    R({ scope: 'a', kind: 'trimmed', harness: 'h'.repeat(40), previousHarness: 'g'.repeat(40) }),
-    R({ scope: 'b', harness: 'other', writtenAt: at(700) }),
-  ]);
-  ok(absurd.rows[0].sublabel.length <= model.MAX_HEADLINE_CHARS,
-    'a pathological harness name never renders unbounded');
-  ok(absurd.rows[0].sublabel.endsWith('…'),
-    '…the clip is VISIBLE, so a reader knows something was dropped');
-  ok(absurd.rows[0].sublabel.startsWith(model.SUBLABEL_TRIMMED),
-    '…the completeness badge is what survives, because it leads the line');
-  ok(absurd.rows[0].toolTip.includes('the save before it came from'),
-    '…and the handover is still reachable, in the tooltip, in a full sentence');
-
-  // The model family is a token, never the raw id.
-  eq(model.familyOfModel('claude-haiku-4-5'), 'haiku-4', 'a vendor prefix is dropped and the generation kept');
-  eq(model.familyOfModel('opus-4-6'), 'opus-4', 'and a bare family keeps its generation');
-  eq(model.familyOfModel('gemini-2.5-flash-lite'), 'gemini-2.5', 'a decimal generation survives intact');
-  eq(model.familyOfModel('anthropic/sonnet-4-6'), 'sonnet-4', 'a vendor PATH prefix is dropped too');
-  eq(model.familyOfModel('claude'), 'claude', 'a single vendor word is NOT shortened to nothing');
-  for (const junk of [undefined, null, 42, '', '   ', {}]) {
+  // ── D2: THE MODEL FAMILY KEEPS THE MINOR VERSION ───────────────────────
+  const fam = {
+    'claude-opus-5-5': 'opus-5.5', 'claude-opus-4-8': 'opus-4.8', 'claude-opus-5[1m]': 'opus-5',
+    'claude-fable-5-1': 'fable-5.1', 'claude-haiku-4-5': 'haiku-4.5', 'claude-haiku-4-5-20251001': 'haiku-4.5',
+    'claude-3-5-sonnet-20241022': 'sonnet-3.5', 'opus-4-6': 'opus-4.6', 'anthropic/sonnet-4-6': 'sonnet-4.6',
+    'gemini-3.7-flash': 'gemini-3.7-flash', 'gemini-2.5-flash-lite': 'gemini-2.5-flash', 'gemini-3-pro': 'gemini-3-pro',
+    'gpt-4o': 'gpt-4o', 'gpt-5-codex': 'gpt-5-codex', 'claude-sonnet-4-5-thinking': 'sonnet-4.5', 'claude': 'claude',
+    'gemini-3.7-pro-preview': 'gemini-3.7-pro',
+  };
+  for (const [id, want] of Object.entries(fam)) eq(model.familyOfModel(id), want, `${id} → ${want}`);
+  ok(model.familyOfModel('claude-opus-5-5') !== model.familyOfModel('claude-opus-5-1'),
+    'two Claude minor versions are two tokens — the drop that read both as opus-5 is fixed');
+  ok(model.familyOfModel('gemini-3.7-flash') !== model.familyOfModel('gemini-3.7-pro'),
+    'and a Gemini tier survives, because Flash and Pro are two different models');
+  for (const junk of [undefined, null, 42, '', '   ', {}, '[1m]']) {
     eq(model.familyOfModel(junk), null, `and ${JSON.stringify(junk) ?? String(junk)} has no family`);
   }
   ok(model.familyOfModel('a'.repeat(80)).length <= model.MODEL_LABEL_CHARS,
     'a pathological model id is capped rather than becoming the whole line');
 }
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§22 the per-row submenu, the headline\'s second line, and the new notice');
@@ -2453,7 +2386,7 @@ section('§22 the per-row submenu, the headline\'s second line, and the new noti
     'the submenu carries exactly the four action ids, in the declared order');
   eq(rowItem.submenu[0].type, menu.MENU_HEADER_TYPE,
     'under a HEADER naming the work-stream, because a submenu opens beside five near-identical rows');
-  eq(rowItem.submenu[0].label, m.rows[0].scopeShort, '…and it names THIS row');
+  eq(rowItem.submenu[0].label, 'projects · other', '…and it names THIS row\'s work-stream, project and scope');
   ok(rowItem.submenu.every((i) => i.type === menu.MENU_HEADER_TYPE || typeof i.click === 'function'),
     'every action carries a click handler');
   ok(typeof rowItem.click !== 'function',
@@ -2495,22 +2428,18 @@ section('§22 the per-row submenu, the headline\'s second line, and the new noti
   ok(flat.filter((i) => i.role).every((i) => typeof i.click !== 'function'),
     'and no item in the whole template — submenus included — pairs a role with a handler');
 
-  // ── THE HEADLINE'S SECOND LINE ─────────────────────────────────────────
-  eq(m.headline.who, 'harness-one · ' + model.familyOfModel('demo-4-6'),
-    'the headline\'s second line is `harness · model`, not the project and scope the first row already shows');
-  ok(m.headline.who.includes('demo-4') && !m.headline.who.includes('demo-4-6'),
-    '…with the model as its FAMILY token, the exact string being a tooltip fact');
-  const whereItem = flat.find((i) => i.id === menu.ID_HEADLINE_WHERE);
-  eq(whereItem.label, '    ' + m.headline.who, 'and the menu renders it');
-  ok(whereItem.toolTip.includes('projects') && whereItem.toolTip.includes('main'),
-    'with project · scope still reachable, on that item\'s tooltip');
-  // It FALLS BACK rather than vanishing when neither is known.
+  // ── THE HEADLINE'S SECOND LINE IS GONE (Layout A) ────────────────────
+  //
+  // `harness · model` said, in grey and with no noun, what the first row now
+  // says on line one (the harness) and line two (the model). The hover keeps
+  // the fast answer: `Last save: <project> · <harness> · <age>`.
+  ok(!flat.some((i) => i.id === 'tray-headline-where' || i.id === 'tray-headline'), 'no headline and no second line in the menu');
+  eq(m.headline.text, 'Last save: projects · harness-two · 1 min ago', 'the icon\'s tooltip names the newest save: project, tool, age');
   const anon = model.buildTrayModel({
     ok: true, total: 1,
     scopes: [{ project: 'p', scope: 's', machine: 'm-a1b2c3', writtenAt: at(60), ageSource: 'agent' }],
   }, { now: NOW });
-  eq(anon.headline.who, null, 'a save naming neither tool nor model has no second line of its own');
-  ok(anon.headline.where, '…and falls back to project · scope rather than rendering a blank');
+  eq(anon.headline.text, 'Last save: p · unknown tool · 1 min ago', 'a save naming no tool says so, rather than leaving a gap');
 
   // ── `<machine> saved after this Mac` ───────────────────────────────────
   const notice = m.notices.find((n) => n.kind === 'newer-elsewhere');
@@ -2729,45 +2658,22 @@ section('§24 the collision is decided over the WHOLE ROW, and no age reads in t
     { ok: true, total: 5, scopes: photoScopes(), brief: null, remote: null, warnings: [], pulse: null },
     { now: PHOTO_NOW });
 
-  eq(photo.rows.length, 5, 'CONTROL — all five photographed rows were built, so nothing below is vacuous');
-  const twins = photo.rows.filter((r) => r.scope.includes('brand-building'));
-  eq(twins.length, 2, 'CONTROL — and the two same-topic rows are both present');
-  ok(new Set(twins.map((r) => r.project)).size === 2,
-    'CONTROL — they are two different PROJECTS, which is the fact line two carries and line one never could');
-
-  // THE HEADLINE ASSERTION: the rendered lines, in full, as strings.
-  eq(twins.map((r) => r.label),
-    ['brand-building-social-engine · 21 hr ago', 'brand-building-social-engine · 21 hr ago'],
-    'both rows read `brand-building-social-engine · 21 hr ago` — the whole topic, an age a person reads');
-  ok(twins[0].sublabel !== twins[1].sublabel,
-    '…and line TWO tells them apart, which is why line one was never in trouble');
-  // ── THE PROJECT MOVED FROM LINE TWO TO THE GROUP HEADER (v3.48.0) ────
+  // ── UNDER LAYOUT A THE COLLISION CANNOT HAPPEN ────────────────────────
   //
-  // It used to be a token on each row's second line; the reader now finds it on
-  // the header the row sits under, once per project instead of once per row.
-  // The fact the reader needs is unchanged and so is the assertion's subject:
-  // these two same-topic rows must be attributable to two different projects.
-  ok(twins.every((r) => !new RegExp('\\b' + r.project + '\\b').test(r.sublabel || '')),
-    'neither row repeats its project on line two any more — five rows of `· projects` is width spent to say one thing five times');
-  const twinGroups = twins.map((r) => photo.groups.find((g) => g.key === r.groupKey));
-  ok(twinGroups.every(Boolean) && new Set(twinGroups.map((g) => g.label)).size === 2,
-    '…and each sits under a header naming ITS project, which is the fact the reader actually needs');
-  ok(twinGroups.some((g) => /\bposts\b/.test(g.label)) && twinGroups.some((g) => /\bprojects\b/.test(g.label)),
-    '…and those two headers are `posts` and `projects`, by name');
-
-  // ANTI-VACUITY. If the resolver still compared line one alone it would see a
-  // collision here, because line one alone IS identical on these two rows.
-  eq(twins[0].label, twins[1].label,
-    'CONTROL — line one alone really is identical on both rows, so the pair comparison is doing real work');
-
-  ok(twins.every((r) => r.agePrecision === null),
-    'neither row was escalated at all — nothing about them collides once the whole row is read');
-  ok(twins.every((r) => r.labelProvenance === null),
-    '…and no provenance token was restored to line one, which is what clipped the topic in the photograph');
-  ok(twins.every((r) => !/Antigravity/.test(r.label)),
-    '…so `— Antigravity` is nowhere on line one');
-  ok(twins.every((r) => !/…/.test(r.label)),
-    '…and neither topic is clipped at all: the budget was never spent on a token that bought nothing');
+  // The two same-topic saves are two (project × tool) rows now — `projects ·
+  // Antigravity` and `posts · Antigravity` — so line one differs by the fact
+  // that separates them, the PROJECT, and no resolver runs at all.
+  eq(photo.rows.length, 5, 'CONTROL — all five photographed saves are rows, so nothing below is vacuous');
+  eq(photo.active.rows.map((r) => r.label),
+    ['projects · Claude Code · just now', 'projects · Antigravity · 21 hr ago', 'posts · Antigravity · 21 hr ago'],
+    'three face rows: the store\'s two tools on `projects`, adjacent and newest first, then `posts`');
+  const twins = photo.rows.filter((r) => r.scope.includes('brand-building'));
+  eq(twins.length, 2, 'CONTROL — the two same-topic saves are both rows');
+  ok(twins[0].label !== twins[1].label, 'and they read differently on LINE ONE, by project — the photograph\'s pair is gone by construction');
+  ok(twins.every((r) => / 21 hr ago$/.test(r.label)), '…each with the age a person reads');
+  eq(photo.active.rows[0].streams.map((r) => r.label),
+    ['menubar-widget-design · 21 hr ago', 'native-prep-and-release-pro… · 1 day ago'],
+    'the Claude Code row\'s other work-streams, `scope · age`: the date prefix dropped because the age says it, and a long scope clipped so the AGE never is');
 
   // AND THE NUMBER FROM THE PHOTOGRAPH IS UNREACHABLE, ANYWHERE ON THE MENU.
   const everyLine = photo.rows.map((r) => r.label + ' ' + (r.sublabel || '')).join(' | ');
@@ -2793,20 +2699,9 @@ section('§24 the collision is decided over the WHOLE ROW, and no age reads in t
     'CONTROL — with no floor at all the ordinary ladder still says days, so the two above are a real difference');
   eq(model.formatAge(3000), '50 min ago', 'CONTROL — and the one-argument ladder is untouched by any of this');
 
-  // ── AND WHEN EVERY RUNG BUYS NOTHING, THE WHOLE ESCALATION IS HANDED BACK ──
-  //
-  // The same two saves, this time with ONE headline on both: now the rows
-  // really are indistinguishable, so the resolver has a genuine problem. It
-  // walks the ladder, finds that neither `hour` nor `minute` tells them apart —
-  // twenty-one hours old and thirty seconds apart — and puts the precision back
-  // exactly where it found it before falling through. A row reading `1271 min
-  // ago` beside four rows reading in hours would be width spent on a
-  // distinction that FAILED.
-  //
-  // THE PAIR SITS IN TWO PROJECTS (v3.51.0), because a group's slots go to
-  // distinct scopes and one project would render ONE row. The fixture's own
-  // subject is unchanged: it is the identical HEADLINE that makes line two
-  // useless here, not the project — the project is on the header either way.
+  // ── TWO IDENTICAL SAVES IN TWO PROJECTS ───────────────────────────────
+  // The resolver's last-resort case — the same topic, the same sentence, the
+  // same tool, thirty seconds apart — is two rows that differ by project.
   const twinsOneProject = model.buildTrayModel({
     ok: true, total: 2, scopes: [
       P({ project: 'posts', scope: 'session-2026-09-01-brand-building-social-engine', harness: 'Antigravity',
@@ -2815,27 +2710,156 @@ section('§24 the collision is decided over the WHOLE ROW, and no age reads in t
         writtenAt: ago(TWIN_B), writtenAgeSeconds: TWIN_B, headline: 'same sentence on both rows' }),
     ], brief: null, remote: null, warnings: [], pulse: null,
   }, { now: PHOTO_NOW });
-  eq(twinsOneProject.rows.length, 2, 'CONTROL — the indistinguishable pair was built');
-  eq(twinsOneProject.rows[0].sublabel, twinsOneProject.rows[1].sublabel,
-    'CONTROL — and line two is identical too, so this pair is a REAL collision, unlike the photographed one');
-  ok(twinsOneProject.rows.every((r) => r.agePrecision === null),
-    'the escalation was handed back whole — no rung separated them, so none was kept');
-  ok(twinsOneProject.rows.every((r) => / 21 hr ago$/.test(r.label)),
-    '…leaving both rows reading the same hours every other row on the menu reads');
-  ok(twinsOneProject.rows.every((r) => !/min ago/.test(r.label)),
-    '…and neither of them reads in minutes');
+  eq(twinsOneProject.rows.map((r) => r.label), ['posts · Antigravity · 21 hr ago', 'projects · Antigravity · 21 hr ago'],
+    'identical sentences on both lines two, and still two readable rows — no escalation, no machine name, no clipped topic');
+  ok(twinsOneProject.rows.every((r) => r.toolTip.includes('brand-building-social-engine') && r.toolTip.includes('Antigravity')),
+    'and the full scope and tool are in every tooltip');
+}
 
-  // THE PROVENANCE, WHEN IT DOES COME BACK, IS APPENDED — NEVER CHARGED TO
-  // THE TOPIC. This is the third of the photograph's three defects.
-  ok(twinsOneProject.rows.every((r) => r.labelProvenance !== null),
-    'with the ladder exhausted the provenance token returns to line one, which is the last resort and is reached');
-  ok(twinsOneProject.rows.every((r) => r.label.startsWith('brand-building-social-engine')),
-    '…and the TOPIC IS INTACT: the token is appended after the topic\'s budget, not taken out of it');
-  ok(twinsOneProject.rows.every((r) => !/^brand-buil…/.test(r.label)),
-    `…so no row reads the photographed \`brand-buil…\`, the ${model.TOPIC_MIN_CHARS}-character floor the old tail arithmetic drove it to`);
-  ok(twinsOneProject.rows.every((r) => r.toolTip.includes('brand-building-social-engine')
-    && r.toolTip.includes('Antigravity')),
-    'and everything on that line is still in the tooltip, which is the absolute rule of every lever in this file');
+// ═══════════════════════════════════════════════════════════════════════════
+section('§25 projects[].latest — the data package\'s shape, its fallbacks, and the menu as TEXT');
+//
+// The data package (v3.74.0, D3) adds `projects[].latest`: the newest save per
+// (project × tool) for EVERY project, whatever the 40-pair row window holds.
+// Its entries spell the harness as `harness` (the LABEL) beside `harnessRaw`,
+// while a scope row keeps `harness` (RAW) beside `harnessLabel`. Built here in
+// exactly that shape, with the fallbacks the model must survive: `latest`
+// null (a project whose index was not read), `latest` absent (an older
+// producer), and a latest entry with no tool.
+{
+  const T = new Date('2026-09-25T14:27:00');
+  const at = (s) => new Date(T.getTime() - s * 1000).toISOString();
+  const host = { machine: 'mbp-9f3c1a', isThisHost: true, isThisMachine: false };
+  const E = (harnessId, harness, raw, scope, age, over = {}) => ({ harnessId, harness, harnessRaw: raw, harnessVariant: null,
+    model: 'claude-opus-5-5', scope, ...host, writtenAt: at(age), writtenAgeSeconds: age, ageSource: 'agent', headline: scope + ' work', kind: 'complete', ...over });
+  const S = (project, scope, harness, harnessId, harnessLabel, age, over = {}) => ({ domain: 'projects', project, projectLabel: 'projects / ' + project, projectsInDomain: 5,
+    scope, harness, harnessId, harnessLabel, model: 'claude-opus-5-5', ...host, writtenAt: at(age), writtenAgeSeconds: age, ageSource: 'agent', headline: scope + ' work', ...over });
+  const summary = {
+    ok: true, readAt: at(60),
+    // The 40-pair window holds ott only …
+    scopes: [
+      S('ott', 'main', 'Claude Code (desktop)', 'claude-code', 'Claude Code', 480, { harnessShared: false }),
+      S('ott', 'roadmap', 'antigravity', 'antigravity', 'Antigravity', 3 * 3600, { previousHarness: 'Claude Code' }),
+    ],
+    // … while `latest` knows every project, including an idle one the window never reached.
+    projects: [
+      { domain: 'projects', project: 'ott', projectLabel: 'projects / ott', latest: [
+        E('claude-code', 'Claude Code', 'Claude Code (desktop)', 'main', 480),
+        E('antigravity', 'Antigravity', 'antigravity', 'roadmap', 3 * 3600, { model: 'gemini-3.7-flash' }),
+      ] },
+      { domain: 'projects', project: 'field-notes', projectLabel: 'projects / field-notes', latest: [
+        E('claude-code', 'Claude Code', 'claude-code', 'main', 9 * 86400, { model: 'claude-opus-5[1m]' }),
+        E(null, null, null, 'untooled', 12 * 86400),
+      ] },
+      { domain: 'projects', project: 'unread', projectLabel: 'projects / unread', latest: null },
+    ],
+    warnings: [{ code: 'scopes-truncated', message: 'Showing the 40 most recent of 60 saved work-streams.' }],
+  };
+  const m = model.buildTrayModel(summary, { now: T });
+  eq(m.active.rows.map((r) => r.label), ['ott · Claude Code · 8 min ago', 'ott · Antigravity · 3 hr ago'],
+    'the face is built from `latest` — the scope row\'s raw `Claude Code (desktop)` reads as the LABEL, Claude Code');
+  ok(/recorded as “Claude Code \(desktop\)”/.test(m.active.rows[0].toolTip), '…with the raw spelling kept in the tooltip');
+  eq(m.active.rows[1].previousHarness, 'Claude Code', 'per-pair facts (the handover) are joined from the matching scope row');
+  eq(m.active.rows.map((r) => r.modelFamily), ['opus-5.5', 'gemini-3.7-flash'], 'and the model families are D2\'s');
+  eq(m.idle.rows.map((r) => r.label), ['field-notes · Claude Code · 1 week ago'],
+    'field-notes has NO pair in the 40-row window and is still listed, idle, from `latest` — D3\'s whole point');
+  eq(m.idle.rows[0].streams.map((r) => r.label), ['untooled · unknown tool · 1 week ago'],
+    'a latest entry that named no tool is its own entry — a stream saying "unknown tool", never dropped and never merged');
+  ok(!m.rows.some((r) => r.project === 'unread'), '`latest: null` with no rows → the project is not listed: not read is not "no saves"');
+  eq(m.notices.filter((n) => n.code === 'scopes-truncated').length, 1,
+    'CONTROL — one project\'s index was not read, so coverage is NOT complete and the truncation warning stays');
+  const complete = model.buildTrayModel({ ...summary, projects: summary.projects.slice(0, 2) }, { now: T });
+  eq(complete.notices.filter((n) => n.code === 'scopes-truncated').length, 0,
+    '…and with `latest` for every listed project, the warning about a window the menu does not draw is not said');
+  const noLatest = model.buildTrayModel({ ...summary, projects: summary.projects.map(({ latest, ...p }) => p) }, { now: T });
+  eq(noLatest.active.rows.map((r) => r.label), m.active.rows.map((r) => r.label),
+    'an OLDER producer (no `latest` at all) draws the same face from the scope rows');
+  eq(noLatest.idle, null, '…and cannot list field-notes, whose saves it never saw — an absence, not a guessed age');
+
+  // ── THE STATIC RENDER — the menu as text, for review without Electron ──
+  const text = menu.renderTrayMenuText(menu.buildTrayMenuTemplate(m, { ...NOOPS, makeIcon: (sp) => sp }));
+  const lines = text.split('\n');
+  eq(lines[0], '── Active · last 24 h ──', 'the text render opens on the Active header (no pulse in this fixture)');
+  eq(lines[1], '●   ott · Claude Code · 8 min ago  ›   [recent]', 'a row: the dot and its tier, the label, the submenu mark');
+  eq(lines[2], '    opus-5.5 — main work', '…and its sublabel on the next line');
+  ok(lines.includes('      ── projects / ott · main ──') && lines.includes('          Copy resume prompt'),
+    'submenus are indented under their parent, headers marked');
+  ok(lines.includes('○   Idle · 1 project  ›   [dormant]') && lines.includes('    field-notes 1 wk'),
+    'the Idle fold renders with its hollow dormant dot and its compact second line');
+  ok(lines[lines.length - 1] === '    Quit The Curator   ⌘Q' && lines.includes('    (Updated 14:26)'),
+    'disabled items in parentheses; Quit last with its key');
+  ok(!/undefined|null|\[object/.test(text), 'and nothing in the render is an unrendered value');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§26 ONE collision notice per work-stream — the maintainer\'s real menu, reproduced');
+//
+// His v3.72 menu, one scope written A-B-A-B by claude-code and antigravity:
+//   "Two harnesses are writing projects / fiel…"   (derived from harnessShared)
+//   "Two agent tools are writing projects / fi…"   (the producer's warning)
+// both greyed, both clipped before the scope, both below the domains. The
+// derived line was keyed WITHOUT its domain and the warning WITH it, so the
+// dedupe never matched. One line now, in the app's words, under the Active rows.
+{
+  const T = new Date('2026-09-25T14:27:00');
+  const at = (s) => new Date(T.getTime() - s * 1000).toISOString();
+  const collided = {
+    domain: 'projects', project: 'field-notes', projectLabel: 'projects / field-notes', projectsInDomain: 5,
+    scope: 's2-collision', machine: 'mbp-9f3c1a', harness: 'antigravity', writtenAt: at(300), ageSource: 'agent',
+    headline: 'second tool took over', isThisHost: true, harnessShared: true,
+    harnesses: ['claude-code', 'antigravity', 'Claude Code', 'antigravity'],
+  };
+  const summary = {
+    ok: true,
+    scopes: [collided,
+      { ...collided, project: 'lumina', projectLabel: 'projects / lumina', scope: 'main', harness: 'claude-code', harnessShared: false, writtenAt: at(9 * 86400), harnesses: [] }],
+    warnings: [{ code: 'harness-collision', message: 'Two agent tools are writing projects / field-notes · s2-collision.',
+      domain: 'projects', project: 'field-notes', projectLabel: 'projects / field-notes', scope: 's2-collision',
+      machine: 'mbp-9f3c1a', harnesses: ['claude-code', 'antigravity'] }],
+    domains: [{ domain: 'projects', index: 0, pageCount: 767 }],
+  };
+  const m = model.buildTrayModel(summary, { now: T });
+  const coll = m.notices.filter((n) => /writing/.test(n.full || n.text));
+  eq(coll.length, 1, 'ONE notice for the collided work-stream — the derived line and the producer\'s warning are the same fact');
+  eq(coll[0] && coll[0].text, 'Two tools are writing field-notes / s2-co…',
+    '…in the app\'s words; at the 42-character plain budget the SCOPE\'s tail is what gives, never the verb or the project');
+  ok(coll[0] && coll[0].full.includes('projects / field-notes / s2-collision'), '…with the whole work-stream on its tooltip');
+  ok(coll[0] && /Claude Code and Antigravity/.test(coll[0].full), '…and the two tools named, normalised, in its tooltip');
+  // Either source alone gives the same single line.
+  const derivedOnly = model.buildTrayModel({ ...summary, warnings: [] }, { now: T }).notices.filter((n) => n.kind === 'collision');
+  const suppliedOnly = model.buildTrayModel({ ...summary, scopes: summary.scopes.map((x) => ({ ...x, harnessShared: false })) }, { now: T })
+    .notices.filter((n) => n.kind === 'collision');
+  eq([derivedOnly.map((n) => n.text), suppliedOnly.map((n) => n.text)],
+    [['Two tools are writing field-notes / s2-co…'], ['Two tools are writing field-notes / s2-co…']],
+    'the row\'s own flag alone, or the producer\'s warning alone, draws the IDENTICAL line — so one source can supersede the other');
+  // A DIFFERENT domain's `field-notes · s2-collision` is a different fact.
+  const twoDomains = model.buildTrayModel({ ...summary, warnings: [{ ...summary.warnings[0], domain: 'articles' }] }, { now: T });
+  eq(twoDomains.notices.filter((n) => n.kind === 'collision').length, 2,
+    'CONTROL — the same project and scope in ANOTHER domain is a second notice, so the dedupe is on all three fields');
+
+  // The producer emits one warning per (scope, MACHINE) pair: the same
+  // collided work-stream seen from two machines is still ONE line.
+  const twoMachines = model.buildTrayModel({ ...summary, warnings: [summary.warnings[0], { ...summary.warnings[0], machine: 'studio-c40b17' }] }, { now: T });
+  eq(twoMachines.notices.filter((n) => n.kind === 'collision').length, 1,
+    'two warnings for one work-stream from two machines are ONE notice');
+  // A LONG project: the line may run past the budget rather than cut the
+  // project or the verb — only the scope's tail gives.
+  const longName = model.collisionLine('a-rather-long-project-name', 's2-collision');
+  ok(longName.startsWith('Two tools are writing a-rather-long-project-name / s2') && longName.endsWith('…'),
+    `a long project stays whole and the scope keeps its head: "${longName}"`);
+
+  // PLACEMENT: directly under the Active rows, above Idle and Knowledge; actionable.
+  let opened = null;
+  const t = menu.buildTrayMenuTemplate(m, { ...NOOPS, onOpenScope: (r) => { opened = r.route; } });
+  const ids = t.map((i) => i.id || i.type);
+  const ni = t.findIndex((i) => i.label === 'Two tools are writing field-notes / s2-co…');
+  const lastRow = Math.max(...m.active.rows.map((r) => ids.indexOf(r.id)));
+  ok(ni > lastRow && ni < ids.indexOf(menu.ID_IDLE) && ni < ids.indexOf(menu.ID_KNOWLEDGE),
+    'the notice sits under the Active rows — above the Idle fold and above Knowledge, not at the bottom');
+  eq(t.filter((i) => /writing/.test(i.label || '')).length, 1, 'and the menu draws it exactly once');
+  ok(t[ni].enabled === true && typeof t[ni].click === 'function', 'it is ENABLED (full contrast) and actionable');
+  t[ni].click();
+  eq(opened, 'projects/field-notes', '…opening that project in Project Context');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
