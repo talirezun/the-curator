@@ -997,7 +997,7 @@ flowchart TD
 **The remedy is yours, and it is one sentence: give each tool its own work-stream name.** Tell each agent which scope it owns — `main` for one, `drafting` for the other — and they never touch the same file again. The widget names the collision and stops there, on purpose; a menu bar line has no business proposing a fix in six words.
 
 > **If it happens anyway, the save still succeeds — and nothing is lost.** A save is never refused
-> just because a different tool wrote the last one (default scope stays `main`), so you are never
+> just because a different tool wrote the last one, so you are never
 > blocked. But since v3.74.0, when a save is about to replace a handoff whose last save came from a
 > **different** tool, The Curator first copies the replaced `current.md`, byte for byte, to
 > `previous.md` in that same scope-and-machine folder — before the new content is written. Open
@@ -1508,15 +1508,22 @@ outside the window"**: they exist, but nothing sends them until an agent asks by
 
 **Choose the reading budget in the step's head row, from seven presets, named in tokens:**
 
-| Preset | Tokens | Meaning |
+| Preset | Tokens (as the picker shows them) | Meaning |
 |---|---|---|
 | **Index only** | 0 | the list only; an agent opens documents by name. Step ① shows **"Index only — no document text at start"** in place of a bar |
-| **Lean** | 8k | one or two short documents |
-| **Standard** *(recommended)* | 16k | a handful of core documents |
-| **Deep** | 32k | a design held in mind |
-| **Large** | 64k | a big project, on a 1M-window model |
-| **Extra large** | 128k | a whole design set, 1M only |
-| **Max** | 200k | the ceiling — almost never right; offered for the rare 1M-window project that genuinely needs it |
+| **Lean** | ≈8.2k (32 KB) | one or two short documents |
+| **Standard** *(recommended)* | ≈16.4k (64 KB) | a handful of core documents |
+| **Deep** | ≈32.8k (128 KB) | a design held in mind |
+| **Large** | ≈65.5k (256 KB) | a big project, on a 1M-window model |
+| **Extra large** | ≈131k (512 KB) | a whole design set, 1M only |
+| **Max** | ≈205k (800 KB) | the ceiling — almost never right; offered for the rare 1M-window project that genuinely needs it |
+
+**One budget, one number (v3.76.0).** The picker used to name each preset in thousands of 1,024
+tokens (*"Extra large 128k"*) while the meter beside it drew the same budget as bytes ÷ 4 in
+thousands of 1,000 (*"≈131k"*). Both now use the meter's figure, so a preset reads the same in the
+picker, on the meter and in every "N tokens" line — the numbers above look less round because they
+are the true ones for the same byte budgets as before (nothing about the presets themselves
+changed).
 
 Each row in the picker states its own reading, e.g. *"an agent starts with ≈16k tokens · 1 MCP
 reply"*, and a row whose start would run over a quarter of your chosen window says so in words
@@ -1680,6 +1687,15 @@ document printed on the page; opening one is a click, not a scroll.*
   no agent memory yet — and never sends you off to create a domain you already have. The screen
   **opens** on whichever project was written to most recently, and it remembers the last project
   you looked at in each domain; the lists themselves do not reorder between visits.
+- **The ages keep moving, and so does the grouping (v3.76.0).** The sidebar is grouped **Active ·
+  last 24 h** and **Idle**. Every age on this screen — each sidebar row, the **MEMORY** tile, the
+  Handoffs summary — is worked out from the save's timestamp every second while the page is open,
+  rather than read once from the last answer the app fetched, so coming back to the screen never
+  shows an hour-old *"2 min ago"*. The freshness dots re-colour as they age, and a project moves
+  from **Active** to **Idle** by itself the moment its newest save turns 24 hours old. An Active
+  row names **every tool that saved into the project in the last 24 hours**, read from the
+  project's journal — so when a second tool's save replaced the first tool's handoff, both are
+  still named (*"Claude Code + Antigravity"*), not just the one whose copy is on disk now.
 - **The header carries `Copy agent instructions`**, beside the title. It is the same block as the
   button of that name in [§10 → Projects](#projects-inside-a-domain), already filled in for this
   project — the thing to paste into the file your coding tool loads every session, so the agent
@@ -1885,8 +1901,8 @@ one clock, told once each in the two places that need it, instead of a third.
 | Row | Summary line | Whose it is |
 |---|---|---|
 | **Agent connections** | *1 connection in the last 30 days · 1 saved before stopping*, five monitor lines inside — see [the meter](#the-meter-did-the-session-read-and-did-it-save), below | Your agents'. No table — the body is the monitor only |
-| **Handoffs** | *3 handoffs · saved 14 min ago* | Your agents'. One row per saved copy; press a row to read its handoff in the [reader](#reading-a-handoff). See [the table below](#the-handoffs-table) |
-| **The brief** | *updated 14 min ago · 126 words*, with a **pencil** | Yours — see [Editing the standing brief](#editing-the-standing-brief) |
+| **Handoffs** | *3 handoffs · saved 14 min ago* — the age keeps moving while the page is open (since v3.76.0; it used to hold the figure from the last repaint) | Your agents'. One row per saved copy; press a row to read its handoff in the [reader](#reading-a-handoff). See [the table below](#the-handoffs-table) |
+| **The brief** | *written 14 min ago · 126 words*, with a **pencil**. *Since v3.76.0* the age is the brief's **own** stamp (the time written into its header when it was saved), not the file's date, so a restore or a pull no longer makes an old brief read new; when the file on disk changed later — you edited it by hand, or sync brought a copy — a second clock follows, *"· changed on disk 2 hr ago"*. A brief you typed by hand with no stamp reads *"file changed …"* | Yours — see [Editing the standing brief](#editing-the-standing-brief) |
 | **Journal** | *17 saves · showing 10 · latest 14 min ago* | Your agents'. One line per save, newest first: when, which harness, which model, the headline, and any notes the store recorded. A **"Show N more"** row extends it in place — the same control the Handoffs table uses, not a separate footer card |
 
 **Agent connections leads now that Last saved is gone** — it already sat directly under that row, so nothing
@@ -1969,7 +1985,7 @@ three worked examples.
 | On screen | On disk | What it is | How many |
 |---|---|---|---|
 | **The brief** | `state/<project>/project.md` | Your standing instructions for the project. Every scope reads the same brief | **One per project**, shared by all scopes and all machines |
-| **Scope** (a row's name in **Handoffs**) | the `<scope>/` folder | The name of one thread of work — `main`, `auth-refactor`, `session-2026-09-25-docs` | As many as you name. A save that names none goes to `main` |
+| **Scope** (a row's name in **Handoffs**) | the `<scope>/` folder | The name of one thread of work — `main`, `auth-refactor`, `session-2026-09-25-docs` | As many as you name. A save that names none goes to its tool's own scope (`claude-code`, `antigravity`) — or to `main` when it names no tool either |
 | **Machine** (the **Machine** column) | the `<machine>/` folder inside a scope | The computer — strictly, the installation of The Curator — that saved it. Recorded for you; an agent cannot choose it | One per computer that has saved under that scope |
 | **Handoff** (a row in **Handoffs**) | `<scope>/<machine>/current.md` | Where that thread stood at its last save on that computer | **One per project × scope × machine** |
 | **Journal** | `<scope>/<machine>/journal.jsonl`, beside the handoff | One line per save — when, which tool, which model, the headline. Only grows | One per handoff |
@@ -2026,10 +2042,12 @@ lines below are ready to paste into the brief's operating-directives section.
 | **Several agent tools on one computer** | Two tools working the same project at the same time | *"Each agent saves under its own scope: `<harness>-<topic>` (e.g. `antigravity-api`, `claude-code-ui`); never save under another agent's scope."* |
 | **Handing a session over** | Context full, switching tool, or moving computer | Nothing — it is a habit, below |
 
-**One stream.** The simplest: a save that names no scope goes to `main`. Note that since v3.76.0
-the **Copy agent instructions** block ([§13b](#making-sure-your-agent-actually-does-it)) does *not*
-say `main` — it tells each tool to save under a scope named for itself (`claude-code`,
-`antigravity`, …), which for one tool is one stream under that tool's name. The cost: the previous session's handoff is gone the moment the next save lands — the
+**One stream.** The simplest: every save names `main`. Two v3.76.0 changes matter here: the
+**Copy agent instructions** block ([§13b](#making-sure-your-agent-actually-does-it)) no longer says
+`main` — it tells each tool to save under a scope named for itself (`claude-code`, `antigravity`, …) —
+and a save that names NO scope now goes to the saving tool's own scope, not `main`. So for one tool,
+one stream is simply that tool's scope; write `main` into the brief only if you want that exact name.
+The cost: the previous session's handoff is gone the moment the next save lands — the
 Journal keeps one line per save, never the full text.
 
 **One scope per session.** This is how The Curator's own repository is worked. Every session opens
@@ -2084,8 +2102,8 @@ written by both means add the brief line above. Three things make separate scope
   hook settings ([§13c](#hooks-what-they-can-do-on-your-harness-and-what-they-cannot)).
 
 **If it happens anyway, since v3.74.0: the save still succeeds, and nothing is silently lost.** A
-save is never refused just because the last save in that scope came from a different tool — the
-default scope stays `main`, and you are never blocked from saving. But when a save is about to
+save is never refused just because the last save in that scope came from a different tool, and
+you are never blocked from saving. But when a save is about to
 replace a handoff whose last save came from a genuinely **different** tool (matched by normalised
 tool identity, so `Claude Code` and `claude-code` count as the same tool and this never fires on a
 spelling difference alone), The Curator first copies the replaced `current.md`, byte for byte, to a
@@ -2298,7 +2316,7 @@ column and the dots cool with them, and the order can never contradict the readi
 | **Working on** | That save's own one-line headline — *not* the project's, so a fortnight-old row shows what it was doing a fortnight ago. An em dash when the save carried none |
 | **Last saved** | A relative age (*"3 hr ago"*, *"2 weeks ago"*). The exact timestamp — and the words *file time* when the reading is the file's rather than the agent's — travel in the row's accessible name, so a screen reader announces them |
 | **Machine** | The installation that wrote it, plus a **this machine** tag on every row in your own machine's folder — and only when the app can positively identify it, never guessed from a lookalike name |
-| **Harness** | The agent tool and the model that wrote the save, e.g. *"claude-code · opus"* |
+| **Harness** | The agent tool and the model that wrote the save, e.g. *"Claude Code · opus"*. *Since v3.76.0* the tool is shown under its one normalised name, so `claude-code`, `Claude Code` and `Claude Code (desktop)` all read **Claude Code** down the column; the agent's own spelling is kept in the row's accessible text |
 | *(trash)* | **v3.75.0.** A neutral trash icon that deletes the whole scope — see [Deleting a handoff](#deleting-a-handoff). Absent on a Shared Brain mirror |
 
 **Press a row to open it.** That replaces the whole picker: pick the scope and the machine
@@ -3299,6 +3317,14 @@ documents marked **read first** — on top of the domain's wiki, never instead o
 project's journal and any other foundation that matches your question come in as well, the same
 way the bootstrap an agent gets chooses them.
 
+**Reopening a conversation restores its project (v3.76.0).** Open an earlier conversation and the
+Project pill shows the project that conversation's last answer used — or **No project** when that
+answer recorded none — instead of whatever this browser last pinned for the domain. You can still
+change it, and that choice is remembered as your pin exactly as before. A **new** chat keeps
+today's behaviour: it starts on your pinned project for the domain. A conversation from before
+v3.72.0 recorded no project, so it opens on your pin too — nothing is guessed for it — and a
+project that has since been deleted is not restored.
+
 **The readout lives in the picker now, not under the composer.** Open the list and its footer says
 what was actually used: the pinned project's own reading, its freshness, and how much of it the
 last answer actually drew on — *"saved 47 min ago · 5 KB read last turn"*. That figure is the
@@ -3429,6 +3455,15 @@ the reader — both point at the same place.
 - **Answers you asked before upgrading keep their old labels.** The titles are stored with the
   answer, and nothing rewrites conversations you already have; ask the question again and the new
   answer's chips are named.
+- **Only real pages are counted (v3.76.0).** A model sometimes writes `[source: …]` around
+  something that is not a wiki page — *"handoff state"*, *"catalogue"*, a version number. Those are
+  no longer numbered or counted: **Sources · N pages** counts only citations that resolve to a page
+  in this wiki, and anything else is listed underneath as **unverified mentions — not a wiki
+  page**, plain text you cannot click. A comma inside one mention (*"CLAUDE.md rows v3.69.0,
+  v3.68.1"*) no longer splits it in two; a comma splits a citation only when every part is a page
+  path (`entities/a.md, concepts/b.md`). An answer saved before v3.76.0 is checked when you
+  reopen it: a citation counts as a page if that page exists in the wiki now (nothing is written
+  back into the conversation).
 
 Answers can also include **block quotes** (a left rule, with a trailing "— Name" line styled as an
 attribution), a horizontal **rule** (`---`) to separate sections, up to four **heading** levels, and
@@ -4462,7 +4497,7 @@ So the division of labour is:
 | **The brief** (`project.md`) | What is true across *all* the work: the architecture, the standing constraints, how you like your agents to operate, pointers to depth. Changes rarely, deliberately. |
 | **A scope** (`<scope>/…`) | Where *one workstream* stands right now. Overwritten on every save. Churns. |
 
-**Which means: do not collapse your work into a single scope in order to get a shared brief. You already have one.** That instinct is understandable and it is the wrong way round — the brief is *already* shared by every scope, so collapsing buys you nothing, and it costs you the one thing scopes exist for: two workstreams under one scope overwrite each other's handoff. Keep them separate. Three features of one product are three scopes — `checkout-rewrite`, `billing-api`, `mobile-nav` — all reading the same brief. A read that names no scope gets `main`. Six naming patterns, with the line to paste into your brief for each, are in [How to organise your work-streams](#how-to-organise-your-work-streams-scopes).
+**Which means: do not collapse your work into a single scope in order to get a shared brief. You already have one.** That instinct is understandable and it is the wrong way round — the brief is *already* shared by every scope, so collapsing buys you nothing, and it costs you the one thing scopes exist for: two workstreams under one scope overwrite each other's handoff. Keep them separate. Three features of one product are three scopes — `checkout-rewrite`, `billing-api`, `mobile-nav` — all reading the same brief. A read that names no scope gets the newest work-stream. Six naming patterns, with the line to paste into your brief for each, are in [How to organise your work-streams](#how-to-organise-your-work-streams-scopes).
 
 **How the brief gets written is different from everything else here.** `save_working_state` only ever writes a scope's handoff, and nothing writes a brief as a by-product of a session. There are exactly three ways it changes, and all three are deliberate acts:
 

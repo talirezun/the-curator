@@ -213,7 +213,7 @@ function contextOverview(over) {
   // v3.69.0: per DOCUMENT now — `foundationsFacts` reads each row's own source
   // group through shared/foundations-sources.js (`FSRC`), injected REAL.
   const fns = ['skeletonOf', 'copiedFromOf', 'foundationsFacts', 'foundationsWord', 'newestPair',
-    'effectiveSave', 'formatAge', 'renderLayerStrip'];
+    'effectiveSave', 'formatAge', 'freshDotHtml', 'renderLayerStrip'];
   // v3.71.0: the strip's ⓘ is the `context.overview` explainer — the kit is
   // injected REAL (it imports only import-free modules, so it runs here).
   const box = new Function('docsLinkHtml', 'renderOverview', 'escapeHtml', 'state',

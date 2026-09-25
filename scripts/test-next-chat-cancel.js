@@ -340,6 +340,12 @@ function makeSandbox(opts = {}) {
     // function calls it, and a fix nothing calls is not a fix — §12i executes
     // the real thing rather than reading it.
     extractFunction(chatSrc, 'selectConversation') + '\n' +
+    // v3.76.0 (F13): opening a conversation restores its own project. Lifted
+    // real — these threads record none, so it hands back to the pin, which
+    // this harness never set, and returns without a repaint.
+    extractFunction(chatSrc, 'conversationProject') + '\n' +
+    extractFunction(chatSrc, 'applyConversationProject') + '\n' +
+    extractFunction(chatSrc, 'restorePinnedProject') + '\n' +
     // The REAL stream consumer, driving the REAL shared/sse.js reader (imported
     // above, not stubbed) — so what is asserted below is the frame parsing that
     // actually ships, including how an abort lands inside it.

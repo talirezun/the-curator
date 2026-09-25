@@ -1160,7 +1160,23 @@ of the guard.
   whole field is `null` when nothing resolved; it is never `{}`. It is also
   **persisted on the assistant message**, appended after `usage`, so a reopened
   thread labels the same chip the same way; assistant messages written before
-  v3.46.0 do not carry it and are not migrated.
+  v3.46.0 do not carry it and are not migrated. Since v3.76.0 a comma-joined
+  capture of page paths is titled per path.
+- `citedPages` (v3.76.0+) is the list of cited strings that ARE pages of this
+  wiki — each `[source: …]` capture split by `citationParts()` (a comma splits
+  it only when every part looks like a path: it names a folder or ends in
+  `.md`; *"CLAUDE.md rows v3.69.0, v3.68.1"* stays one mention), and a part
+  kept only when it is the exact path of a page in the wiki the turn read. The
+  app's **Sources · N pages** counts only these; every other capture is shown
+  apart as an *unverified mention*, never numbered or opened. `[]` is a record
+  ("nothing cited was a page"). It is persisted on the assistant message,
+  appended last. A message written before v3.76.0 has no key; for those,
+  `GET /api/chat/:domain/:id` adds **`citedPagesNow`** on the response — its
+  citations checked against the wiki on disk at read time (an existing file in
+  `entities/`, `concepts/` or `summaries/`, contained by `resolveInsideWiki`;
+  existence checks only) — and never writes it back into the file. Only when a
+  server sends neither does the renderer fall back to shape: titled by
+  `citationTitles`, or a `.md` name with no whitespace.
 - `projectContext` (v3.64.0) is what the pinned project actually contributed to
   **that turn**, or `null` when no project was pinned:
   `{project, domain, scope, chars, briefPresent, briefAuthority, handoffPresent,
@@ -3135,6 +3151,7 @@ here. Absent facts come back as `null`/`0`/`[]` rather than `undefined`, so a ca
       "hasBrief": true,
       "briefBytes": 4120,
       "briefUpdatedAt": "2026-08-20T09:12:44.000Z",
+      "briefWrittenAt": "2026-08-20T09:12:43.871Z",
       "briefAuthoredBy": { "kind": "human" },
       "layoutWarning": null,
       "scopeCount": 2,
@@ -3213,10 +3230,24 @@ speaker's tool run through `normaliseHarness()`, so `Claude Code` and `claude-co
 id/label pair and `claude-desktop` stays a distinct tool from `claude-code`. Both are `null` when
 the newest pair named no tool.
 
+**`briefWrittenAt`** (v3.76.0) is the brief's **own** stamp — its provenance comment's `on=`, or
+the structured door's `_Updated: <ISO>_` header line — and `null` for a brief typed by hand with
+neither. `briefUpdatedAt` is unchanged: the **file's** mtime, which a hand edit, a `git pull` or a
+restore all move. The Context view leads with `briefWrittenAt` and adds the file's time only when
+the two differ by more than two minutes. The same fact is `brief.writtenAt` on the detail read
+(`GET /api/memory/:domain/:project`), beside `brief.updatedAt`, and `briefWrittenAt` on the MCP's
+`list_projects` rows.
+
 **`tools[]`** (v3.74.0) is every NORMALISED tool that has saved into this project, newest first,
 capped at 6 entries (`PROJECT_TOOLS_MAX`) — built by `toolsOf()` in `src/routes/memory.js` over the
 same work-stream index `harnessShared`/`harnessScanned` already pay for, so it costs nothing extra.
-A pair that named no tool is left out. Each entry:
+A pair that named no tool is left out. **Since v3.76.0 it reads each pair's JOURNAL as well as its
+current copy** (`listWorkingScopes(…, {withSaveTimes: true})` — the same tail, no extra read): a
+handoff is one file per (scope, machine), so when a second tool saves into a pair the first tool's
+copy is replaced, and a list built from current copies alone dropped that tool while it had saved
+minutes earlier. Every journal save is offered with its own tool and its own `at`, so each tool's
+entry carries its newest save anywhere in the project, and the Context sidebar's 24-hour Active
+test reads those stamps. Each entry:
 
 | Field | Type | Meaning |
 |-------|------|---------|
@@ -4103,11 +4134,13 @@ then the app and the agent would describe the same file differently.
     "sanitisedOnRead": false,
     "sanitisedOnReadNote": null,
     "duplicateHeadings": [],
-    "headingsSuspect": false
+    "headingsSuspect": false,
+    "authoredBy": null,
+    "writtenAt": "2026-08-20T09:12:43.871Z"
   },
   "scope": null,
   "scopes": [
-    { "scope": "main", "machine": "alices-macbook-pro-9f3c1a20", "lastWriteAt": "2026-08-27T18:03:11.000Z", "bytes": 3598, "ageSeconds": 5421, "headline": "Docs pass — nine false claims corrected" }
+    { "scope": "main", "machine": "alices-macbook-pro-9f3c1a20", "lastWriteAt": "2026-08-27T18:03:11.000Z", "bytes": 3598, "ageSeconds": 5421, "headline": "Docs pass — nine false claims corrected", "harness": "claude-code", "harnessLabel": "Claude Code" }
   ],
   "scopeCount": 3,
   "distinctScopeCount": 2,
@@ -4144,6 +4177,12 @@ alias — the fields below replace them.
 
 `unlistedEntries`/`unlistedReason` carry the same meaning as on the index route above:
 directory entries the store will not address, counted rather than silently skipped.
+
+**`brief.writtenAt` (v3.76.0)** is the brief's own stamp (see `briefWrittenAt` on the index
+route); `brief.updatedAt` stays the file's mtime. **`scopes[].harnessLabel` (v3.76.0)** is each
+row's tool through `normaliseHarness()`, added by this route (not the store) to the envelope and to
+`open` alike, so `open` stays what the scoped read answers; `harness` keeps the raw spelling.
+`null` when the save named no tool.
 
 **`stateBudgetBytes` (v3.66.0)** rides on this envelope (and on `open`, and on a scoped read) —
 `49152`, the size a handoff is trimmed to. Every `scopes[].bytes` is at or under it: an over-budget
@@ -4680,7 +4719,10 @@ no window where a failure could leave a stale root beside a fresh remote.
 the store's minimum up to its cap, now **800 KB** (was 200 KB). The seven presets the app offers,
 in bytes: `0` (Index only, 0 tokens), `32768` (Lean, 8k), `65536` (Standard, 16k), `131072` (Deep,
 32k — was 122880/120 KB through v3.69.0), `262144` (Large, 64k), `524288` (Extra large, 128k),
-`819200` (Max, 200k — was 204800/200 KB). `null` clears it back to "not set". A project already
+`819200` (Max, 200k — was 204800/200 KB). (The token names here are the store's `tokens` field,
+thousands of 1,024; since v3.76.0 the app LABELS each preset with the meter's own figure, bytes ÷ 4
+in thousands of 1,000 — Extra large reads *≈131k* — so one budget never shows two numbers.) `null`
+clears it back to "not set". A project already
 holding an older value (e.g. `122880` or `204800`) is untouched — it is still valid, and reads back
 as a **Custom** value with its nearest preset named, never migrated. Any other key in the body, or
 an out-of-range value, is a 400 naming exactly what was wrong. Writes only `project.json` — curator

@@ -22,7 +22,9 @@
 // repoint a marker (the reason the old M3 fix had to move the path into text).
 //
 // ── THE API P3 WIRES ─────────────────────────────────────────────────────
-//   renderAnswer(raw, { titles, citations }) → { html, sources }
+//   renderAnswer(raw, { titles, citations, pages }) → { html, sources, mentions }
+//     pages      m.citedPages (v3.76.0) — the cited strings the server found
+//                to BE wiki pages; see pageTest below. mentions: the rest.
 //     raw        the answer's Markdown (m.content)
 //     titles     m.citationTitles (path → page title), optional
 //     citations  m.citations (the server's list), optional — any path in it
@@ -34,7 +36,8 @@
 //                appearance order; path RAW (unescaped); folder is
 //                'entities' | 'concepts' | 'summaries' | null; type is
 //                'entity' | 'concept' | 'summary' | 'other'.
-//   sourcesHtml(sources) → the Sources block ('' when there are none)
+//   sourcesHtml(sources, mentions) → the Sources block ('' when there is
+//                neither); the count is pages only, mentions listed apart
 //   sourceByNumber(sources, n) → the entry, or null for anything that is not
 //                one of its numbers (so a stray attribute cannot index
 //                outside the list)
@@ -43,7 +46,7 @@
 // Styling: shared/answer.css (the answer body, headings, quote, rule, the
 // inline marker, the Sources block) and shared/page-chip.css (the ONE page
 // chip, shared with the reader). Both linked from index.html.
-import { renderMarkdown, escHtml } from './markdown.js';
+import { renderMarkdown, escHtml, splitCitationParts } from './markdown.js';
 
 // Page type from the path's first segment — the same rule views/chat.js's
 // folderOfPath and the reader's type chip use. Anything else is 'other'.
@@ -70,30 +73,66 @@ function sourceTitle(path, titles) {
   return slug ? slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : p;
 }
 
+// ── WHICH CITATIONS ARE PAGES (v3.76.0, truth audit F9) ──────────────────
+// "SOURCES · 6 PAGES" was counting every `[source: …]` the model wrote, and
+// four of the six were not pages at all: "Handoff State", "Catalogue", and a
+// version list split in two. A mention is a PAGE only when it resolves to one:
+//   · `pages` — the server's list of cited strings that ARE wiki pages
+//     (`citedPages`, src/brain/chat.js, checked against the wiki it read).
+//     When present it is the whole rule, strictly.
+//     For an answer saved before v3.76.0 the view passes the server's
+//     read-time check instead (`citedPagesNow`, GET /api/chat/:domain/:id).
+//   · no `pages` at all (an older server): a mention the server gave a
+//     TITLE (it only titles a real page) or one shaped like a page file — a
+//     `.md` name with no spaces, optionally in a folder. Words ("handoff
+//     state", "catalogue", "CLAUDE.md rows v3.69.0") are not presented as a
+//     page.
+// Everything that is not a page is kept, in its own list, as an UNVERIFIED
+// MENTION — shown under the Sources, never numbered, never a button, never
+// opened (there is no page to open).
+const WIKI_PATH_RE = /^(?:[^/\s]+\/)*[^/\s]+\.md$/i;
+function pageTest(opts) {
+  if (Array.isArray(opts.pages)) {
+    const set = new Set(opts.pages.filter((x) => typeof x === 'string'));
+    return (key) => set.has(key);
+  }
+  const titles = opts.titles && typeof opts.titles === 'object' ? opts.titles : null;
+  return (key) => (titles !== null && Object.hasOwn(titles, key)) || WIKI_PATH_RE.test(key);
+}
+
 export function renderAnswer(raw, opts) {
   const o = opts || {};
+  const isPage = pageTest(o);
   const order = [];
   const index = new Map(); // a Map, not an object: paths are untrusted keys
+  const mentions = [];
+  const mentioned = new Set();
   const cite = (p) => {
     const key = String(p == null ? '' : p).trim();
     if (!key || key.length > 512) return 0;
+    if (!isPage(key)) {
+      if (!mentioned.has(key)) { mentioned.add(key); mentions.push(key); }
+      return 0;
+    }
     if (!index.has(key)) { order.push(key); index.set(key, order.length); }
     return index.get(key);
   };
   const html = renderMarkdown(raw, { cite });
   // The server's list, after the inline ones. Numbers are assigned here but
-  // never shown inline — these pages were cited without a marker.
+  // never shown inline — these pages were cited without a marker. Split by
+  // the SAME rule the inline pass uses (splitCitationParts), so a comma inside
+  // one mention never makes two.
   if (Array.isArray(o.citations)) {
     for (const c of o.citations) {
       if (typeof c !== 'string') continue;
-      for (const part of c.split(',')) cite(part);
+      for (const part of splitCitationParts(c)) cite(part);
     }
   }
   const sources = order.map((path, i) => {
     const { folder, type } = pageTypeOf(path);
     return { n: i + 1, path, folder, type, title: sourceTitle(path, o.titles) };
   });
-  return { html, sources };
+  return { html, sources, mentions };
 }
 
 // The bound and the `|| null` each cover the other — measured by mutation:
@@ -105,7 +144,9 @@ export function sourceByNumber(sources, n) {
   return sources[k - 1] || null;
 }
 
-const TYPE_WORD = Object.assign(Object.create(null), { entity: 'entity', concept: 'concept', summary: 'summary', other: 'page' });
+// 'other' reads "wiki page": it was "page", which made a screen reader say
+// "page page" for a source outside the three folders.
+const TYPE_WORD = Object.assign(Object.create(null), { entity: 'entity', concept: 'concept', summary: 'summary', other: 'wiki' });
 
 // The Sources block. Every string that came from a page or a model goes
 // through escHtml; the only attribute values are this file's own literals and
@@ -113,9 +154,22 @@ const TYPE_WORD = Object.assign(Object.create(null), { entity: 'entity', concept
 // leadership, concept page, concepts/servant-leadership.md" — the number and
 // dot are aria-hidden (the number is spoken in words, the dot's meaning is
 // the type word), and the path is visually hidden, never a `title=` tooltip.
-export function sourcesHtml(sources) {
-  if (!Array.isArray(sources) || sources.length === 0) return '';
-  const count = sources.length + (sources.length === 1 ? ' page' : ' pages');
+export function sourcesHtml(sources, mentions) {
+  const list = Array.isArray(sources) ? sources : [];
+  const loose = Array.isArray(mentions) ? mentions.filter((m) => typeof m === 'string' && m) : [];
+  if (list.length === 0 && loose.length === 0) return '';
+  // THE COUNT IS PAGES, AND ONLY PAGES (v3.76.0, F9). With none resolved the
+  // head says so rather than "0 pages" beside a list of mentions.
+  const count = list.length === 0 ? 'no wiki page'
+    : list.length + (list.length === 1 ? ' page' : ' pages');
+  const mentionsHtml = loose.length
+    ? '<div class="answer-mentions">'
+      + escHtml(loose.length + (loose.length === 1 ? ' unverified mention' : ' unverified mentions')
+        + ' — not a wiki page: ')
+      + loose.map((m) => '<span class="answer-mention">' + escHtml(m) + '</span>').join(' · ')
+      + '</div>'
+    : '';
+  sources = list;
   const present = new Set();
   let chips = '';
   for (const s of sources) {
@@ -141,8 +195,9 @@ export function sourcesHtml(sources) {
   return (
     '<section class="answer-sources" aria-label="Sources">' +
       '<div class="answer-sources-head">Sources · ' + count + '</div>' +
-      '<div class="answer-sources-list">' + chips + '</div>' +
+      (chips ? '<div class="answer-sources-list">' + chips + '</div>' : '') +
       (legend ? '<div class="answer-legend" aria-hidden="true">' + legend + '</div>' : '') +
+      mentionsHtml +
     '</section>'
   );
 }

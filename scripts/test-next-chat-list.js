@@ -290,7 +290,7 @@ section('§6 — ADOPTION: the one sidebar row, the one row action, the one iden
   ok(/import \{ renderAnswer, sourcesHtml, sourceByNumber \} from '\.\.\/shared\/answer\.js'/.test(chatCode),
     '★ Chat imports P2\'s answer API');
   const thread = extractFunction(chatCode, 'renderThreadOnly');
-  ok(/renderAnswer\(m\.content \|\| '', \{/.test(thread) && /sourcesHtml\(rendered\.sources\)/.test(thread),
+  ok(/renderAnswer\(m\.content \|\| '', \{/.test(thread) && /sourcesHtml\(rendered\.sources, rendered\.mentions\)/.test(thread),
     '★ …renders every answer through it, with the ONE Sources list under it');
   ok(!/chat-cite-row|chat-citation-tag|data-cite=|citationLabel/.test(chatCode),
     '★ the title-chip row, the inline path tags\' handler and citationLabel are gone');

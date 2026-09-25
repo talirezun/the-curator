@@ -21,7 +21,8 @@ import { tokenize } from './sharedbrain-delta.js';
 // page is called — the reader gets its title from getWikiPage(), which is
 // deriveTitle. Both are pure, dependency-free and already stdout-silent (that
 // module is on the MCP's import graph and says so).
-import { deriveTitle, parseFrontmatter } from './wiki-read.js';
+import { deriveTitle, parseFrontmatter, resolveInsideWiki } from './wiki-read.js';
+import { existsSync } from 'fs';
 import {
   readSchema,
   readWikiPages,
@@ -30,6 +31,7 @@ import {
   writeConversation,
   deleteConversation,
   isDomainReadonly,
+  wikiPath,
 } from './files.js';
 // ── THE PROJECT-CONTEXT READ IS IN-PROCESS (v3.64.0) ─────────────────────
 // Chat calls the memory layer's OWN bootstrap rather than re-assembling the
@@ -1401,6 +1403,73 @@ export function normalizeChatModel(provider, model) {
  * a key in every persisted message that says nothing; absent means "no titles",
  * which is precisely what the client's fallback already handles.
  */
+/**
+ * ONE `[source: …]` CAPTURE, SPLIT THE WAY THE RENDERER SPLITS IT (v3.76.0).
+ * A comma separates two citations only when every part looks like a path
+ * (names a folder or ends in `.md`); otherwise the capture is ONE mention —
+ * "CLAUDE.md rows v3.69.0, v3.68.1" is one, not two. The renderer's copy is
+ * `splitCitationParts` in src/public/next/shared/markdown.js; the browser
+ * module cannot be imported here, so scripts/test-next-answer.js holds the
+ * two to one table.
+ */
+export function citationParts(text) {
+  const whole = String(text == null ? '' : text).trim();
+  if (!whole) return [];
+  const parts = whole.split(',').map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return [];   // only commas: nothing was cited
+  const pathy = (s) => /\.md$/i.test(s) || s.indexOf('/') !== -1;
+  return parts.length > 1 && parts.every(pathy) ? parts : [whole];
+}
+
+/**
+ * The cited strings that ARE wiki pages (v3.76.0, truth audit F9). A model
+ * cites what it read, and it also writes `[source: handoff state]` or
+ * `[source: catalogue]` — words, not pages — which the Sources list used to
+ * count as pages ("SOURCES · 6 PAGES", four of them not pages). Each capture
+ * is split by `citationParts` and a part is kept only when it is the exact
+ * path of a page in `pages` (the full wiki this turn read). Returns [] when
+ * nothing resolved: that is a record, not an absence.
+ */
+export function buildCitedPages(citations, pages) {
+  if (!Array.isArray(citations) || citations.length === 0) return [];
+  const known = new Set();
+  for (const p of Array.isArray(pages) ? pages : []) {
+    if (p && typeof p.path === 'string') known.add(p.path);
+  }
+  const out = [];
+  for (const c of citations) {
+    for (const part of citationParts(c)) {
+      if (known.has(part) && !out.includes(part)) out.push(part);
+    }
+  }
+  return out;
+}
+
+/**
+ * The same verdict for an answer saved BEFORE v3.76.0, which recorded no
+ * `citedPages` (truth audit F9). Checked against the wiki on disk at READ
+ * time — a fact about the wiki now, not a reconstruction of what the turn
+ * read, which is why it is returned as `citedPagesNow` and never written back
+ * into the conversation. Only the three page folders count, and a part must
+ * be the exact path of an existing file inside the wiki (resolveInsideWiki,
+ * the same containment the wiki reader uses): `foundations/architecture.md`
+ * or `catalogue` is never a page. Existence checks only, no reads.
+ */
+const PAGE_PATH_RE = /^(entities|concepts|summaries)\/[^/\\]+\.md$/;
+export function citedPagesOnDisk(domain, citations) {
+  if (!Array.isArray(citations) || !citations.length) return [];
+  const root = wikiPath(domain);
+  const out = [];
+  for (const c of citations) {
+    for (const part of citationParts(c)) {
+      if (!PAGE_PATH_RE.test(part) || out.includes(part)) continue;
+      const abs = resolveInsideWiki(root, part);
+      if (abs && existsSync(abs)) out.push(part);
+    }
+  }
+  return out;
+}
+
 export function buildCitationTitles(citations, pages) {
   if (!Array.isArray(citations) || citations.length === 0) return null;
   if (!Array.isArray(pages) || pages.length === 0) return null;
@@ -1409,7 +1478,9 @@ export function buildCitationTitles(citations, pages) {
     if (p && typeof p.path === 'string' && typeof p.content === 'string') byPath.set(p.path, p.content);
   }
   const out = {};
-  for (const c of citations) {
+  // Each capture split as the renderer splits it (v3.76.0), so the two pages
+  // of `[source: a.md, b.md]` get their titles too.
+  for (const c of citations.flatMap((x) => (typeof x === 'string' ? citationParts(x) : []))) {
     if (typeof c !== 'string' || !c) continue;
     const content = byPath.get(c);
     if (typeof content !== 'string') continue;
@@ -1517,6 +1588,13 @@ export function buildAssistantMessage(content, citations, servedProvider, served
     }
     const priced = normalizePriced(facts.priced);
     if (priced) msg.priced = priced;
+    // v3.76.0 (F9) — the cited strings that ARE wiki pages, APPENDED LAST and
+    // only when passed, so an older call site serialises as before. An empty
+    // array is a RECORD ("nothing it cited was a page"), kept; absent means
+    // "answered before this was recorded" and the renderer falls back.
+    if (Array.isArray(facts.citedPages)) {
+      msg.citedPages = facts.citedPages.filter((x) => typeof x === 'string' && x).slice(0, 200);
+    }
   }
   return msg;
 }
@@ -1954,6 +2032,9 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   // function, not the scored subset that went into the prompt — so a citation
   // the model produced from the catalogue alone still gets its real title.
   const citationTitles = buildCitationTitles(uniqueCitations, pages);
+  // v3.76.0 (truth audit F9): which cited strings ARE wiki pages — checked
+  // against the same full wiki read. The Sources list counts only these.
+  const citedPages = buildCitedPages(uniqueCitations, pages);
 
   // ── THE PERSISTENCE RULE, STATED SO NOBODY "IMPROVES" IT ────────────────
   //
@@ -2027,7 +2108,7 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   const priced = await priceServedAnswer(usedModel, usedUsage);
   conversation.messages.push({ role: 'user', content: userMessage });
   conversation.messages.push(buildAssistantMessage(answer, uniqueCitations, usedProvider, usedModel, usedUsage, citationTitles,
-    { project: recordedProject, priced }));
+    { project: recordedProject, priced, citedPages }));
   // LAST USE, written on every completed turn. The list sorts and groups by
   // `updatedAt ?? createdAt`; a conversation written before v3.72.0 has no
   // `updatedAt` until its next turn, and nothing back-fills it.
@@ -2047,6 +2128,10 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
     // scripts/test-beta13-chat-live.js's quality asserts) reads, and a citation
     // whose page has no title must still appear as a citation.
     citationTitles,
+    // v3.76.0 (F9): the cited strings that resolved to a real wiki page —
+    // the ONLY ones the Sources list may count as pages. Beside `citations`,
+    // never folded into it, for the reason `citationTitles` gives above.
+    citedPages,
     responseStyle,
     // Present and TRUE on every ordinary turn, so a consumer reads one field
     // rather than inferring persistence from the domain name. False means the

@@ -316,7 +316,7 @@ function memRenderers(stateObj) {
   // header's ⓘ is the `context.page` explainer, rendered by the kit.
   const body = liftFrom([
     [['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'handoffReaderContent', 'previousHandoffHtml', 'renderJournal',
-      'renderBriefEditor', 'renderBrief'], memSrc, 'memory.js'],
+      'renderBriefEditor', 'briefClocks', 'briefClocksHtml', 'renderBrief'], memSrc, 'memory.js'],
     [['freshnessStep'], read('shared/age.js'), 'shared/age.js'],
   ]);
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',

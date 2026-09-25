@@ -141,3 +141,13 @@ blockquote.chat-md-quote > p.chat-md-attrib {
 @media (prefers-reduced-motion: reduce) {
   .chat-cite-n { transition: none; }
 }
+
+/* v3.76.0 (truth audit F9): mentions the model wrote as `[source: …]` that
+   resolve to no wiki page — listed apart from the numbered pages, never a
+   control, never counted as a page. */
+.answer-mentions {
+  margin-top: 10px;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+}
+.answer-mention { font-style: italic; }

@@ -125,12 +125,12 @@ const ANSWER = (() => {
   const mdImp = /^import\s+\{\s*icon\s*\}\s+from\s+'\.\.\/app\.js';\s*$/m;
   if (!mdImp.test(md)) throw new Error('markdown.js import changed — update this loader');
   const MD = new Function('icon', md.replace(mdImp, '').replace(/^export\s+/gm, '') +
-    '\nreturn { renderMarkdown, escHtml };')(() => '<svg data-icon="dot"></svg>');
+    '\nreturn { renderMarkdown, escHtml, splitCitationParts };')(() => '<svg data-icon="dot"></svg>');
   const an = readFileSync(path.join(ROOT, 'src/public/next/shared/answer.js'), 'utf8');
-  const anImp = /^import\s+\{\s*renderMarkdown,\s*escHtml\s*\}\s+from\s+'\.\/markdown\.js';\s*$/m;
+  const anImp = /^import\s+\{\s*renderMarkdown,\s*escHtml,\s*splitCitationParts\s*\}\s+from\s+'\.\/markdown\.js';\s*$/m;
   if (!anImp.test(an)) throw new Error('answer.js import changed — update this loader');
-  return new Function('renderMarkdown', 'escHtml', an.replace(anImp, '').replace(/^export\s+/gm, '') +
-    '\nreturn { renderAnswer, sourcesHtml, sourceByNumber };')(MD.renderMarkdown, MD.escHtml);
+  return new Function('renderMarkdown', 'escHtml', 'splitCitationParts', an.replace(anImp, '').replace(/^export\s+/gm, '') +
+    '\nreturn { renderAnswer, sourcesHtml, sourceByNumber };')(MD.renderMarkdown, MD.escHtml, MD.splitCitationParts);
 })();
 
 const summarySrc = readFileSync(path.join(ROOT, 'src/public/next/shared/model-summary.js'), 'utf8');

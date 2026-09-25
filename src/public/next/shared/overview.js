@@ -104,6 +104,8 @@ function cls(kit, alias) {
  *     sub?: string,           // an optional second line under the value
  *     toneClass?: string,     // an ink class the HOST stylesheet owns
  *     markHtml?: string,      // TRUSTED — a freshness dot, rendered before the value
+ *     ageAt?: string,         // ISO stamp: the value is an age that ticks (age-ticker.js)
+ *     agePrefix?: string,     // the words before the age in `value` ("saved")
  *     facet?: string,         // makes the card a toggle over a filter
  *     active?: boolean,       // that toggle's state; only meaningful with `facet`
  *     jump?: string,          // makes the card a jump; `facet` wins if both are given
@@ -156,9 +158,25 @@ export function renderOverview(o) {
   const body = (c) => {
     const tone = classList(c.toneClass);
     const mark = typeof c.markHtml === 'string' ? c.markHtml : '';
+    // A TICKING AGE (v3.76.0, truth audit F4). When the value IS an age —
+    // "saved 3 min ago" — the host passes the stamp it was computed from as
+    // `ageAt` and the words before the age as `agePrefix`, and the figure is
+    // wrapped in the shared clock's contract (shared/age-ticker.js): it goes
+    // on moving once a second with no repaint, instead of reading "3 min ago"
+    // until something else happens to redraw the card. The span is INSIDE the
+    // value, after the mark, so the clock's text write can never delete the
+    // freshness dot. An unparseable stamp gets no hook — nothing to recount.
+    const ageAt = typeof c.ageAt === 'string' && c.ageAt && Number.isFinite(Date.parse(c.ageAt))
+      ? c.ageAt : '';
+    const figure = ageAt
+      ? '<span data-age-at="' + escapeHtml(ageAt) + '"' +
+          (typeof c.agePrefix === 'string' && c.agePrefix.trim()
+            ? ' data-age-prefix="' + escapeHtml(c.agePrefix.trim()) + '"' : '') +
+          ' data-age-text>' + escapeHtml(String(c.value)) + '</span>'
+      : escapeHtml(String(c.value));
     return '<div class="cur-eyebrow">' + escapeHtml(c.label) + '</div>' +
       '<div class="' + cls('cur-ov-value', dm ? 'dm-stat-value' : '')
-        + (tone ? ' ' + tone : '') + '">' + mark + escapeHtml(String(c.value)) + '</div>' +
+        + (tone ? ' ' + tone : '') + '">' + mark + figure + '</div>' +
       (c.sub ? '<div class="cur-ov-sub">' + escapeHtml(String(c.sub)) + '</div>' : '');
   };
 

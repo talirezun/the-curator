@@ -152,15 +152,19 @@ Until you set one, nothing changes — every session still receives up to 120 KB
 
 Five presets, all owner-written only — no MCP tool, no CLI flag and no hook ever sets one:
 
-| Preset | Tokens | Bytes |
+| Preset | Tokens (as the app shows them) | Bytes |
 |---|---|---|
 | Index only | 0 | 0 — the list only; no document text at all |
-| Lean | 8k | 32 KB |
-| Standard | 16k | 64 KB — the recommended default |
-| Deep | 32k | 128 KB |
-| Large | 64k | 256 KB |
-| Extra large | 128k | 512 KB |
-| Max | 200k | 800 KB |
+| Lean | ≈8.2k | 32 KB |
+| Standard | ≈16.4k | 64 KB — the recommended default |
+| Deep | ≈32.8k | 128 KB |
+| Large | ≈65.5k | 256 KB |
+| Extra large | ≈131k | 512 KB |
+| Max | ≈205k | 800 KB |
+
+Since v3.76.0 the picker names each preset with the same figure the meter draws — bytes ÷ 4, in
+thousands of 1,000 — so one budget reads as one number everywhere (it used to read *"Extra large
+128k"* in the picker beside *"≈131k"* on the meter). The byte budgets themselves did not change.
 
 A project already holding an older 120 KB or 200 KB value keeps it, unchanged, and reads as
 **Custom** with its nearest preset named.
@@ -230,7 +234,7 @@ Name resolution itself never guesses either. A project name that matches nothing
 
 ## What is a work-stream, and what should I call mine?
 
-A work-stream — called a **scope** in the tools, and shown on screen as a row in the **Handoffs** table since v3.65.1 — is a piece of work inside a project — `main`, `auth-refactor`, `v4-migration`. Work-streams are independent: each has its own handoff and its own journal per machine. A save that names none goes to `main`.
+A work-stream — called a **scope** in the tools, and shown on screen as a row in the **Handoffs** table since v3.65.1 — is a piece of work inside a project — `main`, `auth-refactor`, `v4-migration`. Work-streams are independent: each has its own handoff and its own journal per machine. A save that names none goes to its tool's own scope — `claude-code`, `antigravity`, from the `harness` it names — or to `main` when it names no tool either (since v3.76.0; before that every such save went to `main`, where two tools on one computer overwrote each other).
 
 Any read may pass `latest` in place of a name and get the project's most recently written work-stream. That is what makes a one-line resume possible: you say "pick up the Lumina work", the project resolves, and `latest` resolves to the work-stream you were actually in, without you or the agent knowing the slug.
 
@@ -249,7 +253,7 @@ Give two different agent tools writing the same project their own work-stream na
 
 ## How should I set up scopes for the way I work?
 
-A scope is the name a handoff is saved under. The owner or the agent chooses it; a save that names none goes to `main`. Each handoff is one file per project, scope and machine: `state/<project>/<scope>/<machine>/current.md`, with its Journal (`journal.jsonl`, one line per save) beside it. There is one standing brief per project, `state/<project>/project.md`, and every scope and every machine reads the same one.
+A scope is the name a handoff is saved under. The owner or the agent chooses it; a save that names none goes to its tool's own scope (or `main` with no tool named). Each handoff is one file per project, scope and machine: `state/<project>/<scope>/<machine>/current.md`, with its Journal (`journal.jsonl`, one line per save) beside it. There is one standing brief per project, `state/<project>/project.md`, and every scope and every machine reads the same one.
 
 What a save does:
 
@@ -690,7 +694,7 @@ The **Context** item on the rail — one of three, since version 3.64.0 — open
 - **The header carries Copy agent instructions**, beside a breadcrumb naming the domain and project.
 - **The overview card** answers the question people actually arrive with: where does this project stand? One reading per layer — DOCUMENTS, MEMORY, KNOWLEDGE, **AGENT CONNECTIONS** (*CAPTURE* before version 3.74.0) and, since version 3.67.0, **SESSION START** (the same total step ④ shows: what an agent is handed at the start) — each with its figure, a qualifier under it, and a freshness dot and the word beside it, because colour never carries a reading on its own. Press one and the page jumps to the step it names; unlike the same card on a domain page, nothing here filters — these are readings, not a filter. An unknown age is drawn as a dashed ring and the words, never as age zero.
 - **Step ①, Documents** holds the canonical documents. Its head row always carries two doors, **Add from this computer** and **Add from GitHub**, both always enabled — since v3.69.0 a project can mix written, copied and mirrored documents from up to 8 sources at once — plus a sources strip with per-source Refresh once the project has one, and, since version 3.67.0, **Suggest a reading plan** / **Suggest with AI**. Its table's SIZE column carries a small tinted bar behind each figure, showing that document's share of the 200 KB project budget, and its **At session start** column, since v3.67.0, is a real tri-state control — read first, on request, or not at start — see "How do I choose which documents an agent gets automatically?" above.
-- **Step 2, Memory** holds four collapsed rows, in this order: Agent connections (the honesty meter, below — called *Agent sessions* through v3.73.x, *Capture* through v3.69.0), Handoffs (your agents'; one right-aligned summary line — handoff count and the newest one's age, nothing under the title while closed; press a row to read that handoff in the reader, where its own headline lives), The brief (yours, with a pencil beside it), and Journal — the session journal, with an inline "Show N more". Only genuinely loud outcomes about one specific save sit above the four rows, unfolded, and only when they fire: content that had to be trimmed, a label that was shortened, a deliberately replaced handoff, two tools sharing one file, newer state elsewhere, another machine that saved after this one. **There is no "Last saved" row as of v3.65.1**, and — also new in v3.65.1 — no unfolded line naming which clock an age came from or which machine wrote the open handoff either: the first is explained once in the overview's own info panel, the second is the Handoffs table's own MACHINE column per row. A healthy save renders nothing above the four rows at all.
+- **Step 2, Memory** holds four collapsed rows, in this order: Agent connections (the honesty meter, below — called *Agent sessions* through v3.73.x, *Capture* through v3.69.0), Handoffs (your agents'; one right-aligned summary line — handoff count and the newest one's age, nothing under the title while closed; press a row to read that handoff in the reader, where its own headline lives), The brief (yours, with a pencil beside it; since v3.76.0 its age is the brief's own written time, with the file's time added as "changed on disk" only when a hand edit or a sync moved the file later), and Journal — the session journal, with an inline "Show N more". Only genuinely loud outcomes about one specific save sit above the four rows, unfolded, and only when they fire: content that had to be trimmed, a label that was shortened, a deliberately replaced handoff, two tools sharing one file, newer state elsewhere, another machine that saved after this one. **There is no "Last saved" row as of v3.65.1**, and — also new in v3.65.1 — no unfolded line naming which clock an age came from or which machine wrote the open handoff either: the first is explained once in the overview's own info panel, the second is the Handoffs table's own MACHINE column per row. A healthy save renders nothing above the four rows at all. Since v3.76.0 every age on the page — the MEMORY tile, the Handoffs summary, each sidebar row — is recomputed from its timestamp every second, the freshness dots recolour as they age, a project moves from Active to Idle by itself at 24 hours, an Active row names every tool that saved in the last 24 hours (read from the journal, so a tool whose handoff another tool replaced is still named), and the Handoffs table's Harness column shows one name per tool (Claude Code, never claude-code on the next row).
 - **Step 3, Knowledge** is one row per domain the project draws on — the project's own domain is always listed, since v3.65.1 — each reading "domain · N pages · last ingest age" with that domain's own colour dot, and opening to five figures (entity/concept/summary each with a small bar against that domain's page count) and two doors: Open in Domains, and Ask this domain, plus its own Remove. A **"+ Add a domain"** picker in the step's head row lets you add up to twelve domains a project draws on, including a read-only Shared Brain mirror. A small **default** badge marks a row only while nothing has been explicitly chosen yet, and disappears the moment you add one — curator metadata about the project (`project.json`), written by the app, never by an agent. Version 3.65.2 fixed the picker and Remove themselves, which had not actually worked in v3.65.1 despite being on screen: adding and removing a domain now go through the real route end to end. Remove is withheld with a reason on a single default row, live on every row once there are two or more, and live with a stated outcome on a single explicitly-chosen row.
 - **Step ④, Session start (new in version 3.67.0; a context-window meter since version 3.70.0)** is what an agent is actually handed when it starts work on this project: the standing brief, the latest handoff, a few journal lines, the document index, and the text of every document marked read first — up to the reading budget. Its head row holds the budget picker (seven presets, Index only through Max — see "What is a project's reading budget?" above) plus **Window** and **Harness**, both set per computer. Below that, the meter draws your window to scale, the harness hatched, and The Curator's own layers named, with a dashed room the width of your reading budget. When the total is large, the line carries a **Set a reading budget** action.
 - **Every fold starts closed and remembers whether you left it open.** Each summary line carries the figure that decides whether to open it. Step ④'s "what an agent receives" monitor is the one exception — it opens by default.

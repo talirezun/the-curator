@@ -116,7 +116,7 @@ export async function runSave(parsed, deps = {}) {
 
   // v3.74.0 — `otherToolReplaceSentence`: the same "you replaced another
   // tool's handoff" sentence the MCP reply prints, from the one composer.
-  const { STATE_SECTIONS, saveWorkingState, otherToolReplaceSentence } = await import('../brain/working-state.js');
+  const { STATE_SECTIONS, saveWorkingState, otherToolReplaceSentence, defaultScopeFor, scopeChoiceSentence } = await import('../brain/working-state.js');
 
   // ── The body: a file, or stdin ───────────────────────────────────────────
   const file = flagStr(flags, 'f') || flagStr(flags, 'file');
@@ -208,7 +208,10 @@ export async function runSave(parsed, deps = {}) {
       domain: resolved.domain,
       project: resolved.project,
       resolvedBy: resolved.resolvedBy || resolved.source,
-      scope: input.scope || 'main',
+      // v3.76.0 — the store's own default: no scope + a harness is that
+      // tool's scope, else `main` (defaultScopeFor), so a dry run never names
+      // a scope the real save would not use.
+      scope: input.scope || defaultScopeFor(input.harness).scope,
       wouldWrite: Object.fromEntries(
         Object.entries(input).filter(([, v]) => v !== undefined).map(([k, v]) => [
           k, Array.isArray(v) ? `${v.length} item(s)` : typeof v === 'string' ? `${v.length} char(s)` : v,
@@ -233,6 +236,7 @@ export async function runSave(parsed, deps = {}) {
   else {
     out(`Saved ${result.domain}/${result.project} · scope '${result.scope}' · machine ${result.machine}`
       + `\n${result.path} (${result.bytes} bytes)`
+      + (scopeChoiceSentence(result) ? `\n${scopeChoiceSentence(result).trim()}` : '')
       + `\nThis OVERWROTE the previous save for that scope.`
       + (result.overwrote ? `\n${otherToolReplaceSentence(result.overwrote, result.scope).trim()}` : ''));
   }

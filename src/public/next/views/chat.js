@@ -404,6 +404,13 @@ const state = {
   // localStorage on mount and RECONCILED against `projectRows` the moment
   // they arrive — a project that has been deleted must not keep being sent.
   activeProject: null,
+  // WHERE the pill's project came from (v3.76.0, F13): 'pin' — the
+  // per-domain, per-browser pin (the default, and every new chat) — or
+  // 'conversation', restored from the reopened conversation's own last turn.
+  // A restored project is a reading of THAT thread, not a preference: it is
+  // never written into the pin, and a project it names that has since gone
+  // clears the pill without erasing the pin.
+  activeProjectFrom: 'pin',
   // The WORK-STREAM within that project, or null for "whichever is newest".
   //
   // IN MEMORY ONLY, deliberately, and it is the one field here that is not
@@ -1223,10 +1230,77 @@ function adoptActiveDomain(slug, token) {
   state.projectsFetchedAt = 0;
   state.activeProject = null;
   state.activeProjectScope = null;
+  state.activeProjectFrom = 'pin';
   state.projectLastUsed = null;
   state.projectKnowledge = null;
   loadProjectsForDomain(slug, token).catch(() => {});
   return true;
+}
+
+/**
+ * THE PROJECT A CONVERSATION LAST USED (v3.76.0, truth audit F13), from its
+ * own messages: the newest assistant turn that RECORDED one (`project`, a
+ * name or null — v3.72.0's field). Returns `{ recorded: false }` for a
+ * conversation written before the field existed — nothing is guessed for it.
+ * Pure; exported for scripts/test-chat-project-restore.js.
+ */
+export function conversationProject(messages) {
+  const list = Array.isArray(messages) ? messages : [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i];
+    if (!m || m.role !== 'assistant' || !Object.hasOwn(m, 'project')) continue;
+    const p = m.project;
+    if (p === null) return { recorded: true, project: null };
+    if (typeof p === 'string' && p && p.length <= 64) return { recorded: true, project: p };
+  }
+  return { recorded: false, project: null };
+}
+
+/**
+ * REOPENING A CONVERSATION RESTORES ITS PROJECT (v3.76.0, F13 — the
+ * maintainer's decision). The pill showed the per-domain, per-browser pin, so
+ * a thread asked about `curator` reopened reading "No project" and its next
+ * question went out without the project it had been about. Now the pill
+ * shows what that conversation last used; the user can still change it (that
+ * pick is a preference and goes to the pin, as before). NOT written to the
+ * pin — the pin's reason for being per-device (see LS_PROJECT) is unchanged
+ * — and a conversation with no recorded project leaves today's behaviour
+ * alone. A project that no longer exists is not restored.
+ */
+function applyConversationProject(domain, messages, token) {
+  if (domain !== state.activeDomain) return;
+  const got = conversationProject(messages);
+  // Nothing recorded (an older conversation): today's behaviour, the pin —
+  // including after a previous thread had restored a project of its own.
+  if (!got.recorded) { restorePinnedProject(token); return; }
+  const rowsReady = state.projectsFor === domain && state.projectsState === 'ready';
+  const want = got.project && (!rowsReady || state.projectRows.some((r) => r.project === got.project))
+    ? got.project : null;
+  state.activeProjectFrom = 'conversation';
+  if (want === state.activeProject) return;
+  state.activeProject = want;
+  state.activeProjectScope = null;
+  state.projectLastUsed = null;
+  state.projectKnowledge = null;
+  patchProjectPicker(token);
+  if (want) ensureProjectKnowledge(domain, want, token).catch(() => {});
+}
+
+/** Back to the per-domain pin — a NEW chat keeps today's behaviour (F13). */
+function restorePinnedProject(token) {
+  if (state.activeProjectFrom !== 'conversation') return;
+  state.activeProjectFrom = 'pin';
+  const domain = state.activeDomain;
+  const pin = domain ? readPinnedProjects()[domain] || null : null;
+  const rowsReady = state.projectsFor === domain && state.projectsState === 'ready';
+  const want = pin && (!rowsReady || state.projectRows.some((r) => r.project === pin)) ? pin : null;
+  if (want === state.activeProject) return;
+  state.activeProject = want;
+  state.activeProjectScope = null;
+  state.projectLastUsed = null;
+  state.projectKnowledge = null;
+  patchProjectPicker(token);
+  if (want) ensureProjectKnowledge(domain, want, token).catch(() => {});
 }
 
 /**
@@ -1250,6 +1324,7 @@ async function selectConversation(id, mountToken, opts = {}) {
     if (!isCurrentMount(mountToken)) return;
     if (!res.ok) throw new Error(data.error || 'Could not load this conversation.');
     state.thread = Array.isArray(data.messages) ? data.messages : [];
+    applyConversationProject(domain, state.thread, mountToken);
   } catch (err) {
     if (selectToken !== state.selectToken) return;
     if (!isCurrentMount(mountToken)) return;
@@ -1291,6 +1366,7 @@ function startNewChat() {
   state.activeConversationId = null;
   state.thread = [];
   state.cancelNotice = null;   // belonged to the thread being left behind
+  restorePinnedProject(myMountToken);
   renderShell(myMountToken);
   focusComposer();
 }
@@ -1654,6 +1730,10 @@ async function sendCurrentMessage() {
       // reloaded thread label the same chip the same way. Null when the server
       // resolved no titles; the renderer humanises the slug in that case.
       citationTitles: (data.citationTitles && typeof data.citationTitles === 'object') ? data.citationTitles : null,
+      // v3.76.0 (F9): the cited strings the server found to BE wiki pages.
+      // The same array it persisted onto the message, so a live answer and a
+      // reopened one count the same pages. Absent from an older server.
+      ...(Array.isArray(data.citedPages) ? { citedPages: data.citedPages } : {}),
       // `data.model` is the model that ANSWERED, measured by the server from
       // the provider's own usage payload (src/brain/chat.js `usedModel`) —
       // not an echo of what we asked for. A missing/blank value stays null:
@@ -3255,7 +3335,10 @@ async function loadProjectsForDomain(domain, token) {
   state.projectRows = [];
   // Restored BEFORE the fetch so a repaint in between shows the pill the user
   // left rather than flashing "no project" and back.
-  state.activeProject = readPinnedProjects()[domain] || null;
+  // v3.76.0 (F13): a conversation being opened INTO this domain restores its
+  // own project once its messages land (applyConversationProject); until
+  // then the pin stands, exactly as before.
+  if (state.activeProjectFrom !== 'conversation') state.activeProject = readPinnedProjects()[domain] || null;
   patchProjectPicker(token);
   let rows = [];
   let okState = 'ready';
@@ -3276,7 +3359,7 @@ async function loadProjectsForDomain(domain, token) {
   if (state.activeProject && !rows.some(r => r.project === state.activeProject)) {
     state.activeProject = null;
     state.activeProjectScope = null;
-    writePinnedProject(domain, null);
+    if (state.activeProjectFrom !== 'conversation') writePinnedProject(domain, null);
     state.projectLastUsed = null;
   }
   state.projectKnowledge = null;
@@ -3295,6 +3378,9 @@ function selectChatProject(value) {
   const next = typeof value === 'string' && value ? value : null;
   if (next === state.activeProject) return;
   state.activeProject = next;
+  // The user's own pick is a preference again: it is written to the pin
+  // below, as it always was, whatever the pill showed before.
+  state.activeProjectFrom = 'pin';
   // A scope names a work-stream INSIDE a project, so it means nothing once
   // the project changes — and a figure measured for the PREVIOUS project
   // would be a wrong reading about the new one. A stale number beside a fresh
@@ -3825,7 +3911,7 @@ async function refreshProjectsQuietly(domain, token) {
   if (pinGone) {
     state.activeProject = null;
     state.activeProjectScope = null;
-    writePinnedProject(domain, null);
+    if (state.activeProjectFrom !== 'conversation') writePinnedProject(domain, null);
     state.projectLastUsed = null;
   }
   if (pinGone || !hadPicker || rows.length === 0 || !projectLbCfg) { patchProjectPicker(token); return; }
@@ -7657,6 +7743,11 @@ function renderThreadOnly(token, opts) {
     const rendered = renderAnswer(m.content || '', {
       titles: (m.citationTitles && typeof m.citationTitles === 'object') ? m.citationTitles : null,
       citations: Array.isArray(m.citations) ? m.citations : [],
+      // v3.76.0 (F9): only a mention that resolved to a page is a source.
+      // An answer from before v3.76.0 carries `citedPagesNow` instead: the
+      // server's check of its citations against the wiki on disk at read.
+      pages: Array.isArray(m.citedPages) ? m.citedPages
+        : (Array.isArray(m.citedPagesNow) ? m.citedPagesNow : undefined),
     });
     answerSources.set(i, rendered.sources);
     return (
@@ -7667,7 +7758,7 @@ function renderThreadOnly(token, opts) {
         // SECOND block under the eyebrow (the model-divergence notice).
         copyControlHtml(i, 'answer', m) +
         '<div class="chat-answer">' + rendered.html + '</div>' +
-        sourcesHtml(rendered.sources) +
+        sourcesHtml(rendered.sources, rendered.mentions) +
         reaskButtonHtml(i) +
       '</div>'
     );

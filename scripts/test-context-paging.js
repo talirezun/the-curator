@@ -144,6 +144,12 @@ async function fitDigest() {
   json = json.split(TMP).join('<tmp>');
   json = json.replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z/g, '<ts>');
   json = json.replace(/\b\d+ (second|minute|hour)s? ago\b/g, '<ago>');
+  // THE ONE SENTENCE v3.76.0 CHANGES ON PURPOSE (truth audit F1): the report
+  // said "saved <the FILE's mtime>" and now says "written <the agent's own
+  // time>" (plus the arrival time only when the two differ, which a fresh
+  // fixture never does). Mapped back here so the rest stays pinned to
+  // v3.69.0; the new wording is asserted on its own in §0.
+  json = json.replace(/, written <ts>\./g, ', saved <ts>.');
   if (process.env.CP_DUMP) writeFileSync(process.env.CP_DUMP, json);
   return { digest: sha(json), bytes: json.length, caps: [...caps], maxReply };
 }
@@ -164,6 +170,10 @@ section('0. A REPLY THAT FITS ONE PAGE IS BYTE-IDENTICAL TO v3.69.0');
   assert(!('page' in one.foundations) && !('continuation' in one.foundations) && !('delivery' in one.foundations),
     'a fitting reply carries NO paging field (page / continuation / delivery)');
   assert(!/PAGED/.test(one.report), '…and no paging sentence in its report');
+  // v3.76.0 (F1): the report names the handoff's WRITTEN time — the agent's
+  // own clock — never the file's date as "saved".
+  assert(one.current && one.current.writtenAt && one.report.includes(`, written ${one.current.writtenAt}.`)
+    && !/, saved \d{4}-/.test(one.report), `the report says "written <writtenAt>" (${one.report.slice(0, 160)})`);
 }
 
 section('1. THE LADDER — seven presets in tokens, 800 KB cap, legacy values are CUSTOM');

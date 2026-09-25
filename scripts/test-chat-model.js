@@ -2009,7 +2009,7 @@ section('18. Usage record — the tokens that price an answer, reported or absen
       // which is why the assertion below is not simply the same list again.
       // v3.72.0 appends `project` and `priced` AFTER citationTitles — the same
       // append-only rule, one release later (test-chat-conversation-facts.js).
-      eq(Object.keys(msg).join(','), 'role,content,citations,provider,model,usage,citationTitles,project,priced',
+      eq(Object.keys(msg).join(','), 'role,content,citations,provider,model,usage,citationTitles,project,priced,citedPages',
         'usage keeps its place and citationTitles follows it; v3.72.0\'s project/priced are appended after — existing keys keep their order and their bytes');
       eq(JSON.stringify(msg.citationTitles), '{"entities/foo.md":"Foo"}',
         'and the persisted map names the cited page by its H1, not by its path');
@@ -2759,7 +2759,7 @@ section('21b. Citation titles — driven through the real transport, read back o
       '★ a citation with no page behind it is OMITTED from the map…');
     ok(r.citations.includes('entities/does-not-exist.md'),
       '…while still appearing in `citations`, so the chip is rendered and the user can see what was claimed');
-    eq(Object.keys(msg).join(','), 'role,content,citations,provider,model,usage,citationTitles,project,priced',
+    eq(Object.keys(msg).join(','), 'role,content,citations,provider,model,usage,citationTitles,project,priced,citedPages',
       'citationTitles is the last PRE-v3.72 key on the persisted record (project/priced are appended after it)');
 
     // NOTHING RESOLVABLE ⇒ THE KEY IS ABSENT, and an ANSWER WITH NO CITATIONS
@@ -2772,7 +2772,7 @@ section('21b. Citation titles — driven through the real transport, read back o
     eq(r2.citationTitles, null, 'an answer citing nothing returns citationTitles === null');
     ok(!Object.prototype.hasOwnProperty.call(msg2, 'citationTitles'),
       '…and its persisted record does not carry the key at all');
-    eq(Object.keys(msg2).join(','), 'role,content,citations,provider,model,usage,project,priced',
+    eq(Object.keys(msg2).join(','), 'role,content,citations,provider,model,usage,project,priced,citedPages',
       '…so a citation-free answer keeps every pre-v3.72 key in its old order (v3.72.0 appends project/priced)');
 
     // BACKWARD COMPATIBILITY: a message written before this change has no map
