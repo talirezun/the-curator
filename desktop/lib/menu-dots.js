@@ -1,135 +1,46 @@
 /**
- * renderRecencyDot() — a per-row recency mark for the tray menu.
+ * renderRecencyDot() — a row's freshness mark for the tray menu: THE APP'S
+ * DOT, ON THE APP'S SCALE (v3.74.0).
  *
  * ╔═══════════════════════════════════════════════════════════════════════════╗
- * ║  THIS IS A SURFACE FOR A CALCULATION THE APP ALREADY PERFORMS             ║
+ * ║  ONE SCALE, TWO SURFACES                                                  ║
  * ╚═══════════════════════════════════════════════════════════════════════════╝
  *
- * `ageBucket()` in `lib/tray-model.js` has always resolved a row's age into
- * five named states — `live` / `warm` / `today` / `cool` / `cold` — plus
- * `unknown` when there is no age at all. Until now exactly one of those
- * distinctions reached a screen: the tray glyph fills its centre when some row
- * on THIS machine is `live`, and the other four states were computed and
- * discarded. Nothing new is being measured here. A measurement that was already
- * being made is being drawn.
+ * The app paints "how recently" with ONE scale — `freshnessTier` in
+ * `src/public/next/shared/age.js`, drawn by `shared/freshness.css`:
  *
- * The bucket names, the thresholds and the `unknown` case are READ from
- * `tray-model.js` and are not restated as constants: a second opinion about
- * what "warm" means is exactly the drift this project keeps recording. This
- * module maps names to ink and nothing else.
+ *   live      < 60 s     hot, filled + halo
+ *   recent    < 1 hr     hot, filled
+ *   today     < 24 hr    mid, filled
+ *   week      < 7 days   cold, filled
+ *   dormant   ≥ 7 days   cold, HOLLOW
+ *   unknown   no age     a DASHED ring — different in kind, never "old"
  *
- * ── FIVE BUCKETS ONTO THREE COLOURS, AND WHY THAT IS NOT A LOSS ────────────
+ * Up to v3.72 the tray drew its OWN ladder as a draining pie (2 min / 30 min /
+ * 12 h / 7 d). The design audit measured two defects: a draining disc reads
+ * as a FILL GAUGE — a battery, a context meter, precisely the "am I running
+ * out of context?" question it does not answer — and its cut points
+ * disagreed with the app's, so one save wore two different marks on the two
+ * surfaces a user sees in the same glance. This module now draws the app's
+ * marks. The tier NAMES come from `tray-model.js`'s pinned copy of
+ * `freshnessTier`; this module maps a name to pixels and nothing else.
  *
- * The approved palette is green / amber / grey, and there are five states. The
- * collapse is deliberate, and the boundaries are placed where the ANSWER
- * changes rather than where the numbers are round:
+ * ── WHAT THE SHAPES CARRY WITHOUT COLOUR, AND WHAT THEY DO NOT ─────────────
  *
- *   green   live, warm    under 30 minutes    this is the work-stream in front
- *                                             of you; resuming costs nothing
- *   amber   today         30 min to 12 hours  same working day; resumable, but
- *                                             you will re-read the handoff
- *   grey    cool, cold    over 12 hours       history
- *
- * WHY GREEN COVERS `warm` AND NOT ONLY `live`. `LIVE_WINDOW_SECONDS` is 120
- * seconds. A menu opened by hand will essentially never land inside a
- * two-minute window, so a green reserved for `live` alone would spend the
- * strongest colour in the palette on the state the user almost never sees, and
- * every row would be amber or grey in practice. 30 minutes is the point at
- * which the handoff stops being in your head, which is the thing the colour is
- * being asked about.
- *
- * WHY GREY COVERS BOTH `cool` AND `cold`. Three days ago and three weeks ago
- * prompt the same action — read it properly before you touch it — so a third
- * shade between them would be a distinction with no consequence.
- *
- * AND THE COLLAPSE COSTS NOTHING, because the exact figure is on the same row.
- * `formatAge` already writes "2 min ago" / "34 hr ago" / "1 day ago" into the
- * row's own text. The dot is the PRE-ATTENTIVE BAND and the words are the
- * NUMBER — the same split v3.34.0 recorded for the save-status pip, where the
- * age is "a BAND rather than a number" for the one-second glance. Collapsing a
- * value whose exact form is printed beside it is not information loss.
- *
- * ── COLOUR IS NEVER THE ONLY SIGNAL ────────────────────────────────────────
- *
- * Green and amber are the classic confusion pair for the commonest colour
- * vision deficiencies, and their luminances cannot be pushed far apart without
- * one of them approaching the contrast floor. So the five states are ALSO a
- * ladder in ink, and the ladder is the part that survives with the colour
- * removed:
- *
- *   live    full disc,  r 5.0pt      78.5pt² of ink
- *   warm    ¾ disc  + rim            61.4
- *   today   ½ disc  + rim            44.2
- *   cool    ¼ disc  + rim            27.1
- *   cold    r 2.0 dot + rim          22.5
- *
- * Strictly decreasing, and the suite asserts it from the shipped geometry AND
- * from the decoded alpha channel rather than from this comment.
- *
- * ── THE RIM, AND THE PHOTOGRAPH THAT PUT IT THERE ──────────────────────────
- *
- * The sector ladder shipped without one, and the first photograph of the menu
- * showed what that costs: rows three, four and five carried a `cool` quarter —
- * a wedge with no context around it — and it read as a sliver, not as a
- * quarter of anything. A fraction needs a WHOLE to be a fraction of. On its
- * own, a quarter-disc is just a small shape.
- *
- * So every mark is now drawn inside a faint full RIM at the face radius: a
- * 1-point ring at 35% of the mark's own alpha. The clock face is always
- * visible, and the sector reads as the part of it that is still filled.
- *
- * THREE PROPERTIES IT WAS REQUIRED NOT TO BREAK, and each is asserted:
- *
- *  - THE LADDER STAYS STRICTLY DECREASING. The rim is drawn at the same radius
- *    for every state, so it adds ink in inverse proportion to how much of it
- *    the sector already covers — most to `cold`, none at all to `live`, whose
- *    full disc sits on top of it. That compresses the bottom of the ladder
- *    (`cool` 19.6 -> 27.1 against `cold` 12.6 -> 22.5) without inverting it.
- *  - `live` IS STILL THE ONLY FULL DISC. Its rim is invisible because the disc
- *    covers it, which is the correct reading: a full clock has no visible face.
- *  - COLOUR IS STILL NEVER THE SIGNAL. The rim is the same hue as the mark and
- *    differs only in alpha, so the five silhouettes stay five silhouettes with
- *    the palette discarded entirely.
- *
- * `cold` gets the rim too, and that is a decision rather than an oversight. It
- * is the state a photograph showed as a 4-point dot floating in an empty box;
- * inside the face it reads as a clock that has fully drained down to its hub,
- * which is exactly what the state means.
- *
- * ── A DRAINING CLOCK, AND WHY IT REPLACED THE RINGS ────────────────────────
- *
- * The shipped ladder was a full disc and then three RINGS separated by 0.5pt of
- * radius. At 1x that is ONE DEVICE PIXEL between `warm`, `today` and `cool` —
- * three of the five states, differing by a pixel, inside an 11pt box whose
- * largest mark was a 6pt drawing. The ladder existed in the arithmetic and not
- * on the screen.
- *
- * A SECTOR carries the same ordering at a size a person can see: the disc
- * drains anticlockwise from full, through three-quarters, half and a quarter,
- * to a small solid dot. Every step is a quarter of the circle — a difference
- * measured in whole quadrants rather than in pixels — and the shape reads as
- * a quantity even in a thumbnail.
- *
- * `live` is the one state whose recognition changes what a person does next
- * (something is being written RIGHT NOW), and it is the only complete disc, so
- * it is separable from everything else without reference to colour at all.
- * `cold` returns to a filled shape at 16% of `live`'s area, which no viewer
- * will confuse with it, and which keeps the coldest state from being a sliver
- * that reads as damage.
+ * The app's scale differs in SHAPE at its two ends — the halo on `live`, the
+ * hollow ring on `dormant`, the dashed ring on `unknown` — and in HUE only
+ * between `recent`, `today` and `week`. That is the app's own decision
+ * (freshness.css: "the pre-attentive cut is at one hour", and "every mark in
+ * this app sits immediately beside the age in words"), and it holds here for
+ * the same reason: every dot sits beside its age in words on the same line.
+ * The suite asserts the shape classes in the ALPHA CHANNEL alone — live has
+ * ink outside the disc, dormant has a transparent centre, unknown has gaps
+ * in its ring, the three filled tiers are one silhouette — so nothing claims
+ * a colour-free distinction that is not there.
  *
  * ── NOT A TEMPLATE IMAGE ───────────────────────────────────────────────────
- *
- * See `lib/rgba-png.js` for the whole story. Menu item icons are drawn in
- * colour; the returned spec says `template: false` and the consumer must not
- * call `setTemplateImage(true)` on it.
- *
- * ── WHAT THIS DOT DELIBERATELY DOES NOT SAY ────────────────────────────────
- *
- * It is a recency mark and nothing else. It does not say whether a scope is
- * finished, whether it is healthy, whether it is yours, or whether it is worth
- * opening — an old scope is not a stale one, the same refusal the standing
- * brief's missing pip records. And it carries no count: the number of saves is
- * the pulse strip's job, on one row, once.
+ * Menu item icons are drawn in colour; the spec says `template: false` and
+ * the consumer must not call `setTemplateImage(true)` on it. See rgba-png.js.
  */
 
 import {
@@ -137,170 +48,65 @@ import {
 } from './rgba-png.js';
 
 /**
- * The canvas, in POINTS. 11pt square.
+ * The canvas, in POINTS: 13pt square, the gutter `tray-model.js` reserves as
+ * `ROW_ICON_POINTS` (pinned by the suite).
  *
- * Electron does not scale a menu item icon, so this is 11 points added to the
- * row — but a macOS menu reserves an icon gutter for every item as soon as one
- * item has an image, and the tray menu already has one (the pulse strip). So on
- * a menu that already carries the strip the marginal width of a row dot is the
- * amount by which 11pt exceeds the gutter the strip already opened, which is
- * nothing. THAT IS AN ASSUMPTION about NSMenu's layout, not a measurement; if
- * it is wrong the cost is 11pt on a ~260pt menu, or 4.2%.
- *
- * ── WHY IT IS ODD, WHICH IS NOT A ROUNDING CHOICE ──────────────────────────
- *
- * The first draft was 10pt and the suite caught it. A circle centred at
- * `size / 2` on an EVEN canvas is centred on a pixel CORNER, so it splits
- * symmetrically across four pixels and no pixel is fully covered. At 1x, where
- * a 1.2pt dot is 2.4 device pixels across, that means the mark has no opaque
- * pixel anywhere — every one of it is a partial-coverage rim, and a `cold` dot
- * that should be solid renders as a soft grey blur. On an ODD canvas the centre
- * is at 5.5, the middle of pixel 5, and the smallest filled dot has a solid
- * core again.
- *
- * The same reasoning decides the ring: at 1x, pixel 5 lies entirely inside
- * every ring's HOLE, so `renderRecencyDot('cool').buffer` has a genuinely
- * transparent centre rather than a half-covered smudge, and the disc/ring
- * distinction — the one that does not need colour — survives at 1x.
- *
- * ── 11 -> 13, AND THE BOX GREW BECAUSE THE MARK HAD TO ─────────────────────
- *
- * The sector ladder needs a circle large enough that a quarter of it is still
- * a shape. At r 3.0 in an 11pt box, a quarter-disc is a 3x3-point wedge — nine
- * square points at 1x, which is a smudge. 13pt takes the radius to 5.0 and the
- * quarter-disc to 19.6pt², and still leaves 1.5pt of margin so the full disc is
- * not flush against the gutter's edge.
- *
- * The odd-canvas argument is unchanged and is why it is 13 and not 12 or 14:
- * the centre lands at 6.5, the middle of pixel 6, so `cold`'s small filled dot
- * has a solid core and the sector boundaries fall on the centre pixel rather
- * than between two of them.
+ * ODD ON PURPOSE. A circle centred at `size / 2` on an EVEN canvas is centred
+ * on a pixel CORNER and no pixel of a small disc is fully covered at 1x. On an
+ * odd canvas the centre is the middle of pixel 6, so the disc has a solid
+ * core and the hollow ring a genuinely transparent one.
  */
 export const DOT_POINTS = 13;
 
 /**
- * Every colour drawn by this module, per theme.
+ * Every colour drawn by this module, per theme. MEASURED, NOT PICKED: each
+ * clears 3:1 (WCAG 2.2 1.4.11, the non-text floor) against every background
+ * of its theme's band in rgba-png.js's `MENU_BG_BAND` — the suite recomputes
+ * it. The app's `--fresh-*` tokens are the same three roles (hot / mid /
+ * cold); the values here are the menu-band-measured ones, because a macOS
+ * menu is not the app's `--surface`.
  *
- * MEASURED, NOT PICKED. Each value clears 3:1 (WCAG 2.2 1.4.11, the NON-TEXT
- * floor) against all three backgrounds of its theme's band in `rgba-png.js`'s
- * `MENU_BG_BAND`. Worst of the three:
- *
- *   LIGHT   hot  #15704F   4.42     teal, the design system's success hue
- *           mid  #8A5F19   4.10     attention
- *           cold #6B6B80   3.79     neutral
- *
- *   DARK    hot  #4FD3A4   6.05     teal-400
- *           mid  #EDBB63   6.43     summary-400
- *           cold #A8A8BC   4.86     ink-200
- *
- * Apple's own `systemGreen` `#34C759` was measured at about 1.6:1 against a
- * light menu and is NOT here. A palette is not correct because a platform
- * vendor ships it, and that value is kept as the suite's anti-vacuity control.
- *
- * ── THE LUMINANCE LADDER IS NO LONGER THE WEIGHT LADDER, AND SHOULD NOT BE ─
- *
- * This module used to require `hot > mid > cold` in contrast, so that a warmer
- * row was a HEAVIER mark. That was the right rule when all five marks were
- * nearly the same size and colour was doing the work of the ladder.
- *
- * The sector geometry above now carries weight explicitly — 78.5pt² of ink down
- * to 12.6, a 6:1 range — and it does so in the ALPHA CHANNEL, where it survives
- * a viewer who cannot resolve the colours at all. Ranking the palette by
- * contrast on top of that would be a second, far weaker ladder pointed at the
- * same fact, and it would rule out the design system's own hues for a reason
- * that no longer holds: in dark, `summary-400` (6.43) is brighter than
- * `teal-400` (6.05), and nothing about that makes `today` read heavier than
- * `warm` when `warm` is drawn with 50% more ink.
- *
- * So the palette's requirement is a FLOOR, not an ordering, and the suite
- * asserts the ink ladder instead — see `dotInkArea` and the alpha-only section.
+ *   LIGHT   hot  #15704F   mid  #8A5F19   cold #6B6B80
+ *   DARK    hot  #4FD3A4   mid  #EDBB63   cold #A8A8BC
  */
 export const DOT_PALETTE = {
   light: { hot: '#15704F', mid: '#8A5F19', cold: '#6B6B80' },
   dark: { hot: '#4FD3A4', mid: '#EDBB63', cold: '#A8A8BC' },
 };
 
+/** The app's dot is 8px across; here it is 8pt — r 4.0. */
+export const DOT_RADIUS = 4.0;
+/** The `live` halo: the app's `box-shadow: 0 0 0 3px` is 3px beyond an 8px
+ *  dot; 13pt leaves 2.5pt of room, so the halo runs to r 6.0 — 2pt, inside
+ *  the canvas with a half-point margin. */
+export const HALO_OUTER = 6.0;
+/** The halo's alpha: the app's `--fresh-hot-halo` is the hot ink at 0.18–0.22
+ *  on a flat surface; a menu is translucent, so it is drawn a little stronger. */
+export const HALO_ALPHA = 0.3;
+/** `dormant`: the app's `inset 0 0 0 2px` — a 2pt ring inside the 4pt radius. */
+export const HOLLOW_STROKE = 2.0;
+/** `unknown`: the app's `1.5px dashed` border. Eight dashes round the ring. */
+export const DASH_STROKE = 1.5;
+export const DASH_COUNT = 8;
+
 /**
- * The ink for each of `ageBucket()`'s five drawable states.
- *
- * `unknown` is ABSENT and that is the point: an age we do not have is not an
- * old one, so there is no mark for it and `renderRecencyDot` returns null. A
- * row with no age gets no dot at all rather than the coldest one — the same
- * rule as the save-status strip's dashed ring, where "we don't know" is not
- * step 0.
- *
- * `turns` is the FRACTION OF THE DISC that is drawn, from 1 (whole) down to
- * 0.25 (a quadrant). The disc drains anticlockwise from the top-right, so the
- * bottom-left quadrant — the last one standing — is the one `cool` keeps.
- * Radii are in points and scale with the representation, so 1x and 2x are one
- * drawing at two resolutions rather than two drawings that happen to look
- * alike.
+ * Each tier's mark. `shape` is one of `disc`, `ring`, `dashed`; `halo` adds
+ * the outer glow. `unknown` IS drawn (the app's dashed ring) — an age we do
+ * not have is a different KIND of mark, never the coldest one, and the app
+ * paints it rather than leaving a gap.
  */
 export const DOT_INK = {
-  live: { tone: 'hot', radius: 5.0, turns: 1 },
-  warm: { tone: 'hot', radius: 5.0, turns: 0.75 },
-  today: { tone: 'mid', radius: 5.0, turns: 0.5 },
-  cool: { tone: 'cold', radius: 5.0, turns: 0.25 },
-  // The ONE state that is not a sector. A one-eighth wedge would be a sliver
-  // that reads as a rendering fault rather than as a quantity, so the coldest
-  // mark returns to a solid shape at 16% of `live`'s area — small, definite,
-  // and unmistakable for the full disc.
-  cold: { tone: 'cold', radius: 2.0, turns: 1 },
+  live: { tone: 'hot', shape: 'disc', halo: true },
+  recent: { tone: 'hot', shape: 'disc', halo: false },
+  today: { tone: 'mid', shape: 'disc', halo: false },
+  week: { tone: 'cold', shape: 'disc', halo: false },
+  dormant: { tone: 'cold', shape: 'ring', halo: false },
+  unknown: { tone: 'cold', shape: 'dashed', halo: false },
 };
 
-/** The order the ladder is asserted in — warmest first. Exported so the suite
- *  cannot quietly assert a different order from the one shipped. */
-export const DOT_ORDER = ['live', 'warm', 'today', 'cool', 'cold'];
-
-/**
- * The clock face: the radius every sector drains inside, and the radius the rim
- * is drawn at for EVERY state including `cold`.
- *
- * It is a constant of its own rather than `DOT_INK.live.radius` because it is a
- * different fact from any one state's ink: `cold` is drawn at r 2.0 and still
- * gets its face at 5.0. The suite pins the four sector states' radii against it,
- * so a state drawn at some other radius reds rather than quietly drawing its
- * sector and its face on two different circles.
- */
-export const FACE_RADIUS = 5.0;
-
-/**
- * The rim's stroke, in points, drawn INWARD from `FACE_RADIUS`.
- *
- * One point, which is one device pixel at 1x and two at 2x. A hairline below
- * that has no 1x rendering at all; anything above it starts competing with the
- * sector for the eye, and the sector is the signal.
- */
-export const RIM_POINTS = 1.0;
-
-/**
- * How much of the mark's own alpha the rim carries.
- *
- * 35% — present enough to establish the face at 1x, subordinate enough that
- * nobody mistakes the rim for the filled part. It is the SAME COLOUR as the
- * mark and differs only in alpha, which is what keeps §2's contrast figures
- * describing everything drawn: the rim cannot introduce a hue that was never
- * measured. Its own composited contrast is far below the 3:1 non-text floor and
- * is meant to be — the rim is scaffolding for reading the sector, not a signal
- * anybody is asked to detect on its own, and the suite reports its ratio rather
- * than holding it to a floor written for indicators.
- */
-export const RIM_ALPHA = 0.35;
-
-/**
- * Buckets that are DELIBERATELY not drawn — a WRITTEN case, not an omission.
- *
- * `ageBucket()` returns `'unknown'` for a row with no usable clock, and it is
- * the sixth thing it can return. If that case were merely absent from `DOT_INK`
- * the natural fallback would be the coldest dot, which would assert "old" about
- * a row whose own label says the time is unknown — this project's
- * fact-versus-absence collapse, in the direction that manufactures a fact.
- *
- * So it is listed, checked before anything else, and asserted on its own. An
- * unknown age gets NO MARK AT ALL, the same rule as the save-status strip's
- * dashed ring: "we don't know" is not step 0 of the ladder.
- */
-export const NO_DOT_BUCKETS = ['unknown'];
+/** The order of the scale, freshest first. Exported so the suite asserts the
+ *  order that ships rather than one it restates. */
+export const DOT_ORDER = ['live', 'recent', 'today', 'week', 'dormant', 'unknown'];
 
 /** The palette for a theme. Anything other than an explicit `dark: true` is
  *  LIGHT, because a missing option must resolve to something rather than to a
@@ -309,164 +115,100 @@ export function dotPalette(opts) {
   return (opts && opts.dark === true) ? DOT_PALETTE.dark : DOT_PALETTE.light;
 }
 
-/**
- * The ink area of one bucket's mark, in square points.
- *
- * Exported because it is the LADDER — the thing that carries the five states
- * when colour cannot — and a property that only a comment claims is a property
- * nothing checks.
- */
-export function dotInkArea(bucket) {
-  const ink = DOT_INK[bucket];
-  if (!ink) return 0;
-  // A sector's area is its fraction of the whole disc, exactly: the boundaries
-  // are two radii and an arc, and `paintShape` antialiases the arc without
-  // changing the area the geometry describes.
-  const sector = ink.turns * Math.PI * ink.radius * ink.radius;
-
-  // ── AND THE RIM, WEIGHTED BY ITS ALPHA AND BY WHAT ALREADY COVERS IT ────
-  //
-  // The rim is an annulus at the face radius. Where the sector already fills
-  // it, it adds nothing — its pixels are opaque either way — so only the
-  // UNCOVERED part counts, and it counts at `RIM_ALPHA`, because ink area here
-  // means the alpha-weighted quantity the suite reads back out of the decoded
-  // channel, not the number of pixels touched.
-  //
-  // The overlap is exact rather than estimated: the sector covers `turns` of
-  // every ring it reaches, and it reaches the annulus only as far as its own
-  // radius goes — which for `cold` (r 2.0, inner rim edge 4.0) is not at all.
-  const inner = Math.max(0, FACE_RADIUS - RIM_POINTS);
-  const annulus = Math.PI * (FACE_RADIUS * FACE_RADIUS - inner * inner);
-  const reachOuter = Math.min(ink.radius, FACE_RADIUS);
-  const reachInner = Math.min(ink.radius, inner);
-  const covered = ink.turns * Math.PI
-    * (reachOuter * reachOuter - reachInner * reachInner);
-  return sector + RIM_ALPHA * Math.max(0, annulus - covered);
+/** Is (dx, dy) — measured from the centre — inside a dash of the dashed ring?
+ *  The ring is cut into 2 × `DASH_COUNT` equal arcs, alternately drawn and
+ *  empty. */
+function onDash(dx, dy) {
+  const a = Math.atan2(dy, dx) + Math.PI;
+  const seg = Math.floor(a / (Math.PI / DASH_COUNT));
+  return seg % 2 === 0;
 }
 
 /**
- * Is (dx, dy) inside the drawn part of a `turns` sector?
+ * The RGBA canvas for one tier at one scale factor.
  *
- * The disc DRAINS ANTICLOCKWISE FROM THE TOP-RIGHT — quadrant order top-right,
- * top-left, bottom-left, bottom-right in the sense a clock hand sweeps
- * backwards — so `0.75` loses the top-right, `0.5` keeps the bottom half, and
- * `0.25` keeps the bottom-left.
- *
- * Quadrant-aligned by construction rather than by an angle comparison: every
- * shipped value is a whole quarter, and testing signs of dx/dy is exact where
- * an `atan2` against a floating-point boundary is not — a sector edge landing a
- * hair either side of a pixel centre is what makes a half-disc's straight edge
- * look wobbly.
- *
- * Note the screen's y axis points DOWN, so "above the centre" is `dy < 0`.
+ * ONE COLOUR PER PIXEL, written once: each pixel's alpha is the greater of
+ * the mark's coverage and the halo's coverage scaled by `HALO_ALPHA`, so the
+ * drawing order cannot cut a seam between them (`paintPixel` replaces rather
+ * than composites, deliberately).
  */
-function inSector(dx, dy, turns) {
-  if (turns >= 1) return true;
-  const top = dy < 0, right = dx > 0;
-  if (turns >= 0.75) return !(top && right);          // lose the top-right
-  if (turns >= 0.5) return !top;                      // keep the bottom half
-  return !top && !right;                              // keep the bottom-left
-}
-
-/**
- * The RGBA canvas for one bucket at one scale factor.
- *
- * ── TWO SHAPES, ONE COLOUR, AND THE ALPHA IS THE MAXIMUM OF THEM ───────────
- *
- * `paintPixel` REPLACES rather than composites, and deliberately so — a
- * blending rule in `rgba-png.js` would be an untested code path pretending to
- * be a feature. Painting the rim and then the sector would therefore let the
- * sector's own antialiased edge, at low coverage, overwrite the rim underneath
- * it and cut a pale seam around every mark.
- *
- * So the two are resolved BEFORE anything is written: each pixel's alpha is the
- * greater of its sector coverage and its rim coverage scaled by `RIM_ALPHA`.
- * That is not compositing — one colour is written once per pixel — and it makes
- * the drawing order irrelevant, which is the property a seam would break.
- */
-export function dotCanvas(bucket, scale, palette) {
-  const ink = DOT_INK[bucket];
+export function dotCanvas(tier, scale, palette) {
+  const ink = DOT_INK[tier];
   if (!ink) return null;
   const s = Number.isInteger(scale) && scale > 0 ? scale : 1;
   const canvas = createCanvas(DOT_POINTS * s, DOT_POINTS * s);
-
   const c = (DOT_POINTS / 2) * s;
-  const outer = ink.radius * s;
-  const face = FACE_RADIUS * s;
-  const faceInner = Math.max(0, FACE_RADIUS - RIM_POINTS) * s;
+  const r = DOT_RADIUS * s;
   const rgb = hexToRgb(palette[ink.tone]);
+  const d2 = (x, y) => (x - c) * (x - c) + (y - c) * (y - c);
 
-  const inMark = (x, y) => {
-    const dx = x - c, dy = y - c;
-    if (dx * dx + dy * dy > outer * outer) return false;
-    return inSector(dx, dy, ink.turns);
-  };
-  const inRim = (x, y) => {
-    const dx = x - c, dy = y - c;
-    const d2 = dx * dx + dy * dy;
-    return d2 <= face * face && d2 >= faceInner * faceInner;
-  };
+  let inMark;
+  if (ink.shape === 'disc') {
+    inMark = (x, y) => d2(x, y) <= r * r;
+  } else if (ink.shape === 'ring') {
+    const inner = (DOT_RADIUS - HOLLOW_STROKE) * s;
+    inMark = (x, y) => { const q = d2(x, y); return q <= r * r && q >= inner * inner; };
+  } else {
+    const inner = (DOT_RADIUS - DASH_STROKE) * s;
+    inMark = (x, y) => {
+      const q = d2(x, y);
+      return q <= r * r && q >= inner * inner && onDash(x - c, y - c);
+    };
+  }
+  const haloR = HALO_OUTER * s;
+  const inHalo = ink.halo
+    ? (x, y) => { const q = d2(x, y); return q <= haloR * haloR && q > r * r; }
+    : null;
 
   for (let y = 0; y < canvas.height; y++) {
     for (let x = 0; x < canvas.width; x++) {
-      const a = Math.max(coverage(x, y, inMark), coverage(x, y, inRim) * RIM_ALPHA);
+      const a = Math.max(coverage(x, y, inMark), inHalo ? coverage(x, y, inHalo) * HALO_ALPHA : 0);
       if (a > 0) paintPixel(canvas, x, y, rgb, a);
     }
   }
-
   return canvas;
 }
 
 /**
- * The recency dot, as PNG bytes at 1x and 2x.
+ * The freshness dot, as PNG bytes at 1x and 2x.
  *
- * @param {string} bucket  one of `ageBucket()`'s names
- * @param {{dark?:boolean}} [opts]  the CONSUMER supplies the theme; this module
- *   cannot read it, because Electron is the consumer's dependency and not this
- *   one's.
- * @returns {{buffer:Buffer, buffer2x:Buffer, widthPoints:number,
- *            heightPoints:number, template:false}|null}
- *   `null` for `unknown` and for anything this module does not recognise — a
- *   bucket name it has never heard of is an unknown age, not a cold one, and
- *   inventing a mark for it would be the fact-versus-absence collapse this
- *   whole widget is built to avoid.
+ * @param {string} tier  one of `freshnessTier()`'s names
+ * @param {{dark?:boolean}} [opts]  the CONSUMER supplies the theme
+ * @returns {{buffer, buffer2x, widthPoints, heightPoints, template:false,
+ *            kind:'dot', tier}|null}  null for a name this module has never
+ *   heard of — an unrecognised name is not a tier, and inventing a mark for
+ *   it would be a guess.
  */
-export function renderRecencyDot(bucket, opts) {
-  // The written case, checked FIRST and before the ink lookup, so that "we do
-  // not know when this was saved" can never fall through to a mark. See
-  // NO_DOT_BUCKETS.
-  if (NO_DOT_BUCKETS.includes(bucket)) return null;
-  if (typeof bucket !== 'string' || !DOT_INK[bucket]) return null;
+export function renderRecencyDot(tier, opts) {
+  if (typeof tier !== 'string' || !Object.prototype.hasOwnProperty.call(DOT_INK, tier)) return null;
   const palette = dotPalette(opts);
-
   return {
-    buffer: encodeRgbaPng(dotCanvas(bucket, 1, palette)),
-    // TWO representations, not one: a 1x-only image is soft on every Mac sold
-    // in the last decade, and a 2x-only image handed to a 1x display is
-    // downsampled by the OS rather than drawn.
-    buffer2x: encodeRgbaPng(dotCanvas(bucket, 2, palette)),
+    buffer: encodeRgbaPng(dotCanvas(tier, 1, palette)),
+    // TWO representations: a 1x-only image is soft on every Retina Mac, and a
+    // 2x-only image handed to a 1x display is downsampled by the OS.
+    buffer2x: encodeRgbaPng(dotCanvas(tier, 2, palette)),
     widthPoints: DOT_POINTS,
     heightPoints: DOT_POINTS,
-    // NOT a template image — see lib/rgba-png.js.
     template: false,
+    // What the picture IS, for a text rendering of the menu and the suites —
+    // never read by Electron.
+    kind: 'dot',
+    tier,
   };
 }
 
 /**
- * The tooltip line for a dot, so the colour is never the only way to learn what
- * it means.
- *
- * A legend that exists only in a design document is a legend the user does not
- * have. This returns the band in words; the consumer is free to append it to
- * the row's own tooltip, and the row's age text remains the exact figure.
+ * The tier in words, so the colour is never the only way to learn what a mark
+ * means. The app's own bands.
  */
-export function dotToolTipLine(bucket) {
-  switch (bucket) {
-    case 'live': return 'Being written right now.';
-    case 'warm': return 'Saved within the last half hour.';
-    case 'today': return 'Saved earlier today.';
-    case 'cool': return 'Saved in the last week.';
-    case 'cold': return 'Older than a week.';
+export function dotToolTipLine(tier) {
+  switch (tier) {
+    case 'live': return 'Saved in the last minute.';
+    case 'recent': return 'Saved in the last hour.';
+    case 'today': return 'Saved in the last 24 hours.';
+    case 'week': return 'Saved in the last week.';
+    case 'dormant': return 'Older than a week.';
+    case 'unknown': return 'No save time is recorded.';
     default: return null;
   }
 }

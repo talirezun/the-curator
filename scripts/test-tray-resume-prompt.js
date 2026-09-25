@@ -413,5 +413,44 @@ section('§4 the byte disclosure, and what it is for');
   ok(!md.includes('…'), 'and nothing is elided');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+section('§5 `latest` under Layout A — only the project\'s NEWEST save across every tool may claim it');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// v3.74.0 draws one row per (project × harness). The second tool's row is the
+// NEWEST save OF THAT TOOL, but not of the project — and `scope: "latest"`
+// resolves over the project (working-state `resolveScope`: the index's first
+// scope). A resume prompt claiming `latest` on it would open the OTHER tool's
+// work-stream. Driven through the real model, in both input shapes.
+{
+  const M = await import(path.join(ROOT, 'desktop', 'lib', 'tray-model.js'));
+  const T = new Date('2026-09-25T14:27:00');
+  const at = (s) => new Date(T.getTime() - s * 1000).toISOString();
+  const row = (scope, harness, age) => ({ domain: 'projects', project: 'ott', scope, machine: 'mbp-9f3c1a', harness,
+    writtenAt: at(age), ageSource: 'agent', headline: 'h', isThisHost: true });
+  const scopes = [row('main', 'Claude Code', 480), row('roadmap', 'Antigravity', 3 * 3600), row('older', 'Claude Code', 5 * 3600)];
+  const latest = [
+    { harness: 'Claude Code', harnessId: 'claude-code', harnessRaw: 'Claude Code', scope: 'main', machine: 'mbp-9f3c1a', writtenAt: at(480), ageSource: 'agent', isThisHost: true },
+    { harness: 'Antigravity', harnessId: 'antigravity', harnessRaw: 'Antigravity', scope: 'roadmap', machine: 'mbp-9f3c1a', writtenAt: at(3 * 3600), ageSource: 'agent', isThisHost: true },
+  ];
+  for (const [name, summary] of [
+    ['scope rows only', { ok: true, scopes }],
+    ['projects[].latest', { ok: true, scopes, projects: [{ domain: 'projects', project: 'ott', latest }] }],
+  ]) {
+    const m = M.buildTrayModel(summary, { now: T });
+    const [first, second] = m.active.rows;
+    eq([first.harness, second.harness], ['Claude Code', 'Antigravity'], `${name}: CONTROL — two tools, two face rows, newest first`);
+    eq(m.rows.filter((r) => r.latest).map((r) => r.scope), ['main'], `${name}: exactly ONE row in the whole menu claims latest — the project's newest save`);
+    const p1 = rp.composeResumePrompt(first, { domainsDir: '/k' });
+    const p2 = rp.composeResumePrompt(second, { domainsDir: '/k' });
+    ok(p1.includes('scope "latest"') || p1.includes('latest scope'), `${name}: the newest row's prompt says latest`);
+    ok(p2.includes('scope "roadmap"') && !p2.includes('"latest"') && !p2.includes('latest scope'),
+      `${name}: the SECOND tool's row names its own scope and never latest`);
+    const stream = m.rows.find((r) => r.scope === 'older');
+    ok(stream && stream.latest === false && rp.composeResumePrompt(stream, { domainsDir: '/k' }).includes('scope "older"'),
+      `${name}: and an Other work-streams row names its own scope too`);
+  }
+}
+
 console.log(`\n${failed === 0 ? '✓' : '✗'} test-tray-resume-prompt: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

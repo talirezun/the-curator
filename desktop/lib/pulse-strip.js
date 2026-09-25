@@ -761,27 +761,138 @@ export function pulseLabel(pulse) {
 }
 
 /**
- * ` · N tools`, and ONLY when N is greater than one.
+ * ` · N tools` when N is greater than one, and — v3.74.0 — ` · <tool>` when
+ * it is exactly one and the tool is known.
  *
- * ── THE CHEAP SUBSTITUTE FOR PER-HARNESS LANES, AND THAT IS DELIBERATE ─────
+ * ── WHY ONE TOOL IS NOW NAMED ──────────────────────────────────────────────
  *
- * Two lanes inside a 15-point image give seven points each, and the bar ladder
- * needs twelve. Lanes would also need a legend, and a legend in an NSMenu is
- * another disabled row on the surface with the least vertical space in the
- * product. So the fact that MORE THAN ONE TOOL wrote this week is stated in
- * words instead, and the tooltip names them.
+ * The maintainer runs two harnesses and needs one fact from this row: IS MY
+ * SECOND HARNESS SAVING? At v3.72 the clause was silent at one, so a store in
+ * which only Claude Code saved read exactly like one in which nothing was
+ * known about tools — and, with the harness names un-normalised, it read
+ * `2 tools` when one tool had been spelled two ways (D1). Naming the single
+ * tool (`· Claude Code`) makes a silent second harness an ABSENCE YOU CAN
+ * READ; the `Saves by tool` submenu then says when it last saved.
  *
- * ── WHY IT IS SILENT AT ONE, AND SILENT AT ZERO ────────────────────────────
- *
- * ` · 1 tool` is a token on every row of every single-tool store — the
- * drop-constant rule, which this file's own label already obeys twice. And
- * ZERO is not a measurement of tools, it is the absence of one: a store whose
- * saves named no harness has not told us how many tools wrote it, and printing
- * `0 tools` would answer a question the data declined to answer.
+ * ZERO is still silent: a store whose saves named no harness has not told us
+ * how many tools wrote it. A name longer than `PULSE_TOOL_NAME_CHARS` falls
+ * back to `1 tool`, so the clause stays bounded (see longestPulseLabel).
  */
+export const PULSE_TOOL_NAME_CHARS = 14;
+
 function toolsClause(pulse) {
   const n = Number.isFinite(pulse && pulse.harnessCount) ? Math.floor(pulse.harnessCount) : 0;
-  return n > 1 ? ' · ' + n + ' tools' : '';
+  if (n > 1) return ' · ' + n + ' tools';
+  if (n !== 1) return '';
+  const name = soleToolName(pulse);
+  if (!name) return '';
+  return ' · ' + (name.length <= PULSE_TOOL_NAME_CHARS ? name : '1 tool');
+}
+
+/** The one tool that saved inside the window, when exactly one did and it
+ *  has a name. Read from `byHarness` (lanes with a save in the window). With
+ *  no lanes, a one-element `harnesses` list is used only when its element
+ *  carries a LABEL — the data layer's `harnesses` is a list of ids, and an id
+ *  (`claude-code`) is not a name to print. */
+function soleToolName(pulse) {
+  const lanes = harnessPulses(pulse);
+  if (lanes.length) {
+    const inWindow = lanes.filter((h) => h.events > 0);
+    return inWindow.length === 1 ? inWindow[0].label : null;
+  }
+  const list = pulse && Array.isArray(pulse.harnesses) ? pulse.harnesses : null;
+  if (list && list.length === 1 && list[0] && typeof list[0] === 'object'
+      && typeof list[0].label === 'string' && list[0].label.trim()) {
+    return list[0].label.trim();
+  }
+  return null;
+}
+
+/**
+ * THE PER-TOOL LANES — the `Saves by tool` submenu (v3.74.0).
+ *
+ * Refused INSIDE the menu at v3.47 because two lanes in one 15-point image
+ * give seven points each and the bar ladder needs twelve. A submenu item
+ * carries a whole 55 × 15 pt strip, so each tool gets the SAME picture the
+ * pulse row draws, from its own buckets — `renderPulseStrip` on a pulse
+ * whose buckets and count are that tool's. The window, the bucket size and
+ * the known/unknown boundary are the whole store's: a tool that did not
+ * exist yet is an empty cell, not an unknown one, because the STORE existed.
+ *
+ * Read defensively: `pulse.byHarness` is `{[id]: {label, buckets, events,
+ * lastSeenAt}}` and may be absent, partial or malformed. A malformed entry is
+ * dropped, never drawn as zero. Most saves first; then the most recently
+ * seen.
+ *
+ * @returns {Array<{id, label, events, lastSeenAt, pulse}>}
+ */
+export function harnessPulses(pulse) {
+  const by = pulse && pulse.byHarness && typeof pulse.byHarness === 'object' && !Array.isArray(pulse.byHarness)
+    ? pulse.byHarness : null;
+  if (!by) return [];
+  const out = [];
+  for (const [id, h] of Object.entries(by)) {
+    if (!h || typeof h !== 'object') continue;
+    const label = typeof h.label === 'string' && h.label.trim() ? h.label.trim() : id;
+    const buckets = Array.isArray(h.buckets) ? h.buckets : null;
+    const events = Number.isFinite(h.events) && h.events >= 0 ? Math.floor(h.events)
+      : (buckets ? buckets.reduce((a, b) => a + (Number.isFinite(b) && b > 0 ? Math.floor(b) : 0), 0) : null);
+    if (events === null) continue;
+    const lastSeenAt = typeof h.lastSeenAt === 'string' && Number.isFinite(Date.parse(h.lastSeenAt)) ? h.lastSeenAt : null;
+    out.push({
+      id, label, events, lastSeenAt,
+      pulse: buckets ? {
+        ...pulse, buckets, events, harnessCount: 1,
+        // A cap marks a CHANGE of tool inside a period; inside one tool's lane
+        // it has nothing to say.
+        harnessChanges: undefined,
+      } : null,
+      // The data layer's sentence about why the lanes are a floor, verbatim.
+      note: pulse && typeof pulse.byHarnessNote === 'string' && pulse.byHarnessNote ? pulse.byHarnessNote : null,
+    });
+  }
+  out.sort((a, b) => (b.events - a.events)
+    || ((b.lastSeenAt ? Date.parse(b.lastSeenAt) : 0) - (a.lastSeenAt ? Date.parse(a.lastSeenAt) : 0))
+    || a.label.localeCompare(b.label));
+  return out;
+}
+
+/**
+ * One tool's line in the submenu: `Claude Code · 200 saves`, or
+ * `Antigravity · none · last 1 Sep` for a tool the store has seen but that did
+ * not save inside the window.
+ *
+ * "last" becomes "last seen" when the whole pulse is a FLOOR (some pairs were
+ * read from a 16 KB tail): then `lastSeenAt` is the newest save the TAIL held,
+ * and an older save may exist unread — so the date is when the tool was last
+ * SEEN, not provably when it last saved. The count takes "at least" for the
+ * same reason, as the pulse row's does.
+ */
+export function harnessPulseLabel(h, pulse) {
+  if (!h || typeof h !== 'object') return null;
+  // The data layer's own verdict first (`byHarnessFloor`); the pulse's
+  // truncation count when an older producer did not supply one.
+  const floor = pulse && (pulse.byHarnessFloor === true
+    || (pulse.byHarnessFloor === undefined && Number.isFinite(pulse.pairsTruncated) && pulse.pairsTruncated > 0));
+  const name = h.label || h.id || 'unknown tool';
+  if (h.events > 0) {
+    return name + ' · ' + (floor ? 'at least ' : '') + h.events + (h.events === 1 ? ' save' : ' saves');
+  }
+  const when = dayMonthText(h.lastSeenAt);
+  return name + ' · none' + (when ? ' · ' + (floor ? 'last seen ' : 'last ') + when : '');
+}
+
+/** A local calendar date as `1 Sep`. */
+function dayMonthText(at) {
+  const ms = typeof at === 'string' ? Date.parse(at) : Number.NaN;
+  if (!Number.isFinite(ms)) return null;
+  const d = new Date(ms);
+  return d.getDate() + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
+}
+
+/** The window as words — `7 days` — for the submenu's header. */
+export function windowWords(pulse) {
+  return windowText(pulse);
 }
 
 /**
@@ -854,6 +965,9 @@ export function longestPulseLabel() {
     // Both caveats off — the ordinary reading, kept so this cannot silently
     // become a function about caveats only.
     { ...base, windowSeconds: 604800, coversWholeWindow: true, pairsTruncated: 0 },
+    // ONE tool, named at the longest name the clause will carry (v3.74.0).
+    { ...base, coversWholeWindow: true, pairsTruncated: 1, harnessCount: 1,
+      harnesses: [{ label: 'W'.repeat(PULSE_TOOL_NAME_CHARS) }] },
     // The two replacement sentences, which are not readings at all.
     { ...base, clock: 'none' },
     { ...base, windowSeconds: 604800, firstKnownBucket: 28 },
@@ -893,6 +1007,7 @@ export function pulseToolTip(pulse) {
   lines.push('An amber cap means a different agent tool took over inside that period.');
   const tools = Number.isFinite(pulse.harnessCount) ? Math.floor(pulse.harnessCount) : 0;
   if (tools > 1) lines.push(tools + ' different agent tools wrote inside this window.');
+  else if (tools === 1 && soleToolName(pulse)) lines.push('One agent tool wrote inside this window: ' + soleToolName(pulse) + '.');
   if (Number.isFinite(pulse.bucketSeconds) && pulse.bucketSeconds > 0
       && cellsPerDay(pulse) >= 1) {
     lines.push('The ticks below the baseline are day boundaries; the wide one is today.');
