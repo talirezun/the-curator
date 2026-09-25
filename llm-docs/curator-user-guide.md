@@ -88,7 +88,7 @@ Yes, and on Windows and Linux it is the easiest route. Any CLI-aware coding agen
 |---|---|---|---|
 | Google Gemini | Yes, with strict daily quotas | Recommended. The lowest pay-as-you-go cost and the app's default. | https://aistudio.google.com/app/apikey |
 | Anthropic Claude | No, paid only | Roughly 10 times the Gemini bill for the same workload. Defaults to Claude Haiku 4.5. | https://console.anthropic.com/ |
-| OpenRouter | Some models are free, with a daily request cap | One key onto many vendors. It can build your wiki on three hand-measured models. | https://openrouter.ai/keys |
+| OpenRouter | Free `:free` models exist in its catalogue for chat, with a daily request cap; none is currently hand-listed for building the wiki | One key onto many vendors. It can build your wiki on several hand-measured, paid models — the list is live in Settings and grows over time. | https://openrouter.ai/keys |
 
 To create a Gemini key: sign in at the link above, click **Create API key**, and copy it. It starts with `AIza` and is about 40 characters long. Strongly recommended: click **Set up Billing** in the same console. The free tier is enough to try the app on a few articles, but Gemini 2.5 Flash Lite on the free tier is capped at 15 requests per minute, 1,000 requests per day and 250,000 tokens per minute, and a batch of 5 to 10 PDFs can stall mid-run with `429 RESOURCE_EXHAUSTED`. The paid price is low enough that most users pay between 1 and 10 euros a month.
 
@@ -528,7 +528,7 @@ Each candidate comes back as its own card showing `remove-slug → keep-slug`, a
 
 There is a batch option for high-confidence pairs only, naming the count and what will happen first. Medium and low-confidence pairs are deliberately one at a time, because those are the ones most likely to be genuinely distinct.
 
-You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** in **Settings → Health & scan limits**. The defaults, 50,000 tokens and 500 pairs, suit domains up to about 5,000 pages. A scan refuses to start when its estimate exceeds the ceiling.
+You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** in **Settings → Health & scan limits**. The defaults, 200,000 tokens (raised from 50,000 in v3.72.1) and 500 pairs, suit domains up to about 5,000 pages — 200,000 tokens is enough for a full scan at the 500-pair default, about $0.03 on Gemini Flash Lite. A scan estimates its own cost first and refuses to start, before you can click Scan, when the estimate is over the ceiling.
 
 ## Can I undo a health fix or a merge?
 
@@ -554,9 +554,11 @@ If a button is greyed out, something else is writing to your wiki — an ingest,
 
 ## What does the number on the Sync badge mean?
 
-It is the count of local changes you have not pushed yet. The same number appears twice: as a small badge on the **Sync** icon in the rail, refreshed in the background so you can see there is something to push without opening the view, and as a chip beside the buttons in the Sync view reading, for example, "7 local changes not pushed".
+It is the count of files whose current version has not reached GitHub yet — this includes files sitting in a commit made here that was never pushed (for example right after **Pull only**, which commits but never pushes, or after a push that failed partway), not only uncommitted edits. The same number appears twice: as a small badge on the **Sync** icon in the rail, refreshed in the background so you can see there is something to push without opening the view, and as a chip beside the buttons in the Sync view reading, for example, "7 local changes not pushed".
 
 Chat conversations are synced deliberately, so sending one chat message legitimately ticks the count to 1 even with no ingest and no compile. That is not a bug.
+
+**"Last synced"** (shown in the Sync view) is the time this computer last completed a sync with GitHub — a push that reached it, a pull, or a connect that finished — not the date of your newest change. An install connected before v3.72.1 reads "not recorded yet" until its next sync.
 
 ## What is synced and what stays on my computer?
 

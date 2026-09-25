@@ -1613,7 +1613,7 @@ outside the window"**: they exist, but nothing sends them until an agent asks by
 
 | Preset | Tokens | Meaning |
 |---|---|---|
-| **Index only** | 0 | the list only; an agent opens documents by name |
+| **Index only** | 0 | the list only; an agent opens documents by name. Step ① shows **"Index only — no document text at start"** in place of a bar |
 | **Lean** | 8k | one or two short documents |
 | **Standard** *(recommended)* | 16k | a handful of core documents |
 | **Deep** | 32k | a design held in mind |
@@ -1646,7 +1646,9 @@ begins, and the legend names each document with the reply it arrives in.
 config file, not per browser), so the app and the menu bar widget always agree:
 
 - **Window** — 200K, 400K, 1M, or a custom size — the context window of the model you actually
-  run.
+  run. Until you choose one **on this computer**, the picker reads **"200K · default"** and the
+  meter is labelled **"(default)"** — it is showing you a fallback, not a setting you made, and
+  no option in the menu is marked chosen.
 - **Harness** — **Not set** by default, or **Light ≈20k**, **Typical ≈50k**, **Heavy ≈120k**, or
   an exact number. Read your own harness's overhead from Claude Code's `/context`, which breaks
   out system prompt, system tools, MCP tools, memory files and skills as separate figures. The
@@ -2042,6 +2044,12 @@ true, and a store that only added to itself could never say so.
   nothing in the app behaves differently because of it. It comes from a file beside your settings,
   never inside your knowledge folder, so it is never synced, and it never names an argument, a
   result or a file path. This reading only reports — it never stops, delays or warns a session.
+  **When there is nothing to report, the tile says why, not "0 sessions"**: it reads
+  **"no usage log"** if this computer has no MCP usage log at all, and **"not logged"** if saves
+  exist but no session was recorded for them; the sub-line "N sessions · last 30 days" only
+  appears once a count was actually taken. The count refreshes when you reopen a project and
+  about once a minute while you're watching it, so switching between projects always shows a
+  fresh reading rather than one cached from earlier in the visit.
 
 ##### Knowledge — which domains a project draws on
 
@@ -2756,6 +2764,10 @@ Three things are worth knowing about that reading:
 - **It is a calendar-day age, not a clock.** The date comes from the `## [YYYY-MM-DD]`
   heading in the domain's `wiki/log.md`, which carries no time of day — so *"today"*
   means today, and there is deliberately no *"7 hr ago"* precision the data cannot support.
+  As of v3.72.1 that date, a new page's `created:` field, and a new domain's index all
+  stamp your computer's **local** calendar day (was UTC through v3.72.0, so "today" could
+  read as yesterday or tomorrow depending on your time zone and the hour) — so *"today"*
+  now means your today, wherever you are.
 - **The dot and the words can never disagree**, because the dot is cut on the same
   bands as the phrase beside it. The dot is also never the only carrier: the words
   say the same thing, and a screen reader reads the words.
@@ -2826,7 +2838,9 @@ If the **app itself** restarts mid-batch (a crash, or an update), the batch is d
 
 **8. When the batch finishes: an aggregate report, plus a free Health check.** Once every file has been processed (or skipped, or failed), the panel shows a summary — how many completed, how many failed, how many were skipped, total pages written, total warnings, and total spent. The Curator then automatically runs a **free, local Wiki Health scan** (no AI cost) across the whole domain and shows the results — broken links, orphans, and so on — so you can see the batch's overall effect on your wiki in one place. To act on anything it found, open **Domains**, pick that domain, and use its **Wiki health** panel ([§17](#17-wiki-health)).
 
-**About the spend figure on a cancelled batch.** If you cancelled the batch, the total is shown as **"at least $X"** rather than a flat number. That's honest, not vague: the AI call that was in flight when you clicked Cancel is never billed back to us in a way we can measure, so every dollar counted was really spent but the last fraction of one is missing. (Separately, if the model in use has no published price, the figure reads **"approx. $X"** instead — that one is an estimate share and can land either side of the real number.)
+**About the spend figure on a cancelled batch.** If you cancelled the batch, the total is shown as **"at least $X"** rather than a flat number. That's honest, not vague: the AI call that was in flight when you clicked Cancel is never billed back to us in a way we can measure, so every dollar counted was really spent but the last fraction of one is missing.
+
+**When a billed file ran on a model with no published price** — a custom or override model The Curator can't price — the spend line reads **"price not published"** instead of a dollar figure (never **$0.00**, which would read as "this cost nothing"). If some files in the batch ran on a priced model and others didn't, it reads **"at least $X (some files ran on a model with no published price)"** — $X being the true total of only the part it could actually price. The token and AI-call counts are still shown either way, even with no dollar figure to go with them.
 
 **9. Optional: set a budget cap.** On the confirm screen you can set a dollar amount as a spending cap for the batch. Once the running total reaches that cap, the batch pauses (see the table above) rather than continuing to spend. Leave it blank for no cap. If the AI model currently in use has no published price on file (this can happen with a custom/override model), The Curator refuses to accept a cap at all rather than accept one it can't actually enforce — you'll see a clear message explaining why. The batch itself still works fine without a cap; only the cap is refused.
 
@@ -5156,6 +5170,10 @@ After **Sync now**, domain stats and page lists update automatically. Open **Cha
 
 **How to tell whether you have anything to push.** The Sync view's monitor shows **Connected** as its state word, your repository URL and when you last synced as its two lines, and — beside the buttons — a plain count: *"7 local changes not pushed"*. That count is the signal to look at.
 
+**"Last synced" is the time this computer last completed a sync with GitHub** — a push that actually reached it, a pull, or a connect that finished — recorded at that moment. It is **not** the date of your newest change: after a **Pull only**, for example, it is when the pull finished, not when the pulled changes were made on the other machine. An install connected before v3.72.1 reads **"not recorded yet"** until its next sync; that is expected, not an error.
+
+**"N local changes not pushed"** counts every file whose current version has not reached GitHub — including files sitting in a commit made here that was never pushed (for example right after **Pull only**, which commits but never pushes, or after a push that failed partway). A brand-new folder counts each file inside it, not the folder as one item.
+
 > The **Sync** rail icon also carries a small badge with that same pending count, refreshed in the background, so you can see there is something to push without opening the view. (An earlier version of this guide said there was no such badge — that predates the cutover and is wrong.)
 
 **If a button is greyed out**, something else is writing to your wiki right now — an ingest, a Health fix, a Shared Brain push. Hover it and it tells you what. Wait for that to finish; the buttons re-enable on their own. This is deliberate: a sync mid-write would commit a half-written wiki.
@@ -5410,7 +5428,9 @@ The block is a readout, not a control: which model a new conversation **starts o
 
 Collapsed by default, because it answers "show me everything", which most people never ask. Open it and you get the whole catalogue in one table across every connected provider — name, provider and id, input and output price per million tokens, context, and whether it can build a wiki — with:
 
-- **Filters with live counts**: All / Can build / Measured / Free, plus price bands. Each count is worked out by the same filter that draws the rows, so a filter that would empty the list tells you before you click it.
+- **Filters with live counts**: All / Can build / Measured / Free, plus price bands (labelled "Input price per 1M tokens", now including **$1–$3** so nothing between the bands on either side falls through uncounted — **new in v3.72.1**). Each count is worked out by the same filter that draws the rows, so a filter that would empty the list tells you before you click it.
+- **Exact prices, everywhere.** Every price shown in Settings — the catalogue table, a model's own row, the build card — is the exact figure (e.g. **$0.075**, not rounded to $0.08), the same figure Chat shows.
+- **When a price was last checked.** A model's row shows when The Curator last checked its published price and, for a hand-measured OpenRouter model, when its rate was last actually billed and confirmed (*"price checked 25 Sep 2026 · measured 27 Aug 2026"*). If OpenRouter's own catalogue now quotes a different price for a model The Curator lists by hand, the row says so; if the new price is **higher**, every cost estimate for that model uses it, never the older, lower figure.
 - **Search**, by name or id.
 - **A count line** that also states how many ids are hidden and why — OpenRouter publishes `:batch` variants that answer 404 on every call The Curator makes, so they are excluded and the number is named rather than the list quietly being shorter than the vendor's.
 - **Any row's evidence, one click in.** Each row in the table has a small arrow beside the model name. Open it and the measured note — the full one, unshortened — appears in a strip under that row, along with any result from a test you ran yourself. Closed, the row still shows everything a spending decision needs: name, id, price in and out, context, and whether it can build.
@@ -6118,7 +6138,7 @@ duplicate scan may cost, and it is used only by the **✨ Find duplicate pages**
 you start from a domain's health panel ([§17](#17-wiki-health)). Nothing here
 affects the free structural health scan.
 
-![Settings → Health & scan limits. The Settings panel beside the rail lists the five sections, with Health & scan limits selected and "The Curator v3.57.1" and an Updates button at its foot. The main column reads "CONFIGURATION" over the title "Health & scan limits" with an ⓘ mark, then a hairline. One unnumbered block, "Semantic-duplicate scan limits", opens with "Caps what one scan may cost. Used by Health → Ask AI scans." and an ⓘ. Under it a rounded card holds two rows separated by a hairline: "Cost ceiling per scan" with the note "Default 50,000 tokens ≈ $0.01 on Gemini Flash Lite." and a monospace number field reading 50000 with the suffix "tokens"; and "Maximum candidate pairs per scan" with the note "After local pre-filtering, only the top N pairs by similarity are sent to the model. Default 500." and a monospace number field reading 500. Below the card, a filled violet "Save scan limits" button.](images/curator-health-limits.png)
+![Settings → Health & scan limits (screenshot predates v3.72.1's default). The Settings panel beside the rail lists the five sections, with Health & scan limits selected and "The Curator v3.57.1" and an Updates button at its foot. The main column reads "CONFIGURATION" over the title "Health & scan limits" with an ⓘ mark, then a hairline. One unnumbered block, "Semantic-duplicate scan limits", opens with "Caps what one scan may cost. Used by Health → Ask AI scans." and an ⓘ. Under it a rounded card holds two rows separated by a hairline: "Cost ceiling per scan" with a note naming the current default and what it costs on the model that builds your wiki, and a monospace number field with the suffix "tokens"; and "Maximum candidate pairs per scan" with the note "After local pre-filtering, only the top N pairs by similarity are sent to the model. Default 500." and a monospace number field reading 500. Below the card, a filled violet "Save scan limits" button.](images/curator-health-limits.png)
 
 *Two fields in one card, with the Save button clear of it. Before v3.54.0 the
 button sat 12px under the second field, close enough to read as part of that
@@ -6126,13 +6146,15 @@ field rather than as the action for both of them.*
 
 | Setting | Default | Raise it when … |
 |---|---|---|
-| **Cost ceiling per scan** | 50,000 tokens — about **$0.01** on Gemini Flash Lite | a scan refuses to start on a large wiki |
+| **Cost ceiling per scan** | 200,000 tokens — enough for a full 500-pair scan, about **$0.03** on Gemini Flash Lite (was 50,000 tokens through v3.72.0 — that figure contradicted the 500-pair default and could refuse a scan the pair cap alone would have allowed) | a scan refuses to start on a large wiki |
 | **Maximum candidate pairs per scan** | 500 | you want a wider sweep. **Lower** it for a cheaper first look at a domain you have not scanned before |
 
-> **A ceiling refuses; it does not truncate.** A scan estimates its own cost
-> before it starts and simply **does not run** when the estimate is over the
-> ceiling — so nothing is ever half-scanned and no partial bill is run up. That
-> is the whole model, and it is what the block's **ⓘ** says.
+> **A ceiling refuses before you click; it does not truncate mid-scan.** A scan
+> estimates its own cost first, and when that estimate is over the ceiling the
+> confirm names both figures, says the scan will not start and that nothing is
+> spent, and drops the **Scan** button entirely (offering a link to this
+> settings page instead) — so nothing is ever half-scanned and no partial bill
+> is run up. That is the whole model, and it is what the block's **ⓘ** says.
 
 Defaults suit domains up to roughly 5,000 pages. The hard caps that are **not**
 adjustable — including the 20,000-page refusal — are in
@@ -6347,7 +6369,7 @@ Below the markers, each row carries **one plain line** rather than a paragraph �
 
 **Settings and the chat composer deliberately show different amounts.** Settings is a screen you open to manage models and can afford a fuller row; the composer is a menu you open mid-conversation, so it keeps the warning and the speed and drops the rest. Both use the same words for the same facts, computed once in one place so the two cannot drift apart. That is intentional, not a discrepancy to fix.
 
-![Part of the build-lane model list in Settings → Providers & keys. Six collapsed rows, each with an expand arrow, a display name, the model id in monospace, a coloured provider chip and a "measured by The Curator" chip, and a "Use this" button on the right. Opus 4.5 also carries an "out-performed" badge and the warning line "Out-performed by Opus 5 at the identical price · plans 12-13 pages per source" above "$5.00 in · $25.00 out /1M tokens". MiniMax M3 (free) warns "Free models share an upstream pool — availability is real but not promised · plans about 21 pages per source" and is priced "free". Granite 4.0 H Micro warns "The thinnest outlines measured here — a less detailed wiki from the same source · plans about 9 pages per source" at $0.02 in / $0.11 out. Solar Pro 4 carries no warning and reads "plans about 23 pages per source · measured at about 48s per call" at $0.09 in / $0.36 out. (The screenshot was taken while the app quoted $0.03 / $0.12 for this model; a billed call measured $0.09 / $0.36 and the table was corrected — the prices in the running app are the measured ones.) GLM 5.3 Flash warns "Far slower than the default, and most of its output is hidden reasoning you never see · plans about 27 pages per source · measured at about 3m 8s per call" at $0.07 in / $0.25 out. Kimi K2 0905 warns "Runs away about once in nine documents, planning hundreds of pages instead of ~30 · plans about 30 pages per source · measured at about 33s per call" at $0.60 in / $2.50 out. Below the list a "Chat" heading explains that chat can use any model from any connected provider and that the model is chosen per message in the composer.](images/curator-model-picker.png)
+![Part of the build-lane model list in Settings → Providers & keys. Six collapsed rows, each with an expand arrow, a display name, the model id in monospace, a coloured provider chip and a "measured by The Curator" chip, and a "Use this" button on the right. Opus 4.5 also carries an "out-performed" badge and the warning line "Out-performed by Opus 5 at the identical price · plans 12-13 pages per source" above "$5.00 in · $25.00 out /1M tokens". MiniMax M3 (free) warns "Free models share an upstream pool — availability is real but not promised · plans about 21 pages per source" and is priced "free". Granite 4.0 H Micro warns "The thinnest outlines measured here — a less detailed wiki from the same source · plans about 9 pages per source" at $0.02 in / $0.11 out. Solar Pro 4 carries no warning and reads "plans about 23 pages per source · measured at about 48s per call" at $0.09 in / $0.36 out. (The screenshot was taken while the app quoted $0.03 / $0.12 for this model; a billed call measured $0.09 / $0.36 and the table was corrected — the prices in the running app are the measured ones.) GLM 5.3 Flash warns "Far slower than the default, and most of its output is hidden reasoning you never see · plans about 27 pages per source · measured at about 3m 8s per call" at $0.07 in / $0.25 out. (This screenshot predates v3.72.1: a billed call on 25 Sep 2026 measured $0.045 / $0.14 per 1M tokens, on a different endpoint than the one that had priced $0.075 / $0.25 — the running app quotes the measured rate and, since v3.72.1, also shows when it checked.) Kimi K2 0905 warns "Runs away about once in nine documents, planning hundreds of pages instead of ~30 · plans about 30 pages per source · measured at about 33s per call" at $0.60 in / $2.50 out. Below the list a "Chat" heading explains that chat can use any model from any connected provider and that the model is chosen per message in the composer.](images/curator-model-picker.png)
 
 *Part of the build list. Each row's warning leads the plain line rather than hiding behind the expand arrow, and the price is always stated. The Chat section below the list is the other half of the two-lane split described above.*
 
@@ -6417,7 +6439,7 @@ The three below are the ones with published numbers in this guide and cover the 
 |---|---|---|
 | **Solar Pro 4** — `upstage/solar-pro4` | **The default.** Best all-round of the three. | Clean JSON on **9 of 9** runs with no repair needed; plans a median of **23** pages per document. **$0.09 / $0.36** per 1M tokens. |
 | **Granite 4.0 H Micro** — `ibm-granite/granite-4.0-h-micro` | **When cost dominates.** Also the automatic backup if the default ever disappears. | Equally clean — **9 of 9** — but **thin**: a median of **9** pages where Solar plans 23. **$0.017 / $0.112**, the cheapest model The Curator offers anywhere. |
-| **MiniMax M3 (free)** — `minimax/minimax-m3:free` | **Free.** Widest coverage measured, but least predictable to reach. | **8 of 9** runs clean, 1 needed the repair pass, none unusable; median **21** pages. No price at all. |
+| ~~MiniMax M3 (free)~~ — `minimax/minimax-m3:free` | **Withdrawn.** OpenRouter removed the free version (it now 404s with a pointer to the paid `minimax/minimax-m3`). No longer offered for build or listed as free; a stored pick of it falls back to Solar Pro 4 and Settings tells you your pick is not in use. | **8 of 9** runs clean, 1 needed the repair pass, none unusable; median **21** pages. No price at all. (Historical — measured before withdrawal.) |
 
 Two things are worth reading off that table rather than skipping:
 
@@ -6425,7 +6447,7 @@ Two things are worth reading off that table rather than skipping:
 - **Solar Pro 4 costs about the same as the cheapest Gemini option on input and rather less on output** — **$0.09 / $0.36** against Gemini Flash Lite’s **$0.10 / $0.40** — at wider coverage (a median of 23 pages per document against 18–20).
   > **This figure was wrong here until it was billed.** The table quoted **$0.03 / $0.12** — OpenRouter’s published price for the model — and a cold run’s own `usage.cost` came back at **three times that**, because what bills you is the ENDPOINT that serves the request, not the model’s headline. It is the same finding v3.16.0 recorded when it refused three otherwise-clean models on price honesty, and this guide said "roughly a third the price of Gemini" on the strength of the quoted number. It is not; it is close to level on input. **A price you have not been billed is a quotation, not a measurement.**
 
-**A note on the free one.** It is genuinely free and genuinely useful, but free models draw on a **shared pool**, so whether one answers is not just about your account. In a ten-minute availability check during measurement, this model answered **8 of 8** attempts while **three of its free siblings answered 0 of 8**, all reporting they were rate-limited upstream — same account, same moment. That is why it is offered as a deliberate choice and is never picked for you automatically. Combined with a large ingest being **40+ separate calls**, treat free as a real option, not a guaranteed one.
+**A note on the free one (historical — since withdrawn).** While it was offered, it was genuinely free and genuinely useful, but free models draw on a **shared pool**, so whether one answers is not just about your account. In a ten-minute availability check during measurement (27 Aug 2026), this model answered **8 of 8** attempts while **three of its free siblings answered 0 of 8**, all reporting they were rate-limited upstream — same account, same moment. There is currently no hand-listed free model for building the wiki; free `:free` models from OpenRouter's own catalogue still appear in the **chat** model list after a catalogue sync. Combined with a large ingest being **40+ separate calls**, treat free as a real option when one is offered, not a guaranteed one.
 
 #### Why two standards — and why it is not fussiness
 
@@ -6740,7 +6762,7 @@ The same thing happens when you use the batch **Merge all N high-confidence** bu
 
 **There is also a batch option** for high-confidence pairs, which names the count and what will happen before it runs: *"Combines each pair's bullet sections onto the kept page, retargets every `[[wikilink]]` across the domain…"*. Medium- and low-confidence pairs are deliberately one at a time — they're the ones most likely to be genuinely distinct.
 
-You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** in **Settings → Health & scan limits**. Defaults (50,000 tokens, 500 pairs) suit domains up to ~5k pages; raise them for larger wikis. A scan refuses to start when its estimate exceeds the ceiling.
+You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** in **Settings → Health & scan limits**. Defaults (200,000 tokens, 500 pairs — the ceiling was 50,000 through v3.72.0) suit domains up to ~5k pages; raise them for larger wikis. A scan estimates its cost first and refuses to start — before you can click Scan — when the estimate is over the ceiling.
 
 For the full guide, see [ai-health.md](ai-health.md).
 

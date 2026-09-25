@@ -179,7 +179,7 @@ Each pair ends in one of three states, and since v3.53.0 they are **named separa
 |---|---|---|
 | Max pages for a scan to run at all | 20,000 | hard-coded (contact maintainer to raise) |
 | Max candidate pairs sent to the LLM | 500 | Settings → Health & scan limits → Maximum candidate pairs per scan |
-| Cost ceiling per scan (tokens) | 50,000 | Settings → Health & scan limits → Cost ceiling per scan |
+| Cost ceiling per scan (tokens) | 200,000 (raised from 50,000 in v3.72.1 — the old default could refuse a scan the 500-pair cap alone would have allowed) | Settings → Health & scan limits → Cost ceiling per scan |
 | Batch merge | High-confidence only, confirm-gated | per-pair Preview still required for medium/low |
 | Max pairs per batch merge | 2,000 | hard-coded |
 

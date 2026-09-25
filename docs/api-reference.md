@@ -339,12 +339,18 @@ curl http://localhost:3333/api/ingest/activity
           "outputTokens": 9114,
           "cachedReadTokens": 0,
           "cacheWriteTokens": 0
-        }
+        },
+        "spent": { "provider": "gemini", "model": "gemini-2.5-flash-lite", "usd": 0.021, "estimated": true }
       }
     }
   ]
 }
 ```
+
+`result.spent` (**new in v3.72.1**, additive) is the same `spent` shape described under "AI runs
+— `runsOn` and `spent`" above, carried through so a panel restored after a reload or a second tab
+shows the identical run line a client watching live would have seen — not just the raw
+`tokenUsage`. `null` when the run finished without a `spent` event.
 
 **Fields**
 
@@ -384,12 +390,20 @@ its estimate route, including refusals (where it carries only the model and key 
   inputTokensLow, inputTokensHigh, outputTokensLow, outputTokensHigh,
   usdLow, usdHigh,             // a free model: usdLow = usdHigh = 0
   priceKnown,                  // false → no usd fields at all; costNote: 'price-not-published'
-  free, costNote, medianLatencyMs
+  free, costNote, medianLatencyMs,
+  perCallLatencyMs, plannedCalls   // batch ingest only, v3.72.1 — see below
 }
 ```
 
 A figure the app does not have is **omitted, never sent as 0** — the caller must not mistake "we
 don't know" for "this costs nothing."
+
+On the batch-ingest estimate's `runsOn` specifically, `medianLatencyMs` is the **whole planned
+run's** wait — the per-call median (measured for one outline call) times `estimate.calls`, the
+batch's own planned call count — not one call's latency mistaken for the run's. `perCallLatencyMs`
+carries the un-multiplied per-call figure and `plannedCalls` the count it was scaled by, so a
+client can show both. When there is no call count to scale by, `medianLatencyMs` is dropped
+entirely rather than shown as if it covered the whole run.
 
 **`spent`** — carried on every AI run's completion event, once it actually finished:
 
@@ -431,8 +445,10 @@ Every endpoint below returns (or streams) a **job**. `toWire()` is the single ch
   "budgetUsd": 5,
   "spentUsd": 1.234567,
   "spendIsEstimated": false,
+  "spendUnknown": false,
+  "consecutiveFailureLimit": 3,
   "order": "largest-first",
-  "estimate": { "usdLow": 2.1, "usdHigh": 4.3, "basis": "..." },
+  "estimate": { "usdLow": 2.1, "usdHigh": 4.3, "basis": "...", "calls": 6 },
   "currentIndex": 2,
   "consecutiveFailures": 0,
   "cancelRequested": false,
@@ -451,13 +467,33 @@ Every endpoint below returns (or streams) a **job**. `toWire()` is the single ch
       "attempts": 1,
       "error": null,
       "result": { "title": "...", "pagesWritten": 6, "warningCount": 0, "changeCounts": { "created": 4, "updated": 2, "unchanged": 0 } },
-      "tokenUsage": { "provider": "gemini", "model": "gemini-2.5-flash-lite", "inputTokens": 180000, "outputTokens": 9000 }
+      "tokenUsage": { "provider": "gemini", "model": "gemini-2.5-flash-lite", "inputTokens": 180000, "outputTokens": 9000 },
+      "ranOn": { "provider": "gemini", "providerLabel": "Gemini", "model": "gemini-2.5-flash-lite", "modelLabel": "Gemini 2.5 Flash Lite", "fallbackFrom": null }
     }
   ]
 }
 ```
 
 `itemCount` is the true total number of items in the batch; `items` itself is capped (500 entries — never reached by a normal batch, which tops out at 100 files) and `itemsTruncated` is `true` if the cap trimmed anything. `spentUsd` is tracked to 6 decimal places (not 4), so a long run of very small per-file charges can't silently round down to zero.
+
+**New in v3.72.1, all additive:**
+
+- `spendUnknown` (job-level, boolean) — `true` once any billed item ran on a model with
+  **no published price to charge at all** (not a free model — one The Curator simply
+  can't price). When `true`, `spentUsd` is a floor, not the true total; the view reads
+  "at least $X (some files ran on a model with no published price)" rather than
+  understating the real spend as a dollar figure.
+- `consecutiveFailureLimit` — the same number the `consecutive_failures` pause reason
+  above compares against (currently 3), so a client can build the pause message instead
+  of hardcoding it.
+- `estimate.calls` — the total planned AI-call count across the batch (sum of each
+  file's `totalCalls`), present alongside `usdLow`/`usdHigh` so a free or unpriced-model
+  estimate can still show "N in / M out · K AI calls" when there is no dollar figure to
+  show.
+- `item.ranOn` — the model that **actually** billed this item, once it is `done` or
+  `failed` (`null` before then). Differs from the job's configured model when a
+  fallback chain walked to a different model mid-run, in which case `fallbackFrom`
+  names what was originally requested.
 
 `cancelRequested`/`pauseRequested` are `true` only in the brief window between a `/pause` or `/cancel` call landing and the job actually settling — they are read live off in-process state at serialisation time, never persisted to the manifest, and always `false` for a job recovered after a restart (a stop request from a previous process run must never silently apply to a later one). A GET or SSE frame taken mid-cancel will show `status: "running"` with `cancelRequested: true` for that brief window; poll again (or just wait for the next SSE frame) and it resolves to `status: "cancelled"`.
 
@@ -1576,9 +1612,15 @@ curl http://localhost:3333/api/health/ai-tech
   ],
   "missingBacklinks": [
     { "summary": "summaries/foo.md", "entity": "entities/bar.md", "summarySlug": "foo" }
-  ]
+  ],
+  "dismissedRecords": 6
 }
 ```
+
+`dismissedRecords` is **new in v3.72.1**: the number of dismissal records on disk for this
+domain, including semantic-duplicate-pair Skips — not just the issues currently hidden by
+one. It is additive and omitted (rather than sent as `0`) if the dismissal file can't be
+read.
 
 **Issue types**
 
@@ -1949,8 +1991,23 @@ Returns the user's AI Health limits. Persisted in `.curator-config.json` under t
 **Response** `200 OK`
 
 ```json
-{ "costCeilingTokens": 50000, "semanticDupeMaxPairs": 500 }
+{
+  "costCeilingTokens": 200000,
+  "semanticDupeMaxPairs": 500,
+  "defaults": { "costCeilingTokens": 200000, "semanticDupeMaxPairs": 500 },
+  "defaultRunsOn": { "provider": "gemini", "model": "gemini-2.5-flash-lite", "estimatedUsd": 0.03 }
+}
 ```
+
+The **default** cost ceiling is **200,000 tokens** (raised from 50,000 in v3.72.1) — enough
+for a full scan at the default 500-pair cap, so the two defaults no longer contradict each
+other. `defaults` and `defaultRunsOn` are **new in v3.72.1** and additive:
+
+- `defaults` — the built-in defaults (`DEFAULT_AI_HEALTH`), regardless of what the user has
+  saved.
+- `defaultRunsOn` — what a scan at the default ceiling is priced to cost, on the model that
+  builds the wiki (`null` if pricing can't be determined). Settings shows this next to the
+  "Cost ceiling per scan" field so the hint's dollar figure is never a stale literal.
 
 ## POST /api/health/ai-settings
 
@@ -1983,11 +2040,12 @@ Phase 3 (v2.4.5+). Runs the local candidate-pair pre-filter only. Makes **no LLM
   "estimatedUsd": 0.033,
   "provider": "gemini",
   "model": "gemini-2.5-flash-lite",
-  "costCeilingTokens": 50000
+  "costCeilingTokens": 200000,
+  "maxPairs": 500
 }
 ```
 
-Set `candidatePairs` is the top N after ranking; `totalCandidates` is the unbounded count (what `candidatePairs` was capped from). `truncated: true` means the pre-filter found more pairs than your cap allowed.
+Set `candidatePairs` is the top N after ranking; `totalCandidates` is the unbounded count (what `candidatePairs` was capped from). `truncated: true` means the pre-filter found more pairs than your cap allowed. `maxPairs` (**new in v3.72.1**, additive) echoes the user's own candidate-pair cap, so the confirm dialog can name it without a second lookup. If `estimatedTokens` would exceed `costCeilingTokens`, the scan is refused before it starts (see `POST /api/health/:domain/semantic-dupes/scan` below) — nothing is spent.
 
 **Errors**
 
@@ -2043,6 +2101,7 @@ Phase 3. READ-ONLY. Returns a structured preview of what a specific merge would 
   "removePath": "concepts/e-mail.md",
   "mergedPreview": "...",
   "mergedLength": 1836,
+  "mergedPreviewCap": 4000,
   "affectedFiles": [
     { "path": "concepts/cryptographic-algorithms.md", "linkCount": 1 },
     { "path": "summaries/beyond-encryption-block-labs-occ-tech.md", "linkCount": 1 }
@@ -2052,7 +2111,10 @@ Phase 3. READ-ONLY. Returns a structured preview of what a specific merge would 
 }
 ```
 
-`affectedFiles` is capped at 50 entries; `affectedCount` is the full count.
+`affectedFiles` is capped at 50 entries; `affectedCount` is the full count. `mergedPreview` is
+truncated to the first `mergedPreviewCap` characters (**field is new in v3.72.1**;
+`mergedPreview` itself is unchanged — 4,000 characters, unrounded by multibyte content) when
+`mergedLength` is greater than `mergedPreview.length`.
 
 ---
 
@@ -2230,14 +2292,16 @@ route sits behind `guardConcurrent`, so a wiki write in flight yields a `409`
 
 ### GET /api/sync/status
 
-Cheap enough to sit on the 60-second badge path: a `git status --porcelain` line count
-and two `stat` calls, no subprocess beyond git, no network.
+Cheap enough to sit on the 60-second badge path: a handful of local `git` calls
+(no subprocess beyond git, no network).
 
 ```json
 {
   "configured": true,
   "changesCount": 33,
-  "lastSync": "2026-08-31 14:02:11 +0200",
+  "uncommittedCount": 30,
+  "unpushedCommits": 1,
+  "lastSync": "2026-08-31T12:02:11.000Z",
   "repoUrl": "https://github.com/you/your-brain.git",
   "splitSyncRepo": false,
   "adoptedSyncRepo": false
@@ -2246,6 +2310,22 @@ and two `stat` calls, no subprocess beyond git, no network.
 
 Unconfigured installs get `{"configured": false}`; a failure gets
 `{"configured": true, "error": "…"}`. `repoUrl` always has the token stripped.
+
+- `changesCount` — files whose current version has not reached GitHub: the union of
+  uncommitted files and the files of any commits made here that `origin/main` (as last
+  fetched — this path never fetches) does not have. This is the number the rail badge
+  and the Sync view show, and it is the same figure `POST /setup`'s push reports.
+- `uncommittedCount` — of `changesCount`, the files that are uncommitted (not yet in a
+  local commit at all).
+- `unpushedCommits` — commits made here that `origin/main` does not have; `null` when
+  there is no `origin/main` yet (never synced).
+- `lastSync` — **v3.72.1.** An ISO timestamp, or `null`. This is the time this install
+  last **recorded** a successful exchange with GitHub — a push that reached it, a pull,
+  or a connect that completed — not the newest commit's date. It used to be read from
+  `git log`'s commit date, which was wrong after a fast-forward pull (that is the OTHER
+  machine's commit time) or a failed push (a commit that never reached GitHub). `null`
+  means no sync has been recorded yet; an install connected before v3.72.1 shows `null`
+  until its next sync and is never back-filled from a commit date.
 
 **`splitSyncRepo` and `adoptedSyncRepo` are new in v3.32.0** and are additive — every
 field above them keeps its name, type and meaning.
@@ -2391,11 +2471,11 @@ Endpoints marked **SSE** stream `text/event-stream` progress events (`{type, mes
 
 | Path | Description |
 |---|---|
-| `GET /api/sharedbrain/list` | `{connections: [...]}` with tokens masked. v3.43.0+: each connection also carries an explicit boolean `has_admin_token` — true exactly for the connections `/admin-token/rotate` will not refuse with `no_admin_token`. It exists because `admin_token` is MASKED in this listing, and a client deciding whether to offer the admin affordances must not have to reason about how a credential happens to be redacted. v3.0.4+: each connection carries an additive `pending_pages` count — pages changed since `last_push_at` (∪ `pending_retry`, minus `permanent_skip`) across its contributing domains; cheap mtime scan only. Read-only connections always report 0. It is read by the Shared Brain panel; the shell's Sync badge deliberately does NOT fold it in (`src/public/next/app.js`), and the navbar that once carried it went with the old shell in v3.41.0. |
+| `GET /api/sharedbrain/list` | `{connections: [...]}` with tokens masked. v3.43.0+: each connection also carries an explicit boolean `has_admin_token` — true exactly for the connections `/admin-token/rotate` will not refuse with `no_admin_token`. It exists because `admin_token` is MASKED in this listing, and a client deciding whether to offer the admin affordances must not have to reason about how a credential happens to be redacted. v3.0.4+: each connection carries an additive `pending_pages` count — pages changed since `last_push_at` (∪ `pending_retry`, minus `permanent_skip`) across its contributing domains; cheap mtime scan only. Read-only connections always report 0. `pending_pages` and `pending_retry_pages` are each `null` (not `0`) when they could not be counted (an unreadable watermark or a domain scan that threw) — a client should read that as "unknown", never as "nothing pending". `pending_retry_pages` (**new in v3.72.1**, additive) is how many of `pending_pages` are automatic retries of a page that failed a previous push and still exists locally. It is read by the Shared Brain panel; the shell's Sync badge deliberately does NOT fold it in (`src/public/next/app.js`), and the navbar that once carried it went with the old shell in v3.41.0. `last_contribution_at` (**new in v3.72.1**) is set only once a push has actually sent a contribution — a push that finds nothing to send never moves it; a connection whose only recorded time predates v3.72.1 shows that older watermark instead, labelled as such by the client. |
 | `POST /api/sharedbrain/save` | Body: `{connection: {...}}`. Validated server-side. UUIDs assigned if missing. Rejects with 400 if `github_pat` looks like a masked display value (defense against round-trip overwrites). v3.0.4+: optional boolean `read_only` field (defaults `false`) — set by the wizard when the PAT verdict is valid-but-no-write-access; read-only connections may have zero `local_domains`. v3.0.5+: optional `admin_token` (single-line string 16-200 chars or null; masked-ellipsis values refused) and `data_handling_terms` (`contributor_retains` \| `organisational`, persisted for invite re-display). |
 | `DELETE /api/sharedbrain/:id` | Removes the connection from this machine. The remote shared repo is unaffected. |
 | `POST /api/sharedbrain/:id/unskip` | v3.0.4+. Body: `{pages?: string[]}` — clears the listed pages from `permanent_skip` (omit `pages` to clear all) and resets their `pending_retry` strike counters, so they're re-attempted on the next push. Paths not actually skipped are ignored. Returns `{ok, unskipped, permanent_skip}`. Local config change only; not SSE. |
-| `GET /api/sharedbrain/:id/members` | v3.0.5+. Member directory: everyone who has ever contributed to this brain. Returns `{members: [{fellow_id, short_id, submissions, pages, first_contributed_at, last_contributed_at, display_name}], self_fellow_id}`. Identity is storage-path-derived (same trust rule as synthesis); display names are informational. Reads every contribution payload — fine at cohort scale. Powers the revoke UI's fellow picker. |
+| `GET /api/sharedbrain/:id/members` | v3.0.5+. Member directory: everyone who has ever contributed to this brain. Returns `{members: [{fellow_id, short_id, submissions, pages, page_updates, first_contributed_at, last_contributed_at, display_name}], self_fellow_id}`. Identity is storage-path-derived (same trust rule as synthesis); display names are informational. Reads every contribution payload — fine at cohort scale. Powers the revoke UI's fellow picker. `pages` (**meaning fixed in v3.72.1**) is the count of **distinct** page paths this fellow has ever sent a delta for — it used to sum every delta, over-counting a page touched by several submissions; that raw sum is now the separate `page_updates` field. `last_contributed_at` is the contributor's own app's clock, not a server- or GitHub-observed time — shown as "as reported". |
 | `POST /api/sharedbrain/:id/admin-token/rotate` | v3.0.5+. **v3.43.0 — PROOF OF POSSESSION IS NOW REQUIRED.** Body: `{admin_token}` — the connection's CURRENT `sbat_…` token, compared constant-time through the same gate the revoke route uses. On success it generates a fresh token, stores it (single audited credential write path) and returns it **once**: `{ok, admin_token, rotated}`. Three **403** shapes, each carrying a machine-readable `code` beside the prose `error`: `no_admin_token` (this connection stores none — it is a plain contributor's, and this route will never mint one), `admin_token_required` (no usable token in the body), `admin_token_mismatch` (a token was supplied and it is the wrong one). **Until v3.43.0 this route took NO body and authenticated nothing**, so any connection on the machine could mint an admin token — and with it read every `fellow_id` from `/:id/members` and pass `/:id/revoke`, letting a plain contributor GDPR-erase the cohort admin. The provisioning use this row used to describe ("used to provision pre-v3.0.5 connections") is therefore **gone and cannot come back**: nothing on this machine can tell a legacy admin from a contributor. Such an admin re-runs the brain-setup wizard, whose `/generate-invite` returns a fresh `admin_token` that `/save` persists. |
 
 ### Push, pull, synthesize, revoke (SSE)
@@ -4264,8 +4344,13 @@ nearest}`; `onDemand{documents, tokens}` (what is read-first or on-request but o
 budget's room — "on demand, outside the window"); `delivery{replies, paged, pageTokens}` (how many
 MCP replies this bootstrap actually takes, from the same paging plan `get_project_context` uses);
 `window{tokens, set}` and `harness{tokens, set}` (this computer's own settings, read from
-`GET /api/config/context-window`, never written here); and `meter`, the same shape the bucket kit
-(`shared/bucket.js`) renders directly. It is a pure read: nothing is written, ever.
+`GET /api/config/context-window`, never written here); `meter`, the same shape the bucket kit
+(`shared/bucket.js`) renders directly; and, **new in v3.72.1**, `chat{ceilingChars,
+effectiveChars}` — what Chat itself would actually hand an agent for this project:
+`ceilingChars` is Chat's own fixed 40,000-character ceiling, and `effectiveChars` is the
+smaller of the reading budget and that ceiling (`0` when the reading budget is Index only).
+This is additive and lets a client show "what Chat is really handed" without duplicating
+Chat's own budget constant. It is a pure read: nothing is written, ever.
 
 ### POST /api/memory/:domain/:project/session-start/preview
 

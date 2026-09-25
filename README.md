@@ -496,7 +496,7 @@ out · $0.0008."* With no key the same buttons stay visible but disabled. Chat k
 per-message model picker, separate from the one model everything else runs on.
 
 <p align="center">
-  <img src="docs/images/curator-providers-keys.png" alt="The Curator's Providers &amp; keys settings: step 1 Connect a provider lists Gemini connected, Anthropic with no key, and OpenRouter connected, with a note that local models do not exist yet; step 2 What builds your wiki shows Flash Lite 2.5 selected with chips reading &quot;$0.10 in · $0.40 out per 1M tokens&quot;, &quot;plans 18-20 pages per source&quot; and &quot;measured by The Curator&quot;, and a CHEAPEST MEASURED line offering MiniMax M3 (free)" width="800"><br>
+  <img src="docs/images/curator-providers-keys.png" alt="The Curator's Providers &amp; keys settings (pre-v3.72.1 shot; MiniMax M3 (free) shown here was later withdrawn by OpenRouter): step 1 Connect a provider lists Gemini connected, Anthropic with no key, and OpenRouter connected, with a note that local models do not exist yet; step 2 What builds your wiki shows Flash Lite 2.5 selected with chips reading &quot;$0.10 in · $0.40 out per 1M tokens&quot;, &quot;plans 18-20 pages per source&quot; and &quot;measured by The Curator&quot;, and a CHEAPEST MEASURED line offering MiniMax M3 (free)" width="800"><br>
   <em>Price and pages-per-source are shown as measured facts, next to the cheapest model your own keys can reach.</em>
 </p>
 
