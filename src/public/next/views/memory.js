@@ -494,6 +494,19 @@ const CAPTURE_WINDOW_DAYS = 30;
 // as a measurement would be reporting a CAP as a reading, which is the defect
 // `distinctScopeCount` is counted before the index slice to avoid.
 const CAPTURE_SESSION_LIMIT = 20;
+// ── v3.72.1: HOW OLD A CACHED READING MAY BE BEFORE THE POLL RE-ASKS ─────
+// The AGENT SESSIONS count and step ③'s page counts were cached for the whole
+// life of the page (truth audit F2/F5): an agent session, an ingest or a
+// compile elsewhere never reached this screen until a reload. They are now
+// stale-while-revalidate: a cached reading paints at once, and it is re-asked
+// on a project (re)select and — once it is this old — on the poll and on
+// wake. Both reads are cheap (one local JSONL scan; one dirent walk), and a
+// minute is short beside the poll's own 20 s–5 min cadence.
+const READING_REVALIDATE_MS = 60000;
+// On a project (re)select the wiki count is re-asked once it is this old, so
+// flicking between two projects of ONE domain still costs no second request
+// (v3.62.0's rule), while coming back to Context after an ingest does.
+const KNOWLEDGE_SELECT_MAX_AGE_MS = 10000;
 
 // Journal page sizes. The store clamps journalLimit to [1, 50] itself
 // (MAX_JOURNAL_ENTRIES); these are just the two steps this view offers, and
@@ -1266,6 +1279,7 @@ registerView('memory', {
     wakeHandler = () => {
       if (typeof document !== 'undefined' && document.hidden) return;
       if (!isCurrentMount(mountToken)) return;
+      revalidateReadings(mountToken);
       refreshIndex(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
     };
     if (typeof window !== 'undefined') window.addEventListener('focus', wakeHandler);
@@ -1315,6 +1329,28 @@ function nextPollDelay() {
   return Math.min(POLL_MAX_MS, Math.max(POLL_BASE_MS, measured));
 }
 
+/**
+ * RE-ASK THE TWO CACHED READINGS WHEN THEY ARE OLD (v3.72.1, truth audit F2/F5).
+ *
+ * Called by the poll and by wake, beside `refreshIndex` rather than inside it
+ * (it is lifted by brace-matching into several harnesses; a new free
+ * identifier there is a crash, not a failing assertion). The AGENT SESSIONS
+ * count and step ③'s page counts are re-read once they are
+ * READING_REVALIDATE_MS old; a cached reading keeps painting meanwhile, and an
+ * unchanged answer repaints nothing. Never throws.
+ */
+function revalidateReadings(token) {
+  if (!state || !state.activeDomain || !state.activeProject) return;
+  const d = state.activeDomain;
+  const p = state.activeProject;
+  loadCapture(d, p, token, { maxAgeMs: READING_REVALIDATE_MS })
+    .catch((err) => reportAsyncMountFailure(token, err));
+  const chosen = state.projectRead && Array.isArray(state.projectRead.knowledgeDomains)
+    && state.projectRead.knowledgeDomains.length ? state.projectRead.knowledgeDomains : [d];
+  loadKnowledge(chosen, token, { maxAgeMs: READING_REVALIDATE_MS })
+    .catch((err) => reportAsyncMountFailure(token, err));
+}
+
 function stopPoll() {
   if (pollTimer !== null) { clearTimeout(pollTimer); pollTimer = null; }
 }
@@ -1334,6 +1370,7 @@ function schedulePoll(token) {
     if (!isCurrentMount(token)) return;
     const hidden = typeof document !== 'undefined' && document.hidden;
     if (hidden) { schedulePoll(token); return; }
+    revalidateReadings(token);
     refreshIndex(token)
       .catch((err) => reportAsyncMountFailure(token, err))
       .finally(() => { if (isCurrentMount(token)) schedulePoll(token); });
@@ -2541,14 +2578,18 @@ async function selectProject(domain, project, token, opts = {}) {
   // set rides on the project read and has not landed yet at this point, so
   // this asks for the one wiki that is right unless the owner has chosen
   // otherwise; `applyProjectRead` asks for the rest the moment it knows.
-  loadKnowledge([domain], token).catch((err) => reportAsyncMountFailure(token, err));
+  loadKnowledge([domain], token, { maxAgeMs: KNOWLEDGE_SELECT_MAX_AGE_MS })
+    .catch((err) => reportAsyncMountFailure(token, err));
   // ── AND THE HONESTY METER'S, FOR THE SAME REASON (v3.63.0) ──────────
   // Not awaited and BEFORE the render, exactly like its sibling above: an
   // async function runs synchronously up to its first await and
   // `loadCapture`'s cache-hit arm has none, so returning to a project
   // already read paints the meter on the frame the click lands. Its key is
   // the PAIR rather than the domain, because the reading is per project.
-  loadCapture(domain, project, token).catch((err) => reportAsyncMountFailure(token, err));
+  // v3.72.1: and RE-ASKED on every (re)select (maxAgeMs 0) — the cached
+  // figure paints at once, and a newer one repaints when it lands (F2).
+  loadCapture(domain, project, token, { maxAgeMs: 0 })
+    .catch((err) => reportAsyncMountFailure(token, err));
   render(token);
 
   // A user-initiated selection is the cheapest honest moment to re-ask the
@@ -3102,7 +3143,7 @@ export function effectiveSave(row, now = Date.now()) {
 /**
  * One-line summary of a project's memory for the sidebar row.
  *
- * "No state saved yet" and "a brief, no sessions yet" are DIFFERENT facts and
+ * "No state saved yet" and "a brief, no handoff saved yet" are DIFFERENT facts and
  * are said differently — a project carrying a standing brief but no handoff
  * is a real, deliberate configuration (someone wrote the brief before the
  * first agent session), not an empty one.
@@ -3119,7 +3160,7 @@ export function projectMetaLine(p) {
     const scopes = p.scopeCount + ' scope' + (p.scopeCount === 1 ? '' : 's');
     return age ? scopes + ' · ' + age : scopes;
   }
-  return p.hasBrief ? 'brief only — no sessions yet' : 'no state saved yet';
+  return p.hasBrief ? 'brief only — no handoff saved yet' : 'no state saved yet';
 }
 
 /**
@@ -4051,22 +4092,33 @@ function renderLayerStrip(read) {
     ? state.capture.data : null;
   const capTotals = cap && cap.totals && typeof cap.totals === 'object' ? cap.totals : null;
   const capSessions = capTotals && Number.isInteger(capTotals.sessions) ? capTotals.sessions : null;
-  const capValue = capSessions === null
-    ? 'not counted'
-    : capSessions.toLocaleString('en-US') + ' session' + (capSessions === 1 ? '' : 's');
+  // ── v3.72.1 (truth audit F3): NO MEASURED-LOOKING ZERO ───────────────
+  // An absent usage log gives zeroed totals at the producer, and the tile
+  // printed "0 sessions" beside step ②'s "no usage log on this computer yet".
+  // A zero is shown only when a log WAS read (`logPresent === true`, positive
+  // evidence, captureFacts' own rule); saves with no logged session read "not
+  // logged", step ②'s own explanation in two words.
+  const capValue = cap && cap.logPresent !== true
+    ? 'no usage log'
+    : cap && cap.noSessionsButSaves === true && capSessions === 0
+      ? 'not logged'
+      : capSessions === null
+        ? 'not counted'
+        : capSessions.toLocaleString('en-US') + ' session' + (capSessions === 1 ? '' : 's');
   //
-  // NO SECOND LINE, AND NOT FOR TIDINESS: `renderLayerStrip` is LIFTED by
-  // brace-matching and EXECUTED by scripts/test-next-overview-kit.js, which
-  // this package does not own, so a module-level constant named in this body
-  // (`CAPTURE_WINDOW_DAYS`, for "in the last 30 days") is a ReferenceError
-  // there — a suite that CRASHES rather than asserts. The window is stated in
-  // words in step ②'s own row summary, which is where the jump lands.
+  // THE WINDOW, AS A LITERAL. `renderLayerStrip` is LIFTED by brace-matching
+  // and EXECUTED by scripts/test-next-overview-kit.js, so a module-level
+  // constant named in this body (`CAPTURE_WINDOW_DAYS`) is a ReferenceError
+  // there. The words are typed here and test-next-capture-meter.js pins them
+  // to CAPTURE_WINDOW_DAYS, so the two cannot drift apart. Said only when a
+  // count was taken over that window.
   // v3.70.0: "Capture" became AGENT SESSIONS on screen — what it counts, in
   // the owner's words. The jump id, the route (`…/capture`) and every on-disk
   // name keep the old word, as v3.65.1 did for Documents/Memory.
   cards.push({
     label: 'AGENT SESSIONS',
     value: cap ? capValue : 'not counted',
+    sub: cap && cap.logPresent === true ? 'last 30 days' : null,
     hidden: !cap,
     jump: 'capture',
     name: 'Agent sessions — open the session reading in step 2',
@@ -4733,7 +4785,7 @@ async function loadDomainList(token) {
   }
 }
 
-async function loadKnowledge(domains, token) {
+async function loadKnowledge(domains, token, opts) {
   // ── N DOMAINS, N REQUESTS, AND THE COST IS STATED ─────────────────────
   // One `GET /api/domains/:domain/stats` per CHOSEN domain, not per project
   // and not per paint: the Map is keyed by domain and survives a project
@@ -4748,13 +4800,22 @@ async function loadKnowledge(domains, token) {
   if (!(state.knowledge instanceof Map)) state.knowledge = new Map();
   let painted = false;
   for (const domain of want) {
+    // v3.72.1: STALE-WHILE-REVALIDATE. The entry carries the time its read
+    // STARTED; a hit paints at once, and is re-asked only when the caller
+    // names a maximum age and the entry is at least that old (F5: the count
+    // used to be frozen at the first read until the page reloaded).
     const hit = knowledgeCache.get(domain);
-    if (hit) { state.knowledge.set(domain, { data: hit, error: null, gone: false }); continue; }
+    if (hit) {
+      state.knowledge.set(domain, { data: hit.data, error: null, gone: false });
+      const maxAge = opts && Number.isFinite(opts.maxAgeMs) ? opts.maxAgeMs : Infinity;
+      if (!(Date.now() - hit.at >= maxAge)) continue;
+    }
     if (knowledgeInFlight.has(domain)) continue;
     knowledgeInFlight.add(domain);
     if (!state.knowledge.has(domain)) {
       state.knowledge.set(domain, { data: null, error: null, gone: false });
     }
+    const startedAt = Date.now();
     // NOT AWAITED IN SEQUENCE. Three wikis must not paint one after another
     // over three round trips; each answer writes its own row and asks for one
     // repaint, and the stamp below drops any that arrives after the mount or
@@ -4776,7 +4837,13 @@ async function loadKnowledge(domains, token) {
       }
       knowledgeInFlight.delete(domain);
       if (!isCurrentMount(token)) return;
-      if (next.data) knowledgeCache.set(domain, next.data);
+      if (next.data) knowledgeCache.set(domain, { data: next.data, at: startedAt });
+      // A REVALIDATION THAT FAILED keeps the figures on screen (a failed
+      // re-ask must not blank a reading that is still broadly true — the
+      // poll's own rule), and one that found nothing new paints nothing: a
+      // render replaces both panes and would close an ⓘ somebody is reading.
+      if (hit && !next.data) return;
+      if (hit && JSON.stringify(hit.data) === JSON.stringify(next.data)) return;
       state.knowledge.set(domain, next);
       render(token);
     })().catch((err) => reportAsyncMountFailure(token, err));
@@ -5291,17 +5358,26 @@ function renderCaptureMeter() {
  * Same discipline as `loadKnowledge` one level up, one key finer. NEVER
  * THROWS, and a failure is a DISCLOSURE rather than a blank.
  */
-async function loadCapture(domain, project, token) {
+async function loadCapture(domain, project, token, opts) {
   if (!domain || !project) return;
   const key = keyOf(domain, project);
+  // v3.72.1: STALE-WHILE-REVALIDATE (truth audit F2). The entry carries the
+  // time its read STARTED. A hit paints at once; it is re-asked only when the
+  // caller names a maximum age and the entry is at least that old — a project
+  // (re)select asks with 0, the poll and wake with READING_REVALIDATE_MS.
+  // Before, the count was frozen at the first read for the life of the page.
   const hit = captureCache.get(key);
   if (hit) {
-    state.capture = { domain, project, data: hit, error: null };
-    return;
+    state.capture = { domain, project, data: hit.data, error: null };
+    const maxAge = opts && Number.isFinite(opts.maxAgeMs) ? opts.maxAgeMs : Infinity;
+    if (!(Date.now() - hit.at >= maxAge)) return;
   }
   if (captureInFlight === key) return;
   captureInFlight = key;
-  state.capture = { domain, project, data: null, error: null };
+  if (!hit) state.capture = { domain, project, data: null, error: null };
+  const startedAt = Date.now();
+  // `since` is computed per REQUEST, so a revalidation is "the last 30 days"
+  // from now, not from the first read of the page.
   const since = new Date(Date.now() - CAPTURE_WINDOW_DAYS * 86400000).toISOString();
   let next;
   try {
@@ -5324,7 +5400,13 @@ async function loadCapture(domain, project, token) {
   // unmounting, so a reply for a project the user has already left must never
   // be written into state at all.
   if (state.activeDomain !== domain || state.activeProject !== project) return;
-  if (next.data) captureCache.set(key, next.data);
+  if (next.data) captureCache.set(key, { data: next.data, at: startedAt });
+  // A failed revalidation keeps the reading on screen; an unchanged one paints
+  // nothing (a render would close an open ⓘ). Compared without the server's
+  // per-read age figures, which differ on every read of an unchanged log.
+  if (hit && !next.data) return;
+  const sig = (d) => JSON.stringify(d, (k, v) => (/ageSeconds$|AgeSeconds$/.test(k) ? 0 : v));
+  if (hit && sig(hit.data) === sig(next.data)) return;
   state.capture = next;
   render(token);
 }
@@ -7277,15 +7359,25 @@ function foundationsFacts(read) {
     onRequestCount: f && Number.isInteger(f.onRequestCount)
       ? f.onRequestCount : Math.max(0, docs.length - readFirst),
     readFirstBytes: f && Number.isInteger(f.readFirstBytes) ? f.readFirstBytes : readFirstBytes,
-    readFirstBudgetBytes: f && Number.isInteger(f.readFirstBudgetBytes) && f.readFirstBudgetBytes > 0
+    // v3.72.1: ZERO IS A REAL BUDGET. The owner's "Index only" is sent as 0,
+    // and the old `> 0` test read it as "not sent" and fell back to the 120 KB
+    // default — step ① then drew a red bar against 120 KB while step ④ said
+    // "Index only". The default is the fallback ONLY for a build that sent no
+    // integer at all.
+    readFirstBudgetBytes: f && Number.isInteger(f.readFirstBudgetBytes) && f.readFirstBudgetBytes >= 0
       ? f.readFirstBudgetBytes : READ_FIRST_BUDGET_BYTES,
+    readFirstIndexOnly: !!(f && f.readFirstBudgetBytes === 0),
     // The fallback compares against the SAME denominator the line above
     // settled on — the server's reading budget where it sent one — so the
     // flag and the figure it is drawn against can never be two budgets.
-    readFirstBudgetExceeded: f && typeof f.readFirstBudgetExceeded === 'boolean'
-      ? f.readFirstBudgetExceeded
-      : (readFirst > 0 && readFirstBytes > (f && Number.isInteger(f.readFirstBudgetBytes)
-        && f.readFirstBudgetBytes > 0 ? f.readFirstBudgetBytes : READ_FIRST_BUDGET_BYTES)),
+    // Index only is never "over": no document text is handed at all, so there
+    // is nothing to exceed (the store's flag is any-bytes > 0 there).
+    readFirstBudgetExceeded: f && f.readFirstBudgetBytes === 0
+      ? false
+      : f && typeof f.readFirstBudgetExceeded === 'boolean'
+        ? f.readFirstBudgetExceeded
+        : (readFirst > 0 && readFirstBytes > (f && Number.isInteger(f.readFirstBudgetBytes)
+          && f.readFirstBudgetBytes > 0 ? f.readFirstBudgetBytes : READ_FIRST_BUDGET_BYTES)),
     // The project budget is a DISCLOSURE, never a wall (D6): the store accepts
     // a save that crosses it and says so, and a UI that refused what the store
     // accepts would be the only thing standing between the owner and their
@@ -7370,7 +7462,7 @@ function foundationsSummaryMeta(facts) {
   // sends every body within the session budget, so the applicable set is all
   // documents and the applicable figure is the project budget.
   const flagged = facts.readFirstCount > 0;
-  const size = flagged
+  const size = flagged && !facts.readFirstIndexOnly
     ? (facts.readFirstBytes > facts.readFirstBudgetBytes
       ? fndSize(facts.readFirstBytes) + ' read first, of a '
         + fndSize(facts.readFirstBudgetBytes) + ' budget'
@@ -7418,6 +7510,9 @@ function foundationsSummaryMeta(facts) {
 function foundationsBudgetWarning(facts) {
   const flagged = facts.readFirstCount > 0;
   if (flagged) {
+    // v3.72.1: Index only hands no document text, so there is no over-run to
+    // warn about; the monitor line says "Index only" in words instead.
+    if (facts.readFirstIndexOnly) return '';
     if (!facts.readFirstBudgetExceeded) return '';
     return 'The ' + facts.readFirstCount + ' documents flagged “read first” come to '
       + fndSize(facts.readFirstBytes) + ', over the ' + fndSize(facts.readFirstBudgetBytes)
@@ -7504,7 +7599,15 @@ function foundationsMonitor(facts) {
         sub: facts.count.toLocaleString('en-US') + ' document' + (facts.count === 1 ? '' : 's')
           + ' in this project',
       },
-      flagged ? {
+      // v3.72.1: Index only — the owner's budget is 0. No bar (a bar against
+      // zero is all danger and says nothing true); the words match step ④'s
+      // Index-only note.
+      flagged && facts.readFirstIndexOnly ? {
+        key: 'read first',
+        value: fndSize(facts.readFirstBytes),
+        sub: 'Index only — no document text at start',
+      } : null,
+      flagged && !facts.readFirstIndexOnly ? {
         key: 'read first',
         value: fndSize(facts.readFirstBytes),
         sub: 'of ' + fndSize(facts.readFirstBudgetBytes) + ' per session',
@@ -10442,6 +10545,40 @@ function fndSuggestCellHtml(d, suggest) {
     + '</td>';
 }
 
+/**
+ * WHAT A PLAN OR ITS ESTIMATE WAS MADE FROM (v3.72.1, truth audit F6): the
+ * owner's reading budget and each document's size and start state, as one
+ * string. Taken when an estimate or a suggestion is asked for, and compared
+ * with the project on screen now — a budget change or a document added,
+ * removed or re-flagged since makes the panel's figures an earlier project's.
+ * Pure over the project read.
+ */
+function planInputSig(read) {
+  const f = read && read.foundations;
+  const docs = f && Array.isArray(f.documents) ? f.documents.filter(Boolean) : [];
+  return JSON.stringify([
+    read && Number.isInteger(read.readingBudgetBytes) ? read.readingBudgetBytes : null,
+    docs.map((d) => [d.slug, d.bytes, d.readFirst === true, d.hidden === true, d.atStart || null]),
+  ]);
+}
+
+/**
+ * RE-ASK THE HELPER'S ESTIMATE WHEN ITS INPUTS MOVED (v3.72.1, F6). Called
+ * after every paint (bindSessionAndPlan). The estimate — the budget it quotes
+ * and the AI run's cost over the document set — was read once per panel open,
+ * so picking Lean left "the Standard 64 KB reading budget" on the panel.
+ * Returns true when it asked.
+ */
+function refreshPlanEstimateIfStale(token) {
+  const p = planFor();
+  if (!p || !p.open || p.estimateLoading || typeof p.estimateSig !== 'string') return false;
+  if (p.estimateSig === planInputSig(state.projectRead)) return false;
+  p.estimate = null;
+  p.estimateError = null;
+  loadPlanEstimate(token).catch((err) => reportAsyncMountFailure(token, err));
+  return true;
+}
+
 /** The helper's state, for the project on screen only. */
 function planFor() {
   const p = state.plan;
@@ -10468,8 +10605,11 @@ function planHeadHtml() {
   const p = planFor();
   if (p && p.result) {
     const n = planChangeCount(p);
+    // v3.72.1 (F6): a suggestion made before the budget or the documents
+    // changed is not applied — its totals describe an earlier project.
+    const outdated = typeof p.resultSig === 'string' && p.resultSig !== planInputSig(state.projectRead);
     return '<button type="button" class="btn btn-primary btn-xs" id="mem-plan-apply"'
-      + (p.applying || !n ? ' disabled aria-disabled="true"' : '') + '>'
+      + (p.applying || !n || outdated ? ' disabled aria-disabled="true"' : '') + '>'
       + escapeHtml(p.applying ? 'Applying…' : 'Apply suggestion') + '</button>'
       + '<button type="button" class="btn btn-ghost btn-xs" id="mem-plan-dismiss"'
       + (p.applying ? ' disabled aria-disabled="true"' : '') + '>Dismiss</button>';
@@ -10537,6 +10677,24 @@ function contextWindowNow() {
   const ss = sessionStartFor();
   const w = ss && ss.data && ss.data.window;
   return w && Number.isInteger(w.tokens) && w.tokens > 0 ? w.tokens : 200000;
+}
+
+/**
+ * v3.72.1 (truth audit F4): IS THE WINDOW THE DEFAULT? True when nobody chose
+ * one on this computer — then the 200K the meter is drawn against is the
+ * default, and every place that names it says so, as the menu-bar widget
+ * does ("context window not set; 200k is the default"). Positive evidence
+ * only: the per-computer settings' `contextWindowSet`, else the measurement's
+ * own `window.set`; a build that sends neither is not called a default.
+ */
+function contextWindowIsDefault() {
+  const s = state.ctxSettings;
+  // The per-computer settings, once read, are the only authority — the same
+  // precedence `contextWindowNow` gives them for the figure itself.
+  if (s) return s.contextWindowSet === false;
+  const ss = sessionStartFor();
+  const w = ss && ss.data && ss.data.window;
+  return !!(w && w.set === false);
 }
 
 /** The owner's harness estimate in tokens, or null when Not set. */
@@ -10667,11 +10825,16 @@ function windowPickerCfg(busy) {
     ? s.choices : CONTEXT_WINDOW_CHOICES;
   const cur = contextWindowNow();
   const isChoice = choices.indexOf(cur) >= 0;
+  const dflt = contextWindowIsDefault();
   return {
     id: 'mem-window-lb',
-    value: isChoice ? String(cur) : null,
-    triggerText: busy === true ? 'Saving…' : (isChoice ? windowWord(cur) : 'Custom · ' + windowWord(cur)),
-    ariaLabel: 'Context window: ' + windowWord(cur) + ' tokens, set for this computer',
+    // A default is not the owner's choice, so no option is marked chosen.
+    value: isChoice && !dflt ? String(cur) : null,
+    triggerText: busy === true ? 'Saving…'
+      : dflt ? windowWord(cur) + ' · default'
+        : (isChoice ? windowWord(cur) : 'Custom · ' + windowWord(cur)),
+    ariaLabel: 'Context window: ' + windowWord(cur) + ' tokens, '
+      + (dflt ? 'the default — not set on this computer' : 'set for this computer'),
     disabled: busy === true,
     triggerClass: 'mem-window-btn',
     minWidth: 240,
@@ -10917,7 +11080,9 @@ function sessionReceivesMonitor(data, facts) {
   const b = data.budget && typeof data.budget === 'object' ? data.budget : {};
   const planned = data.planned === true;
   const winTokens = contextWindowNow();
+  // v3.72.1 (F4): "200K (default)" wherever the window is named, when it is.
   const W = windowWord(winTokens);
+  const WIN = W + '-token window' + (contextWindowIsDefault() ? ' (default)' : '');
   const lines = [];
   const tier = (x) => (x && typeof x === 'object' ? x : {});
   const brief = tier(t.brief);
@@ -10984,7 +11149,7 @@ function sessionReceivesMonitor(data, facts) {
     value: tok(mcpTokens) + ' · ' + ssPct(mcpTokens, winTokens),
     sub: ssSize(mcp) + ' · measured · ' + repliesWord(replies),
     depth: { amount: mcpTokens, max: winTokens,
-      label: tok(mcpTokens) + ' tokens of a ' + W + '-token window' },
+      label: tok(mcpTokens) + ' tokens of a ' + WIN },
   });
   const harness = harnessNow();
   lines.push(harness === null
@@ -10993,7 +11158,7 @@ function sessionReceivesMonitor(data, facts) {
       sub: 'system prompt, tools, CLAUDE.md, skills · your estimate, not measured' });
   lines.push({ key: 'free at start',
     value: tok(Math.max(0, winTokens - mcpTokens - (harness || 0))),
-    sub: 'of a ' + W + '-token window' + (harness === null ? ', before your harness' : '') });
+    sub: 'of a ' + WIN + (harness === null ? ', before your harness' : '') });
   const omitted = tier(t.omitted);
   if (Number.isInteger(omitted.count) && omitted.count > 0) {
     lines.push({ key: 'left out, by name', value: ssDocs(omitted), sub: 'fetched by name when needed' });
@@ -11023,7 +11188,7 @@ function sessionReceivesMonitor(data, facts) {
         ? presetName(pb) + ' reading budget, with the suggestion'
         : 'with the suggestion applied',
       depth: { amount: pt, max: winTokens,
-        label: tok(pt) + ' tokens of a ' + W + '-token window, if the suggestion is applied' },
+        label: tok(pt) + ' tokens of a ' + WIN + ', if the suggestion is applied' },
     });
   } else {
     // v3.70.1: the planner's draft, measured by the same preview READ.
@@ -11037,7 +11202,7 @@ function sessionReceivesMonitor(data, facts) {
         value: tok(pt) + ' · ' + ssPct(pt, winTokens),
         sub: pp.changes + ' change' + (pp.changes === 1 ? '' : 's') + ' from Documents at start · ' + repliesWord(pr),
         depth: { amount: pt, max: winTokens,
-          label: tok(pt) + ' tokens of a ' + W + '-token window, if the planned changes are applied' },
+          label: tok(pt) + ' tokens of a ' + WIN + ', if the planned changes are applied' },
       });
     }
   }
@@ -11147,12 +11312,21 @@ function renderSessionStart(read) {
     const replies = data.delivery && Number.isInteger(data.delivery.replies) ? data.delivery.replies : 1;
     const winTokens = contextWindowNow();
     const folds = state.openFolds || {};
+    const pageTokens = data.delivery && Number.isInteger(data.delivery.pageTokens) && data.delivery.pageTokens > 0
+      ? data.delivery.pageTokens : null;
+    const chatCeiling = data.chat && Number.isInteger(data.chat.ceilingChars) ? data.chat.ceilingChars : null;
+    const chatChars = chatCeiling !== null && Number.isInteger(data.chat.effectiveChars) && data.chat.effectiveChars >= 0
+      ? data.chat.effectiveChars : null;
+    const chatWord = chatChars === null ? ''
+      : chatChars === 0 ? 'no document text (Index only)'
+        : '≤ ' + chatChars.toLocaleString('en-US') + ' characters';
     rows = plannerFoldHtml(read, data, readonly)
       + '<details class="mem-fold" data-mem-fold="receives"' + (folds.receives === false ? '' : ' open') + '>'
         + '<summary class="mem-fold-summary" id="mem-fold-receives">' + icon('chevronRight', 14)
           + '<span>What an agent receives</span>'
           + '<span class="mem-fold-meta">' + escapeHtml(tok(mcpTokens) + ' tokens · ' + ssSize(mcp)
-            + ' · ' + ssPct(mcpTokens, winTokens) + ' of ' + windowWord(winTokens))
+            + ' · ' + ssPct(mcpTokens, winTokens) + ' of ' + windowWord(winTokens)
+            + (contextWindowIsDefault() ? ' (default)' : ''))
           + '</span>'
         + '</summary>'
         + '<div class="mem-fold-body">' + sessionReceivesMonitor(data, facts) + '</div>'
@@ -11160,18 +11334,28 @@ function renderSessionStart(read) {
       + '<details class="mem-fold" data-mem-fold="reach"' + (folds.reach ? ' open' : '') + '>'
         + '<summary class="mem-fold-summary" id="mem-fold-reach">' + icon('chevronRight', 14)
           + '<span>How an agent reaches this</span>'
-          + '<span class="mem-fold-meta">MCP · session-start hook · Chat (≤ 40,000 characters)</span>'
+          + '<span class="mem-fold-meta">MCP · session-start hook · Chat'
+            + (chatChars !== null ? escapeHtml(' (' + chatWord + ')') : '') + '</span>'
         + '</summary>'
         + '<div class="mem-fold-body">' + renderMonitor({
           id: 'mem-ss-reach',
           label: 'How an agent reaches this context',
           lines: [
+            // v3.72.1 (truth audit F7): the per-reply cap is the route's
+            // `delivery.pageTokens` — the figure the meter's own delivery line
+            // prints — never a typed "≈20k" that disagreed with it ("≈20.5k").
             { key: 'MCP get_project_context', value: tok(mcpTokens),
-              sub: repliesWord(replies) + ' of at most ≈20k tokens · the owner’s budget' },
+              sub: repliesWord(replies)
+                + (pageTokens !== null ? ' of at most ' + tok(pageTokens) + ' tokens' : '')
+                + ' · the owner’s budget' },
             { key: 'session-start hook', value: tok(hookTokens),
               sub: 'Markdown, one piece · the owner’s budget' },
-            { key: 'Chat', value: '≤ 40,000 characters',
-              sub: 'the smaller of this budget and 40,000 characters' },
+            // …and Chat's figure is the store's min(this budget, Chat's
+            // ceiling), so Lean reads 32,768 and Index only reads none.
+            chatChars !== null
+              ? { key: 'Chat', value: chatWord,
+                sub: 'the smaller of this budget and ' + chatCeiling.toLocaleString('en-US') + ' characters' }
+              : { key: 'Chat', value: 'not measured', sub: 'the smaller of this budget and Chat’s ceiling' },
           ],
         }) + '</div>'
       + '</details>';
@@ -11301,6 +11485,10 @@ async function loadPlanEstimate(token) {
   const p = planFor();
   if (!p) return;
   const { domain, project } = p;
+  // v3.72.1 (F6): what this estimate is OF, so a later budget or document
+  // change is noticed and the estimate re-asked (refreshPlanEstimateIfStale).
+  p.estimateSig = planInputSig(state.projectRead);
+  p.estimateLoading = true;
   let next;
   try {
     const res = await fetch('/api/reading-plan/' + encodeURIComponent(domain) + '/'
@@ -11311,6 +11499,7 @@ async function loadPlanEstimate(token) {
   } catch (err) {
     next = { data: null, error: err.message };
   }
+  p.estimateLoading = false;
   if (!isCurrentMount(token)) return;
   const now = planFor();
   if (now !== p) return;
@@ -11345,6 +11534,8 @@ async function runPlan(arm, token) {
   if (!p || p.running || p.applying) return;
   p.running = arm;
   p.error = null;
+  // v3.72.1 (F6): the inputs this suggestion is made from, taken at the ask.
+  const sigAtAsk = planInputSig(state.projectRead);
   render(token);
   const { domain, project } = p;
   let out;
@@ -11377,6 +11568,7 @@ async function runPlan(arm, token) {
     return;
   }
   p.result = out.data;
+  p.resultSig = sigAtAsk;
   p.failedSpent = null;
   p.ticks = {};
   for (const x of (Array.isArray(out.data.proposals) ? out.data.proposals : [])) {
@@ -11912,7 +12104,8 @@ function plannerFoldHtml(read, data, readonly) {
     const replies = d && d.delivery && Number.isInteger(d.delivery.replies) ? d.delivery.replies : null;
     const failed = state.plannerPreview && state.plannerPreview.error && !d ? state.plannerPreview.error : null;
     const figures = t !== null
-      ? tok(t) + ' tokens · ' + ssPct(t, winTokens) + ' of ' + windowWord(winTokens) + ' · ' + repliesWord(replies)
+      ? tok(t) + ' tokens · ' + ssPct(t, winTokens) + ' of ' + windowWord(winTokens)
+        + (contextWindowIsDefault() ? ' (default)' : '') + ' · ' + repliesWord(replies)
       : failed ? 'the preview could not be measured: ' + failed : 'measuring…';
     body += '<div class="mem-pl-pending" id="mem-pl-pending" role="status">'
       + '<span class="mem-pl-pending-words"><b>Preview, not saved.</b> ' + escapeHtml(changes.length + ' change'
@@ -12037,6 +12230,9 @@ async function setContextSetting(body, token) {
  */
 function bindSessionAndPlan(root, token) {
   if (!root || typeof root.querySelectorAll !== 'function') return;
+  // v3.72.1 (F6): after every paint, the helper's estimate follows the budget
+  // and documents on screen rather than the ones the panel opened with.
+  refreshPlanEstimateIfStale(token);
   const once = (el) => { if (!el || el.__v367Bound) return false; el.__v367Bound = true; return true; };
   const one = (sel) => (typeof root.querySelector === 'function' ? root.querySelector(sel) : null);
 
@@ -12300,9 +12496,12 @@ function renderPlanPanel(facts, p) {
   const owner = read && Number.isInteger(read.readingBudgetBytes) ? read.readingBudgetBytes : null;
   const est = p.estimate;
   const runsOn = est && est.runsOn && typeof est.runsOn === 'object' ? est.runsOn : null;
-  const budget = est && Number.isInteger(est.budgetBytes) ? est.budgetBytes
-    : (owner !== null ? owner : READING_BUDGET_STANDARD);
-  const ownerSet = est ? est.budgetSource === 'owner' : owner !== null;
+  // v3.72.1 (F6): THE OWNER'S LIVE BUDGET FIRST. The estimate's figure is
+  // what the budget was when the panel opened; a budget picked since is the
+  // project's now, and the plan is made against it.
+  const budget = owner !== null ? owner
+    : (est && Number.isInteger(est.budgetBytes) ? est.budgetBytes : READING_BUDGET_STANDARD);
+  const ownerSet = owner !== null ? true : (est ? est.budgetSource === 'owner' : false);
   const phrase = (ownerSet ? 'your ' : 'the Standard ') + budgetWord(budget) + ' reading budget';
   const busy = !!p.running || !!p.applying;
   const aiAttrs = !runsOn ? ' disabled aria-disabled="true"'
@@ -12313,6 +12512,7 @@ function renderPlanPanel(facts, p) {
       ? renderDescription('The cost of an AI suggestion could not be read: ' + p.estimateError)
       : renderDescription('Reading what an AI suggestion would cost…'));
   const r = p.result;
+  const outdated = !!r && typeof p.resultSig === 'string' && p.resultSig !== planInputSig(read);
   let result = '';
   if (r) {
     const tt = r.totals && typeof r.totals === 'object' ? r.totals : {};
@@ -12326,6 +12526,12 @@ function renderPlanPanel(facts, p) {
     const dropped = Array.isArray(r.dropped) ? r.dropped.filter((x) => x && x.slug) : [];
     const notes = Array.isArray(r.notes) ? r.notes.filter((x) => typeof x === 'string' && x) : [];
     result = '<div class="mem-plan-result" id="mem-plan-result" role="status">'
+      + (outdated
+        ? '<div class="mem-note">' + icon('alertTriangle', 13) + '<span>'
+          + escapeHtml('Outdated: the reading budget or the documents changed after this suggestion '
+            + 'was made, so its figures describe the project as it was. Suggest again to apply one.')
+          + '</span></div>'
+        : '')
       + '<p class="mem-plan-summary">' + escapeHtml(clauses.join(' · ')) + '</p>'
       + (r.setBudgetSuggested === true
         ? '<label class="mem-plan-tick"><input type="checkbox" class="cur-check cur-check-sm" '

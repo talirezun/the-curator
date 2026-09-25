@@ -836,6 +836,52 @@ section('§8 — loadCapture: the request, the cache, and the reply that came la
     eq('a 200 carrying `ok: false` is an error too, with the route\'s own words',
       st.capture.error, 'no such project');
   }
+
+  // ── v3.72.1 (truth audit F2): STALE-WHILE-REVALIDATE ─────────────────
+  // The count used to be cached for the life of the page — an agent session
+  // after the first read never reached the tile or step ② until a reload,
+  // and the 30-day window stayed pinned to the first request's clock.
+  {
+    const st = { activeDomain: 'acme', activeProject: 'lumina', capture: null };
+    let sessions = 3;
+    const r = mk(() => {
+      const p = payload();
+      if (p.totals) p.totals = { ...p.totals, sessions };
+      p.__n = sessions;
+      return { ok: true, json: async () => p };
+    }, st);
+    await r.loadCapture('acme', 'lumina', 1);
+    eq('F2: the first read lands', st.capture.data.__n, 3);
+    sessions = 5;   // two more agent sessions happen elsewhere
+    await r.loadCapture('acme', 'lumina', 1, { maxAgeMs: 60000 });
+    eq('F2: CONTROL — an entry younger than the TTL is served from cache, no request',
+      r.calls.urls.length, 1);
+    const before = Date.now();
+    await r.loadCapture('acme', 'lumina', 1, { maxAgeMs: 0 });
+    eq('F2: an entry at the maximum age is RE-ASKED', r.calls.urls.length, 2);
+    eq('F2: ...and the newer count replaces the old one', st.capture.data.__n, 5);
+    const since2 = Date.parse(decodeURIComponent(/since=([^&]+)/.exec(r.calls.urls[1])[1]));
+    ok(Math.abs((before - since2) - WINDOW_DAYS * 86400000) < 10000,
+      'F2: ...with `since` computed for THAT request (30 days before now, not before the first read)');
+    const renders = r.calls.renders;
+    await r.loadCapture('acme', 'lumina', 1, { maxAgeMs: 0 });
+    eq('F2: an unchanged answer repaints nothing (a render would close an open ⓘ)',
+      r.calls.renders, renders);
+  }
+  {
+    const st = { activeDomain: 'acme', activeProject: 'lumina', capture: null };
+    let fail = false;
+    const r = mk(async () => {
+      if (fail) throw new Error('offline');
+      return good();
+    }, st);
+    await r.loadCapture('acme', 'lumina', 1);
+    fail = true;
+    await r.loadCapture('acme', 'lumina', 1, { maxAgeMs: 0 });
+    ok(!!st.capture.data && !st.capture.error,
+      'F2: a FAILED revalidation keeps the reading on screen rather than blanking it',
+      JSON.stringify(st.capture).slice(0, 200));
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════

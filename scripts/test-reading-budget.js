@@ -715,7 +715,9 @@ section('13. THE ROUTES — reading/budget, {atStart}, session-start and its pre
     // are exactly the v3.70.0 contract's (P2: layers, onDemand, delivery,
     // window, harness, tokens, presetsSummary, meter).
     eq(JSON.stringify(Object.keys(s).sort()), JSON.stringify(['ok', 'domain', 'project', 'budget', 'planned', 'presets', 'tiers', 'bytes', 'costLine', 'notes',
-      'tokens', 'layers', 'onDemand', 'delivery', 'window', 'harness', 'presetsSummary', 'meter'].sort()), '…with exactly the contract\'s top-level keys (v3.67.0 + v3.70.0 additive)');
+      'tokens', 'layers', 'onDemand', 'delivery', 'window', 'harness', 'presetsSummary', 'meter',
+      // v3.72.1 (truth audit F7): what Chat is handed, min(budget, Chat's ceiling).
+      'chat'].sort()), '…with exactly the contract\'s top-level keys (v3.67.0 + v3.70.0 + v3.72.1 additive)');
     assert(s.budget.bytes === 65536 && s.budget.source === 'owner' && s.budget.defaulted === false && s.budget.ownerBytes === 65536
       && s.budget.cap === WS.CONTEXT_MAX_BYTES_CAP && s.budget.replyCapBytes === 307200, 'budget: bytes/source/defaulted/ownerBytes/cap (the STORE\'s cap)/replyCapBytes', JSON.stringify(s.budget));
     eq(JSON.stringify(s.presets.map((p) => [p.id, p.bytes])), JSON.stringify(WS.READING_BUDGET_PRESETS.map((p) => [p.id, p.bytes])), 'presets: all seven (the store\'s ladder), in order');

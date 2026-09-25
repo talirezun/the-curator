@@ -51,6 +51,7 @@ const { __setDomainsDirOverride } = await import('../src/brain/config.js');
 __setUserDataDirOverride(USER_DATA);
 __setDomainsDirOverride(DOMAINS);
 const WS = await import('../src/brain/working-state.js');
+const FI = await import('../src/public/next/shared/foundations-init.js');
 const FA = await import('../src/public/next/shared/foundations-add.js');
 
 let passed = 0, failed = 0;
@@ -459,6 +460,20 @@ section('11. The checklist and the commit, DOM-free (v3.69.0)');
       { path: 'big.md', bytes: 600000, suggestedSlug: 'big.md', tooLarge: true }],
     picks: { 'architecture.md': true, 'b.md': true, 'big.md': true } });
   eq('a fresh local panel starts on Copy once', FA.freshAddPanel('local', {}, facts).mode, 'copy');
+  {
+    // v3.72.1 (truth audit tray-copy F9): the per-document limit in the refused
+    // row's sentence is the SERVER's `cap` on the candidate, not a third,
+    // unpinned client literal (it was `512 * 1024` here, pinned nowhere).
+    const capRec = Object.assign({}, rec, { candidates: [{ path: 'big.md', bytes: 600000,
+      suggestedSlug: 'big.md', tooLarge: true, cap: 256 * 1024 }], picks: {} });
+    const why = (FA.renderAddPanel(capRec, facts, 'local', {}).match(/fnd-init-cand-why">([^<]*)/) || [])[1];
+    eq('F9: a refused row quotes the candidate\'s own cap', why,
+      '586 KB is over the 256 KB per-document limit — it cannot be added');
+    eq('F9: the fallback constant IS foundations-init.js\'s pinned MAX_FOUNDATION_BYTES (one client copy)',
+      FA.MAX_DOCUMENT_BYTES, FI.MAX_FOUNDATION_BYTES);
+    eq('F9: …which is the store\'s own', FA.MAX_DOCUMENT_BYTES, WS.MAX_FOUNDATION_BYTES);
+    eq('F9: and the project figure is foundations-init.js\'s too', FA.PROJECT_BUDGET_BYTES, FI.FOUNDATIONS_BUDGET_BYTES);
+  }
   ok('an already-added row (the SERVER\'s field) is never counted as ticked, even if its tick is set',
     JSON.stringify(FA.tickedPaths(rec)) === JSON.stringify(['b.md']));
   ok('...nor is a too-large row', !FA.tickedPaths(rec).includes('big.md'));

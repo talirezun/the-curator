@@ -317,7 +317,9 @@ const CTX = contextOverview();
   section('§1c — the two adopters may differ in exactly three ways');
   ok(withClass(DOM, 'cur-ov-sub').length === 0,
     'the Domains figures carry NO second line, so they are byte-identical to the row they replaced');
-  eq('the Context figures carry one each', withClass(CTX, 'cur-ov-sub').length, 3);
+  // v3.72.1: 4 — AGENT SESSIONS gained "last 30 days" when a count was taken
+  // (truth audit F3), beside DOCUMENTS/MEMORY/KNOWLEDGE's own second lines.
+  eq('the Context figures carry one each', withClass(CTX, 'cur-ov-sub').length, 4);
   ok(/class="cur-ov-value dm-stat-value/.test(DOM) && !/dm-stat-value/.test(CTX),
     'and the alias token is the second — see §2');
   // ── THE THIRD IS A TRACK FLOOR, NOT A TYPE RUNG ──────────────────────

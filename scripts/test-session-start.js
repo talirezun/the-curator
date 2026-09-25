@@ -251,6 +251,40 @@ CFG.setContextWindowSettings({ contextWindowTokens: 1000000, harnessEstimateToke
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+section('3b. v3.72.1 — the caps are the store\'s own, and Chat\'s figure is measured (truth audit F7/F8)');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  // F8: step ④'s "of the ≈8.2k brief budget" / "≈12k handoff budget" were
+  // retyped copies of the store's limits with no guard; step ② reads the
+  // handoff limit off MAX_STATE_BYTES via the route. One number, one source.
+  eq(SS.SESSION_BRIEF_CAP, WS.MAX_BRIEF_BYTES, 'F8: the brief cap IS the store\'s MAX_BRIEF_BYTES');
+  eq(SS.SESSION_HANDOFF_CAP, WS.MAX_STATE_BYTES, 'F8: the handoff cap IS the store\'s MAX_STATE_BYTES (step ②\'s figure too)');
+  eq(SS.SESSION_LEAN_BYTES, WS.READING_BUDGET_PRESETS.find((p) => p.id === 'lean').bytes,
+    'F8: the cost line\'s threshold is the Lean preset off the store\'s ladder, not a literal');
+  const r = await SS.sessionStartReport('alpha', 'two', null, { presets: false, hook: false });
+  eq(r.tiers.brief.capBytes, WS.MAX_BRIEF_BYTES, 'F8: …and the report carries the store\'s brief cap');
+  eq(r.tiers.handoff.capBytes, WS.MAX_STATE_BYTES, 'F8: …and the store\'s handoff cap');
+  const toolSrc = readFileSync(path.join(ROOT, 'mcp/tools/working-state.js'), 'utf8');
+  const m = /const RESPONSE_BUDGET_BYTES = (\d+) \* 1024;/.exec(toolSrc);
+  eq(m ? Number(m[1]) * 1024 : null, SS.SESSION_REPLY_CAP,
+    'F8: the reply cap matches the MCP door\'s module-private RESPONSE_BUDGET_BYTES');
+  // F7: Chat's ceiling is chat.js's constant, and the report's Chat figure is
+  // min(the budget the store applies, that ceiling).
+  const CHAT = await import('../src/brain/chat.js');
+  eq(SS.SESSION_CHAT_CEILING_CHARS, CHAT.PROJECT_CONTEXT_BUDGET_CHARS,
+    'F7: Chat\'s ceiling here IS chat.js\'s PROJECT_CONTEXT_BUDGET_CHARS');
+  assert(r.chat && r.chat.ceilingChars === CHAT.PROJECT_CONTEXT_BUDGET_CHARS
+    && r.chat.effectiveChars === Math.min(r.budget.bytes, CHAT.PROJECT_CONTEXT_BUDGET_CHARS),
+  'F7: the report says what Chat is handed — min(this budget, the ceiling)', JSON.stringify({ chat: r.chat, b: r.budget.bytes }));
+  const lean = await SS.sessionStartReport('alpha', 'two', { ownerBudgetBytes: 32768 }, { presets: false, hook: false });
+  eq(lean.chat && lean.chat.effectiveChars, 32768, 'F7: a Lean what-if reads 32,768 for Chat — the budget, under the ceiling');
+  const none = await SS.sessionStartReport('alpha', 'two', { ownerBudgetBytes: 0 }, { presets: false, hook: false });
+  eq(none.chat && none.chat.effectiveChars, 0, 'F7: Index only hands Chat no document text');
+  eq(r.delivery.pageTokens, WS.estimateTokens(WS.CONTEXT_PAGE_BYTES),
+    'F7: the per-reply cap the view prints is the route\'s pageTokens, the store\'s page size in tokens');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 section('4. The seven presets — true differences, and plain equality');
 // ═════════════════════════════════════════════════════════════════════════
 {

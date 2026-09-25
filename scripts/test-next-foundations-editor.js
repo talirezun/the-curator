@@ -731,8 +731,10 @@ section('§5 — THE CHOOSER, RENDERED, IN BOTH HOSTS');
   // tell somebody they are about to mirror nine times what an agent will
   // receive, which is what happened on the maintainer's own repository: 25
   // documents, 1,875 KB, every one of them ticked by default.
-  ok('the count line says how many of what, AND what it costs',
-    /1 of 1 ticked · 4 KB of a 200 KB budget/.test(scanned), scanned.slice(-800));
+  // v3.72.1 (truth audit tray-copy F2 / context F9): what it WEIGHS, neutrally
+  // — no "of a 200 KB budget", the figure v3.70.0 withdrew on Context's add panel.
+  ok('the count line says how many of what, AND what it weighs — with no retired 200 KB budget',
+    /1 of 1 ticked · 4 KB</.test(scanned) && !/200 KB/.test(scanned), scanned.slice(-800));
   ok('...and the over-budget warning is EMITTED and `hidden` under the budget, so the tick '
     + 'that crosses the line can reveal it without a re-render',
   /class="fnd-init-note fnd-init-note-loud fnd-init-budget" id="x-budget" hidden/.test(scanned),
@@ -1039,7 +1041,7 @@ function docModel(byId, bySel) {
     !('docs/a.md' in choice.picks), JSON.stringify(choice.picks));
   eq('A TICK REPAINTS NOTHING — the whole point of the change', renders, 0);
   ok('...and the count line is rewritten in place instead',
-    /0 of 1 ticked · 0 bytes of a 200 KB budget/.test(countNode.textContent),
+    countNode.textContent === '0 of 1 ticked · 0 bytes',
     countNode.textContent);
   // THE HOST'S COMMIT IS THE ONE THING THE CHOOSER CANNOT PATCH ITSELF: it
   // emits no primary (the other host has its own), so the reason travels back
@@ -1062,14 +1064,12 @@ function docModel(byId, bySel) {
     // v3.65.3: "the rest is dropped" was FALSE — the store omits a document
     // from the session-start reading and keeps it in the index, fetched by
     // name. The sentence names the two budgets and what really happens.
-    ok('over the 200 KB budget, the warning names what REALLY happens: 120 KB of text at '
-      + 'session start, everything else listed and fetched by name',
-      FI.budgetWarning(fat) === 'Over the 200 KB project budget. Agents are handed up to 120 KB '
-        + 'of document text at session start (only the read-first ones, if any are flagged); '
-        + 'every other document stays listed and is fetched by name when needed.',
-      FI.budgetWarning(fat));
-    ok('...and never again claims anything is dropped', !/dropped/i.test(FI.budgetWarning(fat)),
-      FI.budgetWarning(fat));
+    // v3.72.1: WITHDRAWN. The chooser raised "Over the 200 KB project budget"
+    // with a literal 120 KB while Context's add panel (the same act) raised
+    // nothing; the owner's reading budget is what bounds session-start text.
+    eq('a 300 KB set raises NO "over budget" alarm — the retired 200 KB figure, as on Context\'s add panel',
+      FI.budgetWarning(fat), '');
+    eq('...the same answer foundations-add.js gives for the same act', FI.budgetWarning(fat), FA.budgetWarning());
     fat.picks = {};
     eq('...and says nothing at all under the budget', FI.budgetWarning(fat), '');
   }
@@ -2326,14 +2326,18 @@ section('§12 — v3.61.1: THE RHYTHM, THE PICKER, THE DEFAULT TICKS, THE AGE');
       picks: { 'a.md': true } };
     eq('the total counts the ticked candidates and nothing else',
       FI.tickedBytes(c), 120 * 1024);
-    ok('the count line reads ticks, bytes and the budget in one line',
-      FI.countLineText(c) === '1 of 2 ticked · 120 KB of a 200 KB budget', FI.countLineText(c));
+    ok('the count line reads ticks and bytes in one line, neutrally',
+      FI.countLineText(c) === '1 of 2 ticked · 120 KB', FI.countLineText(c));
     eq('...and under the budget there is no warning', FI.budgetWarning(c), '');
     c.picks['b.md'] = true;
     eq('a second tick crosses the budget', FI.tickedBytes(c), 210 * 1024);
-    ok('...and the warning names what an agent will actually receive',
-      /^Over the 200 KB project budget\. Agents are handed up to 120 KB of document text at session start/
-        .test(FI.budgetWarning(c)), FI.budgetWarning(c));
+    eq('...and past the old 200 KB figure there is still no warning (v3.72.1)', FI.budgetWarning(c), '');
+    {
+      const add = { ...c, addMode: true, projectBytes: 100 * 1024 };
+      const h = FI.countLineHtml(add);
+      ok('ADD mode states the project total as a reading — no bar, no danger, no 200 KB',
+        /project total<\/span> 310 KB</.test(h) && !/cur-depth|danger|200 KB/.test(h), h);
+    }
     // A TYPED EXTRA HAS NO SIZE, so it is disclosed rather than counted as 0 —
     // the figure would otherwise read as a measurement when it is a floor.
     c.extras = [{ path: 'notes/x.md', role: 'other' }];
