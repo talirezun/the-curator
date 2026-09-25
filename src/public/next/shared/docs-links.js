@@ -77,6 +77,8 @@ export const DOCS_LINKS = {
   // at the numbers rather than at the feature overview.
   'settings.health-limits': { file: 'ai-health.md', anchor: 'scale-caps-baked-into-the-code' },
   'settings.knowledge-base': { file: 'user-guide.md', anchor: 'knowledge-base-folder' },
+  // v3.76.0 — Settings › Trash: restore or delete forever.
+  'settings.trash': { file: 'user-guide.md', anchor: 'trash' },
   // THE TOOL MAP. The guide's MCP section rather than a section of its own,
   // because the first thing a reader of the map wants is the PRIVACY claim,
   // and that claim only means anything beside the description of the bridge

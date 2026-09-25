@@ -217,6 +217,7 @@ const REQUIRED = [
   'settings.update-recovery-installer', 'settings.appearance', 'settings.system-check',
   'settings.mcp', 'settings.mcp-connect', 'settings.mcp-domain', 'settings.mcp-tool-map',
   'settings.mcp-across', 'settings.health', 'settings.storage', 'settings.vault-folder',
+  'settings.trash',
   'settings.github-token',
   'shared.enable', 'shared.token-check', 'shared.wizard-repo', 'shared.wizard-token',
   'shared.wizard-attribution', 'sync.page',

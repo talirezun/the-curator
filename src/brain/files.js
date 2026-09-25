@@ -1836,7 +1836,7 @@ export async function deleteDomain(slug, opts = {}) {
   }
   let trashPath;
   try {
-    trashPath = await moveToTrash(src, 'domains', slug);
+    trashPath = await moveToTrash(src, 'domains', slug, { domain: slug });
   } finally {
     await release();   // a no-op once the lock has moved with the folder
   }

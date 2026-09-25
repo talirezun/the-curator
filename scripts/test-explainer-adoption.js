@@ -268,8 +268,8 @@ const settingsCode = code(byRel['views/settings.js'].src);
 const secMap = /const SECTION_INFO = Object\.freeze\(\{([\s\S]*?)\}\);/.exec(settingsCode);
 ok(!!secMap, 'Settings SECTION_INFO is a frozen map of keys');
 const secKeys = secMap ? [...secMap[1].matchAll(/^\s*([a-z]+):\s*'([a-z.-]+)'/gm)] : [];
-ok(secKeys.length === 5 && secKeys.every((m) => !!EXPLAINERS[m[2]]),
-  'its five sections each name an entry: ' + secKeys.map((m) => m[1] + '→' + m[2]).join(', '));
+ok(secKeys.length === 6 && secKeys.every((m) => !!EXPLAINERS[m[2]]),
+  'its six sections each name an entry (Trash since v3.76.0): ' + secKeys.map((m) => m[1] + '→' + m[2]).join(', '));
 for (const m of secKeys) APP_KEYS.add(m[2]);
 ok(/info: infoKey \? explainerHtml\(infoKey\) : null,\s*\n\s*infoHtml: true/.test(settingsCode),
   'the Settings header renders the section’s key through explainerHtml');

@@ -3103,3 +3103,156 @@
 }
 /* The System check's run line sits directly under its buttons (v3.67.0). */
 .settings-verify-runs-on { margin-top: var(--space-4); }
+
+/* ── Trash (v3.76.0) ─────────────────────────────────────────────────────
+   Settings › Trash: one row per entry in The Curator's trash (words in
+   views/trash-list.js). The row's delete is the ONE neutral `.row-act`
+   (shared/row-action.css) — no colour here; red appears only on the
+   Delete-forever card's own button. A row's status line (the name is taken,
+   the parent is gone) is a warning, so it is unfolded and amber, the
+   attention pair every caution uses. */
+.trash-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.trash-row {
+  padding: var(--space-5) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.trash-row-line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-5);
+}
+.trash-row-main { flex: 1; min-width: 0; }
+.trash-row-title {
+  font-size: var(--text-sm);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.trash-kind {
+  display: inline-block;
+  padding: 1px var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-subtle);
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.trash-name {
+  font: var(--type-mono);
+  font-size: var(--text-xs);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.trash-owner { color: var(--text-2); }
+.trash-row-meta {
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  line-height: var(--leading-relaxed);
+  overflow-wrap: anywhere;
+}
+.trash-row-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: none;
+}
+.trash-status,
+.trash-error {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  color: var(--text);
+  line-height: var(--leading-relaxed);
+}
+.trash-status {
+  border: 1px solid var(--attention-text);
+  background: var(--attention-tint);
+}
+.trash-error {
+  border: 1px solid var(--danger-border);
+  background: var(--danger-tint);
+}
+.trash-outcome {
+  margin-bottom: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  font-size: var(--text-sm);
+  color: var(--text);
+  line-height: var(--leading-relaxed);
+  overflow-wrap: anywhere;
+}
+.trash-empty {
+  padding: var(--space-5) 0;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+.trash-note {
+  margin-top: var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  line-height: var(--leading-relaxed);
+  overflow-wrap: anywhere;
+}
+.trash-del-card {
+  margin-top: var(--space-4);
+  padding: var(--space-6) var(--space-7);
+  border: 1px solid var(--danger-text);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+.trash-del-title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+  margin-bottom: var(--space-3);
+}
+.trash-del-body {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  line-height: var(--leading-relaxed);
+  max-width: 76ch;
+}
+.trash-del-label {
+  display: block;
+  margin: var(--space-6) 0 var(--space-2);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.trash-del-label .trash-name { text-transform: none; letter-spacing: 0; }
+.trash-del-input {
+  width: 100%;
+  max-width: 420px;
+  box-sizing: border-box;
+  height: var(--control-md);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+  color: var(--text);
+  font: var(--type-mono);
+  font-size: var(--text-sm);
+}
+.trash-del-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: var(--ring-focus);
+}
+.trash-del-actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+@media (max-width: 560px) {
+  .trash-row-line { flex-direction: column; gap: var(--space-3); }
+}
