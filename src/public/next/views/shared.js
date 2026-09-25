@@ -196,7 +196,12 @@ import { explainerHtml, explainerMark } from '../shared/explainer.js';
 // IDENTITY dot for every domain it names (rule 5). Imported, never copied —
 // shared/sidebar.js is the kit's file and is not edited here.
 import { renderMonitor } from '../shared/monitor.js';
-import { freshnessTier } from '../shared/age.js';
+import { freshnessTier, formatAge } from '../shared/age.js';
+// v3.72.1 (F12): the app's ONE age clock. Every age this view prints carries
+// `data-age-at`, and the shared ticker rewrites the words in place — no
+// re-render, so a typed revoke confirmation or a shown-once token is never
+// touched by it.
+import { subscribeAgeTicker } from '../shared/age-ticker.js';
 import { identityDotClass } from '../shared/sidebar.js';
 
 function freshState() {
@@ -220,6 +225,10 @@ function freshState() {
     // and a row that snapped shut under a press would be a row nobody could
     // use.
     expandedSecRows: new Set(),
+    // v3.72.1 (F7): mirror page counts this panel re-read after its own pull,
+    // by domain slug — kept for the mount, since the host's list is not
+    // reloaded by a Shared Brain action.
+    freshPages: {},
   };
 }
 
@@ -232,6 +241,7 @@ let myMountToken = 0;
 // onEnter, cancelled in the teardown. See shared/loading-gate.js.
 let loadGate = null;
 let unsubscribeWriteGate = null;
+let unsubscribeAgeTicker = null;
 
 // ═══════════════════════════════════════════════════════════════════════
 // THE HOST SEAM (v3.64.0) — ONE PANEL, TWO HOSTS
@@ -268,6 +278,7 @@ let unsubscribeWriteGate = null;
 // isCurrentMount() cannot: whether the shell is actually showing THIS view.
 const SHELL_HOST = Object.freeze({
   mode: 'view', el: null, domain: null, onBusyChange: null, onLensChange: null, describeDomain: null,
+  onActionDone: null,
 });
 let hostCtx = SHELL_HOST;
 // True only between registerView('shared')'s onEnter and its teardown.
@@ -466,6 +477,9 @@ export function mountSharedSection(el, opts) {
     // install's own domain index — the identity dot's key (rule 5); the
     // section has no domain list of its own and must not invent an order.
     describeDomain: typeof o.describeDomain === 'function' ? o.describeDomain : null,
+    // ADDITIVE (v3.72.1, F7): `onActionDone({action, connId})` — called after
+    // a Pull finishes, so a host that shows page counts can reload its list.
+    onActionDone: typeof o.onActionDone === 'function' ? o.onActionDone : null,
   };
   const sameElement = inSection() && hostCtx.el === el;
   // ── THE SAME MOUNT ON A NEW ELEMENT IS A RE-POINT TOO (v3.65.3) ────────
@@ -599,6 +613,7 @@ function startShared(token) {
   unsubscribeWriteGate = onWriteGateChange(() => {
     if (isCurrentMount(token)) render(token);
   });
+  if (!unsubscribeAgeTicker) unsubscribeAgeTicker = subscribeAgeTicker();
 }
 
 function stopShared() {
@@ -606,6 +621,7 @@ function stopShared() {
   // this teardown would paint a loader into whatever view comes next.
   if (loadGate) { loadGate.cancel(); loadGate = null; }
   if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
+  if (unsubscribeAgeTicker) { unsubscribeAgeTicker(); unsubscribeAgeTicker = null; }
   // Never leave a credential-holding overlay mounted behind the next
   // view — see the file-header comment above.
   closeSharedBrainWizardIfOpen();
@@ -827,8 +843,10 @@ function renderSidebar(token) {
       '<div class="cur-eyebrow" style="margin-top:2px">YOUR SHARED BRAINS</div>' +
       '<div class="sb-conn-list">' +
       state.connections.map((c) => {
-        const pending = typeof c.pending_pages === 'number' ? c.pending_pages : 0;
-        const stateLabel = c.read_only ? 'read-only' : (pending > 0 ? pending + ' pending' : 'up to date');
+        const { pending } = pendingReading(c);
+        const stateLabel = c.read_only ? 'read-only'
+          : pending === null ? 'pending unknown'
+          : (pending > 0 ? pending + ' pending' : 'up to date');
         return (
           '<div class="sb-conn-row">' +
             '<span class="sb-conn-dot' + (c.read_only ? ' sb-conn-dot-readonly' : '') + '"></span>' +
@@ -1142,19 +1160,23 @@ function renderMirrorStrip(conn, last) {
   );
 }
 
+// v3.72.1 (F12): the app-wide ladder (shared/age.js formatAge — weeks after
+// 7 days, months after 5 weeks), not a hand-tuned second one that said
+// "12 days ago" where every other monitor says "1 week ago". The word and
+// the freshness dot beside it now come from the same module.
 function formatRelativeTime(iso, neverLabel) {
   if (!iso) return neverLabel;
-  const then = new Date(iso);
-  if (Number.isNaN(then.getTime())) return neverLabel;
-  const diffMs = Date.now() - then.getTime();
-  if (diffMs < 60000) return 'just now';
-  const min = Math.floor(diffMs / 60000);
-  if (min < 60) return min + ' min ago';
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return hr + ' hr ago';
-  const day = Math.floor(hr / 24);
-  if (day < 30) return day + (day === 1 ? ' day ago' : ' days ago');
-  return then.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return neverLabel;
+  const words = formatAge(Math.max(0, Math.round((Date.now() - t) / 1000)));
+  return words === null ? neverLabel : words;
+}
+
+/** The attributes that let the shared ticker keep an age live ('' when the
+ *  time is not a real one — a "never" does not tick). */
+function ageTickAttrs(iso) {
+  const t = iso ? new Date(iso).getTime() : NaN;
+  return Number.isFinite(t) ? ' data-age-at="' + escapeHtml(String(iso)) + '" data-age-text' : '';
 }
 
 
@@ -1167,7 +1189,11 @@ function sectionDomainFacts(slug) {
   let facts = null;
   if (fn && slug) { try { facts = fn(slug); } catch { facts = null; } }
   const index = facts && Number.isFinite(facts.index) && facts.index >= 0 ? facts.index : -1;
-  const pages = facts && Number.isFinite(facts.pages) ? facts.pages : null;
+  let pages = facts && Number.isFinite(facts.pages) ? facts.pages : null;
+  // v3.72.1 (F7): a count this section re-read after its own pull beats the
+  // host's list until the host re-mounts us (mountSharedSection clears it).
+  const fresh = state.freshPages && slug ? state.freshPages[slug] : undefined;
+  if (Number.isFinite(fresh)) pages = fresh;
   return { index, pages };
 }
 
@@ -1186,12 +1212,39 @@ function sectionAgeLine(key, iso, sub) {
   const t = iso ? new Date(iso).getTime() : NaN;
   const line = { key, value: 'never' };
   if (Number.isFinite(t)) {
-    line.value = formatRelativeTime(iso, 'never');
+    // The words ride in the (trusted) mark, inside a `data-age-at` span, so
+    // the shared ticker can keep them live; the monitor escapes `value`, so
+    // the value itself is left empty rather than duplicating the words.
+    line.value = '';
     line.markHtml = '<span class="fresh-dot fresh-' + freshnessTier(Math.max(0, (Date.now() - t) / 1000)) +
-      '" aria-hidden="true"></span>';
+      '" aria-hidden="true"></span>' +
+      '<span class="sb-age"' + ageTickAttrs(iso) + '>' + escapeHtml(formatRelativeTime(iso, 'never')) + '</span>';
   }
   if (sub) line.sub = sub;
   return line;
+}
+
+/** v3.72.1 (F9): the "pushed" line is the last push that WROTE a
+ *  contribution (`last_contribution_at`). `last_push_at` is the scan
+ *  watermark and advances on a push that sent nothing; a connection that
+ *  predates the new field says it has no record rather than borrowing the
+ *  watermark's time. */
+function sectionPushedLine(conn) {
+  if (conn && conn.last_contribution_at) return sectionAgeLine('pushed', conn.last_contribution_at);
+  if (conn && conn.last_push_at) {
+    return { key: 'pushed', value: 'not recorded', sub: 'last push run ' + formatRelativeTime(conn.last_push_at, 'never') };
+  }
+  return sectionAgeLine('pushed', null);
+}
+
+/** v3.72.1 (F10/F13): the pending reading. `pending_pages: null` = could not
+ *  be counted — "unknown", never "up to date". `pending_retry_pages` is a
+ *  SUBSET of the pending pages, so it is worded "of which", never added. */
+function pendingReading(conn) {
+  const pending = conn && typeof conn.pending_pages === 'number' && Number.isFinite(conn.pending_pages) ? conn.pending_pages : null;
+  const retry = conn && typeof conn.pending_retry_pages === 'number' && Number.isFinite(conn.pending_retry_pages)
+    ? Math.min(conn.pending_retry_pages, pending === null ? 0 : pending) : 0;
+  return { pending, retry };
 }
 
 /** The repository cell — a link only for a real GitHub repo; local/other
@@ -1272,8 +1325,7 @@ function renderSectionConnection(conn, last) {
   const mirrorBusy = !busy && !!mirrorDomain && isDomainWriteBusy(mirrorDomain);
   const pushDisabled = busy || !!pushBusyDomain;
   const pullSynthDisabled = busy || mirrorBusy;
-  const pending = typeof conn.pending_pages === 'number' ? conn.pending_pages : 0;
-  const retry = conn.pending_retry && typeof conn.pending_retry === 'object' ? Object.keys(conn.pending_retry).length : 0;
+  const { pending, retry } = pendingReading(conn);
   const skips = Array.isArray(conn.permanent_skip) ? conn.permanent_skip.filter((p) => typeof p === 'string') : [];
   const locals = Array.isArray(conn.local_domains) ? conn.local_domains.filter((d) => typeof d === 'string' && d) : [];
   const isAdmin = conn.has_admin_token === true;
@@ -1281,12 +1333,17 @@ function renderSectionConnection(conn, last) {
   const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
 
   const lines = [
-    sectionAgeLine('pushed', conn.last_push_at),
+    sectionPushedLine(conn),
     sectionAgeLine('pulled', conn.last_pull_at),
     sectionAgeLine('synthesis', conn.last_synthesis_at, 'run by the cohort admin'),
   ];
-  if (!readOnly) lines.push({ key: 'pending', value: plural(pending, 'page'), sub: 'ready to push', ...(pending > 0 ? { tone: 'warn' } : {}) });
-  if (retry > 0) lines.push({ key: 'retrying', value: plural(retry, 'page') });
+  if (!readOnly) {
+    lines.push(pending === null
+      ? { key: 'pending', value: 'unknown', sub: 'could not be counted', tone: 'warn' }
+      : { key: 'pending', value: plural(pending, 'page'),
+          sub: 'ready to push' + (retry > 0 ? ' · ' + retry + ' of them automatic retr' + (retry === 1 ? 'y' : 'ies') : ''),
+          ...(pending > 0 ? { tone: 'warn' } : {}) });
+  }
   if (mirrorDomain) lines.push({ key: 'mirror', value: mirrorDomain, markHtml: sectionDotHtml(mirrorDomain) });
   lines.push({
     key: 'contributes',
@@ -1515,8 +1572,8 @@ function renderCard(conn) {
     ? 'Organisational — cohort owns the synthesised output'
     : 'You retain copyright in your own contributions';
 
-  const pendingCount = typeof conn.pending_pages === 'number' ? conn.pending_pages : 0;
-  const retryCount = conn.pending_retry && typeof conn.pending_retry === 'object' ? Object.keys(conn.pending_retry).length : 0;
+  const { pending: pendingOrNull, retry: retryCount } = pendingReading(conn);
+  const pendingCount = pendingOrNull === null ? 0 : pendingOrNull;
   const skips = Array.isArray(conn.permanent_skip) ? conn.permanent_skip.filter((p) => typeof p === 'string') : [];
 
   const fellowShort = (conn.fellow_id || '').slice(0, 8);
@@ -1531,21 +1588,26 @@ function renderCard(conn) {
       '</div>' +
 
       '<div class="sb-card-stats">' +
-        '<span><span class="sb-card-stat-label">Last pushed</span><span class="sb-num">' + escapeHtml(formatRelativeTime(conn.last_push_at, 'never')) + '</span></span>' +
-        '<span><span class="sb-card-stat-label">Last pulled</span><span class="sb-num">' + escapeHtml(formatRelativeTime(conn.last_pull_at, 'never')) + '</span></span>' +
-        '<span><span class="sb-card-stat-label">Last synthesis</span><span class="sb-num">' + escapeHtml(formatRelativeTime(conn.last_synthesis_at, 'never — ask your admin to run synthesis')) + '</span></span>' +
+        (conn.last_contribution_at || !conn.last_push_at
+          ? '<span><span class="sb-card-stat-label">Last pushed</span><span class="sb-num"' + ageTickAttrs(conn.last_contribution_at) + '>' + escapeHtml(formatRelativeTime(conn.last_contribution_at, 'never')) + '</span></span>'
+          : '<span><span class="sb-card-stat-label">Last pushed</span><span class="sb-num">not recorded (last push run ' + escapeHtml(formatRelativeTime(conn.last_push_at, 'never')) + ')</span></span>') +
+        '<span><span class="sb-card-stat-label">Last pulled</span><span class="sb-num"' + ageTickAttrs(conn.last_pull_at) + '>' + escapeHtml(formatRelativeTime(conn.last_pull_at, 'never')) + '</span></span>' +
+        '<span><span class="sb-card-stat-label">Last synthesis</span><span class="sb-num"' + ageTickAttrs(conn.last_synthesis_at) + '>' + escapeHtml(formatRelativeTime(conn.last_synthesis_at, 'never — ask your admin to run synthesis')) + '</span></span>' +
         '<span><span class="sb-card-stat-label">Domains</span><span class="sb-name">' + escapeHtml(domainsLabel) + '</span></span>' +
         '<span><span class="sb-card-stat-label">Data handling</span><span>' + escapeHtml(dataHandlingLabel) + '</span></span>' +
       '</div>' +
 
       renderTokenCheck(conn, card) +
 
-      (!readOnly && (pendingCount > 0 || retryCount > 0)
+      (!readOnly && pendingOrNull === null
+        ? '<div class="sb-card-pending">' + icon('alertTriangle', 13) +
+          '<span>Pending pages could not be counted.</span></div>'
+        : '') +
+      (!readOnly && pendingCount > 0
         ? '<div class="sb-card-pending">' + icon('alertTriangle', 13) +
           '<span>' +
-            (pendingCount > 0 ? '<span class="sb-num">' + pendingCount + '</span> page' + (pendingCount === 1 ? '' : 's') + ' ready to push' : '') +
-            (pendingCount > 0 && retryCount > 0 ? ' · ' : '') +
-            (retryCount > 0 ? '<span class="sb-num">' + retryCount + '</span> queued for automatic retry' : '') +
+            '<span class="sb-num">' + pendingCount + '</span> page' + (pendingCount === 1 ? '' : 's') + ' ready to push' +
+            (retryCount > 0 ? ' (<span class="sb-num">' + retryCount + '</span> of them automatic retr' + (retryCount === 1 ? 'y' : 'ies') + ')' : '') +
           '</span>' +
           '<span class="sb-card-pending-note">(no cost estimate available for Shared Brain pushes yet)</span>' +
         '</div>'
@@ -1669,11 +1731,11 @@ function renderActions(conn, card, busy, readOnly, pushBusyDomain, mirrorBusy) {
 
 function renderPushConfirm(conn, busy) {
   const domains = Array.isArray(conn.local_domains) && conn.local_domains.length ? conn.local_domains.join(', ') : '(no domains configured)';
-  const pendingCount = typeof conn.pending_pages === 'number' ? conn.pending_pages : 0;
+  const pendingCount = typeof conn.pending_pages === 'number' ? conn.pending_pages : null;
   return (
     '<div class="sb-confirm-inline sb-confirm-block">' +
       '<span>Push will scan <span class="sb-name">' + escapeHtml(domains) + '</span> for pages changed since your last push ' +
-      '(currently <span class="sb-num">' + pendingCount + '</span> pending), summarise each with your configured AI provider ' +
+      (pendingCount === null ? '(the pending count could not be taken)' : '(currently <span class="sb-num">' + pendingCount + '</span> pending)') + ', summarise each with your configured AI provider ' +
       '— this spends API credits, and Shared Brain pushes don’t have a cost estimate yet — then send the summaries to the ' +
       'shared repository. Nothing has been sent yet.</span>' +
       '<div class="sb-confirm-actions">' +
@@ -1741,8 +1803,11 @@ function renderCohortBody(conn, card) {
     const total = members.reduce((n, m) => n + (m.pages || 0), 0);
     const self = c.selfFellowId ? members.find((m) => m.fellow_id === c.selfFellowId) : null;
     const selfPages = self ? (self.pages || 0) : 0;
+    // v3.72.1 (F8): each contributor's DISTINCT pages, summed — a page two
+    // contributors both touched counts once for each of them, which the
+    // wording says ("contributed pages"), rather than implying a page total.
     const attributionText = total > 0
-      ? '<span class="sb-num">' + selfPages + ' of ' + total + '</span> pages (<span class="sb-num">' + Math.round((selfPages / total) * 100) + '%</span>)'
+      ? '<span class="sb-num">' + selfPages + ' of ' + total + '</span> contributed pages (<span class="sb-num">' + Math.round((selfPages / total) * 100) + '%</span>)'
       : 'no contributions yet';
 
     let mirrorLine;
@@ -2578,9 +2643,14 @@ function renderRevokePanel(conn, card, busy, mirrorBusy) {
     const isSelf = !!(m.selfFellowId && mem.fellow_id === m.selfFellowId);
     const who = mem.display_name ? mem.display_name + ' (' + mem.short_id + '…)' : 'fellow ' + mem.short_id + '…';
     const subs = typeof mem.submissions === 'number' ? mem.submissions : 0;
+    // v3.72.1 (F8): `pages` is DISTINCT pages (a page re-pushed three times
+    // is one), and the date is the contributor's own app's claim, read from
+    // the payload — worded as reported, since an admin reads it while
+    // deciding a revocation.
+    const pages = typeof mem.pages === 'number' ? mem.pages : 0;
     const meta = subs + ' submission' + (subs === 1 ? '' : 's') +
-      ' · ' + (typeof mem.pages === 'number' ? mem.pages : 0) + ' page' + ((mem.pages === 1) ? '' : 's') +
-      ' · last active ' + formatRelativeTime(mem.last_contributed_at, 'never');
+      ' · ' + pages + ' distinct page' + (pages === 1 ? '' : 's') +
+      ' · ' + (mem.last_contributed_at ? 'last contribution dated ' + formatRelativeTime(mem.last_contributed_at, 'never') + ' (as reported)' : 'no contribution date reported');
     return (
       '<label class="sb-member-row' + (card.revokeSelectedFellowId === mem.fellow_id ? ' selected' : '') + '">' +
         '<input type="radio" name="sb-revoke-' + escapeHtml(conn.id) + '" value="' + escapeHtml(mem.fellow_id) + '"' +
@@ -3061,6 +3131,9 @@ async function runRevoke(token, connId) {
       // must read, and a list error would flip the whole view to its error
       // branch, which renders no cards at all.
       if (outcome.tone === 'success') settling.push(refreshConnections(token).catch(reportAsyncActionFailure));
+      // v3.72.1 (F6): a revoke (even a partial one) can erase a contributor —
+      // the cohort panel's contributor count and attribution are re-read.
+      invalidateCohort(token, connId);
       if (settling.length > 0) {
         Promise.all(settling).then(() => { if (isCurrentMount(token)) revealRevokeOutcome(connId); });
       } else {
@@ -3394,9 +3467,54 @@ async function runSseAction(token, connId, action) {
     card.acting = null;
     if (isCurrentMount(token)) {
       render(token);
-      if (!hadError) refreshConnections(token).catch(reportAsyncActionFailure);
+      // v3.72.1 (F5): refreshed on EVERY outcome, not only a clean one. A
+      // push that failed on one domain has already advanced `last_push_at`
+      // and the queues for the domains that succeeded (the route sends an
+      // `error` frame per failed domain, then `done`), so gating on
+      // `!hadError` left "pending 14 pages" and "pushed 3 days ago" beside a
+      // "12 pages pushed" result. A wholly failed action changed nothing, and
+      // re-reading an unchanged list costs one local call.
+      refreshConnections(token).catch(reportAsyncActionFailure);
+      // v3.72.1 (F6): the cohort panel's numbers (your attribution after a
+      // push, the mirror's page count after a pull — labelled "as of your
+      // last pull") are re-read, not kept from the first open.
+      invalidateCohort(token, connId);
+      // v3.72.1 (F7): a pull rewrote the mirror's pages, and the page count
+      // this section shows comes from its host's domain list.
+      if (action === 'pull') refreshMirrorPages(token, connId);
     }
   }
+}
+
+/** v3.72.1 (F6): drop the cached cohort details; re-load them now if the
+ *  panel is open (either host's wrapper), else on the next open. */
+function invalidateCohort(token, connId) {
+  const card = state.cards[connId];
+  if (!card || card.cohort === 'loading') return;
+  card.cohort = null;
+  const open = state.expandedCohort.has(connId) || state.expandedSecRows.has(connId + ':cohort');
+  if (open) loadCohortDetails(token, connId).catch(reportAsyncActionFailure);
+}
+
+/** v3.72.1 (F7): the mirror strip's "pages" line reads the host's domain
+ *  list, which nothing reloads after a Shared Brain pull. The host may pass
+ *  `onActionDone` to reload its own list (the domain page's own counts);
+ *  until the host re-describes the domain, this section re-reads the one
+ *  count it shows from the same route the cohort panel uses. */
+function refreshMirrorPages(token, connId) {
+  if (typeof hostCtx.onActionDone === 'function') {
+    try { hostCtx.onActionDone({ action: 'pull', connId }); } catch { /* a host callback must never break a render */ }
+  }
+  const slug = mirrorDomainFor(findConnection(connId));
+  if (!slug) return;
+  fetch('/api/domains/' + encodeURIComponent(slug) + '/stats')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((st) => {
+      if (!isCurrentMount(token) || !st || typeof st.pageCount !== 'number') return;
+      state.freshPages[slug] = st.pageCount;
+      render(token);
+    })
+    .catch(() => { /* the host's figure stays; nothing invented */ });
 }
 
 async function onUnskip(token, connId) {

@@ -61,7 +61,7 @@ import {
   connectionClash,
 } from '../brain/sharedbrain-config.js';
 
-import { pushDomain, pullCollective, computePendingPages, listMembers } from '../brain/sharedbrain.js';
+import { pushDomain, pullCollective, computePendingBreakdown, listMembers } from '../brain/sharedbrain.js';
 import { runLocalSynthesis }          from '../brain/sharedbrain-synthesis.js';
 import { revokeContributor, hashAdminToken } from '../brain/sharedbrain-revoke.js';
 import { domainPath } from '../brain/files.js';
@@ -294,10 +294,17 @@ router.get('/list', gate, async (_req, res) => {
     const connections = getSharedBrains();
     // v3.0.4 (M14): cheap local pending-push count per connection —
     // mtime scan only, no LLM/network. Powers the navbar badge and the
-    // connection card. Additive field; failures degrade to 0.
+    // connection card. Additive field; a failure is null (unknown), not 0.
     for (const c of connections) {
-      try { c.pending_pages = await computePendingPages(c); }
-      catch { c.pending_pages = 0; }
+      // v3.72.1 (F10/F13): `null` when the count could not be taken — it
+      // used to degrade to 0, which the UI rendered as "up to date". Plus
+      // `pending_retry_pages`: how many OF those pages are automatic retries
+      // (a subset, never an addition).
+      try {
+        const b = await computePendingBreakdown(c);
+        c.pending_pages = b.pages;
+        c.pending_retry_pages = b.retry;
+      } catch { c.pending_pages = null; c.pending_retry_pages = null; }
       // v3.43.0: an explicit boolean so the UI can decide whether to render
       // the admin affordances (rotate / revoke) without inferring it from a
       // MASKED credential field. `admin_token` is masked to its first 8 chars

@@ -842,6 +842,12 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
   // ── 6. Update connection state ──────────────────────────────────────────
   patchFn(connection.id, {
     last_push_at: pushTimestamp,
+    // v3.72.1 (F9): `last_push_at` is the SCAN WATERMARK — it advances on a
+    // push that sent nothing ("No pages changed since last push.") so the
+    // next scan starts from here. The "pushed" line the app shows is the
+    // last time a contribution was actually WRITTEN to the collective, so
+    // it has its own field, set only when storeContribution succeeded.
+    ...(pushedSubmissionId ? { last_contribution_at: pushTimestamp } : {}),
     ...queuePatch(newPendingRetry, newPermanentSkip),
   });
 
@@ -1418,16 +1424,36 @@ export async function pullCollective(connection, opts = {}) {
  *
  * @param {object} connection   Masked or full connection — no tokens needed.
  * @param {string} [domainsDir] Override for tests; defaults to getDomainsDir().
- * @returns {Promise<number>}
+ * @returns {Promise<number|null>}  null = could not be counted (v3.72.1), never 0
  */
 export async function computePendingPages(connection, domainsDir) {
-  if (!connection || typeof connection !== 'object') return 0;
-  if (connection.enabled === false) return 0;
-  if (connection.read_only === true) return 0;
+  return (await computePendingBreakdown(connection, domainsDir)).pages;
+}
+
+/**
+ * v3.72.1: the pending count AND how many of those pages are automatic
+ * retries, from ONE pass — `{pages, retry}`.
+ *
+ * `retry` is a SUBSET of `pages` (F13): findChangedPages already unions the
+ * retry queue into the changed set, so a UI that printed "5 ready · 2
+ * retrying" was double-counting. It counts only this connection's own
+ * domains' retry entries whose page still exists and is not skipped — the
+ * pages the push would actually retry — never raw queue keys (a deleted
+ * page's stale entry, another domain's key).
+ *
+ * UNKNOWN IS NOT ZERO (F10). An unreadable `last_push_at` or a domain whose
+ * scan throws answers `{pages: null, retry: null}`; the route passes that
+ * through and the UI renders "unknown", never "up to date".
+ */
+export async function computePendingBreakdown(connection, domainsDir) {
+  if (!connection || typeof connection !== 'object') return { pages: 0, retry: 0 };
+  if (connection.enabled === false) return { pages: 0, retry: 0 };
+  if (connection.read_only === true) return { pages: 0, retry: 0 };
   const root = domainsDir || getDomainsDir();
   const sinceDate = connection.last_push_at ? new Date(connection.last_push_at) : null;
-  if (sinceDate && isNaN(sinceDate.getTime())) return 0;
+  if (sinceDate && isNaN(sinceDate.getTime())) return { pages: null, retry: null };
   let total = 0;
+  let retry = 0;
   for (const d of (Array.isArray(connection.local_domains) ? connection.local_domains : [])) {
     if (typeof d !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/i.test(d)) continue;
     if (d.toLowerCase().startsWith('shared-')) continue;
@@ -1444,11 +1470,17 @@ export async function computePendingPages(connection, domainsDir) {
       // then refuses.
       const { ownRetry, ownSkip } = splitQueues(connection, d, wikiDir);
       const skip = new Set(ownSkip);
-      const changed = await findChangedPages(wikiDir, sinceDate, ownRetry);
-      total += changed.filter(p => !skip.has(p)).length;
-    } catch { /* unreadable domain → contribute 0 */ }
+      const changed = (await findChangedPages(wikiDir, sinceDate, ownRetry)).filter(p => !skip.has(p));
+      total += changed.length;
+      const changedSet = new Set(changed);
+      retry += Object.keys(ownRetry).filter(p => changedSet.has(p)).length;
+    } catch {
+      // v3.72.1 (F10): was "contribute 0" — a count that could not be taken
+      // then read as a measured all-clear.
+      return { pages: null, retry: null };
+    }
   }
-  return total;
+  return { pages: total, retry };
 }
 
 // ── listMembers (v3.0.5, Phase 4.3) ────────────────────────────────────────
@@ -1461,7 +1493,10 @@ export async function computePendingPages(connection, domainsDir) {
  *
  * @param {Array<{fellowId, submissionId, payload}>} listed
  * @returns {Array<{fellow_id, short_id, submissions, first_contributed_at,
- *                  last_contributed_at, display_name, pages}>}
+ *                  last_contributed_at, display_name, pages, page_updates}>}
+ *   `pages` = distinct delta paths; `page_updates` = every delta. The two
+ *   `*_contributed_at` are the payload's own `contributed_at` — what the
+ *   contributor's app REPORTED, not a storage-side time; the UI says so.
  */
 export function groupMembers(listed) {
   const byFellow = new Map();
@@ -1477,6 +1512,8 @@ export function groupMembers(listed) {
         last_contributed_at: null,
         display_name: null,
         pages: 0,
+        page_updates: 0,
+        _paths: new Set(),
       };
       byFellow.set(c.fellowId, m);
     }
@@ -1493,8 +1530,18 @@ export function groupMembers(listed) {
       // payloads in the repo anyway; never treat this as identity.
       m.display_name = payload.fellow_display_name.replace(/[\r\n]+/g, ' ').trim().slice(0, 120);
     }
-    m.pages += Array.isArray(payload.deltas) ? payload.deltas.length : 0;
+    // v3.72.1 (F8): `pages` is DISTINCT pages — a page re-pushed in three
+    // submissions is one page, not three. The raw sum is kept, named for
+    // what it is (`page_updates`). A delta with no usable path counts as an
+    // update but cannot be deduplicated, so it adds nothing to `pages`.
+    const deltas = Array.isArray(payload.deltas) ? payload.deltas : [];
+    m.page_updates += deltas.length;
+    for (const d of deltas) {
+      if (d && typeof d.path === 'string' && d.path) m._paths.add(d.path);
+    }
+    m.pages = m._paths.size;
   }
+  for (const m of byFellow.values()) delete m._paths;
   return [...byFellow.values()].sort((a, b) =>
     String(b.last_contributed_at || '').localeCompare(String(a.last_contributed_at || '')));
 }

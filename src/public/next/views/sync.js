@@ -3,7 +3,8 @@
 // badge), but rarely need to come here on purpose.
 //
 // Backend used (all pre-existing — see src/routes/sync.js, src/brain/sync.js):
-//   GET    /api/sync/status                    → {configured, changesCount, lastSync, repoUrl}
+//   GET    /api/sync/status                    → {configured, changesCount, uncommittedCount,
+//                                                  unpushedCommits, lastSync, repoUrl}
 //   POST   /api/sync/setup {repoUrl, token, mode}
 //   POST   /api/sync/push | /pull | /sync
 //   DELETE /api/sync/disconnect
@@ -34,8 +35,8 @@
 //     opposed to a warning, a cost, or an irreversibility notice) belongs
 //     behind the icon. The same fact is documented in full, with the exact
 //     git commands, at docs/sync.md's "no revert control" callout.
-//   - GET /api/sync/status returns a single TOTAL changesCount from
-//     `git status --porcelain`; there is no per-file or per-domain endpoint
+//   - GET /api/sync/status returns a single TOTAL changesCount (v3.72.1:
+//     files not on GitHub — uncommitted plus unpushed commits); there is no per-file or per-domain endpoint
 //     that doesn't ALSO perform a real push/pull. The sidebar therefore
 //     lists the real domain NAMES only ("what this backup covers"), with the
 //     one real total in the main pane. An earlier version added a per-domain
@@ -113,7 +114,7 @@ function freshState() {
     status: null,      // GET /api/sync/status response
     statusError: null,
     domains: [],        // GET /api/domains → domains[]
-    sb: null,           // { enabled, connection } | null while loading
+    sb: null,           // { enabled, connections: [] | null(unreadable) } | null while loading
     acting: null,       // 'sync' | 'push' | 'pull' | 'disconnect' | null
     actionMessage: null,
     actionError: null,
@@ -167,9 +168,7 @@ registerView('sync', {
     // ingest starts/finishes on some domain while the user is sitting on
     // Sync. This view only READS the gate to decide its own button/notice
     // state; it never begins a write itself.
-    unsubscribeWriteGate = onWriteGateChange(() => {
-      if (isCurrentMount(mountToken)) render(mountToken);
-    });
+    unsubscribeWriteGate = onWriteGateChange(() => onGateChange(mountToken));
 
     return () => {
       // L2 fix (re-audit finding): don't let a typed-but-unsubmitted (or
@@ -188,6 +187,23 @@ registerView('sync', {
     };
   },
 });
+
+// A write-gate change while this view is mounted (v3.72.1, F3). It always
+// repaints (the buttons' busy state). When every write has settled it also
+// re-reads /api/sync/status: a write that just FINISHED elsewhere (an ingest,
+// a Shared Brain pull) changed the files this page counts, and the rail badge
+// re-reads at this same moment (app.js), so without this the page and the
+// rail showed one field with two values. Not mid-write: git status is
+// repo-wide, and a count taken while a write is running is already stale.
+function onGateChange(mountToken) {
+  if (!isCurrentMount(mountToken)) return;
+  render(mountToken);
+  if (!crossWriteBusy()) {
+    loadStatus(mountToken)
+      .then(() => { if (isCurrentMount(mountToken)) render(mountToken); })
+      .catch(reportAsyncActionFailure);
+  }
+}
 
 // ── Cross-view write gate (see this file's header comment) ────────────────
 
@@ -292,14 +308,18 @@ async function loadSharedBrainSummary(token) {
   try {
     const flagRes = await fetch('/api/sharedbrain/feature-flag');
     const flag = await flagRes.json();
-    if (!flag.enabled) { if (isCurrentMount(token)) state.sb = { enabled: false, connection: null }; return; }
+    if (!flag.enabled) { if (isCurrentMount(token)) state.sb = { enabled: false, connections: [] }; return; }
     const listRes = await fetch('/api/sharedbrain/list');
-    if (!listRes.ok) { if (isCurrentMount(token)) state.sb = { enabled: true, connection: null }; return; }
+    // `connections: null` = the list could not be read. It is NOT rendered
+    // as "Not connected" — a failed read is not a measured absence.
+    if (!listRes.ok) { if (isCurrentMount(token)) state.sb = { enabled: true, connections: null }; return; }
     const list = await listRes.json();
-    const connection = (list.connections && list.connections[0]) || null;
-    if (isCurrentMount(token)) state.sb = { enabled: true, connection };
+    // v3.72.1 (F11): EVERY connection, not `connections[0]` — a user with
+    // two Shared Brains was told only about the first.
+    const connections = Array.isArray(list.connections) ? list.connections : null;
+    if (isCurrentMount(token)) state.sb = { enabled: true, connections };
   } catch {
-    if (isCurrentMount(token)) state.sb = { enabled: false, connection: null };
+    if (isCurrentMount(token)) state.sb = { enabled: false, connections: [] };
   }
 }
 
@@ -570,8 +590,12 @@ const SYNC_UNDO_NOTE = 'The Curator has no revert control. A git client pointed 
 
 function renderConfigured(s) {
   const acting = state.acting;
-  const lastSyncLabel = s.lastSync ? formatSyncTime(s.lastSync) : 'never';
-  const pendingCount = typeof s.changesCount === 'number' ? s.changesCount : 0;
+  // v3.72.1 (F1): `lastSync` is the RECORDED time of the last successful
+  // push/pull/connect, never a commit date. Null means no sync has been
+  // recorded on this install yet — which, for an install connected before
+  // v3.72.1, is not "never synced", so it is not worded as "never".
+  const lastSyncLabel = s.lastSync ? formatSyncTime(s.lastSync) : 'not recorded yet';
+  const pendingNote = pendingNoteText(s);
 
   // Cross-view write gate (see this file's header comment). `acting` is
   // THIS view's own in-flight action (e.g. mid-push) — that already
@@ -658,7 +682,7 @@ function renderConfigured(s) {
         '</button>' +
         '<button type="button" class="btn btn-secondary" id="btn-sync-push"' + (disabled ? ' disabled' : '') + '>' + (acting === 'push' ? 'Pushing…' : 'Push only') + '</button>' +
         '<button type="button" class="btn btn-secondary" id="btn-sync-pull"' + (disabled ? ' disabled' : '') + '>' + (acting === 'pull' ? 'Pulling…' : 'Pull only') + '</button>' +
-        '<span class="sync-pending-note">' + escapeHtml(String(pendingCount)) + ' local change' + (pendingCount === 1 ? '' : 's') + ' not pushed</span>' +
+        '<span class="sync-pending-note">' + escapeHtml(pendingNote) + '</span>' +
       '</div>' +
       // AN OUTCOME STAYS ON THE PAGE (v3.71.1): the app cannot undo a sync,
       // and the one route back is a git client — said beside the actions,
@@ -674,17 +698,33 @@ function renderConfigured(s) {
   );
 }
 
+// One line per Shared Brain connection (v3.72.1, F11). The time is the last
+// push that actually SENT a contribution (`last_contribution_at`, F9) — a
+// push that found nothing to send advances `last_push_at` (the scan
+// watermark) and is not a contribution. A connection that predates the
+// field and has only the watermark says so rather than borrowing it.
+export function sharedBrainRowLines(sb, nowMs) {
+  if (!sb) return ['Checking Shared Brain…'];
+  if (sb.connections === null) return ['Shared Brain list could not be read'];
+  const list = Array.isArray(sb.connections) ? sb.connections : [];
+  if (!list.length) return ['Not connected to any Shared Brain'];
+  return list.map((c) => {
+    const name = (c && c.label) || 'Shared Brain';
+    let when;
+    if (c && c.last_contribution_at) when = 'pushed ' + formatSyncTime(c.last_contribution_at, nowMs);
+    else if (c && c.last_push_at) when = 'last push run ' + formatSyncTime(c.last_push_at, nowMs) + ', nothing recorded as sent';
+    else when = 'no pushes yet';
+    return name + ' · ' + when;
+  });
+}
+
 function renderSharedBrainRow() {
-  const sb = state.sb;
-  const lastPush = sb && sb.connection && sb.connection.last_push_at ? formatSyncTime(sb.connection.last_push_at) : null;
-  const label = sb && sb.connection
-    ? escapeHtml(sb.connection.label || 'Shared Brain') + ' · ' + (lastPush ? 'pushed ' + escapeHtml(lastPush) : 'no pushes yet')
-    : 'Not connected to any Shared Brain';
+  const lines = sharedBrainRowLines(state.sb);
   return (
     '<div class="sync-sb-row">' +
       icon('users', 16) +
       '<span class="sync-sb-text">Shared Brain pushes are managed in <strong>Shared Brain</strong>. This tab only reports them.</span>' +
-      '<span class="sync-sb-meta">' + label + '</span>' +
+      '<span class="sync-sb-metas">' + lines.map((l) => '<span class="sync-sb-meta">' + escapeHtml(l) + '</span>').join('') + '</span>' +
       '<button type="button" class="btn btn-ghost btn-xs" id="btn-sync-open-shared">Open</button>' +
     '</div>'
   );
@@ -723,14 +763,36 @@ function renderDisconnect() {
 
 // ── Formatting ────────────────────────────────────────────────────────────
 
-function formatSyncTime(iso) {
+// Absolute, so it cannot go stale on a page left open. v3.72.1 (F14): the
+// year is shown whenever it is not this year — "Sep 3 09:10" for a sync more
+// than a year old read as this September.
+export function formatSyncTime(iso, nowMs) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const now = new Date();
+  const now = new Date(typeof nowMs === 'number' ? nowMs : Date.now());
   const sameDay = d.toDateString() === now.toDateString();
   const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   if (sameDay) return 'today ' + time;
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + time;
+  const opts = d.getFullYear() === now.getFullYear()
+    ? { month: 'short', day: 'numeric' }
+    : { month: 'short', day: 'numeric', year: 'numeric' };
+  return d.toLocaleDateString(undefined, opts) + ' ' + time;
+}
+
+// v3.72.1 (F2): the SAME field the rail badge reads (`changesCount`), which
+// now counts every file whose current version is not on GitHub — uncommitted
+// ones AND ones in commits that were made here but never pushed ("Pull only"
+// auto-commits; a failed push leaves its commit). The committed-but-unpushed
+// part is named, because "I have no edits" is exactly what a user thinks
+// after a Pull only. A status that could not be counted says so — it is
+// never rendered as "0 local changes".
+export function pendingNoteText(s) {
+  const n = s && typeof s.changesCount === 'number' && Number.isFinite(s.changesCount) ? s.changesCount : null;
+  if (n === null) return 'local changes not counted';
+  const base = n + ' local change' + (n === 1 ? '' : 's') + ' not pushed';
+  const unc = typeof s.uncommittedCount === 'number' ? s.uncommittedCount : null;
+  const committed = unc !== null ? n - unc : 0;
+  return committed > 0 ? base + ' (' + committed + ' in commits not yet pushed)' : base;
 }
 
 // ── Listeners ─────────────────────────────────────────────────────────────
@@ -932,7 +994,9 @@ async function runSetup(mode, confirmOverwrite, token) {
       return;
     }
     if (!isCurrentMount(token)) return;
-    await loadStatus(token);
+    // v3.72.1 (F4): a pull-mode connect brings domains in — the sidebar's
+    // list is re-read with the status, not left at the pre-connect set.
+    await Promise.all([loadStatus(token), loadDomains(token)]);
     if (!isCurrentMount(token)) return;
     state.setupForm = freshState().setupForm;
   } catch (err) {
@@ -1023,7 +1087,11 @@ async function onAction(kind, token) {
       // push/pull that succeeded ON DISK looked, from the UI, exactly like
       // a hang. The only way out was Disconnect (the one still-enabled
       // control) or leaving the view entirely.
-      await loadStatus(token);
+      // v3.72.1 (F4): a pull or sync can bring a domain in or prune one
+      // deleted on another machine, so the "domains backed up" list is
+      // re-read here too — the result sentence could otherwise name a
+      // removed folder the sidebar still listed.
+      await Promise.all([loadStatus(token), loadDomains(token)]);
       if (isCurrentMount(token)) render(token);
     }
   }

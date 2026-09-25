@@ -638,9 +638,13 @@ export function buildTrayMenuTemplate(model, o = {}) {
   // conflating them is how a widget comes to display a confidently stale list.
   // It also makes a silently-dead filesystem watch visible rather than
   // invisible, which is the one failure this design cannot otherwise detect.
-  if (m && m.renderedAtText) {
+  // v3.72.1 (truth audit tray F7): the stamp is the time the figures were
+  // READ (`readAtText`), not the time of this render — a hover re-renders
+  // from memory, and page counts / capture numbers stay as of the read.
+  const stampText = m && (m.readAtText || m.renderedAtText);
+  if (stampText) {
     template.push(sep);
-    template.push({ id: ID_UPDATED_STAMP, label: 'Updated ' + m.renderedAtText, enabled: false });
+    template.push({ id: ID_UPDATED_STAMP, label: 'Updated ' + stampText, enabled: false });
   }
 
   // ── 7. Quit ─────────────────────────────────────────────────────────────

@@ -180,6 +180,9 @@ const PURE_FNS = [
 const sandbox = new Function(
   'let state = { expandedAdmin: new Set() };\n' +
   extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' +
+  // v3.72.1: formatRelativeTime speaks the app's ONE age ladder — the REAL
+  // formatAge, lifted from shared/age.js, never a stand-in.
+  extractFunction(readFileSync(path.join(ROOT, 'src/public/next/shared/age.js'), 'utf8'), 'formatAge', 'age.js') + '\n' +
   'function icon(name, size) { return "<svg data-icon=\\"" + name + "\\" data-size=\\"" + size + "\\"></svg>"; }\n' +
   PURE_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
   `return { ${PURE_FNS.join(', ')}, escapeHtml, __state: () => state };`

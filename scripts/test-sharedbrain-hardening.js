@@ -1025,7 +1025,12 @@ section('22. 4.3 — groupMembers / listMembers');
   assert(members.length === 2, `two members from three submissions (got ${members.length})`);
   const alice = members.find(m => m.fellow_id === fA);
   const bob = members.find(m => m.fellow_id === fB);
-  assert(!!alice && alice.submissions === 2 && alice.pages === 3, 'per-fellow submission + page counts');
+  // v3.72.1 (truth audit F8): concepts/a.md is in BOTH of Alice's
+  // submissions — that is 2 distinct pages and 3 page updates. The old
+  // assertion (pages === 3) pinned the double count the admin UI then showed
+  // as "pages".
+  assert(!!alice && alice.submissions === 2 && alice.pages === 2 && alice.page_updates === 3,
+    'per-fellow submission + page counts (distinct pages 2, page updates 3)');
   assert(alice.first_contributed_at === '2026-06-01T10:00:00.000Z' &&
          alice.last_contributed_at === '2026-06-10T10:00:00.000Z', 'first/last contribution dates');
   assert(alice.display_name === 'Alice', 'display name carried through');

@@ -57,7 +57,7 @@ import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
 // v3.65.3: the section body is built from three kit parts, and they are the
 // REAL ones here — a stub monitor would test a monitor this suite invented.
 import { renderMonitor } from '../src/public/next/shared/monitor.js';
-import { freshnessTier } from '../src/public/next/shared/age.js';
+import { freshnessTier, formatAge } from '../src/public/next/shared/age.js';
 import { identityDotClass } from '../src/public/next/shared/sidebar.js';
 
 const R = (rel) => readFileSync(path.join(ROOT, rel), 'utf8');
@@ -181,13 +181,13 @@ const SHARED_FNS = [
 // renderDescription is the REAL export of shared/text.js, not a stub: §4 below
 // asserts that the off state's CTA descriptions wear the system's own class,
 // and a stub would let this file certify a class it had itself invented.
-const sharedBox = new Function('renderDescription', 'explainerMark',
+const sharedBox = new Function('renderDescription', 'explainerMark', 'formatAge',
   'let state = { flagError: null, listError: null, enabling: false, connections: [], cards: {}, expandedSkips: new Set(), expandedAdmin: new Set() };\n' +
   extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' +
   ICON_STUB +
   SHARED_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
   `return { ${SHARED_FNS.join(', ')}, __setState: (s) => { state = s; }, __state: () => state };`
-)(renderDescription, explainerMark);
+)(renderDescription, explainerMark, formatAge);
 
 /** Brace-free sibling of extractFunction: lifts a top-level `const NAME = …;`
  *  out of live source. Needed because panelStep3() now interpolates a real
@@ -310,8 +310,9 @@ section('1. Phase 1 — the four properties the first deleted block guarded');
   ok(/This tab only reports them/.test(sbRow),
     '…and says so — it reports, it does not operate');
   // Control: the row is real and was read.
-  ok(sbRow.length > 200 && /last_push_at/.test(sbRow),
-    '(control) the Shared Brain row really was extracted and does report the last push');
+  ok(sbRow.length > 200 && /sharedBrainRowLines\(/.test(sbRow)
+    && /last_contribution_at/.test(bodyOf(syncCode, 'sharedBrainRowLines')),
+    '(control) the Shared Brain row really was extracted and does report the last push (v3.72.1: the contribution time, per connection)');
 
   // ── P4: the enable control EXISTS somewhere reachable ─────────────────
   // Old assertion: `indexHtml.includes('settings-sharedbrain-enabled')`.
@@ -801,8 +802,10 @@ const SEC_FNS = [
   'renderSection', 'renderSectionDoor', 'renderMirrorStrip', 'formatRelativeTime',
   // v3.65.3 — the section body's own parts, all REAL.
   'renderSectionEmpty', 'sectionDomainFacts', 'sectionDotHtml', 'sectionAgeLine', 'sectionRepoCell',
+  // v3.72.1
+  'ageTickAttrs',
 ];
-const secBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass',
+const secBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass', 'formatAge',
   'let state = {};\n' +
   'let loadGate = null;\n' +
   'let busyDomains = new Set();\n' +
@@ -820,7 +823,7 @@ const secBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass'
   SEC_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
   `return { ${SEC_FNS.join(', ')}, __setState: (s) => { state = s; }, __setDomain: (d) => { hostCtx.domain = d; },
      __setBusy: (list) => { busyDomains = new Set(list); }, __setDescribe: (fn) => { hostCtx.describeDomain = fn; } };`
-)(renderMonitor, freshnessTier, identityDotClass);
+)(renderMonitor, freshnessTier, identityDotClass, formatAge);
 
 {
   // ── D-H: the lens, EXECUTED over every shape the wire can send ────────
@@ -1033,10 +1036,11 @@ const secBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass'
     const box = new Function(
       'freshState', 'createLoadingGate', 'onWriteGateChange', 'isCurrentMount',
       'reportAsyncMountFailure', 'closeSharedBrainWizardIfOpen', 'isSharedBrainWizardOpen',
-      'setMain', 'render', 'loadAll', 'log',
+      'setMain', 'render', 'loadAll', 'log', 'subscribeAgeTicker',
       'let state = freshState();\n' +
       'let loadGate = null;\n' +
       'let unsubscribeWriteGate = null;\n' +
+      'let unsubscribeAgeTicker = null;\n' +
       'let myMountToken = 0;\n' +
       extractConst(shared, 'SHELL_HOST', 'shared.js') + '\n' +
       'let hostCtx = SHELL_HOST;\n' +
@@ -1056,7 +1060,8 @@ const secBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass'
       (html) => log.push('setMain:' + String(html).length),
       () => log.push('render'),
       async () => { log.push('loadAll'); },
-      log
+      log,
+      () => { log.push('ticker.subscribe'); return () => log.push('ticker.unsubscribe'); }
     );
     return { box, log, gates };
   }
@@ -1273,8 +1278,10 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     'sectionDomainFacts', 'sectionDotHtml', 'sectionAgeLine', 'sectionRepoCell', 'sectionFoldRow',
     'renderSectionDoor', 'renderSectionConnection', 'renderPushConfirm', 'renderSynthesizeConfirm',
     'tokenCheckApplies', 'adminAffordances',
+    // v3.72.1
+    'ageTickAttrs', 'sectionPushedLine', 'pendingReading',
   ];
-  const cBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass', 'explainerMark',
+  const cBox = new Function('renderMonitor', 'freshnessTier', 'identityDotClass', 'explainerMark', 'formatAge',
     'let state = { cards: {}, expandedSecRows: new Set(), expandedAdmin: new Set() };\n' +
     'let busyDomains = new Set();\n' +
     'let hostCtx = { mode: "section", el: {}, domain: "research", describeDomain: (s) => ({ index: ["research", "notes", "shared-cohort"].indexOf(s), pages: null }) };\n' +
@@ -1289,7 +1296,7 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
     C_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
     `return { ${C_FNS.join(', ')}, __card: (id) => ensureCard(id), __state: () => state,
        __setBusy: (l) => { busyDomains = new Set(l); } };`
-  )(renderMonitor, freshnessTier, identityDotClass, explainerMark);
+  )(renderMonitor, freshnessTier, identityDotClass, explainerMark, formatAge);
 
   const recent = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
   const c = conn({ id: 'c1', label: 'Research_Group 2026', shared_brain_slug: 'cohort', local_domains: ['research'],
@@ -1303,8 +1310,10 @@ const eq = (a, b, label) => ok(a === b, `${label} (got ${JSON.stringify(a)})`);
   ok(!/sb-card-stats|sb-card-footer|sb-card-pending"/.test(html),
     'C: NO card inside the card — none of the full card\'s stat grid, pending box or footer');
   eq((html.match(/class="cur-mon"/g) || []).length, 1, 'C: ONE monitor carries every live reading');
-  ok(/cur-mon-key">pulled<\/span><span class="cur-mon-value"><span class="fresh-dot fresh-[a-z]+" aria-hidden="true"><\/span>2 hr ago/.test(html),
-    'C: a time line carries the app\'s fresh-dot with the age in words');
+  // v3.72.1 (F12): the words sit in a `data-age-at` span so the app's ONE
+  // age clock (shared/age-ticker.js) keeps them live without a re-render.
+  ok(/cur-mon-key">pulled<\/span><span class="cur-mon-value"><span class="fresh-dot fresh-[a-z]+" aria-hidden="true"><\/span><span class="sb-age" data-age-at="[^"]+" data-age-text>2 hr ago<\/span>/.test(html),
+    'C: a time line carries the app\'s fresh-dot with the age in words, in a ticking span');
   ok(/cur-mon-key">pushed<\/span><span class="cur-mon-value">never</.test(html),
     'C: a time that never happened reads "never" with NO dot');
   ok(/cur-mon-key">mirror<\/span><span class="cur-mon-value"><span class="cur-sb-dot cur-sb-dot-3" aria-hidden="true"><\/span>shared-cohort/.test(html),

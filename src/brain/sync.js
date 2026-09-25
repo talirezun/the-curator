@@ -1036,23 +1036,115 @@ export function isConfigured() {
   return existsSync(currentGitDir()) && existsSync(currentConfigFile());
 }
 
+// ── "Last synced": a recorded fact, not a commit date (v3.72.1) ─────────────
+//
+// Stored in the sync repo's OWN git config (`curator.lastSyncAt`), not in
+// .sync-config.json: that file holds the PAT and is rewritten only on
+// connect, and rewriting a credential file on every sync to carry a
+// timestamp would be a new write path for no gain. The git config is
+// machine-local (never pushed), already belongs to exactly this repo, and an
+// install that ADOPTED another's repo shares its sync history and therefore,
+// correctly, its last-sync time. `git config` writes through a lock file and
+// keeps the file's mode; the chmod below is a belt for that file, which also
+// carries the tokenised remote URL.
+const LAST_SYNC_KEY = 'curator.lastSyncAt';
+
+async function recordSyncSuccess(gitDir) {
+  const at = new Date().toISOString();
+  try {
+    await git(`config ${LAST_SYNC_KEY} ${at}`, gitDir ? { gitDir } : {});
+    await chmod(path.join(gitDir || currentGitDir(), 'config'), 0o600).catch(() => {});
+  } catch { /* a stamp that cannot be written must never fail a sync that succeeded */ }
+  return at;
+}
+
+async function readLastSyncStamp() {
+  try {
+    const { stdout } = await git(`config --get ${LAST_SYNC_KEY}`);
+    const v = stdout.trim();
+    return v && Number.isFinite(Date.parse(v)) ? v : null;
+  } catch { return null; /* exit 1 = never recorded */ }
+}
+
+const zList = (out) => String(out || '').split('\0').map((s) => s.trim()).filter(Boolean);
+
+/**
+ * What has not reached GitHub, in FILES — the SAME unit push() reports. The
+ * union of: files changed against HEAD (staged or not), untracked files one
+ * by one (`ls-files --others`, never a collapsed folder), and the files of
+ * commits origin/main does not have (merge-base diff, push()'s own formula).
+ * Local only: reads the remote-tracking ref as last fetched, never fetches.
+ */
+async function countNotOnGitHub() {
+  const uncommitted = new Set();
+  let headExists = true;
+  try { await git('rev-parse --verify -q HEAD'); } catch { headExists = false; }
+  if (headExists) {
+    const { stdout } = await git('diff --name-only -z HEAD');
+    for (const p of zList(stdout)) uncommitted.add(p);
+  } else {
+    const { stdout } = await git('ls-files -z');
+    for (const p of zList(stdout)) uncommitted.add(p);
+  }
+  const { stdout: untracked } = await git('ls-files -z --others --exclude-standard');
+  for (const p of zList(untracked)) uncommitted.add(p);
+
+  const all = new Set(uncommitted);
+  let unpushedCommits = null;
+  if (headExists) {
+    let haveOrigin = true;
+    try { await git('rev-parse --verify -q refs/remotes/origin/main'); } catch { haveOrigin = false; }
+    if (haveOrigin) {
+      const { stdout: ahead } = await git('rev-list --count origin/main..HEAD');
+      unpushedCommits = parseInt(ahead.trim(), 10) || 0;
+      if (unpushedCommits > 0) {
+        const { stdout: baseOut } = await git('merge-base HEAD origin/main').catch(() => ({ stdout: '' }));
+        const base = baseOut.trim();
+        const { stdout: names } = await git(`diff --name-only -z ${base ? `${base}..HEAD` : 'origin/main..HEAD'}`);
+        for (const p of zList(names)) all.add(p);
+      }
+    } else {
+      // Never pushed: push() would send every tracked file — count them.
+      const { stdout: tracked } = await git('ls-files -z');
+      for (const p of zList(tracked)) all.add(p);
+    }
+  }
+  return { files: all.size, uncommitted: uncommitted.size, unpushedCommits };
+}
+
 export async function getStatus() {
   if (!isConfigured()) return { configured: false };
 
   const config = await loadConfig();
   try {
-    const { stdout: statusOut } = await git('status --porcelain');
-    const changesCount = statusOut.split('\n').filter(Boolean).length;
-
-    let lastSync = null;
-    try {
-      const { stdout } = await git('log -1 --format=%ci');
-      lastSync = stdout.trim() || null;
-    } catch { /* no commits yet */ }
+    const pending = await countNotOnGitHub();
+    const lastSync = await readLastSyncStamp();
 
     return {
       configured: true,
-      changesCount,
+      // v3.72.1: the number of FILES whose current version has not reached
+      // GitHub — uncommitted files UNION the files of commits origin/main
+      // does not have. It used to be `git status --porcelain`'s line count
+      // alone, which (1) never saw a commit that was made but not pushed —
+      // "Pull only" auto-commits and never pushes, and a push whose `git
+      // push` failed leaves its commit behind — so the rail badge vanished
+      // over work GitHub did not have; and (2) printed a new folder as ONE
+      // line however many files it held, while the push afterwards reported
+      // the real file count. One formula now, the push's own — see
+      // countNotOnGitHub().
+      changesCount: pending.files,
+      uncommittedCount: pending.uncommitted,
+      // Commits here that origin/main (as last fetched — no network on this
+      // path) does not have. Null when there is no origin/main yet.
+      unpushedCommits: pending.unpushedCommits,
+      // v3.72.1: the time of the last SUCCESSFUL exchange with GitHub — a
+      // push that reached it, a pull, or a connect that completed — recorded
+      // by this module at that moment (recordSyncSuccess()). It used to be
+      // `git log -1 %ci`, the newest commit's date: after a fast-forward pull
+      // that is when the OTHER machine committed, and after a failed push it
+      // is a local commit that never reached GitHub. Null when no sync has
+      // been recorded yet (an install connected before v3.72.1 records its
+      // first on its next sync) — never back-filled from a commit date.
       lastSync,
       repoUrl: config ? displayUrl(config.repoUrl) : null,
       // v3.32.0: is this install ALREADY in the split state — a second sync
@@ -1416,6 +1508,7 @@ export async function setup(repoUrl, token, mode, opts = {}) {
       throw err;
     }
     await saveConfig(repoUrl, token, adoptedDir);
+    await recordSyncSuccess(gitDir);
     return { adopted: !!adoptedDir, mode: 'push' };
   }
 
@@ -1453,6 +1546,7 @@ export async function setup(repoUrl, token, mode, opts = {}) {
       // precisely because there is nothing to overwrite.
       await git('checkout -b main origin/main', { gitDir });
       await saveConfig(repoUrl, token, adoptedDir);
+      await recordSyncSuccess(gitDir);
       return { adopted: !!adoptedDir, mode: 'merge', degradedToPull: true };
     }
     await git('branch -M main', { gitDir });
@@ -1486,6 +1580,7 @@ export async function setup(repoUrl, token, mode, opts = {}) {
               { gitDir, timeout: 120000 });
     await saveConfig(repoUrl, token, adoptedDir);
     invalidateRemoteCache();
+    await recordSyncSuccess(gitDir);
     return { adopted: !!adoptedDir, mode: 'merge' };
   }
 
@@ -1563,6 +1658,7 @@ export async function setup(repoUrl, token, mode, opts = {}) {
 
   await saveConfig(repoUrl, token, adoptedDir);
   invalidateRemoteCache();
+  await recordSyncSuccess(gitDir);
   return { adopted: !!adoptedDir, mode: 'pull', overwrote: assessment.overwriteCount };
 }
 
@@ -1677,6 +1773,9 @@ export async function push() {
 
   // origin/main just moved — a cached "waiting to pull" answer is now stale.
   invalidateRemoteCache();
+  // Only here, AFTER `git push` returned: a push that fails above never
+  // records a sync, although its commit (made further up) stays behind.
+  await recordSyncSuccess();
 
   return {
     pushed: true,
@@ -1895,6 +1994,7 @@ export async function pull() {
   // We just merged everything origin had — anything cached about "waiting to
   // pull" describes a state that no longer exists.
   invalidateRemoteCache();
+  await recordSyncSuccess();
 
   return {
     pulled: true,
@@ -2294,6 +2394,9 @@ export const __testing = {
   pruneGhostDomainDirs,
   topLevelSegments,
   countIncoming,
+  countNotOnGitHub,
+  readLastSyncStamp,
+  LAST_SYNC_KEY,
   invalidateRemoteCache,
   REMOTE_CHECK_TTL_MS,
   REMOTE_CHECK_FAILURE_TTL_MS,
