@@ -740,11 +740,27 @@ a user is asking what the next compile costs.
     "priceKnown": true,
     "costUnknown": null,
     "tokenizerFactor": 1,
-    "basis": "Estimated for Gemini \"gemini-2.5-flash-lite\" compiling a 4-turn conversation … THE OUTPUT HALF CANNOT BE KNOWN IN ADVANCE …"
+    "basis": "Estimated for Gemini \"gemini-2.5-flash-lite\" compiling a 4-turn conversation … THE OUTPUT HALF CANNOT BE KNOWN IN ADVANCE … If gemini-2.5-flash-lite is unavailable, The Curator may fall back to gemini-2.5-flash, priced $0.30 / $2.50 per 1M input / output tokens.",
+    "fallback": {
+      "provider": "gemini", "model": "gemini-2.5-flash", "free": false,
+      "priceKnown": true, "inPerM": 0.3, "outPerM": 2.5, "rungs": 1
+    }
   },
   "warnings": []
 }
 ```
+
+**`estimate.fallback` names the next rung the build model would escalate to
+if it is unavailable when the compile actually runs** (v3.72.0) — the same
+chain `llm.js`'s `fallbackRungsFor` would walk, not a guess. It is `null`
+when there is no further rung to name. A **free** head model never names a
+paid rung as its fallback — the chain only ever escalates FORWARD in time,
+and a free model's own rung is the end of the line for this field. `inPerM`
+and `outPerM` are `null` (never `0`) when the named rung is itself free or
+has no published price, so a `0` never sits where a real price belongs.
+`basis` gains one added sentence naming the rung and its `$in` / `$out`
+prices; the client-facing copy for the confirm dialog is built in the
+Chat view, not read verbatim from `basis`.
 
 **Response** `200 OK` — not compilable
 
@@ -782,9 +798,14 @@ through to the "too short" refusal.
 
 **The range is a range, not a price.**
 
-`inputTokens*` is the real prompt measured character by character, divided by
-the shared `CHARS_PER_TOKEN` (3.53, the same constant the batch-ingest
-estimator uses) and widened by a band measured across seven real compiles.
+**Characters are exact; input tokens are estimated (±15%), not counted.**
+`inputTokens*` is the real prompt measured character by character — that
+measurement is exact — divided by the shared `CHARS_PER_TOKEN` (3.53, the same
+constant the batch-ingest estimator uses) and widened by a band measured
+across seven real compiles. The division is where the estimate enters: no
+provider tokenizer is run, so the token figure itself carries the same ±15%
+band ingest's own estimator does, not the certainty of the character count it
+is built from.
 `outputTokens*` **cannot be known before the call**: the low end is the
 measured `summary-only` rung of the compile's `full → concise → summary-only`
 ladder, the high end scales with transcript length and saturates. Three
@@ -992,6 +1013,25 @@ of the guard.
   priced as if they were four is a confident wrong answer about money. These are
   deliberately tokens, not a dollar figure: price is a property of the catalogue
   and of the date, so the arithmetic belongs where the catalogue is.
+- `project` (v3.72.0) is the pinned project's name, or `null` meaning "no
+  project on this turn". It is recorded on the assistant message going
+  forward only — a message written before v3.72.0 has no `project` key at
+  all, and nothing back-fills one.
+- `priced` (v3.72.0) is the answer's own price, fixed at answer time, so a
+  later catalogue change can never rewrite what an old answer is shown to
+  have cost. It is **omitted** when nothing true can be recorded (an
+  unpriced model, no usage payload, or the zero-usage sentinel) — never a
+  `0` standing in for "unknown". Two shapes:
+  - a priced model: `{"free": false, "inPerM": 0.1, "outPerM": 0.4, "costUsd": 0.000123, "at": "2026-09-25T10:00:00.000Z"}`;
+  - a free model: `{"free": true, "costUsd": 0, "at": "…"}` — no rates are
+    stored for a free model, so a `0` never sits where a price belongs.
+  - `costUsd` is computed by `ai-run.js`'s `spentFromUsage`, which includes
+    the served provider's own cache rates.
+- `updatedAt` (v3.72.0, ISO string) is also written to the conversation file
+  on every **completed** turn — a cancelled or failed turn leaves the file
+  byte-identical. It is returned in the same JSON object and the same `done`
+  frame as the fields above, and is what the conversation list (below) sorts
+  and ages by.
 
 **Success response (streaming path)** `200 OK`, `Content-Type:
 text/event-stream`
@@ -1063,13 +1103,70 @@ List a domain's conversations, newest first.
 ```json
 {
   "conversations": [
-    { "id": "…uuid…", "title": "…", "createdAt": "2026-08-30T10:00:00.000Z", "messageCount": 6 }
+    { "id": "…uuid…", "title": "…", "createdAt": "2026-08-30T10:00:00.000Z", "messageCount": 6,
+      "domain": "articles", "updatedAt": "2026-09-25T10:00:00.000Z", "lastProject": "curator" }
   ]
 }
 ```
 
 `messageCount` is read before any filtering decision, so the number shown is the
 conversation's real length rather than the count of matching messages.
+
+**Row fields added in v3.72.0** (present on this route and on `GET /api/chat`
+below; a row is otherwise unchanged):
+
+- `domain` is read from the **storage path** — the folder the file was found
+  in — never from the conversation file's own `domain` key, which a synced
+  or hand-edited file could disagree with.
+- `updatedAt` is present only when it was recorded and parses as a valid
+  date. A file written before v3.72.0 has none, and the client is expected
+  to render "started … ago" from `createdAt` for that row rather than
+  treat it as recently used.
+- `lastProject` is read from the **last assistant message only**: a string
+  means that project was pinned when it answered; `null` means "recorded:
+  no project"; the key being **absent** means the message predates v3.72.0
+  and nothing is shown. A name over 64 characters, or a non-string value,
+  is dropped the same way.
+- **Sort order**: newest first by `updatedAt ?? createdAt`, ties broken by
+  `id`.
+
+---
+
+### GET /api/chat
+
+**New in v3.72.0.** Lists conversations across **every** domain in one call —
+what the Chat view's single, all-domains conversation list reads.
+
+| Query param | Type | Description |
+|---|---|---|
+| `q` | string | Same search as `GET /api/chat/:domain`'s `q` — title and body, case-insensitive. An array value (repeated `?q=`) is treated as no filter. |
+| `limit` | integer | Default `200`, clamped to a maximum of `500`. A malformed value (non-integer, negative) is refused with `400`, never silently clamped. |
+| `offset` | integer | Default `0`. Same refusal rule as `limit`. |
+
+**Response** `200 OK`
+
+```json
+{
+  "conversations": [ /* rows shaped as above, one per conversation, across domains */ ],
+  "total": 143,
+  "offset": 0,
+  "limit": 200,
+  "unreadable": []
+}
+```
+
+- Covers every domain **except** those flagged `readonly: true` (Shared
+  Brain mirrors) — the same predicate `isDomainReadonly` uses elsewhere, so
+  this route can never disagree with the rest of the app about which
+  domains are mirrors.
+- A row whose `id` is not a UUID shape is dropped before counting.
+  `total` is the true count of openable rows after filtering — not the
+  length of the page returned, and not a raw file count.
+- `unreadable` names the domains whose `conversations/` folder could not be
+  read, so the view can say so rather than silently showing them as empty.
+- The per-domain route above keeps its own, older envelope
+  (`{conversations}`, no `total`/`offset`/`limit`/`unreadable`) — this is an
+  **additional** route, not a replacement.
 
 ---
 
