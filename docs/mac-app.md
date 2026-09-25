@@ -89,16 +89,29 @@ itself — you should not need the Releases page again. See
 ## The menu bar icon (packaged app only)
 
 The app can put a small icon in the macOS menu bar that answers one question without you
-opening anything: **has my agent actually saved, and how long ago?** Click it and you get
-**which project you were last working on**, the last save and which tool and model wrote it, a
-**save pulse** — a small drawn strip of the last seven days — recent work-streams **grouped
-under their project**, each carrying a **recency mark** and a four-item **submenu**, and
-*Open Project Context · Open The Curator · Settings · Quit*.
+opening anything: **has my agent actually saved, and how long ago?** Click it and you get a
+**save pulse** — a small drawn strip of the last seven days, with a **"Saves by tool"**
+submenu (one strip per tool, so two spellings of one tool still read as one) — then
+**Active · last 24 h**: one row per project and tool that saved recently, tool and age on the
+first line, model and headline on the second, each with the app's own recency dot; older
+projects fold into one **Idle · N projects** row, and your domains fold into one
+**Knowledge · N domains** row. Each active row carries a four-item **submenu** and any nested
+"Other work-streams" for that project; then *Open Project Context · Open The Curator ·
+Settings · Quit*.
 
-**The first line names the project**, in the form *"Working on: lumina · 12 min ago"*. Until
-v3.48.0 a domain held one project's memory, so there was nothing there to name; now that a
-domain can hold several, *which one was I in?* is the question a person asks before any other,
-and a flat list of work-streams could only answer it by implication.
+**Since v3.74.0 there is no separate "Working on…" headline** — the project and the tool that
+last saved it are named once, together, on the row itself, rather than repeated as a summary
+line above the rows.
+
+> **The paragraphs below this point — the draining-clock recency mark, project-header
+> grouping, and where a `· docs stale` mark sits — describe the menu's row and header
+> MECHANICS as they stood before v3.74.0's Layout A.** The row cap, the submenu, the pulse
+> strip's own drawing (28 six-hour blocks, the amber handover cap) and the underlying store
+> facts are unchanged; what moved is the shape around them — rows are grouped by **(project ×
+> harness)** rather than by project alone, the recency mark is now the app's own
+> `freshnessTier` dot (filled hot/mid/cold, hollow cold) rather than the five-state draining
+> clock, and Idle/Knowledge are each folded to one row instead of drawn inline. See
+> `desktop/lib/tray-menu.js`'s own top-of-file comment for the current row-by-row order.
 
 **It is off by default, and that is not caution.** A fresh install has no agent memory, so an
 on-by-default icon's only possible content is *"No agent memory yet"* — the worst first

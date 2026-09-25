@@ -941,6 +941,21 @@ takes effect immediately.
 It is a **reader**. It never writes, and it never renders the handoff document itself — the
 document is rendered in one place only.
 
+> **Since v3.74.0 ("Layout A"), the row-by-row walkthrough below is out of date and is kept as
+> design history rather than rewritten in place** (this file's own convention — see the note at
+> the top of the roadmap files this section draws on). What changed: there is no longer a
+> separate *"Working on: lumina · 12 min ago"* headline or a *"Last save · 44 min ago"* line
+> above the rows — a row now names its project, tool and age together, once. Rows are grouped
+> by **project × tool** (not project alone) under an **Active · last 24 h** heading; older
+> projects fold to one **Idle · N projects** row and your domains fold to one
+> **Knowledge · N domains** row, both with their own submenu, rather than being drawn inline.
+> The five-state **draining clock** described below is retired — the recency mark is now the
+> same `freshnessTier` dot (filled hot/mid/cold, hollow cold) used everywhere else in the app.
+> The **save pulse** gained a **"Saves by tool"** submenu, one strip per tool, so a tool saved
+> under two spellings (`Claude Code` vs `claude-code`) reads as one tool rather than two. The
+> mechanics that did NOT change: the submenu's four actions, the pulse strip's own 7-day
+> drawing, and the freshness-stamp / notices / Quit rows at the foot of the menu.
+
 ### What the menu shows, in order
 
 | | |

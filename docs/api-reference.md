@@ -2639,29 +2639,89 @@ the two calls belonged to the same session, only the most recent instance of eac
 all tools" lines (`via: "self-test"`) excluded — the figure a "busiest tools this week" comparison
 draws its bars from. `count7d` itself is unchanged, and still includes self-test calls.
 
-**`?include=projects` (v3.66.0).** Add the query parameter to also receive:
+**`?include=projects` (v3.66.0; window facts and per-tool breakdown added v3.74.0).** Add the query
+parameter to also receive `byProject`, `byProjectWindow` and `savePulse`, built by `acrossProjects()`
+in `src/routes/mcp.js`:
 
 ```json
 {
   "byProject": [
-    { "domain": "projects", "project": "curator", "inStore": true,
-      "sessions": 6, "sessionsRead": 4, "sessionsSaved": 4 }
+    { "domain": "projects", "project": "curator", "projectLabel": "Curator",
+      "inStore": true, "sessions": 6, "sessionsRead": 4, "sessionsSaved": 4,
+      "lastSessionAt": "2026-09-24T11:03:00.000Z", "domainMismatch": false, "sharedName": false }
   ],
-  "byProjectWindow": { "days": 30, "hasLog": true, "busiestSaved": 6 },
-  "savePulse": { "events": 41 }
+  "byProjectWindow": {
+    "since": "2026-08-26T09:00:00.000Z",
+    "windowDays": 30,
+    "logStartsAt": "2026-08-15T04:12:00.000Z",
+    "windowStartsAt": "2026-08-26T09:00:00.000Z",
+    "windowDaysCovered": 30,
+    "windowCovered": true,
+    "unit": "mcp-bridge-process",
+    "logPresent": true,
+    "logFiles": 1,
+    "busiestSaved": 6,
+    "totals": { "sessions": 22, "sessionsSaved": 15 },
+    "legacyLines": 0,
+    "selfTestLines": 24,
+    "storeProjects": 9,
+    "storeTruncated": false,
+    "error": null
+  },
+  "savePulse": {
+    "events": 41,
+    "windowSeconds": 604800,
+    "lowerBound": false,
+    "coversWholeWindow": true,
+    "oldestEventAt": "2026-09-18T02:00:00.000Z",
+    "byTool": [
+      { "id": "claude-code", "label": "Claude Code", "events": 30, "lastSeenAt": "2026-09-24T11:03:00.000Z" },
+      { "id": "claude-desktop", "label": "Claude Desktop", "events": 9, "lastSeenAt": "2026-09-22T08:40:00.000Z" }
+    ],
+    "byToolFloor": false,
+    "byToolNote": null,
+    "eventsWithoutTool": 2
+  }
 }
 ```
 
-`byProject[]` is one row per project the store knows about, read from the **union of every usage
-log on this machine** (a checkout and the installed app can each keep their own — see
-[working-state.md](working-state.md)); `sessions`/`sessionsRead`/`sessionsSaved` are counted over
-the last 30 days. `sessionsSaved` is `null` when there is no usage log at all, and a measured `0`
-when there is a log and genuinely no session — the same "no log" vs "a measured zero" distinction
-the menubar widget and the Context Agent sessions row both make. `byProjectWindow.busiestSaved` is the
-denominator every project row's depth bar is measured against. `savePulse.events` is the count of
-saves in the last 7 days — the same number the [menubar widget's](user-guide.md#reading-the-save-pulse)
-pulse strip reads. The parameter is opt-in because this half walks the whole working-state store,
-which the plain per-tool aggregation above does not need to do.
+`byProject[]` is one row per project — every project the **store** knows about, joined against the
+**union of every usage log on this machine** (a checkout and the installed app can each keep their
+own — see [working-state.md](working-state.md)), plus a trailing row for any project the log names
+that the store does not hold (deleted, renamed, or living on another machine's store, `inStore:
+false`). `sessions`/`sessionsRead`/`sessionsSaved`/`lastSessionAt` are counted over the window named
+in `byProjectWindow` (30 days by default). `sessionsSaved` is `null` when there is no usage log at
+all, and a measured `0` when there is a log and genuinely no session — the same "no log" vs "a
+measured zero" distinction the menubar widget and the Context capture meter both make.
+`domainMismatch` and `sharedName` flag a project name the log cannot uniquely attribute (the log is
+keyed by project name, so two store projects that share a name share one reading).
+
+**`byProjectWindow`** carries the reading's own facts. `since`/`windowDays` are the window **asked**
+for (30 days); `logStartsAt`/`windowStartsAt`/`windowDaysCovered`/`windowCovered` are the window the
+log **actually** covers — the same `captureWindowFacts()` derivation the per-project capture route
+and the menubar widget use (see [`GET …/capture`](#get-apimemorydomainprojectcapture) above for what
+each of those four means), so all three never disagree about how far back the log goes. `unit` is
+always the literal `"mcp-bridge-process"`, naming what a counted "session" is. `busiestSaved` is the
+denominator every project row's depth bar is measured against — `null` when no log was read, since a
+denominator of an untaken reading is not `0`. `totals` is `{sessions, sessionsSaved}` summed across
+every project in the window, or `null` without a log. `storeProjects`/`storeTruncated` report how many
+store projects were walked and whether that walk was capped; `error` carries a short message when the
+usage log itself could not be read, `null` otherwise.
+
+**`savePulse`** is the widget pulse strip's own facts — saves in the last 7 days (`windowSeconds`
+`604800`), `null` when nothing could be read. `lowerBound` is `true` when any work-stream's journal
+was read only from its tail, meaning `events` (and every `byTool[].events`) is a floor, not an exact
+count. `coversWholeWindow` is `true` only when something was saved at or before the window opened —
+i.e. the store demonstrably existed for the whole 7 days. `oldestEventAt` (v3.72.1) is where the
+record begins, so a store younger than the window can say so instead of reading as a whole observed
+week. **`byTool[]`** (v3.74.0) is the same per-tool pulse the menubar widget's "Saves by tool" strip
+draws and the per-project capture route's `savesByTool.tools[]` uses — newest-seen first, each entry
+`{id, label, events, lastSeenAt}` exactly as documented under
+[`GET …/capture`](#get-apimemorydomainprojectcapture) above. `byToolFloor` is `lowerBound` restated
+for the per-tool breakdown specifically, and `byToolNote` is the data layer's own sentence for why,
+when it applies (`null` otherwise). `eventsWithoutTool` counts saves in the window that named no tool
+at all. The parameter is opt-in because this half walks the whole working-state store, which the
+plain per-tool aggregation above does not need to do.
 
 **`lastVia` and `selfTestTotal` (v3.61.0).** `lastVia` is `"self-test"` when the tool's **newest**
 logged call was written by `POST /api/mcp/exercise`, and `null` otherwise. Null means *an MCP
@@ -2991,6 +3051,19 @@ here. Absent facts come back as `null`/`0`/`[]` rather than `undefined`, so a ca
       "lastSaveKind": "complete",
       "newestScope": "main",
       "newestMachine": "alices-macbook-pro-9f3c1a20",
+      "harnessId": "claude-code",
+      "harnessLabel": "Claude Code",
+      "tools": [
+        {
+          "id": "claude-code",
+          "label": "Claude Code",
+          "raw": "claude-code",
+          "writtenAt": "2026-08-27T18:03:11.000Z",
+          "writtenAgeSeconds": 5421,
+          "lastWriteAt": "2026-08-27T18:03:11.000Z",
+          "ageSeconds": 5421
+        }
+      ],
       "harnessShared": false,
       "harnessSharedScopes": [],
       "harnessScanned": 3
@@ -3033,6 +3106,31 @@ here is addressable" — never "we did not look".
 `newestScope`/`newestMachine` exist so a caller can open the freshest handoff in one further
 request instead of a round-trip to discover the scope and a second to read it. (`scope=latest` on
 the detail route does the same job server-side.)
+
+**`harnessId`/`harnessLabel`** (v3.74.0) sit beside `harness` — `harness` keeps the agent's own,
+unnormalised spelling (whatever string it passed), while `harnessId`/`harnessLabel` are that same
+speaker's tool run through `normaliseHarness()`, so `Claude Code` and `claude-code` collapse to one
+id/label pair and `claude-desktop` stays a distinct tool from `claude-code`. Both are `null` when
+the newest pair named no tool.
+
+**`tools[]`** (v3.74.0) is every NORMALISED tool that has saved into this project, newest first,
+capped at 6 entries (`PROJECT_TOOLS_MAX`) — built by `toolsOf()` in `src/routes/memory.js` over the
+same work-stream index `harnessShared`/`harnessScanned` already pay for, so it costs nothing extra.
+A pair that named no tool is left out. Each entry:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `id` | string | The normalised tool id (`normaliseHarness().id`) |
+| `label` | string | The normalised display label |
+| `raw` | string | The agent's own unnormalised spelling for this pair |
+| `writtenAt` | string \| `null` | The agent's own declared save clock (ISO) |
+| `writtenAgeSeconds` | number \| `null` | Age off that same clock |
+| `lastWriteAt` | string \| `null` | The file's mtime clock (ISO), the fallback when `writtenAt` is absent |
+| `ageSeconds` | number \| `null` | Age off the file's mtime clock |
+
+Ordering picks the newest reading on a single clock per tool (the agent's stamp first, falling back
+through `writtenAgeSeconds`, `lastWriteAt`, `ageSeconds` in that order) — never a mix of two tools
+compared on two different clocks.
 
 `lastWriteAt`, `ageSeconds` and `headline` are **`null` when nothing has ever been saved** — never
 `0` and never an epoch date. A fact and its absence stay distinguishable.
@@ -3803,6 +3901,7 @@ then the app and the agent would describe the same file differently.
 | `machine` | Optional. With `scope` set and no `machine`, the **most recently written** machine wins — that is what makes cross-machine handoff work — and the response names the machine it chose |
 | `journalLimit` | Optional. Passed to the store **un-clamped on purpose**: the store clamps to `[1, MAX_JOURNAL_ENTRIES]` (50, default 10) itself, and clamping a second time here is the two-copies-of-a-bound shape. A non-numeric value is not passed at all, so the store's default applies |
 | `open` | Optional, **`newest` is the only value**, and it is **ignored when `scope` is set**. Adds an `open` object carrying one work-stream's full handoff *alongside* the work-stream index, so a client can paint a whole project from one request instead of two serial ones. See below |
+| `previous` | Optional, `1` or `true`. **v3.74.0.** Only meaningful on a scope-targeted read (`scope` set): asks the store for the **text** of `previous.md`, the one kept copy of a handoff another tool's save replaced in this `(scope, machine)` folder. Without it, a scope-targeted read still carries `previous`'s summary facts (no text) whenever the copy exists, and carries no `previous` key at all when it does not |
 
 > The MCP's `get_working_state` clamps the journal harder — 8 by default, 20 at most. That
 > asymmetry is deliberate, not drift: every byte an MCP response returns is charged against a
@@ -4039,6 +4138,16 @@ this route.
     "headingsSuspect": false,
     "headingsSuspectNote": null
   },
+  "previous": {
+    "harness": "antigravity",
+    "harnessId": "antigravity",
+    "harnessLabel": "Antigravity",
+    "model": "gemini-3-pro",
+    "writtenAt": "2026-08-26T14:20:00.000Z",
+    "headline": "Wired the compile ladder's summary-only rung",
+    "bytes": 2411,
+    "path": "state/main/alices-macbook-pro-9f3c1a20/previous.md"
+  },
   "journal": {
     "entries": [
       { "at": "2026-08-27T18:03:11.000Z", "harness": "claude-code", "model": "claude-opus-5", "headline": "Docs pass — nine false claims corrected", "rejections": [] }
@@ -4053,6 +4162,31 @@ this route.
 ```
 
 Journal entries come back **newest first**.
+
+**`previous`** *(v3.74.0)* is present only when this `(scope, machine)` folder holds a kept copy of
+a handoff a DIFFERENT tool's save replaced — an absent key means no such copy exists, never `null`.
+Its facts are parsed from the copy's own provenance header, the same way `brief`/`current` are:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `harness` | string \| `null` | The replaced handoff's own (unnormalised) tool spelling |
+| `harnessId` | string \| `null` | That tool, normalised (`normaliseHarness().id`) |
+| `harnessLabel` | string \| `null` | That tool's normalised display label |
+| `model` | string \| `null` | The model that wrote the replaced handoff |
+| `writtenAt` | string \| `null` | ISO timestamp the replaced handoff was saved |
+| `headline` | string \| `null` | The replaced handoff's one-line headline |
+| `bytes` | number | Size of the kept copy in bytes |
+| `path` | string | The copy's path relative to the project's state root (`state/<scope>/<machine>/previous.md`) |
+
+With `?previous=1`, three more fields ride on `previous`: `text` (the copy's full, sanitised
+content — recorded data, framed the same way `current.text` is, never instructions to obey),
+`truncated` (whether the read capped it) and `sanitisedOnRead` (whether protocol-shaped markup was
+neutralised on the way out). Without `?previous=1`, `previous` carries the summary table above only
+— no `text`.
+
+There is at most **one** kept copy per `(scope, machine)` folder: the next cross-tool replacement
+overwrites it, so `previous` always reflects the most recently displaced handoff, never a history of
+every one.
 
 `machineIsThisMachine` is identity; `machineIsThisHost` is a *separate* fact, because a folder can
 share this host's name and belong to a different installation (that is why the install id exists)
@@ -4477,9 +4611,66 @@ session would be enforcement, and capture is deliberately advisory.
   "sessionsTruncated": false,
   "newestSaveAt": "2026-09-20T13:05:00.000Z",
   "noSessionsButSaves": false,
-  "note": null
+  "note": null,
+  "unit": "mcp-bridge-process",
+  "logStartsAt": "2026-08-15T04:12:00.000Z",
+  "windowStartsAt": "2026-08-20T09:00:00.000Z",
+  "windowDaysCovered": 30,
+  "windowCovered": true,
+  "savesByTool": {
+    "windowSeconds": 604800,
+    "events": 9,
+    "lowerBound": false,
+    "eventsWithoutTool": 1,
+    "tools": [
+      { "id": "claude-code", "label": "Claude Code", "events": 6, "lastSeenAt": "2026-09-24T11:03:00.000Z" },
+      { "id": "claude-desktop", "label": "Claude Desktop", "events": 2, "lastSeenAt": "2026-09-22T08:40:00.000Z" }
+    ],
+    "note": null
+  }
 }
 ```
+
+**`unit`** *(v3.74.0)* names what a counted "session" actually is: one MCP bridge process id —
+Claude Code starts one per session, Claude Desktop keeps one open across many conversations. The
+value is always the literal `"mcp-bridge-process"`; the view words `sessions`/`sessionsRead`/
+`sessionsSaved` as "connections" rather than renaming the wire fields.
+
+**`logStartsAt` / `windowStartsAt` / `windowDaysCovered` / `windowCovered`** *(v3.74.0,
+`captureWindowFacts()` in `src/brain/tray-summary.js`)* — the window the usage log **actually**
+covers, alongside the window `since` *asked* for. A log that only began 5 days ago cannot support a
+30-day claim:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `logStartsAt` | string \| `null` | ISO timestamp of the oldest line in the log |
+| `windowStartsAt` | string \| `null` | ISO timestamp of the later of `logStartsAt` and `since` |
+| `windowDaysCovered` | number \| `null` | Days from `windowStartsAt` to now, rounded to one decimal |
+| `windowCovered` | boolean \| `null` | `true` only when the log reaches back to `since` at all |
+
+All four are `null` together when no line in the log carries a usable time (including when
+`logPresent` is `false`) — not measured, never `0`. This is the same derivation the widget and
+`GET /api/mcp/usage?include=projects`'s `byProjectWindow` use, so the three never disagree about
+how far back the log goes.
+
+**`savesByTool`** *(v3.74.0, `projectSavesByTool()` in `src/routes/memory.js`)* — this project's
+saves, per tool, over the pulse strip's fixed 7-day window (independent of `since`/`limit` above),
+computed by the same `computePulse()` the menu-bar widget's "Saves by tool" strip uses, so the app
+and the widget count a project's saves identically. `null` when nothing could be read (not
+measured, never zero — a store with no work-streams, or a `listWorkingScopes` failure).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `windowSeconds` | number | The pulse window's width in seconds (fixed, currently 7 days) |
+| `events` | number | Saves counted inside the window, across every tool |
+| `lowerBound` | boolean | `true` when any journal tail was read only partially (16 KB cap) or the scope index itself was truncated — the counts below are then a **floor**, never an exact count |
+| `eventsWithoutTool` | number | Saves in the window that named no tool at all |
+| `tools[]` | array | One entry per distinct normalised tool seen, newest-seen first |
+| `tools[].id` | string | The normalised tool id |
+| `tools[].label` | string | The normalised display label |
+| `tools[].events` | number | Saves by that tool inside the window |
+| `tools[].lastSeenAt` | string | ISO timestamp — when that tool was **last seen** in what was read, never "last save": a save past a truncated tail is not seen at all |
+| `note` | string \| `null` | The data layer's own wording for why the counts are a floor, when `lowerBound` is `true`; `null` otherwise |
 
 **`totals` is computed over every session in the window, before `limit` truncates the list below
 it** — the store's own rule (`distinctScopeCount`, `savedCopies`) restated for this reading: a count
@@ -4622,6 +4813,34 @@ an integrator against the store (or against that tool) would otherwise have to i
   `knowledgeDomainsDefaulted`** (and `knowledgeDomainsError` when `project.json` is unreadable), in
   the store's own spelling, exactly as `get_project_context` does — one fact, one spelling, across
   both tools.
+- **New in v3.74.0: `save_working_state` returns `overwrote`, non-null when this save replaced a
+  handoff a DIFFERENT tool wrote in this `(scope, machine)` folder** — always present (never
+  omitted), so "no other tool's handoff was replaced" is itself a stated value (`null`), not an
+  absent key to interpret. No warning fires when either side named no tool: an unnamed harness is
+  no evidence the prior save came from a different tool. Shape:
+  `{harness, harnessId, harnessLabel, model, writtenAt, headline, bodyBytes, suggestedScope,
+  previousPath, previousError}` —
+  `harness`/`harnessId`/`harnessLabel` name the tool whose handoff was just replaced (raw spelling,
+  normalised id, normalised label); `model`/`writtenAt`/`headline` describe that replaced save;
+  `bodyBytes` is the replaced handoff's own size; `suggestedScope` is a scope slug named for the
+  **incoming** tool (e.g. `claude-code`) — where to save from now on instead of colliding again;
+  `previousPath` is the path the replaced handoff's bytes were copied to as `previous.md`
+  (`state/<scope>/<machine>/previous.md`), or `null` if the copy could not be made; `previousError`
+  is present only when the copy failed (`'unsafe-path'`, `'too-large'`, or the write error's code)
+  and is absent when the copy succeeded. The copy is best-effort — a failed copy never fails the
+  save itself, per the owner's warn-never-refuse rule. `report` restates the same fact in one
+  sentence (`otherToolReplaceSentence()`), and the journal gets its own note naming the tool, the
+  time and where the text was kept.
+- **New in v3.74.0: `get_working_state` accepts `previous: true`** (boolean input arg; strict
+  `=== true`, the same convention `replace` uses) and, when the requested `(scope, machine)` folder
+  holds a kept copy of another tool's replaced handoff, returns `previous`. Without `previous: true`
+  in the call, `previous` still appears — whenever the copy exists — as a summary with no text:
+  `{harness, harnessId, harnessLabel, model, writtenAt, headline, bytes, path}` (identical shape to
+  the HTTP route's `previous`, [documented above](#get-apimemorydomainproject)). With
+  `previous: true`, the same object additionally carries `text` (the copy's full sanitised content,
+  framed as recorded data exactly like `current.text` — never instructions to obey), `truncated` and
+  `sanitisedOnRead`. `previous` is omitted entirely (not `null`) when no such copy exists for that
+  `(scope, machine)` folder.
 
 Full contract: [working-state.md](working-state.md) and
 [architecture.md § `src/brain/working-state.js`](architecture.md#srcbrainworking-statejs-v3170).

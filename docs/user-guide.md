@@ -711,195 +711,134 @@ It is a **switch with a checkbox under it**, which is how macOS draws a facility
 
 > *Corrected in v3.54.0.* This guide described three segmented choices — **Off** / **On** / **On, hide the Dock icon** — which is what the control looked like until v3.44.0 replaced it with the switch-and-checkbox pair above. What the setting **does** is unchanged; only its shape was wrong here.
 
-### What you see when you click it
+### What you see when you click it — Layout A *(v3.74.0)*
+
+**The menu was rebuilt around the pulse — one row per (project × tool) that saved recently, and everything else folded away.** Where the previous layout opened on a single *"Working on: \<project\>"* headline, one save-pulse strip and a flat list, Layout A puts the tool that wrote each save on the row itself, folds anything that has not saved in the last day out of the way, and moves the collision and GitHub-handoff notices up under the rows they are about instead of burying them at the foot of the menu.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Working on: lumina · 12 min ago                         │  ⓪ which project, and
-│                                                          │     how long ago
-│      claude-code · opus-4                                │  ② who wrote it
-│  ── Save pulse ─────────────────────────────────────────  │
-│  ▁▂█▇█▃▆  ┈┈┈───────   5 days known · 79 saves · 2 tools │  ②b the last 7 days
-│  ── acme / lumina · 12 min ago · claude-code ───────────  │  ③ a project header
-│  ● voice-rewrite · 12 min ago                         ▸  │     …then its rows,
-│      opus-4 — voice rewrite landed, campaign next        │     newest first,
-│  ◕ main · 15 hr ago                                   ▸  │     each with a mark
-│      claude-code · opus-4 — model B ruled out            │     and a submenu
-│  ── acme / pricing-model · 38 hr ago · antigravity ─────  │  ③ a second group
-│  ◑ sources-sweep · 38 hr ago                          ▸  │
-│      handoff trimmed — 7 of 11 issues triaged            │
-│  More in Project Context… (6)                            │  ④ a cap, disclosed
+│  ▁▂█▇█▃▆  ┈┈┈───────   7 days · 192 saves · Claude Code  │  ①  the save pulse
+│      ▸ Saves by tool                                     │       (a submenu, one
+│                                                            │       strip per tool)
+│  ── Active · last 24 h ────────────────────────────────── │  ②  header
+│  ● ott · Claude Code · 8 min ago                       ▸  │  ③  one row per
+│      opus-5.5 — v1.3.0 shipped, campaign next             │       project × tool
+│  ◕ lumina · Antigravity · 3 hr ago                     ▸  │
+│      gemini-3 — voice rewrite landed                      │
+│  +2 more active projects                               ▸  │  ③b overflow
 ├──────────────────────────────────────────────────────────┤
-│  14 handoffs waiting on GitHub                           │  ⑤ notices, only
-│  studio saved after this Mac                             │     when true
-│  Two agent tools are writing notes…                      │
+│  Two tools are writing ott / main                         │  ④  notices, only
+│  14 handoffs waiting on GitHub                             │       when true —
+│  studio saved after this Mac                               │       directly under
+├──────────────────────────────────────────────────────────┤       the Active rows
+│  ◔ Idle · 4 projects                                    ▸  │  ⑤  the Idle fold
 ├──────────────────────────────────────────────────────────┤
-│  Open Project Context…                                   │
-│  Open The Curator                                        │  ⑥ always here,
-│  Settings…                                               │     in every state
+│  ▪ Knowledge · 6 domains                                ▸  │  ⑥  every domain's
+├──────────────────────────────────────────────────────────┤       page bar
+│  Open Project Context…                                    │
+│  Open The Curator                                          │  ⑦  always here,
+│  Settings…                                                 │       in every state
 ├──────────────────────────────────────────────────────────┤
-│  Updated 12:42                                           │  ⑦ how fresh this
-├──────────────────────────────────────────────────────────┤     reading is
-│  Quit The Curator                                        │
+│  Updated 12:42                                              │  ⑧  how fresh this
+├──────────────────────────────────────────────────────────┤       reading is
+│  Quit The Curator                                            │
 └──────────────────────────────────────────────────────────┘
 ```
 
-*Abbreviated, and the notice lines appear only when they apply. Everything else is always in that
-order. **Save pulse** and each **project header** are real macOS section headers, not drawn rules;
-the pulse and the row marks are real drawn images, not text — the blocks above are the closest a
-page of text can get. The `▸` on each row is macOS's own submenu arrow. A project header reads
-`domain / project` when that domain holds more than one project, and just the project's name when
-it does not — there is no reason to print `acme / acme` at a person. The domain comes back for
-both whenever two headers on screen would otherwise read the same, which is what happens when two
-different domains each hold a project called `main`. The rows under a header are
-that project's **work-streams**.*
-
-> **The first line of a row is the work-stream and the time, and nothing else may stand there.**
-> That is a change, and it came from a photograph of the previous version: a row read
-> *`project… — alices-macbook-pro·9f3c · 18 hr ago`*. The work-stream name — the thing you were
-> looking for — had been cut to eight characters, while a twenty-two-character computer name
-> survived whole, because everything after the name was composed at full length first and the name
-> got whatever was left. **Measured on the same rows, the widest line came down from 46 characters
-> to 35, and no work-stream name is cut at all.**
->
-> Everything that used to crowd that line — the tool, the computer, the project, the model — is now
-> on the **second line**, which macOS draws in a smaller face and which therefore has more room.
-> Each of those is still dropped **only while it distinguishes nothing**: the tool when every row
-> shows the same tool, the computer when every row came from the same computer, the model when
-> they all used the same one. The project left that line entirely in v3.48.0 — it is the group
-> header above the row now. When even the second line will
-> not hold everything, tokens are dropped **whole, lowest priority first** — model, then computer,
-> then tool — because `son…` is not a shorter `sonnet-4`, it is a different word. The project is
-> not in that ladder at all: it never reaches line two to be dropped from it.
->
-> **And nothing a cut removed becomes unreachable. Hover the row and you get all of it** — the full
-> `project · work-stream`, the machine folder, the tool, the exact model string and the exact
-> timestamp.
->
-> That is an absolute rule rather than a courtesy, and it applies everywhere a budget bites: the
-> line under the headline carries the project and work-stream on hover, and a notice long enough to
-> be clipped carries its whole sentence. A notice that already fits carries no tooltip at all,
-> because a tooltip repeating the label word for word is noise.
+*Abbreviated. The notice lines and the overflow row appear only when they apply; everything else is
+always in that order. Every heading (**Active · last 24 h**, and each submenu's own header) is a
+real macOS section header, not a drawn rule; the pulse strip and each row's freshness mark are real
+drawn images, not text — the blocks above are the closest a page of text can get. The `▸` on a row
+is macOS's own submenu arrow.*
 
 | | What it is | Why it is where it is |
 |---|---|---|
-| ② | **Which tool and which model** wrote that save — `claude-code · opus-4` | A statement about the line above, not a second action. It used to repeat `project · work-stream`, which the very first row already shows three pixels below; *which agent, and which LLM* is a question nothing else in the menu answers. The project and work-stream are still there on hover |
-| ②b | **The save pulse** — a small drawn strip of the last seven days, and a sentence saying what it adds up to | *"Did it save?"* is ⓪. *"Have we been saving at all this week?"* is a different question, and a picture answers it faster than any sentence. [How to read it](#reading-the-save-pulse) |
-| ⓪ | **`Working on: <project> · <age>`** — the project written to most recently, anywhere across all of them, and how long ago | It is the question you came to ask, so it is answerable without reading past the first line, and clicking it opens Project context. It replaced a line reading *"Last save · 12 min ago"*, which said WHEN without saying WHAT: a person with several projects asks *which one was I in?* first, and until v3.48.0 the menu could not answer it, because rows were flat and the answer had to be inferred from whichever one happened to be at the top |
-| ③ | Work-streams **grouped under their project**, newest project first and newest work-stream first inside each group — at most **three groups** and **five rows** in total, every row with a [recency mark](#the-recency-dot) and a [submenu](#what-a-row-can-do). Two rows per group is a floor rather than a ceiling: each group gets two before any group gets a third, and rows nobody claimed are handed back out in recency order — so one project on its own still fills all five, which is what every install had before this release. **A work-stream saved from two of your computers takes one row, not two** — the newer save — and the older copy is counted in ④ rather than shown | Rows used to be flat because there was only ever one project. With several, a flat list interleaves two builds and reads as one, which is the confusion the grouping exists to remove. The header carries the project's own age and the tool that wrote it, so a group is readable without its rows |
-| ④ | *"More in Project Context… (6)"* — how many work-streams did **not** fit, **and you can click it** | A cap is never allowed to look like a measurement. A list that shows five when you have eleven, and says nothing about the other six, is the one case where you most need telling — so the number is counted against everything on disk, not against the five you can see. It is the only route to the rows the cap hid, so it is a live menu item and not a dimmed apology |
-| ⑤ | Notices | They appear **only when they have something to say**, at most four at a time, and **below** the list rather than above it — a caveat about a list belongs under it, not in front of the answer you came for. Two agent tools writing one work-stream; handoffs waiting on GitHub; **another computer having saved after this one** |
-| ⑥ | The three ways back into the app | Always present, in every state, whatever the data above them does. That is what makes the icon safe to switch on |
-| ⑦ | *"Updated HH:MM"* — an **absolute** time | The rows' ages are relative; this one is not, deliberately. They answer different questions — *how old is this event* versus *how old is this reading*. It is what makes a reading that has silently stopped updating visible as stale, and it is the moment the [pulse strip](#reading-the-save-pulse) is a picture of |
+| ① | **The save pulse** — a small drawn strip of the last seven days, then a sentence: *`7 days · 192 saves · Claude Code`*. With more than one tool active it opens a **`Saves by tool`** submenu, one drawn strip per tool — `Claude Code · 200 saves`, or `Antigravity · none · last seen 1 Sep` for a tool the store has seen but that did not save inside the window | It sits on top because it is the widest-angle fact the menu has — *has anything been saving at all, and who* — and answering it first means the row below never has to repeat it. [How to read it](#reading-the-save-pulse) |
+| ② | **`Active · last 24 h`** | A plain section header, not a row — it names what the rows under it are |
+| ③ | **One row per project × tool** that saved in the last 24 hours, newest first. Line one is `project · tool · age`, with the freshness mark in the gutter; line two is `model — the agent's own one-line summary`. Hovering, or opening the row's submenu, reaches the four actions (and, when the project has other scopes or machines, a nested **Other work-streams** section carrying the same four actions per work-stream) | The row now carries what the old headline, the tool-and-model line and the first list row used to say between them — one line for *which project, which tool, how long ago*, a second for *which model, and what it did*. [How to read a row](#how-to-read-a-row) |
+| ③b | **`+2 more active projects`**, only when the cap is exceeded — **and you can click it**, into a submenu of the same rows | A cap is never allowed to look like a measurement. The number is counted against everything on disk, not against what fits, and it is a live menu item rather than a dimmed apology |
+| ④ | **Notices**, only when they have something to say, directly **under** the Active rows | A caveat about the rows belongs right under them, not buried at the foot of the menu behind the domains list — where a photograph of the previous layout showed a collision said twice and read neither time. A notice naming a project (a collision) is enabled and opens that project; the rest are statements |
+| ⑤ | **`Idle · N projects`** — one fold, collapsing every project with no save in the last 24 hours. Its submenu lists one row per idle project, same shape as an Active row | Idle projects still matter — you can still reach and resume any of them — but they no longer compete with today's rows for five scarce lines on the face of the menu |
+| ⑥ | **`Knowledge · N domains`** — a submenu with every domain's page bar, in that domain's own [identity colour](#reading-the-screen) | Unchanged from the previous layout, just moved behind one row instead of sitting on the face — the same reason Idle folds |
+| ⑦ | The three ways back into the app | Always present, in every state, whatever the data above them does. That is what makes the icon safe to switch on |
+| ⑧ | *"Updated HH:MM"* — an **absolute** time | The rows' ages are relative; this one is not, deliberately. They answer different questions — *how old is this event* versus *how old is this reading*. A click opens the menu on the snapshot the last read produced and refreshes afterwards — so the menu is not "fresh on click", and this stamp is what tells you how close the snapshot is |
 
 **Quit is always last, and it is the system's own Quit.** It is not a shortcut that skips anything: quitting from the menu bar runs the same check as ⌘Q, so if an ingest or a compile is in flight you still get the *"Quit now?"* dialog described in [§6](#6-starting-and-quitting). That matters more here, not less — an app that keeps running with no window on screen is more likely to be alive while something is being written.
 
+> **Removed from the menu, kept in the app.** Four things that used to sit on the face of the menu
+> are gone from it as of v3.74.0 — the maintainer's own decision, made because the first Active row
+> now carries the facts they used to state on their own: the **`Working on: <project> · <age>`**
+> headline and its grey `harness · model` line; the **Session start** line (the context-window
+> planning reading); the **Documents** line; and the **"N of M saved"** capture bars, which turned
+> out to be counting MCP bridge *process ids*, not real agent sessions (see
+> [Agent connections](#the-meter-did-the-session-read-and-did-it-save), below). None of that
+> information disappeared — it still lives in [Project context](#7-finding-your-way-around), step ②
+> **Memory** and step ④ **Session start** — it simply is not drawn a second time in the menu bar.
+
 ### How to read a row
 
-Every row is the same shape:
+Every Active or Idle row is the same shape:
 
 ```
-main · 4 min ago
-    claude-code · opus-4 — wired the remote observation and its window
+ott · Claude Code · 8 min ago
+    opus-5.5 — v1.3.0 shipped, campaign next
 ```
-**Line one is `work-stream · when`, and nothing else is ever allowed onto it.** Line two is
-*who wrote it* and then **the agent's own one-line summary of what it did**.
 
-**Line two can carry up to five things, and each appears only when it is telling you something.**
-
-| On line two | When it appears |
-|---|---|
-| **`handoff trimmed`** | Only when the last save **did not all fit** and part of the handoff was not stored. [More below](#when-a-save-did-not-all-fit) |
-| **`opencode ← claude-code`** | Only when **the last two saves in that work-stream came from different tools** — the baton changed hands. The arrow points from who wrote it to who wrote it before |
-| **the tool** — `claude-code`, `opencode`, `cursor` | Unless every visible row shows the same one |
-| **the computer** — `studio`, `laptop` | Only on a row from **another computer**, and only when the rows disagree about which computer they came from |
-| **the model** — `opus-4`, `gemini-2.5`, `haiku-4` | Unless every visible row used the same one. It is the family and the generation; the exact string is on hover |
-
-> **A row from another computer can now name its tool as well as its machine, and that is a
-> change.** It used to be one or the other: naming a tool on a foreign row could be misread as
-> *that tool is running here*. Line two is a list rather than a single slot, so the computer is
-> right there beside the tool — `opencode · studio` cannot be misread — and suppressing the tool
-> would now be dropping a real fact to avoid an ambiguity that no longer exists.
-
-> <a id="when-a-save-did-not-all-fit"></a>**`handoff trimmed` appears for exactly one of the five
-> save verdicts.** It means the store could not hold the whole handoff and some of it was not
-> written — the one thing a widget about carrying context must not hide. A save whose one-line
-> *summary* was shortened while the handoff itself was stored in full is **silent here**, because
-> those two are different facts and reporting them with one alarm is the defect v3.39.0 exists to
-> fix. Hover the row and it says which happened, in a sentence.
+**Line one is `project · tool · when`, and nothing else is ever allowed onto it.** Line two is
+*which model* and then **the agent's own one-line summary of what it did**. The tool and the model
+are dropped from line one and two respectively only while they distinguish nothing — the tool when
+every visible row shows the same one, the model likewise — and nothing a drop removes becomes
+unreachable: hovering a row shows the full `project · work-stream`, the machine, the exact model
+string and the exact timestamp.
 
 **And the `when` column tells you which clock it came from.**
 
 | You see | It means |
 |---|---|
-| **`4 min ago`** | The **agent's own clock**, recorded in the journal when it saved. This is the real answer |
-| **`changed 4 min ago`** | The **file's timestamp on this disk**. For a handoff that arrived over Personal Sync, that is when it *landed here*, not when it was written — git rewrites file times when it checks a file out |
-| **`time unknown`** | No save time was recorded for this work-stream. It is never shown as *"just now"*, and a row with no known age sorts to the **bottom**, never the top — putting an unknown first would be asserting it is the newest |
+| **`8 min ago`** | The **agent's own clock**, recorded in the journal when it saved. This is the real answer. Since v3.74.0, ordering across scopes and machines — which save is "latest" — is decided by this same recorded time first, falling back to the file's timestamp on disk only when no agent time was recorded at all |
+| **`changed 8 min ago`** | The **file's timestamp on this disk**, used only as that fallback. For a handoff that arrived over Personal Sync, that is when it *landed here*, not when it was written — git rewrites file times when it checks a file out |
+| **`time unknown`** | No save time was recorded for this work-stream. It is never shown as *"just now"*, and a row with no known age sorts to the bottom, never the top |
 
-> This is the one place the widget could most easily have lied to you. On a second computer, *every* handoff you pull would read as *"just now"* if it used file times — and the strongest signal in the whole design would be wrong in exactly the situation it was built for.
+**Hovering the icon** shows the newest save in the store as a tooltip, without clicking — worded
+as what it is: *"Last save: ott · Claude Code · 8 min ago"*.
 
-**Hovering the icon** shows the same headline in a tooltip, without clicking.
+### The freshness mark
 
-> **How current are the ages, really?** **The ages themselves are recalculated every time the menu
-> is drawn** — including when you merely hover the icon, which costs nothing because it re-uses the
-> reading already in memory. So *"4 min ago"* is 4 minutes as of the moment you are looking at it.
->
-> What can lag is the **reading underneath** — which work-streams exist and what each one last
-> said. That is refreshed the instant a save happens (the app watches the folder), and otherwise
-> every five minutes as a safety net, and again when you click. In practice a save you just made is
-> already there. **`Updated 14:32`** tells you when the menu was last drawn, which is what makes a
-> reading that has silently stopped updating visible as stale.
+Every row — Active, Idle, and each tool's line inside **Saves by tool** — carries a small dot to its
+left, drawn from the same freshness scale the rest of the app uses (`--fresh-hot` / `--fresh-mid` /
+`--fresh-cold`).
 
-### The recency dot
+| Mark | Meaning |
+|---|---|
+| **●** filled, with a halo | **Being written right now** — under 60 seconds |
+| **●** filled, no halo | Saved within the last hour |
+| **●** filled, cooler tone | Saved within the last 24 hours |
+| **●** filled, coldest tone | Saved within the last 7 days |
+| **○** hollow ring | Older than 7 days |
 
-Every work-stream row, under whichever project header it sits, carries a small mark to its left. It is a **band**, not a number — the exact age is printed on the same row, in words, right beside it.
-
-| Mark | Colour | It means |
-|---|---|---|
-| **●** a full disc | teal | **Being written right now** — within the last **2 minutes** |
-| **◕** three quarters filled | teal | Saved within the last **half hour** |
-| **◑** half filled | amber | Saved **earlier today** — between half an hour and **12 hours** ago |
-| **◔** a quarter filled | grey | Saved **in the last week** |
-| **◉** empty, with a small centre dot | grey | **Older than a week** |
-| *(nothing at all)* | — | **No save time is known** for this work-stream |
-
-**It is a clock draining.** That is a change: the marks used to be a disc and three rings that
-differed by half a point of radius — **one screen pixel** between three of the five states, which
-is a ladder that exists in the arithmetic and not on the screen. A quarter of a circle is a
-difference you can see in a thumbnail, and the mark itself grew from 11 points square to 13 so a
-quarter of it is still a shape rather than a smudge.
-
-**And every mark now sits inside a faint ring — the clock's face — which came straight out of the
-first photograph of this menu.** In that picture three of the five rows carried the quarter mark,
-and a quarter with nothing around it does not read as a quarter of anything; it reads as a sliver.
-The ring is the whole that the filled part is a fraction *of*. It is drawn in the mark's own colour
-at about a third of its strength, so it never competes with the filled part, and the *right now*
-state has no visible ring at all — its disc covers it, which is what a full clock looks like. The
-oldest state gains the most from it: instead of a small dot alone in an empty space, it reads as a
-clock that has fully drained down to its hub.
-
-**Why five marks share three colours.** Green covers both *right now* and *the last half hour* on purpose: a menu you open by hand will essentially never land inside the two-minute live window, so a green reserved for that alone would spend the strongest colour in the set on the state you almost never see, and everything would be amber or grey in practice. **Half an hour is the point at which the handoff stops being in your head** — which is the thing the colour is actually being asked about. At the other end, three days ago and three weeks ago call for the same thing from you — read it properly before you touch it — so a third shade between them would be a distinction with no consequence.
-
-**The colour is never the only signal.** Teal and amber are a hard pair for the commonest kinds of colour blindness, so the five marks are also a ladder of *how much ink is on the screen* — 78, 61, 44, 27 and 22 square points, strictly downward — and the one state that changes what you do next, something is being written **right now**, is the only complete disc. You can read the whole ladder with the colour removed entirely, which is exactly how the automated tests check it. **Hover a row** and the band is also stated in words.
-
-> **A row with no known save time gets no mark at all — deliberately.** It does not get the faintest, oldest-looking dot. *We do not know when this was saved* and *this was saved a long time ago* are different claims, and drawing the second when only the first is true would be inventing a fact. The row's own label says *"time unknown"*, and the space where the dot would be stays empty.
+A row's own colour is never the only signal — the tiers are also a ladder of how much ink is on the
+screen, filled to hollow, so the mark reads with colour removed entirely. Hover a row and the band
+is also stated in words.
 
 ### What a row can do
 
-<a id="what-a-row-can-do"></a>Every work-stream row has a **submenu** — hover it and four items
-appear.
+Every Active or Idle row has a **submenu** — hover it and four items appear.
 
 | Item | What it does |
 |---|---|
-| **Open in The Curator** | Opens the app on Project context, at that project. This is what clicking the row used to do, and it is still the first thing under the pointer |
+| **Open in The Curator** | Opens the app on Project context, at that project |
 | **Copy resume prompt** | Puts a short **instruction** on your clipboard: paste it into a fresh agent session and it knows how to fetch this work-stream's state for itself |
 | **Copy handoff as Markdown** | Puts the **document itself** on your clipboard — your brief and the session handoff, in full |
 | **Reveal current.md in Finder** | Opens a Finder window with the handoff file selected |
 
+**When the project has other scopes or other tools' saves, the same submenu adds an "Other
+work-streams" section beneath the four actions** — one row per additional work-stream, each opening
+the same four actions of its own. That is the route to a work-stream the cap on the face of the menu
+hid, or to a second tool's own scope on the same project, without leaving the row you are already on.
+
 **The two Copy items exist because a menu cannot open a work-stream.** Clicking a row lands on the
 *project*; the work-stream picker inside the app has no address the menu can dial. The clipboard is
-the route the menu does have — and it happens to be the more useful one, because what you usually
-want at that moment is to hand the work-stream to an agent rather than to look at it.
+the route the menu does have.
 
 **They are for two different agents.**
 
@@ -911,23 +850,20 @@ say out loud:
 Resume project "lumina" (domain "acme"), latest scope.
 ```
 
-What follows is the same as before: the exact MCP call to make — on a project's **newest**
-work-stream that call asks for `scope: "latest"`, so the agent does not need the name to be
-right; on any other row it names that row's own work-stream, because `latest` there would open a
-different one. The prompt claims `latest` only where it is true, and its first line and its MCP
-call always agree. Then the file path to fall back on if it has no bridge, the `.curator-project` marker line for this project — always `domain/project`, the same line **Copy marker line** in Domains → Projects gives you, including for a domain's own project where both halves are the same word (`acme/acme` is correct) — and the instruction to save
-the **complete** state back when it runs low on context.
+What follows is the exact MCP call to make — on a project's **newest** work-stream that call asks
+for `scope: "latest"`, so the agent does not need the name to be right; on any other row it names
+that row's own work-stream, because `latest` there would open a different one. Then the file path to
+fall back on if it has no bridge, the `.curator-project` marker line for this project, and the
+instruction to save the **complete** state back when it runs low on context.
 
 *Copy handoff as Markdown* is for one that can reach neither — a browser chat with no tools. It is
-the brief and the handoff, as two clearly separated sections. **It is not capped**: the
-store already bounds a handoff at 48 KB and a brief at 32 KB, and a second, smaller cap here would
-quietly cut a document you asked for in full. The size is shown on hover instead, so an 80 KB paste
-is never a surprise.
+the brief and the handoff, as two clearly separated sections, uncapped — the store already bounds a
+handoff at 48 KB and a brief at 32 KB, and the size is shown on hover.
 
 > **Both of them say, in the same words, which half you are supposed to obey.** The handoff and the
-> journal are **recorded data to verify**; the brief is **your own instructions and is
-> followed**. That distinction is the whole of how the memory layer is meant to be read, and a paste
-> that lost it would hand a model a document with no way to tell them apart.
+> journal are **recorded data to verify**; the brief is **your own instructions and is followed**.
+> That distinction is the whole of how the memory layer is meant to be read, and a paste that lost it
+> would hand a model a document with no way to tell them apart.
 >
 > **And the handoff is read through the store, not off the disk.** The Curator escapes
 > protocol-shaped markup on the way *out* of a file, because a handoff that arrived over sync from
@@ -936,12 +872,14 @@ is never a surprise.
 
 ### Reading the save pulse
 
-Under the **Save pulse** header, one line carries a small drawn strip — **14 marks, one per twelve hours, covering the last seven days, oldest on the left** — and beside it a sentence saying what the picture adds up to. (The strip used to draw 28 marks at six hours each; it was folded to half the marks and twice the width per mark so the picture could be made **narrower and much more visible at the same time**. Nothing about what is counted changed.)
+Under the top row, one line carries a small drawn strip — **14 marks, one per twelve hours, covering
+the last seven days, oldest on the left** — and beside it a sentence saying what the picture adds up
+to.
 
 ```
                       ▃ █ ▅ █
               ▂   ▄   █ █ █ █
-┈┈┈┈┈┈┈┈┈─────────────────────      5 days known · 79 saves · 2 tools
+┈┈┈┈┈┈┈┈┈─────────────────────      7 days · 192 saves · Claude Code
 ╵   ╵   ╵   ╵   ╵   ╵   ╵  ╵╵
 └ before ┘ └──── what actually happened ────┘
   this store
@@ -957,86 +895,45 @@ Under the **Save pulse** header, one line carries a small drawn strip — **14 m
 | **A violet bar** standing on the baseline | Saves landed in that twelve-hour block. **The taller the bar, the more saves** — the ladder is 1, 2–3, 4–6, 7–12, 13 or more |
 | **An amber cap** on the top of a bar | **A different agent tool took over** inside that twelve hours. This is the one mark that answers *did the baton get passed cleanly* |
 
-Below the baseline, **one tick per day**, with **today's drawn double width** so the last day is
-findable without counting.
-
-> **The bar height is the save count, and that is a reversal worth explaining.** The previous strip
-> refused to put the count in the height, on the ground that a rising and falling column chart reads
-> as a productivity graph. That ground is real and it still holds — but the version that shipped put
-> the identical number into a five-step **colour ramp** instead, which at three points wide is
-> illegible, and which saturated at five saves while real twelve-hour blocks hold three to eighteen.
-> The result was the fence in the maintainer's screenshot: every active block the same dark green.
->
-> The count is now drawn where it can be read, and the productivity reading is defeated by
-> **structure** rather than by refusal — the baseline and the day ticks make the picture a
-> *timeline*, and the sentence beside it says **saves per 12 hours**, never *activity* and never
-> *progress*. **A tall bar still means "checked in often", never "a good day".** How often an agent
-> saves is an instruction you gave it, not an outcome it earned.
-
-> **Why "did not exist yet" has its own texture rather than just being fainter.** *Nothing happened*
-> and *we have no idea* are opposite claims, and a strip that draws them the same way is lying about
-> half of itself. This is not an edge case: a store three and a half days old spends **half its
-> width** on "did not exist yet". The difference is **solid versus dotted** — a texture, not a
-> shade — and both are drawn in the *same ink*, so it survives being read by someone who cannot see
-> the colours at all.
->
-> **The colours are measured, not picked.** Every one clears the 3:1 contrast floor for non-text
-> against every menu background it can be drawn on, in both light and dark appearance, and the
-> automated tests recompute all of it from the values actually shipped — including three colours
-> that are **required to fail**, so a check that could never fail cannot pass for one that works.
-
-> **`· 2 tools`** appears on the sentence only when **more than one** agent tool wrote inside the
-> week. One tool is silent, because a token on every row of every single-tool store distinguishes
-> nothing; and *zero* is silent too, because it means no save named a tool — an absence, not a
-> measurement of none.
+Below the baseline, **one tick per day**, with **today's drawn double width**.
 
 **The sentence beside it never claims more than the picture can support.**
 
 | You see | It means |
 |---|---|
-| **`7 days · 41 saves`** | The strip really does cover a full week |
+| **`7 days · 192 saves`** | The strip really does cover a full week |
 | **`4 days known · 41 saves`** | Your store is **younger than the window**. The count and the picture are about those four days, not about a week |
 | **`at least 41 saves`** | One or more work-streams had **more history than could be read** — each journal is read from its last 16 KB. The number is a **floor**, and the oldest marks under-count |
 | **`no saves`** | The window really is covered and really is empty. A quiet week |
-| **`nothing recorded yet`** | Every mark is "did not exist yet". Deliberately *not* worded as an empty week, because nothing here knows anything about that week |
+| **`nothing recorded yet`** | Every mark is "did not exist yet" |
 | **`no save times recorded`** | There are journals, but none of them carries a usable time |
 
-> **The words no longer repeat the header.** The sentence used to read *"Save pulse · 4 days known · 70 saves"*. Now that **Save pulse** is a header line of its own directly above it, the label drops the noun and simply says *"4 days known · 70 saves"* — the same reading, one fewer thing to read.
+**`· Claude Code`, naming one tool, appears when exactly one tool saved inside the window** — a
+silent second harness is then an absence you can read, rather than reading identically to a store
+that tracks no tools at all. With more than one tool the clause reads **`· 2 tools`** instead, and
+the strip's own **`Saves by tool`** submenu (described in the "what you see" table above) lists each
+one by name. Counted over **normalised** tool identity since v3.74.0: `Claude Code`, `claude-code` and
+`Claude Code (desktop)` are the same tool for this count, so spelling drift no longer inflates the
+tool count or reads as a false collision. `claude-desktop` (the separate Claude Desktop app) is
+never folded into it.
 
-**Hover the strip** and the tooltip gives you the legend plus everything the sentence had to leave out — how many work-streams were counted, how many older saves fall outside the window entirely, and the timestamp of the oldest save it can see. It is also a live menu item: **clicking the strip opens Project context**, where the saves it counts are listed. It used to be dimmed and unclickable, which put the one picture in the whole widget into the faintest style macOS offers — the opposite of what it was for.
+**Hover the strip** and the tooltip gives you the legend plus everything the sentence had to leave
+out — how many work-streams were counted, how many older saves fall outside the window entirely, and
+the timestamp of the oldest save it can see. **Clicking the strip, or a tool's own strip in the
+submenu, opens Project context**, where the saves it counts are listed.
 
-### The three depth bars *(v3.66.0)*
+**Only the agent's own recorded save time is ever counted** — never the file's timestamp on disk.
+That matters most on a second computer: file times get rewritten when Personal Sync checks files
+out, so a strip built from them would draw a colleague-machine's entire history as one giant spike at
+the moment you pulled. Yours shows *when the work happened*, not *when it landed here*.
 
-Three short bars sit drawn into the menu's icon column, each a colour PNG in a menu item's icon
-gutter — this is the same [depth-bar channel](#reading-the-screen) the rest of the app uses,
-brought to the one surface that is not a web page:
+### The Knowledge fold
 
-| Bar | Where | Measured against |
-|---|---|---|
-| **Per-project saved bar** | Each project's group header | How many agent sessions saved a handoff in the last 30 days, against the busiest project |
-| **Domains bar** | The Domains section | Each domain's page count, in that domain's own [identity colour](#reading-the-screen), against the largest domain |
-| **Documents bar** | The first line under the *open* project's own heading | Since v3.70.0: *"Read first · N documents · N replies"* with a bar sharing the meter's own reading-budget room when something is marked read first, or plainly *"Documents · 9 · 187 KB stored"* with **no bar and no "of 200 KB"** when nothing is — the 200 KB project figure stopped being an alarm in v3.70.0, so the widget stopped drawing it as one |
-| **Session start bar** | Directly under the Documents line, for the *open* project only *(v3.70.0)* | *"Session start ≈22.7k tok · 2 replies · 2.3% of 1M"* with a small segmented gutter PNG — the same window-and-harness meter step ④ draws, at menu-bar scale: the window read from this computer's own setting, the harness hatched when one is entered, and per-document segments inside the enlargement |
-
-A bar turns red only when its own budget is actually exceeded, and the line then also says *"over"*
-in words — the same rule as everywhere else a depth bar appears. With **no usage log on this
-computer**, project lines show no bar at all and read *"no sessions logged"* — nothing is ever
-drawn as zero that was not actually measured. A project with a usage log but genuinely **no
-session** in the 30-day window reads a real, measured empty bar, and its tooltip says *"none logged
-for this project"* — a different fact from having no log at all, worded differently on purpose so
-the two are never mistaken for each other.
-
-Click a project line, the documents line or the session-start line to open Context on that project;
-click a domain line to open Settings, where **Domains in this folder** ([above](#knowledge-base-folder))
-lists every domain the same way.
-
-> ### What the darkness is NOT
->
-> **It is a measure of how often your agents check in. It is not a measure of how much they got done, and it must never be read as one.**
->
-> An agent told to *save early and often* — which is exactly what The Curator's own continuity instructions ask for — produces far more marks than one told to save twice at the end. A dark bar means **a different capture habit**, not a better day's work. That is why the label says *"saves"* and never *"activity"* or *"progress"*, and why nothing anywhere ranks a dark column above a pale one.
-
-**Only the agent's own recorded save time is ever counted** — never the file's timestamp on disk. That matters most on a second computer: file times get rewritten when Personal Sync checks files out, so a strip built from them would draw a colleague-machine's entire history as one giant spike at the moment you pulled. Yours shows *when the work happened*, not *when it landed here*.
+**`Knowledge · N domains`**, its own row below Idle, opens to every domain's page bar in that
+domain's own [identity colour](#reading-the-screen) — unchanged from the layout before v3.74.0,
+just moved behind one row instead of sitting on the face of the menu. Clicking a domain's line opens
+Settings, where **Domains in this folder** ([above](#knowledge-base-folder)) lists every domain the
+same way.
 
 ### The icon itself
 
@@ -1047,7 +944,7 @@ It carries exactly one bit beyond *"The Curator is running"*.
 | **○** — a hollow ring | The Curator is running. Nothing has been written here very recently |
 | **●** — a filled centre | An agent has written **on this computer** within the last **2 minutes** |
 
-Three things it deliberately is **not**: there is no number badge (*a count of what?*), no animation (an animated menu bar icon is the thing people uninstall apps over), and **no text beside it**. A relative age in the menu bar is either stale or it has to wake the app every minute forever to stay honest, and every extra pixel of width makes an icon more likely to vanish behind the notch on a narrow screen. The headline lives at the top of the menu and in the hover tooltip instead.
+Three things it deliberately is **not**: there is no number badge (*a count of what?*), no animation (an animated menu bar icon is the thing people uninstall apps over), and **no text beside it**. A relative age in the menu bar is either stale or it has to wake the app every minute forever to stay honest, and every extra pixel of width makes an icon more likely to vanish behind the notch on a narrow screen. The headline lives in the hover tooltip instead.
 
 The filled state is a **local** instrument: a handoff pulled from another machine never lights it, because that is not an agent working *here*.
 
@@ -1055,37 +952,54 @@ The filled state is a **local** instrument: a handoff pulled from another machin
 
 ### Ways to use it
 
-Four situations the widget was actually designed around. They are not illustrations — each one is the reason a specific decision in it was made the way it was.
+Situations the widget was actually designed around. They are not illustrations — each one is the reason a specific decision in it was made the way it was.
 
 #### Scenario 1 — Two agent tools on one computer
 
-*You run Claude Code in one window and opencode in another, on the same project.*
+*You run Claude Code in one window and Antigravity in another, on the same project.*
 
-The widget shows you **which tool wrote last**, because on a local row that is what the `who` column carries. So *"did Claude Code save, or was that opencode twenty minutes ago?"* is answerable at a glance.
+Each Active row already names **which tool wrote it**, so *"did Claude Code save, or was that
+Antigravity twenty minutes ago?"* is answerable at a glance — you get two separate rows, one per
+tool, rather than one row you have to guess about.
 
 It also warns you about something that is otherwise completely silent:
 
 ```
-Two agent tools are writing notes · drafting
+Two tools are writing ott / main
 ```
 
-**Here is why that matters.** Working state is stored per *project · work-stream · computer* — there is **no slot in that path for the tool**. So two agent tools on one machine, told to use the same work-stream, write to the **same handoff file**, and each save **replaces** the other's. Nothing errors. Nothing warns. The screen looks calm. You come back the next day, resume, and the handoff you are reading is whichever tool happened to save last.
+**Here is why that matters.** Working state is stored per *project · work-stream · computer* — there is **no slot in that path for the tool**. So two agent tools on one machine, told to use the same work-stream, write to the **same handoff file**, and each save **replaces** the other's. The screen looks calm. You come back the next day, resume, and the handoff you are reading is whichever tool happened to save last.
 
 ```mermaid
 flowchart TD
     subgraph BAD["Both tools, one work-stream — they overwrite each other"]
         H1["Claude Code"] --> F1[("state/main/&lt;this computer&gt;/current.md")]
-        H2["opencode"] --> F1
+        H2["Antigravity"] --> F1
     end
     subgraph GOOD["A work-stream each — they never collide"]
         H3["Claude Code"] --> F2[("state/main/&lt;this computer&gt;/")]
-        H4["opencode"] --> F3[("state/drafting/&lt;this computer&gt;/")]
+        H4["Antigravity"] --> F3[("state/drafting/&lt;this computer&gt;/")]
     end
 ```
 
 **The remedy is yours, and it is one sentence: give each tool its own work-stream name.** Tell each agent which scope it owns — `main` for one, `drafting` for the other — and they never touch the same file again. The widget names the collision and stops there, on purpose; a menu bar line has no business proposing a fix in six words.
 
-> **What is not lost, and it is worth knowing.** The append-only journal survives a collision — every save writes a line carrying its own tool name, so the record of *what happened* is intact even when the *current handoff* only holds whichever tool saved last. That is how the collision is detected in the first place, and you can read the whole trail in **Project context → step ② → Journal**.
+> **If it happens anyway, the save still succeeds — and nothing is lost.** A save is never refused
+> just because a different tool wrote the last one (default scope stays `main`), so you are never
+> blocked. But since v3.74.0, when a save is about to replace a handoff whose last save came from a
+> **different** tool, The Curator first copies the replaced `current.md`, byte for byte, to
+> `previous.md` in that same scope-and-machine folder — before the new content is written. Open
+> **Project context → step ② → Working state** and, when a replaced handoff exists, you will see an
+> unfolded line — *"Previous handoff by \<tool\> · \<age\> — open"* — that opens the replaced text in
+> the right-side reader, labelled *"Replaced handoff — by \<tool\>"* and treated as recorded data to
+> verify, not instructions to follow. `previous.md` holds only the one most recent cross-tool
+> replacement — a second cross-tool save replaces it in turn — and a same-tool save never touches it
+> at all. No warning fires, and nothing is copied, when either side's save named no tool.
+>
+> **What is not lost either way.** The append-only journal survives a collision regardless — every
+> save writes a line carrying its own tool name, so the record of *what happened* is intact even when
+> the *current handoff* only holds whichever tool saved last. You can read the whole trail in
+> **Project context → step ② → Journal**.
 
 #### Scenario 2 — Two or three computers, one private GitHub repo
 
@@ -1095,31 +1009,23 @@ Two things the widget gives you here:
 
 | | |
 |---|---|
-| **You can see at a glance that a work-stream was written somewhere else** | A remote row shows the **machine** instead of the tool, so `research · api-rewrite — studio · 3 hr ago` reads as *"the other computer did this, three hours ago"* without you opening anything |
+| **You can see at a glance that a work-stream was written somewhere else** | A remote row shows the **machine** instead of the tool, so a line reading *"research — studio · 3 hr ago"* reads as *"the other computer did this, three hours ago"* without you opening anything |
 | **You are told which clock the age came from** | A handoff that arrived over sync carries the moment it *landed*, not the moment it was written — so the widget says **`changed 3 hr ago`** rather than `3 hr ago` when the agent's own time is not available. A day-old handoff can never present itself as fresh |
 
 The practical use: **before you resume a work-stream, glance at the icon.** If the newest row for it names another machine, that machine wrote it more recently than you did, and pulling before you start is the difference between continuing and diverging.
 
-> **One laptop counts as one computer, even when your Mac has changed its own name.** macOS re-derives your machine's hostname from the network, so a laptop that has moved between Wi-Fi networks can end up with **two folders on disk** — `mac-…` and `alices-macbook-pro-…` — that are the same computer. The widget matches on the **installation** identity rather than the name, so those collapse into one row instead of inventing a second machine you do not own. Two genuinely different computers still get their own names, because there the machine **is** the news.
->
-> If two rows for one work-stream would otherwise read identically, the widget **shows their ages more precisely** — *"34 hr ago"* and *"36 hr ago"* instead of two rows both saying *"1 day ago"* — rather than falling back to those raw folder names. Same fact, read finer; no invented hardware.
+> **One laptop counts as one computer, even when your Mac has changed its own name.** macOS re-derives your machine's hostname from the network, so a laptop that has moved between Wi-Fi networks can end up with **two folders on disk** that are the same computer. The widget matches on the **installation** identity rather than the name, so those collapse into one row instead of inventing a second machine you do not own.
 
 > **How the *"14 handoffs waiting on GitHub"* line gets its answer — and what its absence means.**
 >
 > **Opening the menu asks GitHub.** Only opening it: never hovering, never on a timer. That is
 > deliberate — a background check would mean The Curator phoning GitHub forever behind a closed
 > menu, on battery, possibly on a metered connection, to keep a line fresh that nobody is looking
-> at. Clicking is you asking, so that is when it asks. It goes through the app's existing sync
-> machinery, so it inherits the same cache and the same queueing as the check the app already
-> makes while the window is open, rather than opening a second channel to GitHub.
+> at.
 >
-> An answer older than five minutes is dropped rather than shown with an age, because a line saying
-> *"14 waiting"* reads as current and there is no room beside it to say it is not.
->
-> So: **absence means nobody has checked, and it is deliberately never rendered as "you are up to
-> date."** If the check itself fails — no network, a bad token — you are told that, rather than being
-> shown silence that looks identical to *nothing is waiting*. **Pulling is still a deliberate act
-> you take in the Sync view.** [Automatic sync is researched and not built](#automatic-sync-is-not-built).
+> An answer older than five minutes is dropped rather than shown with an age. So: **absence means
+> nobody has checked, and it is deliberately never rendered as "you are up to date."** **Pulling is
+> still a deliberate act you take in the Sync view.**
 
 #### Scenario 3 — Running low on context
 
@@ -1128,38 +1034,12 @@ The practical use: **before you resume a work-stream, glance at the icon.** If t
 **Move the pointer to the icon. Do not even click.** The tooltip is the answer:
 
 ```
-The Curator — Last save · just now (notes · main)
+The Curator — Last save: ott · Claude Code · just now
 ```
 
-**`just now` means "within the last minute"** — anything under sixty seconds reads the same way,
-because a menu bar is not a stopwatch. Above that it steps through *N min · N hr · N days · N
-weeks*. So what you are actually reading is a **band**, and the band is what the question needs:
-if it says *just now* your save landed, and if it says *2 hr ago* it did not.
+**`just now` means "within the last minute"** — anything under sixty seconds reads the same way, because a menu bar is not a stopwatch. Above that it steps through *N min · N hr · N days · N weeks*.
 
-Read it with the five-minute caveat from [How to read a row](#how-to-read-a-row) in mind — the
-figure may be a reading taken up to five minutes back. That is precise enough to separate *just
-saved* from *this morning*, and not precise enough to time a save to the second.
-
-**The other half of that worry — *"is my brief still describing this project?"* — is in
-the same tooltip**, as a second clause:
-
-```
-The Curator — Last save · just now (notes · main) · Brief · 6 weeks ago
-```
-
-It is stated as an **age and never as a judgement**. *"Brief · 6 weeks ago"* is a measurement;
-*"your brief is stale"* would be the widget passing an opinion on a document you wrote by hand,
-which is not its business — an old brief on a settled project is not a stale one. If the age cannot
-be worked out the clause is simply absent rather than saying *"time unknown"*, and a project with
-no brief at all gets no clause, because that is the ordinary case and not a problem to
-report in a menu bar.
-
-It does not get a **menu row**, and that is the ranking rather than an oversight: a brief is up to
-32 KB of prose that changes on the order of weeks, so it does not earn one of five scarce rows.
-The tooltip is the one surface here with no scarcity — it costs no row, no menu bar width, and no
-extra reading of the disk. For the full picture, **Open Project Context…** still lands you on the
-same readings, in the overview card across the top of the page
-([§7](#the-overviews-memory-tile-and-the-warnings-above-the-four-rows)).
+For the full picture — including your brief's own age — **Open Project Context…** lands you on the overview card across the top of the page ([§7](#the-overviews-memory-tile-and-the-warnings-above-the-four-rows)).
 
 > **What the widget can never tell you: whether you are saved *now*.** It knows when the last save happened, not whether anything has changed since. That is why the line reads **Last save**, and not *"you are saved"*.
 
@@ -1169,35 +1049,26 @@ same readings, in the overview card across the top of the page
 
 Continuity only works if the saves keep happening. But nothing ever tells you they have stopped — a missed save is not an error, it is an absence. You notice weeks later, when you resume a work-stream and the handoff describes a problem you solved on Tuesday.
 
-**Open the menu and look at the second line down. You are looking at the shape, not the numbers.**
+**Open the menu and look at the top row. You are looking at the shape, not the numbers.**
 
 | The strip looks like | Read it as |
 |---|---|
 | Marks spread across most days, with gaps at night and at weekends | **A working rhythm.** This is what a healthy store looks like — the gaps are you sleeping, not the habit failing |
 | A dense cluster at the left and **nothing on the right** | **Saving stopped.** Something changed — a harness reconfigured, an MCP connection that quietly dropped, a project you moved off. Worth a minute of your attention |
 | Ticks on the floor for the left half, marks only on the right | **Your store is just young.** Nothing is wrong; there was no history to draw. The label confirms it — *"4 days known"*, not *"7 days"* |
-| Marks everywhere and very dark | Frequent check-ins. **Not "a good week"** — see the box in [Reading the save pulse](#reading-the-save-pulse). It tells you about cadence, and cadence is an instruction you gave, not an outcome you earned |
+| Marks everywhere and very dark | Frequent check-ins. **Not "a good week"** — how often an agent saves is an instruction you gave it, not an outcome it earned |
 
-**Two things worth knowing before you act on it.**
-
-The strip is **the whole store, not one project** — every work-stream on every machine, added together. A gap means *nothing anywhere*, which is a much stronger signal than one quiet project, and it is why one aggregate strip was drawn instead of a tiny sparkline per row. (Eight or eleven bands a few points tall, each from one work-stream's handful of saves, would have been mostly empty and unreadable at that size.)
-
-And the numbers **count what could be read**. If a work-stream has more history than the last 16 KB of its journal, the sentence says **`at least 41 saves`** — the strip's oldest marks under-count, and it tells you so rather than presenting a floor as a total.
-
-> **A young store and a dead one draw the same empty cells, and the widget refuses to confuse them.** That is the entire reason there are three kinds of mark rather than two. A brand-new install shows fourteen baseline hairlines and says **`nothing recorded yet`** — never *"7 days · no saves"*, which would be a confident statement about a week it knows nothing about.
+**Two things worth knowing before you act on it.** The strip is **the whole store, not one project** — every work-stream on every machine, added together. And the numbers **count what could be read**: if a work-stream has more history than the last 16 KB of its journal, the sentence says **`at least 41 saves`** rather than presenting a floor as a total.
 
 #### Scenarios this does not serve
 
 Named so you do not go looking:
 
-- **Watching the pulse move.** It is a **still picture, redrawn each time you open the menu** — not a live trace that ticks along while you watch. That is a limit of what a macOS menu can do, not a shortcut: a menu item can carry an **image** (which is how the strip exists at all), but it cannot host a live view, and a menu is frozen by the system the moment it opens. The *"Updated 14:32"* line at the bottom tells you which moment the picture is of. Hovering re-times the **rows**; the strip is from the last read.
-- **Judging your week by it.** Covered above and worth repeating because it is the most tempting misreading: darkness is **how often**, never **how well**.
-- **Per-tool or per-work-stream history.** The strip is one lane over everything. A lane per tool — *"are Claude Code and opencode taking turns in this scope?"* — is designed and **not built**; it needs a surface the menu does not have. See [the roadmap](roadmap-menubar-widget.md#0a-status--what-shipped-what-deviated-what-is-still-a-plan).
-
-- **Reading the handoff *in the menu*.** A handoff runs to fifteen thousand characters or more; there is no honest way to draw that in a menu bar, and the menu does not try. What it will do is **hand it to you**: the row's submenu can [copy the whole document, or a prompt that fetches it](#what-a-row-can-do). Clicking the row itself opens the app, on Project context, at that **project** — not the individual work-stream, which the picker there is for.
+- **Watching the pulse move.** It is a **still picture, redrawn each time you open the menu** — not a live trace that ticks along while you watch. A menu item can carry an image, but not a live view, and a menu is frozen by the system the moment it opens. The *"Updated 14:32"* line at the bottom tells you which moment the picture is of.
+- **Judging your week by it.** Darkness is **how often**, never **how well**.
+- **Reading the handoff *in the menu*.** A handoff runs to fifteen thousand characters or more; there is no honest way to draw that in a menu bar. What it will do is **hand it to you** — the row's submenu can [copy the whole document, or a prompt that fetches it](#what-a-row-can-do). Clicking the row itself opens the app, on Project context, at that **project** — not the individual work-stream, which the picker there is for.
 - **Watching progress.** A save is not partly done; it has happened or it has not. There is no progress bar and there will not be one.
 - <a id="automatic-sync-is-not-built"></a>**Syncing by itself.** The widget observes; it never pushes or pulls. Automatic sync has been researched and **is not built** — the finding was that automatic *push* is safe and automatic *pull* is not (a pull rewrites files under you and prefers the remote on a conflict), so the recommendation is automatic push by explicit opt-in, with pull staying a decision you make. Until any of that exists, syncing is a button you press in the [Sync view](#15-sync-across-computers).
-- **A richer panel** — a card per work-stream, how full a handoff is getting, a strip of recent activity per tool. All designed, **none built.** See [the roadmap](roadmap-menubar-widget.md#0a-status--what-shipped-what-deviated-what-is-still-a-plan).
 
 ---
 
@@ -1234,19 +1105,15 @@ Stated plainly rather than left for you to discover.
 
 | | |
 |---|---|
-| **The menu has been photographed twice, both times in light appearance.** | A throwaway probe put the real menu in a real menu bar on 2026-09-02 and captured it. That settled a great deal — the section headers draw, the second line under each row draws, the submenu arrow draws, the colour images are drawn as authored, and the menu is **363.5 points wide**. What it did **not** settle: the **dark** palette, the empty-store menu, the truncation states, whether the tooltip appears on hover, and how the menu bar icon itself is tinted in a light bar. Treat your first launch with it on as a real test, and please [report](https://github.com/talirezun/the-curator/issues) anything that looks wrong |
-| **The save pulse and the row dots have been drawn by macOS once, and the picture changed both** | The one capture showed the pulse reading cut short and the quarter mark reading as a sliver; both are fixed here, and the marks now sit inside a faint clock face. Both images are still generated and inspected pixel by pixel by the tests, and their contrast is arithmetic over decoded pixels. What has not been seen is either of them **after** those two fixes, or either of them in **dark** appearance. If a strip or a dot looks wrong, or makes the menu unexpectedly wide, that is worth reporting |
-| **The section headers draw on macOS 14; below it, nobody knows.** | **Save pulse** and each project header use a macOS 14+ menu affordance, and the 2026-09-02 capture shows a header of that kind drawing correctly. On macOS 13 they should fall back to a dimmed, inert caption line, which is what a heading looks like anyway — but **that fallback has never been observed**. Either way they can never become a clickable item that does nothing. There are now more of them, one per project group, so a machine where the fallback is ugly is uglier than it was |
-| **The menu's colours follow your SYSTEM appearance, not the app's theme.** | If you run the app in its light theme on a Mac set to dark, the menu is drawn for a dark menu bar — which is correct, because that is where it is drawn. The two are genuinely different questions and are allowed to disagree. What is unproven is that macOS delivers the appearance-changed notification the rebuild listens for |
-| **"On, hide the Dock icon" does not hide the Dock icon.** | The macOS call that hides it has a *return* transition — coming back when you open the window from the menu bar — that is reported broken in exactly the way this would depend on, and it could not be tested here. So the app keeps your setting and does the safe half: menu bar icon on, Dock icon left alone. Shipping the untested half risks no Dock icon, no menu bar icon and no window all at once |
-| **The brief's age is in the hover tooltip, not in the menu.** | By design — it changes on the order of weeks, so it does not earn one of five scarce rows. Hover the icon for it, or open Project context for the full picture. See [Scenario 3](#scenario-3--running-low-on-context) |
+| **Layout A has not yet been photographed on a real menu bar.** | The previous layout was photographed twice (2026-09-02 and the grouped v3.50.0 shape); Layout A's row structure, the pulse-on-top placement, the notices moved under the Active rows and the Idle/Knowledge folds are composed and checked pixel by pixel by the automated tests, but nobody has yet seen the assembled menu drawn by a real menu bar, in either light or dark appearance. If something is illegible, or the menu is wider than you expect, that is worth [reporting](https://github.com/talirezun/the-curator/issues) |
+| **The section headers draw on macOS 14; below it, nobody knows.** | `Active · last 24 h` and the submenu headers use a macOS 14+ menu affordance. On macOS 13 they should fall back to a dimmed, inert caption line, which is what a heading looks like anyway — but that fallback has never been observed. Either way they can never become a clickable item that does nothing |
+| **The menu's colours follow your SYSTEM appearance, not the app's theme.** | If you run the app in its light theme on a Mac set to dark, the menu is drawn for a dark menu bar — which is correct, because that is where it is drawn |
+| **"On, hide the Dock icon" does not hide the Dock icon.** | The macOS call that hides it has a *return* transition that is reported broken in exactly the way this would depend on, and it could not be tested here. So the app keeps your setting and does the safe half: menu bar icon on, Dock icon left alone |
 | **The only way to discover it is Settings.** | The app does not offer it to you when your agent memory starts filling up. That was designed and not built |
-| **The save pulse is one strip over everything, not one per tool or per work-stream.** | A lane per tool — which would answer *"are these two tools taking turns?"* — is designed and not built; a menu has nowhere to put five of them legibly |
-| **The pulse does not re-time when you hover.** | The rows do; the strip is the picture from the last time the store was read. At twelve hours per mark this is not a difference you can see, but it is a real difference between two things on the same menu |
-| **A row click opens the project, not the work-stream.** | You land on Project context at the right project, and pick the work-stream from the picker there. The menu has no way to address it directly — which is why the row's submenu offers to [put the work-stream on your clipboard](#what-a-row-can-do) instead |
-| **The current arrangement has not been photographed — the two before it were.** | The second photograph, of the grouped menu as it shipped in v3.50.0, is what produced this release's row-cap fix: grouping and the `Working on:` headline drew exactly as designed, and the menu was **23 rows long**, because the five-row cap had stopped binding. The corrected five-row menu is **derived** from the real store and the real menu builder over that photograph's shape, not photographed. The earlier 2026-09-02 capture is what produced the three fixes before them: a cut pulse reading, a quarter mark too thin to read, and a width model that was wrong by 78 points. Every mark is still generated and inspected pixel by pixel by the automated tests, and its contrast is arithmetic over those decoded pixels — but nobody has yet seen the corrected menu on a real menu bar, and nobody has seen any of it in **dark** appearance. If something is illegible, or the menu is wider than you expect, that is worth [reporting](https://github.com/talirezun/the-curator/issues) |
-| **The row submenus have never been opened.** | That macOS draws a submenu on a menu bar item at all, that the four items appear where you expect, and that **Copy** actually lands on the clipboard while the menu is dismissing, are all unproven here — Electron is not something the tests can run. The composing is executed and checked; the copying is not |
-| **macOS 14 or later is assumed for two things.** | The two section headers and the small second line under each row are macOS 14 affordances (the second line needs 14.4). On an older macOS the headers should degrade to dimmed caption lines and the second line may simply not draw — in which case the work-stream and the age, which are on the *first* line, are still there. Neither degradation has been observed |
+| **The pulse does not re-time when you hover.** | The rows do; the strip is the picture from the last time the store was read |
+| **A row click opens the project, not the work-stream.** | You land on Project context at the right project, and pick the work-stream from the picker there — which is why the row's submenu offers to [put the work-stream on your clipboard](#what-a-row-can-do) instead |
+| **The row and submenu structure has never been opened on a real Mac.** | That macOS draws a two-level submenu on a menu bar item at all (row › Other work-streams › actions), that the items appear where expected, and that **Copy** actually lands on the clipboard while the menu is dismissing, are all unproven here — Electron is not something the tests can run. The composing is executed and checked; the interaction is not |
+| **macOS 14 or later is assumed for the second line under each row.** | It needs 14.4. On an older macOS it may simply not draw — in which case the project, tool and age, which are on the *first* line, are still there. This degradation has not been observed |
 
 ---
 
@@ -1494,9 +1361,9 @@ Since v3.62.0 the page is numbered steps, read top to bottom, under an **overvie
 through v3.66.0, and **four since v3.67.0**, which adds step ④ **Session start**.
 **The overview card itself grew a fifth tile in v3.70.0, SESSION START, in tokens** — e.g. *"≈8.8k
 tokens · 1 reply"*, hidden until the measurement lands, carrying no bar of its own (a reading, not
-a share; the share lives in step ④'s own meter, one press away). The fourth tile, **CAPTURE**, is
-now labelled **AGENT SESSIONS** — see [the rename](#the-meter-did-the-session-read-and-did-it-save),
-below.
+a share; the share lives in step ④'s own meter, one press away). The fourth tile, **CAPTURE**, was
+renamed **AGENT SESSIONS** in v3.70.0 and, since v3.74.0, is **AGENT CONNECTIONS** — see
+[the rename](#the-meter-did-the-session-read-and-did-it-save), below.
 **Since v3.64.2 that card is the same component the domain page draws its own OVERVIEW figures
 in** ([§7b](#7b-the-three-places--ask-knowledge-context)) — through v3.64.1 this page built its own
 separate three-cell strip. Both places open the same way: a card of readings *about* the screen,
@@ -1517,7 +1384,7 @@ confusing.
 identity dot, the same colour that domain has in the Domains sidebar, in the Context sidebar and
 on every row below that names it. Under it, a five-tile overview card — the same component Domains
 uses — reading DOCUMENTS "3 documents · fresh", MEMORY "saved 14 min ago", KNOWLEDGE "391 pages ·
-3 days ago", AGENT SESSIONS "1 session · 30 days" and SESSION START "≈8.8k tokens · 1 reply", each
+3 days ago", AGENT CONNECTIONS "1 connection · last 30 days" and SESSION START "≈8.8k tokens · 1 reply", each
 with a freshness dot (SESSION START carries none — it is a reading, not a share). Below it, four
 numbered steps separated by hairlines, each heading carrying only a numeral, a Title-case title and
 an ⓘ mark — no sentence beneath any of them — and each section's controls sitting in a head row
@@ -1526,7 +1393,7 @@ controls "Refresh from repo", "Add from folder" and "Mirror from GitHub instead"
 "The documents — 3 documents · 391 KB · mirrored · 2 read first", whose SIZE column carries a depth
 bar — a tinted bar behind each figure, anchored at the right, its length that document's share of
 the project's own 200 KB total, shown plainly and never as an alarm. Step 2, Memory: four closed
-rows, each one instrument — Agent sessions, Handoffs, The brief and Journal. Step 4, Session start:
+rows, each one instrument — Agent connections, Handoffs, The brief and Journal. Step 4, Session start:
 a head row with the reading budget, the Window and the Harness pickers, then the segmented meter —
 your window to scale, the harness hatched at the left, The Curator's own layers, and a dashed room
 the width of the reading budget. Step 3, Knowledge: the control "+ Add a domain", then one row per domain this project
@@ -1560,7 +1427,7 @@ The wireframe below is the same shape with the labels called out.
 | | Step | The question it answers | Cost to read it |
 |---|---|---|---|
 | ① | **Documents** | *What is this project built against, and which of it does an agent get automatically?* | A summary line. Open the fold for the table |
-| ② | **Memory** | *Where did the last session stop, and what standing instructions does every agent read?* | Four summary rows, one per fold — Agent sessions, Handoffs, The brief, Journal. Open one to read it |
+| ② | **Memory** | *Where did the last session stop, and what standing instructions does every agent read?* | Four summary rows, one per fold — Agent connections, Handoffs, The brief, Journal. Open one to read it |
 | ③ | **Knowledge** | *What can an agent look things up in?* | One summary row per domain. Open a fold for its figures and its two doors |
 | ④ | **Session start** *(v3.67.0; a window meter since v3.70.0)* | *What does an agent actually receive when it starts work here, and how much of your context window does that use?* | A head row for the reading budget, the window and the harness estimate, and a segmented meter showing the bootstrap to scale inside your window |
 
@@ -1682,7 +1549,7 @@ the qualifier under it and a freshness mark **and** the word beside it, because 
 carries a reading on its own. Press a card and the page goes to the step that owns it — **they are
 readings, not a filter: nothing narrows when you press one**, which is the one difference from the
 same card's use on a domain page, where the figures also filter the page list beneath them.
-AGENT SESSIONS joins the card's row as a fourth door once the session reading described
+AGENT CONNECTIONS joins the card's row as a fourth door once the connections reading described
 [below](#the-meter-did-the-session-read-and-did-it-save) has landed, and **SESSION START joins as a
 fifth, in tokens**, once step ④'s own measurement lands — a reading with no bar of its own, since
 the share it stands for lives in the meter, one press away.
@@ -1973,7 +1840,7 @@ carries.
 
 ##### Memory — what the last session left
 
-**Four closed rows, in this order: Agent sessions, Handoffs, The brief, Journal.** This layer
+**Four closed rows, in this order: Agent connections, Handoffs, The brief, Journal.** This layer
 **supersedes** — every save replaces the last, so a blocker you fixed on Tuesday cannot reappear on
 Wednesday. **Every row's body is the same recessed, monospace instrument** (v3.65.0) — one fact per
 line, key left, reading right — used everywhere a live reading appears in the app: every row here,
@@ -1987,12 +1854,12 @@ one clock, told once each in the two places that need it, instead of a third.
 
 | Row | Summary line | Whose it is |
 |---|---|---|
-| **Agent sessions** | *1 session in the last 30 days · 1 saved before stopping*, five monitor lines inside — see [the meter](#the-meter-did-the-session-read-and-did-it-save), below | Your agents'. No table — the body is the monitor only |
+| **Agent connections** | *1 connection in the last 30 days · 1 saved before stopping*, five monitor lines inside — see [the meter](#the-meter-did-the-session-read-and-did-it-save), below | Your agents'. No table — the body is the monitor only |
 | **Handoffs** | *3 handoffs · saved 14 min ago* | Your agents'. One row per saved copy; press a row to read its handoff in the [reader](#reading-a-handoff). See [the table below](#the-handoffs-table) |
 | **The brief** | *updated 14 min ago · 126 words*, with a **pencil** | Yours — see [Editing the standing brief](#editing-the-standing-brief) |
 | **Journal** | *17 saves · showing 10 · latest 14 min ago* | Your agents'. One line per save, newest first: when, which harness, which model, the headline, and any notes the store recorded. A **"Show N more"** row extends it in place — the same control the Handoffs table uses, not a separate footer card |
 
-**Agent sessions leads now that Last saved is gone** — it already sat directly under that row, so nothing
+**Agent connections leads now that Last saved is gone** — it already sat directly under that row, so nothing
 about the reading order changed, only what used to be above it. Handoffs follows, because the
 question a returning session actually opens with is *what did the last one leave*. The brief comes
 next, because it is the one tier a human owns and an agent reads it on every single call. The
@@ -2032,24 +1899,32 @@ true, and a store that only added to itself could never say so.
   replacing itself, an old line can describe something already resolved — read it as history, not
   as the present. Each line's own summary is capped at 200 characters; a cut summary is a shorter
   label, never lost work.
-- **Agent sessions** counts agents that connected through the MCP tools — a session is one run of
-  the bridge, from the moment an agent connects to the moment its window closes, identified by an
-  id the bridge mints for itself, so two sessions are never merged and one is never split in two.
-  It "started with the context" when it asked for this project's brief, Handoff or Documents at
-  any point before it saved anything, and it "saved before stopping" when a save actually
-  succeeded. What this cannot see: a save made from the command line, a hook, or by hand in a text
-  editor is a real save and still does not count here, because only calls that came through the
-  bridge do — so this reading is about agent sessions that used The Curator, never a claim about
-  your whole week. The harness name beside a session is self-reported by the tool that sent it;
-  nothing in the app behaves differently because of it. It comes from a file beside your settings,
-  never inside your knowledge folder, so it is never synced, and it never names an argument, a
-  result or a file path. This reading only reports — it never stops, delays or warns a session.
-  **When there is nothing to report, the tile says why, not "0 sessions"**: it reads
+- **Agent connections** (named **Agent sessions** through v3.73.x) counts agents that connected
+  through the MCP tools — a connection is **one bridge process**, from the moment an agent connects
+  to the moment its window closes, identified by an id the bridge mints for itself, so two
+  connections are never merged and one is never split in two. **It is a process count, not a
+  conversation count, and the rename exists to say so**: Claude Code starts a fresh bridge process
+  per session, so there one connection is one conversation, but Claude Desktop keeps a single
+  process open across many conversations — so a Claude Desktop process that served thirty different
+  chats used to read as *"1 of 1 sessions"*, which looked like a complete account of your day and
+  was not one. It "started with the context" when it asked for this project's brief, Handoff or
+  Documents at any point before it saved anything, and it "saved before stopping" when a save
+  actually succeeded. What this cannot see: a save made from the command line, a hook, or by hand in
+  a text editor is a real save and still does not count here, because only calls that came through
+  the bridge do — so this reading is about agent connections that used The Curator, never a claim
+  about your whole week. The harness name beside a connection is self-reported by the tool that sent
+  it, normalised since v3.74.0 to one canonical spelling per tool so "Claude Code" and "claude-code"
+  read as one tool rather than two; nothing in the app behaves differently because of it. It comes from a file
+  beside your settings, never inside your knowledge folder, so it is never synced, and it never names
+  an argument, a result or a file path. This reading only reports — it never stops, delays or warns a
+  connection. **When there is nothing to report, the tile says why, not "0 connections"**: it reads
   **"no usage log"** if this computer has no MCP usage log at all, and **"not logged"** if saves
-  exist but no session was recorded for them; the sub-line "N sessions · last 30 days" only
-  appears once a count was actually taken. The count refreshes when you reopen a project and
-  about once a minute while you're watching it, so switching between projects always shows a
-  fresh reading rather than one cached from earlier in the visit.
+  exist but no connection was recorded for them; the sub-line only appears once a count was actually
+  taken, and it names the window **the log actually covers rather than a fixed 30 days** — *"6
+  connections in the last 30 days"* when the log reaches back that far, or *"6 connections in the
+  last 5 days (the log begins 20 Sep)"* when it does not, since v3.74.0 (D5). The count refreshes
+  when you reopen a project and about once a minute while you're watching it, so switching between
+  projects always shows a fresh reading rather than one cached from earlier in the visit.
 
 ##### How to organise your work-streams (scopes)
 
@@ -2096,8 +1971,10 @@ flowchart TD
 
 Three things follow. **The name you save under is the only thing that keeps two threads apart** on
 one computer. **`latest` is only for reading**: an agent asking for scope `latest` gets the
-work-stream whose handoff file was most recently written on this disk, and the reply names which
-one it opened — you never save *to* `latest`. And **scopes are created by saving and by nothing
+work-stream with the newest recorded save — ordered by **the agent's own clock**, recorded in the
+journal at save time, and only by the file's timestamp on this disk as a fallback when no agent time
+was recorded at all — and the reply names which one it opened — you never save *to* `latest`. And
+**scopes are created by saving and by nothing
 else** — an agent's `save_working_state`, or `my-curator save --scope <name>` from a terminal. There
 is no rename or delete control: to retire a scope, stop saving under it and its dot goes hollow
 (*dormant*); to remove one, delete its folder under `state/<project>/` by hand and sync. A name is
@@ -2135,7 +2012,9 @@ the same work splits its history, and the next session opens the wrong one.
 
 **Several computers.** Nothing to configure: every computer writes into its own folder under the
 scope, automatically, so two computers can never overwrite each other. An agent asking for a scope
-without naming a machine gets the most recently written copy and a list of the others. A copy from
+without naming a machine gets the **newest** copy — ordered by the agent's own recorded save time
+first, and only by the file's timestamp on this disk when no agent time was recorded at all — and a
+list of the others. A copy from
 elsewhere is marked — the **Machine** column names it, the reader shows a
 **synced from another machine** chip, and the agent's read carries `machineIsThisMachine: false`,
 which tells it to say so and to check the next steps against *this* checkout before acting. Two habits make it work: press
@@ -2165,6 +2044,21 @@ this collision. Three things make separate scopes hold in practice:
   that inject, and ask for a save under, the project's *newest* work-stream. With two tools on one
   computer, add `--scope <this tool's scope>` to the `my-curator hook …` commands in that tool's
   hook settings ([§13c](#hooks-what-they-can-do-on-your-harness-and-what-they-cannot)).
+
+**If it happens anyway, since v3.74.0: the save still succeeds, and nothing is silently lost.** A
+save is never refused just because the last save in that scope came from a different tool — the
+default scope stays `main`, and you are never blocked from saving. But when a save is about to
+replace a handoff whose last save came from a genuinely **different** tool (matched by normalised
+tool identity, so `Claude Code` and `claude-code` count as the same tool and this never fires on a
+spelling difference alone), The Curator first copies the replaced `current.md`, byte for byte, to a
+`previous.md` file in that same scope-and-machine folder — before the new content is written. Open
+**Project context → step ② → Working state** and, whenever a replaced handoff exists, you will see
+an unfolded line — *"Previous handoff by \<tool\> · \<age\> — open"* — that opens the replaced text
+in the right-side reader, labelled *"Replaced handoff — by \<tool\>"* and treated as **recorded data
+to verify**, not instructions to follow. `previous.md` holds only the single most recent cross-tool
+replacement — a second cross-tool save replaces it in turn — and an ordinary same-tool save never
+touches it. **No warning fires, and nothing is copied, when either side's save named no tool at
+all.** Either way, the append-only Journal still has the full trail of who wrote what, and when.
 
 **Handing a session over.** When a context window is nearly full, or you are moving to another tool
 or computer: ask for a **complete** handoff — *"save a complete handoff now; we are continuing
@@ -2236,10 +2130,12 @@ Yes to both — **two different things travel by two different routes**:
 The per-computer handoff copy is what makes this safe: the laptop and the desktop each save into
 their own folder, so neither overwrites the other even when you forget to sync. Start the second
 computer's session with scope **`latest`** — after **Sync now**, the handoff that just arrived from
-the other computer is the one most recently written on this disk, so `latest` opens it, and the
+the other computer is ordered ahead of your own by **the agent's own recorded save time**, not by
+when the file landed on this disk (that file-arrival time is used only as a fallback, when no agent
+time was recorded at all), so `latest` opens whichever copy was genuinely written last, and the
 agent's reply says it came from another machine. One caution: if a sync brings in several
-work-streams at once, `latest` picks between them by when they landed here, not when they were
-written — name the one you want.
+work-streams at once, `latest` still only opens **one** of them — the single newest-written scope
+across the whole project — so name the one you want rather than assuming `latest` found it.
 
 ###### Three worked examples
 
@@ -2644,8 +2540,8 @@ rules — is in **[working-state.md](working-state.md)**.
 never a grade.** The **Handoffs** row's **Size** column shows each handoff's size against the
 48 KB a handoff is trimmed to; it never turns red, because a save over that budget is trimmed and
 the trim is noted in the handoff itself, never refused — there is nothing left to warn about once
-the trim has already happened. Inside the **Agent sessions** row, *started with the context* and *saved
-before stopping* are drawn as a share of every session in the window, e.g. *"4 of 6"* — a share of
+the trim has already happened. Inside the **Agent connections** row, *started with the context* and *saved
+before stopping* are drawn as a share of every connection in the window, e.g. *"4 of 6"* — a share of
 a whole, not a target against which a bar can fail: nothing here is a grade, and neither bar ever
 turns red.
 
@@ -2710,7 +2606,7 @@ agree. They now do, everywhere: one component per kind of content, not per scree
 | **The overview card** | *What does this hold, and where do I go?* | The top of Domains and of Project context — identical tile size, identical 22px figures on both |
 | **A sidebar row** | *Which one am I on?* | The Domains, Context and Settings sidebars — one identity dot, name, figure, freshness mark, clock and age, and a last line, with the current one shown as a filled row |
 | **A fold row** | *What is inside, without opening it?* | Every collapsible section in the app — a title on the left, a one-line summary on the right, a chevron |
-| **The monitor** | *What is true right now?* | An MCP connection, an Agent sessions count, a Sync status, a Wiki health scan — a recessed, monospace panel with its state as a coloured word, and any warning inside it always visible, never behind the chevron |
+| **The monitor** | *What is true right now?* | An MCP connection, an Agent connections count, a Sync status, a Wiki health scan — a recessed, monospace panel with its state as a coloured word, and any warning inside it always visible, never behind the chevron |
 
 **The rule that survives every one of them, restated for the last time here because it is the one
 that matters most:** a warning, a cost or an outcome never sits behind a chevron. Everything else
@@ -2726,7 +2622,7 @@ Once you know what each one means, you can read a row without opening it.
 |---|---|---|
 | **Identity dot** | *Which domain?* | One colour per domain, the same colour everywhere that domain is named — a sidebar row, a Chat domain chip, a Knowledge row, the Context breadcrumb, the menubar widget. Never a second mapping or palette on any screen |
 | **Freshness dot** (with a clock glyph and an age) | *How recent?* | Every time-based reading in the app — a sidebar row's last save, a Handoffs row, a document's last update, the MCP bridge's connection strip |
-| **Depth bar** | *How much, against what total?* | A tinted bar behind a figure, right-anchored, its length a **named** denominator — never a guess. Today: a document's size against the project's own stored total (v3.70.0: stated plainly, never as an alarm); the running total in Add-from-folder against that same total; a domain's entity/concept/summary counts against its own page count; a clipped save's character count against its 200-character field limit; Handoffs' Size column (vs 48 KB); Agent sessions' saved/read share of all sessions in the window; step ④'s own **segmented window meter** (v3.70.0 — a special case: one violet hue in lightness steps, one segment per layer, every segment named, and it never takes the danger tone even when a reading budget runs past a quarter of the window); Chat's project footer (documents vs the 40,000-character document budget); an Ingest batch's spend against its cap; Wiki health's issues-per-category row; the MCP bridge's Busiest-tools and Across-projects rows; Settings → Knowledge base's Domains-in-this-folder rows |
+| **Depth bar** | *How much, against what total?* | A tinted bar behind a figure, right-anchored, its length a **named** denominator — never a guess. Today: a document's size against the project's own stored total (v3.70.0: stated plainly, never as an alarm); the running total in Add-from-folder against that same total; a domain's entity/concept/summary counts against its own page count; a clipped save's character count against its 200-character field limit; Handoffs' Size column (vs 48 KB); Agent connections' saved/read share of all connections in the window; step ④'s own **segmented window meter** (v3.70.0 — a special case: one violet hue in lightness steps, one segment per layer, every segment named, and it never takes the danger tone even when a reading budget runs past a quarter of the window); Chat's project footer (documents vs the 40,000-character document budget); an Ingest batch's spend against its cap; Wiki health's issues-per-category row; the MCP bridge's Busiest-tools and Across-projects rows; Settings → Knowledge base's Domains-in-this-folder rows |
 | **Tone** (colour, never alone) | *What was the outcome?* | A monitor's head word (ok / danger), a `loud` line for a warning or a cost — always paired with words, since colour alone never carries a reading in this app |
 
 **The depth bar turns danger-toned only when its budget is actually exceeded, and the same fact is
@@ -4191,7 +4087,7 @@ Use **My Curator** when you want a frontier model — Claude Opus, Sonnet, or an
 *The bridge screen, in the shape every Settings section now takes: a numbered block, a one-line
 lede with an **ⓘ** beside it, then the controls. The alt text above describes the v3.65.0 shape —
 the unified sidebar and the connection strip rebuilt as a monitor, the same terminal-like component
-Project context's Agent sessions row and the Sync view's own status use — but the photograph itself
+Project context's Agent connections row and the Sync view's own status use — but the photograph itself
 predates both and is due a re-shoot. The two blocks really are steps — you connect a
 client, and only then does "which domain does *my wiki* mean?" become a question you can have.
 The four buttons are the [button family](#buttons--what-the-look-tells-you): one filled primary
@@ -4323,7 +4219,7 @@ Put durable material in working state and the next save quietly overwrites it. N
 
 Two computers writing to the same handoff file would collide on sync — and the way Sync resolves a collision keeps the *remote* version and discards your local one, silently. Giving each machine its own folder means the collision never happens.
 
-Cross-machine handoff still works, and it works on the reading side: ask for a workstream without naming a machine and you get the **most recently written** one, plus a list of every machine that has state for it. Save on the laptop, resume on the desktop.
+Cross-machine handoff still works, and it works on the reading side: ask for a workstream without naming a machine and you get the **newest** one — ordered by the agent's own recorded save time first, the file's timestamp on disk only as a fallback — plus a list of every machine that has state for it. Save on the laptop, resume on the desktop.
 
 > **If one computer shows up as two machines, restart your MCP client.** The name is decided once and remembered, so it can no longer drift — but an MCP server that your client started *before* you updated The Curator is still running the old code, and no update reaches a process that is already running. Quit and reopen Claude Desktop (or whichever client you use) and the next save lands in the right folder.
 >
@@ -4668,7 +4564,7 @@ correctly all the way through never has to call it.
 
 **How the Foundations block reads, in the app.** Since v3.62.0 it is **step ①**, now called
 **Documents**, on the Project-context screen
-— the first thing on the page, above step ② *Memory* and its four rows (*Agent sessions*,
+— the first thing on the page, above step ② *Memory* and its four rows (*Agent connections*,
 *Handoffs*, *The brief*, *Journal* — since v3.65.0 all built from the same
 instrument, and since v3.65.1 the "Last saved" row that used to lead them is gone) — and its own fold is closed
 by default like theirs. Its summary
@@ -5145,74 +5041,84 @@ a teammate without `my-curator` on their `PATH` would otherwise experience your 
 
 ### The meter: did the session read, and did it save?
 
-Project context → step ② **Memory** carries this reading as its **first** row, **Agent sessions**
-(called **Capture** through v3.69.0) — the question this whole layer exists for is answered without
-opening anything but that one fold.
+Project context → step ② **Memory** carries this reading as its **first** row, **Agent connections**
+(called **Capture** through v3.69.0, then **Agent sessions** through v3.73.x) — the question this
+whole layer exists for is answered without opening anything but that one fold.
 
-**The rename, and what it does and doesn't count.** "Capture" described the mechanism; "Agent
-sessions" describes what you actually read off the row — how many agent sessions reached this
-project through the my-curator MCP, whether they read the context first, and whether they saved
-before stopping. The on-disk word is unchanged (the route is still `…/capture`, the store function
-is still `captureFacts`), exactly as v3.65.1 kept **foundations** and **working state** on disk
-under the screen's own **Documents** and **Memory**. It counts only sessions that reached this
-project **through the MCP bridge**: a session started by the SessionStart **hook**, or by
-`my-curator context` at the command line, reads the context without ever calling
-`get_project_context` over MCP, so it is **not counted** here, and a zero row can be an honest
-answer even on a project you use every day. A one-line explanation sits under the row whenever the
-count is zero, so a quiet number never reads as "nothing is happening" when the truth is "nothing
-here goes through the bridge."
+**Two renames, and what the row does and doesn't count.** "Capture" described the mechanism;
+"Agent sessions" (v3.70.0) described what you read off the row as *sessions* — but what the log
+actually counts is **one bridge process**, not one conversation, and calling that a "session"
+invited exactly the wrong reading: a Claude Desktop app kept open across a whole day of separate
+chats is one process, so it logged as *"1 of 1 sessions"* even on a day with thirty conversations
+through it, while Claude Code — which starts a fresh process per run — logged each one honestly.
+**"Agent connections" (v3.74.0) is the accurate word for the same count**: how many agent
+*connections* reached this project through the my-curator MCP, whether they read the context first,
+and whether they saved before stopping. The on-disk word is unchanged (the route is still
+`…/capture`, the store function is still `captureFacts`), exactly as v3.65.1 kept **foundations**
+and **working state** on disk under the screen's own **Documents** and **Memory**. It counts only
+connections that reached this project **through the MCP bridge**: a session started by the
+SessionStart **hook**, or by `my-curator context` at the command line, reads the context without
+ever calling `get_project_context` over MCP, so it is **not counted** here, and a zero row can be an
+honest answer even on a project you use every day. A one-line explanation sits under the row
+whenever the count is zero, so a quiet number never reads as "nothing is happening" when the truth
+is "nothing here goes through the bridge."
+
+**And, since v3.74.0, the window it claims is the window the log actually covers, not a fixed
+30 days.** A log that only reaches back five days now reads *"6 connections in the last 5 days (the
+log begins 20 Sep)"*, rather than silently implying it watched the full 30-day span it did not have
+data for; a log old enough to cover the whole window still reads the plain *"in the last 30 days"*.
 
 ![The Project context screen, dark theme, scrolled to step 2 "Memory" (numeral, Title-case
 title and an ⓘ beside it — no sentence under the heading). Four closed rows follow: "Agent
-sessions" · "Handoffs" · "The brief" · "Journal". Agent sessions' own row reads, at its right
-edge, "6 sessions in the last 30 days · 4 started with the context · 4 saved before stopping · 2
+connections" · "Handoffs" · "The brief" · "Journal". Agent connections' own row reads, at its right
+edge, "6 connections in the last 30 days · 4 started with the context · 4 saved before stopping · 2
 read and did not save", with a green dot. Opening it reveals a recessed, monospace panel — the
 same instrument every live reading in the app now uses — up to six lines, no table, in this order:
-sessions in the last 30 days, started with the context, saved before stopping, read and did not
+connections in the last 30 days, started with the context, saved before stopping, read and did not
 save (in the warning tone once it is non-zero), the tool calls made across the window, and the
-newest session's age with the harness that wrote it as a sub-line. Two lines sit below the row,
+newest connection's age with the harness that wrote it as a sub-line. Two lines sit below the row,
 never behind its chevron: "412 lines predate session ids and are not counted", and a quieter "25
-self-test calls excluded". At zero, a further line reads "Counts sessions that used the MCP tools
-here; sessions started only through the hook or `my-curator context` are not counted." The word
-"Sessions" appears nowhere on the page outside the
-ⓘ.](images/curator-capture-meter.png) *(the image predates the v3.70.0 rename; the alt text above
-describes the current row)*
+self-test calls excluded". At zero, a further line reads "Counts agent connections that used the MCP
+tools here; sessions started only through the hook or `my-curator context` are not counted." The
+word "Sessions" appears nowhere on the page outside the
+ⓘ.](images/curator-capture-meter.png) *(the image predates both renames — v3.70.0's "Agent sessions"
+and v3.74.0's "Agent connections"; the alt text above describes the current row)*
 
 *As of v3.65.0, this row became one row among the other four, not a card sitting above a separate
 "Sessions" fold. **As of v3.65.1 its body dropped the per-session table entirely** — the maintainer's
 own reading was that a row plus a table plus a floating ⓘ was three designs answering one question —
 and the six facts the table used to carry now live as six monitor lines, so nothing measured is
-lost, only the table's own per-session rows. The ⓘ that used to float alone above the table moved
+lost, only the table's own per-connection rows. The ⓘ that used to float alone above the table moved
 out of the row altogether, into the step's own ⓘ beside its title. The route's own disclosures (the
 pre-session-id count, the excluded self-test calls, and — further down — the note about a bridge
 that logged saves with no session) stay outside the row, unfolded, because a note about what the
 meter cannot see is exactly
 the kind of thing the standing rule says must never sit behind a chevron: a warning, a cost or an
-outcome is never one click further away than the row it qualifies. **As of v3.70.0 the row itself is
-titled Agent sessions**, for the reason above.*
+outcome is never one click further away than the row it qualifies. **As of v3.70.0 the row itself was
+titled Agent sessions, and as of v3.74.0 it is titled Agent connections**, for the reason above.*
 
 **Three words, defined once so the reading cannot be misread:**
 
 | | |
 |---|---|
-| **A session** | **One bridge process** — one run of your agent tool with The Curator connected. Not a conversation, not a day |
-| **Started with the context** | That session asked for this project's brief and state, at some point before its first save. Not necessarily as its very first call — an agent that lists projects first and bootstraps second has still bootstrapped |
+| **A connection** | **One bridge process** — one run of your agent tool with The Curator connected. Not a conversation, not a day — one Claude Desktop process can carry many conversations, which is exactly why the row no longer calls this "a session" |
+| **Started with the context** | That connection asked for this project's brief and state, at some point before its first save. Not necessarily as its very first call — an agent that lists projects first and bootstraps second has still bootstrapped |
 | **Saved before stopping** | A save succeeded. A *refused* save is not a save |
 
-**The uncomfortable number is the one in plain words.** *"2 read and did not save"* is two sessions
-that had everything and wrote nothing back — and it is printed as a count, in words, never as a
-percentage or a bar, because *"67%"* reads as a grade while *"2 read and did not save"* reads as two
-sessions you could go and look at.
+**The uncomfortable number is the one in plain words.** *"2 read and did not save"* is two
+connections that had everything and wrote nothing back — and it is printed as a count, in words,
+never as a percentage or a bar, because *"67%"* reads as a grade while *"2 read and did not save"*
+reads as two connections you could go and look at.
 
 **Three states, told apart rather than blurred:**
 
 | What you see | What it means |
 |---|---|
 | *"no usage log on this computer yet"* | Nothing has used the bridge here. Not a failure |
-| *"no agent session in the last 30 days"* | There is a log, and no session for **this project** in the window. Also not a failure |
-| *"6 sessions in the last 30 days"* | The real reading, with its breakdown underneath |
+| *"no agent connection in the last 30 days"* (or the true-window wording above, when the log is younger) | There is a log, and no connection for **this project** in the window. Also not a failure |
+| *"6 connections in the last 30 days"* | The real reading, with its breakdown underneath |
 
-Only the third carries a freshness dot, and **that dot is the age of the newest session** — not a
+Only the third carries a freshness dot, and **that dot is the age of the newest connection** — not a
 grade for the ratio. A reading and a judgement are different things, and the app does not dress one
 as the other.
 

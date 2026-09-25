@@ -5,11 +5,14 @@
 > (the rendered popover panel and the per-scope popup) is **not built**, and
 > every word about it below is still design context rather than a description of
 > behaviour. **Phase 3 — the bucketed event strip — is PARTLY built**, as a
-> single *aggregate* strip in the top-level menu rather than the per-scope,
-> per-source lanes §1.5 designed; §1.5's own demotion of it has effectively been
-> reversed for the aggregate case and left standing for the per-source one. §0a
-> deviation 6 states that in full. §0a is the boundary; read it before trusting
-> any other section in the present tense.
+> single *aggregate* strip in the top-level menu plus, since v3.74.0, one strip
+> **per tool** in a "Saves by tool" submenu (deviation 12) — never as inline
+> lanes inside a row's own 15pt, which §1.5 designed and which stays refused on
+> legibility. §1.5's own demotion of the per-source strip has effectively been
+> reversed for the aggregate case and honoured, via a submenu rather than the
+> still-unbuilt scope popup, for the per-tool case; the per-**scope** cut is
+> still standing, unbuilt. §0a deviations 6 and 12 state that in full. §0a is
+> the boundary; read it before trusting any other section in the present tense.
 >
 > **Nothing in the rest of this file was rewritten to match what shipped**, on
 > purpose. Where the build deviated from the plan, §0a names the deviation and
@@ -100,11 +103,14 @@ the app is read-only over working state by design, and it must stay that way.
 | A hard width budget — `MENU_WIDTH_POINTS` spent through `labelBudgetChars()` — and **five** rows rather than eight | `desktop/lib/tray-model.js` | **Built.** The target is now the **measured 363.5 points** (measured from a 2× capture on 2026-09-02), not the 260 this row named while it was a guess. See deviations 9 and 11 |
 | Recursive `fs.watch`, 150 ms debounce, 5-minute fallback, one-shot glyph expiry | `desktop/lib/state-watch.js` | **Built**, per §1.6 and §2.4 |
 | The 3×3 live mode transition, so the setting takes effect without a restart | `desktop/lib/background-mode.js` | **Built** |
-| Phase 0 — the agent's own clock beside the file's, and harness-collision detection | `src/brain/working-state.js` | **Shipped separately in v3.34.0**, on its own merits, exactly as §6 asked |
+| Phase 0 — the agent's own clock beside the file's, and harness-collision detection | `src/brain/working-state.js` | **Shipped separately in v3.34.0**, on its own merits, exactly as §6 asked. **The collision check compared raw strings until v3.74.0**, which could both raise a FALSE collision (one tool, two spellings) and undercount real tools in the pulse — see the harness-names.js row below |
+| **One tool, one name** — `normaliseHarness(raw) → {id, label, variant, raw}` folds spelling drift (`Claude Code`, `claude-code`, `Claude Code (desktop)`, …) to one id for comparison, while keeping `claude-desktop` a genuinely separate product, never merged | `src/brain/harness-names.js` (v3.74.0) | **Built.** Not in any section below — new this release. Consumed by the collision check, the pulse's tool count, and the "Saves by tool" submenu |
+| **Layout A** — pulse strip on top with a "Saves by tool" submenu; one row per **(project × harness)** saved in the last 24 h, tool + age on line 1, model + headline on line 2; the app's own `freshnessTier` dot per row; nested "Other work-streams"; Idle folded to one row, Knowledge folded to one row; one collision notice per work-stream, moved directly under the Active rows | `desktop/lib/tray-menu.js`, `desktop/lib/tray-model.js` | **Built** (v3.74.0). Restructures the "order of the menu" table below; see deviation 12 for the per-tool submenu specifically, and for what was removed rather than regrouped |
+| `scope: "latest"` and every "newest project" listing order by the agent's own **`writtenAt`**, file `mtime` only as a fallback | `src/brain/working-state.js` (`listWorkingScopes`, `listScopeMachines`, `summariseProject`) | **Built** (v3.74.0). Fixes a real bug: a Personal Sync pull could leave a stale handoff with a newer file `mtime` than the true latest save, so `scope: "latest"` opened the wrong one. Not itself a menu-widget item, but it feeds the same index the tray reads |
 
 ### What deviated from the plan, and why
 
-Ten deviations. Each one is a decision taken at build time against a section
+Twelve deviations. Each one is a decision taken at build time against a section
 below, and the section below is left as it was written.
 
 1. **`tray-only` does not hide the Dock icon.** §1.8 argued for
@@ -331,8 +337,10 @@ serialises against `pull()` — both real work, neither in this change.
       does have.
 
     **Three things §1.5 and §7 refused are still refused**: per-harness lanes
-    (two lanes inside 15pt give 7pt each and the bar ladder needs 12), per-row
-    sparklines, and promoting the standing brief's age to a menu row.
+    **inside a row's own 15pt** (two lanes inside 15pt give 7pt each and the bar
+    ladder needs 12 — see deviation 12, below, for the submenu shape that WAS
+    built instead in v3.74.0), per-row sparklines, and promoting the standing
+    brief's age to a menu row.
 
     **And the sketch this was built from was WRONG in one place, which is worth
     recording.** It proposed keying machine identity on `isThisHost` *above* the
@@ -391,6 +399,40 @@ serialises against `pull()` — both real work, neither in this change.
       still assumed, because a photograph cannot separate the layout gap from
       the following glyph's left side bearing.
 
+12. **Phase 3's per-source lanes are now BUILT, in v3.74.0 — as a submenu, never
+    as inline lanes in the main menu.** Deviation 6 above recorded §1.5's
+    per-source lanes (one lane per `harness`, twelve 5-minute cells) as **"unbuilt
+    design, and still the right shape for the Phase 2 popup when it exists"**,
+    because a per-row sparkline was **refused on legibility**: eight to eleven
+    independent bands a few points tall, inside a menu item, most of which would
+    be a single mark and a lot of empty. **That refusal still holds, to the
+    letter, for the inline case — nothing draws a lane inside a row's own 15pt.**
+    What shipped is shaped differently: a **"Saves by tool" submenu**
+    (`desktop/lib/tray-menu.js`, `ID_HEADER_PULSE_TOOLS`) off the save-pulse item,
+    one item per normalised tool id (`src/brain/harness-names.js`'s
+    `normaliseHarness`, so four spellings of one tool still read as one lane),
+    each carrying its **own full-size 55 × 15pt strip** — the identical picture
+    the top-level aggregate strip draws, built by the same renderer over
+    `desktop/lib/pulse-strip.js`'s `harnessPulses(pulse)` (one entry per lane
+    with a save in the window, read off the store's `pulse.byHarness`), not a
+    compressed in-row band. So §1.5's demotion
+    (*"ACCEPTED, DEMOTED — a per-source event strip, in the scope popup
+    only"*) is honoured in spirit rather than to the letter: reached through a
+    **submenu** rather than the still-unbuilt Phase 2 scope popup, and keyed by
+    **tool** (harness id) rather than by harness-or-machine — a machine-keyed
+    lane, and the per-**scope** cut §1.5 specified, remain unbuilt design.
+
+    **Removed from the top-level menu in the same release, and not merely
+    regrouped — kept in the app, never dropped as facts (the v3.66.0 parity rule
+    held again):** the `Working on: <project> · <age>` headline and its grey
+    `harness · model` line (#1/#2 in the "order of the menu" table above — an
+    Active row now states both facts once, per `(project, harness)`, beside the
+    age); `Session start`; `Documents`; and the "N of M saved" capture bars —
+    the last three retired as **inaccurate** rather than relocated, because they
+    counted MCP bridge process ids, not real sessions (data-layer commit
+    `fa773ae`, item D5). The app's Context sidebar, Memory step ② and Settings ›
+    Across projects carry the same facts the removed rows carried.
+
 ### The height refusal, and why lifting it is not a reversal of the argument
 
 §1.5 refused to put the save count in the bar height, on the ground that a
@@ -419,7 +461,7 @@ time series, and the label says *saves per 12 hours*, never *activity* and never
 | **0** — two fields on the store's index row | **Shipped** in v3.34.0 |
 | **1** — tray + native menu, `window` default | **Shipped** |
 | **2** — popover panel + per-scope popup + budget bar + recency pips | **Not built.** §1.7's tier rule (*the widget renders the journal; the app renders the handoff*) and §1.7's hard constraint are the contract it must be built to |
-| **3** — bucketed event strip | **PARTLY BUILT — see deviations 6, 9 and 10.** One **aggregate** strip shipped, in the **top-level menu**, drawn at 14 × 12 hours over 7 days from a producer that still buckets at 28 × 6 hours. §1.5's **per-scope, per-source lanes** and the scope popup they live in are **not built**, and the aggregate strip is not a step toward them — it is a different instrument answering *is the habit alive* rather than *are two tools taking turns in this scope* |
+| **3** — bucketed event strip | **PARTLY BUILT — see deviations 6, 9, 10 and 12.** One **aggregate** strip shipped, in the **top-level menu**, drawn at 14 × 12 hours over 7 days from a producer that still buckets at 28 × 6 hours. **Since v3.74.0, one strip PER TOOL also shipped**, in a **"Saves by tool" submenu** off the pulse item (deviation 12) — the per-**source** half of §1.5's design, built as a submenu rather than the still-unbuilt scope popup. §1.5's **per-scope** cut and the scope popup itself are **still not built**, and neither strip is a step toward them — both answer *is the habit alive* (per store, or per tool) rather than *are two tools taking turns in this scope* |
 
 Two items §6 raised that are **not** part of the widget and are still open:
 gating the two shell `setInterval`s on `document.hidden` (§2.7 rec 1) — **now
