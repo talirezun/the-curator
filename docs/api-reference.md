@@ -1580,10 +1580,12 @@ A domain's `state/` tree is markdown too: each project's **standing brief** and 
   "memory": [
     { "kind": "brief",   "project": "ai-tech", "isDefaultProject": true,  "scope": null,
       "machine": null,   "path": "state/project.md",
-      "title": "ai-tech · Standing brief", "savedAt": "2026-09-08T11:02:00.000Z", "bytes": 4180 },
+      "title": "ai-tech · Standing brief", "savedAt": "2026-09-08T11:02:00.000Z",
+      "savedAtFrom": "written", "bytes": 4180 },
     { "kind": "handoff", "project": "lumina", "isDefaultProject": false, "scope": "design",
       "machine": "studio-9f2a1c",           "path": "state/lumina/design/studio-9f2a1c/current.md",
-      "title": "lumina · design · studio-9f2a1c", "savedAt": "2026-09-09T18:41:00.000Z", "bytes": 9022 },
+      "title": "lumina · design · studio-9f2a1c", "savedAt": "2026-09-09T18:41:00.000Z",
+      "savedAtFrom": "written", "bytes": 9022 },
     { "kind": "foundation", "project": "lumina", "isDefaultProject": false, "scope": null,
       "machine": null,   "slug": "architecture.md", "role": "architecture",
       "path": "state/lumina/foundations/architecture.md",
@@ -1596,11 +1598,13 @@ A domain's `state/` tree is markdown too: each project's **standing brief** and 
 }
 ```
 
+**`savedAt` on a brief or a handoff is the WRITER's own clock** (since v3.76.0 for a brief): a brief's own written stamp (its provenance stamp or `Updated:` line) and a handoff's journal time. Only when there is none is it the file's time on this disk — which a pull, a restore or a hand edit moves — and `savedAtFrom` says which: `"written"`, `"file"`, or `null` with a `null` `savedAt` when there is no usable clock at all.
+
 **It is a separate array, never folded into `entries`, and `count`/`total` keep meaning wiki pages.** The Domains view renders a fifth **Memory** facet from it beside Entities / Concepts / Summaries, and the "All" facet keeps counting wiki pages only — a facet that disagreed with the PAGES figure directly above it would be a self-contradicting readout.
 
 **Since v3.64.0 the same array also carries each project's FOUNDATIONS** — its canonical documents
 — beside its standing brief and its work-stream handoffs. A foundation row carries
-the nine fields a brief or a handoff carries plus four of its own — `kind: "foundation"`, its
+the nine fields a brief or a handoff carries (all but `savedAtFrom`, which a foundation row does not carry) plus four of its own — `kind: "foundation"`, its
 `slug`, its `role`, and the `freshness` and `skeleton` readings the store computed. **The wire
 shape is an allow-list, not a spread**: the store's tier-0 rows also carry `sha256`, `authoredBy`,
 `commit` and `source`, and none of it belongs in a page listing. `memoryCount` / `memoryTotal` count them; the wiki `count` and `total` are **unchanged**,
@@ -2963,7 +2967,7 @@ collision (see below the table).
 | `POST` | `/api/memory/:domain/:project/foundations/add-remote` | **New in v3.69.0.** *"Add from GitHub"* — `{remote, ref?, tokenSource?, files}`. `addFoundationsFromRemote` mirrors the ticked files, joining an existing GitHub source with the same owner/repo and ref, or opening a new one. Response below |
 | `POST` | `/api/memory/:domain/:project/foundations/refresh` | Re-mirror from a checkout (v3.59.0; gains a `files` body in v3.61.0) — **or, in v3.63.0, from the GitHub repository itself** when the checkout is not on this machine. **v3.69.0**: `{group}` refreshes one source, `{}` refreshes every source under one lock (a failing one named and left untouched); body and response below |
 | `POST` | `/api/memory/:domain/:project/foundations/source` | **New in v3.65.1**, semantics changed **v3.69.0**. Adds or points a GitHub source: joins an existing GitHub source with the same owner/repo and ref, or opens a new one — it no longer clears a project's only folder source, since a project can hold both. Takes `group` once a project has 2+ sources |
-| `GET` | `/api/memory/:domain/:project/capture` | **New in v3.63.0.** The honesty meter, shown on screen as **Agent sessions** since v3.70.0 (the route and the store's `captureFacts` keep the old name) — how many bridge sessions ran for this project, how many read, how many saved |
+| `GET` | `/api/memory/:domain/:project/capture` | **New in v3.63.0.** The honesty meter, shown on screen as **Agent connections** since v3.74.0 (*Agent sessions* v3.70.0–v3.73.x; the route and the store's `captureFacts` keep the old name) — how many bridge connections ran for this project, how many read, how many saved. A connection is one MCP bridge process, not a conversation |
 | `GET` | `/api/memory/:domain/:project` | One project's brief plus its state |
 | `GET` | `/api/memory/:project` | **Deprecated** alias for that domain's default project |
 
@@ -4182,7 +4186,9 @@ directory entries the store will not address, counted rather than silently skipp
 route); `brief.updatedAt` stays the file's mtime. **`scopes[].harnessLabel` (v3.76.0)** is each
 row's tool through `normaliseHarness()`, added by this route (not the store) to the envelope and to
 `open` alike, so `open` stays what the scoped read answers; `harness` keeps the raw spelling.
-`null` when the save named no tool.
+`null` when the save named no tool. **`journal.entries[].harnessLabel` (v3.76.0)** is the same, on
+each journal line of a scoped read and of `open` — the Context view's journal lines and handoff
+byline show it, with the raw spelling kept as screen-reader text.
 
 **`stateBudgetBytes` (v3.66.0)** rides on this envelope (and on `open`, and on a scoped read) —
 `49152`, the size a handoff is trimmed to. Every `scopes[].bytes` is at or under it: an over-budget
@@ -4788,10 +4794,10 @@ body names no brain at all.
 
 ### GET /api/memory/:domain/:project/capture
 
-**New in v3.63.0; shown on screen as Agent sessions since v3.70.0** (the route, and the store's
+**New in v3.63.0; shown on screen as Agent connections since v3.74.0** (*Agent sessions* v3.70.0–v3.73.x; the route, and the store's
 `captureFacts`, keep the old name — the same on-disk/on-screen split v3.65.1 gave Documents/Memory).
-The **honesty meter**: *did this project's agent sessions start by reading its
-state, and did they save before they stopped?* It counts only sessions that reached this project
+The **honesty meter**: *did this project's agent connections start by reading its
+state, and did they save before they stopped?* It counts only connections that reached this project
 **through the my-curator MCP bridge** — a session started only by the SessionStart hook or by
 `my-curator context` at the command line reads the context without ever calling this route's
 underlying tool, so it is not counted, and a zero reading can be an honest answer on a busy

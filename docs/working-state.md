@@ -2565,6 +2565,17 @@ session → exit. No bridge session at all for this project in this window → e
 agent to use a tool it does not have is nagging. Only then does it ask, **at most once per turn by
 construction**, in that harness's own shape.
 
+**The ask names THIS tool's own scope (v3.76.0).** The scope in the sentence is the one a save with
+no scope and this tool's `harness` lands in — the harness id through the one normaliser
+(`claude-code`, `antigravity`, …) — or the `--scope` configured on the hook command, which wins.
+Through v3.75.x it named the project's *newest* scope, which on a computer running two agent tools
+is routinely the other tool's, so the ask told this tool to overwrite it. Session start still opens
+the newest work-stream (that is the handover), and the injected context now says whose it is and
+where this tool's saves go: *"Opened the newest work-stream, scope 'antigravity' (last saved by
+Antigravity) — not Claude Code's own. Claude Code's saves go to its own scope 'claude-code' — name a
+scope only to write somewhere else."* `my-curator context --for-hook --harness <id>` carries the same
+line. The Context view's session-start figure is measured as Claude Code's hook, line included.
+
 **One policy, several envelopes.** Claude Code *blocks* (`exit 2`, the reason on stderr); Cursor
 *submits a message* (`followup_message`), which is strictly gentler and is preferred where a harness
 offers both; Codex blocks on `Stop` and can refuse a compaction with `{"continue": false}` — the one

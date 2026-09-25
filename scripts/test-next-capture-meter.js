@@ -624,7 +624,7 @@ section('§6 — LOADING, FAILING, AND NOTHING HOSTILE REACHING THE PAGE');
   const failed_ = makeMeter(stFor({
     capture: { domain: 'acme', project: 'lumina', data: null, error: 'HTTP 404' },
   })).renderCaptureMeter();
-  ok(failed_.includes('No agent-sessions reading for this project') && failed_.includes('HTTP 404'),
+  ok(failed_.includes('No agent-connections reading for this project') && failed_.includes('HTTP 404'),
     'a failure is DISCLOSED with its reason, never a blank');
   ok(failed_.includes('tx-status-neutral'),
     '...and neutral rather than danger: on a server older than this release the route is '

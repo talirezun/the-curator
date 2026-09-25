@@ -94,14 +94,16 @@ export async function runContext(parsed) {
     // The harness's session-start envelope, and nothing else. The shape is the
     // adapter's — a harness whose envelope is unverified gets NOTHING rather
     // than a guess at another harness's shape (Decision C's corollary).
-    const { sessionStartEnvelope, harnessEntry } = await import('./hook.js');
+    const { sessionStartEnvelope, harnessEntry, ownSaveScope } = await import('./hook.js');
     const id = flagStr(flags, 'harness');
     const entry = harnessEntry(id);
     if (!entry) {
       note(`--for-hook needs a --harness this build knows. Unknown: "${id || '(none)'}". Nothing was emitted.`);
       return EXIT_OK;
     }
-    const env = sessionStartEnvelope(entry, await renderFramedContextMarkdown(ctx));
+    // The same line the hook injects: whose work-stream this is, and where
+    // this tool's saves go (v3.76.0).
+    const env = sessionStartEnvelope(entry, await renderFramedContextMarkdown(ctx, { saveTarget: await ownSaveScope(entry, flags) }));
     if (env === null) {
       note(`No session-start envelope is shipped for "${entry.id}": ${entry.sessionStart?.withheld || 'unverified'}. Nothing was emitted.`);
       return EXIT_OK;

@@ -342,7 +342,7 @@ section('6. The block: numbered ③, one lede, the privacy ⓘ, no title=');
   // the user guide's "The tool map — what your agents used".
   ok(info.includes(explainerMark('settings-block-info-mcp-tool-map', 'settings.mcp-tool-map').panel),
     'the ⓘ panel IS the settings.mcp-tool-map explainer (byte-equal, id unchanged)');
-  for (const claim of ['never what agents read or wrote', 'never synced', 'never counts as a session']) {
+  for (const claim of ['never what agents read or wrote', 'never synced', 'never counts as a connection']) {
     ok(info.includes(claim), `the ⓘ states: "${claim}"`);
   }
   ok(/href="[^"]*user-guide\.md#the-tool-map/.test(block),
@@ -860,7 +860,7 @@ section('11. "Test all N tools": the marker, the control, and the outcome (v3.61
     // the rendered body in 11a–11f.
     const panel = explainerMark('settings-block-info-mcp-tool-map', 'settings.mcp-tool-map').panel;
     ok(info.includes(panel), 'the ⓘ panel is the settings.mcp-tool-map explainer');
-    ok(/A test run from this page never counts as a session/.test(panel),
+    ok(/A test run from this page never counts as a connection/.test(panel),
       '…and says outright that a run is not a session — the one reading a false mark would corrupt');
   }
 }

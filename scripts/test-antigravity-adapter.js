@@ -200,6 +200,12 @@ section('§2  session-start (PreInvocation): once per conversation, in its own e
   const ctx = run(['context', '--for-hook', '--harness', 'antigravity', '--project', `${D}/lumina`]);
   ok(typeof parse(ctx)?.injectSteps?.[0]?.ephemeralMessage === 'string',
     '`my-curator context --for-hook --harness antigravity` emits the same envelope');
+  // v3.76.0: the injection says whose work-stream it opened and where saves go.
+  ok(/Opened the newest work-stream, scope 'main' \(.*\) — not Antigravity's own\. Antigravity's saves go to its own scope 'antigravity'/.test(text || ''),
+    "the bootstrap says it opened `main`, not Antigravity's own, and that Antigravity's saves go to `antigravity`",
+    (text || '').split('\n').find((l) => /saves go/.test(l)));
+  ok(/Antigravity's saves go to its own scope 'antigravity'/.test(parse(ctx)?.injectSteps?.[0]?.ephemeralMessage || ''),
+    '…and `context --for-hook` carries the same line');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -218,6 +224,11 @@ section('§3  Stop: ask once, only on a model stop, always a JSON object');
   ok(typeof j1?.reason === 'string' && j1.reason.includes('save_working_state') && j1.reason.includes(`${D}/lumina`),
     '…with the ask as `reason`, naming the tool and the project');
   ok(j1 && Object.keys(j1).sort().join() === 'decision,reason', '…and no invented third key');
+  // v3.76.0: the ask names ANTIGRAVITY'S OWN scope — the fixture's only (and
+  // so newest) work-stream is `main`, which a scope-less Antigravity save
+  // would never land in.
+  ok(typeof j1?.reason === 'string' && j1.reason.includes("scope `antigravity` (Antigravity's own)") && !j1.reason.includes('`main`'),
+    "…and the scope it names is Antigravity's own, not the project's newest (`main`)", j1?.reason);
   const s1b = stop('agy-stop-1');
   ok(s1b.code === 0 && s1b.stdout.trim() === '{}', 'the SAME conversation is never asked twice — `{}` (marker, rung 1)');
 

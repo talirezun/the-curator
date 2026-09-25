@@ -242,7 +242,7 @@ Two naming conventions are in circulation and both are legitimate:
 
 | Convention | Where it comes from | What it buys |
 |---|---|---|
-| `main`, or one name per piece of work | The default, and what the pasted agent-instructions block says | One rolling handoff per work-stream. Simple, and the block does not have to be edited |
+| One name per tool (`claude-code`, `antigravity`, …) or per piece of work | Since v3.76.0 the default — a save that names no scope goes to its tool's own scope (`main` only with no tool named) — and what the pasted agent-instructions block says | One rolling handoff per work-stream. Simple, and two tools on one computer never share one file |
 | `session-YYYY-MM-DD-topic`, one scope per session | The maintainer's own practice on this repository | A per-session trail. Each session's state stays readable afterwards instead of being overwritten by the next one, and `latest` still opens the newest |
 
 The cost of the second is more work-streams to list; the cost of the first is that an earlier session's document is gone once the next save lands. The store does not prefer either.

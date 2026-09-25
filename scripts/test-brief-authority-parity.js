@@ -228,7 +228,13 @@ for (const c of CASES) {
         const text = envelopeText(env);
         ok(text !== null, `${h} ${how}: one envelope carrying the Markdown`, hr.stdout.slice(0, 200) || hr.stderr);
         eq(verdictOf(text), c.expected, `${h} ${how}: verdict`);
-        eq(text === null ? null : text.replace(/\s+$/, ''), md, `${h} ${how}: envelope text === \`context\` output`);
+        // v3.76.0: the hook's rendering adds ONE line — whose work-stream it
+        // opened and where THIS tool's saves go (saveTargetLine). Apart from
+        // that line it is the `context` output byte for byte.
+        const SAVE_LINE = /^_(?:Opened |No work-stream has been opened\. |Scope ')[^\n]*saves go to[^\n]*_\n\n/m;
+        ok(text !== null && SAVE_LINE.test(text) && text.match(SAVE_LINE)[0].includes(`${HARNESS_HOOKS[h].label}'s saves go to`),
+          `${h} ${how}: carries the one save-scope line, naming ${HARNESS_HOOKS[h].label}`);
+        eq(text === null ? null : text.replace(SAVE_LINE, '').replace(/\s+$/, ''), md, `${h} ${how}: envelope text === \`context\` output, apart from that line`);
         envelopesChecked++;
       } else {
         eq(hr.stdout, '', `${h} ${how}: withheld harness emits NOTHING`);

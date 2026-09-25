@@ -100,11 +100,24 @@ router.get('/:domain', async (req, res) => {
 // The store's rows carry journal-derived facts (headlines an agent wrote,
 // harness names, model ids) and, on tier 0, per-document provenance
 // (`sha256`, `authoredBy`, `commit`, `source`). None of that belongs in a
-// page listing, and a spread would have shipped all of it. Nine named fields
-// for a brief or a handoff, thirteen for a foundation, and nothing else.
+// page listing, and a spread would have shipped all of it. Ten named fields
+// for a brief or a handoff (`savedAtFrom` joined in v3.76.0), thirteen for a
+// foundation, and nothing else.
 // ─────────────────────────────────────────────────────────────────────────
 
 const MAX_MEMORY_ENTRIES = 2000;
+
+/**
+ * `{savedAt, savedAtFrom}` for a brief or a handoff row (v3.76.0): the
+ * WRITER's own clock where there is one (`savedAtFrom: 'written'`), else the
+ * file's time on this disk, LABELLED (`'file'`), else both null — a fact and
+ * its absence stay distinguishable.
+ */
+function clockOf(writtenAt, fileAt) {
+  if (typeof writtenAt === 'string' && writtenAt) return { savedAt: writtenAt, savedAtFrom: 'written' };
+  if (typeof fileAt === 'string' && fileAt) return { savedAt: fileAt, savedAtFrom: 'file' };
+  return { savedAt: null, savedAtFrom: null };
+}
 
 function briefPathFor(isDefault, project) {
   return isDefault ? 'state/project.md' : `state/${project}/project.md`;
@@ -205,7 +218,11 @@ async function memoryInventory(domain) {
         machine: null,
         path: briefPathFor(isDefault, project),
         title: `${project} · Standing brief`,
-        savedAt: typeof row.briefUpdatedAt === 'string' ? row.briefUpdatedAt : null,
+        // v3.76.0 — the brief's OWN written stamp (`briefWrittenAt`, its
+        // provenance stamp or `Updated:` line), not the file's mtime, which a
+        // hand edit, a pull or a restore all move. The mtime is the fallback
+        // for a brief with no stamp, and `savedAtFrom` says which it is.
+        ...clockOf(row.briefWrittenAt, row.briefUpdatedAt),
         bytes: typeof row.briefBytes === 'number' ? row.briefBytes : null,
       });
     }
@@ -234,9 +251,9 @@ async function memoryInventory(domain) {
         // rewrites mtime on checkout and a synced handoff would otherwise
         // date to the pull. A fact and its absence stay distinguishable:
         // null means "no usable clock", never "now".
-        savedAt: (typeof pair.writtenAt === 'string' && pair.writtenAt)
-          ? pair.writtenAt
-          : (typeof pair.lastWriteAt === 'string' ? pair.lastWriteAt : null),
+        // null means "no usable clock", never "now". `savedAtFrom` labels the
+        // fallback (v3.76.0).
+        ...clockOf(pair.writtenAt, pair.lastWriteAt),
         bytes: typeof pair.bytes === 'number' ? pair.bytes : null,
       });
     }

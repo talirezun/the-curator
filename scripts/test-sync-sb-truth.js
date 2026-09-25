@@ -414,9 +414,9 @@ section('§6  tray F1 / F5 / F7');
     '6c: F1 THE FIX — the tray names the SAME busiest figure (was 1: the store\'s projects only)');
   eq(tray.busiestSavedOf([], false), null, '6d: …and with no log it is null, not 0');
 
-  eq(model.captureNoneInWindow(14), 'no logged sessions · 14 d', '6e: F5 — the label is built from the payload\'s window');
+  eq(model.captureNoneInWindow(14), 'no logged connections · 14 d', '6e: F5 — the label is built from the payload\'s window');
   eq(model.captureNoneInWindow(30), model.CAPTURE_NONE_IN_WINDOW, '6f: …and at 30 it is exactly the pinned wording');
-  eq(model.captureNoneInWindow(undefined), 'no logged sessions', '6g: …and with no window it states none rather than guessing 30');
+  eq(model.captureNoneInWindow(undefined), 'no logged connections', '6g: …and with no window it states none rather than guessing 30');
 
   ok(typeof summary.readAt === 'string' && Number.isFinite(Date.parse(summary.readAt)), '6h: F7 — the summary carries its read time');
   const snap = { ...summary, readAt: '2026-09-25T10:05:00' };

@@ -275,12 +275,14 @@ export function bucketModel(m) {
   else if (readTokens === 0) roomState = 'unused';
   else if (room > 0) roomState = 'left';
   else roomState = 'full';
+  // v3.76.0: "≈" like every other token figure on this meter — the budget is
+  // set in bytes and shown as bytes ÷ 4, an estimate like the rest.
   const roomWords = roomState === 'unused'
-    ? 'reading budget ' + formatTokens(budget) + ' — unused: nothing is read first'
-    : roomState === 'left' ? 'budget left ' + formatTokens(room) : '';
+    ? 'reading budget ≈' + formatTokens(budget) + ' — unused: nothing is read first'
+    : roomState === 'left' ? 'budget left ≈' + formatTokens(room) : '';
   const roomText = roomState === 'unused'
-    ? pickLabel([roomWords, 'budget ' + formatTokens(budget) + ' — unused', 'unused'], roomPct)
-    : roomState === 'left' ? pickLabel([roomWords, formatTokens(room) + ' left'], roomPct) : { short: '', wide: '' };
+    ? pickLabel([roomWords, 'budget ≈' + formatTokens(budget) + ' — unused', 'unused'], roomPct)
+    : roomState === 'left' ? pickLabel([roomWords, '≈' + formatTokens(room) + ' left'], roomPct) : { short: '', wide: '' };
 
   return {
     windowTokens, harnessSet, harness, curator, used, over, free,
@@ -310,9 +312,9 @@ export function bucketText(m) {
     + (l.parts ? ' (' + l.parts.map((p) => p.label + ' ' + formatTokens(p.tokens)).join(', ') + ')' : ''));
   let budgetWords;
   if (g.roomState === 'none') budgetWords = 'no reading budget (index only).';
-  else if (g.roomState === 'unused') budgetWords = 'reading budget ' + formatTokens(g.budget) + ', unused: nothing is read first.';
-  else if (g.roomState === 'left') budgetWords = 'reading budget ' + formatTokens(g.budget) + ', ' + formatTokens(g.room) + ' left.';
-  else budgetWords = 'reading budget ' + formatTokens(g.budget) + ', full.';
+  else if (g.roomState === 'unused') budgetWords = 'reading budget ≈' + formatTokens(g.budget) + ', unused: nothing is read first.';
+  else if (g.roomState === 'left') budgetWords = 'reading budget ≈' + formatTokens(g.budget) + ', ≈' + formatTokens(g.room) + ' left.';
+  else budgetWords = 'reading budget ≈' + formatTokens(g.budget) + ', full.';
   const enl = pre + 'The Curator\'s part, enlarged to its own scale: about ' + formatTokens(g.curator) + ' tokens'
     + (parts.length ? ' — ' + parts.join(', ') : '') + '; ' + budgetWords
     + (g.pages ? ' ' + g.pages.slice(1).map((x) => 'Reply ' + x.page + ' starts with ' + x.first + '.').join(' ') : '');
