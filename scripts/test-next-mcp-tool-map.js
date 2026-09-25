@@ -1003,6 +1003,15 @@ section('14. ④ Across projects (v3.66.0, P8): the widget’s per-project bars,
   const w = (v) => { const m = /cur-depth-bar[^"]*" style="width:([\d.]+)%"/.exec(v || ''); return m ? Number(m[1]) : null; };
   ok(w(lines[0].val) === 100 && w(lines[1].val) === 44.4,
     'sessions that SAVED, against the busiest project (9 → 100%, 4 of 9 → 44.4%)');
+  // v3.74.0 — the bar's label names the row's OWN share and, for every other
+  // row, the busiest project BY NAME as the bar's scale — never "N of 9 …, the
+  // busiest project", which read as if this row were the busiest.
+  const txt = (v) => v.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  ok(/9 of 11 connections saved — the busiest project/.test(txt(lines[0].val)),
+    '★ the busiest row: "9 of 11 connections saved — the busiest project"', txt(lines[0].val));
+  ok(/4 of 6 connections saved · bar scaled to alpha’s 9/.test(txt(lines[1].val))
+    && !/the busiest project/.test(txt(lines[1].val)),
+    '★ another row: "4 of 6 connections saved · bar scaled to alpha’s 9" — never "the busiest project"', txt(lines[1].val));
   ok(lines[0].sub === '11 connections' && lines[1].sub === '6 connections', 'all connections under the figure (v3.74.0 D5: a bridge run is not a session)');
   ok(/cur-sb-dot cur-sb-dot-1"/.test(lines[0].val) && /cur-sb-dot cur-sb-dot-2"/.test(lines[1].val)
      && /cur-sb-dot cur-sb-dot-3"/.test(lines[2].val),
