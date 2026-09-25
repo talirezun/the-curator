@@ -41,7 +41,8 @@ import {
 } from './resolve.js';
 
 export const SAVE_USAGE =
-  'my-curator save [--project <domain/project|project>] [--domain <d>] [--scope main]\n'
+  'my-curator save [--project <domain/project|project>] [--domain <d>] [--scope <name>]\n'
+  + '                --scope default: your tool\'s scope when --harness is given, else main\n'
   + '                [-f <file> | --file <file> | - ]        JSON body on stdin by default\n'
   + '                [--headline "…"] [--now-state "…"] [--now-state-file <f>]\n'
   + '                [--next-steps "…" …] [--decisions "…" …] [--traps "…" …]\n'

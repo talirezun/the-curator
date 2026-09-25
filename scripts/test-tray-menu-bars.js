@@ -285,7 +285,7 @@ section('§6 the capture and documents bars LEFT the menu (v3.74.0) — the doma
     'CONTROL — every project in the fixture carries a capture reading, so its absence below is a decision');
   const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(m, { ...NOOPS, makeIcon: (sp) => sp }));
   const words = flat.map((i) => [i.label, i.sublabel, i.toolTip].filter(Boolean).join('\n')).join('\n');
-  ok(!/\bof \d+ saved\b|no logged sessions|no sessions logged|Agent sessions/.test(words),
+  ok(!/\bof \d+ saved\b|no logged (sessions|connections)|no sessions logged|Agent (sessions|connections)/.test(words),
     'no label, sublabel or tooltip anywhere in the menu states a capture reading');
   ok(!/^(Documents|Read first)\b/m.test(flat.map((i) => i.label || '').join('\n')),
     'no Documents or Read first line, although the headline project has a documents reading');

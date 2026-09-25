@@ -23,6 +23,9 @@
 import {
   briefAuthorityNote, BRIEF_AUTHORITIES, BRIEF_AUTHORITY_LABEL, briefIsTrusted, markdownDataLine,
 } from './context-framing.js';
+// Pure and zero-import (rule 3 of that module): the label of the tool that
+// wrote the opened work-stream, compared by id rather than by raw spelling.
+import { normaliseHarness } from './harness-names.js';
 
 /**
  * THE BRIEF'S AUTHORITY, FROM THE SAME CLASSIFIER CHAT USES (v3.66.0).
@@ -81,8 +84,9 @@ export function renderAuthority(ctx, supplied) {
 
 /** Classify, then render — what both production callers (this command and
  *  the session-start hook) use. */
-export async function renderFramedContextMarkdown(ctx) {
-  return renderContextMarkdown(ctx, { authority: await classifyContextAuthority(ctx) });
+export async function renderFramedContextMarkdown(ctx, opts = {}) {
+  const saveTarget = opts && typeof opts === 'object' ? opts.saveTarget : undefined;
+  return renderContextMarkdown(ctx, { authority: await classifyContextAuthority(ctx), saveTarget });
 }
 
 /** The readable form: the same facts, in the order a session needs them. */
@@ -150,6 +154,10 @@ export function renderContextMarkdown(ctx, opts = {}) {
   L.push(`## Latest handoff${ctx.scope ? ` — scope '${ctx.scope}'` : ''}`);
   L.push('');
   const newest = ctx.journal?.entries?.length ? ctx.journal.entries[0] : null;
+  // v3.76.0 — WHOSE WORK-STREAM THIS IS, AND WHERE A SAVE GOES. Only the
+  // session-start hook passes `saveTarget` (it knows which tool it runs for).
+  const st = saveTargetLine(ctx, newest, opts?.saveTarget);
+  if (st) { L.push(st); L.push(''); }
   if (ctx.current?.present) {
     if (newest?.headline) L.push(`**${newest.headline}**`);
     // `savedAt` is the file's mtime — the moment it ARRIVED on this disk, which
@@ -252,6 +260,30 @@ export function renderContextMarkdown(ctx, opts = {}) {
     L.push('');
   }
   return L.join('\n');
+}
+
+/**
+ * v3.76.0 — the session-start hook opens the NEWEST work-stream (the handover
+ * case), which may be ANOTHER tool's; a save with no scope goes to the saving
+ * tool's own scope (working-state.js defaultScopeFor). Both facts, in one
+ * line, so an agent handed another tool's handoff does not save over it.
+ *
+ * `target` is `{tool, scope, configured}`: the label of the tool the hook runs
+ * for, the scope its saves go to, and whether that scope was configured on the
+ * hook command (`--scope`) rather than being the tool's own. Null → no line.
+ */
+export function saveTargetLine(ctx, newest, target) {
+  if (!target || typeof target !== 'object' || typeof target.scope !== 'string' || !target.scope) return null;
+  const tool = typeof target.tool === 'string' && target.tool ? target.tool : 'this tool';
+  if (target.configured) {
+    return `_Scope '${target.scope}' was configured for this hook: ${tool}'s saves go to scope '${target.scope}'._`;
+  }
+  const own = `${tool}'s saves go to its own scope '${target.scope}' — name a scope only to write somewhere else.`;
+  if (!ctx?.scope) return `_No work-stream has been opened. ${own}_`;
+  const writer = newest && typeof newest.harness === 'string' ? normaliseHarness(newest.harness) : null;
+  const by = writer ? `last saved by ${writer.label}` : 'with no tool recorded on its newest save';
+  if (ctx.scope === target.scope) return `_Opened scope '${ctx.scope}', ${tool}'s own (${by}). ${own}_`;
+  return `_Opened the newest work-stream, scope '${ctx.scope}' (${by}) — not ${tool}'s own. ${own}_`;
 }
 
 /** `Reading budget: 64 KB — the owner's` / `120 KB — the default` /

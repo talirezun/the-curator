@@ -36,8 +36,9 @@ const USAGE = `my-curator — your project's context and handoffs, from the shel
 
   my-curator context [--project <domain/project>] [--scope <name>] [--json]
                      [--budget <bytes>] [--include index|changed|all] [--slugs a.md,b.md]
-  my-curator save    [--project …] [--scope main] [-f <file>|-] [--headline "…"] [--dry-run]
+  my-curator save    [--project …] [--scope <name>] [--harness <name>] [-f <file>|-] [--headline "…"] [--dry-run]
                      the complete state arrives as a JSON object on stdin
+                     --scope default: your tool's scope when --harness is given, else main
   my-curator hook    <session-start|stop|pre-compact|session-end> --harness <id>
                      the harness payload arrives on stdin; its envelope leaves on stdout
   my-curator doctor  [--json] [--alias]

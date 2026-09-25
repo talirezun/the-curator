@@ -295,7 +295,7 @@ Be specific about scale and quantity. "Some tests fail" is nearly worthless; "6 
 | `observations` | list of objects | Point-in-time facts. `{statement, observedAt, recheck}` — only `statement` is required, but **always supply `recheck`**, because §2 step 3 depends on it existing. |
 | `traps` | string list | Tried and rejected, **with the mechanism of the failure**. The highest-value field: by default the next session re-attempts the failed approach, because it is usually the obvious one. |
 | `open_questions` | string list | What is waiting, and on **what**. Keep *blocked pending a decision* and *tried and failed* apart. |
-| `scope` | string | The slice of work. Defaults to `main`. See §8. |
+| `scope` | string | The slice of work. Omitted: your tool's own scope from `harness` (`Claude Code` → `claude-code`), else `main`. See §8. |
 | `project` | string | The project. Falls back to the configured default domain's own project if omitted. It must already EXIST — a save never creates one (§9). Add `domain` when the name lives in more than one. |
 | `harness` | string, **≤80 chars** | Your tool's name, spelled the same way every time (e.g. `claude-code`, `antigravity`). |
 | `model` | string, **≤80 chars** | Your exact model id if you know it (e.g. `claude-opus-5-5`, `gemini-3.8-flash`); if you do not know it, omit it — never search files, environment variables or logs to find it. |

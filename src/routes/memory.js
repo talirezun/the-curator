@@ -663,9 +663,10 @@ async function withScopeFacts(store, rows) {
     const spoken = speaker && typeof speaker.harness === 'string' ? normaliseHarness(speaker.harness) : null;
     out.push({
       ...row,
-      // ONE PROJECT, ONE CLOCK. See agentNewestPair: the store hands this row
-      // the pair that is newest by MTIME, the page renders every age off the
-      // AGENT'S clock, and on any synced or copied store the two disagree.
+      // ONE PROJECT, ONE CLOCK. See agentNewestPair: the page renders every
+      // age off the AGENT'S clock, so the speaker is re-picked off the same
+      // clock here (the store's row has done the same since v3.74.0, with
+      // the file's mtime only as a fallback; through v3.73.x it was mtime).
       // A FIXED set of keys, never a spread of the pair — projectRow's
       // allow-list rule holds here too, and `scopes[]` carries fields
       // (`harnesses`, `journalEntriesScanned`, `bytes`) that are not on this
@@ -4081,15 +4082,21 @@ router.get('/:project', async (req, res) => {
  * AND to `open`, so `open` stays byte-for-byte what the scoped read answers.
  */
 function withHarnessLabels(body) {
-  if (!body || !Array.isArray(body.scopes)) return body;
-  return {
-    ...body,
-    scopes: body.scopes.map((sc) => {
-      if (!sc || typeof sc !== 'object') return sc;
-      const n = typeof sc.harness === 'string' && sc.harness.trim() ? normaliseHarness(sc.harness) : null;
-      return { ...sc, harnessLabel: n ? n.label : null };
-    }),
+  if (!body || typeof body !== 'object') return body;
+  const label = (row) => {
+    if (!row || typeof row !== 'object') return row;
+    const n = typeof row.harness === 'string' && row.harness.trim() ? normaliseHarness(row.harness) : null;
+    return { ...row, harnessLabel: n ? n.label : null };
   };
+  let out = body;
+  if (Array.isArray(body.scopes)) out = { ...out, scopes: body.scopes.map(label) };
+  // v3.76.0 — the JOURNAL too: the Context view's journal lines and the
+  // handoff byline printed the raw spelling ("claude-code" under "Claude
+  // Code"). Each entry gains `harnessLabel`; `harness` stays the raw text.
+  if (body.journal && Array.isArray(body.journal.entries)) {
+    out = { ...out, journal: { ...body.journal, entries: body.journal.entries.map(label) } };
+  }
+  return out;
 }
 
 async function handleDetail(req, res, domain, project, deprecated) {

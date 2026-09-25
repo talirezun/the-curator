@@ -55,6 +55,8 @@ import { EXIT_OK, EXIT_USAGE, out, note, flagStr, flagBool, resolveProjectForCli
 export const HOOK_USAGE =
   'my-curator hook <session-start|stop|pre-compact|session-end> --harness <id>\n'
   + '            [--project <domain/project>] [--scope <name>] [--budget <bytes>]\n'
+  + '            --scope default: session-start opens the newest work-stream; the save ask names\n'
+  + '            the harness\'s own scope (claude-code, antigravity, …)\n'
   + '            the harness payload arrives as JSON on stdin; the envelope leaves on stdout';
 
 /** The deliberate block. Not an error — the one control-flow change we make. */
@@ -64,9 +66,26 @@ export const EXIT_BLOCK = 2;
  * THE SENTENCE. One sentence, naming the tool and the project, and nothing
  * else: a nudge that explains itself at length is a nudge a model argues with.
  */
-export function askSentence(domain, project, scope) {
+export function askSentence(domain, project, scope, tool = null) {
   return 'Working state has not been saved this session. Call `save_working_state` for project '
-    + `\`${domain}/${project}\`, scope \`${scope}\`, with the complete state, then stop.`;
+    + `\`${domain}/${project}\`, scope \`${scope}\`${tool ? ` (${tool}'s own)` : ''}, with the complete state, then stop.`;
+}
+
+/**
+ * THE SCOPE THIS HOOK'S TOOL SAVES TO (v3.76.0). A `--scope` on the hook
+ * command wins; otherwise it is the tool's OWN scope — the same one a save
+ * with no scope and this tool's `harness` lands in (working-state.js
+ * `defaultScopeFor`, over the normalised id). Through v3.75.0 the ask named
+ * the project's NEWEST scope, which on a Mac running two agent tools is
+ * routinely the OTHER tool's: the ask then told this tool to overwrite it.
+ *
+ * @returns {Promise<{scope: string, configured: boolean, tool: string}>}
+ */
+export async function ownSaveScope(entry, flags) {
+  const configured = flagStr(flags, 'scope');
+  if (configured) return { scope: configured, configured: true, tool: entry.label };
+  const { defaultScopeFor } = await import('../brain/working-state.js');
+  return { scope: defaultScopeFor(entry.id).scope, configured: false, tool: entry.label };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -546,7 +565,10 @@ async function runHookInner(parsed) {
         note(`my-curator hook session-start: the store refused the read (${ctx.reason}). Nothing was injected.`);
         return EXIT_OK;
       }
-      send(JSON.stringify(arm.emit(await renderFramedContextMarkdown(ctx))));
+      // The newest work-stream may be ANOTHER tool's (the handover case), so
+      // the rendering says whose it is and where THIS tool's saves go.
+      const saveTarget = await ownSaveScope(entry, flags);
+      send(JSON.stringify(arm.emit(await renderFramedContextMarkdown(ctx, { saveTarget }))));
     } catch (err) {
       note(`my-curator hook session-start: ${err.message}. Nothing was injected.`);
     }
@@ -596,8 +618,10 @@ async function runHookInner(parsed) {
     return EXIT_OK;
   }
 
-  const scope = flagStr(flags, 'scope') || (await latestScopeOf(resolved)) || 'main';
-  const sentence = askSentence(resolved.domain, resolved.project, scope);
+  // THIS tool's scope, never the project's newest (which may be another
+  // tool's) — see ownSaveScope.
+  const target = await ownSaveScope(entry, flags);
+  const sentence = askSentence(resolved.domain, resolved.project, target.scope, target.configured ? null : target.tool);
   writeMarker(marker, { ...(state || {}), harness: entry.id, sessionKey, askedAt: new Date().toISOString() });
 
   if (event === 'pre-compact') {
@@ -624,14 +648,4 @@ async function runHookInner(parsed) {
   }
   emitFor(arm, sentence, `${entry.id} stop`);
   return EXIT_OK;
-}
-
-/** The work-stream the agent is actually in, so the ask names the right one. */
-async function latestScopeOf(resolved) {
-  if (!resolved?.ok) return null;
-  try {
-    const { readWorkingState } = await import('../brain/working-state.js');
-    const s = await readWorkingState(resolved.domain, { project: resolved.project, scope: 'latest' });
-    return s.ok && typeof s.scope === 'string' && s.scope ? s.scope : null;
-  } catch { return null; }
 }

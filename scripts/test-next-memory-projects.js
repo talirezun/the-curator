@@ -874,6 +874,17 @@ routerMod.__setWorkingStateStoreForTest(null);
   ok('...the raw spelling is kept beside it', wsRows.some((r) => r.harness === 'claude-code'));
   ok('...and `open` carries the same rows, so it stays what the scoped read answers',
     det.body.open && (det.body.open.scopes || []).every((r) => 'harnessLabel' in r));
+  // v3.76.0 — THE JOURNAL TOO: the Context view's journal lines and handoff
+  // byline read `harnessLabel`, so each journal entry carries it.
+  const rawRow = wsRows.find((r) => r.harness === 'claude-code');
+  const rawRead = rawRow && await call('get', '/:domain/:project',
+    { params: { domain: 'alpha', project: 'twotools' }, query: { scope: rawRow.scope, machine: rawRow.machine } });
+  const rawEntry = rawRead && ((rawRead.body.journal || {}).entries || []).find((e) => e.harness === 'claude-code');
+  ok('★ a journal entry saved as "claude-code" carries harnessLabel "Claude Code", raw kept beside it',
+    !!rawEntry && rawEntry.harnessLabel === 'Claude Code', JSON.stringify(rawRead && rawRead.body.journal));
+  ok('...and `open`\'s journal entries carry it as well',
+    det.body.open && Array.isArray((det.body.open.journal || {}).entries) && det.body.open.journal.entries.length > 0
+    && det.body.open.journal.entries.every((e) => 'harnessLabel' in e));
 
   // ── v3.74.0: THE REPLACED HANDOFF (previous.md) ──────────────────────────
   // Antigravity now saves into Claude Code's `ui` folder: the store keeps

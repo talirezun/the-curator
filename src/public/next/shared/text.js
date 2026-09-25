@@ -233,9 +233,16 @@ function tone(v) {
  * scripts/test-next-text-system.js §2b pins that against a recorded corpus of
  * their real shapes rather than against a re-description of them.
  *
+ * `srText` (v3.76.0) is ESCAPED text read only by a screen reader, appended
+ * after the provenance in a `.visually-hidden` span — the Context view's
+ * handoff byline shows a tool's normalised label and keeps the agent's own
+ * spelling there ("(saved as “claude-code”)"), the Handoffs table's pattern.
+ * Absent, the output is byte-identical to before.
+ *
  * @param {{label?:string, value:string|number, provenance?:string,
- *          markHtml?:string}} o  `markHtml` is TRUSTED, PRE-RENDERED HTML and
- *          is the only field not escaped; every other field is escaped.
+ *          markHtml?:string, srText?:string}} o  `markHtml` is TRUSTED,
+ *          PRE-RENDERED HTML and is the only field not escaped; every other
+ *          field is escaped.
  * @returns {string} HTML, or '' when there is no value
  */
 export function renderReadout(o) {
@@ -248,11 +255,13 @@ export function renderReadout(o) {
   const prov = str(o.provenance);
   // TRUSTED, and the only field here that is. See the `markHtml` block above.
   const mark = str(o.markHtml);
+  const sr = str(o.srText);
   return (
     '<div class="tx-readout">' +
       (label ? '<span class="tx-readout-label">' + escapeHtml(label) + '</span>' : '') +
       '<span class="tx-readout-value">' + (mark || '') + escapeHtml(value) + '</span>' +
       (prov ? '<span class="tx-readout-prov">' + escapeHtml(prov) + '</span>' : '') +
+      (sr ? '<span class="visually-hidden"> ' + escapeHtml(sr) + '</span>' : '') +
     '</div>'
   );
 }

@@ -5324,7 +5324,7 @@ function renderCaptureMeter() {
     // it has not diagnosed.
     return shell(renderStatus({
       state: 'neutral',
-      title: 'No agent-sessions reading for this project',
+      title: 'No agent-connections reading for this project',
       detail: c.error,
     })) + '</div>';
   }
@@ -5571,7 +5571,7 @@ function renderCaptureMeter() {
           tone: f.readNotSaved ? 'warn' : undefined },
       !hasCalls ? null
         : { key: callsTotal === 1 ? 'tool call' : 'tool calls', value: callsTotal,
-          sub: f.truncated ? 'over the sessions listed' : undefined },
+          sub: f.truncated ? 'over the connections listed' : undefined },
       newestSecs === null ? null
         : { key: 'newest', value: formatAge(newestSecs) || 'time unknown',
           markHtml: '<span class="fresh-dot fresh-' + freshnessTier(newestSecs)
@@ -6159,7 +6159,7 @@ function renderSaveStatus(read, d) {
     const age = formatAge(eff.seconds);
     // Provenance is the scope you are in and the tool that wrote it — the two
     // facts that turn "2 min ago" into "2 min ago, by the thing I am running".
-    const prov = [shownScope, doc ? harnessOf(d) : (row && row.harness) || null]
+    const prov = [shownScope, doc ? harnessOf(d) : (row && (row.harnessLabel || row.harness)) || null]
       .filter(Boolean).join(' · ');
     // SAY WHICH CLOCK. `filesystem` means no journal line carried a usable
     // time, so the figure is the file's own timestamp — which on a computer
@@ -6464,6 +6464,8 @@ function newestPair(scopes) {
 /** The harness that wrote the handoff on screen, from the journal's newest entry. */
 function harnessOf(d) {
   const j0 = d && d.journal && d.journal.entries && d.journal.entries.length ? d.journal.entries[0] : null;
+  // v3.76.0: the normalised label where the route sent one, else the raw name.
+  if (j0 && typeof j0.harnessLabel === 'string' && j0.harnessLabel) return j0.harnessLabel;
   return (j0 && typeof j0.harness === 'string' && j0.harness) ? j0.harness : null;
 }
 
@@ -7082,13 +7084,20 @@ function handoffReaderContent() {
   // Harness and model come from the journal's newest entry — STRUCTURED
   // fields, never scraped out of the document's prose provenance line.
   const j0 = d.journal && d.journal.entries && d.journal.entries.length ? d.journal.entries[0] : null;
-  const who = j0 ? [j0.harness, j0.model].filter(Boolean).join(' · ') : '';
+  // THE TOOL, NORMALISED (v3.76.0): the route's `harnessLabel`, so this byline
+  // says "Claude Code" where the Handoffs table does. The agent's own spelling
+  // goes to screen-reader text, as the table's cell does; an older server
+  // sends no label and the raw name stands.
+  const j0Label = j0 && typeof j0.harnessLabel === 'string' && j0.harnessLabel ? j0.harnessLabel : null;
+  const j0Raw = j0 && typeof j0.harness === 'string' && j0.harness ? j0.harness : null;
+  const who = j0 ? [j0Label || j0Raw, j0.model].filter(Boolean).join(' · ') : '';
+  const whoSr = j0Label && j0Raw && j0Raw.trim() !== j0Label ? '(saved as “' + j0Raw + '”)' : '';
   const clock = savedWhen.source === 'filesystem' ? 'file time' : null;
   const live = savedAge && state.ageTickerArmed ? '· updates live' : '';
   const prov = [who, clock, live].filter(Boolean).join(' ');
   const readout = savedValue
-    ? renderReadout({ label: 'Saved', value: savedValue, provenance: prov || undefined })
-    : (who ? renderReadout({ label: 'Written by', value: who }) : '');
+    ? renderReadout({ label: 'Saved', value: savedValue, provenance: prov || undefined, srText: whoSr || undefined })
+    : (who ? renderReadout({ label: 'Written by', value: who, srText: whoSr || undefined }) : '');
   const kind = (cur && cur.lastSaveKind) || null;
   // Same two badges, same two classes, as the Status block: `clipped` is the
   // QUIET badge (a label was shortened, nothing was lost) and `trimmed` the
@@ -10756,7 +10765,16 @@ function renderJournal() {
   const REPLACED_NOTE_RE = /\boverwrote\b/i;
 
   const rows = j.entries.map((e) => {
-    const meta = [e.harness, e.model].filter(Boolean).map((x) => escapeHtml(x)).join(' · ');
+    // THE TOOL, NORMALISED (v3.76.0): `harnessLabel` from the route, the raw
+    // spelling kept as screen-reader text (the Handoffs table's pattern); an
+    // older server sends no label and the raw name stands.
+    const eLabel = typeof e.harnessLabel === 'string' && e.harnessLabel ? e.harnessLabel : null;
+    const eRaw = typeof e.harness === 'string' && e.harness ? e.harness : null;
+    const toolHtml = eLabel
+      ? escapeHtml(eLabel) + (eRaw && eRaw.trim() !== eLabel
+        ? '<span class="visually-hidden"> (saved as “' + escapeHtml(eRaw) + '”)</span>' : '')
+      : (eRaw ? escapeHtml(eRaw) : '');
+    const meta = [toolHtml, e.model ? escapeHtml(e.model) : ''].filter(Boolean).join(' · ');
     // THE LABEL, and why it is derived rather than fixed.
     //
     // The persisted field is `rejections` and it KEEPS that name — every

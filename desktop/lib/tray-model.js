@@ -508,13 +508,14 @@ export const HEADER_DOMAINS = 'Domains · pages';
  * sat directly above a handoff saved "1 week ago". Those saves came through a
  * bridge that wrote no session line, so both lines were true and together
  * they read as a contradiction. The words now say whose count it is (the
- * LOGGED sessions) and over which window, and the clause is the LAST and
+ * LOGGED connections — v3.76.0: a logged "session" is one MCP bridge
+ * process, a connection, which is the word the app uses) and over which window, and the clause is the LAST and
  * cuttable one, since the saves listed underneath matter more than the empty
  * count. The tooltip keeps the full sentence. It stayed distinct from the
  * absent-log wording: a measured zero and an absent log are two facts and
  * never share a wording.
  */
-export const CAPTURE_NONE_IN_WINDOW = 'no logged sessions · 30 d';
+export const CAPTURE_NONE_IN_WINDOW = 'no logged connections · 30 d';
 
 /**
  * v3.72.1 (truth audit tray F5): the same clause built from the window the
@@ -525,8 +526,8 @@ export const CAPTURE_NONE_IN_WINDOW = 'no logged sessions · 30 d';
  */
 export function captureNoneInWindow(windowDays) {
   return Number.isInteger(windowDays) && windowDays > 0
-    ? 'no logged sessions · ' + windowDays + ' d'
-    : 'no logged sessions';
+    ? 'no logged connections · ' + windowDays + ' d'
+    : 'no logged connections';
 }
 
 /**

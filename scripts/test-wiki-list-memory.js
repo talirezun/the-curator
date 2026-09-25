@@ -93,7 +93,9 @@ function seed(domain, { withState = true } = {}) {
   }
   // A NAMED project, one level deeper.
   mkdirSync(path.join(D, 'state/lumina/design/mac-aaaa1111'), { recursive: true });
-  writeFileSync(path.join(D, 'state/lumina/project.md'), '# lumina brief\n');
+  // v3.76.0: this brief carries its OWN written stamp, a month before the
+  // file's mtime (today) — the listing must date it by the stamp.
+  writeFileSync(path.join(D, 'state/lumina/project.md'), '# lumina brief\n\n_Updated: 2026-08-01T09:00:00.000Z_\n');
   writeFileSync(path.join(D, 'state/lumina/design/mac-aaaa1111/current.md'), '# lumina handoff\n');
   // A project with a brief and NO saves — it must still appear (a brief IS a
   // memory page), and it must contribute no handoff row.
@@ -175,6 +177,21 @@ try {
   eq('...and they are distinguished by machine',
     mainRows.map((e) => e.machine).sort(), ['mac-aaaa1111', 'mac-bbbb2222']);
 
+  // v3.76.0 — A BRIEF IS DATED BY ITS OWN WRITTEN STAMP, not by the file's
+  // mtime (which a pull, a restore or a hand edit moves). The mtime is the
+  // fallback, and it is LABELLED as the file's time.
+  eq('a stamped brief is dated by its own written stamp, not the file date',
+    byPath['state/lumina/project.md'].savedAt, '2026-08-01T09:00:00.000Z');
+  eq('...and says the time is the written one', byPath['state/lumina/project.md'].savedAtFrom, 'written');
+  eq('an unstamped brief falls back to the file date, labelled as such',
+    byPath['state/quiet/project.md'].savedAtFrom, 'file');
+  assert(typeof byPath['state/quiet/project.md'].savedAt === 'string'
+    && byPath['state/quiet/project.md'].savedAt.slice(0, 4) >= '2026',
+    '...with the file date as its savedAt (CONTROL: a real clock, not null)');
+  eq('a handoff with a journal time is dated by it, labelled written',
+    [byPath['state/main/mac-aaaa1111/current.md'].savedAt, byPath['state/main/mac-aaaa1111/current.md'].savedAtFrom],
+    ['2026-09-01T10:00:00.000Z', 'written']);
+
   // A BRIEF WITH NO SAVES IS STILL A MEMORY PAGE.
   assert(!!byPath['state/quiet/project.md'], 'a project with a brief and no saves still lists its brief');
   assert(!mem.some((e) => e.project === 'quiet' && e.kind === 'handoff'),
@@ -189,10 +206,10 @@ try {
   // ═══════════════════════════════════════════════════════════════════════
   section('3. THE WIRE SHAPE IS AN ALLOW-LIST, and carries no file bodies');
   // ═══════════════════════════════════════════════════════════════════════
-  const ALLOWED = ['kind', 'project', 'isDefaultProject', 'scope', 'machine', 'path', 'title', 'savedAt', 'bytes'];
+  const ALLOWED = ['kind', 'project', 'isDefaultProject', 'scope', 'machine', 'path', 'title', 'savedAt', 'savedAtFrom', 'bytes'];
   const stray = new Set();
   for (const e of mem) for (const k of Object.keys(e)) if (!ALLOWED.includes(k)) stray.add(k);
-  eq('no field beyond the nine named ones reaches the wire', [...stray].sort(), []);
+  eq('no field beyond the ten named ones reaches the wire', [...stray].sort(), []);
   // ANTI-VACUITY: the store's rows really do carry the fields that must not
   // leak — the journal facts the seed planted are readable from that store.
   const wire = JSON.stringify(flagged.body);

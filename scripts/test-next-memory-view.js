@@ -11939,7 +11939,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       && /id="mem-ss-choose">Choose read-first documents<\/button>/.test(same[0]), same ? same[0] : html.slice(0, 1500));
     ok('...unfolded, before the first chevron', html.indexOf('id="mem-ss-same"') < html.indexOf('<details'));
     ok('...and the meter\'s dashed room is EMPTY and says so, against the owner\'s 51.2k budget',
-      /reading budget 51\.2k — unused: nothing is read first/.test(html));
+      /reading budget ≈51\.2k — unused: nothing is read first/.test(html));
     ok('...a stored non-preset budget reads "Custom ≈51.2k, nearest Large" and selects no preset',
       (budgetStub(html) || {}).value === null
       && /^Reading budget: Custom ≈51\.2k, nearest Large$/.test((budgetStub(html) || {}).label || ''),
@@ -14152,6 +14152,26 @@ section('§31 — v3.76.0 truth fixes: ages from stamps, a clock that reaches ev
     /visually-hidden"> \(saved as “claude-code”\)/.test(whoOf(rowA)) && !/title=/.test(whoOf(rowA)) && !/saved as/.test(whoOf(rowB)));
   ok('CONTROL: an older server with no label shows the raw name', /<td class="mem-ws-cell-who">claude-code · opus</.test(
     R31.wsRowHtml({ scope: 'c', machine: 'm', writtenAt: at2, harness: 'claude-code', model: 'opus' }, null, null, null, null)));
+
+  // ── v3.76.0 · THE SAME NAME ON THE JOURNAL LINES AND THE HANDOFF BYLINE ──
+  const jDetail = { scope: 'claude-code', machine: 'm', current: { present: true, text: '# H\n\nbody\n', writtenAt: at2, savedAt: at2 },
+    journal: { returned: 2, total: 2, totalUnknown: false, entries: [
+      { at: at2, harness: 'claude-code', harnessLabel: 'Claude Code', model: 'opus', headline: 'one', rejections: [] },
+      { at: at2, harness: '<b>raw</b>', model: null, headline: 'two', rejections: [] }] } };
+  const RJ = makeRenderers({ activeDomain: 'acme', activeProject: 'lumina', projects: [], openFolds: { journal: true },
+    wsWindow: WS_WINDOW_SRC, detail: jDetail, scope: 'claude-code', machine: 'm', staleWrite: false, journalLimit: 10 });
+  const jHtml = RJ.renderJournal();
+  const metas = [...jHtml.matchAll(/<div class="mem-j-meta">([\s\S]*?)<\/div>/g)].map((m) => m[1]);
+  ok('★ a journal line shows the normalised tool ("Claude Code"), not the raw "claude-code"',
+    metas.length === 2 && metas[0].startsWith('Claude Code') && !/^claude-code/.test(metas[0]), JSON.stringify(metas));
+  ok('...with the raw spelling as screen-reader text, the Handoffs table\'s pattern',
+    /<span class="visually-hidden"> \(saved as “claude-code”\)<\/span> · opus/.test(metas[0]), metas[0]);
+  ok('CONTROL: an entry with no label (an older server) shows its raw name, escaped',
+    metas[1] === '&lt;b&gt;raw&lt;/b&gt;', metas[1]);
+  const byline = (RJ.handoffReaderContent() || {}).bodyHtml || '';
+  ok('★ the handoff byline names the normalised tool, raw kept for screen readers',
+    /tx-readout-prov">[^<]*Claude Code · opus/.test(byline) && !/tx-readout-prov">[^<]*claude-code/.test(byline)
+      && /<span class="visually-hidden"> \(saved as “claude-code”\)<\/span>/.test(byline), byline.slice(0, 900));
 }
 
 // ── Done ─────────────────────────────────────────────────────────────────

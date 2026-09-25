@@ -724,8 +724,12 @@ section('13. THE ROUTES — reading/budget, {atStart}, session-start and its pre
     assert(s.presets.every((p) => Number.isInteger(p.mcpBytes) && p.mcpBytes > 0), '…each with its measured MCP bytes');
     const real = await tools.getProjectContextHandler({ domain: 'alpha', project: 'alpha' }, storage);
     eq(s.bytes.mcp, Buffer.byteLength(JSON.stringify(real, null, 2)), 'bytes.mcp is EXACTLY the real handler\'s serialised reply');
-    const hookText = await md.renderFramedContextMarkdown(await WS.getProjectContext('alpha', 'alpha', {}));
-    eq(s.bytes.hook, Buffer.byteLength(hookText), 'bytes.hook is EXACTLY the real session-start Markdown');
+    // v3.76.0: measured as Claude Code's hook, whose rendering carries the
+    // one line naming its own save scope (context-markdown.js saveTargetLine).
+    const hookText = await md.renderFramedContextMarkdown(await WS.getProjectContext('alpha', 'alpha', {}),
+      { saveTarget: { tool: 'Claude Code', scope: 'claude-code', configured: false } });
+    assert(/Claude Code's saves go to its own scope 'claude-code'/.test(hookText), 'the measured hook text carries Claude Code\'s save-scope line');
+    eq(s.bytes.hook, Buffer.byteLength(hookText), 'bytes.hook is EXACTLY the real session-start Markdown (as Claude Code\'s hook)');
     const std = await tools.getProjectContextHandler({ domain: 'alpha', project: 'alpha' }, storage, { whatIf: { ownerBudgetBytes: 65536 } });
     eq(s.presets.find((p) => p.id === 'standard').mcpBytes, Buffer.byteLength(JSON.stringify(std, null, 2)), 'the Standard preset\'s figure is the handler run with that what-if');
     for (const k of ['brief', 'handoff', 'journal', 'index', 'readFirst', 'otherText', 'onRequest', 'omitted', 'hidden', 'domainPages', 'framing']) assert(k in s.tiers, `tiers.${k} is present`);

@@ -655,7 +655,7 @@ const E = {
     points: [
       { icon: 'lock', text: 'It keeps tool names and times, never what agents read or wrote.' },
       { icon: 'computer', text: 'It is never synced; deleting it only restarts the map.' },
-      { icon: 'check', text: 'A test run from this page never counts as a session.' },
+      { icon: 'check', text: 'A test run from this page never counts as a connection.' },
     ],
     guide: { key: 'settings.mcp-tool-map', heading: 'The tool map — what your agents used' },
   },

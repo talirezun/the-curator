@@ -3410,7 +3410,8 @@ export function wouldDestroyState(prior, incoming) {
  *
  * @param {string} project
  * @param {object} input
- *   scope?        string  path segment, default 'main'
+ *   scope?        string  path segment; omitted → the tool's own scope from
+ *                         `harness` (defaultScopeFor), else 'main'
  *   machine?      string  path segment, default this host (tests/explicit use)
  *   headline      string  REQUIRED — one line, feeds the journal + scope index
  *   nowState?     string  prose
@@ -3593,8 +3594,9 @@ export async function saveWorkingState(project, input = {}) {
   // near-empty incoming body, and `harnessShared` needs two SWITCHES (one
   // handover is history, not a live collision) — and the reply said only
   // "This OVERWROTE the previous save", which every save says. The owner's
-  // decision is WARN, never refuse: `main` stays the default scope, and the
-  // save goes through. So the save says, in the store result, the journal and
+  // decision is WARN, never refuse, and the save goes through. (`main` was
+  // then the default for every scope-less save; since v3.76.0 it is the
+  // default only when no tool is named — see defaultScopeFor.) So the save says, in the store result, the journal and
   // the MCP/CLI reply, WHOSE handoff it replaced, when that was written, what
   // its headline was, and where to save instead.
   //

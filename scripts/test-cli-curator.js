@@ -545,6 +545,17 @@ const BODY = {
   const main = run(['save', '--project', `${D1}/lumina`, '--scope', 'main', '--harness', 'Antigravity', '--json'],
     { input: JSON.stringify({ headline: 'explicit main', now_state: 'y' }) });
   ok(parseOut(main)?.scope === 'main' && parseOut(main)?.scopeChosenBy === 'given', 'an explicit --scope main is honoured');
+  // v3.76.0 — the usage text states the default the store now applies; it no
+  // longer advertises `--scope main` as though main were where a save goes.
+  for (const args of [['save', '--help'], ['--help']]) {
+    const h = run(args, { input: '' });
+    const text = h.stdout + h.stderr;
+    ok(!/--scope main\]/.test(text) && /--scope default: your tool's scope when --harness is given, else main/.test(text),
+      `\`my-curator ${args.join(' ')}\` states the default scope: the tool's own with --harness, else main`);
+  }
+  const hh = run(['hook', '--help'], { input: '' });
+  ok(/the save ask names\s+the harness's own scope/.test(hh.stdout + hh.stderr),
+    '`my-curator hook --help` says the save ask names the harness\'s own scope');
 }
 {
   // The store's own refusal, surfaced verbatim, with exit 1 — a DIFFERENT code
@@ -651,6 +662,47 @@ function freshSession(harness, sid, cwd = WORK) {
   });
   ok(control.code === 2,
     '…and the CONTROL: the same session WITHOUT the field is asked, so rung 1 is what ended it');
+}
+{
+  // v3.76.0 — THE ASK NAMES THIS TOOL'S OWN SCOPE, never the project's newest.
+  // Make the newest work-stream ANOTHER tool's (Antigravity's), then ask as
+  // Claude Code: the ask must say `claude-code`, and the session-start
+  // injection must say whose scope it opened and where Claude Code saves go.
+  const ag = await store.saveWorkingState(D1, {
+    project: 'lumina', harness: 'Antigravity', headline: 'antigravity was here last', nextSteps: ['x'],
+  });
+  ok(ag.ok && ag.scope === 'antigravity', 'fixture: a scope-less Antigravity save lands in `antigravity`');
+  const newest = await store.readWorkingState(D1, { project: 'lumina', scope: 'latest' });
+  ok(newest.scope === 'antigravity', '…and it is now the project\'s NEWEST work-stream');
+
+  const start = freshSession('claude-code', 'S-OWN');
+  const injected = parseOut(start)?.hookSpecificOutput?.additionalContext || '';
+  ok(/Opened the newest work-stream, scope 'antigravity' \(last saved by Antigravity\) — not Claude Code's own\./.test(injected),
+    'session-start opens the newest scope and SAYS it is another tool\'s');
+  ok(/Claude Code's saves go to its own scope 'claude-code'/.test(injected),
+    '…and says Claude Code\'s saves go to its own scope');
+
+  writeFileSync(USAGE_LOG, `${usageLine('get_project_context')}\n`);
+  const ask = run(['hook', 'stop', '--harness', 'claude-code'], {
+    cwd: WORK, input: JSON.stringify({ session_id: 'S-OWN' }),
+  });
+  ok(ask.code === 2 && ask.stderr.includes('scope `claude-code` (Claude Code\'s own)'),
+    'the Stop ask names Claude Code\'s OWN scope…');
+  ok(!ask.stderr.includes('`antigravity`'), '…never the newest scope, which is Antigravity\'s');
+
+  // A --scope configured on the hook command wins, and the ask names it bare.
+  freshSession('claude-code', 'S-CONF');
+  writeFileSync(USAGE_LOG, `${usageLine('get_project_context')}\n`);
+  const conf = run(['hook', 'stop', '--harness', 'claude-code', '--scope', 'session-2026-09-25-x'], {
+    cwd: WORK, input: JSON.stringify({ session_id: 'S-CONF' }),
+  });
+  ok(conf.code === 2 && conf.stderr.includes('scope `session-2026-09-25-x`, with'),
+    'a --scope configured on the hook command is the scope the ask names');
+  const confStart = run(['hook', 'session-start', '--harness', 'claude-code', '--scope', 'antigravity'], {
+    cwd: WORK, input: JSON.stringify({ session_id: 'S-CONF2', cwd: WORK }),
+  });
+  ok(/Scope 'antigravity' was configured for this hook/.test(parseOut(confStart)?.hookSpecificOutput?.additionalContext || ''),
+    '…and the injection says the scope was configured, not chosen');
 }
 {
   freshSession('claude-code', 'S-E');

@@ -153,7 +153,8 @@ section('§3  The reading-budget room');
   const room = withClass(z0, 'bk-room')[0];
   ok(room && room.classes.includes('is-unused'), 'nothing read first: the room is drawn, marked is-unused');
   ok(near(widthOf(room), (16384 / (FIXED + 16384)) * 100, 0.001), 'nothing read first: the room is the whole budget', widthOf(room));
-  ok(/reading budget 16\.4k — unused: nothing is read first/.test(z0), 'and it is LABELLED "unused: nothing is read first"');
+  ok(/reading budget ≈16\.4k — unused: nothing is read first/.test(z0), 'and it is LABELLED "unused: nothing is read first" — with the "≈" every token estimate carries');
+  ok(!/reading budget [0-9]/.test(z0 + B.renderLegend(TODAY) + JSON.stringify(B.bucketText(TODAY))), 'no reading-budget figure anywhere without its "≈"');
   ok(withClass(z0, 'bk-ly-read').length === 0, 'no read-first segment is drawn at zero');
   ok(/read first <b>0<\/b>/.test(B.renderLegend(TODAY)), 'but the legend still lists read first at 0');
   // THE POINT: every preset sends the same when nothing is read first — only the room changes.
@@ -164,7 +165,7 @@ section('§3  The reading-budget room');
   ok(withClass(zi, 'bk-room').length === 0 && /no reading budget \(index only\)/.test(B.bucketText({ ...TODAY, budgetTokens: 0 }).enlargement),
     'Index only: no room, and the text alternative says there is no reading budget');
   const zt = B.renderEnlargement(TWO);
-  ok(/budget left 0\.6k/.test(zt) || /budget left 0\.6k/.test(B.renderLegend(TWO)), 'read first under the budget: "budget left 0.6k"');
+  ok(/budget left ≈0\.6k/.test(zt) || /budget left ≈0\.6k/.test(B.renderLegend(TWO)), 'read first under the budget: "budget left ≈0.6k"');
   ok(!withClass(zt, 'bk-room')[0].classes.includes('is-unused'), 'and the room is not marked unused');
   const full = { ...TODAY, layers: LAYERS(16384) };
   ok(withClass(B.renderEnlargement(full), 'bk-room').length === 0 && /, full\./.test(B.bucketText(full).enlargement), 'budget exactly spent: no room, "full" in words');
@@ -193,7 +194,7 @@ section('§5  The text alternative');
 {
   const t = B.bucketText(TODAY);
   eq('window sentence', t.window, 'A 1M-token window, drawn to scale: harness about 120k (your estimate, not measured), The Curator about 6.8k tokens (measured, 0.7%), about 873k free.');
-  ok(/framing 0\.9k, brief 3\.5k, handoff 0\.5k, journal 1\.0k, document list 0\.9k, read first 0; reading budget 16\.4k, unused: nothing is read first\./.test(t.enlargement), 'enlargement sentence names every layer and the room', t.enlargement);
+  ok(/framing 0\.9k, brief 3\.5k, handoff 0\.5k, journal 1\.0k, document list 0\.9k, read first 0; reading budget ≈16\.4k, unused: nothing is read first\./.test(t.enlargement), 'enlargement sentence names every layer and the room', t.enlargement);
   ok(/9 documents, about 47\.9k tokens/.test(t.onDemand) && /outside the window/.test(t.onDemand), 'on-demand sentence: outside the window, with its figure');
   const all = B.renderBucket(TODAY);
   const imgs = tags(all).filter((x) => x.attrs.role === 'img');
@@ -329,7 +330,14 @@ section('§10  v3.70.1 — one segment per read-first document (the planner)');
     { windowTokens: 200000, harnessTokens: null, layers: LAYERS(30000), budgetTokens: 32768, onDemand: 1000, delivery: { replies: 2, replyTokens: 20480 }, preview: true },
     { windowTokens: 200000, harnessTokens: 250000, layers: LAYERS(900), budgetTokens: 0, onDemand: null },
   ];
-  const digest = createHash('sha256').update(G.map((m) => B.renderBucket(m) + '\u0000' + JSON.stringify(B.bucketText(m))).join('\u0001')).digest('hex');
+  // v3.76.0 added "≈" to the reading-budget figures (room label, legend and
+  // text alternative) and changed NOTHING else; this undoes exactly that one
+  // edit, so the pin still proves every other byte is v3.70.0's.
+  const unApprox = (x) => x.replace(/(reading budget |budget left |budget |, )≈(?=[0-9])/g, '$1')
+    .replace(/(>|")≈([0-9][0-9.]*[kM]?) left/g, '$1$2 left');
+  const digest = createHash('sha256').update(G.map((m) => unApprox(B.renderBucket(m) + '\u0000' + JSON.stringify(B.bucketText(m)))).join('\u0001')).digest('hex');
+  ok(/reading budget ≈/.test(G.map((m) => B.renderBucket(m) + JSON.stringify(B.bucketText(m))).join('')),
+    'CONTROL: the digest input really carries the v3.76.0 "≈" that unApprox removes');
   ok(digest === 'd87404e1e700488006f02aa9caae538084bdd0c9bb609abbe1c511d3411ecdab',
     'a meter WITHOUT per-document parts renders byte-identical to v3.70.0 (markup and text alternative)', digest);
 

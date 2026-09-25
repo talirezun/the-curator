@@ -617,7 +617,7 @@ not per process. Two MCP servers spawned by two different harnesses on one
 computer resolve to the **same** `<machine>` folder.
 
 So in Scenario A, if both agents are told *"carry on with this project"* and
-neither names a scope — and the default scope is `main` — **they write the same
+neither names a scope — and the default scope was `main` (until v3.76.0, which gives each named tool its own scope) — **they write the same
 `current.md`, and a save overwrites.** The second one wins. Nothing warns anyone:
 from the store's point of view an overwrite is the correct behaviour, and it is
 the behaviour the whole "state supersedes" design is built on.

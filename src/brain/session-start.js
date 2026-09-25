@@ -41,6 +41,17 @@ import * as workingStore from './working-state.js';
 import { renderFramedContextMarkdown } from './context-markdown.js';
 import { getContextWindowSettings } from './config.js';
 
+/**
+ * v3.76.0 — the hook injects one line naming the tool it runs for and that
+ * tool's own save scope (context-markdown.js `saveTargetLine`), so the real
+ * bytes depend on the tool by a few characters. The figure is measured AS
+ * CLAUDE CODE'S hook — the tool the hooks ship verified for first — with the
+ * scope a Claude Code save with no scope lands in, never a retyped literal.
+ */
+export const HOOK_MEASURE_TARGET = Object.freeze({
+  tool: 'Claude Code', scope: workingStore.defaultScopeFor('claude-code').scope, configured: false,
+});
+
 /** Each layer's own named cap, for the monitor's depth bars. v3.72.1 (truth
  *  audit F8): DERIVED from the store's own limits rather than retyped, so step
  *  ②'s handoff budget (the route's `stateBudgetBytes`, also MAX_STATE_BYTES)
@@ -133,7 +144,7 @@ export async function sessionStartReport(domain, project, whatIf = null, opts = 
   let hook = null;
   if (withHook) {
     const ctx = await store.getProjectContext(domain, project, whatIf ? { whatIf } : {});
-    hook = ctx && ctx.ok === true ? utf8(await renderFramedContextMarkdown(ctx)) : 0;
+    hook = ctx && ctx.ok === true ? utf8(await renderFramedContextMarkdown(ctx, { saveTarget: HOOK_MEASURE_TARGET })) : 0;
   }
 
   // "Not at start" documents are absent from the reply by design; their size

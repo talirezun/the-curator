@@ -2096,10 +2096,13 @@ written by both means add the brief line above. Three things make separate scope
 - **An orchestrator reads the others by name.** An agent coordinating the others calls
   `get_project_context` (or `get_working_state`) with `scope: "antigravity-api"` to read that
   tool's handoff — reading another scope is always safe; only *saving* into it is not.
-- **Hooks, if you installed them, name the newest scope.** `my-curator install-hooks` writes hooks
-  that inject, and ask for a save under, the project's *newest* work-stream. With two tools on one
-  computer, add `--scope <this tool's scope>` to the `my-curator hook …` commands in that tool's
-  hook settings ([§13c](#hooks-what-they-can-do-on-your-harness-and-what-they-cannot)).
+- **Hooks, if you installed them, save to the tool's own scope (since v3.76.0).** The hooks
+  `my-curator install-hooks` writes inject the project's *newest* work-stream at session start —
+  that is the handover — and say which tool's scope it is and that this tool's saves go to its own
+  (`claude-code`, `antigravity`, …). The save ask at the end names that own scope, never the newest
+  one, which may be another tool's. (Through v3.75.x the ask named the newest scope.) To pin a
+  different name, add `--scope <name>` to the `my-curator hook …` commands in that tool's hook
+  settings ([§13c](#hooks-what-they-can-do-on-your-harness-and-what-they-cannot)).
 
 **If it happens anyway, since v3.74.0: the save still succeeds, and nothing is silently lost.** A
 save is never refused just because the last save in that scope came from a different tool, and
@@ -2316,7 +2319,7 @@ column and the dots cool with them, and the order can never contradict the readi
 | **Working on** | That save's own one-line headline — *not* the project's, so a fortnight-old row shows what it was doing a fortnight ago. An em dash when the save carried none |
 | **Last saved** | A relative age (*"3 hr ago"*, *"2 weeks ago"*). The exact timestamp — and the words *file time* when the reading is the file's rather than the agent's — travel in the row's accessible name, so a screen reader announces them |
 | **Machine** | The installation that wrote it, plus a **this machine** tag on every row in your own machine's folder — and only when the app can positively identify it, never guessed from a lookalike name |
-| **Harness** | The agent tool and the model that wrote the save, e.g. *"Claude Code · opus"*. *Since v3.76.0* the tool is shown under its one normalised name, so `claude-code`, `Claude Code` and `Claude Code (desktop)` all read **Claude Code** down the column; the agent's own spelling is kept in the row's accessible text |
+| **Harness** | The agent tool and the model that wrote the save, e.g. *"Claude Code · opus"*. *Since v3.76.0* the tool is shown under its one normalised name, so `claude-code`, `Claude Code` and `Claude Code (desktop)` all read **Claude Code** down the column — and on the Journal's lines and the open handoff's byline, which use the same name; the agent's own spelling is kept in the accessible text |
 | *(trash)* | **v3.75.0.** A neutral trash icon that deletes the whole scope — see [Deleting a handoff](#deleting-a-handoff). Absent on a Shared Brain mirror |
 
 **Press a row to open it.** That replaces the whole picker: pick the scope and the machine
