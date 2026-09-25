@@ -69,7 +69,19 @@
   color: var(--text);
 }
 .row-act:active { transform: scale(var(--press-scale-icon)); }
-.row-act[disabled] { opacity: 0.4; cursor: default; pointer-events: none; }
+/* Reduced motion: the press SHRINK above is motion, so it is cancelled here
+   in the same file that declares it — the pattern views/ingest.css's own
+   `@media (prefers-reduced-motion: reduce)` block already uses for
+   `.ing-queue-file-remove:active`. */
+@media (prefers-reduced-motion: reduce) {
+  .row-act:active { transform: none; }
+}
+/* The design system's ONE disabled spec (test-next-disabled-state.js):
+   `opacity: var(--opacity-disabled)`, `cursor: not-allowed`, no colour
+   change, and never `pointer-events: none` paired with `not-allowed` — a
+   real `<button disabled>` already refuses clicks and leaves the tab order,
+   so suppressing pointer events only costs the cursor and any tooltip. */
+.row-act[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
 /* A "Select" bulk mode (M3) hides the per-row `.row-act` buttons while it is
    on, replacing them with checkboxes and a contextual action bar — never the
