@@ -1,4 +1,5 @@
 import { readdir, readFile, writeFile, mkdir, unlink, rm, rename as fsRename, stat } from 'fs/promises';
+import { localDateStamp } from './local-date.js';
 import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -931,7 +932,7 @@ export async function writePage(domain, relativePath, content, opts = {}) {
   // being resurrected by the ACCUMULATE-section merge. Every other stage
   // (path normalisation, dedup passes, frontmatter, link normalisation,
   // backlinks) runs unchanged, so this stays the single write path.
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStamp(); // LOCAL calendar day — see ./local-date.js (v3.72.1)
 
   // 1. Redirect mis-filed paths to canonical folders
   let canonPath = normalizePath(relativePath);
@@ -1510,7 +1511,7 @@ export async function deleteConversation(domain, id) {
 // ── Domain Management ─────────────────────────────────────────────────────────
 
 function generateClaudemd(slug, displayName, description, template) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStamp(); // LOCAL calendar day — see ./local-date.js (v3.72.1)
 
   const templateConfig = {
     tech: {
@@ -1771,7 +1772,7 @@ export async function createDomain(slug, displayName, description, template) {
     await mkdir(path.join(base, 'wiki', 'summaries'), { recursive: true });
     await mkdir(path.join(base, 'conversations'), { recursive: true });
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDateStamp(); // LOCAL calendar day — see ./local-date.js (v3.72.1)
 
     await writeFileAtomic(
       path.join(base, 'wiki', 'index.md'),

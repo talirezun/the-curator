@@ -13,6 +13,7 @@
  *     → { ok: false, error, spent? }     (`spent` whenever a call was billed)
  */
 
+import { localDateStamp } from './local-date.js';
 import { readdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
@@ -585,7 +586,12 @@ export async function compileConversation(domain, conversationId, onProgress = (
   // 11. Append to log
   const compileTitle = result.title || conversation.title || 'Compiled conversation';
   const pageList = canonicalPaths.map(p => `  - ${p}`).join('\n');
-  const logEntry = `## [${today}] compile | ${compileTitle}\nFrom conversation: "${conversation.title || conversation.id}"\nPages created or updated:\n${pageList}\n`;
+  // The log heading is the LOCAL calendar day (v3.72.1) — the reader ages it
+  // as local. `today` itself is NOT changed: it is part of the summary SLUG
+  // (computeSummarySlug), and moving the slug's date from UTC to local would
+  // let a recompile on the upgrade day land on a new slug and duplicate the
+  // summary. Idempotency by slug is exactly what it was.
+  const logEntry = `## [${localDateStamp()}] compile | ${compileTitle}\nFrom conversation: "${conversation.title || conversation.id}"\nPages created or updated:\n${pageList}\n`;
   await appendLog(domain, logEntry);
 
   progress(100, 'Done!');

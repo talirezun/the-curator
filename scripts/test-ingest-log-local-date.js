@@ -98,6 +98,57 @@ try {
     ok(m[1] !== new Date().toISOString().slice(0, 10), '★ F6 …not the UTC day (the defect)');
     eq(formatDayAge(m[1]), 'today', '★ F6 and the app\'s own age reader calls a fresh ingest "today" — not "yesterday", not "dated ahead"');
   }
+
+  // ── §3  COMPILE: the log heading is local; the SLUG's date is not moved ──
+  console.log('\n§3  A REAL compile writes the local day into log.md; its summary slug keeps the UTC day');
+  const files = await import('../src/brain/files.js');
+  const { compileConversation, precheckCompile } = await import('../src/brain/compile.js');
+  const convId = '00000000-0000-4000-8000-000000372101';
+  await files.writeConversation(DOMAIN, {
+    id: convId, title: 'Local date compile', createdAt: '2026-09-01T00:00:00.000Z', domain: DOMAIN,
+    messages: [
+      { role: 'user', content: 'Explain the Alpha Lab.' },
+      { role: 'assistant', content: 'The Alpha Lab studies the first idea.' },
+    ],
+  });
+  const pre = await precheckCompile(DOMAIN, convId);
+  const utcNow = new Date().toISOString().slice(0, 10);
+  ok(pre && typeof pre.summarySlug === 'string' && pre.summarySlug.includes('-' + utcNow + '-'),
+    'IDEMPOTENCY — the compile summary slug still carries the UTC day it always did (a recompile after the upgrade lands on the SAME slug)');
+  const cllm = async () => JSON.stringify({
+    title: 'Local date compile',
+    pages: [{ path: 'summaries/placeholder.md', content: '# C\n\nTags: test\n\n- one bullet', summary: 's' }],
+  });
+  console.warn = () => {}; console.error = () => {};
+  let cres = null;
+  try { cres = await compileConversation(DOMAIN, convId, () => {}, { generateText: cllm }); }
+  finally { console.warn = realWarn; console.error = realErr; }
+  ok(cres && cres.ok, 'the compile completed under the fake provider' + (cres && !cres.ok ? ' — ' + (cres.error || cres.reason) : ''));
+  const log2 = readFileSync(path.join(dd, 'wiki', 'log.md'), 'utf8');
+  const c = /^## \[(\d{4}-\d{2}-\d{2})\] compile \| /m.exec(log2);
+  ok(!!c, 'the compile appended its `## [date] compile | …` heading');
+  if (c) {
+    eq(c[1], localDateStamp(new Date()), '★ F6 the COMPILE heading carries the LOCAL calendar day');
+    eq(formatDayAge(c[1]), 'today', '★ F6 …and ages as "today"');
+  }
+
+  // ── §4  writePage: a new page's `created:` stamp is the local day ────
+  console.log('\n§4  writePage stamps a new page\'s `created:` with the local day');
+  await files.writePage(DOMAIN, 'concepts/local-day.md', '# Local Day\n\nTags: test\n\n- a bullet\n');
+  const page = readFileSync(path.join(dd, 'wiki', 'concepts', 'local-day.md'), 'utf8');
+  const cr = /^created: (\d{4}-\d{2}-\d{2})$/m.exec(page);
+  ok(!!cr, 'the page carries a `created:` frontmatter stamp');
+  if (cr) eq(cr[1], localDateStamp(new Date()), '★ F6 writePage\'s `created:` is the LOCAL calendar day');
+
+  // ── §5  THE CLASS: no bare UTC calendar stamp left in these writers ──
+  console.log('\n§5  Dumb cross-check — no writer in these files builds a UTC calendar stamp for the log/pages');
+  const srcOf = (f) => readFileSync(new URL('../src/brain/' + f, import.meta.url), 'utf8')
+    .split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+  eq((srcOf('files.js').match(/toISOString\(\)\.slice\(0, *10\)/g) || []).length, 0, 'files.js: 0 UTC calendar stamps');
+  const compileSrc = srcOf('compile.js');
+  eq((compileSrc.match(/toISOString\(\)\.slice\(0, *10\)/g) || []).length, 1,
+    'compile.js: exactly 1 left — precheckCompile\'s slug date, kept UTC on purpose for idempotency by slug');
+  ok(/## \[\$\{localDateStamp\(\)\}\] compile/.test(compileSrc), 'compile.js: the log heading uses localDateStamp');
 } finally {
   rmSync(TMP_ROOT, { recursive: true, force: true });
 }

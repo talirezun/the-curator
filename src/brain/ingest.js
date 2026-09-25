@@ -1,4 +1,5 @@
 import { readFile, writeFile, mkdir, readdir, unlink } from 'fs/promises';
+import { localDateStamp } from './local-date.js';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
 import { generateText, isAbortError, makeAbortError } from './llm.js';
@@ -2491,14 +2492,9 @@ const MULTI_PHASE_INPUT_THRESHOLD = 15_000;
  *
  *   With no `opts.signal`, every branch behaves exactly as it did before.
  */
-/**
- * `YYYY-MM-DD` for the LOCAL calendar day of `d` — the shape shared/age.js's
- * dayDelta assumes when it ages a log heading. Exported for the suite.
- */
-export function localDateStamp(d = new Date()) {
-  const p2 = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
-}
+// localDateStamp lives in ./local-date.js (the one calendar-stamp writer);
+// re-exported here because the suite and earlier callers import it from ingest.js.
+export { localDateStamp };
 
 export async function ingestFile(domain, filePath, originalName, isOverwrite = false, onProgress = null, opts = {}) {
   const progress = makeProgress(onProgress);
