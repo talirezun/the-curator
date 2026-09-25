@@ -201,6 +201,9 @@ import { moveToTrash } from './trash.js';
 // (three brief templates exist today with no drift guard). The module holds
 // frozen data and no logging, so it adds nothing to the MCP stdout surface.
 import { FOUNDATION_SKELETONS } from './foundation-skeletons.js';
+// v3.74.0 (D1) — pure, no imports, no stdout: safe on the MCP import graph.
+// The harness label an agent types is free text; comparisons go by tool id.
+import { harnessId } from './harness-names.js';
 
 export const STATE_DIRNAME = 'state';
 export const BRIEF_FILENAME = 'project.md';
@@ -2056,6 +2059,64 @@ async function checkProjectTarget(domain, project, { allowCreate = false } = {})
   return { ok: true, prefix, project, isDefault: false };
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// WHICH SAVE IS NEWEST — on the AGENT'S clock (v3.74.0, audit G6)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Every "newest" this store answers — `scope: "latest"`, the machine a
+// scope-only read opens, a project row's headline, the project list's order —
+// used to be chosen by `current.md`'s MTIME. git sets mtime to the moment IT
+// wrote the file locally, so after a Personal Sync pull an OLDER handoff from
+// another machine carried the newest mtime and won: `get_project_context`
+// with no scope opened it, over a newer local save. The long block above
+// `classifySaveNotes` (the two clocks) is the full argument; this is that
+// argument applied to ORDER as well as to the ages already reported.
+//
+// THE RULE, the same one the app view's `effectiveSave` and the tray's
+// `chooseClock` apply: a pair's time is the journal's own `at` for its newest
+// line when there is one, else the file's mtime. Ties keep the mtime order the
+// pairs arrive in (Array#sort is stable) — so when the two
+// clocks agree, which is every single-machine store, the order is exactly the
+// mtime order it always was.
+//
+// THE BOUND THAT KEEPS IT CHEAP: a save stamps `at` BEFORE it writes
+// `current.md`, and a pull only moves mtime LATER, so on one clock
+// `writtenAt <= mtime` for every pair. Walking pairs newest-mtime-first, once
+// a pair's mtime is below the best agent time found, no later pair can beat
+// it. On an un-synced store that is ONE journal read — the same one
+// `summariseProject` always made. A machine whose clock runs AHEAD can break
+// the bound (a future `at` above its own mtime); such a pair is still found
+// whenever it is read, and the tail-reading paths below read every shown pair.
+
+/** Epoch ms of a pair on the chosen clock: agent time, else file time. */
+function effectiveSaveMs(writtenAt, mtimeMs) {
+  const w = typeof writtenAt === 'string' ? Date.parse(writtenAt) : NaN;
+  if (Number.isFinite(w)) return w;
+  return Number.isFinite(mtimeMs) ? mtimeMs : Number.NEGATIVE_INFINITY;
+}
+
+/** Comparator: newest first on the chosen clock. Reads `writtenAt` and
+ *  `mtimeMs` off each pair, so call it BEFORE `mtimeMs` is deleted from a row.
+ *  TIES ARE BROKEN BY THE INPUT ORDER, which every caller has already sorted
+ *  newest-mtime-first — Array#sort is stable, so an exact agent-time tie
+ *  keeps the mtime order. (An explicit mtime tie-break here was redundant and
+ *  a mutation deleting it ran green; the suite pins the tie instead.) */
+function byNewestSave(a, b) {
+  return effectiveSaveMs(b.writtenAt, b.mtimeMs) - effectiveSaveMs(a.writtenAt, a.mtimeMs);
+}
+
+/**
+ * A project row's recency for ordering a LIST OF PROJECTS: its newest save on
+ * the agent's clock, else the file clock. Null when it has no save.
+ */
+function projectRecencyMs(r) {
+  if (!r) return null;
+  const w = typeof r.writtenAt === 'string' ? Date.parse(r.writtenAt) : NaN;
+  if (Number.isFinite(w)) return w;
+  const f = typeof r.lastWriteAt === 'string' ? Date.parse(r.lastWriteAt) : NaN;
+  return Number.isFinite(f) ? f : null;
+}
+
 /**
  * Everything an index row can say about ONE project, for one stat sweep and at
  * most ONE journal-tail read.
@@ -2119,12 +2180,24 @@ async function summariseProject(domain, project, now) {
   pairs.sort((a, b) => b.mtimeMs - a.mtimeMs);
   row.savedCopies = pairs.length;
   row.scopeCount = new Set(pairs.map((p) => p.scope)).size;
-  const newest = pairs[0];
+  // THE NEWEST SAVE ON THE AGENT'S CLOCK (v3.74.0, G6), found with the bound
+  // described above `effectiveSaveMs`: newest-mtime first, stopping as soon
+  // as no remaining pair's mtime can beat the best agent time found. One
+  // journal read on a store whose clocks agree — exactly the one this row
+  // always made — and only as many more as a pull has actually reordered.
+  let newest = null;
+  let f = null;
+  let bestMs = Number.NEGATIVE_INFINITY;
+  for (const p of pairs) {
+    if (newest && p.mtimeMs < bestMs) break;
+    const pf = await readPairJournalFacts(domain, prefix, p.scope, p.machine, now);
+    const ms = effectiveSaveMs(pf.writtenAt, p.mtimeMs);
+    if (!newest || ms > bestMs) { newest = p; f = pf; bestMs = ms; }
+  }
   row.lastWriteAt = newest.lastWriteAt;
   row.ageSeconds = Math.max(0, Math.round((now - newest.mtimeMs) / 1000));
   row.newestScope = newest.scope;
   row.newestMachine = newest.machine;
-  const f = await readPairJournalFacts(domain, prefix, newest.scope, newest.machine, now);
   row.headline = f.headline;
   row.writtenAt = f.writtenAt;
   row.writtenAgeSeconds = f.writtenAgeSeconds;
@@ -2170,7 +2243,10 @@ export async function listProjects(domain, opts = {}) {
   // Newest WRITE first; a project with no saves sorts by its brief's mtime,
   // and one with neither sorts last by name. Sorting a never-saved project to
   // the top by accident would put an empty shell above live work.
-  const key = (r) => (r.lastWriteAt ? Date.parse(r.lastWriteAt) : (r.briefUpdatedAt ? Date.parse(r.briefUpdatedAt) : -1));
+  // v3.74.0 (G6): a saved project's recency is its newest save on the AGENT'S
+  // clock (see `projectRecencyMs`), so a pull that rewrote mtimes cannot
+  // reorder the list.
+  const key = (r) => (r.lastWriteAt ? (projectRecencyMs(r) ?? -1) : (r.briefUpdatedAt ? Date.parse(r.briefUpdatedAt) : -1));
   rows.sort((a, b) => (b.lastWriteAt ? 1 : 0) - (a.lastWriteAt ? 1 : 0)
     || key(b) - key(a)
     || String(a.project).localeCompare(String(b.project)));
@@ -2204,7 +2280,7 @@ export async function listAllProjects(opts = {}) {
     if (r.layoutWarning) warnings.push(`${domain}: ${r.layoutWarning}`);
   }
   rows.sort((a, b) => (b.lastWriteAt ? 1 : 0) - (a.lastWriteAt ? 1 : 0)
-    || (b.lastWriteAt ? Date.parse(b.lastWriteAt) : -1) - (a.lastWriteAt ? Date.parse(a.lastWriteAt) : -1)
+    || (b.lastWriteAt ? (projectRecencyMs(b) ?? -1) : -1) - (a.lastWriteAt ? (projectRecencyMs(a) ?? -1) : -1)
     || String(a.domain).localeCompare(String(b.domain))
     || String(a.project).localeCompare(String(b.project)));
   const total = rows.length;
@@ -3791,10 +3867,18 @@ export function journalFacts(entries, now = Date.now(), opts = {}) {
   facts.lastSaveKind = classifySaveNotes(
     Array.isArray(last?.rejections) ? last.rejections : (last ? [] : null));
 
+  // `named` keeps each save's label AS WRITTEN (it is what a reader is shown);
+  // `namedIds` is the same list through `harnessId` — the one every
+  // comparison below uses (v3.74.0, D1). The agent types this field freely,
+  // so `Claude Code` and `claude-code` and `Claude Code (desktop)` are ONE
+  // tool: compared raw, a scope that tool wrote under two spellings read as
+  // two tools taking turns and raised a false collision. Distinct products
+  // stay distinct (claude-desktop is not claude-code) — see harness-names.js.
   const named = [];
+  const namedIds = [];
   for (const e of entries) {
     const h = meta(e && e.harness);
-    if (h) named.push(h); else facts.entriesWithoutHarness++;
+    if (h) { named.push(h); namedIds.push(harnessId(h) || h); } else facts.entriesWithoutHarness++;
     // Folded into the pass that was already walking every entry, so asking
     // for the times adds one branch per line and not a second traversal.
     //
@@ -3818,13 +3902,17 @@ export function journalFacts(entries, now = Date.now(), opts = {}) {
       }
     }
   }
+  // DISTINCT BY TOOL, newest-first, each tool named by the spelling of its
+  // NEWEST save — so the list a collision notice prints never shows one tool
+  // twice under two spellings, and never renames what the agent wrote.
   const distinct = [];
+  const distinctIds = [];
   for (let i = named.length - 1; i >= 0; i--) {          // newest-first
-    if (!distinct.includes(named[i])) distinct.push(named[i]);
+    if (!distinctIds.includes(namedIds[i])) { distinctIds.push(namedIds[i]); distinct.push(named[i]); }
   }
   facts.harnesses = distinct;
   let switches = 0;
-  for (let i = 1; i < named.length; i++) if (named[i] !== named[i - 1]) switches++;
+  for (let i = 1; i < namedIds.length; i++) if (namedIds[i] !== namedIds[i - 1]) switches++;
   facts.harnessSwitches = switches;
   // `distinct.length > 1` is REDUNDANT WITH `switches >= 2`, and that is
   // measured rather than assumed: `switches` counts adjacent differences among
@@ -3853,8 +3941,11 @@ export function journalFacts(entries, now = Date.now(), opts = {}) {
   // save (nothing to compare), or the two agree (no handover). All three mean
   // "do not draw an arrow", and none of them is worth distinguishing on a menu
   // row — the journal itself carries the detail.
+  // Compared by TOOL (v3.74.0): `Claude Code (desktop)` after `Claude Code`
+  // is one tool, and drawing `Claude Code ← Claude Code (desktop)` would be a
+  // handover that did not happen. The value stays the agent's own spelling.
   if (withSaveTimes && facts.harness !== null && named.length > 1
-      && named[named.length - 2] !== facts.harness) {
+      && namedIds[namedIds.length - 2] !== namedIds[namedIds.length - 1]) {
     facts.previousHarness = named[named.length - 2];
   }
   return facts;
@@ -3979,7 +4070,6 @@ export async function listScopeMachines(project, scope, opts = {}) {
   const now = Date.now();
   for (const m of shown) {
     m.ageSeconds = Math.max(0, Math.round((now - m.mtimeMs) / 1000));
-    delete m.mtimeMs;
     // THE MACHINE PICKER IS EXACTLY WHERE THE MTIME LIE HURTS MOST: every
     // entry in it that arrived over sync carried the age of the pull, so the
     // one control whose whole job is "which computer wrote this, and when"
@@ -3992,6 +4082,15 @@ export async function listScopeMachines(project, scope, opts = {}) {
     m.writtenAgeSeconds = f.writtenAgeSeconds;
     m.harness = f.harness;
   }
+  // NEWEST ON THE AGENT'S CLOCK (v3.74.0, G6). `readWorkingState` opens
+  // `machines[0]` when no machine is named, so this order IS which machine's
+  // handoff a scope-only read returns — and on mtime alone, a handoff pulled
+  // from another machine a minute ago beat the newer one saved here. The
+  // CAP above is still taken on mtime; by the bound above `effectiveSaveMs`
+  // a pair outside it can only win when more than MAX_INDEX_ENTRIES machines
+  // arrived in one pull, and it stays openable by name.
+  shown.sort(byNewestSave);
+  for (const m of shown) delete m.mtimeMs;
   return { machines: shown, total, truncated: total > shown.length, unlistedMachines, dirName };
 }
 
@@ -4105,7 +4204,6 @@ export async function listWorkingScopes(project, opts = {}) {
   // `truncated` sitting beside it.
   for (const p of shown) {
     p.ageSeconds = Math.max(0, Math.round((now - p.mtimeMs) / 1000));
-    delete p.mtimeMs;
     const f = await readPairJournalFacts(project, prefix, p.scope, p.machine, now, opts);
     p.headline = f.headline;
     p.writtenAt = f.writtenAt;
@@ -4130,6 +4228,15 @@ export async function listWorkingScopes(project, opts = {}) {
       p.previousHarness = f.previousHarness ?? null;
     }
   }
+  // NEWEST ON THE AGENT'S CLOCK (v3.74.0, G6). `resolveScope`'s `latest`
+  // takes `scopes[0]`, so this order IS which work-stream `scope: "latest"`
+  // and `get_project_context` open. On mtime alone, an older handoff that a
+  // Personal Sync pull had just written to disk outranked a newer local save.
+  // Identical to the mtime order whenever the two clocks agree (ties keep
+  // the mtime order, the sort being stable). The CAP above is still taken on mtime — see listScopeMachines for
+  // the one case that leaves open, and `truncated` beside it says it applies.
+  shown.sort(byNewestSave);
+  for (const p of shown) delete p.mtimeMs;
 
   return {
     // `project` is the PROJECT slug, which for the domain's own project IS the

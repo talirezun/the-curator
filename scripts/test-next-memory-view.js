@@ -821,12 +821,20 @@ section('§3b — `?open=newest`: the index and the first handoff in ONE answer'
   eq('PRECONDITION: the skew fixture has three pairs across two work-streams',
     (skewIdx.body.scopes || []).length, 3);
   // The fixture is only a fixture if the two clocks really disagree.
-  const first = (skewIdx.body.scopes || [])[0] || {};
-  ok('FIXTURE: the store lists the agent-OLD pair first, because its FILE is the '
-    + 'newest — which is what a checkout does to every file it writes',
-  first.scope === 'agent-old', JSON.stringify((skewIdx.body.scopes || []).map((s) => s.scope)));
-  ok('...and that pair really is the older SAVE by the agent\'s own clock',
-    first.writtenAgeSeconds > 86400, String(first.writtenAgeSeconds));
+  // v3.74.0 (audit G6): the STORE now orders on the agent's clock too, so its
+  // first pair is no longer the agent-OLD one whose FILE a checkout made the
+  // newest. These two used to pin the mtime order as the fixture's premise;
+  // they now pin the fix — and the fixture's clocks still genuinely disagree,
+  // which the agent-old pair's own age proves.
+  const byScope = (skewIdx.body.scopes || []);
+  const first = byScope[0] || {};
+  const old = byScope.find((s) => s.scope === 'agent-old') || {};
+  ok('FIXTURE: the agent-OLD pair really is the older SAVE by the agent\'s own clock',
+    old.writtenAgeSeconds > 86400, String(old.writtenAgeSeconds));
+  ok('G6: the store lists the agent-NEWEST pair first even though the agent-old '
+    + 'pair\'s FILE is the newest — a checkout no longer reorders the index',
+  first.scope === 'agent-new' && first.machine === 'box-b',
+  JSON.stringify(byScope.map((s) => `${s.scope}/${s.machine}`)));
 
   const opened = await call('/:domain/:project',
     { params: { domain: 'clocks', project: 'skew' }, query: { open: 'newest' } });
@@ -845,9 +853,14 @@ section('§3b — `?open=newest`: the index and the first handoff in ONE answer'
   {
     const scopeOnly = await call('/:domain/:project',
       { params: { domain: 'clocks', project: 'skew' }, query: { scope: 'agent-new' } });
-    eq('CONTROL: naming the scope ALONE resolves the OTHER machine, on the file '
-      + 'clock — which is what dropping the machine from the pick would open',
-    scopeOnly.body.machine, 'box-c');
+    // v3.74.0 (G6): this was a CONTROL pinning that the store resolved the
+    // scope to the OTHER machine on the file clock. The store now picks the
+    // machine on the agent's clock, so a scope-only read opens the same copy
+    // the table marks — the machine named above is still asserted, because
+    // the table's tie-break (name) is not the store's (mtime).
+    eq('G6: naming the scope ALONE now resolves the agent-newest machine too, not '
+      + 'the one whose file a checkout wrote last',
+    scopeOnly.body.machine, 'box-b');
   }
   ok('...and it carries the document, which is the half a scope-less read cannot give',
     opened.body.open.current && opened.body.open.current.present === true);

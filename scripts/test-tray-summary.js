@@ -1018,6 +1018,125 @@ try { fs.rmSync(PROJ3, { recursive: true, force: true }); } catch { /* best effo
 try { fs.rmSync(REPO3, { recursive: true, force: true }); } catch { /* best effort */ }
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('§8g v3.74.0 — latest per tool (D3), lanes per tool (D4), the capture window (D5), D7');
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const { getStoreActivity } = await import('../src/brain/tray-summary.js');
+  // Deep equality by serialisation — this suite's `eq` is `===`.
+  const deq = (a, e, label) => eq(JSON.stringify(a), JSON.stringify(e), label);
+  const V74 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'curator-tray-v374-')));
+  const MIN = 60 * SEC, HOUR = 3600 * SEC, DAY = 86400 * SEC;
+  const isoAgo = (ms) => new Date(NOW - ms).toISOString();
+  function pair(domain, scope, machine, { mtimeAgo, lines }) {
+    const dir = path.join(V74, domain, 'state', scope, machine);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'current.md'), `# ${scope}\n`);
+    if (lines) {
+      fs.writeFileSync(path.join(dir, 'journal.jsonl'), lines.map((l) => JSON.stringify({
+        at: isoAgo(l.ago), scope, machine, headline: l.headline, harness: l.harness, model: l.model || null, rejections: [],
+      })).join('\n') + '\n');
+    }
+    const t = (NOW - mtimeAgo) / 1000;
+    fs.utimesSync(path.join(dir, 'current.md'), t, t);
+  }
+  for (const d of ['ott', 'idle']) {
+    fs.mkdirSync(path.join(V74, d), { recursive: true });
+    fs.writeFileSync(path.join(V74, d, 'CLAUDE.md'), `# ${d}\n`);
+  }
+  pair('ott', 'claude-code', SELF, { mtimeAgo: 8 * MIN, lines: [{ ago: 8 * MIN, headline: 'OTT-CC', harness: 'Claude Code (desktop)', model: 'claude-opus-5-5' }] });
+  // An OLDER Claude Code save whose FILE is the newest on disk (a pull) — the
+  // per-tool pick must still be OTT-CC, by the agent's clock.
+  pair('ott', 'old-cc', OTHER, { mtimeAgo: 1 * SEC, lines: [{ ago: 2 * DAY, headline: 'OTT-OLD', harness: 'claude-code' }] });
+  pair('ott', 'antigravity', OTHER, { mtimeAgo: 2 * SEC, lines: [{ ago: 3 * HOUR, headline: 'OTT-AG', harness: 'Antigravity', model: 'gemini-3.7-flash' }] });
+  pair('ott', 'noname', SELF, { mtimeAgo: 1 * DAY, lines: [{ ago: 1 * DAY, headline: 'OTT-NONAME' }] });
+  // One tool typed three ways, alternating — must NOT be a collision.
+  pair('ott', 'drift', SELF, { mtimeAgo: 4 * DAY, lines: [
+    { ago: 6 * DAY, headline: 'd1', harness: 'Claude Code' }, { ago: 5 * DAY, headline: 'd2', harness: 'claude-code' },
+    { ago: 4 * DAY, headline: 'd3', harness: 'Claude Code (worker agent)' }] });
+  // Two tools really taking turns — MUST still be a collision.
+  pair('ott', 'shared', SELF, { mtimeAgo: 5 * DAY, lines: [
+    { ago: 7 * DAY, headline: 's1', harness: 'Claude Code' }, { ago: 6 * DAY, headline: 's2', harness: 'Antigravity' },
+    { ago: 5 * DAY, headline: 's3', harness: 'claude-code' }] });
+  pair('idle', 'main', OTHER, { mtimeAgo: 9 * DAY, lines: [{ ago: 9 * DAY, headline: 'IDLE', harness: 'Claude Code' }] });
+  setDomains(V74);
+
+  // ── D7: the shell's call ──────────────────────────────────────────────
+  const s = await getTraySummary({ limit: 1, now: NOW, sessionStart: false });
+  eq(s.sessionStart, null, 'D7: sessionStart:false → the field is null (not measured), and no warning claims a failure');
+  ok(!s.warnings.some((w) => w.code === 'session-start-unavailable'), '…no session-start warning');
+  const withSS = await getTraySummary({ limit: 1, now: NOW });
+  ok(withSS.sessionStart !== null, 'CONTROL: without the switch the reading IS taken, so the switch is what turned it off');
+
+  // ── D3: latest per tool, for EVERY project ─────────────────────────────
+  eq(s.scopes.length, 1, 'CONTROL: limit 1 → one row, so an idle project has NO row…');
+  const idle = (s.projects || []).find((p) => p.project === 'idle');
+  ok(idle && Array.isArray(idle.latest) && idle.latest.length === 1, '…yet its newest save is still known (projects[].latest)', JSON.stringify(idle && idle.latest));
+  const il = (idle && idle.latest[0]) || {};
+  deq([il.harness, il.harnessId, il.harnessRaw, il.headline, il.scope, il.machine, il.isThisMachine, il.ageSource],
+    ['Claude Code', 'claude-code', 'Claude Code', 'IDLE', 'main', OTHER, false, 'agent'], 'the idle entry carries tool, headline, scope, machine, identity and clock');
+  eq(il.writtenAt, isoAgo(9 * DAY), '…on the agent\'s clock');
+  const ott = (s.projects || []).find((p) => p.project === 'ott');
+  const ids = ott ? ott.latest.map((e) => e.harnessId) : null;
+  deq(ids, ['claude-code', 'antigravity', null], 'ott: ONE entry per tool, newest first; a save naming no tool is its own entry');
+  const cc = ott.latest[0];
+  eq(cc.headline, 'OTT-CC', 'the Claude Code entry is the NEWER save (8 min), although the older save\'s FILE has the newer mtime');
+  deq([cc.harness, cc.harnessRaw, cc.harnessVariant, cc.model, cc.kind], ['Claude Code', 'Claude Code (desktop)', 'desktop', 'claude-opus-5-5', 'complete'],
+    '…label normalised, raw spelling and variant kept, model and save kind carried');
+  deq([cc.isThisMachine, cc.isThisHost === true || cc.isThisHost === false], [true, true], '…with machine identity');
+  const ag = ott.latest[1];
+  deq([ag.headline, ag.writtenAt, ag.ageSource, ag.isThisMachine], ['OTT-AG', isoAgo(3 * HOUR), 'agent', false],
+    'the Antigravity entry dates by its journal (3 h), not by its pulled mtime (2 s)');
+  eq(ott.latestTruncated, false, 'latestTruncated false when the index was not capped');
+  ok(s.projects.every((p) => Array.isArray(p.latest)), 'every scanned project carries latest');
+
+  // ── D1 on the rows and the collision notice ────────────────────────────
+  const rows = (await getTraySummary({ limit: 40, now: NOW, sessionStart: false })).scopes;
+  const r0 = rows.find((r) => r.scope === 'claude-code');
+  deq([r0.harness, r0.harnessId, r0.harnessLabel], ['Claude Code (desktop)', 'claude-code', 'Claude Code'], 'rows keep the raw harness and ADD harnessId / harnessLabel');
+  deq([s.lastSave.harnessId, s.lastSave.harnessLabel], ['claude-code', 'Claude Code'], 'lastSave carries them too');
+  const coll = s.warnings.filter((w) => w.code === 'harness-collision').map((w) => w.scope);
+  deq(coll, ['shared'], 'a real A-B-A raises the collision; one tool spelled three ways ("drift") does NOT');
+
+  // ── D4: lanes per tool ─────────────────────────────────────────────────
+  const pu = s.pulse;
+  eq(pu.harnessCount, 2, 'harnessCount counts TOOLS (Claude Code + Antigravity), not the five spellings in the window');
+  deq(pu.harnesses, ['claude-code', 'antigravity'], 'pulse.harnesses: the lanes, newest-seen first');
+  eq(pu.byHarness['claude-code'].label, 'Claude Code', 'a lane is labelled with the canonical name');
+  const ccEvents = pu.byHarness['claude-code'].events, agEvents = pu.byHarness.antigravity.events;
+  eq(ccEvents, 1 + 1 + 3 + 1, 'the Claude Code lane: OTT-CC, OTT-OLD, drift ×3, shared s3 (s1 at 7 d is on the window edge — outside)');
+  eq(agEvents, 2, 'the Antigravity lane: OTT-AG and shared s2');
+  eq(ccEvents + agEvents + pu.eventsWithoutHarness, pu.events, 'lanes + unnamed = every event in the window');
+  eq(pu.byHarness.antigravity.lastSeenAt, isoAgo(3 * HOUR), 'lastSeenAt is the newest save read for that tool');
+  const act = await getStoreActivity({ now: NOW });
+  eq(JSON.stringify(act.pulse), JSON.stringify(pu), 'the app\'s getStoreActivity pulse carries the same lanes (parity)');
+
+  // ── D5: the capture window the log really covers ──────────────────────
+  const rec = (agoMs, project, sid, tool = 'save_working_state') => ({ at: NOW - agoMs, tool, domain: project, project, ok: true, refused: false, ms: 1, sid });
+  const short = { present: true, files: 1, records: [
+    rec(5 * DAY, 'ott', 'aaaaaaaaaaaa', 'get_project_context'),
+    rec(1 * HOUR, 'ott', 'bbbbbbbbbbbb'), rec(1 * HOUR, 'idle', 'bbbbbbbbbbbb'),
+  ] };
+  const c1 = await getTraySummary({ limit: 1, now: NOW, sessionStart: false, usage: short });
+  eq(c1.capture.windowDays, 30, 'the window ASKED for is still 30 days…');
+  deq([c1.capture.logStartsAt, c1.capture.windowStartsAt, c1.capture.windowDaysCovered, c1.capture.windowCovered],
+    [isoAgo(5 * DAY), isoAgo(5 * DAY), 5, false], '…but a log that began 5 days ago says so: the reading covers 5 days, not 30');
+  eq(c1.capture.unit, 'mcp-bridge-process', 'the unit is named: a bridge process, not an agent session');
+  const oc = (c1.projects.find((p) => p.project === 'ott') || {}).capture;
+  const ic = (c1.projects.find((p) => p.project === 'idle') || {}).capture;
+  deq([oc.bridgeRuns, oc.bridgeRunsSaved, oc.bridgeRuns === oc.sessions], [2, 1, true], 'bridgeRuns is the old `sessions` figure under an honest name (old field kept)');
+  deq([ic.bridgeRuns, ic.bridgeRunsSaved], [1, 1], 'ONE bridge process that touched two projects counts on both — which is why it is not "sessions"');
+  const long = { present: true, files: 1, records: [rec(40 * DAY, 'ott', 'cccccccccccc'), rec(1 * HOUR, 'ott', 'dddddddddddd')] };
+  const c2 = await getTraySummary({ limit: 1, now: NOW, sessionStart: false, usage: long });
+  deq([c2.capture.windowCovered, c2.capture.windowDaysCovered, c2.capture.windowStartsAt, c2.capture.logStartsAt],
+    [true, 30, new Date(NOW - 30 * DAY).toISOString(), isoAgo(40 * DAY)], 'a log older than the window covers all 30 days');
+  const none = await getTraySummary({ limit: 1, now: NOW, sessionStart: false, usage: { present: false, files: 0, records: [] } });
+  deq([none.capture.logStartsAt, none.capture.windowDaysCovered, none.capture.windowCovered], [null, null, null], 'no log → the window facts are null, never 0');
+
+  setDomains(TMP_DOMAINS);
+  try { fs.rmSync(V74, { recursive: true, force: true }); } catch { /* best effort */ }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('§9  Isolation held');
 // ═══════════════════════════════════════════════════════════════════════════
 eq(fingerprint(), fpBefore, 'the real credential files are byte-identical after the run');
