@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.72.3` | A docs-only release: the user guide, the LLM-facing memory doc and the continuity skill now explain scopes — how to organise work-streams across machines and agent tools, a standing gap since v3.65.1. |
 | `v3.72.2` | A lone Handoffs row could not be opened — fixed by binding the whole row, not just its ~56px name button, in `bindWorkStreamRows` and the Documents table's `bindFoundationRows`. |
 | `v3.72.1` | The "true numbers" release — every number and state the app shows traces to true current data, an app-wide read-only audit (7 slices, ~85 findings) fixed here package by package: Context, Domains, Ingest, Settings and Sync. |
 | `v3.72.0` | Chat — the section left behind for several releases — is overhauled and synced with the rest of the app: one list across all domains, a real page header, row actions and citations, with every number it shows traced to true data. |
