@@ -9569,6 +9569,12 @@ function renderAcrossProjectsBody() {
       ? P.byProject.filter((r) => r && Number.isInteger(r.sessions) && Number.isInteger(r.sessionsSaved))
       : [];
     const shown = measured.slice(0, ACROSS_PROJECTS_MAX_ROWS);
+    // v3.74.0 — THE BAR'S SCALE, NAMED AS A COMPARISON. A row's own figure is
+    // "N of its M connections saved"; the bar is scaled to the busiest
+    // project, and that project is NAMED, so "2 of 6 …, the busiest project"
+    // can no longer read as if this row were the busiest.
+    const top = measured.find((r) => r.sessionsSaved === busiest) || null;
+    const busiestName = top && typeof top.project === 'string' && top.project ? top.project : 'the busiest project';
     const lines = shown.map((r) => {
       const idx = typeof r.domain === 'string' ? domains.indexOf(r.domain) : -1;
       const name = typeof r.project === 'string' && r.project ? r.project : '(unnamed)';
@@ -9588,8 +9594,9 @@ function renderAcrossProjectsBody() {
         depth: r.sessionsSaved > 0 && busiest > 0
           ? { amount: r.sessionsSaved, max: busiest,
               label: r.sessionsSaved === busiest
-                ? r.sessionsSaved + ' connections saved — the busiest project'
-                : r.sessionsSaved + ' of ' + busiest + ' connections saved, the busiest project' }
+                ? r.sessionsSaved + ' of ' + r.sessions + ' connections saved — the busiest project'
+                : r.sessionsSaved + ' of ' + r.sessions + ' connections saved · bar scaled to '
+                  + busiestName + '’s ' + busiest }
           : undefined,
       };
     });
