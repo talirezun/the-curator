@@ -1655,8 +1655,8 @@ section('§16 every label fits the budget, and nothing it removed is unreachable
   const nItem = menu.flattenTrayMenu(menu.buildTrayMenuTemplate(noticed, { ...NOOPS, onOpenScope: (r) => { opened = r.route; } }))
     .find((i) => i.label && i.label.startsWith('Two tools are writing'));
   ok(nItem, 'CONTROL — the notice reached the menu (an empty store still says its notices)');
-  ok(nItem && nItem.label.length <= model.PLAIN_LABEL_CHARS,
-    `the notice label is inside the ${model.PLAIN_LABEL_CHARS}-character budget: "${nItem && nItem.label}"`);
+  ok(nItem && nItem.label.length <= model.COLLISION_LABEL_CHARS,
+    `the notice label is inside the ${model.COLLISION_LABEL_CHARS}-character collision cap: "${nItem && nItem.label}"`);
   ok(nItem && nItem.label.startsWith('Two tools are writing field-notes / a-del') && nItem.label.endsWith('…'),
     '…and what was clipped is the SCOPE\'s tail: the verb and the project are whole');
   ok(nItem && nItem.toolTip.includes(longScope) && nItem.toolTip.includes('Claude Code and Antigravity'),
@@ -2821,8 +2821,15 @@ section('§26 ONE collision notice per work-stream — the maintainer\'s real me
   const m = model.buildTrayModel(summary, { now: T });
   const coll = m.notices.filter((n) => /writing/.test(n.full || n.text));
   eq(coll.length, 1, 'ONE notice for the collided work-stream — the derived line and the producer\'s warning are the same fact');
-  eq(coll[0] && coll[0].text, 'Two tools are writing field-notes / s2-co…',
-    '…in the app\'s words; at the 42-character plain budget the SCOPE\'s tail is what gives, never the verb or the project');
+  eq(coll[0] && coll[0].text, 'Two tools are writing field-notes / s2-collision',
+    '…in the app\'s words, WHOLE: the maintainer\'s case is 48 characters and a collision line has its own 48-character cap');
+  eq(model.COLLISION_LABEL_CHARS, 48, 'the collision cap: 48 characters, derived from the accepted ~30 pt widening');
+  const collisionPts = model.COLLISION_LABEL_CHARS * model.MENU_CHAR_POINTS + model.MENU_CHROME_POINTS;
+  ok(collisionPts - model.MENU_WIDTH_POINTS <= 33 && collisionPts > model.MENU_WIDTH_POINTS,
+    `…${collisionPts}pt, ${(collisionPts - model.MENU_WIDTH_POINTS).toFixed(1)}pt past the ${model.MENU_WIDTH_POINTS}pt menu — the widening accepted for notices only`);
+  ok(60 * model.MENU_CHAR_POINTS + model.MENU_CHROME_POINTS - model.MENU_WIDTH_POINTS > 100,
+    'CONTROL — the suggested 60 would widen the menu by over 100 pt, which is why the cap is derived, not typed');
+  eq(model.PLAIN_LABEL_CHARS, 42, '…while every other plain item keeps its 42');
   ok(coll[0] && coll[0].full.includes('projects / field-notes / s2-collision'), '…with the whole work-stream on its tooltip');
   ok(coll[0] && /Claude Code and Antigravity/.test(coll[0].full), '…and the two tools named, normalised, in its tooltip');
   // Either source alone gives the same single line.
@@ -2830,7 +2837,7 @@ section('§26 ONE collision notice per work-stream — the maintainer\'s real me
   const suppliedOnly = model.buildTrayModel({ ...summary, scopes: summary.scopes.map((x) => ({ ...x, harnessShared: false })) }, { now: T })
     .notices.filter((n) => n.kind === 'collision');
   eq([derivedOnly.map((n) => n.text), suppliedOnly.map((n) => n.text)],
-    [['Two tools are writing field-notes / s2-co…'], ['Two tools are writing field-notes / s2-co…']],
+    [['Two tools are writing field-notes / s2-collision'], ['Two tools are writing field-notes / s2-collision']],
     'the row\'s own flag alone, or the producer\'s warning alone, draws the IDENTICAL line — so one source can supersede the other');
   // A DIFFERENT domain's `field-notes · s2-collision` is a different fact.
   const twoDomains = model.buildTrayModel({ ...summary, warnings: [{ ...summary.warnings[0], domain: 'articles' }] }, { now: T });
@@ -2852,7 +2859,7 @@ section('§26 ONE collision notice per work-stream — the maintainer\'s real me
   let opened = null;
   const t = menu.buildTrayMenuTemplate(m, { ...NOOPS, onOpenScope: (r) => { opened = r.route; } });
   const ids = t.map((i) => i.id || i.type);
-  const ni = t.findIndex((i) => i.label === 'Two tools are writing field-notes / s2-co…');
+  const ni = t.findIndex((i) => i.label === 'Two tools are writing field-notes / s2-collision');
   const lastRow = Math.max(...m.active.rows.map((r) => ids.indexOf(r.id)));
   ok(ni > lastRow && ni < ids.indexOf(menu.ID_IDLE) && ni < ids.indexOf(menu.ID_KNOWLEDGE),
     'the notice sits under the Active rows — above the Idle fold and above Knowledge, not at the bottom');

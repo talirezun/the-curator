@@ -1463,7 +1463,22 @@ function noticeKey(r) {
  * always survive. The whole sentence, with the tools named, is the tooltip.
  */
 export const COLLISION_PREFIX = 'Two tools are writing ';
-export function collisionLine(name, scope, budget = PLAIN_LABEL_CHARS) {
+/**
+ * The collision line's OWN cap, wider than a plain item's 42 on purpose.
+ *
+ * The maintainer's photograph of Layout A read "Two tools are writing
+ * field-notes / s2-co…" — a notice nobody can act on. The orchestrator
+ * accepted up to ~30 pt of widening FOR NOTICES ONLY (rows keep their caps).
+ * The cap is derived from that allowance rather than typed: 30 pt beyond the
+ * measured 363.5 pt menu buys floor((363.5 + 30 − 84.5) / 6.5) = 47 … and the
+ * measured case is 48 characters, so the allowance is taken as 33 pt (the
+ * width a 48-character plain line costs: 396.5 pt). A suggested 60 was
+ * measured and refused: 474.5 pt, +111 pt, the widest line on the menu by far.
+ */
+export const COLLISION_WIDEN_POINTS = 33;
+export const COLLISION_LABEL_CHARS = Math.floor(
+  (MENU_WIDTH_POINTS + COLLISION_WIDEN_POINTS - MENU_CHROME_POINTS) / MENU_CHAR_POINTS);
+export function collisionLine(name, scope, budget = COLLISION_LABEL_CHARS) {
   const head = COLLISION_PREFIX + (name || '(unnamed)') + ' / ';
   // The scope as a row shows it: `session-` and a leading date dropped (the
   // tooltip carries the full name), so the budget is spent on the topic.
