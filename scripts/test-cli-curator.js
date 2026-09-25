@@ -1075,8 +1075,8 @@ section('§10  Two installs, one machine — the usage log and the machine id');
 {
   // MEASURED 2026-09-20: a checkout and the installed `.app` resolve DIFFERENT
   // user-data dirs, so there are two `.mcp-usage.jsonl` files and two
-  // `.curator-machine-id` values (`alices-macbook-pro-17d23c` against
-  // `…-acb035`). The stop hook read only its own log, never saw a save the
+  // `.curator-machine-id` values (`alices-macbook-pro-9a8b7c` against
+  // `…-4d3e2f`). The stop hook read only its own log, never saw a save the
   // bridge had logged, and therefore asked at the end of every turn including
   // the ones that had just saved.
   const usage = await import('../src/brain/mcp-usage.js');
@@ -1217,8 +1217,8 @@ section('§10  Two installs, one machine — the usage log and the machine id');
         identity: {
           split: true,
           dirs: [
-            { dir: '/w', machineId: 'alices-macbook-pro-17d23c', installId: '17d23c' },
-            { dir: '/Users/x/Library/Application Support/The Curator', machineId: 'alices-macbook-pro-acb035', installId: 'acb035' },
+            { dir: '/w', machineId: 'alices-macbook-pro-9a8b7c', installId: '9a8b7c' },
+            { dir: '/Users/x/Library/Application Support/The Curator', machineId: 'alices-macbook-pro-4d3e2f', installId: '4d3e2f' },
           ],
         },
         install: { bundle: false, appRoot: '/w' },
@@ -1229,7 +1229,7 @@ section('§10  Two installs, one machine — the usage log and the machine id');
     });
   } finally { process.stdout.write = realWrite; }
   ok(out.includes('also on this machine:'), 'doctor names the SECOND usage log');
-  ok(out.includes('alices-macbook-pro-17d23c') && out.includes('alices-macbook-pro-acb035'),
+  ok(out.includes('alices-macbook-pro-9a8b7c') && out.includes('alices-macbook-pro-4d3e2f'),
     '…and BOTH machine ids');
   ok(/ONE computer, TWO machine ids/.test(out),
     '…saying in one line what that costs — two <machine> folders for one computer');

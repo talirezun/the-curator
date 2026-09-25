@@ -3435,7 +3435,7 @@ ok('memory.css contains no hardcoded hex colour (every colour is a token)',
 ok('every var() used in memory.css resolves (delegated to test-css-tokens.js, which walks this file)',
   (viewCss.match(/var\(--/g) || []).length > 20);
 // A machine id is `<hostname-slug>-<install-id>` and used to arrive under
-// `overflow-wrap: anywhere`, which broke `talis-macbook-pro-acb035` across
+// `overflow-wrap: anywhere`, which broke `demo-mac-4d3e2f` across
 // four lines and made every other row in the table taller with it.
 ok('the MACHINE column is one ellipsised line, never a four-line stack',
   (() => {

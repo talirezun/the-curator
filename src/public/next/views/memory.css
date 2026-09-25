@@ -719,7 +719,7 @@
 .mem-ws-cell-age { white-space: nowrap; font-variant-numeric: var(--numeric-tabular); }
 /* ONE LINE, ELLIPSISED — the same call `.mem-ws-headline` makes, for a
    different reason. `overflow-wrap: anywhere` broke a machine id at ANY
-   character, so `talis-macbook-pro-acb035` came down the column four lines
+   character, so `demo-mac-4d3e2f` came down the column four lines
    tall and made every other row in the table taller with it. A machine id is
    `<hostname-slug>-<install-id>` and reads left to right — the hostname is
    the part a person recognises — so cutting the tail is the cheap end.

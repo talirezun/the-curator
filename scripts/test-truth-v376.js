@@ -155,14 +155,14 @@ section('§3  F14 — save_foundation\'s size is derived, not typed');
 section('§4  F15 — machine folders sharing an install id are named in the delete preview');
 {
   const WSD = await import('../src/public/next/views/ws-delete.js');
-  const groups = WSD.sharedInstallIds([{ machine: 'talis-macbook-pro-17d23c' }, { machine: 'mac-17d23c' },
+  const groups = WSD.sharedInstallIds([{ machine: 'laptop-9a8b7c' }, { machine: 'mac-9a8b7c' },
     { machine: 'studio-9f3c1a' }, { machine: 'no-id-here' }]);
-  eq(JSON.stringify(groups), '[{"id":"17d23c","machines":["talis-macbook-pro-17d23c","mac-17d23c"]}]',
+  eq(JSON.stringify(groups), '[{"id":"9a8b7c","machines":["laptop-9a8b7c","mac-9a8b7c"]}]',
     '★ two host names with one install id are grouped; distinct ids and id-less names are not');
   const html = WSD.wsDeleteCardHtml({ scope: 'main', preview: { total: 3, machines: [
-    { machine: 'talis-macbook-pro-17d23c', hasCurrent: true }, { machine: 'mac-17d23c', hasCurrent: true },
+    { machine: 'laptop-9a8b7c', hasCurrent: true }, { machine: 'mac-9a8b7c', hasCurrent: true },
     { machine: 'studio-9f3c1a', hasCurrent: true }] } });
-  ok(/talis-macbook-pro-17d23c and mac-17d23c share one install id \(17d23c\) — probably the same computer under two names\./.test(html),
+  ok(/laptop-9a8b7c and mac-9a8b7c share one install id \(9a8b7c\) — probably the same computer under two names\./.test(html),
     '★ the card says so in words', html.slice(0, 400));
   ok(/This removes 3 saved copies/.test(html), '...and still counts every folder, because every one of them goes');
 }

@@ -95,7 +95,7 @@ function machineLine(m, nowMs) {
  * MACHINE FOLDERS THAT ARE PROBABLY ONE COMPUTER (v3.76.0, truth audit F15).
  * A machine folder is `<host>-<install id>`, and the host part changes when a
  * computer is renamed while the install id does not — measured:
- * `talis-macbook-pro-17d23c` and `mac-17d23c`, counted as two machines. The
+ * `laptop-9a8b7c` and `mac-9a8b7c`, counted as two machines. The
  * folders ARE two copies (both go, and the count stays the store's), so they
  * are not merged; the card says which ones share an id. Pure; exported.
  * @returns {Array<{id: string, machines: string[]}>}

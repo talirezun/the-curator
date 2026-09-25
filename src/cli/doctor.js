@@ -365,8 +365,8 @@ export async function collectDoctor(opts = {}) {
   //
   // Measured 2026-09-20: one Mac, one user, two Curators — a checkout and the
   // installed `.app` — and therefore two user-data directories, two usage logs
-  // and two `.curator-machine-id` files, `alices-macbook-pro-17d23c` against
-  // `alices-macbook-pro-acb035`. The consequence is real and was invisible: the
+  // and two `.curator-machine-id` files, `alices-macbook-pro-9a8b7c` against
+  // `alices-macbook-pro-4d3e2f`. The consequence is real and was invisible: the
   // state tree gains a SECOND `<machine>` folder for what is one computer, so
   // a handoff saved through the bridge and a handoff saved through the CLI do
   // not supersede each other — they sit side by side, and `scope: 'latest'`

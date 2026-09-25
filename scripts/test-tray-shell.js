@@ -2215,7 +2215,7 @@ section('§20 line one under Layout A — the budget over three fixtures, includ
   // ── TWO INSTALLATIONS, ONE MAC — what `localIds` is for ────────────────
   const twoInstalls = build([
     R({ scope: 'session-2026-08-30-shared', writtenAt: at(122400),
-      machine: 'alpha-macbook-pro-acb035', isThisMachine: false, isThisHost: true, headline: 'h' }),
+      machine: 'alpha-macbook-pro-4d3e2f', isThisMachine: false, isThisHost: true, headline: 'h' }),
     R({ scope: 'session-2026-08-30-other', writtenAt: at(129600), harness: 'harness-two',
       machine: 'alpha-macbook-pro-9f3c1a', isThisMachine: true, isThisHost: true, headline: 'h' }),
     R({ scope: 'session-2026-08-30-remote', writtenAt: at(140000), harness: 'harness-two',
@@ -2491,7 +2491,7 @@ section('§22 the per-row submenu, the headline\'s second line, and the new noti
       { project: 'p', scope: 'agents', machine: 'laptop-9f3c1a', writtenAt: at(600),
         ageSource: 'agent', isThisMachine: false, isThisHost: true, headline: 'h' },
       // This installation, and older than the remote row.
-      { project: 'p', scope: 'app', machine: 'laptop-acb035', writtenAt: at(7200),
+      { project: 'p', scope: 'app', machine: 'laptop-4d3e2f', writtenAt: at(7200),
         ageSource: 'agent', isThisMachine: true, isThisHost: true, headline: 'h' },
     ],
   }, { now: NOW });
@@ -2508,7 +2508,7 @@ section('§22 the per-row submenu, the headline\'s second line, and the new noti
     scopes: [
       { project: 'p', scope: 'remote', machine: 'studio-9f8e7d', writtenAt: at(3600),
         ageSource: 'agent', isThisMachine: false, isThisHost: false, headline: 'h' },
-      { project: 'p', scope: 'app', machine: 'laptop-acb035', writtenAt: at(7200),
+      { project: 'p', scope: 'app', machine: 'laptop-4d3e2f', writtenAt: at(7200),
         ageSource: 'agent', isThisMachine: true, isThisHost: true, headline: 'h' },
     ],
   }, { now: NOW });
@@ -2519,7 +2519,7 @@ section('§22 the per-row submenu, the headline\'s second line, and the new noti
   const sameMac = model.buildTrayModel({
     ok: true, total: 2,
     scopes: [
-      { project: 'p', scope: 'app', machine: 'laptop-acb035', writtenAt: at(60),
+      { project: 'p', scope: 'app', machine: 'laptop-4d3e2f', writtenAt: at(60),
         ageSource: 'agent', isThisMachine: false, isThisHost: true, headline: 'h' },
       { project: 'p', scope: 'repo', machine: 'laptop-a1b2c3', writtenAt: at(9000),
         ageSource: 'agent', isThisMachine: true, isThisHost: true, headline: 'h' },
