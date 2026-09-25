@@ -113,6 +113,8 @@ import {
  * the read-side sanitiser. It is reached through `storeAdapter`, never copied.
  */
 import * as workingStore from './working-state.js';
+// v3.74.0 (D1) — one tool, one name. Pure; see harness-names.js.
+import { normaliseHarness } from './harness-names.js';
 // v3.70.0 — the open project's SESSION START, measured by the one function
 // the app's step ④ calls (src/brain/session-start.js), so the widget's line
 // is the app's reading and never a figure of its own.
@@ -240,8 +242,17 @@ export function documentsReading(f) {
 export function captureFor(byName, logPresent, domain, project) {
   if (!logPresent) return null;
   const row = byName instanceof Map ? byName.get(project) : null;
+  // v3.74.0 (D5) — `sessions*` COUNT MCP BRIDGE PROCESSES (the usage log's
+  // `sid`), NOT agent sessions: one Claude desktop app runs one my-curator
+  // process for many conversations, so a single process that touched four
+  // projects reads "1 of 1 saved" on all four. The same numbers are emitted
+  // under names that say what they count (`bridgeRuns*`); the old names stay
+  // for a consumer that still reads them, and mean exactly what they did.
   if (!row) {
-    return { sessions: 0, sessionsRead: 0, sessionsSaved: 0, lastSessionAt: null, domainMismatch: false };
+    return {
+      sessions: 0, sessionsRead: 0, sessionsSaved: 0, lastSessionAt: null, domainMismatch: false,
+      bridgeRuns: 0, bridgeRunsRead: 0, bridgeRunsSaved: 0, lastBridgeRunAt: null,
+    };
   }
   const domains = Array.isArray(row.domains) ? row.domains : [];
   return {
@@ -250,6 +261,10 @@ export function captureFor(byName, logPresent, domain, project) {
     sessionsSaved: row.sessionsSaved,
     lastSessionAt: row.lastSessionAt,
     domainMismatch: domains.length > 0 && !domains.includes(domain),
+    bridgeRuns: row.sessions,
+    bridgeRunsRead: row.sessionsRead,
+    bridgeRunsSaved: row.sessionsSaved,
+    lastBridgeRunAt: row.lastSessionAt,
   };
 }
 
@@ -277,6 +292,35 @@ export function busiestSavedOf(logProjects, logPresent) {
 }
 
 /**
+ * THE WINDOW A USAGE LOG REALLY COVERS (v3.74.0, D5) — one derivation, for
+ * the widget and for the app's Settings › Across projects (routes/mcp.js),
+ * which asks for the same 30 days over the same log.
+ *
+ * `{logStartsAt, windowStartsAt, windowDaysCovered, windowCovered}`: the
+ * oldest line in the log; the later of that and `since`; that span in days
+ * (one decimal); and whether the log reaches back to `since` at all. All four
+ * null when no line carries a usable time — not measured, never 0.
+ */
+export function captureWindowFacts(records, since, now) {
+  let oldest = null;
+  for (const r of (Array.isArray(records) ? records : [])) {
+    if (!r || typeof r !== 'object') continue;
+    const at = Number.isFinite(r.at) ? r.at : Date.parse(r.ts);
+    if (Number.isFinite(at) && (oldest === null || at < oldest)) oldest = at;
+  }
+  if (oldest === null || !Number.isFinite(since) || !Number.isFinite(now)) {
+    return { logStartsAt: null, windowStartsAt: null, windowDaysCovered: null, windowCovered: null };
+  }
+  const start = Math.max(oldest, since);
+  return {
+    logStartsAt: new Date(oldest).toISOString(),
+    windowStartsAt: new Date(start).toISOString(),
+    windowDaysCovered: Math.max(0, Math.round(((now - start) / 86400000) * 10) / 10),
+    windowCovered: oldest <= since,
+  };
+}
+
+/**
  * Read the union of usage logs and reduce it per project, never throwing.
  * `usage` is a TEST-ONLY seam: `{present, files, records}` in place of a read.
  */
@@ -286,6 +330,17 @@ async function readCapture(now, usage) {
     logPresent: false, logFiles: 0,
     since: new Date(since).toISOString(), windowDays: TRAY_CAPTURE_WINDOW_DAYS,
     busiestSaved: null, legacyLines: null, selfTestLines: null, error: null,
+    // ── v3.74.0 (D5): THE WINDOW THE LOG ACTUALLY COVERS ─────────────────
+    //
+    // `windowDays` is the window ASKED for (30). A usage log that began five
+    // days ago cannot support a 30-day claim, so the reading's true span is
+    // reported beside it: `logStartsAt` (the oldest line in the log),
+    // `windowStartsAt` = the later of that and `since`, and
+    // `windowDaysCovered` = how many days that really is. `windowCovered` is
+    // true only when the log reaches back to `since`. Null without a log.
+    logStartsAt: null, windowStartsAt: null, windowDaysCovered: null, windowCovered: null,
+    // WHAT A "SESSION" HERE IS: an MCP bridge process id, not a conversation.
+    unit: 'mcp-bridge-process',
   };
   let byName = new Map();
   try {
@@ -293,6 +348,7 @@ async function readCapture(now, usage) {
     meta.logPresent = u.present === true;
     meta.logFiles = Number.isInteger(u.files) ? u.files : (meta.logPresent ? 1 : 0);
     if (meta.logPresent) {
+      Object.assign(meta, captureWindowFacts(u.records, since, now));
       const sum = summariseSessionsByProject(u.records || [], { since });
       byName = new Map(sum.projects.map((r) => [r.project, r]));
       meta.busiestSaved = busiestSavedOf(sum.projects, true);
@@ -445,6 +501,18 @@ export function computePulse(pairs, now = Date.now()) {
   // week, and saying "2 tools" about that would be a claim the window cannot
   // support.
   const harnessesInWindow = new Set();
+  // ── v3.74.0 (D4): ONE STRIP PER TOOL ─────────────────────────────────────
+  //
+  // Keyed by the NORMALISED id (D1), so `Claude Code` and `claude-code` are
+  // one lane and `claude-desktop` is another. A tool seen anywhere in the
+  // tails READ gets an entry, even with no save inside the window — that is
+  // the lane that says "Antigravity · none this week · last seen 1 Sep".
+  // `lastSeenAt` is the newest save READ for that tool: exact for a tool that
+  // was read, but a tool whose saves all sit past a journal's 16 KB tail is
+  // not seen at all — so it is "last seen", never "last save", and
+  // `byHarnessFloor` says when any tail was cut.
+  const byHarness = new Map();   // id → {label, buckets, events, lastSeenMs}
+  let eventsWithoutHarness = 0;
 
   for (const p of Array.isArray(pairs) ? pairs : []) {
     // A pair with no journal fed nothing. It is not counted as a pair that
@@ -463,18 +531,32 @@ export function computePulse(pairs, now = Date.now()) {
     let prevWho = null;
     p.saveTimes.forEach((t, i) => {
       if (!Number.isFinite(t)) return;
-      const h = who && typeof who[i] === 'string' && who[i] ? who[i] : null;
+      // COMPARED BY TOOL, not by spelling (v3.74.0, D1): the agent types this
+      // label freely, and `Claude Code (desktop)` after `Claude Code` is not a
+      // handover and not a second tool.
+      const n = who && typeof who[i] === 'string' && who[i] ? normaliseHarness(who[i]) : null;
+      const h = n ? n.id : null;
       // Taken BEFORE the window test, so a handover whose second half lands
       // inside the window is still recognised as a handover — the comparison
       // needs the save before it, and that one is often older than the window.
       const changed = h !== null && prevWho !== null && h !== prevWho;
       if (h !== null) prevWho = h;
       if (oldestSeen === null || t < oldestSeen) oldestSeen = t;
+      let lane = null;
+      if (h !== null) {
+        lane = byHarness.get(h);
+        if (!lane) {
+          lane = { label: n.label, buckets: new Array(PULSE_BUCKET_COUNT).fill(0), events: 0, lastSeenMs: null };
+          byHarness.set(h, lane);
+        }
+        if (lane.lastSeenMs === null || t > lane.lastSeenMs) lane.lastSeenMs = t;
+      }
       if (t <= windowStart) { eventsOutsideWindow++; return; }
       const cell = bucketIndex(t, now, bucketMs);
       buckets[cell]++;
       if (changed) harnessChanges[cell] = true;
       if (h !== null) harnessesInWindow.add(h);
+      if (lane) { lane.buckets[cell]++; lane.events++; } else eventsWithoutHarness++;
       events++;
       if (oldestCounted === null || t < oldestCounted) oldestCounted = t;
     });
@@ -494,6 +576,20 @@ export function computePulse(pairs, now = Date.now()) {
   // not exist yet" instead of drawing them as "nothing happened".
   const coversWholeWindow = oldestSeen !== null && oldestSeen <= windowStart;
 
+  // Newest-seen first; the object is keyed by id, the array is the order.
+  const laneIds = [...byHarness.keys()].sort((a, b) => (byHarness.get(b).lastSeenMs - byHarness.get(a).lastSeenMs)
+    || (a < b ? -1 : a > b ? 1 : 0));
+  const byHarnessOut = {};
+  for (const id of laneIds) {
+    const l = byHarness.get(id);
+    byHarnessOut[id] = {
+      label: l.label,
+      buckets: l.buckets,
+      events: l.events,
+      lastSeenAt: l.lastSeenMs === null ? null : new Date(l.lastSeenMs).toISOString(),
+    };
+  }
+
   return {
     windowSeconds: PULSE_WINDOW_SECONDS,
     bucketSeconds: PULSE_BUCKET_SECONDS,
@@ -501,8 +597,26 @@ export function computePulse(pairs, now = Date.now()) {
     // One boolean per bucket, same length and same anchoring as `buckets`.
     harnessChanges,
     // How many DISTINCT tools wrote inside the window. 0 when no save named
-    // one — which is not "one tool", and the label must not say so.
+    // one — which is not "one tool", and the label must not say so. Counted
+    // over NORMALISED ids since v3.74.0 (D1): one tool typed two ways is one.
     harnessCount: harnessesInWindow.size,
+    // v3.74.0 (D4) — one lane per tool: {label, buckets[28], events,
+    // lastSeenAt}. Every tool seen in the tails read, inside the window or
+    // not. Buckets are aligned with `buckets` above.
+    byHarness: byHarnessOut,
+    // The ids of `byHarness`, newest-seen first.
+    harnesses: laneIds,
+    // Saves inside the window that named no tool: in `events`, in no lane.
+    eventsWithoutHarness,
+    // A LOWER BOUND, DISCLOSED, for the lanes: any journal read only from its
+    // tail can hide older saves — and a tool whose every save is hidden has
+    // no lane at all. `lastSeenAt` is "last seen", never "last save".
+    byHarnessFloor: pairsTruncated > 0,
+    byHarnessNote: pairsTruncated > 0
+      ? `At least these counts: ${pairsTruncated} journal${pairsTruncated === 1 ? ' was' : 's were'} read only from `
+        + `the newest ${tailKb()} KB, so older saves — and a tool that only saved there — may be missing. `
+        + 'Dates are when a tool was last seen in what was read.'
+      : null,
     events,
     eventsOutsideWindow,
     pairsCounted,
@@ -524,6 +638,12 @@ export function computePulse(pairs, now = Date.now()) {
       : (oldestCounted === null ? PULSE_BUCKET_COUNT
         : bucketIndex(oldestCounted, now, bucketMs)),
   };
+}
+
+/** The journal tail the index reads, in KB — the store's own constant. */
+function tailKb() {
+  const b = workingStore.INDEX_JOURNAL_TAIL_BYTES;
+  return Number.isInteger(b) && b > 0 ? Math.round(b / 1024) : 16;
 }
 
 /**
@@ -1153,11 +1273,12 @@ export async function getTraySummary(opts = {}) {
       // index — which is under a 400 KB response budget — is unchanged.
       idx = await store.listScopes(domain, project, { withSaveTimes: true });
     } catch {
-      projectsOut.push({ ...projectBase, documents: null });
+      projectsOut.push({ ...projectBase, documents: null, latest: null, latestTruncated: false });
       continue;                       // listWorkingScopes does not throw; belt.
     }
     if (!idx || !idx.ok || !Array.isArray(idx.scopes)) {
-      projectsOut.push({ ...projectBase, documents: null });
+      // NOT READ, so `latest` is null — never an empty "no saves" list.
+      projectsOut.push({ ...projectBase, documents: null, latest: null, latestTruncated: false });
       continue;
     }
 
@@ -1204,6 +1325,7 @@ export async function getTraySummary(opts = {}) {
       foundationsError = err && err.message ? String(err.message).slice(0, 200) : 'foundations unavailable';
     }
 
+    const latestByTool = new Map();
     for (const p of idx.scopes) {
       if (!p || typeof p.scope !== 'string' || typeof p.machine !== 'string') continue;
       // Same validated pairs the rows are built from, so the strip and the
@@ -1236,6 +1358,39 @@ export async function getTraySummary(opts = {}) {
       }
       const clock = chooseClock(p);
       const ident = machineIdentity(p.machine, self, host, hostRe, selfInstallId);
+      const hn = normaliseHarness(typeof p.harness === 'string' ? p.harness : null);
+      // ── v3.74.0 (D3): THE NEWEST SAVE PER TOOL, FOR THIS PROJECT ─────────
+      //
+      // Over EVERY pair this project's index returned, before the row cap —
+      // so an idle project's newest save is known even when none of its pairs
+      // survives `limit`. Keyed by the tool that wrote each pair's LAST save
+      // (the handoff that is actually on disk); a save of no named tool is
+      // its own entry (id null) rather than being dropped.
+      {
+        const key = hn ? hn.id : '\u0000none';
+        const order = orderKey(clock);
+        const prev = latestByTool.get(key);
+        if (!prev || order > prev._order) {
+          latestByTool.set(key, {
+            harness: hn ? hn.label : null,
+            harnessId: hn ? hn.id : null,
+            harnessRaw: typeof p.harness === 'string' ? p.harness : null,
+            harnessVariant: hn ? hn.variant : null,
+            model: typeof p.model === 'string' ? p.model : null,
+            scope: p.scope,
+            machine: p.machine,
+            isThisHost: ident.isThisHost,
+            isThisMachine: ident.isThisMachine,
+            machineMatch: ident.machineMatch,
+            writtenAt: clock.writtenAt,
+            writtenAgeSeconds: clock.writtenAgeSeconds,
+            ageSource: clock.ageSource,
+            headline: typeof p.headline === 'string' ? p.headline : null,
+            kind: typeof p.lastSaveKind === 'string' ? p.lastSaveKind : null,
+            _order: order,
+          });
+        }
+      }
       rows.push({
         // ── THE TWO IDENTITIES, AND THEY ARE NOT ONE ────────────────────
         //
@@ -1255,6 +1410,11 @@ export async function getTraySummary(opts = {}) {
         scope: p.scope,
         machine: p.machine,
         harness: typeof p.harness === 'string' ? p.harness : null,
+        // v3.74.0 (D1) — the same tool, NORMALISED: `harnessId` to compare,
+        // `harnessLabel` to show. `harness` above stays the agent's own
+        // spelling, for a tooltip. Null when the save named no tool.
+        harnessId: hn ? hn.id : null,
+        harnessLabel: hn ? hn.label : null,
         // WHICH MODEL wrote it. Already on the index row since v3.34.0 and
         // dropped here until now — the field-drop class this repo guards
         // behaviourally in test-working-state-disclosure.js, committed by the
@@ -1297,7 +1457,19 @@ export async function getTraySummary(opts = {}) {
         });
       }
     }
-    projectsOut.push({ ...projectBase, documents });
+    // Newest first on the chosen clock; an entry with no clock sorts last.
+    const latest = [...latestByTool.values()]
+      .sort((a, b) => b._order - a._order)
+      .map((e) => { const { _order, ...rest } = e; return rest; });
+    projectsOut.push({
+      ...projectBase,
+      documents,
+      latest,
+      // True when the store capped this project's index (MAX_INDEX_ENTRIES
+      // pairs): `latest` is then over the newest pairs only, and a tool whose
+      // every pair sits past the cap is absent. Said, never hidden.
+      latestTruncated: idx.truncated === true,
+    });
   }
 
   // THE CAPTURE BAR'S DENOMINATOR is set in readCapture() — busiestSavedOf()
@@ -1402,6 +1574,8 @@ export async function getTraySummary(opts = {}) {
     scope: shown[0].scope,
     machine: shown[0].machine,
     harness: shown[0].harness,
+    harnessId: shown[0].harnessId,
+    harnessLabel: shown[0].harnessLabel,
     // The headline's second line is `harness · model`, so the model has to
     // reach this projection too. Projected EXPLICITLY, like every other field
     // here — which is what makes a drop visible to the disclosure guard rather
@@ -1431,8 +1605,10 @@ export async function getTraySummary(opts = {}) {
   // `sessionStartBrief`: the same layers, tokens and replies the app's step ④
   // shows, and nothing the app does not. Null when there is no save to anchor
   // it, or when the measurement fails — never a zero standing in for "could
-  // not measure"; the failure is a warning. `opts.sessionStart === false` is
-  // a TEST-ONLY switch for suites that time or stub the walk.
+  // not measure"; the failure is a warning. `opts.sessionStart === false` skips
+  // it: the menubar shell passes that since v3.74.0 (D7) — the widget no
+  // longer draws the line, and it cost a whole `get_project_context` run on
+  // every refresh — and suites that time or stub the walk pass it too.
   let sessionStart = null;
   if (lastSave && !(opts && opts.sessionStart === false)) {
     try {
@@ -1496,7 +1672,12 @@ export async function getTraySummary(opts = {}) {
     remote: readRemoteObservation(now),
     // ── v3.66.0 ──────────────────────────────────────────────────────────
     // `projects`: one entry per scanned project — {domain, project,
-    //   projectLabel, isDefaultProject, capture, documents}.
+    //   projectLabel, isDefaultProject, capture, documents, latest,
+    //   latestTruncated}. v3.74.0 (D3): `latest` is the newest save per TOOL
+    //   for this project, newest first — [{harness (label), harnessId,
+    //   harnessRaw, harnessVariant, model, scope, machine, isThisHost,
+    //   isThisMachine, machineMatch, writtenAt, writtenAgeSeconds, ageSource,
+    //   headline, kind}] — or null when the project's index was not read.
     // `capture`: the reading's own facts — {logPresent, logFiles, since,
     //   windowDays, busiestSaved, legacyLines, selfTestLines, error}.
     // `domains`: per-domain page counts in listDomains() order, or null.

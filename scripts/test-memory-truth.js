@@ -63,7 +63,8 @@
  * inside it.
  */
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync,
-  utimesSync } from 'node:fs';
+  utimesSync, statSync } from 'node:fs';
+const statMtime = (p) => statSync(p).mtimeMs;
 import { join, dirname, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -989,6 +990,105 @@ section('§9 — The store\'s own vocabulary, and nothing wrote outside the temp
   ok('...with the store\'s own note, so the surface never has to paraphrase',
     row.lastSaveNotes.some((n) => /omitted over the state size budget/.test(n)),
     JSON.stringify(row.lastSaveNotes));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§G6 — "newest" is chosen on the AGENT\'s clock, not on mtime (v3.74.0)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Audit G6: `scope: "latest"`, the machine a scope-only read opens, a project
+// row's newest save and the project list's order were all chosen by
+// `current.md`'s mtime. A Personal Sync pull writes an OLDER handoff from
+// another machine with a brand-new mtime, so it won — `get_project_context`
+// with no scope opened it over a newer local save. Each fixture below is the
+// shape a pull leaves (old journal `at`, new mtime), written directly so the
+// two clocks are set independently; the FIXTURE assertions prove the mtime
+// order really is the wrong one, so a pass cannot be an accident of order.
+{
+  const SELF = WS.machineId();
+  const OTHER = 'otherbox-a1b2c3';
+  const T = Date.now();
+  const MIN = 60000;
+  const iso = (ms) => new Date(ms).toISOString();
+  function pair(domain, rel, scope, machine, { writtenAgoMs, mtimeAgoMs, headline, harness = 'Claude Code' }) {
+    const dir = join(DOMAINS, domain, 'state', ...(rel ? [rel] : []), scope, machine);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'current.md'),
+      `# Working state — ${scope}\n\n## Where things stand\n\n${headline} BODY\n`);
+    if (writtenAgoMs !== null) {
+      writeFileSync(join(dir, 'journal.jsonl'), JSON.stringify({
+        at: iso(T - writtenAgoMs), scope, machine, headline, harness, model: 'm', rejections: [],
+      }) + '\n');
+    }
+    const t = new Date(T - mtimeAgoMs);
+    utimesSync(join(dir, 'current.md'), t, t);
+  }
+  const mtimeOf = (domain, rel, scope, machine) => statMtime(join(DOMAINS, domain, 'state', ...(rel ? [rel] : []), scope, machine, 'current.md'));
+
+  // ── 1 · `latest` across scopes, and the machine inside one scope ─────────
+  makeDomain('gsix');
+  pair('gsix', null, 'claude-code', SELF, { writtenAgoMs: 10 * MIN, mtimeAgoMs: 10 * MIN, headline: 'LOCAL-NEWER' });
+  pair('gsix', null, 'antigravity', OTHER, { writtenAgoMs: 120 * MIN, mtimeAgoMs: 5000, headline: 'PULLED-OLDER', harness: 'Antigravity' });
+  pair('gsix', null, 'main', SELF, { writtenAgoMs: 20 * MIN, mtimeAgoMs: 20 * MIN, headline: 'LOCAL-MAIN' });
+  pair('gsix', null, 'main', OTHER, { writtenAgoMs: 180 * MIN, mtimeAgoMs: 4000, headline: 'PULLED-MAIN' });
+  ok('FIXTURE: the pulled, OLDER handoff has the NEWER file mtime — what a checkout leaves',
+    mtimeOf('gsix', null, 'antigravity', OTHER) > mtimeOf('gsix', null, 'claude-code', SELF));
+
+  const idx = await WS.listWorkingScopes('gsix');
+  eq('the index lists the agent-newest pair first, not the freshest file',
+    `${idx.scopes[0].scope}/${idx.scopes[0].machine}`, `claude-code/${SELF}`);
+  ok('…and the pulled pair, newest by mtime, is ranked by its agent time (last)',
+    idx.scopes[idx.scopes.length - 1].headline === 'PULLED-MAIN', JSON.stringify(idx.scopes.map((x) => x.headline)));
+  ok('…with no internal sort key leaked', idx.scopes.every((x) => !('mtimeMs' in x)));
+
+  const latest = await WS.readWorkingState('gsix', { scope: 'latest' });
+  eq('scope "latest" opens the agent-newest work-stream (the G6 probe)', latest.scope, 'claude-code');
+  eq('…says it chose it', latest.scopeResolvedBy, 'latest');
+  ok('…and returns ITS handoff, not the pulled one', /LOCAL-NEWER BODY/.test(latest.current.text), latest.current.text);
+
+  const main = await WS.readWorkingState('gsix', { scope: 'main' });
+  eq('a scope-only read opens the agent-newest MACHINE, not the one a pull just wrote', main.machine, SELF);
+  ok('…with that machine\'s handoff', /LOCAL-MAIN BODY/.test(main.current.text));
+  eq('…and the machine list is in the same order', main.machines.map((m) => m.machine).join(','), `${SELF},${OTHER}`);
+  ok('…with no internal sort key leaked', main.machines.every((m) => !('mtimeMs' in m)));
+  const pinned = await WS.readWorkingState('gsix', { scope: 'main', machine: OTHER });
+  ok('the pulled machine is still openable by name', /PULLED-MAIN BODY/.test(pinned.current.text));
+
+  const projRow = (await WS.listProjects('gsix')).projects.find((r) => r.project === 'gsix');
+  eq('the project row speaks for the agent-newest save', projRow && projRow.newestScope, 'claude-code');
+  eq('…with its headline', projRow && projRow.headline, 'LOCAL-NEWER');
+  eq('…and its writtenAt', projRow && projRow.writtenAt, iso(T - 10 * MIN));
+
+  // ── 2 · the fallback: a pair with no journal time competes on its file time
+  makeDomain('gsixb');
+  pair('gsixb', null, 'journaled', SELF, { writtenAgoMs: 10 * MIN, mtimeAgoMs: 10 * MIN, headline: 'J' });
+  pair('gsixb', null, 'nojournal', SELF, { writtenAgoMs: null, mtimeAgoMs: 5 * MIN, headline: 'N' });
+  pair('gsixb', null, 'pulled', OTHER, { writtenAgoMs: 300 * MIN, mtimeAgoMs: 1000, headline: 'P' });
+  const b = await WS.readWorkingState('gsixb', { scope: 'latest' });
+  eq('a pair with NO journal still wins on its file time when that is the newest reading (the fallback is load-bearing)',
+    b.scope, 'nojournal');
+  eq('…and the listing agrees', (await WS.listWorkingScopes('gsixb')).scopes.map((x) => x.scope).join(','),
+    'nojournal,journaled,pulled');
+
+  // ── 3 · when the clocks AGREE, the order is exactly the old mtime order ──
+  makeDomain('gsixc');
+  pair('gsixc', null, 'older', SELF, { writtenAgoMs: 30 * MIN, mtimeAgoMs: 30 * MIN, headline: 'O' });
+  pair('gsixc', null, 'newer', SELF, { writtenAgoMs: 20 * MIN, mtimeAgoMs: 20 * MIN, headline: 'N' });
+  pair('gsixc', null, 'tie-a', SELF, { writtenAgoMs: 40 * MIN, mtimeAgoMs: 41 * MIN, headline: 'TA' });
+  pair('gsixc', null, 'tie-b', SELF, { writtenAgoMs: 40 * MIN, mtimeAgoMs: 40 * MIN, headline: 'TB' });
+  eq('clocks that agree keep the mtime order; an exact agent-time TIE falls to mtime',
+    (await WS.listWorkingScopes('gsixc')).scopes.map((x) => x.scope).join(','), 'newer,older,tie-b,tie-a');
+
+  // ── 4 · the PROJECT LIST's order ─────────────────────────────────────────
+  makeDomain('gsixd');
+  ok('fixture: two named projects', (await WS.createProject('gsixd', 'fresh')).ok && (await WS.createProject('gsixd', 'stale')).ok);
+  pair('gsixd', 'fresh', 'main', SELF, { writtenAgoMs: 10 * MIN, mtimeAgoMs: 10 * MIN, headline: 'FRESH' });
+  pair('gsixd', 'stale', 'main', OTHER, { writtenAgoMs: 600 * MIN, mtimeAgoMs: 1000, headline: 'STALE' });
+  const listed = (await WS.listProjects('gsixd')).projects.map((r) => r.project).filter((x) => x !== 'gsixd');
+  eq('the project list puts the project saved most recently BY THE AGENT first, not the one a pull touched',
+    listed.join(','), 'fresh,stale');
+  const all = (await WS.listAllProjects()).projects.filter((r) => r.domain === 'gsixd').map((r) => r.project);
+  eq('…and so does the all-domains list', all.slice(0, 2).join(','), 'fresh,stale');
 }
 
 // Nothing escaped the tempdir: every path this suite touched is under it, and
