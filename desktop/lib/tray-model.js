@@ -1443,10 +1443,39 @@ function noticeKey(r) {
   return d + '\u0000' + p + '\u0000' + s;
 }
 
+/**
+ * ONE collision line per (domain, project, scope), in the app's words.
+ *
+ * ── THE DEFECT THIS REPLACES, FROM THE MAINTAINER'S REAL MENU ──────────────
+ *
+ * One scope written A-B-A-B by two tools drew the notice TWICE: the derived
+ * "Two harnesses are writing projects / fiel…" and the producer's "Two agent
+ * tools are writing projects / fi…". The dedupe keyed the derived line on
+ * project + scope with NO DOMAIN, while the producer's warning carries its
+ * domain — so the two keys never met. Both were clipped before the scope, the
+ * one word that says which work-stream.
+ *
+ * Now both sources resolve to the SAME record, keyed on all three fields, and
+ * the words are composed here from the fields rather than taken from either
+ * producer's prose: `Two tools are writing <project> / <scope>` — the app's
+ * Memory notice ("Two tools are writing …"). The head up to and including the
+ * project is never clipped; the SCOPE's tail is, so the verb and the project
+ * always survive. The whole sentence, with the tools named, is the tooltip.
+ */
+export const COLLISION_PREFIX = 'Two tools are writing ';
+export function collisionLine(name, scope, budget = PLAIN_LABEL_CHARS) {
+  const head = COLLISION_PREFIX + (name || '(unnamed)') + ' / ';
+  // The scope as a row shows it: `session-` and a leading date dropped (the
+  // tooltip carries the full name), so the budget is spent on the topic.
+  const sc = typeof scope === 'string' && scope ? scopeCandidates(scope)[0] : '(unnamed)';
+  if ((head + sc).length <= budget) return head + sc;
+  const room = budget - head.length;
+  // Keep at least a few characters of the scope; past that the line may run
+  // over rather than lose the project or the verb.
+  return head + (clip(sc, Math.max(6, room)) || sc);
+}
 function collisionText(r) {
-  // Named by the SAME project name the row's line one uses, so a user reading
-  // the notice and the row is reading one identity twice, not two.
-  return 'Two harnesses are writing ' + (r.projectLabel || r.project) + ' · ' + r.scope;
+  return collisionLine(r.projectLabel || r.project, r.scope);
 }
 
 /**
@@ -1570,6 +1599,7 @@ function readWarnings(summary) {
       domain: str(w.domain),
       project: str(w.project),
       scope: str(w.scope),
+      harnesses: Array.isArray(w.harnesses) ? w.harnesses : [],
     });
   }
   return out;
@@ -1588,6 +1618,24 @@ function readWarnings(summary) {
  * row. `dedupeAgainstSuppliedWarnings` then removes whichever copy is
  * redundant, so the two sources cannot both speak about one scope.
  */
+function collisionNotice(domain, project, name, scope, harnesses) {
+  const labels = [...new Set((Array.isArray(harnesses) ? harnesses : [])
+    .map((h) => (normaliseHarness(typeof h === 'string' ? h : null) || {}).label).filter(Boolean))];
+  const full = COLLISION_PREFIX + (domain ? domain + ' / ' : '') + (project || name) + ' / ' + scope
+    + (labels.length > 1 ? ' — ' + labels.join(' and ') : '')
+    + '. Each save overwrites the other\'s handoff in this work-stream.';
+  return {
+    kind: 'collision',
+    domain: domain || null,
+    project,
+    scope,
+    // A notice that names a project can OPEN it: the same route a row carries.
+    route: domain ? domain + '/' + project : project,
+    text: collisionLine(name, scope),
+    full,
+  };
+}
+
 function collisionNotices(rows) {
   const out = [];
   const seen = new Set();
@@ -1596,13 +1644,7 @@ function collisionNotices(rows) {
     const key = noticeKey(r);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({
-      kind: 'collision',
-      project: r.project,
-      scope: r.scope,
-      text: clip(collisionText(r), PLAIN_LABEL_CHARS),
-      full: collisionText(r),
-    });
+    out.push(collisionNotice(r.domain, r.project, r.projectLabel || r.project, r.scope, r.harnessesSeen || []));
   }
   return out;
 }
@@ -1708,8 +1750,8 @@ function dedupeAgainstSuppliedWarnings(supplied, derived, coverageComplete) {
   for (const w of supplied) {
     if (w.code === WARNING_SCOPES_TRUNCATED && coverageComplete) continue;
     if (w.code === WARNING_HARNESS_COLLISION) {
-      // Matched on the warning's OWN project/scope fields, not by searching
-      // its prose for them — the same reason the code is matched rather than
+      // Matched on the warning's OWN domain/project/scope fields, never by
+      // searching its prose — the same reason the code is matched rather than
       // the wording. A collision warning that names a scope we did not derive
       // (it was past the row cap, say) still gets through.
       const key = noticeKey(w);
@@ -1925,6 +1967,8 @@ export function buildTrayModel(summary, opts = {}) {
       isThisMachine: (src.isThisMachine ?? m.isThisMachine) === true,
       isThisHost: (src.isThisHost ?? m.isThisHost) === true,
       harnessShared: (src.harnessShared ?? m.harnessShared) === true,
+      // Every tool the journal saw on this pair — the collision line names them.
+      harnessesSeen: Array.isArray(src.harnesses) ? src.harnesses : (Array.isArray(m.harnesses) ? m.harnesses : []),
       foundations: (m.foundations && typeof m.foundations === 'object') ? m.foundations
         : (src.foundations && typeof src.foundations === 'object' ? src.foundations : null),
     };
@@ -2125,6 +2169,7 @@ export function buildTrayModel(summary, opts = {}) {
       isThisMachine: r.isThisMachine,
       isThisHost: r.isThisHost,
       harnessShared: r.harnessShared,
+      harnessesSeen: r.harnessesSeen,
       foundations: r.foundations,
       tier,
       glyphLive: glyphLiveAge(r.ageSeconds),
@@ -2392,8 +2437,21 @@ export function buildTrayModel(summary, opts = {}) {
     }
   }
   const seenText = new Set(notices.map((n) => n.full || n.text));
+  const collisionKeys = new Set(notices.filter((n) => n.kind === 'collision').map(noticeKey));
+  const nameOf = (domain, project) => {
+    const p = projects.get(rowGroupKey({ domain, project }));
+    return p && p.name ? p.name : project;
+  };
   for (const w of deduped.supplied) {
     if (w.code && SILENT_WARNING_CODES.has(w.code)) continue;
+    if (w.code === WARNING_HARNESS_COLLISION && w.project && w.scope) {
+      // ONE line per collided work-stream, whichever source said it first.
+      const key = noticeKey(w);
+      if (collisionKeys.has(key)) continue;
+      collisionKeys.add(key);
+      notices.push(collisionNotice(w.domain, w.project, nameOf(w.domain, w.project), w.scope, w.harnesses));
+      continue;
+    }
     if (seenText.has(w.message)) continue;
     seenText.add(w.message);
     notices.push({
@@ -2402,6 +2460,12 @@ export function buildTrayModel(summary, opts = {}) {
       full: w.message,
     });
   }
+
+  // One order for the block, whichever source produced a line: what is
+  // waiting elsewhere, then the collisions (a live hazard to a handoff), then
+  // stale documents, then anything else the data layer said.
+  const NOTICE_RANK = { remote: 0, 'newer-elsewhere': 1, collision: 2, 'docs-stale': 3 };
+  notices.sort((a, b) => (NOTICE_RANK[a.kind] ?? 4) - (NOTICE_RANK[b.kind] ?? 4));
 
   // ── 9. THE STANDING BRIEF — the icon's tooltip, as before ──────────────
   const rawBrief = summary && typeof summary.brief === 'object' && summary.brief ? summary.brief : null;

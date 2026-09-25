@@ -780,8 +780,21 @@ export function pulseLabel(pulse) {
  */
 export const PULSE_TOOL_NAME_CHARS = 14;
 
+/**
+ * How many TOOLS saved inside the window. The per-tool lanes are keyed by the
+ * NORMALISED harness id, so where they exist they are the count: the
+ * maintainer's real pulse read `4 tools` for `claude-code`, `Claude Code`,
+ * `Claude Code (desktop)` and `antigravity` — two tools, spelled four ways
+ * (D1). A producer without lanes falls back to its own `harnessCount`.
+ */
+export function toolCount(pulse) {
+  const lanes = harnessPulses(pulse);
+  if (lanes.length) return lanes.filter((h) => h.events > 0).length;
+  return Number.isFinite(pulse && pulse.harnessCount) ? Math.floor(pulse.harnessCount) : 0;
+}
+
 function toolsClause(pulse) {
-  const n = Number.isFinite(pulse && pulse.harnessCount) ? Math.floor(pulse.harnessCount) : 0;
+  const n = toolCount(pulse);
   if (n > 1) return ' · ' + n + ' tools';
   if (n !== 1) return '';
   const name = soleToolName(pulse);
@@ -1005,7 +1018,7 @@ export function pulseToolTip(pulse) {
   // "violet means saves" is useless to the viewer who most needs it.
   lines.push('Bar height = how many saves · solid baseline = this store existed · dotted baseline = it did not yet');
   lines.push('An amber cap means a different agent tool took over inside that period.');
-  const tools = Number.isFinite(pulse.harnessCount) ? Math.floor(pulse.harnessCount) : 0;
+  const tools = toolCount(pulse);
   if (tools > 1) lines.push(tools + ' different agent tools wrote inside this window.');
   else if (tools === 1 && soleToolName(pulse)) lines.push('One agent tool wrote inside this window: ' + soleToolName(pulse) + '.');
   if (Number.isFinite(pulse.bucketSeconds) && pulse.bucketSeconds > 0

@@ -490,9 +490,9 @@ section('§2c a collision is announced ONCE, and the match is STRUCTURAL');
   const collisionLines = withReal.notices.filter((n) =>
     /writing/.test(noticeText(n)) && /alpha/.test(noticeText(n)) && /research/.test(noticeText(n)));
   eq(collisionLines.length, 1, 'the REAL producer warning now suppresses the derived line — exactly ONE notice');
-  eq(collisionLines.length ? noticeText(collisionLines[0]) : '(no collision notice at all)',
-    'Two agent tools are writing alpha · research.',
-    '…and the SUPPLIED one is the survivor, because the data layer saw the whole store');
+  eq(collisionLines.length ? collisionLines[0].text : '(no collision notice at all)',
+    'Two tools are writing alpha / research',
+    '…in the APP\'s words (v3.74.0) — composed from the fields, whichever source said it');
 
   // A collision warning about a DIFFERENT scope must not suppress anything.
   const other = model.buildTrayModel(summary({
@@ -691,7 +691,7 @@ section('§4 caps, notices, and "did not check" versus "nothing waiting"');
 
   // Collisions.
   const coll = model.buildTrayModel(summary(), { now: NOW });
-  ok(coll.notices.some((n) => n.kind === 'collision' && (n.full || n.text).includes('alpha · research')),
+  ok(coll.notices.some((n) => n.kind === 'collision' && n.text === 'Two tools are writing alpha / research'),
     'harnessShared produces a collision line naming the scope');
   ok(coll.notices.every((n) => !/rename|split|should/i.test(n.full || n.text)),
     'and it proposes NO remedy — the fix is the user\'s and does not fit in six words');
@@ -1644,20 +1644,26 @@ section('§16 every label fits the budget, and nothing it removed is unreachable
   // useful clipped at 34 characters — so the budget is met by clipping the
   // LABEL and carrying the sentence on the tooltip, and that pairing is the
   // thing worth guarding.
-  const longNotice = 'Two agent tools are writing projects · session-2026-08-30-a-long-one.';
+  // A COLLISION LINE clips the SCOPE'S TAIL, never the verb or the project.
+  const longScope = 'session-2026-08-30-a-deliberately-long-work-stream';
   const noticed = model.buildTrayModel({
     ok: true, scopes: [],
-    warnings: [{ code: 'harness-collision', message: longNotice, project: 'projects', scope: 'x' }],
+    warnings: [{ code: 'harness-collision', message: 'Two agent tools are writing projects / field-notes · ' + longScope + '.',
+      domain: 'projects', project: 'field-notes', scope: longScope, harnesses: ['claude-code', 'Antigravity'] }],
   }, { now: NOW });
-  const nItem = menu.flattenTrayMenu(menu.buildTrayMenuTemplate(noticed, NOOPS))
-    .find((i) => i.label && i.label.startsWith('Two agent tools'));
-  ok(nItem, 'CONTROL — the notice reached the menu');
+  let opened = null;
+  const nItem = menu.flattenTrayMenu(menu.buildTrayMenuTemplate(noticed, { ...NOOPS, onOpenScope: (r) => { opened = r.route; } }))
+    .find((i) => i.label && i.label.startsWith('Two tools are writing'));
+  ok(nItem, 'CONTROL — the notice reached the menu (an empty store still says its notices)');
   ok(nItem && nItem.label.length <= model.PLAIN_LABEL_CHARS,
-    `the notice label is inside the ${model.PLAIN_LABEL_CHARS}-character budget`);
-  ok(nItem && nItem.label.length < longNotice.length,
-    'CONTROL — it really was clipped, so the tooltip assertion below is not vacuous');
-  eq(nItem ? nItem.toolTip : null, longNotice,
-    '…and the WHOLE sentence is on its tooltip — the absolute rule that nothing a budget removed becomes unreachable');
+    `the notice label is inside the ${model.PLAIN_LABEL_CHARS}-character budget: "${nItem && nItem.label}"`);
+  ok(nItem && nItem.label.startsWith('Two tools are writing field-notes / a-del') && nItem.label.endsWith('…'),
+    '…and what was clipped is the SCOPE\'s tail: the verb and the project are whole');
+  ok(nItem && nItem.toolTip.includes(longScope) && nItem.toolTip.includes('Claude Code and Antigravity'),
+    '…with the WHOLE work-stream and both tools named on its tooltip');
+  ok(nItem && nItem.enabled === true && typeof nItem.click === 'function', 'a collision line is ENABLED — it names a project, so it can open it');
+  if (nItem && nItem.click) nItem.click();
+  eq(opened, 'projects/field-notes', '…and a click opens THAT project in Project Context');
   const shortNotice = model.buildTrayModel({
     ok: true, scopes: [], warnings: [{ code: 'x', message: 'short enough' }],
   }, { now: NOW });
@@ -2783,6 +2789,77 @@ section('§25 projects[].latest — the data package\'s shape, its fallbacks, an
   ok(lines[lines.length - 1] === '    Quit The Curator   ⌘Q' && lines.includes('    (Updated 14:26)'),
     'disabled items in parentheses; Quit last with its key');
   ok(!/undefined|null|\[object/.test(text), 'and nothing in the render is an unrendered value');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§26 ONE collision notice per work-stream — the maintainer\'s real menu, reproduced');
+//
+// His v3.72 menu, one scope written A-B-A-B by claude-code and antigravity:
+//   "Two harnesses are writing projects / fiel…"   (derived from harnessShared)
+//   "Two agent tools are writing projects / fi…"   (the producer's warning)
+// both greyed, both clipped before the scope, both below the domains. The
+// derived line was keyed WITHOUT its domain and the warning WITH it, so the
+// dedupe never matched. One line now, in the app's words, under the Active rows.
+{
+  const T = new Date('2026-09-25T14:27:00');
+  const at = (s) => new Date(T.getTime() - s * 1000).toISOString();
+  const collided = {
+    domain: 'projects', project: 'field-notes', projectLabel: 'projects / field-notes', projectsInDomain: 5,
+    scope: 's2-collision', machine: 'mbp-9f3c1a', harness: 'antigravity', writtenAt: at(300), ageSource: 'agent',
+    headline: 'second tool took over', isThisHost: true, harnessShared: true,
+    harnesses: ['claude-code', 'antigravity', 'Claude Code', 'antigravity'],
+  };
+  const summary = {
+    ok: true,
+    scopes: [collided,
+      { ...collided, project: 'lumina', projectLabel: 'projects / lumina', scope: 'main', harness: 'claude-code', harnessShared: false, writtenAt: at(9 * 86400), harnesses: [] }],
+    warnings: [{ code: 'harness-collision', message: 'Two agent tools are writing projects / field-notes · s2-collision.',
+      domain: 'projects', project: 'field-notes', projectLabel: 'projects / field-notes', scope: 's2-collision',
+      machine: 'mbp-9f3c1a', harnesses: ['claude-code', 'antigravity'] }],
+    domains: [{ domain: 'projects', index: 0, pageCount: 767 }],
+  };
+  const m = model.buildTrayModel(summary, { now: T });
+  const coll = m.notices.filter((n) => /writing/.test(n.full || n.text));
+  eq(coll.length, 1, 'ONE notice for the collided work-stream — the derived line and the producer\'s warning are the same fact');
+  eq(coll[0] && coll[0].text, 'Two tools are writing field-notes / s2-co…',
+    '…in the app\'s words; at the 42-character plain budget the SCOPE\'s tail is what gives, never the verb or the project');
+  ok(coll[0] && coll[0].full.includes('projects / field-notes / s2-collision'), '…with the whole work-stream on its tooltip');
+  ok(coll[0] && /Claude Code and Antigravity/.test(coll[0].full), '…and the two tools named, normalised, in its tooltip');
+  // Either source alone gives the same single line.
+  const derivedOnly = model.buildTrayModel({ ...summary, warnings: [] }, { now: T }).notices.filter((n) => n.kind === 'collision');
+  const suppliedOnly = model.buildTrayModel({ ...summary, scopes: summary.scopes.map((x) => ({ ...x, harnessShared: false })) }, { now: T })
+    .notices.filter((n) => n.kind === 'collision');
+  eq([derivedOnly.map((n) => n.text), suppliedOnly.map((n) => n.text)],
+    [['Two tools are writing field-notes / s2-co…'], ['Two tools are writing field-notes / s2-co…']],
+    'the row\'s own flag alone, or the producer\'s warning alone, draws the IDENTICAL line — so one source can supersede the other');
+  // A DIFFERENT domain's `field-notes · s2-collision` is a different fact.
+  const twoDomains = model.buildTrayModel({ ...summary, warnings: [{ ...summary.warnings[0], domain: 'articles' }] }, { now: T });
+  eq(twoDomains.notices.filter((n) => n.kind === 'collision').length, 2,
+    'CONTROL — the same project and scope in ANOTHER domain is a second notice, so the dedupe is on all three fields');
+
+  // The producer emits one warning per (scope, MACHINE) pair: the same
+  // collided work-stream seen from two machines is still ONE line.
+  const twoMachines = model.buildTrayModel({ ...summary, warnings: [summary.warnings[0], { ...summary.warnings[0], machine: 'studio-c40b17' }] }, { now: T });
+  eq(twoMachines.notices.filter((n) => n.kind === 'collision').length, 1,
+    'two warnings for one work-stream from two machines are ONE notice');
+  // A LONG project: the line may run past the budget rather than cut the
+  // project or the verb — only the scope's tail gives.
+  const longName = model.collisionLine('a-rather-long-project-name', 's2-collision');
+  ok(longName.startsWith('Two tools are writing a-rather-long-project-name / s2') && longName.endsWith('…'),
+    `a long project stays whole and the scope keeps its head: "${longName}"`);
+
+  // PLACEMENT: directly under the Active rows, above Idle and Knowledge; actionable.
+  let opened = null;
+  const t = menu.buildTrayMenuTemplate(m, { ...NOOPS, onOpenScope: (r) => { opened = r.route; } });
+  const ids = t.map((i) => i.id || i.type);
+  const ni = t.findIndex((i) => i.label === 'Two tools are writing field-notes / s2-co…');
+  const lastRow = Math.max(...m.active.rows.map((r) => ids.indexOf(r.id)));
+  ok(ni > lastRow && ni < ids.indexOf(menu.ID_IDLE) && ni < ids.indexOf(menu.ID_KNOWLEDGE),
+    'the notice sits under the Active rows — above the Idle fold and above Knowledge, not at the bottom');
+  eq(t.filter((i) => /writing/.test(i.label || '')).length, 1, 'and the menu draws it exactly once');
+  ok(t[ni].enabled === true && typeof t[ni].click === 'function', 'it is ENABLED (full contrast) and actionable');
+  t[ni].click();
+  eq(opened, 'projects/field-notes', '…opening that project in Project Context');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

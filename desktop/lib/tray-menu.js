@@ -32,13 +32,12 @@
  *                                   › the four actions + OTHER WORK-STREAMS
  *                                   (each › the same four actions)
  *   2b the overflow, when capped    "+2 more active projects" › the same rows
- *   3  the Idle fold                "Idle · 4 projects" / "field-notes 9 d ·
+ *   3  notices, only when true,     handoffs waiting on GitHub; a machine that
+ *      between separators           saved after this one; "Two tools are
+ *                                   writing ott / main" (ONE per work-stream,
+ *                                   enabled: opens the project); stale docs
+ *   4  the Idle fold                "Idle · 4 projects" / "field-notes 1 wk ·
  *                                   lumina 2 wk · +2 more" › one row per project
- *   -  separator
- *   4  notices, only when true      handoffs waiting on GitHub; a machine that
- *                                   saved after this one; a harness collision;
- *                                   stale documents on an active project
- *   -  separator
  *   5  "Knowledge · 6 domains"      › every domain's page bar, in its identity
  *                                   colour (design rule 5, unchanged)
  *   -  separator
@@ -398,6 +397,18 @@ export function buildTrayMenuTemplate(model, o = {}) {
         submenu: overflow.rows.map(primary),
       });
     }
+    // ── 3. Notices — only when true, DIRECTLY UNDER THE ACTIVE ROWS ───────
+    //
+    // They were below the domains, greyed and clipped, where the maintainer's
+    // own photograph showed a collision said twice and missed both times.
+    // They are about the work above them, so they sit under it, set off by a
+    // separator on each side. A notice that names a PROJECT (a collision)
+    // is ENABLED and opens that project in Project Context; the rest are
+    // statements and stay disabled.
+    if (notices.length) {
+      pushNotices();
+      if (idle && idle.rows.length) template.push(sep);
+    }
     if (idle && idle.rows.length) {
       const dot = image(makeIcon, idle.dot);
       const sub = idle.rows.map(primary);
@@ -421,18 +432,23 @@ export function buildTrayMenuTemplate(model, o = {}) {
       label: (m && m.ok === false) ? UNREADABLE_HINT : EMPTY_HINT,
       enabled: false,
     });
+    // A failed read's own reason is a notice, and an empty menu still says it.
+    if (notices.length) pushNotices();
   }
-
-  // ── 3. Notices — only when they have something to say ───────────────────
-  if (notices.length) {
+  function pushNotices() {
     template.push(sep);
     for (const n of notices) {
-      // NOTHING A BUDGET REMOVED BECOMES UNREACHABLE: a clipped notice carries
-      // its whole sentence on the tooltip; one that fits carries none.
-      const full = n.full && n.full !== n.text ? n.full : null;
-      template.push({ label: n.text, enabled: false, ...(full ? { toolTip: full } : {}) });
+      // NOTHING A BUDGET REMOVED BECOMES UNREACHABLE: a clipped notice
+      // carries its whole sentence on the tooltip; one that fits, none.
+      const full = n.full && n.full !== n.text ? { toolTip: n.full } : {};
+      if (n.kind === 'collision' && n.route) {
+        template.push({ id: 'tray-notice-' + n.route + ':' + n.scope, label: n.text, enabled: true,
+          click: () => onOpenScope(n), ...full });
+      } else {
+        template.push({ label: n.text, enabled: false, ...full });
+      }
     }
-    if (m.noticesHidden > 0) {
+    if (m && m.noticesHidden > 0) {
       template.push({ label: '…and ' + m.noticesHidden + ' more', enabled: false });
     }
   }

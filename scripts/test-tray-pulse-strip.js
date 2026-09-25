@@ -756,6 +756,15 @@ section('§8 the tools clause: ONE tool is NAMED, many are counted, none is sile
     `a name longer than ${strip.PULSE_TOOL_NAME_CHARS} characters falls back to "1 tool" — the clause stays bounded`);
   ok(/One agent tool wrote inside this window: Claude Code\./.test(strip.pulseToolTip(one)),
     'the tooltip says the same thing in a sentence');
+  // THE MAINTAINER'S REAL PULSE read `4 tools` for claude-code / Claude Code /
+  // Claude Code (desktop) / antigravity — two tools spelled four ways. The
+  // lanes are keyed by the normalised id, so where they exist they ARE the count.
+  const spelled = { ...base, harnessCount: 4, byHarness: { 'claude-code': lane('Claude Code', base.events - 3), antigravity: lane('Antigravity', 3) } };
+  ok(/ · 2 tools$/.test(strip.pulseLabel(spelled)),
+    `a raw harnessCount of 4 over two NORMALISED lanes reads "2 tools" (${strip.pulseLabel(spelled)})`);
+  ok(/^2 different agent tools/m.test(strip.pulseToolTip(spelled)), '…and so does the tooltip');
+  ok(/ · 4 tools$/.test(strip.pulseLabel({ ...base, harnessCount: 4 })),
+    'CONTROL — with no lanes the producer\'s own count is used, so the lane rule above is doing the work');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
