@@ -404,14 +404,14 @@ Every page is a plain markdown file on your disk, so you can equally open it in 
 ## How do I chat with my wiki?
 
 1. Click **Chat** in the rail.
-2. Pick a domain from the **DOMAINS** pills above the thread (renamed from SCOPE in v3.64.1). Chat talks to exactly one domain at a time.
+2. Pick a domain from the composer's **Domain** pill. Chat talks to exactly one domain at a time.
 3. Click **New chat**, or just start typing — a new conversation is created automatically.
 4. Type your question and press **Send**, or Command-Enter on a Mac, Control-Enter on Windows.
 5. The answer streams in as the model writes it. On some models you see the model thinking first.
 
-The DOMAINS bar carries the readout of how much is in scope, for example "3,421 pages in scope", beside the pills it describes. Since v3.64.1 the bar wraps rather than scrolling, so the **Compile to Wiki** button at its right can never be clipped off the edge. Switching a pill switches which conversations the sidebar lists and starts you on a fresh empty thread rather than dropping you into an old one. A turn still in flight when you switch away keeps running, and its answer is still there when you come back.
+**Since v3.72.0** the conversation list beside the rail spans every domain at once, not just the one you are in — each row carries its own domain's colour dot, and, when the last answer recorded one, a small hollow grey square plus the project's name. Rows group by when they were last used: Today, Yesterday, Previous 7 days, Earlier, with a live ticking age; a conversation from before v3.72.0 has no recorded last-use time and reads "started … ago" instead, so it is never mistaken for something you just used. A domain filter narrows the list to one domain. Above the thread, a page header carries the conversation's title, an ⓘ, the **Compile** button, and a line of live facts: domain and its dot, page count, questions and answers on screen, the pinned project if the last answer recorded one, and how long ago the conversation started. Picking the **Domain** pill's other option does not move the current conversation — a conversation lives in one domain's folder, so a different pick starts a fresh conversation there. A turn still in flight when you switch away keeps running, and its answer is still there when you come back.
 
-The AI answers only from your wiki. If you have not ingested anything on a topic it says so rather than inventing an answer. Answers render with real formatting — headings, bold, lists, code — and citations appear as chips under the answer, each named for the page, for example **Dr Tali Rezun**, beside a coloured dot saying whether it is an entity, a concept or a summary. Click a chip to open the page in the reader. The `[source: …]` marks inside the answer text still show the file path.
+The AI answers only from your wiki. If you have not ingested anything on a topic it says so rather than inventing an answer. Answers render with real formatting — headings, bold, block quotes, a rule, one level of nested lists — and citations appear as **numbered inline markers** (¹ ² …), assigned in order of first appearance, with one **Sources · N pages** list under the whole answer: one chip per page, numbered to match, coloured by page type — entity, concept or summary, never by domain, since every source in one answer already shares the conversation's domain — and named for the page's own title, for example **Dr Tali Rezun**. Click a marker or a chip to open that page in the reader. No raw file path appears on the answer face; it lives in the reader's header once opened.
 
 Chat adapts its shape to your question without you doing anything: a decision question gets a direct recommendation up front, a list or count question gets a focused de-duplicated list, and everything else gets a synthesised answer.
 
@@ -421,7 +421,7 @@ A shortcut worth knowing: in **Domains**, the **Ask this domain** button drops y
 
 ## How do I change the chat model and answer length?
 
-Both controls sit along the bottom edge of the message box, to the left of **Send**, and both open upward. Both choices are remembered in your browser across conversations and restarts until you change them.
+The message box's controls sit along its bottom edge, to the left of **Send**, four pills: **Domain**, **Project**, **Length**, **Model**. Length and Model both open upward, and both choices are remembered in your browser across conversations and restarts until you change them. Domain and Project are picked per conversation and per question respectively — see [How do I chat with my wiki?](#how-do-i-chat-with-my-wiki) above.
 
 | Control | What it does |
 |---|---|
@@ -442,24 +442,24 @@ Type in the **Filter conversations** box beside the rail. It reads the messages,
 
 If you type a question into that box by mistake, the app hands it back. When what you typed matches no conversation and looks like something asked rather than looked up — four words or more, or ending in a question mark — the empty result offers **Ask this in a new chat**. Click it or press Enter and your text moves into the composer of a fresh chat, focused with the caret at the end. It is not sent for you.
 
-To delete: hover a conversation and click the trash button, or tick several and use the bar that appears above the list. Deletions are confirmed first and run one at a time; if any fail you are told which, and those stay ticked so you can retry.
+To delete: since v3.72.0, every row shows a neutral trash icon, always visible — the same one row-action rule used across the whole app now — click it and confirm. To delete several: press **Select** in the list head, tick the ones you want (or **Select all**), and use the bar that appears, reading "N selected · Delete N · Done". Deletions are confirmed first and run one at a time; if any fail you are told which, and those stay ticked so you can retry.
 
 ## What does Compile to Wiki do, and what does it cost?
 
 A chat is a good place to think out loud, but the conversation is not part of your wiki. **Compile to Wiki** turns a conversation into permanent wiki pages. Use it after a focused brainstorm, a research thread, a meeting note or a decision you talked through.
 
-The button sits on the right of the DOMAINS bar as soon as you have asked one question, with its own caption: *"Saves this conversation (4 messages) as wiki pages"*, counting the messages in the thread. That caption names the input, never the output, and says nothing about cost.
+The **Compile** button sits in the page header, beside the conversation's title, as soon as you have asked one question. The header's facts line, underneath the title, names how many questions and answers are on screen — the input Compile is about to save — and says nothing about cost.
 
 1. Click **Compile to Wiki**. The button reads **Checking cost…** for a moment.
 2. A dialog opens naming the estimated cost and where the pages will land. Nothing has been spent yet. The estimate itself is free: it makes no AI call and no network request, and only reads the conversation, the domain schema and the list of pages you already have.
 3. Click **Compile**. Now the paid work starts; a progress bar shows each step.
 4. After 15 to 45 seconds a result card appears inline in the conversation: how many pages were created and how many updated, with byte sizes and per-section bullet deltas. Unchanged pages are hidden behind **Show unchanged**.
 
-The cost is shown as a range because half of it is knowable and half is not. The input — the prompt sent to the AI — is measured character by character and is exact. The output — how many pages the AI decides to write — cannot be known in advance; three runs on identical input produced 19, 18 and 18 pages. The range is deliberately generous on the high side, and across eleven measured compiles every actual bill landed inside it.
+The cost is shown as a range because half of it is knowable and half is not. The input — the prompt sent to the AI — is measured character by character, and that character count is exact; the input **token** count derived from it is an estimate (±15%), not counted by a real tokenizer. The output — how many pages the AI decides to write — cannot be known in advance; three runs on identical input produced 19, 18 and 18 pages. The range is deliberately generous on the high side, and across eleven measured compiles every actual bill landed inside it.
 
 The number that surprises people here too: it is your wiki's size, not your chat's length. The same four-turn conversation measured 5,740 prompt characters on a fresh domain and 12,431 on one holding 180 pages. A long conversation on a small domain is often cheaper than a short one on a large domain.
 
-The dialog never renders an unknown cost as $0.00. It says one of four things: a normal range; that the model is genuinely free; that no published price is on file so the cost cannot be shown in dollars while your provider will still bill you; or that no AI provider is configured.
+The dialog never renders an unknown cost as $0.00. It says one of four things: a normal range; that the model is genuinely free; that no published price is on file so the cost cannot be shown in dollars while your provider will still bill you; or that no AI provider is configured. **Since v3.72.0**, when a fallback model exists, the dialog also names it and its price before you confirm — "If gemini-2.5-flash-lite is unavailable, The Curator may fall back to gemini-2.5-flash, priced $0.30 / $2.50 per 1M input / output tokens" — never a silent substitution after the spend.
 
 **Since version 3.67.0** the dialog leads with the same "Runs on …" line every AI action shows, and — Compile always runs on your one AI model (Settings → Providers & keys), never the model this particular chat happens to be on — a second line appears whenever those two differ, saying so plainly. The result card, after the compile, adds a "Ran on … · $…" line with what it actually cost, even when a compile that already called the model then failed.
 

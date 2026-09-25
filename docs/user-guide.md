@@ -1463,7 +1463,7 @@ If you used The Curator before this release, this is the whole map:
 
 | The old tab | Where it is now |
 |---|---|
-| **Chat** | **Chat** in the rail, first. Picking a domain is now the **DOMAINS** pill row above the thread (eyebrow SCOPE → DOMAINS, v3.64.1), not a dropdown. It is no longer the screen the app opens on — see [Which screen you land on](#which-screen-you-land-on). |
+| **Chat** | **Chat** in the rail, first. Picking a domain is the composer's **Domain** pill (v3.72.0; was a **DOMAINS** pill row above the thread, v3.64.1 → v3.71.x), not a dropdown, and the conversation list now spans every domain at once rather than one domain at a time — see [The chat interface](#the-chat-interface). It is no longer the screen the app opens on — see [Which screen you land on](#which-screen-you-land-on). |
 | **Ingest** | Gone as a rail destination since v3.64.0. It is the **Ingest** section of each domain's page in **Domains** — the same panel, on the page that names where the file will land. The full-page view is still there, one press from the section. |
 | **Wiki** | Gone as a destination. Open pages from the **Pages** list, the third section on any domain's page in **Domains** (under OVERVIEW), or by clicking a citation in chat. |
 | **Health** | Gone as a destination. It's the **Wiki health** panel inside each domain in **Domains**. |
@@ -3069,14 +3069,15 @@ After ingesting a few sources, you can have a full multi-turn conversation with 
 
 ### Pin a project, and the answer reads its context too
 
-The bar above a chat holds two selectors on the left and **Compile to Wiki** pushed to its far
-right. On the left, one chip per knowledge
-base — press one to change what this conversation can see. Beside them, under **PROJECT**,
-a chip that wears the same face as a domain chip — only its chevron says it opens a list, since
-v3.65.0. Open it and pick a project; the answer also draws on its **brief**, its **latest
-handoff** and the canonical documents marked **read first** — on top of the domain's wiki, never
-instead of it. A slice of the project's journal and any other foundation that matches your question
-come in as well, the same way the bootstrap an agent gets chooses them.
+**Since v3.72.0, the domain and project choices live on the composer, not a bar above the thread**
+(the redesign is covered in full in [The chat interface](#the-chat-interface) below). The
+composer's pills read left to right: **Domain**, **Project**, **Length**, **Model**. The Domain
+pill picks which knowledge base this conversation can see; the **Project** pill sits beside it,
+wearing the same pill face with a hollow grey mark instead of a coloured dot — open it and pick a
+project, and the answer also draws on its **brief**, its **latest handoff** and the canonical
+documents marked **read first** — on top of the domain's wiki, never instead of it. A slice of the
+project's journal and any other foundation that matches your question come in as well, the same
+way the bootstrap an agent gets chooses them.
 
 **The readout lives in the picker now, not under the composer.** Open the list and its footer says
 what was actually used: the pinned project's own reading, its freshness, and how much of it the
@@ -3086,12 +3087,12 @@ Closing the picker hides the figure; nothing is lost, because every project row 
 own age as its own detail — the one control that used to sit on the bar permanently now shows all
 of them, one press away.
 
-**Which wikis the pinned project's own knowledge lives in is disclosed, never selected.** The chips
-naming those domains get a dashed outline — a note, not a switch. A conversation still reads one
-domain, the chip that is filled, and that never moves because you pinned a project: widening it
-would unpin the project, since a project belongs to the domain it lives in. The picker's footer says
-how many domains they are, whether you chose them in Project context or it is just the project's own
-domain, and names any of them missing from this computer.
+**Which wikis the pinned project's own knowledge lives in is disclosed, never selected.** A
+conversation still reads exactly one domain — the Domain pill's own choice — and pinning a project
+never widens it: widening it would unpin the project, since a project belongs to the domain it
+lives in. The Project picker's footer says how many other domains the project's own knowledge
+spans, whether you chose them in Project context or it is just the project's own domain, and names
+any of them missing from this computer.
 
 Three things are worth knowing before you rely on it.
 
@@ -3119,10 +3120,27 @@ plainly before it starts answering, rather than quietly answering from the wiki 
 
 ### The composer — Length and Model selectors
 
-The message box has its controls tucked along its own bottom edge, to the left of the **Send** button:
+**Since v3.72.0 the composer also carries Domain and Project pills**, described just above in
+[Pin a project](#pin-a-project-and-the-answer-reads-its-context-too) — this section covers the
+Length and Model pills that sit beside them.
 
+The message box has its controls tucked along its own bottom edge, to the left of the **Send**
+button, four pills in a row:
+
+- **Domain** — which knowledge base this conversation can see. **Fixed once a conversation has a
+  message in it** (v3.72.0): a conversation lives in one domain's folder, so the pill draws with a
+  dashed outline and its menu foot reads *"This conversation is in Articles. Another domain starts
+  a new chat there."* Picking a different domain from that menu does not move the current
+  conversation — it starts a fresh one, in the domain you picked. On a brand-new, empty
+  conversation the pill is a normal choice.
+- **Project** (described above, [Pin a project](#pin-a-project-and-the-answer-reads-its-context-too))
+  — the hollow grey mark, never a coloured dot, and its name in words. Picked **per question**: you
+  can pin, change or clear it between messages in the same conversation.
 - **Length** (always shown) — Concise · Balanced · Detailed, described below.
-- **Model** — pick the exact model that answers your chat messages. Each row shows its id, its price per 1M tokens as billed today, and one plain line: any warning reason first, then how fast it answered when measured. With no key saved there is nothing to choose and the picker is hidden. Full explanation of the markers: [§16b](#16b-choosing-your-ai-model).
+- **Model** — pick the exact model that answers your chat messages, per question. Each row shows
+  its id, its price per 1M tokens as billed today, and one plain line: any warning reason first,
+  then how fast it answered when measured. With no key saved there is nothing to choose and the
+  picker is hidden. Full explanation of the markers: [§16b](#16b-choosing-your-ai-model).
 - There is **no attach button** — you can't ingest a file from the chat box. Use the **Ingest** section of the domain's page in **Domains**.
 - Alongside them, a short note reminds you that what a message costs depends on how long the answer runs.
 
@@ -3170,11 +3188,32 @@ Your choice sticks between questions and across restarts (it's remembered in you
 
 Answers render with proper formatting — headings, **bold**, bullet lists, and code are shown styled rather than as raw Markdown, and citations appear as tidy chips under the answer.
 
-**Chips name the page, not the file (v3.46.0+).** A chip used to read `entities/tali-rezun.md`; it now reads **Dr Tali Rezun** — the page's own title, taken from its first `# Heading` (or an explicit `title:` in its frontmatter), beside the coloured dot that says whether it is an entity, a concept or a summary. Hover a chip to see the file path it opens, and click it to open the page in the reader. Three things worth knowing:
+**Citations are numbered inline markers, plus one Sources list under the answer (v3.72.0).** Where
+an answer draws on a page, you now see a small superscript-style marker like **¹** right in the
+text, in the order sources first appear — a repeated source reuses its number rather than getting
+a second one. Under the whole answer sits one **Sources · N pages** block, one page chip per
+source, numbered to match. Click either the inline marker or the Sources chip to open that page in
+the reader — both point at the same place.
 
-- A page with **no heading** is named from its filename, tidied up (`water-footprint.md` → *Water Footprint*) — the same label chips have always shown.
-- **Answers you asked before upgrading keep their old labels.** The titles are stored with the answer, and nothing rewrites conversations you already have; ask the question again and the new answer's chips are named.
-- The `[source: …]` marks **inside the answer text** still show the path. They are the model's own inline references, and they are unchanged.
+- **Chips are coloured by page type, not by domain.** Every source in one answer already comes
+  from the same domain — the conversation's own — so colouring by domain there would just be one
+  colour repeated on every chip. Instead the small dot on each chip says whether the page is an
+  **entity**, a **concept** or a **summary**, the same three-colour mapping the wiki graph uses
+  everywhere else, and the label is the page's own title (`entities/tali-rezun.md` reads **Dr Tali
+  Rezun**, taken from its first `# Heading` or an explicit `title:` in its frontmatter).
+- **No raw file path ever appears on the answer face.** The path lives in the reader's header once
+  you open a page, and — for someone using a screen reader — in a chip's hidden accessible name
+  ("Source 3: concepts/rag.md"); nowhere else.
+- A page with **no heading** is named from its filename, tidied up (`water-footprint.md` → *Water
+  Footprint*) — the same label chips have always shown.
+- **Answers you asked before upgrading keep their old labels.** The titles are stored with the
+  answer, and nothing rewrites conversations you already have; ask the question again and the new
+  answer's chips are named.
+
+Answers can also include **block quotes** (a left rule, with a trailing "— Name" line styled as an
+attribution), a horizontal **rule** (`---`) to separate sections, up to four **heading** levels, and
+one level of nested **lists** — all rendered the same escape-first way as the rest of the answer, so
+nothing pasted into a question or produced by a model can inject a link or a script.
 
 The chat adapts its answer shape to your question: a **decision** question ("which of these should I write — recommend one") gets a direct recommendation up front with a few supporting citations; a **list** question ("list all articles by X", "how many sources do I have?") gets a focused, de-duplicated list; everything else gets a synthesised answer. You don't need to do anything to trigger this — just phrase the question naturally. If you ever want the exhaustive list behind a focused answer, ask a follow-up like "now list every related page".
 
@@ -3182,26 +3221,69 @@ The chat adapts its answer shape to your question: a **decision** question ("whi
 
 ### The chat interface
 
-Chat is the first item in the rail. (It is no longer the screen a fresh install opens on — that is **Domains**; after your first visit the app returns you to whichever view you left. See [Which screen you land on](#which-screen-you-land-on).) It has three parts:
+Chat is the first item in the rail. (It is no longer the screen a fresh install opens on — that is **Domains**; after your first visit the app returns you to whichever view you left. See [Which screen you land on](#which-screen-you-land-on).) **Rebuilt in v3.72.0** around one idea: a conversation belongs to a domain, but *finding* one shouldn't require remembering which domain you asked it in. It has three parts.
 
-- **The panel beside the rail** — a **New chat** button, a **Filter conversations** box that reads the *contents* of your conversations rather than only their titles, a **Select all** tick, and this domain's history grouped into **TODAY** and **EARLIER**. Click any conversation to reopen it. Hover one for a **trash** button, or tick several and delete them together.
-- **A DOMAINS bar across the top of the thread** *(eyebrow SCOPE → DOMAINS in v3.64.1; a scope is a work-stream, not a domain)* — one pill per domain. **Chat talks to exactly one domain at a time**; click a pill to switch. The readout of how much is in scope, e.g. *"3,421 pages in scope"*, sits with those pills, because that is what it describes. Over on the right, once a conversation has a question in it, sits the **Compile to Wiki** button with its own caption: *"Saves this conversation — 2 questions and 2 answers — as wiki pages"*. The caption counts the bubbles in front of you and updates with every turn, so it and the *"N messages"* on the sidebar row are always two readings of the same thread. **Since v3.64.1 the bar wraps instead of scrolling**, so Compile can never be clipped off the edge — it used to be, on a normal-width window, hidden 26 px past the bar's visible edge behind a scrollbar nothing on screen showed — and the ⓘ mark beside a pinned project (below) opens **in flow**, as a second row under the bar, rather than floating over an unrelated part of the screen.
-- **The thread and the composer** below it.
+#### One conversation list, across every domain
 
-An empty thread opens with *"Ask &lt;domain&gt; anything"*, that domain's page count, and a reminder that answers cite the specific pages they draw from — click a citation chip (named for the page, since v3.46.0) to open it.
+The panel beside the rail is no longer one domain's history — it is **every conversation in every domain**, in one list, newest last-used first:
+
+- **Every row carries its domain's own coloured dot** (the same one The Curator uses for that domain everywhere else — the sidebar, the Ingest destination, the Context breadcrumb) so you can tell at a glance which knowledge base a conversation belongs to without opening it.
+- **A conversation that was last answered with a project pinned also carries a small hollow grey square, followed by the project's name in words** — a deliberately different mark from the domain dot (round, coloured) so it can never read as a second domain. It appears only when the **last turn** recorded a project; an older conversation, or one where no project was pinned, shows nothing.
+- **A domain filter** above the list narrows it to one domain, if you want that.
+- **Rows are grouped by when they were last used** — **Today**, **Yesterday**, **Previous 7 days**, **Earlier** — with a live, ticking age (*"12 min ago"*) rather than a static timestamp. A conversation from before v3.72.0 has no recorded last-use time, so it reads *"started 3 weeks ago"* from when it was created — worded that way deliberately, so it is never mistaken for something you just used.
+- **The count in the list head is the true total** across every domain, and if there are more conversations than fit on screen, a line at the bottom says *"Showing the newest N of M."*
+- **Deleting one conversation** uses the same neutral trash icon every list-with-a-delete-action in The Curator now uses ([one row-action rule, app-wide](#the-one-row-action-rule)) — always visible, never red until you confirm. **Deleting several at once** is a mode: press **Select**, tick the ones you want (or **Select all**), and a bar reads *"N selected · Delete N · Done"*. The per-row trash icons hide while you're in Select mode, so there is never a checkbox and a trash icon competing for the same row.
+
+Click any row to reopen that conversation — it opens in **its own domain**, switching the Domain
+pill for you if you were looking at a different one.
+
+<a id="the-one-row-action-rule"></a>
+> **The one row-action rule.** Since v3.72.0, every list in The Curator that lets you remove a row
+> — this one, the documents list in Context, the Ingest queue — uses the same neutral, always-visible
+> trash icon, with the red, committed "Delete" only ever appearing on the confirmation itself. A red
+> icon sitting on thirty rows at rest was noise; a hover-only icon was undiscoverable on a phone or
+> tablet. One idiom, enforced by a test, replaces both.
+
+#### The page header — title, ⓘ, Compile, and the facts
+
+Above the thread sits a page header, the same shape every view in The Curator uses: an eyebrow, the
+conversation's title (or *"New chat"*), an ⓘ that explains the view without ever pushing the thread
+down when you open it, and — once a conversation has a question in it — the **Compile** button. A
+line of facts runs underneath the title, every one of them live: **● Articles · 3,428 pages · 3
+questions · 3 answers · ▢ curator · started 12 min ago** — the domain and its dot, the domain's page
+count, how many questions and answers are on screen (the same two numbers Compile is about to
+save), the pinned project if the last answer recorded one, and how long ago the conversation
+started.
+
+#### The composer — Domain, Project, Length, Model
+
+The composer's four pills are covered in full in [The composer — Domain, Project, Length and
+Model](#the-composer--domain-project-length-and-model) above. The short version: **Domain is fixed
+once a conversation exists** — a conversation lives in one domain's folder, so picking a different
+domain from that pill starts a *new* conversation there rather than moving this one; **Project and
+Model are picked per question**, so you can change either between messages in the same thread.
+
+#### Compile, and what it costs
+
+**Compile to Wiki** saves the thread on screen — *this* conversation's questions and answers — as
+wiki pages. Before it spends anything, the confirmation names what will run and, when a fallback is
+possible, what happens if your chosen model is unavailable at the moment: *"If gemini-2.5-flash-lite
+is unavailable, The Curator may fall back to gemini-2.5-flash, priced $0.30 / $2.50 per 1M input /
+output tokens."* — naming both the model it would fall back to and its price, before you confirm,
+never a silent substitution after the fact.
+
+An empty thread opens with *"Ask &lt;domain&gt; anything"*, that domain's page count, and a reminder that answers cite the specific pages they draw from — click a citation to open it.
 
 ![The Chat view. A left panel headed "Chat" holds a "New chat" button, a "Filter conversations" box with a magnifier inside it, a "Select all" checkbox, and a list of past conversations under the heading EARLIER, each with a checkbox and a message count. Across the top of the main column runs a SCOPE row of coloured domain pills — Articles selected, then Business, Lectures, Posts, Projects, Research — followed by the readout "3,421 pages in scope" and then a "Compile to Wiki" button. Below it a user question sits in a bubble on the right, asking for a table of the last ten articles with a row describing their similarities. The answer beneath it is labelled "THE CURATOR · MiniMax M3 (free) · free" and opens "Here's a synthesis of your recent work based on what's loaded in your wiki." It then renders a Markdown table headed "Your Last 10 Articles (synthesized)" with columns #, Article, Date, Summary and Domain Interest; each Article cell names a title and its source page in monospace, such as "summaries/from-writing-code-to-directing-intelligence.md". At the bottom the composer reads "Ask Articles…" with a model dropdown showing "MiniMax M3 (free)", a length dropdown reading "Balanced", the note "cost varies with response length", and a send button.](images/curator-chat.png)
 
-*The readout and the button in their v3.49.0 positions: **"3,421 pages in scope"** sits with the domain pills, and **Compile to Wiki** stands apart from it. The shot predates v3.64.0's **PROJECT** group, which now sits in the same bar, and v3.64.1's rename of the bar's eyebrow from SCOPE to DOMAINS — see [Pin a project](#9-chat-with-your-brain).*
-
-> **Why they are arranged that way.** The page count used to sit immediately *after* the **Compile to Wiki** button, and read together, *"Compile to Wiki · 3,416 pages in scope"* looked like a warning that compiling would touch 3,416 pages — which put at least one experienced user off pressing the button altogether. The number was always the *scope's* — how much wiki the conversation can see — and never the compile's, so the readout now sits with the DOMAINS pills it belongs to and the button carries its own caption saying what it actually does: it saves *this conversation*, whose questions and answers the caption counts, as wiki pages. (In the shot above the window edge clips that caption.) The caption used to say *"N messages"* and, worse, was painted once and never repainted — so after a few turns it could read *"(2 messages)"* beside a sidebar row saying *"6 messages"* for the same thread. Both numbers had always meant the same thing; only one of them was keeping up. What it will **cost** is still the confirmation dialog's job, not the toolbar's.
-
-> Conversations belong to a domain. Switching the DOMAINS pill switches which set of conversations the sidebar lists — and **starts you on a fresh, empty thread** rather than dropping you into that domain's most recent conversation. Switching scope is something you do because you want to ask something new; landing mid-conversation in an old thread read as though the switch hadn't worked.
+*This shot predates the v3.72.0 rewrite above — the sidebar shown here is one domain's list under
+TODAY/EARLIER, and the top bar is the retired SCOPE/DOMAINS row. The composer, the citation
+handling and the conversation list all changed shape in v3.72.0; a fresh screenshot is pending.*
 
 ### Starting a conversation
 
 1. Click **Chat** in the rail
-2. Pick a domain from the **DOMAINS** pills above the thread
+2. Pick a domain from the composer's **Domain** pill
 3. Click **New chat** (or just start typing — a new conversation is created automatically)
 4. Type your question in the box at the bottom
 5. Press **Send** or use `Cmd + Enter` (Mac) / `Ctrl + Enter` (Windows)
@@ -3372,12 +3454,12 @@ If what you want is context that genuinely survives across sessions and machines
 
 ### Managing conversations
 
-- **Revisit** — click any conversation in the panel beside the rail to reopen it in full
-- **Find one** — type in the **Filter conversations** box beside the rail. **The filter reads the messages, not just the titles.** A conversation's title is only its opening question, trimmed — so searching used to find a thread by how it *started* and never by what it turned into. Now the server searches every message in every conversation of that domain, and a conversation found by its contents rather than its title says so on the row. Filtering is debounced as you type and repaints only the list, so the thread you are reading and your place in the composer are undisturbed. Press **Escape** to clear the filter and get the whole list back; the conversation you have open stays open.
+- **Revisit** — click any conversation in the panel beside the rail to reopen it in full, in its own domain.
+- **Find one** — type in the **Filter conversations** box beside the rail. **The filter reads the messages, not just the titles.** A conversation's title is only its opening question, trimmed — so searching used to find a thread by how it *started* and never by what it turned into. The server searches every message in every conversation across every domain the list covers (narrow it first with the domain filter if you only want one), and a conversation found by its contents rather than its title says so on the row. Filtering is debounced as you type and repaints only the list, so the thread you are reading and your place in the composer are undisturbed. Press **Escape** to clear the filter and get the whole list back; the conversation you have open stays open.
 
 > **If you type a question in there by mistake, the app hands it back (v3.49.0).** This box used to be labelled *"Search conversations…"* and sat directly under **New chat**, looking for all the world like the place you type. One experienced user asked it three questions — once during a live demo — and waited for an answer. It is now labelled as the filter it is, in a recessed field with the magnifier inside it, so it reads less like somewhere to write. And for the times a question still lands in it: when what you typed matches no conversation **and** looks like something asked rather than something looked up — four words or more, or ending in a question mark — the empty result offers **Ask this in a new chat**. Click it, or press **Enter**, and your text moves out of the filter and into the composer of a fresh chat, focused with the caret at the end, exactly where you meant to type it. It is not sent for you; you press Send when you are ready.
-- **Delete one** — hover a conversation and click the trash button that appears
-- **Delete several** — tick the checkbox on each conversation you want gone, then use the bar that appears above the list (it also offers select-all and a way to clear the selection). Deletions are confirmed first and run one at a time; if any fail, you are told which, and those stay ticked so you can retry them. Your ticks survive the list refreshing.
+- **Delete one** — every row shows a neutral trash icon, always visible, never hidden behind a hover (v3.72.0, [the one row-action rule](#the-one-row-action-rule)). Click it and confirm.
+- **Delete several** — press **Select** in the list head to turn on Select mode: a checkbox appears on each row (the per-row trash icons hide while you're in this mode) and a bar reads **Select all · N selected · Delete N · Done**. Deletions are confirmed first and run one at a time; if any fail, you are told which, and those stay ticked so you can retry them. Your ticks survive the list refreshing. Press **Done** to leave Select mode.
 
 > **One wrinkle worth knowing.** The message count on a conversation updates as soon as you send, without a round trip. If you have a search active at that moment, the just-sent message is not re-tested against it until your next keystroke or navigation — so a thread will not leap into the results the instant it becomes a match.
 
@@ -3399,7 +3481,7 @@ A chat is a great place to think out loud, but the conversation itself is not pa
 
 **How it works**
 
-1. Have a conversation in **Chat**. The **Compile to Wiki** button appears on the right of the **DOMAINS** bar above the thread as soon as you've asked one question — so even a single sharp question worth keeping can be compiled (v3.0.1-beta.15; previously it needed two messages). Beside it, from v3.49.0, is the sentence that says what it will act on: *"Saves this conversation (4 messages) as wiki pages"*, counting the messages actually in the thread. That caption names the **input**, never the output, and it says nothing about cost — how many wiki pages the AI decides to write cannot be known before the call, and what the compile will cost is the confirmation dialog's sentence, one click later.
+1. Have a conversation in **Chat**. The **Compile** button appears in the page header, beside the conversation's title, as soon as you've asked one question — so even a single sharp question worth keeping can be compiled (v3.0.1-beta.15; previously it needed two messages; the button moved from a bar above the thread into the header in v3.72.0). The header's facts line, underneath the title, names what it will act on — how many questions and answers are on screen — so the caption and the button never disagree about what a compile will save. It says nothing about cost — how many wiki pages the AI decides to write cannot be known before the call, and what the compile will cost is the confirmation dialog's sentence, one click later.
 2. Click **Compile to Wiki**. The button reads **Checking cost…** for a moment, then a dialog opens telling you what this compile is estimated to cost and where the pages will land. **Nothing has been spent yet.** See *"What it costs, before it costs it"* below.
 3. Click **Compile** in the dialog. *Now* the paid work starts, and a progress bar shows what's happening — loading the conversation, asking the AI to extract durable knowledge, writing pages, syncing entity backlinks, updating the index.
 4. After 15–45 seconds a **result card appears inline in the conversation**, right below the last message: how many pages were **created** (✨) and how many were **updated** (✏️), with byte sizes and per-section bullet deltas. Unchanged pages are hidden by default — click *"Show unchanged"* if you want to see them. The card is part of the thread, so it scrolls with the conversation and you can keep chatting underneath it at full size (before v3.0.14 the result opened in a fixed panel above the input box that permanently squeezed the chat area — that's fixed). The card scrolls into view at its top, so the title and the ✨/✏️ counts are always what you see first. Compile again and you get a second card; the cards clear when you switch conversations or start a new chat. If you switch conversations *while* a compile is running, the pages are still written — you just won't see the card, since it belongs to the other conversation.
@@ -3427,7 +3509,7 @@ flowchart TD
 
 | Half of the cost | Known before the call? | Why |
 |---|---|---|
-| **Input** — the prompt sent to the AI | **Yes, exactly.** | The estimator builds the *real* prompt and measures it character by character. Three identical test runs produced the same input token count every time, to the token. |
+| **Input** — the prompt sent to the AI | **The characters are exact; the input token count is estimated (±15%), not counted.** | The estimator builds the *real* prompt and measures its length character by character — that measurement is exact. No provider tokenizer is run, so the token figure derived from it carries the same estimate band as ingest's own token estimate, not the certainty of the character count underneath it. |
 | **Output** — the pages the AI writes back | **No.** | How many pages the AI decides to write cannot be known in advance. Three runs on byte-identical input produced 19, 18 and 18 pages — about ±11%. And if the first attempt overruns its output limit, The Curator retries (see *Compiling a very large conversation* below), which costs more. |
 
 The range is deliberately generous on the high side. Across eleven real measured compiles, every actual bill landed **inside** the quoted range — and typically in its lower fifth. Over-quoting is the safe way to be wrong about money.
@@ -3444,6 +3526,8 @@ The range is deliberately generous on the high side. Across eleven real measured
 | *"No AI provider is configured…"* | No API key. There's nothing to compile with — add a key in **Settings → Providers & keys** first. |
 
 An unknown cost is always said out loud. The dialog will never render an unpriced or unknown compile as **$0.00**.
+
+**If your chosen model is unavailable when the compile actually runs, the dialog says so before you confirm, not after (v3.72.0).** When a fallback rung exists, the dialog's message gains a sentence naming it: *"If gemini-2.5-flash-lite is unavailable, The Curator may fall back to gemini-2.5-flash, priced $0.30 / $2.50 per 1M input / output tokens."* A model with no further rung, or one that is itself free, names none — the chain only ever moves forward to a newer rung, never sideways or back to something cheaper.
 
 **Two more things worth knowing:**
 
@@ -6157,7 +6241,9 @@ Beside the model name on each answer, you'll often see a small cost figure too �
 
 **Why one model can cost so much more than another for the same question:** mostly the per-token price, which really is dramatically different across the models on offer — see [Cost, honestly](#cost-honestly) below for the full picture. Two real measurements from the same conversation make it concrete: the cheapest Gemini model answered for about $0.0001 (494 input / 98 output tokens); Opus 5 answered the same question for about $0.01 (998 input / 247 output tokens) — roughly **126 times more**. Opus also wrote a longer answer here, but token-for-token the price difference alone would still have made it dozens of times more expensive.
 
-**One thing worth knowing:** the figure is always priced at *today's* rate, not the rate on the day the answer was given. A couple of the Gemini models on offer are running a temporary discount with a stated end date ([The two promotional prices](#the-two-promotional-prices)); reopen an old answer from one of them after that date and it will show the *higher*, standing price — even though it cost less at the time. That's deliberate: when this app can't be exact about a cost, it always rounds toward the number that costs you nothing to have over-believed, never the other way.
+**Since v3.72.0, the figure is what the answer actually cost, not today's rate — for any answer given from that release on.** Each answer's price is recorded and fixed the moment it is written: hover it and the disclosure reads *"Priced when answered 3 days ago: $0.10 in / $0.40 out per 1M tokens"*, and that stays true no matter how the catalogue's prices move afterward. A couple of the Gemini models on offer run a temporary discount with a stated end date ([The two promotional prices](#the-two-promotional-prices)); reopen a v3.72.0-or-later answer from one of them after the discount ends and it still shows what it actually cost at the time, not the higher standing price.
+
+**Older answers — written before an answer's price was recorded — still show today's rate, and say so.** The figure there carries a visible *"at today's price"* qualifier, because that is the only rate The Curator can still tell you: nothing rewrites the message to invent a price it never recorded, and nothing pretends today's rate is what you were actually billed. A free model's answer always just reads **free** — recorded or not, there is no rate to disclose.
 
 ### Picking, pinning, and following the default
 

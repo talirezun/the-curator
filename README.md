@@ -518,8 +518,8 @@ They don't compete and they need no sync or export between them — all three re
 → [User Guide § 13](docs/user-guide.md#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp)
 
 <p align="center">
-  <img src="docs/images/curator-chat.png" alt="The Curator's Chat view: a row of scope pills for the Articles, Business, Lectures, Posts, Projects and Research domains with &quot;3,421 pages in scope&quot; and a Compile to Wiki button; a typed question asking for a table of the last 10 articles; and the streamed answer, labelled THE CURATOR · MiniMax M3 (free) · free, rendering a Markdown table of articles with dates, one-sentence summaries and the source page each came from" width="800"><br>
-  <em>Answers cite the wiki pages they were built from. The model and answer length are per-chat choices.</em>
+  <img src="docs/images/curator-chat.png" alt="The Curator's Chat view (pre-v3.72.0 shot; the scope bar shown here has since moved into the page header and composer): a row of domain pills for the Articles, Business, Lectures, Posts, Projects and Research domains with &quot;3,421 pages in scope&quot; and a Compile to Wiki button; a typed question asking for a table of the last 10 articles; and the streamed answer, labelled THE CURATOR · MiniMax M3 (free) · free, rendering a Markdown table of articles with dates, one-sentence summaries and the source page each came from" width="800"><br>
+  <em>Answers cite the wiki pages they were built from — since v3.72.0, as numbered markers plus one Sources list. The domain, project, length and model are all composer pills, picked per conversation or per question.</em>
 </p>
 
 Keeping that graph honest is **Wiki Health**: one scan for broken links, orphans, duplicate
