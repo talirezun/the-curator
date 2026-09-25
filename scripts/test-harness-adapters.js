@@ -162,12 +162,13 @@ section('§1  THE TABLE — every fact flagged, every state a word from the list
 // ─────────────────────────────────────────────────────────────────────────
 {
   const ids = A.listHarnesses();
-  ok(ids.length === 14, `fourteen harness entries (got ${ids.length}: ${ids.join(', ')})`);
+  ok(ids.length === 15, `fifteen harness entries (got ${ids.length}: ${ids.join(', ')})`);
   ok(new Set(ids).size === ids.length, 'every id appears exactly once');
   // The record's §B.3 ships thirteen; claude-desktop is the fourteenth and is
-  // carried because this repo already writes its config file.
+  // carried because this repo already writes its config file; antigravity is
+  // the fifteenth (v3.76.0, from the vendor's own docs).
   for (const must of ['claude-code', 'codex', 'cursor', 'copilot-cli', 'goose', 'gemini-cli',
-    'cline', 'dsh', 'opencode', 'kilo', 'windsurf', 'zed', 'aider', 'claude-desktop']) {
+    'cline', 'dsh', 'opencode', 'kilo', 'windsurf', 'zed', 'aider', 'claude-desktop', 'antigravity']) {
     ok(ids.includes(must), `…including ${must}`);
   }
 
@@ -756,8 +757,8 @@ section('§8  DECISION K — no instruction file was ever opened for writing');
   ok(named.length === 0, `no instruction filename appears in the module's code${named.length ? ` — ${named.join(', ')}` : ''}`);
   ok(/writeFileAtomicSync/.test(src), '…and the module does contain a write call (the scan\'s own control)');
   const writers = IH.HOOK_WRITERS;
-  ok(writers.length === 5 && writers.every((id) => A.adapterFor(id)?.hooks?.writer === id),
-    `five hook writers ship, each matching its adapter (${writers.join(', ')})`);
+  ok(writers.length === 6 && writers.every((id) => A.adapterFor(id)?.hooks?.writer === id),
+    `six hook writers ship, each matching its adapter (${writers.join(', ')})`);
 }
 
 // ── Done ───────────────────────────────────────────────────────────────────

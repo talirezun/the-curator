@@ -28,11 +28,13 @@
  * Express graph into a CLI's startup. The stale-entry comparison the wizard
  * makes is the wizard's.
  */
-import { existsSync, readFileSync, statSync, accessSync, constants as FS } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, accessSync, constants as FS } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  MCP_SERVER_NAME, adapterFor, listHarnesses, resolveTemplates,
+  MCP_SERVER_NAME, adapterFor, listHarnesses, resolveTemplates, skillRootsFor,
 } from '../brain/harness-adapters.js';
 import { STALE_REMEDY } from '../brain/mcp-bridge-status.js';
 import { EXIT_OK, out, note, flagStr, flagBool, findMarker, resolveProjectForCli } from './resolve.js';
@@ -183,6 +185,9 @@ function inspectMcpFile(target) {
   };
 }
 
+/** A Curator hook command, in any form install-hooks writes. */
+const OUR_HOOK_RE = /curator(?:\.js)?['"]?\s+hook\s/;
+
 /**
  * Curator hook entries in a harness config, and the two that are ACCEPTED AND
  * INERT: a Cline `PreCompact` (accepted, maps to `undefined`, never fires) and
@@ -194,11 +199,29 @@ export function inspectHookFile(harnessId, file) {
   const r = readJsonFile(file);
   if (!r.present || r.parseError) return r;
   const text = JSON.stringify(r.json);
-  const ours = /my-curator hook|curator hook/.test(text);
+  // `curator.js hook` too: install-hooks writes `<node> <repo>/bin/curator.js
+  // hook …` when no `my-curator` is on PATH, and the older pattern missed
+  // exactly that form (found v3.76.0, on the first Antigravity file).
+  const ours = OUR_HOOK_RE.test(text);
   const events = [];
+  const inert = [];
+  const spec = adapterFor(harnessId)?.hooks;
+  if (spec?.fileShape === 'named-hooks') {
+    // Top-level keys are hook NAMES; the events are one level down. A named
+    // hook switched off with `"enabled": false` runs none of its handlers,
+    // which makes a Curator entry inside it present and inert.
+    const doc = r.json && typeof r.json === 'object' && !Array.isArray(r.json) ? r.json : {};
+    for (const [name, hook] of Object.entries(doc)) {
+      if (!hook || typeof hook !== 'object' || Array.isArray(hook)) continue;
+      for (const k of Object.keys(hook)) if (k !== 'enabled' && !events.includes(k)) events.push(k);
+      if (hook.enabled === false && OUR_HOOK_RE.test(JSON.stringify(hook))) {
+        inert.push(`"${name}" — this named hook is switched off (\`"enabled": false\`), so its Curator handlers never run`);
+      }
+    }
+    return { present: true, ours, events, inert };
+  }
   const hooks = r.json?.hooks && typeof r.json.hooks === 'object' ? r.json.hooks : r.json;
   if (hooks && typeof hooks === 'object') for (const k of Object.keys(hooks)) events.push(k);
-  const inert = [];
   if (harnessId === 'cline' && events.some((e) => /precompact/i.test(e))) {
     inert.push('PreCompact — Cline accepts this hook and maps it to `undefined`, so it NEVER fires');
   }
@@ -206,6 +229,64 @@ export function inspectHookFile(harnessId, file) {
     inert.push('SessionEnd — Codex allows 1 s by default and 3 s at most, which cannot complete an MCP round trip');
   }
   return { present: true, ours, events, inert };
+}
+
+/**
+ * The repo's own skills, file by file: `skills/<skill>/<file>` → sha256.
+ * Read from THIS install's tree, so a packaged app without a `skills/`
+ * folder answers `null` and the doctor says it could not compare rather
+ * than calling every installed copy stale.
+ */
+const SKILL_NAMES = ['my-curator', 'curator-continuity'];
+const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
+
+export function repoSkillHashes(skillsDir = fileURLToPath(new URL('../../skills/', import.meta.url))) {
+  if (!skillsDir) return null;
+  const out = {};
+  for (const name of SKILL_NAMES) {
+    const dir = path.join(skillsDir, name);
+    let files;
+    try { files = readdirSync(dir).filter((f) => f.endsWith('.md')).sort(); } catch { return null; }
+    out[name] = Object.fromEntries(files.map((f) => [f, sha256(readFileSync(path.join(dir, f)))]));
+  }
+  return out;
+}
+
+/**
+ * Every installed copy of the repo's skills under a harness's skill roots —
+ * `<root>/skills/<skill>/` and `<root>/plugins/<plugin>/skills/<skill>/` —
+ * compared file by file against the repo's. `match` is true only when every
+ * repo file is present with the same bytes; a missing companion counts as
+ * drift, because a SKILL.md pointing at a file that is not there is worse
+ * than no mention of it.
+ */
+export function inspectSkills(roots, repo) {
+  const found = [];
+  const candidates = [];
+  for (const root of roots) {
+    candidates.push(path.join(root, 'skills'));
+    let plugins = [];
+    try { plugins = readdirSync(path.join(root, 'plugins')).sort(); } catch { plugins = []; }
+    for (const p of plugins) candidates.push(path.join(root, 'plugins', p, 'skills'));
+  }
+  for (const dir of candidates) {
+    for (const name of SKILL_NAMES) {
+      const at = path.join(dir, name);
+      try { if (!statSync(at).isDirectory()) continue; } catch { continue; }
+      const rec = { skill: name, dir: at, match: null, differs: [], missing: [] };
+      if (repo && repo[name]) {
+        for (const [f, h] of Object.entries(repo[name])) {
+          let got = null;
+          try { got = sha256(readFileSync(path.join(at, f))); } catch { got = null; }
+          if (got === null) rec.missing.push(f);
+          else if (got !== h) rec.differs.push(f);
+        }
+        rec.match = rec.differs.length === 0 && rec.missing.length === 0;
+      }
+      found.push(rec);
+    }
+  }
+  return found;
 }
 
 /** Executables named `name` on PATH, in PATH order. */
@@ -363,6 +444,8 @@ export async function collectDoctor(opts = {}) {
   }
 
   // ── Every harness ────────────────────────────────────────────────────────
+  let repoSkills = null;
+  try { repoSkills = repoSkillHashes(); } catch { repoSkills = null; }
   for (const h of harnessTargets(cwd)) {
     const adapter = adapterFor(h.id);
     const row = {
@@ -377,7 +460,15 @@ export async function collectDoctor(opts = {}) {
       hookState: adapter?.hooks?.state || null,
       hookReason: adapter?.hooks?.reason || null,
       measured: adapter?.measured || null,
+      observations: Array.isArray(adapter?.observations) ? [...adapter.observations] : [],
     };
+    // Installed skills, for a harness whose table row says where they live.
+    const roots = skillRootsFor(h.id, { home: HOME, project: cwd });
+    if (roots.length) {
+      try {
+        row.skills = { roots, repoComparable: repoSkills !== null, installed: inspectSkills(roots, repoSkills) };
+      } catch (err) { row.skills = { roots, error: err.message }; }
+    }
     for (const t of h.mcp) {
       const r = inspectMcpFile(t);
       row.mcp.push({ file: t.file, ...r });
@@ -535,6 +626,27 @@ function renderDoctor(r) {
     } else if (h.hookState && h.hookState !== 'none') {
       L.push('    capture: NOT MEASURED — no capture run has been recorded for this harness.');
     }
+    // Single live sessions, VERBATIM from the table — never a count.
+    for (const o of h.observations || []) L.push(`    observed · ${o}`);
+    if (h.skills) {
+      if (h.skills.error) L.push(`    skills: could not be read (${h.skills.error})`);
+      else if (!h.skills.installed.length) {
+        L.push(`    skills: none installed under ${h.skills.roots.join(' or ')}`);
+      } else {
+        for (const s of h.skills.installed) {
+          let verdict;
+          if (s.match === null) verdict = 'installed — not compared (this install carries no skills/ folder to compare with)';
+          else if (s.match) verdict = 'matches this version';
+          else {
+            const bits = [];
+            if (s.differs.length) bits.push(`differs: ${s.differs.join(', ')}`);
+            if (s.missing.length) bits.push(`missing: ${s.missing.join(', ')}`);
+            verdict = `STALE — ${bits.join(' · ')}`;
+          }
+          L.push(`    skill ${s.skill}: ${verdict} (${s.dir})`);
+        }
+      }
+    }
     for (const m of h.mcp) {
       if (m.parseError) L.push(`    ! ${m.file} — could not be parsed (${m.parseError}); nothing was read from it`);
       else if (m.named && m.domainsPath && r.domains.path && m.domainsPath !== r.domains.path) {
@@ -542,6 +654,7 @@ function renderDoctor(r) {
       }
     }
     for (const x of h.hooks) {
+      if (x.ours) L.push(`    ${x.file} — Curator hooks present · events in this file: ${(x.events || []).join(', ') || '(none)'}`);
       if (x.parseError) L.push(`    ! ${x.file} — could not be parsed (${x.parseError})`);
       for (const i of x.inert || []) L.push(`    ! ${x.file} — present and USELESS: ${i}`);
     }

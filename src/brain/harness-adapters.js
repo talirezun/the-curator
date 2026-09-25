@@ -38,7 +38,12 @@
  * M): §E's protocol has now been run once, against a real harness, and that
  * one row carries the result. A harness with no measurement row renders as
  * NOT MEASURED everywhere it appears — that is still true for the other
- * thirteen, and `measured: null` is what makes it true without a second flag.
+ * fourteen, and `measured: null` is what makes it true without a second flag.
+ *
+ * An entry MAY also carry `observations`: a frozen array of plain sentences
+ * recording single live sessions that were NOT the §E protocol (no arms, no
+ * counts). They are printed verbatim and never promoted into `measured` —
+ * one session is an anecdote with a date, not a shape (Antigravity, v3.76.0).
  *
  * ── THE SHAPE OF A NON-NULL `measured` ──────────────────────────────────────
  * No shape existed before this release, so this is it — PURE DATA, no
@@ -222,11 +227,12 @@ export function displayTemplate(tpl) {
 // ─────────────────────────────────────────────────────────────────────────
 // THE TABLE
 //
-// Fourteen entries. The design record's §B.3 ships thirteen; `claude-desktop`
+// Fifteen entries. The design record's §B.3 ships thirteen; `claude-desktop`
 // is the fourteenth and it is here because it is a real MCP client this
 // repository already wires (`src/routes/mcp.js`'s whole wizard is addressed to
 // it) and because `doctor.js`'s own target list carries it. It has NO hooks
 // and NO project instruction file, which is exactly what its row says.
+// `antigravity` is the fifteenth (v3.76.0), from the vendor's own docs.
 // ─────────────────────────────────────────────────────────────────────────
 const ENTRIES = [
   {
@@ -446,6 +452,127 @@ const ENTRIES = [
     captureClass: CAPTURE_CLASSES.HOOK_ASSISTED,
     clientInfo: fact('source', { names: ['gemini-cli-mcp-client'] }),
     measured: null,
+  },
+  {
+    id: 'antigravity',
+    label: 'Antigravity',
+    // Added v3.76.0 (W2). Google's agent app (and its IDE variant). Every fact
+    // below is from the vendor's OWN customization docs, shipped inside the
+    // app at `~/.gemini/antigravity/builtin/skills/agy-customizations/`
+    // (SKILL.md, docs/{rules,skills,plugins,hooks,mcp_servers,json_configs}.md),
+    // read 2026-09-25, plus what was seen on the maintainer's Mac that day.
+    //
+    // THE MCP FILE IS THREE FILES. The docs name `~/.gemini/config/
+    // mcp_config.json` as the global one; the maintainer's Mac also carries
+    // `~/.gemini/antigravity/mcp_config.json` and (for the IDE)
+    // `~/.gemini/antigravity-ide/mcp_config.json` — three separate files, not
+    // links, each naming `my-curator`. Doctor reports all three, because a
+    // bridge configured in one and stale in another is exactly the drift a
+    // user cannot see.
+    mcpConfig: fact('docs', {
+      format: 'json',
+      shape: 'mcpServers',
+      key: 'mcpServers',
+      requiresType: false,
+      argvShape: 'command+args',
+      envKey: 'env',
+      addCommand: null,
+      user: [
+        H('.gemini', 'config', 'mcp_config.json'),
+        H('.gemini', 'antigravity', 'mcp_config.json'),
+        H('.gemini', 'antigravity-ide', 'mcp_config.json'),
+      ],
+      project: [],
+      note: 'The docs name ~/.gemini/config/mcp_config.json; ~/.gemini/antigravity/ and ~/.gemini/antigravity-ide/ '
+        + 'each held their own mcp_config.json on the maintainer\'s Mac on 2026-09-25 (observed, three separate files).',
+    }),
+    // rules.md: `GEMINI.md` and `AGENTS.md`, walked up from the working
+    // directory to the repository root, no frontmatter, always on for their
+    // directory. NOT `CLAUDE.md` — measured 2026-09-25: the session that read
+    // state unprompted had the block in AGENTS.md. Each rule file is capped at
+    // 24,000 bytes after includes are expanded and truncated on a line
+    // boundary past it.
+    instructionFile: fact('docs', {
+      names: ['AGENTS.md', 'GEMINI.md'],
+      cap: 24000,
+      firstMatch: false,
+      note: 'Antigravity reads AGENTS.md and GEMINI.md walking up from the working folder to the repository root — not CLAUDE.md.',
+    }),
+    hooks: fact('docs', {
+      // `verified` in this table's sense: the envelopes are DOCUMENTED
+      // (hooks.md's input/output contract), so an adapter can wire them. It
+      // does NOT mean a run was observed — `measured` stays null and
+      // `shapeVerified` false until the maintainer runs them.
+      state: HOOK_STATES.VERIFIED,
+      reason: null,
+      // PreInvocation fires before EVERY model call, not once per session.
+      // `firstInvocationOnly` is what makes it a session start: the CLI
+      // injects on the first call it sees for a conversation id and emits
+      // `{}` for every later one (src/cli/hook.js, `oncePerSession`).
+      events: { 'session-start': 'PreInvocation', stop: 'Stop' },
+      firstInvocationOnly: true,
+      refusedEvents: {
+        PostInvocation: 'it fires after every round of tool calls, not once at the turn end — an ask there would repeat through the turn',
+        PreToolUse: 'a tool gate, not a lifecycle point — it cannot carry a session-start read or a turn-end ask',
+      },
+      // hooks.md §5: `{"decision":"continue","reason":…}` blocks the stop and
+      // injects `reason` as a system message; §3: `injectSteps:
+      // [{ephemeralMessage}]` injects before the model runs.
+      envelope: 'decision-continue',
+      // No "I already asked" field in the Stop payload, so the CLI's own
+      // marker (keyed on `conversationId`) is the loop guard.
+      loopGuard: 'cli-marker',
+      writer: 'antigravity',
+      format: 'json',
+      // A hooks.json whose TOP-LEVEL keys are hook NAMES, each holding its
+      // events; PreInvocation and Stop take a FLAT list of handlers. The
+      // Curator's handlers live under one name, `my-curator`.
+      fileShape: 'named-hooks',
+      hookName: MCP_SERVER_NAME,
+      configPath: {
+        // A hooks.json sits in a customization root: `.agents/` in the
+        // project (documented by example), `~/.gemini/config/` globally
+        // (the documented global root; hooks.json there is inferred from
+        // "your customization root directory", not shown by example).
+        user: [H('.gemini', 'config', 'hooks.json')],
+        project: [P('.agents', 'hooks.json')],
+        local: [],
+      },
+      shapeVerified: false,
+      // hooks.md: the default is 30 s. Session start reads the store once;
+      // every later invocation only checks a marker.
+      timeoutSeconds: { 'session-start': 30, stop: 30 },
+    }),
+    // skills.md + plugins.md: a skill is `skills/<name>/SKILL.md` inside a
+    // customization root, or inside `plugins/<plugin>/` under one. The
+    // maintainer's install is `~/.gemini/config/plugins/the-curator/skills/`.
+    // `roots` is what `my-curator doctor` walks, looking for
+    // `<root>/skills/<skill>/` and `<root>/plugins/*/skills/<skill>/`.
+    skillsTree: fact('docs', {
+      path: '~/.gemini/config/plugins/<plugin>/skills/',
+      roots: [H('.gemini', 'config'), P('.agents')],
+      note: 'Also .agents/skills/ (or .agents/plugins/<plugin>/skills/) in a workspace.',
+    }),
+    captureClass: CAPTURE_CLASSES.HOOK_ASSISTED,
+    // NOT IDENTIFIED. Its sessions log as `other`. The language server is a Go
+    // binary that speaks the 2026-07-28 MCP revision (the per-request
+    // `io.modelcontextprotocol/clientInfo` key is present in it), but the name
+    // it sends was not recoverable from the binary and no log on the Mac
+    // records it. How to read it once is in docs/working-state.md; nothing
+    // may be seeded here until it has been SEEN.
+    clientInfo: fact('unverified', {
+      names: [],
+      note: 'Not identified — Antigravity\'s sessions are labelled `other` in the usage log until the name it sends has been observed.',
+    }),
+    measured: null,
+    // Single live sessions on the maintainer's Mac, 2026-09-25 — NOT the §E
+    // protocol, so they are not a `measured` row and carry no counts. Printed
+    // verbatim by `my-curator doctor`.
+    observations: Object.freeze([
+      '2026-09-25 · with the Curator block in AGENTS.md, a session told only "Continue." called get_project_context unprompted.',
+      '2026-09-25 · without the AGENTS.md block, a session saved unprompted — but to scope `main`, replacing another tool\'s handoff there.',
+      'The hooks (PreInvocation read, Stop ask) are built from the vendor documentation and have NOT been run yet.',
+    ]),
   },
   {
     id: 'cursor',
@@ -877,6 +1004,16 @@ export function listHarnesses() {
 export function adapterFor(id) {
   if (typeof id !== 'string' || !id) return null;
   return ADAPTERS[id.trim().toLowerCase()] || null;
+}
+
+/**
+ * Where to look for an installed copy of the repo's skills on this harness —
+ * `<root>/skills/<skill>/` and `<root>/plugins/<plugin>/skills/<skill>/` for
+ * each root. Empty for a harness whose table row carries no `roots`.
+ */
+export function skillRootsFor(id, dirs) {
+  const a = adapterFor(id);
+  return resolveTemplates(a?.skillsTree?.roots || [], dirs);
 }
 
 /** Every harness whose hooks this build can actually write. */

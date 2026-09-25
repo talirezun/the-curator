@@ -167,7 +167,7 @@ export function planEvents(adapter, { allowWithheld = false } = {}) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// THE WRITERS — five harnesses, three shapes
+// THE WRITERS — six harnesses, four shapes
 //
 // `claude-code` and `codex` share the NESTED-GROUP shape. That is the least
 // guess available: Claude Code's is documented, Codex's twelve events carry
@@ -182,6 +182,12 @@ const WRITERS = {
   cursor: { kind: 'flat-array', root: 'hooks', version: 1, extra: (a) => ({ loop_limit: a.hooks.loopLimit || 1 }) },
   'copilot-cli': { kind: 'flat-array', root: 'hooks', version: 1, ownFile: true },
   goose: { kind: 'goose-args', root: 'hooks', ownFile: true },
+  // v3.76.0. Antigravity's hooks.json has NO `hooks` root: its top-level keys
+  // are hook NAMES, each holding its events, and PreInvocation/Stop take a
+  // FLAT list of `{type, command, timeout}` handlers (vendor hooks.md). Ours
+  // live under one name, the adapter's `hookName`; every other name is left
+  // exactly as found.
+  antigravity: { kind: 'named-hooks', root: null },
 };
 
 /** The command written for one event — a string, or a cmd/args pair. */
@@ -194,8 +200,47 @@ function commandFor(bin, adapter, canonical) {
   };
 }
 
+/** One named hook's events, stripped of ours. Returns the count removed. */
+function stripNamedHook(hook) {
+  let removed = 0;
+  for (const event of Object.keys(hook)) {
+    const arr = hook[event];
+    if (!Array.isArray(arr)) continue;
+    const kept = [];
+    for (const item of arr) {
+      if (!item || typeof item !== 'object') { kept.push(item); continue; }
+      if (Array.isArray(item.hooks)) {
+        // A GROUPED event (PreToolUse/PostToolUse carry a `matcher`).
+        const inner = item.hooks.filter((h) => !isCuratorHookCommand(h?.command));
+        removed += item.hooks.length - inner.length;
+        if (inner.length) kept.push({ ...item, hooks: inner });
+        continue;
+      }
+      if (isCuratorHookCommand(item.command)) { removed++; continue; }
+      kept.push(item);
+    }
+    if (kept.length) hook[event] = kept;
+    else delete hook[event];
+  }
+  return removed;
+}
+
 /** Strip every entry of ours out of a parsed document. Returns the count. */
 function stripOurs(doc, spec) {
+  if (spec.kind === 'named-hooks') {
+    let removed = 0;
+    for (const name of Object.keys(doc || {})) {
+      const hook = doc[name];
+      if (!hook || typeof hook !== 'object' || Array.isArray(hook)) continue;
+      const n = stripNamedHook(hook);
+      removed += n;
+      // A named hook we emptied is gone; one with anything left (somebody
+      // else's handler, or only their `enabled`) is theirs and stays.
+      const left = Object.keys(hook).filter((k) => k !== 'enabled');
+      if (n && left.length === 0) delete doc[name];
+    }
+    return removed;
+  }
   const root = doc?.[spec.root];
   if (!root || typeof root !== 'object' || Array.isArray(root)) return 0;
   let removed = 0;
@@ -231,6 +276,21 @@ function stripOurs(doc, spec) {
 
 /** Add our entries. The document is already stripped of any previous ours. */
 function addOurs(doc, spec, adapter, bin, plan) {
+  if (spec.kind === 'named-hooks') {
+    const name = adapter.hooks.hookName;
+    const hook = doc[name] && typeof doc[name] === 'object' && !Array.isArray(doc[name]) ? doc[name] : {};
+    const written = [];
+    for (const { canonical, event } of plan.write) {
+      const c = commandFor(bin, adapter, canonical);
+      const timeout = adapter.hooks?.timeoutSeconds?.[canonical] ?? 10;
+      const arr = Array.isArray(hook[event]) ? hook[event] : [];
+      arr.push({ type: 'command', command: c.string, timeout });
+      hook[event] = arr;
+      written.push({ event, canonical, command: c.string });
+    }
+    doc[name] = hook;
+    return written;
+  }
   if (!doc[spec.root] || typeof doc[spec.root] !== 'object' || Array.isArray(doc[spec.root])) doc[spec.root] = {};
   if (spec.version !== undefined && doc.version === undefined) doc.version = spec.version;
   const written = [];
@@ -258,7 +318,21 @@ function addOurs(doc, spec, adapter, bin, plan) {
 /** The shape check — refusal 4. A parsed file whose root is not an object. */
 function shapeProblem(doc, spec, file) {
   if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
-    return refusals.shapeMismatch(file, spec.root, Array.isArray(doc) ? 'an array' : `a ${doc === null ? 'null' : typeof doc}`);
+    return refusals.shapeMismatch(file, spec.root || '(the document)', Array.isArray(doc) ? 'an array' : `a ${doc === null ? 'null' : typeof doc}`);
+  }
+  if (spec.kind === 'named-hooks') {
+    // Every top-level value is a named hook, so every one must be an object —
+    // a file whose values are not is a different tool's, or hand-broken.
+    for (const [k, v] of Object.entries(doc)) {
+      if (v === null || typeof v !== 'object' || Array.isArray(v)) {
+        return refusals.shapeMismatch(file, k, Array.isArray(v) ? 'an array' : `a ${v === null ? 'null' : typeof v}`);
+      }
+      for (const [ev, arr] of Object.entries(v)) {
+        if (ev === 'enabled') continue;
+        if (!Array.isArray(arr)) return refusals.shapeMismatch(file, `${k}.${ev}`, `a ${arr === null ? 'null' : typeof arr}`);
+      }
+    }
+    return null;
   }
   const root = doc[spec.root];
   if (root === undefined) return null;
@@ -395,7 +469,7 @@ export async function runInstallHooks(parsed) {
 
   // Drop an empty root rather than leaving `"hooks": {}` behind after an
   // uninstall of a file we created.
-  if (doc[spec.root] && Object.keys(doc[spec.root]).length === 0) delete doc[spec.root];
+  if (spec.root && doc[spec.root] && Object.keys(doc[spec.root]).length === 0) delete doc[spec.root];
 
   const text = `${JSON.stringify(doc, null, 2)}\n`;
 

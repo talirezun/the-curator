@@ -108,6 +108,18 @@ const ROWS = [
   { raw: 'cursor-vscode', id: 'cursor', evidence: 'community', verified: false },
 ];
 
+// ── NOT HERE, DELIBERATELY: Antigravity (v3.76.0) ─────────────────────────
+// Antigravity is a harness row in `harness-adapters.js`, but the name its MCP
+// client sends has NOT been observed, so it has no row here and its sessions
+// are written as `other`. What is known: its language server speaks the
+// 2026-07-28 revision (the per-request `io.modelcontextprotocol/clientInfo`
+// key is compiled into it), so arm 1 of `readClientName` is the likely source.
+// The string itself could not be read out of the binary and no log records
+// it. To observe it once, see docs/working-state.md ("Antigravity's MCP
+// client name"): a one-session stdin tee in front of the bridge, read by the
+// owner, then deleted. A guessed row would put a wrong word on a report and
+// make it look measured — the reason `cursor-vscode` above is flagged.
+
 /** raw (already normalised) → canonical harness id. MANY-to-one. */
 export const KNOWN_CLIENTS = new Map(ROWS.map((r) => [r.raw, r.id]));
 

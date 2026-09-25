@@ -25,7 +25,9 @@
  * The harnesses disagree on the shape of "ask the model to save": Claude Code
  * BLOCKS (exit 2, reason on stderr), Cursor AUTO-CONTINUES
  * (`{"followup_message": …}`), Codex blocks on `Stop` and can refuse a
- * compaction with `{"continue": false}`. The ladder below is ONE decision
+ * compaction with `{"continue": false}`, Antigravity re-enters its loop on
+ * `{"decision": "continue", "reason": …}` and injects before the model with
+ * `{"injectSteps": [{"ephemeralMessage": …}]}` — documented, not yet observed. The ladder below is ONE decision
  * procedure; the table owns the serialisation.
  *
  * AN UNVERIFIED ENVELOPE IS NEVER APPROXIMATED. A harness whose shape this
@@ -150,6 +152,31 @@ export const HARNESS_HOOKS = Object.freeze({
     preCompact: { emit: null, withheld: 'this harness carries no pre-compaction hook' },
     stop: { emit: null, withheld: 'the Stop envelope is unverified on this harness' },
     loopField: null,
+  },
+  // v3.76.0 (W2). Both envelopes are DOCUMENTED in the vendor's hooks.md
+  // (shipped inside the app, agy-customizations/docs/hooks.md) and NOT yet
+  // observed firing — the adapter row says so (`measured: null`).
+  antigravity: {
+    id: 'antigravity',
+    label: 'Antigravity',
+    // PreInvocation, contract §3: `{"injectSteps":[{"ephemeralMessage": …}]}`
+    // — "a transient system message" before the model runs. It fires before
+    // EVERY model call, so `oncePerSession` injects on the first call for a
+    // conversation id only; every later call gets `{}`. `ephemeralMessage`
+    // rather than `userMessage`: the bootstrap is recorded DATA, and putting
+    // it in the user's mouth would promote it to the user's own instruction.
+    sessionStart: { emit: (text) => ({ injectSteps: [{ ephemeralMessage: text }] }), oncePerSession: true },
+    preCompact: { emit: null, withheld: 'Antigravity documents no pre-compaction hook' },
+    // Stop, contract §5: `"continue"` blocks the stop and re-enters the loop,
+    // with `reason` injected as a system message. Only a MODEL stop is asked
+    // on — forcing a loop that ended on an error or on the step limit back
+    // into motion to ask for a save would be the hook making things worse.
+    stop: { emit: (text) => ({ decision: 'continue', reason: text }), onlyOnTermination: ['model_stop'] },
+    // No "already asked" field in the payload; the CLI's marker is the guard.
+    loopField: null,
+    // "Hook commands … must output their result as a JSON object on stdout."
+    // Every path that emits nothing emits this instead of an empty stdout.
+    emptyEnvelope: {},
   },
   cline: {
     id: 'cline',
@@ -373,6 +400,14 @@ export function stopDecision({ payload, entry, marker, facts }) {
     if (v === true || (typeof v === 'number' && v >= 1)) return { act: 'exit', rung: 1, why: loopField };
   }
   if (marker?.askedAt) return { act: 'exit', rung: 1, why: 'already asked in this session (marker)' };
+  // A harness that reports WHY its loop ended (Antigravity's
+  // `terminationReason`): only a model stop is asked on. An absent field is
+  // not a reason to refuse — the rest of the ladder decides.
+  const only = entry?.stop?.onlyOnTermination;
+  const term = p.terminationReason;
+  if (Array.isArray(only) && typeof term === 'string' && term && !only.includes(term)) {
+    return { act: 'exit', rung: 1, why: `the loop ended by ${term.slice(0, 40)}, not by a model stop` };
+  }
   if (!facts) return { act: 'exit', rung: 2, why: 'no project resolved' };
   if (!Number.isFinite(facts.since)) return { act: 'exit', rung: 2, why: 'no session start is recorded, so the window cannot be bounded' };
   if (facts.saves > 0) return { act: 'exit', rung: 3, why: 'a save_working_state landed in this session' };
@@ -380,19 +415,57 @@ export function stopDecision({ payload, entry, marker, facts }) {
   return { act: 'ask', rung: 5, why: 'the session read state and did not save it' };
 }
 
+/**
+ * Whether this invocation has put anything on stdout. A harness whose entry
+ * carries `emptyEnvelope` (Antigravity: "must output … a JSON object") gets
+ * that object on every path that would otherwise leave stdout empty — see
+ * `runHook`. Reset at the top of every `runHook`.
+ */
+let emitted = false;
+function send(text) { emitted = true; out(text); }
+
 /** Emit an envelope, or record why nothing was emitted. Never throws. */
 function emitFor(arm, text, label) {
   if (!arm || typeof arm.emit !== 'function') {
     note(`my-curator hook: nothing emitted for ${label} — ${arm?.withheld || 'no envelope is shipped for this event'}.`);
     return false;
   }
-  out(JSON.stringify(arm.emit(text)));
+  send(JSON.stringify(arm.emit(text)));
   return true;
 }
 
+/**
+ * The working folder the harness is in. `cwd` where the harness sends it;
+ * Antigravity sends `workspacePaths` instead and runs the hook in the folder
+ * holding `hooks.json` (for a user-scope install, `~/.gemini/config/`), so
+ * `process.cwd()` would resolve the wrong project there.
+ */
+export function payloadCwd(payload) {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  if (typeof p.cwd === 'string' && p.cwd) return p.cwd;
+  if (Array.isArray(p.workspacePaths)) {
+    const w = p.workspacePaths.find((x) => typeof x === 'string' && x);
+    if (w) return w;
+  }
+  return null;
+}
+
 export async function runHook(parsed) {
+  emitted = false;
+  const code = await runHookInner(parsed);
+  // A harness that requires a JSON object on stdout gets its empty one when
+  // nothing else was emitted. An exit-2 block keeps stdout EMPTY by contract,
+  // and no harness with `emptyEnvelope` blocks.
+  const entry = harnessEntry(flagStr(parsed.flags, 'harness'));
+  if (!emitted && code !== EXIT_BLOCK && entry?.emptyEnvelope && canonicalEvent(parsed._[0])) {
+    send(JSON.stringify(entry.emptyEnvelope));
+  }
+  return code;
+}
+
+async function runHookInner(parsed) {
   const { flags, _ } = parsed;
-  if (flagBool(flags, 'help')) { out(HOOK_USAGE); return EXIT_OK; }
+  if (flagBool(flags, 'help')) { send(HOOK_USAGE); return EXIT_OK; }
 
   const event = canonicalEvent(_[0]);
   if (!event) {
@@ -422,7 +495,7 @@ export async function runHook(parsed) {
     payload = {};
   }
 
-  const cwd = (typeof payload.cwd === 'string' && payload.cwd) || flagStr(flags, 'cwd') || process.cwd();
+  const cwd = payloadCwd(payload) || flagStr(flags, 'cwd') || process.cwd();
   const sessionKey = sessionKeyFrom(payload, cwd);
   let installKey = '';
   try { installKey = (await import('../brain/config.js')).getDomainsDir(); } catch { installKey = ''; }
@@ -433,6 +506,18 @@ export async function runHook(parsed) {
   // unresolvable name, an unreadable store. A first-run user must never see an
   // error from a hook they did not ask for.
   if (event === 'session-start') {
+    // A harness whose "session start" is really "before every model call"
+    // (Antigravity's PreInvocation) is injected ONCE per conversation: a
+    // marker that already has a start means this conversation was served.
+    // Only when the harness sent a real id — with no id there is nothing to
+    // key "once" on, and a missed injection is worse than a repeated one.
+    if (entry.sessionStart?.oncePerSession && !sessionKey.startsWith('no-session:')) {
+      const prior = readMarker(marker);
+      if (prior?.startedAt) {
+        note(`my-curator hook session-start (${entry.id}): already injected for this conversation. Nothing was injected.`);
+        return EXIT_OK;
+      }
+    }
     clearMarker(marker);
     writeMarker(marker, { harness: entry.id, sessionKey, startedAt: new Date().toISOString(), askedAt: null });
     try {
@@ -461,7 +546,7 @@ export async function runHook(parsed) {
         note(`my-curator hook session-start: the store refused the read (${ctx.reason}). Nothing was injected.`);
         return EXIT_OK;
       }
-      out(JSON.stringify(arm.emit(await renderFramedContextMarkdown(ctx))));
+      send(JSON.stringify(arm.emit(await renderFramedContextMarkdown(ctx))));
     } catch (err) {
       note(`my-curator hook session-start: ${err.message}. Nothing was injected.`);
     }
@@ -520,7 +605,7 @@ export async function runHook(parsed) {
     if (arm?.reasonOnStderr) {
       // The refusal is the documented `{"continue": false}`; the sentence goes
       // on stderr rather than into an invented key on an unmeasured envelope.
-      if (typeof arm.emit === 'function') out(JSON.stringify(arm.emit(sentence)));
+      if (typeof arm.emit === 'function') send(JSON.stringify(arm.emit(sentence)));
       note(sentence);
       return EXIT_OK;
     }

@@ -2083,9 +2083,10 @@ Name the scope instead of `latest` when several tools or threads are live.
 <a id="do-i-need-both-claudemd-and-agentsmd"></a>**"Claude Code reads `CLAUDE.md`, Antigravity reads
 `AGENTS.md` (and/or `GEMINI.md`) — do I need both files in the project folder?"**
 
-Yes, both — Claude Code loads `CLAUDE.md`, and Antigravity's own documentation names `GEMINI.md` and
-`AGENTS.md` (walked up from the working folder to the repository root) and not `CLAUDE.md`. That is
-the vendor's documentation, not something The Curator has measured. **But keep the rules in one
+Yes, both — Claude Code loads `CLAUDE.md`, and Antigravity reads `GEMINI.md` and `AGENTS.md` (walked
+up from the working folder to the repository root), not `CLAUDE.md`. That is from Antigravity's own
+documentation, and on 2026-09-25 an Antigravity session with the pointer in `AGENTS.md` read the
+project's state unprompted. **But keep the rules in one
 place, and keep each file to the same short pointer.** In practice: `CLAUDE.md` and `AGENTS.md`,
 identical — `AGENTS.md` also serves Codex, opencode and Cursor. The rules live in the **brief**: it is stored in The Curator,
 not in either tool, and `get_project_context` returns it to any tool that connects. The files only
@@ -2116,17 +2117,23 @@ overwrites, so send the complete state each time.
 - **One `.curator-project` file serves every tool.** It holds `domain/project`; the continuity skill
   and the `my-curator` command read it, whichever tool is running. (The MCP server itself does not —
   which is why the pointer names the project too.)
-- **Antigravity is not in The Curator's harness table.** That table records `CLAUDE.md` for Claude
-  Code, `AGENTS.md` for Codex, opencode and Cursor, and `GEMINI.md` for Gemini CLI (where
-  `AGENTS.md` is opt-in); `my-curator doctor` has no Antigravity row, and there is no Antigravity
-  hook adapter, so `install-hooks` cannot wire it. Whether the pointer landed is something you
-  check yourself: its first reply should name the rules from your brief
-  ([read-back](#making-sure-your-standing-rules-actually-land)). No reply naming them means it did
-  not.
-- **The skills, for Antigravity** — also vendor-documented, unverified here: its documentation puts
-  skills in a `skills/` folder under a customization root — `.agents/` in the project, or
-  `~/.gemini/config/` for every project. Copy each skill folder whole, companion files included,
-  and if you keep copies in both places, keep them identical.
+- **Antigravity has its own row in The Curator's harness table (since v3.76.0).** `my-curator
+  doctor` shows whether its MCP config names the bridge (it checks `~/.gemini/config/`,
+  `~/.gemini/antigravity/` and `~/.gemini/antigravity-ide/`), whether `AGENTS.md`/`GEMINI.md` in
+  this folder carry the block, and whether your installed skills match this version.
+  `my-curator install-hooks antigravity` wires two hooks: one that hands over the project's
+  context before the first model call, and one that asks for a save at the end if the
+  conversation read state and did not save. **These hooks are built from Antigravity's own
+  documentation and have not been run yet** — see
+  [Antigravity](working-state.md#antigravity-v3760) for exactly what they do. The first reply is
+  still the check: it should name the rules from your brief
+  ([read-back](#making-sure-your-standing-rules-actually-land)). If it names none, the pointer did
+  not land.
+- **The skills, for Antigravity** (from its documentation): a `skills/` folder under
+  `~/.gemini/config/` for every project, or `.agents/` in the project, or a plugin's `skills/`
+  folder (for example `~/.gemini/config/plugins/the-curator/skills/`). Copy each skill folder
+  whole, companion files included. `my-curator doctor` compares every installed copy with this
+  version, file by file, and names any file that differs or is missing.
 
 <a id="how-do-i-build-from-two-computers"></a>**"How do I build from two computers — do I need the
 repo cloned on both, and sync the state first?"**
@@ -4861,6 +4868,7 @@ into whichever of these your tool reads:
 | Codex | `AGENTS.md` | the file is **cut off at 32 KiB**, silently — the block is small, a whole playbook is not |
 | opencode | `AGENTS.md` | it reads `CLAUDE.md` too |
 | Gemini CLI | `GEMINI.md` | the filename comes from a `context.fileName` **list** in its settings; `AGENTS.md` is opt-in |
+| Antigravity | `AGENTS.md` (or `GEMINI.md`) | it does **not** read `CLAUDE.md`; each file is cut off at 24,000 bytes |
 | Cursor | `.cursor/rules` | it reads `AGENTS.md` too |
 | GitHub Copilot CLI | its own instructions file | it reads `CLAUDE.md` and `GEMINI.md` too |
 | Zed | **`.rules`**, else `AGENTS.md`, else `CLAUDE.md` | **first match wins.** In a repository that has an `AGENTS.md`, a block in `CLAUDE.md` is never read |
@@ -5035,6 +5043,7 @@ promise. Four words describe every row:
 |---|---|---|---|
 | **Claude Code** | verified | `SessionStart` · `PreCompact` · `Stop` | **measured 2026-09-20 — headless `-p` only** |
 | **Cursor** | verified | `sessionStart` · `preCompact` · `stop` — it *submits a message* rather than blocking, which is gentler | not measured |
+| **Antigravity** | verified (from its docs) | `PreInvocation` — the project's context, once per conversation · `Stop` — one save ask per conversation, only when the agent stopped normally | **hooks not yet run.** Reading and saving without hooks were each seen once on 2026-09-25 |
 | **Codex CLI** | unverified | `PreCompact` (the one pre-compaction hook that can actually block) · `Stop`. **Never `SessionEnd`** — it is capped at 3 seconds, which is not long enough to finish a save | not measured |
 | **GitHub Copilot CLI** | unverified | Refused by default — the events exist and their shapes are unmeasured | not measured |
 | **goose** | unverified | Refused by default — same reason. The one harness with a genuinely usable session-end hook | not measured |
@@ -5047,7 +5056,7 @@ promise. Four words describe every row:
 | **Claude Desktop** | none | Nothing | not measured |
 | **Aider** | none | Nothing — **it has no MCP client at all.** Your option is a shell wrapper: `my-curator context` before, `my-curator save` after | not measured |
 
-**Thirteen of the fourteen rows say *not measured*, and that is the truth rather than modesty.**
+**Fourteen of the fifteen rows say *not measured*, and that is the truth rather than modesty.**
 The protocol that would change a row — four runs per arm, one fixed task that never mentions
 saving — is fixed and written down (`scripts/measure-harness.js`), and until it has been run the
 product says so everywhere the question comes up. **A harness with no measurement is never
