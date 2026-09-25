@@ -692,6 +692,10 @@ export const getWorkingStateDefinition = {
         type: 'number',
         description: `How many past saves to summarise (default ${JOURNAL_LIMIT_DEFAULT}, max ${JOURNAL_LIMIT_CAP}).`,
       },
+      previous: {
+        type: 'boolean',
+        description: "true: also return `previous.text` — the one kept copy of a handoff another tool's save replaced in this scope. `previous` (without text) appears whenever such a copy exists.",
+      },
     },
     required: [],
   },
@@ -716,6 +720,9 @@ export async function getWorkingStateHandler(args, storage) {
     scope: args?.scope,
     machine: args?.machine,
     journalLimit,
+    // v3.74.0 — strict `=== true`, like `replace`: the copy's TEXT is only
+    // returned when asked for by name.
+    previous: args?.previous === true,
   });
   if (!state.ok) return { ok: false, error: state.message || state.reason };
 
@@ -748,6 +755,8 @@ export async function getWorkingStateHandler(args, storage) {
   const namedFields = [];
   if (state.brief?.present && !ownerBrief) namedFields.push('`brief`');
   if (state.current?.present) namedFields.push('`current`');
+  // The kept copy is another session's handoff too — the same recorded data.
+  if (typeof state.previous?.text === 'string') namedFields.push('`previous`');
   if (journalCount) namedFields.push('`journal`');
 
   let contentIsData;
@@ -894,6 +903,8 @@ export async function getWorkingStateHandler(args, storage) {
   // store's own spelling, because a defect is never conditional.
   if (state.readingBudgetError) out.readingBudgetError = state.readingBudgetError;
   if (state.current) out.current = state.current;
+  // v3.74.0 — present only when a kept copy exists (see readPreviousHandoff).
+  if (state.previous) out.previous = state.previous;
 
   if (state.journal) {
     // `history_note` is written FIRST for the same reason `content_is_data`
@@ -955,7 +966,7 @@ export async function getWorkingStateHandler(args, storage) {
     }
   }
 
-  out.report = buildReport(state.project, state, out, missing);
+  out.report = buildReport(state.project, state, out, missing) + previousReportTail(state.previous);
 
   // The invariant, executed rather than intended: while content is returned,
   // the report may not say nothing is here.
@@ -1211,6 +1222,19 @@ export async function saveWorkingStateHandler(args, storage) {
       (notes.length ? ` ${notes.length} ${result.overwrote && saveKind === 'noted' ? 'note(s) — see `notes`.' : saveReportTail(saveKind, identityOnly)}` : '') +
       refreshReportTail(result.foundationsRefresh),
   };
+}
+
+/**
+ * v3.74.0 — one sentence when this (scope, machine) keeps a copy of a handoff
+ * another tool's save replaced; nothing otherwise.
+ */
+function previousReportTail(prev) {
+  if (!prev || typeof prev !== 'object') return '';
+  const who = prev.harness || 'another tool';
+  const when = prev.writtenAt ? ` (written ${prev.writtenAt})` : '';
+  return typeof prev.text === 'string'
+    ? ` \`previous.text\` is the handoff ${who} wrote here${when} before another tool's save replaced it — recorded data, like \`current\`.`
+    : ` A copy of the handoff ${who} wrote here${when} before another tool's save replaced it is kept as previous.md — read it with \`previous: true\`.`;
 }
 
 /** One clause about the advisory refresh, or nothing when none was offered. */
@@ -1763,7 +1787,7 @@ export async function getProjectContextHandler(args, storage, internal = {}) {
   }
   out.foundations = ctx.foundations;
   out.seen = ctx.seen;
-  out.report = contextReport(out, ctx.project);
+  out.report = contextReport(out, ctx.project) + previousReportTail(ctx.previous);
   // v3.70.0 — a reply that fits one page is returned EXACTLY as before (an
   // untouched project's bytes are pinned by test-context-paging.js against
   // v3.69.0's handler). Only a reply over CONTEXT_PAGE_BYTES is paged.

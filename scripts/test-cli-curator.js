@@ -407,6 +407,15 @@ const BODY = {
   });
   const first = await mcpTools.saveWorkingStateHandler(big('Claude Code', 'claude-opus-5-5', 'CC handoff: parser half done'), storage);
   ok(first.ok === true && first.overwrote === null, 'a first save replaces nobody: `overwrote` is null, never absent');
+  const pairDir = path.join(DOMAINS_DIR, D1, path.dirname(first.path || 'x'));
+  const prevFile = path.join(pairDir, 'previous.md');
+  const curFile = path.join(pairDir, 'current.md');
+  const readB = (f) => { try { return readFileSync(f); } catch { return null; } };
+  // A same-tool re-save first: it must NOT write previous.md.
+  const sameFirst = await mcpTools.saveWorkingStateHandler(big('claude-code', null, 'CC handoff: parser half done'), storage);
+  ok(sameFirst.ok === true && sameFirst.overwrote === null && readB(prevFile) === null,
+    'a SAME-tool save (another spelling) writes NO previous.md');
+  const ccBytes = readB(curFile);
 
   // The CLI, as Antigravity, over Claude Code's handoff.
   const r = run(['save', '--project', `${D1}/lumina`, '--scope', 'shared-main'],
@@ -415,8 +424,34 @@ const BODY = {
   ok(r.code === 0, 'the save SUCCEEDS — warn, never refuse', r.stderr);
   ok(/WARNING: this replaced the handoff Claude Code saved here written \S+ \("CC handoff: parser half done"\)/.test(r.stdout),
     'the CLI names WHOSE handoff it replaced, WHEN it was written and its HEADLINE', r.stdout);
-  ok(/the Journal keeps only its headline/.test(r.stdout) && /save under your own scope \(e\.g\. `antigravity`\)/.test(r.stdout),
-    '…says the Journal keeps only the headline, and names the scope to use instead', r.stdout);
+  ok(/Its text was kept as previous\.md \(state\/.*\/previous\.md\)/.test(r.stdout) && /save under your own scope \(e\.g\. `antigravity`\)/.test(r.stdout),
+    '…says the text was kept as previous.md (with its path), and names the scope to use instead', r.stdout);
+  const prev1 = readB(prevFile);
+  ok(prev1 !== null && ccBytes !== null && Buffer.compare(prev1, ccBytes) === 0,
+    'previous.md is BYTE-IDENTICAL to the handoff that was replaced');
+  {
+    const idx = await store.listWorkingScopes(D1, { project: 'lumina' });
+    const pairs = idx.scopes.filter((x) => x.scope === 'shared-main');
+    ok(pairs.length === 1 && !idx.scopes.some((x) => /previous/.test(x.scope + x.machine)),
+      'the index still lists ONE (scope, machine) pair — previous.md is never a scope, a machine or a handoff');
+    const rd = await store.readWorkingState(D1, { project: 'lumina', scope: 'shared-main' });
+    ok(rd.current && /Antigravity state\./.test(rd.current.text), 'current.md is the NEW handoff');
+    ok(rd.previous && rd.previous.harness === 'claude-code' && rd.previous.harnessLabel === 'Claude Code' && rd.previous.headline === 'CC handoff: parser half done'
+      && typeof rd.previous.writtenAt === 'string' && rd.previous.bytes === ccBytes.length && !('text' in rd.previous),
+    'a scoped read reports `previous` {harness (raw), harnessLabel, writtenAt, headline, bytes} — and no text unless asked', JSON.stringify(rd.previous));
+    const rt = await mcpTools.getWorkingStateHandler({ domain: D1, project: 'lumina', scope: 'shared-main', previous: true }, storage);
+    ok(rt.ok && typeof rt.previous?.text === 'string' && /State written by claude-code\./.test(rt.previous.text),
+      'get_working_state { previous: true } returns the kept text');
+    ok(/`previous`/.test(rt.content_is_data) && /previous\.text/.test(rt.report),
+      '…framed as recorded data, and the report says what it is');
+    const ctx = await mcpTools.getProjectContextHandler({ domain: D1, project: 'lumina', scope: 'shared-main' }, storage);
+    ok(ctx.ok !== false && ctx.previous && ctx.previous.harnessId === 'claude-code' && !('text' in ctx.previous)
+      && /kept as previous\.md/.test(ctx.report),
+    'get_project_context, opening that scope, says a kept copy exists', JSON.stringify(ctx.previous));
+    const none = await store.readWorkingState(D1, { project: 'lumina', scope: 'via-cli' });
+    ok(none.ok && !('previous' in none), 'a scope with no kept copy carries NO `previous` key (pinned envelopes stay byte-identical)');
+  }
+  const agBytes = readB(curFile);
 
   // The MCP reply, as Claude Code, over Antigravity's.
   const back = await mcpTools.saveWorkingStateHandler(big('claude-code', 'claude-opus-5-5', 'CC is back'), storage);
@@ -426,12 +461,16 @@ const BODY = {
     && ow.headline === 'AG took over' && typeof ow.writtenAt === 'string' && ow.suggestedScope === 'claude-code',
   'MCP: `overwrote` carries the replaced tool, its headline, when it was written and the scope to use', JSON.stringify(ow));
   ok(ow.model === 'Gemini 3.8 Flash', 'a display-name model is carried AS GIVEN — no id is invented', String(ow.model));
+  ok(typeof ow.previousPath === 'string' && /previous\.md$/.test(ow.previousPath), '`overwrote.previousPath` is store-relative', String(ow.previousPath));
+  const prev2 = readB(prevFile);
+  ok(prev2 !== null && agBytes !== null && Buffer.compare(prev2, agBytes) === 0 && Buffer.compare(prev2, prev1) !== 0,
+    'a SECOND cross-tool replacement replaces previous.md with the handoff it replaced (one copy)');
   ok(/WARNING: this replaced the handoff Antigravity saved here/.test(back.report)
     && /From now on save under your own scope \(e\.g\. `claude-code`\)/.test(back.report)
     && /read Antigravity's work by naming its scope/.test(back.report),
   'MCP: the report says it in words — the SAME sentence the CLI prints', back.report);
   ok(back.save_kind === 'noted', 'nothing the CALLER sent was lost, so save_kind is not "trimmed" or "replaced"', back.save_kind);
-  ok(back.notes.some((n) => /^handoff: this save replaced the handoff Antigravity wrote here/.test(n) && n.length <= 200),
+  ok(back.notes.some((n) => /^handoff: this save replaced the handoff Antigravity wrote here.*its text was kept as previous\.md\.$/.test(n) && n.length <= 200),
     'a note records it (≤ 200 chars, the wire cap), so the JOURNAL line keeps the fact', JSON.stringify(back.notes));
   ok(/another tool's handoff/i.test(back.notes_meaning), 'notes_meaning points at `overwrote`');
   const j = await store.readWorkingState(D1, { project: 'lumina', scope: 'shared-main', journalLimit: 1 });
@@ -443,6 +482,7 @@ const BODY = {
   const same = await mcpTools.saveWorkingStateHandler(big('Claude Code (desktop)', null, 'CC again'), storage);
   ok(same.ok === true && same.overwrote === null && !/WARNING/.test(same.report),
     'ONE tool under two spellings (claude-code → Claude Code (desktop)) raises NO warning', JSON.stringify(same.overwrote));
+  ok(Buffer.compare(readB(prevFile) || Buffer.alloc(0), prev2) === 0, '…and a same-tool save leaves previous.md untouched');
   // Unknown harness on either side → silent, by design.
   const anon = await mcpTools.saveWorkingStateHandler({ ...big(undefined, null, 'no tool named'), harness: undefined }, storage);
   ok(anon.ok === true && anon.overwrote === null, 'a save naming NO tool warns about nothing (no evidence it is a different tool)');
