@@ -262,7 +262,8 @@ ok(STATIC_RULES_NOT_APPLIED.every(r => typeof r.reason === 'string' && r.reason.
 
 const audit = llm.auditStaticOffers();
 eq(audit.failures.length, 0, 'every static offer and every fallback rung passes, or carries a named exemption');
-eq(audit.offers.length, 19, 'the audit covers all 19 hand-typed offers');
+// 18 since 2026-09-25: minimax/minimax-m3:free was withdrawn by OpenRouter and removed.
+eq(audit.offers.length, 18, 'the audit covers all 18 hand-typed offers');
 eq(audit.rungs.length, 6, '…and all 6 fallback rungs');
 ok(audit.rungs.every(r => r.offered === true),
   'every fallback rung is itself an offerable entry — a rung nobody could pick has been held to nothing');
@@ -343,7 +344,7 @@ section('§4. contextLength on every static entry — read from a provider, neve
   for (const p of ['gemini', 'anthropic', 'openrouter']) {
     for (const e of (llm.OFFERABLE_MODELS[p] || [])) ALL.push({ p, e });
   }
-  eq(ALL.length, 19, 'nineteen hand-typed entries');
+  eq(ALL.length, 18, 'eighteen hand-typed entries (minimax/minimax-m3:free removed 2026-09-25)');
   ok(ALL.every(({ e }) => Number.isInteger(e.contextLength) && e.contextLength > 0),
     'every one carries a positive integer context window');
   ok(ALL.every(({ e }) => e.contextLength >= 100000 && e.contextLength <= 10000000),
@@ -360,7 +361,6 @@ section('§4. contextLength on every static entry — read from a provider, neve
     'claude-haiku-4-5': 200000, 'claude-opus-4-5': 200000, 'claude-sonnet-5': 1000000,
     'ibm-granite/granite-4.0-h-micro': 131000, 'upstage/solar-pro4': 524288,
     'z-ai/glm-5.3-flash': 1048576, 'moonshotai/kimi-k2-0905': 262144,
-    'minimax/minimax-m3:free': 1048576,
   };
   for (const [id, ctx] of Object.entries(PINNED)) {
     eq(byId.get(id), ctx, `${id} publishes ${ctx.toLocaleString()}`);

@@ -314,7 +314,8 @@ const ROW_INJECTED_NAMES = Object.keys(ROW_INJECTED);
 
 // The SAVE-path sandbox's manifest, declared here beside the row one so §0 can
 // see both. `makeSaveKeyHarness` builds from these exact names.
-const SAVE_FN_NAMES = ['readSkippedActivation', 'classifyActivationOutcome', 'onSaveKey'];
+// v3.72.1 (truth audit F8): a successful save marks the System check stale.
+const SAVE_FN_NAMES = ['readSkippedActivation', 'classifyActivationOutcome', 'markSystemCheckStale', 'onSaveKey'];
 const SAVE_INJECTED_NAMES = ['document', 'fetch', 'state', 'render', 'isCurrentMount', 'loadKeys'];
 /** Set by makeSaveKeyHarness to whatever it ACTUALLY injected; checked in §0b. */
 let saveInjectedNamesActual = null;

@@ -1547,6 +1547,20 @@
    truer rendering of "read this" than amber was, and the only line at this size
    that is not --text-2. */
 .model-promo { font-size: var(--text-2xs); color: var(--text); overflow-wrap: anywhere; }
+/* v3.72.1 (truth audit F3/F4). The as-of dates are provenance, so the quiet
+   --text-2 every other secondary fact on the row uses. The live-list
+   disagreement is a WARNING about a price, so it takes the promo line's
+   treatment — --text, the brightest small text on the row — plus a left rule in
+   --attention-text, a non-text channel that does not have to clear 4.5:1. */
+.model-price-asof { font-size: var(--text-2xs); color: var(--text-2); overflow-wrap: anywhere; }
+.model-price-live {
+  display: block;
+  font-size: var(--text-2xs);
+  color: var(--text);
+  border-left: 2px solid var(--attention-text);
+  padding-left: var(--space-2);
+  overflow-wrap: anywhere;
+}
 
 .model-row-body {
   padding: 2px var(--space-4) var(--space-4) 28px;
@@ -2244,6 +2258,8 @@
   padding: var(--space-5) 0;
 }
 .browse-seg { align-self: center; }
+/* v3.72.1 (audit F6): the price bands say what they measure. */
+.browse-seg-caption { align-self: center; font-size: var(--text-2xs); color: var(--text-2); white-space: nowrap; }
 /* The live count on a facet. Tabular and one rung down: the LABEL is what you
    aim at and the count is what tells you whether aiming is worth it. */
 .browse-seg-n {

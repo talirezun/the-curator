@@ -72,11 +72,14 @@
 //      "restart the app" — that error is shown as itself.
 //
 //   7. The tool count is stated correctly and the WRITE tools are named.
-//      Counted from mcp/tools/index.js: 22 tools, of which 6 mutate
-//      something (the five guarded by refuseIfReadonly — compile_to_wiki,
-//      fix_wiki_issue, dismiss_wiki_issue, undismiss_wiki_issue,
-//      save_working_state). The /next MCP section said "seventeen tools,
-//      ten read and seven write", wrong on all three numbers.
+//      Counted from mcp/tools/index.js: 24 tools, of which 7 mutate
+//      something (the seven guarded by refuseIfReadonly). Four write the
+//      WIKI — compile_to_wiki, fix_wiki_issue, dismiss_wiki_issue,
+//      undismiss_wiki_issue — and three write a project's WORKING STATE —
+//      save_working_state, save_project_brief, save_foundation (v3.72.1,
+//      truth audit F12: this read "22 tools, of which 6", and the panel
+//      called all seven writers wiki writers). The /next MCP section once
+//      said "seventeen tools, ten read and seven write", wrong on all three.
 //      scripts/test-next-mcp-wizard.js imports the real tool table and
 //      fails if these constants drift from it.
 //
@@ -1112,12 +1115,16 @@ function panelStep3() {
       '<div id="mcpw-selftest-result"></div>' +
       '<div class="mcpw-capabilities">' +
         '<h4>' + icon('sparkles', 13) + ' What Claude can do once this is connected</h4>' +
-        '<p>' + TOOL_TOTAL + ' tools — ' + TOOL_READ + ' that read your wiki, ' + TOOL_WRITE + ' that write to it.</p>' +
+        '<p>' + TOOL_TOTAL + ' tools — ' + TOOL_READ + ' that read, ' + TOOL_WRITE + ' that write: to your ' +
+        'wiki, and to your projects’ working state.</p>' +
         '<ul>' +
           '<li><strong>Read:</strong> search across domains, open a page, follow its links and backlinks, ' +
-          'read a summary, look at the graph as a whole, and open the original file a summary was built from.</li>' +
-          '<li><strong>Write:</strong> compile what you just worked out in a conversation straight into wiki ' +
+          'read a summary, look at the graph as a whole, open the original file a summary was built from, ' +
+          'and read a project’s brief, handoff and documents.</li>' +
+          '<li><strong>Write to the wiki:</strong> compile what you just worked out in a conversation straight into wiki ' +
           'pages, and scan and fix wiki health issues — without leaving Claude.</li>' +
+          '<li><strong>Write working state:</strong> save a project’s handoff, its brief and its documents, so ' +
+          'the next session picks up where this one stopped.</li>' +
         '</ul>' +
         '<p class="mcpw-capabilities-note">Write tools refuse on <code>shared-*</code> mirror domains by design, ' +
         'and every write is recorded in that domain’s local audit log.</p>' +

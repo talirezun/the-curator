@@ -280,6 +280,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { formatUsdHonest } from '../src/public/next/shared/format-usd.js';
+import { formatPricePerM } from '../src/public/next/shared/model-row.js';
 import { formatModelSummary } from '../src/public/next/shared/model-summary.js';
 // v3.67.0: block 2's lede and "Used by" row read the REAL registry.
 import { buildLaneJobs } from '../src/public/next/shared/ai-jobs.js';
@@ -531,7 +532,6 @@ const RENDER_CONSTS = ['PROVIDER_ROWS', 'MEASUREMENT_CHIPS', 'ACTIVATION_SKIP_RE
   // the id `getDefaultModel(provider)` resolved to, and a local copy of the
   // table would keep that green after the module changed a value or dropped
   // the model the app actually ships.
-  'MEASURED_CALL_SECONDS',
   // ── v3.45.0, the four-block Providers page ──────────────────────────────
   // The browse table's filter scope key, its two facet tables and the build
   // lane's working-set figure. EXTRACTED, never re-declared here: the facet
@@ -572,7 +572,7 @@ const RENDER_FN_NAMES = [
   // The own-property lookup renderQualification uses to find a baseline latency.
   // Extracted rather than stubbed: its REFUSAL to resolve `constructor` through
   // the prototype chain is one of the things §R7 drives.
-  'measuredCallSeconds',
+  'qualBaselineFor', 'priceAsOfText', 'livePriceText',
   // v3.15.0. renderModelPicker DELEGATES to this when a keyed provider's
   // catalogue is empty — the OpenRouter state for this release. Omitting it
   // is what made this suite CRASH with a ReferenceError instead of failing;
@@ -691,6 +691,9 @@ const RENDER_INJECTED_VALUES = {
   explainerMark,
   explainerHtml,
   formatUsdHonest,
+  // v3.72.1 — the REAL price-per-1M formatter settings.js imports from
+  // shared/model-row.js, so an exact price is what the rows assert.
+  formatPricePerM,
   // The REAL shared builder, not a stub. renderModelOption's collapsed row is
   // where a flagged model's reason has to appear now that the note is folded,
   // and a stub would let this suite go green over a summary that never renders
@@ -761,6 +764,9 @@ const ACTION_FN_NAMES = ['modelPickErrorMessage', 'onPickModel',
   // PROVIDER as well as the pin, so a UI that showed the choice before the
   // server confirmed could claim a different provider is billing.
   'onPickBuildModel',
+  // v3.72.1 (truth audit F8) — a successful build pick marks the System
+  // check stale, so the Verify confirm re-reads which model it would run on.
+  'markSystemCheckStale',
   // v3.15.2 — the catalogue refresh. Same not-optimistic invariant as
   // onPickModel, and a sharper failure mode if it breaks: the list it must
   // not clear reads as "this provider has no models", which is a lie about
@@ -891,10 +897,9 @@ const {
   renderBuildCurrent, renderBuildList, renderBuildBlock, renderChatBlock,
   BUILD_PICK_ERROR_ID, QUALIFY_CONFIRM_ID, buildPickButtonId,
   // ── The 2026-09-02 router-audit fixes (§48) ──────────────────────────────
-  // Both pulled from the sandbox rather than re-declared: MEASURED_CALL_SECONDS
-  // is the table whose VALUES the assertions quote, so a local copy would keep
-  // §48 green after the module changed one.
-  renderQualification, MEASURED_CALL_SECONDS, measuredCallSeconds,
+  // Pulled from the sandbox rather than re-declared (v3.72.1: the baseline
+  // is `qualBaselineFor` over the offer entry; the second table is gone).
+  renderQualification, qualBaselineFor, formatDuration,
 } = sandbox;
 
 // ── The real catalogue, exactly as the wire carries it ────────────────────
@@ -2441,8 +2446,14 @@ section('§12  The list is attached to its own provider row');
       'while a genuine ZERO still reads as $0.00 — the rule is about non-zero costs, not about the string');
     // Cross-checked against the shared module the suite imports DIRECTLY, so
     // the two cannot silently disagree about the same number.
-    ok(String(formatModelPrice(TINY, TINY)).includes(String(formatUsdHonest(TINY))),
-      'and the figure on the row is exactly what shared/format-usd.js produces for it');
+    // v3.72.1: RE-POINTED at the formatter Chat's model menu uses. A RATE is
+    // not an amount spent: formatUsdHonest rounds to cents ($0.075 -> "$0.08")
+    // and Settings printed that while Chat printed $0.075 — one price, two
+    // figures. Rows now use shared/model-row.js's formatPricePerM, exact.
+    ok(String(formatModelPrice(TINY, TINY)).includes(String(formatPricePerM(TINY))),
+      'and the figure on the row is exactly what shared/model-row.js produces for it — the formatter Chat uses');
+    ok(formatModelPrice(0.075, 0.25) === '$0.075 in · $0.25 out' && formatModelPrice(0.017, 0.112) === '$0.017 in · $0.112 out',
+      '★ an exact price stays exact: $0.075 is not "$0.08" and $0.017 is not "$0.02" [a formatUsdHonest revert reds here]');
     // THE WHOLE ROW, through the shipping renderer — a formatter can be
     // correct while the row inserts something else (the v3.16.1 finding:
     // `filterHtml` computed and never rendered).
@@ -5156,8 +5167,8 @@ section('§21  The collapsed row stands alone — reason and price unfolded, not
     }
   }
   ok(checkedFlagged >= 8, `corpus: ${checkedFlagged} flagged rows checked — (a) is not vacuous`);
-  ok(checkedPrice >= 19, `corpus: ${checkedPrice} priced rows checked — (b) is not vacuous`);
-  ok(checkedNote >= 19, `corpus: ${checkedNote} rows with a long note checked — (c) is not vacuous`);
+  ok(checkedPrice >= 18, `corpus: ${checkedPrice} priced rows checked — (b) is not vacuous`);
+  ok(checkedNote >= 18, `corpus: ${checkedNote} rows with a long note checked — (c) is not vacuous`);
 
   // (d) ABSENT IS NOT ZERO, on the real screen. One shipping model has NO page
   // measurement at all; several have no latency. Their rows must omit the
@@ -5319,7 +5330,8 @@ section('§22  The filter — search first, and never a ranking we cannot suppor
   ok(CORPUS.length >= 190, `corpus: ${CORPUS.length} models — real scale, not a 4-row fixture`);
   const freeCount = CORPUS.filter((m) => m.free === true).length;
   ok(freeCount >= 6, `corpus contains ${freeCount} FREE models`);
-  ok(CORPUS.filter((m) => isCuratorMeasured(m)).length >= 12,
+  ok(CORPUS.filter((m) => isCuratorMeasured(m)).length >= 11, // 12 before minimax/minimax-m3:free was withdrawn (2026-09-25)
+
     `corpus contains ${CORPUS.filter(isCuratorMeasured).length} MEASURED models`);
   ok(CORPUS.filter((m) => !isCuratorMeasured(m)).length >= 190,
     'corpus contains ~190 UNMEASURED models — the common case dominates, as in production');
@@ -5349,7 +5361,7 @@ section('§22  The filter — search first, and never a ranking we cannot suppor
 
   // ── 22b. MEASURED-ONLY — absent is ABSENT, never a zero score ─────────
   const onlyMeasured = filterModels(CORPUS, F({ measuredOnly: true }));
-  ok(onlyMeasured.length >= 12 && onlyMeasured.length < 40,
+  ok(onlyMeasured.length >= 11 && onlyMeasured.length < 40,
     `"Measured by The Curator" narrows ${CORPUS.length} to ${onlyMeasured.length}`);
   ok(onlyMeasured.every((m) => typeof m.jsonRaw === 'boolean'),
     'every model in the measured view carries a real measurement marker');
@@ -5675,7 +5687,7 @@ section('§23  Newest / Largest context — ranking a published fact, and REFUSI
   {
     const statics = (OFFERABLE_MODELS.gemini || []).concat(
       OFFERABLE_MODELS.anthropic || [], OFFERABLE_MODELS.openrouter || []);
-    ok(statics.length >= 19, `control: ${statics.length} hand-measured entries built — the module loaded`);
+    ok(statics.length >= 18, `control: ${statics.length} hand-measured entries built — the module loaded`);
     ok(statics.every((e) => Object.hasOwn(e, 'createdUnixSec') && e.createdUnixSec === null),
       'EVERY hand-typed entry carries `createdUnixSec: null` — the field is additive and absent means unpublished');
     // REVERSED FOR `contextLength` IN v3.45.0: every hand-typed entry now
@@ -5724,7 +5736,7 @@ section('§23  Newest / Largest context — ranking a published fact, and REFUSI
   ok(fetched.filter((e) => e.contextLength === null).length === 1
      && fetched.find((e) => e.contextLength === null).id === UNSIZED_ID,
     'corpus: exactly ONE fetched row publishes no context window — the largest-context unranked block');
-  ok(staticRows.length >= 12 && staticRows.every((e) => e.createdUnixSec === null),
+  ok(staticRows.length >= 11 && staticRows.every((e) => e.createdUnixSec === null),
     `corpus: ${staticRows.length} STATIC rows, every one UNDATED — the newest-sort absence assertions are non-vacuous BY CONSTRUCTION`);
   ok(staticRows.every((e) => Number.isInteger(e.contextLength) && e.contextLength > 0),
     '…and every one SIZED since v3.45.0, which is why the unsized fetched row above had to be added');
@@ -7185,103 +7197,70 @@ section('§48  Three claims the picker was making that were not true');
       stillOffered: true,
     }, over || {});
 
-    // The lookup itself.
-    ok(measuredCallSeconds('upstage/solar-pro4') === 53,
-      'measuredCallSeconds finds the measured mean for a model that was timed');
-    ok(measuredCallSeconds('zz/never-timed') === null,
-      '…and returns null, not a guess, for one that was not');
-    ok(measuredCallSeconds('constructor') === null && measuredCallSeconds('__proto__') === null
-      && measuredCallSeconds('hasOwnProperty') === null,
-      '…and cannot be walked into Object.prototype by a model id a third party chose');
-    // ── AND THE OWN-PROPERTY CHECK IS LOAD-BEARING, NOT DECORATION ───────
-    // CHASED FROM A GREEN MUTATION: deleting the hasOwnProperty guard left the
-    // three assertions above still passing, because every real Object.prototype
-    // member is a FUNCTION and the trailing Number.isFinite already rejected it.
-    // The guard only earns its place against a prototype member that IS a finite
-    // number — so this plants one, which is the prototype-pollution shape this
-    // repo names (v3.0.9's normalizeResponseStyle) rather than a hypothetical.
-    {
-      const KEY = 'zzPollutedFiniteProbe';
-      Object.prototype[KEY] = 7; // eslint-disable-line no-extend-native
-      try {
-        // CONTROL FIRST: the pollution is real, and a naive lookup DOES find it.
-        ok(({})[KEY] === 7,
-          'CONTROL: the planted prototype property is visible through a bare lookup — the probe is real');
-        ok(!Object.prototype.hasOwnProperty.call(MEASURED_CALL_SECONDS, KEY),
-          'CONTROL: …and it is NOT an own property of the measured table');
-        ok(measuredCallSeconds(KEY) === null,
-          'a FINITE value planted on Object.prototype is still refused — the own-property check is what stops it, since Number.isFinite would accept a 7');
-      } finally {
-        delete Object.prototype[KEY];
-      }
-      ok(({})[KEY] === undefined, 'CONTROL: the probe cleaned up after itself');
-    }
-    ok(measuredCallSeconds('') === null && measuredCallSeconds(null) === null
-      && measuredCallSeconds(undefined) === null && measuredCallSeconds(42) === null,
-      '…and degrades to null on every non-id input rather than throwing');
-
-    // The sentence FOLLOWS the id it is handed.
-    const timed = renderQualification(QL(), 9, 'upstage/solar-pro4');
-    ok(/averages about 53 s/.test(timed) && timed.includes('upstage/solar-pro4'),
-      'the panel quotes the baseline AND names the model it belongs to');
-    ok(/mean [^<]*per call/.test(timed), 'CONTROL: …beside the user\'s own measured mean');
-
-    const untimed = renderQualification(QL(), 9, 'zz/some-future-default');
-    ok(!/averages about/.test(untimed),
-      'a baseline model nobody has timed DROPS the clause rather than inventing one');
-    ok(/mean [^<]*per call/.test(untimed),
-      '…while the user\'s own measurement still renders — only the comparison goes');
-    ok(!untimed.includes('53'),
-      '…and no stale 53 s survives anywhere in that output');
-    ok(renderQualification(QL(), 9, '') === renderQualification(QL(), 9, undefined),
-      'an absent baseline id behaves exactly like an untimed one');
-
-    // ── "A DEFAULTS BUMP CHANGES THE SENTENCE" ──────────────────────────
-    // The wire field `models[provider]` IS `getDefaultModel(provider)`, so a
-    // bump of DEFAULTS is expressed here as a different value in that field.
-    // Driven through the REAL picker, so the wiring from ctx to the sentence is
-    // exercised rather than assumed.
-    const withQual = (defaultId) => renderModelPicker(rowFor('openrouter'),
-      keysFor('openrouter', {
-        offerable: Object.assign({}, WIRE, { openrouter: LIVE }),
-        models: Object.assign({}, keysFor('openrouter').models, { openrouter: defaultId }),
-        qualifications: [QL()],
-        minRunsToQualify: 9,
-      }), true, false);
-
+    const eqP = (a, b, label) => ok(Object.is(a, b), Object.is(a, b) ? label : label + ' (got ' + JSON.stringify(a) + ', expected ' + JSON.stringify(b) + ')');
+    // ── v3.72.1 (truth audit F1, F2): ONE SOURCE, THE RIGHT MODEL ─────────
+    // The baseline was a second hand-kept table (MEANS: solar-pro4 53 s,
+    // glm-5.3-flash 289 s) while the row summary read llm.js's MEDIANS (48 s,
+    // 188 s) — two figures for one model on one screen — and it called
+    // OpenRouter's default "which builds your wiki today" even when Gemini
+    // built the wiki. Now `qualBaselineFor` reads the offer entry's own
+    // `medianLatencyMs` and compares against `build`.
     const shipped = getDefaultModel('openrouter');
-    ok(typeof shipped === 'string' && shipped.length > 0,
-      `CONTROL: llm.js resolves an OpenRouter default (${shipped}) — the arms below are not comparing two absences`);
-    ok(measuredCallSeconds(shipped) !== null,
-      `CONTROL: …and it IS in the measured table (${measuredCallSeconds(shipped)} s), so the clause is live today rather than permanently absent`);
+    const shippedEntry = LIVE.find((m) => m.id === shipped);
+    ok(!!shippedEntry && Number.isFinite(shippedEntry.medianLatencyMs),
+      `CONTROL: the OpenRouter default (${shipped}) carries a measured median on the wire, so the clause is live`);
+    const kOr = (over) => keysFor('openrouter', Object.assign({
+      offerable: Object.assign({}, WIRE, { openrouter: LIVE }),
+      models: Object.assign({}, keysFor('openrouter').models, { openrouter: shipped }),
+    }, over || {}));
 
-    const nowHtml = withQual(shipped);
-    ok(nowHtml.includes('averages about ' + measuredCallSeconds(shipped) + ' s'),
-      'rendered through the real picker, the panel quotes the CURRENT default\'s measured mean');
-    ok(nowHtml.includes(escapeHtml(shipped)),
-      '…naming that model, so the figure is falsifiable by a reader');
+    const blGem = qualBaselineFor(kOr({ build: { provider: 'gemini', model: 'gemini-2.5-flash-lite' } }), 'openrouter');
+    ok(blGem && blGem.medianMs === shippedEntry.medianLatencyMs,
+      '★ the baseline figure IS the offer entry\'s medianLatencyMs — the one source the row summary reads [F2]');
+    eqP(blGem && blGem.buildsNow, false,
+      '★ with GEMINI building the wiki, OpenRouter\'s default is NOT "the model that builds your wiki today" [F1]');
+    const blOr = qualBaselineFor(kOr({ build: { provider: 'openrouter', model: shipped } }), 'openrouter');
+    eqP(blOr && blOr.buildsNow, true, '…and with OpenRouter building on that very model, it is');
+    eqP(qualBaselineFor(kOr({ models: { openrouter: 'zz/never-timed' } }), 'openrouter'), null,
+      'a default nobody timed has no baseline — null, never a guess');
+    eqP(qualBaselineFor(kOr({ models: { openrouter: '__proto__' } }), 'openrouter'), null,
+      '…and a prototype-key id finds nothing (an equality scan over the list, never an index)');
+    eqP(qualBaselineFor(null, 'openrouter'), null, 'no payload, no baseline, no throw');
 
-    const bumpedHtml = withQual('zz/next-generation-default');
-    ok(!/averages about/.test(bumpedHtml),
-      'BUMPING the default to a model nobody has timed removes the clause — it does not keep describing the model the app no longer ships');
-    ok(bumpedHtml !== nowHtml,
-      '…so a DEFAULTS bump demonstrably changes the sentence');
-    ok(/mean [^<]*per call/.test(bumpedHtml),
-      '…and the user\'s own measurement is untouched by the bump');
+    const gemHtml = renderQualification(QL(), 9, blGem);
+    ok(!/builds your wiki today/.test(gemHtml),
+      '★ the panel does NOT say the OpenRouter default builds the wiki when Gemini does [F1: the pre-fix sentence reds here]');
+    ok(gemHtml.includes(shipped + ', OpenRouter&#39;s default,') || gemHtml.includes(shipped + ", OpenRouter's default,"),
+      '…it names it as OpenRouter\'s default instead');
+    const secs = Math.floor(shippedEntry.medianLatencyMs / 1000);
+    ok(gemHtml.includes('took a median ' + formatDuration(shippedEntry.medianLatencyMs) + ' per call'),
+      `★ …quoting the MEDIAN from the entry (${secs} s), labelled median [F2]`);
+    ok(!/averages about 53 s|\b53 s\b/.test(gemHtml),
+      '★ the old second-table figure (53 s, a mean) is nowhere [F2: restoring MEASURED_CALL_SECONDS reds here]');
+    ok(/mean [^<]*per call/.test(gemHtml), 'CONTROL: the user\'s own figure is still stated, as a mean');
+    const orHtml = renderQualification(QL(), 9, blOr);
+    ok(/which builds your wiki today/.test(orHtml), '…and "builds your wiki today" appears exactly when it is true');
 
-    const otherTimed = Object.keys(MEASURED_CALL_SECONDS).find((id) => id !== shipped);
-    ok(!!otherTimed, 'CONTROL: the table holds more than one entry, so the arm below is a real second value');
-    ok(withQual(otherTimed).includes('averages about ' + MEASURED_CALL_SECONDS[otherTimed] + ' s'),
-      'bumping to a DIFFERENT timed model quotes that model\'s number, not the old one');
+    const untimed = renderQualification(QL(), 9, null);
+    ok(!/took a median/.test(untimed), 'no baseline drops the clause rather than inventing one');
+    ok(/mean [^<]*per call/.test(untimed), '…while the user\'s own measurement still renders');
 
-    // The literal is gone from the module.
+    // Through the REAL picker, so the wiring from the payload to the sentence
+    // is exercised rather than assumed.
+    const withQual = (defaultId, build) => renderModelPicker(rowFor('openrouter'),
+      kOr({ models: Object.assign({}, keysFor('openrouter').models, { openrouter: defaultId }),
+        build, qualifications: [QL()], minRunsToQualify: 9 }), true, false);
+    const pickGem = withQual(shipped, { provider: 'gemini', model: 'gemini-2.5-flash-lite' });
+    ok(pickGem.includes('took a median') && !/builds your wiki today/.test(pickGem),
+      '★ rendered through the real picker with Gemini building: the median is quoted, the false "builds your wiki today" is not [F1]');
+    const bumped = withQual('zz/next-generation-default', { provider: 'openrouter', model: 'zz/next-generation-default' });
+    ok(!/took a median/.test(bumped), 'bumping the default to an untimed model removes the clause');
+
+    // The second table is gone from the module.
+    ok(!/MEASURED_CALL_SECONDS|measuredCallSeconds/.test(stripComments(settings)),
+      'the hand-kept MEASURED_CALL_SECONDS table and its lookup are gone from settings.js');
     const qualSrc = stripComments(functionSource(settings, 'renderQualification'));
-    ok(!/about 53 s/.test(qualSrc),
-      'the hardcoded "about 53 s" is no longer in renderQualification');
-    ok(!/the model this app ships/.test(qualSrc),
-      '…nor the unfalsifiable "the model this app ships" phrasing that carried it');
-    ok(/measuredCallSeconds\(/.test(qualSrc),
-      'CONTROL: …and the function does call the lookup, so the two scans above are looking at the right place');
+    ok(!/about 53 s/.test(qualSrc), 'the hardcoded "about 53 s" is not in renderQualification');
   }
 
   setOpenRouterCatalogue([]);

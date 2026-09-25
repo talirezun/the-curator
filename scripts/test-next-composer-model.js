@@ -1754,6 +1754,23 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
     ok(n === REAL[p].length,
       `§11 provider "${p}" contributes all ${REAL[p].length} of its entries to the money cross-check (got ${n})`);
   }
+  // v3.72.1 — THE FREE ARM NEEDS A FREE ENTRY, AND THE SHIPPED ONE IS GONE.
+  // `minimax/minimax-m3:free` was the static table's only free model; OpenRouter
+  // withdrew it (a real call answered 404 "unavailable for free", 2026-09-25)
+  // and it was removed. Free ids still reach users through the runtime
+  // catalogue, so the free arm stays: one synthetic `:free` entry, built by the
+  // REAL offer factory (which registers its freeness exactly as a synced one's),
+  // added AFTER the per-provider count above so that count stays the table's.
+  {
+    const { __testing: LLM_T } = await import('../src/brain/llm.js');
+    const FREE_ID = 'zz-vendor/zz-free-fixture:free';
+    const freeEntry = LLM_T.defineOfferableModel('openrouter', {
+      id: FREE_ID, label: 'Free Fixture', thinks: false, tokenizerFactor: 1.0,
+      suitability: 'chat-only', maxOutput: 32768, contextLength: 131072, free: true,
+      note: 'Synthetic free entry for the free-model money arm.',
+    });
+    everyEntry.push({ p: 'openrouter', e: JSON.parse(JSON.stringify(freeEntry)) });
+  }
   // DECLARED, because today this loop runs ZERO times: every provider ships a
   // populated catalogue, so EMPTY is `[]` and the assertion inside it never
   // executes. A loop over an empty collection is not a failing test and not a
@@ -1838,6 +1855,11 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
 
   const ANY = ALL_PROVIDERS;
   const OFF = rawFull();
+  // v3.72.1: the synthetic free entry (above) is in the composer's catalogue
+  // too, as a synced free id would be — so the cost line can find it.
+  for (const { p, e } of everyEntry) {
+    if (e.free === true && OFF[p] && !OFF[p].some((x) => x.id === e.id)) OFF[p] = OFF[p].concat([e]);
+  }
   const ctx = { offerable: OFF, availableProviders: ANY, activeProvider: 'gemini' };
   const msg = (model, usage, extra) =>
     Object.assign({ role: 'assistant', content: 'x', model, usage }, extra || {});

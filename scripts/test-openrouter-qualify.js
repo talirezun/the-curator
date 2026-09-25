@@ -644,18 +644,16 @@ let ui;
 try {
 ui = new Function('escapeHtml', 'formatIsoDay', 'formatUsdHonest',
   liftConst(settingsSrc, 'QUALIFY_CONFIRM_ID') + '\n' +
-  // The measured per-model latency baseline renderQualification quotes, and the
-  // own-property lookup that reads it. Both LIFTED: the table's values are what
-  // the rendered sentence prints, so a copy here would assert this file agrees
-  // with itself.
-  liftObjectConst(settingsSrc, 'MEASURED_CALL_SECONDS') + '\n' +
-  lift(settingsSrc, 'measuredCallSeconds') + '\n' +
+  // v3.72.1: the latency baseline is no longer a table in settings.js — it is
+  // the offer entry's own `medianLatencyMs`, handed in as an object by
+  // `qualBaselineFor` (driven directly in test-next-model-picker.js R7).
+
   lift(settingsSrc, 'formatSyncedAt') + '\n' +
   lift(settingsSrc, 'formatTokenCount') + '\n' +
   lift(settingsSrc, 'formatDuration') + '\n' +
   lift(settingsSrc, 'renderQualification') + '\n' +
   lift(settingsSrc, 'renderQualifyPanel') + '\n' +
-  'return { renderQualification, renderQualifyPanel, formatDuration, QUALIFY_CONFIRM_ID, measuredCallSeconds, MEASURED_CALL_SECONDS };'
+  'return { renderQualification, renderQualifyPanel, formatDuration, QUALIFY_CONFIRM_ID };'
 )(
   str => String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
   iso => String(iso).slice(0, 10),
@@ -691,6 +689,15 @@ try {
   ui = { renderQualification: () => '', renderQualifyPanel: () => '', formatDuration: () => '' };
 }
 
+// v3.72.1: the baseline as `qualBaselineFor` builds it, from the REAL offer
+// entry of the shipping default — so the figure asserted below is llm.js's own
+// median, the one source the row summary reads too.
+const SHIPPED_ID = llm.getDefaultModel('openrouter');
+const SHIPPED_ENTRY = llm.listOfferableModels('openrouter').find((m) => m.id === SHIPPED_ID) || null;
+const SHIPPED_BASELINE = SHIPPED_ENTRY && Number.isFinite(SHIPPED_ENTRY.medianLatencyMs)
+  ? { id: SHIPPED_ID, providerName: 'OpenRouter', medianMs: SHIPPED_ENTRY.medianLatencyMs, buildsNow: true,
+      measuredOn: SHIPPED_ENTRY.measuredOn || '' }
+  : null;
 const cleanHtml = ui.renderQualification(Object.assign(record(), {
   qualifies: true, stillOffered: true,
   pages: { median: 23, min: 14, max: 36, n: 9 },
@@ -702,7 +709,7 @@ const cleanHtml = ui.renderQualification(Object.assign(record(), {
   // DEFAULTS.openrouter would have left this panel attributing one model's
   // timing to another. Passing the real shipping default here means the
   // assertion below reads the same table the module does.
-}), 9, llm.getDefaultModel('openrouter'));
+}), 9, SHIPPED_BASELINE);
 
 // THE FORBIDDEN WORDS. This is the claim the feature may not make, and a grep
 // over rendered output is the only guard that survives a rewrite of the prose.
@@ -745,16 +752,15 @@ ok(/per call/.test(cleanHtml), 'latency is rendered as a first-class fact');
 // moved to a model with a different measured mean, which is the exact defect
 // the third argument exists to prevent.
 {
-  const shippedId = llm.getDefaultModel('openrouter');
-  const baseline = ui.measuredCallSeconds(shippedId);
-  ok(baseline !== null,
-    `CONTROL: the shipping OpenRouter default (${shippedId}) HAS a measured mean (${baseline} s), so the assertion below is not vacuous`);
-  ok(new RegExp('averages about ' + baseline + ' s').test(cleanHtml),
-    '…beside the shipping default, so the reader can judge it');
-  ok(cleanHtml.includes(shippedId),
+  ok(SHIPPED_BASELINE !== null,
+    `CONTROL: the shipping OpenRouter default (${SHIPPED_ID}) HAS a measured median on its offer entry, so the assertion below is not vacuous`);
+  ok(cleanHtml.includes('took a median ' + ui.formatDuration(SHIPPED_BASELINE.medianMs) + ' per call'),
+    '…beside the shipping default, labelled a MEDIAN (the user\'s own figure is a mean), so the reader can judge it');
+  ok(cleanHtml.includes(SHIPPED_ID),
     '…and the baseline NAMES the model it belongs to, rather than an unfalsifiable "the model this app ships"');
-  ok(Object.prototype.hasOwnProperty.call(ui.MEASURED_CALL_SECONDS, shippedId),
-    '…read out of the module\'s own measured table, so a DEFAULTS bump to an untimed model drops the clause instead of lying');
+  ok(!ui.renderQualification(Object.assign(record(), {
+    qualifies: true, stillOffered: true, latencyMs: { mean: 41000 }, pages: {} }), 9, null).includes('took a median'),
+    '…and with no baseline the clause is dropped instead of lying');
 }
 ok(/23 pages/.test(cleanHtml), 'median pages planned is rendered');
 ok(/9 raw/.test(cleanHtml) && /0 unrepairable/.test(cleanHtml), 'the raw/repaired/unrepairable split is rendered');

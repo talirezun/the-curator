@@ -83,6 +83,9 @@ function extractFunction(source, name) {
 const RENDER_CHAIN = ['ageSecondsOf', 'ageMarkHtml', 'renderToolTile', 'renderToolGroup',
   'renderSessionStrip', 'renderExerciseOutcome', 'renderExerciseRunner',
   'renderToolMapBody', 'renderToolMap', 'usageSignature',
+  // v3.72.1 (truth audit F9): the poll compares the save/session stamp to
+  // decide whether block ④ is re-read on the same tick.
+  'acrossProjectsStamp',
   'applyUsageVerdict', 'tickMcpAges'];
 
 /**
@@ -118,6 +121,9 @@ function build(extra, over, alsoReturn) {
     // button thirty seconds after a run.
     wireExerciseControl: () => {},
     TOOL_MAP_BODY_SEL: '.settings-block-mcp-tool-map .settings-block-body',
+    // v3.72.1 — block ④'s re-read on a moved save stamp. Recorded, never
+    // performed here: test-next-settings-truth.js §5 asserts when it fires.
+    loadAcrossProjects: async () => {},
   };
   Object.assign(deps, over || {});
   const bodies = [extractFunction(src, 'settingsBlock')]
@@ -968,7 +974,11 @@ section('14. ④ Across projects (v3.66.0, P8): the widget’s per-project bars,
 // ═══════════════════════════════════════════════════════════════════════════
 {
   const { identityDotClass } = await import('../src/public/next/shared/sidebar.js');
-  const across = (projects) => build([extractFunction(src, 'renderAcrossProjects')], {
+  // v3.72.1: the body is its own function (the 30 s poll repaints it alone)
+  // and the windows are words built from the route's own figures.
+  const across = (projects) => build([extractFunction(src, 'renderAcrossProjects'),
+    extractFunction(src, 'renderAcrossProjectsBody'), extractFunction(src, 'windowDaysWords'),
+    extractFunction(src, 'formatSyncedAt')], {
     state: { mcpProjects: projects, mcpProjectsError: null,
       defaultDomainInfo: { domains: ['business', 'posts', 'research'] } },
     identityDotClass, ACROSS_PROJECTS_MAX_ROWS: 12,
@@ -979,7 +989,8 @@ section('14. ④ Across projects (v3.66.0, P8): the widget’s per-project bars,
   const P = { byProject: [row('business', 'alpha', 11, 9), row('posts', 'curator', 6, 4), row('research', 'quiet', 0, 0),
       row('gone', 'old', 2, 1, { inStore: false })],
     window: { logPresent: true, busiestSaved: 9, windowDays: 30 },
-    savePulse: { events: 79, lowerBound: false } };
+    // v3.72.1: the route sends the pulse window; the label is built from it.
+    savePulse: { events: 79, lowerBound: false, windowSeconds: 604800, coversWholeWindow: true } };
   const html = across(P);
   ok(/settings-block-mcp-across/.test(html) && /settings-block-num" aria-hidden="true">4</.test(html)
      && /<h2 class="settings-job-title">Across projects<\/h2>/.test(html),
@@ -999,7 +1010,7 @@ section('14. ④ Across projects (v3.66.0, P8): the widget’s per-project bars,
   ok(!/cur-sb-dot/.test(lines[3].val) && lines[3].sub === '2 sessions · not in this folder',
     'a project whose domain this install does not hold gets NO dot — never a guessed one — and says it is not here');
   ok(/settings-id-idle/.test(lines[2].val) && w(lines[2].val) === null && /^.*>0$/.test(lines[2].val.replace(/<[^>]+>/g, '>').replace(/>+/g, '>'))
-     && lines[2].sub === 'no session in 30 days',
+     && lines[2].sub === 'no session, last 30 days',
     'a project with NO session is shown, as 0, marked idle, with no bar — so a reader can see which never save');
   ok(/\.mcp-across \.cur-mon-line:has\(\.settings-id-idle\) \.cur-mon-value\s*\{[^}]*color:\s*var\(--text-2\)/.test(css),
     '...and the idle figure takes the quiet ink, never an opacity');
@@ -1012,7 +1023,7 @@ section('14. ④ Across projects (v3.66.0, P8): the widget’s per-project bars,
   ok(!/cur-mon-line[ "]/.test(none) && /No usage log on this computer yet/.test(none),
     'with no usage log every row reads null — the block draws NO row and says so, never a column of zeros');
   // lowerBound pulse.
-  const lb = across({ ...P, savePulse: { events: 23, lowerBound: true } });
+  const lb = across({ ...P, savePulse: { events: 23, lowerBound: true, windowSeconds: 604800, coversWholeWindow: true } });
   ok(/cur-mon-value">at least 23</.test(lb), 'a pulse past the journal tail reads "at least N"');
   // Loading and a server that cannot say.
   ok(/Reading the usage logs…/.test(across(null)), 'before the reading lands the block says so');

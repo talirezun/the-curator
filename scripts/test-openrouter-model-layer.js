@@ -2080,7 +2080,19 @@ cfgMod.setActiveProvider('openrouter');
 
 section('8b. A free head never walks onto a paid rung [M10, M20]');
 {
-  const FREE = 'minimax/minimax-m3:free';
+  // v3.72.1: this read 'minimax/minimax-m3:free', the one SHIPPED free id,
+  // pinned as the build model. OpenRouter withdrew it (2026-09-25) and it left
+  // the table, so no free id can be a stored build pin any more. The path is
+  // still real — a free head reached through LLM_MODEL, or any future
+  // hand-measured free id — so the head is a synthetic `:free` id registered
+  // through the real offer factory and put in force through LLM_MODEL, which
+  // the engine honours without the build-lane allow-list.
+  const FREE = 'zz-vendor/zz-free-head:free';
+  defineOfferableModel('openrouter', {
+    id: FREE, label: 'Free Head', thinks: false, tokenizerFactor: 1.0,
+    suitability: 'chat-only', maxOutput: 32768, free: true,
+    note: 'Synthetic free head for the free-to-paid fallback guard.',
+  });
   const PAID_RUNG = llm.__testing.FALLBACK_CHAINS.openrouter[0];
   ok(llm.isFreeModel(FREE), 'fixture: the head id is free');
   ok(!llm.isFreeModel(PAID_RUNG), 'fixture: the chain\'s only rung is PAID — which is what makes this reachable rather than theoretical');
@@ -2118,8 +2130,10 @@ section('8b. A free head never walks onto a paid rung [M10, M20]');
   // before/after is the assertion that was meant: NOTHING about the fallback
   // record may change, because no fallback may occur.
   const fallbackBefore = JSON.stringify(llm.getFallbackStatus());
+  const prevEnvModel = process.env.LLM_MODEL;
   try {
-    cfgMod.setSelectedModel('openrouter', FREE);
+    process.env.LLM_MODEL = FREE;
+    eq(llm.getProviderInfo().model, FREE, 'fixture: the free head is the model in force');
     const asked = retirementTransport();
     let threw = null;
     try {
@@ -2138,6 +2152,7 @@ section('8b. A free head never walks onto a paid rung [M10, M20]');
       'and the fallback record is UNCHANGED across the whole attempt, because no fallback happened');
   } finally {
     __setOpenRouterAdapterFactory(null);
+    if (prevEnvModel === undefined) delete process.env.LLM_MODEL; else process.env.LLM_MODEL = prevEnvModel;
     if (prevSelected) cfgMod.setSelectedModel('openrouter', prevSelected);
   }
 }

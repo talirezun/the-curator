@@ -103,6 +103,15 @@ writeFileSync(path.join(TMP_USER, '.curator-config.json'), JSON.stringify({
 }), { mode: 0o600 });
 
 const llm = await import('../src/brain/llm.js');
+// v3.72.1: the WITHDRAWN id. It was `minimax/minimax-m3:free` — the real case,
+// measured absent 2026-09-16 — until OpenRouter's withdrawal was acted on and
+// the id left the table (2026-09-25). Every property this suite needs is
+// "a SHIPPED, offerable, build-lane, hand-measured id the provider's listing
+// lacks", and the CHEAPEST such id, so that `cheapestMeasured` names it until
+// the listing arrives. Granite is all of those; the fixture listings below
+// simply leave it out. (It is also the chain's only rung, which §4 does not
+// depend on: §4 drives `fallbackRungsFor` with its own heads.)
+const WITHDRAWN = 'ibm-granite/granite-4.0-h-micro';
 const adapterMod = await import('../src/brain/openrouter-adapter.js');
 const { OpenRouterAdapter, classifyBadRequestReason, classifyNotFoundReason } = adapterMod;
 const { modelGoneError, MODEL_GONE_CODE } = await import('../src/brain/model-gone.js');
@@ -130,7 +139,7 @@ async function driveAdapter(status, message, opts = {}) {
   });
   try {
     await adapter.createChatCompletion({
-      model: opts.model || 'minimax/minimax-m3:free',
+      model: opts.model || WITHDRAWN,
       userPrompt: 'hi', maxTokens: 1, responseFormat: 'json',
     });
     return { calls, err: null };
@@ -145,7 +154,7 @@ async function driveAdapter(status, message, opts = {}) {
   ok(err instanceof Error, 'it throws');
   eq(err.curatorModelGone, true, '★ the error is tagged curatorModelGone [M1]');
   eq(err.curatorDeterministic, true, '★ and curatorDeterministic, which is what stops the chain walk [M2]');
-  ok(err.message.includes('minimax/minimax-m3:free'), 'the message NAMES the id the user is pinned to');
+  ok(err.message.includes(WITHDRAWN), 'the message NAMES the id the user is pinned to');
   ok(err.message.includes('pick another model'), 'the message says what to do next — "pick another model"');
   eq(err.status, undefined, '`.status` is withheld: 400 is not a signal any classifier reads, and setting it would put a number where isModelNotFound looks');
   eq(err.httpStatus, 400, '…while httpStatus keeps the fact for a log — "we withheld it" never becomes "there was not one"');
@@ -211,7 +220,6 @@ eq(llm.getLiveModelListing('openrouter'), null, 'and there is no listing to desc
   // id is absent, its paid twin is present, and the other four shipped ids are.
   const LIVE = [
     'minimax/minimax-m3',
-    'ibm-granite/granite-4.0-h-micro',
     'upstage/solar-pro4',
     'z-ai/glm-5.3-flash',
     'moonshotai/kimi-k2-0905',
@@ -221,12 +229,12 @@ eq(llm.getLiveModelListing('openrouter'), null, 'and there is no listing to desc
   eq(rec.recorded, true, 'a non-empty listing is recorded');
   eq(rec.count, LIVE.length, 'with every id');
 
-  eq(llm.catalogueAbsence('openrouter', 'minimax/minimax-m3:free'), 'missing',
+  eq(llm.catalogueAbsence('openrouter', WITHDRAWN), 'missing',
     '★ the WITHDRAWN id reports missing — and it is a STATIC, hand-measured, build-lane entry, which is the entire point [M3]');
   // The proof that M3 is a real mutation: the id IS still offerable, and the
   // synced catalogue would never have contained it (static ids are dropped as
   // `superseded`), so consulting the catalogue answers the wrong question.
-  eq(llm.isOfferableModel('openrouter', 'minimax/minimax-m3:free'), true,
+  eq(llm.isOfferableModel('openrouter', WITHDRAWN), true,
     '…while STILL being offerable, which is why the stale-pin fallback can never fire for it');
   eq(llm.catalogueAbsence('openrouter', 'upstage/solar-pro4'), 'present',
     '★ a shipped id the provider DOES list reports present — also a static entry the synced catalogue drops [M3]');
@@ -261,7 +269,7 @@ eq(llm.getLiveModelListing('openrouter'), null, 'and there is no listing to desc
 section('§2b. Refusals that must not be mistaken for answers');
 eq(llm.recordLiveModelListing('openrouter', []).recorded, false,
   '★ an EMPTY list is refused, not recorded — a provider publishing zero models is not a state that exists; a body we misread is');
-eq(llm.catalogueAbsence('openrouter', 'minimax/minimax-m3:free'), 'missing',
+eq(llm.catalogueAbsence('openrouter', WITHDRAWN), 'missing',
   '…and the previous listing therefore still stands, unchanged');
 eq(llm.recordLiveModelListing('openrouter', null).recorded, false, 'a non-array is refused');
 eq(llm.recordLiveModelListing('not-a-provider', ['x']).recorded, false, 'an unknown provider is refused');
@@ -277,15 +285,15 @@ eq(llm.catalogueAbsence('gemini', 'gemini-2.5-flash-lite'), null,
 section('§3. A `missing` verdict must not re-pin — v3.45.0 Option B [M5]');
 {
   const { setSelectedModel } = await import('../src/brain/config.js');
-  setSelectedModel('openrouter', 'minimax/minimax-m3:free');
-  eq(llm.catalogueAbsence('openrouter', 'minimax/minimax-m3:free'), 'missing', 'fixture: the pinned model is reported missing');
+  setSelectedModel('openrouter', WITHDRAWN);
+  eq(llm.catalogueAbsence('openrouter', WITHDRAWN), 'missing', 'fixture: the pinned model is reported missing');
   const info = llm.getProviderInfo();
   eq(info.provider, 'openrouter', 'the provider still resolves');
-  eq(info.model, 'minimax/minimax-m3:free',
+  eq(info.model, WITHDRAWN,
     '★ and getProviderInfo STILL resolves the model the user pinned — a cached list may not move the build lane, or the bill, without them asking [M5]');
-  eq(llm.getDefaultModel('openrouter'), 'minimax/minimax-m3:free',
+  eq(llm.getDefaultModel('openrouter'), WITHDRAWN,
     '★ getDefaultModel agrees — there is no second resolution that could disagree with the engine [M5]');
-  ok(llm.__testing.DEFAULTS.openrouter !== 'minimax/minimax-m3:free',
+  ok(llm.__testing.DEFAULTS.openrouter !== WITHDRAWN,
     'non-vacuous: DEFAULTS.openrouter is a DIFFERENT id, so a silent re-pin would be visible');
 }
 
@@ -299,9 +307,18 @@ section('§4. A chain may degrade capability; it may not start billing you [M10]
   ok(rungs.length > 0, 'fixture: the OpenRouter chain has at least one rung');
   ok(rungs.every(id => !llm.isFreeModel(id)),
     'fixture: EVERY rung on it is PAID — which is what makes the guard load-bearing rather than theoretical');
-  eq(llm.isFreeModel('minimax/minimax-m3:free'), true, 'fixture: the withdrawn id is free');
+  // v3.72.1: the free head was the shipped `minimax/minimax-m3:free`, which
+  // OpenRouter withdrew and which left the table. A synthetic `:free` id
+  // registered through the real offer factory is the same membership.
+  const FREE_HEAD = 'zz-vendor/zz-free-head:free';
+  llm.__testing.defineOfferableModel('openrouter', {
+    id: FREE_HEAD, label: 'Free Head', thinks: false, tokenizerFactor: 1.0,
+    suitability: 'chat-only', maxOutput: 32768, free: true,
+    note: 'Synthetic free head for the free-to-paid fallback guard.',
+  });
+  eq(llm.isFreeModel(FREE_HEAD), true, 'fixture: the head id is free');
 
-  eq(fallbackRungsFor('openrouter', 'minimax/minimax-m3:free').length, 0,
+  eq(fallbackRungsFor('openrouter', FREE_HEAD).length, 0,
     '★ a FREE head gets no paid rungs — a user who chose a zero-cost model is never silently moved onto a billed one [M10]');
   eq(fallbackRungsFor('openrouter', 'upstage/solar-pro4').join(','), rungs.join(','),
     '★ a PAID head gets the full chain, in order, byte-unchanged [M10 leaves this green, which is why it is stated separately]');
@@ -351,7 +368,7 @@ section('§6. The raw listing round-trips through the sidecar [M9]');
   eq(restored.restored, true, 'the sidecar restores');
   eq(restored.listedIds, listed.length, '★ …and re-arms the raw listing, so catalogueAbsence can answer at BOOT with no network and no key');
   eq(llm.catalogueAbsence('openrouter', 'upstage/solar-pro4'), 'present', 'a listed id is present after a restart');
-  eq(llm.catalogueAbsence('openrouter', 'minimax/minimax-m3:free'), 'missing', 'and an unlisted one is missing');
+  eq(llm.catalogueAbsence('openrouter', WITHDRAWN), 'missing', 'and an unlisted one is missing');
   eq(llm.getLiveModelListing('openrouter').source, 'disk', 'the provenance says it came from disk, not from the network');
 
   const SHA_BEFORE = createHash('sha256').update(readFileSync(CATALOGUE)).digest('hex');
@@ -404,13 +421,13 @@ const getJson = async (p, init) => {
 {
   llm.recordLiveModelListing('openrouter', ['upstage/solar-pro4', 'zz/other'], { source: 'network' });
   const { body } = await getJson('/api/config/api-keys');
-  eq(body.build.model, 'minimax/minimax-m3:free', 'fixture: the pinned build model is still the withdrawn one');
+  eq(body.build.model, WITHDRAWN, 'fixture: the pinned build model is still the withdrawn one');
   eq(body.build.liveMissing, true, '★ …and liveMissing is TRUE once a listing exists that lacks it');
   eq(body.buildModel.liveMissing, true, 'both objects agree — one producer');
   eq(body.build.liveListing.count, 2, 'liveListing reports what the verdict was taken against');
 
   const beforeOffers = JSON.stringify(llm.listOfferableModels('openrouter'));
-  llm.recordLiveModelListing('openrouter', ['minimax/minimax-m3:free', 'upstage/solar-pro4'], { source: 'network' });
+  llm.recordLiveModelListing('openrouter', [WITHDRAWN, 'upstage/solar-pro4'], { source: 'network' });
   const after = await getJson('/api/config/api-keys');
   eq(after.body.build.liveMissing, false, '★ …and FALSE once the provider lists it again — the verdict tracks the listing, it is not sticky');
   eq(JSON.stringify(llm.listOfferableModels('openrouter')), beforeOffers,
@@ -472,7 +489,7 @@ section('§7b. POST /models/check is READ-ONLY with respect to the offer tables 
   eq(okCheck.body.liveMissing, true,
     '…and the verdict for the pinned (withdrawn) model, computed from what was just fetched');
   ok(typeof okCheck.body.checkedAt === 'string' && okCheck.body.checkedAt.length > 0, 'stamped with when');
-  eq(okCheck.body.chosen, 'minimax/minimax-m3:free', 'and naming the model the verdict is ABOUT, resolved through the engine');
+  eq(okCheck.body.chosen, WITHDRAWN, 'and naming the model the verdict is ABOUT, resolved through the engine');
   eq(okCheck.body.error, undefined, 'with no error field on the success path');
 
   eq(JSON.stringify(llm.listOfferableModels('openrouter')), OFFERS_BEFORE,
@@ -592,8 +609,8 @@ section('§7d. cheapestMeasured EXCLUDES a withdrawn model — and only a positi
 {
   llm.__clearLiveModelListings();
   const before = (await getJson('/api/config/api-keys')).body;
-  eq(before.build.model, 'minimax/minimax-m3:free', 'fixture: the withdrawn id is the resolved build model');
-  eq(before.build.cheapestMeasured && before.build.cheapestMeasured.model, 'minimax/minimax-m3:free',
+  eq(before.build.model, WITHDRAWN, 'fixture: the withdrawn id is the resolved build model');
+  eq(before.build.cheapestMeasured && before.build.cheapestMeasured.model, WITHDRAWN,
     'fixture: with NOTHING checked it is also `cheapestMeasured` — this is the sentence the screen renders');
   eq(before.build.cheapestMeasured.same, true,
     '…and `same: true`, which is what makes the copy read "the one you are already using"');
@@ -603,14 +620,14 @@ section('§7d. cheapestMeasured EXCLUDES a withdrawn model — and only a positi
   // the only thing this recording changes is the one id.
   const listed = llm.listOfferableModels('openrouter')
     .map(m => m.id)
-    .filter(id => id !== 'minimax/minimax-m3:free')
+    .filter(id => id !== WITHDRAWN)
     .concat(['minimax/minimax-m3']);
   llm.recordLiveModelListing('openrouter', listed, { source: 'network' });
 
   const after = (await getJson('/api/config/api-keys')).body;
   eq(after.build.liveMissing, true, 'fixture: the banner condition is now live');
   const cm = after.build.cheapestMeasured;
-  ok(cm === null || cm.model !== 'minimax/minimax-m3:free',
+  ok(cm === null || cm.model !== WITHDRAWN,
     '★★ `cheapestMeasured` NO LONGER NAMES the withdrawn model [M12: the route stops passing isMissing and this reds]');
   ok(cm !== null,
     '…and it is not null either: a withdrawn cheapest must be replaced by the next cheapest, not deleted, or the user is left with a banner and no way forward');
@@ -629,7 +646,7 @@ section('§7d. cheapestMeasured EXCLUDES a withdrawn model — and only a positi
   eq(Object.keys(map.openrouter).sort().join(','),
     llm.listOfferableModels('openrouter').map(m => m.id).sort().join(','),
     '★ …and its OpenRouter keys are exactly the ids `offerable.openrouter` serialises — a verdict for every row a client can draw, and none for a row it cannot');
-  eq(map.openrouter['minimax/minimax-m3:free'], true,
+  eq(map.openrouter[WITHDRAWN], true,
     '★★ the withdrawn id reports TRUE [M14: a boolean map still passes this one — §7d\'s null assertion below is the one that reds]');
   eq(map.openrouter['upstage/solar-pro4'], false,
     '★ a listed id reports FALSE — "we checked and it is there" is its own fact, not the absence of a warning');
@@ -639,11 +656,11 @@ section('§7d. cheapestMeasured EXCLUDES a withdrawn model — and only a positi
   // THE THIRD VALUE, which is the one a boolean map destroys.
   llm.__clearLiveModelListings();
   const unchecked = (await getJson('/api/config/api-keys')).body;
-  eq(unchecked.liveMissingByModel.openrouter['minimax/minimax-m3:free'], null,
+  eq(unchecked.liveMissingByModel.openrouter[WITHDRAWN], null,
     '★★ with NOTHING checked every verdict is NULL, never false [M14: a two-valued map reports `false` here and the UI states a fact it does not have]');
   eq(unchecked.liveMissingByModel.openrouter['upstage/solar-pro4'], null,
     '…for every id alike, because the absence is a property of the PROVIDER\'S listing, not of one model [M14]');
-  eq(unchecked.build.cheapestMeasured.model, 'minimax/minimax-m3:free',
+  eq(unchecked.build.cheapestMeasured.model, WITHDRAWN,
     '★ …and the recommendation comes BACK, because an unchecked provider must not have its whole catalogue quietly suppressed [M13]');
 }
 

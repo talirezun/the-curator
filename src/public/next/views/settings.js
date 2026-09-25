@@ -171,6 +171,9 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // the model list are money the user will be billed; a local formatter here
 // would be a second hand-maintained copy of that rule. See format-usd.js.
 import { formatUsdHonest } from '../shared/format-usd.js';
+// v3.72.1 — ONE price-per-1M formatter app-wide: the exact one Chat's model
+// menu uses. formatUsdHonest stays for amounts spent (it rounds to cents).
+import { formatPricePerM } from '../shared/model-row.js';
 import { formatModelSummary } from '../shared/model-summary.js';
 // ── THE AI JOBS, AS DATA (v3.67.0) ────────────────────────────────────────
 // Block 2 ("Your AI model") derives its lede and its "Used by · N jobs" row
@@ -290,7 +293,7 @@ import {
  */
 const SETTINGS_SECTIONS = [
   ['general',   'General',              'Software update, appearance'],
-  ['providers', 'Providers & keys',     'Gemini, Anthropic, OpenRouter, local'],
+  ['providers', 'Providers & keys',     'Gemini, Anthropic, OpenRouter'], // v3.72.1 (audit F14): no local provider exists yet
   ['storage',   'Knowledge base',       'Vault folder, GitHub token'],
   ['mcp',       'MCP bridge',           'My Curator, default write domain'],
   ['health',    'Health & scan limits', 'Cost ceilings, candidate pairs'],
@@ -1063,6 +1066,7 @@ function freshState() {
     copyFeedback: null,
     defaultDomainInfo: null, // { defaultDomain, domains }
     defaultDomainSaving: false,
+    defaultDomainError: null,
 
     // ── The tool map (block ③) ───────────────────────────────────────────
     // GET /api/mcp/usage. A SEPARATE field from `state.mcp` and a separately
@@ -1701,7 +1705,8 @@ function applyUsageVerdict(verdict) {
  * parameter and answers without `byProject`, which is "this server cannot say",
  * never "no projects" — so an absent array is an error state, not an empty list.
  */
-async function loadAcrossProjects(token) {
+async function loadAcrossProjects(token, opts) {
+  const bodyOnly = !!(opts && opts.bodyOnly);
   let next = null, err = null;
   try {
     const res = await fetch('/api/mcp/usage?include=projects');
@@ -1717,9 +1722,18 @@ async function loadAcrossProjects(token) {
     err = (e && e.message) || 'Could not read the sessions per project.';
   }
   if (!isCurrentMount(token)) return;
+  // A failed background refresh keeps the reading it already has: an error
+  // painted over good figures would be the poll inventing an outage.
+  if (bodyOnly && !next && state.mcpProjects) return;
   state.mcpProjects = next;
   state.mcpProjectsError = next ? null : err;
-  render(token);
+  if (!bodyOnly) { render(token); return; }
+  // v3.72.1 (truth audit F9): the 30 s poll's repaint — block ④'s BODY only,
+  // exactly as block ③'s tool map is repainted, so an open ⓘ or fold stays.
+  if (state.section !== 'mcp') return;
+  if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
+  const body = document.querySelector(ACROSS_PROJECTS_BODY_SEL);
+  if (body) body.innerHTML = renderAcrossProjectsBody();
 }
 
 async function loadAiHealth(token) {
@@ -2929,9 +2943,19 @@ function renderQuickSummary(quick) {
       '</div>'
     );
   }).join('');
+  // v3.72.1 (truth audit F8): the rows are a snapshot. They say WHEN, and
+  // once a key, the active provider or the build model changes they say that
+  // they predate it, instead of naming the old model as if it were current.
+  const t = Number.isFinite(quick.checkedAtMs) ? new Date(quick.checkedAtMs) : null;
+  const two = (n) => (n < 10 ? '0' + n : String(n));
+  if (t) parts.push('checked ' + two(t.getHours()) + ':' + two(t.getMinutes()));
+  const staleHtml = quick.stale === true
+    ? '<div class="check-summary-line">Checked before your last provider, key or model change — run the check again for current results.</div>'
+    : '';
   return (
     '<div class="settings-check-results">' +
       '<div class="check-summary-line mono">' + escapeHtml(parts.join(' · ') || 'No checks ran.') + '</div>' +
+      staleHtml +
       rows +
     '</div>'
   );
@@ -3639,11 +3663,21 @@ const ALL_MODELS_SCOPE = '__all__';
  */
 const BUILD_WORKING_SET_TOKENS = 110000;
 
+// ── CONTIGUOUS, AND LABELLED WITH WHAT THEY MEASURE (v3.72.1, audit F6) ──
+// The bands read "Under $0.20 · $0.20–$1 · $3 and up" and NO predicate took an
+// input price between $1 and $3 — Sonnet 5 ($2), the Gemini Flash models after
+// their promotion ($1.50) and many synced OpenRouter models sat in no band, so
+// the band counts did not add up to the total and "a mid-priced model" could
+// not be found. Every edge is now shared by exactly two neighbours (`<` on one
+// side, `>=` on the other), so any positive input price lands in exactly one
+// band; test-next-providers-page.js walks a price grid across every edge to
+// prove it. The group is labelled "Input price per 1M tokens" where it renders.
 const MODEL_PRICE_BANDS = [
   ['any', 'Any price', null],
   ['free', 'Free', (m) => m && m.free === true],
   ['lt20', 'Under $0.20', (m) => typeof m.input === 'number' && m.input > 0 && m.input < 0.2],
-  ['mid', '$0.20–$1', (m) => typeof m.input === 'number' && m.input >= 0.2 && m.input <= 1],
+  ['mid', '$0.20–$1', (m) => typeof m.input === 'number' && m.input >= 0.2 && m.input < 1],
+  ['upper', '$1–$3', (m) => typeof m.input === 'number' && m.input >= 1 && m.input < 3],
   ['high', '$3 and up', (m) => typeof m.input === 'number' && m.input >= 3],
 ];
 
@@ -3803,8 +3837,8 @@ function renderWorthTesting(rowsAll, b, pickDisabled) {
     return '<tr data-worth-model="' + escapeHtml(String(m.id == null ? '' : m.id)) + '">' +
       '<td class="browse-name"><b>' + escapeHtml(m.label || m.id) + '</b>' +
         '<small>' + escapeHtml(row.p.name) + ' · ' + escapeHtml(m.id) + '</small></td>' +
-      '<td class="browse-num mono">' + escapeHtml(formatUsdHonest(m.input) || '—') + '</td>' +
-      '<td class="browse-num mono">' + escapeHtml(formatUsdHonest(m.output) || '—') + '</td>' +
+      '<td class="browse-num mono">' + escapeHtml(formatPricePerM(m.input) || '—') + '</td>' +
+      '<td class="browse-num mono">' + escapeHtml(formatPricePerM(m.output) || '—') + '</td>' +
       '<td class="browse-num mono">' + escapeHtml(formatTokenCount(m.contextLength) || '—') + '</td>' +
       '<td class="browse-worth-why">' + escapeHtml(why) + '</td>' +
       '<td>' + act + '</td>' +
@@ -4042,12 +4076,14 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
     const noteText = lane === MODEL_LANES.BUILD_LOCAL
       ? withoutLaneClaim(m.note)
       : (typeof m.note === 'string' ? m.note : '');
-    const qualHtml = renderQualification(qual, minRuns, k && k.models ? k.models[p.id] : '') +
+    const qualHtml = renderQualification(qual, minRuns, qualBaselineFor(k, p.id)) +
       ((state.qualify && state.qualify.modelId === m.id)
         // `defaultId` is what is building the wiki right now, so the done
         // panel can report that state instead of offering to set it again.
         ? renderQualifyPanel(state.qualify, minRuns, defaultId) : '');
-    const hasDetail = !!(noteText.trim() || qualHtml);
+    // v3.72.1 (audit F4): when the price was checked and the model measured.
+    const asOfText = priceAsOfText(m);
+    const hasDetail = !!(noteText.trim() || qualHtml || asOfText);
     const detailOpen = hasDetail &&
       (state.browseRowOpen[m.id] === true || !!(state.qualify && state.qualify.modelId === m.id));
     const expander = hasDetail
@@ -4059,6 +4095,7 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
     const detailRow = detailOpen
       ? '<tr class="browse-detail" data-browse-detail-row="' + escapeHtml(String(m.id)) + '">' +
           '<td colspan="5">' +
+            (asOfText ? '<p class="model-price-asof">' + escapeHtml(asOfText) + '</p>' : '') +
             (noteText.trim() ? '<p class="model-note">' + escapeHtml(noteText) + '</p>' : '') +
             qualHtml +
           '</td>' +
@@ -4100,9 +4137,12 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
         // records for `dominated` / "out-performed".
         (canBuild ? laneChip(inUse) : '') +
         (gone ? renderGoneChip(p.name) : '') +
-        '<small>' + escapeHtml(p.name) + ' · ' + escapeHtml(m.id) + '</small></td>' +
-      '<td class="browse-num mono">' + escapeHtml(formatUsdHonest(m.input) || '—') + '</td>' +
-      '<td class="browse-num mono">' + escapeHtml(formatUsdHonest(m.output) || '—') + '</td>' +
+        '<small>' + escapeHtml(p.name) + ' · ' + escapeHtml(m.id) + '</small>' +
+        // v3.72.1 (audit F3): a warning, so on the row, never behind the chevron.
+        (livePriceText(m) ? '<small class="model-price-live" role="note">' + escapeHtml(livePriceText(m)) + '</small>' : '') +
+        '</td>' +
+      '<td class="browse-num mono">' + escapeHtml(formatPricePerM(m.input) || '—') + '</td>' +
+      '<td class="browse-num mono">' + escapeHtml(formatPricePerM(m.output) || '—') + '</td>' +
       '<td class="browse-num mono">' + escapeHtml(ctx || '—') + '</td>' +
       '<td>' + laneCell + '</td>' +
     '</tr>' + detailRow;
@@ -4152,7 +4192,8 @@ function renderModelBrowse(k, counts, f, rowsAll, crossBusy) {
   return (
     '<div class="browse-facets">' +
       '<span class="theme-segmented browse-seg" role="group" aria-label="Model lane">' + laneSeg + '</span>' +
-      '<span class="theme-segmented browse-seg" role="group" aria-label="Input price band">' + bandSeg + '</span>' +
+      '<span class="browse-seg-caption">Input price per 1M tokens</span>' +
+      '<span class="theme-segmented browse-seg" role="group" aria-label="Input price per 1M tokens">' + bandSeg + '</span>' +
       '<input type="search" class="model-filter-q browse-q" data-model-filter-q="' +
         escapeHtml(ALL_MODELS_SCOPE) + '" placeholder="Search name or id"' +
         ' aria-label="Search models by name or id" value="' + escapeHtml(f.q) + '">' +
@@ -5202,8 +5243,16 @@ function renderBuildCurrent(k, pickDisabled, opts) {
   const price = formatModelPrice(b.priceIn, b.priceOut);
   const priceChip = b.free ? 'free — this model bills nothing'
     : (price ? price + ' per 1M tokens' : '');
+  // v3.72.1 (audit F3/F4): the same dated provenance and live-list warning
+  // the rows carry, read off the build model's own offer entry.
+  const bEntry = ((k && k.offerable && Array.isArray(k.offerable[b.provider])) ? k.offerable[b.provider] : [])
+    .find((e) => e && e.id === b.model) || null;
+  const bAsOf = priceAsOfText(bEntry);
+  const bLive = livePriceText(bEntry);
   const facts =
     (priceChip ? '<span class="build-fact build-fact-num mono">' + escapeHtml(priceChip) + '</span>' : '') +
+    (bAsOf ? '<span class="build-fact">' + escapeHtml(bAsOf) + '</span>' : '') +
+    (bLive ? '<span class="build-fact model-price-live" role="note">' + escapeHtml(bLive) + '</span>' : '') +
     (b.outlineNote ? '<span class="build-fact">' + escapeHtml(b.outlineNote) + '</span>' : '') +
     '<span class="build-fact build-fact-measured">' + escapeHtml(chip.label) + '</span>';
 
@@ -5356,7 +5405,7 @@ function renderBuildList(cands, k, pickDisabled, crossBusy, busyId, errorAt, err
     // Same source as the shelf's — `getDefaultModel(<provider>)` off the wire.
     // Per row, because this list mixes providers and a baseline from another
     // provider would compare two things that never run the same job.
-    baselineModelId: (k && k.models && typeof k.models[p.id] === 'string') ? k.models[p.id] : '',
+    baseline: qualBaselineFor(k, p.id),
     // ── THE WITHDRAWN VERDICT, PASSED RATHER THAN LOOKED UP ───────────────
     // `renderModelOption` can resolve this itself from `state.keys`, and does
     // for the callers that render outside this list. It is passed HERE for the
@@ -6147,16 +6196,70 @@ function formatTokenCount(n) {
   return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-/** One model's price, as billed RIGHT NOW. Both figures go through the shared
- *  formatUsdHonest so a non-zero cost can never render as $0.00 — see
- *  shared/format-usd.js. Returns '' when either figure is missing, so a
- *  half-priced row renders no price at all rather than an authoritative-looking
- *  half-truth. */
+/** One model's price per 1M tokens, as billed RIGHT NOW, EXACT. Returns ''
+ *  when either figure is missing, so a half-priced row renders no price at all
+ *  rather than an authoritative-looking half-truth.
+ *
+ *  v3.72.1: through `formatPricePerM` (shared/model-row.js), the formatter
+ *  Chat's model menu uses — never `formatUsdHonest`, which rounds to cents and
+ *  is for AMOUNTS spent, not RATES. It printed GLM 5.3 Flash's $0.075 as
+ *  "$0.08" and Granite's $0.017 as "$0.02" here while Chat printed them
+ *  exactly: one price, two figures, one app. */
 function formatModelPrice(input, output) {
-  const inStr = formatUsdHonest(input);
-  const outStr = formatUsdHonest(output);
+  const inStr = formatPricePerM(input);
+  const outStr = formatPricePerM(output);
   if (!inStr || !outStr) return '';
   return inStr + ' in · ' + outStr + ' out';
+}
+
+/**
+ * ── WHEN A HAND-TYPED PRICE AND MEASUREMENT WERE TAKEN (v3.72.1, audit F4) ──
+ *
+ * "price checked 25 Sep 2026 · measured 26 Aug 2026", from the entry's own
+ * `priceAsOf` / `measuredOn` (llm.js PRICE_VERIFIED_ON / MEASURED_ON). A
+ * code-time snapshot rendered with no date reads as current forever; these
+ * two dates are what make it a statement about a moment. '' for a fetched
+ * entry, which carries neither — its price is as old as the catalogue sync,
+ * which the Model lists row already dates.
+ */
+function priceAsOfText(m) {
+  if (!m || typeof m !== 'object') return '';
+  const parts = [];
+  if (typeof m.priceAsOf === 'string' && m.priceAsOf && m.free !== true) {
+    parts.push('price checked ' + formatIsoDay(m.priceAsOf));
+  }
+  if (typeof m.measuredOn === 'string' && m.measuredOn) {
+    parts.push('measured ' + formatIsoDay(m.measuredOn));
+  }
+  return parts.join(' · ');
+}
+
+/**
+ * ── THE PROVIDER'S LIVE LIST DISAGREES WITH THE CHECKED PRICE (audit F3) ───
+ *
+ * One sentence, or '' when there is nothing to say. `livePriceDiffers` is
+ * three-valued and only `true` speaks: null means NOT COMPARED (no sync yet),
+ * which must never render as "matches". A warning, so it renders on the row
+ * itself, never behind a chevron (v3.16.1).
+ *
+ * The two directions are worded differently because llm.js prices them
+ * differently: a HIGHER live figure is what estimates now use (never quote
+ * below what the provider publishes); a LOWER one is shown but not used, since
+ * a headline may not be the endpoint that answers — it enters the price only
+ * from a bill.
+ */
+function livePriceText(m) {
+  if (!m || m.livePriceDiffers !== true || !m.livePrice || typeof m.livePrice !== 'object') return '';
+  const live = formatModelPrice(m.livePrice.input, m.livePrice.output);
+  if (!live) return '';
+  const who = providerLabel(m.provider) || 'The provider';
+  const when = formatSyncedAt(m.livePrice.listedAt);
+  const higher = (typeof m.standardInput === 'number' && m.livePrice.input > m.standardInput) ||
+    (typeof m.standardOutput === 'number' && m.livePrice.output > m.standardOutput);
+  return who + ' now lists ' + live + (when ? ' (synced ' + when + ')' : '') +
+    (higher
+      ? ' — above the checked price, so estimates use the higher of each.'
+      : ' — below the checked price, which estimates keep until a bill confirms the lower one.');
 }
 
 /**
@@ -6692,9 +6795,9 @@ function renderModelPicker(p, k, isOpen, crossBusy) {
       ? list[0].id : '',
     // The id `getDefaultModel(<provider>)` resolved to, served as
     // `models[provider]`. renderQualification quotes its measured latency as a
-    // scale marker beside the user's own result — see MEASURED_CALL_SECONDS for
+    // scale marker beside the user's own result — see qualBaselineFor for
     // why this is looked up rather than typed into the sentence.
-    baselineModelId: (k.models && typeof k.models[p.id] === 'string') ? k.models[p.id] : '',
+    baseline: qualBaselineFor(k, p.id),
   };
   // ── FILTER, THEN RENDER ────────────────────────────────────────────────
   // Applied to the DELIVERED list, so the lane grouping and every row below it
@@ -7429,54 +7532,47 @@ function formatDuration(ms) {
  *    whether a 40-call ingest is worth it; an automatic rejection on a
  *    transient upstream slowdown would permanently disqualify a good model.
  *  · THE BASELINE IS LOOKED UP BY MODEL ID, and vanishes rather than going
- *    stale. See MEASURED_CALL_SECONDS below.
+ *    stale. See qualBaselineFor below.
  */
 /**
- * Mean seconds per outline call, by EXACT model id, from the live measurement
- * pass recorded in `src/brain/openrouter-qualify.js`'s
- * `QUALIFY_OBSERVED_CALL_SECONDS` docblock (2026-08-27, nine runs apiece
- * against the real ingest outline prompt).
+ * The scale marker the qualification panel prints beside the user's own
+ * result: one model's MEASURED median seconds per outline call, and whether
+ * that model is the one building the wiki right now. Null when there is
+ * nothing measured to quote.
  *
- * ── WHY A TABLE AND NOT A CONSTANT ────────────────────────────────────────
- * The one figure this panel needs — 53 s — used to be typed into the sentence
- * that quotes it, with nothing tying it to the model it describes. A bump of
- * `DEFAULTS.openrouter` would have left the panel confidently attributing one
- * model's timing to another. Keyed by id, a bump either finds a measured value
- * or finds nothing, and finding nothing removes the clause.
+ * ── v3.72.1: ONE SOURCE, AND THE RIGHT MODEL (truth audit F1, F2) ─────────
+ * This panel read a second, hand-kept table (`MEASURED_CALL_SECONDS`: solar-pro4
+ * 53, glm-5.3-flash 289, glm-4.7 38, …) — MEANS, while the row summary one line
+ * away read `medianLatencyMs` from llm.js's MEASURED_LATENCY_MS (48, 188, and
+ * glm-4.7 deliberately absent because its runs were fast FAILURES). One
+ * measurement, two statistics, two numbers for the same model on one screen.
+ * The table is gone; the figure is the offer entry's own `medianLatencyMs`,
+ * already on the wire, and it is labelled "median".
  *
- * ── WHAT IT MUST NOT BECOME ───────────────────────────────────────────────
- * A RANKING. These are means from one session, on one corpus, over hosts that
- * change; the panel prints one of them as a scale marker beside the user's own
- * fresh measurement and draws no conclusion. Never sort by it, never label an
- * entry fast or slow, and never add an unmeasured id with an estimate — an
- * absent id is the honest state and the code handles it.
- *
- * ⚠ ADDING A MODEL HERE IS A CLAIM THAT SOMEBODY TIMED IT. If a future default
- * is not in this list, leave it out; the sentence disappears and the user loses
- * a comparison rather than being handed a false one.
+ * And it named OpenRouter's per-provider default (`models.openrouter`) as the
+ * model "which builds your wiki today" — true only when OpenRouter is the
+ * build provider. `buildsNow` compares against `build` (what ingest, Health and
+ * Compile actually resolve), and the clause is only printed when it is true.
  */
-const MEASURED_CALL_SECONDS = {
-  'upstage/solar-pro4': 53,
-  'z-ai/glm-4.7': 38,
-  'z-ai/glm-5.3-flash': 289,
-  'deepseek/deepseek-v4-flash-0731': 382,
-};
-
-/**
- * The measured mean for a model id, or null.
- *
- * Own-property check, not truthiness: `MEASURED_CALL_SECONDS['constructor']`
- * resolves to a FUNCTION through the prototype chain, and a model id is a third
- * party's string (v3.0.9's `normalizeResponseStyle` shape, and the same reason
- * `qualIndex` builds a null-prototype object).
- */
-function measuredCallSeconds(modelId) {
-  if (typeof modelId !== 'string' || !modelId) return null;
-  if (!Object.prototype.hasOwnProperty.call(MEASURED_CALL_SECONDS, modelId)) return null;
-  const v = MEASURED_CALL_SECONDS[modelId];
-  return Number.isFinite(v) ? v : null;
+function qualBaselineFor(k, providerId) {
+  if (!k || typeof providerId !== 'string') return null;
+  const id = (k.models && typeof k.models[providerId] === 'string') ? k.models[providerId] : '';
+  if (!id) return null;
+  const list = (k.offerable && Array.isArray(k.offerable[providerId])) ? k.offerable[providerId] : [];
+  const entry = list.find((m) => m && m.id === id) || null;
+  const ms = entry && Number.isFinite(entry.medianLatencyMs) && entry.medianLatencyMs > 0
+    ? entry.medianLatencyMs : null;
+  if (ms === null) return null;
+  const b = k.build && typeof k.build === 'object' ? k.build : null;
+  return {
+    id,
+    providerName: providerLabel(providerId) || providerId,
+    medianMs: ms,
+    buildsNow: !!(b && b.provider === providerId && b.model === id),
+    measuredOn: entry && typeof entry.measuredOn === 'string' ? entry.measuredOn : '',
+  };
 }
-function renderQualification(qual, minRuns, baselineModelId) {
+function renderQualification(qual, minRuns, baseline) {
   if (!qual || typeof qual !== 'object') return '';
   const c = qual.counts || {};
   const num = v => (Number.isFinite(v) ? v : 0);
@@ -7492,23 +7588,18 @@ function renderQualification(qual, minRuns, baselineModelId) {
   }
   if (qual.latencyMs && Number.isFinite(qual.latencyMs.mean)) {
     // ── THE BASELINE IS LOOKED UP, NOT TYPED ──────────────────────────────
-    // This read `'(the model this app ships averages about 53 s)'` — a literal
-    // untied to anything, in the one panel whose stated discipline is never
-    // stating an unmeasured figure. 53 s is `upstage/solar-pro4`'s measured mean.
-    // The moment `DEFAULTS.openrouter` is bumped, that sentence describes a
-    // model the app no longer ships, and nothing anywhere would have said so.
-    //
-    // Now it is keyed on the id the server resolved (`getDefaultModel(provider)`,
-    // delivered as `models[provider]`) and looked up in MEASURED_CALL_SECONDS.
-    // A bump therefore either changes the number or — for a model nobody has
-    // timed — DROPS THE CLAUSE, which is the fail-safe direction: no baseline
-    // is a smaller loss than a confident wrong one. The model is NAMED, because
-    // an anonymous "the model this app ships" is unfalsifiable to a reader.
-    const baseSecs = measuredCallSeconds(baselineModelId);
+    // `baseline` comes from `qualBaselineFor` — the provider default's OWN
+    // measured median off the offer entry, never a second table, and a
+    // "builds your wiki today" clause only when the build model really is it.
+    // No measured figure, no clause: no baseline is a smaller loss than a
+    // confident wrong one. The user's figure is a MEAN of their runs and the
+    // marker is a MEDIAN of ours, and both say so.
+    const bl = (baseline && typeof baseline === 'object' && Number.isFinite(baseline.medianMs)) ? baseline : null;
     lines.push('mean ' + formatDuration(qual.latencyMs.mean) + ' per call' +
-      (baseSecs === null ? ''
-        : ' (' + baselineModelId + ', which builds your wiki today, averages about '
-          + baseSecs + ' s)'));
+      (bl === null ? ''
+        : ' (' + bl.id + (bl.buildsNow ? ', which builds your wiki today,' : ', ' + bl.providerName + '\'s default,') +
+          ' took a median ' + formatDuration(bl.medianMs) + ' per call when measured' +
+          (bl.measuredOn ? ' on ' + formatIsoDay(bl.measuredOn) : '') + ')'));
   }
   // MONEY IS TRI-STATE. A missing figure renders as nothing at all — never as
   // $0.00, which is the v3.15.0 defect where a fact and its absence were the
@@ -8179,6 +8270,12 @@ function renderModelOption(m, index, defaultId, ctx) {
         (m.standardPriceFromIso ? ' on ' + escapeHtml(formatIsoDay(m.standardPriceFromIso)) : '') +
         '</span>'
     : '';
+  // v3.72.1 (audit F3/F4): the live-list disagreement, on the row, and the
+  // dates the price and the measurement were taken.
+  const liveText = livePriceText(m);
+  const liveHtml = liveText ? '<span class="model-price-live" role="note">' + escapeHtml(liveText) + '</span>' : '';
+  const asOf = priceAsOfText(m);
+  const asOfHtml = asOf ? '<span class="model-price-asof">' + escapeHtml(asOf) + '</span>' : '';
 
   const facts = [];
   const cap = formatTokenCount(m.maxOutput);
@@ -8218,7 +8315,7 @@ function renderModelOption(m, index, defaultId, ctx) {
   // different blocks. It belongs to block 4's table, which is where the press
   // happened and where the user has been watching; that row is forced open
   // while `state.qualify` names its model, so it is on screen.
-  const qualHtml = renderQualification(qual, c.minRuns, c.baselineModelId) +
+  const qualHtml = renderQualification(qual, c.minRuns, c.baseline) +
     ((c.qualify && c.qualify.modelId === m.id && c.qualify.phase !== 'done')
       ? renderQualifyPanel(c.qualify, c.minRuns) : '');
 
@@ -8293,7 +8390,8 @@ function renderModelOption(m, index, defaultId, ctx) {
       badges.join('') +
     '</span>' +
     derivedHtml +
-    '<span class="model-row-line model-row-cost">' + priceHtml + riseHtml + '</span>'
+    '<span class="model-row-line model-row-cost">' + priceHtml + riseHtml + asOfHtml + '</span>' +
+    liveHtml
   );
 
   const inner = expandable
@@ -8583,9 +8681,14 @@ function deriveMcpStatus(m) {
   // the app reporting a problem it invented. `danger` is reserved for the one
   // case the app genuinely cannot read — a config file it could not parse.
   const pillTone = unreadable ? 'danger' : (connected ? 'ok' : 'quiet');
+  // v3.72.1 (truth audit F13): 'Configured', not 'Connected'. `connected`
+  // here means only that Claude Desktop's config file holds today's launch
+  // line — not that any client has connected, and v3.64.0 measured a live
+  // bridge serving old code under a "Connected" pill. The word states what
+  // was checked; the tool map below states what agents actually called.
   const pillLabel = unreadable
     ? 'Config unreadable'
-    : (connected ? 'Connected' : (m.installed ? 'Needs re-connect' : 'Not connected'));
+    : (connected ? 'Configured' : (m.installed ? 'Needs re-connect' : 'Not connected'));
   const wizardLabel = unreadable
     ? 'Fix the config file'
     : (connected ? 'Re-run setup' : (m.installed ? 'Re-connect' : 'Set up Claude Desktop'));
@@ -8852,6 +8955,9 @@ function renderMcp() {
     // position a chevron against.
     renderListboxHtml(defaultDomainCfg) +
     (state.defaultDomainSaving ? '<span class="mono settings-saving-note">saving…</span>' : '') +
+    // v3.72.1 (truth audit F11): a refused save says so, here, beside the
+    // control — never through state.mcpError, which blanks the whole section.
+    (state.defaultDomainError ? '<div class="settings-inline-error" role="alert">' + escapeHtml(state.defaultDomainError) + '</div>' : '') +
     // THE CONSEQUENCE IS ON THE PAGE (v3.71.1; it was only in the ⓘ): a
     // write aimed at the wrong domain is a real, quiet mistake.
     '<p class="settings-block-footnote">' + escapeHtml(MCP_DOMAIN_CONSEQUENCE) + '</p>';
@@ -8957,6 +9063,7 @@ const USAGE_POLL_MS = 30000;
  * typed in two places is a selector that can come to mean two elements.
  */
 const TOOL_MAP_BODY_SEL = '.settings-block-mcp-tool-map .settings-block-body';
+const ACROSS_PROJECTS_BODY_SEL = '.settings-block-mcp-across .settings-block-body';
 
 /**
  * The revalidate timer's handle, in an OBJECT rather than in a bare `let`.
@@ -8979,6 +9086,13 @@ const usagePoll = { timer: null };
  * read — change one of those and the block repaints; change anything else and
  * it does not.
  */
+/** The two stamps block ④'s figures move with: the last save and the last
+ *  session start. v3.72.1 (audit F9). */
+function acrossProjectsStamp(data) {
+  const s = data && data.sessions && typeof data.sessions === 'object' ? data.sessions : {};
+  return String(s.lastSaveAt || '') + '|' + String(s.lastBootstrapAt || '');
+}
+
 function usageSignature(data) {
   if (!data || typeof data !== 'object') return 'none';
   const tools = Array.isArray(data.tools) ? data.tools : [];
@@ -9394,13 +9508,34 @@ function renderToolMap() {
  */
 const ACROSS_PROJECTS_MAX_ROWS = 12;
 function renderAcrossProjects() {
-  const lede = 'Which projects’ agent sessions saved a handoff, last 30 days.';
+  // v3.72.1 (truth audit F6/F10): no window length in the lede. It read "last
+  // 30 days" — typed, while the route sends the window it counted over
+  // (`byProjectWindow.windowDays`). The body states the window from the
+  // payload, and the lede stays true whatever that window is.
+  const lede = 'Which projects’ agent sessions saved a handoff.';
+  return settingsBlock(4, 'mcp-across', 'Across projects', lede, renderAcrossProjectsBody(), 'settings.mcp-across', '');
+}
+
+/**
+ * The window a payload counted over, as words: "last 30 days". From the
+ * route's own figures (`byProjectWindow.windowDays`, `savePulse.windowSeconds`),
+ * never typed; '' when the payload does not say, so a caller drops the
+ * clause rather than inventing one. v3.72.1 (audit F10).
+ */
+function windowDaysWords(days) {
+  if (!Number.isFinite(days) || days <= 0) return '';
+  const d = Math.round(days * 100) / 100;
+  return 'last ' + (d === 1 ? 'day' : d + ' days');
+}
+
+function renderAcrossProjectsBody() {
   let body;
   const P = state.mcpProjects;
   if (!P) {
     body = '<p class="mcp-map-empty">' + escapeHtml(state.mcpProjectsError || 'Reading the usage logs…') + '</p>';
   } else {
     const w = P.window || {};
+    const capWindow = windowDaysWords(w.windowDays);
     const domains = state.defaultDomainInfo && Array.isArray(state.defaultDomainInfo.domains)
       ? state.defaultDomainInfo.domains : [];
     const busiest = Number.isInteger(w.busiestSaved) && w.busiestSaved > 0 ? w.busiestSaved : 0;
@@ -9414,7 +9549,7 @@ function renderAcrossProjects() {
       const key = typeof r.domain === 'string' && r.domain && r.domain !== name
         ? r.domain + ' / ' + name : name;
       const idle = r.sessions === 0;
-      const sub = (idle ? 'no session in 30 days'
+      const sub = (idle ? (capWindow ? 'no session, ' + capWindow : 'no session')
         : r.sessions + (r.sessions === 1 ? ' session' : ' sessions')) +
         (r.inStore === false ? ' · not in this folder' : '');
       return {
@@ -9434,8 +9569,15 @@ function renderAcrossProjects() {
     });
     const pulse = P.savePulse;
     if (pulse && Number.isInteger(pulse.events)) {
-      lines.push({ key: 'saves, last 7 days',
-        value: (pulse.lowerBound ? 'at least ' : '') + pulse.events });
+      const pw = windowDaysWords(Number.isFinite(pulse.windowSeconds) ? pulse.windowSeconds / 86400 : NaN);
+      // A store younger than the window has not been observed for all of it,
+      // so "saves, last 7 days: 3" would claim a week nobody watched. Say
+      // where the record begins instead (`coversWholeWindow === false`).
+      const since = pulse.coversWholeWindow === false && typeof pulse.oldestEventAt === 'string'
+        ? formatSyncedAt(pulse.oldestEventAt) : '';
+      const key = 'saves' + (pw ? ', ' + pw : '') +
+        (pulse.coversWholeWindow === false ? (since ? ' (records begin ' + since + ')' : ' (records do not cover it all)') : '');
+      lines.push({ key, value: (pulse.lowerBound ? 'at least ' : '') + pulse.events });
     }
     const notes = [];
     if (w.logPresent !== true) {
@@ -9451,12 +9593,12 @@ function renderAcrossProjects() {
       notes.push('Projects that share a name share one reading.');
     }
     body = '<div class="mcp-across">' + renderMonitor({
-      label: 'Sessions that saved, per project, last 30 days',
+      label: 'Sessions that saved, per project' + (capWindow ? ', ' + capWindow : ''),
       lines,
       note: notes.join(' '),
     }) + '</div>';
   }
-  return settingsBlock(4, 'mcp-across', 'Across projects', lede, body, 'settings.mcp-across', '');
+  return body;
 }
 
 /**
@@ -9562,7 +9704,14 @@ async function refreshMcpUsage(token) {
   const sig = verdict.ok ? usageSignature(verdict.data) : null;
   // NOTHING MOVED, NOTHING REPAINTS — not even the error, which is unchanged.
   if (verdict.ok && sig === state.mcpUsageSig) return;
+  // v3.72.1 (truth audit F9): block ④ (Across projects) counts the same saves
+  // and sessions, and was read once per section entry — so while an agent
+  // saved, block ③'s `save_working_state` tile moved and block ④ did not: two
+  // readings of one fact disagreeing on one screen. When the save or session
+  // stamp moved, ④ is re-read on the same tick.
+  const sessionsMoved = verdict.ok && acrossProjectsStamp(verdict.data) !== acrossProjectsStamp(state.mcpUsage);
   applyUsageVerdict(verdict);
+  if (sessionsMoved && state.mcpProjects) loadAcrossProjects(token, { bodyOnly: true }).catch(() => {});
   if (state.section !== 'mcp') return;
   if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
   const body = document.querySelector(TOOL_MAP_BODY_SEL);
@@ -9643,6 +9792,28 @@ const SCAN_LIMIT_REFUSAL = 'A scan estimates its cost first, and does not start 
 const MCP_DOMAIN_CONSEQUENCE = 'Left unset, a write waits for the agent to name a domain. ' +
   'A write aimed at the wrong domain lands in that wiki and is hard to spot afterwards.';
 
+/**
+ * The cost-ceiling hint, from the route's own figures (v3.72.1, audit F7 /
+ * tray F4): the default is config.js's DEFAULT_AI_HEALTH as served
+ * (`defaults`), and its price is `defaultRunsOn` — describeHealthRun on the
+ * model that builds the wiki now, the pricing the scan's confirm uses. Each
+ * half is dropped, never guessed, when the route did not send it.
+ */
+function scanCeilingHint(ai) {
+  const lead = 'Estimated input and output tokens together.';
+  const d = ai && ai.defaults && Number.isInteger(ai.defaults.costCeilingTokens) ? ai.defaults.costCeilingTokens : null;
+  if (d === null) return lead;
+  const ro = ai.defaultRunsOn && typeof ai.defaultRunsOn === 'object' ? ai.defaultRunsOn : null;
+  let price = '';
+  if (ro && ro.needsKey !== true && typeof ro.modelLabel === 'string' && ro.modelLabel) {
+    if (ro.free === true) price = ' — free on ' + ro.modelLabel + ', the model that builds your wiki';
+    else if (typeof ro.usdHigh === 'number' && Number.isFinite(ro.usdHigh)) {
+      price = ' — ≈ ' + formatUsdHonest(ro.usdHigh) + ' on ' + ro.modelLabel + ', the model that builds your wiki';
+    } else price = ' — ' + ro.modelLabel + ' publishes no price, so no cost is shown';
+  }
+  return lead + ' Default ' + formatTokenCount(d) + price + '.';
+}
+
 function renderHealthLimits() {
   if (state.aiHealthError) {
     return '<div class="settings-inline-error">' + escapeHtml(state.aiHealthError) + '</div>';
@@ -9651,10 +9822,12 @@ function renderHealthLimits() {
     return gatedLoader(loadGate, 'Loading scan limits…');
   }
 
-  // "AI duplicate" was the two spare words: the block is titled
-  // "Semantic-duplicate scan limits" and the second sentence already says
-  // Ask AI, so the lede was naming both twice. 14 → 12.
-  const lede = 'Caps what one scan may cost. Used by Health → Ask AI scans.';
+  // v3.72.1 (truth audit F7): the lede said "Used by Health → Ask AI scans",
+  // but the ceiling governs ONE of them — the semantic-duplicate scan
+  // (routes/health.js and mcp/tools/health.js read it). The broken-link and
+  // orphan-rescue plans carry their own fixed ceilings in health-ai.js. The
+  // shared explainer already said "AI duplicate scan"; now the lede does too.
+  const lede = 'Caps what one AI duplicate scan may cost.';
 
   const body =
     // The two fields as rows of the kit's inset group — the same card and the
@@ -9666,14 +9839,23 @@ function renderHealthLimits() {
       '<div class="settings-field-block">' +
         '<div class="cur-group-label">' +
           '<span class="settings-field-label">Cost ceiling per scan</span>' +
-          '<span class="settings-hint-text">Default 50,000 tokens ≈ $0.01 on Gemini Flash Lite.</span>' +
+          // v3.72.1 (audit F7 / tray F4): this read "Default 50,000 tokens ≈
+          // $0.01 on Gemini Flash Lite" — a SECOND copy of config.js's
+          // DEFAULT_AI_HEALTH, and a dollar figure true for one model only (on
+          // Flash Lite 3.1 or Haiku 4.5 the same tokens cost several times it),
+          // while the scan runs on whatever builds the wiki. Both halves now
+          // come off the route: the default IS the constant, and its price is
+          // the scan's own run-line pricing on the model in force.
+          '<span class="settings-hint-text">' + escapeHtml(scanCeilingHint(state.aiHealth)) + '</span>' +
         '</div>' +
         '<div class="settings-input-suffix"><input type="number" min="1" class="mono settings-number-input" id="input-cost-ceiling" value="' + escapeHtml(state.costCeilingInput) + '"><span class="mono suffix">tokens</span></div>' +
       '</div>' +
       '<div class="settings-field-block">' +
         '<div class="cur-group-label">' +
           '<span class="settings-field-label">Maximum candidate pairs per scan</span>' +
-          '<span class="settings-hint-text">After local pre-filtering, only the top N pairs by similarity are sent to the model. Default 500.</span>' +
+          '<span class="settings-hint-text">' + escapeHtml('After local pre-filtering, only the top N pairs by similarity are sent to the model.' +
+            (state.aiHealth && state.aiHealth.defaults && Number.isInteger(state.aiHealth.defaults.semanticDupeMaxPairs)
+              ? ' Default ' + formatTokenCount(state.aiHealth.defaults.semanticDupeMaxPairs) + '.' : '')) + '</span>' +
         '</div>' +
         '<div class="settings-input-suffix"><input type="number" min="1" class="mono settings-number-input" id="input-max-pairs" value="' + escapeHtml(state.maxPairsInput) + '"></div>' +
       '</div>' +
@@ -10983,6 +11165,19 @@ function onRestartOnly(token) {
  * the button's attributes are composed HERE, outside renderGeneral, because
  * that renderer is lifted by two suites (see its button's comment).
  */
+/**
+ * v3.72.1 (truth audit F8): a key save, a disconnect, an active-provider
+ * switch or a build-model pick changes what the System check would report and
+ * which model the Verify confirm names. Called on the success path of each, so
+ * the next confirm re-reads and the old result rows say they predate it.
+ */
+function markSystemCheckStale() {
+  state.liveRunsOn = undefined;
+  state.liveRunsOnHtml = '';
+  state.liveVerifyAttrs = '';
+  if (state.quick && !state.quick.error) state.quick = Object.assign({}, state.quick, { stale: true });
+}
+
 function setLiveRunsOn(data) {
   const ro = (data && data.liveCheck && data.liveCheck.runsOn && typeof data.liveCheck.runsOn === 'object')
     ? data.liveCheck.runsOn : null;
@@ -11001,8 +11196,14 @@ function setLiveRunsOn(data) {
 async function openLiveConfirm(token) {
   state.liveConfirmOpen = true;
   state.live = null;
+  // v3.72.1 (truth audit F8): ALWAYS re-read. The line was fetched once per
+  // mount and Settings stays one mount across sections, so after a build-model
+  // switch in Providers the confirm named the OLD model and price. The read is
+  // free and local; `undefined` renders the not-yet-read state meanwhile.
+  state.liveRunsOn = undefined;
+  state.liveRunsOnHtml = '';
+  state.liveVerifyAttrs = '';
   render(token);
-  if (state.liveRunsOn !== undefined) return;
   try {
     const res = await fetch('/api/diagnostics/quick');
     const data = await res.json();
@@ -11022,7 +11223,7 @@ async function onRunQuickCheck(token) {
     const res = await fetch('/api/diagnostics/quick');
     const data = await res.json();
     if (!isCurrentMount(token)) return;
-    state.quick = data.error ? { error: data.error } : data;
+    state.quick = data.error ? { error: data.error } : Object.assign({}, data, { checkedAtMs: Date.now(), stale: false });
     if (!data.error) setLiveRunsOn(data);
   } catch (err) {
     if (!isCurrentMount(token)) return;
@@ -11151,6 +11352,7 @@ async function onSaveKey(provider, token) {
     state.keysBusy = null;
     state.replacing = null;
     state.replaceValue = ''; // MEDIUM-2 fix: never let a saved secret linger in state past a successful save
+    markSystemCheckStale();
     await loadKeys(token); // re-fetch to pick up the masked value + new active/model fields
   } catch (err) {
     if (isCurrentMount(token)) {
@@ -11177,6 +11379,7 @@ async function onDisconnect(provider, token) {
       body: JSON.stringify({ provider }),
     });
     if (!res.ok) throw new Error((await res.json()).error || 'Disconnect failed');
+    markSystemCheckStale();
     if (!isCurrentMount(token)) return;
     state.keysBusy = null;
     await loadKeys(token);
@@ -11205,6 +11408,7 @@ async function onSetActive(provider, token) {
       body: JSON.stringify({ provider }),
     });
     if (!res.ok) throw new Error((await res.json()).error || 'Could not switch provider');
+    markSystemCheckStale();
     if (!isCurrentMount(token)) return;
     state.keysBusy = null;
     await loadKeys(token);
@@ -11776,6 +11980,7 @@ async function onPickBuildModel(provider, modelId, token) {
     // that anything went wrong.
     let body = null;
     try { body = await res.json(); } catch { body = null; }
+    markSystemCheckStale();
     if (!isCurrentMount(token)) return;
     state.modelPickBusy = null;
     const inert = !!(body && body.inert === true);
@@ -12223,11 +12428,28 @@ async function onSaveDefaultDomain(value, token) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ defaultDomain: value || null }),
     });
-    const data = await res.json();
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
     if (!isCurrentMount(token)) return;
-    if (state.defaultDomainInfo) state.defaultDomainInfo.defaultDomain = data.defaultDomain;
+    if (res.ok && data && Object.hasOwn(data, 'defaultDomain')) {
+      if (state.defaultDomainInfo) state.defaultDomainInfo.defaultDomain = data.defaultDomain;
+      state.defaultDomainError = null;
+    } else {
+      // v3.72.1 (truth audit F11): this wrote `data.defaultDomain` — undefined
+      // on a 400 — into the selector, which then read "unset" while the server
+      // kept the previous value. Now the old value stays, the refusal is shown,
+      // and the domain list is re-read (the likely cause is a domain renamed or
+      // deleted since the list loaded).
+      state.defaultDomainError = (data && typeof data.error === 'string' && data.error)
+        ? data.error : 'The default domain was not saved.';
+      try {
+        const again = await fetch('/api/config/default-domain');
+        const dd = again.ok ? await again.json() : null;
+        if (isCurrentMount(token) && dd && typeof dd === 'object') state.defaultDomainInfo = dd;
+      } catch { /* keep what is on screen */ }
+    }
   } catch (err) {
-    if (isCurrentMount(token)) state.mcpError = err.message;
+    if (isCurrentMount(token)) state.defaultDomainError = err.message || 'The default domain was not saved.';
   } finally {
     if (isCurrentMount(token)) { state.defaultDomainSaving = false; render(token); }
   }

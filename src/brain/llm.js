@@ -31,6 +31,9 @@ import {
   // adapter's own `_warn`. See its docblock for why a second copy of a claim
   // about a NUMBER is the worst case of the two-hand-maintained-copies shape.
   describeReportedLimit,
+  // v3.72.1: the ONE exact per-token -> per-1M converter, so a live price read
+  // for a hand-priced id is converted exactly as a fetched offer's price is.
+  usdPerMtokFromPerTokenString,
 } from './openrouter-adapter.js';
 // User-data path + atomic write for the persisted OpenRouter catalogue. `fs` is
 // already on the MCP child's import graph (config.js), so this adds no new
@@ -487,13 +490,21 @@ function capsFor(provider) {
  * that admitting one can never be done by typing a zero into the price table.
  */
 const FREE_MODELS = Object.freeze(new Set([
-  // Measured live 2026-08-27 against the real buildOutlinePrompt (341,005 chars
-  // built from the real `articles` domain — 127,666-char index, 607 entities,
-  // 2,685 concepts, plus an 80,000-char source at ingest's own TEXT_CAP).
-  // 9 runs: 8 raw-clean JSON, 1 needing jsonrepair, 0 unrepairable, 15-40
-  // outline pages. Deliberately absent from MODEL_PRICES_USD_PER_MTOK so
-  // getModelPrice() keeps returning null for it.
-  'minimax/minimax-m3:free',
+  // EMPTY SINCE v3.72.1 (2026-09-25). Its one member, `minimax/minimax-m3:free`
+  // (measured 2026-08-27: 8/9 raw-clean JSON, 15-40 outline pages), was
+  // WITHDRAWN by OpenRouter: absent from the live catalogue on 2026-09-16 and
+  // again on 2026-09-25 (460 ids, 20 of them `:free`, none of them this one),
+  // and a real call on 2026-09-25 answered HTTP 404 "This model is unavailable
+  // for free. The paid version is available now - use this slug instead:
+  // minimax/minimax-m3". A free id nobody can call is not an offer, so it left
+  // this set and OFFERABLE_MODELS together. The paid slug is NOT a substitute:
+  // it measured 0/9 parseable on the ingest prompt (see the 2026-08-28 session
+  // under OFFERABLE_MODELS.openrouter) and a measurement never carries across
+  // sibling ids. It stays reachable for CHAT through the runtime catalogue.
+  //
+  // The mechanism is kept, not deleted: free `:free` ids still arrive through
+  // the runtime catalogue (`_dynamicFree`), and the next hand-measured free
+  // model is admitted by adding its id here.
 ]));
 
 /**
@@ -695,8 +706,9 @@ const FALLBACK_CHAINS = {
    * plan is the right trade when the alternative is not ingesting at all, and
    * it mirrors what the Gemini chain already does.
    *
-   * ⚠ minimax/minimax-m3:free is offerable but is deliberately NOT a rung, and
-   * the reason is stated at the strength it was actually established.
+   * ⚠ minimax/minimax-m3:free was offerable (until OpenRouter withdrew it; removed
+   * 2026-09-25) and was deliberately NOT a rung. The reason still governs any
+   * future free id, and is stated at the strength it was actually established.
    *
    * WHAT WAS OBSERVED: a `:free` id is gated by an OpenRouter ACCOUNT SETTING
    * about free-model training — a request for one can be refused outright with
@@ -898,7 +910,20 @@ const MODEL_PRICES_USD_PER_MTOK = {
   // words. Nothing is re-priced on that basis: the quoted figure is the one
   // the bill produced, and quoting a rate we did not observe would be the
   // invented number this table forbids.
-  'z-ai/glm-5.3-flash':              { input: 0.075, output: 0.25  },
+  //
+  // ── ⚠ RE-MEASURED 2026-09-25: THE BILL MOVED, DOWN ─────────────────────────
+  // Three cold calls (41-42 prompt + 64 completion tokens each) were served by
+  // InferenceNet and billed `upstream_inference_prompt_cost` 1.845e-6 for 41
+  // tokens (= $0.045/1M) and `…_completions_cost` 8.96e-6 for 64 (= $0.14/1M),
+  // matching OpenRouter's headline for the id. The endpoint list that day had
+  // 33 rows from $0.045 to $0.30 input; DeepInfra still charged $0.075/$0.25,
+  // but it is no longer the endpoint that answers. The figure below is the one
+  // the bill produced, as the table's rule requires. ⚠ One $0.045-input
+  // endpoint (Sail Research) charges $0.60 OUTPUT, so the output rate is the
+  // half of this pair that could jump without the input rate moving — the
+  // live-price comparison (`liveCataloguePrice`) watches the headline, and the
+  // note says the rate can move.
+  'z-ai/glm-5.3-flash':              { input: 0.045, output: 0.14  },
   'moonshotai/kimi-k2-0905':         { input: 0.60,  output: 2.50  },
 };
 
@@ -909,6 +934,172 @@ const MODEL_PRICES_USD_PER_MTOK = {
 // cross-test leak.
 for (const price of Object.values(MODEL_PRICES_USD_PER_MTOK)) Object.freeze(price);
 Object.freeze(MODEL_PRICES_USD_PER_MTOK);
+
+/**
+ * ── WHEN EACH HAND-TYPED PRICE WAS LAST CHECKED AGAINST ITS SOURCE ─────────
+ *
+ * v3.72.1 (truth audit, Settings F4). Every figure in MODEL_PRICES_USD_PER_MTOK
+ * is a code-time snapshot, changed only by a release, and until now it reached
+ * the screen with no date at all — an OpenRouter row at least carried "synced
+ * …", a Gemini or Anthropic row carried nothing. A price is a displayed FACT,
+ * and a fact with no as-of date reads as current forever.
+ *
+ * ONE DATE PER ID, and the offline suite (test-model-price-truth.js) refuses a
+ * priced id with no date here and a date for an id that is not priced, so the
+ * two tables cannot drift apart.
+ *
+ * WHAT EACH DATE MEANS, by provider — a re-check, not a first entry:
+ *   Gemini      the live ai.google.dev/gemini-api/docs/pricing page, paid
+ *               tier, text. Re-read 2026-09-25: all seven figures (and both
+ *               promotions, through 31 Dec 2026) matched this table.
+ *   Anthropic   the live platform.claude.com pricing page. Re-read 2026-09-25:
+ *               all seven figures matched.
+ *   OpenRouter  THE BILL, not the catalogue: one cold call per id on
+ *               2026-09-25, `usage.cost_details` divided by the token counts.
+ *               granite 0.017/0.112 (Cloudflare), solar-pro4 0.09/0.36
+ *               (Upstage), kimi-k2-0905 0.60/2.50 (Novita) matched; glm-5.3-flash
+ *               billed 0.045/0.14 on three calls (InferenceNet) and was
+ *               re-priced from 0.075/0.25 — see its entry.
+ *
+ * A LATER RELEASE THAT RE-CHECKS A PRICE UPDATES ITS DATE HERE, AND ONLY THEN.
+ * A date that moves without a check is the invented fact this exists to stop.
+ */
+const PRICE_VERIFIED_ON = Object.freeze({
+  'gemini-2.5-flash-lite':           '2026-09-25',
+  'gemini-3.1-flash-lite':           '2026-09-25',
+  'gemini-2.5-flash':                '2026-09-25',
+  'gemini-3.5-flash-lite':           '2026-09-25',
+  'gemini-3.7-flash':                '2026-09-25',
+  'gemini-3.6-flash':                '2026-09-25',
+  'gemini-3.5-flash':                '2026-09-25',
+  'claude-haiku-4-5':                '2026-09-25',
+  'claude-sonnet-5':                 '2026-09-25',
+  'claude-sonnet-4-6':               '2026-09-25',
+  'claude-sonnet-4-5':               '2026-09-25',
+  'claude-opus-5':                   '2026-09-25',
+  'claude-opus-4-8':                 '2026-09-25',
+  'claude-opus-4-5':                 '2026-09-25',
+  'ibm-granite/granite-4.0-h-micro': '2026-09-25',
+  'upstage/solar-pro4':              '2026-09-25',
+  'z-ai/glm-5.3-flash':              '2026-09-25',
+  'moonshotai/kimi-k2-0905':         '2026-09-25',
+});
+
+/**
+ * ── WHEN EACH HAND-MEASURED MODEL WAS MEASURED ─────────────────────────────
+ *
+ * The session date behind an OFFERABLE_MODELS entry's `note`, outline pages,
+ * `jsonRaw`, `thinks` and (where present) its median latency. Same audit
+ * finding as PRICE_VERIFIED_ON: "Measured 3/3 clean raw JSON" and "about 48s per
+ * ingest call" rendered as timeless facts about a model whose hosts, prices and
+ * behaviour move. A measurement is a statement about a moment; the date is
+ * what makes it one.
+ *
+ * Read from the recorded sessions, never re-dated: Gemini and Anthropic were
+ * probed on 2026-08-26 (the OFFERABLE_MODELS docblock), OpenRouter's Granite
+ * and Solar Pro 4 on 2026-08-27 and GLM 5.3 Flash and Kimi K2 0905 on
+ * 2026-08-28 (the two sessions recorded under OFFERABLE_MODELS.openrouter).
+ * A fetched catalogue entry has no date here because nobody measured it.
+ */
+const MEASURED_ON = Object.freeze({
+  'gemini-2.5-flash-lite':           '2026-08-26',
+  'gemini-3.1-flash-lite':           '2026-08-26',
+  'gemini-2.5-flash':                '2026-08-26',
+  'gemini-3.5-flash-lite':           '2026-08-26',
+  'gemini-3.7-flash':                '2026-08-26',
+  'gemini-3.6-flash':                '2026-08-26',
+  'gemini-3.5-flash':                '2026-08-26',
+  'claude-haiku-4-5':                '2026-08-26',
+  'claude-sonnet-5':                 '2026-08-26',
+  'claude-sonnet-4-6':               '2026-08-26',
+  'claude-sonnet-4-5':               '2026-08-26',
+  'claude-opus-5':                   '2026-08-26',
+  'claude-opus-4-8':                 '2026-08-26',
+  'claude-opus-4-5':                 '2026-08-26',
+  'ibm-granite/granite-4.0-h-micro': '2026-08-27',
+  'upstage/solar-pro4':              '2026-08-27',
+  'z-ai/glm-5.3-flash':              '2026-08-28',
+  'moonshotai/kimi-k2-0905':         '2026-08-28',
+});
+
+/**
+ * ── WHAT OPENROUTER'S OWN LIST SAYS A HAND-PRICED ID COSTS, RIGHT NOW ──────
+ *
+ * v3.72.1 (truth audit, Settings F3). The catalogue sync fetched a live price
+ * for every hand-listed OpenRouter id and THREW IT AWAY: the static id was
+ * "superseded" before admission and `registerDynamicPrice` refuses a
+ * statically-priced id. So a repricing on OpenRouter reached no screen and no
+ * estimate — and that already happened once: `upstage/solar-pro4` tripled on
+ * 2026-09-16 and "nothing in the app noticed", while a fresh "synced" stamp
+ * beside the stale figure implied the price was fresh too.
+ *
+ * Now the sync records, for each hand-priced OpenRouter id, the headline price
+ * the provider published (`pricing.prompt`/`.completion`, converted exactly by
+ * the adapter's `usdPerMtokFromPerTokenString`), with the listing time. It is
+ * REBUILT on every sync and restored from the same sidecar at boot, so it is a
+ * function of the last listing, never of every listing ever seen.
+ *
+ * HOW IT IS USED — THE FAIL-SAFE DIRECTION ON MONEY (v3.9.0's rule):
+ *   • SHOWN: every surface gets `livePrice` and `livePriceDiffers` on the
+ *     entry, and Settings says "OpenRouter now lists …" beside the checked
+ *     price when the two disagree.
+ *   • PRICED: `resolveModelPrice` returns, per component, the HIGHER of the
+ *     hand-checked figure and the live one. A live figure ABOVE ours means
+ *     the provider repriced upward and our figure would under-quote, which is
+ *     the harm the solar-pro4 incident was; a live figure BELOW ours is a
+ *     headline that may not be the endpoint that answers (glm-5.3-flash has
+ *     one $0.045 endpoint that charges $0.60 output), so it never lowers a
+ *     quote on its own — a lower price enters this table only from the bill.
+ *     A user quoted more than they are billed picks a cheaper model than they
+ *     needed; a user quoted less was lied to.
+ *
+ * NEVER a free posture: a `0`, a negative (a ROUTER's "-1") or an unparseable
+ * figure records nothing, and a missing id records nothing — absent means the
+ * listing did not say, never "free".
+ */
+const _liveStaticPrices = new Map(); // id -> frozen { input, output, listedAt, source }
+
+function liveStaticPriceFromRecord(record) {
+  if (!record || typeof record !== 'object' || !record.pricing || typeof record.pricing !== 'object') return null;
+  const input = usdPerMtokFromPerTokenString(record.pricing.prompt);
+  const output = usdPerMtokFromPerTokenString(record.pricing.completion);
+  if (!Number.isFinite(input) || !Number.isFinite(output) || input <= 0 || output <= 0) return null;
+  return { input, output };
+}
+
+/**
+ * Record the live headline prices for the hand-priced OpenRouter ids.
+ * `prices` is `{ id: {input, output} }`; anything else is ignored. Replaces the
+ * whole registry, so an id the provider stopped listing stops carrying a
+ * live figure.
+ */
+function recordLiveStaticPrices(prices, meta = {}) {
+  _liveStaticPrices.clear();
+  if (!prices || typeof prices !== 'object') return 0;
+  const staticOr = new Set(Object.keys(MODEL_PRICES_USD_PER_MTOK).filter(id => id.includes('/')));
+  const listedAt = typeof meta.listedAt === 'string' && meta.listedAt ? meta.listedAt : null;
+  const source = typeof meta.source === 'string' ? meta.source : null;
+  for (const [id, p] of Object.entries(prices)) {
+    if (!staticOr.has(id) || !p || typeof p !== 'object') continue;
+    const { input, output } = p;
+    if (!Number.isFinite(input) || !Number.isFinite(output) || input <= 0 || output <= 0) continue;
+    _liveStaticPrices.set(id, Object.freeze({ input, output, listedAt, source }));
+  }
+  return _liveStaticPrices.size;
+}
+
+/**
+ * OpenRouter's live headline price for a hand-priced id, or null when no
+ * listing has been read (or the listing did not price it).
+ * @returns {null | {input:number, output:number, listedAt:string|null, source:string|null}}
+ */
+export function liveCataloguePrice(modelId) {
+  if (typeof modelId !== 'string') return null;
+  return _liveStaticPrices.get(modelId) || null;
+}
+
+/** Test-only: forget every recorded live price. Never called in production. */
+export function __clearLiveCataloguePrices() { _liveStaticPrices.clear(); }
 
 /**
  * Time-limited promotional prices, keyed by EXACT model id.
@@ -993,7 +1184,16 @@ export function resolveModelPrice(modelId, atMs = Date.now()) {
   // id, so a dynamic entry can never shadow a hand-verified number).
   if (_dynamicPrices.has(modelId)) return _dynamicPrices.get(modelId);
   if (!Object.hasOwn(MODEL_PRICES_USD_PER_MTOK, modelId)) return null;
-  const standard = MODEL_PRICES_USD_PER_MTOK[modelId];
+  const checked = MODEL_PRICES_USD_PER_MTOK[modelId];
+  // v3.72.1: never quote below what the provider now publishes. Per component,
+  // the higher of the hand-checked figure and the live listing — see
+  // `_liveStaticPrices` for why a LOWER live figure does not lower the quote.
+  // Only OpenRouter ids ever carry a live figure; Gemini and Anthropic publish
+  // no machine-readable price list, and their promotions below are unaffected.
+  const live = _liveStaticPrices.get(modelId);
+  const standard = (live && (live.input > checked.input || live.output > checked.output))
+    ? Object.freeze({ input: Math.max(checked.input, live.input), output: Math.max(checked.output, live.output) })
+    : checked;
   if (!Object.hasOwn(PROMOTIONAL_PRICES, modelId)) return standard;
   const promo = PROMOTIONAL_PRICES[modelId];
   const t = Number.isFinite(atMs) ? atMs : Date.now();
@@ -1666,6 +1866,18 @@ function defineOfferableModel(provider, spec, opts = {}) {
      */
     cautionReason: (typeof spec.cautionReason === 'string' && spec.cautionReason.trim())
       ? spec.cautionReason.trim() : null,
+    /**
+     * v3.72.1 — the ISO day the hand-typed price was last checked against its
+     * source (the provider's pricing page, or for OpenRouter the bill), or
+     * null. Null for every fetched entry: its price is as old as the catalogue
+     * sync, which the surfaces already date.
+     */
+    priceAsOf: (!opts.dynamic && Object.hasOwn(PRICE_VERIFIED_ON, spec.id)) ? PRICE_VERIFIED_ON[spec.id] : null,
+    /**
+     * v3.72.1 — the ISO day of the session behind `note` and the measured
+     * fields, or null for an entry nobody measured.
+     */
+    measuredOn: (!opts.dynamic && Object.hasOwn(MEASURED_ON, spec.id)) ? MEASURED_ON[spec.id] : null,
   };
 
   // Resolved at READ time, so a promotion expiring mid-process cannot serve a
@@ -1681,6 +1893,29 @@ function defineOfferableModel(provider, spec, opts = {}) {
   Object.defineProperty(entry, 'output', {
     enumerable: true, configurable: false,
     get: () => resolveModelPrice(spec.id)?.output ?? null,
+  });
+  // v3.72.1 (truth audit F3) — what OpenRouter's own list says this
+  // hand-priced id costs, as of the last sync, or null (never synced, not an
+  // OpenRouter id, or a fetched entry whose price IS the listing). Getters
+  // for the same reason `input`/`output` are: a sync mid-process must show on
+  // the next read without rebuilding the frozen table.
+  Object.defineProperty(entry, 'livePrice', {
+    enumerable: true, configurable: false,
+    get: () => {
+      if (opts.dynamic || !staticPrice) return null;
+      const live = _liveStaticPrices.get(spec.id);
+      return live ? { input: live.input, output: live.output, listedAt: live.listedAt } : null;
+    },
+  });
+  // true | false | null — null means NOT COMPARED, never "matches".
+  Object.defineProperty(entry, 'livePriceDiffers', {
+    enumerable: true, configurable: false,
+    get: () => {
+      if (opts.dynamic || !staticPrice) return null;
+      const live = _liveStaticPrices.get(spec.id);
+      if (!live) return null;
+      return live.input !== staticPrice.input || live.output !== staticPrice.output;
+    },
   });
 
   return Object.freeze(entry);
@@ -1756,9 +1991,9 @@ export const OFFERABLE_MODELS = Object.freeze({
       suitability: 'general',
       outlinePagesLow: 18, outlinePagesHigh: 20,
       note:
-        'The default, and the cheapest model on either provider. Measured 3/3 clean raw JSON, no ' +
+        'The Gemini default, and the cheapest Gemini model. Measured 3/3 clean raw JSON, no ' +
         'hidden reasoning tokens, and the widest outline coverage of any Gemini model probed ' +
-        '(18-20 pages on the reference source). Nothing here beats it on value for ingest.',
+        '(18-20 pages on the reference source). No Gemini model here beats it on value for ingest.',
     }),
     defineOfferableModel('gemini', {
       id: 'gemini-3.1-flash-lite',
@@ -2128,25 +2363,16 @@ export const OFFERABLE_MODELS = Object.freeze({
    * because a cached run bills a fraction and matches nothing.
    */
   openrouter: Object.freeze([
-    defineOfferableModel('openrouter', {
-      id: 'minimax/minimax-m3:free',
-      label: 'MiniMax M3 (free)',
-      contextLength: 1048576,
-      maxOutput: 943718, free: true,
-      thinks: false, jsonRaw: false, tokenizerFactor: 1.015,
-      suitability: 'caution',
-      outlinePagesLow: 15, outlinePagesHigh: 40, outlinePagesMedian: 21,
-      cautionReason:
-        'Free models share an upstream pool — availability is real but not promised.',
-      note:
-        'FREE, and the widest outlines measured on OpenRouter: 15-40 pages (median 21) against the ' +
-        'real ingest prompt, with no hidden reasoning tokens in any of 9 runs. Two measured caveats. ' +
-        '(1) 8 of 9 runs parsed as raw JSON and 1 needed the jsonrepair fallback — none were ' +
-        'unrepairable, so it is safe, but the repair path is load-bearing. (2) Free models draw on a ' +
-        'SHARED upstream pool: over a 10-round availability poll it served 8/8, but four of its free ' +
-        'siblings served 0/8 and returned "temporarily rate-limited upstream" throughout. A free ' +
-        'model is a real option, not a guaranteed one — nothing is billed, and nothing is promised.',
-    }),
+    // ── REMOVED 2026-09-25: `minimax/minimax-m3:free` ───────────────────────
+    // OpenRouter withdrew the free route (absent from the live catalogue on
+    // 2026-09-16 and 2026-09-25; a real call answered HTTP 404 "This model is
+    // unavailable for free … use this slug instead: minimax/minimax-m3"). It was
+    // the head of this list and its only free entry. NOT replaced: the paid slug
+    // measured 0/9 parseable on the ingest prompt (2026-08-28, above), and no
+    // measurement carries across sibling ids. A user whose stored pick was this
+    // id falls back to the provider default and the Providers page says so
+    // (`buildModel.selectedHonoured: false`); the paid slug stays reachable for
+    // chat through the runtime catalogue at its own live price.
     defineOfferableModel('openrouter', {
       id: 'ibm-granite/granite-4.0-h-micro',
       label: 'Granite 4.0 H Micro',
@@ -2158,8 +2384,7 @@ export const OFFERABLE_MODELS = Object.freeze({
       cautionReason:
         'The thinnest outlines measured here — a less detailed wiki from the same source.',
       note:
-        'The cheapest paid model here and the cheapest The Curator offers anywhere: $0.017/$0.112 per ' +
-        '1M tokens, roughly a sixth of the cheapest Gemini option on input. Perfectly clean — 9 of 9 runs ' +
+        'The cheapest OpenRouter model offered for building a wiki. Perfectly clean — 9 of 9 runs ' +
         'parsed as raw JSON with no jsonrepair and no hidden reasoning tokens — but THIN: 7-13 outline ' +
         'pages (median 9) where solar-pro4 plans a median of 23 on the identical prompt. Fewer planned ' +
         'pages means a less detailed wiki from the same source, so pick it when cost dominates.',
@@ -2168,11 +2393,12 @@ export const OFFERABLE_MODELS = Object.freeze({
     // `z-ai/glm-5.3-flash` now precedes `upstage/solar-pro4` because this list
     // is CHEAPEST-FIRST — a shipped promise the picker renders in order and an
     // offline assertion pins — and solar-pro4's re-measured price ($0.09/$0.36,
-    // up from $0.03/$0.12) inverted the pair against glm's unchanged
-    // $0.075/$0.25. The PINNED DEFAULT is still solar-pro4: the head of this
-    // list has never been the default here (a free entry leads it), and the
-    // default is chosen on measured coverage and JSON cleanliness, not on
-    // position. See MODEL_PRICES_USD_PER_MTOK for the bill that settled it.
+    // up from $0.03/$0.12) inverted the pair against glm's then-unchanged
+    // $0.075/$0.25 (glm re-billed at $0.045/$0.14 on 2026-09-25; same order).
+    // The PINNED DEFAULT is still solar-pro4: the head of this list has never
+    // been the default here (Granite leads it since the free entry that used
+    // to was withdrawn), and the default is chosen on measured coverage and
+    // JSON cleanliness, not on position. See MODEL_PRICES_USD_PER_MTOK for the bill that settled it.
     defineOfferableModel('openrouter', {
       id: 'z-ai/glm-5.3-flash',
       label: 'GLM 5.3 Flash',
@@ -2193,11 +2419,10 @@ export const OFFERABLE_MODELS = Object.freeze({
         'after it, so a document that takes a minute on the default can take five here, and roughly ' +
         '1 call in 9 will time out and be retried. (2) HIDDEN REASONING: every run spent 4,976-9,781 ' +
         'tokens on reasoning the user never sees — 79-86% of its entire output — billed as output ' +
-        'and drawn from the same 24,576-token budget as the answer. Priced $0.075/$0.25, which is ' +
-        'what it billed on a cold run on 2026-09-16 as well as on both cold runs in August — but ' +
-        'that is now the rate of ONE of its 26 endpoints. Twenty of them charge $0.15/$0.50 or more, ' +
-        'up to $0.45/$1.50, so of everything here this is the id whose real cost is likeliest to ' +
-        'change without the model id changing.',
+        'and drawn from the same 24,576-token budget as the answer. Its price is the rate its ' +
+        'cheapest JSON-capable endpoint billed on the day shown beside it. This id is served by ' +
+        'many endpoints at different rates, so of everything here it is the one whose ' +
+        'real cost is likeliest to change without the model id changing.',
     }),
     defineOfferableModel('openrouter', {
       id: 'upstage/solar-pro4',
@@ -2211,12 +2436,9 @@ export const OFFERABLE_MODELS = Object.freeze({
         'The pinned OpenRouter default, chosen on reliability rather than on price. 9 of 9 runs ' +
         'returned raw JSON that parsed WITHOUT jsonrepair — stricter than our own Anthropic default, ' +
         'which fences its JSON 3/3 and depends entirely on the repair path — and 14-36 outline pages ' +
-        '(median 23), coverage comparable to the cheapest Gemini option. No hidden reasoning tokens ' +
-        'in any run, so the whole output budget goes to the answer. ⚠ ITS PRICE TRIPLED: it was ' +
-        '$0.03/$0.12 when first measured on 2026-08-27 and both of its endpoints now charge ' +
-        '$0.09/$0.36, confirmed against the bill on 2026-09-16. That is roughly nine tenths of ' +
-        'gemini-2.5-flash-lite ($0.10/$0.40) rather than the third it used to be, so it is no longer ' +
-        'the affordability pick — Granite 4.0 H Micro and GLM 5.3 Flash are both cheaper.',
+        '(median 23). No hidden reasoning tokens in any run, so the whole output budget goes to ' +
+        'the answer. ⚠ Its price tripled on 2026-09-16 without the id changing, so it is no ' +
+        'longer the affordability pick: Granite 4.0 H Micro and GLM 5.3 Flash both cost less.',
     }),
     defineOfferableModel('openrouter', {
       id: 'moonshotai/kimi-k2-0905',
@@ -2238,8 +2460,8 @@ export const OFFERABLE_MODELS = Object.freeze({
         'and cost $0.107 against ~$0.048 for a normal run. jsonrepair salvaged the truncated JSON so ' +
         'nothing was lost, but a 903-page plan is a generation defect and ingest would try to write ' +
         'it. Budget for that happening about once in nine documents. Also the dearest OpenRouter ' +
-        'option here at $0.60/$2.50 — 20x the pinned default on input, which is ~98% of an outline ' +
-        'call\'s tokens. Its price at least cannot surprise you: it has exactly one endpoint.',
+        'model offered for building a wiki. Its price at least cannot surprise you: it has ' +
+        'exactly one endpoint.',
     }),
   ]),
 });
@@ -2842,7 +3064,7 @@ export function measurementProvenance(provider, modelId) {
  * in memory. The user's models work this session either way; the only cost of a
  * failed write is that they work again after a restart.
  */
-function persistOpenRouterCatalogue(specs, syncedAt, funnel, listedIds) {
+function persistOpenRouterCatalogue(specs, syncedAt, funnel, listedIds, staticLivePrices) {
   try {
     writeFileAtomicSync(
       openRouterCataloguePath(),
@@ -2867,6 +3089,12 @@ function persistOpenRouterCatalogue(specs, syncedAt, funnel, listedIds) {
         specs,
         ...(Array.isArray(funnel) ? { funnel } : {}),
         ...(Array.isArray(listedIds) && listedIds.length ? { listedIds } : {}),
+        // v3.72.1, additive on the same terms: the live headline price of each
+        // hand-priced id, so the "OpenRouter now lists …" comparison and the
+        // never-quote-below rule survive a restart. Absent in an older file,
+        // which reads back as "no live figure" — never as a price.
+        ...(staticLivePrices && typeof staticLivePrices === 'object' && Object.keys(staticLivePrices).length
+          ? { staticLivePrices } : {}),
       }, null, 0),
       'utf8',
     );
@@ -2932,6 +3160,10 @@ export function restoreOpenRouterCatalogue() {
     checkedAt: _openrouterCatalogueSyncedAt || undefined,
     source: 'disk',
   });
+  // v3.72.1: the live prices of the hand-priced ids, from the same file and
+  // the same listing time. An older file carries none, which clears nothing
+  // it did not set: the registry is rebuilt from what this file says.
+  recordLiveStaticPrices(parsed.staticLivePrices, { listedAt: _openrouterCatalogueSyncedAt, source: 'disk' });
   return {
     restored: true, admitted, refused,
     syncedAt: _openrouterCatalogueSyncedAt,
@@ -3041,11 +3273,23 @@ export async function syncOpenRouterCatalogue(opts = {}) {
     .map(r => r.id);
   recordLiveModelListing('openrouter', listedIds, { checkedAt: syncedAt, source: 'network' });
 
+  // ── THE LIVE PRICE OF EVERY HAND-PRICED ID, FROM THE SAME RECORDS ─────────
+  // v3.72.1 (truth audit F3): read from the RAW records, not from `built.specs`
+  // — a hand-listed id is dropped from the specs as `superseded` (and may be
+  // cut by eligibility), which is exactly how this figure used to be lost.
+  const staticLivePrices = {};
+  for (const r of records) {
+    if (!r || typeof r.id !== 'string' || !Object.hasOwn(MODEL_PRICES_USD_PER_MTOK, r.id)) continue;
+    const price = liveStaticPriceFromRecord(r);
+    if (price) staticLivePrices[r.id] = price;
+  }
+  recordLiveStaticPrices(staticLivePrices, { listedAt: syncedAt, source: 'network' });
+
   // Persist the SPECS, not the built entries: entries carry price GETTERS that
   // JSON.stringify would flatten into today's number, freezing a promotional
   // price past its expiry. Specs are plain data and are re-admitted through the
   // same factory on the way back in.
-  const persisted = persistOpenRouterCatalogue(built.specs, syncedAt, built.funnel, listedIds);
+  const persisted = persistOpenRouterCatalogue(built.specs, syncedAt, built.funnel, listedIds, staticLivePrices);
 
   return {
     syncedAt,
@@ -5756,6 +6000,9 @@ export const __testing = {
   OPENROUTER_MODEL_MAX_OUTPUT_TOKENS,
   PROMOTIONAL_PRICES, OFFERABLE_SUITABILITY,
   KNOWN_PROVIDERS, FREE_MODELS, TIERED_PRICE_MODELS,
+  // v3.72.1 — the as-of dates and the live-price registry, exposed so the
+  // price-truth suite drives the real tables and the real recorder.
+  PRICE_VERIFIED_ON, MEASURED_ON, recordLiveStaticPrices, liveStaticPriceFromRecord,
   capsFor, hasKnownPricePosture, hasTieredPricing, providerDisplayName,
   // v3.15.0 guards. Exposed so a suite can drive the real predicates rather than
   // reach them through a provider call: `looksLikeMovingAlias` is the id-shaped

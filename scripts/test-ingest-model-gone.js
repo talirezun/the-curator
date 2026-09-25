@@ -69,11 +69,17 @@ function fingerprint() {
 }
 const FINGERPRINT_BEFORE = fingerprint();
 
+// v3.72.1: the pinned-and-withdrawn id. It was `minimax/minimax-m3:free`, the
+// real case, until OpenRouter's withdrawal was acted on and the id left the
+// table (2026-09-25). What this suite needs is a SHIPPED build-lane id the
+// fixture listings leave out; Kimi K2 0905 is one, and neither listing below
+// names it.
+const WITHDRAWN = 'moonshotai/kimi-k2-0905';
 const FAKE_KEY = ['sk', 'or', 'v1', 'B'.repeat(40)].join('-');
 writeFileSync(path.join(TMP_USER, '.curator-config.json'), JSON.stringify({
   openrouterApiKey: FAKE_KEY,
   activeProvider: 'openrouter',
-  selectedModels: { openrouter: 'minimax/minimax-m3:free' },
+  selectedModels: { openrouter: WITHDRAWN },
 }), { mode: 0o600 });
 
 // A domain with the folders ingest expects.
@@ -97,7 +103,7 @@ llm.recordLiveModelListing('openrouter', [
 
 {
   const info = llm.getProviderInfo();
-  eq(info.model, 'minimax/minimax-m3:free', 'fixture: the resolved build model is the withdrawn id');
+  eq(info.model, WITHDRAWN, 'fixture: the resolved build model is the withdrawn id');
   eq(llm.catalogueAbsence(info.provider, info.model), 'missing', 'fixture: and it is reported missing');
 }
 
@@ -161,7 +167,7 @@ async function postIngest(filename, body) {
   ok(err, '★ an error frame is emitted [M6]');
   eq(err && err.code, 'MODEL_GONE', '★ …carrying the machine-readable code [M6]');
   ok(err && /no longer offers/.test(err.message), '…and a message that says what happened');
-  ok(err && err.message.includes('minimax/minimax-m3:free'), '…naming the model');
+  ok(err && err.message.includes(WITHDRAWN), '…naming the model');
   ok(err && /pick another model/i.test(err.message), '…and what to do next');
   eq(providerCalls, 0,
     '★★ ZERO provider calls — the claim is "no money was spent", and a call count is the only thing that proves it [M6: removing the gate drives the real ingest and this becomes non-zero]');
@@ -171,7 +177,7 @@ async function postIngest(filename, body) {
 section('§1b. An UNCHECKED provider must NOT be blocked [M14]');
 {
   llm.__clearLiveModelListings();
-  eq(llm.catalogueAbsence('openrouter', 'minimax/minimax-m3:free'), null, 'fixture: with no listing the verdict is null');
+  eq(llm.catalogueAbsence('openrouter', WITHDRAWN), null, 'fixture: with no listing the verdict is null');
   providerCalls = 0;
   const { frames } = await postIngest('unchecked.md', '# Another source\n\n' + 'word '.repeat(400));
   const err = frames.find(f => f.type === 'error');
@@ -194,17 +200,17 @@ const queue = await import('../src/brain/ingest-queue.js');
 
 // Re-arm the withdrawn state for this section.
 llm.recordLiveModelListing('openrouter', ['minimax/minimax-m3', 'upstage/solar-pro4'], { source: 'network' });
-eq(llm.catalogueAbsence('openrouter', 'minimax/minimax-m3:free'), 'missing', 'fixture: still missing');
+eq(llm.catalogueAbsence('openrouter', WITHDRAWN), 'missing', 'fixture: still missing');
 
 {
   // `classifyTransientError` is the function that decides PAUSE vs FAIL. Driving
   // it directly is what pins M13: a model-gone error classified transient would
   // pause the whole batch — and pause again on every Resume, forever, because a
   // withdrawn model does not come back with time.
-  const gone = llm.makeModelGoneError('openrouter', 'minimax/minimax-m3:free');
+  const gone = llm.makeModelGoneError('openrouter', WITHDRAWN);
   eq(queue.classifyTransientError(gone), null,
     '★★ the model-gone error is NOT transient, so it fails ONE item instead of pausing the batch forever [M13]');
-  eq(queue.classifyTransientError(gone, { ignore: 'minimax/minimax-m3:free' }), null,
+  eq(queue.classifyTransientError(gone, { ignore: WITHDRAWN }), null,
     '…and stays non-transient once the filename-scrub pass has run over it');
   eq(gone.curatorTransient, undefined, 'it carries no curatorTransient tag — the structural signal the classifier reads first');
 
@@ -248,7 +254,7 @@ async function makeUpload(name, bytes) {
   eq(item.status, 'failed', '★ the item is marked FAILED [M12]');
   eq(item.errorCode, 'MODEL_GONE', '★ …with the machine-readable code, so a client can offer the right remedy [M12]');
   ok(/no longer offers/.test(item.error || ''), '…and the same sentence the route emits — one builder, one wording');
-  ok(String(item.error || '').includes('minimax/minimax-m3:free'), '…naming the model');
+  ok(String(item.error || '').includes(WITHDRAWN), '…naming the model');
   eq(ingestCalls, 0,
     '★★ ZERO calls into the ingest seam — the item never reached the pipeline, so it never reached a provider [M12]');
   eq(after.status === 'paused', false,
@@ -273,7 +279,7 @@ section('§2b. An UNCHECKED provider does not block a batch item either [M14]');
   eq(await queue.getActiveJob(), null, 'fixture: no batch is active, so a second job may be created');
 
   llm.__clearLiveModelListings();
-  eq(llm.catalogueAbsence('openrouter', 'minimax/minimax-m3:free'), null, 'fixture: no listing, so the verdict is null');
+  eq(llm.catalogueAbsence('openrouter', WITHDRAWN), null, 'fixture: no listing, so the verdict is null');
 
   let ingestCalls = 0;
   const countingIngest = async () => {

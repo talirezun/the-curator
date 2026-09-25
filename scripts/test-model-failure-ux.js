@@ -466,6 +466,12 @@ section('§8  THE FREE-MODEL FACT: ONE SENTENCE, ONE OWNER, NO INVENTED FIGURE')
   ok(html.includes('Gemma 4 26B A4B (free)'), '…naming the model that was actually asked');
   ok(/share one pool of capacity/.test(html), '…and stating the measured mechanism');
   ok(/8 of 8[\s\S]*?0 of 8/.test(html), '…with the figures v3.15.0 actually measured');
+  // v3.72.1 (truth audit tray F10): a past measurement is DATED, and stated as a
+  // fact about free models in general — the model it was taken on has since
+  // been withdrawn, so no sentence may read as that model's current result.
+  ok(/in our testing on 27 Aug 2026/.test(html), '…dated: the measurement is a moment, not a standing fact');
+  ok(/availability can differ sharply between free models/.test(html), '…and framed as a property of free models in general');
+  ok(!/minimax/i.test(html), '…naming no withdrawn model');
 
   // THE HARD RULE. v3.15.0 records this project declining to print free-tier
   // request caps because they could not be verified, and v3.18.0 measured 18
