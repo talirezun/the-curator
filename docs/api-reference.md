@@ -2730,8 +2730,12 @@ timestamp across every logged `get_project_context` **or** `get_working_state` c
 the two calls belonged to the same session, only the most recent instance of each.
 
 **`count7dAgent` (v3.66.0).** Calls in the same 7-day window as `count7d`, with the app's own "Test
-all tools" lines (`via: "self-test"`) excluded — the figure a "busiest tools this week" comparison
+all tools" lines (`via: "self-test"`) excluded — the figure the "busiest tools" comparison
 draws its bars from. `count7d` itself is unchanged, and still includes self-test calls.
+
+**`countWindowDays` (v3.76.0).** The window `count7d` and `count7dAgent` count over, in days (`7`),
+sent so the view does not type it. When `logStartedAt` falls inside that window, the app states the
+shorter span the log really covers ("last 5 days — the log begins 20 Sep") rather than "7 days".
 
 **`?include=projects` (v3.66.0; window facts and per-tool breakdown added v3.74.0).** Add the query
 parameter to also receive `byProject`, `byProjectWindow` and `savePulse`, built by `acrossProjects()`

@@ -35,7 +35,7 @@ import { getCapabilities } from '../brain/install-mode.js';
 import { getMcpLauncherPath } from '../brain/mcp-launcher.js';
 import { writeFileAtomicSync } from '../brain/atomic-write.js';
 import {
-  readUsage, readUsageLinesUnion, summariseSessionsByProject, VIA_SELF_TEST,
+  readUsage, readUsageLinesUnion, summariseSessionsByProject, VIA_SELF_TEST, RECENT_WINDOW_MS,
 } from '../brain/mcp-usage.js';
 import {
   getStoreActivity, captureFor, captureWindowFacts, TRAY_CAPTURE_WINDOW_MS, TRAY_CAPTURE_WINDOW_DAYS,
@@ -711,6 +711,10 @@ export async function usageHandler(req, res) {
   const body = {
     present: usage.present === true,
     logStartedAt: usage.logStartedAt ?? null,
+    // v3.76.0 (truth audit F8): the window `count7d`/`count7dAgent` count
+    // over, sent rather than typed in the view, which states the SHORTER span
+    // the log really covers when `logStartedAt` falls inside it.
+    countWindowDays: RECENT_WINDOW_MS / 86400000,
     logBytes: usage.logBytes || 0,
     tools,
     sessions: {

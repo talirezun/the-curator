@@ -1132,7 +1132,8 @@ export function projectLabel(domain, project, projectsInDomain) {
  *   pulse:    {windowSeconds, bucketSeconds, buckets[28], events,
  *              eventsOutsideWindow, pairsCounted, pairsTruncated, clock,
  *              oldestEventAt, coversWholeWindow, firstKnownBucket} | null,
- *   brief:    {project, ageSeconds} | null,
+ *   brief:    {domain, project, projectLabel, updatedAt, ageSource: 'recorded'|'file'|null,
+ *              ageSeconds, authoredBy: 'agent'|'human'|null} | null,
  *   remote:   {ok, behindFiles, behindCommits, checkedAt} | null,
  *   warnings: [{code, message, ...}]
  * }
@@ -1273,7 +1274,15 @@ export async function getTraySummary(opts = {}) {
     const projectsInDomain = perDomain.get(domain) || 1;
     const label = projectLabel(domain, project, projectsInDomain);
     const capture = captureFor(cap.byName, cap.meta.logPresent, domain, project);
-    const projectBase = { domain, project, projectLabel: label, isDefaultProject, capture };
+    // v3.76.0 (truth audit F5): the project's TRUE totals, from the store's
+    // own walk — `scopeCount` distinct work-streams and `savedCopies`
+    // (scope, machine) pairs. The widget's "N more in Project Context…" line
+    // is counted against these, never against the rows that survived `limit`
+    // (which read "8 more" for a project with 16 more). `null` when the store
+    // did not say — a different fact from a number.
+    const scopeCount = Number.isInteger(entry.scopeCount) ? entry.scopeCount : null;
+    const savedCopies = Number.isInteger(entry.savedCopies) ? entry.savedCopies : null;
+    const projectBase = { domain, project, projectLabel: label, isDefaultProject, capture, scopeCount, savedCopies };
     let idx;
     try {
       // THE ONLY CALLER THAT ASKS FOR SAVE TIMES. `src/routes/memory.js` and
@@ -1512,7 +1521,10 @@ export async function getTraySummary(opts = {}) {
   if (rowTotal > shown.length) {
     warnings.push({
       code: 'scopes-truncated',
-      message: `Showing the ${shown.length} most recent of ${rowTotal} saved work-streams.`,
+      // v3.76.0 (F5): the unit is a saved COPY — a (work-stream, computer)
+      // pair — which is what `rows` holds. "work-streams" over-counted: the
+      // maintainer's 52 copies are 49 work-streams.
+      message: `Showing the ${shown.length} most recent of ${rowTotal} saved copies (a work-stream saved on two computers is two).`,
       shown: shown.length,
       total: rowTotal,
       // `pairTotal` counts every (scope, machine) pair the store SAW, including
@@ -1781,9 +1793,16 @@ function normaliseLimit(v) {
  * "the brief is six weeks old" is about to matter. Stat'ing every project's
  * brief to show one line would be a cost with no consumer.
  *
- * There is no journal for a brief — it is hand-authored, and no MCP tool
- * writes it — so mtime is the ONLY clock available and no `ageSource` is
- * emitted. There is nothing here to be honest between.
+ * ── WHICH CLOCK (v3.76.0, truth audit F2) ──────────────────────────────
+ * A brief is written by the app's editor or by the MCP's `save_project_brief`
+ * (on the owner's explicit instruction), and either writer stamps the moment
+ * it wrote into the brief's own provenance comment (`on=…`). That RECORDED
+ * time is the brief's age. The file's mtime is not: a restore, a clone or a
+ * sync rewrites every file, and on the maintainer's own store every brief read
+ * "updated 7 hr ago" after an 08:51 restore while their own headers said
+ * 10, 16 and 23 September. The mtime is used only when no time is recorded (a
+ * pre-v3.48.0 brief, or a stamp without `on=`), and `ageSource: 'file'` says
+ * so, so the widget can word it as the FILE's age rather than the brief's.
  */
 async function briefFor(row, meta, now) {
   const domain = row && typeof row.domain === 'string' ? row.domain : null;
@@ -1805,11 +1824,25 @@ async function briefFor(row, meta, now) {
   // never to do.
   if (meta && typeof meta === 'object' && (meta.hasBrief === true || typeof meta.briefUpdatedAt === 'string')) {
     if (meta.hasBrief === false) return null;
-    const at = typeof meta.briefUpdatedAt === 'string' ? meta.briefUpdatedAt : null;
+    // `briefAuthoredBy` is the store's `parseBriefProvenance` result — an
+    // OBJECT `{kind, harness, model, at, commissionedBy}`, or null. Until
+    // v3.76.0 this compared the object to the string 'agent', so the widget's
+    // "by an agent" clause could never appear (truth audit F3). A bare string
+    // is still accepted, for a store that reports the kind alone.
+    const prov = meta.briefAuthoredBy;
+    const kind = typeof prov === 'string' ? prov
+      : (prov && typeof prov === 'object' && typeof prov.kind === 'string' ? prov.kind : null);
+    const recordedAt = prov && typeof prov === 'object' && typeof prov.at === 'string'
+      && Number.isFinite(Date.parse(prov.at)) ? prov.at : null;
+    const fileAt = typeof meta.briefUpdatedAt === 'string' ? meta.briefUpdatedAt : null;
+    const at = recordedAt || fileAt;
     const ms = at ? Date.parse(at) : NaN;
     return {
       ...base,
       updatedAt: at,
+      // Which clock `updatedAt` is: the writer's own recorded time, or the
+      // file's mtime when nothing was recorded. Never presented as the same.
+      ageSource: recordedAt ? 'recorded' : (at ? 'file' : null),
       // A cap, a clamp and a null, in that order: an unparseable stamp is an
       // absent age, never a zero. Same rule as `chooseClock`.
       ageSeconds: Number.isFinite(ms) ? Math.max(0, Math.round((now - ms) / 1000)) : null,
@@ -1825,8 +1858,7 @@ async function briefFor(row, meta, now) {
       // `'agent'` or `'human'` are carried through; anything else — including
       // absent, which is every pre-v3.48.0 brief — becomes null and is rendered
       // as no clause at all rather than as a guess about the author.
-      authoredBy: meta.briefAuthoredBy === 'agent' ? 'agent'
-        : (meta.briefAuthoredBy === 'human' ? 'human' : null),
+      authoredBy: kind === 'agent' ? 'agent' : (kind === 'human' ? 'human' : null),
     };
   }
 
@@ -1851,6 +1883,8 @@ async function briefFor(row, meta, now) {
     return {
       ...base,
       updatedAt: st.mtime.toISOString(),
+      // No provenance was read on this path, so the only clock is the file's.
+      ageSource: 'file',
       ageSeconds: Math.max(0, Math.round((now - st.mtimeMs) / 1000)),
       authoredBy: null,
     };

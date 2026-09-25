@@ -664,11 +664,11 @@ const E = {
   'settings.mcp-across': {
     label: 'About Across projects',
     title: 'Across projects',
-    lead: '**Across projects** shows which projects’ agent connections saved a Handoff in the last 30 days.',
+    lead: '**Across projects** shows which projects’ agent connections saved a Handoff: the last 30 days, or since the usage log began.',
     points: [
       { icon: 'agent', text: 'Claude Code connects once per session; Claude Desktop once for many chats.' },
-      { icon: 'clock', text: 'A newer usage log counts only from the day it began.' },
-      { icon: 'search', text: 'The last lines count saves in the last 7 days, per tool.' },
+      { icon: 'clock', text: 'The note under the connections names the window they cover.' },
+      { icon: 'search', text: 'The second reading counts saves in the last 7 days, per tool.' },
     ],
     guide: { key: 'settings.mcp-tool-map', heading: 'The tool map — what your agents used' },
   },

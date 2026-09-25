@@ -740,7 +740,10 @@ either mirrored byte-for-byte from a repository or written by an agent you asked
 document no longer matches the checkout it was copied from, that project's header in the menu bar
 gains a small `· docs stale` mark, or `· N docs stale` when more than one has drifted. Nothing
 appears when every mirrored document is current, and a document an agent wrote rather than
-mirrored never triggers it, because there is no second copy to compare it against.
+mirrored never triggers it, because there is no second copy to compare it against. A mirrored
+document whose source could not be reached from this Mac — for example a GitHub document with no
+read token — is shown separately as `· 1 doc not checked` (since v3.76.0): nothing was compared, so
+it is not called stale.
 
 The fix is either to refresh the mirror from the repository, on whichever machine has that
 checkout, or, for an agent-written document, to save the version you actually want kept.

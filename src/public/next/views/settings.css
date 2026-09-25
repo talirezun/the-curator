@@ -2962,6 +2962,10 @@
   letter-spacing: normal;
   font-size: var(--text-xs);
 }
+/* ④ is two readings since v3.76.0 (truth audit F12): the connections, then
+   the journal-based saves, each with its own note. A gap between them so
+   the second does not read as a continuation of the first's note. */
+.mcp-across > .cur-mon + .cur-mon { margin-top: var(--space-4); }
 /* ③'s busiest-tools monitor sits between the session strip and the tiles,
    at the strip's own gap. */
 .mcp-busiest { margin-bottom: var(--space-10); }

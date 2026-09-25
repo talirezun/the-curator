@@ -692,6 +692,31 @@ const PROJ = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'curator-tray
   ok(s.brief != null && s.brief.project === 'lumina',
     'the standing brief reported is the newest project\'s own');
 
+  // ── v3.76.0 (truth audit F2 + F3), ON THE REAL STORE ──────────────────
+  // A brief an agent wrote 3 days ago (its own stamp says so) whose FILE a
+  // restore rewrote a minute ago. The widget's age is the stamp's; the author
+  // is read off the store's provenance OBJECT, not compared as a string.
+  const briefAbs = path.join(PROJ, 'workshop', 'state', 'lumina', 'project.md');
+  const recorded = new Date(Date.now() - 3 * 86400 * 1000).toISOString();
+  fs.writeFileSync(briefAbs, '<!-- curator-brief: authored_by=agent harness=claude-code model=opus-5 on='
+    + recorded + ' commissioned=user -->\n# lumina\n');
+  const s2 = await getTraySummary({ limit: 20 });
+  eq(s2.brief.authoredBy, 'agent',
+    '★ an agent-stamped brief reads authoredBy "agent" through the REAL store — the clause could never fire before [F3]');
+  eq(s2.brief.ageSource, 'recorded', '★ the age comes from the brief\'s own recorded time [F2]');
+  eq(s2.brief.updatedAt, recorded, '…exactly that time');
+  ok(s2.brief.ageSeconds > 2.9 * 86400 && s2.brief.ageSeconds < 3.1 * 86400,
+    '★ …so a brief whose file was rewritten a moment ago still reads ~3 days [F2]', s2.brief.ageSeconds);
+  fs.writeFileSync(briefAbs, '# lumina\n');
+  const s3 = await getTraySummary({ limit: 20 });
+  eq(s3.brief.ageSource, 'file', 'CONTROL — an unstamped brief falls back to the FILE time, and says so');
+  eq(s3.brief.authoredBy, null, '…with no author guessed');
+
+  // ── F5: the store's per-project totals ride on `projects[]` ────────────
+  const pl = s.projects.find((p) => p.project === 'lumina');
+  eq(pl && pl.scopeCount, 1, '★ each project carries the store\'s true scopeCount [F5]');
+  eq(pl && pl.savedCopies, 1, '…and savedCopies');
+
   // And the handoff read goes to the named project's file, not the default's.
   const h = await getHandoffMarkdown('workshop', 'lumina', 'main', SELF);
   ok(h.ok === true, 'the handoff for the named project reads');

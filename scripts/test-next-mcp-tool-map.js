@@ -80,7 +80,7 @@ function extractFunction(source, name) {
   throw new Error(`extractFunction: unbalanced braces in ${name}`);
 }
 
-const RENDER_CHAIN = ['ageSecondsOf', 'ageMarkHtml', 'renderToolTile', 'renderToolGroup',
+const RENDER_CHAIN = ['ageSecondsOf', 'ageMarkHtml', 'usageWindowWords', 'renderToolTile', 'renderToolGroup',
   'renderSessionStrip', 'renderExerciseOutcome', 'renderExerciseRunner',
   'renderToolMapBody', 'renderToolMap', 'usageSignature',
   // v3.72.1 (truth audit F9): the poll compares the save/session stamp to
@@ -933,10 +933,28 @@ section('13. The busiest tools this week (v3.66.0, P7): agents only, bars agains
   ok(/>41<\/span>/.test(lines[0] ? lines[0].val : ''),
     'the figure printed is count7dAgent (41), NOT count7d (50) — a self-test call is never an agent’s');
   ok(!/cur-depth-danger/.test(mon), 'NEVER red: the busiest tool is not a fault');
-  ok(/visually-hidden"> 12 of 41 calls, the busiest tool this week</.test(mon),
-    'every bar names its denominator in words');
-  ok(/21 tools not called by an agent this week\./.test(mon),
-    'the tools left out are COUNTED in words, not silently dropped');
+  ok(/visually-hidden"> 12 calls · bar scaled to get_project_context’s 41</.test(mon),
+    '★ every bar names its scale as the BUSIEST TOOL, by name — never "12 of 41 calls", which read as a share of this tool\'s own calls (v3.76.0 F8a)', mon);
+  ok(/visually-hidden"> 41 calls — the busiest tool</.test(mon), '…and the busiest one says it is the scale');
+  ok(/21 tools not called by an agent in the last 7 days\./.test(mon),
+    'the tools left out are COUNTED in words, not silently dropped — over the window the log covers');
+  ok(/BUSIEST · LAST 7 DAYS · AGENTS ONLY/.test(mon), 'CONTROL — a log older than 7 days says 7 days');
+
+  // ── v3.76.0 (F8b): A LOG YOUNGER THAN THE WINDOW STATES ITS TRUE SPAN ──
+  // The maintainer's log began 5.4 days before the reading; "7 DAYS", "this
+  // week" and "uses · 7 days" claimed a week nobody logged.
+  const young = withAgent({ logStartedAt: ago(5.4 * 86400), countWindowDays: 7 });
+  const yh = build(null, { state: { mcpUsage: young, mcpUsageError: null } }).renderToolMapBody(NOW);
+  const ym = yh.slice(yh.indexOf('class="mcp-busiest"'), yh.indexOf('class="mcp-tool-group"'));
+  const begins = new Date(NOW - 5.4 * 86400000);
+  const day = begins.getDate() + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][begins.getMonth()];
+  ok(/BUSIEST · LAST 5 DAYS · AGENTS ONLY/.test(ym), '★ the eyebrow states the span the log covers, not "7 DAYS" [F8b]', ym);
+  ok(ym.includes('Counted over the last 5 days — the log begins ' + day + '.') || ym.includes('Counted over the last 5 days — the log begins ' + day + ' ·'),
+    '★ …and says where the log begins, in Agent connections\' own words [F8b]', ym);
+  ok(/not called by an agent in the last 5 days/.test(ym) && !/this week|7 days/i.test(ym),
+    '★ …and no "this week" or "7 days" survives in the monitor [F8b]', ym);
+  ok(/50 uses · 5 days/.test(yh) && !/uses · 7 days/.test(yh),
+    '★ each tile\'s count names the window the log covers ("50 uses · 5 days") [F8b]');
 
   // Eight at most, and the rest are said.
   const many = payload({ tools: Array.from({ length: 11 }, (_, i) => ({ name: 't' + String(i).padStart(2, '0'),

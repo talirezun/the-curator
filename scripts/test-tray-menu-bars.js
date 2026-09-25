@@ -304,13 +304,17 @@ section('§7 stale documents survive as a NOTICE — only when true');
   const stale = (n, u) => ({ staleCount: n, unreachableCount: u });
   const withStale = build(summary({ scopes: [scope('projects', 'curator', 10, { foundations: stale(2, 1) }), scope('business', 'alpha', 60 * 26, { foundations: stale(4, 0) })] }));
   const n = withStale.notices.filter((x) => x.kind === 'docs-stale');
-  eq(n.map((x) => x.text), ['curator · 3 docs stale'],
-    'an ACTIVE project with stale or unreachable documents gets one notice, the two counts summed under "stale"');
-  ok(/not known to be current/.test(n[0].full), '… and its tooltip says what "stale" means here');
+  eq(n.map((x) => x.text), ['curator · 2 docs stale · 1 not checked'],
+    'an ACTIVE project with stale or unchecked documents gets one notice, the two facts in their own words (v3.76.0 F6)');
+  ok(/2 curator-owned documents differ from their sources/.test(n[0].full) && /1 could not be checked/.test(n[0].full),
+    '… and its tooltip says what each clause means');
   ok(!n.some((x) => x.project === 'alpha'), 'an IDLE project\'s stale documents are not a notice — it is not being worked on');
   const clean = build(summary({ scopes: [scope('projects', 'curator', 10, { foundations: stale(0, 0) })] }));
   eq(clean.notices.filter((x) => x.kind === 'docs-stale').length, 0, 'CONTROL — nothing stale → no notice (only when true)');
   eq(M.staleDocsText('ott', 1), 'ott · 1 doc stale', 'one document is singular');
+  eq(M.staleDocsText('curator', 0, 1), 'curator · 1 doc not checked',
+    '★ stale 0 + unreachable 1 is "1 doc not checked", never "1 doc stale" (F6)');
+  eq(M.staleDocsText('curator', 0, 0), null, 'CONTROL — neither → no text');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

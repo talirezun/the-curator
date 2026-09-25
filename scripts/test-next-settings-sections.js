@@ -194,6 +194,7 @@ const REAL = [
   // emits from arguments these functions supply.
   extractFunction(src, 'ageSecondsOf'),
   extractFunction(src, 'ageMarkHtml'),
+  extractFunction(src, 'usageWindowWords'),
   extractFunction(src, 'renderToolTile'),
   extractFunction(src, 'renderToolGroup'),
   extractFunction(src, 'renderSessionStrip'),

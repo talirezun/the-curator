@@ -1128,7 +1128,7 @@ section('11. "Works with any MCP client" — the vendor-neutrality sentence (v3.
     // Block ③'s chain, lifted REAL for the same reason: `renderMcp` calls
     // `renderToolMap` unconditionally, and a stub of it would let this
     // section go green against a section that had stopped rendering.
-    const mapSrc = ['ageSecondsOf', 'ageMarkHtml', 'renderToolTile', 'renderToolGroup',
+    const mapSrc = ['ageSecondsOf', 'ageMarkHtml', 'usageWindowWords', 'renderToolTile', 'renderToolGroup',
       'renderSessionStrip', 'renderToolMapBody', 'renderToolMap']
       .map((n) => extractFunction(settingsCode, n)).join('\n');
     const deps = {

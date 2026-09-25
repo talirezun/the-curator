@@ -283,17 +283,20 @@ function rowItem(row, makeIcon, submenu) {
 function rowSubmenu(row, onOpenScope, onRowAction, onOpenMemory, makeIcon) {
   const items = actionItems(row, onOpenScope, onRowAction);
   const streams = Array.isArray(row.streams) ? row.streams : [];
-  if (streams.length || row.streamsHidden > 0) {
+  const more = typeof row.streamsMoreLabel === 'string' && row.streamsMoreLabel ? row.streamsMoreLabel
+    : (row.streamsHidden > 0 ? row.streamsHidden + ' more in Project Context…' : null);
+  if (streams.length || more) {
     items.push(sep);
     items.push(header(rowActionId(row.id, ID_HEADER_STREAMS), HEADER_STREAMS));
     for (const s of streams) {
       items.push(rowItem(s, makeIcon, actionItems(s, onOpenScope, onRowAction)));
     }
-    if (row.streamsHidden > 0) {
-      // ENABLED: it is the only route to the streams the cap hid.
+    if (more) {
+      // ENABLED: it is the only route to the streams the cap hid. The count
+      // is the model's, taken against the project's true total (F5).
       items.push({
         id: rowActionId(row.id, ID_STREAMS_MORE),
-        label: row.streamsHidden + ' more in Project Context…',
+        label: more,
         click: onOpenMemory,
       });
     }

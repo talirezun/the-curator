@@ -1816,10 +1816,35 @@ export function overflowLabel(hiddenProjects, rowsOfShown = 0) {
 export const WARNING_SESSION_START = 'session-start-unavailable';
 const SILENT_WARNING_CODES = new Set([WARNING_SESSION_START]);
 
-/** Stale-documents notice text, for one project. */
-export function staleDocsText(name, n) {
-  if (!Number.isInteger(n) || n < 1) return null;
-  return name + ' · ' + (n === 1 ? '1 doc stale' : n + ' docs stale');
+/**
+ * Documents notice text, for one project: `ott · 2 docs stale`,
+ * `curator · 1 doc not checked`, or both clauses.
+ *
+ * TWO DIFFERENT FACTS, NEVER ONE WORD (v3.76.0, truth audit F6). "Stale" is a
+ * measurement: the source was read and it differs from the stored copy.
+ * "Not checked" is its absence: the source could not be reached from this Mac
+ * (a GitHub document with no read token — the app says "GitHub · not
+ * checked"). Summing the two under "stale" told the maintainer a document had
+ * changed when nothing had been compared at all.
+ */
+export function staleDocsText(name, stale, unchecked = 0) {
+  const s = Number.isInteger(stale) && stale > 0 ? stale : 0;
+  const u = Number.isInteger(unchecked) && unchecked > 0 ? unchecked : 0;
+  if (!s && !u) return null;
+  const parts = [];
+  if (s) parts.push(s === 1 ? '1 doc stale' : s + ' docs stale');
+  if (u) parts.push(s ? u + ' not checked' : (u === 1 ? '1 doc not checked' : u + ' docs not checked'));
+  return name + ' · ' + parts.join(' · ');
+}
+
+/** The notice's tooltip — what each clause of `staleDocsText` means. */
+export function staleDocsFull(name, stale, unchecked = 0) {
+  const s = Number.isInteger(stale) && stale > 0 ? stale : 0;
+  const u = Number.isInteger(unchecked) && unchecked > 0 ? unchecked : 0;
+  const parts = [];
+  if (s) parts.push(s + ' curator-owned document' + (s === 1 ? ' differs from its source' : 's differ from their sources'));
+  if (u) parts.push(u + ' could not be checked from this Mac (its source was not reachable, e.g. a GitHub document with no read token)');
+  return parts.length ? name + ': ' + parts.join('; ') : null;
 }
 
 /**
@@ -1913,6 +1938,8 @@ export function buildTrayModel(summary, opts = {}) {
         latestIn: null,
         scopeRows: [],
         foundations: null,
+        // The store's true count of this project's work-streams (F5), or null.
+        scopeCount: null,
       });
       order.push(key);
     }
@@ -1923,6 +1950,7 @@ export function buildTrayModel(summary, opts = {}) {
   for (const p of projectsIn || []) {
     if (!p || typeof p !== 'object' || !str(p.project)) continue;
     const rec = projectOf(p);
+    if (Number.isInteger(p.scopeCount) && p.scopeCount >= 0) rec.scopeCount = p.scopeCount;
     if (Array.isArray(p.latest)) {
       rec.fromLatest = true;
       rec.latestIn = p.latest.filter((e) => e && typeof e === 'object');
@@ -2310,7 +2338,9 @@ export function buildTrayModel(summary, opts = {}) {
     const recs = row._streamRecs || [];
     delete row._streamRecs;
     const shown = recs.slice(0, MAX_OTHER_STREAMS);
-    row.streamsHidden = recs.length - shown.length;
+    row._streamsOverflow = recs.slice(MAX_OTHER_STREAMS);
+    row.streamsHidden = 0;
+    row.streamsMoreLabel = null;
     const scopeLabels = shortScopeNames([row.scope, ...shown.map((r) => r.scope)]);
     row.scopeShort = scopeLabels.get(row.scope) || row.scope;
     row.streams = shown.map((r) => {
@@ -2329,6 +2359,51 @@ export function buildTrayModel(summary, opts = {}) {
       return s;
     });
   }
+  // ── HOW MANY MORE, COUNTED AGAINST THE PROJECT'S TRUE TOTAL (F5) ──────
+  //
+  // The streams above are drawn from the pairs this summary FETCHED — the
+  // newest `limit` across every project — so counting the "more" line from
+  // them reported the fetch as the measurement: `8 more` under curator, which
+  // had 22 work-streams with 6 shown (16 more). The count is now the store's
+  // `scopeCount` minus the DISTINCT work-streams this menu shows for the
+  // project (the rows and their streams; a second computer's copy of a shown
+  // work-stream is not another one), and it is said ONCE per project, on its
+  // first row, so two rows of one project never count the same remainder
+  // twice. Another row of the project whose own list was capped says "More
+  // in Project Context…" with no number. When the store gave no total, the
+  // fetched remainder is exact only if nothing was fetched short; otherwise
+  // it reads "at least N".
+  const fetchedShort = !!(summary && summary.truncated === true);
+  for (const [k, rowsHere] of rowsByProject) {
+    const p = projects.get(k);
+    const shownScopes = new Set();
+    for (const r of rowsHere) {
+      shownScopes.add(r.scope);
+      for (const st of r.streams || []) shownScopes.add(st.scope);
+    }
+    let count;
+    let atLeast = false;
+    if (p && Number.isInteger(p.scopeCount)) {
+      count = Math.max(0, p.scopeCount - shownScopes.size);
+    } else {
+      const hidden = new Set();
+      for (const r of rowsHere) {
+        for (const x of r._streamsOverflow || []) if (!shownScopes.has(x.scope)) hidden.add(x.scope);
+      }
+      count = hidden.size;
+      atLeast = fetchedShort;
+    }
+    const first = rowsHere[0];
+    if (count > 0) {
+      first.streamsHidden = count;
+      first.streamsMoreLabel = (atLeast ? 'At least ' : '') + count + ' more in Project Context…';
+    }
+    for (const r of rowsHere) {
+      if (r !== first && (r._streamsOverflow || []).length > 0) r.streamsMoreLabel = 'More in Project Context…';
+    }
+  }
+  for (const row of activeRows.concat(overflowRows, idleRows)) delete row._streamsOverflow;
+
   for (const row of activeRows.concat(overflowRows, idleRows)) {
     const sub = composeSublabel(row, namesMachine(row));
     row.sublabel = sub.text;
@@ -2442,15 +2517,12 @@ export function buildTrayModel(summary, opts = {}) {
   for (const p of activeProjects) {
     const f = p.foundations;
     if (!f || typeof f !== 'object') continue;
-    const n = (Number.isInteger(f.staleCount) && f.staleCount > 0 ? f.staleCount : 0)
-      + (Number.isInteger(f.unreachableCount) && f.unreachableCount > 0 ? f.unreachableCount : 0);
-    const text = staleDocsText(p.name, n);
+    const text = staleDocsText(p.name, f.staleCount, f.unreachableCount);
     if (text) {
       notices.push({
         kind: 'docs-stale', project: p.project, domain: p.domain,
         text: clip(text, PLAIN_LABEL_CHARS),
-        full: (p.projectFull || p.project) + ': ' + n + ' curator-owned document'
-          + (n === 1 ? ' is' : 's are') + ' not known to be current (stale or unreachable)',
+        full: staleDocsFull(p.projectFull || p.project, f.staleCount, f.unreachableCount),
       });
     }
   }
@@ -2490,17 +2562,27 @@ export function buildTrayModel(summary, opts = {}) {
   const briefAge = rawBrief
     ? effectiveAgeSeconds(str(rawBrief.updatedAt), num(rawBrief.ageSeconds), nowMs)
     : null;
-  const briefAuthor = rawBrief && rawBrief.authoredBy === 'agent' ? 'agent'
-    : (rawBrief && rawBrief.authoredBy === 'human' ? 'human' : null);
+  // The summary's contract is the string 'agent' | 'human' | null; the store's
+  // own shape (`{kind, …}`) is accepted too, because comparing that object to
+  // a string is exactly how the "by an agent" clause went missing (truth audit
+  // F3, v3.76.0).
+  const briefKind = rawBrief && rawBrief.authoredBy && typeof rawBrief.authoredBy === 'object'
+    ? rawBrief.authoredBy.kind : (rawBrief ? rawBrief.authoredBy : null);
+  const briefAuthor = briefKind === 'agent' ? 'agent' : (briefKind === 'human' ? 'human' : null);
+  // WHICH CLOCK (F2): the brief's own recorded write time, or — only when
+  // none was recorded — the file's mtime, which a restore or a sync resets.
+  // The fallback is worded as the FILE's age, never as the brief's.
+  const briefFromFile = rawBrief ? rawBrief.ageSource === 'file' : false;
   const brief = rawBrief ? {
     domain: str(rawBrief.domain),
     project: str(rawBrief.project),
     projectLabel: str(rawBrief.projectLabel) || projectLabelOf(rawBrief),
     ageSeconds: briefAge,
+    ageSource: briefFromFile ? 'file' : (rawBrief.ageSource === 'recorded' ? 'recorded' : null),
     authoredBy: briefAuthor,
     ageText: ageText(briefAge, null),
     text: briefAge === null ? null
-      : 'Brief updated ' + ageText(briefAge, null)
+      : (briefFromFile ? 'Brief file changed ' : 'Brief updated ') + ageText(briefAge, null)
         + (briefAuthor === 'agent' ? ' by an agent' : ''),
   } : null;
 

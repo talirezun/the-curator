@@ -9142,6 +9142,12 @@ function usageSignature(data) {
   return JSON.stringify([
     data.present === true,
     data.logStartedAt || null,
+    // v3.76.0 (F8): PAINTED — the busiest-tools window words ("last 5 days")
+    // are derived from `logStartedAt` and the clock, so the whole-day span
+    // the log covers belongs here or "last 5 days" would stand past day 6.
+    data.countWindowDays || null,
+    typeof data.logStartedAt === 'string' && Number.isFinite(Date.parse(data.logStartedAt))
+      ? Math.round((Date.now() - Date.parse(data.logStartedAt)) / 86400000) : null,
     s.lastBootstrapAt || null,
     s.lastSaveAt || null,
     tools.map((t) => [t && t.name, t && t.group, t && t.mutates === true,
@@ -9208,6 +9214,38 @@ function ageMarkHtml(iso, now, extraClass, markerWord) {
 }
 
 /**
+ * THE WINDOW A 7-DAY TOOL COUNT REALLY COVERS (v3.76.0, truth audit F8).
+ *
+ * `count7d` / `count7dAgent` are counted over the last `windowDays` (the
+ * route's `countWindowDays`, 7) — but a usage log that began five days ago
+ * cannot support "7 days", "this week" or "not called … this week". Returns
+ * the span the log really covers, in the words Agent connections already
+ * uses ("last 5 days — the log begins 20 Sep"):
+ *   { covered, short: '7 days' | '5 days', last: 'last 5 days',
+ *     inWords: 'in the last 5 days', begins: '20 Sep' | '' }
+ * From the payload's own `logStartedAt`; never typed.
+ */
+function usageWindowWords(logStartedAt, now, windowDays) {
+  const days = Number.isFinite(windowDays) && windowDays > 0 ? windowDays : 7;
+  const at = typeof now === 'number' ? now : Date.now();
+  const begins = typeof logStartedAt === 'string' ? Date.parse(logStartedAt) : NaN;
+  if (Number.isFinite(begins) && begins > at - days * 86400000) {
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const n = Math.round(Math.max(0, at - begins) / 86400000);
+    const d = new Date(begins);
+    return {
+      covered: false,
+      short: n < 1 ? 'under a day' : (n === 1 ? '1 day' : n + ' days'),
+      last: n < 1 ? 'under a day' : 'last ' + (n === 1 ? 'day' : n + ' days'),
+      inWords: n < 1 ? 'in under a day' : 'in the last ' + (n === 1 ? 'day' : n + ' days'),
+      begins: d.getDate() + ' ' + MONTHS[d.getMonth()],
+    };
+  }
+  return { covered: true, short: days + ' days', last: 'last ' + days + ' days',
+    inWords: 'in the last ' + days + ' days', begins: '' };
+}
+
+/**
  * ONE TILE.
  *
  * The chip is on the MUTATORS ONLY, and that is the v3.53.1 rule rather than a
@@ -9218,7 +9256,7 @@ function ageMarkHtml(iso, now, extraClass, markerWord) {
  * A tile is NOT a button and takes no press family: there is nothing to press.
  * The map is a reading.
  */
-function renderToolTile(t, logStartedAt, now) {
+function renderToolTile(t, logStartedAt, now, windowDays) {
   const name = typeof t.name === 'string' ? t.name : '(unnamed)';
   const purpose = typeof t.purpose === 'string' ? t.purpose : '';
   const used = typeof t.lastUsedAt === 'string' && t.lastUsedAt;
@@ -9237,7 +9275,8 @@ function renderToolTile(t, logStartedAt, now) {
   const viaWord = t.lastVia === 'self-test' ? 'self-test' : null;
   const meta = used
     ? ageMarkHtml(t.lastUsedAt, now, null, viaWord) +
-      '<span class="mcp-tool-uses">' + escapeHtml(uses + (uses === 1 ? ' use' : ' uses') + ' · 7 days') + '</span>'
+      '<span class="mcp-tool-uses">' + escapeHtml(uses + (uses === 1 ? ' use' : ' uses') + ' · '
+        + usageWindowWords(logStartedAt, now, windowDays).short) + '</span>'
     // ── THE UNUSED READING IS ONE SENTENCE, AND IT WRAPS AS ONE ────────────
     // FOUND BY LOOKING at the rendered grid: with the phrase and the age as
     // two siblings the 220px column broke the line after the separator, so a
@@ -9266,13 +9305,13 @@ function renderToolTile(t, logStartedAt, now) {
 }
 
 /** One group — the caption names it and counts it, the tiles fill the row. */
-function renderToolGroup(label, tools, logStartedAt, now) {
+function renderToolGroup(label, tools, logStartedAt, now, windowDays) {
   if (!tools.length) return '';
   return (
     '<div class="mcp-tool-group">' +
       '<div class="mcp-group-eyebrow">' + escapeHtml(label + ' · ' + tools.length + ' tools') + '</div>' +
       '<div class="mcp-tool-grid">' +
-        tools.map((t) => renderToolTile(t, logStartedAt, now)).join('') +
+        tools.map((t) => renderToolTile(t, logStartedAt, now, windowDays)).join('') +
       '</div>' +
     '</div>'
   );
@@ -9431,8 +9470,9 @@ function renderToolMapBody(now) {
   const reads = tools.filter((t) => t.group !== 'write');
   const writes = tools.filter((t) => t.group === 'write');
 
-  // ── THE BUSIEST TOOLS THIS WEEK (v3.66.0, placement P7) ─────────────────
-  // A monitor of the tools AGENTS called most in 7 days, each count with a
+  // ── THE BUSIEST TOOLS (v3.66.0, placement P7) ───────────────────────────
+  // A monitor of the tools AGENTS called most in the count window (7 days, or
+  // less when the log is younger — v3.76.0 F8), each count with a
   // depth bar against the busiest one — a column of peers, the named
   // denominator (design rule 6). The tiles below stay as they are: a grid of
   // cards has no numeric column to anchor a bar to (v3.65.1's own refusal).
@@ -9456,35 +9496,45 @@ function renderToolMapBody(now) {
     const busiest = shown.length ? shown[0].count7dAgent : 0;
     const notCalled = tools.length - called.length;
     const moreCalled = called.length - shown.length;
+    // v3.76.0 (truth audit F8b): the window is the one the log REALLY covers,
+    // never a typed "7 days" / "this week" over a log that began 5 days ago.
+    const win = usageWindowWords(u.logStartedAt, at, u.countWindowDays);
+    // v3.76.0 (F8a): the busiest tool is NAMED as the bar's scale, so a row's
+    // "8 of 151 calls" can no longer read as a share of its own calls — the
+    // wording Across projects already uses ("· bar scaled to curator's 6").
+    const busiestName = shown.length ? String(shown[0].name) : '';
     const noteParts = [];
+    if (!win.covered) noteParts.push('Counted over the ' + win.last + ' — the log begins ' + win.begins);
     if (moreCalled > 0) noteParts.push(moreCalled + ' more ' + (moreCalled === 1 ? 'tool' : 'tools') + ' called less');
-    if (notCalled > 0) noteParts.push(notCalled + ' ' + (notCalled === 1 ? 'tool' : 'tools') + ' not called by an agent this week');
+    if (notCalled > 0) noteParts.push(notCalled + ' ' + (notCalled === 1 ? 'tool' : 'tools') + ' not called by an agent ' + win.inWords);
     // Captioned like the READ / WRITE groups below it, because the caption
     // is what says whose calls these are: a tile's "18 uses · 7 days" counts
     // a test run, this column does not, and the two must not read as a
     // disagreement.
     busiestHtml = '<div class="mcp-busiest">' +
-      '<div class="mcp-group-eyebrow">BUSIEST · 7 DAYS · AGENTS ONLY</div>' + renderMonitor({
-      label: 'Busiest tools, last 7 days, agents only',
+      '<div class="mcp-group-eyebrow">' + escapeHtml('BUSIEST · ' + win.last.toUpperCase() + ' · AGENTS ONLY') + '</div>' + renderMonitor({
+      label: 'Busiest tools, ' + win.last + ', agents only',
       lines: shown.map((t) => ({
         key: String(t.name),
         value: t.count7dAgent,
         depth: { amount: t.count7dAgent, max: busiest,
           label: t.count7dAgent === busiest
-            ? t.count7dAgent + ' calls — the busiest tool this week'
-            : t.count7dAgent + ' of ' + busiest + ' calls, the busiest tool this week' },
+            ? t.count7dAgent + (t.count7dAgent === 1 ? ' call' : ' calls') + ' — the busiest tool'
+            : t.count7dAgent + (t.count7dAgent === 1 ? ' call' : ' calls') + ' · bar scaled to '
+              + busiestName + '’s ' + busiest },
       })),
       note: shown.length
         ? (noteParts.length ? noteParts.join(' · ') + '.' : '')
-        : 'No agent called a tool in the last 7 days. Test runs from this page are not counted.',
+        : 'No agent called a tool ' + win.inWords + (win.covered ? '' : ' (the log begins ' + win.begins + ')')
+          + '. Test runs from this page are not counted.',
     }) + '</div>';
   }
   return (
     runner +
     renderSessionStrip(u.sessions, at) +
     busiestHtml +
-    renderToolGroup('READ', reads, u.logStartedAt, at) +
-    renderToolGroup('WRITE', writes, u.logStartedAt, at)
+    renderToolGroup('READ', reads, u.logStartedAt, at, u.countWindowDays) +
+    renderToolGroup('WRITE', writes, u.logStartedAt, at, u.countWindowDays)
   );
 }
 
@@ -9641,6 +9691,13 @@ function renderAcrossProjectsBody() {
           : undefined,
       };
     });
+    // v3.76.0 (truth audit F12): TWO READINGS, TWO MONITORS. The lines above
+    // count usage-log CONNECTIONS over `capWindow`; the saves below count
+    // handoff JOURNAL entries over the pulse window. They were one monitor
+    // with one note, so "Counted over the last 5 days — the log begins
+    // 20 Sep" sat under "saves, last 7 days", which it does not describe.
+    // Each note now sits under the reading it is about.
+    const saveLines = [];
     const pulse = P.savePulse;
     if (pulse && Number.isInteger(pulse.events)) {
       const pw = windowDaysWords(Number.isFinite(pulse.windowSeconds) ? pulse.windowSeconds / 86400 : NaN);
@@ -9651,7 +9708,7 @@ function renderAcrossProjectsBody() {
         ? formatSyncedAt(pulse.oldestEventAt) : '';
       const key = 'saves' + (pw ? ', ' + pw : '') +
         (pulse.coversWholeWindow === false ? (since ? ' (records begin ' + since + ')' : ' (records do not cover it all)') : '');
-      lines.push({ key, value: (pulse.lowerBound ? 'at least ' : '') + pulse.events });
+      saveLines.push({ key, value: (pulse.lowerBound ? 'at least ' : '') + pulse.events });
       // ── SAVES BY TOOL (v3.74.0, the parity rule) ────────────────────────
       // The widget's "Saves by tool": the same pulse, one lane per tool
       // (normalised by the data layer, so one tool typed two ways is one
@@ -9668,7 +9725,7 @@ function renderAcrossProjectsBody() {
       };
       for (const t of Array.isArray(pulse.byTool) ? pulse.byTool : []) {
         if (!t || typeof t.label !== 'string' || !t.label || !Number.isInteger(t.events)) continue;
-        lines.push({
+        saveLines.push({
           key: 'by ' + t.label,
           value: t.events === 0 ? 'none'
             : (pulse.byToolFloor === true || pulse.lowerBound ? 'at least ' : '') + t.events,
@@ -9676,7 +9733,7 @@ function renderAcrossProjectsBody() {
         });
       }
       if (Number.isInteger(pulse.eventsWithoutTool) && pulse.eventsWithoutTool > 0) {
-        lines.push({ key: 'named no tool', value: pulse.eventsWithoutTool });
+        saveLines.push({ key: 'named no tool', value: pulse.eventsWithoutTool });
       }
     }
     const notes = [];
@@ -9685,9 +9742,6 @@ function renderAcrossProjectsBody() {
     // window beside it at all. Said once, first, in the same words.
     if (w.logPresent === true && measured.length && capWindow) {
       notes.push('Counted over the ' + capWindow + '.');
-    }
-    if (pulse && pulse.byToolFloor === true && typeof pulse.byToolNote === 'string' && pulse.byToolNote) {
-      notes.push(pulse.byToolNote);
     }
     if (w.logPresent !== true) {
       notes.push('No usage log on this computer yet — connections appear here once an agent uses the bridge.');
@@ -9701,11 +9755,17 @@ function renderAcrossProjectsBody() {
     if (shown.some((r) => r.sharedName)) {
       notes.push('Projects that share a name share one reading.');
     }
+    const saveNote = pulse && pulse.byToolFloor === true && typeof pulse.byToolNote === 'string' && pulse.byToolNote
+      ? pulse.byToolNote : '';
     body = '<div class="mcp-across">' + renderMonitor({
       label: 'Connections that saved, per project' + (capWindow ? ', ' + capWindow : ''),
       lines,
       note: notes.join(' '),
-    }) + '</div>';
+    }) + (saveLines.length ? renderMonitor({
+      label: 'Handoff saves, from the journals',
+      lines: saveLines,
+      note: saveNote,
+    }) : '') + '</div>';
   }
   return body;
 }

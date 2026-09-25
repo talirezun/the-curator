@@ -153,7 +153,9 @@ tool that last wrote to it, so a group says something even before you read its r
 groups are drawn and five rows in total, newest project and newest work-stream first. Two rows per
 group is a floor, not a ceiling: each group gets two before any gets a third, and rows no group
 claimed are handed back out in recency order, so a single project still fills all five. Anything
-past that is counted on the *More in Project Context…* line rather than dropped silently.
+past that is counted on the *More in Project Context…* line rather than dropped silently — since
+v3.76.0 counted against the project's true number of work-streams (the store's `scopeCount`, carried
+on `getTraySummary().projects[]`), not against the rows the fetch returned.
 
 **A project header can also carry a small `· docs stale` mark, new in v3.60.0.** When that
 project's **foundations** (its mirrored architecture, decisions and conventions — see
@@ -161,7 +163,8 @@ project's **foundations** (its mirrored architecture, decisions and conventions 
 and
 [user-guide.md § Documents](user-guide.md#documents--the-files-that-travel-with-a-project)) are
 **repo-owned** and one or more no longer match the checkout they were mirrored from, the header's
-sublabel gains `· 1 doc stale` (or `· N docs stale` once there is more than one), clipped by the
+sublabel gains `· 1 doc stale` (or `· N docs stale` once there is more than one; a document whose
+source could not be checked from this Mac is its own clause, `· 1 doc not checked`, since v3.76.0), clipped by the
 same `labelBudgetChars` every other sublabel respects. Nothing is added when every mirrored
 document is current, and a curator-owned foundation — one an agent wrote rather than mirrored —
 never produces the mark, because there is no second copy to be stale against. It never becomes a

@@ -270,6 +270,24 @@ section('§5. Across projects states the windows it was sent, and moves with the
   ok(/<note>Counted over the last 5 days — the log begins 20 Sep\./.test(young),
     '★ …and in a VISIBLE line — the monitor label is only an accessible name', young);
   ok(!/30 days/.test(young), '…and no "30 days" survives anywhere in the body');
+  // ── v3.76.0 (truth audit F12): THE NOTE SITS UNDER THE READING IT DESCRIBES ──
+  // The connections are counted from the usage log over "last 5 days — the
+  // log begins 20 Sep"; the saves are counted from the handoff journals over
+  // 7 days. One note under both read as if it described the saves.
+  state.mcpProjects = { ...mk(30, { events: 12, windowSeconds: 604800, lowerBound: false, coversWholeWindow: true,
+      byTool: [{ id: 'claude-code', label: 'Claude Code', events: 12, lastSeenAt: null }],
+      byToolFloor: false, byToolNote: null, eventsWithoutTool: 0 }),
+    window: { windowDays: 30, logPresent: true, busiestSaved: 2,
+      windowCovered: false, windowDaysCovered: 5.3, logStartsAt: begins } };
+  const split = S.renderAcrossProjectsBody();
+  const mons = split.split('<monitor ').slice(1);
+  eq(mons.length, 2, '★ two readings, two monitors: connections, then saves [F12]', split);
+  ok(/<note>Counted over the last 5 days — the log begins 20 Sep\./.test(mons[0] || '')
+     && /key="projects \/ curator"|key="curator"/.test(mons[0] || ''),
+    '★ the window note is under the CONNECTIONS it describes [F12]', mons[0]);
+  ok(/key="saves, last 7 days"/.test(mons[1] || '') && !/Counted over|the log begins/.test(mons[1] || ''),
+    '★ …and NOT under the journal-based saves lines, which are counted over their own 7 days [F12]', mons[1]);
+  ok(!/key="saves/.test(mons[0] || ''), '…and no saves line sits in the connections monitor');
   state.mcpProjects = { ...mk(30, null),
     window: { windowDays: 30, logPresent: true, busiestSaved: 2,
       windowCovered: true, windowDaysCovered: 30, logStartsAt: '2026-08-01T00:00:00.000Z' } };

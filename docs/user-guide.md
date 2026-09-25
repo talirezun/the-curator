@@ -800,7 +800,13 @@ string and the exact timestamp.
 | **`time unknown`** | No save time was recorded for this work-stream. It is never shown as *"just now"*, and a row with no known age sorts to the bottom, never the top |
 
 **Hovering the icon** shows the newest save in the store as a tooltip, without clicking — worded
-as what it is: *"Last save: ott · Claude Code · 8 min ago"*.
+as what it is: *"Last save: ott · Claude Code · 8 min ago"* — followed by that project's standing
+brief: *"Brief updated 2 days ago by an agent"*. Since v3.76.0 the brief's age is the time its
+writer **recorded** in the brief itself (the app's editor and the MCP's `save_project_brief` both
+stamp it), not the file's date on disk, which a restore or a sync rewrites; and *"by an agent"*
+appears whenever an agent wrote it at your instruction (before v3.76.0 that clause could never
+appear). A brief with no recorded time — one written before v3.48.0 — reads *"Brief file changed
+… ago"*, so you can tell the file's age from the brief's.
 
 ### The freshness mark
 
@@ -835,6 +841,12 @@ Every Active or Idle row has a **submenu** — hover it and four items appear.
 work-streams" section beneath the four actions** — one row per additional work-stream, each opening
 the same four actions of its own. That is the route to a work-stream the cap on the face of the menu
 hid, or to a second tool's own scope on the same project, without leaving the row you are already on.
+It lists five; the rest are counted on a last line, **"N more in Project Context…"**, which opens the
+app there. Since v3.76.0 that N is taken against the project's **true** number of work-streams — the
+same count Project Context's Handoffs table shows — minus the ones this menu shows, not against the
+saves the menu happened to fetch (which once read "8 more" for a project with 16 more). It is said
+once per project, on its first row; a second tool's row whose own list was cut says *More in Project
+Context…* with no number, so nothing is counted twice.
 
 **The two Copy items exist because a menu cannot open a work-stream.** Clicking a row lands on the
 *project*; the work-stream picker inside the app has no address the menu can dial. The clipboard is
@@ -2593,7 +2605,10 @@ still calls this tier **foundations**; the screen calls it **Documents**): when 
 mirrored documents, from any of the project's sources, no longer match the folder or repository
 they were copied from, its header sublabel gains **`· docs stale`**, or **`· N docs stale`** once
 there is more than one — the same computed-not-remembered freshness check the in-app Documents
-block already runs, surfaced where you are most likely to see it before starting work. Nothing
+block already runs, surfaced where you are most likely to see it before starting work. A document
+whose source **could not be checked** from this Mac — typically a GitHub document with no read token,
+which the app shows as *GitHub · not checked* — is counted separately, as **`· 1 doc not checked`**
+(since v3.76.0; before that it was added to the stale count, reporting a change nobody had compared). Nothing
 appears when every mirrored document is current, and a written or copied document (nothing to
 compare it against) never triggers the mark. If you see it: **refresh that source** — the sources
 strip offers Refresh per source, and a Refresh all — run from whichever machine has the folder, or
@@ -6037,10 +6052,22 @@ already asks an agent to hold itself to.
 If no bridge has ever written to the log, the block says so plainly: *"No calls recorded yet.
 The map fills as your agents use the bridge."*
 
+**Busiest tools.** Above the tiles, up to eight tools your agents called most, each a depth bar
+scaled to the busiest one — and named as such: a row reads *"8 calls · bar scaled to
+get_project_context's 151"*, never "8 of 151 calls", which read as a share of that tool's own
+calls. The window is the one the log really covers (since v3.76.0): **"Busiest · last 7 days"**
+when the log is older than a week, and **"Busiest · last 5 days"** with the note *"Counted over the
+last 5 days — the log begins 20 Sep"* when it is younger — the same words Agent connections uses.
+Each tile's *"N uses · 7 days"* follows the same rule (*"· 5 days"*), and the tools nobody called are
+*"not called by an agent in the last 5 days"*, never "this week".
+
 **Across projects**, the block's own depth bar, reads the same figure the Mac menu bar widget's
-own Projects section shows — sessions saved in the last 30 days, one bar per project — and both
+own Projects section shows — agent connections that saved a handoff, one bar per project — and both
 are scaled to the same denominator, the busiest project, so a glance at either one agrees with the
-other.
+other. Since v3.76.0 it is **two readings**: the connections (from the usage log, over the last 30
+days or since the log began — the note under them says which), and beneath them, separately, the
+**saves** (from the handoff journals, over the last 7 days, per tool). The window note sits under the
+reading it describes, not under both.
 
 #### "Test all 24 tools" — lighting the map yourself
 

@@ -109,6 +109,19 @@ const M = await import(path.join(DESKTOP, 'lib', 'tray-model.js'));
 const MENU = await import(path.join(DESKTOP, 'lib', 'tray-menu.js'));
 const RP = await import(path.join(DESKTOP, 'lib', 'resume-prompt.js'));
 const WATCH = await import(path.join(DESKTOP, 'lib', 'state-watch.js'));
+// The store's OWN provenance parser (v3.76.0, truth audit F3): the fake below
+// hands the data layer `briefAuthoredBy` in the shape the real store returns —
+// an object `{kind, harness, model, at, commissionedBy}` or null — derived by
+// the real function from a real stamp line, never a hand-typed string. The
+// string 'agent' this fake used to return is exactly why a data layer that
+// compared the object to 'agent' passed here and never fired in production.
+const { parseBriefProvenance } = await import(path.join(ROOT, 'src', 'brain', 'working-state.js'));
+/** A brief's provenance, as the real store parses it from its stamp line. */
+function briefProvenance(brief) {
+  if (!brief || !brief.authoredBy) return parseBriefProvenance('# no stamp\n');
+  return parseBriefProvenance('<!-- curator-brief: authored_by=' + brief.authoredBy
+    + ' harness=claude-code model=opus-5 on=' + brief.updatedAt + ' commissioned=user -->\n# brief\n');
+}
 
 const NOOPS = {
   onOpenScope() {}, onOpenMemory() {}, onOpenApp() {}, onOpenSettings() {}, onRowAction() {},
@@ -156,8 +169,13 @@ function fakeStore(spec) {
           project: p.project,
           isDefaultProject: p.isDefaultProject === true,
           hasBrief: p.brief !== undefined,
-          briefUpdatedAt: p.brief ? p.brief.updatedAt : null,
-          briefAuthoredBy: p.brief ? p.brief.authoredBy : null,
+          // The FILE's mtime — which a restore or sync rewrites — is
+          // `fileAt` when the fixture gives one (F2), else the recorded time.
+          briefUpdatedAt: p.brief ? (p.brief.fileAt || p.brief.updatedAt) : null,
+          briefAuthoredBy: p.brief ? briefProvenance(p.brief) : null,
+          // The store's true per-project totals (F5), when the fixture says.
+          ...(Number.isInteger(p.scopeCount) ? { scopeCount: p.scopeCount } : {}),
+          ...(Number.isInteger(p.savedCopies) ? { savedCopies: p.savedCopies } : {}),
         })),
         truncated: spec.truncated === true,
         total: Number.isInteger(spec.total) ? spec.total : projects.length,
@@ -243,7 +261,9 @@ section('§1 the four fixtures, driven through the REAL data layer');
 const TWO_IN_ONE = {
   projects: [
     { domain: 'workshop', project: 'lumina',
-      brief: { updatedAt: ago(3 * 86400), authoredBy: 'agent' },
+      // Recorded 3 days ago by an agent; the FILE was rewritten an hour ago by
+      // a restore (F2) — the widget must say 3 days, not an hour.
+      brief: { updatedAt: ago(3 * 86400), authoredBy: 'agent', fileAt: ago(3600) },
       scopes: [
         { scope: 'session-2026-09-07-widget', machine: 'mac-a1b2c3', age: 720,
           harness: 'claude-code', model: 'opus-4-6', headline: 'grouped the tray rows by project' },
@@ -515,6 +535,61 @@ section('§3b the shell asks for 40 and the face shows five — v3.51.0, kept');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('§3c "N more in Project Context…" counts against the project\'s TRUE total — v3.76.0, truth audit F5');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The maintainer's own menu read "8 more" under curator: 22 work-streams, 6
+// shown, but only the 14 pairs that fell inside the fetch's 40 were counted.
+{
+  const streams = (proj, n, base, harness = 'claude-code') => Array.from({ length: n }, (_, i) => ({
+    scope: 'session-2026-09-' + proj + '-' + i, machine: 'mac-a1b2c3',
+    age: base + i * 600, harness, model: 'opus-5', headline: proj + i,
+  }));
+  // The store says 22 work-streams; only 14 of them are in the fetched window.
+  const TRUE_TOTAL = {
+    projects: [{ domain: 'workshop', project: 'curator', scopeCount: 22, savedCopies: 25,
+      scopes: streams('c', 14, 120) }],
+  };
+  const t = await drive(TRUE_TOTAL);
+  eq(t.summary.projects[0].scopeCount, 22, '★ the data layer carries the store\'s true scopeCount per project');
+  eq(t.summary.projects[0].savedCopies, 25, '…and savedCopies');
+  const row = t.model.active.rows[0];
+  eq(row.streams.length, M.MAX_OTHER_STREAMS, 'CONTROL — the row shows the capped five');
+  eq(row.streamsHidden, 22 - 1 - M.MAX_OTHER_STREAMS,
+    '★ 22 − 6 shown = 16 more, NOT 14 − 6 = 8 from the fetched rows [F5]');
+  const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(t.model, NOOPS));
+  ok(flat.some((i) => i.label === '16 more in Project Context…' && typeof i.click === 'function'),
+    '…and the menu item says 16, and opens Project Context');
+
+  // No total from the store AND the fetch was cut short: the remainder is a floor.
+  const NO_TOTAL = { projects: [{ domain: 'workshop', project: 'curator', scopes: streams('c', 14, 120) }] };
+  const cut = await TS.getTraySummary({ store: fakeStore(NO_TOTAL), limit: 8, now: NOW_MS });
+  ok(cut.truncated === true, 'CONTROL — the fetch was truncated (8 of 14)');
+  const cm = M.buildTrayModel(cut, { now: NOW });
+  const crow = cm.active.rows.find((r) => r.project === 'curator');
+  eq(crow.streamsMoreLabel, 'At least 2 more in Project Context…',
+    '★ with no store total and a truncated fetch, the count is said as a floor — never as exact [F5]');
+  const full = M.buildTrayModel(await TS.getTraySummary({ store: fakeStore(NO_TOTAL), limit: 40, now: NOW_MS }), { now: NOW });
+  eq(full.active.rows.find((r) => r.project === 'curator').streamsMoreLabel, '8 more in Project Context…',
+    'CONTROL — nothing fetched short and no total: the fetched remainder IS the count, said exactly');
+
+  // Two tools in one project, each with a capped list: the remainder is said
+  // ONCE, on the project's first row; the other row names no number.
+  const TWO_TOOLS = {
+    projects: [{ domain: 'workshop', project: 'curator', scopeCount: 20,
+      scopes: streams('a', 8, 60, 'claude-code').concat(streams('b', 8, 90, 'opencode')) }],
+  };
+  const tt = await drive(TWO_TOOLS);
+  const rowsC = tt.model.active.rows.filter((r) => r.project === 'curator');
+  ok(rowsC.length === 2, 'CONTROL — two rows, one per tool', rowsC.length);
+  const shownScopes = new Set(rowsC.flatMap((r) => [r.scope, ...r.streams.map((x) => x.scope)]));
+  eq(rowsC[0].streamsHidden, 20 - shownScopes.size,
+    '★ the first row carries the project\'s whole remainder against its true total');
+  eq(rowsC[1].streamsHidden, 0, '…the second row counts nothing, so no stream is counted twice');
+  eq(rowsC[1].streamsMoreLabel, 'More in Project Context…', '…but still offers the way in, with no number');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('§3c one stream per work-stream per COMPUTER; two tools on one project are two rows');
 // ═══════════════════════════════════════════════════════════════════════════
 {
@@ -617,8 +692,16 @@ ok(MENU.trayToolTip(twoInOne.model).includes('Brief updated 3 days ago by an age
   '…and the icon\'s tooltip carries that clause');
 eq(legacyOnly.model.brief.authoredBy, null,
   'a pre-v3.48.0 brief has no recorded author…');
-eq(legacyOnly.model.brief.text, 'Brief updated 2 weeks ago',
-  '…and its clause says nothing about one, rather than guessing "you wrote it"');
+eq(legacyOnly.model.brief.text, 'Brief file changed 2 weeks ago',
+  '…and its clause says nothing about one, rather than guessing "you wrote it" — and, with no recorded time, it is worded as the FILE\'s age (F2)');
+// ── F2/F3 (v3.76.0): THE RECORDED TIME AND THE AUTHOR, THROUGH THE REAL SHAPE ──
+eq(twoInOne.summary.brief.ageSource, 'recorded',
+  '★ the brief\'s age is its own recorded write time (the stamp\'s `on=`), not the file\'s mtime [F2]');
+ok(twoInOne.summary.brief.ageSeconds > 2.9 * 86400,
+  '★ …so a file a restore rewrote an hour ago still reads 3 days [F2]', twoInOne.summary.brief.ageSeconds);
+eq(twoInOne.summary.brief.authoredBy, 'agent',
+  '★ the data layer reads `.kind` off the store\'s provenance OBJECT — "by an agent" can appear [F3]');
+eq(legacyOnly.summary.brief.ageSource, 'file', '…a brief with no stamp falls back to the file time, and says so');
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -969,7 +1052,13 @@ section('§10 stale documents are a NOTICE now (v3.74.0) — only when true');
   eq(staleOf(M.buildTrayModel(base({ present: true, count: 2, staleCount: 1, unreachableCount: 0 }), { now: NOW })),
     ['lumina · 1 doc stale'], 'one is singular');
   eq(staleOf(M.buildTrayModel(base({ present: true, count: 2, staleCount: 1, unreachableCount: 2 }), { now: NOW })),
-    ['lumina · 3 docs stale'], 'stale and unreachable are summed: the stored copy is NOT KNOWN to be current');
+    ['lumina · 1 doc stale · 2 not checked'],
+    '★ stale and not-checked are TWO clauses, never summed under "stale" — "not checked" is no comparison at all [F6]');
+  eq(staleOf(M.buildTrayModel(base({ present: true, count: 9, staleCount: 0, unreachableCount: 1 }), { now: NOW })),
+    ['lumina · 1 doc not checked'],
+    '★ the maintainer\'s own case: stale 0, unreachable 1 reads "1 doc not checked", never "1 doc stale" [F6]');
+  eq(staleOf(M.buildTrayModel(base({ present: true, count: 9, staleCount: 0, unreachableCount: 2 }), { now: NOW })),
+    ['lumina · 2 docs not checked'], '…plural');
   eq(staleOf(M.buildTrayModel(base(null), { now: NOW })), [], 'no foundations → silent');
   eq(staleOf(M.buildTrayModel(base(undefined), { now: NOW })), [], '…and so is a producer that does not report them');
   eq(staleOf(M.buildTrayModel(base({ staleCount: 3, unreachableCount: 0 }, 3 * 86400), { now: NOW })), [],
@@ -977,8 +1066,13 @@ section('§10 stale documents are a NOTICE now (v3.74.0) — only when true');
   const flat = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(
     M.buildTrayModel(base({ present: true, count: 4, staleCount: 3, unreachableCount: 0 }), { now: NOW }), NOOPS));
   const n = flat.find((i) => i.label === 'lumina · 3 docs stale');
-  ok(n && n.enabled === false && /not known to be current/.test(n.toolTip || ''),
+  ok(n && n.enabled === false && /differ from their sources/.test(n.toolTip || ''),
     'in the menu it is a disabled statement whose tooltip says what "stale" means');
+  const flatU = MENU.flattenTrayMenu(MENU.buildTrayMenuTemplate(
+    M.buildTrayModel(base({ present: true, count: 4, staleCount: 0, unreachableCount: 1 }), { now: NOW }), NOOPS));
+  const u = flatU.find((i) => i.label === 'lumina · 1 doc not checked');
+  ok(u && /could not be checked from this Mac/.test(u.toolTip || '') && !/differ/.test(u.toolTip || ''),
+    '…and a not-checked notice\'s tooltip says it could not be checked — never that it differs [F6]', u && u.toolTip);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
