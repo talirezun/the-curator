@@ -333,7 +333,7 @@ eq(formatUsd(NaN), null, 'domains.js formatUsd: NaN -> null (caller hides the re
 eq(costReadout({ estimatedUsd: 0.00001, priceKnown: true, costNote: null }, { compact: true }),
    '< $0.0001', 'quick-action badge on a sub-$0.00005 charge does not read as free');
 eq(costReadout({ estimatedUsd: 0.00010701, priceKnown: true, costNote: null }, { compact: true }),
-   '$0.0001', 'quick-action badge on the reported estimate');
+   '\u2248 $0.0001', 'quick-action badge on the reported estimate (v3.72.1: marked as an estimate)');
 eq(costReadout({ estimatedUsd: 0, priceKnown: true, costNote: null }, { compact: true }),
    '$0.00', 'a genuinely free action still reads as free');
 eq(costReadout({ estimatedUsd: null, priceKnown: false, costNote: 'Cost estimate unavailable — no published price for model "x".' }, { compact: true }),

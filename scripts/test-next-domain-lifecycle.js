@@ -168,6 +168,15 @@ function loadBrowse(slug, token) { (calls.loadBrowse = calls.loadBrowse || []).p
 function navigate(name) { calls.navigate.push(name); calls.order.push('nav'); }
 function reportAsyncActionFailure(err) { calls.asyncFailures = (calls.asyncFailures || 0) + 1; void err; }
 const shell = { requestChatScope: (s) => { calls.chatScope.push(s); calls.order.push('scope'); } };
+// v3.72.1 (F1): the Delete confirm re-reads its domain's stats when it opens.
+// Answered here from the sandbox's own list, synchronously-resolved, so the
+// page-count assertions below read the FRESH-read path; the stale-row case is
+// scripts/test-domains-true-numbers.js §3.
+function isCurrentMount() { return true; }
+function refreshDomainFigures(slug) {
+  const row = (state.domains || []).find((d) => d.slug === slug);
+  return Promise.resolve(row || null);
+}
 `;
 
 let sandbox;
@@ -340,6 +349,9 @@ ok(!html.includes('dm-lc-refusal'), 'an error is not dressed up as a refusal');
 console.log('\n=== 7. Delete confirmation states the page count ===');
 __setState(freshState());
 openLifecycle('delete', { slug: 'alpha', displayName: 'Alpha' });
+// v3.72.1 (F1): the count is the one READ when the card opened — let that
+// read land (the sandbox answers it from its own list) before rendering.
+await new Promise((r) => setTimeout(r, 0));
 html = renderLifecycleCard();
 ok(html.includes('7 pages'),
    'the delete card quotes pageCount (7) — the RECURSIVE total, so it cannot promise 4 and delete 7 (v3.2.0 L1)');

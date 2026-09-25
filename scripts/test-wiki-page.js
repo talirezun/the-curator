@@ -1266,6 +1266,10 @@ try {
     const KNOWN = [
       'AUTO_FIXABLE', 'SEMANTIC_DUPE_DEFAULT_CAP', 'SEMANTIC_DUPE_MAX_DOMAIN_PAGES',
       'SEMANTIC_SCAN_YIELD_CHUNK',
+      // v3.72.1: the merge preview's character cap, sent to the view as
+      // `mergedPreviewCap`. A plain numeric constant, same class as the three
+      // above — not a new way in, no §8b case.
+      'MERGED_PREVIEW_CAP_CHARS',
       'applyBrokenLinkFixes', 'applyOrphanRescue', 'countLinksToSlug',
       'findSemanticCandidatePairs', 'fixAllSafe', 'fixIssue', 'fixSemanticDuplicatesBatch',
       'listMd', 'previewSemanticDuplicateMerge', 'scanWiki',

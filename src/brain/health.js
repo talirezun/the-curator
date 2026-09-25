@@ -1787,6 +1787,14 @@ export async function countLinksToSlug(domain, slug) {
  *
  * Runs no writes. Returns a structured object the UI renders.
  */
+/**
+ * How much of the merged page the preview carries, in UTF-16 CHARACTERS
+ * (String#slice units) — not bytes. v3.72.1: the view labelled it "FIRST 4 KB"
+ * and retyped 4000 for its own "…(truncated)" test; it now reads this number
+ * off the response (`mergedPreviewCap`) and says "characters".
+ */
+export const MERGED_PREVIEW_CAP_CHARS = 4000;
+
 export async function previewSemanticDuplicateMerge(domain, issue) {
   const wikiDir = wikiPath(domain);
   const resolved = resolveSemanticDupePair(wikiDir, issue);
@@ -1837,7 +1845,8 @@ export async function previewSemanticDuplicateMerge(domain, issue) {
   return {
     keepPath: path.relative(wikiDir, keepPath),
     removePath: path.relative(wikiDir, removePath),
-    mergedPreview: merged.slice(0, 4000), // cap for UI
+    mergedPreview: merged.slice(0, MERGED_PREVIEW_CAP_CHARS), // cap for UI
+    mergedPreviewCap: MERGED_PREVIEW_CAP_CHARS,
     mergedLength: merged.length,
     affectedFiles: affectedFiles.slice(0, 50),
     affectedCount: affectedFiles.length,

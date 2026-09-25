@@ -419,7 +419,7 @@ section('9. Doc-drift guard — costNote consumers exist and stale "not wired" c
     const cases = [
       { p: '/:domain/broken-links/estimate', kind: 'brokenLinks', direct: () => estimateBrokenLinkFix(domain), extra: {} },
       { p: '/:domain/orphans/estimate', kind: 'orphans', direct: () => estimateOrphanRescue(domain), extra: {} },
-      { p: '/:domain/semantic-dupes/estimate', kind: 'semanticDupes', direct: () => estimateSemanticDuplicateScan(domain, 500), extra: { costCeilingTokens: 50_000 } },
+      { p: '/:domain/semantic-dupes/estimate', kind: 'semanticDupes', direct: () => estimateSemanticDuplicateScan(domain, 500), extra: { costCeilingTokens: 200_000, maxPairs: 500 } },
     ];
     const SPLIT = healthAiTesting.HEALTH_TOKEN_SPLIT || {};
     for (const c of cases) {
@@ -428,7 +428,7 @@ section('9. Doc-drift guard — costNote consumers exist and stale "not wired" c
       const expectedOld = { ok: true, ...est, ...c.extra };
       eq(r.status, 200, `${c.p}: 200, unchanged`);
       ok(JSON.stringify(without(r.body, 'runsOn')) === JSON.stringify(expectedOld),
-        `${c.p}: the body minus runsOn is BYTE-identical to {ok:true, ...estimate${c.extra.costCeilingTokens ? ', costCeilingTokens' : ''}} — no existing field changed`);
+        `${c.p}: the body minus runsOn is BYTE-identical to {ok:true, ...estimate${c.extra.costCeilingTokens ? ', costCeilingTokens, maxPairs' : ''}} — no existing field changed`);
       const R = r.body.runsOn || {};
       ok(R.job === 'wiki-health' && R.jobLabel === 'Wiki health' && R.needsKey === false, `${c.p}: runsOn is the wiki-health run line`);
       const split = SPLIT[c.kind] || {};

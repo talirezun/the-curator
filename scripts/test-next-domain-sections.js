@@ -193,6 +193,9 @@ function renderViewHeader(o) { return '<div class="tx-view-header">' + escapeHtm
 function renderStatus(o) { return '<div class="tx-status tx-status-' + o.state + '">' + escapeHtml(o.title) + '</div>'; }
 function renderDescription(t) { return '<p class="tx-desc">' + escapeHtml(t) + '</p>'; }
 function relTime() { return 'just now'; }
+// v3.72.1 (F2/F3): ① meta and the SOURCES tile come from the REAL
+// lastWriteReading (lifted below); only its day clock is fixed here.
+function formatDayAge(d) { return d ? 'today' : null; }
 const MIRROR_INFO = 'mirror-info';
 const DOMAIN_BLURB = 'domain-blurb';
 const MIRROR_WARNING = 'mirror-warning';
@@ -240,6 +243,7 @@ try {
     extractFunction(SRC, 'renderBrowsePanel') + '\n' +
     extractFunction(SRC, 'sharedJumpReading') + '\n' +
     extractFunction(SRC, 'renderStatCards') + '\n' +
+    extractFunction(SRC, 'lastWriteReading') + '\n' +
     extractFunction(SRC, 'renderMain') + '\n' +
     extractFunction(SRC, 'selectBrowseFacet') + '\n' +
     `return { renderMain, renderBrowsePanel, renderStatCards, browseMatches, memoryRowHtml,
@@ -263,6 +267,7 @@ const MEM_FND = { kind: 'foundation', project: 'lumina', isDefaultProject: false
 const mainState = (over) => ({
   loaded: true, loadError: null, activeSlug: 'alpha',
   domains: [{ slug: 'alpha', displayName: 'Alpha', pageCount: 3, lastIngestDate: '2026-09-01',
+    lastIngestKind: 'ingest', // v3.72.1 (F3): the verb is the log's
     pageCounts: { entities: 1, concepts: 1, summaries: 1, other: 0 } }],
   readonlySet: new Set(),
   sectionPrefs: {},
@@ -1527,6 +1532,8 @@ function mountSharedSection(el, o) { calls.mountShared.push({ el, domain: o.doma
 // v3.65.3: the identity/page-count reader ④ is handed. A recorder here; the
 // REAL one is driven on its own in S5c.
 function describeDomainForShared(slug) { return { index: -1, pages: null, slug }; }
+// v3.72.1: the pull hook passed to ④; its behaviour is test-domains-true-numbers.js §2b.
+function onSharedActionDone() {}
 function unmountSharedSection() { calls.unmountShared++; }
 function onHostedBusyChange() {}
 function onSharedLensChange() {}
@@ -1852,6 +1859,13 @@ section('S6 -- THE TEARDOWN TAKES BOTH PANELS DOWN');
     function reportAsyncMountFailure() {}
     function reportAsyncActionFailure() {}
     function render() {}
+    // v3.72.1: onEnter watches the write gate (F1) and the one age clock
+    // (F12); inert here, their behaviour is test-domains-true-numbers.js's.
+    const shell = {};
+    const writesInFlight = new Map();
+    function onWriteGateEdge() {}
+    const ageSubs = { on: 0, off: 0 };
+    function subscribeAgeTicker() { ageSubs.on++; return () => { ageSubs.off++; }; }
     function disarmSemanticScan() {}
     function onEnter(mountToken) {${body}}
     return { onEnter, __calls: () => calls,
@@ -1941,7 +1955,9 @@ section('S7 -- THE TWO JUMPS ARE TILES IN THE GRID (v3.65.0)');
   eq('SHARED is hidden until the panel says this domain is part of one',
     cards.length === 7 && Object.hasOwn(cards[6].attrs, 'hidden'), true);
   // The SOURCES reading is the domain's own last write, or the honest absence.
-  ok('SOURCES reads the last ingest', /dm-stat-value">just now</.test(html), html.slice(0, 300));
+  // v3.72.1 (F2/F3): day precision off the real lastWriteReading, and only
+  // when the newest log entry IS an ingest (the fixture says so).
+  ok('SOURCES reads the last ingest', /dm-stat-value">today</.test(html), html.slice(0, 300));
   const never = renderCard({ domains: [{ slug: 'alpha', displayName: 'Alpha', pageCount: 0,
     lastIngestDate: null, pageCounts: { entities: 0, concepts: 0, summaries: 0, other: 0 } }] });
   ok('...and says "nothing yet" rather than inventing a date', /dm-stat-value">nothing yet</.test(never));

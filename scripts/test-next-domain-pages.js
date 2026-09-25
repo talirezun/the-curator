@@ -285,6 +285,9 @@ function renderDescription(t) { return '<p class="tx-desc">' + escapeHtml(t) + '
 function renderBadge(o) { return '<span class="tx-badge">' + escapeHtml(o.label) + '</span>'; }
 function renderMarkdown(t) { return '<p class="md">' + escapeHtml(t) + '</p>'; }
 function relTime() { return 'just now'; }
+// v3.72.1 (F2/F3): ① meta and the SOURCES tile come from the REAL
+// lastWriteReading (lifted below); only its day clock is fixed here.
+function formatDayAge(d) { return d ? 'today' : null; }
 function openReader(content) { calls.reader.push(content); return 1; }
 async function fetchJSON(url) { return (await fetchResponder(url)); }
 let fetchResponder = async () => ({});
@@ -333,7 +336,7 @@ const FNS = [
   'activeBrowse', 'activeProjects', 'projectCount', 'projInfoId',
   'filterBrowseEntries', 'filterMemoryEntries', 'browseMatches', 'browseWindow',
   'browseRowHtml', 'memoryRowHtml', 'browseMoreHtml', 'browseNoteHtml',
-  'renderBrowsePanel', 'renderStatCards', 'renderProjectRow', 'renderCopyOutcome', 'renderProjectsPanel',
+  'renderBrowsePanel', 'renderStatCards', 'lastWriteReading', 'renderProjectRow', 'renderCopyOutcome', 'renderProjectsPanel',
   'showMoreBrowseRows', 'bindBrowseRowClicks', 'bindBrowseListeners', 'openMemoryPageFromBrowse',
   // v3.58.0. The ONE write path the chip row and the OVERVIEW tiles share --
   // lifted, never stubbed, because bindBrowseListeners below is driven for
