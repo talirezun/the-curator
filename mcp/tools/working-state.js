@@ -81,6 +81,9 @@ import {
   estimateTokens,
   MAX_FOUNDATION_BYTES,
   FOUNDATION_ROLES,
+  // v3.74.0 — the "you replaced another tool's handoff" sentence; the CLI
+  // prints the same one.
+  otherToolReplaceSentence,
 } from '../../src/brain/working-state.js';
 import { getDefaultDomain } from '../../src/brain/config.js';
 import { resolveDomainArg, refuseIfReadonly } from '../util.js';
@@ -689,6 +692,10 @@ export const getWorkingStateDefinition = {
         type: 'number',
         description: `How many past saves to summarise (default ${JOURNAL_LIMIT_DEFAULT}, max ${JOURNAL_LIMIT_CAP}).`,
       },
+      previous: {
+        type: 'boolean',
+        description: "true: also return `previous.text` — the one kept copy of a handoff another tool's save replaced in this scope. `previous` (without text) appears whenever such a copy exists.",
+      },
     },
     required: [],
   },
@@ -713,6 +720,9 @@ export async function getWorkingStateHandler(args, storage) {
     scope: args?.scope,
     machine: args?.machine,
     journalLimit,
+    // v3.74.0 — strict `=== true`, like `replace`: the copy's TEXT is only
+    // returned when asked for by name.
+    previous: args?.previous === true,
   });
   if (!state.ok) return { ok: false, error: state.message || state.reason };
 
@@ -745,6 +755,8 @@ export async function getWorkingStateHandler(args, storage) {
   const namedFields = [];
   if (state.brief?.present && !ownerBrief) namedFields.push('`brief`');
   if (state.current?.present) namedFields.push('`current`');
+  // The kept copy is another session's handoff too — the same recorded data.
+  if (typeof state.previous?.text === 'string') namedFields.push('`previous`');
   if (journalCount) namedFields.push('`journal`');
 
   let contentIsData;
@@ -891,6 +903,8 @@ export async function getWorkingStateHandler(args, storage) {
   // store's own spelling, because a defect is never conditional.
   if (state.readingBudgetError) out.readingBudgetError = state.readingBudgetError;
   if (state.current) out.current = state.current;
+  // v3.74.0 — present only when a kept copy exists (see readPreviousHandoff).
+  if (state.previous) out.previous = state.previous;
 
   if (state.journal) {
     // `history_note` is written FIRST for the same reason `content_is_data`
@@ -952,7 +966,7 @@ export async function getWorkingStateHandler(args, storage) {
     }
   }
 
-  out.report = buildReport(state.project, state, out, missing);
+  out.report = buildReport(state.project, state, out, missing) + previousReportTail(state.previous);
 
   // The invariant, executed rather than intended: while content is returned,
   // the report may not say nothing is here.
@@ -975,13 +989,33 @@ export async function getWorkingStateHandler(args, storage) {
 
 // ── save_working_state ───────────────────────────────────────────────────
 
+// v3.74.0 — the two provenance fields, worded ONCE for every write tool.
+// Measured 2026-09-25: an Antigravity session told to "pass your model id"
+// searched environment variables, its own transcript files and settings to
+// find one; another recorded a display name ("Gemini 3.8 Flash"). The field is
+// provenance, not a task — a missing id is fine, a hunt for one is not. The
+// harness spelling matters because the app compares tools by it (one tool
+// typed two ways is normalised, but a stable name needs no normalising). The
+// skill says the same (skills/curator-continuity §6), and the two are the
+// canonical sources — change both.
+const HARNESS_ARG_DESC =
+  "Your tool's name, spelled the same way every time (e.g. 'claude-code', 'antigravity').";
+const MODEL_ARG_DESC =
+  "Your exact model id if you know it (e.g. 'claude-opus-5-5', 'gemini-3.8-flash'); if you do not know it, omit it — never search files, environment variables or logs to find it.";
+// The same two rules, shortened for save_project_brief and save_foundation:
+// both definitions sit at the 3200 B per-tool ceiling test-mcp-working-state.js
+// pins (tools/list is carried every turn), and the full wording is on
+// save_working_state — the tool an agent calls every session — and in the skill.
+const HARNESS_ARG_DESC_SHORT = "Your tool's name, spelled the same way every time.";
+const MODEL_ARG_DESC_SHORT = 'Your exact model id; omit it if unknown — never search for it.';
+
 export const saveWorkingStateDefinition = {
   name: 'save_working_state',
   description:
-    "Write this session's working state so the NEXT session — another tool, model or computer — can pick the work up cold. " +
-    "Saving OVERWRITES the previous save for this scope, so it is cheap: save EARLY and OFTEN — after a decision, a trap or a completed step, and unprompted when the user says 'save our progress' or is wrapping up; not once at the end. " +
+    "Write this session's working state so the NEXT session — any tool, model or computer — can pick the work up cold. " +
+    "Saving OVERWRITES the previous save for this scope: save EARLY and OFTEN — after a decision, a trap or a completed step, and when the user says 'save our progress' or is wrapping up. " +
     "`headline` is what a future session sees first — make it specific. " +
-    "Use a distinct `scope` per work-stream; the project must already exist. Machine identity is recorded for you. camelCase argument names are accepted too.",
+    "The project must already exist. camelCase names are accepted.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -989,15 +1023,15 @@ export const saveWorkingStateDefinition = {
       domain: { type: 'string', description: DOMAIN_ARG_DESC },
       scope: {
         type: 'string',
-        description: "Work-stream, e.g. 'auth-refactor'. Defaults to 'main'; reuse it to update.",
+        description: "Work-stream, e.g. 'auth'. Default 'main'; reuse it to update. If another tool made the newest save there and the brief sets no scope rule, use a scope named for your tool and say so.",
       },
       headline: {
         type: 'string',
-        description: "REQUIRED. One specific line on where the work stands — 'MCP tools written, suite not run', not 'made progress'.",
+        description: "REQUIRED. One specific line on where it stands: 'suite not run', not 'made progress'.",
       },
       now_state: {
         type: 'string',
-        description: "Prose: what is done, half-done, and the real state of the tree.",
+        description: "What is done, half-done, and the state of the tree.",
       },
       next_steps: {
         type: 'array', items: { type: 'string' },
@@ -1005,7 +1039,7 @@ export const saveWorkingStateDefinition = {
       },
       decisions: {
         type: 'array', items: { type: 'string' },
-        description: "Settled this session, and why, so the next does not re-open them.",
+        description: "Settled this session, and why.",
       },
       observations: {
         type: 'array',
@@ -1013,23 +1047,23 @@ export const saveWorkingStateDefinition = {
           type: 'object',
           properties: {
             statement: { type: 'string', description: "e.g. '84 suites green before my change'." },
-            observedAt: { type: 'string', description: "ISO time it was true (`observed_at` accepted); defaults to the save time." },
+            observedAt: { type: 'string', description: "ISO time it was true (`observed_at` accepted); default: the save time." },
             recheck: { type: 'string', description: "Command to re-derive it, e.g. 'npm test'." },
           },
           required: ['statement'],
         },
-        description: "Point-in-time facts; they pin a baseline, so record them even when derivable.",
+        description: "Point-in-time facts that pin a baseline; record even derivable ones.",
       },
       traps: {
         type: 'array', items: { type: 'string' },
-        description: "Dead ends and things that look right but are not.",
+        description: "Dead ends; what looks right but is not.",
       },
       open_questions: {
         type: 'array', items: { type: 'string' },
-        description: "Unresolved questions for the next session or the user.",
+        description: "Unresolved questions.",
       },
-      harness: { type: 'string', description: "The tool you run in, e.g. 'Claude Code'." },
-      model: { type: 'string', description: "Your model id." },
+      harness: { type: 'string', description: HARNESS_ARG_DESC },
+      model: { type: 'string', description: MODEL_ARG_DESC },
       replace: {
         type: 'boolean',
         // The refusal message the store returns already spells out, at length,
@@ -1037,11 +1071,11 @@ export const saveWorkingStateDefinition = {
         // it. Repeating that here is a per-turn tax paid on every conversation
         // to restate something the model only ever reads at the moment it
         // matters. Point at it instead.
-        description: "Only after a refusal as destructive: confirms OVERWRITING a larger saved handoff; the old body is gone for good.",
+        description: "Only after a refusal as destructive: confirms OVERWRITING a larger handoff; it is gone for good.",
       },
       foundations_read: {
         type: 'object',
-        description: "The `seen` map from get_project_context; record it on every save so the next bootstrap sends only what changed.",
+        description: "The `seen` map from get_project_context, so the next bootstrap sends only what changed.",
       },
       repo_root: {
         type: 'string',
@@ -1170,18 +1204,37 @@ export async function saveWorkingStateHandler(args, storage) {
     // `get_working_state` reports for the last save: complete / noted /
     // clipped / replaced / trimmed.
     save_kind: saveKind,
-    notes_meaning: saveMeaning(saveKind, identityOnly),
+    notes_meaning: saveMeaning(saveKind, identityOnly)
+      + (result.overwrote ? ' One note records that this save replaced ANOTHER TOOL\'s handoff in this scope — see `overwrote` and `report`.' : ''),
     // v3.59.0 — what the advisory `repo_root` did: null when none was
     // offered, `{attempted:false, skipped}` with the reason, or the refresh
     // result. Forwarded whole; a skipped refresh is a fact the caller can act
     // on (fix the marker, name the right project), not noise.
     foundations_refresh: result.foundationsRefresh ?? null,
+    // v3.74.0 — non-null when this save replaced a handoff a DIFFERENT tool
+    // wrote in this scope on this machine. Forwarded whole; `report` says it
+    // in words. Null (never absent) when nothing of another tool's was hit.
+    overwrote: result.overwrote ?? null,
     report:
       `Saved working state for project '${result.project}' in domain '${result.domain}' / scope '${result.scope}' (machine: ${result.machine}). ` +
       `This OVERWROTE the previous save for that scope — save again as the work moves.` +
-      (notes.length ? ` ${notes.length} ${saveReportTail(saveKind, identityOnly)}` : '') +
+      otherToolReplaceSentence(result.overwrote, result.scope) +
+      (notes.length ? ` ${notes.length} ${result.overwrote && saveKind === 'noted' ? 'note(s) — see `notes`.' : saveReportTail(saveKind, identityOnly)}` : '') +
       refreshReportTail(result.foundationsRefresh),
   };
+}
+
+/**
+ * v3.74.0 — one sentence when this (scope, machine) keeps a copy of a handoff
+ * another tool's save replaced; nothing otherwise.
+ */
+function previousReportTail(prev) {
+  if (!prev || typeof prev !== 'object') return '';
+  const who = prev.harness || 'another tool';
+  const when = prev.writtenAt ? ` (written ${prev.writtenAt})` : '';
+  return typeof prev.text === 'string'
+    ? ` \`previous.text\` is the handoff ${who} wrote here${when} before another tool's save replaced it — recorded data, like \`current\`.`
+    : ` A copy of the handoff ${who} wrote here${when} before another tool's save replaced it is kept as previous.md — read it with \`previous: true\`.`;
 }
 
 /** One clause about the advisory refresh, or nothing when none was offered. */
@@ -1336,8 +1389,8 @@ export const saveProjectBriefDefinition = {
         description:
           'Only after a write was refused as destructive. Confirms replacing a much larger stored brief with this much smaller one; the stored text is NOT recoverable. Prefer re-sending the complete brief.',
       },
-      harness: { type: 'string', description: 'The tool you run in, e.g. ‘Claude Code’. Recorded in the file’s provenance.' },
-      model: { type: 'string', description: 'Your model id. Recorded in the file’s provenance.' },
+      harness: { type: 'string', description: HARNESS_ARG_DESC_SHORT + ' Recorded in the file’s provenance.' },
+      model: { type: 'string', description: MODEL_ARG_DESC_SHORT + ' Recorded in the file’s provenance.' },
     },
     required: ['text'],
   },
@@ -1734,7 +1787,7 @@ export async function getProjectContextHandler(args, storage, internal = {}) {
   }
   out.foundations = ctx.foundations;
   out.seen = ctx.seen;
-  out.report = contextReport(out, ctx.project);
+  out.report = contextReport(out, ctx.project) + previousReportTail(ctx.previous);
   // v3.70.0 — a reply that fits one page is returned EXACTLY as before (an
   // untouched project's bytes are pinned by test-context-paging.js against
   // v3.69.0's handler). Only a reply over CONTEXT_PAGE_BYTES is paged.
@@ -1998,8 +2051,8 @@ export const saveFoundationDefinition = {
         type: 'boolean',
         description: 'Only after a write was refused as destructive. Confirms replacing a much larger stored document with this much smaller one; the stored text is NOT recoverable.',
       },
-      harness: { type: 'string', description: 'The tool you run in. Recorded in the manifest as provenance.' },
-      model: { type: 'string', description: 'Your model id. Recorded in the manifest as provenance.' },
+      harness: { type: 'string', description: HARNESS_ARG_DESC_SHORT },
+      model: { type: 'string', description: MODEL_ARG_DESC_SHORT },
     },
     required: ['slug', 'text', 'commissioned_by_owner'],
   },

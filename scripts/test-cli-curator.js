@@ -394,6 +394,112 @@ const BODY = {
     ok(back.current?.text?.includes(key) === true, `…and "${key.slice(0, 28)}" survived the round trip`);
   }
 }
+// v3.74.0 — ANOTHER TOOL'S HANDOFF REPLACED. Measured live on 2026-09-25:
+// Antigravity saved to `main` and replaced Claude Code's 3.8 KB handoff; the
+// reply said only "This OVERWROTE the previous save", which every save says.
+// The owner's decision: WARN, never refuse. Driven through BOTH clients — the
+// MCP handler in-process and the shipped CLI as a child — because they share
+// the store function and must say the same thing.
+{
+  const big = (h, model, headline) => ({
+    domain: D1, project: 'lumina', scope: 'shared-main', harness: h, model, headline,
+    now_state: `State written by ${h}. `.repeat(40), next_steps: ['go on'],
+  });
+  const first = await mcpTools.saveWorkingStateHandler(big('Claude Code', 'claude-opus-5-5', 'CC handoff: parser half done'), storage);
+  ok(first.ok === true && first.overwrote === null, 'a first save replaces nobody: `overwrote` is null, never absent');
+  const pairDir = path.join(DOMAINS_DIR, D1, path.dirname(first.path || 'x'));
+  const prevFile = path.join(pairDir, 'previous.md');
+  const curFile = path.join(pairDir, 'current.md');
+  const readB = (f) => { try { return readFileSync(f); } catch { return null; } };
+  // A same-tool re-save first: it must NOT write previous.md.
+  const sameFirst = await mcpTools.saveWorkingStateHandler(big('claude-code', null, 'CC handoff: parser half done'), storage);
+  ok(sameFirst.ok === true && sameFirst.overwrote === null && readB(prevFile) === null,
+    'a SAME-tool save (another spelling) writes NO previous.md');
+  const ccBytes = readB(curFile);
+
+  // The CLI, as Antigravity, over Claude Code's handoff.
+  const r = run(['save', '--project', `${D1}/lumina`, '--scope', 'shared-main'],
+    { input: JSON.stringify({ headline: 'AG took over', harness: 'Antigravity', model: 'Gemini 3.8 Flash',
+      now_state: 'Antigravity state. '.repeat(40) }) });
+  ok(r.code === 0, 'the save SUCCEEDS — warn, never refuse', r.stderr);
+  ok(/WARNING: this replaced the handoff Claude Code saved here written \S+ \("CC handoff: parser half done"\)/.test(r.stdout),
+    'the CLI names WHOSE handoff it replaced, WHEN it was written and its HEADLINE', r.stdout);
+  ok(/Its text was kept as previous\.md \(state\/.*\/previous\.md\)/.test(r.stdout) && /save under your own scope \(e\.g\. `antigravity`\)/.test(r.stdout),
+    '…says the text was kept as previous.md (with its path), and names the scope to use instead', r.stdout);
+  const prev1 = readB(prevFile);
+  ok(prev1 !== null && ccBytes !== null && Buffer.compare(prev1, ccBytes) === 0,
+    'previous.md is BYTE-IDENTICAL to the handoff that was replaced');
+  {
+    const idx = await store.listWorkingScopes(D1, { project: 'lumina' });
+    const pairs = idx.scopes.filter((x) => x.scope === 'shared-main');
+    ok(pairs.length === 1 && !idx.scopes.some((x) => /previous/.test(x.scope + x.machine)),
+      'the index still lists ONE (scope, machine) pair — previous.md is never a scope, a machine or a handoff');
+    const rd = await store.readWorkingState(D1, { project: 'lumina', scope: 'shared-main' });
+    ok(rd.current && /Antigravity state\./.test(rd.current.text), 'current.md is the NEW handoff');
+    ok(rd.previous && rd.previous.harness === 'claude-code' && rd.previous.harnessLabel === 'Claude Code' && rd.previous.headline === 'CC handoff: parser half done'
+      && typeof rd.previous.writtenAt === 'string' && rd.previous.bytes === ccBytes.length && !('text' in rd.previous),
+    'a scoped read reports `previous` {harness (raw), harnessLabel, writtenAt, headline, bytes} — and no text unless asked', JSON.stringify(rd.previous));
+    const rt = await mcpTools.getWorkingStateHandler({ domain: D1, project: 'lumina', scope: 'shared-main', previous: true }, storage);
+    ok(rt.ok && typeof rt.previous?.text === 'string' && /State written by claude-code\./.test(rt.previous.text),
+      'get_working_state { previous: true } returns the kept text');
+    ok(/`previous`/.test(rt.content_is_data) && /previous\.text/.test(rt.report),
+      '…framed as recorded data, and the report says what it is');
+    const ctx = await mcpTools.getProjectContextHandler({ domain: D1, project: 'lumina', scope: 'shared-main' }, storage);
+    ok(ctx.ok !== false && ctx.previous && ctx.previous.harnessId === 'claude-code' && !('text' in ctx.previous)
+      && /kept as previous\.md/.test(ctx.report),
+    'get_project_context, opening that scope, says a kept copy exists', JSON.stringify(ctx.previous));
+    const none = await store.readWorkingState(D1, { project: 'lumina', scope: 'via-cli' });
+    ok(none.ok && !('previous' in none), 'a scope with no kept copy carries NO `previous` key (pinned envelopes stay byte-identical)');
+  }
+  const agBytes = readB(curFile);
+
+  // The MCP reply, as Claude Code, over Antigravity's.
+  const back = await mcpTools.saveWorkingStateHandler(big('claude-code', 'claude-opus-5-5', 'CC is back'), storage);
+  ok(back.ok === true, 'MCP: the save succeeds');
+  const ow = back.overwrote || {};
+  ok(ow.harness === 'Antigravity' && ow.harnessId === 'antigravity' && ow.harnessLabel === 'Antigravity'
+    && ow.headline === 'AG took over' && typeof ow.writtenAt === 'string' && ow.suggestedScope === 'claude-code',
+  'MCP: `overwrote` carries the replaced tool, its headline, when it was written and the scope to use', JSON.stringify(ow));
+  ok(ow.model === 'Gemini 3.8 Flash', 'a display-name model is carried AS GIVEN — no id is invented', String(ow.model));
+  ok(typeof ow.previousPath === 'string' && /previous\.md$/.test(ow.previousPath), '`overwrote.previousPath` is store-relative', String(ow.previousPath));
+  const prev2 = readB(prevFile);
+  ok(prev2 !== null && agBytes !== null && Buffer.compare(prev2, agBytes) === 0 && Buffer.compare(prev2, prev1) !== 0,
+    'a SECOND cross-tool replacement replaces previous.md with the handoff it replaced (one copy)');
+  ok(/WARNING: this replaced the handoff Antigravity saved here/.test(back.report)
+    && /From now on save under your own scope \(e\.g\. `claude-code`\)/.test(back.report)
+    && /read Antigravity's work by naming its scope/.test(back.report),
+  'MCP: the report says it in words — the SAME sentence the CLI prints', back.report);
+  ok(back.save_kind === 'noted', 'nothing the CALLER sent was lost, so save_kind is not "trimmed" or "replaced"', back.save_kind);
+  ok(back.notes.some((n) => /^handoff: this save replaced the handoff Antigravity wrote here.*its text was kept as previous\.md\.$/.test(n) && n.length <= 200),
+    'a note records it (≤ 200 chars, the wire cap), so the JOURNAL line keeps the fact', JSON.stringify(back.notes));
+  ok(/another tool's handoff/i.test(back.notes_meaning), 'notes_meaning points at `overwrote`');
+  const j = await store.readWorkingState(D1, { project: 'lumina', scope: 'shared-main', journalLimit: 1 });
+  const line = (j.journal && j.journal.entries && j.journal.entries[0]) || {};
+  ok((line.rejections || line.notes || []).some((n) => /replaced the handoff Antigravity wrote here/.test(n)),
+    'the journal line of the replacing save records whose handoff it replaced', JSON.stringify(line).slice(0, 300));
+
+  // Same tool, other spelling → silent.
+  const same = await mcpTools.saveWorkingStateHandler(big('Claude Code (desktop)', null, 'CC again'), storage);
+  ok(same.ok === true && same.overwrote === null && !/WARNING/.test(same.report),
+    'ONE tool under two spellings (claude-code → Claude Code (desktop)) raises NO warning', JSON.stringify(same.overwrote));
+  ok(Buffer.compare(readB(prevFile) || Buffer.alloc(0), prev2) === 0, '…and a same-tool save leaves previous.md untouched');
+  // Unknown harness on either side → silent, by design.
+  const anon = await mcpTools.saveWorkingStateHandler({ ...big(undefined, null, 'no tool named'), harness: undefined }, storage);
+  ok(anon.ok === true && anon.overwrote === null, 'a save naming NO tool warns about nothing (no evidence it is a different tool)');
+  const afterAnon = await mcpTools.saveWorkingStateHandler(big('Antigravity', null, 'AG after an unnamed save'), storage);
+  ok(afterAnon.ok === true && afterAnon.overwrote === null, '…and a save over an UNNAMED save warns about nothing either');
+  const cd = await mcpTools.saveWorkingStateHandler(big('claude-desktop', null, 'desktop app'), storage);
+  ok(cd.ok === true && cd.overwrote && cd.overwrote.harnessId === 'antigravity', 'CONTROL: a genuinely different tool still warns');
+  const cc = await mcpTools.saveWorkingStateHandler(big('claude-code', null, 'code over desktop'), storage);
+  ok(cc.overwrote && cc.overwrote.harnessId === 'claude-desktop',
+    'claude-code over claude-desktop WARNS — two products, never merged');
+
+  // The other tool saved into THIS tool's own scope: the advice changes.
+  await mcpTools.saveWorkingStateHandler({ ...big('Antigravity', null, 'AG in its own scope'), scope: 'claude-code' }, storage);
+  const own = await mcpTools.saveWorkingStateHandler({ ...big('claude-code', null, 'my scope'), scope: 'claude-code' }, storage);
+  ok(own.overwrote && /Antigravity saved into this scope; each tool should save under its own scope/.test(own.report),
+    'when the other tool wrote into YOUR tool-named scope, the advice says so instead of naming the scope you are in', own.report);
+}
 {
   const r = run(['save', '--project', `${D1}/lumina`], { input: '{}' });
   ok(r.code === 2 && r.stdout === '', 'an EMPTY body is refused with exit 2 and nothing on stdout');

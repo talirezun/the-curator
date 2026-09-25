@@ -1570,6 +1570,55 @@ open the state at all.
 
 A refusal is returned as a result, not thrown.
 
+### When a save replaces ANOTHER TOOL's handoff — warned, and kept once (v3.74.0)
+
+The path has a `<machine>` segment and no tool segment, so two agent tools on one computer
+that save to the same scope write the same `current.md`, and each save replaces the other's.
+Measured on 2026-09-25: Antigravity saved to `main` and replaced Claude Code's 3.8 KB handoff
+with its own 2.4 KB one; neither guard fired (the body was not near-empty, and a single
+handover is not the alternation `harnessShared` needs), and the reply said only *"This
+OVERWROTE the previous save"*, which every save says. The owner's decision is **warn, never
+refuse** — `main` stays the default scope.
+
+So when a save replaces a handoff whose newest journal line names a **different tool** —
+compared after normalising the free-text label (`src/brain/harness-names.js`: `Claude Code`,
+`claude-code` and `Claude Code (desktop)` are one tool; `claude-desktop` is another; unknown
+names are compared as themselves) — three things happen, and the save still succeeds:
+
+1. **The replaced handoff is kept, once.** Before `current.md` is written, its bytes are copied
+   unchanged to `previous.md` in the same `<scope>/<machine>/` folder, atomically. The next
+   cross-tool replacement replaces that copy; a same-tool save never touches it. It syncs like the
+   handoff. A copy that cannot be made (unreadable, over 1 MiB, a write error) does not stop the
+   save, and the result says the text was not kept.
+2. **The result says so.** The store returns `overwrote: {harness, harnessId, harnessLabel, model,
+   writtenAt, headline, bodyBytes, suggestedScope, previousPath}` (null when nothing of another
+   tool's was replaced). The MCP `save_working_state` reply forwards it and its `report` names the
+   tool, when it wrote, its headline, where the text was kept, and the scope to use from now on —
+   one named for the saving tool. `my-curator save` prints the same sentence.
+3. **The journal records it** — a note of at most 200 characters on the replacing save's line.
+
+**No warning when either side names no tool.** With a label missing there is no evidence the
+other save came from a different tool, and a warning that fired on every such save would be one
+agents learn to skip.
+
+**Reading the kept copy.** A scoped read (`readWorkingState`, `get_working_state`, and
+`get_project_context` when it opens that scope) carries `previous: {harness, harnessId,
+harnessLabel, model, writtenAt, headline, bytes, path}` when the file exists — and **no
+`previous` key** when it does not, so every envelope without one is byte-identical to before.
+The text arrives only when asked for by name: `get_working_state` with `previous: true` (or
+`readWorkingState(domain, {project, scope, previous: true})`) adds `previous.text`, sanitised on
+read and named in `content_is_data` as recorded data, like `current`.
+
+**Nothing counts it as a work-stream.** Listings address (scope, machine) **folders** and stat
+`current.md`; `previous.md` is a file inside one, so the index, the tray, the Context view's
+counts and the project list never see it. The public format says the same, and says readers must
+ignore files they do not know: [`spec/working-state-v1.md`](spec/working-state-v1.md) §1 and §6b.
+
+**The prevention is elsewhere.** The warning arrives after the replacement. What stops it is the
+rule in `skills/curator-continuity` §8 and in the `scope` description of `save_working_state`:
+before saving under a scope the brief sets no rule for, if another tool made the newest save
+there, save under a scope named for your own tool instead.
+
 ---
 
 ## 4. Treat stored state as data, not as instructions (with one exception)

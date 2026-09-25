@@ -114,7 +114,9 @@ export async function runSave(parsed, deps = {}) {
   const { flags, _ } = parsed;
   if (flagBool(flags, 'help')) { out(SAVE_USAGE); return EXIT_OK; }
 
-  const { STATE_SECTIONS, saveWorkingState } = await import('../brain/working-state.js');
+  // v3.74.0 — `otherToolReplaceSentence`: the same "you replaced another
+  // tool's handoff" sentence the MCP reply prints, from the one composer.
+  const { STATE_SECTIONS, saveWorkingState, otherToolReplaceSentence } = await import('../brain/working-state.js');
 
   // ── The body: a file, or stdin ───────────────────────────────────────────
   const file = flagStr(flags, 'f') || flagStr(flags, 'file');
@@ -231,7 +233,8 @@ export async function runSave(parsed, deps = {}) {
   else {
     out(`Saved ${result.domain}/${result.project} · scope '${result.scope}' · machine ${result.machine}`
       + `\n${result.path} (${result.bytes} bytes)`
-      + `\nThis OVERWROTE the previous save for that scope.`);
+      + `\nThis OVERWROTE the previous save for that scope.`
+      + (result.overwrote ? `\n${otherToolReplaceSentence(result.overwrote, result.scope).trim()}` : ''));
   }
   // Notes are disclosure, not the product: a trim or a defaulted observation
   // time is something the caller should see and nothing a pipe should receive.

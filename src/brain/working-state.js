@@ -203,12 +203,24 @@ import { moveToTrash } from './trash.js';
 import { FOUNDATION_SKELETONS } from './foundation-skeletons.js';
 // v3.74.0 (D1) — pure, no imports, no stdout: safe on the MCP import graph.
 // The harness label an agent types is free text; comparisons go by tool id.
-import { harnessId } from './harness-names.js';
+import { harnessId, normaliseHarness } from './harness-names.js';
 
 export const STATE_DIRNAME = 'state';
 export const BRIEF_FILENAME = 'project.md';
 export const CURRENT_FILENAME = 'current.md';
 export const JOURNAL_FILENAME = 'journal.jsonl';
+/**
+ * v3.74.0 — ONE kept copy of a handoff that ANOTHER TOOL's save replaced,
+ * beside `current.md` in the same `<scope>/<machine>/` folder. Written only
+ * when a save replaces a handoff whose last save was by a DIFFERENT tool id
+ * (the rule `overwrote` reports); a same-tool save never touches it. The next
+ * cross-tool replacement replaces it. It syncs like the handoff. Listings
+ * address (scope, machine) FOLDERS and stat `current.md`, so this file is
+ * never counted as a scope, a machine or a handoff.
+ */
+export const PREVIOUS_FILENAME = 'previous.md';
+/** A handoff larger than this is not copied (hand-edited or hostile); the save goes on. */
+const MAX_PREVIOUS_COPY_BYTES = 1024 * 1024;
 // ── Project metadata (v3.65.0) — see the KNOWLEDGE DOMAINS block below ────
 /** The project's own small metadata file, BESIDE project.md and never inside
  *  it: project.md is the human's hand-authored standing brief, and a machine
@@ -506,9 +518,11 @@ export function finaliseNotes(notes, max = MAX_NOTES) {
   // regression dressed as a priority scheme.
   const TIER_REPLACED = 0, TIER_IDENTITY = 1, TIER_OMITTED = 2,
     TIER_LOSS = 3, TIER_NORMALISED = 4;
+  // v3.74.0: another tool's handoff replaced shares the identity tier — it is
+  // a fact about WHOSE state is on disk, not about how input was normalised.
   const tierOf = (n) =>
     /\boverwrote\b/i.test(n) ? TIER_REPLACED
-      : /^machine identity:/i.test(n) ? TIER_IDENTITY
+      : /^(machine identity|handoff):/i.test(n) ? TIER_IDENTITY
         : /item\(s\) omitted over the /.test(n) ? TIER_OMITTED
           : /\b(dropped|omitted|truncated)\b/i.test(n) ? TIER_LOSS
             : TIER_NORMALISED;
@@ -3310,6 +3324,45 @@ export async function saveWorkingState(project, input = {}) {
       incoming: { bodyBytes: Buffer.byteLength(incomingBody, 'utf8'), sections: incomingSections },
     };
   }
+  // ── v3.74.0: ANOTHER TOOL'S HANDOFF IS ABOUT TO BE REPLACED ─────────────
+  //
+  // Measured live (2026-09-25, conduit): Antigravity saved to `main` and
+  // replaced Claude Code's 3.8 KB handoff with its own 2.4 KB one. Neither
+  // guard fired, correctly by their own rules — the destructive guard needs a
+  // near-empty incoming body, and `harnessShared` needs two SWITCHES (one
+  // handover is history, not a live collision) — and the reply said only
+  // "This OVERWROTE the previous save", which every save says. The owner's
+  // decision is WARN, never refuse: `main` stays the default scope, and the
+  // save goes through. So the save says, in the store result, the journal and
+  // the MCP/CLI reply, WHOSE handoff it replaced, when that was written, what
+  // its headline was, and where to save instead.
+  //
+  // NO WARNING WHEN EITHER SIDE NAMES NO TOOL, and that is deliberate: with a
+  // missing harness there is no evidence the other save came from a DIFFERENT
+  // tool — most unnamed saves are the same agent that simply did not pass it —
+  // and a warning that fires on every such save is a warning agents learn to
+  // skip. The compare is by NORMALISED id (harness-names.js), so `Claude Code`
+  // after `claude-code` is one tool and stays silent.
+  let overwrote = null;
+  {
+    const incomingId = harnessId(harness.text || null);
+    const pf = prior && prior.present ? await readPairJournalFacts(project, prefix, scope, machine, Date.now()) : null;
+    const priorN = pf ? normaliseHarness(pf.harness) : null;
+    if (incomingId && priorN && priorN.id !== incomingId) {
+      overwrote = {
+        harness: pf.harness,
+        harnessId: priorN.id,
+        harnessLabel: priorN.label,
+        model: pf.model,
+        writtenAt: pf.writtenAt,
+        headline: pf.headline,
+        bodyBytes: prior.bodyBytes,
+        // A scope named for THIS tool — what to save under from now on.
+        suggestedScope: slugSegment(incomingId) || null,
+      };
+    }
+  }
+
   if (verdict.destructive) {
     // Allowed, because the caller asked for it explicitly — but never silent.
     // This note also lands in journal.jsonl, so the JOURNAL preserves the
@@ -3327,6 +3380,33 @@ export async function saveWorkingState(project, input = {}) {
   // capping before this line would have dropped the irreversible-replace
   // note from the result and the journal entirely. Both mistakes were made
   // and caught by assertions during this fix; the ordering is load-bearing.
+  // ── v3.74.0: KEEP THE REPLACED HANDOFF, ONCE, BEFORE IT IS REPLACED ────
+  //
+  // Same rule as the warning above, and only then: another TOOL's handoff is
+  // about to go. Its bytes are copied UNCHANGED to `previous.md` beside it —
+  // atomically, through the same writer (which refuses a symlink) — so the
+  // warning can say where the text went instead of that it is gone. One copy:
+  // the next cross-tool replacement replaces it. A copy that cannot be made
+  // (unreadable, over MAX_PREVIOUS_COPY_BYTES, a write error) does NOT stop
+  // the save — the owner's rule is warn, never refuse — and the result says
+  // the text was not kept.
+  if (overwrote) {
+    overwrote.previousPath = null;
+    const prevAbs = resolveInsideState(project, `${dirRel}/${PREVIOUS_FILENAME}`);
+    try {
+      const st = await stat(currentAbs);
+      if (!prevAbs) overwrote.previousError = 'unsafe-path';
+      else if (st.size > MAX_PREVIOUS_COPY_BYTES) overwrote.previousError = 'too-large';
+      else {
+        await writeFileAtomic(prevAbs, await readFile(currentAbs));
+        overwrote.previousPath = `${STATE_DIRNAME}/${dirRel}/${PREVIOUS_FILENAME}`;
+      }
+    } catch (err) {
+      overwrote.previousError = err && err.code ? String(err.code) : 'io';
+    }
+    notes.push(otherToolNote(overwrote));
+  }
+
   const finalNotes = finaliseNotes(notes);
 
   try {
@@ -3396,8 +3476,55 @@ export async function saveWorkingState(project, input = {}) {
     // absence must not collapse into one value, which is this module's own
     // stated rule and the reason the silent fallback was a defect.
     installIdAvailable: idAvailable,
+    // v3.74.0 — non-null when this save replaced a handoff that a DIFFERENT
+    // tool wrote in this (project, scope, machine): {harness, harnessId,
+    // harnessLabel, model, writtenAt, headline, bodyBytes, suggestedScope}.
+    // Always present, so "no other tool's handoff was replaced" is a value.
+    overwrote,
     notes: finalNotes,
   };
+}
+
+/**
+ * v3.74.0 — the JOURNAL NOTE for a save that replaced another tool's handoff.
+ * At most 200 characters (the MCP layer's per-note cap) — the headline is
+ * shortened first, then dropped, rather than the fact. No loss vocabulary:
+ * nothing the CALLER sent was lost, so `save_kind` must not read "trimmed".
+ */
+function otherToolNote(ow) {
+  const who = String(ow.harnessLabel || ow.harness || 'another tool').slice(0, 40);
+  const kept = ow.previousPath ? '; its text was kept as previous.md.' : '; the Journal keeps only its headline.';
+  const head = `handoff: this save replaced the handoff ${who} wrote here${ow.writtenAt ? ` at ${ow.writtenAt}` : ''}`;
+  const hl = ow.headline ? String(ow.headline) : '';
+  for (const n of [40, 20]) {
+    const clip = hl.length > n ? `${hl.slice(0, n - 1)}…` : hl;
+    const note = head + (clip ? ` ("${clip}")` : '') + kept;
+    if (note.length <= 200) return note;
+  }
+  return (head + kept).slice(0, 200);
+}
+
+/**
+ * v3.74.0 — the sentence for a save that replaced ANOTHER tool's handoff, or
+ * nothing. Shared by the MCP reply and the CLI (`my-curator save`), so the two
+ * surfaces say the same thing. Measured: a bare "This OVERWROTE the previous
+ * save" — which every save says — was all an agent got when Antigravity
+ * replaced Claude Code's handoff on `main`, and it carried on in the same
+ * scope. The save still succeeds (the owner's decision: warn, never refuse).
+ */
+export function otherToolReplaceSentence(ow, scope) {
+  if (!ow || typeof ow !== 'object') return '';
+  const who = ow.harnessLabel || ow.harness || 'another tool';
+  const when = ow.writtenAt ? ` written ${ow.writtenAt}` : '';
+  const hl = ow.headline ? ` ("${String(ow.headline).slice(0, 200)}")` : '';
+  const kept = ow.previousPath
+    ? ` Its text was kept as previous.md (${ow.previousPath}) — read it with get_working_state and \`previous: true\` on scope \`${scope}\`; the next time another tool's handoff is replaced here, that copy is replaced too.`
+    : ' Its text is not kept — the Journal keeps only its headline.';
+  const own = ow.suggestedScope;
+  const advice = own && own !== scope
+    ? ` From now on save under your own scope (e.g. \`${own}\`), and read ${who}'s work by naming its scope.`
+    : ` ${who} saved into this scope; each tool should save under its own scope and read the other's by name.`;
+  return ` WARNING: this replaced the handoff ${who} saved here${when}${hl}.${kept}${advice}`;
 }
 
 /**
@@ -3994,6 +4121,46 @@ async function readPairJournalFacts(domain, prefix, scopeDir, machine, now, opts
 }
 
 /**
+ * v3.74.0 — read `previous.md` in one (scope, machine) folder, or null when
+ * there is none. `{harness, model, writtenAt, headline, bytes, path}` from the
+ * copy's own header, sanitised like every other read; `text` (neutralised,
+ * byte-capped at MAX_STATE_BYTES) only when `withText`. Never throws.
+ */
+async function readPreviousHandoff(domain, relDir, withText) {
+  const abs = resolveInsideState(domain, `${relDir}/${PREVIOUS_FILENAME}`);
+  if (!abs) return null;
+  const r = await readCapped(abs, MAX_STATE_BYTES);
+  if (!r) return null;
+  const clean = neutraliseProtocol(r.text);
+  const prov = /^_(.*Saved: .*)_$/m.exec(clean);
+  const field = (name) => {
+    if (!prov) return null;
+    const m = new RegExp(`(?:^|· )${name}: ([^·]+?)(?: ·|$)`).exec(prov[1]);
+    return m ? m[1].trim().slice(0, MAX_META_CHARS) : null;
+  };
+  const saved = field('Saved');
+  const hl = /^>\s?(.+)$/m.exec(clean);
+  const h = field('Harness');
+  const hn = normaliseHarness(h);
+  const out = {
+    harness: h,
+    harnessId: hn ? hn.id : null,
+    harnessLabel: hn ? hn.label : null,
+    model: field('Model'),
+    writtenAt: saved && isIsoish(saved) ? new Date(saved).toISOString() : null,
+    headline: hl ? hl[1].slice(0, MAX_HEADLINE_CHARS) : null,
+    bytes: r.bytes,
+    path: `${STATE_DIRNAME}/${relDir}/${PREVIOUS_FILENAME}`,
+  };
+  if (withText) {
+    out.text = clean;
+    out.truncated = r.truncated;
+    out.sanitisedOnRead = clean !== r.text;
+  }
+  return out;
+}
+
+/**
  * Every machine that has state under ONE scope, newest first.
  *
  * This exists because `listWorkingScopes` is CAPPED at MAX_INDEX_ENTRIES and
@@ -4540,6 +4707,15 @@ export async function readWorkingState(project, opts = {}) {
     }
   }
   if (!out.current) out.current = { present: false };
+
+  // v3.74.0 — the one kept copy of a handoff another tool's save replaced.
+  // PRESENT ONLY WHEN THE FILE IS: an absent key keeps every pinned read
+  // envelope byte-identical (test-context-paging.js / test-reading-budget.js
+  // pin get_project_context's bytes). The summary is parsed from the copy's
+  // own header — the provenance line the writer put there — so it needs no
+  // sidecar; the TEXT is returned only when asked for (`previous: true`).
+  const prev = await readPreviousHandoff(project, `${prefix}${scopeDir}/${machine}`, opts && opts.previous === true);
+  if (prev) out.previous = prev;
 
   const limit = Math.max(1, Math.min(
     Number.isFinite(opts.journalLimit) ? Math.floor(opts.journalLimit) : DEFAULT_JOURNAL_ENTRIES,
