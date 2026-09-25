@@ -2764,7 +2764,7 @@ function deleteDomainOutcome(form, result) {
   const where = result && typeof result.trashPath === 'string' && result.trashPath ? result.trashPath : null;
   return 'Deleted “' + name + '”.' +
     (where
-      ? ' It was moved to The Curator’s trash, at ' + where + '. To restore it, move that folder back into ' +
+      ? ' It was moved to The Curator’s trash, at ' + where + '. To restore it, open Settings › Trash and press Restore — or move that folder back into ' +
         'your domains folder and rename it ' + form.slug + '.'
       : '') +
     (result && result.syncWarning
@@ -5853,7 +5853,7 @@ function renderLifecycleCard() {
         '</div>' +
         '<div class="dm-lc-body">It is moved to The Curator’s trash' +
           (trashDir ? ', <span class="mono">' + escapeHtml(trashDir) + '/domains/</span>' : '') +
-          ', not erased — you can restore it by moving the folder back into your domains folder. ' +
+          ', not erased — you can restore it from Settings › Trash. ' +
           'Nothing empties the trash automatically.' +
           (pv && pv.syncConfigured
             ? ' GitHub Sync is on: your next Sync removes it from GitHub and from your other computers.'
@@ -6151,7 +6151,7 @@ async function runProjectAction() {
     // where and how to put it back, from the SERVER's answer.
     if (f.mode === 'delete' && body && typeof body.trashPath === 'string' && body.trashPath) {
       detailParts.push('It was moved to The Curator’s trash, at ' + body.trashPath +
-        '. To restore it, move that folder back to domains/' + slug + '/state/ and rename it ' + f.project + '.');
+        '. To restore it, open Settings › Trash and press Restore — or move that folder back to domains/' + slug + '/state/ and rename it ' + f.project + '.');
     }
     if (f.mode === 'create') {
       // ── PHASE 2 TAKES THE SLOT (P1-10) ──────────────────────────────────
