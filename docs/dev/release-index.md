@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.71.1` | Every remaining ⓘ in the app now uses the v3.71.0 explainer model, through ONE implementation — cutting the words behind them by about half per view app-wide. |
 | `v3.71.0` | One explainer model for every ⓘ — treatment B — starting with Context and the six places a beginner lands with none. |
 | `v3.70.1` | The per-document planner for the context-window meter, deferred out of v3.70.0 — each read-first document now its own segment on the meter, and a "Documents at start" fold that previews start-state changes before Apply. |
 | `v3.70.0` | The context-window meter becomes the control panel of project context — the maintainer's own "key element that makes this app truly useful": people pick their window size, and a bar to scale shows the harness (their own estimate, hatched), The Curator's share, and free space, with The Curator's part enlarged layer by layer in tokens. |

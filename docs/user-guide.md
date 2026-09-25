@@ -2139,7 +2139,8 @@ column and the dots cool with them, and the order can never contradict the readi
 
 **Press a row to open it.** That replaces the whole picker: pick the scope and the machine
 in one gesture, from a list that already tells you which is worth opening — and since v3.56.0 the
-handoff opens in the [reader](#reading-a-handoff) rather than underneath the table.
+handoff opens in the [reader](#reading-a-handoff) rather than underneath the table. Click anywhere
+on a Handoffs or Documents row to open it in the reader.
 
 **The table shows the newest five, and a `Show N more` row extends it** (*v3.56.0*). A project that
 has run for a month across two machines is twenty rows, and twenty rows own the page the same way
