@@ -163,6 +163,9 @@ const TOP_KEYS = [
   'ok', 'domain', 'project', 'since', 'logPresent', 'lineCeiling', 'lineCeilingLabel',
   'totals', 'sessions', 'sessionsShown', 'sessionsTruncated', 'newestSaveAt',
   'noSessionsButSaves', 'note',
+  // v3.74.0 (D5 + the parity rule): what is counted, the window the log
+  // really covers, and this project's saves per tool over 7 days.
+  'unit', 'logStartsAt', 'windowStartsAt', 'windowDaysCovered', 'windowCovered', 'savesByTool',
 ];
 const TOTALS_KEYS = [
   'sessions', 'sessionsRead', 'sessionsSaved', 'sessionsReadNotSaved', 'legacyLines', 'selfTestLines',
@@ -741,6 +744,68 @@ try {
     eq(own.body.stateBudgetBytes, store.MAX_STATE_BYTES, 'a project with NO handoff still states its budget (a constant, never null)');
     const meter = await GET('/alpha/budget/capture');
     ok(!('stateBudgetBytes' in meter.body), 'the capture meter’s pinned envelope does NOT gain it');
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
+  section('§14  v3.74.0 — the window the log really covers, and saves by tool');
+  // ═════════════════════════════════════════════════════════════════════
+  //
+  // D5: the view asks for 30 days, the log may have begun five days ago.
+  // The route reports the span the log covers (captureWindowFacts, the
+  // widget's own derivation) so no screen says "last 30 days" over it.
+  {
+    const DAY = 86400000;
+    const since30 = new Date(Date.now() - 30 * DAY).toISOString();
+    writeLog([
+      { ts: new Date(Date.now() - 5 * DAY).toISOString(), ev: 'session', sid: 'aaaaaaaaaaaa', client: 'claude-code' },
+      { ts: new Date(Date.now() - 5 * DAY + 1000).toISOString(), tool: 'get_project_context', domain: 'alpha',
+        ok: true, refused: false, ms: 3, sid: 'aaaaaaaaaaaa', project: 'proj1' },
+    ]);
+    const young = await GET('/alpha/proj1/capture?since=' + encodeURIComponent(since30));
+    eq(young.body.unit, 'mcp-bridge-process', 'the unit is named: an MCP bridge process, not a conversation');
+    eq(young.body.windowCovered, false, '★ a log that began 5 days ago does NOT cover a 30-day window');
+    eq(young.body.windowDaysCovered, 5, '…it covers 5 days');
+    ok(typeof young.body.logStartsAt === 'string'
+      && Math.abs(Date.parse(young.body.logStartsAt) - (Date.now() - 5 * DAY)) < 60000,
+    '…and says where the log begins', JSON.stringify(young.body.logStartsAt));
+    writeLog([
+      { ts: new Date(Date.now() - 40 * DAY).toISOString(), ev: 'session', sid: 'bbbbbbbbbbbb', client: 'claude-code' },
+      { ts: new Date(Date.now() - 1 * DAY).toISOString(), ev: 'session', sid: 'cccccccccccc', client: 'claude-code' },
+    ]);
+    const old = await GET('/alpha/proj1/capture?since=' + encodeURIComponent(since30));
+    eq(old.body.windowCovered, true, 'CONTROL: a log older than the window covers it');
+    clearLog();
+    const none = await GET('/alpha/proj1/capture');
+    ok(none.body.windowCovered === null && none.body.logStartsAt === null && none.body.windowDaysCovered === null,
+      'no log: every window fact is null — not measured, never 0', JSON.stringify(none.body));
+
+    // SAVES BY TOOL — the widget's lanes over THIS project. Two tools, one
+    // typed two ways (one tool), one other product; and a second project's
+    // saves must not leak in.
+    const store = await import('../src/brain/working-state.js');
+    makeProject('alpha', 'tools');
+    makeProject('alpha', 'other');
+    const save = (project, scope, harness) => store.saveWorkingState('alpha', {
+      project, scope, harness, headline: 'h ' + scope, now: 'n', next: 'x' });
+    const r1 = await save('tools', 'one', 'Claude Code');
+    const r2 = await save('tools', 'one', 'claude-code');
+    const r3 = await save('tools', 'two', 'Antigravity');
+    const r4 = await save('other', 'three', 'Cursor');
+    ok([r1, r2, r3, r4].every((r) => r && r.ok === true), 'CONTROL: four real saves through the store');
+    const t = await GET('/alpha/tools/capture');
+    const sbt = t.body.savesByTool;
+    ok(sbt && Array.isArray(sbt.tools), 'savesByTool is on the envelope', JSON.stringify(sbt));
+    const by = Object.fromEntries((sbt ? sbt.tools : []).map((x) => [x.id, x]));
+    eq(by['claude-code'] && by['claude-code'].events, 2,
+      '★ `Claude Code` and `claude-code` are ONE tool with 2 saves (the data layer\'s normaliser)');
+    eq(by['claude-code'] && by['claude-code'].label, 'Claude Code', '…shown under its one label');
+    eq(by.antigravity && by.antigravity.events, 1, 'Antigravity is its own tool, 1 save');
+    ok(!by.cursor, '★ another project\'s tool never leaks into this project\'s count');
+    eq(sbt && sbt.events, 3, 'the total is this project\'s 3 saves');
+    eq(sbt && sbt.windowSeconds, 7 * 86400, 'over the widget\'s 7-day window');
+    const o = await GET('/alpha/other/capture');
+    eq((o.body.savesByTool && o.body.savesByTool.tools || []).map((x) => x.label).join(','), 'Cursor',
+      'CONTROL: the other project counts only its own tool');
   }
 } finally {
   await new Promise((r) => server.close(r));

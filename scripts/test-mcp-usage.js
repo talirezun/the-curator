@@ -1657,6 +1657,27 @@ section('§14  v3.66.0 — count7dAgent, summariseSessionsByProject, the union r
   ok(withLog.savePulse === null || Number.isInteger(withLog.savePulse.events),
     'savePulse is the store pulse’s event count, or null when no journal exists');
   ok(withLog.tools.length === registry.length, 'the tool rows are still all there beside the project half');
+  // ── v3.74.0 (D5): the window the log REALLY covers, for the Settings label ──
+  eq(noLog.byProjectWindow?.windowCovered, null, 'no log: windowCovered is null — not measured');
+  eq(noLog.byProjectWindow?.logStartsAt, null, '…and so is where it begins');
+  eq(withLog.byProjectWindow?.unit, 'mcp-bridge-process', 'the unit counted is named: a bridge process, not a conversation');
+  eq(withLog.byProjectWindow?.windowCovered, false, '★ a log whose oldest line is 1 day old does NOT cover the 30 days asked for');
+  eq(withLog.byProjectWindow?.windowDaysCovered, 1, '…it covers 1 day');
+  ok(typeof withLog.byProjectWindow?.logStartsAt === 'string'
+    && Math.abs(Date.parse(withLog.byProjectWindow.logStartsAt) - (Date.now() - D)) < 60000,
+  '…and names the day the log begins');
+  // ── v3.74.0 (parity): saves by tool on the save pulse ──
+  {
+    const ws = await import('../src/brain/working-state.js');
+    const saved = await ws.saveWorkingState(DOM, { scope: 'lanes', harness: 'Claude Code (desktop)',
+      headline: 'h', now: 'n', next: 'x' });
+    ok(saved && saved.ok === true, 'CONTROL: a real save with a harness');
+    let lanes = null;
+    await r14.usageHandler({ query: { include: 'projects' } }, { json: (o) => { lanes = o; } });
+    const cc = (lanes.savePulse?.byTool || []).find((t) => t.id === 'claude-code');
+    ok(cc && cc.label === 'Claude Code' && cc.events >= 1,
+      '★ savePulse.byTool names the tool under its NORMALISED label, with its count', JSON.stringify(lanes.savePulse));
+  }
 
   eq(fp(), fpBefore, 'real credential files unchanged (sha256 + size + existence)');
 }

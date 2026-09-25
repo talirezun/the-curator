@@ -464,8 +464,10 @@ const CONTEXT_WINDOWS = { '200k': 200000, '1m': 1000000 };
 const CONTEXT_WINDOW_CHOICES = [200000, 400000, 1000000];
 const HARNESS_PRESETS = [
   { tokens: 20000, label: 'Light', hint: 'A short system prompt, few tools.' },
-  { tokens: 50000, label: 'Typical', hint: 'Claude Code with a CLAUDE.md and a few MCP servers.' },
-  { tokens: 120000, label: 'Heavy', hint: 'Many MCP servers, skills and a long CLAUDE.md.' },
+  // Harness-neutral (v3.74.0): the instruction file is CLAUDE.md in Claude
+  // Code and AGENTS.md in most other agent tools.
+  { tokens: 50000, label: 'Typical', hint: 'An agent tool with an instruction file (CLAUDE.md or AGENTS.md) and a few MCP servers.' },
+  { tokens: 120000, label: 'Heavy', hint: 'Many MCP servers, skills and a long instruction file.' },
 ];
 // Where the exact figure comes from, said wherever the estimate is set.
 const HARNESS_HINT = 'Run /context in Claude Code and add up its system prompt, system tools, '
@@ -2693,7 +2695,12 @@ function applyProjectRead(data, at) {
   // the store hands back.
   //
   // ── THE DEFECT (v3.56.0) ───────────────────────────────────────────────
-  // This read `scopes[0]` — the store's own order, which is mtime — on the
+  // (v3.74.0, audit G6: the store now orders pairs by the AGENT'S `writtenAt`
+  // with an mtime fallback, so the defect below is fixed at the source too.
+  // `workStreamOrder` stays the pick because the two still differ on TIES —
+  // see `tableFirstPair` in src/routes/memory.js — and the table paints this
+  // order.)
+  // This read `scopes[0]` — the store's own order, which WAS mtime — on the
   // stated grounds that it resolves to the same pair the route's
   // `scope=latest` would. Both are true and both are the wrong clock. **git
   // sets mtime to the moment it wrote the file locally**, so on every synced
@@ -3326,23 +3333,23 @@ function restoreFocus() {
 }
 
 /**
- * The rail's project list, GROUPED BY DOMAIN.
+ * The rail's project list, GROUPED ACTIVE / IDLE (v3.74.0; by domain before).
  *
- * A domain heading above its projects, in the domain order the index
- * returned. The list itself is deliberately NOT re-sorted by recency: a rail
- * that reorders itself between visits is disorienting, and recency already
- * decides the initial SELECTION (see initialPick), which is the place where
- * "what did I just touch" is actually useful.
+ * Two headings — "Active · last 24 h" and "Idle", the menubar widget's own
+ * split (see the block inside) — and, inside each, the domain order the index
+ * returned. The list is deliberately NOT re-sorted by recency within a group:
+ * a rail that reorders itself between visits is disorienting, and recency
+ * already decides the initial SELECTION (see initialPick), which is the place
+ * where "what did I just touch" is actually useful. A row crosses from Active
+ * to Idle only when its newest save turns 24 hours old.
  *
- * THE HEADING IS A HEADING, NOT A BUTTON. Selecting a domain is not a thing
- * this screen does — memory belongs to a project — so a clickable domain row
- * would either do nothing or invent a second selection model. It carries the
- * domain name and nothing else.
+ * THE HEADING IS A HEADING, NOT A BUTTON. Selecting a group is not a thing
+ * this screen does — memory belongs to a project.
  *
- * A domain with exactly one project still gets its heading. Suppressing it
- * would make the rail change SHAPE when a second project appears, and the
- * heading is also the only thing on this screen that names which domain a
- * project lives in.
+ * THE DOMAIN MOVED FROM THE HEADING TO THE ROW. Until v3.74.0 the heading was
+ * the only thing on this screen naming which domain a project lives in; it is
+ * now the first half of every row's figure ("projects · 3 scopes"), beside
+ * the identity dot that has always carried it.
  *
  * Pure and exported through __testing: this is the function the grouping
  * assertions drive.
@@ -3373,9 +3380,32 @@ export function renderProjectGroups(projects, activeDomain, activeProject, domai
   // yet the local order stands in, which is right far more often than not and
   // is never wrong about which SET of colours is in use.
   const slots = Array.isArray(domainOrder) && domainOrder.length ? domainOrder : order;
-  return order.map((domain) => {
+  // ── ACTIVE / IDLE, THE WIDGET'S SPLIT (v3.74.0, the parity rule) ─────────
+  //
+  // The menubar widget leads with "ACTIVE · LAST 24 H" and folds the rest
+  // under "IDLE"; a fact the widget shows must also be in the app (v3.66.0,
+  // no widget-only fact). The boundary is the APP'S OWN, not a second
+  // threshold table: a row is active when its newest save sits in the
+  // `live`, `recent` or `today` tier of `freshnessTier` — under 24 hours on
+  // the same clock (`effectiveSave`) the row's dot and age already use, so a
+  // row can never be worded "3 hr ago" and filed as idle.
+  //
+  // THE ORDER INSIDE A GROUP IS STILL THE DOMAIN ORDER, then the index's —
+  // never re-sorted by recency, for the reason at this function's head. And
+  // the domain, which the group heading used to name, is now the first half
+  // of the row's figure ("projects · 3 scopes"), so no row loses it.
+  const ACTIVE_TIERS = ['live', 'recent', 'today'];
+  const isActiveAge = (secs) => ACTIVE_TIERS.includes(freshnessTier(secs));
+  const activeRows = [];
+  const idleRows = [];
+  for (const domain of order) {
     const slot = slots.indexOf(domain);
-    const rowsHtml = byDomain.get(domain).map((p) => {
+    for (const p of byDomain.get(domain)) {
+      const eff = effectiveSave(p);
+      (isActiveAge(eff.seconds) ? activeRows : idleRows).push({ p, domain, slot, eff });
+    }
+  }
+  const rowHtml = ({ p, domain, slot, eff }) => {
       const active = p.domain === activeDomain && p.project === activeProject;
       const has = p.scopeCount > 0 || p.hasBrief;
       // THE FRESHNESS DOT, on the app-wide scale. The rail said "3 scopes ·
@@ -3385,8 +3415,26 @@ export function renderProjectGroups(projects, activeDomain, activeProject, domai
       // cut on, so a project row and its own newest work-stream can never
       // disagree about how fresh it is. It is aria-hidden: the words beside
       // it say the same thing.
-      const eff = effectiveSave(p);
       const tier = freshnessTier(eff.seconds);
+      // ── WHICH TOOL, NORMALISED (v3.74.0) ───────────────────────────────
+      // The widget names the tool on every project row, compared and shown
+      // through ONE normaliser (src/brain/harness-names.js) — so the route
+      // sends the label (`tools[].label`, `harnessLabel`) and this view never
+      // re-spells an agent's free text. An ACTIVE project names every tool
+      // that saved into it in the last 24 hours, newest first, so two tools
+      // on one project are both visible ("Claude Code + Antigravity"); an
+      // idle one names the tool of its newest save. Omitted when no save
+      // named a tool — never a guess.
+      const tools = Array.isArray(p.tools) ? p.tools.filter((t) => t && typeof t.label === 'string' && t.label) : [];
+      const toolLabels = isActiveAge(eff.seconds)
+        ? tools.filter((t) => isActiveAge(effectiveSave(t).seconds)).map((t) => t.label)
+        : [];
+      if (!toolLabels.length) {
+        const newest = typeof p.harnessLabel === 'string' && p.harnessLabel ? p.harnessLabel
+          : (tools.length ? tools[0].label : '');
+        if (newest) toolLabels.push(newest);
+      }
+      const toolsText = toolLabels.join(' + ');
       // THE FIGURE AND THE AGE ARE TWO SLOTS, NOT ONE SENTENCE — and that is
       // the whole of what the maintainer was pointing at. `projectMetaLine`
       // composes "18 scopes · 15 hr ago" as a STRING, so there was nowhere
@@ -3396,7 +3444,8 @@ export function renderProjectGroups(projects, activeDomain, activeProject, domai
       // the age, which cannot be done by splitting a formatted line, and it
       // emits the glyph itself so a host cannot forget it.
       const n = Number.isInteger(p.scopeCount) ? p.scopeCount : null;
-      const figure = n === null ? '' : n + ' scope' + (n === 1 ? '' : 's');
+      const figure = [domain || null, n === null ? null : n + ' scope' + (n === 1 ? '' : 's')]
+        .filter(Boolean).join(' · ');
       return renderSidebarRow({
         alias: 'mem',
         name: p.project,
@@ -3417,20 +3466,21 @@ export function renderProjectGroups(projects, activeDomain, activeProject, domai
         // the two rails' anatomy really differed — and it is a LAST EVENT,
         // which is the slot Domains' "Ingested · <title>" already occupies.
         // OMITTED rather than filled with a placeholder when there is none.
-        event: p.headline || '',
+        // v3.74.0: the TOOL leads line three and the headline follows it —
+        // the widget's "project · tool" order, in the kit's two event slots.
+        event: toolsText || p.headline || '',
+        eventDetail: toolsText ? (p.headline || '') : '',
         active,
         stateClass: has ? '' : 'mem-row-quiet',
         ariaCurrent: active,
         data: { 'mem-domain': domain, 'mem-project': p.project },
       });
-    }).join('');
-    // THE GROUP HEAD IS THE DOMAIN, and `.cur-eyebrow` upper-cases it — so
-    // the maintainer's own domain, which is literally named `projects`, reads
-    // PROJECTS. That is correct and is not the duplicate-word defect it was
-    // reported as: the OTHER PROJECTS on that screen was the actions eyebrow,
-    // which this release retires with the row of ghost buttons it captioned.
-    return renderSidebarGroup({ eyebrow: domain, alias: 'mem', rowsHtml });
-  }).join('');
+  };
+  // THE GROUP HEADS ARE THE WIDGET'S OWN WORDS. `.cur-eyebrow` upper-cases
+  // them. A group with no rows renders nothing (renderSidebarGroup's rule), so
+  // a store where nothing saved today shows IDLE alone, never an empty head.
+  return renderSidebarGroup({ eyebrow: 'Active · last 24 h', alias: 'mem', rowsHtml: activeRows.map(rowHtml).join('') })
+    + renderSidebarGroup({ eyebrow: 'Idle', alias: 'mem', rowsHtml: idleRows.map(rowHtml).join('') });
 }
 
 function renderSidebar(token) {
@@ -4098,13 +4148,34 @@ function renderLayerStrip(read) {
   // A zero is shown only when a log WAS read (`logPresent === true`, positive
   // evidence, captureFacts' own rule); saves with no logged session read "not
   // logged", step ②'s own explanation in two words.
+  // v3.74.0 (D5): the count is of CONNECTIONS — one MCP bridge process each,
+  // which Claude Code starts per session and Claude Desktop keeps open across
+  // many conversations — so it is worded as one, never as "sessions".
   const capValue = cap && cap.logPresent !== true
     ? 'no usage log'
     : cap && cap.noSessionsButSaves === true && capSessions === 0
       ? 'not logged'
       : capSessions === null
         ? 'not counted'
-        : capSessions.toLocaleString('en-US') + ' session' + (capSessions === 1 ? '' : 's');
+        : capSessions.toLocaleString('en-US') + ' connection' + (capSessions === 1 ? '' : 's');
+  // ── THE WINDOW THE LOG REALLY COVERS (v3.74.0, D5) ────────────────────
+  // "last 30 days" over a log that began five days ago is a claim the log
+  // cannot support. When the route says the log does not reach back to the
+  // window's start (`windowCovered === false`), the tile states the span it
+  // does cover and the day the log begins. Inline, for the lifting reason
+  // stated just below.
+  const capDays = cap && typeof cap.windowDaysCovered === 'number' && Number.isFinite(cap.windowDaysCovered)
+    ? Math.round(cap.windowDaysCovered) : null;
+  const capBegins = cap && cap.windowCovered === false && typeof cap.logStartsAt === 'string'
+    && Number.isFinite(Date.parse(cap.logStartsAt))
+    // "20 Sep", written out: `toLocaleDateString` says "Sept" on newer ICU.
+    ? new Date(Date.parse(cap.logStartsAt)).getDate() + ' '
+      + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][new Date(Date.parse(cap.logStartsAt)).getMonth()]
+    : null;
+  const capSub = capBegins && capDays !== null
+    ? (capDays < 1 ? 'under a day' : 'last ' + capDays + ' day' + (capDays === 1 ? '' : 's'))
+      + ' · log begins ' + capBegins
+    : 'last 30 days';
   //
   // THE WINDOW, AS A LITERAL. `renderLayerStrip` is LIFTED by brace-matching
   // and EXECUTED by scripts/test-next-overview-kit.js, so a module-level
@@ -4116,12 +4187,12 @@ function renderLayerStrip(read) {
   // the owner's words. The jump id, the route (`…/capture`) and every on-disk
   // name keep the old word, as v3.65.1 did for Documents/Memory.
   cards.push({
-    label: 'AGENT SESSIONS',
+    label: 'AGENT CONNECTIONS',
     value: cap ? capValue : 'not counted',
-    sub: cap && cap.logPresent === true ? 'last 30 days' : null,
+    sub: cap && cap.logPresent === true ? capSub : null,
     hidden: !cap,
     jump: 'capture',
-    name: 'Agent sessions — open the session reading in step 2',
+    name: 'Agent connections — open the connections reading in step 2',
   });
 
   // ── SESSION START — THE SUM OF THE THREE LAYERS (v3.67.0) ─────────────
@@ -4989,6 +5060,18 @@ function captureFacts(payload) {
     // leave "saved 47 min ago" and "no agent session in the last 30 days" on
     // screen together with nothing to reconcile them.
     noSessionsButSaves: p ? p.noSessionsButSaves === true : false,
+    // ── v3.74.0 (D5): THE WINDOW THE LOG REALLY COVERS ─────────────────
+    // `windowCovered` is true only when the log reaches back to the start of
+    // the window asked for; false means it began later, on `logStartsAt`,
+    // and covers `windowDaysCovered` days. Null when the route did not say.
+    windowCovered: p && typeof p.windowCovered === 'boolean' ? p.windowCovered : null,
+    windowDaysCovered: p && typeof p.windowDaysCovered === 'number' && Number.isFinite(p.windowDaysCovered)
+      ? p.windowDaysCovered : null,
+    logStartsAt: p && typeof p.logStartsAt === 'string' && Number.isFinite(Date.parse(p.logStartsAt))
+      ? p.logStartsAt : null,
+    // v3.74.0 (parity): this project's saves per tool over 7 days, or null.
+    savesByTool: p && p.savesByTool && typeof p.savesByTool === 'object'
+      && Array.isArray(p.savesByTool.tools) ? p.savesByTool : null,
   };
 }
 
@@ -5076,7 +5159,21 @@ function renderCaptureMeter() {
   }
 
   const f = captureFacts(c.data);
-  const win = CAPTURE_WINDOW_DAYS + ' days';
+  // ── THE WINDOW, AS THE LOG REALLY COVERS IT (v3.74.0, D5) ─────────────
+  // "in the last 30 days" is said only when the log reaches back that far.
+  // A log that began later says the span it covers and the day it begins —
+  // "in the last 5 days (the log begins 20 Sep)" — never a month it did not
+  // watch.
+  const winDays = f.windowDaysCovered === null ? null : Math.round(f.windowDaysCovered);
+  const winBegins = f.windowCovered === false && f.logStartsAt
+    // "20 Sep", written out: `toLocaleDateString` says "Sept" on newer ICU.
+    ? new Date(Date.parse(f.logStartsAt)).getDate() + ' '
+      + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][new Date(Date.parse(f.logStartsAt)).getMonth()]
+    : null;
+  const inWin = winBegins && winDays !== null
+    ? (winDays < 1 ? 'in under a day' : 'in the last ' + winDays + ' day' + (winDays === 1 ? '' : 's'))
+      + ' (the log begins ' + winBegins + ')'
+    : 'in the last ' + CAPTURE_WINDOW_DAYS + ' days';
 
   // ── THE HEADLINE FIGURE, AND THE THREE STATES IT HAS TO TELL APART ────
   // "no log on this computer", "a log, and nothing ran" and "N sessions" are
@@ -5085,15 +5182,19 @@ function renderCaptureMeter() {
   let value;
   let tier = 'unknown';
   let prov = null;
+  // v3.74.0 (D5): CONNECTIONS, not sessions. What the log counts is one MCP
+  // bridge process — Claude Code starts one per session, Claude Desktop keeps
+  // one open across many conversations — so "3 sessions" could be thirty
+  // chats. The route's field names keep the old word; the screen does not.
   if (!f.logPresent) {
     value = 'no usage log on this computer yet';
   } else if (f.sessions === null) {
-    value = 'sessions could not be counted';
+    value = 'connections could not be counted';
   } else if (f.sessions === 0) {
-    value = 'no agent session in the last ' + win;
+    value = 'no agent connection ' + inWin;
   } else {
     value = f.sessions.toLocaleString('en-US')
-      + ' session' + (f.sessions === 1 ? '' : 's') + ' in the last ' + win;
+      + ' connection' + (f.sessions === 1 ? '' : 's') + ' ' + inWin;
     // THE SENTENCE, WITH THE UNCOMFORTABLE NUMBER IN IT. Each clause is
     // dropped INDIVIDUALLY when the route did not send its figure, so a
     // partial answer prints what it knows and claims nothing else.
@@ -5179,7 +5280,7 @@ function renderCaptureMeter() {
     // here instead would report a cap as a measurement.
     f.truncated
       ? 'showing the ' + f.shown + ' most recent of '
-        + (f.sessions === null ? f.shown : f.sessions) + ' sessions' : null,
+        + (f.sessions === null ? f.shown : f.sessions) + ' connections' : null,
     ((!f.note || f.noSessionsButSaves) && f.legacyLines)
       ? f.legacyLines.toLocaleString('en-US') + ' earlier call'
       + (f.legacyLines === 1 ? '' : 's') + ' carried no session id and cannot be counted' : null,
@@ -5279,15 +5380,15 @@ function renderCaptureMeter() {
   const shareOf = (n) => (f.sessions !== null && f.sessions > 0 && n !== null
     ? { amount: n, max: f.sessions,
       label: n.toLocaleString('en-US') + ' of the ' + f.sessions.toLocaleString('en-US')
-        + ' sessions in the last ' + win }
+        + ' connections ' + inWin }
     : undefined);
   const ofSessions = f.sessions !== null && f.sessions > 0
     ? 'of ' + f.sessions.toLocaleString('en-US') : undefined;
   const monitor = renderMonitor({
-    label: 'The agent-sessions reading',
+    label: 'The agent-connections reading',
     lines: [
       f.sessions === null ? null
-        : { key: 'sessions', value: f.sessions, sub: 'in the last ' + win },
+        : { key: 'connections', value: f.sessions, sub: inWin },
       f.read === null ? null
         : { key: 'started with the context', value: f.read,
           sub: ofSessions, depth: shareOf(f.read) },
@@ -5319,23 +5420,59 @@ function renderCaptureMeter() {
   // `my-curator context` read the store directly and write no usage log
   // (src/cli/context.js, src/cli/resolve.js).
   const zeroLine = (!f.logPresent || f.sessions === 0)
-    ? '<p class="mem-capture-limits mem-capture-zero" id="mem-capture-zero">Counts sessions where an agent '
-      + 'used the MCP tools here; sessions started only through a hook or <code>my-curator context</code> '
-      + 'are not counted.</p>'
+    ? '<p class="mem-capture-limits mem-capture-zero" id="mem-capture-zero">Counts connections where an agent '
+      + 'used the MCP tools here; work started only through a hook or <code>my-curator context</code> '
+      + 'is not counted.</p>'
     : '';
   const row = body
     ? '<details class="mem-fold" data-mem-fold="capture"' + open + '>'
       + '<summary class="mem-fold-summary" id="mem-fold-capture">' + icon('chevronRight', 14)
-        + '<span>Agent sessions</span>'
+        + '<span>Agent connections</span>'
         + '<span class="mem-fold-meta">' + meta + '</span>'
       + '</summary>'
       + '<div class="mem-fold-body">' + body + '</div>'
     + '</details>'
     : '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body mem-save-flat">'
-      + '<span>Agent sessions</span>'
+      + '<span>Agent connections</span>'
       + '<span class="mem-fold-meta">' + meta + '</span>'
     + '</div></div>';
-  return row + zeroLine + notice + limitsHtml;
+
+  // ── SAVES BY TOOL, THIS PROJECT, 7 DAYS (v3.74.0, the parity rule) ─────
+  //
+  // The menubar widget's "Saves by tool" names, per tool, how many saves it
+  // made in the pulse window; this is the same `computePulse` lanes over this
+  // project's work-streams (the route's `savesByTool`), so the widget is never
+  // the only place the fact lives. UNFOLDED, like the limits beside it: it is
+  // a reading of what the store holds, and it must not need a click to find.
+  //
+  // THE DATA LAYER'S OWN FLOOR WORDING. When any journal was read only from
+  // its tail the counts are "at least", and the route's note — the data
+  // layer's sentence, never paraphrased here — says why; a tool with no save
+  // in the window reads "none", with the day it was LAST SEEN in what was
+  // read (never "last save", which the tail cannot promise).
+  const sbt = f.savesByTool;
+  let toolsHtml = '';
+  if (sbt) {
+    const sbtDays = Number.isFinite(sbt.windowSeconds) ? Math.round(sbt.windowSeconds / 86400) : null;
+    const floor = sbt.lowerBound === true;
+    const day = (iso) => (typeof iso === 'string' && Number.isFinite(Date.parse(iso))
+      ? new Date(Date.parse(iso)).getDate() + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][new Date(Date.parse(iso)).getMonth()] : null);
+    const parts = sbt.tools.filter((t) => t && typeof t.label === 'string' && t.label).map((t) => {
+      const n = Number.isInteger(t.events) ? t.events : null;
+      if (n === null) return t.label + ' not counted';
+      if (n === 0) return t.label + ' none' + (day(t.lastSeenAt) ? ' (last seen ' + day(t.lastSeenAt) + ')' : '');
+      return t.label + ' ' + (floor ? 'at least ' : '') + n.toLocaleString('en-US');
+    });
+    if (Number.isInteger(sbt.eventsWithoutTool) && sbt.eventsWithoutTool > 0) {
+      parts.push(sbt.eventsWithoutTool.toLocaleString('en-US') + ' named no tool');
+    }
+    const head = 'Saves by tool' + (sbtDays ? ', last ' + sbtDays + ' day' + (sbtDays === 1 ? '' : 's') : '') + ': ';
+    toolsHtml = '<p class="mem-capture-limits mem-capture-tools" id="mem-capture-tools">'
+      + escapeHtml(head + (parts.length ? parts.join(' · ') : 'none'))
+      + (floor && typeof sbt.note === 'string' && sbt.note ? ' ' + escapeHtml(sbt.note) : '')
+      + '</p>';
+  }
+  return row + zeroLine + notice + limitsHtml + toolsHtml;
 }
 
 
@@ -6305,9 +6442,12 @@ function renderEmptyProject(unlistedEntries) {
  * The table's row order: the SAME clock the row shows, youngest first.
  *
  * ── THE MARK, THE WORD AND THE ORDER ARE ONE READING ─────────────────────
- * The store's `listWorkingScopes` sorts by `mtimeMs` — the FILE clock — and
- * that is correct for what it serves: the tray and the index consume that
- * order and it is NOT changed here. But every cell this table paints reads
+ * The store's `listWorkingScopes` sorted by `mtimeMs` — the FILE clock —
+ * until v3.74.0; since then (audit G6) it sorts by the AGENT'S `writtenAt`
+ * with an mtime fallback, the same preference as below, and breaks ties on
+ * mtime. This function is kept because a tie is broken DIFFERENTLY here (by
+ * scope, then machine — see its body) and the table must paint one order.
+ * The history that follows is why it was written. Every cell this table paints reads
  * through `effectiveSave`, which prefers the AGENT'S clock (`writtenAt`) and
  * falls back to the file's only when there is no journal time at all. On any
  * machine where the two disagree — every synced one, because a checkout
@@ -10261,7 +10401,8 @@ function renderJournal() {
     return (
       '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
         '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
-          '<span>Journal</span><span class="mem-fold-meta">empty</span></summary>' +
+          '<span>' + escapeHtml('Journal' + (typeof d.scope === 'string' && d.scope ? ' · ' + d.scope : ''))
+          + '</span><span class="mem-fold-meta">empty</span></summary>' +
         '<div class="mem-fold-body">' +
           renderDescription('No saves recorded under this scope and machine yet.') +
         '</div>' +
@@ -10441,10 +10582,22 @@ function renderJournal() {
     escapeHtml(countClause) +
     (latestAge ? ' · latest <span class="mem-age-words">' + escapeHtml(latestAge) + '</span>' : '');
 
+  // ── WHOSE JOURNAL THIS IS (v3.74.0) ─────────────────────────────────────
+  // A journal belongs to ONE work-stream on ONE machine — the open handoff's —
+  // yet the summary read "Journal · 2 saves · latest 1 min ago" beside a
+  // project that had forty, which reads as the project's total. The label now
+  // names the work-stream it counts ("Journal · antigravity"), and the machine
+  // too when the project holds that work-stream on more than one.
+  const jScope = typeof d.scope === 'string' && d.scope ? d.scope : null;
+  const jMachine = typeof d.machine === 'string' && d.machine ? d.machine : null;
+  const jPairs = state.projectRead && Array.isArray(state.projectRead.scopes)
+    ? state.projectRead.scopes.filter((r) => r && r.scope === jScope).length : 0;
+  const jWhose = jScope ? jScope + (jMachine && jPairs > 1 ? ' on ' + jMachine : '') : '';
+  const jLabel = 'Journal' + (jWhose ? ' · ' + jWhose : '');
   return (
     '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
       '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
-        '<span>Journal</span>' +
+        '<span>' + escapeHtml(jLabel) + '</span>' +
         '<span class="mem-fold-meta"' +
           (latest && latestAge ? ' data-mem-age-at="' + escapeHtml(latest) + '"' : '') + '>' +
           journalMeta + '</span></summary>' +
@@ -11177,9 +11330,13 @@ function sessionReceivesMonitor(data, facts) {
   });
   const harness = harnessNow();
   lines.push(harness === null
-    ? { key: 'harness', value: 'not set', sub: 'system prompt, tools, CLAUDE.md, skills · set an estimate above' }
+    // HARNESS-NEUTRAL (v3.74.0): an agent tool's instruction file is
+    // CLAUDE.md in Claude Code and AGENTS.md in most others; naming only
+    // Claude's told every other tool's user the line was not about them.
+    ? { key: 'harness', value: 'not set',
+      sub: 'system prompt, tools, instruction files such as CLAUDE.md or AGENTS.md, skills · set an estimate above' }
     : { key: 'harness', value: tok(harness) + ' · ' + ssPct(harness, winTokens),
-      sub: 'system prompt, tools, CLAUDE.md, skills · your estimate, not measured' });
+      sub: 'system prompt, tools, instruction files such as CLAUDE.md or AGENTS.md, skills · your estimate, not measured' });
   lines.push({ key: 'free at start',
     value: tok(Math.max(0, winTokens - mcpTokens - (harness || 0))),
     sub: 'of a ' + WIN + (harness === null ? ', before your harness' : '') });

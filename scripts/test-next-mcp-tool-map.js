@@ -978,6 +978,7 @@ section('14. ④ Across projects (v3.66.0, P8): the widget’s per-project bars,
   // and the windows are words built from the route's own figures.
   const across = (projects) => build([extractFunction(src, 'renderAcrossProjects'),
     extractFunction(src, 'renderAcrossProjectsBody'), extractFunction(src, 'windowDaysWords'),
+    extractFunction(src, 'logWindowWords'),
     extractFunction(src, 'formatSyncedAt')], {
     state: { mcpProjects: projects, mcpProjectsError: null,
       defaultDomainInfo: { domains: ['business', 'posts', 'research'] } },
@@ -1002,15 +1003,15 @@ section('14. ④ Across projects (v3.66.0, P8): the widget’s per-project bars,
   const w = (v) => { const m = /cur-depth-bar[^"]*" style="width:([\d.]+)%"/.exec(v || ''); return m ? Number(m[1]) : null; };
   ok(w(lines[0].val) === 100 && w(lines[1].val) === 44.4,
     'sessions that SAVED, against the busiest project (9 → 100%, 4 of 9 → 44.4%)');
-  ok(lines[0].sub === '11 sessions' && lines[1].sub === '6 sessions', 'all sessions under the figure');
+  ok(lines[0].sub === '11 connections' && lines[1].sub === '6 connections', 'all connections under the figure (v3.74.0 D5: a bridge run is not a session)');
   ok(/cur-sb-dot cur-sb-dot-1"/.test(lines[0].val) && /cur-sb-dot cur-sb-dot-2"/.test(lines[1].val)
      && /cur-sb-dot cur-sb-dot-3"/.test(lines[2].val),
     'each line carries its DOMAIN’s identity dot, keyed on the install’s domain index (the one mapping)');
   ok(identityDotClass(0) === 'cur-sb-dot-1', 'CONTROL: that is the kit’s own mapping');
-  ok(!/cur-sb-dot/.test(lines[3].val) && lines[3].sub === '2 sessions · not in this folder',
+  ok(!/cur-sb-dot/.test(lines[3].val) && lines[3].sub === '2 connections · not in this folder',
     'a project whose domain this install does not hold gets NO dot — never a guessed one — and says it is not here');
   ok(/settings-id-idle/.test(lines[2].val) && w(lines[2].val) === null && /^.*>0$/.test(lines[2].val.replace(/<[^>]+>/g, '>').replace(/>+/g, '>'))
-     && lines[2].sub === 'no session, last 30 days',
+     && lines[2].sub === 'no connection, last 30 days',
     'a project with NO session is shown, as 0, marked idle, with no bar — so a reader can see which never save');
   ok(/\.mcp-across \.cur-mon-line:has\(\.settings-id-idle\) \.cur-mon-value\s*\{[^}]*color:\s*var\(--text-2\)/.test(css),
     '...and the idle figure takes the quiet ink, never an opacity');

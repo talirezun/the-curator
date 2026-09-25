@@ -38,7 +38,7 @@ import {
   readUsage, readUsageLinesUnion, summariseSessionsByProject, VIA_SELF_TEST,
 } from '../brain/mcp-usage.js';
 import {
-  getStoreActivity, captureFor, TRAY_CAPTURE_WINDOW_MS, TRAY_CAPTURE_WINDOW_DAYS,
+  getStoreActivity, captureFor, captureWindowFacts, TRAY_CAPTURE_WINDOW_MS, TRAY_CAPTURE_WINDOW_DAYS,
 } from '../brain/tray-summary.js';
 import { detectBridgeProcesses, STALE_REMEDY } from '../brain/mcp-bridge-status.js';
 import { exerciseAllTools } from '../brain/mcp-exercise.js';
@@ -754,11 +754,16 @@ async function acrossProjects() {
   const now = Date.now();
   const since = now - TRAY_CAPTURE_WINDOW_MS;
   let logPresent = false, logFiles = 0, sum = null, logError = null;
+  // v3.74.0 (D5): the span the log REALLY covers — the widget's own derivation.
+  let win = { logStartsAt: null, windowStartsAt: null, windowDaysCovered: null, windowCovered: null };
   try {
     const u = await readUsageLinesUnion();
     logPresent = u.present === true;
     logFiles = Number.isInteger(u.files) ? u.files : 0;
-    if (logPresent) sum = summariseSessionsByProject(u.records || [], { since });
+    if (logPresent) {
+      sum = summariseSessionsByProject(u.records || [], { since });
+      win = captureWindowFacts(u.records || [], since, now);
+    }
   } catch (err) {
     logPresent = false; logError = err && err.message ? String(err.message).slice(0, 200) : 'unreadable';
   }
@@ -818,7 +823,19 @@ async function acrossProjects() {
     byProject: rows,
     byProjectWindow: {
       since: new Date(since).toISOString(),
+      // The window ASKED for. The four facts after it are the window the log
+      // actually covers (v3.74.0, D5): a log that began five days ago cannot
+      // support "last 30 days", so the view states `windowDaysCovered` and
+      // where the log begins whenever `windowCovered` is false.
       windowDays: TRAY_CAPTURE_WINDOW_DAYS,
+      logStartsAt: win.logStartsAt,
+      windowStartsAt: win.windowStartsAt,
+      windowDaysCovered: win.windowDaysCovered,
+      windowCovered: win.windowCovered,
+      // WHAT IS COUNTED (v3.74.0, D5): an MCP bridge process id — one per
+      // Claude Code session, but ONE for many Claude Desktop conversations.
+      // `sessions*` keep their wire names; the view words them as connections.
+      unit: 'mcp-bridge-process',
       logPresent,
       logFiles,
       // The bars' NAMED denominator: the busiest project's sessions-that-saved.
@@ -841,6 +858,17 @@ async function acrossProjects() {
       // store younger than the window can say "records begin <date>" instead
       // of reading as a whole observed week.
       oldestEventAt: typeof pulse.oldestEventAt === 'string' ? pulse.oldestEventAt : null,
+      // v3.74.0 (parity with the widget's "Saves by tool"): the same pulse's
+      // per-tool lanes, newest-seen first. `lastSeenAt` is when a tool was
+      // last SEEN in what was read, never "last save"; `byToolNote` says why
+      // the counts are a floor when any journal was read only from its tail.
+      byTool: (Array.isArray(pulse.harnesses) ? pulse.harnesses : [])
+        .filter((id) => pulse.byHarness && pulse.byHarness[id])
+        .map((id) => ({ id, label: pulse.byHarness[id].label, events: pulse.byHarness[id].events,
+          lastSeenAt: pulse.byHarness[id].lastSeenAt })),
+      byToolFloor: pulse.byHarnessFloor === true,
+      byToolNote: typeof pulse.byHarnessNote === 'string' ? pulse.byHarnessNote : null,
+      eventsWithoutTool: Number.isInteger(pulse.eventsWithoutHarness) ? pulse.eventsWithoutHarness : 0,
     } : null,
   };
 }

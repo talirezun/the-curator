@@ -1716,10 +1716,10 @@ async function loadAcrossProjects(token, opts) {
       next = { byProject: data.byProject, window: data.byProjectWindow,
         savePulse: data.savePulse && typeof data.savePulse === 'object' ? data.savePulse : null };
     } else {
-      err = 'This server does not report sessions per project.';
+      err = 'This server does not report connections per project.';
     }
   } catch (e) {
-    err = (e && e.message) || 'Could not read the sessions per project.';
+    err = (e && e.message) || 'Could not read the connections per project.';
   }
   if (!isCurrentMount(token)) return;
   // A failed background refresh keeps the reading it already has: an error
@@ -9512,7 +9512,10 @@ function renderAcrossProjects() {
   // 30 days" — typed, while the route sends the window it counted over
   // (`byProjectWindow.windowDays`). The body states the window from the
   // payload, and the lede stays true whatever that window is.
-  const lede = 'Which projects’ agent sessions saved a handoff.';
+  // v3.74.0 (D5): CONNECTIONS. The figure counts MCP bridge processes — one
+  // per Claude Code session, but ONE for many Claude Desktop conversations —
+  // so "sessions" over-claimed; the ⓘ says what a connection is.
+  const lede = 'Which projects’ agent connections saved a handoff.';
   return settingsBlock(4, 'mcp-across', 'Across projects', lede, renderAcrossProjectsBody(), 'settings.mcp-across', '');
 }
 
@@ -9528,6 +9531,29 @@ function windowDaysWords(days) {
   return 'last ' + (d === 1 ? 'day' : d + ' days');
 }
 
+/**
+ * THE WINDOW THE USAGE LOG REALLY COVERS, as words (v3.74.0, D5).
+ *
+ * The route asks for 30 days; a log that began five days ago cannot support
+ * that. When `windowCovered === false` this says the span the log does cover
+ * and the day it begins — "last 5 days — the log begins 20 Sep" — from the
+ * route's `captureWindowFacts` (the widget's own derivation). Otherwise it is
+ * `windowDaysWords` of the window asked for. '' when neither is known.
+ */
+function logWindowWords(w) {
+  const win = w && typeof w === 'object' ? w : {};
+  const begins = typeof win.logStartsAt === 'string' ? Date.parse(win.logStartsAt) : NaN;
+  if (win.windowCovered === false && Number.isFinite(begins)
+      && Number.isFinite(win.windowDaysCovered)) {
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const d = new Date(begins);
+    const days = Math.round(win.windowDaysCovered);
+    return (days < 1 ? 'under a day' : 'last ' + (days === 1 ? 'day' : days + ' days'))
+      + ' — the log begins ' + d.getDate() + ' ' + MONTHS[d.getMonth()];
+  }
+  return windowDaysWords(win.windowDays);
+}
+
 function renderAcrossProjectsBody() {
   let body;
   const P = state.mcpProjects;
@@ -9535,7 +9561,7 @@ function renderAcrossProjectsBody() {
     body = '<p class="mcp-map-empty">' + escapeHtml(state.mcpProjectsError || 'Reading the usage logs…') + '</p>';
   } else {
     const w = P.window || {};
-    const capWindow = windowDaysWords(w.windowDays);
+    const capWindow = logWindowWords(w);
     const domains = state.defaultDomainInfo && Array.isArray(state.defaultDomainInfo.domains)
       ? state.defaultDomainInfo.domains : [];
     const busiest = Number.isInteger(w.busiestSaved) && w.busiestSaved > 0 ? w.busiestSaved : 0;
@@ -9549,8 +9575,8 @@ function renderAcrossProjectsBody() {
       const key = typeof r.domain === 'string' && r.domain && r.domain !== name
         ? r.domain + ' / ' + name : name;
       const idle = r.sessions === 0;
-      const sub = (idle ? (capWindow ? 'no session, ' + capWindow : 'no session')
-        : r.sessions + (r.sessions === 1 ? ' session' : ' sessions')) +
+      const sub = (idle ? (capWindow ? 'no connection, ' + capWindow : 'no connection')
+        : r.sessions + (r.sessions === 1 ? ' connection' : ' connections')) +
         (r.inStore === false ? ' · not in this folder' : '');
       return {
         key,
@@ -9562,8 +9588,8 @@ function renderAcrossProjectsBody() {
         depth: r.sessionsSaved > 0 && busiest > 0
           ? { amount: r.sessionsSaved, max: busiest,
               label: r.sessionsSaved === busiest
-                ? r.sessionsSaved + ' sessions saved — the busiest project'
-                : r.sessionsSaved + ' of ' + busiest + ' sessions saved, the busiest project' }
+                ? r.sessionsSaved + ' connections saved — the busiest project'
+                : r.sessionsSaved + ' of ' + busiest + ' connections saved, the busiest project' }
           : undefined,
       };
     });
@@ -9578,10 +9604,45 @@ function renderAcrossProjectsBody() {
       const key = 'saves' + (pw ? ', ' + pw : '') +
         (pulse.coversWholeWindow === false ? (since ? ' (records begin ' + since + ')' : ' (records do not cover it all)') : '');
       lines.push({ key, value: (pulse.lowerBound ? 'at least ' : '') + pulse.events });
+      // ── SAVES BY TOOL (v3.74.0, the parity rule) ────────────────────────
+      // The widget's "Saves by tool": the same pulse, one lane per tool
+      // (normalised by the data layer, so one tool typed two ways is one
+      // line). A count is "at least" whenever any journal was read only from
+      // its tail (`byToolFloor`); a tool with no save in the window reads
+      // "none" and says the day it was LAST SEEN in what was read — never
+      // "last save", which a tail cannot promise.
+      const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const seen = (iso) => {
+        const t = typeof iso === 'string' ? Date.parse(iso) : NaN;
+        if (!Number.isFinite(t)) return '';
+        const d = new Date(t);
+        return d.getDate() + ' ' + MONTHS[d.getMonth()];
+      };
+      for (const t of Array.isArray(pulse.byTool) ? pulse.byTool : []) {
+        if (!t || typeof t.label !== 'string' || !t.label || !Number.isInteger(t.events)) continue;
+        lines.push({
+          key: 'by ' + t.label,
+          value: t.events === 0 ? 'none'
+            : (pulse.byToolFloor === true || pulse.lowerBound ? 'at least ' : '') + t.events,
+          sub: t.events === 0 && seen(t.lastSeenAt) ? 'last seen ' + seen(t.lastSeenAt) : '',
+        });
+      }
+      if (Number.isInteger(pulse.eventsWithoutTool) && pulse.eventsWithoutTool > 0) {
+        lines.push({ key: 'named no tool', value: pulse.eventsWithoutTool });
+      }
     }
     const notes = [];
+    // THE WINDOW, VISIBLE (v3.74.0, D5). The monitor's label is its accessible
+    // name, not a line on screen, so a busy row's "7 connections" had no
+    // window beside it at all. Said once, first, in the same words.
+    if (w.logPresent === true && measured.length && capWindow) {
+      notes.push('Counted over the ' + capWindow + '.');
+    }
+    if (pulse && pulse.byToolFloor === true && typeof pulse.byToolNote === 'string' && pulse.byToolNote) {
+      notes.push(pulse.byToolNote);
+    }
     if (w.logPresent !== true) {
-      notes.push('No usage log on this computer yet — sessions appear here once an agent uses the bridge.');
+      notes.push('No usage log on this computer yet — connections appear here once an agent uses the bridge.');
     } else if (!measured.length) {
       notes.push('No project in this folder has a saved handoff yet.');
     }
@@ -9593,7 +9654,7 @@ function renderAcrossProjectsBody() {
       notes.push('Projects that share a name share one reading.');
     }
     body = '<div class="mcp-across">' + renderMonitor({
-      label: 'Sessions that saved, per project' + (capWindow ? ', ' + capWindow : ''),
+      label: 'Connections that saved, per project' + (capWindow ? ', ' + capWindow : ''),
       lines,
       note: notes.join(' '),
     }) + '</div>';

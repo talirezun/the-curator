@@ -64,7 +64,7 @@ const E = {
         ['DOCUMENTS', 'how many, and whether they’re current'],
         ['MEMORY', 'when an agent last saved'],
         ['KNOWLEDGE', 'pages in the domains it searches'],
-        ['AGENT SESSIONS', 'did agents read first, and save?'],
+        ['AGENT CONNECTIONS', 'did agents read first, and save?'],
         ['SESSION START', 'what an agent starts with'],
       ],
     },
@@ -109,12 +109,12 @@ const E = {
         ['The brief', { icon: 'pencil', text: 'you' }, 'your goal and firm decisions'],
         ['Handoffs', { icon: 'agent', text: 'agents' }, 'where each piece of work stopped'],
         ['Journal', { icon: 'agent', text: 'agents' }, 'one line per save; only grows'],
-        ['Agent sessions', { icon: 'search', text: 'a reading' }, 'did agents read first, and save?'],
+        ['Agent connections', { icon: 'search', text: 'a reading' }, 'did agents read first, and save?'],
       ],
     },
     points: [
       { icon: 'computer', text: 'Each computer keeps its own Handoffs, so syncing never overwrites them.' },
-      { icon: 'search', text: '**Agent sessions** counts agents that connected through the MCP tools.' },
+      { icon: 'search', text: '**Agent connections** counts agent tools that connected through the MCP tools.' },
     ],
     guide: { key: 'context.memory', heading: 'Memory — the brief, Handoffs and the Journal' },
   },
@@ -664,11 +664,11 @@ const E = {
   'settings.mcp-across': {
     label: 'About Across projects',
     title: 'Across projects',
-    lead: '**Across projects** shows which projects’ agent sessions saved a Handoff in the last 30 days.',
+    lead: '**Across projects** shows which projects’ agent connections saved a Handoff in the last 30 days.',
     points: [
-      { icon: 'agent', text: 'A session is one run of an agent through the MCP bridge.' },
-      { icon: 'search', text: 'A project that never saves reads 0, so gaps stand out.' },
-      { icon: 'clock', text: 'The last line counts every save in the last 7 days.' },
+      { icon: 'agent', text: 'Claude Code connects once per session; Claude Desktop once for many chats.' },
+      { icon: 'clock', text: 'A newer usage log counts only from the day it began.' },
+      { icon: 'search', text: 'The last lines count saves in the last 7 days, per tool.' },
     ],
     guide: { key: 'settings.mcp-tool-map', heading: 'The tool map — what your agents used' },
   },
@@ -841,14 +841,14 @@ export const FRAMING = {
  */
 export const SCREEN_WORDS = [
   'the brief', 'The brief', 'Documents', 'Memory', 'Knowledge', 'Handoffs', 'Journal',
-  'Agent sessions', 'Session start', 'read first', 'on request', 'not at start', 'mirrored',
+  'Agent connections', 'Session start', 'read first', 'on request', 'not at start', 'mirrored',
   'Window', 'Reading budget', 'Harness', 'Documents at start', 'Copy agent instructions',
   'domain', 'Projects', 'New domain', 'Ingest', 'PROJECT', 'Length', 'Model',
   'Wiki', 'Context', 'All', 'Scan', 'Providers & keys', 'Knowledge base', 'MCP bridge',
   'Shared Brain', 'Push', 'Pull',
   // The overview's tile names, printed as the tiles print them, and the
   // Pages list's three kinds — a table's row names are screen words too.
-  'DOCUMENTS', 'MEMORY', 'KNOWLEDGE', 'AGENT SESSIONS', 'SESSION START',
+  'DOCUMENTS', 'MEMORY', 'KNOWLEDGE', 'AGENT CONNECTIONS', 'SESSION START',
   'Entity', 'Concept', 'Summary',
   // v3.71.1 — the rest of the app's screen words, each as printed: domain
   // page figures and buttons, Settings block titles and fields, the model

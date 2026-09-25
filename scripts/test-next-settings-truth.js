@@ -82,7 +82,7 @@ const escapeHtml = (s) => String(s === undefined || s === null ? '' : s)
 // One sandbox over the real settings.js functions this suite drives.
 const FNS = ['browseBandPass', 'formatIsoDay', 'formatSyncedAt', 'formatModelPrice', 'providerLabel',
   'priceAsOfText', 'livePriceText', 'renderQuickSummary', 'markSystemCheckStale', 'setLiveRunsOn',
-  'openLiveConfirm', 'windowDaysWords', 'renderAcrossProjectsBody', 'acrossProjectsStamp',
+  'openLiveConfirm', 'windowDaysWords', 'logWindowWords', 'renderAcrossProjectsBody', 'acrossProjectsStamp',
   'refreshMcpUsage', 'onSaveDefaultDomain', 'scanCeilingHint', 'formatTokenCount', 'renderHealthLimits',
   'deriveMcpStatus'];
 const CONSTS = ['MODEL_PRICE_BANDS', 'SETTINGS_SECTIONS', 'ACROSS_PROJECTS_MAX_ROWS',
@@ -241,9 +241,9 @@ section('§5. Across projects states the windows it was sent, and moves with the
   Object.assign(state, { defaultDomainInfo: { domains: ['projects'] }, mcpProjectsError: null });
   state.mcpProjects = mk(14, { events: 3, windowSeconds: 3 * 86400, lowerBound: false, coversWholeWindow: true, oldestEventAt: null });
   const a = S.renderAcrossProjectsBody();
-  ok(/label="Sessions that saved, per project, last 14 days"/.test(a),
+  ok(/label="Connections that saved, per project, last 14 days"/.test(a),
     '★ the window is the one the ROUTE sent (14 here), not a typed 30 [F10]');
-  ok(/sub="no session, last 14 days"/.test(a), '…in the idle row too');
+  ok(/sub="no connection, last 14 days"/.test(a), '…in the idle row too');
   ok(/key="saves, last 3 days"/.test(a), '★ …and the pulse window from `windowSeconds` (3 days here), not a typed 7');
   ok(!/30 days|7 days/.test(a), 'no typed 30 or 7 survives in the body');
   state.mcpProjects = mk(30, { events: 2, windowSeconds: 604800, lowerBound: true, coversWholeWindow: false,
@@ -253,6 +253,48 @@ section('§5. Across projects states the windows it was sent, and moves with the
     '★ a store younger than the window says where its record begins, rather than claiming a whole observed week');
   ok(/value="at least 2"/.test(b), 'CONTROL: the lower-bound disclosure is unchanged');
   eq(S.windowDaysWords(undefined), '', 'an absent window drops the clause — never invented');
+
+  // ── v3.74.0 (D5): THE WINDOW THE LOG REALLY COVERS ────────────────────
+  // The route asks for 30 days; a log that began five days ago cannot
+  // support that. The label and the idle row state the span the log covers
+  // and the day it begins, from the route's captureWindowFacts.
+  const begins = new Date(2026, 8, 20, 9, 0, 0).toISOString();          // 20 Sep, local
+  state.mcpProjects = { ...mk(30, null),
+    window: { windowDays: 30, logPresent: true, busiestSaved: 2,
+      windowCovered: false, windowDaysCovered: 5.3, logStartsAt: begins } };
+  const young = S.renderAcrossProjectsBody();
+  ok(/label="Connections that saved, per project, last 5 days — the log begins 20 Sep"/.test(young),
+    '★ a log younger than the window states its true span and where it begins, never "last 30 days"', young);
+  ok(/sub="no connection, last 5 days — the log begins 20 Sep"/.test(young), '…in the idle row too');
+  ok(/<note>Counted over the last 5 days — the log begins 20 Sep\./.test(young),
+    '★ …and in a VISIBLE line — the monitor label is only an accessible name', young);
+  ok(!/30 days/.test(young), '…and no "30 days" survives anywhere in the body');
+  state.mcpProjects = { ...mk(30, null),
+    window: { windowDays: 30, logPresent: true, busiestSaved: 2,
+      windowCovered: true, windowDaysCovered: 30, logStartsAt: '2026-08-01T00:00:00.000Z' } };
+  ok(/label="Connections that saved, per project, last 30 days"/.test(S.renderAcrossProjectsBody()),
+    'CONTROL: a log that covers the window says the window asked for');
+  eq(S.logWindowWords({ windowDays: 30, windowCovered: false, windowDaysCovered: 0.4, logStartsAt: begins }),
+    'under a day — the log begins 20 Sep', 'a log begun today says "under a day", never "last 0 days"');
+  ok(!/\bsessions?\b/.test(young.replace(/<[^>]+>/g, ' ')), '★ the body never calls a bridge run a "session" (D5)', young);
+
+  // ── v3.74.0 (parity): SAVES BY TOOL, the widget's lanes ────────────────
+  state.mcpProjects = mk(30, { events: 12, windowSeconds: 604800, lowerBound: false, coversWholeWindow: true,
+    byTool: [{ id: 'claude-code', label: 'Claude Code', events: 12, lastSeenAt: '2026-09-25T09:00:00Z' },
+      { id: 'antigravity', label: 'Antigravity', events: 0, lastSeenAt: new Date(2026, 8, 1, 12).toISOString() }],
+    byToolFloor: false, byToolNote: null, eventsWithoutTool: 0 });
+  const tools = S.renderAcrossProjectsBody();
+  ok(/key="by Claude Code" value="12"/.test(tools), '★ one line per tool, with its count', tools);
+  ok(/key="by Antigravity" value="none" sub="last seen 1 Sep"/.test(tools),
+    '★ a tool with no save in the window reads "none" and when it was LAST SEEN — never "last save"', tools);
+  state.mcpProjects = mk(30, { events: 12, windowSeconds: 604800, lowerBound: true, coversWholeWindow: true,
+    byTool: [{ id: 'claude-code', label: 'Claude Code', events: 12, lastSeenAt: null }],
+    byToolFloor: true, byToolNote: 'At least these counts: 2 journals were read only from the newest 16 KB.',
+    eventsWithoutTool: 1 });
+  const floor = S.renderAcrossProjectsBody();
+  ok(/key="by Claude Code" value="at least 12"/.test(floor), '★ a floor reads "at least" on each tool line');
+  ok(/<note>[^<]*At least these counts: 2 journals/.test(floor), '…and the data layer\'s own note says why');
+  ok(/key="named no tool" value="1"/.test(floor), 'saves that named no tool are counted, not dropped');
 
   // F9: the 30 s tick re-reads block ④ when the save stamp moved, not otherwise.
   H.acrossLoads.length = 0;

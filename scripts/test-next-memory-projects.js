@@ -808,6 +808,32 @@ routerMod.__setWorkingStateStoreForTest(null);
     { params: { domain: 'alpha' }, body: { project: 'projects' } });
   eq('the one literal that would shadow its own detail URL is refused', reserved.status, 400);
   eq('...at the ROUTE, with its own reason', reserved.body.reason, 'reserved_project');
+
+  // ── v3.74.0: WHICH TOOLS SAVED, NORMALISED, ON THE INDEX ROW ─────────────
+  // The Context sidebar names every tool active on a project (the widget's
+  // project × tool rows — the parity rule), so the route sends them through
+  // the data layer's ONE normaliser: `Claude Code (desktop)` and
+  // `claude-code` are one tool, `Claude Desktop` is another product.
+  const mk = await call('post', '/:domain/projects', { params: { domain: 'alpha' }, body: { project: 'twotools' } });
+  eq('CONTROL: a project for the tool rows is created', mk.status, 201);
+  const s1 = await realStore.saveWorkingState('alpha', { project: 'twotools', scope: 'ui',
+    harness: 'Claude Code (desktop)', headline: 'ui work', now: 'n', next: 'x' });
+  const s2 = await realStore.saveWorkingState('alpha', { project: 'twotools', scope: 'api',
+    harness: 'Antigravity', headline: 'api work', now: 'n', next: 'x' });
+  const s3 = await realStore.saveWorkingState('alpha', { project: 'twotools', scope: 'ops',
+    harness: 'claude-code', headline: 'ops work', now: 'n', next: 'x' });
+  ok('CONTROL: three real saves by two tools', [s1, s2, s3].every((r) => r && r.ok === true), JSON.stringify([s1,s2,s3].map((r) => r && (r.reason || r.error))));
+  const toolIdx = await call('get', '/');
+  const lum = (toolIdx.body.projects || []).find((r) => r.domain === 'alpha' && r.project === 'twotools') || {};
+  const ids = (lum.tools || []).map((t) => t.id);
+  eq('★ the row names each TOOL once, newest first — two spellings of Claude Code are one',
+    JSON.stringify(ids), '["claude-code","antigravity"]');
+  eq('...under its one label', (lum.tools || [])[0] && lum.tools[0].label, 'Claude Code');
+  ok('...each with its own save clock, for the view\'s 24-hour Active test',
+    (lum.tools || []).every((t) => typeof t.writtenAt === 'string' || typeof t.lastWriteAt === 'string'),
+    JSON.stringify(lum.tools));
+  eq('the newest save\'s tool is sent NORMALISED as well as raw', lum.harnessLabel, 'Claude Code');
+  eq('...raw kept', lum.harness, 'claude-code');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
