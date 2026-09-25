@@ -345,6 +345,7 @@ For the same reason, protocol-shaped tokens and line-initial chat role markers a
 - Scope names are normalised to a safe path segment. Anything unusable is refused with `invalid-scope` rather than silently mangled.
 - **`latest` is a read-side keyword, not a scope you may save to.** Reading with `scope: "latest"` opens the newest work-stream and the reply names it in `scopeResolvedBy`; saving always names a real scope. A work-stream genuinely called `latest` wins over the keyword, which is a good reason not to create one.
 - **A scope belongs to a project, not a domain.** Two projects in one domain may both have a `main`, and they are different work-streams. Resolve the project first (§2 step 1), always.
+- If the user asks how to set scopes up, point them to "How to organise your work-streams (scopes)" in The Curator's user guide: six naming patterns, each with a line for the brief.
 
 **Machine** is a read-side argument only.
 

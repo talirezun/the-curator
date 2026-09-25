@@ -2051,6 +2051,225 @@ true, and a store that only added to itself could never say so.
   about once a minute while you're watching it, so switching between projects always shows a
   fresh reading rather than one cached from earlier in the visit.
 
+##### How to organise your work-streams (scopes)
+
+*New in v3.72.3.* **A scope is the name a handoff is saved under, and you — or your agent — choose
+it.** No control in the app creates, renames or deletes a single scope, so the one decision worth making
+on purpose is *how you name them*. This section is that decision: what the words mean, six patterns
+with the exact line to paste into your brief, answers to the two questions people ask most, and
+three worked examples.
+
+###### The five words, side by side
+
+| On screen | On disk | What it is | How many |
+|---|---|---|---|
+| **The brief** | `state/<project>/project.md` | Your standing instructions for the project. Every scope reads the same brief | **One per project**, shared by all scopes and all machines |
+| **Scope** (a row's name in **Handoffs**) | the `<scope>/` folder | The name of one thread of work — `main`, `auth-refactor`, `session-2026-09-25-docs` | As many as you name. A save that names none goes to `main` |
+| **Machine** (the **Machine** column) | the `<machine>/` folder inside a scope | The computer — strictly, the installation of The Curator — that saved it. Recorded for you; an agent cannot choose it | One per computer that has saved under that scope |
+| **Handoff** (a row in **Handoffs**) | `<scope>/<machine>/current.md` | Where that thread stood at its last save on that computer | **One per project × scope × machine** |
+| **Journal** | `<scope>/<machine>/journal.jsonl`, beside the handoff | One line per save — when, which tool, which model, the headline. Only grows | One per handoff |
+
+```mermaid
+flowchart TD
+    P["PROJECT — lumina<br/><i>project.md — the ONE brief every scope reads</i>"]
+    P --> S1["SCOPE — main"]
+    P --> S2["SCOPE — auth-refactor"]
+    S1 --> M1["MACHINE — laptop"]
+    S1 --> M2["MACHINE — desktop"]
+    S2 --> M3["MACHINE — laptop"]
+    M1 --> H1["current.md — the handoff<br/>journal.jsonl — the Journal"]
+    M2 --> H2["current.md — the handoff<br/>journal.jsonl — the Journal"]
+    M3 --> H3["current.md — the handoff<br/>journal.jsonl — the Journal"]
+```
+
+*Three handoffs, three rows in the **Handoffs** table: `main` on the laptop, `main` on the desktop,
+`auth-refactor` on the laptop. The brief sits above all of them.*
+
+**What a save does, in four lines** — checked against the store, not paraphrased from memory:
+
+| You save… | What happens |
+|---|---|
+| Under a scope that already has a handoff **on this computer** | That handoff is **overwritten** — replaced, not merged. One line is added to its Journal |
+| Under a **new** scope name | A new handoff is **created** — a new row in **Handoffs** |
+| Under the same scope **on another computer** | That computer gets **its own copy** beside the first; neither ever touches the other's file |
+| From **two agent tools on one computer**, same scope | They write the **same file** and overwrite each other — there is no tool name in the path. See [the pattern for this](#several-agent-tools-on-one-computer) |
+
+Three things follow. **The name you save under is the only thing that keeps two threads apart** on
+one computer. **`latest` is only for reading**: an agent asking for scope `latest` gets the
+work-stream whose handoff file was most recently written on this disk, and the reply names which
+one it opened — you never save *to* `latest`. And **scopes are created by saving and by nothing
+else** — an agent's `save_working_state`, or `my-curator save --scope <name>` from a terminal. There
+is no rename or delete control: to retire a scope, stop saving under it and its dot goes hollow
+(*dormant*); to remove one, delete its folder under `state/<project>/` by hand and sync. A name is
+tidied into a safe folder name as it saves — lower-case, `feature/auth` becomes `feature-auth`, at
+most 64 characters — and the save says so when it changed.
+
+###### Six patterns, and the line for your brief
+
+Pick one per project and write it into the brief, where every agent in every tool reads it. The
+lines below are ready to paste into the brief's operating-directives section.
+
+| Pattern | Use it when | Paste into the brief |
+|---|---|---|
+| **One stream** | One thread of work, one tool, and you only ever want *where things stand now* | *"Save working state under scope `main`."* |
+| **One scope per session** | Long projects where you want each session's handoff to stay readable afterwards instead of being overwritten by the next | *"Save working state in ONE scope per session named `session-YYYY-MM-DD-topic` (date and topic); save early and often; always before you stop."* |
+| **One scope per work-stream** | Several features or tracks running in parallel, each resumed on its own | *"Use one scope per work-stream, named after it (e.g. `auth-refactor`); a new stream gets a new scope."* |
+| **Several computers** | Laptop and desktop on the same project | Nothing — see below |
+| **Several agent tools on one computer** | Two tools working the same project at the same time | *"Each agent saves under its own scope: `<harness>-<topic>` (e.g. `antigravity-api`, `claude-code-ui`); never save under another agent's scope."* |
+| **Handing a session over** | Context full, switching tool, or moving computer | Nothing — it is a habit, below |
+
+**One stream.** The simplest, and the default: a save that names no scope goes to `main`, and the
+**Copy agent instructions** block ([§13b](#making-sure-your-agent-actually-does-it)) says `main` as
+pasted. The cost: the previous session's handoff is gone the moment the next save lands — the
+Journal keeps one line per save, never the full text.
+
+**One scope per session.** This is how The Curator's own repository is worked. Every session opens
+the newest handoff (`latest`), reads where the last one stopped, and saves under a fresh name, so
+yesterday's handoff is still there tomorrow. The cost is a longer **Handoffs** table; it shows the
+newest five and **Show N more** extends it. Name the topic, not just the date — the name is what you
+scan for a fortnight later.
+
+**One scope per work-stream.** Right when threads genuinely run side by side: three features of one
+product are three scopes reading one brief. Reuse a name while the work continues — a new name for
+the same work splits its history, and the next session opens the wrong one.
+
+**Several computers.** Nothing to configure: every computer writes into its own folder under the
+scope, automatically, so two computers can never overwrite each other. An agent asking for a scope
+without naming a machine gets the most recently written copy and a list of the others. A copy from
+elsewhere is marked — the **Machine** column names it, the reader shows a
+**synced from another machine** chip, and the agent's read carries `machineIsThisMachine: false`,
+which tells it to say so and to check the next steps against *this* checkout before acting. Two habits make it work: press
+**Sync now** (in **Sync**, [§15](#15-sync-across-computers)) **before you start** and **after your
+last save**. The brief is the one file with no machine in its path, so edit it on one computer and
+sync before editing it on the other.
+
+<a id="several-agent-tools-on-one-computer"></a>**Several agent tools on one computer.** The one case
+the machine folder cannot separate: two tools on one computer are the same machine, so if they save
+under the same scope, each save replaces the other's. Nothing refuses or prevents that save. The app
+only notices **afterwards**, from the Journal, and only once the two tools have taken turns — one,
+the other, the first again: then step ② says so in red, *"Two tools are writing `<scope>`… Give
+each tool its own handoff."* A single switch from one tool to another is treated as a move, not a
+clash, and is not flagged. So give each tool its own scope from the start — and note that
+**Copy agent instructions**, as copied, tells every tool to save under `main`, which is exactly
+this collision. Three things make separate scopes hold in practice:
+
+- **Working in parallel, each agent reads its own scope, not `latest`.** `latest` opens whichever
+  tool saved last — the *other* one, half the time. Name it when you start: *"resume
+  `claude-code-ui`"*. (Handing one piece of work from one tool to the other is the opposite case:
+  there `latest` is right — it opens whoever saved last — and the new tool then saves under its own
+  scope.)
+- **An orchestrator reads the others by name.** An agent coordinating the others calls
+  `get_project_context` (or `get_working_state`) with `scope: "antigravity-api"` to read that
+  tool's handoff — reading another scope is always safe; only *saving* into it is not.
+- **Hooks, if you installed them, name the newest scope.** `my-curator install-hooks` writes hooks
+  that inject, and ask for a save under, the project's *newest* work-stream. With two tools on one
+  computer, add `--scope <this tool's scope>` to the `my-curator hook …` commands in that tool's
+  hook settings ([§13c](#hooks-what-they-can-do-on-your-harness-and-what-they-cannot)).
+
+**Handing a session over.** When a context window is nearly full, or you are moving to another tool
+or computer: ask for a **complete** handoff — *"save a complete handoff now; we are continuing
+elsewhere"* — and wait for the agent to confirm the save landed. Sync if you are changing computer.
+Then open the new session with one line:
+
+> *"Resume project `lumina` from The Curator: call `get_project_context` with scope `latest`, tell
+> me which scope you opened and the rules you are following, then continue from its next steps."*
+
+Name the scope instead of `latest` when several tools or threads are live.
+
+###### Two questions people ask
+
+<a id="do-i-need-both-claudemd-and-agentsmd"></a>**"Claude Code reads `CLAUDE.md`, Antigravity reads
+`AGENTS.md` (and/or `GEMINI.md`) — do I need both files in the project folder?"**
+
+Yes, both — Claude Code loads `CLAUDE.md`, and Antigravity's own documentation names `GEMINI.md` and
+`AGENTS.md` (walked up from the working folder to the repository root) and not `CLAUDE.md`. That is
+the vendor's documentation, not something The Curator has measured. **But keep the rules in one
+place, and keep each file to the same short pointer.** In practice: `CLAUDE.md` and `AGENTS.md`,
+identical — `AGENTS.md` also serves Codex, opencode and Cursor. The rules live in the **brief**: it is stored in The Curator,
+not in either tool, and `get_project_context` returns it to any tool that connects. The files only
+have to send each tool there. The pointer, identical in every file:
+
+```markdown
+## Working state
+
+This repository's working state lives in The Curator (project `acme/lumina`, see
+`.curator-project`). At the START of every session call the my-curator MCP tool
+`get_project_context` with project "lumina" and read the standing brief before acting.
+Open and save the scope the brief's scope rule gives you; never save under another
+agent's scope. SAVE with `save_working_state` under project "lumina" after every material
+decision and at least every ten tool calls, and ALWAYS before you stop; a save
+overwrites, so send the complete state each time.
+```
+
+- **Start from Copy agent instructions** (Domains → Projects, or the Project context screen). As
+  copied it says `get_working_state` with scope `latest` and saves under `main` — right for *one
+  stream*. For any other pattern, edit the scope wording in *your pasted copy* to defer to the
+  brief, as above — the app's own copy stays frozen, because it is the text that was measured (on
+  Claude Code an agent saved in 3 of 4 runs with it, 0 of 4 with the skill alone). An edited
+  pointer, this repository's own `CLAUDE.md` included, is **unmeasured**. The block's later
+  paragraphs (Documents, read-first) still apply; paste them below the pointer unchanged.
+- **One `.curator-project` file serves every tool.** It holds `domain/project`; the continuity skill
+  and the `my-curator` command read it, whichever tool is running. (The MCP server itself does not —
+  which is why the pointer names the project too.)
+- **Antigravity is not in The Curator's harness table.** That table records `CLAUDE.md` for Claude
+  Code, `AGENTS.md` for Codex, opencode and Cursor, and `GEMINI.md` for Gemini CLI (where
+  `AGENTS.md` is opt-in); `my-curator doctor` has no Antigravity row, and there is no Antigravity
+  hook adapter, so `install-hooks` cannot wire it. Whether the pointer landed is something you
+  check yourself: its first reply should name the rules from your brief
+  ([read-back](#making-sure-your-standing-rules-actually-land)). No reply naming them means it did
+  not.
+- **The skills, for Antigravity** — also vendor-documented, unverified here: its documentation puts
+  skills in a `skills/` folder under a customization root — `.agents/` in the project, or
+  `~/.gemini/config/` for every project. Copy each skill folder whole, companion files included,
+  and if you keep copies in both places, keep them identical.
+
+<a id="how-do-i-build-from-two-computers"></a>**"How do I build from two computers — do I need the
+repo cloned on both, and sync the state first?"**
+
+Yes to both — **two different things travel by two different routes**:
+
+| What | Travels by | Before you start | When you stop |
+|---|---|---|---|
+| **Your code** | The project's own git remote — clone it on both computers | `git pull` | Commit and `git push` |
+| **Working state** — the brief, handoffs, Journal, Documents | The Curator's **Personal Sync** — your private knowledge repository ([§15](#15-sync-across-computers)) | **Sync now** | **Sync now**, *after* the last save |
+
+The per-computer handoff copy is what makes this safe: the laptop and the desktop each save into
+their own folder, so neither overwrites the other even when you forget to sync. Start the second
+computer's session with scope **`latest`** — after **Sync now**, the handoff that just arrived from
+the other computer is the one most recently written on this disk, so `latest` opens it, and the
+agent's reply says it came from another machine. One caution: if a sync brings in several
+work-streams at once, `latest` picks between them by when they landed here, not when they were
+written — name the one you want.
+
+###### Three worked examples
+
+**1 — One long project, many sessions, one tool.**
+
+1. In the brief, paste the *one scope per session* line.
+2. In the repository, paste the pointer into `CLAUDE.md` and **Copy marker line** into
+   `.curator-project`.
+3. Each session: *"resume"* → the agent opens `latest`, reads the brief, works, and saves under
+   `session-2026-09-25-billing` as it goes and before it stops.
+4. A week later every session is a row in **Handoffs**, newest first, each readable in the reader.
+
+**2 — Claude Code and Antigravity, same project, same computer, same afternoon.**
+
+1. In the brief, paste the *several agent tools* line.
+2. Put the same pointer in `CLAUDE.md` (for Claude Code) and `AGENTS.md` (for Antigravity).
+3. Start each one naming its scope: *"resume `claude-code-ui`"*, *"resume `antigravity-api`"*. If
+   you installed hooks for Claude Code, add `--scope claude-code-ui` to them.
+4. **Handoffs** shows two rows, one per tool, on this machine. If step ② ever shows *"Two tools are
+   writing…"*, one of them saved under the other's scope — tell it which is its own.
+
+**3 — Laptop by day, desktop in the evening.**
+
+1. Nothing to set up for state beyond Personal Sync on both, and the code repository cloned on both.
+2. Laptop, end of day: the agent saves → **Sync now** → `git push`.
+3. Desktop: `git pull` → **Sync now** → *"resume"*. The agent opens `latest` — the laptop's
+   handoff — and says it came from another machine.
+4. The desktop's save lands in the desktop's own folder under the same scope. **Handoffs** now shows
+   the scope twice, once per machine, and the next read on either computer opens the newer one.
+
 ##### Knowledge — which domains a project draws on
 
 **One row per domain, plus a picker in a head row above them.** Through v3.64.2 a project could
@@ -4240,7 +4459,7 @@ So the division of labour is:
 | **The brief** (`project.md`) | What is true across *all* the work: the architecture, the standing constraints, how you like your agents to operate, pointers to depth. Changes rarely, deliberately. |
 | **A scope** (`<scope>/…`) | Where *one workstream* stands right now. Overwritten on every save. Churns. |
 
-**Which means: do not collapse your work into a single scope in order to get a shared brief. You already have one.** That instinct is understandable and it is the wrong way round — the brief is *already* shared by every scope, so collapsing buys you nothing, and it costs you the one thing scopes exist for: two workstreams under one scope overwrite each other's handoff. Keep them separate. Three features of one product are three scopes — `checkout-rewrite`, `billing-api`, `mobile-nav` — all reading the same brief. A read that names no scope gets `main`.
+**Which means: do not collapse your work into a single scope in order to get a shared brief. You already have one.** That instinct is understandable and it is the wrong way round — the brief is *already* shared by every scope, so collapsing buys you nothing, and it costs you the one thing scopes exist for: two workstreams under one scope overwrite each other's handoff. Keep them separate. Three features of one product are three scopes — `checkout-rewrite`, `billing-api`, `mobile-nav` — all reading the same brief. A read that names no scope gets `main`. Six naming patterns, with the line to paste into your brief for each, are in [How to organise your work-streams](#how-to-organise-your-work-streams-scopes).
 
 **How the brief gets written is different from everything else here.** `save_working_state` only ever writes a scope's handoff, and nothing writes a brief as a by-product of a session. There are exactly three ways it changes, and all three are deliberate acts:
 
