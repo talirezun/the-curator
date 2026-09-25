@@ -9872,10 +9872,34 @@ async function deleteFoundation(token) {
  * handler keeps the data it needs on its own element.
  */
 function bindFoundationRows(root, token) {
+  // THE WHOLE ROW IS THE PRESS (v3.72.2) — the same defect and the same fix as
+  // `bindWorkStreamRows`, whose header carries the reasoning: `.fnd-row`
+  // hovers and shifts like one control, but only the title button listened.
+  // This row holds OTHER controls (the start listbox, Edit, the trash, the
+  // "why?" word), and a press on any of them stays that control's.
   root.querySelectorAll('.fnd-open[data-fnd-slug]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    const press = () => {
       openFoundation(btn.dataset.fndSlug, token)
         .catch((err) => reportAsyncMountFailure(token, err));
+    };
+    const row = typeof btn.closest === 'function' ? btn.closest('tr') : null;
+    if (!row || typeof row.addEventListener !== 'function') {
+      btn.addEventListener('click', press);
+      return;
+    }
+    row.addEventListener('click', (e) => {
+      const t = e && e.target;
+      const hit = t && typeof t.closest === 'function'
+        // `[role]` covers the listbox's options and any other ARIA control;
+        // nothing plain in these rows carries a role.
+        ? t.closest('a, button, input, select, textarea, label, summary, [role]')
+        : null;
+      if (hit && hit !== btn && (typeof row.contains !== 'function' || row.contains(hit))) return;
+      if (hit !== btn && typeof getSelection === 'function') {
+        const sel = getSelection();
+        if (sel && !sel.isCollapsed && String(sel).trim()) return;
+      }
+      press();
     });
   });
 
@@ -12646,11 +12670,48 @@ function bindKnowledgeRows(root, token) {
   });
 }
 
+// ── THE WHOLE ROW IS THE PRESS (v3.72.2) ──────────────────────────────────
+// The maintainer's report: with ONE handoff its row is highlighted and
+// "clicking it does nothing". Measured in the running app: the row hovers,
+// shifts on :active and carries the open-row tint — it presents as ONE control
+// — but the only listener was on the slug button in the first cell, ~56px of a
+// six-column row inside a horizontally scrolling table. A press anywhere else
+// on the row (the headline, the age, the machine) reached nothing. With two
+// rows a press on the OTHER row's slug worked, which is why it read as "the
+// selected row ignores clicks".
+//
+// So the listener goes on the `<tr>`. The button keeps the keyboard contract
+// (Tab reaches it, Enter/Space fire a `click` on it) and that click BUBBLES to
+// the row, so there is exactly ONE handler per row and a press can never open
+// the reader twice. A press on ANOTHER control inside the row (the Documents
+// table's start-listbox, Edit, the trash, a "why?" word) is that control's, not
+// the row's. A drag that selects text in a cell is a selection, not a press.
+// A caller whose button has no `<tr>` (a stub, an unforeseen markup) keeps the
+// old button-only binding rather than binding nothing.
 function bindWorkStreamRows(root, token) {
   root.querySelectorAll('.mem-ws-open[data-mem-scope]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    const press = () => {
       openWorkStream(btn.dataset.memScope, btn.dataset.memMachine || null, token)
         .catch((err) => reportAsyncMountFailure(token, err));
+    };
+    const row = typeof btn.closest === 'function' ? btn.closest('tr') : null;
+    if (!row || typeof row.addEventListener !== 'function') {
+      btn.addEventListener('click', press);
+      return;
+    }
+    row.addEventListener('click', (e) => {
+      const t = e && e.target;
+      const hit = t && typeof t.closest === 'function'
+        // `[role]` covers the listbox's options and any other ARIA control;
+        // nothing plain in these rows carries a role.
+        ? t.closest('a, button, input, select, textarea, label, summary, [role]')
+        : null;
+      if (hit && hit !== btn && (typeof row.contains !== 'function' || row.contains(hit))) return;
+      if (hit !== btn && typeof getSelection === 'function') {
+        const sel = getSelection();
+        if (sel && !sel.isCollapsed && String(sel).trim()) return;
+      }
+      press();
     });
   });
 }

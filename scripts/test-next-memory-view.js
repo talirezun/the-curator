@@ -6425,10 +6425,24 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   });
   const mkTr = (btn) => ({ _btn: btn, querySelectorAll: (sel) =>
     (sel.includes('mem-ws-open') ? [btn] : []) });
+  // v3.72.2 — a button INSIDE a real-shaped <tr>: `closest('tr')` answers the
+  // row, `closest(<interactive>)` answers the button itself, exactly as the
+  // DOM does for a press that lands on the button. `_cell` is a plain cell
+  // (the headline) and `_other` another control in the same row.
+  const mkRowBtn = (scope, machine) => {
+    const btn = mkBtn(scope, machine);
+    const cell = { closest: () => null };
+    const other = { closest: () => other };
+    const tr = { _click: null, addEventListener(t, fn) { if (t === 'click') this._click = fn; },
+      contains: (n) => n === btn || n === cell || n === other };
+    btn.closest = (sel) => (sel === 'tr' ? tr : (sel.includes('button') ? btn : null));
+    Object.assign(btn, { _tr: tr, _cell: cell, _other: other });
+    return btn;
+  };
 
   function rig(over = {}) {
     const calls = { reader: [], scopesLoaded: [], render: 0 };
-    const rowButtons = (over.rows || ['ws-00']).map((r) => mkBtn(r, 'boxa'));
+    const rowButtons = (over.rows || ['ws-00']).map((r) => (over.withRow ? mkRowBtn : mkBtn)(r, 'boxa'));
     const tbody = {
       children: rowButtons.map(mkTr),
       _appended: '',
@@ -6576,6 +6590,56 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     ok('...without a loading panel, because nothing is being fetched',
       !r.calls.reader[0].loading, JSON.stringify(r.calls.reader[0]));
     eq('...and without re-reading it', r.calls.scopesLoaded.length, 0);
+  }
+
+  // ── v3.72.2: THE WHOLE ROW IS THE PRESS — A LONE, SELECTED HANDOFF OPENS ─
+  // The maintainer's report: with ONE handoff its row is highlighted and a
+  // click "does nothing". The row presented as one control but only the slug
+  // button in its first cell listened, so a press on the headline, the age or
+  // the machine reached nothing. Driven through the REAL `wire` →
+  // `bindWorkStreamRows` → `openWorkStream` chain, with the press landing on
+  // a plain cell of the row, as a mouse on the headline does.
+  {
+    const opened = { scope: 'ws-00', machine: 'boxa',
+      current: { present: true, writtenAgeSeconds: 120, writtenAt: iso(120), text: '## x\n\ny' },
+      journal: { returned: 0, total: 0, totalUnknown: false, entries: [] } };
+    // (a) ONE row, and it is the open (selected) one.
+    const r = rig({ withRow: true, detail: opened,
+      state: { projectRead: { scopes: [scopes[0]], savedCopies: 1, distinctScopeCount: 1, brief: { present: false } } } });
+    const btn = r.rowButtons[0];
+    ok('SINGLE ROW: the press is bound on the ROW', typeof btn._tr._click === 'function');
+    ok('...and NOT also on the button, so a button press (which bubbles) cannot open twice',
+      btn._click === null);
+    btn._tr._click({ target: btn._cell });
+    await new Promise((res) => setImmediate(res));
+    eq('SINGLE SELECTED ROW: a press on its headline cell OPENS THE READER', r.calls.reader.length, 1);
+    ok('...with the document, not a loader', !!(r.calls.reader[0] && !r.calls.reader[0].loading
+      && r.calls.reader[0].slug === 'state/lumina/ws-00/boxa/current.md'), JSON.stringify(r.calls.reader[0] || null));
+    // Enter/Space on the focused button fire a `click` whose target is the button.
+    btn._tr._click({ target: btn });
+    await new Promise((res) => setImmediate(res));
+    eq('RE-PRESSING the open row (Enter/Space or a click on the slug) opens it again, once',
+      r.calls.reader.length, 2);
+    eq('...and neither press re-read it', r.calls.scopesLoaded.length, 0);
+    btn._tr._click({ target: btn._other });
+    await new Promise((res) => setImmediate(res));
+    eq('a press on ANOTHER control in the row is that control\'s, not an open', r.calls.reader.length, 2);
+
+    // (b) ONE row, nothing opened yet: the cell press reads it and opens it.
+    const r2 = rig({ withRow: true,
+      state: { projectRead: { scopes: [scopes[0]], savedCopies: 1, distinctScopeCount: 1, brief: { present: false } } } });
+    r2.rowButtons[0]._tr._click({ target: r2.rowButtons[0]._cell });
+    await new Promise((res) => setImmediate(res));
+    eq('SINGLE UNOPENED ROW: a cell press reads that work-stream', r2.calls.scopesLoaded.join(','), 'ws-00/boxa');
+    eq('...and opens the loader then the document', r2.calls.reader.length, 2);
+
+    // (c) TWO rows, the first selected: re-pressing it by its cell opens IT.
+    const r3 = rig({ withRow: true, detail: opened, rows: ['ws-00', 'ws-01'] });
+    r3.rowButtons[0]._tr._click({ target: r3.rowButtons[0]._cell });
+    await new Promise((res) => setImmediate(res));
+    eq('TWO ROWS: the SELECTED row\'s cell press opens the reader', r3.calls.reader.length, 1);
+    eq('...on that row\'s own handoff', r3.calls.reader[0] && r3.calls.reader[0].slug,
+      'state/lumina/ws-00/boxa/current.md');
   }
 
   // ── "SHOW N MORE" APPENDS ───────────────────────────────────────────────
@@ -11047,6 +11111,30 @@ function realListbox() {
   eq('one request, at the document\'s own URL', calls.urls.length, 1);
   ok('...escaped segment by segment',
     calls.urls[0] === '/api/memory/acme/lumina/foundations/architecture.md', calls.urls[0]);
+  // ── v3.72.2: THE WHOLE DOCUMENT ROW IS THE PRESS ─────────────────────
+  // The Handoffs defect in its sibling table: `.fnd-row` hovers and shifts as
+  // one control, but only the title button listened. A button in a real-shaped
+  // <tr>; the press lands on a plain cell, then on another control in the row.
+  {
+    const before = calls.reader.length;
+    const cell = { closest: () => null };
+    const other = { closest: () => other };
+    let rowBtn = null;
+    const tr = { _click: null, addEventListener(t, fn) { if (t === 'click') this._click = fn; },
+      contains: (n) => n === cell || n === other || n === rowBtn };
+    rowBtn = { dataset: { fndSlug: 'architecture.md' }, _click: null,
+      addEventListener(t, fn) { if (t === 'click') this._click = fn; },
+      closest: (sel) => (sel === 'tr' ? tr : (sel.includes('button') ? rowBtn : null)) };
+    api.bindFoundationRows({ querySelectorAll: (sel) => (sel.includes('fnd-open') ? [rowBtn] : []) }, 1);
+    ok('DOCUMENT ROW: the press is bound on the row, not also on the button',
+      typeof tr._click === 'function' && rowBtn._click === null);
+    tr._click({ target: cell });
+    await new Promise((r) => setImmediate(r));
+    eq('...and a press on a plain cell of the row opens the document', calls.reader.length - before, 2);
+    tr._click({ target: other });
+    await new Promise((r) => setImmediate(r));
+    eq('...while a press on another control in the row does not', calls.reader.length - before, 2);
+  }
 
   const c = calls.reader[1];
   eq('the reader\'s path is where the file actually is', c.slug, 'state/lumina/foundations/architecture.md');
