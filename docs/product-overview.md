@@ -845,8 +845,8 @@ and save often.
 carrying only what changed would silently drop the firm decisions recorded in the first.
 
 **4. Capture is advisory, and a missed save fails safe.** Nothing forces an agent to save.
-A hook can ask but never write: since `v3.63.0` `my-curator install-hooks` wires three of the
-fourteen harnesses in the adapter table, and the model is still what calls the save tool. The
+A hook can ask but never write: since `v3.63.0` `my-curator install-hooks` wires four of the
+fifteen harnesses in the adapter table, and the model is still what calls the save tool. The
 discipline itself is carried by an installable skill and the block you paste. The consequence is
 stated rather than hidden: **a session that ends without saving means the next read returns the
 previous state — stale, never corrupted**, and nothing already saved is lost. That is the
@@ -1355,7 +1355,7 @@ models and a wrong sentence changes what an agent tells a user.
 | **Shared Brain general availability** | Gated on a structured pilot with a real cohort, which has not started. |
 | **A Shared Brain backend outside GitHub** | Designed as the answer to EU data residency; has not shipped. |
 | **Apple notarisation** | Developer enrolment in progress. Until it completes, a first manual install needs a one-time *Open Anyway*. |
-| **Automatic capture on every harness** | **The mechanism exists; almost nothing about its reach has been measured.** Hooks are written for three of fourteen harnesses and refused by default on two more, and as of 2026-09-20 exactly **one** harness has been run against the protocol. Everything else is documented or inferred, and says so on every screen that mentions it. |
+| **Automatic capture on every harness** | **The mechanism exists; almost nothing about its reach has been measured.** Hooks are written for four of fifteen harnesses and refused by default on two more, and as of 2026-09-20 exactly **one** harness has been run against the protocol. Everything else is documented or inferred, and says so on every screen that mentions it. |
 
 ### What has actually been measured about capture
 
@@ -1365,7 +1365,7 @@ One harness, once. **Claude Code, 2026-09-20**, headless `-p`, four runs per arm
 the hook, **5 of 6** save attempts ran a shell command named after the tool instead of calling it.
 Two limits of the instrument are stated rather than smoothed over: a session that never lands a
 real tool call writes no line at all, so a failed attempt looks like silence; and a hook-injected
-read is invisible to the log. Thirteen of the fourteen harnesses in the table read **not
+read is invisible to the log. Fourteen of the fifteen harnesses in the table read **not
 measured**, and nothing in the product describes them otherwise.
 
 ---

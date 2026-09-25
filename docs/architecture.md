@@ -273,9 +273,9 @@ the-curator/
 │   │   ├── mcp-clients.js      clientInfo.name → a canonical harness id, MANY-to-one, allow-listed
 │   │   │                       (v3.63.0). PURE DATA, imports nothing — it sits on the MCP child's
 │   │   │                       import graph. A LABEL for a report: nothing branches on it.
-│   │   ├── harness-adapters.js The per-harness table (v3.63.0) — 14 entries, each fact carrying its
+│   │   ├── harness-adapters.js The per-harness table (v3.63.0) — 15 entries, each fact carrying its
 │   │   │                       own source + verified, hooks.state in four words. `measured` is
-│   │   │                       null on thirteen rows and carries a real result on claude-code
+│   │   │                       null on fourteen rows and carries a real result on claude-code
 │   │   │                       (v3.64.0). Pure data + pure functions, no Node builtin, so a view
 │   │   │                       can import it.
 │   │   ├── github-read-client.js  READ-ONLY GitHub plumbing (v3.63.0), extracted from the Shared
@@ -2331,7 +2331,7 @@ collapsing any two would make the table lie in the user's favour: `verified`, `u
 `present-useless` (OpenCode and Kilo take TypeScript plugins, not shell commands; Windsurf has twelve
 hooks and not one of them is a stop, session-end or pre-compaction hook) and `none`.
 
-**`measured` is `null` on thirteen of the fourteen entries, and that is the point.** The protocol
+**`measured` is `null` on fourteen of the fifteen entries, and that is the point.** The protocol
 in `scripts/measure-harness.js` was run for the first time on 2026-09-20, against Claude Code, and
 that one row carries the result — date, harness version, model, `n`, the protocol sentence, a count
 per arm and a verdict word, every figure a COUNT out of a stated `n` and never a percentage. Every

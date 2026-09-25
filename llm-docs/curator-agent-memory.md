@@ -285,7 +285,7 @@ The full walk-through, with a diagram and worked examples, is in the user guide:
 
 ## Claude Code reads CLAUDE.md and Antigravity reads AGENTS.md or GEMINI.md. Do I need both files?
 
-Yes. Claude Code loads `CLAUDE.md`. Antigravity's own documentation names `GEMINI.md` and `AGENTS.md`, walked up from the working folder to the repository root, and not `CLAUDE.md`; that is the vendor's documentation, not something The Curator has measured. In practice use `CLAUDE.md` and `AGENTS.md` with identical text; `AGENTS.md` also serves Codex, opencode and Cursor. Keep the working-state rules in one place: the standing brief, which lives in The Curator rather than in either tool and is returned by `get_project_context` to any tool that connects. Each instruction file then carries the same short pointer:
+Yes. Claude Code loads `CLAUDE.md`. Antigravity reads `GEMINI.md` and `AGENTS.md`, walked up from the working folder to the repository root, and not `CLAUDE.md`. That comes from Antigravity's own documentation, and on 25 September 2026 an Antigravity session with the pointer in `AGENTS.md` read the project's state unprompted. In practice use `CLAUDE.md` and `AGENTS.md` with identical text; `AGENTS.md` also serves Codex, opencode and Cursor. Keep the working-state rules in one place: the standing brief, which lives in The Curator rather than in either tool and is returned by `get_project_context` to any tool that connects. Each instruction file then carries the same short pointer:
 
 ```markdown
 ## Working state
@@ -303,9 +303,9 @@ Start from the app's Copy agent instructions button. As copied, it reads with sc
 
 One `.curator-project` file, holding `domain/project`, serves every tool: the continuity skill and the `my-curator` command read it. The MCP server does not read it, which is why the pointer also names the project.
 
-Antigravity is not in The Curator's harness table, which records `CLAUDE.md` for Claude Code, `AGENTS.md` for Codex, opencode and Cursor, and `GEMINI.md` for Gemini CLI, where `AGENTS.md` is opt-in. `my-curator doctor` has no Antigravity row and there is no Antigravity hook adapter. To check the pointer landed, see whether the agent's first reply names the rules from the brief; if it names none, the pointer did not reach it.
+Since version 3.76.0 Antigravity has its own row in The Curator's harness table. `my-curator doctor` reports whether Antigravity's MCP config names the bridge (it checks `~/.gemini/config/mcp_config.json`, `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/antigravity-ide/mcp_config.json`), whether `AGENTS.md` or `GEMINI.md` in the current folder carries the block, and whether the installed skills match this version, file by file. `my-curator install-hooks antigravity` wires two hooks: `PreInvocation`, which hands the agent the project's context before its first model call in a conversation, and `Stop`, which asks once per conversation for a save when the agent stopped normally after reading state without saving. Both are built from Antigravity's own documentation and have not been run yet. Antigravity's MCP client name is not known, so its sessions appear as `other` in the usage log. To check the pointer landed, see whether the agent's first reply names the rules from the brief; if it names none, the pointer did not reach it.
 
-Skills for Antigravity, also vendor-documented and unverified by The Curator: its documentation puts skills in a `skills/` folder under a customization root, `.agents/` in the project or `~/.gemini/config/` for every project. Copy each skill folder whole, companion files included, and keep any two copies identical.
+Skills for Antigravity, from its documentation: a `skills/` folder under `~/.gemini/config/` for every project or `.agents/` in the project, or a plugin's `skills/` folder such as `~/.gemini/config/plugins/the-curator/skills/`. Copy each skill folder whole, companion files included; `my-curator doctor` names any installed file that differs from this version or is missing.
 
 ## How do I build one project from two computers?
 
@@ -473,7 +473,7 @@ Two practical notes. Only two short flags exist — `-f` for `--file` and `-h` f
 
 A hook can ask. It can never write the handoff itself, and that limit is deliberate: a fabricated handoff is worse than a missing one, because the whole value of the store is that what is written was written by whoever it names. So `my-curator install-hooks` wires three moments — inject the context at the start, remind before a compaction, and ask once at the end of a turn if nothing has been saved this session — and the model is what calls the save tool.
 
-Whether any of that is available depends entirely on your harness, and the harnesses disagree about almost everything. Eleven of the fourteen in the table have some lifecycle hook; three of them accept a hook that never fires. Four words describe every row:
+Whether any of that is available depends entirely on your harness, and the harnesses disagree about almost everything. Twelve of the fifteen in the table have some lifecycle hook; three of them accept a hook that never fires. Four words describe every row:
 
 | Word | Means |
 |---|---|
@@ -482,9 +482,9 @@ Whether any of that is available depends entirely on your harness, and the harne
 | present-useless | Hooks exist and cannot carry the ask. That is a finding, not a gap |
 | none | No hook mechanism at all |
 
-Hooks are written for Claude Code, Cursor and Codex; Copilot CLI and goose are refused by default because their response shapes are unmeasured; Gemini CLI, Cline and DeepSeek Harness get none for the same reason; OpenCode and Kilo take TypeScript plugins rather than shell commands; Windsurf has twelve hooks and not one of them fires at a stop, a session end or a compaction; Zed has no hook mechanism; Aider has no MCP client.
+Hooks are written for Claude Code, Cursor, Codex and Antigravity (Antigravity's from its documentation, not yet run); Copilot CLI and goose are refused by default because their response shapes are unmeasured; Gemini CLI, Cline and DeepSeek Harness get none for the same reason; OpenCode and Kilo take TypeScript plugins rather than shell commands; Windsurf has twelve hooks and not one of them fires at a stop, a session end or a compaction; Zed has no hook mechanism; Aider has no MCP client.
 
-One thing to be clear about: **thirteen of the fourteen harness rows read "not measured"**. The mechanism shipped in version 3.63.0 and the protocol was run for the first time in version 3.64.0, against one harness.
+One thing to be clear about: **fourteen of the fifteen harness rows read "not measured"**. The mechanism shipped in version 3.63.0 and the protocol was run for the first time in version 3.64.0, against one harness.
 
 That measurement — Claude Code, 20 September 2026, four runs per arm, headless mode — came back mixed, and the mixture is the useful part. With the hooks installed, the session-start hook injected the project's context before the agent's first turn in 4 of 4 runs, and 4 of 4 saved a handoff before stopping. In that same headless mode the stop hook never fired at all, across six sessions. And without the hook, five of six save attempts ran something shaped like a shell command named after the tool instead of calling it — with the skill and the instruction block present in every one of those runs. The hook is what works. Every other harness still reads "not measured", and the product says so everywhere the question comes up rather than implying reach it has not demonstrated.
 
@@ -591,6 +591,7 @@ Where it goes — plain prose in a file each of these already reads on its own. 
 | Codex | `AGENTS.md` |
 | opencode | `AGENTS.md` |
 | Gemini CLI | `GEMINI.md` |
+| Antigravity | `AGENTS.md` or `GEMINI.md` (never `CLAUDE.md`) |
 | Cursor | `.cursor/rules` |
 
 One detail for Cursor: a rule file in that directory must have the `.mdc` extension, because a plain `.md` there is ignored, and a rule set to *Always Apply* is the setting that loads it every chat. Cursor also reads `AGENTS.md` in the repository root, which auto-applies.

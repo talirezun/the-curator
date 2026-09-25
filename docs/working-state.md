@@ -2399,6 +2399,7 @@ installed, and it is the same text everywhere.
 | Codex | `AGENTS.md` | **capped at 32,768 bytes** (`project_doc_max_bytes`), and truncated silently past it |
 | opencode | `AGENTS.md` | **and `CLAUDE.md`** — both, read walking up from the working directory |
 | Gemini CLI | `GEMINI.md` | named by **`context.fileName`** — nested, and an *array*; `AGENTS.md` is opt-in and not read by default |
+| Antigravity | `AGENTS.md` **and** `GEMINI.md` | walked up from the working folder to the repository root; **not `CLAUDE.md`**. Each rule file is capped at 24,000 bytes and truncated on a line boundary past it |
 | Cursor | `.cursor/rules` | **and `AGENTS.md`** — Cursor reads both |
 | GitHub Copilot CLI | its own file, **plus `CLAUDE.md` and `GEMINI.md`** | |
 | Zed | **first match** of `.rules`, `AGENTS.md`, `CLAUDE.md` | `.rules` and `AGENTS.md` **outrank** `CLAUDE.md`, so a block pasted into `CLAUDE.md` beside an `AGENTS.md` is **dead text** |
@@ -2505,7 +2506,10 @@ construction**, in that harness's own shape.
 **One policy, several envelopes.** Claude Code *blocks* (`exit 2`, the reason on stderr); Cursor
 *submits a message* (`followup_message`), which is strictly gentler and is preferred where a harness
 offers both; Codex blocks on `Stop` and can refuse a compaction with `{"continue": false}` — the one
-blocking pre-compaction hook the research found. **An unverified envelope is never approximated.** A
+blocking pre-compaction hook the research found; Antigravity re-enters its loop on
+`{"decision": "continue", "reason": …}` and injects before the model with
+`{"injectSteps": [{"ephemeralMessage": …}]}` (both from its own documentation, not yet observed).
+**An unverified envelope is never approximated.** A
 harness whose shape has not been measured emits nothing and records why; Gemini CLI's `AfterAgent` is
 the named case — the capture *point* is right, the envelope is not, so it ships withheld.
 
@@ -2521,6 +2525,7 @@ it cannot read, and it leaves every hook it did not write untouched.
 |---|---|---|---|
 | **Claude Code** | verified | `SessionStart` · `PreCompact` · `Stop` | `.claude/settings.json` · `.claude/settings.local.json` · `~/.claude/settings.json` |
 | **Cursor** | verified | `sessionStart` · `preCompact` · `stop` (with `loop_limit: 1`) | `.cursor/hooks.json` · `~/.cursor/hooks.json` |
+| **Antigravity** | verified (documented, **not yet run**) | `PreInvocation` (injected once per conversation) · `Stop`, under one named hook `my-curator`. `PostInvocation` refused — it fires after every tool round | `.agents/hooks.json` · `~/.gemini/config/hooks.json` |
 | **Codex CLI** | unverified | `PreCompact` · `Stop`. **`SessionEnd` refused** — 3 s maximum | `.codex/hooks.json` · `~/.codex/hooks.json` |
 | **GitHub Copilot CLI** | unverified | `sessionStart` · `preCompact` · `agentStop` — **refused by default**, envelopes unmeasured | `.github/hooks/` · `~/.copilot/hooks/` |
 | **goose** | unverified | `Stop` · `SessionEnd` — **refused by default**, envelopes unmeasured | `~/.agents/plugins/my-curator/hooks/hooks.json` |
@@ -2549,12 +2554,92 @@ context in **every one of the 6 headless sessions** it was measured over. In tha
 `Stop` hook **never fired at all** — not once across all 6 — so the end-of-session ask does not
 reach a `claude -p` pipeline. `PreCompact` fired once, through `-p --resume "/compact"`, but left
 no `hook_started`/`hook_response` pair behind: the only trace was a line of its own standard output
-embedded in a user-role message. Every other row's `measured` field is still `null` — thirteen of the
-fourteen — and their hook states are **documented or inferred, never observed**: one of them reads
-`verified` (Cursor's, from its own documentation), six `unverified`, three `present-useless` and
-three `none`. Claude Code's row is the only one where a word in that column has been watched
+embedded in a user-role message. Every other row's `measured` field is still `null` — fourteen of the
+fifteen — and their hook states are **documented or inferred, never observed**: two of them read
+`verified` (Cursor's and Antigravity's, each from its own documentation), six `unverified`, three
+`present-useless` and three `none`. Claude Code's row is the only one where a word in that column has been watched
 happening. Nothing here should be read as a claim of reach. See the meter below and `scripts/measure-harness.js` for the protocol that changed this
 one row and would change another.
+
+### Antigravity (v3.76.0)
+
+Antigravity (Google's agent app, and its IDE variant) got its own row in
+`src/brain/harness-adapters.js` in v3.76.0. Every fact in it comes from the vendor's own
+customization docs, which ship inside the app (`~/.gemini/antigravity/builtin/skills/agy-customizations/`),
+plus what was seen on one Mac on 2026-09-25. What is measured, what is documented and what is
+unknown are kept apart:
+
+| | Status | Detail |
+|---|---|---|
+| **Reads state** | **seen once, 2026-09-25** | With the Curator block in `AGENTS.md`, a session told only *"Continue."* called `get_project_context` unprompted |
+| **Saves state** | **seen once, 2026-09-25** | Without the `AGENTS.md` block, a session saved unprompted — but to scope `main`, replacing another tool's handoff there |
+| **Instruction file** | documented | `AGENTS.md` and `GEMINI.md`, walked up to the repository root; **not `CLAUDE.md`** |
+| **MCP config** | documented + seen | `~/.gemini/config/mcp_config.json` (documented); `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/antigravity-ide/mcp_config.json` were separate files on that Mac. `doctor` checks all three |
+| **Skills** | documented | `skills/<name>/` under `~/.gemini/config/` or `.agents/`, or under `plugins/<plugin>/` there (e.g. `~/.gemini/config/plugins/the-curator/skills/`) |
+| **Hooks** | **built, not yet run** | `PreInvocation` → the project context, `Stop` → the save ask. Both shapes come from the vendor's `hooks.md` |
+| **MCP client name** | **unknown** | Its sessions show up as `other` in the usage log (see below) |
+
+Those two sessions are single observations, not the four-runs-per-arm protocol, so the row's
+`measured` stays `null` and `doctor` prints them under `observations` word for word.
+
+**The hooks, and what the vendor schema could and could not carry.**
+
+- `PreInvocation` runs **before every model call**, not once per session. `my-curator hook
+  session-start --harness antigravity` therefore injects on the first call it sees for a
+  `conversationId` and returns `{}` on every later one. If Antigravity sends no id, it injects every
+  time: with nothing to key "once" on, a repeated injection is better than a missed one. The context
+  arrives as an `ephemeralMessage`, which the docs call *"a transient system message"*. It is not
+  sent as a `userMessage`, because putting recorded state in the user's mouth would promote it to
+  the user's own instruction. **Not yet known:** whether an ephemeral message stays in context after
+  the first model call. If it does not, the agent only has the context for that one call.
+- `Stop` returns `{"decision": "continue", "reason": <the ask>}` — the documented way to stop the
+  loop ending and inject a system message. It asks only when `terminationReason` is `model_stop`, so
+  a loop that ended on an error or hit the step limit is never pushed back into motion. Nothing in
+  Antigravity's payload says "already asked", so the CLI's own marker (keyed on `conversationId`) is
+  the loop guard: **one ask per conversation**. The rest of the ladder is the shared one, so it asks
+  only if this conversation made a `get_project_context`/`get_working_state` call and did not save.
+  A context that arrived only through the hook is not a tool call, so by itself it does not trigger
+  an ask.
+- Every hook path returns a JSON object, `{}` when there is nothing to say, because the contract
+  requires one on stdout.
+- **Not wired:** `PostInvocation` (it fires after every tool round, so an ask there would repeat all
+  through the turn), `PreToolUse`/`PostToolUse` (tool gates), and any pre-compaction hook, since the
+  docs name none.
+- The file is `hooks.json` in a customization root. Its top-level keys are **hook names**, and The
+  Curator's handlers live under `my-curator`. Every other named hook — its `matcher`, its
+  `enabled` — is left exactly as found. `.agents/hooks.json` is the docs' own example; the global
+  `~/.gemini/config/hooks.json` is inferred from *"your customization root directory"* and is not
+  shown by example. If a user-scope install never fires, use the project scope.
+
+```
+my-curator install-hooks antigravity --scope user        # ~/.gemini/config/hooks.json
+my-curator install-hooks antigravity --scope project     # <repo>/.agents/hooks.json
+my-curator install-hooks antigravity --uninstall --scope user
+my-curator doctor                                        # the Antigravity row
+```
+
+`my-curator doctor`'s Antigravity row shows: all three MCP files and whether each names
+`my-curator`; which hook files carry Curator entries, including one switched off with
+`"enabled": false`; whether `AGENTS.md`/`GEMINI.md` in the current folder carry the block; and
+every installed copy of the two skills, **compared file by file (sha256) against this version's
+`skills/` folder**. It names the file that differs or the companion that is missing.
+
+<a id="antigravitys-mcp-client-name"></a>**Antigravity's MCP client name.** It is not known, so
+`src/brain/mcp-clients.js` has no row for it and its sessions are written as `other`. Nothing
+branches on the value; it is a label only. Its language server speaks the 2026-07-28 MCP revision,
+but the name it sends could not be read out of the binary, and no log records it. To observe it once,
+point Antigravity's `my-curator` entry at a small wrapper for one session. The wrapper copies what
+Antigravity sends to a file and then runs the real command:
+
+```sh
+#!/bin/sh
+# agy-tee.sh — ONE session only, then delete this and the file it wrote.
+tee /tmp/agy-mcp-in.jsonl | exec "<the entry's command>" <the entry's args…>
+```
+
+Then `grep -o '"clientInfo":{[^}]*}\|"io.modelcontextprotocol/clientInfo":{[^}]*}' /tmp/agy-mcp-in.jsonl`.
+That file holds the whole session's tool arguments, so read it yourself, take the `name`, and
+delete it. A row goes into `mcp-clients.js` only with that observed value.
 
 ### The honesty meter — did this session read, and did it save?
 

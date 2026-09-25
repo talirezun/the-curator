@@ -38,7 +38,8 @@
  * The seed is `harness-adapters.js`'s ids and labels (each asserted to
  * normalise to its own id by scripts/test-harness-names.js, so the two cannot
  * drift silently), `mcp-clients.js`'s raw client names for the same products,
- * plus `antigravity`, which has no adapter row yet (audit G5).
+ * `antigravity` included (its adapter row landed in v3.76.0; its aliases are
+ * the save-side spellings, since its MCP client name is not yet observed).
  */
 
 /**
@@ -62,8 +63,9 @@ const PRODUCTS = [
   { id: 'windsurf', label: 'Windsurf / Devin Desktop', aliases: ['windsurf', 'windsurf-devin-desktop'] },
   { id: 'zed', label: 'Zed', aliases: ['zed'] },
   { id: 'aider', label: 'Aider', aliases: ['aider'] },
-  // No harness-adapters row exists for Antigravity yet (audit G5); the one
-  // real Antigravity save on record spelled it `Antigravity`.
+  // The adapter row landed in v3.76.0 (same id and label, asserted by
+  // scripts/test-harness-names.js §3); the one real Antigravity save on
+  // record spelled it `Antigravity`.
   { id: 'antigravity', label: 'Antigravity', aliases: ['antigravity', 'google-antigravity'] },
 ];
 

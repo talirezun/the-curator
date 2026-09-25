@@ -145,7 +145,11 @@ merely misinforming a reader.
 | **opencode** | `AGENTS.md` in the repo root, or `~/.config/opencode/AGENTS.md`; or list the file under `instructions: []` in `opencode.json` | Yes | Yes — `"type": "local"` with a `command` array in `opencode.json` |
 | **Cursor** | `.cursor/rules/curator.mdc` (**must be `.mdc`** — plain `.md` in that directory is ignored), or `AGENTS.md` in the repo root | Depends: a rule set to *Always Apply* loads every chat; *Apply Intelligently* is conditional; *Apply Manually* needs an `@`-mention. `AGENTS.md` auto-applies | Yes — `mcpServers` in `.cursor/mcp.json` or `~/.cursor/mcp.json` |
 | **Gemini CLI** | `GEMINI.md` in the repo root, or `~/.gemini/GEMINI.md`. It will read `AGENTS.md` instead if you set `context.fileName` | Yes — concatenated and sent **with every prompt** | Yes — `mcpServers` in `.gemini/settings.json` or `~/.gemini/settings.json` |
+| **Antigravity** | No build needed — copy each skill **folder** whole into `skills/` under `~/.gemini/config/` (every project), `.agents/` (this project), or a plugin such as `~/.gemini/config/plugins/the-curator/skills/`. Put the instruction block in `AGENTS.md` or `GEMINI.md` — it does not read `CLAUDE.md` | Skills: their name and description are loaded, the body when the model activates one (vendor docs). `AGENTS.md`/`GEMINI.md`: always, capped at 24,000 bytes per file. `my-curator doctor` compares installed skills with this version, file by file | Yes — `mcpServers` in `~/.gemini/config/mcp_config.json` (documented); the app's `~/.gemini/antigravity/` and `~/.gemini/antigravity-ide/` folders carry their own `mcp_config.json` too |
 | **Aider** | `CONVENTIONS.md`, or any filename | **No — you must ask for it**: `aider --read CONVENTIONS.md`, `/read` in session, or `read:` in `.aider.conf.yml` | **No — aider has no MCP client.** See below |
+
+Antigravity's facts come from its own customization docs, which ship inside the app
+(`~/.gemini/antigravity/builtin/skills/agy-customizations/`), read 2026-09-25.
 
 Sources: [Codex `AGENTS.md`](https://learn.chatgpt.com/docs/agent-configuration/agents-md.md) ·
 [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp.md?surface=cli) ·
