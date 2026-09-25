@@ -4774,8 +4774,9 @@ function slowTurnNoticeText(hint) {
   // it produced across siblings in one session.
   const free = hint.free === true
     ? hint.label + ' is a free model, and free models share one pool of capacity with ' +
-      'everyone else using them: in our own testing one free model answered 8 of 8 calls while ' +
-      'three of its siblings answered 0 of 8 over the same ten minutes.'
+      'everyone else using them, so availability can differ sharply between free models at the same ' +
+      'moment: in our testing on 27 Aug 2026, one free model answered 8 of 8 calls while three others ' +
+      'answered 0 of 8 over the same ten minutes.'
     : '';
   let timing = '';
   if (hint.kind === 'measured') {
