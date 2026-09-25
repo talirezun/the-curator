@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.72.0` | Chat — the section left behind for several releases — is overhauled and synced with the rest of the app: one list across all domains, a real page header, row actions and citations, with every number it shows traced to true data. |
 | `v3.71.1` | Every remaining ⓘ in the app now uses the v3.71.0 explainer model, through ONE implementation — cutting the words behind them by about half per view app-wide. |
 | `v3.71.0` | One explainer model for every ⓘ — treatment B — starting with Context and the six places a beginner lands with none. |
 | `v3.70.1` | The per-document planner for the context-window meter, deferred out of v3.70.0 — each read-first document now its own segment on the meter, and a "Documents at start" fold that previews start-state changes before Apply. |
