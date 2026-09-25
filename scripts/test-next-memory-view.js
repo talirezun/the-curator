@@ -8753,7 +8753,7 @@ const fndRead = (payload) => ({
     // carries what v3.61.1's labelled "Remove" used to (§5.1).
     ok('...whose control is the TRASH ICON — quiet at rest, never the pencil, which would promise an '
       + 'edit the route refuses',
-    /class="btn btn-ghost btn-xs fnd-delete"/.test(F.fndRowHtml(fndDoc(), false))
+    /class="btn btn-ghost btn-xs fnd-delete row-act"/.test(F.fndRowHtml(fndDoc(), false))
       && /<svg[^>]*aria-hidden="true"/.test(F.fndRowHtml(fndDoc(), false))
       && !/data-fnd-edit/.test(F.fndRowHtml(fndDoc(), false))
       && !/>Remove</.test(F.fndRowHtml(fndDoc(), false)),

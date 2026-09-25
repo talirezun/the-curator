@@ -897,11 +897,19 @@
   -webkit-user-select: none;
   transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
-.ing-queue-file-remove:hover { background: var(--danger-tint); color: var(--danger-text); }
-/* 20x20 — the icon amplitude, and NO background step. The hover is already
-   the danger tint, the tree defines nothing stronger in that family, and a
-   destructive control is the last place to invent a colour so a scan can
-   report uniformity. See shell.css `.btn-danger` for the same refusal. */
+/* v3.72.0 (M3, the ONE row-action rule, DESIGN.md §4): this queue-row action
+   used to turn `--danger-tint`/`--danger-text` red on hover, one of THREE
+   row-action idioms the design pass found (§4 finding C8). A row action's
+   trigger stays neutral at rest AND on hover — colour arrives only at a
+   confirm step, never this button. It adopts `shared/row-action.css`'s
+   `.row-act` treatment (the same `--mat-row-hover`/`--text` pair
+   `.rail-btn`/`.reader-close` already hover to); it keeps its own class
+   name here because the markup lives in views/ingest.js, outside this
+   package. scripts/test-row-actions.js pins that no `--danger*` token
+   appears on this rule's hover/focus/active states. */
+.ing-queue-file-remove:hover { background: var(--mat-row-hover); color: var(--text); }
+/* 20x20 — the icon amplitude, and NO background step beyond the hover
+   already declared above. */
 .ing-queue-file-remove:active { transform: scale(var(--press-scale-icon)); }
 /* ── THE GLYPH STAYS 20x20; THE POINTER TARGET REACHES --hit-min ──────────
    The amplitude above is deliberate and unchanged. What was not deliberate is

@@ -76,7 +76,11 @@ const CARVE_OUTS = new Set([
   '.btn-danger',                   // shell.css — the destructive button family
   '.dm-delete-btn',                // views/domains.css — delete a domain/project
   '.chat-conv-delete:hover',       // views/chat.css — delete a conversation, on hover
-  '.ing-queue-file-remove:hover',  // views/ingest.css — remove a queued file, on hover
+  // '.ing-queue-file-remove:hover' REMOVED, v3.72.0 (P5, DESIGN.md §4, M3,
+  // the ONE row-action rule): this control's hover no longer colours
+  // --danger-text at all — it adopted shared/row-action.css's neutral
+  // --mat-row-hover/--text treatment (scripts/test-row-actions.js pins it).
+  // There is nothing left here to carve out.
 ]);
 /** Marks whose class name does not say so, BY NAME, each with its evidence. */
 const MARKS_BY_NAME = new Set([
