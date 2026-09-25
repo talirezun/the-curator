@@ -204,6 +204,8 @@ import { Router } from 'express';
 import { listDomains, isDomainReadonly } from '../brain/files.js';
 import * as workingState from '../brain/working-state.js';
 import { sessionStartReport } from '../brain/session-start.js';
+import { normaliseHarness } from '../brain/harness-names.js';
+import { captureWindowFacts, computePulse } from '../brain/tray-summary.js';
 import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
 import {
   readUsageLinesUnion, summariseSessions, MAX_LINE_BYTES, MAX_LINE_BYTES_LABEL,
@@ -367,10 +369,15 @@ function projectRow(domain, r) {
  *
  * ── TWO READINGS OF ONE PROJECT ON ONE SCREEN ────────────────────────────
  * `listProjects` reads its headline, harness, model, save kind and newest
- * scope off `listWorkingScopes(...).scopes[0]` — the FIRST pair, and the
- * store sorts pairs by `mtimeMs`, the FILE clock. That sort is correct for
- * what it serves (the tray and the route's own `scope=latest` consume it)
- * and is NOT changed.
+ * scope off `listWorkingScopes(...).scopes[0]` — the FIRST pair. Until
+ * v3.74.0 the store sorted pairs by `mtimeMs`, the FILE clock; since v3.74.0
+ * (audit G6) it sorts them by the AGENT'S `writtenAt`, falling back to mtime
+ * for a pair with no journal time — the same preference this function
+ * applies. So in the ordinary case `scopes[0]` and this pick are now the same
+ * pair. This function is KEPT, not because the store is on the other clock
+ * any more, but because the two differ in one place: the store's own cap is
+ * still taken on mtime (see `listWorkingScopes`), and this pick is made over
+ * exactly the pairs this route shows.
  *
  * But every age this app renders goes through the view's `effectiveSave`,
  * which prefers the AGENT'S clock — `writtenAt`, out of the journal — and
@@ -519,6 +526,66 @@ export function tableFirstPair(scopes) {
 }
 
 /**
+ * WHICH TOOLS SAVED INTO A PROJECT, AND WHEN EACH LAST DID (v3.74.0, parity).
+ *
+ * The menubar widget lists a project once per TOOL that saved into it
+ * (`projects[].latest`, tray-summary.js), so "Claude Code and Antigravity are
+ * both on this project" is a fact the widget shows. The parity rule (v3.66.0,
+ * no widget-only fact) puts the same fact on the Context sidebar, and this is
+ * where it is derived: one entry per NORMALISED tool (`normaliseHarness`, the
+ * one table the widget compares with, so `Claude Code (desktop)` and
+ * `claude-code` are one tool and `claude-desktop` is another), carrying the
+ * newest save that tool made on the pair it wrote LAST — on the same clock as
+ * `agentNewestPair`: the agent's `writtenAt` when there is one, else the
+ * file's.
+ *
+ * Newest first. A pair that named no tool is left out — there is no tool to
+ * name — and the list is capped (a project with a dozen tools is not a
+ * sidebar line). Taken over the pairs the store LISTED; when it capped them,
+ * `scopesTruncated` on the same row already says so.
+ */
+const PROJECT_TOOLS_MAX = 6;
+function toolsOf(scopes) {
+  const byId = new Map();
+  // Epoch ms on the chosen clock — the agent's stamp first, then the file's.
+  // Milliseconds, not the whole-second ages, so two saves in one second still
+  // order (a stamp carries ms; an age alone is the fallback).
+  const now = Date.now();
+  const msOf = (p) => {
+    const at = (x) => (typeof x === 'string' && x ? Date.parse(x) : NaN);
+    const back = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? now - v * 1000 : NaN);
+    for (const t of [at(p.writtenAt), back(p.writtenAgeSeconds), at(p.lastWriteAt), back(p.ageSeconds)]) {
+      if (Number.isFinite(t)) return t;
+    }
+    return null;
+  };
+  for (const p of Array.isArray(scopes) ? scopes : []) {
+    if (!p || typeof p !== 'object' || typeof p.harness !== 'string' || !p.harness.trim()) continue;
+    const n = normaliseHarness(p.harness);
+    if (!n) continue;
+    const ms = msOf(p);
+    const prev = byId.get(n.id);
+    // Absence never displaces a reading; a newer reading wins.
+    if (prev && (ms === null || (prev.ms !== null && prev.ms >= ms))) continue;
+    byId.set(n.id, {
+      id: n.id,
+      label: n.label,
+      raw: p.harness,
+      ms,
+      writtenAt: p.writtenAt ?? null,
+      writtenAgeSeconds: Number.isFinite(p.writtenAgeSeconds) ? p.writtenAgeSeconds : null,
+      lastWriteAt: p.lastWriteAt ?? null,
+      ageSeconds: Number.isFinite(p.ageSeconds) ? p.ageSeconds : null,
+    });
+  }
+  return [...byId.values()]
+    .sort((a, b) => (a.ms === null ? 1 : 0) - (b.ms === null ? 1 : 0)
+      || (b.ms ?? 0) - (a.ms ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .slice(0, PROJECT_TOOLS_MAX)
+    .map(({ ms, ...rest }) => rest);
+}
+
+/**
  * Fold the per-work-stream facts into a row the store answers cheaply.
  *
  * ── WHAT IS MISSING FROM A STORE ROW, AND WHY IT IS MISSING ──────────────
@@ -556,6 +623,7 @@ async function withScopeFacts(store, rows) {
     catch { idx = null; }
     const scopes = idx && idx.ok && Array.isArray(idx.scopes) ? idx.scopes : [];
     const speaker = agentNewestPair(scopes);
+    const spoken = speaker && typeof speaker.harness === 'string' ? normaliseHarness(speaker.harness) : null;
     out.push({
       ...row,
       // ONE PROJECT, ONE CLOCK. See agentNewestPair: the store hands this row
@@ -580,6 +648,12 @@ async function withScopeFacts(store, rows) {
         writtenAt: speaker.writtenAt ?? null,
         writtenAgeSeconds: Number.isFinite(speaker.writtenAgeSeconds) ? speaker.writtenAgeSeconds : null,
       } : {}),
+      // v3.74.0 (parity with the widget): the speaker's tool, NORMALISED —
+      // `harness` above stays the agent's own spelling — and every tool that
+      // saved into this project, newest first (see toolsOf).
+      harnessId: spoken ? spoken.id : null,
+      harnessLabel: spoken ? spoken.label : null,
+      tools: toolsOf(scopes),
       scopesTruncated: !!(idx && idx.ok && idx.truncated),
       unlistedEntries: idx && idx.ok && Number.isInteger(idx.unlistedEntries) ? idx.unlistedEntries : 0,
       unlistedReason: (idx && idx.ok && idx.unlistedReason) || null,
@@ -3620,6 +3694,47 @@ function captureLimit(raw) {
   return Math.min(Math.floor(n), CAPTURE_MAX_LIMIT);
 }
 
+/**
+ * THIS PROJECT'S SAVES, PER TOOL, OVER THE WIDGET'S 7 DAYS (v3.74.0, parity).
+ *
+ * The menubar widget's "Saves by tool" is `computePulse(...).byHarness` over
+ * every pair's journal times; this is the same function over THIS project's
+ * pairs, so the app and the widget count a project's saves the same way. The
+ * figures are a FLOOR whenever any journal was read only from its tail
+ * (`lowerBound`), and a tool's date is when it was LAST SEEN in what was read,
+ * never "last save" — the data layer's own wording, carried as its note.
+ *
+ * Null when nothing could be read (not measured, never zero). Never throws.
+ */
+async function projectSavesByTool(store, domain, project) {
+  let idx;
+  try { idx = await store.listWorkingScopes(domain, { project, withSaveTimes: true }); }
+  catch { return null; }
+  if (!idx || !idx.ok || !Array.isArray(idx.scopes)) return null;
+  const pairs = idx.scopes
+    .filter((p) => p && typeof p.scope === 'string' && typeof p.machine === 'string')
+    .map((p) => ({
+      saveTimes: Array.isArray(p.saveTimes) ? p.saveTimes : null,
+      saveHarnesses: Array.isArray(p.saveHarnesses) ? p.saveHarnesses : null,
+      journalTailTruncated: p.journalTailTruncated === true,
+    }));
+  let pulse;
+  try { pulse = computePulse(pairs, Date.now()); } catch { return null; }
+  if (!pulse) return null;
+  const by = pulse.byHarness && typeof pulse.byHarness === 'object' ? pulse.byHarness : {};
+  const ids = Array.isArray(pulse.harnesses) ? pulse.harnesses : Object.keys(by);
+  return {
+    windowSeconds: pulse.windowSeconds,
+    events: pulse.events,
+    lowerBound: pulse.pairsTruncated > 0 || pulse.byHarnessFloor === true || idx.truncated === true,
+    eventsWithoutTool: Number.isInteger(pulse.eventsWithoutHarness) ? pulse.eventsWithoutHarness : 0,
+    tools: ids.filter((id) => by[id]).map((id) => ({
+      id, label: by[id].label, events: by[id].events, lastSeenAt: by[id].lastSeenAt,
+    })),
+    note: typeof pulse.byHarnessNote === 'string' ? pulse.byHarnessNote : null,
+  };
+}
+
 router.get('/:domain/:project/capture', async (req, res) => {
   try {
     const { domain, project } = req.params;
@@ -3662,6 +3777,15 @@ router.get('/:domain/:project/capture', async (req, res) => {
     // and in every isolated suite the list is ONE file and nothing changes.
     const { present, records } = await readUsageLinesUnion();
     const summary = summariseSessions(records, { project, since: sinceMs });
+    // ── THE WINDOW THE LOG REALLY COVERS (v3.74.0, D5) ────────────────────
+    // The view asks for 30 days; a usage log that began five days ago cannot
+    // support a 30-day claim. `captureWindowFacts` is the ONE derivation the
+    // widget and Settings › Across projects use, so the three say the same
+    // span. All null without a log — not measured, never 0.
+    const win = present === true
+      ? captureWindowFacts(records, sinceMs, Date.now())
+      : { logStartsAt: null, windowStartsAt: null, windowDaysCovered: null, windowCovered: null };
+    const savesByTool = await projectSavesByTool(store, domain, project);
     // UNCAPPED totals, THEN the display slice — never the other order.
     const shown = summary.sessions.slice(0, limit).map((s) => ({
       sid: s.sid, client: s.client, startedAt: s.startedAt, endedAt: s.endedAt,
@@ -3748,6 +3872,16 @@ router.get('/:domain/:project/capture', async (req, res) => {
       newestSaveAt: newestSaveMs === null ? null : new Date(newestSaveMs).toISOString(),
       noSessionsButSaves,
       note,
+      // v3.74.0 (D5) — what a counted "session" IS: one MCP bridge process,
+      // which Claude Code starts per session and Claude Desktop keeps open
+      // across many conversations. The view words it as a connection.
+      unit: 'mcp-bridge-process',
+      logStartsAt: win.logStartsAt,
+      windowStartsAt: win.windowStartsAt,
+      windowDaysCovered: win.windowDaysCovered,
+      windowCovered: win.windowCovered,
+      // v3.74.0 (parity): this project's saves per tool, last 7 days.
+      savesByTool,
     });
   } catch (err) {
     console.error('Memory capture read error:', err);
@@ -3829,6 +3963,11 @@ async function handleDetail(req, res, domain, project, deprecated) {
       const n = Number(req.query.journalLimit);
       if (Number.isFinite(n)) opts.journalLimit = n;
     }
+    // v3.74.0 — `?previous=1` asks the store for the TEXT of `previous.md`,
+    // the one handoff by another tool that the current one replaced. Without
+    // it the scoped read still carries `previous` (its facts, no text) when
+    // the copy exists, and no key at all when it does not.
+    if (req.query.previous === '1' || req.query.previous === 'true') opts.previous = true;
 
     // ── `?open=newest` — THE INDEX AND THE FIRST HANDOFF IN ONE ANSWER ───
     //

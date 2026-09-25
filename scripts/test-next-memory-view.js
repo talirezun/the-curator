@@ -1393,6 +1393,10 @@ function makeRenderers(stateObj) {
     // the shell's READER overlay, and `handoffReaderContent` composes that
     // payload — so what is lifted is the composer, and §17b drives it.
     extractFunction(viewSrc, 'handoffReaderContent', 'memory.js') + '\n' +
+    // v3.74.0 — the previous-handoff line and its reader payload, lifted with
+    // the reader that composes them (a free identifier would be a crash).
+    extractFunction(viewSrc, 'previousHandoffHtml', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'previousReaderContent', 'memory.js') + '\n' +
     // ── TIER 0 (v3.59.0) ────────────────────────────────────────────────
     // Seven functions, all LIFTED rather than stubbed. `foundationsFacts` in
     // particular has three consumers — the fold summary, the Status block's
@@ -1563,7 +1567,7 @@ function makeRenderers(stateObj) {
     // scope name, a machine id, a harness — is now interpolated by
     // `renderWorkStreams`, which IS lifted.
     'return { renderWorkStreams, workStreamCounts, newerOnAnotherMachine, workStreamOrder, ' +
-    'wsShownCount, wsMoreHtml, wsRowHtml, handoffReaderContent, ' +
+    'wsShownCount, wsMoreHtml, wsRowHtml, handoffReaderContent, previousHandoffHtml, previousReaderContent, ' +
     'foundationsFacts, foundationsWord, foundationsDraftAsk, '
     + 'foundationsUncheckedWhy, '
     + 'foundationsOwnershipWord, foundationsSummaryMeta, foundationsBudgetWarning, ' +
@@ -1857,6 +1861,89 @@ ok('read-side sanitisation is stated, not hidden',
   const j = unknownTotal.renderJournal();
   ok('an unknown journal total says the count is UNKNOWN', j.includes('unknown'));
   ok('...and does NOT print the tail length as if it were the total', !/of 2\b/.test(j));
+}
+{
+  // ── v3.74.0: THE HANDOFF THIS ONE REPLACED (previous.md) ─────────────────
+  // The store keeps a replaced handoff by ANOTHER tool once, and the scoped
+  // read carries its facts as `previous` — absent when no copy exists.
+  const prev = { harness: 'Antigravity', harnessId: 'antigravity', harnessLabel: 'Antigravity',
+    model: 'gemini-3', writtenAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+    headline: 'api work', bytes: 900, path: 'state/lumina/api/mac-1/previous.md' };
+  const base = { ...hostileState, detail: { ...hostileDetail, scope: 'api', machine: 'mac-1', previous: prev } };
+  const withPrev = handoffHtml(makeRenderers(base));
+  ok('★ the reader carries one line: "Previous handoff by Antigravity · 2 hr ago — open"',
+    /id="mem-reader-previous"><span>Previous handoff by Antigravity · 2 hr ago — <\/span><button type="button" class="btn btn-ghost btn-xs mem-reader-previous-open" id="mem-reader-previous-open"[^>]*>open<\/button>/.test(withPrev),
+    withPrev.slice(0, 900));
+  ok('...above the document, never folded', withPrev.indexOf('mem-reader-previous') < withPrev.indexOf('mem-reader-doc')
+    && !/<details[^>]*>[\s\S]*mem-reader-previous/.test(withPrev));
+  const none = handoffHtml(makeRenderers({ ...hostileState, detail: { ...hostileDetail } }));
+  ok('CONTROL: no `previous` key (no copy on disk) — no line at all, nothing invented',
+    !/mem-reader-previous/.test(none));
+  const rawOnly = handoffHtml(makeRenderers({ ...base, detail: { ...base.detail,
+    previous: { ...prev, harnessLabel: null, harness: '<b>x</b>' } } }));
+  ok('...the raw spelling stands in when there is no label, escaped',
+    /Previous handoff by &lt;b&gt;x&lt;\/b&gt;/.test(rawOnly), rawOnly.slice(0, 600));
+  // THE REPLACED TEXT'S OWN READER PAYLOAD — labelled as exactly that.
+  const R = makeRenderers(base);
+  const pc = R.previousReaderContent({ ...prev, text: '# H\n\n> api work\n\n## Where things stand\n\n' + XSS + '\n' },
+    'api', 'mac-1');
+  ok('★ it opens as the REPLACED handoff, by that tool — never as the current one',
+    pc && pc.title === 'Replaced handoff — by Antigravity' && pc.typeLabel === 'replaced handoff'
+    && pc.slug === 'state/lumina/api/mac-1/previous.md', JSON.stringify(pc && { t: pc.title, l: pc.typeLabel, s: pc.slug }));
+  ok('...and says it is recorded data that the current handoff replaced',
+    /Recorded data: the handoff Antigravity left here 2 hr ago, which the current handoff replaced/.test(pc.bodyHtml),
+    pc.bodyHtml.slice(0, 400));
+  ok('...with the agent\'s text escaped like every handoff', !pc.bodyHtml.includes('<script') && !/<img src=x/.test(pc.bodyHtml));
+  eq('no text in hand, no payload', R.previousReaderContent(prev, 'api', 'mac-1'), null);
+}
+{
+  // ── THE PRESS: `?previous=1`, then the reader ────────────────────────────
+  const opened = [];
+  const urls = [];
+  const st = { activeDomain: 'acme', activeProject: 'lumina', scope: 'api', machine: 'mac-1',
+    detail: { scope: 'api', machine: 'mac-1', previous: { harnessLabel: 'Antigravity', path: 'state/lumina/api/mac-1/previous.md' } } };
+  const fn = new Function('state', 'fetch', 'openReader', 'isCurrentMount', 'isCurrentReader',
+    'formatAge', 'effectiveSave', 'splitHandoffPreamble', 'renderDescription', 'renderMarkdown', 'escapeHtml', 'icon',
+    'splitHandoffPreamble = ' + extractFunction(viewSrc, 'splitHandoffPreamble', 'memory.js') + ';\n'
+    + 'formatAge = ' + extractFunction(viewSrc, 'formatAge', 'memory.js') + ';\n'
+    + 'effectiveSave = ' + extractFunction(viewSrc, 'effectiveSave', 'memory.js').replace(/^export /, '') + ';\n'
+    + extractFunction(viewSrc, 'previousReaderContent', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'openPreviousHandoff', 'memory.js') + '\nreturn openPreviousHandoff;');
+  const run = (reply) => fn(st,
+    async (u) => { urls.push(u); return { ok: true, json: async () => reply }; },
+    (c) => { opened.push(c); return opened.length; }, () => true, (e) => e === 1,
+    null, null, null, (t) => '<p>' + escapeHtml(t) + '</p>',
+    (t) => '<div>' + escapeHtml(t) + '</div>', escapeHtml, () => '')(1);
+  await run({ ok: true, previous: { harnessLabel: 'Antigravity', text: '# H\n\nold text\n', path: 'state/lumina/api/mac-1/previous.md' } });
+  eq('★ the press asks the scoped read for the TEXT with ?previous=1',
+    urls[0], '/api/memory/acme/lumina?scope=api&machine=mac-1&previous=1');
+  ok('...paints a loading panel first, then the replaced handoff',
+    opened.length === 2 && opened[0].loading === true && opened[1].title === 'Replaced handoff — by Antigravity',
+    JSON.stringify(opened.map((o) => o.title + ':' + (o.error || ''))));
+  opened.length = 0;
+  await run({ ok: true, scope: 'api' });
+  ok('a copy gone by the time of the press (replaced again) is said, not a blank reader',
+    opened.length === 2 && /could not be read/.test(opened[1].error || ''), JSON.stringify(opened[1]));
+}
+{
+  // ── v3.74.0: WHOSE JOURNAL THIS IS ──────────────────────────────────────
+  // The fold counts ONE work-stream's saves — the open handoff's — and read
+  // "Journal · 2 saves" beside a project with forty, as if it were the total.
+  const entries = [hostileDetail.journal.entries[1]];
+  const jr = (scopes, detail) => makeRenderers({ ...hostileState,
+    projectRead: { ...(hostileState.projectRead || {}), scopes },
+    detail: { ...hostileDetail, scope: 'antigravity', machine: 'mac-1', ...detail,
+      journal: { returned: 2, total: 2, totalUnknown: false, entries } } }).renderJournal();
+  const one = jr([{ scope: 'antigravity', machine: 'mac-1' }, { scope: 'other', machine: 'mac-1' }]);
+  ok('★ the Journal fold names the work-stream it counts ("Journal · antigravity")',
+    /id="mem-fold-journal">[\s\S]*?<span>Journal · antigravity<\/span><span class="mem-fold-meta"[^>]*>2 saves/.test(one),
+    one.slice(0, 500));
+  const two = jr([{ scope: 'antigravity', machine: 'mac-1' }, { scope: 'antigravity', machine: 'mac-2' }]);
+  ok('...and the machine too, when that work-stream is held on more than one',
+    /<span>Journal · antigravity on mac-1<\/span>/.test(two), two.slice(0, 500));
+  const hostile = jr([], { scope: '<img src=x onerror=1>' });
+  ok('...escaped, like every other string the agent wrote',
+    !/<img src=x/.test(hostile) && /Journal · &lt;img/.test(hostile), hostile.slice(0, 400));
 }
 {
   // THE COUNT IS AN INSTRUMENT NOW, not a sentence: the journal foot renders a
@@ -4982,33 +5069,49 @@ section('§16 — Projects inside a domain (v3.48.0)');
   }), '{}');
 }
 
-// ── 16d. The rail groups by domain ───────────────────────────────────────
+// ── 16d. The rail groups Active / Idle (v3.74.0; by domain before) ─────────
 {
   const g = makeRenderers({}).renderProjectGroups;
+  const H = 3600;
   const rows = [
-    { domain: 'alpha', project: 'one', scopeCount: 2, hasBrief: true, lastWriteAt: null },
+    { domain: 'alpha', project: 'one', scopeCount: 2, hasBrief: true, writtenAgeSeconds: 2 * H },
     { domain: 'alpha', project: 'two', scopeCount: 0, hasBrief: false, lastWriteAt: null },
-    { domain: 'beta', project: 'one', scopeCount: 1, hasBrief: false, lastWriteAt: null },
+    { domain: 'beta', project: 'one', scopeCount: 1, hasBrief: false, writtenAgeSeconds: 3 * 86400 },
   ];
   // THE INSTALL'S DOMAIN LIST is the fourth argument (v3.65.0): the identity
   // colour is the domain's place in THAT list, not in this screen's, so a
   // domain with no project context at all cannot slide every colour below it.
   const html = g(rows, 'beta', 'one', ['zeta', 'alpha', 'beta']);
-  eq('one group per domain, not one per row', (html.match(/cur-sb-group-head/g) || []).length, 2);
+  const heads = [...html.matchAll(/cur-sb-group-head cur-eyebrow">([^<]*)</g)].map((m) => m[1]);
+  eq('two groups, the widget\'s own words: Active · last 24 h, then Idle', heads.join('|'), 'Active · last 24 h|Idle');
+  const activePart = html.slice(0, html.indexOf('>Idle<'));
+  const idlePart = html.slice(html.indexOf('>Idle<'));
+  ok('a project saved 2 hr ago is ACTIVE; one saved 3 days ago, and one never saved, are IDLE',
+    /data-mem-domain="alpha" data-mem-project="one"/.test(activePart)
+    && /data-mem-domain="beta" data-mem-project="one"/.test(idlePart)
+    && /data-mem-project="two"/.test(idlePart), html.slice(0, 900));
+  // THE BOUNDARY IS THE APP'S freshnessTier `today` edge (86,400 s), on the
+  // row's own clock. Driven on both sides of it.
+  const edge = (secs) => g([{ domain: 'alpha', project: 'p', scopeCount: 1, hasBrief: true,
+    writtenAgeSeconds: secs }], null, null, ['alpha']);
+  ok('23 h 59 min is still Active', /eyebrow">Active · last 24 h</.test(edge(86399)) && !/>Idle</.test(edge(86399)));
+  ok('24 h is Idle — the same edge the dot turns from `today` to `week` on',
+    /eyebrow">Idle</.test(edge(86400)) && !/Active · last 24 h/.test(edge(86400)));
+  ok('the AGENT clock decides, not the file clock (a fresh checkout mtime is not a save)',
+    /eyebrow">Idle</.test(g([{ domain: 'alpha', project: 'p', scopeCount: 1, hasBrief: true,
+      writtenAgeSeconds: 5 * 86400, ageSeconds: 60 }], null, null, ['alpha'])));
   eq('every project still renders a row', (html.match(/data-mem-project=/g) || []).length, 3);
   ok('each row carries its DOMAIN as well as its project — the click handler needs both',
     (html.match(/data-mem-domain=/g) || []).length === 3);
+  ok('the domain the heading used to name is now on the row, in its figure',
+    /cur-sb-figure">alpha · 2 scopes</.test(html) && /cur-sb-figure">beta · 1 scope</.test(html), html.slice(0, 900));
   // THE ACTIVE ROW IS RESOLVED ON THE PAIR. Both domains hold a project
   // called `one`, so a renderer comparing the name alone marks BOTH.
   eq('exactly ONE row is active, even though two projects share a name',
     (html.match(/class="cur-sb-row mem-row active"/g) || []).length, 1);
   ok('...and it is the one in the active DOMAIN, not the first of that name',
-    html.indexOf('mem-row active') > html.indexOf('cur-sb-group-head cur-eyebrow">beta'));
+    /class="cur-sb-row mem-row active" data-mem-domain="beta"/.test(html));
   // ── THE IDENTITY COLOUR IS THE INSTALL'S INDEX, NOT THIS LIST'S ──────
-  // `alpha` is second and `beta` third in the install; a renderer taking the
-  // local position would paint them slots 1 and 2. This is the whole reason
-  // the list is fetched at all, so it is asserted on the slot NUMBERS rather
-  // than on "a dot exists".
   ok('the identity dot is the domain\'s slot in the INSTALL\'s list',
     html.includes('cur-sb-dot-2') && html.includes('cur-sb-dot-3')
     && !html.includes('cur-sb-dot-1'), html.slice(0, 400));
@@ -5019,8 +5122,26 @@ section('§16 — Projects inside a domain (v3.48.0)');
     + 'identity does not have states',
     html.includes('mem-row-quiet')
     && (html.match(/class="cur-sb-dot mem-row-mark/g) || []).length === 2);
-  ok('a domain with ONE project still gets its heading — the rail must not change shape',
+  ok('a group with no rows renders no heading — nothing saved today shows IDLE alone',
     (g([rows[2]], null, null).match(/cur-sb-group-head/g) || []).length === 1);
+
+  // ── THE TOOL ON EVERY ROW, NORMALISED BY THE ROUTE (v3.74.0) ─────────
+  const two = g([{ domain: 'alpha', project: 'p', scopeCount: 3, hasBrief: true, writtenAgeSeconds: 120,
+    headline: 'Doing X', harnessLabel: 'Claude Code',
+    tools: [{ id: 'claude-code', label: 'Claude Code', writtenAgeSeconds: 120 },
+      { id: 'antigravity', label: 'Antigravity', writtenAgeSeconds: 5 * H },
+      { id: 'cursor', label: 'Cursor', writtenAgeSeconds: 9 * 86400 }] }], null, null, ['alpha']);
+  ok('★ two tools active on one project are BOTH named, newest first — and a tool idle for 9 days is not',
+    /class="cur-sb-event mem-row-head">Claude Code \+ Antigravity<span class="cur-sb-sep" aria-hidden="true"> · <\/span>(<span class="cur-sb-event-mark[^"]*"[^>]*><\/span>)?<span class="cur-sb-event-detail">Doing X</.test(two)
+    && !/Cursor/.test(two), two);
+  const idleOne = g([{ domain: 'alpha', project: 'p', scopeCount: 1, hasBrief: true, writtenAgeSeconds: 4 * 86400,
+    harnessLabel: 'Antigravity', tools: [{ id: 'antigravity', label: 'Antigravity', writtenAgeSeconds: 4 * 86400 }] }],
+  null, null, ['alpha']);
+  ok('an IDLE project names the tool of its newest save', /mem-row-head">Antigravity</.test(idleOne), idleOne);
+  const noTool = g([{ domain: 'alpha', project: 'p', scopeCount: 1, hasBrief: true, writtenAgeSeconds: 60,
+    headline: 'Only a headline' }], null, null, ['alpha']);
+  ok('CONTROL: a save that named no tool shows its headline alone — never a guessed tool',
+    /mem-row-head">Only a headline<\/span>/.test(noTool) && !/cur-sb-event-detail/.test(noTool), noTool);
   eq('no projects renders nothing at all', g([], null, null), '');
   // ── THE CLOCK, WHICH IS WHAT THE REPORT WAS ABOUT ────────────────────
   // *"it has clocks showing when it was changed; in Context we don't have
@@ -5033,7 +5154,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
     || /<\/svg><span class="cur-sb-age">2 hr ago<\/span>/.test(aged), aged);
   ok('...and the figure and the age are two SLOTS with the mark between them, '
     + 'which is what a formatted sentence could not express',
-    /class="cur-sb-figure">2 scopes<\/span><span class="cur-sb-sep"[^>]*>·<\/span><span class="fresh-dot/
+    /class="cur-sb-figure">alpha · 2 scopes<\/span><span class="cur-sb-sep"[^>]*>·<\/span><span class="fresh-dot/
       .test(aged), aged);
   // ── THE RAIL CANNOT GROW A SECOND ⓘ, AND THAT IS STRUCTURAL ──────────
   //
@@ -6507,7 +6628,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       // stub anywhere along it would be this suite testing its own harness.
       [...['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'workStreamOrder',
         'wsShownCount', 'wsRowHtml', 'wsMoreHtml', 'workStreamCounts',
-        'handoffReaderContent', 'bindWorkStreamRows', 'openWorkStream',
+        'handoffReaderContent', 'previousHandoffHtml', 'openHandoffReader', 'bindWorkStreamRows', 'openWorkStream',
         'showMoreWorkStreams', 'bindFoldToggles', 'wire']]
         .map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n')
       + '\nfunction bindSessionAndPlan() {}\n'
@@ -7056,6 +7177,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       + extractFunction(viewSrc, 'payloadSignature', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'loadScope', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'openWorkStream', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'openHandoffReader', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'bindWorkStreamRows', 'memory.js') + '\n'
       + 'return { bindWorkStreamRows };')(
       st, () => { renders++; }, () => true,
@@ -10283,6 +10405,9 @@ function realListbox() {
       // v3.70.0: "Capture" left the screen for "Agent sessions" — the route,
       // the jump id and every on-disk name keep the old word.
       ['Capture (the retired name)', /\bCapture\b/],
+      // v3.74.0 (D5): the count is of CONNECTIONS (MCP bridge processes), and
+      // "sessions" over-claimed it — the retired name may not come back.
+      ['Agent sessions (the retired name)', /\bagent sessions?\b/i],
     ]) {
       const scan = /^wiki/.test(word) ? copyNoPanels : copy;
       ok('the Context view says nothing of "' + word + '" in its copy',
@@ -10295,7 +10420,7 @@ function realListbox() {
     for (const [what, word] of [
       ['step ①', 'Documents'], ['step ②', 'Memory'], ['step ③', 'Knowledge'],
       ['the handoffs row', 'Handoffs'], ['the journal row', 'Journal'],
-      ['the capture row', 'Agent sessions'],
+      ['the capture row', 'Agent connections'],
       ['the picker', '+ Add a domain'], ['the picker\'s accessible name', 'Add a domain this'],
     ]) {
       ok('CONTROL: ' + what + ' really painted, under its new word',
@@ -10435,7 +10560,7 @@ function realListbox() {
       data: { logPresent: true, totals: { sessions: 3 } } } }).renderLayerStrip({ scopes: [] });
     ok('CONTROL: once the reading lands the same tile is shown, and carries it',
       /data-ov-jump="capture"/.test(withCap) && !/data-ov-jump="capture"[^>]*hidden>/.test(withCap)
-      && /3 sessions/.test(withCap), withCap.slice(-600));
+      && /3 connections/.test(withCap), withCap.slice(-600));
     // ── v3.72.1 (truth audit F3): NO MEASURED-LOOKING ZERO ─────────────
     const capTile = (h) => {
       const i = h.indexOf('data-ov-jump="capture"');
@@ -10445,25 +10570,38 @@ function realListbox() {
       /cur-ov-sub">last 30 days</.test(capTile(withCap)), capTile(withCap));
     const tiedDays = Number((/^const CAPTURE_WINDOW_DAYS = (\d+);$/m.exec(viewSrc) || [])[1]);
     ok('F3: ...and the literal is the view\'s own CAPTURE_WINDOW_DAYS, so they cannot drift apart',
-      new RegExp("sub: cap && cap.logPresent === true \\? 'last " + tiedDays + " days'").test(viewSrc),
+      new RegExp(": 'last " + tiedDays + " days';").test(viewSrc)
+      && /sub: cap && cap\.logPresent === true \? capSub : null/.test(viewSrc),
       'CAPTURE_WINDOW_DAYS=' + tiedDays);
     const noLog = capTile(F({ capture: { domain: 'acme', project: 'lumina', error: null,
       data: { logPresent: false, totals: { sessions: 0 } } } }).renderLayerStrip({ scopes: [] }));
-    ok('F3: with NO usage log on this computer the tile says so — never "0 sessions"',
-      /cur-ov-value">no usage log</.test(noLog) && !/0 sessions|last 30 days/.test(noLog), noLog);
+    ok('F3: with NO usage log on this computer the tile says so — never "0 connections"',
+      /cur-ov-value">no usage log</.test(noLog) && !/0 connections|last 30 days/.test(noLog), noLog);
     const legacy = capTile(F({ capture: { domain: 'acme', project: 'lumina', error: null,
       data: { totals: { sessions: 0 } } } }).renderLayerStrip({ scopes: [] }));
     ok('F3: ...and a reply that does not SAY the log is present is not read as one (positive evidence only)',
-      /no usage log/.test(legacy) && !/0 sessions/.test(legacy), legacy);
+      /no usage log/.test(legacy) && !/0 connections/.test(legacy), legacy);
     const saves = capTile(F({ capture: { domain: 'acme', project: 'lumina', error: null,
       data: { logPresent: true, noSessionsButSaves: true, totals: { sessions: 0 } } } })
       .renderLayerStrip({ scopes: [] }));
-    ok('F3: saves with no logged session read "not logged", step ②\'s explanation — not "0 sessions"',
-      /cur-ov-value">not logged</.test(saves) && !/0 sessions/.test(saves), saves);
+    ok('F3: saves with no logged session read "not logged", step ②\'s explanation — not "0 connections"',
+      /cur-ov-value">not logged</.test(saves) && !/0 connections/.test(saves), saves);
     const zero = capTile(F({ capture: { domain: 'acme', project: 'lumina', error: null,
       data: { logPresent: true, totals: { sessions: 0 } } } }).renderLayerStrip({ scopes: [] }));
-    ok('F3: CONTROL — a log that WAS read and holds none in the window is a real "0 sessions"',
-      /cur-ov-value">0 sessions</.test(zero) && /last 30 days/.test(zero), zero);
+    ok('F3: CONTROL — a log that WAS read and holds none in the window is a real "0 connections"',
+      /cur-ov-value">0 connections</.test(zero) && /last 30 days/.test(zero), zero);
+    // ── v3.74.0 (D5): A LOG YOUNGER THAN THE WINDOW ────────────────────
+    const young = capTile(F({ capture: { domain: 'acme', project: 'lumina', error: null,
+      data: { logPresent: true, totals: { sessions: 2 }, windowCovered: false, windowDaysCovered: 5.3,
+        logStartsAt: new Date(2026, 8, 20, 9).toISOString() } } }).renderLayerStrip({ scopes: [] }));
+    ok('★ D5: a log that began 5 days ago reads "last 5 days · log begins 20 Sep", never "last 30 days"',
+      /cur-ov-value">2 connections</.test(young) && /cur-ov-sub">last 5 days · log begins 20 Sep</.test(young)
+      && !/30 days/.test(young), young);
+    const covered = capTile(F({ capture: { domain: 'acme', project: 'lumina', error: null,
+      data: { logPresent: true, totals: { sessions: 2 }, windowCovered: true, windowDaysCovered: 30,
+        logStartsAt: '2026-08-01T00:00:00.000Z' } } }).renderLayerStrip({ scopes: [] }));
+    ok('CONTROL: a log that covers the window still says "last 30 days"',
+      /cur-ov-sub">last 30 days</.test(covered), covered);
   }
 
   // ── CELL ① WHILE THE READ IS IN FLIGHT ──────────────────────────────
@@ -11671,7 +11809,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       harnessEstimateTokens: 120000, choices: [200000, 400000, 1000000] } })).renderSessionStart(st.projectRead);
     ok('1M + a 120k harness: the share, the words and the harness line follow the SETTINGS',
       /≈13\.2k tokens · 51\.7 KB · 1\.3% of 1M/.test(big)
-      && /harness<\/span><span class="cur-mon-value">≈120k · 12\.0%<\/span><span class="cur-mon-sub">system prompt, tools, CLAUDE\.md, skills · your estimate, not measured/.test(big)
+      && /harness<\/span><span class="cur-mon-value">≈120k · 12\.0%<\/span><span class="cur-mon-sub">system prompt, tools, instruction files such as CLAUDE\.md or AGENTS\.md, skills · your estimate, not measured/.test(big)
       && /free at start<\/span><span class="cur-mon-value">≈867k</.test(big), big);
     ok('...the hint leaves once an estimate is set', !/mem-ss-harness-hint/.test(big));
     {
@@ -11955,8 +12093,8 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     const order = [...strip.matchAll(/data-ov-jump="([a-z-]+)"/g)].map((m) => m[1]);
     eq('...after AGENT SESSIONS, as the picture draws it', order.join(','),
       'context-canonical,context-state,capture,context-session');
-    ok('the capture tile is named AGENT SESSIONS on screen; its jump id keeps the on-disk word',
-      /AGENT SESSIONS/.test(strip) && !/>CAPTURE</.test(strip) && /data-ov-jump="capture"/.test(strip));
+    ok('the capture tile is named AGENT CONNECTIONS on screen; its jump id keeps the on-disk word',
+      /AGENT CONNECTIONS/.test(strip) && !/AGENT SESSIONS/.test(strip) && !/>CAPTURE</.test(strip) && /data-ov-jump="capture"/.test(strip));
   }
 
   // ── §25d — the helper: head control, panel, gate ──────────────────────
@@ -12997,6 +13135,9 @@ const TOP_LEVEL_FNS = [...viewNoComments.matchAll(/^(?:export\s+)?(?:async\s+)?f
 
 // Executed somewhere above, with real assertions over what they returned/did.
 const EXECUTED = new Set([
+  // v3.74.0 — the replaced handoff (previous.md): its line, its reader
+  // payload, the reader wrapper that binds it and the press that fetches it.
+  'previousHandoffHtml', 'previousReaderContent', 'openHandoffReader', 'openPreviousHandoff',
   'formatAge', 'projectMetaLine', 'splitHandoffPreamble',
   // v3.67.2: the GitHub-mirror test and its "why?" sentence, lifted by §6's
   // makeRenderers and by the row-press section, and driven in
@@ -13690,7 +13831,7 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
   const read6 = lineOf(c6, 'started with the context');
   ok('P3: "saved before stopping" is drawn as a share of all sessions, and says so ("of 6")',
     widthOf(saved6) === 50 && /cur-mon-sub">of 6</.test(saved6)
-    && /visually-hidden"> 3 of the 6 sessions in the last 30 days/.test(saved6), saved6);
+    && /visually-hidden"> 3 of the 6 connections in the last 30 days/.test(saved6), saved6);
   ok('P3: ...and so is "started with the context" (4 of 6)',
     widthOf(read6) === 66.7 && /cur-mon-sub">of 6</.test(read6), read6);
   ok('P3: a share is never danger — there is no target, so there is no over-run',

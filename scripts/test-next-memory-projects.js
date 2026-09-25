@@ -808,6 +808,67 @@ routerMod.__setWorkingStateStoreForTest(null);
     { params: { domain: 'alpha' }, body: { project: 'projects' } });
   eq('the one literal that would shadow its own detail URL is refused', reserved.status, 400);
   eq('...at the ROUTE, with its own reason', reserved.body.reason, 'reserved_project');
+
+  // ── v3.74.0: WHICH TOOLS SAVED, NORMALISED, ON THE INDEX ROW ─────────────
+  // The Context sidebar names every tool active on a project (the widget's
+  // project × tool rows — the parity rule), so the route sends them through
+  // the data layer's ONE normaliser: `Claude Code (desktop)` and
+  // `claude-code` are one tool, `Claude Desktop` is another product.
+  const mk = await call('post', '/:domain/projects', { params: { domain: 'alpha' }, body: { project: 'twotools' } });
+  eq('CONTROL: a project for the tool rows is created', mk.status, 201);
+  const s1 = await realStore.saveWorkingState('alpha', { project: 'twotools', scope: 'ui',
+    harness: 'Claude Code (desktop)', headline: 'ui work', now: 'n', next: 'x' });
+  const s2 = await realStore.saveWorkingState('alpha', { project: 'twotools', scope: 'api',
+    harness: 'Antigravity', headline: 'api work', now: 'n', next: 'x' });
+  const s3 = await realStore.saveWorkingState('alpha', { project: 'twotools', scope: 'ops',
+    harness: 'claude-code', headline: 'ops work', now: 'n', next: 'x' });
+  ok('CONTROL: three real saves by two tools', [s1, s2, s3].every((r) => r && r.ok === true), JSON.stringify([s1,s2,s3].map((r) => r && (r.reason || r.error))));
+  const toolIdx = await call('get', '/');
+  const lum = (toolIdx.body.projects || []).find((r) => r.domain === 'alpha' && r.project === 'twotools') || {};
+  const ids = (lum.tools || []).map((t) => t.id);
+  eq('★ the row names each TOOL once, newest first — two spellings of Claude Code are one',
+    JSON.stringify(ids), '["claude-code","antigravity"]');
+  eq('...under its one label', (lum.tools || [])[0] && lum.tools[0].label, 'Claude Code');
+  ok('...each with its own save clock, for the view\'s 24-hour Active test',
+    (lum.tools || []).every((t) => typeof t.writtenAt === 'string' || typeof t.lastWriteAt === 'string'),
+    JSON.stringify(lum.tools));
+  eq('the newest save\'s tool is sent NORMALISED as well as raw', lum.harnessLabel, 'Claude Code');
+  eq('...raw kept', lum.harness, 'claude-code');
+
+  // ── v3.74.0: THE REPLACED HANDOFF (previous.md) ──────────────────────────
+  // Antigravity now saves into Claude Code's `ui` folder: the store keeps
+  // Claude Code's text once as previous.md. The scoped read carries its
+  // FACTS; `?previous=1` asks for its TEXT; and nothing counts the file as a
+  // second handoff.
+  const pvBefore = await call('get', '/:domain/:project', { params: { domain: 'alpha', project: 'twotools' } });
+  const over = await realStore.saveWorkingState('alpha', { project: 'twotools', scope: 'ui',
+    harness: 'Antigravity', headline: 'ui taken over', now: 'n2', next: 'x2' });
+  ok('CONTROL: another tool replaced the ui handoff', over && over.ok === true);
+  const pairDir = (await realStore.listWorkingScopes('alpha', { project: 'twotools' })).scopes.find((p) => p.scope === 'ui');
+  ok('CONTROL: previous.md really is on disk beside current.md',
+    existsSync(join(DOMAINS, 'alpha', 'state', 'twotools', 'ui', pairDir.machine, 'previous.md')));
+  const scoped = await call('get', '/:domain/:project',
+    { params: { domain: 'alpha', project: 'twotools' }, query: { scope: 'ui' } });
+  ok('★ the scoped read carries `previous` — the tool it replaced, normalised — and no text by default',
+    scoped.body.previous && scoped.body.previous.harnessLabel === 'Claude Code'
+    && scoped.body.previous.headline === 'ui work' && !('text' in scoped.body.previous),
+    JSON.stringify(scoped.body.previous));
+  const withText = await call('get', '/:domain/:project',
+    { params: { domain: 'alpha', project: 'twotools' }, query: { scope: 'ui', previous: '1' } });
+  ok('★ `?previous=1` passes through: the replaced text comes back',
+    withText.body.previous && typeof withText.body.previous.text === 'string'
+    && /ui work/.test(withText.body.previous.text), JSON.stringify(withText.body.previous).slice(0, 300));
+  const other = await call('get', '/:domain/:project',
+    { params: { domain: 'alpha', project: 'twotools' }, query: { scope: 'api' } });
+  ok('CONTROL: a pair with no copy carries NO `previous` key (absent, never null)', !('previous' in other.body));
+  // NOTHING MISTAKES THE FILE FOR A HANDOFF.
+  const pvAfter = await call('get', '/:domain/:project', { params: { domain: 'alpha', project: 'twotools' } });
+  eq('★ the pair count is unchanged by previous.md', pvAfter.body.savedCopies, pvBefore.body.savedCopies);
+  eq('...and so is the work-stream count', pvAfter.body.distinctScopeCount, pvBefore.body.distinctScopeCount);
+  eq('...and the ui work-stream is still ONE row', (pvAfter.body.scopes || []).filter((r) => r.scope === 'ui').length, 1);
+  const idx2 = await call('get', '/');
+  const row2 = (idx2.body.projects || []).find((r) => r.project === 'twotools') || {};
+  eq('...and the index row counts the same pairs', row2.savedCopies, pvBefore.body.savedCopies);
 }
 
 // ═════════════════════════════════════════════════════════════════════════

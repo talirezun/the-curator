@@ -200,7 +200,7 @@ section('§1 — THE FOUR NUMBERS, AND THE ONE THAT MATTERS IS NAMED');
 // ═════════════════════════════════════════════════════════════════════════
 {
   const html = makeMeter(stFor()).renderCaptureMeter();
-  ok(html.includes('6 sessions in the last ' + WINDOW_DAYS + ' days'),
+  ok(html.includes('6 connections in the last ' + WINDOW_DAYS + ' days'),
     'the headline figure is the session count over the window the view asks for',
     html.slice(0, 300));
   ok(html.includes('4 started with the context'),
@@ -228,13 +228,13 @@ section('§1 — THE FOUR NUMBERS, AND THE ONE THAT MATTERS IS NAMED');
   // and the instrument opens under it.
   // v3.70.0: "Capture" is "Agent sessions" on screen; `capture` stays the
   // fold key, the route and every on-disk name.
-  ok(/<summary class="mem-fold-summary" id="mem-fold-capture">[\s\S]*?<span>Agent sessions<\/span>/.test(html)
+  ok(/<summary class="mem-fold-summary" id="mem-fold-capture">[\s\S]*?<span>Agent connections<\/span>/.test(html)
     && !/>Capture</.test(html),
-    'the reading is a fold row, titled Agent sessions, in the same chrome as its four siblings',
+    'the reading is a fold row, titled Agent connections, in the same chrome as its four siblings',
     html.slice(0, 400));
   ok(!html.includes('mem-capture-zero'),
     '...and with sessions counted there is NO zero line — it explains a zero, nothing else');
-  ok(/<span class="mem-fold-meta"><span class="fresh-dot[^>]*><\/span>6 sessions in the last [0-9]+ days · 4 started with the context/
+  ok(/<span class="mem-fold-meta"><span class="fresh-dot[^>]*><\/span>6 connections in the last [0-9]+ days · 4 started with the context/
     .test(html), '...with the headline AND the three clauses as its one closed line',
   html.slice(0, 600));
   ok(html.includes('<div class="cur-mon"'),
@@ -277,7 +277,7 @@ section('§2 — THE THREE STATES, TOLD APART (roadmap B12)');
   })).renderCaptureMeter();
   ok(noLog.includes('no usage log on this computer yet'),
     'an absent log says so, in words');
-  ok(!noLog.includes('0 read and did not save') && !noLog.includes('no agent session in'),
+  ok(!noLog.includes('0 read and did not save') && !noLog.includes('no agent connection in'),
     '...and never as zero sessions, which is a different and false claim', noLog.slice(0, 400));
   ok(noLog.includes('fresh-dot fresh-unknown'),
     '...and the mark is the dashed UNKNOWN ring, never age zero');
@@ -286,8 +286,8 @@ section('§2 — THE THREE STATES, TOLD APART (roadmap B12)');
   // v3.70.0: AT ZERO, one unfolded line says what is counted — the likeliest
   // reason for a zero on a busy project is sessions that never touched the
   // MCP (the hook and `my-curator context` write no usage log).
-  const ZERO = 'Counts sessions where an agent used the MCP tools here; sessions started only through a hook '
-    + 'or <code>my-curator context</code> are not counted.';
+  const ZERO = 'Counts connections where an agent used the MCP tools here; work started only through a hook '
+    + 'or <code>my-curator context</code> is not counted.';
   ok(noLog.includes('id="mem-capture-zero">' + ZERO + '</p>'),
     '...and the ZERO line says what is counted — the hook and `my-curator context` are not', noLog);
   ok(noLog.indexOf('id="mem-capture-zero"') > noLog.indexOf('</details>') || noLog.indexOf('id="mem-capture-zero"') > noLog.indexOf('mem-save-flat'),
@@ -300,7 +300,7 @@ section('§2 — THE THREE STATES, TOLD APART (roadmap B12)');
       sessions: [], sessionsShown: 0,
     }) },
   })).renderCaptureMeter();
-  ok(idle.includes('no agent session in the last ' + WINDOW_DAYS + ' days'),
+  ok(idle.includes('no agent connection in the last ' + WINDOW_DAYS + ' days'),
     'a log with nothing in the window says NO SESSION RAN — a different sentence');
   ok(!idle.includes('no usage log'),
     '...and does not claim the log is missing', idle.slice(0, 300));
@@ -385,7 +385,7 @@ section('§3 — THE READING NEVER FOLDS; THE SESSION LIST DOES, AND SHIPS SHUT'
   };
   const outsideAllDetails = (h) => h.replace(/<details[\s\S]*?<\/details>/g, '');
   const closedText = summaryOf(html, 'capture') + outsideAllDetails(html);
-  for (const claim of ['6 sessions in the last', '2 read and did not save']) {
+  for (const claim of ['6 connections in the last', '2 read and did not save']) {
     ok(closedText.includes(claim),
       '`' + claim + '…` is readable while the row is CLOSED — an outcome behind a click is not an outcome');
   }
@@ -499,7 +499,7 @@ section('§4 — THE TABLE IS GONE, AND THE MONITOR CARRIES WHAT IT CARRIED');
       data: payload({ sessionsTruncated: true, sessionsShown: 3 }) },
     openFolds: { capture: true },
   })).renderCaptureMeter();
-  ok(cut.includes('showing the 3 most recent of 6 sessions'),
+  ok(cut.includes('showing the 3 most recent of 6 connections'),
     'a truncated list discloses BOTH numbers — what was counted and what exists',
     cut.slice(cut.indexOf('mem-capture-limits') - 20, cut.indexOf('mem-capture-limits') + 260));
   ok(cut.replace(/<details[\s\S]*?<\/details>/g, '').includes('showing the 3 most recent'),
@@ -523,7 +523,7 @@ section('§5 — AN ABSENT FIGURE IS NOT A ZERO');
     capture: { domain: 'acme', project: 'lumina', error: null,
       data: payload({ totals: { sessions: 6, sessionsRead: 4 } }) },
   })).renderCaptureMeter();
-  ok(partial.includes('6 sessions in the last'),
+  ok(partial.includes('6 connections in the last'),
     'what the route DID say is painted');
   ok(partial.includes('4 started with the context'), '...clause by clause');
   // READ OFF THE PROVENANCE ELEMENT, not off the whole page: the ⓘ panel
@@ -649,7 +649,7 @@ section('§6 — LOADING, FAILING, AND NOTHING HOSTILE REACHING THE PAGE');
   const junk = makeMeter(stFor({
     capture: { domain: 'acme', project: 'lumina', error: null, data: { ok: true, logPresent: true } },
   })).renderCaptureMeter();
-  ok(junk.includes('sessions could not be counted'),
+  ok(junk.includes('connections could not be counted'),
     'an envelope with no totals at all says so rather than painting zeros');
   ok(!junk.includes('<details'), '...and offers no fold over rows it does not have');
 }
@@ -1016,7 +1016,7 @@ section('§11 — SAVES WITH NO SESSION TO ACCOUNT FOR THEM (v3.64.1)');
   });
 
   const html = makeMeter(contradiction()).renderCaptureMeter();
-  ok(html.includes('no agent session in the last ' + WINDOW_DAYS + ' days'),
+  ok(html.includes('no agent connection in the last ' + WINDOW_DAYS + ' days'),
     'CONTROL: the headline still reports the honest zero — the note explains it, it does not '
     + 'replace it', html.slice(0, 400));
   ok(html.includes(escapeHtml(NOTE).replace(/&#39;/g, "&#39;")) || html.includes(NOTE),
@@ -1101,8 +1101,49 @@ section('§12 — v3.66.0 (P3): TWO OUTCOMES AS A SHARE OF A NAMED WHOLE');
   ok(!/cur-depth-danger/.test(html), 'no share is ever danger — there is no target');
   const summary = html.slice(html.indexOf('<summary'), html.indexOf('</summary>'));
   ok(!/cur-depth|%/.test(summary), 'the closed summary line carries no bar and no percentage', summary);
-  ok(!/cur-depth-bar/.test(line('sessions')) && !/cur-depth-bar/.test(line('read and did not save')),
+  ok(line('connections') !== '' && !/cur-depth-bar/.test(line('connections'))
+    && !/cur-depth-bar/.test(line('read and did not save')),
     'the whole itself and the uncomfortable number get no bar');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§v3.74.0 — CONNECTIONS, THE WINDOW THE LOG COVERS, AND SAVES BY TOOL');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  // D5: the count is of MCP bridge processes — "sessions" over-claimed it.
+  const plain = makeMeter(stFor()).renderCaptureMeter();
+  ok(/6 connections in the last 30 days/.test(plain) && !/\bsessions?\b/.test(plain.replace(/<[^>]+>/g, ' ')),
+    '★ the reading counts CONNECTIONS and never calls a bridge run a session', plain.slice(0, 500));
+  // A LOG YOUNGER THAN THE WINDOW says the span it covers and when it began.
+  const begins = new Date(2026, 8, 20, 9, 0, 0).toISOString();
+  const young = makeMeter(stFor({ capture: { domain: 'acme', project: 'lumina', error: null,
+    data: payload({ windowCovered: false, windowDaysCovered: 5.3, logStartsAt: begins }) } })).renderCaptureMeter();
+  ok(/6 connections in the last 5 days \(the log begins 20 Sep\)/.test(young),
+    '★ a log that began 5 days ago never says "in the last 30 days"', young.slice(0, 600));
+  ok(!/30 days/.test(young), '...anywhere in the reading');
+  const covered = makeMeter(stFor({ capture: { domain: 'acme', project: 'lumina', error: null,
+    data: payload({ windowCovered: true, windowDaysCovered: 30, logStartsAt: '2026-08-01T00:00:00.000Z' }) } }))
+    .renderCaptureMeter();
+  ok(/6 connections in the last 30 days/.test(covered) && !/log begins/.test(covered),
+    'CONTROL: a log that covers the window says the window');
+
+  // SAVES BY TOOL — the widget's fact, unfolded under the reading.
+  const tools = (sbt) => makeMeter(stFor({ capture: { domain: 'acme', project: 'lumina', error: null,
+    data: payload({ savesByTool: sbt }) } })).renderCaptureMeter();
+  const t1 = tools({ windowSeconds: 604800, events: 12, lowerBound: false, eventsWithoutTool: 0, note: null,
+    tools: [{ id: 'claude-code', label: 'Claude Code', events: 12, lastSeenAt: '2026-09-25T09:00:00Z' },
+      { id: 'antigravity', label: 'Antigravity', events: 0, lastSeenAt: new Date(2026, 8, 1, 12).toISOString() }] });
+  ok(/id="mem-capture-tools">Saves by tool, last 7 days: Claude Code 12 · Antigravity none \(last seen 1 Sep\)<\/p>/.test(t1),
+    '★ one clause per tool; a tool idle in the window says when it was LAST SEEN, never "last save"', t1.slice(-500));
+  ok(t1.indexOf('mem-capture-tools') > t1.indexOf('</details>'),
+    '...and it sits OUTSIDE the fold — a reading never needs a click to find');
+  const t2 = tools({ windowSeconds: 604800, events: 5, lowerBound: true, eventsWithoutTool: 2,
+    note: 'At least these counts: 1 journal was read only from the newest 16 KB.',
+    tools: [{ id: 'claude-code', label: 'Claude Code', events: 3, lastSeenAt: null }] });
+  ok(/Claude Code at least 3 · 2 named no tool/.test(t2) && /At least these counts: 1 journal/.test(t2),
+    '★ a floor says "at least" and carries the data layer\'s own note', t2.slice(-500));
+  ok(!/mem-capture-tools/.test(makeMeter(stFor()).renderCaptureMeter()),
+    'CONTROL: no savesByTool from the route, no line — never an invented "none"');
 }
 
 console.log('\n  ' + '─'.repeat(60));
