@@ -821,6 +821,14 @@ function tail(out, n = 12) {
       console.log(`         ⚠ inconclusive — transient provider error (503 / rate-limit / dropped stream) on both attempts. NOT counted as a failure.`);
     } else if (!r.ok) {
       console.log(`         reason: ${r.reason || `exit ${r.code}`}`);
+      // The tail alone can miss the failing line of a long suite (v3.76.0:
+      // a CI-only failure hid behind 2,097 passing lines), so name every
+      // failed assertion the suite printed, before the tail.
+      const failedLines = String(r.out || '').split('\n').filter((l) => /^\s*(✗|FAIL\b)/.test(l));
+      if (failedLines.length) {
+        console.log('         failed assertions:');
+        for (const l of failedLines.slice(0, 30)) console.log('           ' + l.trim().slice(0, 400));
+      }
       console.log(tail(r.out));
     }
   }
