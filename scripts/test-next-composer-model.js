@@ -4,8 +4,9 @@
  *
  * No network, no API key, no server, no browser, no LLM call. The real, live
  * helpers (`normalizeOfferable`, `offerableEntries`, `resolveChatModel`,
- * `formatPricePerM`, `formatLivePrice`, `formatPromotionRise`,
- * `isFlaggedModel`, `renderModelOptionHtml`, `renderModelMenuHtml`) are
+ * `isChatDefaultRow`, `renderModelRowBodyHtml`, `renderModelOptionHtml`,
+ * `renderModelMenuHtml`; the row body itself is shared/model-row.js, imported
+ * real and injected, v3.72.0) are
  * extracted from source by brace-matching and executed standalone with
  * `new Function` — the same technique scripts/test-next-provider-rows.js and
  * scripts/test-chat-markdown.js use for browser-side code.
@@ -184,6 +185,20 @@ import { OFFERABLE_MODELS, getModelPrice, resolveModelPrice, isFreeModel, isOffe
 // is mutation M4.
 import { formatUsdHonest } from '../src/public/next/shared/format-usd.js';
 import { formatModelSummary, formatDurationMs } from '../src/public/next/shared/model-summary.js';
+// v3.72.0 (P4): the model ROW body moved to shared/model-row.js — one builder
+// for the composer menu and the browse dialog. Imported REAL, injected into
+// the sandbox under the names chat.js imports, and its formatters driven
+// directly below under the names this suite has always asserted on.
+import {
+  modelRowBodyHtml, modelMenuFootHtml, providerWord,
+  formatPricePerM, priceFact, formatIsoDay, promotionText,
+} from '../src/public/next/shared/model-row.js';
+/** The price column's words: 'free', '$a / $b', or 'price unavailable'. */
+const formatLivePrice = (e) => priceFact(e).text;
+/** The live promotion line ('' when none) — model-row.js's promotionText. */
+const formatPromotionRise = promotionText;
+const MODEL_ROW_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '../src/public/next/shared/model-row.js');
+const modelRowSrc = readFileSync(MODEL_ROW_PATH, 'utf8');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { progressRingHtml } from '../src/public/next/shared/progress-ring.js';
@@ -293,7 +308,7 @@ function scanTags(html) {
 
 const FN_NAMES = [
   'normalizeOfferable', 'offerableEntries', 'resolveChatModel',
-  'formatPricePerM', 'formatLivePrice', 'formatIsoDay', 'formatPromotionRise',
+  'isChatDefaultRow',
   'renderModelRowBodyHtml', 'renderModelOptionHtml', 'renderModelMenuHtml',
   // §13 — the WORKING SET. Pure, so the whole "which models does the composer
   // show by default" decision is executable offline with no DOM and no server.
@@ -329,7 +344,7 @@ const FN_NAMES = [
 // DOM-bound in the real view (one opens a document-level overlay, one writes
 // localStorage), so extracting them would drag the whole dialog in for nothing.
 const INJECTED = ['escapeHtml', 'formatUsdHonest', 'formatModelSummary', 'icon', 'formatDurationMs',
-  'openBrowseDialog', 'selectChatModel'];
+  'openBrowseDialog', 'selectChatModel', 'modelRowBodyHtml', 'modelMenuFootHtml', 'providerWord'];
 
 /**
  * The shell's `icon()`, reproduced as an inert stub.
@@ -375,7 +390,6 @@ const QUEUE_INJECTED = {
 const sandbox = new Function(
   ...INJECTED,
   extractConst(chatSrc, 'PROVIDER_LABELS') + '\n' +
-  extractConst(chatSrc, 'SUITABILITY_LABELS') + '\n' +
   // The working set's three tunables, lifted from the REAL source rather than
   // re-declared here: a suite that hardcodes the threshold it is testing tests
   // its own copy of the number.
@@ -399,17 +413,16 @@ const sandbox = new Function(
   // HANDLERS it names go through INJECTED because §0 scans for them by name.
   'var pendingListboxes = [];\n' +
   FN_NAMES.map(n => extractFunction(chatSrc, n)).join('\n') + '\n' +
-  'return { SUITABILITY_LABELS, WORKING_SET_COLLAPSE_ABOVE, MAX_RECENTS, MAX_STARRED, ' +
+  'return { WORKING_SET_COLLAPSE_ABOVE, MAX_RECENTS, MAX_STARRED, ' +
   'PROMPT_HISTORY_MESSAGES, MODEL_VALUE_SEP, BROWSE_MODEL_VALUE, ' +
   '__setThread(t) { state.thread = t; }, ' +
   '__setChatState(o) { Object.assign(state, o); }, ' + FN_NAMES.join(', ') + ' };'
 )(escapeHtmlStub, formatUsdHonest, formatModelSummary, iconStub, formatDurationMs,
-  () => {}, () => {});
+  () => {}, () => {}, modelRowBodyHtml, modelMenuFootHtml, providerWord);
 
 const {
-  SUITABILITY_LABELS, WORKING_SET_COLLAPSE_ABOVE, MAX_RECENTS, MAX_STARRED,
-  normalizeOfferable, offerableEntries, resolveChatModel,
-  formatPricePerM, formatLivePrice, formatIsoDay, formatPromotionRise,
+  WORKING_SET_COLLAPSE_ABOVE, MAX_RECENTS, MAX_STARRED,
+  normalizeOfferable, offerableEntries, resolveChatModel, isChatDefaultRow,
   renderModelRowBodyHtml, renderModelOptionHtml, renderModelMenuHtml,
   parseIdList, pushRecent, toggleStar, buildWorkingSet, filterCatalogue,
   measuredLatencyRange, slowTurnNoticeText,
@@ -621,7 +634,7 @@ section('§0  FN_NAMES COMPLETENESS — the harness cannot go blind by omission'
 {
   const topLevel = topLevelFunctionNames(chatSrc);
   const imported = importedNames(chatSrc);
-  const extractedConsts = new Set(['PROVIDER_LABELS', 'SUITABILITY_LABELS']);
+  const extractedConsts = new Set(['PROVIDER_LABELS']);
   ok(topLevel.size > 20,
     `§0 the top-level function scanner sees chat.js's helpers (found ${topLevel.size})`);
   for (const n of FN_NAMES) {
@@ -1063,41 +1076,44 @@ section('§4  v3.0.13 GUARD — an unkeyed provider\'s models are NOT selectable
 // ═════════════════════════════════════════════════════════════════════════
 section('§5  Price honesty — the LIVE price is rendered, never the standard one');
 // ═════════════════════════════════════════════════════════════════════════
+// v3.72.0 (P4): the row body is shared/model-row.js. `formatLivePrice` here is
+// its `priceFact(e).text` and `formatPricePerM` its exact formatter, imported
+// REAL at the top of this file; the rows are driven through chat.js's own
+// wrappers, so the view's delegation is what is measured.
 {
   // ── THREE STATES, NEVER TWO ───────────────────────────────────────────
-  // paid    a real price renders, built from the LIVE input/output.
-  // free    known to bill nothing. Must NOT render "$0.00" (v3.14.0:
-  //         reported or absent, never inferred) and must NOT say the price is
-  //         unknown — we know exactly what it is.
-  // unknown we were not told. Must go on saying so.
-  //
-  // Collapsing free into unknown is the absent-vs-empty mistake in a new
-  // costume, and it was the SHIPPED behaviour until this release: a free
-  // model rendered "price unavailable" in the composer and blank in Settings,
-  // while `entry.free === true` sat on the wire read by nobody — the sixth
-  // instance of this repo's dead-data shape.
+  // paid / free / unknown. Collapsing free into unknown was the SHIPPED
+  // behaviour before v3.14.0 — the dead-data shape.
   for (const p of ALL_PROVIDERS) {
     for (const e of REAL[p]) {
       const html = renderModelOptionHtml(p, e, null);
+      const menu = renderModelRowBodyHtml(p, e);
       const live = formatLivePrice(e);
       if (e.free === true) {
         ok(live === 'free', `${e.id}: a FREE entry renders "free" (got ${JSON.stringify(live)})`);
-        ok(live !== 'price unavailable',
-          `${e.id}: …and NOT "price unavailable" — a known-zero cost is not an unknown one`);
         ok(!/\$/.test(live), `${e.id}: …and no dollar figure at all, so no $0.00 can be inferred`);
       } else {
-        ok(live === formatPricePerM(e.input) + ' in / ' + formatPricePerM(e.output) + ' out per 1M',
-          `${e.id}: formatLivePrice is built from input/output`);
+        ok(live === formatPricePerM(e.input) + ' / ' + formatPricePerM(e.output),
+          `${e.id}: the price column is live input / output per 1M ("${live}")`);
         ok(html.includes(escapeHtmlStub(formatPricePerM(e.input))), `${e.id}: row shows live input ${e.input}`);
       }
-      ok(html.includes(escapeHtmlStub(live)), `${e.id}: row renders the live price "${live}"`);
+      ok(html.includes(escapeHtmlStub(live)), `${e.id}: browse row renders the live price "${live}"`);
+      ok(menu.includes(escapeHtmlStub(live)), `${e.id}: menu row renders the SAME live price`);
     }
   }
+  // ── EXACT, NEVER ROUNDED TO CENTS ─────────────────────────────────────
+  // The old composer printed $0.075 as "$0.08" and $0.017 as "$0.02".
+  ok(formatPricePerM(0.075) === '$0.075', 'formatPricePerM: $0.075 is shown exactly (was "$0.08")');
+  ok(formatPricePerM(0.017) === '$0.017', 'formatPricePerM: $0.017 is shown exactly (was "$0.02")');
+  ok(formatPricePerM(0.1) === '$0.10' && formatPricePerM(2) === '$2.00',
+    'formatPricePerM: at least two decimals, so a column lines up');
+  ok(formatPricePerM(0) === '$0.00', 'formatPricePerM: a real zero is a zero (free is decided by the FLAG, not here)');
+  for (const p of ALL_PROVIDERS) for (const e of REAL[p]) {
+    if (typeof e.input !== 'number') continue;
+    const back = Number(formatPricePerM(e.input).slice(1));
+    ok(Math.abs(back - e.input) < 1e-9, `${e.id}: the printed input price parses back to the catalogue's ${e.input}`);
+  }
 
-  // ── THE THREE STATES ARE MUTUALLY DISTINGUISHABLE ─────────────────────
-  // Driven on synthetic entries so this holds whatever the catalogue contains
-  // today, and so each state is reached deliberately rather than by whichever
-  // real model happens to exist.
   {
     const paid = { id: 'p', input: 1, output: 5 };
     const free = { id: 'f', free: true, input: null, output: null };
@@ -1105,51 +1121,35 @@ section('§5  Price honesty — the LIVE price is rendered, never the standard o
     const [lp, lf, lu] = [formatLivePrice(paid), formatLivePrice(free), formatLivePrice(unknown)];
     ok(new Set([lp, lf, lu]).size === 3,
       `the three price states render three DIFFERENT strings (${JSON.stringify([lp, lf, lu])})`);
-    ok(lf === 'free' && lu === 'price unavailable',
-      'free says free; unknown says unavailable');
-    ok(!/\$0(\.0+)?\b/.test(lf), 'the free state never renders a $0 figure');
-    // DRIVEN OFF THE FLAG, never off a zero price, a provider id, or a ":free"
-    // id substring. Each of those would be a different (and wrong) test, and
-    // llm.js's own docblock records why the `:free` suffix in particular is
-    // unsafe — a router id and two audio models are zero-priced but not free.
+    ok(lf === 'free' && lu === 'price unavailable', 'free says free; unknown says unavailable');
     ok(formatLivePrice({ id: 'z', input: 0, output: 0 }) !== 'free',
-      'a model priced at exactly $0/$0 without the flag is NOT called free — membership is the authority, not the number');
+      'a model priced at exactly $0/$0 without the flag is NOT called free');
     ok(formatLivePrice({ id: 'x/y:free', input: 1, output: 5 }) !== 'free',
-      'an id merely CONTAINING ":free" is not treated as free — the suffix is not a membership test');
-    ok(formatLivePrice({ id: 'q', provider: 'openrouter', input: 1, output: 5 }) !== 'free',
-      'and no provider id implies free');
+      'an id merely CONTAINING ":free" is not treated as free');
     ok(formatLivePrice({ id: 'w', free: false, input: null, output: null }) === 'price unavailable',
-      'free:false with no price stays UNKNOWN — the flag being present and false is not a licence to guess');
-    // The rendered rows differ too, not merely the helper's return value.
+      'free:false with no price stays UNKNOWN');
     const rp = renderModelOptionHtml('gemini', paid, null);
     const rf = renderModelOptionHtml('gemini', free, null);
     const ru = renderModelOptionHtml('gemini', unknown, null);
-    ok(rf.includes('free') && !rf.includes('price unavailable'),
-      'the rendered FREE row says free and does not also claim the price is unavailable');
+    ok(/tx-badge-success[^"]*">free</.test(rf) && !rf.includes('price unavailable'),
+      'the rendered FREE row carries a success badge reading "free" and does not also claim the price is unavailable');
     ok(ru.includes('price unavailable') && !/>free</.test(ru),
       'the rendered UNKNOWN row keeps saying unavailable and is never relabelled free');
     ok(rp !== rf && rf !== ru && rp !== ru, 'all three rows render differently');
   }
-  // For a PROMOTED entry the standard price must never appear as the current
-  // price — i.e. never inside the .chat-mm-price span.
+  // For a PROMOTED entry the standard price must never appear AS the current
+  // price — i.e. never inside the .mr-price span.
   for (const { p, e } of promotedEntries) {
-    const html = renderModelOptionHtml(p, e, null);
-    // The class list was `chat-mm-price mono` until the design pass moved
-    // every COUNT and PRICE in /next off the monospace face onto the text one
-    // (mono is kept for code and raw source; a price is neither). Matched on
-    // the price class ALONE now, so this assertion measures where the price
-    // is rather than what face it happens to be set in.
-    const m = /<span class="chat-mm-price"[^>]*>([\s\S]*?)<\/span>/.exec(html);
-    ok(!!m, `${e.id}: a price span is present`);
-    const priceText = m ? m[1] : '';
-    ok(priceText.includes(escapeHtmlStub(formatPricePerM(e.input))),
-      `${e.id}: the price span carries the LIVE input ${e.input}`);
-    ok(!priceText.includes(escapeHtmlStub(formatPricePerM(e.standardInput))),
-      `${e.id}: the price span does NOT present the standard input ${e.standardInput} as current`);
-    ok(!priceText.includes(escapeHtmlStub(formatPricePerM(e.standardOutput))),
-      `${e.id}: the price span does NOT present the standard output ${e.standardOutput} as current`);
+    for (const html of [renderModelOptionHtml(p, e, null), renderModelRowBodyHtml(p, e)]) {
+      const m = /<span class="mr-price"[^>]*>([\s\S]*?)<\/span>/.exec(html);
+      ok(!!m, `${e.id}: a price span is present`);
+      const priceText = m ? m[1] : '';
+      ok(priceText.includes(escapeHtmlStub(formatPricePerM(e.input))),
+        `${e.id}: the price span carries the LIVE input ${e.input}`);
+      ok(!priceText.includes(escapeHtmlStub(formatPricePerM(e.standardInput))),
+        `${e.id}: the price span does NOT present the standard input ${e.standardInput} as current`);
+    }
   }
-  // A non-finite price is never fabricated into a number.
   ok(formatPricePerM(undefined) === null && formatPricePerM(NaN) === null && formatPricePerM('3') === null,
     'formatPricePerM refuses a non-finite / non-number price');
   ok(formatLivePrice({ input: 1 }) === 'price unavailable', 'a half-priced entry renders "price unavailable", not a fake 0');
@@ -1158,84 +1158,69 @@ section('§5  Price honesty — the LIVE price is rendered, never the standard o
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§6  Promotion disclosure — the coming rise is stated');
+section('§6  Promotion disclosure — the coming rise is stated, on BOTH surfaces');
 // ═════════════════════════════════════════════════════════════════════════
 {
   for (const { p, e } of promotedEntries) {
     const rise = formatPromotionRise(e);
-    const html = renderModelOptionHtml(p, e, null);
-    ok(rise !== '', `${e.id}: formatPromotionRise produces a rise clause`);
-    ok(html.includes(escapeHtmlStub(rise)), `${e.id}: the row renders the rise clause`);
-    // SCOPED TO THE RISE ELEMENT, not to the whole row. Every promoted entry
-    // in today's catalogue is ALSO flagged, and its measured note happens to
-    // repeat the same standard prices and date — so a whole-row `includes`
-    // passes even with the rise element deleted entirely (mutation-proven:
-    // dropping the rise clause left these three green). Scoping them makes
-    // them test the disclosure they are named for, and keeps them meaningful
-    // for a future promoted entry that carries no note at all.
-    const rm = /<span class="chat-mm-rise">([\s\S]*?)<\/span>/.exec(html);
-    ok(!!rm, `${e.id}: a rise element is present`);
-    const riseText = rm ? rm[1] : '';
-    ok(riseText.includes(escapeHtmlStub(formatPricePerM(e.standardInput))),
-      `${e.id}: the rise element names the standard input price ${e.standardInput}`);
-    ok(riseText.includes(escapeHtmlStub(formatPricePerM(e.standardOutput))),
-      `${e.id}: the rise element names the standard output price ${e.standardOutput}`);
-    // CLAIM UPDATED, NOT ASSERTION WEAKENED. This pinned the RAW ISO string
-    // and went red the moment the composer adopted Settings' humanised form —
-    // the guard working. The date must still be named; it is now named the way
-    // a person reads a date, and the raw ISO must NOT survive alongside it, or
-    // the drift this fixed would simply have gained a second rendering.
-    const date = e.standardPriceFromIso || e.promotionUntilIso;
-    const human = formatIsoDay(date);
-    ok(human !== date, `${e.id}: ${date} humanises to something different ("${human}")`);
-    ok(riseText.includes(escapeHtmlStub(human)), `${e.id}: the rise element names the date it applies ("${human}")`);
-    ok(!riseText.includes(date), `${e.id}: the rise element does NOT also carry the raw ISO ${date}`);
+    ok(rise !== '', `${e.id}: promotionText produces a rise clause`);
+    for (const [where, html] of [['browse', renderModelOptionHtml(p, e, null)], ['menu', renderModelRowBodyHtml(p, e)]]) {
+      // SCOPED TO THE PROMO ELEMENT, not the whole row (the browse row's ingest
+      // note can repeat prices, which once let a deleted rise stay green).
+      const rm = /<span class="mr-promo">([\s\S]*?)<\/span><\/span>/.exec(html);
+      ok(!!rm, `${e.id} (${where}): a promo element is present`);
+      const riseText = rm ? rm[1] : '';
+      ok(/tx-badge-attention[^"]*">promo</.test(riseText), `${e.id} (${where}): it carries the "promo" attention badge`);
+      ok(riseText.includes(escapeHtmlStub(formatPricePerM(e.standardInput))),
+        `${e.id} (${where}): it names the standard input price ${e.standardInput}`);
+      ok(riseText.includes(escapeHtmlStub(formatPricePerM(e.standardOutput))),
+        `${e.id} (${where}): it names the standard output price ${e.standardOutput}`);
+      const until = formatIsoDay(e.promotionUntilIso);
+      ok(riseText.includes('until ' + escapeHtmlStub(until)), `${e.id} (${where}): it names the last promotional day ("${until}")`);
+      ok(!/\d{4}-\d{2}-\d{2}/.test(riseText), `${e.id} (${where}): no raw ISO date survives beside it`);
+    }
   }
-  // Control: a NON-promoted entry adds no rise clause, so the assertion above
-  // is discriminating rather than always-true.
+  // The catalogue's own promotion, read back: the menu line is exactly what
+  // llm.js's fields say — nothing typed in the view.
+  for (const { e } of promotedEntries) {
+    // llm.js's promotions end on day D and the standard price applies from
+    // D+1, so the line is exactly "until D, then $a / $b" — a " from" clause
+    // would only repeat the next day. (Checked against the raw fields.)
+    const d = new Date(e.promotionUntilIso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1);
+    const nextDay = d.toISOString().slice(0, 10);
+    const expect = 'until ' + formatIsoDay(e.promotionUntilIso) + ', then ' + formatPricePerM(e.standardInput) +
+      ' / ' + formatPricePerM(e.standardOutput) +
+      (e.standardPriceFromIso && e.standardPriceFromIso !== nextDay ? ' from ' + formatIsoDay(e.standardPriceFromIso) : '');
+    ok(formatPromotionRise(e) === expect, `${e.id}: the promotion line is derived from the catalogue fields ("${expect}")`);
+  }
   for (const p of ALL_PROVIDERS) for (const e of REAL[p]) {
     if (e.promotionUntilIso) continue;
     ok(formatPromotionRise(e) === '', `${e.id}: no promotion → no rise clause`);
-    ok(!renderModelOptionHtml(p, e, null).includes('chat-mm-rise'), `${e.id}: no rise element rendered`);
+    ok(!renderModelRowBodyHtml(p, e).includes('mr-promo'), `${e.id}: no promo element rendered`);
   }
   ok(formatPromotionRise({ promotionUntilIso: '2027-01-01' }).includes('1 Jan 2027'),
     'a promotion with unknown standard prices still discloses that a rise is coming, humanised');
+  // A standard-price day that is NOT the next day is named, never dropped.
+  ok(formatPromotionRise({ promotionUntilIso: '2026-12-31', standardPriceFromIso: '2027-02-01',
+    input: 0.75, output: 3.75, standardInput: 1.5, standardOutput: 7.5 }).endsWith(' from 1 Feb 2027'),
+    'a gap between the promotion\'s end and the standard price is stated ("from 1 Feb 2027")');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§6b  Promotion date is humanised, and an EXPIRED promotion claims nothing');
 // ═════════════════════════════════════════════════════════════════════════
-//
-// Two separate facts, both about money, both previously wrong on this surface
-// while RIGHT on Settings:
-//
-//   1. VOCABULARY. The composer rendered the rise date as a raw ISO string
-//      ("on 2027-01-01") where Settings rendered "on 1 Jan 2027". One date,
-//      two renderings, one app.
-//   2. CORRECTNESS. `promotionUntilIso` stays populated after a promotion
-//      expires, so a truthiness-only check keeps announcing a rise that has
-//      already happened — beside a price line that already shows the risen
-//      figure. Settings guards this; the composer did not.
-//
-// NOT ENFORCED, stated rather than implied: settings.js's `formatIsoDay` and
-// `MODEL_SUITABILITY_BADGES` are independent copies in an independent module.
-// This suite pins the composer's output and scripts/test-next-model-picker.js
-// pins Settings' — two mirrored assertions, NOT one shared source of truth.
+// NOT ENFORCED, stated: settings.js keeps its own `formatIsoDay`; this suite
+// pins model-row.js's output and scripts/test-next-model-picker.js pins
+// Settings' — two mirrored assertions, not one shared source.
 {
-  // ── formatIsoDay: the unit contract ────────────────────────────────────
   ok(formatIsoDay('2027-01-01') === '1 Jan 2027', 'formatIsoDay: 2027-01-01 → "1 Jan 2027"');
   ok(formatIsoDay('2026-12-31') === '31 Dec 2026', 'formatIsoDay: 2026-12-31 → "31 Dec 2026"');
   ok(formatIsoDay('2026-08-09') === '9 Aug 2026', 'formatIsoDay: a leading zero in the day is dropped');
-  // Never invent a date out of input it cannot parse.
   ok(formatIsoDay('tomorrow') === 'tomorrow', 'formatIsoDay: unparseable input is returned verbatim, never guessed');
   ok(formatIsoDay('2027-13-01') === '2027-13-01', 'formatIsoDay: an impossible month is returned verbatim');
   for (const bad of [null, undefined, 0, {}, []]) {
     ok(formatIsoDay(bad) === '', `formatIsoDay: non-string ${JSON.stringify(bad)} → "" (no text at all)`);
   }
-
-  // ── EXPIRED promotion: the live price has caught up with the standard ──
-  // Exactly the shape llm.js's getters produce on 2027-01-02: the promo record
-  // is still on the entry, but input/output already resolve to the standard.
   const expired = {
     id: 'x-expired', label: 'X', input: 1.5, output: 7.5,
     standardInput: 1.5, standardOutput: 7.5,
@@ -1243,72 +1228,36 @@ section('§6b  Promotion date is humanised, and an EXPIRED promotion claims noth
   };
   ok(formatPromotionRise(expired) === '',
     'an EXPIRED promotion claims no rise — the change it would warn about has already happened');
-  ok(!renderModelOptionHtml('gemini', expired, null).includes('chat-mm-rise'),
-    'and no rise element is rendered for it');
-  // Control: the SAME entry while the promotion is still live does disclose,
-  // so the assertion above is discriminating rather than always-true.
+  ok(!renderModelRowBodyHtml('gemini', expired).includes('mr-promo'), 'and no promo element is rendered for it');
   const live = { ...expired, input: 0.75, output: 3.75 };
-  ok(formatPromotionRise(live).includes('1 Jan 2027'),
+  ok(formatPromotionRise(live).includes('31 Dec 2026') && formatPromotionRise(live).includes('$1.50 / $7.50'),
     'control: the same entry while still promoted DOES disclose the rise');
-  ok(renderModelOptionHtml('gemini', live, null).includes('chat-mm-rise'),
-    'control: and renders a rise element');
-  // Half-expired (only one axis has caught up) is NOT expired — still disclose.
-  ok(formatPromotionRise({ ...expired, input: 0.75 }) !== '',
-    'a promotion where only the OUTPUT axis has risen still discloses');
-  ok(formatPromotionRise({ ...expired, output: 3.75 }) !== '',
-    'a promotion where only the INPUT axis has risen still discloses');
-  // Missing figures ⇒ we cannot establish expiry ⇒ WARN, never go silent.
+  ok(renderModelRowBodyHtml('gemini', live).includes('mr-promo'), 'control: and renders a promo element');
+  ok(formatPromotionRise({ ...expired, input: 0.75 }) !== '', 'a promotion where only the OUTPUT axis has risen still discloses');
+  ok(formatPromotionRise({ ...expired, output: 3.75 }) !== '', 'a promotion where only the INPUT axis has risen still discloses');
   ok(formatPromotionRise({ promotionUntilIso: '2026-12-31' }) !== '',
     'unknown prices cannot prove expiry, so the rise is still disclosed (fail-safe = warn)');
-  ok(formatPromotionRise({ promotionUntilIso: '2026-12-31', input: 0.75, standardInput: 1.5 }) !== '',
-    'a partially-known entry is likewise disclosed rather than silently dropped');
-
-  // ── Every REAL promoted entry: humanised date, no raw ISO ─────────────
-  for (const { e } of promotedEntries) {
-    const rise = formatPromotionRise(e);
-    ok(!/\d{4}-\d{2}-\d{2}/.test(rise),
-      `${e.id}: the rise clause carries no raw ISO date at all`);
-  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§6d  The rise date is timezone-proof — asserted, not merely commented');
 // ═════════════════════════════════════════════════════════════════════════
-//
-// formatIsoDay's docblock claims it parses the ISO COMPONENTS rather than
-// going through `new Date(iso)` + toLocaleDateString, because the latter reads
-// the string as UTC midnight and renders it in the VIEWER's zone — so anyone
-// west of Greenwich is told a price rises the day before it does.
-//
-// That claim cannot be tested in this process: the dev machine and CI both sit
-// EAST of Greenwich (Europe/*, UTC), where the buggy implementation returns the
-// right answer and a same-process assertion passes over it. So the check is
-// re-run in a CHILD with TZ pinned to a negative-offset zone, against the very
-// same extracted source. A rewrite to the Date-based form goes green here and
-// RED there, which is the only place the defect is observable.
+// Re-run in a CHILD with TZ pinned west of Greenwich, against model-row.js's
+// own source — a `new Date(iso)` rewrite goes green here and RED there.
 {
-  const src = extractFunction(chatSrc, 'formatIsoDay');
+  const src = extractFunction(modelRowSrc, 'formatIsoDay').replace(/^export\s+/, '');
   const probe = src + '\nprocess.stdout.write(JSON.stringify([' +
     'formatIsoDay("2027-01-01"), formatIsoDay("2026-12-31"), formatIsoDay("2026-03-01")' +
     ']));';
   const EXPECTED = ['1 Jan 2027', '31 Dec 2026', '1 Mar 2026'];
-
-  // Control first: the harness itself must work, or a green below is vacuous.
   const here = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8' });
   ok(here.status === 0, '§6d the child probe runs at all (harness control)');
-  ok(here.stdout === JSON.stringify(EXPECTED),
-    `§6d control: in this machine's own zone the dates are ${EXPECTED.join(', ')}`);
-
+  ok(here.stdout === JSON.stringify(EXPECTED), `§6d control: in this machine's own zone the dates are ${EXPECTED.join(', ')}`);
   for (const TZ of ['America/Los_Angeles', 'Pacific/Midway', 'America/Sao_Paulo']) {
-    const r = spawnSync(process.execPath, ['-e', probe], {
-      encoding: 'utf8', env: { ...process.env, TZ },
-    });
+    const r = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8', env: { ...process.env, TZ } });
     ok(r.status === 0, `§6d probe runs under TZ=${TZ}`);
-    ok(r.stdout === JSON.stringify(EXPECTED),
-      `§6d under TZ=${TZ} the rise dates are unchanged (no UTC-midnight slip)`);
+    ok(r.stdout === JSON.stringify(EXPECTED), `§6d under TZ=${TZ} the rise dates are unchanged (no UTC-midnight slip)`);
   }
-  // Positive control: the BUGGY implementation this guard exists to reject
-  // really does slip a day west of Greenwich — so the greens above are load-bearing.
   const buggy = 'function f(iso){return new Date(iso).toLocaleDateString("en-GB",' +
     '{day:"numeric",month:"short",year:"numeric"});}' +
     'process.stdout.write(f("2027-01-01"));';
@@ -1320,171 +1269,82 @@ section('§6d  The rise date is timezone-proof — asserted, not merely commente
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§6c  Suitability: the composer badges a WARNING, never a lane');
+section('§6c  No INGEST verdict in the chat menu (DESIGN.md M-a)');
 // ═════════════════════════════════════════════════════════════════════════
-//
-// ── WHAT CHANGED, AND WHY THE OLD ASSERTION WAS RIGHT UNTIL IT WAS NOT ───
-// This section used to pin the composer's `chat-only` badge to Settings'
-// wording, word for word — the v3.13.1 finding applied to a second label, and
-// correct while both surfaces badged it.
-//
-// The composer no longer badges `chat-only` at all. Counted against a synced
-// catalogue: 194 of 213 offerable models carry it, because every fetched
-// OpenRouter entry is admitted chat-only BY CONSTRUCTION. A flag on 97% of a
-// list carries no information — the same finding v3.16.1 recorded about the
-// caution flag, arriving through a different field — and there is no ingest
-// decision on this screen for it to warn about.
-//
-// So the assertion is INVERTED rather than deleted: the composer must not badge
-// it, Settings must go on doing so, and `caution` — a genuine measured hazard on
-// a small number of models — must survive on both. Deleting the section would
-// have left the removal unguarded in the direction that matters: a future edit
-// re-adding the badge, or dropping `caution` along with it.
+// "caution", "out-performed", "chat only" and the ingest-call speed are all
+// verdicts about BUILDING THE WIKI. The Model menu picks who answers a chat
+// question, so none of them is on a menu row. The browse dialog — opened on
+// purpose to compare — keeps the reason, LABELLED with what it is about. The
+// `suitability`/`dominated` fields are untouched and still ship on the wire
+// (Settings renders them; test-next-model-picker.js pins that side).
 {
-  ok(!Object.hasOwn(SUITABILITY_LABELS, 'chat-only'),
-    'the composer has NO chat-only label — a badge on 97% of the list is not a warning');
-  ok(SUITABILITY_LABELS.caution === 'caution',
-    'caution survives, word-for-word with settings.js');
-
-  const chatOnly = [];
+  const chatOnly = [], cautions = [];
   for (const p of ALL_PROVIDERS) for (const e of REAL[p]) {
     if (e.suitability === 'chat-only') chatOnly.push({ p, e });
-  }
-  ok(chatOnly.length > 0, 'the live catalogue still contains a chat-only model (this section is not vacuous)');
-  for (const { p, e } of chatOnly) {
-    const html = renderModelOptionHtml(p, e, null);
-    ok(!html.includes('chat only'),
-      `${e.id}: the composer does not badge chat-only`);
-    // ── THE FALLBACK THAT WOULD HAVE MADE THIS WORSE THAN BEFORE ─────────
-    // The old renderer gated on `suitability !== 'general'` and printed the RAW
-    // FIELD VALUE when the label table had no entry. Dropping 'chat-only' from
-    // the table under that gate would have put the bare string "chat-only" on
-    // 194 rows instead of removing the badge. The renderer now gates on the
-    // table HAVING an entry, and this is the assertion that keeps it that way.
-    ok(!html.includes('chat-only<') && !html.includes('>chat-only'),
-      `${e.id}: and does NOT fall back to printing the raw field value instead`);
-  }
-
-  // ── THE FIELD IS UNTOUCHED, ONLY THE LABEL IS GONE ──────────────────────
-  // `suitability` is still enforced at two layers in llm.js and still rendered
-  // by Settings. This is a label removed from one menu, not a constraint
-  // removed from the app — asserted against the real table so a future edit
-  // that actually DELETED the field would go red here.
-  ok(chatOnly.every(({ e }) => e.suitability === 'chat-only'),
-    'the underlying suitability field still ships on the wire and still says chat-only');
-
-  // Control: a `caution` model DOES still get its badge, so the assertions
-  // above discriminate rather than matching everything.
-  const cautions = [];
-  for (const p of ALL_PROVIDERS) for (const e of REAL[p]) {
     if (e.suitability === 'caution') cautions.push({ p, e });
   }
-  ok(cautions.length > 0, 'control: the live catalogue contains a caution model');
-  for (const { p, e } of cautions) {
-    ok(renderModelOptionHtml(p, e, null).includes('>caution<'),
-      `${e.id}: a genuinely-cautioned model IS still badged`);
+  ok(chatOnly.length > 0 && cautions.length > 0 && dominatedEntries.length > 0,
+    'corpus: the live catalogue holds chat-only, caution AND dominated models (this section is not vacuous)');
+  for (const p of ALL_PROVIDERS) for (const e of REAL[p]) {
+    const menu = renderModelRowBodyHtml(p, e);
+    const browse = renderModelOptionHtml(p, e, null);
+    for (const [where, html] of [['menu', menu], ['browse', browse]]) {
+      ok(!/>\s*caution\s*</.test(html) && !/>\s*out-performed\s*</.test(html) &&
+         !/>\s*chat[ -]only\s*</.test(html) && !/>\s*dominated\s*</.test(html),
+        `${e.id} (${where}): no ingest verdict BADGE on a chat row`);
+    }
+    ok(!/per ingest call|measured at about|pages per source/.test(menu),
+      `${e.id}: the MENU row carries no ingest measurement at all`);
+    if (typeof e.cautionReason === 'string' && e.cautionReason.trim()) {
+      const reason = escapeHtmlStub(e.cautionReason.trim().replace(/([^.])\.$/, '$1'));
+      ok(!menu.includes(reason), `${e.id}: the menu row does not carry the ingest reason`);
+      const nm = /<span class="mr-note">([\s\S]*?)<\/span>/.exec(browse);
+      ok(!!nm && nm[1].startsWith('For building the wiki: ') && nm[1].includes(reason),
+        `${e.id}: the browse row carries the reason, LABELLED "For building the wiki:"`);
+    }
   }
+  ok(chatOnly.every(({ e }) => e.suitability === 'chat-only'),
+    'the underlying suitability field still ships on the wire and still says chat-only');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§7  The row summarises — it no longer dumps the measured note');
+section('§7  The row reads in the app\'s type hierarchy — name, meta, promo');
 // ═════════════════════════════════════════════════════════════════════════
-// THE CHANGE THIS SECTION GUARDS. The row used to render `entry.note` inline
-// for every flagged model. Once the live OpenRouter catalogue landed, every
-// fetched chat-only entry is flagged, so the dropdown became several screens of
-// two-hundred-word paragraphs — the maintainer's report. The note is not
-// shortened and not truncated: it is shown whole behind Settings' per-model
-// expand, and this row carries the derived one-liner instead.
-//
-// The property that must survive the change is that a FLAGGED model still shows
-// WHY, with nothing to open. That is enforced upstream — `defineOfferableModel`
-// refuses to build a `caution`/`dominated` entry without a `cautionReason` — and
-// asserted here against the REAL catalogue, on the rendered HTML.
 {
-  ok(flaggedEntries.length >= 8,
-    `corpus check: ${flaggedEntries.length} flagged entries — the assertions below are not carried by one lucky model`);
-
-  for (const { p, e } of flaggedEntries) {
-    const html = renderModelOptionHtml(p, e, null);
-    // 1. THE REASON IS ON THE ROW, UNFOLDED.
-    ok(typeof e.cautionReason === 'string' && e.cautionReason.trim().length > 0,
-      `${e.id}: flagged entry carries a cautionReason in the real catalogue (llm.js refuses to build one without)`);
-    const reasonText = e.cautionReason.trim().replace(/([^.])\.$/, '$1');
-    ok(html.includes(escapeHtmlStub(reasonText)),
-      `${e.id}: the flag's REASON is rendered on the collapsed row — a warning you must open something to find is not a warning`);
-    ok(html.includes('chat-mm-note'), `${e.id}: flagged -> a summary element is rendered`);
-    ok(html.includes('is-warn'), `${e.id}: flagged -> a warning badge is rendered`);
-
-    // 2. THE FULL NOTE IS GONE FROM THIS SURFACE. This is the fix itself, and
-    // it is asserted on the note's own TAIL rather than the whole string: a
-    // renderer that truncated the note would still contain its opening, and
-    // truncating a measured claim is the one outcome forbidden outright.
-    const tail = e.note.slice(-60);
-    ok(!html.includes(escapeHtmlStub(tail)),
-      `${e.id}: the multi-paragraph note is NOT dumped into the dropdown row`);
-    ok(html.length < 1400,
-      `${e.id}: the whole row is ${html.length} bytes — a row that regrew past a paragraph has re-acquired the defect`);
-  }
-
-  // 3. THIS SURFACE IS THE COMPACT ONE, AND THAT IS THE DESIGN.
-  // A dropdown opened mid-thought needs the model, the price and any warning.
-  // Measured COVERAGE is what you consult after narrowing to a candidate, so it
-  // is Settings-only (asserted there, in test-next-model-picker.js §21) and is
-  // dropped here. Both surfaces call ONE builder with a `compact` flag, so they
-  // agree on vocabulary while differing on density — which is the intent.
-  {
-    const coverageOnly = generalEntries.filter(({ e }) =>
-      (e.outlinePagesLow || e.outlinePagesMedian) && !Number.isFinite(e.medianLatencyMs));
-    ok(coverageOnly.length >= 5,
-      `corpus check: ${coverageOnly.length} UNFLAGGED entries whose ONLY measurement is coverage`);
-    for (const { p, e } of coverageOnly) {
-      const html = renderModelOptionHtml(p, e, null);
-      ok(!html.includes('chat-mm-note'),
-        `${e.id}: coverage alone does NOT put a line in the dropdown — that belongs in Settings`);
-      ok(!/pages per source/.test(html), `${e.id}: and the words never appear here`);
+  for (const p of ALL_PROVIDERS) for (const e of REAL[p]) {
+    const menu = renderModelRowBodyHtml(p, e);
+    const browse = renderModelOptionHtml(p, e, null);
+    // LINE 1: the name, and the price column.
+    ok(menu.includes('<span class="mr-title">' + escapeHtmlStub(e.label || e.id)),
+      `${e.id}: line 1 is the model's catalogue label`);
+    // LINE 2: provider as a WORD, no dot; context from the catalogue.
+    const mm = /<span class="mr-meta">([\s\S]*?)<\/span><\/span>|<span class="mr-meta">([\s\S]*?)<\/span>(?=<span class="mr-promo"|<\/span>$)/.exec(menu);
+    const meta = mm ? (mm[1] || mm[2] || '') : '';
+    ok(meta.startsWith(escapeHtmlStub(providerWord(p))), `${e.id}: the meta line leads with the provider as a word ("${providerWord(p)}")`);
+    ok(!/prov-dot|--prov-|background:/.test(menu), `${e.id}: no provider dot or inline colour on the row`);
+    if (Number.isInteger(e.contextLength)) {
+      ok(/\d+(\.\d)?[MK] context/.test(meta), `${e.id}: the meta line states the catalogue context (${e.contextLength})`);
+      ok(browse.includes(String(e.contextLength).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '-token context'),
+        `${e.id}: the browse row states the EXACT context size`);
     }
-    // …while the SAME entry does summarise in the full density, which is what
-    // makes the compact flag a real distinction rather than a dead parameter.
-    for (const { e } of coverageOnly) {
-      ok(/pages per source/.test(formatModelSummary(e)),
-        `${e.id}: the full (Settings) density DOES carry its coverage`);
+    ok((e.thinks === true) === /(^|· <\/span>|>)thinks/.test(meta.replace(/<span class="mr-sep"[^>]*>/g, '')) || (e.thinks === true) === meta.includes('thinks'),
+      `${e.id}: "thinks" appears exactly when the catalogue says the model thinks`);
+    if (e.thinks === true) ok(browse.includes('thinks — reasoning billed as output'), `${e.id}: browse spells out that reasoning is billed as output`);
+    // THE ID: not at rest in the menu (only in its accessible name), on screen in browse.
+    ok(browse.includes('<span class="mr-id mono">' + escapeHtmlStub(e.id) + '</span>'), `${e.id}: the browse row shows the id in mono`);
+    ok(!menu.includes('mr-id'), `${e.id}: the menu row does not show the id at rest`);
+    if ((e.label || e.id) !== e.id) {
+      ok(menu.includes('<span class="visually-hidden">, ' + escapeHtmlStub(e.id) + '</span>'),
+        `${e.id}: …but the id is in the menu row's accessible name`);
     }
-    // An unflagged model with a LATENCY figure still summarises here: four
-    // words, and the fact a live bug report proved a user needs before
-    // choosing rather than after.
-    const withLatency = generalEntries.filter(({ e }) => Number.isFinite(e.medianLatencyMs));
-    ok(withLatency.length >= 1, `corpus check: ${withLatency.length} UNFLAGGED entry carries latency`);
-    for (const { p, e } of withLatency) {
-      ok(renderModelOptionHtml(p, e, null).includes('measured at about'),
-        `${e.id}: unflagged but SLOW -> the call time survives into the compact row`);
+    // No full note on either surface (it lives in Settings, whole).
+    if (typeof e.note === 'string' && e.note.length > 80) {
+      const tail = escapeHtmlStub(e.note.slice(-60));
+      ok(!menu.includes(tail) && !browse.includes(tail), `${e.id}: the multi-paragraph note is NOT dumped into a chat row`);
     }
+    ok(menu.length < 900, `${e.id}: the menu row is ${menu.length} bytes — short by construction`);
   }
-
-  // 4. A ROW WITH NOTHING MEASURED RENDERS NO SUMMARY ELEMENT AT ALL. This is
-  // the ~176-of-190 case: a fetched chat-only entry nobody has probed. It must
-  // collapse to name/id/price/badges rather than emitting an empty box or a
-  // fabricated line. Built through the REAL admission function so it is a real
-  // entry, not a hand-shaped object that could differ from one.
-  {
-    const unmeasured = {
-      id: 'vendor/never-probed', provider: 'openrouter', label: 'Never Probed',
-      suitability: 'chat-only', dominated: false, thinks: false,
-      input: 0.5, output: 1.5, standardInput: 0.5, standardOutput: 1.5,
-      note: 'Chat only — never measured against The Curator\'s ingest prompt.',
-      outlinePagesLow: null, outlinePagesHigh: null, outlinePagesMedian: null,
-      medianLatencyMs: null, cautionReason: null,
-    };
-    const html = renderModelOptionHtml('openrouter', unmeasured, null);
-    ok(!html.includes('chat-mm-note'), 'an entry with NOTHING measured renders no summary element');
-    ok(!/\b0 pages\b/.test(html) && !/about 0s\b/.test(html),
-      'and never renders a zero in place of an absent measurement');
-    ok(html.includes('data-model-id="vendor/never-probed"'), 'it is still selectable');
-  }
-
-  // 5. THE MEASURED LATENCY REACHES THE ROW — including for a model we probed
-  // and then REFUSED for the build lane. `deepseek/deepseek-v4-flash-0731` is
-  // the live report this clause exists for: picked in the composer, 382s per
-  // call, reported as broken. The number existed and reached no screen.
+  // F4: a measured speed says it was an INGEST call — browse only.
   {
     const slow = {
       id: 'deepseek/deepseek-v4-flash-0731', provider: 'openrouter', label: 'DeepSeek V4 Flash',
@@ -1492,35 +1352,40 @@ section('§7  The row summarises — it no longer dumps the measured note');
       input: 0.2, output: 0.8, standardInput: 0.2, standardOutput: 0.8,
       note: 'Chat only.', medianLatencyMs: 382000,
     };
-    const html = renderModelOptionHtml('openrouter', slow, null);
-    ok(html.includes('6m 22s'), 'a measured-then-refused model still shows its measured call time at pick time');
+    const b = renderModelOptionHtml('openrouter', slow, null);
+    ok(b.includes('about 6m 22s per ingest call in our testing'),
+      'F4: the browse row names the call that was timed ("per ingest call in our testing")');
+    ok(!renderModelRowBodyHtml('openrouter', slow).includes('6m 22s'), 'F4: the menu row shows no ingest speed');
   }
-
-  // Flagged models are SHOWN, never filtered out of the menu.
+  // An entry with nothing measured: no note element, no invented zero.
+  {
+    const unmeasured = {
+      id: 'vendor/never-probed', provider: 'openrouter', label: 'Never Probed',
+      suitability: 'chat-only', dominated: false, thinks: false,
+      input: 0.5, output: 1.5, standardInput: 0.5, standardOutput: 1.5,
+      medianLatencyMs: null, cautionReason: null,
+    };
+    const html = renderModelOptionHtml('openrouter', unmeasured, null);
+    ok(!html.includes('mr-note'), 'an entry with NOTHING measured renders no note element');
+    ok(!/\b0 pages\b/.test(html) && !/about 0s\b/.test(html), 'and never renders a zero in place of an absent measurement');
+    ok(html.includes('data-model-id="vendor/never-probed"'), 'it is still selectable');
+  }
+  // "default" marks exactly the build model's row, matched on provider AND id.
+  {
+    const e = REAL.gemini[0];
+    __setChatState({ buildModelId: e.id, buildProvider: 'gemini' });
+    ok(isChatDefaultRow('gemini', e) === true, 'the build model on its own provider is the default row');
+    ok(isChatDefaultRow('openrouter', e) === false, 'the same id under ANOTHER provider is not called default');
+    ok(renderModelRowBodyHtml('gemini', e).includes('<span class="mr-sep" aria-hidden="true"> · </span>default'),
+      'the default row says "default" on its meta line');
+    ok(!renderModelRowBodyHtml('gemini', REAL.gemini[1]).includes('default'), 'a non-default row does not');
+    __setChatState({ buildModelId: '', buildProvider: null });
+    ok(!renderModelRowBodyHtml('gemini', e).includes('default'), 'with no build model known, no row claims to be default');
+  }
+  // Flagged models are SHOWN, never filtered out.
   const { html } = menuFor(ALL_PROVIDERS);
   for (const { e } of flaggedEntries) {
-    ok(html.includes('data-model-id="' + e.id + '"'), `${e.id}: flagged model is still selectable in the menu`);
-  }
-  // The menu says where the full measurement went, once, for the whole list.
-  ok(html.includes('Settings'), 'the menu points at where the full note now lives');
-  ok(!/data-model-id="[^"]*"[^>]*>\s*<div class="chat-mm-foot"/.test(html),
-    'the footer is not itself an option row');
-
-  // WORD-LEVEL PIN, not merely "a badge exists": the `dominated` flag renders
-  // as the literal text "out-performed" on THIS surface, matching the word
-  // settings.js's renderModelOption uses for the identical
-  // `OFFERABLE_MODELS[].dominated` flag (src/brain/llm.js). Before this
-  // assertion existed, nothing on either surface pinned the rendered WORD —
-  // only the `model-badge-flag` / `is-warn` CSS marker — so one surface could
-  // silently drift back to the raw field name "dominated" while every other
-  // assertion here stayed green. See scripts/test-next-model-picker.js for
-  // the settings.js half of this pin; there is no shared JS constant the two
-  // views both import (independent modules, independent badge tables), so
-  // these two assertions ARE the enforcement — keep both in sync by hand.
-  for (const { p, e } of dominatedEntries) {
-    const html2 = renderModelOptionHtml(p, e, null);
-    ok(html2.includes('>out-performed<'), `${e.id}: dominated entry renders the word "out-performed" (matches settings.js)`);
-    ok(!html2.includes('>dominated<'), `${e.id}: dominated entry does NOT render the raw field name "dominated" as its label`);
+    ok(html.includes('data-model-id="' + e.id + '"'), `${e.id}: flagged model is still selectable in the browse list`);
   }
 }
 
@@ -1589,8 +1454,12 @@ section('§8  Escaping — hostile catalogue strings cannot break out');
   // escaped, because it is not here.
   ok(html.includes('&lt;img src=x onerror=alert(3)&gt;'),
     'the hostile cautionReason IS present and fully escaped — the new interpolated field is not an escaping hole');
-  ok(!html.includes('&lt;script&gt;'),
+  // v3.72.0: '&lt;script&gt;' may now appear — the hostile promotionUntilIso
+  // is unparseable, so the promo line prints it verbatim, ESCAPED. The note's
+  // own payload (`alert(2)`) is the marker that it is not here at all.
+  ok(!html.includes('alert(2)'),
     'the note is not rendered on this surface at all — not raw, and not escaped either');
+  ok(html.includes('2027-01-01&lt;script&gt;'), 'the hostile promotion date is printed escaped, never raw');
   ok(html.includes('&quot;&gt;&lt;img'), 'the label is present but escaped');
   // Attribute integrity: exactly one data-model-id attribute, and the value
   // cannot terminate early into a new attribute.
@@ -3269,60 +3138,74 @@ section('§13  THE WORKING SET — a short list that hides nothing');
     ok(ws.rows.find(r => r.entry.id === 'm0').reasons.includes('measured'), 'a measured row carries its reason');
   }
 
-  // ── 13f. THE ROW RENDERS ITS REASON, AND NEVER A JUDGEMENT ────────────
+  // ── 13f. GROUPS: STARRED, RECENT, THEN BY PROVIDER (v3.72.0, P4) ──────
+  // The row no longer carries "recent"/★ marks: the menu's GROUPS say why a
+  // row is where it is (DESIGN.md §6). Driven through the REAL cfg builder,
+  // on a catalogue small enough to show whole — the case where
+  // buildWorkingSet strips `reasons`, which a star must survive.
   {
-    const e = mkEntry('some/model', { label: 'Some Model', input: 1, output: 2, measuredBy: 'curator' });
-    const plain = renderModelRowBodyHtml('openrouter', e, { reasons: ['measured'] });
-    const recent = renderModelRowBodyHtml('openrouter', e, { reasons: ['recent'] });
-    const starred = renderModelRowBodyHtml('openrouter', e, { reasons: ['starred'] });
-    ok(recent.includes('recent'), 'a recent row says so');
-    ok(starred.includes('is-star'), 'a starred row shows its star');
-    ok(!plain.includes('>recent<'), 'a merely-measured row claims nothing about recency');
-    // The SELECTED reason is deliberately NOT rendered: the check mark and the
-    // trigger label already carry it, and a third copy is noise.
-    ok(!renderModelRowBodyHtml('openrouter', e, { reasons: ['selected'] }).includes('selected'),
-      'the selected reason is not repeated as a badge — the check mark and the trigger already say it');
-    // NO CAPABILITY VOCABULARY ANYWHERE. We hold capability data for 19 of 213
-    // ids and this project has measured that every available proxy lies.
-    for (const html of [plain, recent, starred]) {
-      ok(!/\b(recommended|best|fastest|smartest|most capable|top pick|premium)\b/i.test(html),
+    __setChatState({
+      offerable: {
+        gemini: [mkEntry('g0', { provider: 'gemini' }), mkEntry('g1', { provider: 'gemini' }), mkEntry('g2', { provider: 'gemini' })],
+        anthropic: [mkEntry('a0', { provider: 'anthropic' }), mkEntry('a1', { provider: 'anthropic' })],
+      },
+      availableProviders: ['gemini', 'anthropic'],
+      chatModel: 'g2', modelProvider: 'gemini', activeProvider: 'gemini',
+      modelRecents: ['g2', 'a1'], modelStarred: ['a0'],
+      orCatalogueSyncedAt: null,
+    });
+    const cfg = modelListboxCfg();
+    const models = cfg.options.filter((o) => !o.action);
+    const seq = models.map((o) => o.group + ':' + parseModelOptionValue(o.value).id);
+    ok(JSON.stringify(seq) === JSON.stringify(['Starred:a0', 'Recent:g2', 'Recent:a1', 'Gemini:g0', 'Gemini:g1']),
+      `groups are Starred, Recent, then provider — each row exactly once (got ${seq.join(', ')})`);
+    ok(new Set(models.map((o) => o.value)).size === models.length, 'no option value appears twice (the listbox resolves by value)');
+    ok(models.every((o) => !/is-star|>recent</.test(o.html)), 'no row carries its own star or "recent" mark — the group heading says it');
+    ok(cfg.ariaLabel === 'Model for your next question', 'the menu is named for what it sets: the model for your NEXT question');
+    // Contiguity — the listbox draws one heading per run of a group.
+    const runs = models.map((o) => o.group).filter((g, i, a) => i === 0 || a[i - 1] !== g);
+    ok(new Set(runs).size === runs.length, 'every group is one contiguous run');
+    // The foot: the unit and where the choice is kept; no date when none was sent.
+    ok(/Prices per 1M tokens, input \/ output/.test(cfg.footHtml) && /remembered on this computer across chats/.test(cfg.footHtml),
+      'the foot states the unit once and that the choice is remembered on this computer');
+    ok(!/synced/.test(cfg.footHtml), 'no sync date is claimed when the server sent none');
+    __setChatState({ availableProviders: ['gemini', 'openrouter'], offerable: { gemini: [mkEntry('g0', { provider: 'gemini' })], openrouter: [] },
+      orCatalogueSyncedAt: '2026-08-30T10:00:00.000Z' });
+    ok(/OpenRouter catalogue synced 30 Aug 2026/.test(modelListboxCfg().footHtml),
+      'with OpenRouter keyed, the foot carries the catalogue\'s OWN sync day');
+    __setChatState({ availableProviders: ['gemini'] });
+    ok(!/synced/.test(modelListboxCfg().footHtml), 'without an OpenRouter key, no OpenRouter date is shown');
+    // NO CAPABILITY VOCABULARY ANYWHERE.
+    for (const o of models) {
+      ok(!/\b(recommended|best|fastest|smartest|most capable|top pick|premium)\b/i.test(o.html),
         'no capability or ranking vocabulary reaches a row');
     }
+    __setChatState({ orCatalogueSyncedAt: null, modelRecents: [], modelStarred: [], chatModel: null });
   }
 
-  // ── 13g. THE PROVIDER IS ON EVERY ROW ─────────────────────────────────
-  // Group headings alone stopped working at ~194 rows under one of them: scroll
-  // past the first screen and no heading is in view, so a row 40 deep names a
-  // model and not who serves it — the one fact that decides whose key pays.
+  // ── 13g. THE PROVIDER IS ON EVERY ROW, AS A WORD ───────────────────────
+  // ~194 rows can sit under one heading, so the provider — whose key pays —
+  // is on every row. A WORD, never a coloured dot: the dots re-used the
+  // page-type hues (DESIGN.md M-c).
   {
     for (const p of ALL_PROVIDERS) {
-      const e = REAL[p][0];
-      const html = renderModelRowBodyHtml(p, e, {});
-      ok(html.includes('chat-mm-prov'), `${p}: the row carries a provider marker`);
-      ok(html.includes('is-' + p), `${p}: …with the family class the stylesheet colours`);
-      // THE WORD, not only the dot. Colour alone is not an accessible
-      // distinction, so the marker must carry text a screen reader can read.
-      const label = { gemini: 'Gemini', anthropic: 'Claude', openrouter: 'OpenRouter' }[p];
-      ok(html.includes('>' + label + '</span>') || html.includes(label),
-        `${p}: …and the provider NAME, not colour alone`);
+      const html = renderModelRowBodyHtml(p, REAL[p][0]);
+      ok(html.includes('<span class="mr-meta">' + providerWord(p)), `${p}: the meta line names the provider ("${providerWord(p)}")`);
+      ok(!/prov-dot|is-(gemini|anthropic|openrouter)/.test(html), `${p}: no provider dot or family colour class`);
     }
-    // An unknown provider gets the neutral swatch and its own name back, never
-    // another vendor's identity and never an interpolated class.
-    const odd = renderModelRowBodyHtml('weird-vendor', mkEntry('z'), {});
-    ok(odd.includes('chat-mm-prov"'), 'an unknown provider gets the bare marker class');
-    ok(!odd.includes('is-weird-vendor'),
-      'the family class comes from an ALLOW-LIST, never interpolated from the provider string');
-    ok(odd.includes('weird-vendor'), '…while its own name is still shown rather than a substitute');
+    const odd = renderModelRowBodyHtml('weird-vendor', mkEntry('z'));
+    ok(odd.includes('weird-vendor'), 'an unknown provider is shown by its own name rather than a substitute');
+    ok(!odd.includes('is-weird-vendor'), 'and never becomes a class');
   }
-  // A hostile provider string cannot smuggle a class or break out of the markup.
   {
-    const html = renderModelRowBodyHtml('"><img src=x onerror=alert(1)>', mkEntry('z'), {});
+    const html = renderModelRowBodyHtml('"><img src=x onerror=alert(1)>', mkEntry('z'));
     ok(!html.includes('<img src=x'), 'a hostile provider name is escaped');
     const tags = scanTags(html);
     ok(!tags.some(t => t.attrs.some(a => /^on[a-z]+$/i.test(a))),
       '…and no tag in the row carries an event-handler attribute');
   }
 }
+
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§14  THE BROWSE DIALOG — search and filter on FACTS only');

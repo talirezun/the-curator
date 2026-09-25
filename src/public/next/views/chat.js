@@ -54,6 +54,9 @@ import { renderAnswer, sourcesHtml, sourceByNumber } from '../shared/answer.js';
 // not an edge case. See shared/format-usd.js.
 import { formatUsdHonest } from '../shared/format-usd.js';
 import { formatModelSummary, formatDurationMs } from '../shared/model-summary.js';
+// v3.72.0 (P4): the ONE model-row body, shared by the Model menu and the
+// browse dialog — see the model-row region below.
+import { modelRowBodyHtml, modelMenuFootHtml, providerWord } from '../shared/model-row.js';
 import { confirmThen, closeConfirmIfOpen } from '../shared/confirm.js';
 // THE RUN LINE (v3.67.0). One line, the same on every AI action in the app:
 // which model runs it, roughly what it costs, and one door to Providers & keys.
@@ -454,6 +457,12 @@ const state = {
   // model id, and a flag with no id attached would go on claiming after the
   // model changed underneath it.
   buildModelId: '',
+  // v3.72.0 (P4): the build model's PROVIDER, so the Model menu marks exactly
+  // one row "default" (two providers may list one id), and the OpenRouter
+  // catalogue's own sync stamp for the menu's foot. Both from the same
+  // /api/config/api-keys payload applyApiKeys reads; null when not sent.
+  buildProvider: null,
+  orCatalogueSyncedAt: null,
   buildLiveMissing: null,   // true | false | null — null is UNKNOWN, never gone
   // PER-BROWSER, not per-conversation. Persisted to localStorage[LS_MODEL] on
   // pick and restored in applyApiKeys, and nothing clears it on a conversation
@@ -1021,6 +1030,7 @@ function applyApiKeys(data) {
     const b = (data && data.build && typeof data.build === 'object') ? data.build
       : ((data && data.buildModel && typeof data.buildModel === 'object') ? data.buildModel : null);
     state.buildModelId = (b && typeof b.model === 'string') ? b.model : '';
+    state.buildProvider = (b && typeof b.provider === 'string' && b.provider) ? b.provider : null;
     state.buildLiveMissing = (b && b.liveMissing === true) ? true
       : ((b && b.liveMissing === false) ? false : null);
   }
@@ -1045,6 +1055,11 @@ function applyApiKeys(data) {
   // Re-scoped client-side against the SAME `providers` list built above from
   // hasGeminiKey/hasAnthropicKey — config-only, never .env (v3.0.13).
   state.offerable = normalizeOfferable(data.offerable, providers);
+  {
+    const orc = data && data.openrouterCatalogue && typeof data.openrouterCatalogue === 'object'
+      ? data.openrouterCatalogue : null;
+    state.orCatalogueSyncedAt = orc && typeof orc.syncedAt === 'string' && orc.syncedAt ? orc.syncedAt : null;
+  }
 
   // ── THE WORKING SET'S STORED LISTS ──────────────────────────────────────
   // Restored here rather than at module load, so a Settings Disconnect that
@@ -4378,36 +4393,13 @@ function renderComposerHtml(active) {
 // parameter — which is what makes "an unkeyed provider is not selectable"
 // provable rather than asserted about source text.
 
-// ── THE BADGE THAT WAS ON 97% OF THE LIST, AND IS NOW ON NONE OF IT ───────
-//
-// `chat-only` used to render here as "chat only — not for ingest". Counted
-// against a synced catalogue: 194 of 213 offerable models carry it — every
-// fetched OpenRouter entry, by construction, because `defineOfferableModel`
-// admits a dynamic entry only as chat-only. A flag on 97% of a list is not a
-// warning, it is wallpaper; it is the same finding v3.16.1 recorded about the
-// caution flag ("every FETCHED catalogue entry is 'flagged' by construction"),
-// arriving through a different field.
-//
-// It is also redundant on THIS surface specifically. The composer picks the
-// model that answers a CHAT turn; there is no ingest decision on this screen to
-// warn about, and the fact a user actually needs — which model builds the wiki —
-// is stated positively in Settings ("This model builds your wiki", v3.14.0). A
-// model's absence from the BUILD list is the message.
-//
-// THE UNDERLYING FIELD IS UNTOUCHED. `suitability` is still enforced at two
-// layers in llm.js (`isBuildLaneModel` and the lane split), still rendered by
-// Settings' picker, and still pinned by scripts/test-next-model-picker.js. This
-// removes a LABEL from one menu, not a constraint from the app.
-//
-// `caution` stays, and stays word-for-word aligned with settings.js's
-// MODEL_SUITABILITY_BADGES: it flags a specific measured hazard on a small
-// number of models, and its reason is on the row (`cautionReason`, the first
-// clause of the derived summary). There is no shared JS constant the two views
-// import, so this comment is the enforcement point: change the word here and
-// change it in settings.js in the same commit.
-const SUITABILITY_LABELS = Object.assign(Object.create(null), {
-  caution: 'caution',
-});
+// ── NO SUITABILITY BADGE IN CHAT (v3.72.0, P4) ───────────────────────────
+// `SUITABILITY_LABELS` ("caution") and the "chat only" badge before it are
+// gone from this view. Both were verdicts about BUILDING THE WIKI shown in a
+// menu that picks who answers a chat question (DESIGN.md M-a). The field is
+// untouched: llm.js still enforces it and Settings still renders it, where
+// the decision on screen is an ingest one. The browse dialog keeps the
+// reason text, labelled "For building the wiki:" (shared/model-row.js).
 
 // ── THE THINKING CLOCK ────────────────────────────────────────────────────
 // The maintainer picked `deepseek/deepseek-v4-flash-0731` in the composer and
@@ -6303,290 +6295,68 @@ function assistantEyebrowHtml(m, ctx, index) {
     '</div>';
 }
 
-/**
- * A price per 1M tokens as a display string, or null when the value is not a
- * finite number. NEVER substitutes a placeholder number — an unknown price is
- * rendered as "price unavailable", because a fabricated 0 on a spend surface is
- * the honesty defect this whole catalogue exists to remove.
- */
-function formatPricePerM(n) {
-  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return null;
-  return '$' + n.toFixed(2).replace(/\.00$/, '');
-}
+// ── THE MODEL ROW (v3.72.0, P4) ─────────────────────────────────────────────
+// The row BODY is shared/model-row.js's `modelRowBodyHtml` — one builder for
+// the composer's menu and the browse dialog, so the two lists a user compares
+// models across cannot describe one model two ways. What stays here is only
+// what this VIEW knows: which row is the default, the listbox/dialog wrappers,
+// and the star. The price, promotion and context formatting that used to live
+// here (formatPricePerM, formatLivePrice, formatIsoDay, formatPromotionRise)
+// moved there whole; nothing about a price is decided in this file.
+//
+// ── WHAT THE CHAT ROW NO LONGER SAYS, AND WHY ──────────────────────────────
+// "caution", "out-performed" and "measured at about Xs per call" were INGEST
+// verdicts — timed and judged on a ~300,000-character wiki-outline call — shown
+// in a menu that picks who answers a chat question (DESIGN.md M-a, truth audit
+// Chat F4). They stay in Settings, where the decision is an ingest one. The
+// browse dialog keeps the reason, labelled "For building the wiki:".
 
 /**
- * "$1 in / $5 out per 1M" from the LIVE (promotion-resolved) fields — or
- * 'free' / 'price unavailable', which are DIFFERENT facts and must not
- * collapse into one string.
- *
- * `entry.free === true` is llm.js's own reported fact that this model bills
- * nothing (see FREE_MODELS in src/brain/llm.js) — a free model's `input`/
- * `output` are `null` BY DESIGN, never `0`, precisely so a budget guard can
- * never mistake "known to be free" for a truthy zero it must "enforce" (the
- * v3.3.0 shape). So `free` is checked FIRST, ahead of the price fields, and
- * is the ONLY thing this function branches on to say "free" — never a price
- * of 0 (a real model could in principle be priced at exactly $0/$0 and that
- * would still not mean "free" without the flag), never a provider id, and
- * never an id substring like ":free" (llm.js's own docblock records why
- * OpenRouter's `:free` suffix is not a safe membership test — a router id
- * and two audio models are zero-priced but not actually free).
- *
- * A model with NO `free` flag and no usable price is a DIFFERENT fact — the
- * catalogue did not tell us what this costs — and must keep saying so rather
- * than being read as free. "Free" and "unknown" must never render the same.
+ * Whether `provider`/`entry` is the model a question uses when nothing is
+ * picked: the BUILD model (a model-less chat turn is answered by it — see
+ * chatModelOnScreen). Matched on provider AND id, because two providers may
+ * list one id and "default" must name exactly one row.
  */
-function formatLivePrice(entry) {
-  if (entry && entry.free === true) return 'free';
-  const inp = formatPricePerM(entry && entry.input);
-  const out = formatPricePerM(entry && entry.output);
-  if (inp === null || out === null) return 'price unavailable';
-  return inp + ' in / ' + out + ' out per 1M';
+function isChatDefaultRow(provider, entry) {
+  if (!entry || typeof state.buildModelId !== 'string' || !state.buildModelId) return false;
+  if (entry.id !== state.buildModelId) return false;
+  const bp = typeof state.buildProvider === 'string' && state.buildProvider ? state.buildProvider : null;
+  return bp ? provider === bp : true;
 }
 
-/**
- * '2027-01-01' -> '1 Jan 2027'.
- *
- * Parsed from the ISO COMPONENTS, never via `new Date(iso)` +
- * `toLocaleDateString`: that reads the string as UTC midnight and then renders
- * it in the viewer's zone, so anyone west of Greenwich would be told a price
- * rises on 31 Dec 2026. An off-by-one on a price date is a small lie about
- * money. Unparseable input returns the raw string rather than inventing a date.
- *
- * A DELIBERATE SECOND COPY of settings.js's `formatIsoDay`, not a shared
- * import: that module is an independent view with no shared date utility, and
- * this release does not own it. The composer previously rendered this same fact
- * as a raw ISO string while Settings humanised it — one date, two renderings,
- * one app. NOT ENFORCED, and said plainly: nothing mechanically pins these two
- * functions together; if this behaviour changes, change settings.js's copy in
- * the same commit. The suites assert the OUTPUT on each side independently.
- */
-function formatIsoDay(iso) {
-  if (typeof iso !== 'string') return '';
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
-  if (!m) return iso;
-  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const monthIdx = Number(m[2]) - 1;
-  if (monthIdx < 0 || monthIdx > 11) return iso;
-  return String(Number(m[3])) + ' ' + MONTHS[monthIdx] + ' ' + m[1];
-}
-
-/**
- * The coming rise, when `input`/`output` are a promotion rather than the
- * standing price. Returns '' when there is no promotion — so a caller that
- * renders this unconditionally shows nothing extra for a normally-priced model.
- * A promoted price shown with no mention of the rise reads as permanent, which
- * is the same class of misstatement as showing the standard price as current.
- */
-function formatPromotionRise(entry) {
-  if (!entry || !entry.promotionUntilIso) return '';
-  // ── Only claim a rise that has not already happened ──────────────────────
-  // `promotionUntilIso` stays populated AFTER a promotion expires, at which
-  // point llm.js's `input`/`output` getters have already resolved to the
-  // standing figures. The old truthiness-only check would therefore keep
-  // telling a 2027 reader that this price "rises to $1.50" while the price
-  // line directly above it already read $1.50 — a warning about a change that
-  // has already happened, on the one surface whose whole job is to say what
-  // something costs. settings.js's renderModelRow has carried this guard since
-  // the picker shipped (`promoActive`); the composer did not, and the drift
-  // was invisible because today's clock is on the promoted side of the date.
-  //
-  // SUPPRESS ONLY ON POSITIVE EVIDENCE OF EXPIRY. If any of the four figures
-  // is missing we cannot establish that the promotion has ended, and the
-  // fail-safe direction on money is to WARN (v3.9.0's rule) — so an entry with
-  // unknown standard prices still discloses that a rise is coming, via the
-  // date-only fallback below. Going silent because we could not tell would
-  // turn "we don't know" into "there is nothing to know".
-  const bothKnown =
-    typeof entry.input === 'number' && typeof entry.standardInput === 'number' &&
-    typeof entry.output === 'number' && typeof entry.standardOutput === 'number';
-  const expired = bothKnown &&
-    entry.input === entry.standardInput && entry.output === entry.standardOutput;
-  if (expired) return '';
-  const inp = formatPricePerM(entry.standardInput);
-  const out = formatPricePerM(entry.standardOutput);
-  const from = typeof entry.standardPriceFromIso === 'string' && entry.standardPriceFromIso
-    ? entry.standardPriceFromIso
-    : entry.promotionUntilIso;
-  if (inp === null || out === null) return 'promotional price — rises after ' + formatIsoDay(entry.promotionUntilIso);
-  return 'promotional price — rises to ' + inp + ' / ' + out + ' on ' + formatIsoDay(from);
-}
-
-/**
- * THE BODY of one model row — everything inside it, and none of its wrapper.
- * Every interpolated value is server-supplied → escaped.
- *
- * TWO SURFACES RENDER THIS: the composer's shared-listbox menu (which owns the
- * row ELEMENT, and therefore all of the keyboard and ARIA behaviour, and takes
- * this string as `html`) and the browse dialog (via `renderModelOptionHtml`
- * below). Splitting the body from the wrapper is what lets those two be one
- * description of one model rather than two that can drift.
- *
- * ── WHY THIS ROW NO LONGER CARRIES THE FULL `note` ──────────────────────────
- * It used to render `entry.note` inline for every FLAGGED model — and once the
- * live OpenRouter catalogue landed, every fetched chat-only entry is flagged, so
- * a dropdown became several screens of two-hundred-word paragraphs. That was the
- * maintainer's report. The note is not shortened and not truncated: it is shown
- * whole in Settings, behind that screen's existing per-model disclosure, and
- * what stands here is the derived one-liner from shared/model-summary.js.
- *
- * THE SUMMARY IS NOT OPTIONAL FOR A FLAGGED MODEL. `defineOfferableModel`
- * refuses to build a `caution` or `dominated` entry without a `cautionReason`,
- * and that string is the summary's first clause — so the reason for a warning
- * badge is on screen with nothing to open, which is the property this row is
- * required to have. `isFlaggedModel` was deleted with the inline note: it
- * existed only to gate that note, and re-deriving "is this flagged" here is how
- * the badge and the prose drift apart.
- *
- * WHY THERE IS NO DISCLOSURE ON THIS SURFACE. Every row is a `[role="option"]`.
- * A `<details>` inside one would put an interactive control inside an
- * interactive control — the v3.0.1-beta.18 hazard, in the shape that cannot be
- * fixed with `stopPropagation` because it breaks the listbox's own semantics.
- * So the composer summarises and Settings discloses, and the menu carries one
- * footer line saying so. The STAR in the browse dialog is a sibling BUTTON
- * outside the option element for exactly the same reason — the v3.13.0 pattern.
- */
+/** The menu row's body — model-row.js, told which row is the default. */
 function renderModelRowBodyHtml(provider, entry, opts) {
   const o = opts || {};
-  // COMPACT on this surface. A dropdown opened mid-thought needs the model, the
-  // price and any warning — not the measured coverage, which is what Settings'
-  // denser row and its expand are for. Same builder, same words, less of them.
-  const summary = formatModelSummary(entry, { compact: true });
-  const rise = formatPromotionRise(entry);
-  const badges = [];
-  // ── SUITABILITY, NARROWED TO WHAT IS ACTUALLY A WARNING ──────────────────
-  // Gated on the LABEL TABLE having an entry, not on `!== 'general'`. That is
-  // the load-bearing difference: the old test rendered the raw field value as a
-  // fallback, so dropping 'chat-only' from the table would have printed the bare
-  // string "chat-only" on 194 rows instead of removing the badge. A value with
-  // no label is a value this surface has decided not to badge.
-  const suitLabel = typeof entry.suitability === 'string'
-    && Object.hasOwn(SUITABILITY_LABELS, entry.suitability)
-    ? SUITABILITY_LABELS[entry.suitability] : null;
-  if (suitLabel) {
-    badges.push('<span class="chat-mm-badge is-warn">' + escapeHtml(suitLabel) + '</span>');
-  }
-  // Label kept in sync with settings.js's MODEL_SUITABILITY_BADGES-adjacent
-  // `dominated` badge (search for "out-performed" there): same underlying
-  // `OFFERABLE_MODELS[].dominated` flag (src/brain/llm.js, not owned by this
-  // view), same user-facing word on both surfaces. "dominated" is measurement
-  // jargon a user does not think in; "out-performed" says the same fact in
-  // plain language. See scripts/test-next-composer-model.js /
-  // scripts/test-next-model-picker.js for the assertions pinning this string
-  // on both sides — there is no single shared JS constant the two views both
-  // import (they are independent modules with independent badge tables), so
-  // this comment is the enforcement point: if you change the word here,
-  // change it in settings.js's renderModelOption in the same commit.
-  if (entry.dominated === true) badges.push('<span class="chat-mm-badge is-warn">out-performed</span>');
-  if (entry.thinks === true) badges.push('<span class="chat-mm-badge">thinks</span>');
-
-  // ── THE PROVIDER, ON EVERY ROW ───────────────────────────────────────────
-  // Group headings alone stopped working the moment ~194 OpenRouter rows landed
-  // under one of them: scroll past the first screen and no heading is in view,
-  // so a row 40 deep names a model and not who serves it — which is the one
-  // fact that decides whose key pays for it. A per-row marker costs the same
-  // wherever the scroll happens to be.
-  //
-  // TEXT PLUS A DOT, never a dot alone: colour alone is not an accessible
-  // distinction, so the three families are told apart by the WORD and the colour
-  // is a scanning aid on top of it. chat.css records the measured contrast of
-  // both halves in both themes.
-  const provLabel = Object.hasOwn(PROVIDER_LABELS, provider) ? PROVIDER_LABELS[provider] : provider;
-  // The class comes from an ALLOW-LIST, never interpolated from the provider
-  // string — a class attribute assembled out of payload text is a way to smuggle
-  // a selector. An unknown provider gets the neutral swatch and its own name.
-  const provClass = Object.hasOwn(PROVIDER_LABELS, provider) ? ' is-' + provider : '';
-  const prov =
-    '<span class="chat-mm-prov' + provClass + '">' +
-      '<span class="chat-mm-prov-dot" aria-hidden="true"></span>' +
-      escapeHtml(provLabel) +
-    '</span>';
-
-  // Why a row is in the working set — rendered only where it says something the
-  // row does not already say. `selected` is deliberately absent: the check mark
-  // and the trigger label both already carry it.
-  const marks = [];
-  const reasons = Array.isArray(o.reasons) ? o.reasons : [];
-  if (reasons.includes('starred') || o.starred === true) {
-    marks.push('<span class="chat-mm-mark is-star" title="Starred">★</span>');
-  }
-  if (reasons.includes('recent')) {
-    marks.push('<span class="chat-mm-mark" title="You used this recently">recent</span>');
-  }
-
-  // ── THE PRICE IS A COLUMN, AND A COLUMN HAS TO BE ONE ────────────────────
-  // It used to be its own full-width line under the id. Stacked, tabular
-  // numerals buy nothing — there is no second number above or below to line up
-  // with — so a menu of 24 models gave no way to compare cost by eye, which is
-  // the one comparison this control exists to support. It now sits at the END
-  // of the head row, pushed right and right-aligned, with tabular numerals.
-  //
-  // IT STAYS IN THE TEXT FACE, AND THAT IS A DELIBERATE DEVIATION FROM THE
-  // PROPOSAL, which asked for a mono column. v3.44.0 moved every COUNT and
-  // PRICE in /next off the monospace face onto the text one — mono is kept for
-  // code and raw source, and a price is neither — and that decision is a
-  // release old with its reasoning recorded here in
-  // scripts/test-next-composer-model.js's own assertion. What the proposal
-  // actually argued for is ALIGNMENT ("without tabular numerals a price column
-  // is not a column"), and alignment is what is delivered: right-aligned,
-  // `tabular-nums`, `nowrap`. Re-adding `mono` here would reverse a shipped
-  // typographic rule in one control and leave the app's two price surfaces
-  // disagreeing about which face a price is set in.
-  return (
-    '<span class="chat-mm-head">' +
-      '<span class="chat-dd-opt-title">' + escapeHtml(entry.label || entry.id) + '</span>' +
-      prov +
-      marks.join('') +
-      badges.join('') +
-      '<span class="chat-mm-price">' + escapeHtml(formatLivePrice(entry)) + '</span>' +
-    '</span>' +
-    '<span class="chat-dd-opt-desc mono">' + escapeHtml(entry.id) + '</span>' +
-    (rise ? '<span class="chat-mm-rise">' + escapeHtml(rise) + '</span>' : '') +
-    (summary ? '<span class="chat-mm-note">' + escapeHtml(summary) + '</span>' : '')
-  );
+  return modelRowBodyHtml(provider, entry, {
+    surface: o.surface === 'browse' ? 'browse' : 'menu',
+    isDefault: isChatDefaultRow(provider, entry),
+    summary: o.surface === 'browse' ? formatModelSummary(entry, { compact: true }) : '',
+  });
 }
 
 /**
- * The BROWSE DIALOG's wrapper around the same body.
- *
- * ONE BODY BUILDER, TWO WRAPPERS, and that is the point. The composer's menu row
- * is a shared-listbox `div[role="option"]` this file does not own; the browse
- * dialog's is a `<button>` it does. If each surface built its own body, the
- * price, the badges and the warning would be free to disagree between the two
- * lists the user is comparing models across — two hand-maintained descriptions
- * of one measured fact, this repo's named cause of the v3.2.0 CRITICAL.
+ * The BROWSE DIALOG's wrapper around the same body: a plain `<button>` (the
+ * dialog is a search-results list, not a listbox — each row also carries a
+ * star, and a listbox option containing a second control is the
+ * v3.0.1-beta.18 hazard). `aria-current`, valid outside a listbox, names the
+ * model in use.
  */
 function renderModelOptionHtml(provider, entry, selectedId, opts) {
   const isActive = entry.id === selectedId;
-  // ── A PLAIN BUTTON, NOT A `role="option"` ────────────────────────────────
-  // The browse dialog is a SEARCH RESULTS list, not a listbox: each row carries
-  // a pick control AND a star control, and a `role="listbox"` whose options
-  // contain a second interactive control is a broken listbox — the
-  // v3.0.1-beta.18 hazard, and the reason the composer's rich rows delegate
-  // their semantics to shared/listbox.js instead of hand-rolling them here.
-  // Two native buttons per row means native focus, native activation and a
-  // native tab order, with no ARIA to get wrong.
-  //
-  // `aria-current` rather than `aria-selected`: valid outside a listbox, and it
-  // says the true thing — this is the model currently in use.
   return (
-    '<button type="button" class="chat-dd-opt chat-mm-opt chat-browse-pick' + (isActive ? ' is-active' : '') +
+    '<button type="button" class="mr-pick chat-browse-pick' + (isActive ? ' is-active' : '') +
       '"' + (isActive ? ' aria-current="true"' : '') +
       ' data-model-id="' + escapeHtml(entry.id) + '" data-model-provider="' + escapeHtml(provider) + '">' +
-      renderModelRowBodyHtml(provider, entry, opts) +
+      renderModelRowBodyHtml(provider, entry, Object.assign({}, opts || {}, { surface: 'browse' })) +
     '</button>'
   );
 }
 
 /**
  * The BROWSE DIALOG's list: one group per KEYED provider, each cheapest-first
- * exactly as the server ordered it. Returns '' when nothing is pickable, so the
- * caller can say "no model matches" rather than render an empty box.
- *
- * Takes a FLAT, already-filtered row list (`[{provider, entry, reasons?}]`) and
- * regroups it, rather than walking `offerable` itself — because the dialog's
- * search and its free-only/provider filters have already decided what belongs
- * here, and a second walk would let the header rows disagree with the body rows
- * about what is on screen.
+ * as the server ordered it. Takes the already-filtered flat row list, so the
+ * headings and the rows cannot disagree about what is on screen. '' when
+ * nothing is pickable, so the caller can say "no model matches".
  */
 function renderModelMenuHtml(rowList, selectedId, opts) {
   const list = Array.isArray(rowList) ? rowList : [];
@@ -6598,53 +6368,28 @@ function renderModelMenuHtml(rowList, selectedId, opts) {
   for (const row of list) {
     if (!row || !row.entry) continue;
     if (row.provider !== lastProvider) {
-      // An `<li>`, not a `<div>`: this list is a real `<ul>` and a `<div>` is
-      // not valid content inside one. `role="presentation"` keeps it out of the
-      // list's item count for a screen reader, where it is a heading and not an
-      // eighth model.
-      html += '<li class="chat-mm-group" role="presentation">' +
-        escapeHtml(Object.hasOwn(PROVIDER_LABELS, row.provider) ? PROVIDER_LABELS[row.provider] : row.provider) +
-        '</li>';
+      // An `<li role="presentation">`: valid inside the `<ul>`, and a heading
+      // to a screen reader rather than one more model in the count.
+      html += '<li class="mr-group" role="presentation">' + escapeHtml(providerWord(row.provider)) + '</li>';
       lastProvider = row.provider;
     }
     const isStarred = starred.has(row.entry.id);
     html += '<li class="chat-browse-row">' +
-      renderModelOptionHtml(row.provider, row.entry, selectedId, {
-        reasons: row.reasons,
-        starred: isStarred,
-      }) +
-      // ── THE STAR IS A SIBLING, NOT A CHILD ─────────────────────────────
-      // The v3.13.0 pattern, for the reason recorded there: a control nested
-      // inside another control has to suppress propagation to work at all, and
-      // any later edit that drops the suppression silently re-breaks it. As a
-      // sibling there is NO propagation path to suppress, so it cannot regress.
-      // `aria-pressed` makes it a real toggle to a screen reader; the label
-      // names the model, because "Star" alone is meaningless in a list of 213.
-      '<button type="button" class="chat-mm-star' + (isStarred ? ' is-on' : '') + '"' +
+      renderModelOptionHtml(row.provider, row.entry, selectedId) +
+      // THE STAR IS A SIBLING, NOT A CHILD (the v3.13.0 pattern): no control
+      // inside a control, so there is no propagation to suppress and none to
+      // forget. `aria-pressed` makes it a toggle; the label names the model.
+      '<button type="button" class="mr-star' + (isStarred ? ' is-on' : '') + '"' +
         ' data-star-id="' + escapeHtml(row.entry.id) + '"' +
         ' aria-pressed="' + (isStarred ? 'true' : 'false') + '"' +
-        ' title="' + (isStarred ? 'Starred — always in your working set' : 'Star: keep this in your working set') + '"' +
+        ' title="' + (isStarred ? 'Starred — listed first in the Model menu' : 'Star: list this first in the Model menu') + '"' +
         ' aria-label="' + (isStarred ? 'Unstar ' : 'Star ') + escapeHtml(row.entry.label || row.entry.id) + '">' +
         icon('star', 13) +
       '</button>' +
     '</li>';
     rows++;
   }
-  // ── WHERE THE FULL MEASUREMENT WENT ──────────────────────────────────────
-  // Each row now carries a derived one-liner instead of the model's whole
-  // measured `note` (see renderModelOptionHtml). The note still exists, whole
-  // and verbatim, behind Settings' per-model expand — so this says so once for
-  // the menu rather than leaving the reader to guess that the evidence was
-  // deleted rather than moved.
-  //
-  // A PLAIN DIV, CARRYING NO `data-model-id`. The pick handler binds to
-  // `[data-model-id]` only, so nothing here is clickable and nothing can be
-  // selected by mistake; it sits alongside the existing `.chat-mm-group`
-  // headers, which are already non-row children of this list.
-  const foot = rows
-    ? '<div class="chat-mm-foot">Full measurements for each model: Settings → API keys</div>'
-    : '';
-  return rows ? '<ul class="chat-browse-ul">' + html + '</ul>' + foot : '';
+  return rows ? '<ul class="chat-browse-ul">' + html + '</ul>' : '';
 }
 
 // ── THE COMPOSER'S TWO PICKERS, ON THE SHARED LISTBOX ─────────────────────
@@ -6721,21 +6466,35 @@ function modelListboxCfg() {
     selectedId: state.chatModel,
   });
   const starred = new Set(Array.isArray(state.modelStarred) ? state.modelStarred : []);
+  const recent = new Set(Array.isArray(state.modelRecents) ? state.modelRecents : []);
 
-  const options = ws.rows.map(row => ({
+  // ── GROUPS: STARRED, RECENT, THEN BY PROVIDER (DESIGN.md §6) ────────────
+  // Read from the stored lists directly, not from `row.reasons`: below the
+  // collapse threshold `buildWorkingSet` returns every row with NO reasons,
+  // and a star must still lead the menu there. Each row lands in exactly ONE
+  // group (starred beats recent beats provider), because the listbox resolves
+  // a commit by value and one value may appear once. Within a group the
+  // catalogue's own order (cheapest first) is kept — a stable sort on the
+  // group rank only.
+  const ranked = ws.rows.map((row, i) => ({
+    row,
+    i,
+    g: starred.has(row.entry.id) ? { rank: 0, name: 'Starred' }
+      : recent.has(row.entry.id) ? { rank: 1, name: 'Recent' }
+        : { rank: 2, name: providerWord(row.provider) },
+  })).sort((a, b) => (a.g.rank - b.g.rank) || (a.i - b.i));
+
+  const options = ranked.map(({ row, g }) => ({
     // PROVIDER-QUALIFIED — see modelOptionValue. Two rows can never share one
     // value, so the listbox's resolve-by-value cannot cross providers.
     value: modelOptionValue(row.provider, row.entry.id),
     label: row.entry.label || row.entry.id,
-    group: Object.hasOwn(PROVIDER_LABELS, row.provider) ? PROVIDER_LABELS[row.provider] : row.provider,
+    group: g.name,
     // Type-ahead reaches the ID as well as the label, so "deepseek" and "opus"
     // both land somewhere. The listbox tries a prefix match first and falls back
     // to a substring, so the label still wins for a leading match.
     typeahead: (row.entry.label || '') + ' ' + row.entry.id,
-    html: renderModelRowBodyHtml(row.provider, row.entry, {
-      reasons: row.reasons,
-      starred: starred.has(row.entry.id),
-    }),
+    html: renderModelRowBodyHtml(row.provider, row.entry),
   }));
 
   // ── THE ESCAPE HATCH IS ALWAYS PRESENT, AND THAT REVERSES A REFUSAL ──────
@@ -6759,8 +6518,9 @@ function modelListboxCfg() {
     value: BROWSE_MODEL_VALUE,
     label: 'Browse all ' + ws.total + ' models',
     action: true,
-    html: '<span class="chat-mm-browse">' + icon('search', 13) +
-      '<span>Browse all ' + ws.total + ' models - search, filter, star</span></span>',
+    html: '<span class="mr-browse">' + icon('search', 13) +
+      '<span>Browse all ' + ws.total + ' models…</span>' +
+      '<span class="mr-browse-sub">search, filter, star</span></span>',
   });
 
   // ── NO `|| 'gemini'` TERMINAL FALLBACK ───────────────────────────────────
@@ -6770,7 +6530,7 @@ function modelListboxCfg() {
   // Naming a specific vendor as a stand-in for "we do not know" is a small lie
   // on a surface whose entire job is saying which model answers.
   const shownProvider = state.modelProvider || state.activeProvider || state.availableProviders[0] || null;
-  const shownLabel = (shownProvider && PROVIDER_LABELS[shownProvider]) || shownProvider || null;
+  const shownLabel = (shownProvider && providerWord(shownProvider)) || null;
 
   return {
     id: 'chat-model-lb',
@@ -6790,7 +6550,11 @@ function modelListboxCfg() {
     // always includes the selection). "<Provider> default" only where the
     // provider can be named; a bare "Default" claims only what is known.
     placeholder: shownLabel ? shownLabel + ' default' : 'Default',
-    ariaLabel: 'Model for this chat',
+    // The choice is remembered PER BROWSER (localStorage), across chats, and
+    // applies to the next question; the model that actually answered is on
+    // each answer (DESIGN.md M-d). "for this chat" claimed a per-conversation
+    // memory that does not exist.
+    ariaLabel: 'Model for your next question',
     // ── THE FULL NAME, RECOVERABLE ON HOVER ──────────────────────────────
     // The trigger sits in a composer row beside Send and truncates, and an
     // OpenRouter label routinely runs past it (`Mistral Medium 3.1` under a
@@ -6805,15 +6569,21 @@ function modelListboxCfg() {
       return nm === cur.entry.id ? nm : nm + ' — ' + cur.entry.id;
     })(),
     triggerClass: 'lb-sm chat-lb',
-    menuClass: 'lb-rich chat-mm-menu',
+    // Names the pill's ROOT so the composer row can let the model name give
+    // way (ellipsis, full name in `title`) before the row wraps — chat.css.
+    rootClass: 'chat-model-lb-root',
+    menuClass: 'lb-rich mr-menu',
     prefer: 'up',
     minWidth: 360,
-    // ── WHERE THE FULL MEASUREMENT WENT ────────────────────────────────────
-    // Each row carries a derived one-liner rather than the model's whole
-    // measured `note`. The note still exists, whole and verbatim, behind
-    // Settings' per-model expand, so this says so once rather than leaving the
-    // reader to guess the evidence was deleted rather than moved.
-    footHtml: 'Full measurements for each model: Settings → API keys',
+    // ── ONE FOOT LINE: THE UNIT, WHERE THE CHOICE LIVES, THE SYNC DAY ─────
+    // The unit is said once here so no row repeats it. The sync day is the
+    // OpenRouter catalogue's OWN stamp from /api/config/api-keys, shown only
+    // when OpenRouter is keyed and the server sent one — Gemini and Anthropic
+    // prices ship with the app and carry no date on the wire, so none is
+    // claimed for them.
+    footHtml: modelMenuFootHtml({
+      syncedAt: state.availableProviders.includes('openrouter') ? state.orCatalogueSyncedAt : null,
+    }),
     onChange: (value) => {
       if (value === BROWSE_MODEL_VALUE) { openBrowseDialog({ mode: 'pick' }); return; }
       const parsed = parseModelOptionValue(value);
@@ -6831,6 +6601,7 @@ function lengthListboxCfg() {
     value: state.responseStyle,
     ariaLabel: 'Answer length',
     triggerClass: 'lb-sm chat-pill chat-lb',
+    rootClass: 'chat-length-lb-root',
     prefer: 'up',
     onChange: (value) => {
       if (!STYLE_ORDER.includes(value)) return;
@@ -7122,7 +6893,9 @@ function renderBrowseFiltersHtml() {
   const chips = [{ id: null, label: 'All providers' }].concat(
     state.availableProviders.map(p => ({
       id: p,
-      label: Object.hasOwn(PROVIDER_LABELS, p) ? PROVIDER_LABELS[p] : p,
+      // The picker's ONE provider vocabulary (shared/model-row.js), so a
+      // chip and the rows it filters name the provider the same way.
+      label: providerWord(p),
     })),
   );
   const provHtml = chips.map(c => (
@@ -7235,7 +7008,9 @@ function openBrowseDialog(opts) {
               ? (answerIsInPromptWindow(o.messageIndex)
                 ? 'Re-asks your question in this conversation. The new model can see the answer above, so this is a second opinion rather than an independent run.'
                 : 'Re-asks your question in this conversation. The new model is only shown the most recent part of the thread and the answer above may fall outside it — but it does see the turns since, so this is still not an independent run.')
-              : 'Every model you have a key for. Picking one changes the model for this chat until you change it again.') +
+              // v3.72.0 (P4, DESIGN.md M-d): the pick is remembered PER
+              // BROWSER across chats, not per conversation — say so.
+              : 'Every model you have a key for. Picking one sets the model for your next question, remembered on this computer across chats.') +
           '</div>' +
         '</div>' +
         '<button type="button" class="chat-browse-close" data-browse-close aria-label="Close">' +

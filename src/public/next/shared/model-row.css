@@ -1,0 +1,181 @@
+/* shared/model-row.css — the ONE model row body (v3.72.0, P4).
+
+   Built by shared/model-row.js for the composer's Model menu and the browse
+   dialog. The row reads in the app's type hierarchy, like a sidebar row:
+
+     name  (--text-md, medium, --text)               price (tabular, --text-2)
+     meta  (--text-2xs, --text-2): provider · default · thinks · 1M context
+     promo (only while live): [promo] until <day>, then $x / $y
+
+   The PRICE stays in the text face with tabular numerals, not mono: v3.44.0
+   moved every count and price in /next off mono (mono is for code and raw
+   source), and alignment is what a column needs — `tabular-nums`, right
+   aligned, `nowrap` so "$0.10 / $0.40" never breaks into two figures.
+
+   NO PROVIDER COLOUR. The provider is a word. The old dots used the page-type
+   hues (entity cyan, concept green), so one hue meant two things on a screen.
+
+   Every text colour here is --text or --text-2 (AA on the menu surface in both
+   themes, listbox.css records 6.16 / 5.60 for --text-2); nothing is --text-3,
+   which is a DISABLED rung and the old row's note sat on it at 4.00:1. */
+
+.mr-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: var(--space-5);
+  row-gap: 2px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+}
+.mr-title {
+  grid-column: 1;
+  min-width: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-snug);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mr-price {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  align-self: baseline;
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--text-2);
+  font-variant-numeric: var(--numeric-tabular);
+  white-space: nowrap;
+  text-align: right;
+}
+/* "price unavailable" is words, not a figure: it keeps the column but not
+   the numerals' weight. Still --text-2 (a fact, not a disabled state). */
+.mr-price.is-unknown { font-style: italic; }
+.mr-meta,
+.mr-promo,
+.mr-note,
+.mr-id {
+  grid-column: 1 / -1;
+  min-width: 0;
+  font-size: var(--text-2xs);
+  line-height: var(--leading-snug);
+  color: var(--text-2);
+}
+.mr-sep { color: var(--text-2); }
+/* A promotion is a COST: never folded, and at full --text (the words carry
+   the warning; tone lives in the badge's border and tint, design rule 7). */
+.mr-promo { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; color: var(--text); margin-top: 1px; }
+.mr-badge { font-size: var(--text-2xs); line-height: 1.4; padding: 0 6px; }
+.mr-id { overflow-wrap: anywhere; }
+/* The browse dialog's labelled ingest line. Wrapped in full, never clamped:
+   its first clause can be the reason a model is a poor wiki builder. */
+.mr-note { white-space: normal; text-wrap: pretty; }
+
+/* ── THE SELECTED ROW (M-b) ────────────────────────────────────────────────
+   shared/listbox.css paints the committed option as a filled accent pill with
+   --text-on-accent (4.53:1 dark, 6.57:1 light). EVERY child takes the pill's
+   own foreground — `currentColor`, never a second literal — or --text-2 on the
+   violet measures 2.31:1 (listbox.css's own figure). The badges drop their
+   tint and keep their edge in the same colour, so they stay badges without a
+   second fill inside the first. */
+.lb-opt.is-selected .mr-title,
+.lb-opt.is-selected .mr-price,
+.lb-opt.is-selected .mr-meta,
+.lb-opt.is-selected .mr-sep,
+.lb-opt.is-selected .mr-promo,
+.lb-opt.is-selected .mr-note,
+.lb-opt.is-selected .mr-id { color: currentColor; }
+.lb-opt.is-selected .mr-badge {
+  background: transparent;
+  border-color: currentColor;
+  color: currentColor;
+}
+
+/* The menu's foot: unit, where the choice lives, the catalogue's sync day. */
+.mr-foot {
+  margin: 0;
+  font-size: var(--text-2xs);
+  line-height: var(--leading-snug);
+  color: var(--text-2);
+}
+
+/* The browse dialog's star — a SIBLING of the pick button (the v3.13.0
+   pattern: no control inside a control). An icon control, so WCAG 1.4.11's
+   3:1 non-text floor applies; --text-2 clears it in both themes with room.
+   ON is filled (`fill: currentColor`) as well as coloured, so colour is not
+   the only carrier, and `aria-pressed` carries it non-visually. */
+.mr-star {
+  flex: none;
+  width: 28px; height: 28px;
+  margin-top: 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: color var(--t-state), background var(--t-state);
+}
+.mr-star:hover { background: var(--surface-hover); color: var(--text); }
+.mr-star:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+.mr-star.is-on { color: var(--attention-text); }
+.mr-star.is-on svg { fill: currentColor; }
+
+/* The browse dialog's pick button: a plain button laid out as the row. */
+.mr-pick {
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+}
+.mr-pick:hover { background: var(--surface-hover); }
+.mr-pick[aria-current="true"] { background: var(--accent-tint); }
+
+/* A provider heading inside the browse dialog's list. */
+.mr-group {
+  padding: 8px 9px 3px;
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mr-star { transition: none; }
+}
+
+/* ── THE COMPOSER'S MODEL MENU ─────────────────────────────────────────────
+   Wider than the other composer menus (a price column beside a name) and
+   scroll-capped on the MENU, never on a row: a row is never truncated. */
+.lb-menu.mr-menu {
+  min-width: 360px;
+  max-width: 420px;
+  max-height: min(62vh, 560px);
+  overflow-y: auto;
+}
+/* The check sits in the price column's gutter, top right (listbox.css's
+   `.lb-rich` places it); the row keeps room for it. */
+.lb-menu.mr-menu .lb-opt { padding-top: 7px; padding-bottom: 7px; }
+
+/* The one ACTION row: "Browse all N models…". Reads as a control, not a
+   model: accent text, no price, a rule above it. `[data-lb-action]` is what
+   shared/listbox.js emits for it, so no `:has()` is needed for the layout. */
+.mr-browse { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 7px; color: var(--accent-text); font-size: var(--text-md); }
+.mr-browse > svg { align-self: center; }
+.mr-browse-sub { font-size: var(--text-2xs); color: var(--text-2); }
+.lb-menu.mr-menu .lb-opt[data-lb-action] {
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  margin-top: 3px;
+  padding-top: 9px;
+}
+.lb-opt.is-selected .mr-browse,
+.lb-opt.is-selected .mr-browse-sub { color: currentColor; }

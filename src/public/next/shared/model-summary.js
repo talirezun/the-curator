@@ -147,8 +147,8 @@ export function formatDurationMs(ms) {
  * It is stated as what it is — a measurement of one call — and NOT extrapolated.
  * The figure comes from an ingest outline call on a very large prompt, so a chat
  * turn on the same model will usually be quicker; claiming otherwise would be
- * over-reading our own data. Saying "per call when we measured it" keeps the
- * claim inside the evidence.
+ * over-reading our own data. Saying "per ingest call in our testing" keeps the
+ * claim inside the evidence, and names the call that was timed.
  *
  * ABSENT FOR MOST MODELS AND THAT IS CORRECT. Roughly 14 ids have a figure
  * against a synced catalogue of ~190. The rest render NO clause — never "0s",
@@ -161,7 +161,12 @@ function speedClause(entry) {
   // "measured at about 0s per call" is the zero-for-absent claim this whole
   // module exists to refuse — arriving through rounding instead of a null.
   if (!Number.isFinite(ms) || ms < 1000) return '';
-  return 'measured at about ' + formatDurationMs(ms) + ' per call';
+  // v3.72.0 (truth audit Chat F4): the clause names WHAT was timed. The
+  // unqualified "measured at about Xs per call" read as a chat-answer latency
+  // in the composer; the figure is the median of an INGEST outline call on a
+  // ~300,000-character prompt (llm.js MEASURED_LATENCY_MS). Settings' context
+  // is ingest too, so the wording is true on both surfaces.
+  return 'about ' + formatDurationMs(ms) + ' per ingest call in our testing';
 }
 
 /**

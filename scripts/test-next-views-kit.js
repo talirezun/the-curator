@@ -575,7 +575,8 @@ section('7. The monospace face is spent on LITERALS, not on facts');
      copies. Each is listed with its reason so the next person adding a `mono`
      has to argue against a specific list rather than against a vibe. */
   const KEPT = {
-    'views/chat.js': 5,       // four message eyebrows and the model id in the picker. v3.72.0 (P3):
+    'views/chat.js': 4,       // four message eyebrows. v3.72.0 (P4): the model id moved to
+                              // shared/model-row.js (browse dialog only). v3.72.0 (P3):
                               // the SCOPE and PROJECT eyebrows went with the scope bar, and the
                               // conversation group label is the sidebar kit's `.cur-eyebrow`.
                               // (was 8: four message eyebrows, the SCOPE and PROJECT eyebrows (v3.64.0), the conversation group label,
@@ -655,10 +656,11 @@ section('7. The monospace face is spent on LITERALS, not on facts');
   {
     const kept = (read('views/chat.js').match(/class="([^"]*)\bmono\b([^"]*)"/g) || [])
       .map((c) => c.replace(/class="|"| ?\bmono\b ?/g, '').trim()).sort();
+    // v3.72.0 (P4): the model id's mono span moved to shared/model-row.js
+    // (`mr-id`, browse dialog only), so chat.js keeps only its eyebrows.
     ok(JSON.stringify(kept) === JSON.stringify([
-      'chat-dd-opt-desc', 'chat-msg-eyebrow',
-      'chat-msg-eyebrow', 'chat-msg-eyebrow', 'chat-msg-eyebrow',
-    ]), `views/chat.js keeps mono ONLY on its eyebrows and the model id (got ${kept.join(', ')})`);
+      'chat-msg-eyebrow', 'chat-msg-eyebrow', 'chat-msg-eyebrow', 'chat-msg-eyebrow',
+    ]), `views/chat.js keeps mono ONLY on its eyebrows (got ${kept.join(', ')})`);
   }
   // The stylesheets, from the other side: the chip and the wikilink no longer
   // name the mono family at all.

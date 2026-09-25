@@ -498,8 +498,8 @@
        equidistant, so "nearest" does not decide it. The tie-break is: never
        make already-tiny text smaller. --text-2xs (10px) is the ramp FLOOR,
        these lines are painted in --text-3 (which does not clear 4.5:1, see
-       the note at .chat-mm-badge), and two of the three state money
-       (.chat-cost-hint) or a caution reason (.chat-mm-note). Rounding up
+       the ramp notes), and one of them states money (.chat-cost-hint).
+       Rounding up
        costs half a pixel and moves the one direction that helps.
 
    The `em` sizes below (.chat-answer code, .chat-wikilink at 0.92em,
@@ -1129,149 +1129,12 @@
    survives long enough for someone to half-resurrect the control later —
    the reasoning the .chat-drop-* and .chat-dd-* removals above record. */
 
-/* ── THE COMPOSER'S OWN DROPDOWN IS GONE ──────────────────────────────────
-   `.chat-dd`, `.chat-dd-btn`, `.chat-dd-dot` and `.chat-dd-menu` used to style
-   a hand-rolled menu that carried listbox ARIA roles and had no keyboard
-   support at all. Both composer pickers now use shared/listbox.js, which owns
-   the trigger AND the popup, so those four rules had zero remaining consumers
-   and are DELETED rather than left behind — dead CSS is how a stylesheet stops
-   describing the app (v3.9.1 shipped a whole file that was never even linked).
+/* ── THE MODEL ROW MOVED OUT (v3.72.0, P4) ───────────────────────────────
+   `.chat-dd-opt*` and every `.chat-mm-*` rule (menu, head, badge, price,
+   rise, note, foot, provider dot, marks, browse action, star, browse row)
+   are DELETED: the row body, the menu and the browse rows are now
+   shared/model-row.js + model-row.css, one builder for both surfaces. */
 
-   `.chat-dd-opt` and its two children SURVIVE and are used below: the browse
-   dialog's rows reuse them, so the composer menu and the browse list lay a
-   model out identically. */
-.chat-dd-opt {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  padding: 7px 9px;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  border: none;
-  text-align: left;
-  color: var(--text);
-}
-.chat-dd-opt:hover { background: var(--surface-hover); }
-.chat-dd-opt.is-active { background: var(--accent-tint); }
-.chat-dd-opt.is-active .chat-dd-opt-title { color: var(--accent-text); }
-.chat-dd-opt-title { font-size: var(--text-md); }
-.chat-dd-opt-desc { font-size: var(--text-2xs); color: var(--text-3); }
-
-/* ── Model picker (gated: see MODEL_PICKER_ENABLED in chat.js) ─────────────
-   A model menu carries far more per row than the provider menu it replaces —
-   an id, a live price, a promotion clause and a measured note — so it needs a
-   wider, scroll-capped box. The cap is on the MENU, never on a row: truncating
-   a row would hide the caveat the row exists to show. */
-.chat-mm-menu {
-  min-width: 340px;
-  max-width: 420px;
-  max-height: 62vh;
-  overflow-y: auto;
-  gap: 2px;
-}
-.chat-mm-group {
-  padding: 6px 9px 2px;
-  font-size: var(--text-2xs);
-  letter-spacing: var(--track-eyebrow);
-  text-transform: uppercase;
-  color: var(--text-3);
-}
-.chat-mm-opt { gap: 3px; width: 100%; }
-.chat-mm-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-/* WAS 9.5px, which is BELOW the ramp's 10px floor — so this was not a size
-   that had drifted off a step, it was a size the ramp deliberately does not
-   offer. --text-2xs (10px, +0.5) is both the nearest step and the only one
-   that does not visibly resize the pill: --text-xs would be +1.5px / +16% on
-   a bordered chip in a flex-wrap row, for no gain the scale control does not
-   already give. Growing it also nudges the right way on a line that is
-   already hard to read.
-
-   FLAGGED, NOT FIXED HERE: this badge and five other rules in this file paint
-   --text-3, measured at 4.38 (dark) / 4.00 (light) — under the 4.5:1 floor
-   for text. That is a token-wide problem being handled by the wave that
-   retires --text-3; changing colours in a change whose whole purpose is
-   sizes would make neither reviewable. The other five: .chat-cost-hint,
-   .chat-dd-opt-desc, .chat-mm-group, .chat-mm-note, .chat-mm-foot.
-   (.chat-mm-badge.is-warn below overrides to --attention-text and is not
-   affected.) */
-.chat-mm-badge {
-  font-size: var(--text-2xs);
-  line-height: 1.6;
-  padding: 0 5px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--border);
-  color: var(--text-3);
-  white-space: nowrap;
-}
-/* TONE IS A MARK, NEVER TEXT (design rule 7, v3.66.0). The warning lives
-   in the badge's 1px border and its tint; the WORDS are --text, because
-   --attention-text as text measured 3.35:1 in light, under the 4.5 AA floor.
-   The label already says what is wrong ("out-performed", a suitability word),
-   so colour is never the only carrier. */
-.chat-mm-badge.is-warn {
-  border-color: var(--attention);
-  background: var(--attention-tint);
-  color: var(--text);
-}
-/* ── THE PRICE IS A COLUMN, SO IT IS RIGHT-ALIGNED AND MONOSPACED ────────
-   It used to be a full-width line of its own under the id, where tabular
-   numerals bought nothing — there is no second figure above or below to line
-   up with. It now ends the head row, pushed right by `margin-left: auto`, with
-   `tabular-nums` so the digits are of equal width and `text-align: right` so
-   the strings end on one edge regardless of how many digits each carries.
-
-   IT STAYS IN THE TEXT FACE. The router proposal asked for a mono column;
-   v3.44.0 moved every count and price in /next off mono onto the text face
-   (mono is kept for code and raw source, and a price is neither), and that
-   rule is pinned by scripts/test-next-composer-model.js. The property the
-   proposal was after is alignment, and alignment is what these three
-   declarations give — the face is not what makes a column.
-
-   `white-space: nowrap` because "$0.10 / $0.40" wrapping mid-price would put
-   the output figure under the input one and read as two models. */
-.chat-mm-price {
-  margin-left: auto;
-  padding-left: var(--space-5);
-  text-align: right;
-  font-size: var(--text-xs);
-  color: var(--text-2);
-  font-variant-numeric: var(--numeric-tabular);
-  white-space: nowrap;
-}
-/* A price-rise note ("rises to $1.50 …", formatPromotionRise's own words).
-   The amber was a tone painted on TEXT — 3.35:1 in light, under AA (design
-   rule 7, v3.66.0). It is a COST warning, so it keeps full --text rather than
-   stepping back to --text-2: the words carry the warning, at full contrast. */
-.chat-mm-rise { font-size: var(--text-2xs); color: var(--text); }
-/* The DERIVED one-line summary (next/shared/model-summary.js) — no longer the
-   model's whole measured `note`, which is now shown in full behind Settings'
-   per-model expand. Class name kept so the composer and its suite do not churn
-   on a rename in a change whose whole point is that the ROW got shorter.
-
-   STILL WRAPPED IN FULL, NEVER CLAMPED, and that is load-bearing: the first
-   clause of this line is `cautionReason`, the reason for a warning badge on the
-   same row. A `-webkit-line-clamp` here would hide the tail of a warning behind
-   an ellipsis on a narrow composer, which is the same defect as folding it. The
-   line is short by construction now, so there is nothing to gain by truncating
-   it and a warning to lose. */
-.chat-mm-note {
-  font-size: var(--text-xs);
-  line-height: var(--leading-snug);
-  color: var(--text-3);
-  white-space: normal;
-  text-wrap: pretty;
-}
-/* One line for the whole menu, saying where the full measurements went. Not a
-   row: it carries no `data-model-id`, so the option handler cannot reach it. */
-.chat-mm-foot {
-  padding: 6px 9px 2px;
-  font-size: var(--text-2xs);
-  line-height: var(--leading-snug);
-  color: var(--text-3);
-  border-top: 1px solid var(--border);
-  margin-top: 4px;
-}
 
 /* ── SHARED MARKDOWN RENDERER — reader body content ───────────────────
    The reader overlay's chrome (loading/error/tags/backlinks) is rendered by
@@ -1522,75 +1385,6 @@
   font-size: var(--text-sm);
 }
 
-/* ── PROVIDER FAMILY COLOURS ──────────────────────────────────────────────
-   The three --prov-* tokens this view reads (gemini/anthropic/openrouter)
-   now live in shell.css, not here. They used to be defined in this file with
-   a comment reading "If a second view ever groups by provider they should
-   move" — Settings' provider list and its per-provider build list became
-   that second view (v3.24.3), and until the move they had silently forked:
-   Settings hand-picked var(--type-summary) for Anthropic (the amber "human
-   attention required" status colour) while this file used var(--concept-400)
-   green, so the SAME provider rendered two different colours on the same
-   screen visit (Settings -> Chat). Read the full rationale — why the palette
-   reuses the type triad, why amber is refused for a provider, and the
-   measured contrast figures — at the token definition in shell.css. Nothing
-   else in this rule changed: it still reads var(--prov-*) exactly as before,
-   now resolved from a shared source both views load. */
-
-/* The provider marker on EVERY row. See renderModelRowBodyHtml for why a group
-   heading alone stopped being enough at ~194 rows. */
-.chat-mm-prov {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-  font-size: var(--text-2xs);
-  letter-spacing: var(--track-eyebrow);
-  text-transform: uppercase;
-  color: var(--text-2);
-  white-space: nowrap;
-}
-.chat-mm-prov-dot {
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: var(--border-strong);   /* unknown provider: neutral, never a lie */
-  flex: none;
-}
-.chat-mm-prov.is-gemini     .chat-mm-prov-dot { background: var(--prov-gemini); }
-.chat-mm-prov.is-anthropic  .chat-mm-prov-dot { background: var(--prov-anthropic); }
-.chat-mm-prov.is-openrouter .chat-mm-prov-dot { background: var(--prov-openrouter); }
-
-/* Why a row is in the working set. --text-2, not --text-3: this is body text a
-   user reads, so it takes the AA 4.5:1 floor (the same reasoning listbox.css
-   records for its own detail column). */
-.chat-mm-mark {
-  font-size: var(--text-2xs);
-  letter-spacing: var(--track-eyebrow);
-  text-transform: uppercase;
-  color: var(--text-2);
-  white-space: nowrap;
-  flex: none;
-}
-.chat-mm-mark.is-star { color: var(--attention-text); font-size: var(--text-xs); letter-spacing: 0; }
-
-/* The one ACTION row in the model menu. Reads as a control rather than as a
-   model: no price, no id, no badges, and a rule above it. */
-.chat-mm-browse {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--accent-text);
-  font-size: var(--text-sm);
-}
-/* `[data-lb-action]`, emitted by shared/listbox.js, NOT `:has(.chat-mm-browse)`:
-   settings.css records the house position that `:has()` is acceptable for
-   cosmetics and not for layout, and this rule adds a border and padding. */
-.lb-menu.chat-mm-menu .lb-opt[data-lb-action] {
-  border-top: 1px solid var(--border);
-  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
-  margin-top: 3px;
-  padding-top: 9px;
-}
 
 /* The composer's two listbox triggers. `.chat-lb` only narrows the shared
    `.lb-sm` variant to this row's rhythm — everything else about the control is
@@ -1604,6 +1398,45 @@
 .chat-composer-pickers > .chat-project-host { flex: 0 0 auto; max-width: 100%; }
 .chat-composer-pickers .lb-btn { max-width: 15rem; }
 .chat-lb { max-width: 220px; }
+
+/* ── ONE ROW WHEN THE ROW HAS ROOM (v3.72.0, P4) ───────────────────────────
+   At 1400px the composer's control row is ~754px, and four pills + the cost
+   hint + Send measured ~50px over it with a project pinned and a named model
+   picked, so the Model pill wrapped to a second line (P3's report). The type
+   stays on the ramp; instead, once the ROW is wide enough to hold every pill
+   at its floor (a container query on the row itself, not the viewport — the
+   sidebar decides this width), the strip stops wrapping and the two free-text
+   names give way first: the PROJECT and the MODEL name ellipsise (the model's
+   full name and id stay in the trigger's `title`, the project's in its menu),
+   the domain less so, and Length — a fixed word — never. Below the threshold
+   the pills wrap exactly as before, so nothing is ever cut to "M…".
+   720px = the floors (6.5 + 7 + 7rem, Length's own width) + the hint + Send
+   + gaps, measured, with room to spare. */
+.chat-composer-controls { container-type: inline-size; container-name: chatctl; }
+@container chatctl (min-width: 720px) {
+  .chat-composer-pickers { flex-wrap: nowrap; }
+  .chat-composer-pickers > .lb,
+  .chat-composer-pickers > .chat-project-host { flex: 0 1 auto; min-width: 0; }
+  .chat-composer-pickers .lb-btn { min-width: 0; max-width: 100%; }
+  .chat-composer-pickers { column-gap: 4px; }
+  .chat-composer-pickers > .chat-length-lb-root { flex-shrink: 0; }
+  /* The MODEL name gives way first (weight 10): its full name and id are in
+     the trigger's title and at the top of its own menu. A project or domain
+     name is the user's own word, so it shrinks only as a last resort. */
+  .chat-composer-pickers > .chat-domain-lb-root { flex-shrink: 0.1; min-width: 6.5rem; }
+  .chat-composer-pickers > .chat-project-host { flex-shrink: 0.1; min-width: 7rem; }
+  .chat-composer-pickers > .chat-model-lb-root { flex-shrink: 10; min-width: 7rem; }
+  /* The cost hint is the one COMPACT LABEL: it may set on two short lines
+     beside Send instead of one long one, which frees ~70px for the pills —
+     enough that a pinned project and a named model fit whole in the usual
+     case, and nothing is ellipsised at all. Same words, same size. */
+  .chat-composer-controls > .chat-cost-hint {
+    white-space: normal;
+    max-width: 9.5em;
+    text-align: right;
+    line-height: var(--leading-snug);
+  }
+}
 
 /* ── ASK AGAIN ────────────────────────────────────────────────────────────
    Quiet by construction: it sits under an answer the user is reading, and it
@@ -1764,36 +1597,6 @@
 .chat-browse-pick:focus-visible { outline: none; box-shadow: var(--ring-focus); }
 .chat-browse-pick[aria-current="true"] { background: var(--accent-tint); }
 
-.chat-mm-star {
-  flex: none;
-  width: 28px; height: 28px;
-  margin-top: 5px;
-  display: inline-flex; align-items: center; justify-content: center;
-  border-radius: var(--radius-md);
-  border: 1px solid transparent;
-  background: transparent;
-  /* --text-3 sits below the 4.5:1 AA floor for TEXT, but this is an icon
-     control and WCAG 1.4.11's 3:1 non-text floor is the one that applies.
-     Measured in a browser (method as above), against the surface behind it:
-
-       star OFF (--text-3)          dark  4.15:1   light 4.14:1
-       star ON  (--attention-text)  dark 10.70:1   light 3.58:1
-
-     All four clear 3:1. Light-theme ON is the lowest at 3.58 and is LOWER than
-     its own off state — recorded rather than smoothed over, because the honest
-     reading is that colour is not what distinguishes the two states here: the
-     ON glyph is FILLED (`fill: currentColor`) where the OFF one is an outline,
-     and `aria-pressed` carries the state non-visually regardless. */
-  color: var(--text-3);
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: color var(--t-state), background var(--t-state);
-}
-.chat-mm-star:hover { background: var(--surface-hover); color: var(--text); }
-.chat-mm-star:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
-.chat-mm-star.is-on { color: var(--attention-text); }
-.chat-mm-star.is-on svg { fill: currentColor; }
 
 .chat-browse-empty {
   padding: 28px 12px;
@@ -1820,25 +1623,9 @@
 .chat-browse-clear:active { background: var(--surface-active); transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
 .chat-browse-clear:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
 
-/* The browse dialog's rows reuse .chat-mm-opt, which is a flex COLUMN inside the
-   composer menu; nothing here re-declares that, so both surfaces lay a model out
-   identically. */
-.chat-browse-pick.chat-mm-opt {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-  padding: 7px 9px;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  border: none;
-  text-align: left;
-  color: var(--text);
-}
-.chat-browse-pick.chat-mm-opt:hover { background: var(--surface-hover); }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-reask-btn, .chat-browse-chip, .chat-mm-star { transition: none; }
+  .chat-reask-btn, .chat-browse-chip { transition: none; }
 }
 
 /* ── DIGITS THAT MOVE ─────────────────────────────────────────────────────

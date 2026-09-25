@@ -5176,14 +5176,15 @@ section('§21  The collapsed row stands alone — reason and price unfolded, not
     ok(noLat.length >= 14, `corpus: ${noLat.length} shipping models have NO latency — the common case is represented`);
     for (const m of noLat) {
       const head = summaryOf(renderModelOption(m, 1, ''));
-      ok(!/measured at about/.test(head), `${m.id}: no speed clause where nothing was measured`);
+      ok(!/per ingest call|measured at about/.test(head), `${m.id}: no speed clause where nothing was measured`);
     }
     const withLat = ['gemini', 'anthropic', 'openrouter']
       .flatMap((p) => WIRE[p] || []).filter((m) => Number.isFinite(m.medianLatencyMs));
     ok(withLat.length >= 3, `corpus: ${withLat.length} shipping models DO carry latency — the omission above discriminates`);
     for (const m of withLat) {
-      ok(/measured at about/.test(summaryOf(renderModelOption(m, 1, ''))),
-        `${m.id}: a MEASURED model does show its call time`);
+      // v3.72.0 (truth audit Chat F4): the clause names the call it timed.
+      ok(/about \d+(m \d+)?s per ingest call in our testing/.test(summaryOf(renderModelOption(m, 1, ''))),
+        `${m.id}: a MEASURED model does show its call time, as an INGEST call`);
     }
   }
 

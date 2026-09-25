@@ -162,11 +162,17 @@ for (const id of PROV_IDS) {
   ok(shellDefs === 2, `both --prov-${id} definitions are in shell.css (found ${shellDefs} there)`);
 }
 
-// chat.css must still READ the tokens (it did not lose its provider-dot
-// rules), just never DEFINE them again.
+// v3.72.0 (P4, DESIGN.md M-c): Chat's model picker NO LONGER paints a
+// provider dot. The --prov-* hues are the page-type hues (Gemini = entity
+// cyan, Anthropic = concept green), so a dot in the model menu meant one
+// thing while the same hue on a citation chip meant another. The provider is
+// a WORD there now (shared/model-row.js). So chat.css and the shared row
+// must NOT read the tokens; Settings still does, through PROVIDER_ROWS (§2).
+const MODEL_ROW_CSS = stripComments(readFileSync(path.join(NEXT, 'shared/model-row.css'), 'utf8'));
 for (const id of PROV_IDS) {
   const readRe = new RegExp(`var\\(--prov-${id}\\)`);
-  ok(readRe.test(chatCss), `chat.css still reads var(--prov-${id}) (did not lose its dot rule)`);
+  ok(!readRe.test(chatCss), `chat.css no longer reads var(--prov-${id}) — the model menu names the provider in words`);
+  ok(!readRe.test(MODEL_ROW_CSS), `shared/model-row.css does not read var(--prov-${id}) either`);
   const defRe = new RegExp(`--prov-${id}\\s*:`);
   ok(!defRe.test(chatCss), `chat.css does not (re)define --prov-${id}`);
 }
