@@ -69,7 +69,7 @@ save_working_state({
   project:  "curator",
   scope:    "track-7",
   harness:  "claude-code",
-  model:    "the model you are running as",
+  model:    "claude-opus-5-5",   // your exact id if you know it; omit it if not — never search for it
 
   headline: "tool schema settled at two tools; a third brief-writing tool was rejected on tier grounds",
 

@@ -358,6 +358,37 @@ ok(describeProblems('Use when the user asks about their wiki. Activates on "save
 ok(!quotes('nothing here', 200) && quotes('the cap is 200 characters', 200),
   'the cap-quoting check can both find and miss a number');
 
+// ═══ v3.74.0 — the provenance rules and the scope rule, in BOTH canonical sources ═══
+// The skill and the tool descriptions are the two canonical sources of MCP
+// behaviour rules (CLAUDE.md); a rule in one and not the other is a rule half
+// the agents never see. Measured 2026-09-25: an agent told to pass its model
+// id searched env vars and transcript files for it.
+console.log('\n§v3.74.0 — model / harness / scope rules agree between the skill and the save tool');
+{
+  const sw = tools.find((t) => t.definition.name === 'save_working_state')?.definition || {};
+  const props = sw.inputSchema?.properties || {};
+  const pairs = [
+    ['model: omit when unknown, never search', /omit it — never search files, environment variables or logs to find it/, props.model?.description],
+    ['model: exact id examples', /claude-opus-5-5.*gemini-3\.8-flash/, props.model?.description],
+    ['harness: one spelling every time', /spelled the same way every time/, props.harness?.description],
+  ];
+  for (const [label, re, toolText] of pairs) {
+    ok(re.test(continuityText) && re.test(toolText || ''), `${label} — in the skill AND in save_working_state`, `${toolText}`);
+  }
+  ok(/newest save in that scope was made by a \*\*different tool\*\*/.test(continuityText)
+    && /Reading that scope is always fine/.test(continuityText),
+  'the skill carries the save-under-your-own-scope rule, and says reading is always fine');
+  ok(/another tool made the newest save there.*scope named for your tool/i.test(props.scope?.description || ''),
+    'save_working_state\'s `scope` carries the same rule', props.scope?.description);
+  ok(!/Do not try to detect this yourself/.test(continuityText),
+    'the retired "do not try to detect this yourself" sentence, which the new rule contradicts, is gone');
+  for (const n of ['save_foundation', 'save_project_brief']) {
+    const d = tools.find((t) => t.definition.name === n)?.definition?.inputSchema?.properties || {};
+    ok(/never search/.test(d.model?.description || '') && /same way every time/.test(d.harness?.description || ''),
+      `${n} carries the same two rules (short form — it sits at the 3200 B ceiling)`);
+  }
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) { console.log('❌ FAILURES'); process.exit(1); }
