@@ -1996,9 +1996,10 @@ lines below are ready to paste into the brief's operating-directives section.
 | **Several agent tools on one computer** | Two tools working the same project at the same time | *"Each agent saves under its own scope: `<harness>-<topic>` (e.g. `antigravity-api`, `claude-code-ui`); never save under another agent's scope."* |
 | **Handing a session over** | Context full, switching tool, or moving computer | Nothing — it is a habit, below |
 
-**One stream.** The simplest, and the default: a save that names no scope goes to `main`, and the
-**Copy agent instructions** block ([§13b](#making-sure-your-agent-actually-does-it)) says `main` as
-pasted. The cost: the previous session's handoff is gone the moment the next save lands — the
+**One stream.** The simplest: a save that names no scope goes to `main`. Note that since v3.76.0
+the **Copy agent instructions** block ([§13b](#making-sure-your-agent-actually-does-it)) does *not*
+say `main` — it tells each tool to save under a scope named for itself (`claude-code`,
+`antigravity`, …), which for one tool is one stream under that tool's name. The cost: the previous session's handoff is gone the moment the next save lands — the
 Journal keeps one line per save, never the full text.
 
 **One scope per session.** This is how The Curator's own repository is worked. Every session opens
@@ -2029,9 +2030,15 @@ under the same scope, each save replaces the other's. Nothing refuses or prevent
 only notices **afterwards**, from the Journal, and only once the two tools have taken turns — one,
 the other, the first again: then step ② says so in red, *"Two tools are writing `<scope>`… Give
 each tool its own handoff."* A single switch from one tool to another is treated as a move, not a
-clash, and is not flagged. So give each tool its own scope from the start — and note that
-**Copy agent instructions**, as copied, tells every tool to save under `main`, which is exactly
-this collision. Three things make separate scopes hold in practice:
+clash, and is not flagged. So give each tool its own scope from the start. **Since v3.76.0, Copy agent
+instructions asks for exactly that:** as copied, it tells each tool to save under a scope named for
+itself — `"claude-code"` for Claude Code, `"antigravity"` for Antigravity, `"opencode"` for
+opencode, otherwise the tool's own name — and to pass that name as `harness` too. (Until v3.75.0 it
+told every tool to save under `main`, which *was* this collision.) **Check it took:** measured on a
+small model (Claude Code with Haiku 4.5, 2026-09-25), the agent saved in 7 of 8 runs but put the
+save in its own scope in only 2 of those 7 — it set `harness` and left the scope at `main`. So
+after each tool's first save, look at **Handoffs**: one row per tool is right; one `main` row
+written by both means add the brief line above. Three things make separate scopes hold in practice:
 
 - **Working in parallel, each agent reads its own scope, not `latest`.** `latest` opens whichever
   tool saved last — the *other* one, half the time. Name it when you start: *"resume
@@ -2097,11 +2104,14 @@ overwrites, so send the complete state each time.
 ```
 
 - **Start from Copy agent instructions** (Domains → Projects, or the Project context screen). As
-  copied it says `get_working_state` with scope `latest` and saves under `main` — right for *one
-  stream*. For any other pattern, edit the scope wording in *your pasted copy* to defer to the
-  brief, as above — the app's own copy stays frozen, because it is the text that was measured (on
-  Claude Code an agent saved in 3 of 4 runs with it, 0 of 4 with the skill alone). An edited
-  pointer, this repository's own `CLAUDE.md` included, is **unmeasured**. The block's later
+  copied (since v3.76.0) it calls `get_project_context`, reads the newest handoff, and saves under a
+  scope named for the tool that reads it — right for *several agent tools on one computer*, and for
+  one tool it is one stream under that tool's name. For a brief-set pattern (one scope per session,
+  per work-stream), edit the scope wording in *your pasted copy* to defer to the brief, as above —
+  the app's own copy stays frozen, because it is the text that was measured (2026-09-25, Claude
+  Code with Haiku 4.5: saved in 7 of 8 runs, in its own scope in 2 of those 7 — see
+  [§13b](#making-sure-your-agent-actually-does-it)). An edited pointer, this repository's own
+  `CLAUDE.md` included, is **unmeasured**. The block's later
   paragraphs (Documents, read-first) still apply; paste them below the pointer unchanged.
 - **One `.curator-project` file serves every tool.** It holds `domain/project`; the continuity skill
   and the `my-curator` command read it, whichever tool is running. (The MCP server itself does not —
@@ -3863,7 +3873,7 @@ exists, and creating one is a click away. Six controls:
 | **Rename** | Renames the folder under `state/`. It is refused if a project of the new name already exists, if the new name is one a project may not have, and — see below — if the project you are renaming is the domain's own |
 | **Delete** | Removes the project's brief, handoffs and journals from the project list. It asks you to **type the project's name** to confirm. Since v3.73.0 the folder is **moved** to `.curator-trash/projects/`, not erased — see [Deleting a domain](#creating-renaming-deleting) above for how to restore it — and if you sync, GitHub carries the deletion too |
 | **Copy marker line** | Puts one line on your clipboard — always `domain/project`, `acme/acme` included for a domain's own project — to paste into a `.curator-project` file at the root of the repository this project is about. An agent that starts in that folder then knows which project it is in without asking ([§13b](#resuming--the-one-line-to-learn)) |
-| **Copy agent instructions** | Puts a short **paste-into-your-entry-file block** on your clipboard, with this project's names already filled in. It tells an agent to read your working state when a session opens and to save it as it goes. It exists because on some harnesses the continuity skill is installed and **never activates** — measured, an agent on Claude Code saved in **0 of 4** headless runs with the skill alone and **3 of 4** with this block in `CLAUDE.md` ([§13b](#making-sure-your-agent-actually-does-it)) |
+| **Copy agent instructions** | Puts a short **paste-into-your-entry-file block** on your clipboard, with this project's names already filled in. It tells an agent to read your working state when a session opens and to save it as it goes — since v3.76.0, under a handoff named for its own tool, so two tools on one computer do not overwrite each other. It exists because on some harnesses the continuity skill is installed and **never activates** — measured, an agent on Claude Code saved in **0 of 4** headless runs with the skill alone and **3 of 4** with this block in `CLAUDE.md` ([§13b](#making-sure-your-agent-actually-does-it)) |
 
 **One project on that list cannot be renamed or deleted: the domain's own** — the one named after
 the domain itself, which is where a domain's state lives when you have not made any other project,
@@ -4828,6 +4838,18 @@ Measured on 2026-09-10 across 16 headless runs (one task, N=4 per arm): with the
 agent on **Claude Code** saved in **0 of 4** runs; with a short block pasted into the file that
 harness loads every session, **3 of 4**. On **opencode**, which loads the skill itself, it was
 **4 of 4** either way — there the block buys nothing.
+
+**The block changed in v3.76.0, and was measured again.** It used to tell every tool to save under
+`main`, so two tools on one computer overwrote each other's handoff. It now tells each tool to save
+under a scope **named for itself** — `claude-code`, `antigravity`, `opencode`, or its own name — and
+to record that name as `harness`. Re-measured on 2026-09-25 (Claude Code, headless, Haiku 4.5, the
+whole copied text in `CLAUDE.md`, 8 runs each): the new text saved in **7 of 8** runs, the same as
+the old one did that day. But only **2 of those 7** saves landed in the tool's own scope — the rest
+set `harness` correctly and still saved under `main`. So the save habit carries over; the per-tool
+scope is asked for, not guaranteed, at least on a small model. If two tools share a project, check
+**Handoffs** after their first saves and add the one-line scope rule to the brief
+([Several agent tools on one computer](#several-agent-tools-on-one-computer)) if they landed in one
+row.
 
 **Copy agent instructions**, beside **Copy marker line** in Domains → Projects (and on the Project
 context screen), puts that block on your clipboard with this project's names already in it. Paste it

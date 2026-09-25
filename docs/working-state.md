@@ -2329,7 +2329,7 @@ call reached the bridge — which is a different fact from four sessions that st
 save.
 
 What not to read out of it: arm B's zero is not evidence that the block does nothing (the first
-campaign measured it as the difference between 0/4 and 3/4 in an interactive session), and arm C's
+campaign measured it as the difference between 0/4 and 3/4, in headless runs), and arm C's
 `read: 1 of 4` is not three sessions ignoring their prior state. They all had it; they just had no
 reason to ask for it.
 
@@ -2349,28 +2349,70 @@ Read the two harnesses separately, because they are answering different question
 So this is a difference in *kind* on the harness that does not self-activate, and *zero* on the
 harness that does.
 
+**A third campaign, 2026-09-25, re-measured a changed block (v3.76.0).** The 2026-09-10 block told
+every tool to save under scope `"main"`. With two agent tools on one computer — the maintainer's
+own test that day, Claude Code and Antigravity on one Mac — that makes them overwrite each other's
+handoff, because the machine folder cannot tell two tools on one machine apart. The block now tells
+each tool to save under a scope **named for itself** (`claude-code`, `antigravity`, `opencode`, or
+its own name) and to pass `harness` as the same name; the paragraph after it was rewritten with it.
+Because the block is the measured artefact, it was measured again before shipping: Claude Code
+CLI 2.1.281, headless `-p`, `claude-haiku-4-5-20251001`, API-key auth, an isolated store and
+config folder, both skills installed, one neutral task opening with *"Continue"* that never
+mentioned saving or The Curator, and the **whole** Copy output (all four paragraphs) in
+`CLAUDE.md`. N = 8 per text. *Tool scope* counts, among the runs that saved, those whose save
+landed on disk in scope `claude-code`:
+
+| Text in `CLAUDE.md` | Read state | Runs that saved ≥1 | Saved before stopping | Save in the tool's own scope | `harness` set |
+|---|---|---|---|---|---|
+| v3.75.0 block (`"main"`) — same-day control | 7 of 8 | **7 of 8** | 7 of 8 | 0 of 7 | 0 of 7 |
+| **v3.76.0 block (per-tool scope) — what ships** | 6 of 8 | **7 of 8** | 7 of 8 | **2 of 7** | 7 of 7 |
+
+Read it honestly. **The save discipline held** — 7 of 8 either way, every run's `npm test` passed.
+**The per-tool scope did not, on this model:** in 5 of the 7 saving runs Haiku 4.5 set
+`harness: "claude-code"` as asked and then left `scope` out or set it to `"main"`, so the save
+still landed in the shared stream. The block is necessary for the scope to be right and, on a
+small model, not sufficient; the maintainer's two-tool evidence that it *did* keep them apart is
+from his own sessions on other models and is **not** this measurement. Two drafts were measured on
+the way and do not ship: the same first paragraph with a second paragraph that no longer said
+*call it first* saved in only **2 of 8** (the model loaded the tool, then ran the tests instead of
+calling it) — which is why the second paragraph keeps *"make it your first action of the session"*;
+and a draft that set the scope beside the project, the way the old block did, saved in 6 of 8 with
+**1 of 6** in the tool's scope. The same runs on a stronger model could not be made: the
+API account ran out of credit mid-campaign. Same limits as before: N is a shape, not a rate; one
+task, one model, headless only.
+
 #### The block
 
 Paste it into your harness's entry file, with your own domain and project substituted. **Domains →
 Projects → Copy agent instructions** (and the same button on the Project-context screen) puts exactly
 this on your clipboard with the names already filled in, which is the intended way to get it —
-the text is frozen because it is the thing that was measured.
+the text is frozen because it is the thing that was measured. This is the **v3.76.0** text,
+measured on 2026-09-25 (above); the 2026-09-10 figures were measured on the earlier, `"main"`
+version.
 
 ```markdown
 ## Working state
 
 This repository's working state lives in The Curator (project `exp/widget`, see
 `.curator-project`). At the START of every session call the my-curator MCP tool
-`get_working_state` with project "widget" and scope "latest" and read the standing
-brief before acting. SAVE with `save_working_state` under project "widget", scope
-"main", after every material decision and at least every ten tool calls, and ALWAYS
-before you stop; a save overwrites, so send the complete state each time.
+`get_project_context` with project "widget" and read the standing brief and latest
+handoff before acting. SAVE with `save_working_state` under project "widget" with the
+`scope` argument set to your tool's name — "claude-code" if you are Claude Code,
+"antigravity" if you are Antigravity, "opencode" if you are opencode, otherwise your
+tool's own name, lowercase and hyphenated. Never leave `scope` out (it defaults to the
+shared "main") and never save under another tool's scope. Save after every material
+decision, at least every ten tool calls, and ALWAYS before you stop; a save overwrites,
+so send the complete state each time. Pass `harness` as that same name and `model` as
+your exact model id if you know it (omit it otherwise — never search files for it), and
+record the `seen` map as `foundations_read`.
 ```
 
 #### What the Copy control adds beside it
 
-The measured block above is **frozen** — 501 bytes, sha256 `85dc8f97…`, unchanged since v3.52.0,
-because it is the thing that was measured and re-wording it would throw the measurement away. Every
+The measured block above is **frozen** — 995 bytes for `exp/widget`, sha256 `42f60960…` —
+because it is the thing that was measured and re-wording it would throw the measurement away. It
+changed once, in v3.76.0, and was re-measured in the same change (sha `85dc8f97…`, 501 bytes, is
+the v3.52.0 text it replaced). Every
 addition since has therefore been a **separate, separately pinned paragraph**, composed after it,
 so each one keeps matching its own text alone and *"the measured block is untouched"* stays a claim
 you can check with a hash rather than one you have to take on trust. **Copy agent instructions**
@@ -2378,8 +2420,8 @@ puts all four on your clipboard:
 
 | Paragraph | Since | What it tells an agent |
 |---|---|---|
-| The measured block | v3.52.0 | Which project, read at the start, save often and completely |
-| `TEMPLATE_FOUNDATIONS` | v3.59.0 | That the project carries canonical documents, and to read them |
+| The measured block | v3.52.0, rewritten v3.76.0 | Which project; read with `get_project_context` at the start; save often and completely, **in a scope named for your own tool**, with `harness` set to that name |
+| `TEMPLATE_FOUNDATIONS` | v3.59.0, rewritten v3.76.0 | That the project carries canonical documents, to make `get_project_context` the session's first action, and what the `seen` map is for |
 | `TEMPLATE_SEED` | v3.61.0 | What a **skeleton** is — prompts to answer, not facts to believe — and to fill them through a commissioned `save_foundation` |
 | `TEMPLATE_READ_FIRST` | **v3.62.0** | That read-first documents arrive with their text and the rest arrive as an index; to open those by name with `slugs`; that the brief's *"Read before you…"* section says which; and that **an index entry with no text is a document waiting to be asked for, not one that is missing** |
 
@@ -2426,6 +2468,9 @@ block's job is only to make sure the agent reaches for any of it.
   of its own skills beside the two installed, so `curator-continuity` was one description among 21.
   A stock install with only these two may behave like opencode. That was not measured.
 - **opencode needs no block**, and the table says so rather than recommending it everywhere.
+- **The per-tool scope is followed in a minority of saves on Haiku 4.5** (2 of 7, 2026-09-25). If
+  two tools share a project, check the **Handoffs** table after their first saves: two rows named
+  for the two tools is the goal, one `main` row written by both is the collision.
 
 ---
 

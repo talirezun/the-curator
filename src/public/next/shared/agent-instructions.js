@@ -22,6 +22,44 @@
 // does not self-activate, and zero on the harness that does. N=4 is a shape,
 // not a rate: nothing here licenses "75%".
 //
+// ── v3.76.0: THE TEXT CHANGED, AND WAS RE-MEASURED IN THE SAME COMMIT ──────
+//
+// The 2026-09-10 block told EVERY tool to save under scope "main". With two
+// tools on one Mac (Claude Code + Antigravity, the maintainer's live finding
+// of 2026-09-25) that text makes them overwrite each other's handoff; the
+// per-tool wording now in TEMPLATE (a scope named for the tool, `harness` set
+// to the same name) did not. The maintainer approved changing the frozen
+// paragraph, and paragraph 2 (TEMPLATE_FOUNDATIONS) was rewritten with it,
+// because it used to say "call get_project_context INSTEAD OF
+// get_working_state" — a correction of a paragraph that no longer names
+// get_working_state at all.
+//
+// Re-measured 2026-09-25: Claude Code 2.1.281 headless (`-p`), Haiku 4.5
+// (claude-haiku-4-5-20251001), API-key auth, an isolated store and config
+// dir, both skills installed, one neutral task opening with "Continue" that
+// never mentions saving or The Curator, the WHOLE four-paragraph Copy output
+// in CLAUDE.md. Counts are runs out of 8; "tool scope" counts the saving runs
+// whose save landed in scope "claude-code" on disk:
+//
+//   text                               read  saved  tool scope  harness set
+//   v3.75 text (control, same day)     7/8   7/8    0 of 7      0 of 7
+//   THIS text                          6/8   7/8    2 of 7      7 of 7
+//
+// Two drafts were measured on the way and are NOT what ships: the same
+// paragraph 1 with a paragraph 2 that no longer said to call
+// get_project_context first saved in 2/8 (the model loaded the tool and then
+// ran the tests instead of calling it) — so paragraph 2 keeps an imperative
+// "make it your first action"; and a draft that put the scope beside the
+// project, the way the old text did, saved in 6/8 with 1 of 6 in the tool
+// scope. READ THIS HONESTLY: on Haiku 4.5 the save discipline holds, but the
+// per-tool SCOPE is followed in a minority of saves — the model sets
+// `harness` to "claude-code" and leaves `scope` at its default "main". The
+// live two-tool evidence is the maintainer's, on other models, and is not
+// this measurement. Same limits as 2026-09-10: N is a shape, not a rate; one
+// task, one model, headless only. The file fed to the runs hashes (for
+// exp/widget, whole composition) to 313bbe41…; scripts/test-agent-
+// instructions.js pins it.
+//
 // ── WHY THE TEXT IS FROZEN ─────────────────────────────────────────────────
 //
 // TEMPLATE below is the artefact that was measured, byte for byte, with the
@@ -31,7 +69,7 @@
 // ships. scripts/test-agent-instructions.js pins the composed output against a
 // hand-written second copy and against the tested artefact's sha256, so an
 // edit here is RED rather than silent. If the text must change, re-run the
-// experiment and replace the numbers in the same commit.
+// experiment and replace the numbers in the same commit — as v3.76.0 did.
 //
 // ── WHY IT LIVES IN src/public/next/shared/ ────────────────────────────────
 //
@@ -54,18 +92,25 @@
 // unchanged, measured paragraph.
 export const HEADING = '## Working state';
 
-// VERBATIM, placeholders included. `{{DOMAIN_PROJECT}}` stands where the
-// measured artefact read `exp/widget`; `{{PROJECT}}` stands where it read
-// `widget`, at both of its occurrences. Nothing else differs from the file
-// that was pasted into the arm-B runs, including the hard line breaks — those
-// are part of what was measured and are not re-flowed for a longer name.
+// VERBATIM, placeholders included (v3.76.0 text, measured 2026-09-25).
+// `{{DOMAIN_PROJECT}}` stands where the measured artefact read `exp/widget`;
+// `{{PROJECT}}` stands where it read `widget`, at both of its occurrences.
+// Nothing else differs from the file pasted into the 2026-09-25 runs,
+// including the hard line breaks — those are part of what was measured and
+// are not re-flowed for a longer name.
 export const TEMPLATE = [
   "This repository's working state lives in The Curator (project `{{DOMAIN_PROJECT}}`, see",
   '`.curator-project`). At the START of every session call the my-curator MCP tool',
-  '`get_working_state` with project "{{PROJECT}}" and scope "latest" and read the standing',
-  'brief before acting. SAVE with `save_working_state` under project "{{PROJECT}}", scope',
-  '"main", after every material decision and at least every ten tool calls, and ALWAYS',
-  'before you stop; a save overwrites, so send the complete state each time.',
+  '`get_project_context` with project "{{PROJECT}}" and read the standing brief and latest',
+  'handoff before acting. SAVE with `save_working_state` under project "{{PROJECT}}" with the',
+  '`scope` argument set to your tool\'s name — "claude-code" if you are Claude Code,',
+  '"antigravity" if you are Antigravity, "opencode" if you are opencode, otherwise your',
+  'tool\'s own name, lowercase and hyphenated. Never leave `scope` out (it defaults to the',
+  'shared "main") and never save under another tool\'s scope. Save after every material',
+  'decision, at least every ten tool calls, and ALWAYS before you stop; a save overwrites,',
+  'so send the complete state each time. Pass `harness` as that same name and `model` as',
+  'your exact model id if you know it (omit it otherwise — never search files for it), and',
+  'record the `seen` map as `foundations_read`.',
 ].join('\n') + '\n';
 
 /**
@@ -136,25 +181,30 @@ export const COPY_SUCCESS_BANNER = COPY_SUCCESS_LINES.join(' ');
 // ── v3.59.0: the foundations tier gets a SECOND, separately pinned paragraph ─
 //
 // TEMPLATE above is frozen because it is a measured artefact — editing it
-// would silently invalidate the 2026-09-10 experiment. TEMPLATE_FOUNDATIONS is
-// NOT that: it is new prose for a feature the experiment predates, so it has
-// no numbers of its own to protect. It still gets the same discipline
+// would silently invalidate the experiment behind it. TEMPLATE_FOUNDATIONS was
+// NOT that when v3.59.0 wrote it: it was new prose for a feature the first
+// experiment predated. v3.76.0 rewrote it together with TEMPLATE (it said
+// "call get_project_context instead of get_working_state", which paragraph 1
+// no longer mentions) and the 2026-09-25 runs measured the two together —
+// including a draft of it with no "first action" imperative, which saved in
+// 2 of 8 runs against 7 of 8 with it (see the header). So the imperative is
+// load-bearing, not decoration. It still gets the same discipline
 // (a byte-for-byte pin against a hand-written literal and a sha256, in
 // scripts/test-agent-instructions.js) for the ordinary reason any model-read
 // instruction text in this repo does: a well-meant reword is a silent
 // behaviour change to every agent that reads it next.
 //
 // It is composed AFTER the pinned block, never merged into it — TEMPLATE's
-// own 501-byte/sha256 pin has to keep matching TEMPLATE alone, so a second,
+// own byte-count/sha256 pin has to keep matching TEMPLATE alone, so a second,
 // independent constant is the only shape that lets both stay frozen at once.
 // No placeholders: unlike TEMPLATE, it names no project — the paragraph above
 // it has already said which project and which tools to call on it.
 export const TEMPLATE_FOUNDATIONS = [
   'This project also keeps foundations — canonical documents such as its architecture and firm',
-  'decisions — that travel with it. At session start, call `get_project_context` instead of',
-  '`get_working_state` to receive them alongside the brief and handoff. On every',
-  '`save_working_state` call, include `foundations_read` (the hashes you were given) so the next',
-  'session knows what changed.',
+  'decisions — that travel with it. `get_project_context` is the call that returns them with',
+  'the brief and handoff, so make it your first action of the session, before you read code',
+  'or run anything. Its `seen` map holds their hashes: passing that back as `foundations_read`',
+  'on every save is how the next session learns which of them changed.',
 ].join('\n') + '\n';
 
 // ── v3.61.0: a THIRD, separately pinned paragraph — the seed for a skeleton ──
@@ -168,7 +218,7 @@ export const TEMPLATE_FOUNDATIONS = [
 //
 // TEMPLATE_SEED closes that gap the same way TEMPLATE_FOUNDATIONS closed the
 // first one: composed AFTER it, never merged into it, so TEMPLATE's own
-// 501-byte/sha256 pin and TEMPLATE_FOUNDATIONS's own pin both keep matching
+// byte-count/sha256 pin and TEMPLATE_FOUNDATIONS's own pin both keep matching
 // their own text alone. A third independent constant is the only shape that
 // lets all three stay frozen at once. Pinned the same way (a hand-written
 // literal AND a sha256, in scripts/test-agent-instructions.js §S8) for the
@@ -195,7 +245,7 @@ export const TEMPLATE_SEED = [
 // worse than the gap v3.59.0 closed, because it looks like knowledge.
 //
 // A FOURTH CONSTANT rather than a re-pin of TEMPLATE_FOUNDATIONS, and the
-// reason is the same one the file has given three times: TEMPLATE's 501-byte
+// reason is the same one the file has given three times: TEMPLATE's byte-count
 // / sha256 pin, TEMPLATE_FOUNDATIONS's own pin and TEMPLATE_SEED's own pin all
 // have to keep matching their own text alone, and separate constants are the
 // only shape where all of them can. A re-pin would also have meant moving a
@@ -219,7 +269,7 @@ export const TEMPLATE_READ_FIRST = [
  * The block for one project, PLUS the foundations addendum, PLUS the seed
  * addendum, PLUS the read-first addendum — what the Copy control pastes as of
  * v3.62.0. `composeAgentInstructions` itself is untouched (its output is still
- * exactly the measured 501-byte artefact for the same arguments), so anything
+ * exactly the measured paragraph-1 artefact for the same arguments), so anything
  * that still wants the original alone keeps calling it directly.
  *
  * @param {{domain: string, project: string}} args

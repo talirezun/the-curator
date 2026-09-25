@@ -385,7 +385,7 @@ const E = {
     lead: '**Copy agent instructions** copies a short paragraph telling your agent to use this project’s memory.',
     points: [
       { icon: 'file', text: 'Paste it into the file your agent loads every session.' },
-      { icon: 'agent', text: 'Your agent then reads the project’s memory first, and saves before stopping.' },
+      { icon: 'agent', text: 'It reads the memory first, then saves under its own tool’s handoff.' },
     ],
     try: 'Press **Copy agent instructions**, then paste it into your agent’s instructions file.',
     guide: { key: 'domains.agent-instructions', heading: 'Making sure your agent actually does it' },

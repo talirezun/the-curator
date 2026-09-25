@@ -275,7 +275,7 @@ Six patterns. Write the chosen line into the project's standing brief, because e
 
 Several computers: a read that names a scope but no machine returns the most recently written copy and lists the others. A copy from another computer is marked in the app (the Machine column, and a "synced from another machine" chip in the reader), and the agent's read carries `machineIsThisMachine: false`, so it should check the next steps against this checkout. Press Sync now (in Sync) before starting and after the last save. The brief has no machine in its path, so edit it on one computer and sync before editing it on the other.
 
-Several agent tools on one computer: nothing refuses or prevents two tools saving into one scope. The app notices only afterwards, from the Journal, once the tools have taken turns (one, the other, the first again); then the Memory step shows a red line, "Two tools are writing (scope name)... Give each tool its own handoff." A single switch from one tool to another is treated as a move, not flagged. The Copy agent instructions block, as copied, tells every tool to save under `main`, which is exactly this collision, so give each tool its own scope from the start. When the tools work in parallel, each agent should read its own scope by name rather than `latest`, because `latest` opens whichever tool saved last; when one piece of work is handed from one tool to the other, `latest` is right, and the new tool then saves under its own scope. An orchestrating agent reads another tool's handoff with `get_project_context` or `get_working_state` and that tool's `scope`; reading another scope is safe, saving into it is not. Hooks installed with `my-curator install-hooks` inject, and ask for a save under, the project's newest work-stream; with two tools on one computer, add `--scope <this tool's scope>` to the `my-curator hook` commands in that tool's hook settings.
+Several agent tools on one computer: nothing refuses or prevents two tools saving into one scope. The app notices only afterwards, from the Journal, once the tools have taken turns (one, the other, the first again); then the Memory step shows a red line, "Two tools are writing (scope name)... Give each tool its own handoff." A single switch from one tool to another is treated as a move, not flagged. Give each tool its own scope from the start. Since version 3.76.0 the Copy agent instructions block asks for exactly that: it tells each tool to save under a scope named for itself (`claude-code` for Claude Code, `antigravity` for Antigravity, `opencode` for opencode, otherwise the tool's own name) and to pass the same name as `harness`; up to version 3.75.0 it told every tool to save under `main`, which was this collision. It is asked for, not guaranteed: measured on Claude Code with Haiku 4.5 (2026-09-25), 2 of 7 saves landed in the tool's own scope and the other 5 set `harness` but left the scope at `main`, so after each tool's first save check the Handoffs table for one row per tool, and add a scope rule to the brief if both tools landed in one row. When the tools work in parallel, each agent should read its own scope by name rather than `latest`, because `latest` opens whichever tool saved last; when one piece of work is handed from one tool to the other, `latest` is right, and the new tool then saves under its own scope. An orchestrating agent reads another tool's handoff with `get_project_context` or `get_working_state` and that tool's `scope`; reading another scope is safe, saving into it is not. Hooks installed with `my-curator install-hooks` inject, and ask for a save under, the project's newest work-stream; with two tools on one computer, add `--scope <this tool's scope>` to the `my-curator hook` commands in that tool's hook settings.
 
 **Since version 3.74.0, a save that replaces a handoff whose last save was by a different tool (compared by normalised tool id — spelling variants of "Claude Code" are one tool; `claude-desktop` stays distinct) still succeeds, warn-only, never refused.** The replaced `current.md` is first copied byte-for-byte to `previous.md` in the same scope/machine folder — one copy, overwritten only by the next cross-tool replacement — and the save's reply carries an `overwrote` object (tool, model, when, headline, where the text was kept, the scope to use from now on) plus a plain-English `report` sentence; `my-curator save` prints the same sentence. No warning fires when either save named no tool. `get_working_state` with `previous: true` returns the kept text, framed as recorded data like any other handoff. Full detail: `docs/working-state.md` and `docs/spec/working-state-v1.md` §6b.
 
@@ -299,7 +299,7 @@ decision and at least every ten tool calls, and ALWAYS before you stop; a save
 overwrites, so send the complete state each time.
 ```
 
-Start from the app's Copy agent instructions button. As copied, it reads with scope `latest` and saves under `main`, which fits the one-stream pattern; for any other pattern, edit the scope wording in the pasted copy to defer to the brief, as above. The app's copy is frozen because it is the measured text (on Claude Code, an agent saved in 3 of 4 runs with it and 0 of 4 with the skill alone); an edited pointer is unmeasured.
+Start from the app's Copy agent instructions button. Since version 3.76.0, as copied, it calls `get_project_context`, reads the newest handoff, and saves under a scope named for the tool that reads it, which fits several tools on one computer (and, for one tool, is one stream under that tool's name); for a brief-set pattern such as one scope per session, edit the scope wording in the pasted copy to defer to the brief, as above. The app's copy is frozen because it is the measured text (2026-09-25, Claude Code with Haiku 4.5: saved in 7 of 8 runs, in the tool's own scope in 2 of those 7); an edited pointer is unmeasured.
 
 One `.curator-project` file, holding `domain/project`, serves every tool: the continuity skill and the `my-curator` command read it. The MCP server does not read it, which is why the pointer also names the project.
 
@@ -442,6 +442,15 @@ Read the two harnesses separately. Claude Code never activated the skill at all,
 
 So this is a difference in kind on the harness that does not activate skills by itself, and zero on the harness that does. **Activation is a property of the harness, not of the skill and not of Claude.** All 16 runs made the task's test suite pass, so nothing here traded correctness for discipline. The block cost about 0.2 minutes and $0.02 per run on Claude Code.
 
+**The block changed in version 3.76.0 and was measured again on 2026-09-25.** Claude Code 2.1.281, headless, Haiku 4.5, an isolated store, both skills installed, the same kind of neutral task, the whole copied text in `CLAUDE.md`, eight runs per text:
+
+| Text | Read state | Runs that saved at least once | Save in the tool's own scope | `harness` set |
+|---|---|---|---|---|
+| Old block (every tool under `main`), same day | 7 of 8 | 7 of 8 | 0 of 7 | 0 of 7 |
+| New block (a scope named for each tool), what ships | 6 of 8 | 7 of 8 | 2 of 7 | 7 of 7 |
+
+The save habit carried over unchanged. The per-tool scope did not, on this small model: five of the seven saving runs set `harness` to `claude-code` and still saved under `main`. The maintainer's own two-tool test that the new text kept Claude Code and Antigravity apart was on other models and is not this measurement. A draft whose second paragraph did not say to call `get_project_context` first saved in only 2 of 8 runs, which is why the shipped second paragraph says to make it the session's first action.
+
 What the measurement does not show:
 
 - Four runs per arm is a shape, not a rate. Nothing here licenses a number like "75 percent".
@@ -558,16 +567,22 @@ This is the composed block. `<domain>` and `<project>` stand where your own name
 
 This repository's working state lives in The Curator (project `<domain>/<project>`, see
 `.curator-project`). At the START of every session call the my-curator MCP tool
-`get_working_state` with project "<project>" and scope "latest" and read the standing
-brief before acting. SAVE with `save_working_state` under project "<project>", scope
-"main", after every material decision and at least every ten tool calls, and ALWAYS
-before you stop; a save overwrites, so send the complete state each time.
+`get_project_context` with project "<project>" and read the standing brief and latest
+handoff before acting. SAVE with `save_working_state` under project "<project>" with the
+`scope` argument set to your tool's name — "claude-code" if you are Claude Code,
+"antigravity" if you are Antigravity, "opencode" if you are opencode, otherwise your
+tool's own name, lowercase and hyphenated. Never leave `scope` out (it defaults to the
+shared "main") and never save under another tool's scope. Save after every material
+decision, at least every ten tool calls, and ALWAYS before you stop; a save overwrites,
+so send the complete state each time. Pass `harness` as that same name and `model` as
+your exact model id if you know it (omit it otherwise — never search files for it), and
+record the `seen` map as `foundations_read`.
 
 This project also keeps foundations — canonical documents such as its architecture and firm
-decisions — that travel with it. At session start, call `get_project_context` instead of
-`get_working_state` to receive them alongside the brief and handoff. On every
-`save_working_state` call, include `foundations_read` (the hashes you were given) so the next
-session knows what changed.
+decisions — that travel with it. `get_project_context` is the call that returns them with
+the brief and handoff, so make it your first action of the session, before you read code
+or run anything. Its `seen` map holds their hashes: passing that back as `foundations_read`
+on every save is how the next session learns which of them changed.
 
 Some foundations may be skeletons — prompts, not facts; the document says so
 at the top. As you learn the project, fill each one and save it with
@@ -581,7 +596,7 @@ for it — the brief's "Read before you…" section says which. An index entry w
 text is a document waiting to be asked for, not one that is missing.
 ```
 
-The first paragraph is frozen, including its line breaks, because it is the artefact that was measured. Editing a word of it does not improve the wording; it invalidates the evidence that any of it works. The three paragraphs after it were added in versions 3.59.0 (foundations), 3.61.0 (filling in a skeleton) and 3.62.0 (read-first documents, and asking for the rest by name). Each is composed after the frozen one rather than merged into it, which is what lets the first stay byte-identical to what was measured.
+The first paragraph is frozen, including its line breaks, because it is the artefact that was measured. Editing a word of it does not improve the wording; it invalidates the evidence that any of it works. It changed once, in version 3.76.0 (from saving every tool under `main` to a scope named for each tool), and was measured again before it shipped — see "Why doesn't my agent save anything?". The three paragraphs after it were added in versions 3.59.0 (foundations; rewritten in 3.76.0 to say to call `get_project_context` first, which the measurement showed matters), 3.61.0 (filling in a skeleton) and 3.62.0 (read-first documents, and asking for the rest by name). Each is composed after the frozen one rather than merged into it, which is what lets the first stay byte-identical to what was measured.
 
 Where it goes — plain prose in a file each of these already reads on its own. Nothing needs to be installed, and it is the same text everywhere.
 
