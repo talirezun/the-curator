@@ -1253,6 +1253,33 @@ the Release from it. That is a real next step, not a rewrite of this one.
 
 ---
 
+## Regenerating screenshots
+
+The README's Chat screenshots are taken on a **synthetic demo domain**, so anyone can
+reproduce them and no personal wiki ever reaches an image:
+
+```bash
+node scripts/screenshots.mjs              # writes docs/images/curator-chat.png + curator-chat-dark.png
+node scripts/screenshots.mjs --out /tmp/x # write somewhere else to review first
+node scripts/demo-domain.mjs <empty-dir>  # just the demo data, to run the app against by hand
+```
+
+- `scripts/demo-domain.mjs` writes two hand-authored domains (Early Computing, 23 pages;
+  Night Sky, 6 pages) and five saved conversations — no LLM call, fixed ids. Only the
+  conversation timestamps follow the current time (pin them with `--now <ISO time>`),
+  because the Chat list groups rows by age.
+- `scripts/screenshots.mjs` starts `src/server.js` isolated (both test seams, every
+  provider/GitHub credential stripped, a fake key so the first-run panel stays shut), drives
+  the Chrome/Chromium already on the machine through the visual harness's own launcher and
+  CDP client (`scripts/visual/`), and captures the Chat view at 1280×1000 CSS px ×1.25 in
+  light and dark. It refuses to write an image if the page shows this machine's host name,
+  user name or home path. With no browser it prints a skip and exits 0.
+- It is not in `npm test`. Re-run it when the Chat view changes shape, and update the alt
+  text in `README.md`, `docs/user-guide.md` and `docs/product-overview.md` to match.
+
+The other images in `docs/images/` are still hand-taken on real data; extend `SHOTS` in
+`scripts/screenshots.mjs` when you replace one.
+
 ## Project layout (quick map)
 
 ```
