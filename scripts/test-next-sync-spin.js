@@ -135,6 +135,8 @@ function extractObjectOrSimpleConst(src, name, fileLabel) {
 const SYNC_FNS = [
   'freshState', 'renderConfigured', 'renderSharedBrainRow', 'renderDisconnect',
   'formatSyncTime', 'crossWriteBusy', 'activeWriteInfo', 'crossWriteTitle',
+  // v3.72.1
+  'pendingNoteText', 'sharedBrainRowLines',
 ];
 const APP_FNS = ['icon', 'escapeHtml'];
 
@@ -267,8 +269,12 @@ section('8. The connection reading is THE MONITOR \u2014 the same call the MCP b
     '\u2026whose head word is the connection state, in the ok tone');
   ok(html.includes('https://github.com/example/knowledge-base'),
     '\u2026the repository it is connected TO is a reading');
-  ok(/cur-mon-key">last synced/.test(html) && html.includes('never'),
-    '\u2026and so is the age of the last exchange, which on a fresh connection says "never"');
+  // v3.72.1 (truth audit sync F1): `lastSync` is now the RECORDED time of a
+  // successful sync; null means none has been recorded on this install —
+  // which for an install connected before v3.72.1 is not "never synced", so
+  // the words say what is known.
+  ok(/cur-mon-key">last synced/.test(html) && html.includes('not recorded yet') && !/last synced<\/span><span class="cur-mon-value">never/.test(html),
+    '\u2026and so is the time of the last sync, which with none recorded says "not recorded yet", never "never"');
   ok((html.match(/class="cur-mon"/g) || []).length === 1,
     'exactly ONE monitor \u2014 the warning, the cross-write refusal and the action row beside it '
     + 'are not readings and must not become instruments');

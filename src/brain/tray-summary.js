@@ -254,6 +254,29 @@ export function captureFor(byName, logPresent, domain, project) {
 }
 
 /**
+ * THE CAPTURE BAR'S DENOMINATOR — ONE derivation for the menubar and the app
+ * (v3.72.1, truth audit tray F1). The busiest project's sessions-that-saved
+ * over EVERY project the usage log names in the window: store projects and
+ * log-only ones (deleted, renamed, or held on another machine's store) alike.
+ *
+ * The tray used to take the max over the STORE's projects only, while the
+ * app's "Across projects" block (routes/mcp.js) takes it over its rows, which
+ * include the log-only ones — so when a log-only project was the busiest the
+ * two bars for one project, both captioned "against the busiest project (N
+ * saved)", named two different N. A store project's reading IS its log row
+ * (`captureFor` joins by name), so the log-wide max is exactly the app's
+ * figure. Null without a log: a denominator of an untaken reading is not 0.
+ */
+export function busiestSavedOf(logProjects, logPresent) {
+  if (!logPresent) return null;
+  let m = 0;
+  for (const r of (Array.isArray(logProjects) ? logProjects : [])) {
+    if (r && Number.isInteger(r.sessionsSaved) && r.sessionsSaved > m) m = r.sessionsSaved;
+  }
+  return m;
+}
+
+/**
  * Read the union of usage logs and reduce it per project, never throwing.
  * `usage` is a TEST-ONLY seam: `{present, files, records}` in place of a read.
  */
@@ -272,6 +295,7 @@ async function readCapture(now, usage) {
     if (meta.logPresent) {
       const sum = summariseSessionsByProject(u.records || [], { since });
       byName = new Map(sum.projects.map((r) => [r.project, r]));
+      meta.busiestSaved = busiestSavedOf(sum.projects, true);
       meta.legacyLines = sum.totals.legacyLines;
       meta.selfTestLines = sum.totals.selfTestLines;
     }
@@ -1018,6 +1042,7 @@ export async function getTraySummary(opts = {}) {
     // user who moved it, a disconnected volume) and it is reported as one.
     return {
       ok: true, lastSave: null, scopes: [], brief: null,
+      readAt: new Date(now).toISOString(),
       // Nothing was read, so there is no heartbeat — not an empty one. A strip
       // of 28 zeroes here would be a confident claim that nothing was saved
       // this week, made by a call that could not open the folder.
@@ -1275,13 +1300,10 @@ export async function getTraySummary(opts = {}) {
     projectsOut.push({ ...projectBase, documents });
   }
 
-  // THE CAPTURE BAR'S DENOMINATOR: the busiest project's sessions-that-saved,
-  // over EVERY scanned project (never the rows left after `limit`). Null when
-  // there is no log, because a denominator of a reading that was not taken
-  // is not 0.
-  cap.meta.busiestSaved = cap.meta.logPresent
-    ? projectsOut.reduce((m, p) => Math.max(m, p.capture ? p.capture.sessionsSaved : 0), 0)
-    : null;
+  // THE CAPTURE BAR'S DENOMINATOR is set in readCapture() — busiestSavedOf()
+  // over every project the LOG names (never the rows left after `limit`, and
+  // never the store's projects alone: v3.72.1, see busiestSavedOf).
+  if (!cap.meta.logPresent) cap.meta.busiestSaved = null;
 
   // Per-domain page counts, in the install's own domain order (§4.4 (2)).
   const domains = await readDomainPages(warnings);
@@ -1434,6 +1456,11 @@ export async function getTraySummary(opts = {}) {
   }
 
   return {
+    // v3.72.1 (tray F7): WHEN THIS WAS READ. The menu's "Updated HH:MM"
+    // stamp is this time, not the render time: a hover re-renders ages from
+    // memory, but page counts and capture figures are as of this read, and a
+    // stamp that moved with every hover said "fresh" over them.
+    readAt: new Date(now).toISOString(),
     ok: true,
     lastSave,
     scopes: shown,

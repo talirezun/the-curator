@@ -544,6 +544,19 @@ export const CAPTURE_NOT_LOGGED = 'no sessions logged';
 export const CAPTURE_NONE_IN_WINDOW = 'no logged sessions · 30 d';
 
 /**
+ * v3.72.1 (truth audit tray F5): the same clause built from the window the
+ * payload names (`capture.windowDays`, = TRAY_CAPTURE_WINDOW_DAYS), so the
+ * label and the tooltip beside it can never state two windows. With no
+ * window in the payload the day clause is dropped rather than guessed.
+ * `CAPTURE_NONE_IN_WINDOW` above is this at 30, kept as the pinned wording.
+ */
+export function captureNoneInWindow(windowDays) {
+  return Number.isInteger(windowDays) && windowDays > 0
+    ? 'no logged sessions · ' + windowDays + ' d'
+    : 'no logged sessions';
+}
+
+/**
  * Append ONE clause, whole, as the last and cuttable one: added only when all
  * of it fits and the head was not itself clipped. Never `· 30…`, and never
  * split at its own inner ` · `.
@@ -3173,8 +3186,11 @@ export function buildTrayModel(summary, opts = {}) {
     ? summary.capture : null;
   const busiestSaved = capMeta && Number.isInteger(capMeta.busiestSaved) && capMeta.busiestSaved >= 0
     ? capMeta.busiestSaved : null;
+  // v3.72.1 (F5): no hard-coded 30 fallback — a payload without a window
+  // gets wording without one.
   const windowDays = capMeta && Number.isInteger(capMeta.windowDays) && capMeta.windowDays > 0
-    ? capMeta.windowDays : 30;
+    ? capMeta.windowDays : null;
+  const windowPhrase = windowDays !== null ? 'last ' + windowDays + ' days' : 'in the logged window';
 
   // (3) The open project's documents, under the headline.
   let documents = null;
@@ -3269,16 +3285,16 @@ export function buildTrayModel(summary, opts = {}) {
       // as one atomic clause, appended only when the whole clause fits.
       const budget = b ? BAR_LABEL_CHARS : PLAIN_LABEL_CHARS;
       const head = clipClauses([g.projectLabel, age, g.harness].filter(Boolean).join(' · '), budget);
-      g.label = appendLastClause(head, CAPTURE_NONE_IN_WINDOW, budget);
+      g.label = appendLastClause(head, captureNoneInWindow(windowDays), budget);
       g.toolTip = [g.projectFull, age, g.harness].filter(Boolean).join(' · ')
-        + ' · Agent sessions, last ' + windowDays + ' days: none logged for this project'
+        + ' · Agent sessions, ' + windowPhrase + ': none logged for this project'
         + ' (saves made through a bridge that logged no session line are not counted)'
         + (busiestSaved !== null ? ' · Bar: against the busiest project (' + busiestSaved + ' saved)' : '');
     } else if (reading !== null) {
       g.label = composeBarLabel(g.projectLabel, reading, [age, g.harness],
         b ? BAR_LABEL_CHARS : PLAIN_LABEL_CHARS);
       g.toolTip = [g.projectFull, age, g.harness].filter(Boolean).join(' · ')
-        + ' · Agent sessions, last ' + windowDays + ' days: ' + capture.sessionsSaved + ' of '
+        + ' · Agent sessions, ' + windowPhrase + ': ' + capture.sessionsSaved + ' of '
         + capture.sessions + ' saved a handoff'
         + (busiestSaved !== null ? ' · Bar: against the busiest project (' + busiestSaved + ' saved)' : '')
         + (capture.domainMismatch === true ? ' · The usage log names this project only in another domain' : '');
@@ -3395,6 +3411,14 @@ export function buildTrayModel(summary, opts = {}) {
     // lie the way a relative one does.
     renderedAt: now.toISOString(),
     renderedAtText: clockText(now),
+    // v3.72.1 (truth audit tray F7): the time the DATA was read — the stamp
+    // the menu prints. A hover re-renders from the in-memory snapshot (ages
+    // re-derived, correctly), but page counts and capture figures stay as of
+    // the read, which a moving render-time stamp claimed were fresh. Null
+    // when the summary carries no read time (a fixture); the menu then falls
+    // back to the render time, the pre-v3.72.1 behaviour.
+    readAt: summary && typeof summary.readAt === 'string' && clockText(summary.readAt) ? summary.readAt : null,
+    readAtText: summary && typeof summary.readAt === 'string' ? clockText(summary.readAt) : null,
   };
 }
 

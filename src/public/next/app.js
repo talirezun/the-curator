@@ -1926,7 +1926,14 @@ function renderRailActive() {
 //      than no badge: it is the same false "you are fine" the feature
 //      exists to prevent, just with a number on it. Never render a guess.
 //
-// COST. One GET /api/sync/status, which is a local `git status --porcelain`
+// WHAT IT COUNTS (v3.72.1): files whose current version is not on GitHub —
+// uncommitted files AND files in commits made here but never pushed ("Pull
+// only" auto-commits; a failed push leaves its commit). Before v3.72.1 it
+// was the porcelain line count alone, so the badge vanished after a Pull
+// only over work GitHub did not have — the false "you are fine" rule 3
+// forbids. brain/sync.js countNotOnGitHub() is the one formula.
+//
+// COST. One GET /api/sync/status, which is local git only (no fetch)
 // — the same endpoint views/sync.js's own loadStatus() already calls, not a
 // second source of truth. It is NOT polled on a tight loop: the refresh is
 // event-driven off the same moments the shipping app used (a view change,

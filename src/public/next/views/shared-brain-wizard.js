@@ -403,9 +403,14 @@ function resourceOwnerSentence(meta, wrap) {
 
 /** The expiry warning, stated as a consequence rather than as advice.
  *  GitHub's default is 30 days and the app never mentioned it, so every
- *  contributor's connection was one month from silently failing. */
+ *  contributor's connection was one month from silently failing.
+ *  v3.72.1 (truth audit F15): the figure is a THIRD PARTY's default, which
+ *  GitHub can change with no signal to this string — so it carries the date
+ *  it was last checked, inside the string. Re-check it and move the date
+ *  together; the value lives in GitHub's fine-grained token form. */
 const PAT_EXPIRY_WARNING =
-  'GitHub’s default is 30 days; on that day your pushes stop with no notice — ' +
+  'GitHub sets an expiry by default (30 days when last checked, September 2026); ' +
+  'on that day your pushes stop with no notice — ' +
   'pick the longest your organisation allows, and put the date in your calendar.';
 
 /** The request the "Check token" button (and the debounced check behind the

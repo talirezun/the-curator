@@ -429,7 +429,10 @@ section('4. groupMembers — the admin member directory with no name on file');
     '4b: display_name stays null — the UI falls back to the short-ID label');
   assertEq(members[0].short_id, fid.replace(/-/g, '').slice(0, 8),
     '4c: short_id still identifies the contributor for the revoke picker');
-  assertEq(members[0].pages, 2, '4d: page count unaffected');
+  // v3.72.1 (F8): two deltas with NO path are two page updates; with no
+  // path they cannot be counted as distinct pages.
+  assertEq(members[0].page_updates, 2, '4d: page-update count unaffected by the missing name');
+  assertEq(members[0].pages, 0, '4d: a delta with no path is not a distinct page');
 
   // Mixed cohort: one attributed, one not — both must appear.
   const fid2 = randomUUID();
