@@ -287,6 +287,22 @@
      file's <link> tags. -->
 <link rel="stylesheet" href="/next/shared/toast.css">
 
+<!-- shared/page-chip.css — THE ONE PAGE CHIP (v3.72.0): a chip naming a wiki
+     page, type as the dot and the label in neutral text. Drawn by Chat's
+     Sources list (shared/answer.js) and the reader's type/tag chips (app.js),
+     so it can live in neither view's stylesheet. Owns the `page-chip` prefix
+     and the reader's `.reader-tag-chip` / `.reader-chip-*` rules. Linked here
+     because scripts/test-css-tokens.js §5 discovers /next stylesheets only
+     from this file's <link> tags. -->
+<link rel="stylesheet" href="/next/shared/page-chip.css">
+
+<!-- shared/answer.css — the ANSWER'S READING SURFACE (v3.72.0): heading
+     levels, the rule, the blockquote and nested lists shared/markdown.js now
+     emits (these reach the wiki reader too), the numbered inline citation
+     marker and the Sources list shared/answer.js draws, and the answer body's
+     primary text colour. Owns the `answer-` prefix. -->
+<link rel="stylesheet" href="/next/shared/answer.css">
+
 <!-- One CSS file per view (views/README.md) — linked here so the views/
      directory never has to touch this file to add view-specific styling.
      All seven exist even where a view currently has no rules of its own,

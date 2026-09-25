@@ -222,8 +222,14 @@ section('1. The skeletons are DATA, and there is exactly one copy of them');
     return extracted;
   }
   const mdSrc = readFileSync(path.join(REPO, 'src/public/next/shared/markdown.js'), 'utf8');
-  const MD_FNS = ['escHtml', 'formatSegment', 'renderInline',
-    'splitTableRow', 'isTableDelimiterCell', 'tableAlignClass', 'renderMarkdown'];
+  // DERIVED from the source, not a hand-kept list: v3.72.0 added nine helpers
+  // to the renderer and a hardcoded list here crashed this suite with a
+  // ReferenceError (the v3.14.0 "hardcoded FN list" blind spot). Every
+  // top-level function declaration in the module is extracted.
+  const MD_FNS = [...mdSrc.matchAll(/^(?:export\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/gm)].map((m) => m[1]);
+  if (!MD_FNS.includes('renderMarkdown') || MD_FNS.length < 7) {
+    throw new Error(`shared/markdown.js function scan found too little (${MD_FNS.join(', ')})`);
+  }
   const mdBody = MD_FNS.map((n) => extractMdFn(mdSrc, n)).join('\n\n');
   const { renderMarkdown: realRenderMarkdown } = new Function('icon',
     `${mdBody}\nreturn { ${MD_FNS.join(', ')} };`)(() => '');

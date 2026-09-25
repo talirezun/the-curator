@@ -2711,22 +2711,13 @@ body.guide-docked .main {
   margin-bottom: 12px;
 }
 .reader-tags { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-4) 0 var(--space-8); }
-.reader-tag-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 24px;
-  padding: 0 9px 0 7px;
-  border-radius: var(--radius-full);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);   /* was a frozen 10.5px, below the ramp's own floor */
-  border: none;
-  cursor: default;
-}
-.reader-chip-entity  { background: var(--type-entity-tint);  color: var(--type-entity); }
-.reader-chip-concept { background: var(--type-concept-tint); color: var(--type-concept); }
-.reader-chip-summary { background: var(--type-summary-tint); color: var(--type-summary); }
-.reader-chip-plain   { background: var(--surface-raised); color: var(--text-2); }
+/* `.reader-tag-chip` and `.reader-chip-entity|concept|summary|plain` are
+   declared in shared/page-chip.css (v3.72.0), grouped onto the ONE page chip
+   Chat's Sources list uses. They used to be here with the type colour as the
+   LABEL colour, in mono — the treatment that failed AA on light (entity 3.02 ·
+   concept 2.82 · summary 3.11). The type is now the dot; the label is
+   --text-2. Do not redeclare them here: shell.css loads first, so a rule here
+   would lose to page-chip.css anyway and would only be a second copy. */
 .reader-type-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
 .reader-body-text { font: var(--type-body); color: var(--text-2); }
 .reader-body-text p { margin: 0 0 14px; }

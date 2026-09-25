@@ -1,0 +1,98 @@
+/* ── shared/page-chip.css — THE ONE PAGE CHIP (v3.72.0) ─────────────────────
+   A chip that names a wiki page. Drawn in two places that used to disagree:
+     · Chat's Sources list under an answer (shared/answer.js → `.page-chip`),
+     · the reader's type/tag chips (app.js → `.reader-tag-chip` +
+       `.reader-chip-entity|concept|summary|plain`).
+   The reader's chips took the TYPE COLOUR AS TEXT on the type tint, in mono —
+   the treatment Chat's citation chips had already dropped because its label
+   failed AA on light (entity 3.02 · concept 2.82 · summary 3.11 against a 4.5
+   floor; views/chat.css records the measurement). Both surfaces now share the
+   rule Chat arrived at: THE TYPE IS THE DOT, THE LABEL IS NEUTRAL TEXT.
+     · label `--text-2` on the type tint: 8.09:1 dark / 7.26:1 light;
+     · dot `--type-*`, a non-text indicator held to 1.4.11's 3:1 — on light
+       derived with color-mix at 90% (3.63 / 3.39 / 3.73), the same derivation
+       chat.css uses, so no fourth set of literals enters the palette;
+     · ground `--type-*-tint`; a page of no known type is `--surface-raised`
+       with a `--border-strong` dot and a `--text-3` label.
+   The reader's classes are GROUPED onto these rules rather than restyled in
+   shell.css, so there is one declaration of the chip, not two kept in step.
+   app.js still emits its own class names (and an INLINE-styled dot, which no
+   stylesheet can re-colour for light — recorded as a follow-up for the owner
+   of app.js: emit `.page-chip-dot` inside `.reader-chip-*` and the light rule
+   below reaches it).
+
+   SIZE follows interactivity, not surface: a static chip is 24px (a label,
+   `cursor: default`, nothing to aim at); a chip that is a <button> is
+   `--hit-min` (28px), the app's pointer-target floor. */
+
+.page-chip,
+.reader-tag-chip {
+  /* positioned so a `.visually-hidden` child (the chip's path, in its
+     accessible name) anchors to the chip rather than to some ancestor */
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 10px 0 8px;
+  border: none;
+  border-radius: var(--radius-full);
+  font: var(--type-body-sm);
+  color: var(--text-2);
+  background: var(--surface-raised);
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.page-chip-entity,  .reader-chip-entity  { background: var(--type-entity-tint); }
+.page-chip-concept, .reader-chip-concept { background: var(--type-concept-tint); }
+.page-chip-summary, .reader-chip-summary { background: var(--type-summary-tint); }
+.page-chip-other,   .reader-chip-plain   { background: var(--surface-raised); }
+.page-chip-other { color: var(--text-3); }
+
+/* A chip that opens its page. The hover COMPOSITES over the tint (an inset
+   overlay) so the type stays readable under the pointer in both themes. */
+button.page-chip {
+  height: var(--hit-min);
+  padding: 0 11px 0 7px;
+  cursor: pointer;
+  transition: box-shadow var(--t-state), transform var(--t-press);
+}
+button.page-chip:hover { box-shadow: inset 0 0 0 999px var(--mat-row-hover); color: var(--text); }
+button.page-chip:active { transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
+
+.page-chip-n {
+  font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  min-width: 14px;
+  text-align: center;
+}
+.page-chip-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--border-strong); }
+.page-chip-entity  .page-chip-dot, .page-chip-dot-entity  { background: var(--type-entity); }
+.page-chip-concept .page-chip-dot, .page-chip-dot-concept { background: var(--type-concept); }
+.page-chip-summary .page-chip-dot, .page-chip-dot-summary { background: var(--type-summary); }
+[data-theme="light"] .page-chip-entity  .page-chip-dot,
+[data-theme="light"] .page-chip-dot-entity  { background: color-mix(in srgb, var(--type-entity) 90%, black); }
+[data-theme="light"] .page-chip-concept .page-chip-dot,
+[data-theme="light"] .page-chip-dot-concept { background: color-mix(in srgb, var(--type-concept) 90%, black); }
+[data-theme="light"] .page-chip-summary .page-chip-dot,
+[data-theme="light"] .page-chip-dot-summary { background: color-mix(in srgb, var(--type-summary) 90%, black); }
+
+/* The label truncates rather than wrapping the chip onto two lines. The cap is
+   views/chat.css's measured 42ch (p90 of real page titles is 41 characters);
+   the full title and path are in the chip's accessible name. */
+.page-chip-label {
+  max-width: min(100%, 42ch);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button.page-chip { transition: none; }
+  button.page-chip:active { transform: none; }
+}

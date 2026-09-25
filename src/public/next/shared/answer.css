@@ -1,0 +1,143 @@
+/* ── shared/answer.css — THE ANSWER'S READING SURFACE (v3.72.0) ─────────────
+   What shared/markdown.js and shared/answer.js emit for an answer, and the
+   block shapes that reach the wiki reader too. DESIGN.md §5.
+
+   LOAD ORDER, AND WHY SOME SELECTORS ARE DOUBLED. index.html links the shared
+   components BEFORE the view stylesheets, so views/chat.css (package P3's
+   file) wins every tie. Where chat.css already declares a property on the same
+   element (`.chat-md-h`'s font and margin, `.chat-answer p`'s margin), the rule
+   here carries one more class or element of specificity so it wins on purpose
+   rather than by accident of order. */
+
+/* ── THE ANSWER BODY IS PRIMARY TEXT ─────────────────────────────────────────
+   Answers looked "less vivid" than everything around them because they
+   inherited `--text-2` from `.chat-msg-assistant` (views/chat.css) while the
+   user bubble and every other surface's primary line are `--text`. That rule
+   lives in P3's chat.css, so the correction is HERE, scoped to the answer
+   element — the eyebrow, notes and cost line in the same message keep their
+   secondary colour. (0,2,0) so a later `.chat-answer` rule cannot quietly
+   undo it. The column is the app's prose measure, not the 780px bubble. */
+.chat-msg-assistant .chat-answer {
+  color: var(--text);
+  max-width: min(var(--prose-max), 100%);
+}
+.chat-msg-assistant .chat-answer li::marker { color: var(--text-3); }
+
+/* ── HEADING LEVELS ──────────────────────────────────────────────────────────
+   `#`/`##` → the h3 face; `###` → 14px semibold; `####`–`######` → the
+   eyebrow face. The base `.chat-md-h` (chat.css) still applies underneath. */
+.chat-md-h.chat-md-h1,
+.chat-md-h.chat-md-h2 {
+  font: var(--type-h3);
+  letter-spacing: var(--track-title);
+  color: var(--text);
+  margin: 18px 0 10px;
+}
+.chat-md-h.chat-md-h3 {
+  font: var(--weight-semibold) var(--text-base)/var(--leading-snug) var(--font-sans);
+  color: var(--text);
+  margin: 16px 0 8px;
+}
+.chat-md-h.chat-md-h4 {
+  font: var(--type-eyebrow);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin: 16px 0 8px;
+}
+.chat-answer > .chat-md-h:first-child { margin-top: 0; }
+
+/* ── RULE ─────────────────────────────────────────────────────────────────── */
+.chat-md-hr {
+  height: 0;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  margin: 20px 0;
+}
+
+/* ── BLOCKQUOTE ──────────────────────────────────────────────────────────────
+   A 2px `--border-strong` left rule, the quote in `--text`, and a trailing
+   "— Name" line one step back in `--text-2`. */
+blockquote.chat-md-quote {
+  margin: 0 0 12px;
+  padding: 1px 0 1px 14px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text);
+}
+li > blockquote.chat-md-quote { margin: 2px 0 4px; }
+blockquote.chat-md-quote > p { margin: 0 0 6px; }
+blockquote.chat-md-quote > p:last-child { margin-bottom: 0; }
+blockquote.chat-md-quote > p.chat-md-attrib {
+  margin-top: 3px;
+  color: var(--text-2);
+  font-size: var(--text-md);
+}
+
+/* ── ONE LEVEL OF NESTED LIST ───────────────────────────────────────────── */
+.chat-answer li > ul,
+.chat-answer li > ol,
+.reader-body-text li > ul,
+.reader-body-text li > ol { margin: 4px 0 0; }
+
+/* ── THE INLINE CITATION MARKER ──────────────────────────────────────────────
+   A real <button> showing only its number: mono 10px, `--text-2` on
+   `--surface-raised`, `--radius-xs`. The glyph stays 16px so it sits in the
+   line; its TARGET grows to --hit-min with a transparent ::before (the
+   sanctioned technique, test-next-design-kit §11). Focus uses the kit's
+   global :focus-visible ring. */
+.chat-cite-n {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  min-width: 17px;
+  height: 16px;
+  padding: 0 4px;
+  margin: 0 1px;
+  vertical-align: 2px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: var(--surface-raised);
+  color: var(--text-2);
+  font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color var(--t-state), color var(--t-state);
+}
+.chat-cite-n::before {
+  content: '';
+  position: absolute;
+  inset: calc((var(--hit-min) - 16px) / -2) -2px;
+}
+.chat-cite-n:hover { background: var(--accent-tint-strong); color: var(--text); }
+/* A citation whose path could not be a page (it held markup, or was empty):
+   shown as inert text so nothing opens a joined or invented path. */
+.chat-cite-unresolved { color: var(--text-3); font-size: 0.88em; }
+
+/* ── THE SOURCES LIST ────────────────────────────────────────────────────── */
+.answer-sources {
+  max-width: min(var(--prose-max), 100%);
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+.answer-sources-head {
+  font: var(--type-eyebrow);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin-bottom: 10px;
+}
+.answer-sources-list { display: flex; flex-wrap: wrap; gap: 7px; }
+.answer-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 10px;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+}
+.answer-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-cite-n { transition: none; }
+}

@@ -268,8 +268,12 @@ function declaredTopLevelFunctions(src) {
 // `icon` is the only thing the renderer closes over from the shell. The stub
 // is deliberately marked (`data-icon`) so an assertion can tell "the citation
 // chip carries its dot icon" from "some other svg happened to be there".
-const FNS = ['escHtml', 'formatSegment', 'renderInline',
-  'splitTableRow', 'isTableDelimiterCell', 'tableAlignClass', 'renderMarkdown'];
+const FNS = ['escHtml', 'unescHtml', 'formatSegment', 'citationMarkup', 'legacyCitationTag', 'renderInline',
+  'splitTableRow', 'isTableDelimiterCell', 'tableAlignClass',
+  // v3.72.0 block helpers (blockquote, rule, nesting).
+  'indentWidth', 'isRule', 'isQuoteLine', 'stripQuoteMarker', 'isAttribution',
+  'renderQuote', 'renderItemBody', 'renderList',
+  'renderMarkdown'];
 const bodySrc = FNS.map((n) => extractFunction(HOME.src, n, HOME.label)).join('\n\n');
 const iconCalls = [];
 const iconStub = (name, size) => {
@@ -603,7 +607,8 @@ section('4b. ReDoS — the wiki-token passes carry a measured length bound');
 section('5. Block formatting');
 {
   const h = renderMarkdown('### A heading\n\nSome text.');
-  ok(/<div class="chat-md-h">A heading<\/div>/.test(h), 'ATX heading → styled heading div');
+  ok(/<div class="chat-md-h chat-md-h3">A heading<\/div>/.test(h),
+    'ATX heading → styled heading div (base class kept, level class from the fixed set — v3.72.0)');
   ok(/<p>Some text\.<\/p>/.test(h), 'paragraph wrapped in <p>');
 
   ok(/<ul><li>one<\/li><li>two<\/li><\/ul>/.test(renderMarkdown('- one\n- two')), 'dash bullets → <ul>');
@@ -691,8 +696,9 @@ section('8. Widening — realistic wiki page bodies');
     '- [[summaries/the-rag-paper]]',
   ].join('\n');
   const h = renderMarkdown(page);
-  ok(/<div class="chat-md-h">Retrieval-Augmented Generation<\/div>/.test(h), 'page H1 renders as a heading');
-  ok((h.match(/chat-md-h/g) || []).length === 4, 'all four headings render as headings');
+  ok(/<div class="chat-md-h chat-md-h1">Retrieval-Augmented Generation<\/div>/.test(h), 'page H1 renders as a heading');
+  ok((h.match(/class="chat-md-h /g) || []).length === 4, 'all four headings render as headings');
+  ok((h.match(/class="chat-md-h chat-md-h2"/g) || []).length === 3, 'and the three ## sections keep their level (v3.72.0)');
   ok(/<ul>/.test(h) && (h.match(/<li>/g) || []).length === 3, 'the bullet sections render as lists');
   ok(!/^##|\*\*retrieval\*\*/m.test(h), 'no raw ## or ** markers leak into the output');
   ok((h.match(/chat-wikilink/g) || []).length === 4, 'every [[wikilink]] renders as a styled span');
@@ -1019,6 +1025,223 @@ section('11. Ordered lists keep the number they were written with');
   const allOnes = renderMarkdown('1. one\n' + CITE + '\n\n1. two\n' + CITE);
   ok((allOnes.match(/<ol[^>]*>/g) || []).length === 2 && !/start=/.test(allOnes),
     '§11e KNOWN AND UNFIXED: a model that writes "1." for EVERY item AND breaks between them still renders 1, 1 — that is the number it wrote');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('12. v3.72.0 — quote, rule, heading levels, nesting, split citations');
+// ═══════════════════════════════════════════════════════════════════════════
+/**
+ * DESIGN.md §5 (package P2). Every new pass runs on ALREADY-ESCAPED text and
+ * gets its own XSS case here, next to its behaviour — the cardinal rule is
+ * re-proven per pass, not assumed to carry over.
+ */
+const HOOK_ATTRS = ['class', 'data-icon', 'width', 'type', 'data-cite-n', 'aria-hidden', 'start'];
+function attrNames(html) {
+  return realTags(html).flatMap((t) => [...t.matchAll(/\s([a-zA-Z:-]+)=/g)].map((m) => m[1]));
+}
+function mkHook() {
+  const order = [];
+  const calls = [];
+  const cite = (p) => { calls.push(p); if (!order.includes(p)) order.push(p); return order.indexOf(p) + 1; };
+  return { cite, order, calls };
+}
+const ALLOWED_V372 = new Set([...ALLOWED_TAGS, 'blockquote', 'hr', 'button']);
+function foreignTags372(html) {
+  const out = [];
+  const re = /<\/?([a-zA-Z][a-zA-Z0-9-]*)\b/g;
+  let m;
+  while ((m = re.exec(html))) if (!ALLOWED_V372.has(m[1].toLowerCase())) out.push(m[1]);
+  return out;
+}
+const balanced = (h, tag) => (h.match(new RegExp('<' + tag + '\\b', 'g')) || []).length ===
+  (h.match(new RegExp('</' + tag + '>', 'g')) || []).length;
+
+// ── §12a BLOCKQUOTE ────────────────────────────────────────────────────────
+{
+  ok(renderMarkdown('> A quote.') === '<blockquote class="chat-md-quote"><p>A quote.</p></blockquote>',
+    '§12a `> quote` → a blockquote (was a literal "&gt; …" paragraph — C3)');
+  ok(!/&gt;/.test(renderMarkdown('> A quote.')), '§12a …and the marker is consumed, not shown');
+  const two = renderMarkdown('> line one\n> line two');
+  ok(two === '<blockquote class="chat-md-quote"><p>line one<br>line two</p></blockquote>',
+    '§12a consecutive quote lines are ONE quote, soft-broken');
+  ok(renderMarkdown('> para one\n>\n> para two') ===
+    '<blockquote class="chat-md-quote"><p>para one</p><p>para two</p></blockquote>',
+    '§12a a bare `>` line separates paragraphs inside the quote');
+  const inAttr = renderMarkdown('> "Leadership is doing the right things."\n> — Peter Drucker');
+  ok(inAttr.endsWith('<p class="chat-md-attrib">— Peter Drucker</p></blockquote>'),
+    '§12a a trailing "— Name" inside the quote is its attribution');
+  const outAttr = renderMarkdown('> "Quote."\n— Warren Bennis, *On Becoming a Leader*');
+  ok(/<p class="chat-md-attrib">— Warren Bennis, <em>On Becoming a Leader<\/em><\/p><\/blockquote>$/.test(outAttr),
+    '§12a a "— Name" line DIRECTLY under the quote joins it as attribution (inline formatting kept)');
+  ok(/<\/blockquote><p>— later<\/p>/.test(renderMarkdown('> q\n\n— later')),
+    '§12a …but not across a blank line');
+  ok(/<p class="chat-md-attrib">-- Ann<\/p>/.test(renderMarkdown('> q\n> -- Ann')) &&
+     /<p class="chat-md-attrib">– Ann<\/p>/.test(renderMarkdown('> q\n> – Ann')),
+    '§12a `--` and an en dash also mark attribution');
+  ok(!/chat-md-attrib/.test(renderMarkdown('> — only a dash line')),
+    '§12a a quote that is ONLY a dash line is quoted text, not a credit for nothing');
+  ok(/<p>&gt; nested<\/p>/.test(renderMarkdown('> > nested')), '§12a a second `>` stays literal (one level)');
+  ok(!/blockquote/.test(renderMarkdown('&gt; typed as an entity')),
+    '§12a the ENTITY typed in the input is escaped to &amp;gt; and never starts a quote');
+  ok(/<p>before<\/p><blockquote/.test(renderMarkdown('before\n> q')), '§12a a quote line closes the paragraph above it');
+  ok(/<\/ul><blockquote/.test(renderMarkdown('- item\n> q')), '§12a an unindented quote line closes an open list');
+  ok(/blockquote/.test(renderMarkdown('   > indented quote')), '§12a an indented quote with no open list is still a quote');
+
+  // XSS — the brief's own vector, and the attribution arm.
+  for (const v of ['> <img src=x onerror=alert(1)>', '> ok\n> — <script>alert(1)</script>',
+                   '> " onmouseover="alert(1)', '> [[a" onclick="x]]\n— <svg/onload=alert(1)>']) {
+    const h = renderMarkdown(v);
+    ok(foreignTags372(h).length === 0 && !hasLiveHandlerOrUrlAttr(h),
+      `§12a XSS ${JSON.stringify(v.slice(0, 32))}: no foreign tag, no live attribute`);
+    ok(balanced(h, 'blockquote') && balanced(h, 'p'), '§12a …and the quote markup is balanced');
+  }
+  ok(renderMarkdown('> <img src=x onerror=alert(1)>').includes('&lt;img src=x onerror=alert(1)&gt;'),
+    '§12a the payload is shown as escaped text, not dropped');
+}
+
+// ── §12b THEMATIC BREAK ────────────────────────────────────────────────────
+{
+  for (const r of ['---', '***', '___', '- - -', '* * *', '_ _ _', '----------', '  ---  ']) {
+    ok(renderMarkdown(r) === '<hr class="chat-md-hr">', `§12b ${JSON.stringify(r)} → <hr> (was a literal paragraph — C4)`);
+  }
+  ok(!/<ul>/.test(renderMarkdown('* * *')), '§12b `* * *` is a rule, NOT a bullet (the rule test runs first)');
+  for (const notRule of ['--', '-*-', '--- x', '**bold**', '-- -x']) {
+    ok(!/<hr/.test(renderMarkdown(notRule)), `§12b ${JSON.stringify(notRule)} is not a rule`);
+  }
+  ok(renderMarkdown('above\n---\nbelow') === '<p>above</p><hr class="chat-md-hr"><p>below</p>',
+    '§12b a rule between two paragraphs closes the first and opens the second');
+  ok(/<\/ol><hr class="chat-md-hr">/.test(renderMarkdown('1. a\n---')), '§12b a rule closes an open list');
+  const x = renderMarkdown('--- <img src=x onerror=alert(1)>');
+  ok(!/<hr/.test(x) && foreignTags372(x).length === 0 && !hasLiveHandlerOrUrlAttr(x),
+    '§12b XSS: a rule-shaped line carrying a payload is not a rule and the payload is inert');
+  const t = (s) => { const t0 = process.hrtime.bigint(); renderMarkdown(s); return Number(process.hrtime.bigint() - t0) / 1e6; };
+  ok(t('- '.repeat(100000) + 'x') < 1500 && t('-'.repeat(200000) + 'x') < 1500,
+    '§12b a 200 KB near-rule line renders in well under 1.5 s (the test is linear, no backtracking)');
+}
+
+// ── §12c HEADING LEVELS ────────────────────────────────────────────────────
+{
+  const lv = (n) => renderMarkdown('#'.repeat(n) + ' T');
+  ok(lv(1) === '<div class="chat-md-h chat-md-h1">T</div>', '§12c # → level 1');
+  ok(lv(2) === '<div class="chat-md-h chat-md-h2">T</div>', '§12c ## → level 2');
+  ok(lv(3) === '<div class="chat-md-h chat-md-h3">T</div>', '§12c ### → level 3');
+  ok([4, 5, 6].every((n) => lv(n) === '<div class="chat-md-h chat-md-h4">T</div>'), '§12c ####–###### → level 4 (the eyebrow face)');
+  ok(!/<div/.test(renderMarkdown('####### seven')), '§12c seven #s is not a heading (unchanged)');
+  for (const v of ['# <img src=x onerror=alert(1)>', '### h" onclick="alert(1)', '#### <script>x</script> **b**']) {
+    const h = renderMarkdown(v);
+    ok(foreignTags372(h).length === 0 && !hasLiveHandlerOrUrlAttr(h), `§12c XSS ${JSON.stringify(v)}: inert`);
+    ok(/^<div class="chat-md-h chat-md-h[1-4]">/.test(h), '§12c …and the level class is one of the fixed four');
+  }
+}
+
+// ── §12d ONE LEVEL OF LIST NESTING, AND INDENTED CONTINUATION ─────────────
+{
+  const c4 = renderMarkdown('1. first\n   - sub a\n   - sub b\n2. second');
+  ok(c4 === '<ol><li>first<ul><li>sub a</li><li>sub b</li></ul></li><li>second</li></ol>',
+    '§12d a nested bullet stays INSIDE its item — no more ol / ul / ol start=2 (C4)');
+  ok(!/start=/.test(c4), '§12d …so the second item needs no start attribute');
+  ok(renderMarkdown('- a\n  - b\n    - c\n- d') === '<ul><li>a<ul><li>b</li><li>c</li></ul></li><li>d</li></ul>',
+    '§12d deeper indentation lands on the SAME nested level (one level is the grammar)');
+  ok(renderMarkdown('- a\n  1. x\n  2. y') === '<ul><li>a<ol><li>x</li><li>y</li></ol></li></ul>',
+    '§12d a nested list of the other type');
+  ok(renderMarkdown('- a\n\t- b') === '<ul><li>a<ul><li>b</li></ul></li></ul>', '§12d a tab indents too');
+  ok(renderMarkdown('- a\n - b') === '<ul><li>a</li><li>b</li></ul>',
+    '§12d ONE space is not nesting (the threshold is 2)');
+  ok(renderMarkdown('  - lone') === '<ul><li>lone</li></ul>', '§12d an indented item with no open list opens one');
+  ok(renderMarkdown('1. item\n   continued here') === '<ol><li>item<br>continued here</li></ol>',
+    '§12d an indented line under an item continues it');
+  ok(renderMarkdown('1. item\ncontinued') === '<ol><li>item</li></ol><p>continued</p>',
+    '§12d …an UNINDENTED one does not (lazy continuation stays unshipped — §11)');
+  const quotes = renderMarkdown(
+    '1. > "Leadership is the capacity to translate vision into reality."\n' +
+    '   — Warren Bennis\n' +
+    '2. > "Management is doing things right."\n' +
+    '   — Peter Drucker');
+  ok((quotes.match(/<ol/g) || []).length === 1 && (quotes.match(/<li>/g) || []).length === 2,
+    '§12d THE "10 QUOTES" SHAPE: numbered quotes with an indented credit stay ONE list');
+  ok((quotes.match(/<blockquote class="chat-md-quote">/g) || []).length === 2 &&
+     (quotes.match(/<p class="chat-md-attrib">— /g) || []).length === 2,
+    '§12d …each item a quote carrying its own attribution');
+  const nx = renderMarkdown('- a\n  - <img src=x onerror=alert(1)>\n  > " onclick="y');
+  ok(foreignTags372(nx).length === 0 && !hasLiveHandlerOrUrlAttr(nx) && balanced(nx, 'ul') && balanced(nx, 'li'),
+    '§12d XSS in a nested item and a continuation quote: inert and balanced');
+  const nol = renderMarkdown('- a\n  7" onmouseover="x. b\n  3. c');
+  ok(!/\son\w+\s*=/.test(realTags(nol).join(' ')) && !/<ol start="[^"]*[^0-9"]/.test(nol),
+    '§12d a nested <ol start> is digits only, never input text');
+}
+
+// ── §12e CITATIONS SPLIT INTO ONE MARKER PER PATH ─────────────────────────
+{
+  // No hook — every reader surface. One path: BYTE-IDENTICAL to before.
+  const one = renderMarkdown('See [source: concepts/rag.md].');
+  ok(one === '<p>See <span class="chat-citation-tag"><svg data-icon="dot" width="7"></svg>' +
+    '<span class="chat-cite-path">concepts/rag.md</span></span>.</p>',
+    '§12e no hook, one path: the legacy tag, byte-identical (the reader surfaces do not move)');
+  const two = renderMarkdown('[source: a.md, b.md]');
+  const paths = [...two.matchAll(/<span class="chat-cite-path">([^<]*)<\/span>/g)].map((m) => m[1]);
+  ok(JSON.stringify(paths) === '["a.md","b.md"]', '§12e no hook, a comma list: ONE tag PER PATH (C5)');
+  ok(!/a\.md, b\.md/.test(two), '§12e …and no tag holds the comma-joined string any more');
+
+  // With a hook — the answer surface.
+  const hk = mkHook();
+  const h = renderMarkdown('Alpha [source: a.md, b.md] beta [source: a.md] gamma [source: c.md,b.md]', { cite: hk.cite });
+  const nums = [...h.matchAll(/data-cite-n="(\d+)"/g)].map((m) => m[1]);
+  ok(JSON.stringify(nums) === '["1","2","1","3","2"]', `§12e hooked: numbered by first appearance, repeats re-use (${nums.join(',')})`);
+  ok((h.match(/<button type="button" class="chat-cite-n"/g) || []).length === 5,
+    '§12e each marker is a real <button type="button"> — keyboard-reachable (C5)');
+  ok(!/chat-citation-tag|chat-cite-path/.test(h), '§12e hooked: no legacy tag and no path hook class');
+  const face = h.replace(/<span class="visually-hidden">[^<]*<\/span>/g, '').replace(/<[^>]*>/g, '');
+  ok(!/\.md/.test(face), '§12e hooked: NO raw path on the visible face (only in visually-hidden text)');
+  ok(/<span class="visually-hidden">Source 2: b\.md<\/span>/.test(h), '§12e …the path is in the marker\'s accessible name');
+  ok(JSON.stringify(hk.order) === '["a.md","b.md","c.md"]', '§12e the hook saw each path, trimmed');
+  const unexpected = attrNames(h).filter((a) => !HOOK_ATTRS.includes(a));
+  ok(unexpected.length === 0, `§12e hooked output carries only fixed attributes (extra: ${unexpected.join(',') || 'none'})`);
+
+  // The hook receives the RAW path (the L5 lesson) while the page shows it escaped.
+  const amp = mkHook();
+  const ah = renderMarkdown('[source: summaries/r&d-notes.md]', { cite: amp.cite });
+  ok(amp.calls[0] === 'summaries/r&d-notes.md', '§12e the hook is handed the RAW path (`&`, not `&amp;`)');
+  ok(ah.includes('r&amp;d-notes.md') && !ah.includes('&amp;amp;'), '§12e …and the page text is escaped exactly once');
+
+  // THE BRIEF'S VECTOR: a wikilink inside the brackets.
+  for (const cite of [mkHook(), null]) {
+    const v = renderMarkdown('[source: a.md, [[b]]]', cite ? { cite: cite.cite } : undefined);
+    ok(foreignTags372(v).length === 0 && !hasLiveHandlerOrUrlAttr(v) && balanced(v, 'span'),
+      `§12e ${cite ? 'hooked' : 'no hook'} [source: a.md, [[b]]]: no foreign tag, no live attribute, spans balanced`);
+    if (cite) {
+      ok(cite.calls.length === 0, '§12e hooked: a capture holding markup is NEVER handed to the hook as a path');
+      ok(!/<button/.test(v) && /chat-cite-unresolved/.test(v), '§12e hooked: …it renders inert, with no marker to open');
+    }
+  }
+  // Hostile paths: escaped in the text, never an attribute.
+  for (const v of ['[source: <img src=x onerror=alert(1)>.md]', '[source: a" onclick="alert(1), b.md]',
+                   "[source: x' onfocus='y]", '[source: javascript:alert(1)]']) {
+    const hh = mkHook();
+    const out = renderMarkdown(v, { cite: hh.cite });
+    ok(foreignTags372(out).length === 0 && !hasLiveHandlerOrUrlAttr(out),
+      `§12e hooked XSS ${JSON.stringify(v.slice(0, 30))}: inert`);
+    ok(attrNames(out).every((a) => HOOK_ATTRS.includes(a)) &&
+       realTags(out).every((t) => !/data-cite-n="[^"]*[^0-9"]/.test(t)),
+      '§12e …every data-cite-n value is digits only');
+  }
+  // The hook's return value is VALIDATED — only a positive integer reaches the attribute.
+  for (const bad of ['1" onclick="x', -1, 0, 1.5, NaN, 1e6, '3', null, undefined, {}]) {
+    const out = renderMarkdown('[source: p.md]', { cite: () => bad });
+    ok(!/<button/.test(out) && /chat-cite-unresolved/.test(out) && !hasLiveHandlerOrUrlAttr(out),
+      `§12e a hook returning ${JSON.stringify(bad) ?? String(bad)} yields NO marker (inert text)`);
+  }
+  // The citation pass stays LAST: §4's M1 vector, hooked.
+  const m1 = renderMarkdown('[source: x[[y] tail]] rest of the document', { cite: mkHook().cite });
+  ok(balanced(m1, 'span') && balanced(m1, 'button') && m1.includes('rest of the document'),
+    '§12e M1 vector, hooked: balanced, nothing deleted');
+  // A hook in a table cell, a heading, a quote and a list item all reach the citation pass.
+  const every = mkHook();
+  renderMarkdown('# H [source: h.md]\n\n| a |\n|---|\n| [source: t.md] |\n\n> q [source: q.md]\n\n- i [source: i.md]\n  - n [source: n.md]\n\npara [source: p.md]',
+    { cite: every.cite });
+  ok(JSON.stringify(every.order) === '["h.md","t.md","q.md","i.md","n.md","p.md"]',
+    `§12e the hook reaches every block shape, in document order (${every.order.join(',')})`);
+  ok(renderMarkdown('[source: , ]', { cite: mkHook().cite }) === '<p></p>',
+    '§12e an empty citation emits no marker');
 }
 
 console.log(`\n${'─'.repeat(60)}`);
