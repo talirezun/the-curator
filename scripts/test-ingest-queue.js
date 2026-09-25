@@ -1840,7 +1840,19 @@ async function testTruthAuditV3721() {
 
   // ── F2/F3: tokens and calls survive a FREE or UNPRICED model.
   const batch = [{ name: 'note.md', size: 4000 }, { name: 'big.pdf', size: 60000 }];
-  for (const [label, model] of [['FREE', 'minimax/minimax-m3:free'], ['UNPRICED', 'zz-v3721-unpriced-model']]) {
+  // FREE arm: a synthetic `:free` id registered through the REAL offer factory
+  // (the shipped minimax/minimax-m3:free was withdrawn by OpenRouter and left
+  // FREE_MODELS in v3.72.1 — the same fixture the other suites adopted).
+  const llmMod = await import('../src/brain/llm.js');
+  const FREE_FIXTURE = 'zz-vendor/zz-free-fixture:free';
+  if (!llmMod.isFreeModel(FREE_FIXTURE)) {
+    llmMod.__testing.defineOfferableModel('openrouter', {
+      id: FREE_FIXTURE, label: 'Free Fixture', thinks: false, tokenizerFactor: 1.0,
+      suitability: 'chat-only', maxOutput: 32768, free: true, note: 'Synthetic free id.',
+    });
+  }
+  assert(llmMod.isFreeModel(FREE_FIXTURE), 'fixture: the synthetic :free id is free by membership');
+  for (const [label, model] of [['FREE', FREE_FIXTURE], ['UNPRICED', 'zz-v3721-unpriced-model']]) {
     await freshEnv({ withProviderKey: true, model });
     try {
       const domain = await makeDomain();
