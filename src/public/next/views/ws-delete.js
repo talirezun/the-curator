@@ -180,7 +180,10 @@ export function wsDeleteOutcomeText(result, scope) {
   if (n) text += ' — ' + plural(n, 'saved copy', 'saved copies') + (machines.length ? ' (' + machines.join(', ') + ')' : '');
   text += '.';
   if (typeof r.trashPath === 'string' && r.trashPath) {
-    text += ' It was moved to The Curator’s trash, at ' + r.trashPath + '. To restore it, move that folder back into ' +
+    // v3.76.0: the restore is a button now — Settings › Trash. The by-hand
+    // path stays, as the fallback the user guide also keeps.
+    text += ' It was moved to The Curator’s trash, at ' + r.trashPath + '. To restore it, open Settings › Trash ' +
+      'and press Restore — or move that folder back into ' +
       (typeof r.restoreTo === 'string' && r.restoreTo ? r.restoreTo : 'this project’s state folder') +
       ' and rename it ' + name + '.';
   }

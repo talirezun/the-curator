@@ -2913,7 +2913,7 @@ export async function deleteProject(domain, project, opts = {}) {
   // folder, so Sync sees exactly what it saw before: the project is gone.
   let trashPath;
   try {
-    trashPath = await moveToTrash(abs, 'projects', `${domain}--${slug}`);
+    trashPath = await moveToTrash(abs, 'projects', `${domain}--${slug}`, { domain, project: slug });
   } catch (err) {
     return { ok: false, reason: 'io', message: `Could not delete the project: ${scrubPaths(String(err?.message ?? err))}` };
   } finally {
@@ -3107,7 +3107,8 @@ export async function deleteWorkStream(domain, project, scope, opts = {}) {
     // Read UNDER the lock, immediately before the move, so the list returned
     // is what went — not what a preview saw a minute ago.
     ({ safe: machines, unlisted } = await scopeMachineDirs(r.abs));
-    trashPath = await moveToTrash(r.abs, 'scopes', `${domain}--${r.project}--${r.scope}`);
+    trashPath = await moveToTrash(r.abs, 'scopes', `${domain}--${r.project}--${r.scope}`,
+      { domain, project: r.project, scope: r.scope });
   } catch (err) {
     return { ok: false, reason: 'io', message: `Could not delete the work-stream: ${scrubPaths(String(err?.message ?? err))}` };
   } finally {

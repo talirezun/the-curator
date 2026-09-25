@@ -688,6 +688,19 @@ const E = {
     guide: { key: 'settings.health', heading: 'Health & scan limits' },
   },
 
+  // SECTION_INFO.trash · the Trash header (v3.76.0).
+  'settings.trash': {
+    label: 'About Trash',
+    title: 'Trash',
+    lead: 'Where a deleted domain, project or handoff waits, on this computer only.',
+    points: [
+      { icon: 'refresh', text: '**Restore** puts it back where it was.' },
+      { icon: 'check', text: 'A name in use now gets a new one, beside the other.' },
+      { icon: 'computer', text: 'The trash itself never syncs. A restored folder does.' },
+    ],
+    guide: { key: 'settings.trash', heading: 'Trash' },
+  },
+
   // SECTION_INFO.storage · the Knowledge base header.
   'settings.storage': {
     label: 'About Knowledge base',
@@ -860,6 +873,8 @@ export const SCREEN_WORDS = [
   'Connect a client', 'Default domain for MCP writes', 'Tool map', 'Across projects',
   'Maximum candidate pairs per scan', 'Vault folder', 'GitHub read-only token', 'Choose folder', 'Test',
   'Access token', 'Check now', 'Sync', 'Sync now',
+  // v3.76.0 — Settings › Trash.
+  'Restore',
 ];
 
 // Frozen DEEPLY: a caller that could assign into this map would be a second,

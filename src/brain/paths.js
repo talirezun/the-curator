@@ -595,7 +595,12 @@ export function getMcpUsageLogPath() {
  * in DOMAINS_GITIGNORE_RULES and the app's .gitignore, for the pathological
  * install whose domainsPath IS the user-data dir.
  *
- * Nothing empties it automatically. Emptying it is the user's call, in Finder.
+ * (v3.75.0 added `scopes/<domain>--<project>--<scope>--<UTC stamp>/`, one
+ * handoff; v3.76.0 an `<entry>.origin.json` beside each new entry.)
+ *
+ * Nothing empties it automatically. Settings › Trash (v3.76.0, trash-items.js)
+ * lists it, restores an entry, or deletes ONE entry forever on a typed
+ * confirmation; emptying all of it is the user's call, in Finder.
  *
  * Pure resolver — never creates the directory.
  */

@@ -20,6 +20,7 @@ import ingestQueueRouter from './routes/ingest-queue.js';
 import memoryRouter from './routes/memory.js';
 import readingPlanRouter from './routes/reading-plan.js';
 import writeStatusRouter from './routes/write-status.js';
+import trashRouter from './routes/trash.js';
 import { getProviderInfo } from './brain/llm.js';
 import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
 import { APP_ROOT, getCredentialFiles } from './brain/paths.js';
@@ -206,6 +207,8 @@ app.use('/api/diagnostics', diagnosticsRouter);
 app.use('/api/ingest-queue', ingestQueueRouter);
 app.use('/api/memory', memoryRouter);
 app.use('/api/reading-plan', readingPlanRouter);
+// Settings › Trash (v3.76.0): list / restore / delete-forever one entry.
+app.use('/api/trash', trashRouter);
 // READ route. Deliberately not registered as a write and not behind
 // guardConcurrent — see the docblock in src/routes/write-status.js.
 app.use('/api/write-status', writeStatusRouter);

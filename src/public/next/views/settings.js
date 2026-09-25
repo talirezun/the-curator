@@ -139,8 +139,16 @@ import {
   isAnyWriteBusy, getDomainWriteLabel, onWriteGateChange,
   preserveMainScroll, resetMainScroll, revealInMain,
   currentFontScale, fontScaleOptions, setFontScale,
-  consumeSettingsSection,
+  consumeSettingsSection, refreshSyncBadge,
 } from '../app.js';
+// ── SETTINGS › TRASH (v3.76.0) ────────────────────────────────────────────
+// The words, the one typed-confirmation predicate and the outcome sentences,
+// in a DOM-free module so scripts/test-trash-restore.js imports the real
+// builders; this file owns the state, the three requests and the listeners.
+import {
+  trashSectionHtml, trashDeleteConfirmMatches, trashDeleteBody, trashRestorePlan,
+  trashRestoreBody, trashRestoreOutcomeText, trashDeleteOutcomeText,
+} from './trash-list.js';
 // Overlay, not a view — same relationship views/shared.js has with
 // views/shared-brain-wizard.js. It is opened from the MCP section's CTA and
 // closed unconditionally by this view's teardown, so navigating away can
@@ -297,6 +305,9 @@ const SETTINGS_SECTIONS = [
   ['storage',   'Knowledge base',       'Vault folder, GitHub token'],
   ['mcp',       'MCP bridge',           'My Curator, default write domain'],
   ['health',    'Health & scan limits', 'Cost ceilings, candidate pairs'],
+  // v3.76.0: last, because it is the least often visited — a place you go
+  // to after a delete, not a setting. See views/trash-list.js.
+  ['trash',     'Trash',                'Deleted domains, projects, handoffs'],
 ];
 
 const SECTION_TITLES = Object.fromEntries(SETTINGS_SECTIONS.map(([id, label]) => [id, label]));
@@ -336,6 +347,7 @@ const SECTION_INFO = Object.freeze({
   mcp: 'settings.mcp',
   health: 'settings.health',
   storage: 'settings.storage',
+  trash: 'settings.trash',
 });
 
 // ── Provider display metadata — 3 of these actually run. The remaining one
@@ -1143,6 +1155,16 @@ function freshState() {
     // force rather than being replaced by an error.
     backgroundModeSaving: false,
     backgroundModeError: null,
+
+    // Trash (v3.76.0). `trash` is GET /api/trash verbatim (null = not read
+    // yet); `trashError` means the list could not be read. `trashAction` is
+    // the one entry being acted on — { kind, id, mode: 'restore'|'delete',
+    // confirmText, busy, error } — and `trashOutcome` the last result's
+    // sentence, which stays until dismissed: it names where a restore went.
+    trash: null,
+    trashError: null,
+    trashAction: null,
+    trashOutcome: null,
   };
 }
 
@@ -1452,6 +1474,7 @@ function sectionLoaderFor(section) {
   if (section === 'health') return state.aiHealth === null ? loadAiHealth : null;
   if (section === 'storage') return state.config === null ? loadConfig : null;
   if (section === 'general') return state.config === null ? loadConfig : null;
+  if (section === 'trash') return state.trash === null ? loadTrash : null;
   return null;
 }
 
@@ -1748,6 +1771,22 @@ async function loadAiHealth(token) {
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.aiHealthError = err.message || 'Could not load scan limits.';
+  }
+  if (isCurrentMount(token)) render(token);
+}
+
+/** GET /api/trash → state.trash. Never throws. */
+async function loadTrash(token) {
+  try {
+    const res = await fetch('/api/trash');
+    const data = await res.json();
+    if (!isCurrentMount(token)) return;
+    if (!res.ok || !data || !Array.isArray(data.entries)) throw new Error((data && data.error) || ('HTTP ' + res.status));
+    state.trash = data;
+    state.trashError = null;
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    state.trashError = err.message || 'Could not read the trash.';
   }
   if (isCurrentMount(token)) render(token);
 }
@@ -2133,6 +2172,7 @@ function renderMain(token, force) {
   // and a new free identifier inside a lifted body is a crash there.
   else if (state.section === 'mcp') body = renderMcp() + (state.mcp ? renderAcrossProjects() : '');
   else if (state.section === 'health') body = renderHealthLimits();
+  else if (state.section === 'trash') body = renderTrash();
   // The GitHub read-only token block (v3.65.2) is composed HERE, at the call
   // site, rather than inside renderStorage: scripts/test-next-settings-sections
   // lifts renderStorage alone into a sandbox, and a new free identifier inside
@@ -9945,6 +9985,153 @@ function renderHealthLimits() {
   return settingsBlock(null, 'health-limits', 'Semantic-duplicate scan limits', lede, body, null, '');
 }
 
+// ── Trash (v3.76.0) ───────────────────────────────────────────────────────
+//
+// ONE UNNUMBERED BLOCK: the list of what a delete moved into The Curator's
+// trash, newest first, with Restore and Delete forever on each row. The
+// words live in views/trash-list.js; see its header for what each row says.
+
+function trashEntryOf(kind, id) {
+  const list = state.trash && Array.isArray(state.trash.entries) ? state.trash.entries : [];
+  return list.find((e) => e.kind === kind && e.id === id) || null;
+}
+
+function renderTrash() {
+  const body = trashSectionHtml(
+    { data: state.trash, error: state.trashError, action: state.trashAction, outcome: state.trashOutcome },
+    {
+      nowMs: Date.now(),
+      trashIconHtml: icon('trash', 13),
+      loadingHtml: gatedLoader(loadGate, 'Loading…'),
+      writeBusy: (domain) => {
+        try { return getDomainWriteLabel(domain); } catch { return null; }
+      },
+    });
+  const lede = 'Deleted domains, projects and handoffs wait here until you restore them or delete them forever. '
+    + 'Nothing is emptied automatically.';
+  return settingsBlock(null, 'trash', 'In the trash', lede, body, null, '');
+}
+
+/**
+ * RESTORE one entry. One press, no confirmation: the server never
+ * overwrites, so the worst outcome is a refusal that says why. On success
+ * the list is re-read (the entry is gone from it) and the Sync badge is
+ * re-asked, since the domains folder just changed. Every other view reads
+ * its own data when it is next opened, so the restored domain, project or
+ * handoff is there on the next visit with nothing cached to invalidate.
+ */
+async function runTrashRestore(kind, id, token) {
+  const e = trashEntryOf(kind, id);
+  const plan = trashRestorePlan(e);
+  if (!e || !plan || (state.trashAction && state.trashAction.busy)) return;
+  const action = { kind, id, mode: 'restore', confirmText: '', busy: true, error: null };
+  state.trashAction = action;
+  state.trashOutcome = null;
+  render(token);
+  let data = null;
+  let error = null;
+  try {
+    const res = await fetch('/api/trash/' + encodeURIComponent(kind) + '/' + encodeURIComponent(id) + '/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: trashRestoreBody(plan),
+    });
+    try { data = await res.json(); } catch { /* non-JSON error page */ }
+    if (!res.ok || !data || data.ok !== true) error = (data && (data.error || data.message)) || ('HTTP ' + res.status);
+  } catch (err) {
+    error = err.message;
+  }
+  if (!isCurrentMount(token) || state.trashAction !== action) return;
+  action.busy = false;
+  if (error) {
+    action.error = String(error);
+    // The list may be stale (the name got taken, the parent went): re-read
+    // it so the row's own status line says so, and keep the reason above.
+    await loadTrash(token);
+    return;
+  }
+  state.trashAction = null;
+  state.trashOutcome = { text: trashRestoreOutcomeText(data) };
+  await loadTrash(token);
+  refreshSyncBadge().catch(() => {});
+}
+
+/** DELETE FOREVER one entry, with the typed word SENT as `{confirm}`. */
+async function runTrashDelete(token) {
+  const action = state.trashAction;
+  if (!action || action.mode !== 'delete' || action.busy) return;
+  const e = trashEntryOf(action.kind, action.id);
+  if (!e || !trashDeleteConfirmMatches(action, e)) return;
+  action.busy = true;
+  action.error = null;
+  render(token);
+  let data = null;
+  let error = null;
+  try {
+    const res = await fetch('/api/trash/' + encodeURIComponent(action.kind) + '/' + encodeURIComponent(action.id), {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: trashDeleteBody(action),
+    });
+    try { data = await res.json(); } catch { /* non-JSON error page */ }
+    if (!res.ok || !data || data.ok !== true) error = (data && (data.error || data.message)) || ('HTTP ' + res.status);
+  } catch (err) {
+    error = err.message;
+  }
+  if (!isCurrentMount(token) || state.trashAction !== action) return;
+  action.busy = false;
+  if (error) {
+    action.error = String(error);
+    render(token);
+    return;
+  }
+  state.trashAction = null;
+  state.trashOutcome = { text: trashDeleteOutcomeText(data) };
+  await loadTrash(token);
+}
+
+function wireTrashListeners() {
+  const token = myMountToken;
+  document.querySelectorAll('.trash-row').forEach((row) => {
+    const kind = row.getAttribute('data-trash-kind');
+    const id = row.getAttribute('data-trash-id');
+    const restore = row.querySelector('[data-trash-restore]');
+    if (restore) restore.addEventListener('click', () => {
+      runTrashRestore(kind, id, token).catch(reportAsyncActionFailure);
+    });
+    const del = row.querySelector('[data-trash-delete]');
+    if (del) del.addEventListener('click', () => {
+      if (state.trashAction && state.trashAction.busy) return;
+      state.trashAction = { kind, id, mode: 'delete', confirmText: '', busy: false, error: null };
+      render(token);
+      const input = document.getElementById('trash-del-input');
+      if (input && typeof input.focus === 'function') input.focus();
+    });
+  });
+  const input = document.getElementById('trash-del-input');
+  if (input) {
+    // A keystroke never re-renders (the input would lose focus); it updates
+    // the state and the button's `disabled`, through the ONE predicate.
+    input.addEventListener('input', (ev) => {
+      const a = state.trashAction;
+      if (!a) return;
+      a.confirmText = ev.target.value;
+      const go = document.getElementById('trash-del-go');
+      if (go) go.disabled = !!a.busy || !trashDeleteConfirmMatches(a, trashEntryOf(a.kind, a.id));
+    });
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); runTrashDelete(token).catch(reportAsyncActionFailure); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); state.trashAction = null; render(token); }
+    });
+  }
+  const go = document.getElementById('trash-del-go');
+  if (go) go.addEventListener('click', () => runTrashDelete(token).catch(reportAsyncActionFailure));
+  const no = document.getElementById('trash-del-no');
+  if (no) no.addEventListener('click', () => { state.trashAction = null; render(token); });
+  const okBtn = document.getElementById('trash-outcome-ok');
+  if (okBtn) okBtn.addEventListener('click', () => { state.trashOutcome = null; render(token); });
+}
+
 // ── Knowledge base ────────────────────────────────────────────────────────
 
 /**
@@ -10198,6 +10385,7 @@ function wireGlobalListeners() {
   else if (state.section === 'mcp') wireMcpListeners();
   else if (state.section === 'health') wireHealthListeners();
   else if (state.section === 'storage') wireStorageListeners();
+  else if (state.section === 'trash') wireTrashListeners();
 }
 
 function wireGeneralListeners() {

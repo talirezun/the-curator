@@ -210,7 +210,7 @@ Each project has its own standing brief and its own work-streams, so two builds 
 
 Projects are created, renamed, deleted and given a brief in the app, under Domains, in the Projects section of a domain's page. One project can be neither renamed nor deleted: the domain's own. Its folder is the domain's state root, so renaming it would sweep every other project in that domain into the new name and deleting it would take them all with it. Its row says so rather than offering a control whose only outcome is a refusal.
 
-Since v3.73.0, deleting a project moves its folder to The Curator's trash (`.curator-trash/projects/`), not erased — restore it by moving the folder back and renaming it to the project name.
+Since v3.73.0, deleting a project moves its folder to The Curator's trash (`.curator-trash/projects/`), not erased. Since v3.76.0 the owner restores a deleted project or handoff from **Settings → Trash** (Restore; never overwrites, offers `<name>-restored` when the name is taken) — moving the folder back by hand still works. Agents cannot restore or empty the trash; there is no tool for it.
 
 A project name is one path segment: lowercase letters, digits, dot, hyphen and underscore, at most 64 characters. A name that would make one folder mean two things is refused rather than resolved.
 

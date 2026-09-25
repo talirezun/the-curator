@@ -394,7 +394,7 @@ try {
     const out = V.wsDeleteOutcomeText({ scope: 'main', trashPath: '/t/alpha--alpha--main--x', machines: ['a', 'b'], restoreTo: 'state/', recreated: false }, 'main');
     eq('the outcome says what went, where, and how to restore it', out,
       'Deleted handoff “main” — 2 saved copies (a, b). It was moved to The Curator’s trash, at /t/alpha--alpha--main--x. '
-      + 'To restore it, move that folder back into state/ and rename it main.');
+      + 'To restore it, open Settings › Trash and press Restore — or move that folder back into state/ and rename it main.');
     ok('...and a save that landed during the move is SAID', /exists again holding only that save/.test(
       V.wsDeleteOutcomeText({ scope: 'main', trashPath: '/t', machines: ['a'], recreated: true }, 'main')));
   }

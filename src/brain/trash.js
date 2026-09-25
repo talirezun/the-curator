@@ -2,7 +2,9 @@
  * Recoverable delete (v3.73.0) — MOVE a folder into The Curator's trash
  * instead of `rm -rf`-ing it.
  *
- * Used by `deleteDomain` (files.js) and `deleteProject` (working-state.js).
+ * Used by `deleteDomain` (files.js), `deleteProject` and `deleteWorkStream`
+ * (working-state.js). Listing, restoring and permanently deleting an entry
+ * live in trash-items.js (v3.76.0, Settings › Trash).
  * The trash lives OUTSIDE the domains folder — see `getTrashDir()` in
  * paths.js for why that is load-bearing (Personal Sync's work-tree).
  *
@@ -21,7 +23,7 @@
  * failure direction is "nothing was deleted", never "half was".
  */
 
-import { rename as fsRename, cp, rm, mkdir, readdir } from 'fs/promises';
+import { rename as fsRename, cp, rm, mkdir, readdir, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { getTrashDir } from './paths.js';
@@ -70,10 +72,31 @@ export async function __moveDirectory(src, dest, opts = {}) {
 }
 
 /**
+ * The ORIGIN RECORD beside a trash entry (v3.76.0): `<trash>/<kind>/<id>.origin.json`.
+ *
+ * The folder name alone (`<domain>--<project>--<scope>--<stamp>`) cannot be
+ * split back into its parts when a domain or a scope name itself contains
+ * `--` — both are legal (a hand-made domain folder, a scope named
+ * `a--b`). The record says exactly where the folder came from, so Settings ›
+ * Trash can put it back. It sits BESIDE the folder, never inside it, so a
+ * restored folder is byte-identical to the one that was deleted.
+ *
+ * Best-effort: a record that cannot be written costs only the exactness of a
+ * later restore (trash-items.js falls back to reading the name), never the
+ * delete itself.
+ */
+export function originRecordPath(entryPath) {
+  return entryPath + '.origin.json';
+}
+
+/**
  * Move one folder into `<trash>/<kind>/<baseName>--<stamp>/`.
  * Returns the absolute path it now lives at.
+ *
+ * `origin` (optional) — `{ domain, project?, scope? }`, written as the origin
+ * record beside it (see originRecordPath).
  */
-export async function moveToTrash(src, kind, baseName) {
+export async function moveToTrash(src, kind, baseName, origin) {
   const trashRoot = path.resolve(getTrashDir());
   const from = path.resolve(src);
   // A trash INSIDE the folder being deleted would move a folder into itself
@@ -84,6 +107,17 @@ export async function moveToTrash(src, kind, baseName) {
   }
   const dest = uniqueTrashPath(kind, baseName);
   await __moveDirectory(from, dest);
+  if (origin && typeof origin === 'object') {
+    try {
+      await writeFile(originRecordPath(dest), JSON.stringify({
+        version: 1, kind,
+        domain: origin.domain ?? null,
+        project: origin.project ?? null,
+        scope: origin.scope ?? null,
+        deletedAt: new Date().toISOString(),
+      }, null, 2) + '\n', 'utf8');
+    } catch { /* best-effort — see originRecordPath */ }
+  }
   return dest;
 }
 

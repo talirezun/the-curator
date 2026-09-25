@@ -184,14 +184,17 @@ console.log('\n§4  THE SIDEBAR ORDER — deliberately pinned, and here is why')
 // capability with the rest of General, and the sidebar footer's "Updates"
 // button already lands on it. §5 pins that it is General's first block, so
 // the two halves of this decision cannot drift apart.
-const EXPECTED_ORDER = ['general', 'providers', 'storage', 'mcp', 'health'];
+// v3.76.0: Trash joins LAST — a place you go to after a delete, not a setting.
+const EXPECTED_ORDER = ['general', 'providers', 'storage', 'mcp', 'health', 'trash'];
 const actualOrder = SETTINGS_SECTIONS.map(([id]) => id);
 ok(JSON.stringify(actualOrder) === JSON.stringify(EXPECTED_ORDER),
   `the rail is ordered by how often a section is returned to: ${EXPECTED_ORDER.join(' -> ')} (got ${actualOrder.join(' -> ')})`);
 ok(actualOrder.indexOf('storage') < actualOrder.indexOf('mcp'),
   'Knowledge base is ABOVE the MCP bridge — "where does my wiki live" is asked far more often than a bridge that is set up once per client');
-ok(actualOrder.indexOf('health') === actualOrder.length - 1,
-  'Health & scan limits is last — cost ceilings are touched only when a scan refuses to run');
+ok(actualOrder.indexOf('health') === actualOrder.length - 2,
+  'Health & scan limits is the last SETTING — cost ceilings are touched only when a scan refuses to run');
+ok(actualOrder.indexOf('trash') === actualOrder.length - 1,
+  'Trash is last of all (v3.76.0) — visited after a delete, never to set anything');
 
 // EXECUTED, not scanned: the real renderSidebar, run against the real array,
 // must emit the rows in that order. renderSidebar is what a user sees; the

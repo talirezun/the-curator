@@ -2309,10 +2309,11 @@ brief, your other scopes, the Documents and the wiki stay as they are.
 When it is done, the card is replaced by a line saying what went and the exact folder it now lives
 in; the table, its counts and the project list refresh on their own.
 
-**To restore it:** open the folder the line names — `<domain>--<project>--<scope>--<time>` inside
-`.curator-trash/scopes/` — and move it back into `domains/<domain>/state/` (the domain's own
-project) or `domains/<domain>/state/<project>/` (a named one), renaming it to the scope's name.
-Nothing empties the trash automatically. With Personal Sync on, the delete still reaches GitHub on
+**To restore it:** open **Settings → [Trash](#trash)** and press **Restore** on its row (v3.76.0).
+If a handoff of that name has been saved since, the button offers `<name>-restored` instead — it
+never overwrites. By hand still works: move the folder the line names back into
+`domains/<domain>/state/` (the domain's own project) or `domains/<domain>/state/<project>/` (a named
+one), renaming it to the scope's name. Nothing empties the trash automatically. With Personal Sync on, the delete still reaches GitHub on
 your next Sync, and from there your other computers; the trash copy exists only on the computer
 where you deleted it.
 
@@ -3861,7 +3862,7 @@ exists, and creating one is a click away. Six controls:
 | **New project** | The **last row of the Projects group**, reading `+ New project` — press it and the create form opens **in place of that row, inside the group**, so you never lose sight of the projects you already have. Name it, and optionally write its **standing brief** in the editor that opens — seeded from the [project brief template](project-brief-template.md), so you are editing a skeleton rather than facing an empty box. The name follows the same rule as a work-stream name: lowercase letters, digits, dot, hyphen and underscore |
 | **Edit brief** | Opens the same editor on an existing project. This is the **one** part of agent memory the app writes; the handoff and the journal are still written only by an agent ([§13b](#what-it-does-not-do)) |
 | **Rename** | Renames the folder under `state/`. It is refused if a project of the new name already exists, if the new name is one a project may not have, and — see below — if the project you are renaming is the domain's own |
-| **Delete** | Removes the project's brief, handoffs and journals from the project list. It asks you to **type the project's name** to confirm. Since v3.73.0 the folder is **moved** to `.curator-trash/projects/`, not erased — see [Deleting a domain](#creating-renaming-deleting) above for how to restore it — and if you sync, GitHub carries the deletion too |
+| **Delete** | Removes the project's brief, handoffs and journals from the project list. It asks you to **type the project's name** to confirm. Since v3.73.0 the folder is **moved** to `.curator-trash/projects/`, not erased — restore it from **Settings → [Trash](#trash)** (v3.76.0) — and if you sync, GitHub carries the deletion too |
 | **Copy marker line** | Puts one line on your clipboard — always `domain/project`, `acme/acme` included for a domain's own project — to paste into a `.curator-project` file at the root of the repository this project is about. An agent that starts in that folder then knows which project it is in without asking ([§13b](#resuming--the-one-line-to-learn)) |
 | **Copy agent instructions** | Puts a short **paste-into-your-entry-file block** on your clipboard, with this project's names already filled in. It tells an agent to read your working state when a session opens and to save it as it goes. It exists because on some harnesses the continuity skill is installed and **never activates** — measured, an agent on Claude Code saved in **0 of 4** headless runs with the skill alone and **3 of 4** with this block in `CLAUDE.md` ([§13b](#making-sure-your-agent-actually-does-it)) |
 
@@ -3897,12 +3898,7 @@ the wiki, in the same commit, with no separate step.
 
 *Since v3.73.0,* a deleted domain is **moved to The Curator's trash, not erased**: a hidden `.curator-trash` folder in your Curator data folder. The message after the delete shows its full path.
 
-| What | Where it goes | How to restore |
-|---|---|---|
-| A deleted **domain** | `.curator-trash/domains/<folder name>--<date and time>/` | Move that folder back into your domains folder and rename it to the original folder name (drop the `--<date and time>` part); it reappears in **Domains** on the next refresh |
-| A deleted **project** | `.curator-trash/projects/<domain>--<project>--<date and time>/` | Move that folder back into `domains/<domain>/state/` and rename it to the project name |
-
-In Finder, press **⇧⌘.** to show hidden folders, or use **Go → Go to Folder…** with the path from the message. Nothing empties the trash automatically — delete a folder from it yourself when you are sure.
+**To bring it back, open Settings → [Trash](#trash) and press Restore** (v3.76.0) — for a deleted domain or a deleted project alike. It never overwrites: if the name is taken now, it offers to restore under `<name>-restored` instead. Moving the folder back by hand still works, and the [Trash](#trash) section says how. Nothing empties the trash automatically.
 
 If GitHub Sync is on, a delete still reaches GitHub on your next Sync, and from there your other computers. The trash copy exists only on the computer where you deleted it, and raw sources are never sent to GitHub, so for them the trash holds the only copy.
 
@@ -5466,6 +5462,7 @@ The full setup walkthrough, daily workflow, troubleshooting, and admin operation
 | **Knowledge base** | Where your `domains/` folder lives; your Obsidian vault folder |
 | **MCP bridge** | My Curator setup wizard, self-test, default write domain |
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans |
+| **Trash** | Deleted domains, projects and handoffs — **Restore** or **Delete forever** ([Trash](#trash), v3.76.0) |
 
 *Reordered in v3.49.0.* The list used to run General → Providers → MCP bridge → Health → Knowledge
 base, which was the order the sections were built in rather than the order anyone reads them. It is
@@ -5512,6 +5509,7 @@ every block is built the same way:
 | **Knowledge base** | Vault folder | No |
 | **MCP bridge** | ① Connect a client · ② Default domain for MCP writes | **Yes** — ② answers a question ① has to raise first |
 | **Health & scan limits** | Semantic-duplicate scan limits | No |
+| **Trash** | In the trash | No |
 
 ### The page is four numbered steps
 
@@ -6329,6 +6327,64 @@ adjustable — including the 20,000-page refusal — are in
 [ai-health.md](ai-health.md#scale-caps-baked-into-the-code).
 
 ---
+
+### Trash
+
+*New in v3.76.0.* Deleting a domain, a project or a handoff has not erased anything since v3.73.0 —
+the folder is moved to The Curator's trash. **Settings → Trash** is where you get it back.
+
+The section lists everything in the trash, newest first. Each row says:
+
+- **what it is** — a *domain*, a *project* (and which domain it was in) or a *handoff* (and which
+  domain and project);
+- **when it was deleted** — how long ago, and the exact time in UTC;
+- **where it goes back to** — for example `domains/research/state/website/`;
+- **what it held** — pages, conversations, raw sources and projects for a domain; the standing
+  brief and handoffs for a project; the saved copies for a handoff — and its size on disk.
+
+**Restore** puts it back where it came from, in one press. It never overwrites and never merges:
+
+| What you see on the row | Why | What you can do |
+|---|---|---|
+| **Restore** | The place it came from is free | Press it. The line above the list says where it went |
+| **Restore as `<name>-restored`** | Something with that name exists there now — you made a new one after the delete | Press it to bring this one back under the new name, beside the other. Nothing of the existing one is touched |
+| No Restore button, and a line saying the domain is gone | A project or handoff whose domain was deleted too | Restore the **domain** first; its row is in the same list. Then this one |
+| …saying the project is gone | A handoff whose named project was deleted | Restore the **project** first |
+| …saying where it came from cannot be read | A handoff or project deleted before v3.76.0 whose folder name can be read more than one way (a domain or handoff name that itself contains `--`) | Move it back by hand — see below |
+
+A domain restored under a new name is renamed properly — its conversations and page headers
+follow the new folder name, and its display name gains *(restored)* so you can tell the two apart.
+Restore is refused while something is writing to that domain (an ingest, a compile, an MCP write);
+wait for it to finish.
+
+After a restore, the domain is back in **Domains** and a project or handoff is back in **Context**
+the next time you open them.
+
+**The trash is on this computer only, and it never syncs.** It lives outside your domains folder on
+purpose, so GitHub Sync never sees it. A restored folder is back *inside* the domains folder, so
+with Personal Sync on, your next Sync carries it to GitHub and your other computers like any other
+change.
+
+**Delete forever** — the trash icon on a row — is the one thing in The Curator that erases data for
+good. A card opens saying how many files and how much it frees, and that it cannot be undone (it
+does not go to the Mac's Trash, and Sync never had a copy). Type the item's name exactly;
+**Delete forever** stays disabled until it matches. There is no "empty the whole trash" button, on
+purpose: the trash exists because one click once removed a whole domain. To clear everything at
+once, delete the folders in Finder.
+
+**Restoring by hand (the fallback).** The trash is a hidden folder, `.curator-trash`, in your
+Curator data folder — its full path is at the foot of the section. In Finder press **⇧⌘.** to show
+hidden folders, or use **Go → Go to Folder…**. Each entry is a folder named after what it was, with
+`--<date and time>` on the end:
+
+| Entry | Move it back into | Rename it to |
+|---|---|---|
+| `domains/<folder name>--<time>/` | your domains folder | the folder name |
+| `projects/<domain>--<project>--<time>/` | `domains/<domain>/state/` | the project name |
+| `scopes/<domain>--<project>--<handoff>--<time>/` | `domains/<domain>/state/` (when the project is the domain's own) or `domains/<domain>/state/<project>/` | the handoff name |
+
+A small `<entry>.origin.json` file beside a folder records where it came from; you can delete it
+along with the folder.
 
 ## 16b. Choosing your AI model
 

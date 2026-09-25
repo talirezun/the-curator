@@ -211,7 +211,7 @@ Delete a domain and everything in it (wiki pages, projects' working state, conve
 
 `confirm` must equal the domain's **slug** (its folder name) exactly — case-sensitive, untrimmed, a string. Not the display name: the slug is the folder that is removed, it is unique where display names need not be, and it carries no case/whitespace/Unicode ambiguity. The confirmation is enforced **at the route** (and again in `deleteDomain()` itself), not only in the view: a confirmation that lives only in a view is a confirmation any other client skips. A request without it changes nothing on disk.
 
-**Recoverable.** The folder is **moved**, never erased, to `<user data>/.curator-trash/domains/<slug>--<UTC stamp>/` (e.g. `health-and-wellness--2026-09-25T14-03-22Z`; a second delete in the same second gets `-2`). The trash lives outside the domains folder, so Personal Sync never sees it and `GET /api/domains` never lists it. Nothing empties it automatically. There is no Restore endpoint in this release — **to restore, move the folder back into the domains folder and rename it to the slug** (if that slug is taken meanwhile, rename the live one first, or restore under another name and use Rename). If the domains folder is on another volume, the move is a copy followed by removal of the original, only once the copy completed.
+**Recoverable.** The folder is **moved**, never erased, to `<user data>/.curator-trash/domains/<slug>--<UTC stamp>/` (e.g. `health-and-wellness--2026-09-25T14-03-22Z`; a second delete in the same second gets `-2`). The trash lives outside the domains folder, so Personal Sync never sees it and `GET /api/domains` never lists it. Nothing empties it automatically. **To restore, use [`POST /api/trash/domains/:id/restore`](#trash-apitrash) (v3.76.0; Settings › Trash)** — or, by hand, move the folder back into the domains folder and rename it to the slug. A restore never overwrites: if the slug is taken meanwhile it refuses with a suggested `<slug>-restored`, which the caller may pass back as `as`. If the domains folder is on another volume, the move is a copy followed by removal of the original, only once the copy completed.
 
 **Concurrency:** refuses with `409` (`conflict: "write_in_progress"`) while this domain has an active write in this process (per-domain `isDomainActive`), and with `409` (`conflict: "file_lock"`) while another process — the MCP — holds the domain's file lock. The lock taken for the move does not travel into the trash.
 
@@ -243,6 +243,100 @@ curl -X DELETE http://localhost:3333/api/domains/health-and-wellness \
 | `404` | Domain not found |
 | `409` | This domain has an active write (`write_in_progress`), or another process holds its file lock (`file_lock`) |
 | `500` | Filesystem error — the original folder is left where it was |
+
+---
+
+## Trash (`/api/trash`)
+
+**New in v3.76.0** — Settings › Trash. The three deletes — a domain (above), a project and a work-stream (under `/api/memory`) — MOVE
+the folder to `<user data>/.curator-trash/{domains,projects,scopes}/<name>--<UTC stamp>/`; these
+routes list it, put one entry back, or erase one entry for good. Source: `src/routes/trash.js` over
+`src/brain/trash-items.js`.
+
+`:kind` is `domains`, `projects` or `scopes`. `:id` is the entry's folder name in the trash, exactly
+as `GET /api/trash` returned it; the store matches it against the real listing (real directories
+only, never a symlink) before it builds any path, so a traversal id is a `404`.
+
+Since v3.76.0 each delete also writes an **origin record** beside the folder,
+`<id>.origin.json` — `{ version: 1, kind, domain, project, scope, deletedAt }` — because a name like
+`a--b--c--<stamp>` cannot be split back unambiguously when a domain or scope name itself contains
+`--`. The record is believed only when it agrees with the folder name. An entry without one (deleted
+before v3.76.0) is parsed from its name, and one that can be read more than one way — with no single
+reading naming a live domain — is listed with `status: "unknown-origin"` and cannot be restored here.
+
+**The trash is never synced** (it is outside the domains folder). A restore puts the folder back
+inside it, and the next Sync carries it like any other change.
+
+### GET /api/trash
+
+```json
+{
+  "ok": true,
+  "trashDir": "/path/to/user-data/.curator-trash",
+  "syncConfigured": true,
+  "entries": [
+    {
+      "kind": "scopes", "noun": "handoff",
+      "id": "research--website--main--2026-09-25T14-03-22Z",
+      "deletedAt": "2026-09-25T14:03:22.000Z",
+      "name": "main", "domain": "research", "project": "website", "scope": "main",
+      "isDefaultProject": false, "originFrom": "record", "displayName": null,
+      "bytes": 18234, "files": 6, "approximate": false,
+      "contains": { "handoffs": 2, "machines": 2 },
+      "restoreTo": "domains/research/state/website/main/",
+      "status": "ready", "message": null, "suggestedName": null
+    }
+  ]
+}
+```
+
+Newest first. `contains` is per kind — a domain: `pages`, `conversations`, `rawSources`, `projects`,
+`handoffs`; a project: `hasBrief`, `scopes`, `handoffs`; a scope: `machines`, `handoffs`. The walk
+behind `bytes`/`files` is capped (50,000 entries); `approximate: true` says it hit the cap.
+
+`status` is what a restore would do now: `ready`; `exists` (the name is taken — `suggestedName` is
+the first free `<name>-restored[-n]`); `no-parent` (the domain, the named project, or the domains
+folder itself is gone — `message` says which to restore first); `readonly` (the domain is a Shared
+Brain mirror); `unknown-origin`.
+
+### POST /api/trash/:kind/:id/restore
+
+Body: `{}` or `{ "as": "<new name>" }`. Moves the entry back to where it came from — never
+overwriting, never merging. Without `as`, it restores under its own name; `as` is the explicit
+"restore as `<name>-restored`" alternative and is validated like any new name (a domain `as` may not
+start with `shared-`). A domain restored under a new name is renamed through `renameDomain`'s
+same-slug path (its conversations' `domain` field and its headers follow) and its display name gains
+" (restored)".
+
+A project or scope restore takes the domain's cross-process file lock (the one the deletes take).
+The route refuses with `409` (`conflict: "write_in_progress"`) while the target domain has a write
+in flight in this process, or an update is running, and registers the restore as a write while it
+runs.
+
+```json
+{ "ok": true, "restored": true, "kind": "scopes", "id": "…", "name": "main",
+  "domain": "research", "project": "website", "scope": "main",
+  "restoredTo": "domains/research/state/website/main/", "renamed": false, "syncConfigured": true }
+```
+
+| Status | `reason` | When |
+|--------|----------|------|
+| `400` | `invalid_kind` · `invalid_name` · `unsafe_path` | Unknown kind; an unusable `as` |
+| `403` | `readonly` | The domain is a read-only Shared Brain mirror |
+| `404` | `not_found` | No such entry in that kind's folder |
+| `409` | `exists` | The destination exists now — `suggestedName` is included. Nothing on either side was touched |
+| `409` | `no_parent` | The domain / project / domains folder is gone — restore that first |
+| `409` | `unknown_origin` | The entry's origin cannot be read — restore it by hand |
+| `409` | `locked` · `write_in_progress` | The domain's file lock is held, or a write is in flight |
+
+### DELETE /api/trash/:kind/:id
+
+**Permanent** — the only erase in the app. Body: `{ "confirm": "<name>" }`, where `<name>` is the
+entry's own name (the domain slug, project or scope name; for an `unknown-origin` entry, its full
+folder name) — exact, case-sensitive, untrimmed, checked at the route and in the store. Removes the
+folder and its origin record: `{ ok, deleted: true, kind, id, name, files, bytes }`. A missing or
+wrong `confirm` is `400 confirm_required`, with `expected` naming the word. There is deliberately no
+"empty the whole trash" endpoint.
 
 ---
 
@@ -3807,7 +3901,8 @@ Those are frequently the only record of decisions nobody wrote down anywhere els
 **wiki is not touched**. There is no in-app undo, but since v3.73.0 the project's folder is **moved**,
 not erased, to `<user data>/.curator-trash/projects/<domain>--<project>--<UTC stamp>/`, and the
 success response carries it as `trashPath`: `{ ok, domain, project, deleted: true, trashPath }`. To
-restore, move that folder back to `domains/<domain>/state/` and rename it to the project name. With
+restore, use [`POST /api/trash/projects/:id/restore`](#trash-apitrash) (v3.76.0), or move that folder
+back to `domains/<domain>/state/` and rename it to the project name. With
 Personal Sync configured the deletion still reaches GitHub on the next Sync.
 
 **Body: `{ confirm }`, and it must equal the project name exactly** — case-sensitive, untrimmed.
@@ -3864,8 +3959,9 @@ single work-stream could only be removed by hand.
 
 **Recoverable.** The folder is **moved**, never erased, to
 `<user data>/.curator-trash/scopes/<domain>--<project>--<scope>--<UTC stamp>/` (for the domain's own
-project, `<project>` is the domain name). To restore, move that folder back into the `restoreTo`
-folder (`state/` or `state/<project>/`) and rename it to the scope name. With Personal Sync
+project, `<project>` is the domain name). To restore, use
+[`POST /api/trash/scopes/:id/restore`](#trash-apitrash) (v3.76.0), or move that folder back into the
+`restoreTo` folder (`state/` or `state/<project>/`) and rename it to the scope name. With Personal Sync
 configured the deletion still reaches GitHub on the next Sync, and from there your other computers.
 
 **Body: `{ confirm }`, and it must equal the scope's folder name exactly** — case-sensitive,
