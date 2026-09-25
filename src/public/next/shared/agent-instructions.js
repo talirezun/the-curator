@@ -43,22 +43,42 @@
 //
 //   text                               read  saved  tool scope  harness set
 //   v3.75 text (control, same day)     7/8   7/8    0 of 7      0 of 7
-//   THIS text                          6/8   7/8    2 of 7      7 of 7
+//   draft ("Never leave `scope` out")  6/8   7/8    2 of 7      7 of 7
 //
-// Two drafts were measured on the way and are NOT what ships: the same
-// paragraph 1 with a paragraph 2 that no longer said to call
+// Two further drafts were measured on the way and are NOT what ships: the
+// same paragraph 1 with a paragraph 2 that no longer said to call
 // get_project_context first saved in 2/8 (the model loaded the tool and then
 // ran the tests instead of calling it) — so paragraph 2 keeps an imperative
 // "make it your first action"; and a draft that put the scope beside the
 // project, the way the old text did, saved in 6/8 with 1 of 6 in the tool
-// scope. READ THIS HONESTLY: on Haiku 4.5 the save discipline holds, but the
-// per-tool SCOPE is followed in a minority of saves — the model sets
-// `harness` to "claude-code" and leaves `scope` at its default "main". The
-// live two-tool evidence is the maintainer's, on other models, and is not
-// this measurement. Same limits as 2026-09-10: N is a shape, not a rate; one
-// task, one model, headless only. The file fed to the runs hashes (for
-// exp/widget, whole composition) to 313bbe41…; scripts/test-agent-
-// instructions.js pins it.
+// scope. On Haiku 4.5 the draft's per-tool SCOPE was followed in a minority
+// of saves — the model set `harness` to "claude-code" and left `scope` at
+// its default "main".
+//
+// ── v3.76.0, same day: the STORE changed, so the text changed once more ────
+//
+// From that result, save_working_state given no `scope` but a `harness` now
+// saves under the normalised harness id (claude-code, antigravity; unknown →
+// slugified; no harness → main); an explicit scope always wins; the reply
+// reports `scope_chosen_by`. That made the draft's "Never leave `scope` out
+// (it defaults to the shared "main")" FALSE, so it became "Pass `scope`
+// explicitly every time" — the only change. The shipped text was re-run on
+// the integrated v3.76.0 code (2026-09-25, with the v3.76.0 default scope),
+// same protocol, N=8 per model; "scope" is the final save's scope on disk:
+//
+//   model              read  saved  before stop  scope                         harness      cost
+//   haiku-4-5          5/8   5/8    5/8          claude-code 3 (1 named,       claude-code  $0.49
+//                                                2 default), main 2 (named)    5 of 5
+//   claude-sonnet-5    8/8   8/8    8/8          claude-code 8 (all named)     claude-code  $0.98
+//                                                                              8 of 8
+//
+// READ THIS HONESTLY: on Sonnet 5 the block does everything it asks. On
+// Haiku 4.5 both the save habit and the scope are weaker, and two saves NAMED
+// "main" (the scope of the handoff just read) — an explicit scope wins, so
+// the default cannot catch that. The maintainer's live two-tool evidence is
+// separate from this measurement. N is a shape, not a rate; one task;
+// headless only. The file fed to the final runs hashes (exp/widget, whole
+// composition) to a139e04b…; scripts/test-agent-instructions.js pins it.
 //
 // ── WHY THE TEXT IS FROZEN ─────────────────────────────────────────────────
 //
@@ -92,7 +112,8 @@
 // unchanged, measured paragraph.
 export const HEADING = '## Working state';
 
-// VERBATIM, placeholders included (v3.76.0 text, measured 2026-09-25).
+// VERBATIM, placeholders included (v3.76.0 text, measured 2026-09-25 on the
+// integrated code, with the v3.76.0 default scope).
 // `{{DOMAIN_PROJECT}}` stands where the measured artefact read `exp/widget`;
 // `{{PROJECT}}` stands where it read `widget`, at both of its occurrences.
 // Nothing else differs from the file pasted into the 2026-09-25 runs,
@@ -105,8 +126,8 @@ export const TEMPLATE = [
   'handoff before acting. SAVE with `save_working_state` under project "{{PROJECT}}" with the',
   '`scope` argument set to your tool\'s name — "claude-code" if you are Claude Code,',
   '"antigravity" if you are Antigravity, "opencode" if you are opencode, otherwise your',
-  'tool\'s own name, lowercase and hyphenated. Never leave `scope` out (it defaults to the',
-  'shared "main") and never save under another tool\'s scope. Save after every material',
+  'tool\'s own name, lowercase and hyphenated. Pass `scope` explicitly every time, and never',
+  'save under another tool\'s scope. Save after every material',
   'decision, at least every ten tool calls, and ALWAYS before you stop; a save overwrites,',
   'so send the complete state each time. Pass `harness` as that same name and `model` as',
   'your exact model id if you know it (omit it otherwise — never search files for it), and',

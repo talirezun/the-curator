@@ -2082,10 +2082,11 @@ clash, and is not flagged. So give each tool its own scope from the start. **Sin
 instructions asks for exactly that:** as copied, it tells each tool to save under a scope named for
 itself — `"claude-code"` for Claude Code, `"antigravity"` for Antigravity, `"opencode"` for
 opencode, otherwise the tool's own name — and to pass that name as `harness` too. (Until v3.75.0 it
-told every tool to save under `main`, which *was* this collision.) **Check it took:** measured on a
-small model (Claude Code with Haiku 4.5, 2026-09-25), the agent saved in 7 of 8 runs but put the
-save in its own scope in only 2 of those 7 — it set `harness` and left the scope at `main`. So
-after each tool's first save, look at **Handoffs**: one row per tool is right; one `main` row
+told every tool to save under `main`, which *was* this collision.) And since v3.76.0 a save that names no scope but
+names its tool lands in that tool's scope, not `main`. **Check it took:** measured on 2026-09-25
+(Claude Code), Sonnet 5 saved in its own scope in 8 of 8 runs, but the small Haiku 4.5 did so in
+only 3 of its 5 saves — the other 2 named `main` outright. So after each tool's first save, look at
+**Handoffs**: one row per tool is right; one `main` row
 written by both means add the brief line above. Three things make separate scopes hold in practice:
 
 - **Working in parallel, each agent reads its own scope, not `latest`.** `latest` opens whichever
@@ -2158,7 +2159,8 @@ overwrites, so send the complete state each time.
   one tool it is one stream under that tool's name. For a brief-set pattern (one scope per session,
   per work-stream), edit the scope wording in *your pasted copy* to defer to the brief, as above —
   the app's own copy stays frozen, because it is the text that was measured (2026-09-25, Claude
-  Code with Haiku 4.5: saved in 7 of 8 runs, in its own scope in 2 of those 7 — see
+  Code: Sonnet 5 saved in 8 of 8 runs, all in its own scope; Haiku 4.5 in 5 of 8, 3 of them in its
+  own scope — see
   [§13b](#making-sure-your-agent-actually-does-it)). An edited pointer, this repository's own
   `CLAUDE.md` included, is **unmeasured**. The block's later
   paragraphs (Documents, read-first) still apply; paste them below the pointer unchanged.
@@ -4933,10 +4935,19 @@ harness loads every session, **3 of 4**. On **opencode**, which loads the skill 
 `main`, so two tools on one computer overwrote each other's handoff. It now tells each tool to save
 under a scope **named for itself** — `claude-code`, `antigravity`, `opencode`, or its own name — and
 to record that name as `harness`. Re-measured on 2026-09-25 (Claude Code, headless, Haiku 4.5, the
-whole copied text in `CLAUDE.md`, 8 runs each): the new text saved in **7 of 8** runs, the same as
-the old one did that day. But only **2 of those 7** saves landed in the tool's own scope — the rest
-set `harness` correctly and still saved under `main`. So the save habit carries over; the per-tool
-scope is asked for, not guaranteed, at least on a small model. If two tools share a project, check
+whole copied text in `CLAUDE.md`, 8 runs each): a draft of the new text saved in **7 of 8** runs,
+the same as the old one did that day. But only **2 of those 7** saves landed in the tool's own scope
+— the rest set `harness` correctly and still saved under `main`. So The Curator changed too: since
+v3.76.0 a save that names no scope but names its tool lands in **that tool's scope**, and the
+shipped text (one sentence changed to match) was measured again the same day, with that default:
+
+| Model | Read state | Saved | Saved before stopping | Where the save landed | Cost, 8 runs |
+|---|---|---|---|---|---|
+| Sonnet 5 | 8 of 8 | **8 of 8** | 8 of 8 | `claude-code` 8 of 8 | $0.98 |
+| Haiku 4.5 | 5 of 8 | **5 of 8** | 5 of 8 | `claude-code` 3, `main` 2 (named outright) | $0.49 |
+
+So on a capable model the block does all of it; on a small one the save habit and the scope are
+both weaker, and a scope the agent *names* — even `main` — always wins. If two tools share a project, check
 **Handoffs** after their first saves and add the one-line scope rule to the brief
 ([Several agent tools on one computer](#several-agent-tools-on-one-computer)) if they landed in one
 row.

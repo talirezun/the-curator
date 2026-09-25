@@ -2370,9 +2370,9 @@ landed on disk in scope `claude-code`:
 | Text in `CLAUDE.md` | Read state | Runs that saved ≥1 | Saved before stopping | Save in the tool's own scope | `harness` set |
 |---|---|---|---|---|---|
 | v3.75.0 block (`"main"`) — same-day control | 7 of 8 | **7 of 8** | 7 of 8 | 0 of 7 | 0 of 7 |
-| **v3.76.0 block (per-tool scope) — what ships** | 6 of 8 | **7 of 8** | 7 of 8 | **2 of 7** | 7 of 7 |
+| v3.76.0 draft block (per-tool scope, *"Never leave `scope` out"*), store default `main` | 6 of 8 | **7 of 8** | 7 of 8 | **2 of 7** | 7 of 7 |
 
-Read it honestly. **The save discipline held** — 7 of 8 either way, every run's `npm test` passed.
+Read that honestly. **The save discipline held** — 7 of 8 either way, every run's `npm test` passed.
 **The per-tool scope did not, on this model:** in 5 of the 7 saving runs Haiku 4.5 set
 `harness: "claude-code"` as asked and then left `scope` out or set it to `"main"`, so the save
 still landed in the shared stream. The block is necessary for the scope to be right and, on a
@@ -2382,9 +2382,29 @@ the way and do not ship: the same first paragraph with a second paragraph that n
 *call it first* saved in only **2 of 8** (the model loaded the tool, then ran the tests instead of
 calling it) — which is why the second paragraph keeps *"make it your first action of the session"*;
 and a draft that set the scope beside the project, the way the old block did, saved in 6 of 8 with
-**1 of 6** in the tool's scope. The same runs on a stronger model could not be made: the
-API account ran out of credit mid-campaign. Same limits as before: N is a shape, not a rate; one
-task, one model, headless only.
+**1 of 6** in the tool's scope.
+
+**Then the store changed, and the shipped text was measured again the same day — with the v3.76.0
+default scope.** From that result, `save_working_state` given **no** `scope` but a `harness` now
+saves under the normalised tool id (`claude-code`, `antigravity`; an unknown tool's name
+slugified; no `harness` → `main`), an explicit `scope` always wins, and the reply says which with
+`scope_chosen_by`. That made the draft's *"Never leave `scope` out (it defaults to the shared
+"main")"* false, so that sentence became *"Pass `scope` explicitly every time"* — the only change —
+and the shipped text was re-run on the integrated v3.76.0 code, same protocol, on two models, N = 8
+each (2026-09-25, with the v3.76.0 default scope):
+
+| Model | Read state | Runs that saved ≥1 | Saved before stopping | Final save's scope | `harness` spelling | Cost (8 runs) |
+|---|---|---|---|---|---|---|
+| `claude-haiku-4-5-20251001` | 5 of 8 | **5 of 8** | 5 of 8 | **3 × `claude-code`** (1 named, 2 by the default), **2 × `main`** (named explicitly) | `claude-code` 5 of 5 | $0.49 |
+| `claude-sonnet-5` | 8 of 8 | **8 of 8** | 8 of 8 | **8 × `claude-code`**, all named explicitly | `claude-code` 8 of 8 | $0.98 |
+
+What it shows: **on Sonnet 5 the block does everything it asks** — every run read first, saved
+before stopping, named its own scope and spelled `harness` the same way. **On Haiku 4.5 it is
+weaker on both counts:** 5 of 8 saved (7 of 8 earlier the same day — at N = 8 that is within what
+one model varies by, not a measured drop), and 2 of the 5 saves *named* `main` — the scope of the
+handoff they had just read — which an explicit scope is allowed to do, so the default could not
+catch them. The two saves that left `scope` out landed in `claude-code`, which is what the store
+change is for. Same limits as before: N is a shape, not a rate; one task; headless only.
 
 #### The block
 
@@ -2404,8 +2424,8 @@ This repository's working state lives in The Curator (project `exp/widget`, see
 handoff before acting. SAVE with `save_working_state` under project "widget" with the
 `scope` argument set to your tool's name — "claude-code" if you are Claude Code,
 "antigravity" if you are Antigravity, "opencode" if you are opencode, otherwise your
-tool's own name, lowercase and hyphenated. Never leave `scope` out (it defaults to the
-shared "main") and never save under another tool's scope. Save after every material
+tool's own name, lowercase and hyphenated. Pass `scope` explicitly every time, and never
+save under another tool's scope. Save after every material
 decision, at least every ten tool calls, and ALWAYS before you stop; a save overwrites,
 so send the complete state each time. Pass `harness` as that same name and `model` as
 your exact model id if you know it (omit it otherwise — never search files for it), and
@@ -2414,7 +2434,7 @@ record the `seen` map as `foundations_read`.
 
 #### What the Copy control adds beside it
 
-The measured block above is **frozen** — 995 bytes for `exp/widget`, sha256 `42f60960…` —
+The measured block above is **frozen** — 972 bytes for `exp/widget`, sha256 `6582395a…` —
 because it is the thing that was measured and re-wording it would throw the measurement away. It
 changed once, in v3.76.0, and was re-measured in the same change (sha `85dc8f97…`, 501 bytes, is
 the v3.52.0 text it replaced). Every
@@ -2474,9 +2494,10 @@ block's job is only to make sure the agent reaches for any of it.
   of its own skills beside the two installed, so `curator-continuity` was one description among 21.
   A stock install with only these two may behave like opencode. That was not measured.
 - **opencode needs no block**, and the table says so rather than recommending it everywhere.
-- **The per-tool scope is followed in a minority of saves on Haiku 4.5** (2 of 7, 2026-09-25). If
-  two tools share a project, check the **Handoffs** table after their first saves: two rows named
-  for the two tools is the goal, one `main` row written by both is the collision.
+- **On a small model the per-tool scope is not reliable** (Haiku 4.5, 2026-09-25, with the v3.76.0
+  default scope: 3 of 5 saves in `claude-code`, 2 named `main`; Sonnet 5: 8 of 8). If two tools
+  share a project, check the **Handoffs** table after their first saves: two rows named for the two
+  tools is the goal, one `main` row written by both is the collision.
 
 ---
 

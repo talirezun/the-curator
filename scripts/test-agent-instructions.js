@@ -104,8 +104,8 @@ const MEASURED_EXP_WIDGET =
   'handoff before acting. SAVE with `save_working_state` under project "widget" with the\n' +
   '`scope` argument set to your tool\'s name — "claude-code" if you are Claude Code,\n' +
   '"antigravity" if you are Antigravity, "opencode" if you are opencode, otherwise your\n' +
-  'tool\'s own name, lowercase and hyphenated. Never leave `scope` out (it defaults to the\n' +
-  'shared "main") and never save under another tool\'s scope. Save after every material\n' +
+  'tool\'s own name, lowercase and hyphenated. Pass `scope` explicitly every time, and never\n' +
+  'save under another tool\'s scope. Save after every material\n' +
   'decision, at least every ten tool calls, and ALWAYS before you stop; a save overwrites,\n' +
   'so send the complete state each time. Pass `harness` as that same name and `model` as\n' +
   'your exact model id if you know it (omit it otherwise — never search files for it), and\n' +
@@ -124,20 +124,28 @@ const MEASURED_EXP_WIDGET =
 // it was re-measured the same day (Claude Code 2.1.281 headless, Haiku 4.5,
 // N=8: 7 of 8 runs saved, 2 of those 7 in the tool-named scope; the old text,
 // same day, 7 of 8 and 0 of 7) and docs/working-state.md carries the table.
+//
+// SECOND RECORDED RE-PIN (v3.76.0, same day): the store began choosing the
+// tool's own scope when `scope` is omitted and `harness` is given, which made
+// the measured draft's "Never leave `scope` out (it defaults to the shared
+// "main")" false. It became "Pass `scope` explicitly every time" (995 -> 972
+// bytes, sha 42f60960… -> 6582395a…), and the shipped text was re-measured on
+// the integrated code: Haiku 4.5 saved 5/8 (3 in claude-code, 2 named main),
+// Sonnet 5 saved 8/8 (all in claude-code).
 const MEASURED_SHA256 =
-  '42f609607a7047a8469d7ae3e4bdb76a26672f795309e125706ef61d24ca6d21';
+  '6582395a04e9dbd6bd6795c3085f4009b43e59cfdf6e6c2e5f0913624e977422';
 
 {
   const out = composeAgentInstructions({ domain: 'exp', project: 'widget' });
   eq('the composed block IS the artefact that was measured', out, MEASURED_EXP_WIDGET);
   eq('...and hashes to the measured file\'s sha256',
     createHash('sha256').update(out, 'utf8').digest('hex'), MEASURED_SHA256);
-  eq('...995 bytes, including the single trailing newline', Buffer.byteLength(out, 'utf8'), 995);
+  eq('...972 bytes, including the single trailing newline', Buffer.byteLength(out, 'utf8'), 972);
   // The WHOLE Copy output for exp/widget -- the exact CLAUDE.md the
   // 2026-09-25 runs read. Pinned so that a change to ANY of the four
   // paragraphs is visibly a change to the measured artefact.
   const WHOLE_MEASURED_SHA256 =
-    '313bbe41a62931bb3065d05a08e34d00e255ba8f127c4eedcec0cbe2f11dcd0f';
+    'a139e04b447d64b9dd8a8c219a385c57a144e89f07c502d66ff1d69b9e093510';
   eq('...and the whole four-paragraph Copy output is the file the 2026-09-25 runs read',
     createHash('sha256').update(composeAgentInstructionsFull({ domain: 'exp', project: 'widget' }), 'utf8')
       .digest('hex'), WHOLE_MEASURED_SHA256);
@@ -161,8 +169,8 @@ const MEASURED_SHA256 =
     '"antigravity" if you are Antigravity',
     '"opencode" if you are opencode',
     'lowercase and hyphenated',
-    'Never leave `scope` out',
-    'never save under another tool\'s scope',
+    'Pass `scope` explicitly every time',
+    'never\nsave under another tool\'s scope',
     'Pass `harness` as that same name',
     'never search files for it',
     'record the `seen` map as `foundations_read`',
@@ -836,20 +844,34 @@ const RM = read('README.md');
   // is exactly how a measured caveat quietly becomes a claim.
   for (const row of [
     '| v3.75.0 block (`"main"`) — same-day control | 7 of 8 | **7 of 8** | 7 of 8 | 0 of 7 | 0 of 7 |',
-    '| **v3.76.0 block (per-tool scope) — what ships** | 6 of 8 | **7 of 8** | 7 of 8 | **2 of 7** | 7 of 7 |',
+    '| v3.76.0 draft block (per-tool scope, *"Never leave `scope` out"*), store default `main` | 6 of 8 | **7 of 8** | 7 of 8 | **2 of 7** | 7 of 7 |',
   ]) {
     ok('the 2026-09-25 re-measure row survives: ' + row, WS.includes(row));
   }
   ok('...with its date, harness build and model on the record',
     WS.includes('2026-09-25') && WS.includes('CLI 2.1.281') && WS.includes('claude-haiku-4-5-20251001'));
+  for (const row of [
+    '| `claude-haiku-4-5-20251001` | 5 of 8 | **5 of 8** | 5 of 8 | **3 × `claude-code`** (1 named, 2 by the default), **2 × `main`** (named explicitly) | `claude-code` 5 of 5 | $0.49 |',
+    '| `claude-sonnet-5` | 8 of 8 | **8 of 8** | 8 of 8 | **8 × `claude-code`**, all named explicitly | `claude-code` 8 of 8 | $0.98 |',
+  ]) {
+    ok('the integrated-code re-measure row survives: ' + row, WS.includes(row));
+  }
+  ok('...labelled with the default scope it ran against', WS.includes('(2026-09-25, with the v3.76.0 default scope)'));
+  ok('...and the false "defaults to the shared main" sentence is gone from the fenced block and the text',
+    !WS.includes('Never leave `scope` out (it defaults to the\n') && !TEMPLATE.includes('defaults to the'));
   ok('...and the scope caveat is a stated limit, not a footnote',
-    WS.includes('**The per-tool scope is followed in a minority of saves on Haiku 4.5** (2 of 7, 2026-09-25)'));
+    WS.includes('**On a small model the per-tool scope is not reliable** (Haiku 4.5, 2026-09-25, with the v3.76.0'));
   ok('...and the retired "0/4 vs 3/4 in an interactive session" misstatement is gone',
     !WS.includes('3/4 in an interactive session'));
   {
     const LLM = read('llm-docs/curator-agent-memory.md');
-    ok('llm-docs carries the same re-measure (new block row)',
-      LLM.includes('| New block (a scope named for each tool), what ships | 6 of 8 | 7 of 8 | 2 of 7 | 7 of 7 |'));
+    ok('llm-docs carries the draft row as history',
+      LLM.includes('| Draft of the new block ("Never leave `scope` out"), store default `main` | 6 of 8 | 7 of 8 | 2 of 7 | 7 of 7 |'));
+    ok('...and the integrated-code rows, per model',
+      LLM.includes('| claude-haiku-4-5-20251001 | 5 of 8 | 5 of 8 | 5 of 8 | 3 in `claude-code` (1 named, 2 by the default), 2 in `main` (named explicitly) | `claude-code`, 5 of 5 | $0.49 |')
+      && LLM.includes('| claude-sonnet-5 | 8 of 8 | 8 of 8 | 8 of 8 | 8 in `claude-code`, all named explicitly | `claude-code`, 8 of 8 | $0.98 |'));
+    ok('...and no longer carries the false "defaults to the shared main" sentence as current text',
+      !LLM.includes('Never leave `scope` out (it defaults to the\n'));
     ok('...and the control row',
       LLM.includes('| Old block (every tool under `main`), same day | 7 of 8 | 7 of 8 | 0 of 7 | 0 of 7 |'));
     ok('...and reproduces the whole composed block for <domain>/<project>, byte for byte',
@@ -859,7 +881,9 @@ const RM = read('README.md');
       && !LLM.includes('tells every tool to save under `main`, which is exactly this collision'));
   }
   ok('user-guide §13b states the re-measure with its unflattering number',
-    UG.includes('the new text saved in **7 of 8** runs') && UG.includes('only **2 of those 7** saves landed in the tool\'s own scope'));
+    UG.includes('a draft of the new text saved in **7 of 8** runs') && UG.includes('only **2 of those 7** saves landed in the tool\'s own scope')
+      && UG.includes('| Sonnet 5 | 8 of 8 | **8 of 8** | 8 of 8 | `claude-code` 8 of 8 | $0.98 |')
+      && UG.includes('| Haiku 4.5 | 5 of 8 | **5 of 8** | 5 of 8 | `claude-code` 3, `main` 2 (named outright) | $0.49 |'));
   ok('...and no longer says the copied block saves under `main`',
     !UG.includes('says `main` as\npasted') && !UG.includes('tells every tool to save under `main`, which is exactly')
       && !UG.includes('scope `latest` and saves under `main`'));
@@ -954,7 +978,7 @@ section('S7 -- v3.59.0: the foundations addendum, pinned the same way TEMPLATE i
 // silent reword of model-read instruction text is exactly the defect class
 // S1's own header names. And because a SECOND frozen constant is only worth
 // having if the FIRST one is still frozen, this section re-asserts the
-// original 995-byte / sha256 42f60960... facts S1 already pins -- proof that
+// original 972-byte / sha256 6582395a... facts S1 already pins -- proof that
 // adding this constant did not, itself, disturb the one it sits beside.
 
 {
@@ -1018,10 +1042,10 @@ section('S7 -- v3.59.0: the foundations addendum, pinned the same way TEMPLATE i
   // The pin this whole section exists to protect: S1's original facts about
   // TEMPLATE itself must still hold, proving this addition did not touch it.
   const ORIGINAL_SHA256 =
-    '42f609607a7047a8469d7ae3e4bdb76a26672f795309e125706ef61d24ca6d21';
-  eq('the ORIGINAL measured block is still exactly 995 bytes',
-    Buffer.byteLength(original, 'utf8'), 995);
-  eq('...and still hashes to 42f60960... -- the pin still bites',
+    '6582395a04e9dbd6bd6795c3085f4009b43e59cfdf6e6c2e5f0913624e977422';
+  eq('the ORIGINAL measured block is still exactly 972 bytes',
+    Buffer.byteLength(original, 'utf8'), 972);
+  eq('...and still hashes to 6582395a... -- the pin still bites',
     createHash('sha256').update(original, 'utf8').digest('hex'), ORIGINAL_SHA256);
 }
 
@@ -1091,15 +1115,15 @@ section('S8 -- v3.61.0: the seed addendum, a THIRD paragraph pinned the same way
   ok('...and TEMPLATE_SEED does not itself end with a second trailing blank line',
     !TEMPLATE_SEED.endsWith('\n\n'));
 
-  // The pins this whole section exists to protect: S1's original 995-byte/
+  // The pins this whole section exists to protect: S1's original 972-byte/
   // sha256 facts about TEMPLATE, and S7's facts about TEMPLATE_FOUNDATIONS,
   // must both still hold -- proof that adding a third constant touched
   // neither of the first two.
   const ORIGINAL_SHA256 =
-    '42f609607a7047a8469d7ae3e4bdb76a26672f795309e125706ef61d24ca6d21';
-  eq('S1\'s pin still bites: the ORIGINAL measured block is still exactly 995 bytes',
-    Buffer.byteLength(original, 'utf8'), 995);
-  eq('...and still hashes to 42f60960...',
+    '6582395a04e9dbd6bd6795c3085f4009b43e59cfdf6e6c2e5f0913624e977422';
+  eq('S1\'s pin still bites: the ORIGINAL measured block is still exactly 972 bytes',
+    Buffer.byteLength(original, 'utf8'), 972);
+  eq('...and still hashes to 6582395a...',
     createHash('sha256').update(original, 'utf8').digest('hex'), ORIGINAL_SHA256);
   const FOUNDATIONS_SHA256 =
     '98588ba51c95c4cfcbb83e048af34d056c197e0ad70d5e83de7cdcf36ba1a0be';
@@ -1236,14 +1260,14 @@ section('S9 -- v3.61.0: the drafting request -- composed, not appended, never du
   // a fourth constant touched none of them.
   const original = composeAgentInstructions({ domain: 'exp', project: 'widget' });
   const ORIGINAL_SHA256 =
-    '42f609607a7047a8469d7ae3e4bdb76a26672f795309e125706ef61d24ca6d21';
+    '6582395a04e9dbd6bd6795c3085f4009b43e59cfdf6e6c2e5f0913624e977422';
   const FOUNDATIONS_SHA256 =
     '98588ba51c95c4cfcbb83e048af34d056c197e0ad70d5e83de7cdcf36ba1a0be';
   const SEED_SHA256 =
     '6c82b6351783f335f9a6edf5d5e9e8e2aeed5977a273f2efdd221c899bdcbcf6';
-  eq('S1\'s pin still bites: the ORIGINAL measured block is still exactly 995 bytes',
-    Buffer.byteLength(original, 'utf8'), 995);
-  eq('...and still hashes to 42f60960...',
+  eq('S1\'s pin still bites: the ORIGINAL measured block is still exactly 972 bytes',
+    Buffer.byteLength(original, 'utf8'), 972);
+  eq('...and still hashes to 6582395a...',
     createHash('sha256').update(original, 'utf8').digest('hex'), ORIGINAL_SHA256);
   eq('S7\'s pin still bites: TEMPLATE_FOUNDATIONS still hashes to 98588ba5...',
     createHash('sha256').update(TEMPLATE_FOUNDATIONS, 'utf8').digest('hex'), FOUNDATIONS_SHA256);
@@ -1347,10 +1371,10 @@ section('S10 -- v3.62.0: the read-first addendum, a FOURTH paragraph pinned the 
   // The pins this section exists to protect: all three earlier constants must
   // still hold, proving a fourth constant disturbed none of them.
   const ORIGINAL_SHA256 =
-    '42f609607a7047a8469d7ae3e4bdb76a26672f795309e125706ef61d24ca6d21';
-  eq('S1\'s pin still bites: the ORIGINAL measured block is still exactly 995 bytes',
-    Buffer.byteLength(original, 'utf8'), 995);
-  eq('...and still hashes to 42f60960...',
+    '6582395a04e9dbd6bd6795c3085f4009b43e59cfdf6e6c2e5f0913624e977422';
+  eq('S1\'s pin still bites: the ORIGINAL measured block is still exactly 972 bytes',
+    Buffer.byteLength(original, 'utf8'), 972);
+  eq('...and still hashes to 6582395a...',
     createHash('sha256').update(original, 'utf8').digest('hex'), ORIGINAL_SHA256);
   eq('S7\'s pin still bites: TEMPLATE_FOUNDATIONS still hashes to 98588ba5...',
     createHash('sha256').update(TEMPLATE_FOUNDATIONS, 'utf8').digest('hex'),
