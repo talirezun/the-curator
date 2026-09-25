@@ -1532,6 +1532,8 @@ function mountSharedSection(el, o) { calls.mountShared.push({ el, domain: o.doma
 // v3.65.3: the identity/page-count reader ④ is handed. A recorder here; the
 // REAL one is driven on its own in S5c.
 function describeDomainForShared(slug) { return { index: -1, pages: null, slug }; }
+// v3.72.1: the pull hook passed to ④; its behaviour is test-domains-true-numbers.js §2b.
+function onSharedActionDone() {}
 function unmountSharedSection() { calls.unmountShared++; }
 function onHostedBusyChange() {}
 function onSharedLensChange() {}

@@ -222,6 +222,30 @@ section('2. F1 — the write-gate watcher');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('2b. A Shared Brain pull reloads the page\'s figures (onActionDone)');
+{
+  const refreshed = [];
+  let reloaded = 0;
+  const state = { domains: [{ slug: 'a', pageCount: 1 }, { slug: 'shared-x', pageCount: 5 }] };
+  let serve = { domains: [{ slug: 'a', pageCount: 1 }, { slug: 'shared-x', pageCount: 9 }] };
+  const { onSharedActionDone } = sandbox(['statsRowChanged', 'staleHealthSlugs', 'onSharedActionDone'], {
+    state, myMountToken: 1, isCurrentMount: () => true, reportAsyncActionFailure: (e) => { throw e; },
+    fetchJSON: async () => serve,
+    refreshDomainFigures: async (slug, t, o) => { refreshed.push(slug + ':' + !!(o && o.rescan)); },
+    reloadAfterLifecycleChange: async () => { reloaded++; },
+  });
+  onSharedActionDone({ action: 'pull', connId: 'c1' });
+  await tick(); await tick();
+  ok(refreshed.join() === 'shared-x:true' && reloaded === 0,
+    '2b.1 a pull refreshes the mirror whose pages changed (and only it)', refreshed.join());
+  serve = { domains: [...serve.domains, { slug: 'shared-y', pageCount: 3 }] };
+  onSharedActionDone({ action: 'pull', connId: 'c2' });
+  await tick(); await tick();
+  ok(reloaded === 1, '2b.2 a pull that CREATED a mirror reloads the whole list');
+  ok(/onActionDone: onSharedActionDone/.test(lift('mountHostedSections')), '2b.3 the hook is passed to the hosted Shared Brain section');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('3. F1 — the Delete confirm quotes the count read when it opened');
 {
   let resolveFresh;

@@ -1380,6 +1380,11 @@ function mountHostedSections(token) {
       onBusyChange: onHostedBusyChange,
       onLensChange: onSharedLensChange,
       describeDomain: describeDomainForShared,
+      // v3.72.1: after a Shared Brain PULL the section calls this, and the
+      // page re-reads every domain's figures (a pull writes the mirror, which
+      // is usually NOT the domain on screen, and can create it). An older
+      // section ignores the unknown option — nothing to guard beyond that.
+      onActionDone: onSharedActionDone,
     });
     mountedSharedEl = shHost;
     mountedSharedDomain = slug;
@@ -2740,6 +2745,28 @@ async function refreshDomainFigures(slug, token, opts) {
     if (rescanHealth && changed) rescan(slug);
   }
   return fresh;
+}
+
+/**
+ * The hosted Shared Brain section's `onActionDone({action, connId})` (v3.72.1).
+ * A pull writes a `shared-*` mirror the section knows and this page does not
+ * map from `connId`, so every row is re-read in ONE bulk call: a new or
+ * vanished domain reloads the whole list (reloadAfterLifecycleChange); an
+ * existing one is patched through the same one-row path the gate uses.
+ */
+function onSharedActionDone(ev) {
+  if (!ev || ev.action !== 'pull') return;
+  const token = myMountToken;
+  fetchJSON('/api/domains/stats').then((data) => {
+    if (!isCurrentMount(token)) return;
+    const rows = Array.isArray(data && data.domains) ? data.domains : [];
+    const have = state.domains.map((d) => d && d.slug).sort().join('\n');
+    const now = rows.map((d) => d && d.slug).sort().join('\n');
+    if (have !== now) return reloadAfterLifecycleChange(token);
+    for (const slug of staleHealthSlugs(state.domains, rows)) {
+      refreshDomainFigures(slug, token, { rescan: true }).catch(reportAsyncActionFailure);
+    }
+  }).catch(reportAsyncActionFailure);
 }
 
 /** The write-gate watcher. Called on EVERY gate change (any domain). */
