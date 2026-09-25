@@ -388,6 +388,10 @@ function makeThreadRenderer(state) {
     // message carries no copyable content anyway (copyControlHtml returns ''
     // for it) — test-next-chat-copy.js drives the real pair.
     'copyControlHtml', 'refreshCompileCaption',
+    // v3.72.0 (P3, M4): the answer is rendered by shared/answer.js and its
+    // sources kept per message for the one delegated click. Stubbed like
+    // renderMarkdown above — this suite's subject is the FAILURE markup.
+    'answerSources', 'renderAnswer', 'sourcesHtml',
     src,
   )(
     state, doc, () => true,
@@ -399,6 +403,7 @@ function makeThreadRenderer(state) {
     () => '', () => '', () => 'entities', () => '', () => '',
     () => {}, () => {}, (ms) => `${Math.round(ms / 1000)}s`, true,
     () => '', () => {},
+    new Map(), (c) => ({ html: `<p>${c}</p>`, sources: [] }), () => '',
   );
   run();
   return el.innerHTML;

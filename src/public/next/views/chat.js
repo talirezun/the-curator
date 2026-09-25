@@ -41,8 +41,12 @@ import { renderViewHeader, renderReadoutGroup } from '../shared/text.js';
 // chips, the PROJECT pin, Length and Model were unexplained. `CHAT_INFO` is
 // the framing top ⓘ (second brain → Shared Brain → agent memory, "you are
 // here" on second-brain) every other top ⓘ in the app now opens with.
-import { explainerHtml, explainerMark } from '../shared/explainer.js';
+import { explainerHtml } from '../shared/explainer.js';
 import { renderMarkdown } from '../shared/markdown.js';
+// v3.72.0 (P2 + P3): the answer renderer — numbered inline citation markers
+// and ONE Sources list under the answer, in the page-type channel. Replaces
+// the raw `[source:]` path tags AND the title-chip row that repeated them.
+import { renderAnswer, sourcesHtml, sourceByNumber } from '../shared/answer.js';
 // The ONE honest USD renderer for /next. Imported, never re-implemented: a
 // local `'$' + n.toFixed(4)` renders any charge below $0.00005 as the string
 // `$0.0000`, i.e. a paid answer labelled free — and a one-word chat turn on the
@@ -100,6 +104,12 @@ import { formatAge, freshnessTier } from '../shared/age.js';
 // same colour as that domain's row on the Domains rail, its project rows on
 // the Context rail, and its destination row in Ingest.
 import { identityDotClass } from '../shared/sidebar.js';
+// v3.72.0: the conversation pane is its own DOM-free module (rows through the
+// ONE sidebar component, the Select mode, live groups) — see its header.
+import {
+  conversationPaneHtml, wireConversationPane, convKey,
+} from './chat-list.js';
+import { subscribeAgeTicker, tickAgesNow, ageWordsFor } from '../shared/age-ticker.js';
 // THE DEPTH BAR (design rule 6, v3.66.0). The project picker's footer is one
 // of the four hosts that sit OUTSIDE a monitor, so it imports the bar from its
 // public address rather than from shared/monitor.js. See
@@ -123,82 +133,12 @@ function folderOfPath(p) {
   return (seg === 'entities' || seg === 'concepts' || seg === 'summaries') ? seg : null;
 }
 
-/* ── THE CITATION DOT'S COLOUR IS A CLASS, NOT AN INLINE STYLE ────────────
-   This was `style="background:var(--type-entity)"`. An inline style is
-   unreachable by every stylesheet and by every [data-theme] block — which is
-   precisely the defect views/domains.css records for its own six row dots,
-   where the DARK values were painted in LIGHT too because nothing could
-   override them. views/chat.css's light block darkens these three dots to
-   clear WCAG 1.4.11's 3:1 floor, and it can only do that if the colour is
-   carried by `.chat-chip-*` rather than stamped on the element. */
-function typeChipClass(folder) {
-  if (folder === 'entities') return 'chat-chip-entity';
-  if (folder === 'concepts') return 'chat-chip-concept';
-  if (folder === 'summaries') return 'chat-chip-summary';
-  return 'chat-chip-plain';
-}
-
-/* ── THE CHIP SHOWS THE PAGE'S NAME, THE PATH STAYS ON THE ELEMENT ────────
-   A chip read `entities/tali-rezun.md`. It now reads `Dr Tali Rezun`, and the
-   path it opens is unchanged: `data-cite` still carries it (that is what the
-   click handler and `GET /api/wiki/:domain/page` need) and so does the `title`
-   attribute (the hover tooltip — chat.css's truncation rule says so in as many
-   words). The LABEL is the only thing that changed.
-
-   THE TITLE COMES FROM THE SERVER, and it must, because the only way to know a
-   page is called `IEA` and not `International Energy Agency` is to read its
-   first `# Heading` — src/brain/chat.js's `buildCitationTitles` does that from
-   the wiki it has already loaded, and persists the map on the message so a
-   REOPENED thread labels the same chip the same way.
-
-   THIS FALLBACK IS NOT A NEW BRANCH — IT IS THE SHIPPED ONE. Every chat answer
-   written before this change has no `citationTitles`, and a chip whose page was
-   deleted or whose path the model invented has no entry in it. Both land here,
-   on the humanised basename. It is deliberately character-for-character the
-   last-resort branch of wiki-read.js's `deriveTitle` (and of `titleFromSlug`
-   beside it), so a page with no `# Heading` gets the SAME label whether the
-   server resolved it or the client fell back — the two paths are
-   indistinguishable on screen, which is the property that makes an old thread
-   look untouched rather than degraded. */
-function titleFromSlug(slug) {
-  return slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
-
-function citationLabel(citePath, titles) {
-  const p = String(citePath || '');
-  // Object.hasOwn, not truthiness: a citation path of `constructor` or
-  // `toString` would otherwise read a FUNCTION off the prototype chain. The
-  // typeof check below would catch it, but the own-property check is the rule
-  // this codebase already applies to every map keyed by untrusted strings
-  // (see normalizeResponseStyle) and it states the intent rather than relying
-  // on a second guard to clean up after it.
-  if (titles && typeof titles === 'object' && Object.hasOwn(titles, p)) {
-    const t = titles[p];
-    if (typeof t === 'string' && t.trim()) return t.trim();
-  }
-  const slug = p.split('/').pop().replace(/\.md$/i, '');
-  return slug ? titleFromSlug(slug) : p;
-}
-
-function isSameLocalDay(isoA, isoB) {
-  const a = new Date(isoA), b = new Date(isoB);
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-
-function timeAgo(iso) {
-  if (!iso) return '';
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '';
-  const diffMs = Date.now() - then;
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return mins + 'm ago';
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return hrs + 'h ago';
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return days + 'd ago';
-  return new Date(iso).toLocaleDateString();
-}
+/* v3.72.0: `typeChipClass`, `titleFromSlug` and `citationLabel` are gone with
+   the `.chat-cite-row` title chips they labelled. An answer's sources are now
+   shared/answer.js's ONE Sources list (P2), whose chip is shared/page-chip.css
+   and whose title falls back exactly as `citationLabel` did. `isSameLocalDay`
+   and the dead `timeAgo` went with the old TODAY/EARLIER grouping — the list's
+   groups and ages are views/chat-list.js's, and tick (shared/age-ticker.js). */
 
 // NIT-10 fix: indexed by server-supplied provider strings (state.modelProvider
 // / state.activeProvider come from the /api/config/api-keys response) — same
@@ -213,14 +153,11 @@ function timeAgo(iso) {
 // in the frame, so no `{ here }` override is needed here.
 const CHAT_INFO = explainerHtml('chat.page');
 
-// ── THE PROJECT ⓘ (v3.71.1) ─────────────────────────────────────────────
-// Was a hand-rolled button (first a typed "ⓘ" character, then a fourth local
-// copy of the glyph) with its own panel prose. It is now the shared mark —
-// `explainerMark('chat-project-info', 'chat.project')` — so the button, the
-// glyph, the panel and its behaviour come from shared/text.js like every
-// other ⓘ in the app. The ids are unchanged. Composed once: the copy is
-// static; the STATE lines it used to append are in the picker's footer.
-const CHAT_PROJECT_INFO = explainerMark('chat-project-info', 'chat.project');
+// ── THE PROJECT ⓘ IS RETIRED (v3.72.0) ─────────────────────────────────
+// It explained one control inside a sticky bar and, opened, took the thread's
+// height (DESIGN.md §0.4). Its three points now live in `chat.page`, the ONE
+// page ⓘ the view header carries; the project pill on the composer is named
+// in words and needs no mark of its own.
 
 const PROVIDER_LABELS = Object.assign(Object.create(null), {
   gemini: 'Gemini',
@@ -368,7 +305,21 @@ const state = {
   booted: false,
   domains: [],           // [{slug, displayName, pageCount, pageCounts, conversationCount}]
   activeDomain: null,
-  conversations: [],      // sidebar list for activeDomain: [{id, title, createdAt, messageCount, matchField?}]
+  // v3.72.0 (M1): ONE list across every non-mirror domain, from GET /api/chat
+  // — or one domain's, from GET /api/chat/:domain, while the list's domain
+  // filter is set. Each row: {id, title, createdAt, messageCount, domain,
+  // updatedAt?, lastProject?, matchField?}; `domain` is the storage path's.
+  conversations: [],
+  // The list's domain filter: null = all domains, else one slug.
+  domainFilter: null,
+  // The server's TRUE count for the last list answer (GET /api/chat's
+  // `total`), which can exceed the rows fetched; and the domains whose
+  // conversations folder could not be read, named rather than swallowed.
+  listTotal: 0,
+  listUnreadable: [],
+  // Select mode (M3): checkboxes and the contextual bar are shown only while
+  // this is on; the per-row trash is hidden while it is.
+  selectMode: false,
   // What the search box currently HOLDS. It is NOT a client-side filter:
   // `conversations` is already whatever the server returned for the last
   // COMPLETED search, so this is read only to (a) repopulate the input's
@@ -391,7 +342,7 @@ const state = {
   // survive into a list that no longer shows those rows, and "Delete
   // selected" would then destroy conversations the user cannot see. A Set,
   // so re-ticking a row cannot queue the same id twice.
-  selectedConvIds: new Set(),
+  selectedConvKeys: new Set(),   // convKey(domain, id) — ids are unique only per domain
   // Outcome of the last bulk delete: {text, tone}. Rendered in the sidebar
   // because a partial failure has nowhere else to be seen — the list simply
   // comes back with some rows still in it, which on its own is
@@ -442,6 +393,10 @@ const state = {
   projectRows: [],
   projectsFor: null,
   projectsState: 'idle',
+  // When `projectRows` were fetched (Date.now()). Each row's `ageSeconds`
+  // was measured by the server AT that instant, so a row's age now is
+  // ageSeconds + (now − projectsFetchedAt)/1000 (truth audit F3).
+  projectsFetchedAt: 0,
   // The pinned project's slug for the ACTIVE domain, or null. Restored from
   // localStorage on mount and RECONCILED against `projectRows` the moment
   // they arrive — a project that has been deleted must not keep being sent.
@@ -591,6 +546,8 @@ const COMPILE_CONFIRM_RUNLINE_ID = 'chat-compile-confirm-runline';
 let compileRunSeq = 0;
 
 let escHandler = null;
+// The age ticker's unsubscribe, held for the teardown (v3.72.0).
+let stopAgeTicker = null;
 
 // `myMountToken` still exists so a handler invoked SYNCHRONOUSLY by a real
 // user event (a click, a keydown — no `await` between the event firing and
@@ -813,7 +770,17 @@ registerView('chat', {
     };
     document.addEventListener('keydown', escHandler);
 
+    // ── EVERY AGE ON THIS SCREEN TICKS (v3.72.0, truth audit F3 + F7) ──────
+    // One shared clock (shared/age-ticker.js) rewrites the TEXT of every
+    // `[data-age-at]` once a second and never renders this view. The one
+    // repaint it may ask for is the list's own light one, when the LOCAL DAY
+    // changes, so a conversation from before midnight leaves "Today".
+    stopAgeTicker = subscribeAgeTicker({
+      onDayChange: () => { if (isCurrentMount(mountToken)) renderSidebarConversationsOnly(mountToken); },
+    });
+
     return () => {
+      if (stopAgeTicker) { stopAgeTicker(); stopAgeTicker = null; }
       // Timer hygiene (load-bearing): an armed delay timer that survives
       // this teardown would paint a loader into whatever view comes next.
       if (bootGate) { bootGate.cancel(); bootGate = null; }
@@ -947,7 +914,7 @@ async function boot(token, scopeReq) {
     try { localStorage.setItem(LS_DOMAIN, decision.activeDomain); } catch { /* ignore */ }
   }
 
-  await loadDomainConversations(state.activeDomain, token, { autoSelectMostRecent: true });
+  await loadConversationList(token, { autoSelectMostRecent: true });
 
   // ── A PROJECT HANDED OVER WITH THE SCOPE (v3.64.0) ──────────────────────
   //
@@ -983,8 +950,8 @@ async function boot(token, scopeReq) {
   }
 
   // NOT awaited, and not part of the boot gate: the pill is a retrieval
-  // WIDENING, so the thread must never wait on it. `patchProjectGroup`
-  // repaints the group alone when the answer lands, and every failure —
+  // WIDENING, so the thread must never wait on it. `patchProjectPicker`
+  // repaints the pill alone when the answer lands, and every failure —
   // including this promise rejecting — leaves the pill in a stated state
   // rather than the view in a broken one.
   loadProjectsForDomain(state.activeDomain, token).catch(() => {});
@@ -1106,45 +1073,68 @@ function applyApiKeys(data) {
   if (restored) state.modelProvider = restored.provider;
 }
 
+// How many rows one list answer asks for. GET /api/chat clamps to 500; the
+// server's `total` is the true count, and the pane says "Showing the newest N
+// of M" whenever it is larger (views/chat-list.js truncationHintHtml).
+const LIST_LIMIT = 500;
+
+/**
+ * The URL for the list, from the list's two inputs: the domain filter and the
+ * search text. PURE, so the suite asserts both routes without a network.
+ *
+ * All domains → GET /api/chat (every non-mirror domain, `total`, `unreadable`).
+ * One domain  → GET /api/chat/:domain, the route that has always listed one
+ *               domain's conversations in full (no page cap).
+ */
+function conversationListUrl(domainFilter, q) {
+  const query = typeof q === 'string' ? q.trim() : '';
+  if (typeof domainFilter === 'string' && domainFilter) {
+    return '/api/chat/' + encodeURIComponent(domainFilter) + (query ? '?q=' + encodeURIComponent(query) : '');
+  }
+  return '/api/chat?limit=' + LIST_LIMIT + (query ? '&q=' + encodeURIComponent(query) : '');
+}
+
 // `mountToken` here is ALWAYS a value captured by the caller before its own
 // first await (see the H1 doc comment above `myMountToken`) — never the
 // live module variable re-read late. `convToken` is the pre-existing,
-// unrelated SAME-mount guard (two quick domain switches racing each other);
+// unrelated SAME-mount guard (two quick list loads racing each other);
 // both are needed and check different things.
-// `opts.q` — the search string to ask the SERVER to filter by. Absent or
-// empty means no filter, i.e. byte-identical to the pre-search request.
-// Callers that refresh the list for some other reason (a send, a delete)
-// pass state.searchQuery so a refresh cannot silently drop an active
-// filter while the search box still shows its text.
 //
-// `opts.sidebarOnly` — repaint only the conversation pane and leave the
-// selection AND the open thread exactly as they are. This is the search
-// path: a user typing in the search box has not asked to close the
-// conversation they are reading, and a full renderShell() would rebuild the
-// search input itself and drop their focus and caret mid-word.
-async function loadDomainConversations(domain, mountToken, opts = {}) {
+// `opts.q` — the search string to ask the SERVER to filter by. Callers that
+// refresh the list for some other reason (a send, a delete) pass
+// state.searchQuery so a refresh cannot silently drop an active filter while
+// the search box still shows its text.
+//
+// `opts.sidebarOnly` — repaint only the conversation pane and leave the open
+// thread exactly as it is. A user typing in the filter has not asked to close
+// the conversation they are reading.
+//
+// `opts.autoSelectMostRecent` — the COLD BOOT only: open the newest
+// conversation IN THE ACTIVE DOMAIN (the domain boot resolved from a handoff
+// or the saved choice), never a newer one elsewhere — a handoff that said
+// "ask Articles" must land in Articles.
+async function loadConversationList(mountToken, opts = {}) {
   const convToken = ++state.convToken;
-  const q = typeof opts.q === 'string' ? opts.q.trim() : '';
-  const url = '/api/chat/' + encodeURIComponent(domain) + (q ? '?q=' + encodeURIComponent(q) : '');
+  const url = conversationListUrl(state.domainFilter, opts.q);
   try {
     const res = await fetch(url);
     const data = await res.json();
-    if (convToken !== state.convToken) return; // a newer domain switch superseded this
+    if (convToken !== state.convToken) return; // a newer list load superseded this
     if (!isCurrentMount(mountToken)) return; // H1 fix — this mount may already be gone
     if (!res.ok) throw new Error(data.error || 'Could not load conversations.');
     state.conversations = Array.isArray(data.conversations) ? data.conversations : [];
+    state.listTotal = Number.isInteger(data.total) ? data.total : state.conversations.length;
+    state.listUnreadable = Array.isArray(data.unreadable) ? data.unreadable : [];
     state.loadError = null;
   } catch (err) {
     if (convToken !== state.convToken) return;
     if (!isCurrentMount(mountToken)) return;
     state.conversations = [];
-    state.loadError = 'Could not load conversations for this domain (' + err.message + ').';
+    state.listTotal = 0;
+    state.listUnreadable = [];
+    state.loadError = 'Could not load conversations (' + err.message + ').';
   }
 
-  // Every path that replaces state.conversations passes through here, which
-  // is what makes "selection only ever names a visible row" true rather than
-  // remembered — including the error path above, where the list becomes
-  // empty and the selection must therefore become empty too.
   pruneSelection();
 
   if (opts.sidebarOnly) {
@@ -1152,8 +1142,11 @@ async function loadDomainConversations(domain, mountToken, opts = {}) {
     return;
   }
 
-  if (opts.autoSelectMostRecent && state.conversations.length > 0) {
-    await selectConversation(state.conversations[0].id, mountToken, { skipSidebarRender: true });
+  const first = opts.autoSelectMostRecent
+    ? state.conversations.find((c) => (c.domain || state.activeDomain) === state.activeDomain)
+    : null;
+  if (first) {
+    await selectConversation(first.id, mountToken, { skipSidebarRender: true, domain: state.activeDomain });
   } else {
     state.activeConversationId = null;
     state.thread = [];
@@ -1161,32 +1154,23 @@ async function loadDomainConversations(domain, mountToken, opts = {}) {
   renderShell(mountToken);
 }
 
-// See the invariant on state.selectedConvIds. Deliberately a prune rather
-// than a clear: a list refresh that leaves the ticked rows on screen (a
-// send, an unrelated delete) has no business discarding the user's ticks.
+// See the invariant on state.selectedConvKeys. A prune rather than a clear:
+// a search that still shows a ticked row keeps it ticked.
 function pruneSelection() {
-  if (state.selectedConvIds.size === 0) return;
-  const live = new Set(state.conversations.map(c => c.id));
-  for (const id of [...state.selectedConvIds]) {
-    if (!live.has(id)) state.selectedConvIds.delete(id);
+  if (state.selectedConvKeys.size === 0) return;
+  const live = new Set(state.conversations.map(c => convKey(c.domain || state.activeDomain, c.id)));
+  for (const k of [...state.selectedConvKeys]) {
+    if (!live.has(k)) state.selectedConvKeys.delete(k);
   }
 }
 
-// How long after the last keystroke the search refetch fires. Long enough
-// that typing a word is one request rather than one per letter; short
-// enough to feel immediate. Measured server-side at 500 conversations /
-// 11.8 MB: the whole request is ~37 ms with no query and ~42 ms on a
-// full-scan miss, so the debounce is here to spare requests, not because
-// the query is expensive.
+// Debounce for the server-side search. The route does a full-scan read of
+// every conversation file, so the debounce is here to spare requests.
 const SEARCH_DEBOUNCE_MS = 220;
 
 // How many words make a filter string read as a sentence rather than a needle.
 // See looksLikeAnAsk() for why this is a word count and not a question-word
-// list, and why 4 rather than 3: "large PDF ingest" is an entirely plausible
-// three-word needle, so 3 would put the offer under ordinary filtering. Four
-// is where a typed string stops looking like something you would scan a list
-// for. A miss here costs nothing — the filter still works exactly as before,
-// and the offer is simply not made.
+// list, and why 4 rather than 3.
 const FILTER_ASK_MIN_WORDS = 4;
 
 function cancelSearchTimer() {
@@ -1199,26 +1183,53 @@ function scheduleConversationSearch(mountToken) {
   state.searchTimer = setTimeout(() => {
     state.searchTimer = null;
     if (!isCurrentMount(mountToken)) return;
-    loadDomainConversations(state.activeDomain, mountToken, {
+    loadConversationList(mountToken, {
       q: state.searchQuery,
       sidebarOnly: true,
     }).catch(reportAsyncActionFailure);
   }, SEARCH_DEBOUNCE_MS);
 }
 
+/**
+ * Make `slug` the active domain WITHOUT opening or closing anything. The one
+ * place the domain changes, used by opening a row from another domain and by
+ * the composer's domain picker. Projects belong to a DOMAIN, so the old
+ * domain's rows, pin and last reading are about something just left; the new
+ * domain's pin is restored inside loadProjectsForDomain from the per-domain
+ * map.
+ */
+function adoptActiveDomain(slug, token) {
+  if (!slug || slug === state.activeDomain) return false;
+  state.activeDomain = slug;
+  try { localStorage.setItem(LS_DOMAIN, slug); } catch { /* ignore */ }
+  state.projectRows = [];
+  state.projectsFor = null;
+  state.projectsState = 'idle';
+  state.projectsFetchedAt = 0;
+  state.activeProject = null;
+  state.activeProjectScope = null;
+  state.projectLastUsed = null;
+  state.projectKnowledge = null;
+  loadProjectsForDomain(slug, token).catch(() => {});
+  return true;
+}
+
+/**
+ * Open one conversation. `opts.domain` is the conversation's own domain (a
+ * row's `domain`, from its storage path); opening a row from another domain
+ * makes that domain active first — the conversation's container, which the
+ * composer then shows fixed (M2).
+ */
 async function selectConversation(id, mountToken, opts = {}) {
-  // H1 fix: guards against an out-of-order resolution WITHIN the same mount
-  // (click conversation A, then quickly click B — A's fetch can resolve
-  // after B's and must not paint over it) — the same shape as convToken
-  // above, distinct from the cross-mount isCurrentMount(mountToken) check.
+  // H1 fix: guards against an out-of-order resolution WITHIN the same mount.
   const selectToken = ++state.selectToken;
-  // The notice describes a turn in the thread being navigated AWAY from; it has
-  // no meaning in the one being opened. Same reason switchDomain clears
-  // bulkNotice. (Also covers the re-mount path, where boot() reaches here.)
+  // The notice describes a turn in the thread being navigated AWAY from.
   state.cancelNotice = null;
+  const domain = typeof opts.domain === 'string' && opts.domain ? opts.domain : state.activeDomain;
+  adoptActiveDomain(domain, mountToken);
   state.activeConversationId = id;
   try {
-    const res = await fetch('/api/chat/' + encodeURIComponent(state.activeDomain) + '/' + encodeURIComponent(id));
+    const res = await fetch('/api/chat/' + encodeURIComponent(domain) + '/' + encodeURIComponent(id));
     const data = await res.json();
     if (selectToken !== state.selectToken) return;
     if (!isCurrentMount(mountToken)) return;
@@ -1230,68 +1241,35 @@ async function selectConversation(id, mountToken, opts = {}) {
     state.thread = [{ role: 'assistant', content: '', error: 'Could not load this conversation (' + err.message + ').' }];
   }
   // ── THE RE-ATTACH POINT (v3.64.1) ───────────────────────────────────────
-  // THE one place in this file where a conversation becomes the conversation
-  // on screen — every path that opens a thread (boot's auto-select, a sidebar
-  // click, the post-delete re-select) funnels through here — which is why the
-  // adoption lives here rather than in `onEnter`. At `onEnter` the answer to
-  // "which conversation is open?" is not yet known; here it has just been
-  // decided, one line above.
-  //
-  // SYNCHRONOUS WITH THE ASSIGNMENT ABOVE AND THE RENDER BELOW: no `await`
-  // between them, so a turn cannot resolve in the gap and have its answer
-  // overwritten by the thread this fetch returned. (The narrow case it does
-  // NOT cover is stated rather than hidden: a turn that finished while the
-  // fetch was in flight is not adopted — there is nothing left to adopt — and
-  // its answer appears on the next load if the server had not yet persisted
-  // it when this read went out.)
+  // THE one place a conversation becomes the conversation on screen — every
+  // path that opens a thread funnels through here. SYNCHRONOUS with the
+  // assignment above and the render below: no `await` between them, so a
+  // turn cannot resolve in the gap and have its answer overwritten.
   adoptLiveTurn(mountToken);
   if (!opts.skipSidebarRender) renderShell(mountToken);
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────
 
-// Entered synchronously by a click handler — reading myMountToken here is
-// safe (see the doc comment on it above): nothing can have re-mounted
-// between the click firing and this line running.
+/**
+ * The composer's domain picker. A conversation lives in ONE domain (its file
+ * is in that domain's folder), so choosing another domain can never re-scope
+ * the open thread: it starts a NEW chat there (M2 — "domain fixed once a
+ * conversation exists"). With no conversation open it simply moves the empty
+ * new chat. The list is not touched: it spans every domain already.
+ *
+ * Entered synchronously by a picker's onChange — reading myMountToken here is
+ * safe: nothing can have re-mounted between the event and this line.
+ */
 function switchDomain(slug) {
   if (slug === state.activeDomain) return;
-  state.activeDomain = slug;
-  try { localStorage.setItem(LS_DOMAIN, slug); } catch { /* ignore */ }
+  if (!state.domains.some((d) => d.slug === slug)) return;
   state.activeConversationId = null;
   state.thread = [];
-  state.searchQuery = '';
-  cancelSearchTimer();          // a keystroke's pending refetch belongs to the OLD domain
-  state.selectedConvIds.clear(); // ids are per-domain; carrying them across would target rows that are gone
-  state.bulkNotice = null;
-  state.cancelNotice = null;     // belonged to the OLD domain's thread
-
-  // autoSelectMostRecent: FALSE.
-  //
-  // This function has already cleared activeConversationId and thread three
-  // lines up — the deliberate "you switched scope, here is a blank sheet"
-  // state, which renderMain paints as the empty new-chat placeholder. Passing
-  // `true` here then had loadDomainConversations immediately re-select
-  // conversations[0], so the blank sheet existed only for the duration of the
-  // fetch and the user landed inside whatever thread they happened to have
-  // opened last in that domain — reading as a switch that did not take.
-  //
-  // `true` is still correct for the COLD BOOT call (see boot()): there, the
-  // user has not asked for anything, and restoring the most recent thread is
-  // the useful default rather than an override of an explicit action.
-  loadDomainConversations(slug, myMountToken, { autoSelectMostRecent: false }).catch(reportAsyncActionFailure);
-  // Projects belong to a DOMAIN, so the old domain's rows, its pin and its
-  // last measured reading are all about something the user has just left.
-  // Cleared here and reloaded for the new domain; the pin for the new domain
-  // is restored inside loadProjectsForDomain from the per-domain map, so
-  // coming back to a domain brings its own pin back rather than nothing.
-  state.projectRows = [];
-  state.projectsFor = null;
-  state.projectsState = 'idle';
-  state.activeProject = null;
-  state.activeProjectScope = null;
-  state.projectLastUsed = null;
-  loadProjectsForDomain(slug, myMountToken).catch(() => {});
-  renderShell(myMountToken); // immediate feedback while the fetch is in flight
+  state.cancelNotice = null;     // belonged to the thread being left behind
+  adoptActiveDomain(slug, myMountToken);
+  renderShell(myMountToken);
+  focusComposer();
 }
 
 function startNewChat() {
@@ -1303,136 +1281,112 @@ function startNewChat() {
 }
 
 // `mountToken` is passed in by the caller (captured synchronously at click
-// time — see wireConvRows below) rather than read fresh here.
+// time) rather than read fresh here: the in-design confirm awaits from its
+// first statement and the user can sit on it indefinitely, during which a
+// rail click can tear this mount down. The destructive work lives INSIDE
+// confirmThen's `onConfirm`, reached only from the dialog's own confirm
+// button — there is no decision boolean to be mis-tested (shared/confirm.js).
 //
-// UPDATED with the confirm-dialog swap: the staleness reasoning that
-// comment recorded still holds, but it now bites HARDER and EARLIER, so it
-// is restated rather than left saying something half-true. Before, the
-// first statement was `window.confirm`, which is synchronous and BLOCKING —
-// nothing could re-mount the view while it was up, and the only await was
-// the fetch afterwards. The in-design dialog is a normal in-page overlay:
-// it awaits from the very first statement and the user can sit on it
-// indefinitely, during which a rail click can tear this mount down and
-// build another. So `mountToken` must be the value captured at CLICK time
-// (it is — see the two call sites), never `myMountToken` read in here, and
-// the isCurrentMount guard below is now load-bearing for a much wider
-// window than it used to be.
-//
-// The destructive work lives INSIDE confirmThen's `onConfirm`, which is
-// only ever reached from the dialog's own confirm button. There is no
-// decision boolean anywhere in that API to be mis-tested, so the classic
-// port of this code — `const ok = openConfirm(...)` without `await`, where
-// `ok` is a truthy Promise and the DELETE fires on Cancel — is not
-// expressible here. See shared/confirm.js's header.
-async function deleteConversationRow(id, title, mountToken) {
+// `domain` is the ROW's domain: in an all-domains list the row being deleted
+// is very often not in the active domain.
+async function deleteConversationRow(id, title, domain, mountToken) {
+  const dom = typeof domain === 'string' && domain ? domain : state.activeDomain;
   await confirmThen({
     title: 'Delete this conversation?',
     message: title || 'this conversation',
-    detail: 'The thread and its messages are removed from this domain. This cannot be undone.',
+    detail: 'The thread and its messages are removed from ' + domainLabel(dom) + '. This cannot be undone.',
     confirmLabel: 'Delete',
     cancelLabel: 'Cancel',
     tone: 'danger',
-    // The filled red, and the one place shell.css sanctions it: this dialog's
-    // primary action IS the deletion. See shared/confirm.js on why `danger`
-    // alone does not imply it — three of the six danger dialogs in the app
-    // destroy nothing.
     destructive: true,
     onConfirm: async () => {
       try {
-        await fetch('/api/chat/' + encodeURIComponent(state.activeDomain) + '/' + encodeURIComponent(id), { method: 'DELETE' });
+        await fetch('/api/chat/' + encodeURIComponent(dom) + '/' + encodeURIComponent(id), { method: 'DELETE' });
       } catch { /* best-effort; the list refresh below will show the true state either way */ }
       if (!isCurrentMount(mountToken)) return; // H1 fix
-      if (state.activeConversationId === id) {
+      state.selectedConvKeys.delete(convKey(dom, id));
+      if (state.activeConversationId === id && state.activeDomain === dom) {
         state.activeConversationId = null;
         state.thread = [];
+        await loadConversationList(mountToken, { autoSelectMostRecent: false, q: state.searchQuery });
+        return;
       }
-      await loadDomainConversations(state.activeDomain, mountToken, { autoSelectMostRecent: false, q: state.searchQuery });
+      await loadConversationList(mountToken, { sidebarOnly: true, q: state.searchQuery });
     },
   });
 }
 
-// How many messages one completed chat turn appends to a conversation.
-//
-// DERIVED FROM THE SERVER, NOT GUESSED: sendMessage in src/brain/chat.js
-// pushes exactly one 'user' message and one assistant message and then
-// writes the file — so a turn that reached the client with a conversation
-// id grew the stored conversation by two. Pinned by a source guard in
-// scripts/test-next-chat-sidebar.js, which counts those pushes in the real
-// brain file, so a change there turns this constant red instead of letting
-// the sidebar quietly drift out of step with the number on disk.
+/** A domain's display name, or its slug. */
+function domainLabel(slug) {
+  const d = state.domains.find((x) => x.slug === slug);
+  return (d && (d.displayName || d.slug)) || String(slug || 'this domain');
+}
+
+// The number of messages ONE completed turn adds to a conversation file: the
+// user message and the assistant message. MUST agree with what
+// src/brain/chat.js's sendMessage pushes — scripts/test-next-chat-sidebar.js
+// §8 holds the two together.
 const MESSAGES_PER_TURN = 2;
 
 /**
- * Advance one sidebar row's message count for a turn the server PERSISTED.
+ * Apply one PERSISTED turn to its row: the count advances by one turn, the
+ * row's last use and last project become the ones the server just wrote, and
+ * the row moves to the top (the server sorts by `updatedAt ?? createdAt`, and
+ * this is that order applied locally rather than a refetch per turn).
  *
- * Gated on a conversation id, and that gate is load-bearing rather than
- * defensive: sendMessage has an early return for a domain whose wiki is
- * empty which answers with prose, writes NOTHING to disk, and reports
- * `conversationId: null`. That response lands in this same branch (it is
- * not `isNew`), so counting it would push the sidebar one turn ahead of the
- * file on every such message. A thrown/aborted turn never reaches here at
- * all — it lands in the catch — and nothing is persisted there either.
+ * Gated on a conversation id: an empty-wiki reply answers with prose, writes
+ * NOTHING, and reports `conversationId: null`. A row that is not in the list
+ * (an active search filtered it out) is left alone rather than invented.
  *
- * A row that is not in the list (an active search filtered it out) is left
- * alone rather than invented: there is nothing on screen for the number to
- * be wrong on, and the next list load brings the server's own count.
- *
- * MEASURED, AND RECORDED RATHER THAN OVERCLAIMED: deleting the id gate alone
- * leaves the suite GREEN, because the `.find` below can never match a falsy
- * id either (every id in the list is a server-generated UUID). The gate is
- * therefore DEFENCE IN DEPTH — it states the rule at the top where the next
- * reader meets it — and the `.find` is what actually enforces it today. It is
- * kept, not deleted, because the rule it states is the one a future refactor
- * (a loose `==`, an id-less optimistic row) would break first; it is just not
- * claimed as independently load-bearing.
+ * `data` is the turn's response ({updatedAt?, project?}); both are optional
+ * and applied only when they have the shape the server writes, so a server
+ * from before v3.72 changes the count and nothing else.
  */
-function bumpMessageCountForTurn(conversationId) {
+function bumpMessageCountForTurn(conversationId, domain, data) {
   if (!conversationId) return;
-  const row = state.conversations.find(c => c.id === conversationId);
-  if (!row || typeof row.messageCount !== 'number') return;
-  row.messageCount += MESSAGES_PER_TURN;
+  const dom = domain || state.activeDomain;
+  const i = state.conversations.findIndex(c => c.id === conversationId && (c.domain || state.activeDomain) === dom);
+  if (i < 0) return;
+  const row = state.conversations[i];
+  if (typeof row.messageCount === 'number') row.messageCount += MESSAGES_PER_TURN;
+  const d = data && typeof data === 'object' ? data : {};
+  if (typeof d.updatedAt === 'string' && Number.isFinite(Date.parse(d.updatedAt))) {
+    row.updatedAt = d.updatedAt;
+    state.conversations.splice(i, 1);
+    state.conversations.unshift(row);
+  }
+  if (Object.hasOwn(d, 'project') && (d.project === null || (typeof d.project === 'string' && d.project.length <= 64))) {
+    row.lastProject = d.project;
+  }
 }
 
 /**
- * Delete every ticked conversation.
+ * Delete every ticked conversation (Select mode).
  *
  * No new endpoint: DELETE /api/chat/:domain/:id already exists and each
  * conversation is one file, so this is N calls to the route the single-row
- * delete has always used — no second server-side deletion path to keep in
- * step with the first, and nothing new to secure.
+ * delete has always used. Each call names the ROW's own domain.
  *
- * The id list is FROZEN at click time, from state.conversations rather than
- * from the Set: the Set is the source of truth for what is ticked, but
- * intersecting it with the list that is actually on screen means a row that
- * has since disappeared cannot be swept up even if pruneSelection had not
- * already run. Ordering follows the rendered list so the confirm's count and
- * the sidebar agree.
+ * The key list is FROZEN at click time, intersected with the list on screen,
+ * so a row that has since disappeared cannot be swept up. Requests are
+ * sequential, so the outcome can say which ones failed.
  *
- * Requests are sequential. They are a handful of local file unlinks; firing
- * them in parallel buys milliseconds and costs the ability to say which ones
- * actually succeeded when some of them do not.
- *
- * PARTIAL FAILURE IS REPORTED, NEVER ASSUMED AWAY. `{ success: true }` comes
- * back from the route for an id that names no file at all (deleteConversation
- * is a no-op then), so the honest signal is `res.ok` — the server accepted and
- * acted on the request — and every non-ok or thrown call is counted and named.
- * A run that deletes 3 of 5 says so; the 2 survivors stay ticked, so a retry
- * is one click rather than a re-selection.
+ * PARTIAL FAILURE IS REPORTED, NEVER ASSUMED AWAY: the honest signal is
+ * `res.ok`; every non-ok or thrown call is counted and named, and survivors
+ * stay ticked so a retry is one click.
  */
 async function deleteSelectedConversations(mountToken) {
-  const domain = state.activeDomain;
-  const ids = state.conversations.filter(c => state.selectedConvIds.has(c.id)).map(c => c.id);
-  if (!domain || ids.length === 0) return;
-  const n = ids.length;
-  const only = n === 1 ? (state.conversations.find(c => c.id === ids[0]) || {}) : null;
+  const rows = state.conversations.filter(c => state.selectedConvKeys.has(convKey(c.domain || state.activeDomain, c.id)));
+  if (rows.length === 0) return;
+  const n = rows.length;
+  const only = n === 1 ? rows[0] : null;
+  const domainsHit = [...new Set(rows.map(c => c.domain || state.activeDomain))];
 
   await confirmThen({
-    // The count is in the TITLE, not only in the body: it is the whole
-    // difference between this dialog and the single-row one, and it is what
-    // catches a select-all the user did not mean.
     title: 'Delete ' + n + ' conversation' + (n === 1 ? '' : 's') + '?',
-    message: only ? (only.title || 'Untitled') : n + ' selected conversations in ' + domain,
-    detail: 'Their threads and messages are removed from this domain. This cannot be undone.',
+    message: only ? (only.title || 'Untitled')
+      : n + ' selected conversations in ' + domainsHit.map(domainLabel).join(', '),
+    detail: 'Their threads and messages are removed. This cannot be undone.',
     confirmLabel: 'Delete ' + n,
     cancelLabel: 'Cancel',
     tone: 'danger',
@@ -1440,31 +1394,20 @@ async function deleteSelectedConversations(mountToken) {
     onConfirm: async () => {
       const failed = [];
       let deleted = 0;
-      for (const id of ids) {
+      for (const c of rows) {
+        const dom = c.domain || state.activeDomain;
+        const key = convKey(dom, c.id);
         try {
-          const res = await fetch('/api/chat/' + encodeURIComponent(domain) + '/' + encodeURIComponent(id), { method: 'DELETE' });
-          if (res.ok) { deleted++; state.selectedConvIds.delete(id); }
-          else failed.push(id);
-        } catch { failed.push(id); }
+          const res = await fetch('/api/chat/' + encodeURIComponent(dom) + '/' + encodeURIComponent(c.id), { method: 'DELETE' });
+          if (res.ok) { deleted++; state.selectedConvKeys.delete(key); }
+          else failed.push(key);
+        } catch { failed.push(key); }
       }
       if (!isCurrentMount(mountToken)) return;
-      // The domain can have changed under a long run (the dialog is a normal
-      // in-page overlay and the loop awaits N requests). The deletes already
-      // went to the right domain — `domain` was captured — but the list
-      // refresh and the notice belong to whatever is on screen now, and
-      // painting a "Deleted 3" over a different domain's sidebar would be a
-      // false statement about it.
-      if (state.activeDomain !== domain) return;
 
-      // Only the OPEN conversation being one of the ones actually deleted
-      // may close the thread. Deleting two unrelated rows must not throw away
-      // what the user is reading — which is why the refresh below is
-      // `sidebarOnly` rather than the `autoSelectMostRecent: false` the
-      // single-row path uses (that arm unconditionally blanks the thread,
-      // which is correct there because the row it deleted is usually the open
-      // one, and wrong here).
       let closedActiveThread = false;
-      if (state.activeConversationId && ids.includes(state.activeConversationId) && !failed.includes(state.activeConversationId)) {
+      const activeKey = state.activeConversationId ? convKey(state.activeDomain, state.activeConversationId) : null;
+      if (activeKey && rows.some(c => convKey(c.domain || state.activeDomain, c.id) === activeKey) && !failed.includes(activeKey)) {
         state.activeConversationId = null;
         state.thread = [];
         closedActiveThread = true;
@@ -1472,9 +1415,10 @@ async function deleteSelectedConversations(mountToken) {
       state.bulkNotice = failed.length === 0
         ? { text: 'Deleted ' + deleted + ' conversation' + (deleted === 1 ? '' : 's') + '.', tone: 'ok' }
         : { text: 'Deleted ' + deleted + ' of ' + n + '. ' + failed.length + ' could not be deleted and stayed selected — try again.', tone: 'error' };
-      await loadDomainConversations(domain, mountToken, { sidebarOnly: true, q: state.searchQuery });
-      // sidebarOnly repaints only the pane, so the emptied main area needs
-      // its own paint — and only when the thread genuinely closed.
+      // A clean run leaves Select mode; a partial one stays in it, with the
+      // survivors ticked, so the retry is the next press.
+      if (failed.length === 0) state.selectMode = false;
+      await loadConversationList(mountToken, { sidebarOnly: true, q: state.searchQuery });
       if (closedActiveThread && isCurrentMount(mountToken)) renderShell(mountToken);
     },
   });
@@ -1713,11 +1657,24 @@ async function sendCurrentMessage() {
       // same figure for the same message. If it were derived only here, the cost
       // would disappear on reload.
       usage: data.usage && typeof data.usage === 'object' ? data.usage : null,
+      // v3.72.0 (P1): what the server just PERSISTED on this message — the
+      // pinned project's name (null = none this turn) and what the answer
+      // cost at answer time. Carried so the live thread and a reloaded one
+      // say the same thing; the renderer re-validates both.
+      project: (typeof data.project === 'string' || data.project === null) ? data.project : undefined,
+      priced: data.priced && typeof data.priced === 'object' ? data.priced : null,
     });
+    // The header's meta line counts questions and answers and names the
+    // pinned project; patched in place, never by a repaint (see patchChatHead).
+    patchChatHead();
+    // F3: a save an agent made while this view was open is seen after the
+    // next answer, not only on a domain switch. Quiet: the picker is patched
+    // in place and an open menu is left open.
+    refreshProjectsQuietly(domainAtSend, here()).catch(() => {});
 
     if (wasNew) {
       // Live-verified bug (found while testing an unrelated fix in this
-      // same session): loadDomainConversations({autoSelectMostRecent:
+      // same session): loadConversationList({autoSelectMostRecent:
       // false}) unconditionally does `state.activeConversationId = null;
       // state.thread = [];` when it isn't auto-selecting — correct for ITS
       // other callers (e.g. deleteConversationRow, which already wants a
@@ -1732,9 +1689,9 @@ async function sendCurrentMessage() {
       // sidebar-refreshing call, then restore it — we only wanted the
       // conversation LIST refreshed, never the content we already have.
       const threadSoFar = state.thread;
-      await loadDomainConversations(state.activeDomain, here(), { autoSelectMostRecent: false, q: state.searchQuery });
+      await loadConversationList(here(), { autoSelectMostRecent: false, q: state.searchQuery });
       if (!isCurrentMount(here())) return;
-      // loadDomainConversations doesn't know which conversation is "active"
+      // loadConversationList doesn't know which conversation is "active"
       // beyond auto-select, so restore it explicitly and re-render.
       state.activeConversationId = data.conversationId;
       state.thread = threadSoFar;
@@ -1758,7 +1715,7 @@ async function sendCurrentMessage() {
       // match a live query because of this turn. That is not worth a
       // full-list reparse per message, and it self-corrects on the next
       // keystroke or navigation; stated here rather than left as a surprise.
-      bumpMessageCountForTurn(data.conversationId);
+      bumpMessageCountForTurn(data.conversationId, domainAtSend, data);
       renderThreadOnly(here());
       renderSidebarConversationsOnly(here());
     }
@@ -2075,25 +2032,22 @@ function updateCompileButtonBusy(owner, busy, pct) {
 // file): #main is the real scrolling ancestor, so offsets are measured
 // against it, not against the thread element.
 //
-// `.chat-scopebar` is `position: sticky; top: 0` with an OPAQUE background
-// (see chat.css), so it pins to the top of #main's scrollport and covers
-// whatever is underneath it. Landing the card at the scrollport's own top
-// therefore parked its first rows BEHIND the bar: measured live at 1440x892
-// on a 30-change card, the bar occupied 0->55 while `.chat-compile-note` —
-// the ONLY signal that compile's full->concise->summary-only ladder degraded
-// this run — sat at 8->45, entirely hidden. With no warning present the same
-// arithmetic hides the "Compiled to wiki: <title>" heading instead. It bit
-// precisely in the case this function exists for (a card taller than the
-// viewport). The bar's height is MEASURED, never hardcoded: it wraps and
-// grows with the number of scope pills, and its padding comes from tokens.
+// v3.72.0: NOTHING IS STICKY AT THE TOP OF THE COLUMN any more — the scope
+// bar went (M2: the domain and project moved to the composer, Compile to the
+// view header, which scrolls with the thread). So the card lands 8px into the
+// scrollport and there is no bar to measure; scripts/test-next-chat-compile.js
+// §6c holds the arithmetic AND that chat.css declares no top-sticky rule, so
+// the day one returns, this function goes red rather than hiding a card under
+// it again. The history: `.chat-scopebar` was `position: sticky; top: 0` with
+// an OPAQUE background and covered the top of #main's scrollport; measured
+// live at 1440x892 it hid the degraded-compile note entirely, which is why
+// this function measured the bar through v3.71.
 function scrollCompileCardIntoView(card) {
   const scrollHost = document.getElementById('main');
   if (!scrollHost) return;
-  const bar = scrollHost.querySelector('.chat-scopebar');
-  const barHeight = bar ? bar.getBoundingClientRect().height : 0;
   const hostRect = scrollHost.getBoundingClientRect();
   const cardRect = card.getBoundingClientRect();
-  scrollHost.scrollTop += (cardRect.top - hostRect.top) - barHeight - 8;
+  scrollHost.scrollTop += (cardRect.top - hostRect.top) - 8;
 }
 
 // Pure — the mid-compile-switch guard runCompile()'s renderCompileOutcome
@@ -2262,14 +2216,38 @@ function buildCompileConfirmCopy(est, domain, convTitle, estimateError, opts) {
   // NOT dropped with the others: it is the one branch that is about what to DO
   // (and the line's own no-key form is five words); every other branch's cost
   // sentence is exactly what the line above it already reads.
+  // ── A FALLBACK IS PRICED TOO (v3.72.0, truth audit F5) ─────────────────
+  // The figure above prices the configured model. If that model is
+  // unavailable the run walks llm.js's fallback chain, which bills a
+  // DIFFERENT model — chains escalate forward, so possibly a dearer one. The
+  // estimate names the first rung that walk would take (P1,
+  // `estimate.fallback`), and the dialog says so before the spend. Absent
+  // (no chain, or a server from before v3.72.0) adds nothing, so the copy is
+  // byte-identical to before in that case.
+  const fb = e.fallback && typeof e.fallback === 'object' && typeof e.fallback.model === 'string' && e.fallback.model
+    ? e.fallback : null;
+  let fallbackLine = '';
+  if (fb && e.costUnknown !== 'no-provider') {
+    const fbName = `${providerDisplayLabel(fb.provider)} "${fb.model}"`;
+    const rate = (n) => (typeof n === 'number' && Number.isFinite(n) && n >= 0) ? n : null;
+    const fin = rate(fb.inPerM);
+    const fout = rate(fb.outPerM);
+    const priced = fb.free === true
+      ? 'which is free'
+      : (fb.priceKnown === true && fin !== null && fout !== null
+        ? `priced $${fin} / $${fout} per 1M input / output tokens`
+        : 'which has no published price');
+    fallbackLine = ` If ${model} is unavailable, The Curator may fall back to ${fbName}, ${priced}.`;
+  }
+
   if (opts && opts.runLine === true && e.costUnknown !== 'no-provider') {
     const why = ranged
       ? 'The figure above is a range rather than a price — how many wiki pages the AI decides to write cannot be known before the call, and if the first attempt overruns its output limit The Curator retries, which costs more. '
       : '';
-    return { title, message, confirmLabel: 'Compile', detail: `${why}${where}` };
+    return { title, message, confirmLabel: 'Compile', detail: `${why}${where}${fallbackLine}` };
   }
 
-  return { title, message, confirmLabel: 'Compile', detail: `${cost}${uncertainty} ${where}` };
+  return { title, message, confirmLabel: 'Compile', detail: `${cost}${uncertainty}${fallbackLine} ${where}` };
 }
 
 /**
@@ -2419,17 +2397,17 @@ function applyCompileRunsOn(runsOn) {
 
   const btn = document.getElementById('chat-compile-btn');
   if (!btn) return;
-  const group = btn.closest('.chat-compile-group');
+  const host = document.getElementById('chat-compile-keyline-host');
   const oldLine = document.getElementById(COMPILE_RUNLINE_ID);
   if (oldLine) oldLine.remove();
   if (needsKey) {
-    if (group) group.insertAdjacentHTML('beforeend', state.compileKeyLineHtml);
+    if (host) host.insertAdjacentHTML('beforeend', state.compileKeyLineHtml);
     btn.disabled = true;
     btn.setAttribute('aria-disabled', 'true');
     btn.setAttribute('aria-describedby', COMPILE_RUNLINE_ID);
   } else {
     btn.removeAttribute('aria-disabled');
-    btn.removeAttribute('aria-describedby');
+    btn.setAttribute('aria-describedby', 'chat-compile-caption');
     // A run in flight or an estimate being fetched owns `disabled`; only an
     // idle button is released here.
     if (!state.compileBusy && !compilePrepping) btn.disabled = false;
@@ -2450,7 +2428,7 @@ async function startCompile() {
 
   const convId = state.activeConversationId;
   const domain = state.activeDomain;
-  const row = state.conversations.find((c) => c.id === convId);
+  const row = state.conversations.find((c) => c.id === convId && (c.domain || state.activeDomain) === state.activeDomain);
   const convTitle = (row && typeof row.title === 'string') ? row.title : '';
 
   compilePrepping = true;
@@ -2678,7 +2656,15 @@ async function runCompile() {
     // touching, and `mountToken` is the click-time capture per the H1 rule.
     try {
       const domainsData = await fetch('/api/domains/stats').then(r => r.json());
-      if (isCurrentMount(mountToken) && Array.isArray(domainsData.domains)) state.domains = domainsData.domains;
+      if (isCurrentMount(mountToken) && Array.isArray(domainsData.domains)) {
+        state.domains = domainsData.domains;
+        // F1 (v3.72.0): the fresh count used to sit in `state.domains` while
+        // the screen kept the old one until a domain switch. Every place the
+        // count is printed is now PATCHED in place — the header's meta line,
+        // the empty thread's line and the composer's domain menu — which is
+        // still not the renderMain() the paragraph above refuses.
+        patchScopeCount();
+      }
     } catch { /* best-effort, see above */ }
   } catch (err) {
     renderCompileOutcome('<div class="chat-compile-error">' + icon('alertCircle', 14) + ' ' + escapeHtml(err.message) + '</div>' +
@@ -2694,31 +2680,6 @@ async function runCompile() {
 function focusComposer() {
   const ta = document.getElementById('chat-input');
   if (ta) ta.focus();
-}
-
-// Conversation rows are `<div role="button" tabindex="0">` (a real <button>
-// can't be used because each row also nests a delete <button> — buttons
-// can't nest) — so click alone isn't enough for keyboard/AT users; wire
-// Enter/Space the same way a native button would respond. `root` scopes
-// the query to either the whole sidebar (first render) or just the
-// conversation-list element (the lighter re-render after search input).
-function wireConvRows(root) {
-  root.querySelectorAll('[data-conv-select]').forEach(el => {
-    // myMountToken read HERE, inside the handler body, at the moment the
-    // event actually fires — not at bind time and not by a wrapper closure
-    // capturing it early. Both would be equivalent in practice (this DOM
-    // node can only receive an event while its own mount is still live —
-    // it's replaced wholesale by setSidebar() on every mount), but reading
-    // it fresh at invocation is the least assumption-laden version of "safe
-    // because this is a synchronous, real user event".
-    el.addEventListener('click', () => selectConversation(el.dataset.convSelect, myMountToken).catch(reportAsyncActionFailure));
-    el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        selectConversation(el.dataset.convSelect, myMountToken).catch(reportAsyncActionFailure);
-      }
-    });
-  });
 }
 
 function autosize(ta) {
@@ -2813,98 +2774,121 @@ function renderShell(token) {
 
 // ── The conversation pane ────────────────────────────────────────────────
 //
-// Row markup, grouping, the empty state and the event wiring all live here
-// ONCE. They used to exist as two hand-maintained copies — one inside
-// renderSidebar (the full paint) and one inside renderSidebarConversationsOnly
-// (the light re-paint) — including two copies of the search predicate. Two
-// copies of a renderer is how a fix lands in one of them: adding a checkbox
-// or a match hint to only one path would have made a row appear and then
-// silently lose its checkbox on the next send. The light path now replaces
-// `.chat-conv-pane`'s contents with the SAME builder the full path used, so
-// they cannot diverge.
+// v3.72.0: the row, the grouping, the list head, the Select mode's bar and
+// their wiring live in views/chat-list.js (DOM-free, the ONE sidebar
+// component). What stays here is what needs this view's state and its
+// actions: the context object the builders read, the handlers they call, and
+// the domain filter's listbox (listbox.js imports app.js, which that module
+// must not).
 
-// A row's own "why did this match" hint. Compared with === against the one
-// value the server can send, so nothing user- or LLM-derived reaches the
-// markup through this field. A title match needs no hint: the title is
-// right there and the user can see the word in it.
-function matchHint(c) {
-  return c.matchField === 'message' ? ' · matched in a message' : '';
+/** Everything the pane's builders read, from `state`, in one object. */
+function listCtx() {
+  return {
+    conversations: state.conversations,
+    domains: state.domains,
+    activeDomain: state.activeDomain,
+    activeConversationId: state.activeConversationId,
+    selectMode: state.selectMode,
+    selectedKeys: state.selectedConvKeys,
+    answeringConvId: state.answeringConvId,
+    answeringDomain: state.answeringDomain,
+    searchQuery: state.searchQuery,
+    loadError: state.loadError,
+    domainFilter: state.domainFilter,
+    total: state.listTotal,
+    unreadable: state.listUnreadable,
+    bulkNotice: state.bulkNotice,
+    emptyExtraHtml: filterAskRowHtml(),
+    now: Date.now(),
+  };
 }
 
-function conversationRowHtml(c) {
-  const selected = state.selectedConvIds.has(c.id);
-  const count = typeof c.messageCount === 'number' ? c.messageCount : 0;
-  const title = c.title || 'Untitled';
-  // ── IS THIS ROW'S CONVERSATION BEING ANSWERED RIGHT NOW? (v3.64.1) ──────
-  //
-  // READ OFF `state`, NEVER OFF THE TURN RECORD, AND WRITTEN OUT HERE RATHER
-  // THAN IN A HELPER. Both halves of that are the same constraint, and the
-  // second half was found the hard way: this function is lifted out of the
-  // file and EXECUTED by scripts/test-next-chat-filter.js, in a sandbox that
-  // declares `state` and an explicit list of extracted functions. A reference
-  // to `sendAbort` would be an unresolved binding there — and so is a call to
-  // a NEW sibling function, which is exactly what reddened that suite when
-  // this started life as `conversationIsAnswering(c.id)`. Three property reads
-  // on an object every sandbox already injects cannot.
-  //
-  // `state.answeringConvId` / `state.answeringDomain` are written by
-  // `sendCurrentMessage` at send time and cleared in its `finally` — the same
-  // lifetime the `sendAbort` record has, so this is a second READER'S VIEW of
-  // one fact rather than a second copy of it.
-  //
-  // BOTH fields, because conversation ids are unique only inside one domain's
-  // folder: matching on the id alone could mark an unrelated row after a
-  // domain switch. An ABSENT field is `undefined` and matches nothing, so a
-  // fixture state that has never seen a send renders exactly what it did
-  // before this existed.
-  const answering = !!c.id && state.answeringConvId === c.id && state.answeringDomain === state.activeDomain;
-  return (
-    '<div class="chat-conv-row' +
-        (c.id === state.activeConversationId ? ' active' : '') +
-        (selected ? ' selected' : '') +
-        (answering ? ' answering' : '') +
-      '" data-conv-id="' + escapeHtml(c.id) + '">' +
-      // Always rendered, never hover-revealed: a control that only exists
-      // under the pointer cannot be reached by keyboard at all (the sibling
-      // delete button's `display:none` until :hover has exactly that
-      // problem), and multi-select is unusable if you cannot find the way in.
-      // WRAPPED IN A LABEL PURELY TO GIVE THE 13x13 INPUT A REAL TARGET.
-      // `.cur-check` is an <input>, and Chrome renders no ::before or ::after
-      // on a replaced element — so the sanctioned "keep the glyph, grow the
-      // target with a transparent ::before" technique cannot reach it and
-      // shared/checkbox.css records that. A wrapping <label> is the only
-      // thing that can: clicking anywhere in it toggles the input and fires
-      // the same `change` the handler below already listens for. The label
-      // is a SIBLING of .chat-conv-row-main, exactly as the bare input was,
-      // so it still never passes through the row's own select handler.
-      '<label class="chat-conv-check-hit">' +
-        '<input type="checkbox" class="cur-check cur-check-sm chat-conv-check" data-conv-check="' + escapeHtml(c.id) + '"' +
-          (selected ? ' checked' : '') +
-          ' aria-label="Select ' + escapeHtml(title) + '">' +
-      '</label>' +
-      '<div class="chat-conv-row-main" role="button" tabindex="0" data-conv-select="' + escapeHtml(c.id) + '">' +
-        '<div class="chat-conv-title">' + escapeHtml(title) + '</div>' +
-        '<div class="chat-conv-meta">' + count + ' message' + (count === 1 ? '' : 's') + matchHint(c) +
-          // THE MARK, IN WORDS AND NOT IN COLOUR ALONE. It rides the meta line
-          // the row already has rather than adding a second line, so a list of
-          // twenty rows does not change height the moment one of them is
-          // answering. `role="status"` because it appears without the user
-          // doing anything to this row. No animation: a pulsing dot in a list
-          // that can hold dozens of rows is exactly what
-          // prefers-reduced-motion exists to suppress, and the fact is legible
-          // without one.
-          (answering
-            ? '<span class="chat-conv-answering" role="status">' +
-                '<span class="chat-conv-answering-dot" aria-hidden="true"></span>answering' +
-              '</span>'
-            : '') +
-        '</div>' +
-      '</div>' +
-      '<button class="chat-conv-delete" data-conv-delete="' + escapeHtml(c.id) + '" data-conv-title="' + escapeHtml(c.title || '') + '" title="Delete conversation" aria-label="Delete conversation">' +
-        icon('trash', 13) +
-      '</button>' +
-    '</div>'
-  );
+/**
+ * The list's DOMAIN FILTER (M1). The shared listbox, one option per domain
+ * that can HOLD conversations — a Shared Brain mirror is answered but never
+ * written to (src/routes/chat.js, v3.43.0), so it has none to list — each
+ * with its identity dot, the same `identityDotClass(index)` every other view
+ * paints that domain with.
+ */
+function domainFilterCfg() {
+  const options = [{ value: '', label: 'All domains' }];
+  state.domains.forEach((d, i) => {
+    if (d.readonly === true) return;
+    const name = d.displayName || d.slug;
+    options.push({
+      value: d.slug,
+      label: name,
+      html: '<span class="lb-opt-label chat-dom-opt"><span class="cur-sb-dot ' + identityDotClass(i) + '" aria-hidden="true"></span>' +
+        escapeHtml(name) + '</span>',
+    });
+  });
+  return {
+    id: 'chat-domain-filter',
+    options,
+    value: state.domainFilter || '',
+    ariaLabel: 'Show conversations from',
+    triggerClass: 'lb-sm chat-list-filter-btn',
+    onChange: (value) => {
+      const next = typeof value === 'string' && value ? value : null;
+      if (next === state.domainFilter) return;
+      state.domainFilter = next;
+      state.bulkNotice = null;
+      loadConversationList(myMountToken, { q: state.searchQuery, sidebarOnly: true }).catch(reportAsyncActionFailure);
+    },
+  };
+}
+
+function conversationPaneBody() {
+  if (state.domains.length === 0) return '';
+  return conversationPaneHtml(listCtx());
+}
+
+/** Bind the pane: the builders' own wiring, with this view's actions. */
+function wirePane(root) {
+  wireConversationPane(root, {
+    // `myMountToken` is read HERE, at the moment a real user event fires —
+    // this node can only receive one while its own mount is live.
+    onOpen: (id, domain) => selectConversation(id, myMountToken, { domain }).catch(reportAsyncActionFailure),
+    onDelete: (id, domain, title) => deleteConversationRow(id, title, domain, myMountToken).catch(reportAsyncActionFailure),
+    onToggle: (key, on) => {
+      const want = on === null ? !state.selectedConvKeys.has(key) : on;
+      if (want) state.selectedConvKeys.add(key); else state.selectedConvKeys.delete(key);
+      renderSidebarConversationsOnly(myMountToken);
+    },
+    onToggleAll: (on) => {
+      if (on) for (const c of state.conversations) state.selectedConvKeys.add(convKey(c.domain || state.activeDomain, c.id));
+      else state.selectedConvKeys.clear();
+      renderSidebarConversationsOnly(myMountToken);
+    },
+    onDeleteSelected: () => deleteSelectedConversations(myMountToken).catch(reportAsyncActionFailure),
+    onSelectMode: (on) => {
+      state.selectMode = !!on;
+      state.selectedConvKeys.clear();
+      state.bulkNotice = null;
+      renderSidebarConversationsOnly(myMountToken);
+      // Keyboard continuity: the control that replaced the one just pressed.
+      const next = document.getElementById(on ? 'chat-select-done' : 'chat-select-btn');
+      if (next) next.focus();
+    },
+    onAsk: askFilterTextInNewChat,
+  }, { selectMode: state.selectMode });
+
+  const allBox = root.querySelector('#chat-bulk-all');
+  if (allBox) {
+    const n = state.conversations.filter(c => state.selectedConvKeys.has(convKey(c.domain || state.activeDomain, c.id))).length;
+    // Not expressible as an attribute — indeterminate is a DOM property only.
+    allBox.indeterminate = n > 0 && n < state.conversations.length;
+  }
+  const host = root.querySelector('#chat-domain-filter-host');
+  if (host) {
+    const cfg = domainFilterCfg();
+    host.innerHTML = renderListboxHtml(cfg);
+    mountListbox(cfg);
+  }
+  // The rows just painted carry `data-age-at`; the clock's next second would
+  // write the same words, so this only matters for a row that crossed a unit
+  // between the build and now.
+  tickAgesNow();
 }
 
 // ── "Ask this in a new chat" ─────────────────────────────────────────────
@@ -2975,7 +2959,7 @@ function filterAskRowHtml() {
 }
 
 /**
- * Clear the filter and show the domain's real list again. Also the Escape
+ * Clear the filter and show the real list again. Also the Escape
  * handler's whole body — Escape on a filter means "undo the filtering", which
  * is a repaint, not a navigation: the open conversation stays open.
  */
@@ -2985,7 +2969,7 @@ function clearConversationFilter() {
   cancelSearchTimer();
   const input = document.getElementById('chat-search-input');
   if (input) input.value = '';
-  loadDomainConversations(state.activeDomain, myMountToken, {
+  loadConversationList(myMountToken, {
     // Cleared one statement above, so this is a blank — passed explicitly all
     // the same, because scripts/test-next-chat-sidebar.js §9 requires every
     // list REFRESH to carry the active query and exempts exactly two call
@@ -3042,133 +3026,10 @@ function askFilterTextInNewChat() {
   // The list on screen is the FILTERED (empty) answer; the filter is now gone,
   // so refetch or the sidebar keeps claiming the domain is empty. Same `q`
   // reasoning as clearConversationFilter above.
-  loadDomainConversations(state.activeDomain, myMountToken, {
+  loadConversationList(myMountToken, {
     q: state.searchQuery,
     sidebarOnly: true,
   }).catch(reportAsyncActionFailure);
-}
-
-function conversationListHtml() {
-  if (state.domains.length === 0) return '';
-  if (state.loadError) return '<div class="chat-sidebar-error">' + escapeHtml(state.loadError) + '</div>';
-
-  const query = state.searchQuery.trim();
-  // NOT filtered here. state.conversations IS the server's answer for the
-  // last completed search (see loadDomainConversations' `q`); re-applying a
-  // client-side predicate on top would silently throw away exactly the rows
-  // the server-side search exists to find — the ones that matched on a
-  // message body rather than on the title this file renders.
-  const list = state.conversations;
-  if (list.length === 0) {
-    return '<div class="sidebar-hint">' +
-      (query ? 'No conversations match “' + escapeHtml(state.searchQuery) + '”.' : 'No conversations yet in this domain.') +
-      '</div>' + filterAskRowHtml();
-  }
-
-  const today = [];
-  const earlier = [];
-  const now = new Date().toISOString();
-  for (const c of list) (isSameLocalDay(c.createdAt, now) ? today : earlier).push(c);
-
-  const groupHtml = (label, group) => group.length === 0 ? '' : (
-    '<div class="chat-conv-group-label mono">' + label + '</div>' + group.map(conversationRowHtml).join('')
-  );
-  return groupHtml('TODAY', today) + groupHtml('EARLIER', earlier);
-}
-
-// The select-all / count / clear / delete strip. Present whenever there is
-// anything to select, so "select all" is discoverable without first having
-// to guess that ticking a row reveals more controls; the destructive half
-// appears only once something is actually selected.
-function bulkBarHtml() {
-  if (state.domains.length === 0 || state.loadError || state.conversations.length === 0) return '';
-  const n = state.selectedConvIds.size;
-  const allChecked = n > 0 && n >= state.conversations.length;
-  return (
-    '<div class="chat-bulk-bar">' +
-      '<label class="chat-bulk-all">' +
-        '<input type="checkbox" class="cur-check cur-check-sm" id="chat-bulk-all"' + (allChecked ? ' checked' : '') + ' aria-label="Select all conversations">' +
-        '<span class="chat-num">' + (n === 0 ? 'Select all' : n + ' selected') + '</span>' +
-      '</label>' +
-      (n > 0
-        ? '<button type="button" class="btn btn-ghost btn-xs" id="chat-bulk-clear">Clear</button>' +
-          '<button type="button" class="btn btn-danger btn-xs" id="chat-bulk-delete" aria-label="Delete ' + n + ' selected conversation' + (n === 1 ? '' : 's') + '">' +
-            icon('trash', 12) + ' Delete' +
-          '</button>'
-        : '') +
-    '</div>'
-  );
-}
-
-function bulkNoticeHtml() {
-  const notice = state.bulkNotice;
-  if (!notice || !notice.text) return '';
-  return '<div class="chat-bulk-notice' + (notice.tone === 'error' ? ' error' : '') + '" role="status">' +
-    escapeHtml(notice.text) + '</div>';
-}
-
-function conversationPaneHtml() {
-  return bulkBarHtml() + bulkNoticeHtml() + '<div class="chat-conv-list">' + conversationListHtml() + '</div>';
-}
-
-// Wires everything inside the pane: row select (click + keyboard), per-row
-// delete, per-row checkbox, and the bulk strip. One function, called from
-// both render paths, for the same reason the markup is one builder.
-function wireConversationPane(root) {
-  wireConvRows(root);
-
-  root.querySelectorAll('[data-conv-delete]').forEach(el => {
-    el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      deleteConversationRow(el.dataset.convDelete, el.dataset.convTitle, myMountToken).catch(reportAsyncActionFailure);
-    });
-  });
-
-  root.querySelectorAll('[data-conv-check]').forEach(el => {
-    // No stopPropagation: the checkbox is a SIBLING of .chat-conv-row-main,
-    // not a descendant, so a click on it never passes through the row's own
-    // select handler. (The delete button above suppresses defensively; it is
-    // a sibling too.)
-    el.addEventListener('change', () => {
-      if (el.checked) state.selectedConvIds.add(el.dataset.convCheck);
-      else state.selectedConvIds.delete(el.dataset.convCheck);
-      renderSidebarConversationsOnly(myMountToken);
-    });
-  });
-
-  const allBox = root.querySelector('#chat-bulk-all');
-  if (allBox) {
-    const n = state.selectedConvIds.size;
-    // Not expressible as an attribute — indeterminate is a DOM property only.
-    allBox.indeterminate = n > 0 && n < state.conversations.length;
-    allBox.addEventListener('change', () => {
-      if (allBox.checked) for (const c of state.conversations) state.selectedConvIds.add(c.id);
-      else state.selectedConvIds.clear();
-      renderSidebarConversationsOnly(myMountToken);
-    });
-  }
-
-  const clearBtn = root.querySelector('#chat-bulk-clear');
-  if (clearBtn) clearBtn.addEventListener('click', () => {
-    state.selectedConvIds.clear();
-    renderSidebarConversationsOnly(myMountToken);
-  });
-
-  const deleteBtn = root.querySelector('#chat-bulk-delete');
-  if (deleteBtn) deleteBtn.addEventListener('click', () => {
-    deleteSelectedConversations(myMountToken).catch(reportAsyncActionFailure);
-  });
-
-  // Wired HERE, in the ONE shared wiring function, and not in renderSidebar.
-  // The row lives inside the pane, and the pane is what the light re-render
-  // replaces — which is the path the row normally arrives on, since it appears
-  // as the result of a debounced filter refetch (renderSidebarConversationsOnly
-  // patches `.chat-conv-pane` in place and never re-runs renderSidebar's own
-  // body). Wiring it in renderSidebar would therefore leave the row dead in the
-  // case it is actually reached in, while looking correct in the full render.
-  // Same reasoning, and the same function, as the per-row delete above.
-  const askBtn = root.querySelector('#chat-filter-ask');
-  if (askBtn) askBtn.addEventListener('click', askFilterTextInNewChat);
 }
 
 // ── Sidebar render entry points ──────────────────────────────────────────
@@ -3238,7 +3099,7 @@ function renderSidebar(token) {
           '<span class="chat-search-icon">' + icon('search', 13) + '</span>' +
           '<input type="text" class="chat-search-input" id="chat-search-input" placeholder="Filter conversations" aria-label="Filter conversations" value="' + escapeHtml(state.searchQuery) + '">' +
         '</div>' +
-        '<div class="chat-conv-pane">' + conversationPaneHtml() + '</div>'
+        '<div class="chat-conv-pane">' + conversationPaneBody() + '</div>'
       // ── CUT: "No domains exist yet — nothing to chat with." ──────────────
       // It stated the same fact as the centre pane, WITH BOTH ON SCREEN AT
       // ONCE — the duplicated-copy class v3.20.0 deleted 712 characters of,
@@ -3300,7 +3161,7 @@ function renderSidebar(token) {
   }
 
   const pane = document.querySelector('.chat-conv-pane');
-  if (pane) wireConversationPane(pane);
+  if (pane) wirePane(pane);
 }
 
 // Lighter re-render used after a selection change, a search result, or a
@@ -3315,8 +3176,8 @@ function renderSidebarConversationsOnly(token) {
   if (!isCurrentMount(token)) return;
   const paneEl = document.querySelector('.chat-conv-pane');
   if (!paneEl) { renderSidebar(token); return; }
-  paneEl.innerHTML = conversationPaneHtml();
-  wireConversationPane(paneEl);
+  paneEl.innerHTML = conversationPaneBody();
+  wirePane(paneEl);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -3380,7 +3241,7 @@ async function loadProjectsForDomain(domain, token) {
   // Restored BEFORE the fetch so a repaint in between shows the pill the user
   // left rather than flashing "no project" and back.
   state.activeProject = readPinnedProjects()[domain] || null;
-  patchProjectGroup(token);
+  patchProjectPicker(token);
   let rows = [];
   let okState = 'ready';
   try {
@@ -3395,6 +3256,7 @@ async function loadProjectsForDomain(domain, token) {
   // about a domain nobody is looking at any more.
   if (!isCurrentMount(token) || state.activeDomain !== domain) return;
   state.projectRows = rows;
+  state.projectsFetchedAt = Date.now();
   state.projectsState = okState;
   if (state.activeProject && !rows.some(r => r.project === state.activeProject)) {
     state.activeProject = null;
@@ -3403,8 +3265,7 @@ async function loadProjectsForDomain(domain, token) {
     state.projectLastUsed = null;
   }
   state.projectKnowledge = null;
-  patchProjectGroup(token);
-  patchScopePillMarks();
+  patchProjectPicker(token);
   // AFTER the reconciliation, never before: a pin that has just been cleared
   // because the project is gone must not then be read about. This is the one
   // hook that covers the per-device pin restored on mount AND the pin seeded
@@ -3430,8 +3291,7 @@ function selectChatProject(value) {
   // longer pinned; dropped here so no repaint between now and the answer can
   // paint them beside the new name.
   state.projectKnowledge = null;
-  patchProjectGroup(myMountToken);
-  patchScopePillMarks();
+  patchProjectPicker(myMountToken);
   // UN-PINNING READS NOTHING. "No project" has no knowledge domains, and a
   // request that can only answer about nothing is a request not worth making.
   if (next) ensureProjectKnowledge(state.activeDomain, next, myMountToken).catch(() => {});
@@ -3492,9 +3352,8 @@ async function ensureProjectKnowledge(domain, project, token) {
   const key = token + '\u0000' + domain + '\u0000' + project;
   if (projectKnowledgeCache.has(key)) {
     state.projectKnowledge = projectKnowledgeCache.get(key);
-    patchProjectGroup(token);
-    patchScopePillMarks();
-    return;
+    patchProjectPicker(token);
+      return;
   }
   let rec;
   try {
@@ -3528,81 +3387,32 @@ async function ensureProjectKnowledge(domain, project, token) {
   if (projectKnowledgeCache.size >= MAX_PROJECT_KNOWLEDGE_CACHE) projectKnowledgeCache.clear();
   projectKnowledgeCache.set(key, rec);
   state.projectKnowledge = rec;
-  patchProjectGroup(token);
-  patchScopePillMarks();
+  patchProjectPicker(token);
 }
 
-/**
- * The domains the pinned project's knowledge lives in, as a Set — or null when
- * there is nothing to mark.
- *
- * NULL WHEN THE LIST IS THE DEFAULT, and that is the point of the store's
- * second field: a defaulted list names the domain the chips are already on, so
- * marking it would dress "nobody has chosen" up as a choice.
- */
-function projectKnowledgeSet() {
-  const k = state.projectKnowledge;
-  if (!k || k.error || k.defaulted || k.project !== state.activeProject) return null;
-  if (!Array.isArray(k.domains) || k.domains.length === 0) return null;
-  return new Set(k.domains);
-}
 
 /**
- * One domain chip. ONE producer, called by the full render and by the targeted
- * mark patch, so a repaint and a patch cannot disagree about which chips
- * belong to the project.
+ * A project row's age NOW, in seconds, or null when it has no saves.
  *
- * The mark carries a TEXT carrier as well as a colour one: the chip's
- * accessible name gains the clause, with the visible label as its prefix so
- * "label in name" still holds.
- *
- * THE DOT IS THE DOMAIN'S IDENTITY (v3.65.1), not decoration. It was
- * `<span class="chat-type-dot" style="background:var(--accent)">` — the same
- * violet on every chip, which is a mark that answers no question. `i` is the
- * position in `state.domains`, which is GET /api/domains' own order and
- * therefore listDomains()'s, the same index the Domains rail, the Context
- * rail and Ingest's destination list count from; `identityDotClass` turns it
- * into the one palette's slot. Two channels never collide here: this is
- * IDENTITY (which domain), `.in-project`'s dashed edge is MEMBERSHIP (is it
- * in the pinned project's knowledge) and `.active`'s fill is SELECTION.
+ * `ageSeconds` was measured by the server at fetch time and never advances on
+ * its own — which is how the picker came to say "saved 4 min ago" an hour
+ * later (truth audit F3). The fetch instant is recorded beside the rows, so
+ * the age is the server's reading plus the time since.
  */
-function scopePillLabelFor(d) {
-  return d.displayName || d.slug;
-}
-function scopePillAriaFor(d) {
-  return scopePillLabelFor(d) + ' \u2014 in this project\'s knowledge';
-}
-function scopePillHtml(d, i) {
-  const set = projectKnowledgeSet();
-  const inProject = !!set && set.has(d.slug);
-  return '<button class="chat-scope-pill' + (d.slug === state.activeDomain ? ' active' : '')
-    + (inProject ? ' in-project' : '') + '" data-scope-domain="' + escapeHtml(d.slug) + '"'
-    + (inProject ? ' aria-label="' + escapeHtml(scopePillAriaFor(d)) + '"' : '') + '>'
-    + '<span class="cur-sb-dot ' + identityDotClass(i) + '"></span>'
-    + escapeHtml(scopePillLabelFor(d))
-    + '</button>';
+function projectAgeSeconds(row, now) {
+  if (!row || typeof row.ageSeconds !== 'number' || !Number.isFinite(row.ageSeconds) || row.ageSeconds < 0) return null;
+  const t = typeof now === 'number' ? now : Date.now();
+  const since = state.projectsFetchedAt > 0 ? Math.max(0, (t - state.projectsFetchedAt) / 1000) : 0;
+  return row.ageSeconds + since;
 }
 
-/**
- * Move the marks without repainting anything.
- *
- * The chips live in `.chat-scope-group`, which `patchProjectGroup` does not
- * touch — and a `renderMain()` here would destroy the thread, the draft and
- * the scroll position to change a class. This toggles the class and the
- * accessible name on the buttons that are already in the document, so the
- * listeners bound in `renderMain` survive untouched.
- */
-function patchScopePillMarks() {
-  const set = projectKnowledgeSet();
-  for (const btn of document.querySelectorAll('[data-scope-domain]')) {
-    const slug = btn.dataset ? btn.dataset.scopeDomain : null;
-    if (!slug) continue;
-    const d = state.domains.find(x => x.slug === slug) || { slug };
-    const inProject = !!set && set.has(slug);
-    btn.classList.toggle('in-project', inProject);
-    if (inProject) btn.setAttribute('aria-label', scopePillAriaFor(d));
-    else btn.removeAttribute('aria-label');
-  }
+/** The ISO instant of a row's last save, derived from the same two facts, for
+ *  the shared ticker's `data-age-at`. '' when there is no save. */
+function projectSavedAtIso(row) {
+  const age = projectAgeSeconds(row, state.projectsFetchedAt || Date.now());
+  if (age === null) return '';
+  const at = (state.projectsFetchedAt || Date.now()) - row.ageSeconds * 1000;
+  return Number.isFinite(at) ? new Date(at).toISOString() : '';
 }
 
 /**
@@ -3611,50 +3421,44 @@ function patchScopePillMarks() {
  *
  * WHY A MODULE-LEVEL HANDLE EXISTS AT ALL (v3.65.0). The picker's footer is
  * `cfg.footHtml`, and shared/listbox.js reads that field when it BUILDS the
- * menu (`menuHtml(...)`, on open and on `setOptions`) — not once at mount. So
- * a reading that changes while the menu is shut has exactly one place to be
- * written: onto the same cfg object the instance holds. Rebuilding the group
- * would do it too, and is what this deliberately avoids — that tears down the
- * picker to move a figure, which is the repaint `patchProjectGroup`'s own note
- * refuses. See `patchProjectFooter`.
+ * menu (on open and on `setOptions`) — not once at mount. So a reading that
+ * changes while the menu is shut has exactly one place to be written: onto
+ * the same cfg object the instance holds. See `patchProjectFooter`.
  */
 let projectLbCfg = null;
 
 function projectListboxCfg() {
+  const now = Date.now();
   const options = [
     { value: '', label: 'No project' },
-    ...state.projectRows.map(r => ({
-      value: r.project,
-      label: r.project,
-      detail: r.ageSeconds === null || r.ageSeconds === undefined ? 'no saves' : formatAge(r.ageSeconds),
-    })),
+    ...state.projectRows.map(r => {
+      const iso = projectSavedAtIso(r);
+      const words = iso ? ageWordsFor(iso, now) : null;
+      return {
+        value: r.project,
+        label: r.project,
+        detail: words || 'no saves',
+        // The age TICKS while the menu is open (v3.72.0, F3): the option
+        // carries `data-age-at`, and shared/age-ticker.js rewrites the words
+        // in place. Everything interpolated is escaped.
+        html: '<span class="lb-opt-label">' + escapeHtml(r.project) + '</span>' +
+          (iso
+            ? '<span class="lb-opt-detail chat-opt-figure" data-age-at="' + escapeHtml(iso) + '" data-age-text>' + escapeHtml(words || '') + '</span>'
+            : '<span class="lb-opt-detail chat-opt-figure">no saves</span>'),
+      };
+    }),
   ];
   const cfg = {
     id: 'chat-project-lb',
     options,
     value: state.activeProject || '',
     placeholder: 'No project',
-    ariaLabel: 'Project context for this chat',
-    // ── ONE SELECTOR PARADIGM (v3.65.0) ────────────────────────────────────
-    // The maintainer, on the bar: "the domain chips and the project dropdown
-    // are two paradigms side by side." The domain chips stay the always-
-    // visible selector — they show the whole set at a glance and are what a
-    // user switches most — and the project picker takes their FACE: the same
-    // 28px height, the same pill radius, the same hairline border.
-    //
-    // IT IS NOT `chat-scope-pill`, and the difference is measured rather than
-    // stylistic. That class carries a press TRANSFORM, and shared/listbox.css
-    // refuses a transform on a trigger with a reason in its own comment: the
-    // open menu is positioned by a rAF loop watching the trigger's
-    // `getBoundingClientRect()`, and a transform IS in that rect — so the menu
-    // would twitch, and re-measure a ~200-row list, for the length of a hold.
-    // scripts/test-next-press-motion.js pins `lb-btn` at `moves: false` and
-    // `chat-scope-pill` at `moves: true` for exactly that reason. So the face
-    // is copied into a class of its own and the press is not.
-    triggerClass: 'lb-sm chat-project-pill',
+    // Per QUESTION, not per chat (M2): the project is sent with each turn and
+    // may change between two questions of one conversation.
+    ariaLabel: 'Project for your next question',
+    triggerClass: 'lb-sm chat-pill chat-project-pill',
     rootClass: 'chat-project-lb-root',
-    // The pinned project's own reading, in the picker's footer — see
-    // projectFootHtml for what moved here and what it cost.
+    prefer: 'up',
     footHtml: projectFootHtml(),
     onChange: selectChatProject,
   };
@@ -3666,41 +3470,34 @@ function projectListboxCfg() {
  * The picker's footer: what the PINNED project is, in the one place the app
  * already has for a reading — `shared/text.js`'s `renderReadout`.
  *
- * ── WHAT MOVED, AND THE COST, STATED RATHER THAN DISCOVERED ──────────────
- * Through v3.64.2 the freshness mark and the last turn's measured reading sat
- * in the BAR, beside the picker. They move here so the bar carries NAMES ONLY
- * — a domain eyebrow with chips and a count, a project eyebrow with a chip —
- * which is what "one selector paradigm" means once the two controls look
- * alike: one group cannot be a selector while the other is a selector plus an
- * instrument.
+ * The "saved … ago" is LIVE (v3.72.0, F3): the readout is wrapped in an
+ * element carrying `data-age-at` + `data-age-prefix="saved"`, and the shared
+ * ticker rewrites the value's words once a second (`.tx-readout-value` is a
+ * named target — renderReadout escapes its own value, so no element of this
+ * view's can sit around the words).
  *
- * THE COST: the pinned project's freshness is now one press away rather than
- * always on screen. It is not LOST — every option row already carries its own
- * project's age as `detail`, so opening the picker shows the ages of all of
- * them AND, here, the pinned one's own reading. Recorded because it is a real
- * trade and the previous release added that mark on purpose.
- *
- * `markHtml` is `renderReadout`'s ONE trusted field (its own docblock says
- * so); it carries the shared freshness dot, and the age is in WORDS beside it,
- * so colour is never the only carrier. Everything else is escaped by the kit.
+ * `markHtml` is `renderReadout`'s ONE trusted field; it carries the shared
+ * freshness dot, and the age is in WORDS beside it, so colour is never the
+ * only carrier. The dot's tier is cut at paint; the words move every second.
  */
 function projectFootHtml() {
   const row = activeProjectRow();
   if (!row) return '';
-  const age = Number.isFinite(row.ageSeconds) ? row.ageSeconds : null;
-  return renderReadoutGroup([
+  const age = projectAgeSeconds(row);
+  const iso = projectSavedAtIso(row);
+  const group = renderReadoutGroup([
     {
       label: row.project,
       value: age === null ? 'no saves yet' : 'saved ' + formatAge(age),
       markHtml: '<span class="fresh-dot fresh-' + freshnessTier(age) + '" aria-hidden="true"></span>',
-      // EMPTY until a turn measures something, and `renderReadout` drops an
-      // empty provenance entirely — no zero, no placeholder, no reading nobody
-      // took. Same refusal the node in the bar carried.
       provenance: projectFigureText(state.projectLastUsed),
     },
     projectDocumentsReadout(state.projectLastUsed),
     projectKnowledgeReadout(),
   ]);
+  return iso
+    ? '<div class="chat-project-foot" data-age-at="' + escapeHtml(iso) + '" data-age-prefix="saved">' + group + '</div>'
+    : group;
 }
 
 /**
@@ -3870,7 +3667,7 @@ function projectKnowledgeReadout() {
  * The menu's id is `cfg.id + '-menu'` — the kit's own public contract (it is
  * what the trigger's `aria-controls` names), not a private reach.
  *
- * STILL NOT A REPAINT: `patchProjectGroup(...)` here would rebuild the picker
+ * STILL NOT A REPAINT: `patchProjectPicker(...)` here would rebuild the picker
  * and close a menu the user has open, to move one figure.
  */
 function patchProjectFooter() {
@@ -3914,197 +3711,135 @@ function projectFigureText(used) {
 }
 
 /**
- * The group's markup. Three states, told apart rather than merged:
- * not-asked-yet, asked-and-this-domain-has-none, and a real list.
+ * The project control on the composer. Three non-picker states, told apart
+ * rather than merged: not-asked-yet, asked-and-this-domain-has-none, and a
+ * read that failed; otherwise the picker.
  *
- * The ⓘ uses `data-tx-info`, shared/text.js's ONE delegated listener — the
- * same mechanism every other disclosure in this shell uses, so Escape,
- * outside-click and focus return come from one place and not from a second
- * hand-written handler.
+ * The retired ⓘ (`chat-project-info`) is not here: its points are in the page
+ * ⓘ (`chat.page`), and a mark inside the composer strip would put a panel
+ * where it takes the thread's height — the M2 complaint.
  */
-function projectGroupHtml() {
+function projectPickerHtml() {
   const loading = state.projectsState === 'idle' || state.projectsState === 'loading';
   const none = state.projectsState === 'ready' && state.projectRows.length === 0;
 
-  // Dropped FIRST, so the three non-picker branches below leave no handle on
-  // a cfg whose trigger is about to leave the document. `patchProjectFooter`
-  // would otherwise mutate a dead object and, worse, read as though a picker
-  // were still mounted.
+  // Dropped FIRST, so the non-picker branches leave no handle on a cfg whose
+  // trigger is about to leave the document.
   projectLbCfg = null;
 
-  let control;
-  if (loading) {
-    control = '<span class="chat-project-note">Reading projects…</span>';
-  } else if (none) {
-    control = '<span class="chat-project-note">No projects in this domain yet.</span>';
-  } else if (state.projectsState === 'error') {
-    control = '<span class="chat-project-note">Projects could not be read.</span>';
-  } else {
-    const cfg = projectListboxCfg();
-    pendingListboxes.push(cfg);
-    control = renderListboxHtml(cfg);
-  }
-
-  // ── THE READOUT IS NO LONGER HERE (v3.65.0) ────────────────────────────
-  // The freshness mark and the last turn's measured reading used to sit on
-  // this row, between the picker and the ⓘ. They are now the picker's own
-  // footer (`projectFootHtml` → `cfg.footHtml`), so this row carries a name
-  // and a control and nothing else — the same anatomy as the domain group
-  // beside it. The trade is written out in projectFootHtml's docblock.
-
-  return (
-    // ── TWO ROWS, NOT FOUR ITEMS (v3.64.1) ─────────────────────────────────
-    // The controls are wrapped so the group can be a COLUMN: row 1 is the
-    // picker and everything that labels it, row 2 is the ⓘ's panel.
-    //
-    // MEASURED, because the obvious version does not work: leaving the group a
-    // flex ROW and giving the panel `flex-basis: 100%` did NOT force a break.
-    // The group is `flex: none` inside the bar, so its main size is
-    // content-based — and a percentage basis against an indefinite containing
-    // block resolves to content size, not to a full line. In the browser at
-    // 1370px the panel simply sat BESIDE the picker (panel x=633 against an ⓘ
-    // at x=610, on the same 93px-tall line), which is neither under the button
-    // nor a row of its own. A column is deterministic and needs no percentage.
-    '<div class="chat-project-controls">' +
-      '<span class="chat-scope-eyebrow mono">PROJECT</span>' +
-      control +
-      CHAT_PROJECT_INFO.btn +
-    '</div>' +
-    // ── AND ITS PANEL, BACK INSIDE THE GROUP (v3.64.1) ────────────────────
-    // Reported: "the ⓘ opens somewhere on the left." It did — as a sibling of
-    // the bar, in flow, it began at the page's left margin while its button
-    // sat several hundred pixels to the right, so the panel that appeared read
-    // as belonging to the domain chips above it. See projectInfoPanelHtml for
-    // why it was out there and what changed to let it come back.
-    projectInfoPanelHtml()
-  );
+  if (loading) return '<span class="chat-project-note">Reading projects…</span>';
+  // Short, because it sits among the composer's pills; still the fact —
+  // this domain holds no projects — and never "none" for a failed read.
+  if (none) return '<span class="chat-project-note">No projects yet</span>';
+  if (state.projectsState === 'error') return '<span class="chat-project-note">Projects could not be read.</span>';
+  const cfg = projectListboxCfg();
+  pendingListboxes.push(cfg);
+  return renderListboxHtml(cfg);
 }
 
 /**
- * The ⓘ's panel — INSIDE the group, anchored under its own button.
+ * Give a mounted pill its leading glyph and word.
  *
- * ── THE HISTORY, BECAUSE BOTH HALVES OF IT ARE MEASUREMENTS ──────────────
- * v3.64.0 put this panel inside the group, positioned `absolute`, and measured
- * it in the browser at 1370 px: it reported itself open (`hidden: false`,
- * `aria-expanded: true`) at a sane rectangle and NOTHING WAS DRAWN.
- * `.chat-scopebar` was `overflow-x: auto`, and a box whose overflow-x is not
- * `visible` computes overflow-y to `auto` as well — so the bar was a scroll
- * container and clipped an absolutely-positioned descendant hanging below it.
- * No z-index reaches out of a scroll container. It was moved out to a SIBLING
- * of the bar, in flow, which is where v3.64.0 shipped it.
- *
- * THE SIBLING VERSION WAS THEN REPORTED FROM PRODUCTION: "the ⓘ opens
- * somewhere on the left." Correct, and it is the cost of that fix rather than
- * a bug in it — a block in flow under the bar starts at the page's left
- * margin, while its button sits wherever the project group happens to land,
- * so the panel appeared under the DOMAIN chips and read as belonging to them.
- * A disclosure that opens away from the thing it discloses is the same class
- * of defect as one that does not open at all; it is just louder.
- *
- * ── WHAT CHANGED, SO THAT IT CAN COME BACK (v3.64.1) ─────────────────────
- * The bar is no longer a scroll container. It WRAPS (`flex-wrap: wrap`,
- * `overflow: visible` — see chat.css), which is the fix for the separate
- * defect where the Compile control was clipped off the right edge at ordinary
- * widths. TWO DEFECTS, ONE CAUSE: with nothing clipping any more, the panel
- * can sit where its button is without needing to escape a scroll container.
- * The v3.64.0 measurement is not being undone — its CAUSE is removed.
- *
- * ── STILL IN FLOW, AND STILL THE APP'S ONLY ⓘ PATTERN ────────────────────
- * It is NOT an absolutely-positioned floating popover, and it is NOT inside
- * the picker's own menu. The first would be a new overlay layer in a shell
- * that has none; the second is refused outright by docs/design-system-source.md
- * §3 ("a control may never go inside a fold") — a button inside the listbox's
- * roving-focus menu is unreachable by that component's keyboard model and
- * brings a second Escape handler to fight the first.
- *
- * What it IS: the same `data-tx-info` disclosure, in flow, taking a full-width
- * row INSIDE `.chat-project-group` (`flex-basis: 100%` in a wrapping group —
- * chat.css). So it opens directly under the ⓘ and the picker it is about,
- * shares their left edge and the group's own hairline, and pushes what is
- * below it down exactly as `.tx-vh-panel` does under a view header. Open,
- * close, Escape and focus return all still come from shared/text.js's ONE
- * delegated listener; nothing here adds a second handler or a second class.
- *
- * ONE CONSEQUENCE, STATED RATHER THAN DISCOVERED LATER: the panel is inside
- * the element `patchProjectGroup` repaints, so an open panel would be closed
- * by a background project fetch. That function now carries the open state
- * across its own repaint — see its note.
+ * shared/listbox.js renders a trigger's TEXT only (and rewrites only its
+ * `[data-lb-text]` child on a pick), so a view that wants a mark on the pill
+ * adds it beside that child once the trigger is in the document. Idempotent.
+ * `markClass` is one of this file's own literal class names; the word is a
+ * literal too, and `aria-hidden` — the trigger's aria-label already names it.
  */
-function projectInfoPanelHtml() {
-  // v3.71.1: the shared explainer panel, in a wrapper this stylesheet owns
-  // (shared/text.css owns the tx- prefix). The two CONDITIONAL sentences it
-  // used to append — the project's knowledge lives in another domain; it
-  // names a domain not on this computer — are STATE, which an explainer may
-  // not carry: both are in the picker's footer (projectKnowledgeReadout).
-  return '<div class="chat-project-panel">' + CHAT_PROJECT_INFO.panel + '</div>';
+function decoratePill(id, markClass, word) {
+  const trigger = document.getElementById(id);
+  if (!trigger || trigger.querySelector('.chat-pill-lead')) return;
+  trigger.insertAdjacentHTML('afterbegin',
+    '<span class="chat-pill-lead" aria-hidden="true">' +
+      (markClass ? '<span class="' + markClass + '"></span>' : '') +
+      (word ? '<span class="chat-pill-k">' + escapeHtml(word) + '</span>' : '') +
+    '</span>');
 }
 
 /**
- * Repaint the project group ALONE.
+ * Repaint the project control ALONE.
  *
- * Never `renderMain()`: a repaint of the whole view destroys the thread, the
- * composer's draft and the scroll position, and this group changes on a
- * background fetch the user did not ask for. The same discipline
- * `renderSidebarConversationsOnly` uses one screen over.
+ * Never `renderMain()`: that destroys the thread, the draft and the scroll
+ * position, and this control changes on a background fetch the user did not
+ * ask for.
  */
-function patchProjectGroup(token) {
+let projectLbApi = null;
+
+function patchProjectPicker(token) {
   if (!isCurrentMount(token)) return;
-  const host = document.getElementById('chat-project-group');
+  const host = document.getElementById('chat-project-host');
   if (!host) return;
-  // ── THE ⓘ SURVIVES THIS REPAINT (v3.64.1) ──────────────────────────────
-  // The panel moved inside this element when it was anchored under its button,
-  // so a background project fetch — which the user did not ask for and did not
-  // notice — would otherwise snap an open disclosure shut mid-sentence. Read
-  // the state off the BUTTON, which is `data-tx-info`'s own source of truth
-  // (shared/text.js finds open panels by `[data-tx-info][aria-expanded="true"]`
-  // and toggles both attributes together), and put it back after the rebuild.
-  // The prose is static, so restoring the two attributes restores the panel
-  // exactly; there is nothing else in it to preserve.
-  const wasOpen = document.getElementById('chat-project-info-btn')?.getAttribute('aria-expanded') === 'true';
-  // Any open menu belongs to a trigger about to leave the document.
-  closeAllListboxes();
-  pendingListboxes.length = 0;
-  host.innerHTML = projectGroupHtml();
-  for (const cfg of pendingListboxes) mountListbox(cfg);
-  pendingListboxes.length = 0;
-  if (wasOpen) {
-    const btn = document.getElementById('chat-project-info-btn');
-    const panel = document.getElementById('chat-project-info');
-    if (btn && panel) { btn.setAttribute('aria-expanded', 'true'); panel.hidden = false; }
+  const menuOpen = !!document.getElementById('chat-project-lb-menu');
+  if (menuOpen) closeAllListboxes();
+  const queued = pendingListboxes.length;
+  host.innerHTML = projectPickerHtml();
+  projectLbApi = null;
+  for (const cfg of pendingListboxes.slice(queued)) {
+    const api = mountListbox(cfg);
+    if (cfg.id === 'chat-project-lb') projectLbApi = api;
   }
+  pendingListboxes.length = queued;
+  decoratePill('chat-project-lb', 'chat-pmark', 'Project');
+}
+
+/**
+ * Re-read this domain's projects after an answer (F3), QUIETLY.
+ *
+ * A save an agent made through the MCP while Chat stayed open was never seen:
+ * the rows were read on mount and on a domain switch only. This refreshes
+ * the rows and their fetch instant, then updates the picker's cfg IN PLACE
+ * (the menu reads it on open) rather than repainting — so a picker the user
+ * has open stays open. Only a pin whose project has gone repaints, because
+ * the trigger's own label would otherwise name a project that is not sent.
+ */
+async function refreshProjectsQuietly(domain, token) {
+  if (!domain || domain !== state.activeDomain) return;
+  let rows;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/projects');
+    const data = await res.json();
+    if (!res.ok || data.ok === false) return;
+    rows = Array.isArray(data.projects) ? data.projects : [];
+  } catch { return; }
+  if (!isCurrentMount(token) || state.activeDomain !== domain) return;
+  const hadPicker = state.projectsState === 'ready' && state.projectRows.length > 0;
+  state.projectRows = rows;
+  state.projectsFetchedAt = Date.now();
+  state.projectsState = 'ready';
+  const pinGone = !!state.activeProject && !rows.some(r => r.project === state.activeProject);
+  if (pinGone) {
+    state.activeProject = null;
+    state.activeProjectScope = null;
+    writePinnedProject(domain, null);
+    state.projectLastUsed = null;
+  }
+  if (pinGone || !hadPicker || rows.length === 0 || !projectLbCfg) { patchProjectPicker(token); return; }
+  // The mounted instance closed over ITS cfg object and normalised its
+  // options at mount, so the fresh rows go in through the kit's own
+  // `setOptions` (an open menu is rebuilt in place, not closed) and the
+  // footer onto the same cfg object the next menu build reads.
+  const mounted = projectLbCfg;
+  const fresh = projectListboxCfg();
+  projectLbCfg = mounted;
+  mounted.options = fresh.options;
+  mounted.footHtml = fresh.footHtml;
+  if (projectLbApi) projectLbApi.setOptions(fresh.options);
 }
 
 function renderMain(token) {
   if (!isCurrentMount(token)) return;
 
-  // Chat has no domain-creation UI of its own — Domains owns that
-  // (openLifecycle('create'), a real modal over POST /api/domains). A
+  // Chat has no domain-creation UI of its own — Domains owns that. A
   // zero-domain user is routed there rather than shown a duplicate create
-  // flow; see resolveBootDomain()'s own comment for why a Chat-side
-  // create-domain panel used to exist here and was removed.
+  // flow; see resolveBootDomain()'s own comment.
   // Never assert "you have no domains" before boot() has answered. Until
   // then the chat chrome is painted with an empty body — and a loader only
-  // if the gate fires. `loadError` is excluded because that frame is a
-  // real conclusion with its own rendering elsewhere; waiting on it here
-  // would replace an error with a spinner.
-  // WRITTEN OUT AT BOTH SITES rather than hoisted into a `chatHeader()`
-  // builder, deliberately. The argument has no branching — no readonly
-  // variant, nothing that could drift the way views/domains.js's header can
-  // (which is why THAT one is a builder). And an indirection would hide the
-  // call from the adjacency arm of scripts/test-next-view-header.js §9b,
-  // which reads what sits next to a `renderViewHeader(` call: a helper name
-  // is not that call.
-  //
-  // `info: CHAT_INFO` (v3.71.0, G2) IS the one field that now differs from a
-  // truly bare two-field literal — this view had no ⓘ at all, and the const
-  // is computed once above rather than re-typed at each site, for the same
-  // reason `chatHeader()` above stayed out: the explainer's own copy lives in
-  // shared/explainers.js, not here. `infoId` is EXPLICIT and DIFFERENT at
-  // each site — both calls resolve to the same title and density, so the
-  // derived id would collide (scripts/test-next-view-header.js's own §8
-  // "TWO DENSITIES, ONE VOCABULARY" guard, written for exactly this class of
-  // defect). The two branches never both reach the DOM, but the guard has no
-  // way to know that and is right not to trust it.
+  // if the gate fires.
+  // WRITTEN OUT AT EACH SITE rather than hoisted into a builder: the
+  // adjacency arm of scripts/test-next-view-header.js §9b reads what sits
+  // next to a `renderViewHeader(` call, and a helper name is not that call.
+  // `infoId` is EXPLICIT and DIFFERENT at each site — the calls resolve to
+  // the same density, so a derived id could collide (§8's guard).
   if (!state.booted && !state.loadError && state.domains.length === 0) {
     setMain(
       renderViewHeader({ eyebrow: 'ask your wiki', title: 'Chat', info: CHAT_INFO, infoHtml: true, infoId: 'tx-vh-info-chat-boot' }) +
@@ -4115,35 +3850,10 @@ function renderMain(token) {
   }
 
   // ── THE EMPTY STATE IS A CARD, NOT A PARAGRAPH UNDER THE TITLE ──────────
-  //
-  // This was the live instance of the defect v3.22.0 exists to remove, on the
-  // app's DEFAULT view: `<h1 class="view-title">Chat</h1>` followed IMMEDIATELY
-  // by `<div class="view-body">Chat needs at least one domain to talk to…</div>`.
-  //
-  // IT IS NOT FOLDED BEHIND THE INFO MARK, and that is the judgement rather
-  // than an oversight. `info` is for prose that EXPLAINS a view someone can
-  // already use — a reader who never opens the panel loses nothing. This
-  // sentence states why the view CANNOT be used at all, next to the one button
-  // that unblocks it. Hiding the reason a screen is empty behind a click is the
-  // same failure shape as hiding a warning behind one: the reader most in need
-  // of it is the one least likely to go looking.
-  //
-  // So it RELOCATES into the shared empty state, which is the house answer for
-  // exactly this (`emptyCard` in app.js — Ingest, Domains, Shared Brain and
-  // memory all use it, and views/domains.js's own zero-domain branch is this
-  // same title + body + primary-button shape). The message and the action it
-  // names now sit in ONE block instead of two loose siblings.
-  //
-  // CUT, and ONLY this: ", then come back here". The rail is on screen the
-  // whole time and Chat is its default item, so the way back was never in
-  // question. "Create one in Domains" is NOT cut, and that is a deliberate
-  // reversal of the first draft of this change: scripts/test-next-chat-compile.js
-  // §5 pins that clause with a reason — Chat has no domain-creation surface of
-  // its own (v3.7.0 deleted one) and the copy has to say where creation really
-  // happens. The button label says WHERE TO GO; it does not say what to do on
-  // arrival. Cutting a clause an existing suite documents as load-bearing, on
-  // the strength of a button label that does not carry it, would have been the
-  // wrong half of "prefer cutting".
+  // The message states why the view CANNOT be used at all, next to the one
+  // button that unblocks it — never folded behind the ⓘ. "Create one in
+  // Domains" is pinned by scripts/test-next-chat-compile.js §5: Chat has no
+  // domain-creation surface of its own and the copy says where it is.
   if (state.domains.length === 0) {
     setMain(
       renderViewHeader({ eyebrow: 'ask your wiki', title: 'Chat', info: CHAT_INFO, infoHtml: true, infoId: 'tx-vh-info-chat-empty' }) +
@@ -4161,94 +3871,175 @@ function renderMain(token) {
   }
 
   const active = state.domains.find(d => d.slug === state.activeDomain) || state.domains[0];
-  const pageCount = active ? active.pageCount : 0;
 
-  // ONE PRODUCER, shared with `patchScopePillMarks` — see its note for why a
-  // mark must never arrive by repainting this view.
-  const scopePills = state.domains.map(scopePillHtml).join('');
-
+  // ── A REAL VIEW HEADER, AND THE SCOPE MOVED TO THE COMPOSER (v3.72.0) ───
+  // Maintainer decision M2. The sticky scope bar packed six unrelated things
+  // into one wrapping row — domain chips (a navigation control that looked
+  // like a filter), a page count, the PROJECT eyebrow with its picker and ⓘ,
+  // Compile and its caption — and an open ⓘ took the thread's height. Now:
+  //   · the view header, like every other view: eyebrow, the conversation's
+  //     title, the page ⓘ (C1: the populated view had none), Compile in the
+  //     action slot, and ONE meta line of live facts under it;
+  //   · every control that changes THE NEXT ANSWER on the composer: domain
+  //     (fixed once a conversation exists), project, length, model.
+  // The header is not sticky, and its ⓘ panel is laid OVER the thread
+  // (chat.css `.chat-head .tx-vh-panel`), so opening it never pushes the
+  // thread (M2) — the same button, panel and delegated behaviour as every
+  // other ⓘ (shared/text.js), only positioned.
   setMain(
     '<div class="chat-view">' +
-      // ── THE READOUT BELONGS TO THE SCOPE CHIP, NOT TO THE BUTTON ─────────
-      // REPORTED by a power user, and reproduced from the shipped markup: the
-      // page count was rendered as the LAST child of this bar, immediately
-      // after the Compile button, so on a mature domain the right-hand end of
-      // the toolbar read `[Compile to Wiki] 1,406 pages in scope` as one
-      // phrase. He read it as the button's own caption — "compiling will touch
-      // 1,406 pages" — and did not press it. The number was always the SCOPE's
-      // (how much wiki this conversation can see), never the compile's
-      // (compile writes a handful of pages from ONE conversation), so the two
-      // facts were adjacent and one was silently annotating the other.
-      //
-      // The fix is structural rather than a wording change: the readout moves
-      // INSIDE `.chat-scope-group` with the eyebrow and the pills it describes,
-      // and the compile control gets its own caption in `.chat-compile-group`.
-      // Those two groups are separated by the flex spacer, so no future edit
-      // can make the count the button's neighbour again without deleting a
-      // container — which is what scripts/test-next-chat-scopebar.js asserts on
-      // (the DOM path of each, not the words).
-      '<div class="chat-scopebar">' +
-        '<div class="chat-scope-group">' +
-          // ── "SCOPE" → "DOMAINS" (v3.64.1) ────────────────────────────────
-          // The maintainer's correction, and it is a correction rather than a
-          // preference: the chips under this eyebrow are DOMAINS, one per
-          // knowledge base, while a SCOPE in this app is a work-stream inside
-          // a project (`state/<project>/<scope>/…`, `scope: "latest"`, the
-          // scope bar in the Context view). One word naming two different
-          // things in one product is how a reader learns to distrust both.
-          // The readout under the pills keeps the phrase "in scope" — that
-          // sentence is about how much wiki this conversation can see, which
-          // is what the word means in plain English and not a reference to a
-          // work-stream.
-          '<span class="chat-scope-eyebrow mono">DOMAINS</span>' +
-          '<div class="chat-scope-pills">' + scopePills + '</div>' +
-          '<span class="chat-scope-count">' + pageCount.toLocaleString() + ' page' + (pageCount === 1 ? '' : 's') + ' in scope</span>' +
-        '</div>' +
-        // ── THE PROJECT GROUP: SECOND, AND STILL IN THE LEFT HALF ────────
-        // A second GROUP, not a second domain selector. It sits after the
-        // domain group and BEFORE the spacer, so the bar still reads as two
-        // halves — what this conversation can see on the left, what it can
-        // write on the right — and the readout can never become the Compile
-        // button's neighbour, which is the defect the spacer exists for.
-        // Its body is painted by patchProjectGroup, which is also what a
-        // background project fetch repaints, so there is ONE producer.
-        '<div class="chat-scope-group chat-project-group" id="chat-project-group">' +
-          projectGroupHtml() +
-        '</div>' +
-        '<div class="chat-scope-spacer"></div>' +
-        compileControlHtml() +
+      '<div class="chat-head" id="chat-head">' +
+        renderViewHeader({
+          eyebrow: 'ask your wiki',
+          title: chatHeadTitle(),
+          info: CHAT_INFO,
+          infoHtml: true,
+          infoId: 'tx-vh-info-chat',
+          actionsHtml: compileControlHtml(),
+        }) +
+        '<div class="chat-head-meta" id="chat-head-meta">' + chatHeadMetaHtml() + '</div>' +
+        // Compile's no-key run line, UNDER the header rather than inside its
+        // action slot: the header drops that slot whole when it meets a <p>
+        // (shared/text.js safeActions), and the line is one. '' in every
+        // other state; its id is what the button's aria-describedby names.
+        '<div class="chat-head-runline" id="chat-compile-keyline-host">' + (compileControlHtml() ? (state.compileKeyLineHtml || '') : '') + '</div>' +
       '</div>' +
-      // THE ⓘ PANEL MOVED INTO THE GROUP IN v3.64.1 — see projectGroupHtml and
-      // projectInfoPanelHtml for the two measurements (the one that put it out
-      // here, and the one that let it come back).
       '<div class="chat-thread" id="chat-thread"></div>' +
       renderComposerHtml(active) +
     '</div>',
     token
   );
 
-  document.querySelectorAll('[data-scope-domain]').forEach(btn => {
-    btn.addEventListener('click', () => switchDomain(btn.dataset.scopeDomain));
-  });
-  // MOUNTED HERE, NOT LEFT FOR renderComposerPickers. That function clears
-  // `pendingListboxes` before building its own two, so a cfg queued by
-  // projectGroupHtml() above and mounted later would be thrown away — the
-  // pill would render and never open. Cleared afterwards for the same
-  // reason, so the composer's pass starts from an empty queue.
-  for (const cfg of pendingListboxes) mountListbox(cfg);
-  pendingListboxes.length = 0;
   // startCompile, NOT runCompile: the estimate-then-confirm gate is the entry
   // point and runCompile is unreachable from the UI without passing it.
   document.getElementById('chat-compile-btn')?.addEventListener('click', () => startCompile().catch(reportAsyncActionFailure));
-  // The one-click route out of the retired-model notice. Settings → Providers
-  // & keys is where the banner with the actual control lives; this view has no
-  // business offering a second one, for the reason block 3 of that page states
-  // about itself.
+  // The one-click route out of the retired-model notice.
   document.getElementById('chat-model-gone-settings')?.addEventListener('click', () => navigate('settings'));
+
+  // ONE delegated listener for every citation marker and Sources chip, bound
+  // to the thread element this paint just created (renderThreadOnly only
+  // replaces its innerHTML, so this cannot stack).
+  document.getElementById('chat-thread')?.addEventListener('click', onThreadCitationClick);
 
   wireComposer();
   renderThreadOnly(token);
-  renderComposerPickers();
+  tickAgesNow();
+}
+
+/** The open conversation's row in the list, or null (a new chat, a mirror's
+ *  unlisted conversation, or a row a search filtered out). */
+function activeConversationRow() {
+  if (!state.activeConversationId) return null;
+  return state.conversations.find(c => c.id === state.activeConversationId &&
+    (c.domain || state.activeDomain) === state.activeDomain) || null;
+}
+
+/**
+ * The header's title: the conversation's own title, as the list shows it.
+ * A conversation not in the list (a Shared Brain mirror's is never written,
+ * or a search hid the row) takes the server's rule on its first question —
+ * brain/chat.js titles a conversation with its first message, cut at 57
+ * characters past 60 — so the two can never name one thread differently.
+ */
+function chatHeadTitle() {
+  if (!state.activeConversationId) return 'New chat';
+  const row = activeConversationRow();
+  if (row && row.title) return row.title;
+  const first = state.thread.find(m => m && m.role === 'user' && typeof m.content === 'string' && m.content.trim());
+  if (!first) return 'Conversation';
+  const t = first.content;
+  return t.length > 60 ? t.slice(0, 57).trimEnd() + '…' : t.trim();
+}
+
+/**
+ * The project the conversation's LAST ANSWER recorded, or null. A message
+ * from before v3.72 carries no `project` key and says nothing — never a
+ * guess from the pin, which is about the NEXT question, not the last one.
+ */
+function lastAnswerProject() {
+  for (let i = state.thread.length - 1; i >= 0; i--) {
+    const m = state.thread[i];
+    if (!m || m.role !== 'assistant' || m.error) continue;
+    return typeof m.project === 'string' && m.project ? m.project : null;
+  }
+  return null;
+}
+
+/**
+ * The meta line under the title — every item a live fact:
+ *   ● Articles · 3,428 pages · 3 questions · 3 answers · ▢ curator · started 12 min ago
+ * The domain is its identity dot AND its name. The page count is re-patched
+ * after a compile writes pages (F1, `patchChatHead`). The questions and
+ * answers are the thread on screen — the same counts Compile takes as input,
+ * so they stand in for the caption the old bar carried. The project is the
+ * one the last answer recorded. The age is the conversation's START, ticking,
+ * and says "started" so it is never read as last use.
+ */
+function chatHeadMetaHtml() {
+  const i = state.domains.findIndex(d => d.slug === state.activeDomain);
+  const d = i >= 0 ? state.domains[i] : null;
+  if (!d) return '';
+  const sep = '<span class="chat-head-sep" aria-hidden="true">·</span>';
+  const pages = Number.isFinite(d.pageCount) ? d.pageCount : 0;
+  const parts = [
+    '<span class="chat-head-dom"><span class="cur-sb-dot ' + identityDotClass(i) + '" aria-hidden="true"></span>' +
+      escapeHtml(d.displayName || d.slug) + '</span>',
+    '<span class="chat-head-pages" id="chat-head-pages">' + pages.toLocaleString() + ' page' + (pages === 1 ? '' : 's') + '</span>',
+  ];
+  if (state.activeConversationId && state.thread.length) {
+    const { questions, answers } = compileTurnCounts();
+    parts.push('<span class="chat-head-turns" id="chat-head-turns">' + escapeHtml(turnCountsText(questions, answers)) + '</span>');
+  }
+  const project = lastAnswerProject();
+  if (project) {
+    parts.push('<span class="chat-head-project"><span class="chat-pmark" aria-hidden="true"></span>' + escapeHtml(project) + '</span>');
+  }
+  const row = activeConversationRow();
+  const started = row && typeof row.createdAt === 'string' && Number.isFinite(Date.parse(row.createdAt)) ? row.createdAt : null;
+  if (started) {
+    parts.push('<span class="chat-head-age" data-age-at="' + escapeHtml(started) + '" data-age-prefix="started" data-age-text>' +
+      escapeHtml(ageWordsFor(started, Date.now(), 'started') || '') + '</span>');
+  }
+  return parts.join(sep);
+}
+
+/** "3 questions · 3 answers", with the caption's "no answers yet". */
+function turnCountsText(questions, answers) {
+  return questions + ' question' + (questions === 1 ? '' : 's') + ' · ' +
+    (answers === 0 ? 'no answers yet' : answers + ' answer' + (answers === 1 ? '' : 's'));
+}
+
+/**
+ * Re-state the header's live facts IN PLACE — the title, the meta line and
+ * the Compile caption — never by repainting the header, which would close its
+ * open ⓘ and drop focus from Compile. Called after a turn, and after a
+ * compile refreshed the domain's page count (truth audit F1: the fresh number
+ * sat in `state.domains` while the DOM kept the stale one).
+ */
+function patchChatHead() {
+  const meta = document.getElementById('chat-head-meta');
+  if (meta) meta.innerHTML = chatHeadMetaHtml();
+  const title = document.querySelector('#chat-head .tx-vh-title');
+  const want = chatHeadTitle();
+  if (title && title.textContent !== want) title.textContent = want;
+  refreshCompileCaption();
+}
+
+/**
+ * F1, for the other two places a domain's page count is printed: the empty
+ * thread's "This domain has N pages" and the composer's domain menu. The
+ * header is `patchChatHead`'s.
+ */
+function patchScopeCount() {
+  patchChatHead();
+  const d = state.domains.find(x => x.slug === state.activeDomain);
+  const body = document.querySelector('.chat-empty-body');
+  if (d && body) body.textContent = emptyThreadBodyText(d);
+  if (domainLbCfg && domainLbApi) {
+    const fresh = domainPickerCfg();
+    domainLbCfg.options = fresh.options;
+    domainLbApi.setOptions(fresh.options);
+  }
 }
 
 // Shown/hidden the same way the shipping app's #compile-btn is (v3.0.1-
@@ -4271,7 +4062,11 @@ function renderCompileButtonHtml() {
     // state because this body is lifted by two suites (see the field's own
     // comment); '' whenever a run is possible. Busy wins, and prints ONE
     // `disabled`, never two.
+    // v3.72.0: with no key line, the button is described by its caption —
+    // the sentence the old scope bar printed beside it, now visually hidden
+    // because the header's meta line shows the same counts on the face.
     '<button type="button" class="btn btn-ai btn-xs chat-compile-pill" id="chat-compile-btn"' + (state.compileBusy ? ' disabled' : (state.compileKeyAttrs || '')) +
+      (state.compileKeyAttrs ? '' : ' aria-describedby="chat-compile-caption"') +
       ' title="Save this conversation as wiki pages">' +
       icon('sparkles', 13) + ' <span id="chat-compile-btn-label">' + escapeHtml(label) + '</span>' +
     '</button>'
@@ -4395,7 +4190,7 @@ function compileCaptionText() {
  * repaints the bar; this covers every transition that can only change it.
  */
 function refreshCompileCaption() {
-  const el = document.querySelector('.chat-compile-caption');
+  const el = document.getElementById('chat-compile-caption');
   if (!el) return;
   el.textContent = compileCaptionText();
 }
@@ -4416,11 +4211,12 @@ function compileControlHtml() {
   return (
     '<div class="chat-compile-group">' +
       btn +
-      '<span class="chat-compile-caption">' + escapeHtml(compileCaptionText()) + '</span>' +
-      // The no-key run line, directly under the action it explains (its id is
-      // what the button's aria-describedby names). Trusted markup from
-      // shared/ai-run.js via applyCompileRunsOn; '' in every other state.
-      (state.compileKeyLineHtml || '') +
+      // v3.72.0: VISUALLY HIDDEN, still the button's description. It is not
+      // a cost (the confirm is the cost gate) and the header's meta line
+      // prints the same question/answer counts on the face. The no-key run
+      // line is NOT here: it is a <p>, and the header drops an action slot
+      // that holds one — see renderMain's `chat-compile-keyline-host`.
+      '<span class="chat-compile-caption visually-hidden" id="chat-compile-caption">' + escapeHtml(compileCaptionText()) + '</span>' +
     '</div>'
   );
 }
@@ -4496,7 +4292,11 @@ function composerPrimaryButtonHtml(busy) {
 // whole matrix rather than by driving a predicate nothing might call — the
 // v3.0.17 lesson about a guard that proves a line exists.
 function renderComposerHtml(active) {
-  const placeholder = active ? 'Ask ' + (active.displayName || active.slug) + '…' : 'Ask this domain…';
+  // v3.72.0: a follow-up says where it goes — the conversation's domain is
+  // fixed, and this is the one sentence under the caret that says so.
+  const domName = active ? (active.displayName || active.slug) : '';
+  const placeholder = !active ? 'Ask this domain…'
+    : (state.activeConversationId ? 'Ask a follow-up in ' + domName + '…' : 'Ask ' + domName + '…');
 
   // ── WOULD THE NEXT SEND ASK FOR A MODEL THAT IS NOT THERE? ─────────────
   // Two arms, and they are the two ways a turn resolves a model:
@@ -6342,7 +6142,38 @@ function costMarkHtml(panelId, title, text) {
  * disagree").
  */
 function assistantCostHtml(m, ctx, index) {
-  const usd = messageCostUsd(m, ctx);
+  // ── WHAT IT COST, OR TODAY'S PRICE SAID AS TODAY'S (v3.72.0, F2) ───────
+  // A message written from v3.72.0 on carries `priced`, recorded by the
+  // server at answer time for the SERVED model (brain/chat.js, P1): what the
+  // answer cost THEN. That is the figure shown, and it never moves when a
+  // promotion ends or a catalogue re-syncs. A message without it predates
+  // the record: its figure can only be computed from TODAY's catalogue, so it
+  // is shown AS today's — on the face, not behind the disclosure — and never
+  // as what it cost. Validated inline (not in a helper) for the reason the
+  // note above gives: suites lift this function by name.
+  const pr = m && m.priced && typeof m.priced === 'object' ? m.priced : null;
+  const prAt = pr && typeof pr.at === 'string' && Number.isFinite(Date.parse(pr.at)) ? pr.at : null;
+  // (No local helper FUNCTIONS in here: test-next-composer-model.js §0
+  // resolves every call this function makes against its extraction list.)
+  const prOk = !!pr && [pr.costUsd, pr.inPerM, pr.outPerM]
+    .every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0);
+  const recorded = !pr ? null
+    : (pr.free === true && pr.costUsd === 0) ? { free: true }
+    : (pr.free === false && prOk) ? { free: false, usd: pr.costUsd, inPerM: pr.inPerM, outPerM: pr.outPerM }
+    : null;
+  const whenText = prAt ? ' on ' + prAt.slice(0, 10) : '';
+  // A rate as the catalogue writes it: at least two decimals, at most four.
+  const rates = recorded && !recorded.free
+    ? [recorded.inPerM, recorded.outPerM].map((n) => {
+      // Rounded to four places by arithmetic, then padded to two — never a
+      // `toFixed(4)` money formatter (test-next-composer-model.js §11.7:
+      // the per-answer FIGURE comes from formatUsdHonest; this is a RATE).
+      const t = String(Math.round(n * 10000) / 10000);
+      const dec = t.indexOf('.') === -1 ? '' : t.slice(t.indexOf('.') + 1);
+      return '$' + t + (dec === '' ? '.00' : (dec.length < 2 ? '0' : ''));
+    })
+    : null;
+  const usd = recorded ? (recorded.free ? null : recorded.usd) : messageCostUsd(m, ctx);
   const u = messageUsageTokens(m);
   // See the block comment above this function for why this is inline and what
   // each clause is for. `.toLocaleString()` is spelled out at each of the five
@@ -6388,6 +6219,11 @@ function assistantCostHtml(m, ctx, index) {
   })();
   const unreportedReasoning = !!u && !u.reasoningTokens &&
     !!thinksEntry && thinksEntry.thinks === true;
+  const priceNote = recorded
+    ? (recorded.free
+      ? ' Priced when answered' + whenText + ': free.'
+      : ' Priced when answered' + whenText + ': ' + rates[0] + ' in / ' + rates[1] + ' out per 1M tokens.')
+    : ' At today\u2019s price: this answer was written before prices were recorded with each answer.';
   const title = u
     ? 'This answer: ' + Number(u.inputTokens).toLocaleString() +
       ' in / ' + Number(u.outputTokens).toLocaleString() + ' out' +
@@ -6398,14 +6234,16 @@ function assistantCostHtml(m, ctx, index) {
         ? ', of which ' + Number(u.reasoningTokens).toLocaleString() + ' reasoning the model did not show'
         : (unreportedReasoning
           ? '. "Out" includes the model\'s hidden reasoning; this provider does not report how much'
-          : ''))
-    : '';
+          : '')) +
+      '.' + priceNote
+    : (recorded ? priceNote.trim() : '');
   // `renderThreadOnly` rebuilds the whole thread with one innerHTML write, so
   // an id only has to be unique WITHIN one paint of one conversation — the
   // message's own index is exactly that. It is not persisted anywhere and no
   // open state survives a rebuild, which is correct: the thread it described
   // has just been replaced.
   const panelId = 'chat-cost-' + (Number.isInteger(index) && index >= 0 ? index : 0);
+  if (recorded && recorded.free) return costMarkHtml(panelId, title, 'free');
   if (usd === null) {
     // `messageCostUsd` returned null for one of several reasons (see its own
     // docblock) — free is only ONE of them, and must be checked with the
@@ -6418,7 +6256,7 @@ function assistantCostHtml(m, ctx, index) {
     const c = ctx || {};
     const row = resolveChatModel(modelId, c.offerable, c.availableProviders);
     if (!row || !row.entry || row.entry.free !== true) return '';
-    return costMarkHtml(panelId, title, 'free');
+    return costMarkHtml(panelId, title, recorded ? 'free' : 'free today');
   }
   const text = formatUsdHonest(usd);
   // formatUsdHonest returns null for anything that is not a finite number. It
@@ -6426,7 +6264,7 @@ function assistantCostHtml(m, ctx, index) {
   // that CAN say "no figure" must never have that answer interpolated as the
   // string "null" on a spend line.
   if (text === null) return '';
-  return costMarkHtml(panelId, title, text);
+  return costMarkHtml(panelId, title, recorded ? text : text + ' at today\u2019s price');
 }
 
 /**
@@ -6992,7 +6830,7 @@ function lengthListboxCfg() {
     options: STYLE_ORDER.map(s => ({ value: s, label: STYLE_LABELS[s] })),
     value: state.responseStyle,
     ariaLabel: 'Answer length',
-    triggerClass: 'lb-sm chat-lb',
+    triggerClass: 'lb-sm chat-pill chat-lb',
     prefer: 'up',
     onChange: (value) => {
       if (!STYLE_ORDER.includes(value)) return;
@@ -7104,10 +6942,86 @@ function renderComposerPickers() {
   closeAllListboxes();
   pendingListboxes.length = 0;
   const showModelPicker = composerShowsModelPicker();
+  // v3.72.0 (M2): the per-question scope lives HERE, in the order a question
+  // is shaped — which wiki (fixed once the conversation exists), which
+  // project's context, then how long and who answers. The project control has
+  // its own host so a background project fetch repaints it alone.
   host.innerHTML =
-    (showModelPicker ? renderModelDropdownHtml() : '') +
-    renderLengthDropdownHtml();
-  for (const cfg of pendingListboxes) mountListbox(cfg);
+    renderDomainPickerHtml() +
+    '<span class="chat-project-host" id="chat-project-host">' + projectPickerHtml() + '</span>' +
+    '<span class="chat-composer-vsep" aria-hidden="true"></span>' +
+    renderLengthDropdownHtml() +
+    (showModelPicker ? renderModelDropdownHtml() : '');
+  domainLbApi = null;
+  projectLbApi = null;
+  for (const cfg of pendingListboxes) {
+    const api = mountListbox(cfg);
+    if (cfg.id === 'chat-domain-lb') domainLbApi = api;
+    if (cfg.id === 'chat-project-lb') projectLbApi = api;
+  }
+  pendingListboxes.length = 0;
+  const di = state.domains.findIndex(d => d.slug === state.activeDomain);
+  decoratePill('chat-domain-lb', di >= 0 ? 'cur-sb-dot ' + identityDotClass(di) : '', '');
+  decoratePill('chat-project-lb', 'chat-pmark', 'Project');
+  decoratePill('chat-length-lb', '', 'Length');
+  decoratePill('chat-model-lb', '', 'Model');
+}
+
+// ── THE DOMAIN PILL (v3.72.0, M2) ─────────────────────────────────────────
+// The conversation's CONTAINER. A conversation is one file in one domain's
+// folder, so once it exists its domain cannot change: the pill is drawn
+// FIXED (dashed, `.is-fixed`), the menu's foot says which domain the
+// conversation is in, and every other option reads "new chat" — choosing one
+// starts a new conversation there (switchDomain). It can never look like a
+// filter over the thread on screen, which is what the old chips did.
+
+let domainLbCfg = null;
+let domainLbApi = null;
+
+function domainPickerCfg() {
+  const fixed = !!state.activeConversationId;
+  const current = state.domains.find(d => d.slug === state.activeDomain);
+  const currentName = current ? (current.displayName || current.slug) : '';
+  const options = state.domains.map((d, i) => {
+    const name = d.displayName || d.slug;
+    const pages = Number.isFinite(d.pageCount) ? d.pageCount : 0;
+    const figure = pages.toLocaleString() + ' page' + (pages === 1 ? '' : 's');
+    const detail = (fixed && d.slug !== state.activeDomain ? 'new chat · ' : '') + figure +
+      (d.readonly === true ? ' · read-only' : '');
+    return {
+      value: d.slug,
+      label: name,
+      detail,
+      html: '<span class="lb-opt-label chat-dom-opt"><span class="cur-sb-dot ' + identityDotClass(i) + '" aria-hidden="true"></span>' +
+        escapeHtml(name) + '</span><span class="lb-opt-detail chat-opt-figure">' + escapeHtml(detail) + '</span>',
+    };
+  });
+  const cfg = {
+    id: 'chat-domain-lb',
+    options,
+    value: state.activeDomain || '',
+    placeholder: 'Domain',
+    ariaLabel: fixed
+      ? 'Domain: ' + currentName + '. This conversation is in ' + currentName + '; another domain starts a new chat'
+      : 'Domain for this chat',
+    triggerClass: 'lb-sm chat-pill chat-domain-pill' + (fixed ? ' is-fixed' : ''),
+    rootClass: 'chat-domain-lb-root',
+    prefer: 'up',
+    footHtml: fixed
+      ? '<p class="chat-dom-foot">This conversation is in <strong>' + escapeHtml(currentName) +
+        '</strong>. Another domain starts a new chat there.</p>'
+      : '',
+    onChange: (value) => switchDomain(value),
+  };
+  domainLbCfg = cfg;
+  return cfg;
+}
+
+function renderDomainPickerHtml() {
+  if (state.domains.length === 0) return '';
+  const cfg = domainPickerCfg();
+  pendingListboxes.push(cfg);
+  return renderListboxHtml(cfg);
 }
 
 // ── THE BROWSE DIALOG ─────────────────────────────────────────────────────
@@ -7866,11 +7780,7 @@ function renderThreadOnly(token, opts) {
     el.innerHTML =
       '<div class="chat-empty">' +
         '<div class="chat-empty-title">Ask ' + escapeHtml(active ? (active.displayName || active.slug) : 'this domain') + ' anything</div>' +
-        '<div class="chat-empty-body">' +
-          (active
-            ? 'This domain has ' + active.pageCount.toLocaleString() + ' page' + (active.pageCount === 1 ? '' : 's') + '. Answers cite the specific pages they draw from — click a citation to open it.'
-            : 'Answers cite the specific pages they draw from — click a citation to open it.') +
-        '</div>' +
+        '<div class="chat-empty-body">' + escapeHtml(emptyThreadBodyText(active)) + '</div>' +
       '</div>' +
       // The empty state is REACHABLE AFTER A STOP, and it is the case that most
       // needs the notice: stopping the very first message of a new conversation
@@ -7904,6 +7814,7 @@ function renderThreadOnly(token, opts) {
     chatModel: state.chatModel,
   };
 
+  answerSources.clear();
   el.innerHTML = state.thread.map((m, i) => {
     // Compile-to-Wiki outcome cards (see the "Compile to Wiki" section
     // above runCompile()). Pushed into `state.thread` itself — NOT
@@ -7958,37 +7869,28 @@ function renderThreadOnly(token, opts) {
         '</div>'
       );
     }
-    const citations = Array.isArray(m.citations) ? [...new Set(m.citations)] : [];
-    // Present on answers written from v3.46.0 on; absent on every earlier one.
-    // No defaulting and no migration-on-read — citationLabel's fallback IS the
-    // old behaviour, so an old thread renders exactly as it used to.
-    const citeTitles = (m.citationTitles && typeof m.citationTitles === 'object') ? m.citationTitles : null;
-    const chips = citations.map(c => {
-      const folder = folderOfPath(c);
-      // STILL DERIVED FROM THE PATH, not from the label: the dot's colour is
-      // the page's TYPE, and the type lives in the first path segment. That is
-      // the reason the path had to stay on the element rather than being
-      // swapped out for the title.
-      const label = citationLabel(c, citeTitles);
-      return (
-        '<button class="chat-cite-chip ' + typeChipClass(folder) + '" data-cite="' + escapeHtml(c) + '"' +
-          ' data-cite-title="' + escapeHtml(label) + '"' +
-          ' title="' + escapeHtml(c) + '">' +
-          '<span class="chat-type-dot"></span><span>' + escapeHtml(label) + '</span>' +
-        '</button>'
-      );
-    }).join('');
+    // ── NUMBERED CITATIONS + ONE SOURCES LIST (v3.72.0, M4) ─────────────
+    // shared/answer.js numbers every cited page by first appearance, turns
+    // each inline `[source: …]` into a numbered marker (one per path), and
+    // appends the server's `citations` after them, deduped. The Sources list
+    // under the answer carries each page ONCE, by title, in the page-type
+    // channel. No raw path is on the answer's face any more (C5/C6); the
+    // `.chat-cite-row` of title chips that repeated every citation is gone.
+    // The sources are kept per message index for the ONE delegated click.
+    const rendered = renderAnswer(m.content || '', {
+      titles: (m.citationTitles && typeof m.citationTitles === 'object') ? m.citationTitles : null,
+      citations: Array.isArray(m.citations) ? m.citations : [],
+    });
+    answerSources.set(i, rendered.sources);
     return (
-      '<div class="chat-msg chat-msg-assistant">' +
+      '<div class="chat-msg chat-msg-assistant" data-msg-index="' + i + '">' +
         assistantEyebrowHtml(m, eyebrowCtx, i) +
         // A SIBLING of the eyebrow rather than a child of it, and positioned
         // into the meta line by chat.css. assistantEyebrowHtml can emit a
-        // SECOND block under the eyebrow (the model-divergence notice), so
-        // wrapping the two in a flex row would put that sentence beside the
-        // button instead of under the line it qualifies.
+        // SECOND block under the eyebrow (the model-divergence notice).
         copyControlHtml(i, 'answer', m) +
-        '<div class="chat-answer">' + renderMarkdown(m.content || '') + '</div>' +
-        (chips ? '<div class="chat-cite-row">' + chips + '</div>' : '') +
+        '<div class="chat-answer">' + rendered.html + '</div>' +
+        sourcesHtml(rendered.sources) +
         reaskButtonHtml(i) +
       '</div>'
     );
@@ -8051,32 +7953,6 @@ function renderThreadOnly(token, opts) {
     btn.addEventListener('click', () => copyMessageText(btn));
   });
 
-  // Delegated click for the citation-chip row below the message. `data-cite`
-  // is safe here — `c` is a plain filename from the API's `citations` array,
-  // passed through escapeHtml (which escapes quotes) for attribute context.
-  el.querySelectorAll('[data-cite]').forEach(elm => {
-    // The label is handed over as openWikiReader's `titleHint`, so the reader's
-    // LOADING header says the same thing the chip said instead of a basename
-    // that then changes under the reader's eye when the fetch lands. Read off
-    // the element rather than recomputed: the chip that was clicked is the one
-    // record of what this row is labelled, and recomputing it here would be a
-    // second copy of citationLabel's rule to keep in step.
-    elm.addEventListener('click', () => openWikiReader(elm.dataset.cite, elm.dataset.citeTitle || null));
-  });
-  // Delegated click for inline "[source: ...]" mentions inside the rendered
-  // answer text (M3 fix). These never carry a data-cite attribute — the path
-  // lives in TEXT CONTENT (.chat-cite-path); the reasoning is in
-  // formatSegment's citation-pass comment, which now lives in
-  // ../shared/markdown.js, NOT in this file — the renderer was lifted out so
-  // the wiki reader could share it. Read the path back the same way it was
-  // displayed rather than via a dataset.
-  el.querySelectorAll('.chat-citation-tag').forEach(elm => {
-    const pathEl = elm.querySelector('.chat-cite-path');
-    const path = pathEl ? pathEl.textContent.trim() : '';
-    if (!path) return;
-    elm.addEventListener('click', () => openWikiReader(path, null));
-  });
-
   // The reasoning fold's toggle. Same reason as every other listener in this
   // block: the `innerHTML` replacement above dropped the previous one with the
   // element it was bound to.
@@ -8091,6 +7967,41 @@ function renderThreadOnly(token, opts) {
   // the content moved. It used to be unconditional, which was survivable at one
   // or two renders per turn and is not once text arrives continuously.
   if (stickAfter) stickThreadToBottom(scrollHost);
+}
+
+/**
+ * Each painted answer's sources, by message index — what the ONE delegated
+ * click reads. Rebuilt on every thread paint, so a click can only ever
+ * resolve against the sources of the answer that is on screen. The path the
+ * reader opens comes from HERE, never from the DOM (P2's contract).
+ */
+const answerSources = new Map();
+
+/**
+ * THE ONE CITATION CLICK, delegated on the thread element (bound once per
+ * element in renderMain). A numbered marker in the text (`data-cite-n`) and a
+ * Sources chip (`data-source-n`) open the same page: the number is resolved
+ * through `sourceByNumber` against that answer's own list.
+ */
+function onThreadCitationClick(e) {
+  const hit = e.target && e.target.closest ? e.target.closest('[data-cite-n], [data-source-n]') : null;
+  if (!hit) return;
+  const msg = hit.closest('[data-msg-index]');
+  if (!msg) return;
+  const sources = answerSources.get(Number(msg.getAttribute('data-msg-index')));
+  const n = hit.getAttribute('data-cite-n') || hit.getAttribute('data-source-n');
+  const src = sourceByNumber(sources || [], n);
+  if (!src) return;
+  e.preventDefault();
+  openWikiReader(src.path, src.title || null);
+}
+
+/** The empty thread's line under "Ask X anything" — its page count is live
+ *  (F1: patched by patchScopeCount after a compile). */
+function emptyThreadBodyText(d) {
+  const pages = d && Number.isFinite(d.pageCount) ? d.pageCount : null;
+  const cite = 'Answers number the pages they draw from — press a number to open that page.';
+  return pages === null ? cite : 'This domain has ' + pages.toLocaleString() + ' page' + (pages === 1 ? '' : 's') + '. ' + cite;
 }
 
 // The conversation the thread element was last painted for. Purely a scroll

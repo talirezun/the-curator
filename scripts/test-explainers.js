@@ -219,7 +219,7 @@ const REQUIRED = [
   'settings.mcp-across', 'settings.health', 'settings.storage', 'settings.vault-folder',
   'settings.github-token',
   'shared.enable', 'shared.token-check', 'shared.wizard-repo', 'shared.wizard-token',
-  'shared.wizard-attribution', 'sync.page', 'chat.project',
+  'shared.wizard-attribution', 'sync.page',
 ];
 for (const k of REQUIRED) ok(keys.includes(k), `COPY.md §2–§3 entry "${k}" is present`);
 ok(keys.every((k) => REQUIRED.includes(k)), `…and nothing else (${keys.length} entries) — a new entry is added here as well, on purpose`);

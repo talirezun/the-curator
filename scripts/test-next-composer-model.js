@@ -2685,8 +2685,14 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
       const f = assistantCostHtml(msg(freeEntry.id, USAGES[0]), ctx, 2);
       ok(/<button type="button" class="chat-msg-cost"/.test(f) && !/<span class="chat-msg-cost"/.test(f),
         '§11.10 the FREE case is the same disclosure, not a leftover span');
-      ok(f.includes('>free</button>'),
-        '§11.10 …and still renders the word "free", never a dollar figure');
+      // v3.72.0 (truth audit F2): a message with no recorded `priced` predates
+      // the record, so "free" is a fact about TODAY's catalogue — said so on
+      // the face. A message that recorded `priced.free` says plain "free".
+      ok(f.includes('>free today</button>'),
+        '§11.10 …and still renders the word "free" (as "free today" for an unrecorded answer), never a dollar figure');
+      const fp = assistantCostHtml(Object.assign(msg(freeEntry.id, USAGES[0]), { priced: { free: true, costUsd: 0, at: '2026-09-25T10:00:00.000Z' } }), ctx, 2);
+      ok(fp.includes('>free</button>') && fp.includes('Priced when answered on 2026-09-25: free.'),
+        '§11.10 (v3.72.0) an answer that RECORDED free says "free", and the disclosure names when it was priced');
     } else {
       ok(false, '§11.10 CONTROL: the fixture catalogue must contain a free entry for this to mean anything');
     }

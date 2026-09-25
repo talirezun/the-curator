@@ -1,0 +1,149 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   views/chat-list.css — Chat's conversation pane (v3.72.0), owned by
+   views/chat-list.js.
+
+   The row itself is shared/sidebar.css's `.cur-sb-row` — the ONE sidebar
+   component, the Domains reference — and the trash is shared/row-action.css's
+   `.row-act` — the ONE row-action rule. This file lays those two out side by
+   side, draws the project mark, and styles the list head and the Select
+   mode's bar. It paints no row state of its own: hover, active and press are
+   the kit's, so Chat's rows cannot drift from Domains', Context's and
+   Settings' again (DESIGN.md C10).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.chat-conv-pane { display: flex; flex-direction: column; min-height: 0; }
+.chat-conv-list { display: flex; flex-direction: column; }
+/* The kit's group head, first in the list, sits closer to the list head. */
+.chat-conv-list > .cur-sb-group-head:first-child { margin-top: 2px; }
+
+/* ── THE ITEM: [checkbox] · row · trash ─────────────────────────────────────
+   The row is a <button> and a <button> may not contain another interactive
+   element, so the checkbox (Select mode) and the trash are its SIBLINGS.
+   `align-items: flex-start` keeps the trash on the title's line when the row
+   runs to three lines. The row takes the free width; the trash never shrinks
+   it below its own target. */
+.chat-conv-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  border-radius: var(--radius-md);
+}
+.chat-conv-item > .cur-sb-row { flex: 1 1 auto; min-width: 0; align-items: flex-start; }
+/* The identity dot rides the title's line, not the row's middle. */
+.chat-conv-item > .cur-sb-row > .cur-sb-dot { margin-top: 5px; }
+.chat-conv-item > .row-act { margin-top: 6px; }
+/* A ticked row reads as selected: the kit's active overlay, on the ITEM so
+   the checkbox beside the row is inside the same band. */
+.chat-conv-item.selected { background: var(--mat-row-active); }
+.chat-conv-item.selected > .cur-sb-row { background: transparent; }
+
+/* ── THE PROJECT MARK ──────────────────────────────────────────────────────
+   An 8px HOLLOW rounded square, 1.5px stroke, greyscale by design. A second
+   8px round dot would read as a second DOMAIN — rule 5 reserves that shape
+   for identity — so the project is told apart by shape, and always with its
+   NAME in words beside it. The same glyph is on the composer's project pill
+   and in the header's meta line: one mark wherever Chat names a project. */
+.chat-pmark {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  border: 1.5px solid var(--text-2);
+  box-sizing: border-box;
+}
+
+/* ── "answering" (v3.64.1) ────────────────────────────────────────────────
+   The word is the mark; the dot is decoration (tokens/color.css: status
+   colour always ships with a label). No animation: a pulsing dot in a list
+   of dozens is what prefers-reduced-motion exists to suppress. */
+.chat-conv-answering {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.chat-conv-answering-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  flex: none;
+}
+
+/* ── THE LIST HEAD: [domain filter] count · Select ─────────────────────── */
+.chat-list-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--hit-min);
+  padding: 0 0 2px 2px;
+}
+.chat-list-spacer { flex: 1 1 auto; }
+.chat-list-count {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  font-variant-numeric: var(--numeric-tabular);
+}
+.chat-list-filter { display: inline-flex; min-width: 0; }
+.chat-list-filter .lb-btn { max-width: 11rem; }
+/* The option rows of both domain menus (this filter and the composer's
+   domain pill): the identity dot before the name. */
+.chat-dom-opt { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+/* A menu row's figure — pages, or a project's age. A FACT, not a literal, so
+   it takes the sans face with tabular figures rather than the code face
+   (scripts/test-next-views-kit.js §7: mono is spent on literals). */
+.chat-opt-figure { font-variant-numeric: var(--numeric-tabular); }
+
+/* ── SELECT MODE'S CONTEXTUAL BAR ─────────────────────────────────────────
+   Select all · N selected · Delete N · Done. Neutral buttons only — red is
+   the confirm's alone (M3). */
+.chat-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--hit-min);
+  padding: 0 0 4px 2px;
+}
+/* THE LABEL IS THE CHECKBOX'S ONLY POSSIBLE HIT BOX: `.cur-check` is a 13x13
+   <input>, and Chrome draws no ::before on one, so the label is the target. */
+.chat-bulk-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--hit-min);
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+}
+.chat-bulk-notice {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  padding: 0 4px 6px;
+}
+/* `.chat-bulk-notice.error` and `.chat-sidebar-error` stay in views/chat.css:
+   they are the pane's two danger inks, counted against THAT file's baseline
+   by scripts/test-tone-channel.js, and moving them would read as two new ones. */
+.chat-list-more,
+.chat-list-unreadable { padding: 6px 4px; }
+
+/* The label that carries a row checkbox's pointer target. It paints nothing;
+   it adds 28x28 of hittable area around the 13x13 box. `flex: none` so it
+   never absorbs the row's free space. Shown only in Select mode, and then at
+   FULL strength — the at-rest 45% dim went with the always-drawn boxes. */
+.chat-conv-check-hit {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--hit-min);
+  height: var(--hit-min);
+  margin-top: 4px;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.chat-conv-check { margin-left: 0; }

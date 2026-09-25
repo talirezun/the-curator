@@ -484,8 +484,10 @@ const NAMED_FAMILIES = [
   // so it is held to the same press its sibling in the rail is.
   ['mem-ws-row', 'agent-memory work-stream rows', true],
   ['ing-dest-row', 'ingest destination rows', true],
-  ['chat-scope-pill', 'chat scope pills', true],
-  ['chat-conv-row', 'conversation rows', true],
+  // v3.72.0 (P3): `chat-scope-pill` is gone with the scope bar (the domain
+  // is a composer pill — `lb-btn`, below), and Chat's conversation rows are
+  // the ONE sidebar row, so their press is `cur-sb-row`'s.
+  ['cur-sb-row', 'sidebar rows — Chat\'s conversation rows included', true],
   // WAS `chat-compile-btn`, the hand-built compile pill. That class is gone:
   // Compile to Wiki is `btn btn-ai btn-xs chat-compile-pill` now, so the pin
   // moves UP to the variant and gets stronger — it covers every control in

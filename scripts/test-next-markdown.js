@@ -805,8 +805,15 @@ section('9. Wiring — chat and the wiki reader share ONE renderer');
       citePathRules.length === 0
         ? '.chat-cite-path has NO rule — it is a selector hook, and both source comments now say so'
         : `.chat-cite-path gained a rule and it is scoped correctly (unscoped, so it reaches the reader): ${JSON.stringify(citePathRules)}`);
-    ok(/chat-cite-path/.test(readFileSync(P_SHARED, 'utf8')) && /chat-cite-path/.test(chatSrc),
-      'the class IS emitted by the renderer and IS read back by chat.js (it is live, just unstyled)');
+    // v3.72.0 (P3, M4): chat.js no longer reads the path back out of the DOM
+    // — Chat renders numbered markers through shared/answer.js and resolves
+    // a click by number (`sourceByNumber`), never from textContent. The
+    // legacy tag, with its path hook, is still what the READER renders (no
+    // `cite` hook there), so the class stays emitted — and chat.js must NOT
+    // read it any more, which is the P2 contract ("the path is never read
+    // from the DOM").
+    ok(/chat-cite-path/.test(readFileSync(P_SHARED, 'utf8')) && !/chat-cite-path/.test(chatSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),
+      'the class IS emitted by the renderer (the reader still shows legacy tags) and chat.js no longer reads a path back from it (v3.72.0)');
   }
   // Anchored on the opening brace, NOT on a word boundary. Caught by mutation:
   // `/\.reader-body-text pre\b/` still matched after the `pre` rule was

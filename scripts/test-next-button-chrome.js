@@ -363,7 +363,9 @@ ok(bare.length === 0,
 
 // The two reports, named, so a count staying at zero cannot hide a swap.
 const named = [
-  ['views/chat.js', 'chat-conv-delete'],
+  // v3.72.0 (P3): the reported `.chat-conv-delete` is gone; Chat's row trash
+  // is the ONE row action, `.row-act chat-conv-act`, in views/chat-list.js.
+  ['views/chat-list.js', 'chat-conv-act'],
   ['shared/confirm.js', 'cfd-confirm'],
   ['views/memory.js', 'mem-stale-btn'],
   ['views/memory.js', 'mem-j-more'],
@@ -611,20 +613,24 @@ const solidBase = solidRules.find(r => /^\.btn-danger-solid$/.test(r.selector));
 ok(!!solidBase && /--danger-fill/.test(solidBase.body),
   '…and the variant it moved to fills with --danger-fill (4.51:1 against --text-on-accent), not --danger (3.40:1)');
 
-const delRules = rulesFor('chat-conv-delete', 'views/chat.css');
-const delBase = delRules.find(r => /^\.chat-conv-delete$/.test(r.selector));
-ok(!!delBase, '.chat-conv-delete base rule exists');
+// v3.72.0 (P3, M3): the reported `.chat-conv-delete` became the ONE row
+// action. The same four properties are now held on `.row-act`
+// (shared/row-action.css) — and the fourth is INVERTED on purpose: the hover
+// is NEUTRAL (red belongs to the confirm alone) and the control is visible at
+// rest, so there is no :focus-within reveal left to require.
+const delRules = rulesFor('row-act', 'shared/row-action.css');
+const delBase = delRules.find(r => /^\.row-act$/.test(r.selector));
+ok(!!delBase, '.row-act base rule exists');
 ok(!!delBase && BORDER_DECL.test(delBase.body),
-  '.chat-conv-delete DECLARES a border — no UA 2px outset bevel');
+  '.row-act DECLARES a border — no UA 2px outset bevel');
 ok(!!delBase && declares(delBase.body, 'padding'),
-  '.chat-conv-delete declares padding — no UA 1px 6px');
+  '.row-act declares padding — no UA 1px 6px');
 ok(!!delBase && !declares(delBase.body, 'box-shadow'),
-  '.chat-conv-delete sets NO box-shadow — base.css\'s :focus-visible ring must win');
-ok(delRules.some(r => /:hover/.test(r.selector) && /--danger-tint/.test(r.body)),
-  '.chat-conv-delete:hover tints with --danger-tint, not a neutral surface');
-ok(delRules.some(r => /:focus-within/.test(r.selector)) ||
-   RULES.some(r => /chat-conv-delete/.test(r.selector) && /:focus-within/.test(r.selector)),
-  '.chat-conv-delete is revealed on :focus-within — reachable without a pointer');
+  '.row-act sets NO box-shadow — base.css\'s :focus-visible ring must win');
+ok(delRules.some(r => /:hover/.test(r.selector) && /--mat-row-hover/.test(r.body) && !/--danger/.test(r.body)),
+  '.row-act:hover takes the neutral row hover, never a --danger* tint (M3)');
+ok(!!delBase && !/display\s*:\s*none/.test(delBase.body),
+  '.row-act is visible at rest — never revealed only on hover or :focus-within');
 
 // The sibling row-level remove, so the two cannot drift apart.
 const ingRemove = rulesFor('ing-queue-file-remove', 'views/ingest.css')

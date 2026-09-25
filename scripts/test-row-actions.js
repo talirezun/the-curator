@@ -29,16 +29,11 @@
  * automatically (§ "generic" below). A short, curated list of selectors
  * that predate this release and are NOT YET converted is also covered by
  * name, so a fourth idiom cannot land unnoticed even before it adopts
- * `.row-act` outright — with ONE deliberate, NAMED, DATED exception: Chat's
- * `.chat-conv-delete` (views/chat.css) keeps its pre-existing hover-only +
- * red-on-hover shape for now. This package (P5) does not touch
- * `views/chat.css` — package P3, landing later in the SAME release, adopts
- * `.row-act` on Chat's conversation rows and must empty EXCEPTIONS when it
- * does (DESIGN.md §4: "Chat adopts the rule in P3. P5 adds a guard suite so
- * a fourth idiom cannot land."). The exception is asserted to still exist
- * and still match, so it cannot silently outlive the idiom it names — if
- * P3 already fixed Chat, this suite REDS on a stale exception rather than
- * passing quietly.
+ * `.row-act` outright. P5 shipped with ONE named, dated exception — Chat's
+ * `.chat-conv-delete` (hover-only, red on hover) — for P3 to remove in the
+ * same release. P3 did (v3.72.0): Chat's rows emit `.row-act chat-conv-act`
+ * and EXCEPTIONS is empty. It stays as a list, asserted to still match what
+ * it excuses, so the next exception is written there, named and dated.
  *
  * A separate section pins THE ONE TRASH GLYPH (C9): before this release,
  * `shared/foundations-sources.js` drew its own inline trash outline,
@@ -170,9 +165,9 @@ section('0. Self-test: the checkers themselves');
 //     already conformed before this release; kept pinned so it cannot drift.
 //   - `.ing-queue-file-remove` (Ingest queue remove) — P5 fixes it in this
 //     release (views/ingest.css).
-//   - `.chat-conv-delete` (Chat conversation delete) — NOT fixed by this
-//     release; carried only in EXCEPTIONS below, never in this list, so a
-//     bare match here does not accidentally allow it back in once P3 lands.
+//   - `.chat-conv-delete` (Chat conversation delete) — GONE in v3.72.0 (P3):
+//     Chat's rows emit `.row-act chat-conv-act`, so the generic `.row-act`
+//     coverage holds them.
 // A labelled, worded button (e.g. `.btn-danger` with a text "Delete…", or
 // `.dm-delete-btn`/`.mem-fnd-delete` — a full sentence-length control that
 // OPENS a confirm rather than a bare icon that IS the row) is out of scope:
@@ -187,19 +182,11 @@ const ROW_ACTION_CLASSES = ['row-act', 'fnd-delete', 'ing-queue-file-remove'];
 // reads as a live TODO, not a silent carve-out. `mustStillMatch: true` means
 // this suite REDS if the pattern is no longer found, so the list cannot
 // outlive what it excuses.
-const EXCEPTIONS = [
-  {
-    file: 'views/chat.css',
-    className: 'chat-conv-delete',
-    addedDate: '2026-09-25',
-    owner: 'P3 (Chat view package, this same release)',
-    reason: 'Pre-existing hover-only + --danger-text-on-hover row action '
-      + '(DESIGN.md §4 finding C8). P5 does not touch views/chat.css. P3 '
-      + 'adopts .row-act on Chat conversation rows and must remove this '
-      + 'entry when it does.',
-    mustStillMatch: true,
-  },
-];
+// EMPTIED in v3.72.0 by P3, as the entry required: Chat's conversation rows
+// adopted `.row-act` (views/chat-list.js) and `.chat-conv-delete` — hover-only,
+// red on hover — no longer exists anywhere in /next. Kept as an empty list so
+// the next exception is written HERE, named and dated, not invented elsewhere.
+const EXCEPTIONS = [];
 
 function isExcepted(file, className, kind) {
   return EXCEPTIONS.some((e) => e.file === file && e.className === className);

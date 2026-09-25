@@ -453,7 +453,12 @@ ok(selectOffenders.length === 0,
 //     estimate (Not set · Light · Typical · Heavy · Exact…) join the reading
 //     budget, each one call site from one builder (`windowPickerCfg`,
 //     `harnessPickerCfg`) that `bindSessionAndPlan` mounts from again.
-const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 3, 'memory.js': 5 };
+//   · v3.72.0, chat.js 3 -> 5 (P3, maintainer decisions M1 + M2): the
+//     composer's DOMAIN pill (`domainPickerCfg` — the conversation's container,
+//     fixed once it exists) replaces the scope bar's domain chips, and the
+//     conversation list's DOMAIN FILTER (`domainFilterCfg`) is new with the
+//     all-domains list. Each is one call site handed one builder's cfg.
+const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 5, 'memory.js': 5 };
 let total = 0;
 for (const f of ADOPTERS) {
   const src = readFileSync(path.join(VIEWS, f), 'utf8');
@@ -470,7 +475,7 @@ for (const f of ADOPTERS) {
   ok((code.match(/closeAllListboxes\(\)/g) || []).length >= 1,
     `${f} closes any open menu on teardown/repaint (in CODE, not in a comment)`);
 }
-ok(total === 15, `FIFTEEN adoptions across four views (found ${total})`);
+ok(total === 17, `SEVENTEEN adoptions across four views (found ${total})`);
 
 // ── §5b — memory.js has exactly ONE picker, and it is this one ────────────
 //
@@ -535,10 +540,12 @@ for (const f of ['settings.js', 'chat.js']) {
   ok(/function modelListboxCfg\(/.test(src) && /function lengthListboxCfg\(/.test(src),
     'chat.js has ONE cfg builder per composer picker');
   const lbCalls = src.match(/renderListboxHtml\([^)]*/g) || [];
-  ok(lbCalls.length === 3
-    && lbCalls.some(c => c.includes('cfg'))
+  ok(/function domainPickerCfg\(/.test(src) && /function domainFilterCfg\(/.test(src),
+    'chat.js has ONE cfg builder for the composer\'s domain pill and ONE for the list\'s domain filter (v3.72.0)');
+  ok(lbCalls.length === 5
+    && lbCalls.every(c => /cfg\s*$/.test(c))
     && lbCalls.every(c => !/\{/.test(c)),
-    'ALL THREE renderListboxHtml calls (model, length, and the v3.64.0 project picker) pass a builder\'s output (a `cfg` binding), never an inline literal ' +
+    'ALL FIVE renderListboxHtml calls (model, length, project, domain pill, domain filter) pass a builder\'s output (a `cfg` binding), never an inline literal ' +
     '(found: ' + lbCalls.length + ' calls)');
   ok(/mountListbox\(cfg\)/.test(src),
     'and the wiring pass mounts from the SAME cfg objects the markup came from');

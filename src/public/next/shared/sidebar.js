@@ -352,6 +352,10 @@ export function renderSidebarGroup(o) {
  *   ageExact?: string,     // the absolute date, visually hidden beside it
  *   clock?: boolean,       // default true whenever an age line renders
  *   event?: string,        // line three — the last event, or the headline
+ *   eventDetail?: string,  // line three, after `event` and a separator (v3.72.0)
+ *   eventMarkClass?: string, // a class NAME for a mark drawn before
+ *                          // `eventDetail` (Chat's hollow project square);
+ *                          // filtered like `dotClass`, aria-hidden
  *   active?: boolean,
  *   stateClass?: string,   // one extra host state class (e.g. a quiet row)
  *   badgesHtml?: string,   // TRUSTED — trailing badges, after the main block
@@ -385,6 +389,13 @@ export function renderSidebarRow(o) {
   const ageFallback = typeof opts.ageFallback === 'string' ? opts.ageFallback.trim() : '';
   const ageText = age || ageFallback;
   const event = typeof opts.event === 'string' ? opts.event.trim() : '';
+  // v3.72.0 — A SECOND PART OF LINE THREE, AND STILL NO TRUSTED HTML. Chat's
+  // rows say which domain a conversation is in AND, when one was pinned, which
+  // project — "Articles · ▢ curator". The mark is a shape the kit draws from a
+  // filtered class NAME, and the detail is escaped like every other string, so
+  // this adds no fourth trusted field to the three the header names.
+  const eventDetail = typeof opts.eventDetail === 'string' ? opts.eventDetail.trim() : '';
+  const eventMark = classList(opts.eventMarkClass);
   const stateClass = classList(opts.stateClass);
 
   // The meta line renders only when it has something in it. A row with a name
@@ -446,8 +457,14 @@ export function renderSidebarRow(o) {
     '<span class="' + cls('cur-sb-main', a && a.main) + '">' +
       '<span class="' + cls('cur-sb-name', a && a.name) + '">' + escapeHtml(name) + '</span>' +
       meta +
-      (event
-        ? '<span class="' + cls('cur-sb-event', a && a.event) + '">' + escapeHtml(event) + '</span>'
+      (event || eventDetail
+        ? '<span class="' + cls('cur-sb-event', a && a.event) + '">' + escapeHtml(event) +
+            (eventDetail
+              ? (event ? '<span class="cur-sb-sep" aria-hidden="true"> · </span>' : '') +
+                (eventMark ? '<span class="cur-sb-event-mark ' + eventMark + '" aria-hidden="true"></span>' : '') +
+                '<span class="cur-sb-event-detail">' + escapeHtml(eventDetail) + '</span>'
+              : '') +
+          '</span>'
         : '') +
     '</span>' +
     trusted(opts.badgesHtml) +

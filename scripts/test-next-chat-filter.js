@@ -44,6 +44,9 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+// v3.72.0 (P3): the conversation pane's REAL, DOM-free module.
+const LIST = await import('../src/public/next/views/chat-list.js');
+const SIDEBAR = await import('../src/public/next/shared/sidebar.js');
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CHAT_JS = path.join(ROOT, 'src/public/next/views/chat.js');
@@ -183,7 +186,11 @@ function freshState(over = {}) {
     thread: [{ role: 'user', content: 'q' }, { role: 'assistant', content: 'a' }],
     searchQuery: '',
     searchTimer: null,
-    selectedConvIds: new Set(),
+    selectedConvKeys: new Set(),
+    selectMode: false,
+    domainFilter: null,
+    listTotal: 0,
+    listUnreadable: [],
     bulkNotice: null,
     cancelNotice: null,
     loadError: null,
@@ -207,27 +214,29 @@ function makeSandbox(over = {}) {
     extractFunction(chatSrc, 'startNewChat') + '\n' +
     extractFunction(chatSrc, 'focusComposer') + '\n' +
     extractFunction(chatSrc, 'autosize') + '\n' +
-    extractFunction(chatSrc, 'isSameLocalDay') + '\n' +
-    extractFunction(chatSrc, 'matchHint') + '\n' +
-    extractFunction(chatSrc, 'conversationRowHtml') + '\n' +
-    extractFunction(chatSrc, 'conversationListHtml') + '\n' +
-    extractFunction(chatSrc, 'bulkBarHtml') + '\n' +
-    extractFunction(chatSrc, 'bulkNoticeHtml') + '\n' +
-    extractFunction(chatSrc, 'conversationPaneHtml') + '\n' +
-    extractFunction(chatSrc, 'wireConvRows') + '\n' +
-    extractFunction(chatSrc, 'wireConversationPane') + '\n' +
+    // v3.72.0 (P3): the row, list, bar and their wiring are
+    // views/chat-list.js's. The REAL module is imported below and its
+    // exports are injected as bindings; what is extracted from chat.js is
+    // the host half — the context object, the pane body and the wiring with
+    // this view's actions.
+    extractFunction(chatSrc, 'listCtx') + '\n' +
+    extractFunction(chatSrc, 'domainFilterCfg') + '\n' +
+    extractFunction(chatSrc, 'conversationPaneBody') + '\n' +
+    extractFunction(chatSrc, 'wirePane') + '\n' +
     extractFunction(chatSrc, 'renderSidebar') + '\n' +
     extractFunction(chatSrc, 'renderSidebarConversationsOnly') + '\n' +
     extractConst(chatSrc, 'MESSAGES_PER_TURN') + '\n' +
     'return { renderSidebar, renderSidebarConversationsOnly, looksLikeAnAsk, ' +
     'filterAskOffered, filterAskRowHtml, askFilterTextInNewChat, ' +
-    'clearConversationFilter, conversationPaneHtml, FILTER_ASK_MIN_WORDS };';
+    'clearConversationFilter, conversationPaneBody, FILTER_ASK_MIN_WORDS };';
 
   const api = new Function(
     'document', 'state', 'isCurrentMount', 'setSidebar', 'escapeHtml', 'icon',
-    'renderViewHeader', 'renderShell', 'loadDomainConversations',
+    'renderViewHeader', 'renderShell', 'loadConversationList',
     'scheduleConversationSearch', 'deleteConversationRow', 'deleteSelectedConversations',
     'selectConversation', 'reportAsyncActionFailure', 'navigate', 'MESSAGES_PER_TURN_UNUSED',
+    'conversationPaneHtml', 'wireConversationPane', 'convKey', 'identityDotClass',
+    'renderListboxHtml', 'mountListbox', 'tickAgesNow',
     src
   )(
     doc, state,
@@ -237,12 +246,14 @@ function makeSandbox(over = {}) {
     (n) => '<span class="icon-stub" data-icon="' + n + '"></span>',
     () => '<header class="view-header-stub"></header>',
     () => { calls.renderShell.push(true); },
-    (domain, token, opts) => { calls.load.push({ domain, opts }); return Promise.resolve(); },
+    (token, opts) => { calls.load.push({ opts }); return Promise.resolve(); },
     () => { calls.schedule++; },
     () => {}, () => {}, () => Promise.resolve(),
     (e) => { throw e; },
     (v) => { calls.navigate.push(v); },
     null,
+    LIST.conversationPaneHtml, LIST.wireConversationPane, LIST.convKey, SIDEBAR.identityDotClass,
+    () => '<span data-lb-stub></span>', () => null, () => 0,
   );
 
   return { doc, state, calls, api };
@@ -307,7 +318,10 @@ section('§1 — The field reads as a FILTER, not as a place to write a message'
 
   // The composer's own placeholder is untouched — the two must read
   // differently, and this is the half that is allowed to sound like writing.
-  ok(/'Ask ' \+ \(active\.displayName \|\| active\.slug\) \+ '…'/.test(chatSrc),
+  // v3.72.0: a follow-up in an open conversation reads "Ask a follow-up in
+  // <domain>…" (the domain is fixed); a new chat still reads "Ask <domain>…".
+  // Both keep the writing voice and the ellipsis the filter gave up.
+  ok(/'Ask ' \+ domName \+ '…'/.test(chatSrc) && /'Ask a follow-up in ' \+ domName \+ '…'/.test(chatSrc),
     'CONTROL: the composer still says "Ask <domain>…" — the contrast is the point, so only one of the two moved');
 }
 

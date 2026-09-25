@@ -912,8 +912,10 @@ console.log('\n§10  THE ROLE -> TOKEN STANDARD');
   // more, so the standard follows the rule the kit actually owns. `.mem-row-
   // name` is gone the same way — memory.js's sidebar row is the kit's row
   // now too, so `.cur-sb-name` alone carries this rung for it as well.
+  // `.chat-conv-title` is gone the same way in v3.72.0 (P3): Chat's
+  // conversation rows adopted the kit's row, so `.cur-sb-name` carries it.
   const ROW_NAME = ['.cur-sb-name', '.sync-domain-name',
-                    '.sb-conn-name', '.ing-dest-name', '.chat-conv-title'];
+                    '.sb-conn-name', '.ing-dest-name'];
 
   /**
    * TARGETING, not equality. A rule reaches `.reader-title` as

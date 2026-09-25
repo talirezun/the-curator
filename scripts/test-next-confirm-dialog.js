@@ -106,7 +106,7 @@ const confirmCode = assertStrippedSane(stripComments(confirmSrc), 'confirm.js', 
   'function onKeydown(e)',
 ]);
 const chatCode = assertStrippedSane(stripComments(chatSrc), 'chat.js', [
-  'async function deleteConversationRow(id, title, mountToken)',
+  'async function deleteConversationRow(id, title, domain, mountToken)',
 ]);
 const settingsCode = assertStrippedSane(stripComments(settingsSrc), 'settings.js', [
   'function classifyUpdate(check, versionInfo)',
@@ -600,10 +600,12 @@ section('§4  deleteConversationRow: Cancel really cancels');
 
 function makeDeleteHarness(confirmBehaviour) {
   const calls = [];
-  const state = { activeDomain: 'articles', activeConversationId: 'c1', thread: [{ role: 'user' }] };
+  // v3.72.0 (P3): the row names its OWN domain (the list spans every
+  // domain), and the refresh is loadConversationList.
+  const state = { activeDomain: 'articles', activeConversationId: 'c1', thread: [{ role: 'user' }], selectedConvKeys: new Set(), searchQuery: '' };
   const refreshes = [];
   const factory = new Function(
-    'confirmThen', 'fetch', 'state', 'isCurrentMount', 'loadDomainConversations',
+    'confirmThen', 'fetch', 'state', 'isCurrentMount', 'loadConversationList', 'convKey', 'domainLabel',
     extractFunction(chatSrc, 'deleteConversationRow', 'chat.js') + '\nreturn deleteConversationRow;');
   const fn = factory(
     confirmBehaviour,
@@ -611,6 +613,8 @@ function makeDeleteHarness(confirmBehaviour) {
     state,
     () => true,
     async (...a) => { refreshes.push(a); },
+    (d, id) => d + '/' + id,
+    (slug) => slug,
   );
   return { fn, calls, state, refreshes };
 }
@@ -618,7 +622,7 @@ function makeDeleteHarness(confirmBehaviour) {
 // Cancel: the dialog resolves without ever calling onConfirm.
 {
   const h = makeDeleteHarness(async () => { /* user cancelled — action never invoked */ });
-  await h.fn('c1', 'My conversation', 7);
+  await h.fn('c1', 'My conversation', 'articles', 7);
   eq(h.calls.length, 0, 'Cancel: no fetch of any kind was issued');
   eq(h.calls.filter((c) => c.method === 'DELETE').length, 0, 'Cancel: no DELETE reached the server');
   eq(h.state.activeConversationId, 'c1', 'Cancel: the active conversation is untouched');
@@ -629,7 +633,7 @@ function makeDeleteHarness(confirmBehaviour) {
 {
   let seenOpts = null;
   const h = makeDeleteHarness(async (opts) => { seenOpts = opts; await opts.onConfirm(); });
-  await h.fn('c1', 'My conversation', 7);
+  await h.fn('c1', 'My conversation', 'articles', 7);
   eq(h.calls.length, 1, 'Confirm: exactly one request was issued');
   eq(h.calls[0].method, 'DELETE', 'Confirm: it is a DELETE');
   eq(h.calls[0].url, '/api/chat/articles/c1', 'Confirm: at the conversation\'s own URL');
@@ -644,17 +648,17 @@ function makeDeleteHarness(confirmBehaviour) {
 {
   let seenOpts = null;
   const h = makeDeleteHarness(async (opts) => { seenOpts = opts; });
-  await h.fn('c1', '', 7);
+  await h.fn('c1', '', 'articles', 7);
   eq(seenOpts.message, 'this conversation', 'an untitled conversation gets a readable fallback');
 }
 
 // The mount guard still holds after the (now much longer) await window.
 {
   const calls = [];
-  const state = { activeDomain: 'articles', activeConversationId: 'c1', thread: [{ role: 'user' }] };
+  const state = { activeDomain: 'articles', activeConversationId: 'c1', thread: [{ role: 'user' }], selectedConvKeys: new Set(), searchQuery: '' };
   const refreshes = [];
   const factory = new Function(
-    'confirmThen', 'fetch', 'state', 'isCurrentMount', 'loadDomainConversations',
+    'confirmThen', 'fetch', 'state', 'isCurrentMount', 'loadConversationList', 'convKey', 'domainLabel',
     extractFunction(chatSrc, 'deleteConversationRow', 'chat.js') + '\nreturn deleteConversationRow;');
   const fn = factory(
     async (opts) => { await opts.onConfirm(); },
@@ -662,8 +666,10 @@ function makeDeleteHarness(confirmBehaviour) {
     state,
     () => false, // the view re-mounted while the dialog was up
     async (...a) => { refreshes.push(a); },
+    (d, id) => d + '/' + id,
+    (slug) => slug,
   );
-  await fn('c1', 'T', 7);
+  await fn('c1', 'T', 'articles', 7);
   eq(calls.length, 1, 'a stale mount still lets the DELETE complete (the server-side effect is wanted either way)');
   eq(state.activeConversationId, 'c1', 'but a stale mount never writes to the NEW mount\'s state');
   eq(refreshes.length, 0, 'and never re-renders a view it no longer owns');

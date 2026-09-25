@@ -327,6 +327,9 @@ function makeSandbox(opts = {}) {
     // ORIGINAL start time back after a re-adopted turn re-arms the interval —
     // can be executed here rather than described.
     'let sendStartedAt = null;\n' +
+    // v3.72.0: the shared age clock's unsubscribe, which the teardown calls
+    // and clears (shared/age-ticker.js). A spy counts the call.
+    'let stopAgeTicker = __ageStop;\n' +
     extractFunction(chatSrc, 'sendCurrentMessage') + '\n' +
     // ── THE CONTINUITY PAIR (v3.64.1) ─────────────────────────────────────
     // Both REAL. §12 drives a turn across a simulated re-mount, so nothing
@@ -373,7 +376,7 @@ function makeSandbox(opts = {}) {
   const api = new Function(
     'document', 'state', 'fetch', 'isCurrentMount', 'startSendClock', 'stopSendClock',
     'autosize', 'renderThreadOnly', 'renderShell',
-    'loadDomainConversations', 'bumpMessageCountForTurn', 'renderSidebarConversationsOnly',
+    'loadConversationList', 'bumpMessageCountForTurn', 'renderSidebarConversationsOnly',
     'escapeHtml', 'icon', 'AbortController', 'bootGate', 'cancelSearchTimer', 'escHandler',
     'closeAllListboxes', 'closeBrowseDialog', 'closeConfirmIfOpen',
     'readSseFrames', 'schedulePaintStream',
@@ -383,6 +386,11 @@ function makeSandbox(opts = {}) {
     // that the completion path still calls it exactly once, and that a
     // cancelled turn does not.
     'patchProjectFooter',
+    // v3.72.0 (P3): a completed turn patches the header's live facts and
+    // re-reads the domain's projects quietly (F3); opening a conversation
+    // adopts its OWN domain first. Stubs — their behaviour is
+    // scripts/test-next-chat-list.js's subject.
+    'patchChatHead', 'refreshProjectsQuietly', 'adoptActiveDomain', '__ageStop',
     src
   )(
     doc, state, fetchImpl,
@@ -398,6 +406,8 @@ function makeSandbox(opts = {}) {
     // not rendering — test-next-chat-streaming.js drives the real painter.
     readSseFrames, (t) => { paints.push(t); },
     () => { rendered.projectFooter++; },
+    () => { rendered.head = (rendered.head || 0) + 1; }, async () => {}, () => false,
+    () => { rendered.ageStop = (rendered.ageStop || 0) + 1; },
   );
 
   return { api, doc, state, calls, clock, rendered, loadCalls, paints, ctl };
@@ -1480,14 +1490,12 @@ section('§12  A TURN THAT OUTLIVES ITS MOUNT  ★ the v3.64.1 defect');
   // §12h — THE MARK ON THE ROW, DRIVEN THROUGH THE REAL ROW BUILDER.
   // §12g proves the two state fields move; this proves they reach the markup,
   // and that the word — not a colour — is what carries the fact.
-  const rowSrc =
-    extractFunction(chatSrc, 'matchHint') + '\n' +
-    extractFunction(chatSrc, 'conversationRowHtml') + '\n' +
-    'return { conversationRowHtml };';
-  const mkRow = (st) => new Function('state', 'escapeHtml', 'icon', rowSrc)(
-    Object.assign({ selectedConvIds: new Set(), activeConversationId: null, activeDomain: 'articles', searchQuery: '' }, st),
-    escapeHtmlStub, iconStub,
-  ).conversationRowHtml;
+  // v3.72.0 (P3): the row builder is views/chat-list.js's, DOM-free, so the
+  // REAL module is imported rather than lifted into a sandbox. It reads the
+  // state it needs from a context object instead of the module `state`.
+  const { conversationRowHtml: realRow } = await import('../src/public/next/views/chat-list.js');
+  const mkRow = (st) => (c) => realRow(Object.assign({ domain: 'articles' }, c),
+    Object.assign({ domains: [{ slug: 'articles' }, { slug: 'business' }], activeConversationId: null, activeDomain: 'articles' }, st));
 
   const idle = mkRow({})({ id: 'conv-1', title: 'A thread', messageCount: 4 });
   ok(!/answering/.test(idle),
@@ -1497,7 +1505,7 @@ section('§12  A TURN THAT OUTLIVES ITS MOUNT  ★ the v3.64.1 defect');
     { id: 'conv-1', title: 'A thread', messageCount: 4 });
   ok(/chat-conv-answering/.test(live), '★ the row being answered carries the mark');
   ok(/>answering</.test(live), '★ IN WORDS — colour is never the only carrier of a status in this app');
-  ok(/class="chat-conv-row[^"]*\banswering\b/.test(live),
+  ok(/class="cur-sb-row[^"]*\bchat-conv-row\b[^"]*\banswering\b/.test(live),
     '…and the row itself is flagged, so the styling has something to hang on');
   ok(/aria-hidden="true"/.test(live.slice(live.indexOf('chat-conv-answering'))),
     '…with the dot hidden from assistive tech, because the word beside it says the same thing');
@@ -1514,7 +1522,7 @@ section('§12  A TURN THAT OUTLIVES ITS MOUNT  ★ the v3.64.1 defect');
   /* NO ANIMATION ANYWHERE NEAR IT. A pulsing dot in a list that can hold
      dozens of rows is exactly what prefers-reduced-motion exists to suppress;
      the fact reads perfectly standing still, so there is nothing to suppress. */
-  const mark = /\.chat-conv-answering[\s\S]{0,400}?\}/.exec(cssSrc);
+  const mark = /\.chat-conv-answering[\s\S]{0,400}?\}/.exec(readFileSync(CSS_PATH.replace(/chat\.css$/, 'chat-list.css'), 'utf8'));
   ok(mark !== null, 'the mark has a rule of its own');
   ok(!/animation/.test(mark[0]), '…and declares no animation');
 }

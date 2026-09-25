@@ -419,23 +419,16 @@ section('5b. CONTROL: the contrast checker actually fires on a known-bad token')
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-section('6. the one deliberate exception is still intact');
-// chat.css hides .chat-scopebar's scrollbar on purpose (v3.18.0 investigated
-// it: a full-width horizontal bar under the scope chips read as a draggable
-// divider). A global scrollbar rule must not have swallowed that.
-
+section('6. the one deliberate exception is RETIRED with the bar it hid');
+// chat.css hid .chat-scopebar's scrollbar on purpose (v3.18.0: a full-width
+// horizontal bar under the scope chips read as a draggable divider). v3.72.0
+// (P3, M2) deleted the scope bar itself — the domain and project moved to the
+// composer and the page header — so the exception has nothing left to guard.
+// Held in the other direction: no rule may bring the selector back.
 const chatCss = stripComments(readFileSync(CHAT, 'utf8'));
 const chatRules = collectRules(chatCss);
-const scopebarHide = chatRules.find(r =>
-  /\.chat-scopebar\b/.test(r.selector) &&
-  decls(r.body).some(([p, v]) => p === 'scrollbar-width' && /none/i.test(v)));
-ok(!!scopebarHide,
-  '.chat-scopebar still sets scrollbar-width: none — the deliberate hide survives the global rule');
-
-const scopebarWebkitHide = chatRules.some(r =>
-  /\.chat-scopebar::-webkit-scrollbar/.test(r.selector) && /display\s*:\s*none/i.test(r.body));
-ok(scopebarWebkitHide,
-  '.chat-scopebar::-webkit-scrollbar { display: none } still present for Safari / older Chromium');
+ok(!chatRules.some(r => /\.chat-scopebar\b/.test(r.selector)),
+  'no .chat-scopebar rule survives — the bar and its scrollbar hide are gone together');
 
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);

@@ -2602,10 +2602,18 @@ section('21. Citation titles — the map that turns a path into a page name');
     // (b) THE FALLBACK PARITY ASSERTION. `titleFromSlug` is lifted out of the
     // shipping VIEW source, not retyped here — if the two rules ever drift,
     // this goes red rather than the drift shipping invisibly.
-    const chatViewSrc = readFileSync(path.join(ROOT, 'src/public/next/views/chat.js'), 'utf8');
-    const tfsMatch = /function titleFromSlug\(slug\) \{\n([\s\S]*?)\n\}/.exec(chatViewSrc);
-    ok(!!tfsMatch, 'the view\'s titleFromSlug is findable (a rename must not silently skip this check)');
-    const clientTitleFromSlug = new Function('slug', tfsMatch[1]);
+    // v3.72.0 (P2 + P3): the client's fallback is shared/answer.js's (the
+    // Sources list labels a page whose title the server did not resolve), so
+    // the parity is asserted against THAT module's real output — imported,
+    // not lifted — rather than against chat.js's retired `titleFromSlug`.
+    // (answer.js imports markdown.js, which imports app.js, so the function
+    // is LIFTED from the shipping source and executed — the same technique
+    // this check used on chat.js's titleFromSlug.)
+    const answerSrc = readFileSync(path.join(ROOT, 'src/public/next/shared/answer.js'), 'utf8');
+    const stMatch = /function sourceTitle\(path, titles\) \{\n([\s\S]*?)\n\}/.exec(answerSrc);
+    ok(!!stMatch, 'the client fallback (shared/answer.js sourceTitle) is findable (a rename must not silently skip this check)');
+    const sourceTitle = new Function('path', 'titles', stMatch[1]);
+    const clientTitleFromSlug = (slug) => sourceTitle('concepts/' + slug + '.md', null);
     eq(m['concepts/two-worlds-of-code.md'], 'Two Worlds Of Code',
       '★ a page with no H1 falls back to the humanised slug');
     eq(m['concepts/two-worlds-of-code.md'], clientTitleFromSlug('two-worlds-of-code'),

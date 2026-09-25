@@ -182,10 +182,10 @@ function resolveValue(theme, value) {
 const TEXT_FLOOR = 4.5;
 const NONTEXT_FLOOR = 3;
 
-const OWNED = ['views/chat.css', 'views/domains.css', 'views/ingest.css',
+const OWNED = ['views/chat.css', 'views/chat-list.css', 'views/domains.css', 'views/ingest.css',
   'views/memory.css', 'views/sync.css', 'views/shared.css',
   'views/onboarding.css', 'views/mcp-wizard.css'];
-const OWNED_JS = ['views/chat.js', 'views/domains.js', 'views/ingest.js',
+const OWNED_JS = ['views/chat.js', 'views/chat-list.js', 'views/domains.js', 'views/ingest.js',
   'views/memory.js', 'views/sync.js', 'views/shared.js',
   'views/onboarding.js', 'views/mcp-wizard.js'];
 
@@ -265,10 +265,14 @@ const { dark: D, light: L } = themeTables(
 section('2. The citation chip — the LABEL is text, the DOT is the type');
 // ═════════════════════════════════════════════════════════════════════════
 {
-  const chat = read('views/chat.css');
-  const chipLabel = declFor(chat, '.chat-cite-chip', 'color');
+  // v3.72.0 (P2 + P3, M4): the citation chip is shared/page-chip.css's ONE
+  // page chip — Chat's Sources list and the reader's backlinks wear it — so
+  // the same contrast properties are held THERE. views/chat.css's
+  // `.chat-cite-chip` / `.chat-chip-*` / `.chat-type-dot` are gone.
+  const chat = read('shared/page-chip.css');
+  const chipLabel = declFor(chat, '.page-chip', 'color');
   ok(chipLabel === 'var(--text-2)',
-    `.chat-cite-chip's label takes a neutral text token, not a type colour (got ${chipLabel})`);
+    `.page-chip's label takes a neutral text token, not a type colour (got ${chipLabel})`);
 
   // The chip's real backdrop: its own type tint composited over the thread's
   // canvas. Graded per type, per theme.
@@ -296,8 +300,8 @@ section('2. The citation chip — the LABEL is text, the DOT is the type');
   // light it is derived from the token with color-mix rather than from a new
   // literal; on dark it is the token itself, unchanged.
   for (const [name, T, sel] of [
-    ['dark', D, (ty) => `.chat-chip-${ty} .chat-type-dot`],
-    ['light', L, (ty) => `[data-theme="light"] .chat-chip-${ty} .chat-type-dot`],
+    ['dark', D, (ty) => `.page-chip-${ty} .page-chip-dot`],
+    ['light', L, (ty) => `[data-theme="light"] .page-chip-${ty} .page-chip-dot`],
   ]) {
     for (const ty of TYPES) {
       const decl = declFor(chat, sel(ty), 'background');
@@ -480,7 +484,10 @@ section('5. The hand cursor is gone, and chrome does not drag-select');
      only reason it is on screen. That is the rule working: `user-select:
      none` is for CHROME, and a rule that opted OUT deliberately is evidence
      the distinction is real rather than a blanket. */
-  const contentExempt = ['.chat-conv-row-main', '.sbw-dht-card', '.reader-source-url'];
+  // `.chat-conv-row-main` WAS the first exemption. v3.72.0 (P3) made Chat's
+  // conversation rows the ONE sidebar row (`.cur-sb-row`, shared/sidebar.css),
+  // so the selector no longer exists and the exemption goes with it.
+  const contentExempt = ['.sbw-dht-card', '.reader-source-url'];
   const noSelect = [];
   for (const rel of OWNED) {
     const css = stripComments(read(rel));
@@ -516,8 +523,12 @@ section('6. Digits that align or tick carry tabular figures');
      reflows the words beside it and a column of figures does not line up.
      Taken WITHOUT the code face, per class, so each is checkable. */
   const WANT = [
-    ['views/chat.css', '.chat-num'], ['views/chat.css', '.chat-scope-count'],
-    ['views/chat.css', '.chat-conv-meta'], ['views/chat.css', '.chat-compile-change-detail'],
+    // v3.72.0 (P3): `.chat-scope-count` and `.chat-conv-meta` went with the
+    // scope bar and the hand-built rows. The page count now ticks in the
+    // header's meta line, and the list head carries the true conversation
+    // count; the rows' figure is the kit's `.cur-sb-meta`.
+    ['views/chat.css', '.chat-num'], ['views/chat.css', '.chat-head-meta'],
+    ['views/chat-list.css', '.chat-list-count'], ['views/chat.css', '.chat-compile-change-detail'],
     // v3.64.2: `.dm-stat-value` moved to the shared overview component as
     // `.cur-ov-value` when the Project-context view adopted the same card.
     ['shared/overview.css', '.cur-ov-value'],
@@ -564,7 +575,10 @@ section('7. The monospace face is spent on LITERALS, not on facts');
      copies. Each is listed with its reason so the next person adding a `mono`
      has to argue against a specific list rather than against a vibe. */
   const KEPT = {
-    'views/chat.js': 8,       // four message eyebrows, the SCOPE and PROJECT eyebrows (v3.64.0), the conversation group label,
+    'views/chat.js': 5,       // four message eyebrows and the model id in the picker. v3.72.0 (P3):
+                              // the SCOPE and PROJECT eyebrows went with the scope bar, and the
+                              // conversation group label is the sidebar kit's `.cur-eyebrow`.
+                              // (was 8: four message eyebrows, the SCOPE and PROJECT eyebrows (v3.64.0), the conversation group label,
                               // the SCOPE eyebrow, and the model id in the picker.
                               // An eyebrow is a mono IDIOM in this system —
                               // tokens/typography.css defines --type-eyebrow as a
@@ -642,16 +656,15 @@ section('7. The monospace face is spent on LITERALS, not on facts');
     const kept = (read('views/chat.js').match(/class="([^"]*)\bmono\b([^"]*)"/g) || [])
       .map((c) => c.replace(/class="|"| ?\bmono\b ?/g, '').trim()).sort();
     ok(JSON.stringify(kept) === JSON.stringify([
-      'chat-conv-group-label', 'chat-dd-opt-desc', 'chat-msg-eyebrow',
-      'chat-msg-eyebrow', 'chat-msg-eyebrow', 'chat-msg-eyebrow', 'chat-scope-eyebrow',
-      'chat-scope-eyebrow', // SCOPE and PROJECT (v3.64.0)
+      'chat-dd-opt-desc', 'chat-msg-eyebrow',
+      'chat-msg-eyebrow', 'chat-msg-eyebrow', 'chat-msg-eyebrow',
     ]), `views/chat.js keeps mono ONLY on its eyebrows and the model id (got ${kept.join(', ')})`);
   }
   // The stylesheets, from the other side: the chip and the wikilink no longer
   // name the mono family at all.
   const chat = stripComments(read('views/chat.css'));
-  ok(!/font-family:\s*var\(--font-mono\)/.test(declForBody(chat, '.chat-cite-chip')),
-    '.chat-cite-chip is not set in the code face');
+  ok(!/font-family:\s*var\(--font-mono\)/.test(declForBody(stripComments(read('shared/page-chip.css')), '.page-chip')),
+    '.page-chip (the Sources chip, v3.72.0) is not set in the code face');
   ok(!/font-family:\s*var\(--font-mono\)/.test(declForBody(chat, '.chat-wikilink')),
     '.chat-wikilink is not set in the code face either — a [[link]] in a sentence is a name');
   ok(/font-family:\s*var\(--font-mono\)/.test(declForBody(chat, '.chat-answer code')),
@@ -667,8 +680,8 @@ section('8. Rows on a material take the alpha overlay, not an opaque fill');
      reads as a hole punched in the sidebar rather than as a lit row. The
      overlays composite onto the plane instead, which is what AppKit does. */
   const ROWS = [
-    ['views/chat.css', '.chat-conv-row:hover', '--mat-row-hover'],
-    ['views/chat.css', '.chat-conv-row.active', '--mat-row-active'],
+    // `.chat-conv-row:hover/.active` WERE HERE. v3.72.0 (P3): Chat's rows are
+    // the ONE sidebar row, so `.cur-sb-row` below is their rule too.
     // THE DOMAINS ROW IS THE KIT'S SINCE v3.65.0. `.dm-row` still rides the
     // same element as an ALIAS, but the RULES moved to shared/sidebar.css
     // when all three sidebars became one component — so the declaration this
@@ -781,8 +794,8 @@ section('10. Nothing interactive in a view is under --hit-min');
   };
   // The one chip that IS a control, graded by name because the pattern above
   // deliberately cannot see it.
-  ok(/\.chat-cite-chip\s*\{[^}]*height:\s*var\(--hit-min\)/.test(stripComments(read('views/chat.css'))),
-    '.chat-cite-chip is a real <button> and grew its BOX to --hit-min — the one chip the classifier above cannot reach');
+  ok(/button\.page-chip\s*\{[^}]*height:\s*var\(--hit-min\)/.test(stripComments(read('shared/page-chip.css'))),
+    'button.page-chip (the Sources chip, v3.72.0) is a real <button> and grew its BOX to --hit-min — the one chip the classifier above cannot reach');
   const small = [];
   for (const rel of OWNED) {
     const css = stripComments(read(rel));
@@ -812,7 +825,8 @@ section('10. Nothing interactive in a view is under --hit-min');
      dropped, so "the entry went away" cannot mean "the control shrank and
      nobody noticed". */
   const DERIVED = [
-    ['views/chat.css', '.chat-conv-delete', 24],
+    // v3.72.0 (P3): `.chat-conv-delete` became the ONE row action.
+    ['shared/row-action.css', '.row-act', 24],
     ['views/ingest.css', '.ing-queue-file-remove', 20],
   ];
   for (const [file, sel, px] of DERIVED) {
@@ -842,9 +856,9 @@ section('10. Nothing interactive in a view is under --hit-min');
   }
 
   // The checkbox labels — the ONE case the ::before technique cannot reach.
-  ok(/\.chat-conv-check-hit\s*\{[^}]*height:\s*var\(--hit-min\)/.test(stripComments(read('views/chat.css'))),
+  ok(/\.chat-conv-check-hit\s*\{[^}]*height:\s*var\(--hit-min\)/.test(stripComments(read('views/chat-list.css'))),
     'the conversation checkbox is wrapped in a <label> at --hit-min — an <input> renders no ::before, so the label is its only possible target');
-  ok(/\.chat-bulk-all\s*\{[^}]*min-height:\s*var\(--hit-min\)/.test(stripComments(read('views/chat.css'))),
+  ok(/\.chat-bulk-all\s*\{[^}]*min-height:\s*var\(--hit-min\)/.test(stripComments(read('views/chat-list.css'))),
     'and so is the bulk "Select all" label');
   ok(/\.sbw-checkbox-label\s*\{[^}]*min-height:\s*var\(--hit-min\)/.test(stripComments(read('views/shared.css'))),
     'and the Shared Brain wizard\'s consent and domain labels');

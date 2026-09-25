@@ -954,26 +954,24 @@ section('6b. updateCompileButtonBusy() — the compile lock is owned by the RUN'
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('6c. scrollCompileCardIntoView() — the card lands BELOW the sticky bar');
+section('6c. scrollCompileCardIntoView() — the card lands at the top of the scrollport');
 // ═════════════════════════════════════════════════════════════════════════
-// BEHAVIOURAL. `.chat-scopebar` is `position: sticky; top: 0` with an OPAQUE
-// background (asserted in §8 below), so it covers the top of #main's
-// scrollport. Landing the card at that scrollport's own top hid its first
-// rows — measured live at 1440x892 on a 30-change card: bar 0->55,
-// `.chat-compile-note` (the ONLY degraded-compile signal) 8->45, entirely
-// underneath. The bar's height is measured at call time, never hardcoded:
-// it wraps and grows with the number of scope pills.
+// v3.72.0 (P3, M2): the opaque sticky `.chat-scopebar` that covered the top
+// of #main's scrollport is GONE — the scope moved to the composer and the
+// view header scrolls with the thread. So the card comes to rest 8px into
+// the scrollport, and this section holds BOTH halves: the arithmetic, and
+// that nothing in chat.css is sticky at the top of the column (the property
+// the arithmetic silently depends on — the v3.64 bar hid the degraded-compile
+// note exactly because the two disagreed).
 {
   function buildScrollSandbox(fnSrc) {
     return new Function(`
       let host = null;
       function setup(cfg) {
-        const bar = cfg.barHeight == null ? null
-          : { getBoundingClientRect: () => ({ height: cfg.barHeight }) };
         host = {
           scrollTop: cfg.scrollTop || 0,
           getBoundingClientRect: () => ({ top: cfg.hostTop }),
-          querySelector: (sel) => (sel === '.chat-scopebar' ? bar : null),
+          querySelector: () => null,
         };
         return { host, card: { getBoundingClientRect: () => ({ top: cfg.cardTop }) } };
       }
@@ -982,52 +980,21 @@ section('6c. scrollCompileCardIntoView() — the card lands BELOW the sticky bar
       return { setup, scrollCompileCardIntoView };
     `)();
   }
-
   const GOOD = extractFunction(chat, 'scrollCompileCardIntoView');
   const sb = buildScrollSandbox(GOOD);
-
-  // The live-measured geometry: #main's rect top 92, the bar 55 tall, a card
-  // starting 500px down the viewport.
-  const { host, card } = sb.setup({ hostTop: 92, cardTop: 500, barHeight: 55, scrollTop: 0 });
+  const { host, card } = sb.setup({ hostTop: 92, cardTop: 500, scrollTop: 0 });
   sb.scrollCompileCardIntoView(card);
-  // After scrolling by `host.scrollTop`, the card's top relative to the
-  // scrollport is its old offset minus the scroll delta.
-  const restingTop = (500 - 92) - host.scrollTop;
-  eq(restingTop, 63, 'the card comes to rest 63px into the scrollport (55px bar + the 8px gap)');
-  ok(restingTop > 55, 'which is BELOW the bar\'s bottom edge — the card\'s first row is visible, not covered');
-
-  // A taller bar (scope pills wrapped onto a second line) must push the card
-  // further, which a hardcoded constant could not do.
-  const tall = sb.setup({ hostTop: 92, cardTop: 500, barHeight: 96, scrollTop: 0 });
-  sb.scrollCompileCardIntoView(tall.card);
-  eq((500 - 92) - tall.host.scrollTop, 104, 'a 96px-tall bar pushes the resting position to 104 — the height is measured, not assumed');
-
-  ok(!/\b55\b/.test(GOOD), 'the function contains no hardcoded bar height');
-  ok(/getBoundingClientRect\(\)\.height/.test(GOOD), 'it measures the bar with getBoundingClientRect().height');
-
-  // Defensive: no bar in the DOM at all -> 0, same arithmetic as before, no
-  // throw. (Reachable in principle if the scopebar is ever restructured.)
-  const noBar = sb.setup({ hostTop: 92, cardTop: 500, barHeight: null, scrollTop: 0 });
-  let threwNoBar = false;
-  try { sb.scrollCompileCardIntoView(noBar.card); } catch { threwNoBar = true; }
-  ok(!threwNoBar, 'a missing .chat-scopebar does not throw');
-  eq((500 - 92) - noBar.host.scrollTop, 8, 'it degrades to the plain 8px inset rather than refusing to scroll');
-
-  // ── Mutation proof: drop the bar subtraction (the pre-fix arithmetic) ───
-  const brokenScrollSrc = GOOD.replace(' - barHeight - 8;', ' - 8;');
-  ok(brokenScrollSrc !== GOOD, 'the mutation actually changed the source text');
-  const brokenSb = buildScrollSandbox(brokenScrollSrc);
-  const broken = brokenSb.setup({ hostTop: 92, cardTop: 500, barHeight: 55, scrollTop: 0 });
-  let brokenScrollThrew = false;
-  try { brokenSb.scrollCompileCardIntoView(broken.card); } catch { brokenScrollThrew = true; }
-  ok(!brokenScrollThrew, 'the mutated function runs without throwing (a red here would be a crash, not the intended behavioural failure)');
-  const brokenRestingTop = (500 - 92) - broken.host.scrollTop;
-  eq(brokenRestingTop, 8, 'CONFIRMED RED: without the subtraction the card rests 8px into the scrollport');
-  ok(brokenRestingTop < 55,
-    'CONFIRMED RED: which is UNDER the 55px opaque sticky bar — reproducing the hidden degradation warning exactly');
-
-  eq(GOOD, extractFunction(chat, 'scrollCompileCardIntoView'),
-    'the source on disk was never touched by this mutation test (re-extraction is byte-identical)');
+  eq((500 - 92) - host.scrollTop, 8, 'the card comes to rest 8px into the scrollport — its first row visible');
+  const scrolled = sb.setup({ hostTop: 92, cardTop: 300, scrollTop: 400 });
+  sb.scrollCompileCardIntoView(scrolled.card);
+  eq(scrolled.host.scrollTop, 400 + (300 - 92) - 8, 'relative to the CURRENT scroll, not from zero');
+  const css = readFileSync(path.join(ROOT, 'src/public/next/views/chat.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const topSticky = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((m) => /position:\s*sticky/.test(m[2]) && /(^|;)\s*top:\s*0/.test(m[2])).map((m) => m[1].trim());
+  ok(topSticky.length === 0,
+    '★ and chat.css declares NO top-sticky rule, which is what makes the plain 8px true (found: ' + (topSticky.join(', ') || 'none') + ')');
+  ok(/position:\s*sticky[^}]*bottom:\s*0/.test(css.replace(/\n/g, ' ')),
+    'CONTROL: the scan can see a sticky rule — the composer IS sticky, at the bottom');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -1759,12 +1726,25 @@ function buildButtonSandbox(stateExtra) {
   ok(/ disabled aria-disabled="true" aria-describedby="chat-compile-runline"/.test(btn),
     'and it carries the kit\'s disabled attributes, described by the no-key line');
   eq((btn.match(/ disabled/g) || []).length, 1, 'with exactly one `disabled`');
+  // v3.72.0 (P3, M2): Compile moved into the VIEW HEADER's action slot, and
+  // shared/text.js drops that slot WHOLE when it holds a <p> (safeActions).
+  // The no-key line IS a <p>, so it cannot ride inside the group any more —
+  // renderMain paints it into its own host directly under the header. Both
+  // halves are held: the group carries no <p>, and the host carries the line.
   const group = sb.compileControlHtml();
-  ok(/<p class="ai-run" role="note" id="chat-compile-runline">/.test(group),
-    'the no-key line sits in the Compile group, under the action, with the id the button names');
-  ok(textOf(group).includes('Needs an AI provider key · Add one in Providers & keys'),
+  ok(!/<p[\s>]/.test(group),
+    'the Compile group carries NO <p> — the header would drop the whole action slot (and Compile with it) if it did');
+  const { renderViewHeader } = await import('../src/public/next/shared/text.js');
+  ok(!/chat-compile-btn/.test(renderViewHeader({ title: 'T', actionsHtml: group + sb.state.compileKeyLineHtml })) &&
+     /chat-compile-btn/.test(renderViewHeader({ title: 'T', actionsHtml: group })),
+    'CONTROL: that drop is real — the header renders Compile from the group alone and loses it when the line rides along');
+  ok(/<p class="ai-run" role="note" id="chat-compile-runline">/.test(sb.state.compileKeyLineHtml),
+    'the no-key line exists, with the id the button names');
+  ok(/id="chat-compile-keyline-host">' \+ \(compileControlHtml\(\) \? \(state\.compileKeyLineHtml \|\| ''\) : ''\)/.test(chat),
+    'and renderMain paints it into its host under the header, only when the Compile group exists');
+  ok(textOf(sb.state.compileKeyLineHtml).includes('Needs an AI provider key · Add one in Providers & keys'),
     'reading the kit\'s no-key words');
-  ok(/data-ai-run-door="providers"/.test(group), 'and carrying the one door');
+  ok(/data-ai-run-door="providers"/.test(sb.state.compileKeyLineHtml), 'and carrying the one door');
   // busy wins, one `disabled`
   sb.state.compileBusy = true;
   eq((sb.renderCompileButtonHtml().match(/ disabled/g) || []).length, 1, 'busy AND no key still prints ONE `disabled`');
@@ -1787,6 +1767,7 @@ async function driveAvailability(fetchImpl) {
   const document = {
     getElementById(id) {
       if (id === 'chat-compile-btn') return btn;
+      if (id === 'chat-compile-keyline-host') return group;
       if (id === 'chat-compile-runline') return group.html.includes('id="chat-compile-runline"') ? (lineEl = { remove() { group.html = ''; } }) : null;
       return null;
     },
@@ -1829,7 +1810,8 @@ async function driveAvailability(fetchImpl) {
   eq(keyed.btn.disabled, true, 'CONTROL: the same sandbox does disable on a no-key answer');
   keyed.sb.applyCompileRunsOn(PRICED_RUNS_ON);
   eq(keyed.btn.disabled, false, 'and re-enables once a key exists — no stale disabled state');
-  ok(!('aria-describedby' in keyed.btnAttrs), 'with the no-key description removed');
+  eq(keyed.btnAttrs['aria-describedby'], 'chat-compile-caption',
+    'with the no-key description replaced by the button\'s own caption (v3.72.0: the caption is visually hidden, still its description)');
 }
 // updateCompileButtonBusy releases to the no-key state, not to enabled.
 {

@@ -220,6 +220,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* v3.72.0 — line three's optional SECOND part: a separator, a host-named mark
+   (Chat's hollow project square) and a detail, all on the one ellipsised line.
+   The mark's shape is the host's; this places it on the text's line. */
+.cur-sb-event-mark { display: inline-block; vertical-align: -1px; margin-right: 5px; }
+.cur-sb-event-detail { color: var(--text-2); }
 
 /* ── Reduced motion ───────────────────────────────────────────────────────
    The press transform is off; the background step stays, because a colour

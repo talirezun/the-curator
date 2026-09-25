@@ -75,7 +75,9 @@ function isMarkSelector(sel) {
 const CARVE_OUTS = new Set([
   '.btn-danger',                   // shell.css — the destructive button family
   '.dm-delete-btn',                // views/domains.css — delete a domain/project
-  '.chat-conv-delete:hover',       // views/chat.css — delete a conversation, on hover
+  // '.chat-conv-delete:hover' REMOVED, v3.72.0 (P3, M3): Chat's conversation
+  // rows adopted shared/row-action.css's `.row-act` — neutral on hover, red
+  // only at the confirm — and the class no longer exists.
   // '.ing-queue-file-remove:hover' REMOVED, v3.72.0 (P5, DESIGN.md §4, M3,
   // the ONE row-action rule): this control's hover no longer colours
   // --danger-text at all — it adopted shared/row-action.css's neutral

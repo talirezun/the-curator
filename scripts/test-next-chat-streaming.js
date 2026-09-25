@@ -115,19 +115,23 @@ function escapeHtmlStub(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-/* THE REAL CHIP HELPERS, not stubs. §1-§7 stub `folderOfPath` and
-   `typeChipClass` because those sections are about the streaming path and a
-   chip's colour is noise to them. §8 is about the chip itself, so it must run
-   the shipping functions: the dot's class is derived from the PATH while the
-   label is derived from the TITLE MAP, and a stub that returned a constant
-   would make it impossible to tell those two apart. */
-const realChipFn = (name) => new Function(
-  extractFunction(chatSrc, 'titleFromSlug') + '\n' +
-  extractFunction(chatSrc, 'citationLabel') + '\n' +
-  extractFunction(chatSrc, 'folderOfPath') + '\n' +
-  extractFunction(chatSrc, 'typeChipClass') + '\n' +
-  `return ${name};`
-)();
+/* THE REAL ANSWER RENDERER, for §8 (v3.72.0, M4). §1-§7 stub it because
+   those sections are about the streaming path; §8 is about the citations
+   themselves, so it runs shared/answer.js over shared/markdown.js — loaded
+   from their sources (markdown.js imports app.js for one icon, stubbed), the
+   loader scripts/test-next-answer.js uses. */
+const ANSWER = (() => {
+  const md = readFileSync(path.join(ROOT, 'src/public/next/shared/markdown.js'), 'utf8');
+  const mdImp = /^import\s+\{\s*icon\s*\}\s+from\s+'\.\.\/app\.js';\s*$/m;
+  if (!mdImp.test(md)) throw new Error('markdown.js import changed — update this loader');
+  const MD = new Function('icon', md.replace(mdImp, '').replace(/^export\s+/gm, '') +
+    '\nreturn { renderMarkdown, escHtml };')(() => '<svg data-icon="dot"></svg>');
+  const an = readFileSync(path.join(ROOT, 'src/public/next/shared/answer.js'), 'utf8');
+  const anImp = /^import\s+\{\s*renderMarkdown,\s*escHtml\s*\}\s+from\s+'\.\/markdown\.js';\s*$/m;
+  if (!anImp.test(an)) throw new Error('answer.js import changed — update this loader');
+  return new Function('renderMarkdown', 'escHtml', an.replace(anImp, '').replace(/^export\s+/gm, '') +
+    '\nreturn { renderAnswer, sourcesHtml, sourceByNumber };')(MD.renderMarkdown, MD.escHtml);
+})();
 
 const summarySrc = readFileSync(path.join(ROOT, 'src/public/next/shared/model-summary.js'), 'utf8');
 const formatDurationMs = new Function(
@@ -282,11 +286,10 @@ function makeSandbox(opts = {}) {
     extractFunction(chatSrc, 'paintStream') + '\n' +
     extractFunction(chatSrc, 'schedulePaintStream') + '\n' +
     extractFunction(chatSrc, 'wireStreamToggle') + '\n' +
-    // The chip's label rule, always present: `renderThreadOnly` calls it on
-    // every assistant message, so it is a BINDING this file must resolve, not
-    // an opt-in for §8.
-    extractFunction(chatSrc, 'titleFromSlug') + '\n' +
-    extractFunction(chatSrc, 'citationLabel') + '\n' +
+    // v3.72.0: the answer's sources are kept per message for the ONE
+    // delegated click, which is extracted REAL so §8 can drive it.
+    'const answerSources = new Map();\n' +
+    extractFunction(chatSrc, 'onThreadCitationClick') + '\n' +
     // The per-message copy control. Extracted REAL rather than stubbed, so §9
     // below can assert on what `renderThreadOnly` actually emits — in
     // particular that the in-flight bubble, which this suite owns, carries no
@@ -297,7 +300,7 @@ function makeSandbox(opts = {}) {
     extractFunction(chatSrc, 'stickThreadToBottom') + '\n' +
     extractFunction(chatSrc, 'renderThreadOnly') + '\n' +
     'return {\n' +
-    '  renderThreadOnly, paintStream, schedulePaintStream, sendIsOnScreen,\n' +
+    '  renderThreadOnly, paintStream, schedulePaintStream, sendIsOnScreen, onThreadCitationClick,\n' +
     '  streamSlotHtml, thinkingBodyHtml, isThreadAtBottom, streamShapeKey,\n' +
     '  setStream: (v) => { sendStream = v; },\n' +
     '  getStream: () => sendStream,\n' +
@@ -308,7 +311,7 @@ function makeSandbox(opts = {}) {
     'document', 'state', 'isCurrentMount', 'escapeHtml', 'formatDurationMs',
     'progressRingHtml', 'slowTurnNoticeText', 'renderMarkdown', 'cancelNoticeHtml',
     'assistantEyebrowHtml', 'failedModelNoteHtml', 'reaskButtonHtml',
-    'folderOfPath', 'typeChipClass', 'typeDotStyle',
+    'renderAnswer', 'sourcesHtml', 'sourceByNumber',
     'openBrowseDialog', 'openWikiReader', 'questionForAnswerIndex', 'window',
     // `icon` is what the extracted copyControlHtml reaches for; the Compile
     // caption's targeted refresh is a no-op here because this fake document
@@ -325,9 +328,10 @@ function makeSandbox(opts = {}) {
     // strings reach it — §4 and §7 assert exactly that.
     (s) => { calls.markdown.push(s); return '<md>' + escapeHtmlStub(s) + '</md>'; },
     () => '', () => '<eyebrow>', () => '', () => '',
-    opts.realChips ? realChipFn('folderOfPath') : (p) => String(p).split('/')[0],
-    opts.realChips ? realChipFn('typeChipClass') : () => 'chip',
-    () => '',
+    opts.realChips ? ANSWER.renderAnswer
+      : (c) => { calls.markdown.push(c); return { html: '<md>' + escapeHtmlStub(c) + '</md>', sources: [] }; },
+    opts.realChips ? ANSWER.sourcesHtml : () => '',
+    ANSWER.sourceByNumber,
     // BOTH arguments recorded. It used to push only the path, so a mutation
     // dropping openWikiReader's `titleHint` — the reader's loading header —
     // left §8 green (measured). A stub that discards an argument cannot see a
@@ -768,28 +772,33 @@ section('§7  CITATIONS ARE WIRED ON THE TERMINAL FRAME ONLY');
   s.doc._ensure('chat-thread'); s.doc._ensure('main');
   s.api.renderThreadOnly(1);
   ok(s.calls.markdown.some(x => /right-page/.test(x)),
-    'POSITIVE CONTROL: the finished answer IS passed to renderMarkdown');
-  ok(/chat-cite-chip/.test(s.doc.getElementById('chat-thread').innerHTML),
-    'and its citation chips are rendered on the terminal frame');
+    'POSITIVE CONTROL: the finished answer IS passed to the answer renderer');
+  // v3.72.0: the citations are shared/answer.js's Sources list now; with the
+  // REAL renderer the finished answer carries it.
+  const r = makeSandbox({
+    realChips: true, sending: false,
+    thread: [{ role: 'user', content: 'q' }, { role: 'assistant', content: 'done [source: entities/right-page.md]', citations: ['entities/right-page.md'] }],
+  });
+  r.doc._ensure('chat-thread'); r.doc._ensure('main');
+  r.api.renderThreadOnly(1);
+  ok(/class="answer-sources"/.test(r.doc.getElementById('chat-thread').innerHTML),
+    'and its Sources list is rendered on the terminal frame');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§8  THE CITATION CHIP SHOWS THE PAGE\'S NAME, NOT ITS FILE PATH');
-// ═════════════════════════════════════════════════════════════════════════
-/* THE COMPLAINT THIS ANSWERS. A chip read `entities/tali-rezun.md`. Twenty of
-   them sit under one answer, in the smallest text on the view, and the page's
-   actual name — `Dr Tali Rezun` — was nowhere on screen.
-
-   FOUR THINGS HAVE TO BE TRUE AT ONCE, and they pull against each other:
-     1. the VISIBLE text is the title;
-     2. `data-cite` is still the PATH — it is what the click fetches;
-     3. the DOT's class is still derived from the PATH's folder, because the
-        dot carries the page's TYPE and the title says nothing about type;
-     4. a message with NO title map (every answer written before this change,
-        and every chip whose page the model invented) still renders, labelled
-        the way it always was.
-   This section runs the REAL `folderOfPath` / `typeChipClass` / `citationLabel`
-   (see realChipFn) precisely so 1 and 3 can be told apart. */
+section('§8  NUMBERED CITATIONS + ONE SOURCES LIST (v3.72.0, M4)');
+/* v3.46.0's title chips under the answer are GONE: they repeated every inline
+   `[source:]` path tag, so every citation was printed twice (DESIGN.md C6).
+   The answer now carries numbered markers inline and ONE Sources list, both
+   from shared/answer.js. What this section holds, through the REAL renderer:
+     1. the Sources chip's visible text is the page TITLE (from the map), and a
+        page with no entry falls back to the humanised slug — an old thread
+        with no `citationTitles` still renders;
+     2. no raw path is on the answer's face;
+     3. the chip's TYPE comes from the path's folder;
+     4. a click — on an inline marker OR a Sources chip — resolves the NUMBER
+        against that answer's own list and opens the PATH with the TITLE as
+        the reader's loading header; the path is never read from the DOM. */
 {
   const s = makeSandbox({
     realChips: true,
@@ -798,13 +807,11 @@ section('§8  THE CITATION CHIP SHOWS THE PAGE\'S NAME, NOT ITS FILE PATH');
       { role: 'user', content: 'q' },
       {
         role: 'assistant',
-        content: 'An answer.',
-        citations: ['entities/iea.md', 'concepts/water-footprint.md', 'summaries/some-report.md'],
+        content: 'Energy [source: entities/iea.md, concepts/water-footprint.md] and more.',
+        citations: ['entities/iea.md', 'summaries/some-report.md'],
         citationTitles: {
           'entities/iea.md': 'International Energy Agency',
           'summaries/some-report.md': 'The Energy and Water Footprint of Generative AI',
-          // `concepts/water-footprint.md` is DELIBERATELY absent — a page with
-          // no `# Heading` that the server therefore did not resolve.
         },
       },
     ],
@@ -812,62 +819,38 @@ section('§8  THE CITATION CHIP SHOWS THE PAGE\'S NAME, NOT ITS FILE PATH');
   s.doc._ensure('chat-thread'); s.doc._ensure('main');
   s.api.renderThreadOnly(1);
   const html = s.doc.getElementById('chat-thread').innerHTML;
+  const labels = [...html.matchAll(/<span class="page-chip-label">([^<]*)<\/span>/g)].map(m => m[1]);
+  ok(JSON.stringify(labels) === JSON.stringify(['International Energy Agency', 'Water Footprint',
+    'The Energy and Water Footprint of Generative AI']),
+    `★ ONE Sources list: titles in first-appearance order, the unmapped page humanised (got ${JSON.stringify(labels)})`);
+  const face = html.replace(/<span class="visually-hidden">[^<]*<\/span>/g, '').replace(/<[^>]*>/g, '');
+  ok(!/\.md/.test(face), '★ NO raw path is on the answer\'s face');
+  ok(!/chat-cite-row|chat-cite-chip|data-cite="/.test(html),
+    '★ the title-chip row that repeated every citation is gone');
+  const types = [...html.matchAll(/class="page-chip page-chip-([a-z]+)"/g)].map(m => m[1]);
+  ok(JSON.stringify(types) === '["entity","concept","summary"]', '★ each chip\'s type comes from its path\'s folder');
+  ok((html.match(/data-cite-n="/g) || []).length === 2, 'the inline [source: a, b] became TWO numbered markers');
+  ok(/data-msg-index="1"/.test(html), 'the answer carries its message index, which the one delegated click resolves against');
 
-  // 1. THE VISIBLE TEXT IS THE TITLE. Asserted on the SPAN's contents, not on
-  //    "does the string appear anywhere" — the path appears in this markup too
-  //    (twice, by design), so a substring test would pass on the old renderer.
-  const labels = [...html.matchAll(/<span class="chat-type-dot"><\/span><span>([^<]*)<\/span>/g)].map(m => m[1]);
-  ok(labels.length === 3, `three chips rendered (got ${labels.length})`);
-  ok(labels[0] === 'International Energy Agency',
-    `★ the chip's visible label is the page TITLE from the map (got "${labels[0]}")`);
-  ok(labels[2] === 'The Energy and Water Footprint of Generative AI',
-    '★ …including a long summary title, which the CSS truncates rather than the renderer');
-  ok(!labels.some(l => /\.md$/.test(l)),
-    '★ NO chip label is a filename any more — this is the defect, stated directly');
-
-  // 4. THE FALLBACK, on a path the map does not cover.
-  ok(labels[1] === 'Water Footprint',
-    `★ a citation with no entry in the map is humanised from its slug (got "${labels[1]}")`);
-
-  // 2. THE PATH IS STILL ON THE ELEMENT — twice, and each for a different job.
-  const cites = [...html.matchAll(/data-cite="([^"]*)"/g)].map(m => m[1]);
-  ok(JSON.stringify(cites) ===
-     JSON.stringify(['entities/iea.md', 'concepts/water-footprint.md', 'summaries/some-report.md']),
-    '★ data-cite still carries the untouched PATH — it is what the click fetches');
-  const tooltips = [...html.matchAll(/ title="([^"]*)"/g)].map(m => m[1]);
-  ok(JSON.stringify(tooltips) === JSON.stringify(cites),
-    'and the title ATTRIBUTE is still the path, so the tooltip answers "which file is this?"');
-
-  // 3. THE DOT IS STILL TYPED BY THE FOLDER. A title carries no type, so if
-  //    the class had been derived from the label these would all collapse to
-  //    `chat-chip-plain` — which is exactly the failure this asserts against.
-  const classes = [...html.matchAll(/class="chat-cite-chip ([a-z-]+)"/g)].map(m => m[1]);
-  ok(JSON.stringify(classes) === JSON.stringify(['chat-chip-entity', 'chat-chip-concept', 'chat-chip-summary']),
-    '★ the dot\'s class is still derived from the PATH\'s folder — one chip per type, all three distinct');
-
-  // THE CLICK STILL OPENS THE PATH, and now hands the label over as the
-  // reader's loading header instead of leaving it to show a bare basename that
-  // changes under the reader\'s eye when the fetch lands.
-  const chips = s.doc.getElementById('chat-thread').querySelectorAll('[data-cite]');
-  ok(chips.length === 3, 'the chips are reachable as elements');
-  ok(chips[0].dataset.cite === 'entities/iea.md' &&
-     chips[0].dataset.citeTitle === 'International Energy Agency',
-    'the element carries the path and the label as two separate data attributes');
-  chips[0].click();
-  ok(s.calls.openReader.length === 1 && s.calls.openReader[0] === 'entities/iea.md',
-    '★ clicking a chip still opens the PATH, not the title');
-  ok(s.calls.openReaderTitle[0] === 'International Energy Agency',
-    '★ …and hands the LABEL over as openWikiReader\'s titleHint, so the reader\'s loading header '
-    + 'says what the chip said instead of a basename that changes under the reader once the fetch lands');
+  // 4. The click, through the REAL delegated handler.
+  const fakeTarget = (attr, n) => {
+    const msg = { getAttribute: (a) => (a === 'data-msg-index' ? '1' : null) };
+    const hit = { getAttribute: (a) => (a === attr ? String(n) : null), closest: (sel) => (sel === '[data-msg-index]' ? msg : null) };
+    return { closest: (sel) => (/data-cite-n/.test(sel) ? hit : null) };
+  };
+  let prevented = 0;
+  s.api.onThreadCitationClick({ target: fakeTarget('data-cite-n', 2), preventDefault: () => { prevented++; } });
+  ok(s.calls.openReader[0] === 'concepts/water-footprint.md' && s.calls.openReaderTitle[0] === 'Water Footprint',
+    '★ an inline marker opens ITS page by number, with the title as the loading header');
+  s.api.onThreadCitationClick({ target: fakeTarget('data-source-n', 3), preventDefault: () => { prevented++; } });
+  ok(s.calls.openReader[1] === 'summaries/some-report.md' && s.calls.openReaderTitle[1] === 'The Energy and Water Footprint of Generative AI',
+    '★ a Sources chip opens the same way');
+  s.api.onThreadCitationClick({ target: fakeTarget('data-source-n', 99), preventDefault: () => { prevented++; } });
+  ok(s.calls.openReader.length === 2 && prevented === 2, 'a number outside the list opens nothing (sourceByNumber refuses it)');
 }
 
 {
-  // ── THE OLD-THREAD CASE, ON ITS OWN, BECAUSE IT IS THE ONE THAT BREAKS ──
-  // Every conversation already on a user's disk has assistant messages with no
-  // `citationTitles` at all. There is no defaulting and no migration-on-read,
-  // so the renderer has to carry them — and it has to carry them producing the
-  // SAME string the server's own fallback produces, or an old thread would
-  // look subtly different from a new one for the same page.
+  // THE OLD-THREAD CASE: no citationTitles at all, and a hostile map.
   const s = makeSandbox({
     realChips: true, sending: false,
     thread: [
@@ -878,63 +861,22 @@ section('§8  THE CITATION CHIP SHOWS THE PAGE\'S NAME, NOT ITS FILE PATH');
   s.doc._ensure('chat-thread'); s.doc._ensure('main');
   s.api.renderThreadOnly(1);
   const html = s.doc.getElementById('chat-thread').innerHTML;
-  ok(/<span class="chat-type-dot"><\/span><span>Tali Rezun<\/span>/.test(html),
+  ok(/<span class="page-chip-label">Tali Rezun<\/span>/.test(html),
     '★ a pre-v3.46.0 message with NO citationTitles renders a humanised label, never a crash and never a path');
-  ok(/data-cite="entities\/tali-rezun\.md"/.test(html),
-    'and its path is intact, so the chip still opens the right page');
 
-  // A HOSTILE MAP MUST NOT REACH THE LABEL. `citationTitles` arrives from a
-  // JSON body and from a JSON file on disk; a path named after a prototype
-  // member must not read a function off Object.prototype and stringify it into
-  // the chip. citationLabel uses Object.hasOwn for exactly this.
-  //
-  // ── MUTATION NOTE, RECORDED BECAUSE IT CAME BACK GREEN ────────────────
-  // Replacing `Object.hasOwn(titles, p)` with a bare `titles[p]` truthiness
-  // check leaves this pair of assertions GREEN, and that is not a hole. Two
-  // INDEPENDENT checks stand between the prototype chain and the label — the
-  // own-property test and the `typeof t === 'string'` test — and either one
-  // alone is sufficient, so a one-guard mutation cannot change the observable
-  // behaviour. Removing BOTH does: it renders `function Object() { [native
-  // code] }` into the chip and these two go red (verified). So the property
-  // asserted here is the PAIR, the redundancy is deliberate, and neither half
-  // should be deleted on the grounds that "the test still passes without it".
-  const s2 = makeSandbox({
-    realChips: true, sending: false,
-    thread: [
-      { role: 'user', content: 'q' },
-      { role: 'assistant', content: 'x', citations: ['constructor', 'entities/ok-page.md'],
-        citationTitles: { 'entities/ok-page.md': 'Ok Page' } },
-    ],
-  });
-  s2.doc._ensure('chat-thread'); s2.doc._ensure('main');
-  s2.api.renderThreadOnly(1);
-  const h2 = s2.doc.getElementById('chat-thread').innerHTML;
-  ok(!/function|Object\(\)|native code/i.test(h2),
-    '★ a citation named `constructor` reads NOTHING off the prototype chain');
-  ok(/<span>Constructor<\/span>/.test(h2), '…it is humanised like any other unresolved path');
-  ok(/<span>Ok Page<\/span>/.test(h2), 'CONTROL: a real own-property entry in the same map IS used');
-
-  // AND THE LABEL IS ESCAPED. It is server-supplied text taken out of a wiki
-  // page's own heading, which a user can type anything into.
   const s3 = makeSandbox({
     realChips: true, sending: false,
     thread: [
       { role: 'user', content: 'q' },
-      { role: 'assistant', content: 'x', citations: ['entities/x.md'],
+      { role: 'assistant', content: 'x', citations: ['entities/x.md', 'constructor'],
         citationTitles: { 'entities/x.md': '<img src=x onerror=alert(1)> & "quoted"' } },
     ],
   });
   s3.doc._ensure('chat-thread'); s3.doc._ensure('main');
   s3.api.renderThreadOnly(1);
   const h3 = s3.doc.getElementById('chat-thread').innerHTML;
-  ok(!/<img/.test(h3), '★ a title carrying markup is ESCAPED — it reaches two attributes and a text node');
-  ok(/&lt;img src=x onerror=alert\(1\)&gt; &amp; &quot;quoted&quot;/.test(h3),
-    '…and survives as readable text rather than being dropped');
-  // The same escaped string must be in data-cite-title, or the reader\'s
-  // header would be the one place the escape was skipped.
-  const chips3 = s3.doc.getElementById('chat-thread').querySelectorAll('[data-cite]');
-  ok(chips3.length === 1 && chips3[0].dataset.citeTitle === '&lt;img src=x onerror=alert(1)&gt; &amp; &quot;quoted&quot;',
-    'the title hint attribute is escaped in the markup too');
+  ok(!/<img/.test(h3), '★ a title carrying markup is ESCAPED');
+  ok(!/function|native code/i.test(h3), '★ a citation named `constructor` reads NOTHING off the prototype chain');
 }
 
 

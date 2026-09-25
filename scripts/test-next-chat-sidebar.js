@@ -115,7 +115,7 @@ const brainChat = readFileSync(BRAIN_CHAT_PATH, 'utf8');
 const routeSrc = readFileSync(ROUTE_PATH, 'utf8');
 
 const chatViewCode = assertStrippedSane(stripComments(chatView), 'views/chat.js', [
-  'function conversationRowHtml(', 'function pruneSelection(', 'function switchDomain(',
+  'function conversationListUrl(', 'function pruneSelection(', 'function switchDomain(',
 ]);
 const brainChatCode = assertStrippedSane(stripComments(brainChat), 'brain/chat.js', [
   'conversation.messages.push(',
@@ -155,471 +155,228 @@ function extractConst(src, name) {
   return m[0].trim();
 }
 
-// ── Sandbox over views/chat.js's pure sidebar helpers ────────────────────
-// `state` is injected; escapeHtml is the REAL one lifted out of app.js (so
-// the escaping assertions test what actually ships, not a stand-in);
-// isSameLocalDay is the real one from chat.js; icon() is a stub because it
-// only ever contributes an <svg> this suite does not assert on.
+// ── Sandbox over views/chat.js's state helpers ───────────────────────────
+// v3.72.0 (P3): the ROW, the LIST, the SELECT MODE'S BAR and the notice are
+// views/chat-list.js's now — a DOM-free module, so §5 IMPORTS the real one
+// rather than lifting functions into a sandbox. What stays extracted from
+// chat.js is the state half: the per-turn row patch and the selection prune.
 function buildSidebarSandbox() {
   const src =
     'const state = __state;\n' +
-    extractFunction(appSrc, 'escapeHtml') + '\n' +
-    extractFunction(chatView, 'isSameLocalDay') + '\n' +
-    'function icon(n, s) { return "<svg data-icon=\\"" + n + "\\"></svg>"; }\n' +
+    'function convKey(d, id) { return String(d || "") + "/" + String(id || ""); }\n' +
     extractConst(chatView, 'MESSAGES_PER_TURN') + '\n' +
-    // v3.49.0: conversationListHtml's empty state now ends with
-    // filterAskRowHtml(), so these three are BINDINGS this sandbox has to
-    // resolve, not opt-ins. Their own behaviour is asserted in
-    // scripts/test-next-chat-filter.js; here they exist so the pre-existing
-    // empty-state assertions below still execute the real function.
-    extractConst(chatView, 'FILTER_ASK_MIN_WORDS') + '\n' +
-    extractFunction(chatView, 'looksLikeAnAsk') + '\n' +
-    extractFunction(chatView, 'filterAskOffered') + '\n' +
-    extractFunction(chatView, 'filterAskRowHtml') + '\n' +
-    extractFunction(chatView, 'matchHint') + '\n' +
-    extractFunction(chatView, 'conversationRowHtml') + '\n' +
-    extractFunction(chatView, 'conversationListHtml') + '\n' +
-    extractFunction(chatView, 'bulkBarHtml') + '\n' +
-    extractFunction(chatView, 'bulkNoticeHtml') + '\n' +
-    extractFunction(chatView, 'conversationPaneHtml') + '\n' +
     extractFunction(chatView, 'pruneSelection') + '\n' +
     extractFunction(chatView, 'bumpMessageCountForTurn') + '\n' +
-    'return { matchHint, conversationRowHtml, conversationListHtml, bulkBarHtml, ' +
-    'bulkNoticeHtml, conversationPaneHtml, pruneSelection, bumpMessageCountForTurn, ' +
-    'looksLikeAnAsk, filterAskOffered, filterAskRowHtml, ' +
-    'MESSAGES_PER_TURN, FILTER_ASK_MIN_WORDS };';
+    'return { pruneSelection, bumpMessageCountForTurn, MESSAGES_PER_TURN };';
   return new Function('__state', src);
 }
 const makeSidebar = buildSidebarSandbox();
+const LIST = await import('../src/public/next/views/chat-list.js');
 
 function freshState(over = {}) {
   return Object.assign({
     domains: [{ slug: 'demo' }],
+    activeDomain: 'demo',
     conversations: [],
     activeConversationId: null,
     searchQuery: '',
-    selectedConvIds: new Set(),
+    selectedConvKeys: new Set(),
     bulkNotice: null,
     loadError: null,
   }, over);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§1 — listConversations(domain, {q}) and matchConversation (REAL files.js, real tempdir)');
-
-const files = await import(path.join(ROOT, 'src/brain/files.js'));
-const { listConversations, matchConversation, CONVERSATION_SEARCH_MAX_CHARS, conversationsPath } = files;
-
-const DOMAIN = 'searchdemo';
-const convDir = conversationsPath(DOMAIN);
-mkdirSync(convDir, { recursive: true });
-// The CLAUDE.md schema is what makes a directory a DOMAIN (listDomains filters
-// on it, so ghost folders left by a sync deletion are not domains). §2 drives
-// the real GET /api/chat/:domain handler, which now refuses a name that is not
-// on that allow-list — the guard that closes the `..%2f` traversal — so the
-// fixture has to be a real domain rather than a bare directory.
-writeFileSync(path.join(path.dirname(convDir), 'CLAUDE.md'), '# searchdemo\n');
-function uuidN(n) { return String(n).padStart(8, '0') + '-0000-4000-8000-000000000000'; }
-function writeConv(n, title, messages, createdAt) {
-  const id = uuidN(n);
-  writeFileSync(path.join(convDir, id + '.json'), JSON.stringify({
-    id, title, createdAt: createdAt || new Date(2026, 0, 1, 12, 0, n).toISOString(),
-    domain: DOMAIN, messages,
-  }));
-  return id;
-}
-// (1) title carries the needle, bodies do not.
-const ID_TITLE = writeConv(1, 'Kubernetes rollout plan', [
-  { role: 'user', content: 'how do we stage this' },
-  { role: 'assistant', content: 'stage it in three waves' },
-]);
-// (2) THE DECISIVE ONE — the needle appears only in the LAST message, and the
-// title is a plausible truncated opening line that does not contain it.
-const ID_BODY = writeConv(2, 'What is the best way to structure the ingest pi…', [
-  { role: 'user', content: 'What is the best way to structure the ingest pipeline for large PDFs' },
-  { role: 'assistant', content: 'Batch the phases.' },
-  { role: 'user', content: 'and what about GRAPHQL for the read side' },
-]);
-// (3) matches nothing.
-const ID_NONE = writeConv(3, 'Weekly review', [
-  { role: 'user', content: 'summarise the week' },
-]);
-// (4) malformed messages array + a non-string content — must not throw.
-writeConv(4, 'Odd shapes', [{ role: 'user' }, { role: 'assistant', content: { not: 'a string' } }]);
-// (5) genuinely malformed JSON — the pre-existing skip path must still hold.
-writeFileSync(path.join(convDir, uuidN(5) + '.json'), '{ this is not json');
-
-const all = await listConversations(DOMAIN);
-eq(all.length, 4, 'no query → every well-formed conversation (malformed file skipped)');
-ok(all.every(c => !('matchField' in c)), 'unfiltered rows carry NO matchField (there is no match to explain)');
-ok(all.every(c => typeof c.messageCount === 'number'), 'unfiltered rows carry a numeric messageCount');
-
-const byTitle = await listConversations(DOMAIN, { q: 'kubernetes' });
-eq(byTitle.length, 1, 'title match found (case-insensitive: query "kubernetes" vs title "Kubernetes")');
-eq(byTitle[0].id, ID_TITLE, 'title match returns the right conversation');
-eq(byTitle[0].matchField, 'title', 'a title match reports matchField "title"');
-
-const byBody = await listConversations(DOMAIN, { q: 'graphql' });
-eq(byBody.length, 1, 'THE FIX: a needle only in the LAST message is found — unreachable when search was title-only');
-eq(byBody[0].id, ID_BODY, 'body match returns the right conversation');
-eq(byBody[0].matchField, 'message', 'a body match reports matchField "message"');
-eq(byBody[0].messageCount, 3, 'messageCount is the conversation length, NOT the number of matching messages');
-
-eq((await listConversations(DOMAIN, { q: 'GRAPHQL' })).length, 1, 'uppercase query matches lowercase body');
-eq((await listConversations(DOMAIN, { q: 'zzz-no-such-thing' })).length, 0, 'a miss returns an empty list, not everything');
-eq((await listConversations(DOMAIN, { q: '   ' })).length, 4, 'a whitespace-only query is NO filter (not a filter matching nothing)');
-eq((await listConversations(DOMAIN, { q: '' })).length, 4, 'an empty query is no filter');
-eq((await listConversations(DOMAIN, {})).length, 4, 'an absent q is no filter');
-// These inputs are the ones that can THROW rather than mis-filter (`42.slice`
-// / `[].trim` are not functions), so they go through a catching wrapper: a
-// suite that dies on the first bad input reports a red for the wrong reason
-// and hides every assertion after it.
-async function listOrThrew(opts) {
-  try { return await listConversations(DOMAIN, opts); }
-  catch (err) { return { threw: String(err && err.message).slice(0, 80) }; }
-}
-{
-  const r = await listOrThrew({ q: null });
-  eq(Array.isArray(r) ? r.length : r, 4, 'a null q is no filter');
-  const r2 = await listOrThrew({ q: 42 });
-  eq(Array.isArray(r2) ? r2.length : r2, 4, 'a non-string q is no filter and does not throw (never coerced into a needle)');
-  const r3 = await listOrThrew({ q: ['a', 'b'] });
-  eq(Array.isArray(r3) ? r3.length : r3, 4, 'an ARRAY q — what express hands over for ?q=a&q=b — is no filter and does not throw');
-  const r4 = await listOrThrew({ q: { toString() { return 'kubernetes'; } } });
-  eq(Array.isArray(r4) ? r4.length : r4, 4, 'an object that stringifies to a real needle is still not a needle');
-}
-
-// Truncation is DECISIVE only where the first CONVERSATION_SEARCH_MAX_CHARS
-// of the query are present in the haystack and the tail is not: a shorter
-// prefix is a LESS restrictive needle, so the truncated query matches while
-// the full one cannot. Constructed exactly that way rather than asserted
-// about a query that would have missed either way.
-writeConv(6, 'Long body', [{ role: 'user', content: 'A'.repeat(CONVERSATION_SEARCH_MAX_CHARS + 50) }]);
-const overLong = 'A'.repeat(CONVERSATION_SEARCH_MAX_CHARS) + 'B'.repeat(60);
-eq((await listConversations(DOMAIN, { q: overLong })).length, 1,
-  'an over-long query is TRUNCATED to the cap and still matches — the failure direction is a superset, never a false empty');
-eq((await listConversations(DOMAIN, { q: 'A'.repeat(CONVERSATION_SEARCH_MAX_CHARS) + 'B' })).length, 1,
-  'one character past the cap is already discarded (the bound is the cap, not "roughly the cap")');
-eq((await listConversations(DOMAIN, { q: 'A'.repeat(CONVERSATION_SEARCH_MAX_CHARS - 1) + 'B' })).length, 0,
-  'a query INSIDE the cap is honoured in full — truncation is a bound, not a blanket prefix match');
-ok((await listConversations(DOMAIN, { q: 'q'.repeat(500000) })).length === 0,
-  'a half-megabyte query neither throws nor is scanned in full');
-ok(CONVERSATION_SEARCH_MAX_CHARS > 0 && CONVERSATION_SEARCH_MAX_CHARS <= 1000, 'the search cap is a real bound');
-
-const sorted = await listConversations(DOMAIN, { q: 'the' });
-ok(sorted.length >= 2, 'a common word matches several conversations');
-ok(new Date(sorted[0].createdAt) >= new Date(sorted[sorted.length - 1].createdAt),
-  'filtered results keep the newest-first ordering');
-
-// matchConversation directly — including the shapes that must not throw.
-eq(matchConversation({ title: 'abc', messages: [] }, 'abc'), 'title', 'matchConversation: title hit');
-eq(matchConversation({ title: 'abc', messages: [{ content: 'zed' }] }, 'zed'), 'message', 'matchConversation: body hit');
-eq(matchConversation({ title: 'abc', messages: [] }, 'nope'), null, 'matchConversation: miss returns null');
-eq(matchConversation({ title: 'abc' }, ''), null, 'matchConversation: an empty needle never matches (no filter is decided upstream)');
-eq(matchConversation(null, 'x'), null, 'matchConversation: a null conversation does not throw');
-eq(matchConversation({ title: 7, messages: 'nope' }, 'x'), null, 'matchConversation: non-string title / non-array messages do not throw');
-eq(matchConversation({ messages: [{ content: null }, { content: 'hit' }] }, 'hit'), 'message',
-  'matchConversation: a null message body does not stop the scan reaching a later one');
-ok(matchConversation({ title: 'x', messages: [{ content: 'x' }] }, 'x') === 'title',
-  'title is checked before bodies (the cheap case wins)');
-
-// ═════════════════════════════════════════════════════════════════════════
-section('§2 — GET /api/chat/:domain honours ?q= (the REAL route handler)');
-
-// Derived from §1's fixtures rather than hardcoded, so adding a fixture up
-// there cannot silently make this section assert about the wrong number.
-const TOTAL_CONVS = (await listConversations(DOMAIN)).length;
-
-const routerMod = await import(path.join(ROOT, 'src/routes/chat.js'));
-const router = routerMod.default;
-const listLayer = router.stack.find(l => l.route && l.route.path === '/:domain' && l.route.methods.get);
-ok(!!listLayer, 'the list route is registered at GET /:domain');
-const listHandler = listLayer.route.stack[0].handle;
-
-async function callList(query) {
-  return await new Promise((resolve) => {
-    const res = {
-      statusCode: 200,
-      status(c) { this.statusCode = c; return this; },
-      json(body) { resolve({ statusCode: this.statusCode, body }); },
-    };
-    listHandler({ params: { domain: DOMAIN }, query }, res, () => resolve({ statusCode: 0, body: null }));
-  });
-}
-
-const r1 = await callList({});
-eq(r1.statusCode, 200, 'no q → 200');
-eq(r1.body.conversations.length, TOTAL_CONVS, 'no q → the full list');
-const r2 = await callList({ q: 'graphql' });
-eq(r2.body.conversations.length, 1, 'q reaches listConversations and filters on message bodies');
-eq(r2.body.conversations[0].matchField, 'message', 'matchField survives to the wire');
-// express delivers a repeated parameter as an ARRAY. `[].slice()` returns an
-// array and `.trim` is not a function on it, so an unguarded route turns a
-// malformed URL into a 500 — executed, not reasoned about.
-const r3 = await callList({ q: ['a', 'b'] });
-eq(r3.statusCode, 200, 'a REPEATED ?q=a&q=b (an array) does not 500');
-eq(r3.body.conversations.length, TOTAL_CONVS, 'a repeated q is treated as no query at all');
-const r4 = await callList({ q: undefined });
-eq(r4.statusCode, 200, 'an absent q does not 500');
-
-// ═════════════════════════════════════════════════════════════════════════
-section('§3 — bumpMessageCountForTurn: the sidebar count moves on the turn that wrote it');
+section('§3 — bumpMessageCountForTurn: the row moves on the turn that wrote it');
 
 {
-  const st = freshState({ conversations: [{ id: 'a', messageCount: 4 }, { id: 'b', messageCount: 0 }] });
+  // The SAME id in another domain sits FIRST, so a patch that matched on the
+  // id alone would hit it — mutation M16 (P3 report) was green until it did.
+  const st = freshState({ conversations: [
+    { id: 'a', domain: 'other', messageCount: 10 },
+    { id: 'a', domain: 'demo', messageCount: 4 },
+    { id: 'b', domain: 'demo', messageCount: 0 },
+  ] });
   const S = makeSidebar(st);
   eq(S.MESSAGES_PER_TURN, 2, 'one completed turn appends two messages');
 
-  S.bumpMessageCountForTurn('a');
-  eq(st.conversations[0].messageCount, 6, 'THE FIX: the row for the answered conversation advances by one turn');
-  eq(st.conversations[1].messageCount, 0, 'no other row is touched');
-  S.bumpMessageCountForTurn('a');
-  eq(st.conversations[0].messageCount, 8, 'a second turn advances it again');
+  S.bumpMessageCountForTurn('a', 'demo');
+  eq(st.conversations[1].messageCount, 6, 'THE FIX: the row for the answered conversation advances by one turn');
+  eq(st.conversations[2].messageCount, 0, 'no other row is touched');
+  eq(st.conversations[0].messageCount, 10, '★ nor the SAME id in another domain — ids are unique only per domain (v3.72.0 all-domains list)');
+  S.bumpMessageCountForTurn('a', 'demo');
+  eq(st.conversations[1].messageCount, 8, 'a second turn advances it again');
 
-  // The empty-wiki reply: sendMessage returns prose with conversationId null
-  // and writes NOTHING. It lands in this same branch.
-  S.bumpMessageCountForTurn(null);
-  S.bumpMessageCountForTurn(undefined);
-  S.bumpMessageCountForTurn('');
-  eq(st.conversations[0].messageCount, 8,
+  S.bumpMessageCountForTurn(null, 'demo');
+  S.bumpMessageCountForTurn(undefined, 'demo');
+  S.bumpMessageCountForTurn('', 'demo');
+  eq(st.conversations[1].messageCount, 8,
     'a reply carrying NO conversationId (nothing was persisted) never advances a count');
 
-  S.bumpMessageCountForTurn('not-in-the-list');
-  eq(st.conversations.length, 2, 'an id that is not on screen invents no row');
+  S.bumpMessageCountForTurn('not-in-the-list', 'demo');
+  eq(st.conversations.length, 3, 'an id that is not on screen invents no row');
 
-  st.conversations.push({ id: 'c' });                 // no messageCount at all
-  st.conversations.push({ id: 'd', messageCount: 'x' }); // wrong type
-  S.bumpMessageCountForTurn('c');
-  S.bumpMessageCountForTurn('d');
-  eq(st.conversations[2].messageCount, undefined, 'a row with no count is left alone, never given "NaN"');
-  eq(st.conversations[3].messageCount, 'x', 'a non-numeric count is left alone, never string-concatenated');
+  st.conversations.push({ id: 'c', domain: 'demo' });
+  st.conversations.push({ id: 'd', domain: 'demo', messageCount: 'x' });
+  S.bumpMessageCountForTurn('c', 'demo');
+  S.bumpMessageCountForTurn('d', 'demo');
+  eq(st.conversations[3].messageCount, undefined, 'a row with no count is left alone, never given "NaN"');
+  eq(st.conversations[4].messageCount, 'x', 'a non-numeric count is left alone, never string-concatenated');
+
+  // v3.72.0 (P1 facts): the turn's `updatedAt` makes the row LAST USED now,
+  // so it moves to the top — the server's own order, applied locally — and
+  // its recorded project becomes the row's.
+  S.bumpMessageCountForTurn('b', 'demo', { updatedAt: '2026-09-25T10:00:00.000Z', project: 'curator' });
+  eq(st.conversations[0].id + '@' + st.conversations[0].domain, 'b@demo', '★ a turn with a real updatedAt moves its row to the top');
+  eq(st.conversations[0].updatedAt, '2026-09-25T10:00:00.000Z', '…and the row carries it, so its age and group are last use');
+  eq(st.conversations[0].lastProject, 'curator', '★ the turn\'s recorded project becomes the row\'s project mark');
+  S.bumpMessageCountForTurn('b', 'demo', { updatedAt: 'not-a-date', project: 'x'.repeat(65) });
+  eq(st.conversations[0].updatedAt, '2026-09-25T10:00:00.000Z', 'a malformed updatedAt changes nothing');
+  eq(st.conversations[0].lastProject, 'curator', 'a project name over 64 characters is not taken (the server drops it too)');
+  S.bumpMessageCountForTurn('b', 'demo', { project: null });
+  eq(st.conversations[0].lastProject, null, 'a turn that recorded NO project says so (null), so the mark goes');
+  S.bumpMessageCountForTurn('b', 'demo', {});
+  eq(st.conversations[0].lastProject, null, 'and a server that sent no `project` key changes nothing');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§4 — pruneSelection: a ticked id can never outlive the row it names');
+section('§4 — pruneSelection: a ticked row can never outlive the row it names');
 
 {
   const st = freshState({
-    conversations: [{ id: 'a' }, { id: 'b' }],
-    selectedConvIds: new Set(['a', 'b', 'ghost']),
+    conversations: [{ id: 'a', domain: 'demo' }, { id: 'b', domain: 'demo' }],
+    selectedConvKeys: new Set(['demo/a', 'demo/b', 'demo/ghost', 'other/a']),
   });
   const S = makeSidebar(st);
   S.pruneSelection();
-  eq(st.selectedConvIds.size, 2, 'an id absent from the list is dropped');
-  ok(st.selectedConvIds.has('a') && st.selectedConvIds.has('b'), 'ids still on screen are KEPT (a refresh must not discard the user\u2019s ticks)');
-  ok(!st.selectedConvIds.has('ghost'), 'the vanished id is gone — a bulk delete cannot reach a row the user cannot see');
+  eq(st.selectedConvKeys.size, 2, 'a key absent from the list is dropped');
+  ok(st.selectedConvKeys.has('demo/a') && st.selectedConvKeys.has('demo/b'), 'keys still on screen are KEPT');
+  ok(!st.selectedConvKeys.has('other/a'), '★ the same id in ANOTHER domain is a different row, and it is not on screen');
 
   st.conversations = [];
   S.pruneSelection();
-  eq(st.selectedConvIds.size, 0, 'an emptied list (a failed load, a filtering search) empties the selection');
-
-  const st2 = freshState({ conversations: [{ id: 'a' }] });
-  const S2 = makeSidebar(st2);
-  S2.pruneSelection();
-  eq(st2.selectedConvIds.size, 0, 'an empty selection stays empty and does not throw');
+  eq(st.selectedConvKeys.size, 0, 'an emptied list (a failed load, a filtering search) empties the selection');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§5 — the ONE shared row/list/bulk builder, executed');
+section('§5 — the ONE row/list/bulk builder (views/chat-list.js), executed');
 
 {
-  const st = freshState({
-    conversations: [
-      { id: 'a', title: 'First thread', createdAt: '2020-01-01T00:00:00.000Z', messageCount: 1 },
-      { id: 'b', title: 'Second thread', createdAt: '2020-01-01T00:00:00.000Z', messageCount: 12, matchField: 'message' },
-    ],
-  });
-  const S = makeSidebar(st);
+  const NOW = Date.parse('2026-09-25T15:00:00');
+  const ctx = (over = {}) => Object.assign({
+    domains: [{ slug: 'demo', displayName: 'Demo' }, { slug: 'biz', displayName: 'Business' }],
+    activeDomain: 'demo', activeConversationId: null, conversations: [],
+    selectMode: false, selectedKeys: new Set(), searchQuery: '', loadError: null, now: NOW,
+  }, over);
+  const A = { id: 'a', domain: 'demo', title: 'First thread', createdAt: '2020-01-01T00:00:00.000Z', messageCount: 1 };
+  const B = { id: 'b', domain: 'biz', title: 'Second thread', createdAt: '2020-01-01T00:00:00.000Z', messageCount: 12, matchField: 'message' };
 
-  const rowA = S.conversationRowHtml(st.conversations[0]);
-  ok(rowA.includes('data-conv-check="a"'), 'every row carries a selection checkbox');
-  ok(rowA.includes('type="checkbox"'), 'the checkbox is a real input, not a styled div');
-  ok(!rowA.includes(' checked'), 'an unselected row renders unchecked');
-  ok(rowA.includes('aria-label="Select First thread"'), 'the checkbox names the conversation it selects');
+  const rowA = LIST.conversationRowHtml(A, ctx());
+  ok(rowA.includes('class="cur-sb-row'), '★ the row IS the one sidebar component (renderSidebarRow)');
   ok(rowA.includes('1 message<'), 'a single-message row is not pluralised');
   ok(!rowA.includes('matched in'), 'a row with no matchField carries no hint');
-  ok(rowA.includes('data-conv-select="a"'), 'the row still opens the conversation');
-  ok(rowA.includes('data-conv-delete="a"'), 'the per-row delete survived the refactor');
-
-  const rowB = S.conversationRowHtml(st.conversations[1]);
+  ok(rowA.includes('data-conv-select="a"') && rowA.includes('data-conv-domain="demo"'),
+    'the row opens the conversation, naming its OWN domain');
+  ok(rowA.includes('data-conv-delete="a"') && /class="row-act chat-conv-act"/.test(rowA),
+    '★ the per-row delete is the ONE row action (.row-act), visible at rest');
+  ok(!rowA.includes('type="checkbox"'), '★ no checkbox at rest — selection is a MODE (M3)');
+  const rowB = LIST.conversationRowHtml(B, ctx());
   ok(rowB.includes('12 messages'), 'a multi-message row is pluralised');
-  ok(rowB.includes('matched in a message'),
-    'a body-only match SAYS SO — otherwise the row looks unrelated to what was typed');
+  ok(rowB.includes('matched in a message'), 'a row that matched in a body says so, so the match is not a mystery');
+  ok(/cur-sb-dot cur-sb-dot-2/.test(rowB) && /cur-sb-dot cur-sb-dot-1/.test(rowA),
+    '★ each row carries ITS domain\'s identity dot, from the install\'s domain index');
+  ok(rowB.includes('>Business'), '…and the domain in words, so colour is never the only carrier');
 
-  st.selectedConvIds.add('a');
-  const rowSel = S.conversationRowHtml(st.conversations[0]);
-  ok(rowSel.includes(' checked'), 'a selected row renders checked');
-  ok(rowSel.includes('chat-conv-row selected') || /class="chat-conv-row[^"]*\sselected/.test(rowSel),
-    'a selected row is marked for styling');
-  st.selectedConvIds.clear();
+  const sel = ctx({ selectMode: true, selectedKeys: new Set(['demo/a']) });
+  const rowSel = LIST.conversationRowHtml(A, sel);
+  ok(rowSel.includes('data-conv-check="demo/a"') && rowSel.includes(' checked'), 'in Select mode a ticked row renders checked');
+  ok(rowSel.includes('aria-label="Select First thread"'), 'the checkbox names the conversation it selects');
+  ok(/class="chat-conv-item selected"/.test(rowSel), 'and the item is marked selected');
 
-  // Escaping, through the REAL escapeHtml.
-  const nasty = S.conversationRowHtml({
-    id: '"><script>x</script>', title: '<img src=x onerror=alert(1)>', messageCount: 2, matchField: 'message',
-  });
+  const nasty = LIST.conversationRowHtml({ id: '"><script>x</script>', domain: 'demo', title: '<img src=x onerror=1>', messageCount: 1 }, sel);
   ok(!nasty.includes('<script>'), 'a hostile conversation id cannot break out of an attribute');
   ok(!nasty.includes('<img src=x'), 'a hostile title cannot inject an element');
   ok(nasty.includes('&lt;img'), 'the hostile title is rendered as escaped text');
 
-  // matchHint compares with === against the single value the server sends.
-  eq(S.matchHint({ matchField: 'message' }), ' · matched in a message', 'matchHint: message');
-  eq(S.matchHint({ matchField: 'title' }), '', 'matchHint: a title match needs no hint — the word is visible in the title');
-  eq(S.matchHint({}), '', 'matchHint: absent field → no hint');
-  eq(S.matchHint({ matchField: '<b>x</b>' }), '', 'matchHint: an unexpected value produces NOTHING, never echoed markup');
-  eq(S.matchHint({ matchField: 'constructor' }), '', 'matchHint: a prototype key is not a hint');
-}
-
-{
-  // THE DECISIVE SEARCH PROPERTY: with a query active, a conversation whose
-  // TITLE does not contain it must still render — the server matched it on a
-  // message body, and a client-side predicate on top would throw away exactly
-  // the rows the whole fix exists to surface.
-  const st = freshState({
-    searchQuery: 'graphql',
-    conversations: [{ id: 'b', title: 'Ingest pipeline for large PDFs', createdAt: '2020-01-01T00:00:00.000Z', messageCount: 3, matchField: 'message' }],
-  });
-  const S = makeSidebar(st);
-  const html = S.conversationListHtml();
-  ok(html.includes('Ingest pipeline'),
-    'a server-matched row whose TITLE lacks the query is still rendered (no client-side re-filtering)');
+  // THE CLIENT DOES NOT SECOND-GUESS THE SERVER'S FILTER.
+  const html = LIST.conversationListHtml(ctx({ conversations: [{ id: 'x', domain: 'demo', title: 'Ingest pipeline', createdAt: '2020-01-01T00:00:00.000Z', messageCount: 2, matchField: 'message' }], searchQuery: 'graphql' }));
+  ok(html.includes('Ingest pipeline'), 'a row the SERVER matched on a message body is rendered even though its title lacks the query');
   ok(!html.includes('No conversations match'), 'and it is not reported as no match');
+  ok(LIST.conversationListHtml(ctx({ searchQuery: 'graphql' })).includes('No conversations match “graphql”'),
+    'an empty filtered list says the query matched nothing, quoting it');
+  ok(LIST.conversationListHtml(ctx()).includes('No conversations yet.'), 'an empty unfiltered list says so');
+  ok(LIST.conversationListHtml(ctx({ domainFilter: 'biz' })).includes('No conversations in Business yet.'),
+    'a domain-filtered empty list names the domain');
+  ok(!LIST.conversationListHtml(ctx({ searchQuery: '<img src=x>' })).includes('<img src=x>'), 'the echoed query is escaped');
+  const err = LIST.conversationListHtml(ctx({ loadError: 'boom <b>' }));
+  ok(err.includes('chat-sidebar-error') && !err.includes('<b>'), 'a load error renders the escaped error state');
 
-  st.conversations = [];
-  ok(S.conversationListHtml().includes('No conversations match'), 'an empty filtered list says the query matched nothing');
-  ok(S.conversationListHtml().includes('graphql'), 'and quotes the query back');
-  st.searchQuery = '';
-  ok(S.conversationListHtml().includes('No conversations yet'), 'an empty unfiltered list says the domain is empty instead');
-  ok(S.conversationListHtml().includes('<') , 'the empty state is markup, not a bare string');
-
-  st.searchQuery = '<img src=x>';
-  st.conversations = [];
-  ok(!S.conversationListHtml().includes('<img src=x>'), 'the echoed query is escaped');
-
-  st.searchQuery = '';
-  st.loadError = 'boom <b>';
-  ok(S.conversationListHtml().includes('chat-sidebar-error'), 'a load error renders the error state');
-  ok(!S.conversationListHtml().includes('<b>'), 'and escapes it');
-  st.loadError = null;
-  st.domains = [];
-  eq(S.conversationListHtml(), '', 'with no domains the list is empty rather than claiming anything');
-}
-
-{
-  const st = freshState({ conversations: [{ id: 'a', title: 'A', createdAt: '2020-01-01T00:00:00.000Z', messageCount: 1 }, { id: 'b', title: 'B', createdAt: '2020-01-01T00:00:00.000Z', messageCount: 1 }] });
-  const S = makeSidebar(st);
-
-  let bar = S.bulkBarHtml();
-  ok(bar.includes('Select all'), 'select-all is offered before anything is ticked (discoverable without guessing)');
-  ok(bar.includes('id="chat-bulk-all"'), 'select-all is a real checkbox');
-  ok(!bar.includes('chat-bulk-delete'), 'the destructive control is ABSENT while nothing is selected');
-  ok(!bar.includes('chat-bulk-clear'), 'so is clear-selection');
-
-  st.selectedConvIds.add('a');
-  bar = S.bulkBarHtml();
-  ok(bar.includes('1 selected'), 'the bar states the count');
-  ok(bar.includes('chat-bulk-delete'), 'delete appears once something is selected');
-  ok(bar.includes('chat-bulk-clear'), 'so does clear');
+  // SELECT MODE'S BAR (M3): Select all · N selected · Delete N · Done.
+  const two = [A, B];
+  ok(LIST.selectBarHtml(ctx({ conversations: two })) === '', 'no bar outside Select mode');
+  let bar = LIST.selectBarHtml(ctx({ conversations: two, selectMode: true }));
+  ok(bar.includes('Select all') && bar.includes('id="chat-bulk-all"'), 'Select all is a real checkbox, offered first');
+  ok(/id="chat-bulk-delete" disabled/.test(bar), 'Delete is present but DISABLED while nothing is ticked');
+  ok(bar.includes('id="chat-select-done"'), 'and Done leaves the mode');
+  bar = LIST.selectBarHtml(ctx({ conversations: two, selectMode: true, selectedKeys: new Set(['demo/a']) }));
+  ok(bar.includes('1 selected') && bar.includes('>Delete 1<'), 'the bar states the count, and Delete names it');
   ok(bar.includes('Delete 1 selected conversation"'), 'the delete control names the count for assistive tech, singular');
-  ok(!/id="chat-bulk-all"[^>]*checked/.test(bar), 'select-all is not checked on a partial selection');
+  ok(!/btn-danger/.test(bar), '★ Delete is NEUTRAL — red belongs to the confirm alone (M3)');
+  bar = LIST.selectBarHtml(ctx({ conversations: two, selectMode: true, selectedKeys: new Set(['demo/a', 'biz/b']) }));
+  ok(bar.includes('2 selected') && bar.includes('Delete 2 selected conversations"'), 'plural, across TWO domains');
+  ok(/id="chat-bulk-all" checked/.test(bar), 'select-all is checked when everything is selected');
 
-  st.selectedConvIds.add('b');
-  bar = S.bulkBarHtml();
-  ok(bar.includes('2 selected'), 'the count follows the selection');
-  ok(bar.includes('Delete 2 selected conversations"'), 'plural in the assistive label');
-  ok(/id="chat-bulk-all"[^>]*checked/.test(bar), 'select-all is checked when everything is selected');
+  ok(LIST.bulkNoticeHtml({ text: 'Deleted 3 conversations.', tone: 'ok' }).includes('Deleted 3 conversations.'), 'a success notice reports the real number');
+  ok(LIST.bulkNoticeHtml({ text: 'x', tone: 'error' }).includes('chat-bulk-notice error'), 'a partial failure IS styled as an error');
+  ok(!LIST.bulkNoticeHtml({ text: '<b>x</b>' }).includes('<b>'), 'the notice text is escaped');
 
-  st.conversations = [];
-  st.selectedConvIds.clear();
-  eq(S.bulkBarHtml(), '', 'no conversations → no bulk strip at all');
-  st.conversations = [{ id: 'a' }];
-  st.loadError = 'x';
-  eq(S.bulkBarHtml(), '', 'a load error → no bulk strip (nothing trustworthy to act on)');
-  st.loadError = null;
-  st.domains = [];
-  eq(S.bulkBarHtml(), '', 'no domains → no bulk strip');
-}
-
-{
-  const st = freshState();
-  const S = makeSidebar(st);
-  eq(S.bulkNoticeHtml(), '', 'no notice → nothing rendered');
-  st.bulkNotice = { text: 'Deleted 3 conversations.', tone: 'ok' };
-  ok(S.bulkNoticeHtml().includes('Deleted 3 conversations.'), 'a success notice reports the real number');
-  ok(!S.bulkNoticeHtml().includes('error'), 'a success notice is not styled as an error');
-  st.bulkNotice = { text: 'Deleted 1 of 3. 2 could not be deleted', tone: 'error' };
-  ok(S.bulkNoticeHtml().includes('chat-bulk-notice error'), 'a partial failure IS styled as an error');
-  st.bulkNotice = { text: '<b>x</b>', tone: 'ok' };
-  ok(!S.bulkNoticeHtml().includes('<b>'), 'the notice text is escaped');
-  st.bulkNotice = { tone: 'ok' };
-  eq(S.bulkNoticeHtml(), '', 'a notice with no text renders nothing rather than an empty box');
-}
-
-{
-  const st = freshState({ conversations: [{ id: 'a', title: 'A', createdAt: '2020-01-01T00:00:00.000Z', messageCount: 1 }] });
-  const S = makeSidebar(st);
-  const pane = S.conversationPaneHtml();
-  ok(pane.includes('chat-bulk-bar'), 'the pane contains the bulk strip');
-  ok(pane.includes('chat-conv-list'), 'and the list');
-  ok(pane.indexOf('chat-bulk-bar') < pane.indexOf('chat-conv-list'), 'the strip renders above the list');
+  const pane = LIST.conversationPaneHtml(ctx({ conversations: two, selectMode: true }));
+  ok(pane.indexOf('chat-bulk-bar') < pane.indexOf('chat-conv-list'), 'the bar renders above the list');
+  ok(/class="chat-conv-list row-select-mode"/.test(pane),
+    '★ Select mode hides the per-row trash through row-action.css\'s ONE rule (.row-select-mode .row-act)');
+  ok(!/row-select-mode/.test(LIST.conversationPaneHtml(ctx({ conversations: two }))), 'and only in Select mode');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§6 — SOURCE GUARD: the row markup and list grouping exist exactly ONCE');
 
 {
-  // These were two hand-maintained copies (renderSidebar and
-  // renderSidebarConversationsOnly), which is how a change lands in one
-  // render path and silently not the other. Counted over comment-stripped
-  // code so the prose describing the old duplication cannot satisfy it.
-  const rowMarkers = (chatViewCode.match(/data-conv-select="/g) || []).length;
-  eq(rowMarkers, 1, 'the conversation-row markup is built in exactly one place');
-  const deleteMarkers = (chatViewCode.match(/data-conv-delete="/g) || []).length;
-  eq(deleteMarkers, 1, 'the per-row delete button is built in exactly one place');
-  const groupMarkers = (chatViewCode.match(/'TODAY'/g) || []).length;
-  eq(groupMarkers, 1, 'the TODAY/EARLIER grouping is built in exactly one place');
-  const emptyMarkers = (chatViewCode.match(/No conversations match/g) || []).length;
-  eq(emptyMarkers, 1, 'the empty-search state is worded in exactly one place');
-
-  // The client-side title-only predicate is GONE, not merely unused. This is
-  // the assertion that fails if someone "restores" filtering on top of the
-  // server's answer and silently re-hides every body match.
+  ok(!/function conversationRowHtml\(/.test(chatViewCode) && !/function conversationListHtml\(/.test(chatViewCode),
+    'views/chat.js builds NO row and NO list of its own — views/chat-list.js is the one copy');
+  ok(/import \{[^}]*conversationPaneHtml[^}]*\} from '\.\/chat-list\.js'/.test(chatViewCode),
+    'chat.js imports the pane builder from views/chat-list.js');
+  ok(/renderSidebarConversationsOnly\([^)]*\)\s*\{[\s\S]{0,400}?conversationPaneBody\(\)/.test(chatViewCode),
+    'the light re-render reuses the same pane builder');
+  ok(/function renderSidebar\([\s\S]{0,6000}?conversationPaneBody\(\)/.test(chatViewCode),
+    'and so does the full render');
   ok(!/state\.conversations\.filter\(\s*c\s*=>\s*\(c\.title/.test(chatViewCode),
-    'the client-side title-only search predicate no longer exists');
-  ok(!chatViewCode.includes('.title || \'\').toLowerCase().includes(query)'),
-    'no title-lowercase-includes filter survives anywhere in the view');
-
-  ok(/renderSidebarConversationsOnly\([^)]*\)\s*\{[\s\S]{0,400}?conversationPaneHtml\(\)/.test(chatViewCode),
-    'the light re-render uses the SAME pane builder as the full render');
-  ok(/wireConversationPane/.test(chatViewCode), 'one shared wiring function exists');
-  eq((chatViewCode.match(/function wireConversationPane\(/g) || []).length, 1,
-    'and it is defined once');
+    'no client-side title filter survives — the server owns the search');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§7 — SOURCE GUARD: a domain switch lands on an empty new chat');
+section('§7 — SOURCE GUARD: a domain pick starts a new chat there; boot restores');
 
 {
+  // v3.72.0 (M2): the composer's domain pill. A conversation lives in ONE
+  // domain, so picking another can never re-scope the thread: it starts a
+  // NEW chat there. The list spans every domain, so nothing in it resets.
   const switchSrc = extractFunction(chatViewCode, 'switchDomain');
-  ok(/autoSelectMostRecent:\s*false/.test(switchSrc),
-    'switchDomain does NOT auto-select the most recent conversation');
-  ok(!/autoSelectMostRecent:\s*true/.test(switchSrc),
-    'and nothing in it re-enables auto-select');
-  ok(/state\.activeConversationId = null/.test(switchSrc), 'it clears the active conversation');
-  ok(/selectedConvIds\.clear\(\)/.test(switchSrc), 'and the selection, which is per-domain');
-  ok(/cancelSearchTimer\(\)/.test(switchSrc), 'and cancels a pending search that belongs to the old domain');
-
-  // Cold boot still restores the most recent thread — the user has not asked
-  // for anything there, so restoring is a default rather than an override.
+  ok(/state\.activeConversationId = null/.test(switchSrc) && /state\.thread = \[\]/.test(switchSrc),
+    'switchDomain lands on an empty new chat');
+  ok(/adoptActiveDomain\(slug/.test(switchSrc), 'and makes that domain active through the ONE domain-change path');
+  ok(!/loadConversationList\(/.test(switchSrc), '…without reloading a list that already spans every domain');
+  ok(!/selectedConvKeys\.clear\(\)/.test(switchSrc), '…or throwing away a selection that is not per-domain any more');
   const bootSrc = extractFunction(chatViewCode, 'boot');
   ok(/autoSelectMostRecent:\s*true/.test(bootSrc), 'boot() still auto-selects the most recent conversation');
+  const listSrc = extractFunction(chatViewCode, 'loadConversationList');
+  ok(/\(c\.domain \|\| state\.activeDomain\) === state\.activeDomain/.test(listSrc),
+    '…in the ACTIVE domain — a handoff that said "ask Articles" lands in Articles, not in a newer thread elsewhere');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§8 — SOURCE GUARD: MESSAGES_PER_TURN agrees with what the server writes');
 
 {
-  // The sidebar count is patched locally, so this constant is the ONLY thing
-  // tying it to the file on disk. Count the pushes in the real brain module.
   const pushes = (brainChatCode.match(/conversation\.messages\.push\(/g) || []).length;
   eq(pushes, 2, 'src/brain/chat.js appends exactly two messages per completed turn');
   const S = makeSidebar(freshState());
@@ -638,43 +395,34 @@ section('§9 — SOURCE GUARD: timer hygiene and the debounced refetch');
     'the teardown cancels the debounced search timer');
   ok(/scheduleConversationSearch\(myMountToken\)/.test(chatViewCode),
     'typing schedules a debounced refetch rather than filtering in place');
-  ok(/q:\s*state\.searchQuery/.test(chatViewCode), 'the refetch sends the query to the server');
   const scheduleSrc = extractFunction(chatViewCode, 'scheduleConversationSearch');
   ok(/cancelSearchTimer\(\)/.test(scheduleSrc), 'a new keystroke supersedes the pending timer rather than stacking one');
   ok(/isCurrentMount\(mountToken\)/.test(scheduleSrc), 'and the fired callback refuses to act on a dead mount');
 
-  // Every REFRESH of an existing list carries the active query, or a send or
-  // a delete would silently drop the filter while the search box still shows
-  // its text. Two call sites are deliberately exempt and are excluded BY
-  // NAME rather than by the assertion being loosened: boot() has no query to
-  // carry yet, and switchDomain has just RESET searchQuery to '' three lines
-  // above its own call, so passing it would be passing a blank.
-  const loadCalls = chatViewCode.match(/loadDomainConversations\([^;]*?\);/gs) || [];
-  const switchSrcForCalls = extractFunction(chatViewCode, 'switchDomain');
+  // Every REFRESH of an existing list carries the active query. boot() is
+  // exempt by NAME: it has no query to carry yet.
+  const loadCalls = chatViewCode.match(/loadConversationList\([^;]*?\);/gs) || [];
   const bootSrcForCalls = extractFunction(chatViewCode, 'boot');
-  const refreshCalls = loadCalls.filter(c => !switchSrcForCalls.includes(c) && !bootSrcForCalls.includes(c));
-  ok(refreshCalls.length >= 3, `there are several list REFRESH call sites (found ${refreshCalls.length})`);
+  const refreshCalls = loadCalls.filter(c => !bootSrcForCalls.includes(c));
+  ok(refreshCalls.length >= 5, `there are several list REFRESH call sites (found ${refreshCalls.length})`);
   ok(refreshCalls.every(c => /q:\s*state\.searchQuery/.test(c)),
-    'every list refresh (send, single delete, bulk delete, search) passes the active search query');
-  ok(/state\.searchQuery = '';/.test(switchSrcForCalls),
-    'and switchDomain is exempt because it clears the query itself');
+    'every list refresh (send, single delete, bulk delete, search, the domain filter) passes the active search query');
+  // The URL builder, executed: the list and the filter each reach the right route.
+  const urlOf = new Function(extractConst(chatView, 'LIST_LIMIT') + '\n' +
+    extractFunction(chatViewCode, 'conversationListUrl') + '\nreturn conversationListUrl;')();
+  eq(urlOf(null, ''), '/api/chat?limit=500', '★ all domains → GET /api/chat (every non-mirror domain, with its true total)');
+  eq(urlOf(null, ' rag eval '), '/api/chat?limit=500&q=rag%20eval', '…with the search, trimmed and encoded');
+  eq(urlOf('biz', ''), '/api/chat/biz', '★ one domain → GET /api/chat/:domain, the route that lists one domain in full');
+  eq(urlOf('a/b', 'x&y'), '/api/chat/a%2Fb?q=x%26y', 'the slug and the query are encoded');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§10 — SOURCE GUARD: the scope bar\u2019s scrollbar');
+section('§10 — the scope bar is GONE (v3.72.0, M2) and nothing restyles it');
 
 {
-  const bar = chatCss.slice(chatCss.indexOf('.chat-scopebar {'), chatCss.indexOf('.chat-scope-eyebrow'));
-  ok(/overflow-x:\s*auto/.test(bar), 'the scope bar still scrolls horizontally');
-  ok(/scrollbar-width:\s*none/.test(bar), 'the scrollbar is hidden for Firefox and modern Chromium');
-  ok(/\.chat-scopebar::-webkit-scrollbar\s*\{[^}]*display:\s*none/.test(chatCss),
-    'and for Safari / older Chromium');
-  // The rejected alternative: a sized webkit scrollbar takes LAYOUT space
-  // rather than overlaying, so it would permanently grow this bar and push
-  // the thread down on every machine.
-  ok(!/\.chat-scopebar::-webkit-scrollbar\s*\{[^}]*height:/.test(chatCss),
-    'no sized ::-webkit-scrollbar — that form shifts layout on every machine');
-  ok(!/overflow-x:\s*hidden/.test(bar), 'scrolling is preserved, not removed');
+  ok(!/\.chat-scopebar\b/.test(stripComments(chatCss)),
+    'chat.css carries no .chat-scopebar rule — the domain and project moved to the composer, Compile to the header');
+  ok(!/chat-scopebar|chat-scope-pill/.test(chatViewCode), 'and chat.js emits neither the bar nor its pills');
 }
 
 // ═════════════════════════════════════════════════════════════════════════

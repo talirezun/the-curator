@@ -55,6 +55,9 @@ function ok(cond, label) {
   else { failed++; console.log(`  ✗ ${label}`); }
 }
 function eq(a, b, label) { ok(a === b, `${label} (got ${JSON.stringify(a)}, expected ${JSON.stringify(b)})`); }
+// v3.72.0 (truth audit F2): a message with no recorded `priced` is priced at
+// TODAY's catalogue, and the token breakdown says so in its last sentence.
+const TODAY = '. At today\u2019s price: this answer was written before prices were recorded with each answer.';
 function section(t) { console.log(`\n${t}`); }
 
 // ── Extraction (brace-matched; a desync fails LOUDLY) ─────────────────────
@@ -380,6 +383,8 @@ function renderThread(thread, over = {}) {
     'assistantEyebrowHtml', 'cancelNoticeHtml', 'thinkingBodyHtml', 'folderOfPath',
     'typeChipClass', 'citationLabel', 'openWikiReader', 'openBrowseDialog',
     'reaskButtonHtml', 'refreshCompileCaption', 'failedModelNoteHtml',
+    // v3.72.0 (P3, M4): the answer renderer and the per-message source map.
+    'answerSources', 'renderAnswer', 'sourcesHtml',
     src,
   )(
     doc, state, () => true,
@@ -389,6 +394,9 @@ function renderThread(thread, over = {}) {
     () => '<div class="chat-msg-eyebrow mono">THE CURATOR</div>',
     () => '', () => '<thinking>', () => 'entities', () => 'chip', (c) => c,
     () => {}, () => {}, () => '', () => {}, () => '',
+    new Map(),
+    (c, o) => ({ html: `<md>${c}</md>`, sources: ((o && o.citations) || []).map((p, i) => ({ n: i + 1, path: p })) }),
+    (src) => (src.length ? '<section class="answer-sources"></section>' : ''),
   )();
   return el.innerHTML;
 }
@@ -441,7 +449,7 @@ function renderThread(thread, over = {}) {
   ok(renderThread([
     { role: 'user', content: 'q' },
     { role: 'assistant', content: 'a', citations: ['summaries/x.md'] },
-  ]).includes('chat-cite-chip'), 'and citation chips still render');
+  ]).includes('answer-sources'), 'and the Sources list still renders (v3.72.0: one list, not a chip row)');
 }
 
 // ── §5b — SOURCE GUARDS on the stylesheet (labelled as such) ──────────────
@@ -573,28 +581,30 @@ section('§7  The breakdown names the hidden reasoning, and the scope');
   const withReasoning = assistantCostHtml(
     MSG({ inputTokens: 19250, outputTokens: 6150, cachedReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 4900 }), {}, 0);
   const text = panelText(withReasoning);
-  eq(text, 'This answer: 19,250 in / 6,150 out tokens, of which 4,900 reasoning the model did not show',
+  // v3.72.0 (truth audit F2): a message with no recorded `priced` is priced
+  // at TODAY's catalogue, and the breakdown says so in its last sentence.
+  eq(text, 'This answer: 19,250 in / 6,150 out tokens, of which 4,900 reasoning the model did not show' + TODAY,
     'the breakdown states the hidden reasoning that doubles the bill');
   ok(text.startsWith('This answer:'),
     '…and names the SCOPE, because a later turn costs more only by re-sending the earlier ones');
-  ok(withReasoning.includes('title="This answer: 19,250 in / 6,150 out tokens, of which 4,900 reasoning the model did not show"'),
+  ok(withReasoning.includes('title="This answer: 19,250 in / 6,150 out tokens, of which 4,900 reasoning the model did not show' + TODAY + '"'),
     'the tooltip on the focusable control is the SAME string — one variable, so they cannot disagree');
 
   const noReasoning = panelText(assistantCostHtml(
     MSG({ inputTokens: 998, outputTokens: 247, cachedReadTokens: 0, cacheWriteTokens: 0 }), {}, 0));
-  eq(noReasoning, 'This answer: 998 in / 247 out tokens',
+  eq(noReasoning, 'This answer: 998 in / 247 out tokens' + TODAY,
     'a provider that reports no reasoning gets no reasoning clause');
   ok(!/reasoning/.test(noReasoning),
     '…and is never told "0 reasoning", which would be a claim the app cannot make');
   eq(panelText(assistantCostHtml(
     MSG({ inputTokens: 998, outputTokens: 247, cachedReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }), {}, 0)),
-    'This answer: 998 in / 247 out tokens',
+    'This answer: 998 in / 247 out tokens' + TODAY,
     'a reported ZERO prints nothing either — there is nothing hidden to disclose');
 
   // The cache clauses are unchanged and still conditional.
   eq(panelText(assistantCostHtml(
     MSG({ inputTokens: 1000, outputTokens: 200, cachedReadTokens: 512, cacheWriteTokens: 64, reasoningTokens: 100 }), {}, 0)),
-    'This answer: 1,000 in / 200 out / 512 cached / 64 cache write tokens, of which 100 reasoning the model did not show',
+    'This answer: 1,000 in / 200 out / 512 cached / 64 cache write tokens, of which 100 reasoning the model did not show' + TODAY,
     'cached and cache-write clauses still appear, before the reasoning clause');
 
   // The figure itself is untouched by any of this.
@@ -704,11 +714,11 @@ section('§8  Gemini reports a count; Anthropic does not, and says so');
     { role: 'assistant', content: 'a', model, usage }, {}, 0));
 
   const NOTE = '. "Out" includes the model\'s hidden reasoning; this provider does not report how much';
-  eq(say('claude-sonnet-5', ANTH), 'This answer: 19,250 in / 6,150 out tokens' + NOTE,
+  eq(say('claude-sonnet-5', ANTH), 'This answer: 19,250 in / 6,150 out tokens' + NOTE + TODAY,
     '§8b a THINKING model with no reported count states the fact without a number');
-  eq(say('claude-opus-5', ANTH), 'This answer: 19,250 in / 6,150 out tokens',
+  eq(say('claude-opus-5', ANTH), 'This answer: 19,250 in / 6,150 out tokens' + TODAY,
     '§8b a model measured NOT to reason by default gets nothing extra — and opus-5 is exactly that model, released AFTER sonnet-5');
-  eq(say('claude-haiku-4-5', ANTH), 'This answer: 19,250 in / 6,150 out tokens',
+  eq(say('claude-haiku-4-5', ANTH), 'This answer: 19,250 in / 6,150 out tokens' + TODAY,
     '§8b …nor does the cheap default');
   ok(!/\b0\b.*reasoning/.test(say('claude-sonnet-5', ANTH)),
     '§8b the note carries NO number — inventing one would be worse than the silence it replaces');
@@ -716,7 +726,7 @@ section('§8  Gemini reports a count; Anthropic does not, and says so');
   // A REPORTED count wins: the day a provider starts reporting one, the number
   // replaces the apology with no second edit.
   eq(say('claude-sonnet-5', { ...ANTH, reasoningTokens: 4900 }),
-    'This answer: 19,250 in / 6,150 out tokens, of which 4,900 reasoning the model did not show',
+    'This answer: 19,250 in / 6,150 out tokens, of which 4,900 reasoning the model did not show' + TODAY,
     '§8b a reported count REPLACES the worded note rather than joining it');
   ok(!say('claude-sonnet-5', { ...ANTH, reasoningTokens: 4900 }).includes('does not report'),
     '§8b …so the app never says "we do not know" beside a figure it does know');

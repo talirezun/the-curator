@@ -224,11 +224,13 @@ const E = {
   'chat.page': {
     label: 'About Chat',
     title: 'Chat',
-    lead: 'Ask questions and get answers written from your own wiki pages, with links to them.',
+    lead: 'Ask your wiki a question. Answers are written from your own pages and number the pages they use.',
     visual: { type: 'frame', here: 'second-brain' },
+    // v3.72.0: C2's multi-select claim ("the domain chips choose which wikis")
+    // is gone with the chips, and the retired `chat.project` ⓘ folds in here.
     points: [
-      { icon: 'search', text: 'The domain chips choose which wikis an answer reads.' },
-      { icon: 'pencil', text: '**PROJECT** adds a project’s brief and Documents to the answer.' },
+      { icon: 'search', text: 'Each conversation reads one domain; another domain starts a new chat.' },
+      { icon: 'pencil', text: 'A pinned project adds its brief and **Documents**, read but never changed.' },
       { icon: 'window', text: '**Length** sets how long answers are; **Model** picks who answers.' },
     ],
     try: 'Ask “What do I know about …?” about something you ingested.',
@@ -812,18 +814,8 @@ const E = {
   },
 
   // ── Chat (views/chat.js) ─────────────────────────────────────────────────
-  // The PROJECT pin's ⓘ — `chat-project-info` (was a literal "ⓘ" character
-  // with its own panel; the wiring moves it onto the shared mark).
-  'chat.project': {
-    label: 'What a pinned project adds',
-    title: 'A pinned project',
-    lead: 'Pin a project and answers also read its brief, its latest Handoff and its **read first** Documents.',
-    points: [
-      { icon: 'search', text: 'Chat treats them as notes to check, never as orders.' },
-      { icon: 'lock', text: 'Chat never writes to your project.' },
-    ],
-    guide: { key: 'chat.project', heading: 'Pin a project, and the answer reads its context too' },
-  },
+  // `chat.project` (the PROJECT pin's ⓘ) is RETIRED in v3.72.0: the pin moved
+  // onto the composer and its points folded into `chat.page`.
 };
 
 /**
