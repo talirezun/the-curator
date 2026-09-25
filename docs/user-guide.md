@@ -1929,8 +1929,8 @@ true, and a store that only added to itself could never say so.
 ##### How to organise your work-streams (scopes)
 
 *New in v3.72.3.* **A scope is the name a handoff is saved under, and you — or your agent — choose
-it.** No control in the app creates, renames or deletes a single scope, so the one decision worth making
-on purpose is *how you name them*. This section is that decision: what the words mean, six patterns
+it.** No control in the app creates or renames a single scope (since v3.75.0 you can [delete
+one](#deleting-a-handoff)), so the one decision worth making on purpose is *how you name them*. This section is that decision: what the words mean, six patterns
 with the exact line to paste into your brief, answers to the two questions people ask most, and
 three worked examples.
 
@@ -1976,8 +1976,9 @@ journal at save time, and only by the file's timestamp on this disk as a fallbac
 was recorded at all — and the reply names which one it opened — you never save *to* `latest`. And
 **scopes are created by saving and by nothing
 else** — an agent's `save_working_state`, or `my-curator save --scope <name>` from a terminal. There
-is no rename or delete control: to retire a scope, stop saving under it and its dot goes hollow
-(*dormant*); to remove one, delete its folder under `state/<project>/` by hand and sync. A name is
+is no rename control: to retire a scope, stop saving under it and its dot goes hollow
+(*dormant*); to remove one, use the trash on its row in **Handoffs** ([Deleting a
+handoff](#deleting-a-handoff), v3.75.0) — it goes to The Curator's trash, not away for good. A name is
 tidied into a safe folder name as it saves — lower-case, `feature/auth` becomes `feature-auth`, at
 most 64 characters — and the save says so when it changed.
 
@@ -2251,6 +2252,7 @@ column and the dots cool with them, and the order can never contradict the readi
 | **Last saved** | A relative age (*"3 hr ago"*, *"2 weeks ago"*). The exact timestamp — and the words *file time* when the reading is the file's rather than the agent's — travel in the row's accessible name, so a screen reader announces them |
 | **Machine** | The installation that wrote it, plus a **this machine** tag on every row in your own machine's folder — and only when the app can positively identify it, never guessed from a lookalike name |
 | **Harness** | The agent tool and the model that wrote the save, e.g. *"claude-code · opus"* |
+| *(trash)* | **v3.75.0.** A neutral trash icon that deletes the whole scope — see [Deleting a handoff](#deleting-a-handoff). Absent on a Shared Brain mirror |
 
 **Press a row to open it.** That replaces the whole picker: pick the scope and the machine
 in one gesture, from a list that already tells you which is worth opening — and since v3.56.0 the
@@ -2286,6 +2288,35 @@ than the scope one — and it disappears once everything is on screen, because a
 fits says nothing about its own length. That clause is **about this table's window**; if the store
 itself could only return the most recently saved copies, it says so in its own separate clause and
 gives the true total. Two caps, two sentences — neither is ever reported as the other.
+
+#### Deleting a handoff
+
+*New in v3.75.0.* Each row of the **Handoffs** table ends in a small trash icon. It deletes the
+**whole scope** the row belongs to — every machine's saved copy of it, each with its Journal and
+any kept previous handoff — not just the row you pressed. Nothing else is touched: the standing
+brief, your other scopes, the Documents and the wiki stay as they are.
+
+1. Press the trash on any row of the scope. A card opens above the table: *"Delete handoff
+   `main`?"*
+2. The card reads the scope fresh and lists **every machine's copy** with its newest headline and
+   how long ago it was saved, marking the one from **this machine**. When any copy was saved on
+   another computer it says so plainly: *"Sync will remove it on your other computers too."*
+3. It says where the folder goes — The Curator's trash, `<user data>/.curator-trash/scopes/` —
+   and how to bring it back.
+4. Type the scope's name exactly. **Delete handoff** stays disabled until it matches; **Keep it**
+   closes the card.
+
+When it is done, the card is replaced by a line saying what went and the exact folder it now lives
+in; the table, its counts and the project list refresh on their own.
+
+**To restore it:** open the folder the line names — `<domain>--<project>--<scope>--<time>` inside
+`.curator-trash/scopes/` — and move it back into `domains/<domain>/state/` (the domain's own
+project) or `domains/<domain>/state/<project>/` (a named one), renaming it to the scope's name.
+Nothing empties the trash automatically. With Personal Sync on, the delete still reaches GitHub on
+your next Sync, and from there your other computers; the trash copy exists only on the computer
+where you deleted it.
+
+**Only you can do this, from the app.** Agents cannot delete a scope — there is no MCP tool for it.
 
 #### Reading a handoff
 

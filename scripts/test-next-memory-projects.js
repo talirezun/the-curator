@@ -512,6 +512,12 @@ const EXPECTED = [
   ['post', '/:domain/projects'],
   ['patch', '/:domain/projects/:project'],
   ['delete', '/:domain/projects/:project'],
+  // v3.75.0 — ONE WORK-STREAM: the delete preview (read-only) and the
+  // delete (typed `{confirm}`, moved to the trash). FIVE and FOUR segments
+  // with the literal `scopes`, so neither can shadow — or be shadowed by —
+  // the three-segment project routes above or the foundations rows below.
+  ['get', '/:domain/:project/scopes/:scope/delete-preview'],
+  ['delete', '/:domain/:project/scopes/:scope'],
   // v3.65.0. WHICH WIKIS A PROJECT'S KNOWLEDGE LIVES IN — curator metadata
   // about the project (`state/[<project>/]project.json`), so the app is its
   // one writer and no tier-2/3 rule is touched. FOUR SEGMENTS, and here the

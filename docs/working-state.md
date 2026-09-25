@@ -2074,7 +2074,8 @@ properties are deliberate and are worth knowing about:
   drops every cached copy of that project before it asks, because the whole
   meaning of the control is "my copy is stale". Saving the standing brief drops
   them too.
-* **Nothing about tiers 2 and 3 moved.** The app is still read-only over them,
+* **Nothing about tiers 2 and 3 moved.** The app is still read-only over them
+  (v3.75.0's owner-only *Delete handoff* removes a whole scope to the trash; it edits nothing),
   the extra query is a read, and the pair the server offers is *checked* against
   the one the table would put first rather than trusted — if they ever disagree,
   the view reads the pair it chose, exactly as it did before.
@@ -2130,18 +2131,34 @@ and the file you type are the same file written the same way. What it costs is s
 the brief now has three routes into it rather than one, which widens the *"two machines editing
 the brief between syncs"* window that has always existed. Edit, then sync.
 
-**The whole of the app's write surface is four HTTP routes**, all in `src/routes/memory.js` and
-all tier 1:
+**The project-admin write surface is four HTTP routes**, all in `src/routes/memory.js` and
+all tier 1 — plus, since v3.75.0, the one narrow removal on tiers 2–3 described just below the
+table:
 
 | Route | What it does |
 |---|---|
 | `POST /api/memory/:domain/projects` | Create a project — its folder and its `project.md`, seeded from the template when you typed no brief |
 | `PATCH /api/memory/:domain/projects/:project` | Rename it, replace its standing brief, or both |
 | `DELETE /api/memory/:domain/projects/:project` | Delete it, behind a typed confirmation enforced at the route rather than only in the view; since v3.73.0 the folder is moved to `<user data>/.curator-trash/projects/`, not erased |
+| `DELETE /api/memory/:domain/:project/scopes/:scope` | **v3.75.0.** Delete ONE work-stream — every machine's saved copy — behind a typed confirmation of the scope's exact name; moved to `<user data>/.curator-trash/scopes/<domain>--<project>--<scope>--<stamp>/`, not erased. Its preview, `GET …/scopes/:scope/delete-preview`, is a read |
 | *(reads)* `GET /api/memory`, `…/:domain/projects`, `…/:domain/:project` | Every tier, read-only |
 
-Nothing in that file calls `saveWorkingState` — the one store function that would reach tier 2 or
+Nothing in that file calls `saveWorkingState` — the one store function that would WRITE tier 2 or
 tier 3 — and a test asserts the absence rather than trusting the sentence.
+
+**Deleting one work-stream (v3.75.0) is a removal, never an edit, and only the owner can do it.**
+Before this release a single scope could only be removed by hand (a project delete already removed
+all of them). The app's rule that it never writes tiers 2–3 exists so a human edit can never arrive
+under an agent's harness/model provenance line; moving a whole scope folder to the trash writes no
+handoff and stamps nothing, so that argument is untouched. It is safe for four reasons: it is
+**owner-initiated** (a trash on a Handoffs row, in the app); **typed** (the scope's exact name,
+re-checked by the route and the store — `latest` is taken literally, never resolved); **trashed**,
+not erased (the move is one `rename(2)`, so the trash copy is whole — restore by moving it back into
+`state/` or `state/<project>/`); and **never an agent's** — there is no MCP tool for it, and a suite
+asserts none can reach it. It takes the domain's write lock like a project delete. Tier-2 saves take
+no lock (by design, see above), so a save landing in the same instant is not excluded: one that
+finished first goes into the trash with the rest, and one that started after re-creates the scope
+holding only itself — which the delete reports (`recreated: true`) rather than hiding.
 
 **One guard the editor deliberately waives.** The store refuses a brief write that cuts the
 stored text to under 5% of itself, because `project.md` is overwritten in place with nothing

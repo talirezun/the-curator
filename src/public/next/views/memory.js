@@ -358,6 +358,15 @@ import {
   // nothing) — the "Add from this computer" door's "Choose folder…".
   pickFolder,
 } from '../shared/foundations-init.js';
+// ── "DELETE WORK-STREAM" (v3.75.0) ─────────────────────────────────────────
+// The confirm card's words, the one typed-confirmation predicate and the
+// outcome sentence. A DOM-free module so its suite imports the real builders
+// (scripts/test-work-stream-delete.js); this file owns the state, the two
+// requests and the listeners.
+import {
+  wsDeleteCardHtml, wsDeleteConfirmMatches, wsDeleteCanSubmit, wsDeleteBody,
+  wsDeleteOutcomeText,
+} from './ws-delete.js';
 
 // ── THE TWO PICKERS ARE GONE, AND SO IS THE HANDOFF THEY NEEDED ──────────
 //
@@ -697,6 +706,17 @@ function freshState() {
     // final the instant the user asks for it, and on every later visit; it is
     // not made final by an act the user did not perform.
     fndForceOpen: false,
+    // ── "DELETE WORK-STREAM", WHILE IT IS BEING ASKED (v3.75.0) ──────────
+    //   { domain, project, scope, preview, loading, loadError, confirmText,
+    //     busy, error }
+    // STAMPED with its pair like every other in-flight question here: the
+    // card renders only while (domain, project) is the one on screen.
+    wsDelete: null,
+    // ── ITS OUTCOME, IN THE HANDOFFS FOLD WHERE THE CARD STOOD ────────────
+    //   { domain, project, text }
+    // An outcome, so never behind a chevron and never on a timer: it names
+    // the trash folder, which a toast would take away before it was copied.
+    wsDeleteOutcome: null,
     // The standing-brief editor, or null when nothing is being edited.
     //   { domain, project, loaded, text, busy, error, preview, confirmDiscard }
     // `loaded` is the document the editor OPENED on and never changes; `text`
@@ -888,6 +908,9 @@ let pendingFocusId = null;
 
 const FOCUSABLE_IDS = [
   'mem-journal-more',
+  // THE WORK-STREAM DELETE CARD (v3.75.0). A poll repaints the pane while the
+  // owner types the scope's name, so the field, and both buttons, come back.
+  'mem-ws-del-input', 'mem-ws-del-go', 'mem-ws-del-no', 'mem-ws-del-dismiss',
   // THE WORK-STREAM TABLE'S SELECTED ROW. Only one row carries an id — the one
   // that is open — because ids must be unique and a scope slug is not a safe
   // id fragment. Clicking a row therefore records this id EXPLICITLY in wire()
@@ -1012,6 +1035,13 @@ const FOCUSABLE_IDS = [
 // just inside.
 const FOCUS_FALLBACK = {
   'mem-journal-more': '#mem-fold-journal',
+  // ── "DELETE HANDOFF" (v3.75.0) ──────────────────────────────────────────
+  // Keep it and Dismiss each remove themselves (the card, the outcome line),
+  // so the Handoffs summary they sat under is where the keyboard lands; a
+  // successful Delete is replaced by its outcome, whose Dismiss is next.
+  'mem-ws-del-no': '#mem-fold-streams',
+  'mem-ws-del-dismiss': '#mem-fold-streams',
+  'mem-ws-del-go': '#mem-ws-del-dismiss',
   // The last "Show N more" press paints the remaining rows and takes the
   // button with them. The newly-revealed last row is what the user was
   // reaching for, and it is the nearest stable thing to it.
@@ -2517,6 +2547,8 @@ async function selectProject(domain, project, token, opts = {}) {
   // draft was never sent, and carrying it onto another project's brief is
   // the one outcome that could destroy something.
   state.briefEdit = null;
+  // v3.75.0: a half-asked "Delete work-stream?" belongs to its project too.
+  state.wsDelete = null;
   // Same rule, same reason: a copy confirmation is about the project it was
   // pressed on. The stamp on `state.copied` would already stop it rendering
   // here, but leaving it set would make it reappear the moment the user came
@@ -2998,7 +3030,8 @@ function patchOpenPair(token) {
   const mineMachine = d && d.machineIsThisMachine === true ? d.machine : null;
   tbody.innerHTML = ordered.slice(0, shown)
     .map((row) => wsRowHtml(row, openScope, openMachine, mineMachine,
-      state.projectRead && state.projectRead.stateBudgetBytes)).join('');
+      state.projectRead && state.projectRead.stateBudgetBytes,
+      !(d && d.readonly) && !(state.projectRead && state.projectRead.readonly))).join('');
   // The rows are new elements, so their listeners are too. Scoped to the
   // tbody, the same way the "Show more" append scopes its own binding.
   bindWorkStreamRows(tbody, token);
@@ -3322,7 +3355,7 @@ function restoreFocus() {
     // A text field of the add panel (v3.68.0) keeps typing where it left
     // off: a render rebuilt the field, and a caret at 0 would put the next
     // keystroke at the front of the path.
-    if (/^fadd-/.test(String(el.id || '')) && el.type === 'text' && typeof el.setSelectionRange === 'function') {
+    if (/^(fadd-|mem-ws-del-input$)/.test(String(el.id || '')) && el.type === 'text' && typeof el.setSelectionRange === 'function') {
       try { const n = String(el.value || '').length; el.setSelectionRange(n, n); } catch { /* ignore */ }
     }
     return;
@@ -4322,8 +4355,22 @@ function renderWorkStreamsFold(read, d) {
   const scopes = (read && Array.isArray(read.scopes)) ? read.scopes : [];
   const unlisted = unlistedCount(read);
   const hasBrief = !!(read && read.brief && read.brief.present);
+  // ── DELETE WORK-STREAM (v3.75.0): the card and its outcome ──────────────
+  // Both STAMPED with the pair they were made on; a card or an outcome about
+  // another project never renders here. The outcome also renders when the
+  // delete took the LAST work-stream, above the empty-project notice.
+  const readonly = !!(d && d.readonly) || !!(read && read.readonly);
+  const onThis = (x) => !!x && x.domain === state.activeDomain && x.project === state.activeProject;
+  const delCard = !readonly && onThis(state.wsDelete) ? wsDeleteCardHtml(state.wsDelete) : '';
+  const delOutcome = onThis(state.wsDeleteOutcome)
+    ? '<div class="mem-wsdel-outcome" role="status">' +
+        '<span>' + escapeHtml(state.wsDeleteOutcome.text) + '</span>' +
+        '<button type="button" class="btn btn-ghost btn-xs" id="mem-ws-del-dismiss">Dismiss</button>' +
+      '</div>'
+    : '';
   if (!scopes.length) {
     return '<div class="mem-fold mem-fold-flat"><div class="mem-fold-body">'
+      + delOutcome
       + (hasBrief ? renderBriefOnlyNotice(read, unlisted) : renderEmptyProject(unlisted))
       + '</div></div>';
   }
@@ -4377,7 +4424,8 @@ function renderWorkStreamsFold(read, d) {
         + '<span class="mem-fold-meta">' + escapeHtml(meta) + '</span>'
       + '</summary>'
       + '<div class="mem-fold-body">'
-        + renderWorkStreams(scopes, d, state.wsWindow, read && read.stateBudgetBytes)
+        + delOutcome + delCard
+        + renderWorkStreams(scopes, d, state.wsWindow, read && read.stateBudgetBytes, !readonly)
         + workStreamCounts(read, scopes.length, shown)
       + '</div>'
     + '</details>'
@@ -6590,7 +6638,7 @@ function wsMoreHtml(shown, total) {
   );
 }
 
-function renderWorkStreams(scopes, open, windowSize = WS_WINDOW, budgetBytes = null) {
+function renderWorkStreams(scopes, open, windowSize = WS_WINDOW, budgetBytes = null, canDelete = false) {
   const ordered = workStreamOrder(scopes);
   if (!ordered.length) return '';
   const shown = wsShownCount(ordered, open, windowSize);
@@ -6612,7 +6660,7 @@ function renderWorkStreams(scopes, open, windowSize = WS_WINDOW, budgetBytes = n
   const mineMachine = open && open.machineIsThisMachine === true ? open.machine : null;
 
   const body = rows.map(
-    (s) => wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes)).join('');
+    (s) => wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes, canDelete)).join('');
 
   return (
     '<div class="mem-ws-wrap">' +
@@ -6626,6 +6674,9 @@ function renderWorkStreams(scopes, open, windowSize = WS_WINDOW, budgetBytes = n
           // v3.66.0 (P2): each handoff's size against the ceiling the store
           // trims a save at — see `wsRowHtml`'s last cell.
           '<th scope="col">Size</th>' +
+          // v3.75.0: the row action's column, named for a screen reader and
+          // absent entirely on a read-only mirror, where there is no action.
+          (canDelete ? '<th scope="col" class="mem-ws-cell-act"><span class="visually-hidden">Actions</span></th>' : '') +
         '</tr></thead>' +
         '<tbody id="mem-ws-body">' + body + '</tbody>' +
       '</table>' +
@@ -6641,7 +6692,7 @@ function renderWorkStreams(scopes, open, windowSize = WS_WINDOW, budgetBytes = n
  * and two hand-maintained copies is how the appended rows quietly stop matching
  * the painted ones.
  */
-function wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes) {
+function wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes, canDelete = false) {
   {
     const eff = effectiveSave(s);
     const tier = freshnessTier(eff.seconds);
@@ -6724,6 +6775,19 @@ function wsRowHtml(s, openScope, openMachine, mineMachine, budgetBytes) {
             : sizeText + ' of a ' + Math.round(budget / 1024).toLocaleString('en-US')
               + ' KB handoff budget',
         })) + '</td>' +
+        // ── DELETE WORK-STREAM (v3.75.0) ─────────────────────────────────
+        // THE ONE ROW-ACTION RULE (shared/row-action.css): a neutral trash,
+        // visible at rest, never red — colour arrives only inside the confirm.
+        // It only ASKS: a press opens the card above the table, which reads
+        // every machine's copy fresh before anything can be deleted. The
+        // label names the WORK-STREAM, not this row's machine, because the
+        // delete takes every machine's copy of it.
+        (canDelete
+          ? '<td class="mem-ws-cell-act"><button type="button" class="row-act mem-ws-del"' +
+            ' data-ws-delete="' + escapeHtml(s.scope) + '"' +
+            ' aria-label="' + escapeHtml('Delete handoff ' + s.scope + '…') + '">' +
+            icon('trash', 13) + '</button></td>'
+          : '') +
       '</tr>'
     );
   }
@@ -12977,6 +13041,152 @@ function bindWorkStreamRows(root, token) {
       press();
     });
   });
+  // ── DELETE WORK-STREAM (v3.75.0) ───────────────────────────────────────
+  // Bound HERE rather than in wire() for the reason bindFoundationRows gives:
+  // wire() is lifted and executed against a hand-written stub set elsewhere,
+  // and a new identifier named inside it would be a ReferenceError there.
+  // The row trash is a <button>, so the row's own press above ignores it.
+  root.querySelectorAll('[data-ws-delete]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const scope = btn.getAttribute('data-ws-delete');
+      if (!scope) return;
+      openWorkStreamDelete(scope, token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  });
+  const byId = (id) => (typeof root.getElementById === 'function' ? root.getElementById(id) : null);
+  const delInput = byId('mem-ws-del-input');
+  if (delInput) {
+    // Write into state and flip ONLY the button's disabled state on the live
+    // node — never repaint, which would rebuild the field and lose the caret.
+    // The same pattern as the Delete-domain card (views/domains.js).
+    delInput.addEventListener('input', () => {
+      if (!state.wsDelete) return;
+      state.wsDelete.confirmText = delInput.value;
+      const go = byId('mem-ws-del-go');
+      if (go) go.disabled = !wsDeleteCanSubmit(state.wsDelete);
+    });
+  }
+  byId('mem-ws-del-go')?.addEventListener('click', () => {
+    runWorkStreamDelete(token).catch((err) => reportAsyncMountFailure(token, err));
+  });
+  byId('mem-ws-del-no')?.addEventListener('click', () => {
+    if (state.wsDelete && state.wsDelete.busy) return;
+    state.wsDelete = null;
+    pendingFocusId = 'mem-fold-streams';
+    render(token);
+  });
+  byId('mem-ws-del-dismiss')?.addEventListener('click', () => {
+    state.wsDeleteOutcome = null;
+    pendingFocusId = 'mem-fold-streams';
+    render(token);
+  });
+}
+
+/**
+ * OPEN "DELETE WORK-STREAM?" for one scope (v3.75.0).
+ *
+ * The card paints in the frame of the press, saying it is reading; then the
+ * delete PREVIEW is read fresh — every machine's copy of the scope, which is
+ * what the delete takes — and the card repaints with it. Nothing is deleted
+ * until the card's own button is pressed with the scope's name typed.
+ *
+ * STAMPED: a preview that lands after the owner moved on (another project, or
+ * another row's trash) is dropped rather than painted onto a different card.
+ */
+async function openWorkStreamDelete(scope, token) {
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  if (!domain || !project || !scope) return;
+  const del = {
+    domain, project, scope, preview: null, loading: true, loadError: null,
+    confirmText: '', busy: false, error: null,
+  };
+  state.wsDelete = del;
+  state.wsDeleteOutcome = null;
+  pendingFocusId = 'mem-ws-del-input';
+  render(token);
+
+  let data = null;
+  let error = null;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
+      encodeURIComponent(project) + '/scopes/' + encodeURIComponent(scope) + '/delete-preview');
+    try { data = await res.json(); } catch { /* non-JSON error page */ }
+    if (!res.ok || !data || data.ok !== true) error = (data && (data.error || data.message)) || ('HTTP ' + res.status);
+  } catch (err) {
+    error = err.message;
+  }
+  if (!isCurrentMount(token) || state.wsDelete !== del) return;
+  del.loading = false;
+  if (error) del.loadError = String(error);
+  else del.preview = data;
+  pendingFocusId = 'mem-ws-del-input';
+  render(token);
+}
+
+/**
+ * THE DELETE ITSELF. The typed text is SENT as `{confirm}` — the route refuses
+ * without an exact match, so a client that skipped the box deletes nothing.
+ *
+ * On success the card is replaced by its OUTCOME, in the same place, from the
+ * server's answer (where it went, how to restore it, and a save that landed
+ * during the move, if one did). Then every figure is re-read rather than
+ * patched: the Handoffs table and its counts (`reloadActive`) and the rail's
+ * project rows (`refreshIndex`). The menubar tray reads the store on its own
+ * schedule and needs nothing from here.
+ */
+async function runWorkStreamDelete(token) {
+  const del = state.wsDelete;
+  if (!del || !wsDeleteCanSubmit(del) || !wsDeleteConfirmMatches(del)) return;
+  const { domain, project, scope } = del;
+  del.busy = true;
+  del.error = null;
+  render(token);
+
+  let ok = false;
+  let error = null;
+  let data = null;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' +
+      encodeURIComponent(project) + '/scopes/' + encodeURIComponent(scope), {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: wsDeleteBody(del),
+    });
+    try { data = await res.json(); } catch { /* non-JSON error page */ }
+    ok = res.ok && !!(data && data.ok);
+    if (!ok) error = (data && (data.error || data.message)) || ('HTTP ' + res.status);
+  } catch (err) {
+    error = err.message;
+  }
+
+  if (!isCurrentMount(token) || state.wsDelete !== del) return;
+  del.busy = false;
+  if (!ok) {
+    // THE CARD STAYS OPEN WITH THE REASON IN IT. A refusal that closed the
+    // question would leave the row exactly as it was with nothing said.
+    del.error = String(error);
+    render(token);
+    return;
+  }
+  state.wsDelete = null;
+  state.wsDeleteOutcome = { domain, project, text: wsDeleteOutcomeText(data, scope) };
+  // The open handoff may have been one of the copies that went. Dropped, so
+  // the re-read below falls back to the freshest remaining work-stream (what
+  // reloadActive does when the kept scope is gone) instead of re-asking for it.
+  if (state.scope === scope) {
+    state.scope = null;
+    state.machine = null;
+    state.detail = null;
+  }
+  pendingFocusId = 'mem-ws-del-dismiss';
+  forgetProject(domain, project);
+  if (activeKey() === keyOf(domain, project)) {
+    await reloadActive(token);
+    refreshIndex(token).catch((err) => reportAsyncMountFailure(token, err));
+  } else {
+    render(token);
+  }
 }
 
 /**
@@ -13082,7 +13292,8 @@ function showMoreWorkStreams(token) {
   const before = tbody.children.length;
   tbody.insertAdjacentHTML('beforeend', ordered.slice(from, to)
     .map((row) => wsRowHtml(row, openScope, openMachine, mineMachine,
-      pr && pr.stateBudgetBytes)).join(''));
+      pr && pr.stateBudgetBytes,
+      !(open && open.readonly) && !(pr && pr.readonly))).join(''));
   // `wsWindow` records what was ASKED for, which `wsShownCount` may still
   // stretch to reach an open row further down. Storing the stretched figure
   // would silently make the open row's position part of the user's request.

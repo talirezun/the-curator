@@ -530,6 +530,12 @@ const EXPECTED_ROUTES = [
   ['post', '/:domain/projects'],
   ['patch', '/:domain/projects/:project'],
   ['delete', '/:domain/projects/:project'],
+  // v3.75.0 — ONE WORK-STREAM: the delete preview (read-only) and the
+  // delete (typed `{confirm}`, moved to the trash). FIVE and FOUR segments
+  // with the literal `scopes`, so neither can shadow — or be shadowed by —
+  // the three-segment project routes above or the foundations rows below.
+  ['get', '/:domain/:project/scopes/:scope/delete-preview'],
+  ['delete', '/:domain/:project/scopes/:scope'],
   // v3.65.0 — WHICH WIKIS a project's knowledge lives in. Curator METADATA
   // about the project (`state/[<project>/]project.json`), so the app is its
   // one writer and tiers 2 and 3 stay agent-only. FOUR segments, and here
@@ -2917,9 +2923,16 @@ const withInit = fetchArgLists.filter((a) => topLevelArgs(a).length > 1);
 //   goes through `writeStartState`, step ①'s one PATCH call site, below. The
 //   budget picker's preview may now carry the planner's pending `plan` beside
 //   the budget (a what-if the route already takes), never a write field.
-eq('EXACTLY FIFTEEN fetches in the view carry a request init', withInit.length, 15);
+// ── SIXTEEN SINCE v3.75.0 ────────────────────────────────────────────────
+// · `DELETE …/scopes/:scope {confirm}` — "Delete handoff", the owner's
+//   removal of ONE work-stream (every machine's saved copy of it), moved to
+//   the trash. The one write in this view that reaches tiers 2–3, and it is
+//   a REMOVAL, never an edit: it writes no handoff and stamps nothing. Named
+//   below by its URL and its body, and excluded BY NAME from the "no scope"
+//   rule rather than by loosening it. Its preview is a single-argument GET.
+eq('EXACTLY SIXTEEN fetches in the view carry a request init', withInit.length, 16);
 ok('every other fetch is single-argument — structurally a GET, whatever a method string is spelled like',
-  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 15,
+  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 16,
   JSON.stringify(fetchArgLists.map((a) => topLevelArgs(a).length)));
 {
   const inits = withInit.map((a) => ({ url: topLevelArgs(a)[0], init: topLevelArgs(a)[1] }));
@@ -3105,8 +3118,22 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
   // Remove — and they are the same route with the same body. Checking only
   // `del` (the first match) would let the second one send anything at all,
   // which is precisely the shape this section exists to refuse.
-  const dels = withMethod('DELETE');
+  // v3.75.0: the handoff delete is a DELETE too, at a different route with a
+  // different body; it is split off BY URL and asserted on its own below, so
+  // the foundations pair keeps every assertion it had.
+  const allDels = withMethod('DELETE');
+  const scopeDels = allDels.filter((d) => d.url.includes("'/scopes/'"));
+  const dels = allDels.filter((d) => !scopeDels.includes(d));
   eq('...and there are exactly TWO of them: the editor\'s and the row\'s', dels.length, 2);
+  eq('v3.75.0: and exactly ONE handoff delete, at …/scopes/:scope', scopeDels.length, 1);
+  ok('...whose URL ends at ONE scope, escaped — never a machine, a journal or a collection',
+    scopeDels.length === 1
+      && /'\/scopes\/' \+ encodeURIComponent\(scope\)$/.test(scopeDels[0].url.trim())
+      && !/machine|journal/i.test(scopeDels[0].url),
+    scopeDels.map((d) => d.url).join(' | '));
+  ok('...and whose BODY is the typed confirmation and nothing else (wsDeleteBody → {confirm})',
+    scopeDels.length === 1 && /body:\s*wsDeleteBody\(del\)\s*,?\s*\}$/.test(scopeDels[0].init.trim()),
+    scopeDels.map((d) => d.init).join(' | '));
   ok('...EVERY one carrying the slug as its own typed confirmation, which the route re-checks',
     dels.length > 0 && dels.every((d) => /body:\s*JSON\.stringify\(\{\s*confirm:\s*slug\s*\}\)/.test(d.init)),
     JSON.stringify(dels.map((d) => d.init.slice(0, 120))));
@@ -3125,8 +3152,8 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     JSON.stringify(inits.map((x) => x.url.slice(0, 90))));
   // NONE of the five can reach a work-stream handoff or a journal: neither
   // path fragment appears in any of their URLs.
-  ok('and NONE of them names a scope, a machine or a journal',
-    inits.every((x) => !/scope|machine|journal/i.test(x.url)),
+  ok('and NONE of them names a scope, a machine or a journal — the handoff delete above excepted, by name',
+    inits.every((x) => scopeDels.includes(x) || !/scope|machine|journal/i.test(x.url)),
     JSON.stringify(inits.map((x) => x.url.slice(0, 90))));
 }
 // Positive control: the detector must SEE an init object, including one whose
@@ -3142,10 +3169,10 @@ ok('self-test: the argument-count scan does NOT fire on a plain read',
 // transport exists at all.
 {
   const methods = [...viewNoComments.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g)].map((m) => m[1]).sort();
-  ok('exactly FIFTEEN `method:` property keys appear in the view\'s real code, and every one of them '
+  ok('exactly SIXTEEN `method:` property keys appear in the view\'s real code, and every one of them '
     + 'is a LITERAL — so the `\'PO\' + \'ST\'` evasion is refused by construction',
   JSON.stringify(methods) === JSON.stringify(
-    ["'DELETE'", "'DELETE'", "'PATCH'", "'PATCH'", "'PATCH'", "'PATCH'",
+    ["'DELETE'", "'DELETE'", "'DELETE'", "'PATCH'", "'PATCH'", "'PATCH'", "'PATCH'",
       "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'PUT'", "'PUT'"]),
   JSON.stringify(methods));
 }
@@ -13307,6 +13334,11 @@ const EXECUTED = new Set([
 // NOT executed, each with the reason it is not — so the gap is a decision on
 // the record rather than an omission nobody noticed.
 const NOT_EXECUTED = {
+  // v3.75.0: "Delete handoff". Both are LIFTED and EXECUTED — against a
+  // recording fetch, a stub render and a real state object — by their own
+  // suite, which owns the feature end to end (store, route, view).
+  openWorkStreamDelete: 'executed in scripts/test-work-stream-delete.js §V: the card opens in the frame of the press, the preview GET is single-argument, a stale answer is dropped',
+  runWorkStreamDelete: 'executed in scripts/test-work-stream-delete.js §V: refuses to send until the typed name matches, sends {confirm}, keeps the card with the reason on a refusal, re-reads on success',
   // v3.70.0: the meter's in-place repaint during a preview.
   patchSessionMeter: 'innerHTML write of #mem-ss-meter alone in a live DOM (so an OPEN picker is not replaced); what it writes is sessionMeterHtml, executed in §25b/§25k, and the browser pass previewed a preset with the list open',
   // v3.67.0: the two that need a painted page to say anything.

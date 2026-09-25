@@ -761,6 +761,142 @@
    (shared/depth-bar.css owns the bar). Never wraps, tabular figures, like the
    Documents table's own Size column. */
 .mem-ws-cell-size { white-space: nowrap; font-variant-numeric: var(--numeric-tabular); }
+
+/* ── DELETE WORK-STREAM (v3.75.0) ────────────────────────────────────────
+   The row's action column: the shared `.row-act` trash (shared/row-action.css
+   owns every state of it — neutral at rest AND on hover, never red). This
+   rule only sizes the cell so the glyph never pushes the table wider. */
+.mem-ws-table .mem-ws-cell-act {
+  width: 1%;
+  padding-right: var(--space-3);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* The confirm card, in flow ABOVE the table it is about — never a dialog,
+   the same rule as the Documents strip: the rows under discussion stay on
+   screen while the owner decides. Danger shows on the card's border and on
+   its one filled button (`.btn-danger-solid`), never on the row trigger. */
+.mem-wsdel-card {
+  margin: 0 0 var(--space-6);
+  padding: var(--space-6) var(--space-7);
+  border: 1px solid var(--danger-text);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+.mem-wsdel-title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+  margin-bottom: var(--space-3);
+}
+.mem-wsdel-body {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  line-height: var(--leading-relaxed);
+  max-width: 76ch;
+}
+.mem-wsdel-body + .mem-wsdel-body,
+.mem-wsdel-list + .mem-wsdel-body,
+.mem-wsdel-warn + .mem-wsdel-body { margin-top: var(--space-4); }
+.mem-wsdel-name,
+.mem-wsdel-path,
+.mem-wsdel-machine-name {
+  font: var(--type-mono);
+  font-size: var(--text-xs);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mem-wsdel-list {
+  margin: var(--space-3) 0 0;
+  padding-left: var(--space-7);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  line-height: var(--leading-relaxed);
+}
+.mem-wsdel-machine { overflow-wrap: anywhere; }
+.mem-wsdel-mine {
+  padding: 1px var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-subtle);
+  font-size: var(--text-2xs);
+  color: var(--text);
+  white-space: nowrap;
+}
+.mem-wsdel-facts { color: var(--text-2); }
+/* Other computers are affected: a warning, so it is unfolded and amber — the
+   attention pair every caution on this screen uses. */
+.mem-wsdel-warn {
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--attention-text);
+  background: var(--attention-tint);
+  font-size: var(--text-sm);
+  color: var(--text);
+  line-height: var(--leading-relaxed);
+}
+.mem-wsdel-label {
+  display: block;
+  margin: var(--space-6) 0 var(--space-2);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.mem-wsdel-label .mem-wsdel-name { text-transform: none; letter-spacing: 0; }
+.mem-wsdel-input {
+  width: 100%;
+  max-width: 420px;
+  box-sizing: border-box;
+  height: var(--control-md);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+  color: var(--text);
+  font: var(--type-mono);
+  font-size: var(--text-sm);
+}
+.mem-wsdel-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: var(--ring-focus);
+}
+.mem-wsdel-error {
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--danger-border);
+  background: var(--danger-tint);
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+.mem-wsdel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
+/* The outcome, where the card stood. Plain and quiet: the delete succeeded,
+   and what it has to say is where the folder went and how to bring it back. */
+.mem-wsdel-outcome {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-inset);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  line-height: var(--leading-relaxed);
+  overflow-wrap: anywhere;
+}
+.mem-wsdel-outcome > span { flex: 1; min-width: 0; }
+.mem-wsdel-outcome > .btn { flex: none; }
 /* The two counts under the table. Tabular for the same reason the age is. */
 /* ── "SHOW N MORE" — THE TABLE'S OWN LAST ROW ────────────────────────────
 

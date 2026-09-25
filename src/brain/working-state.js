@@ -148,7 +148,7 @@
  * cache TTL out of date. Stale state is worse than no state.
  */
 
-import { readdir, stat, mkdir, appendFile, open, rename, rm, realpath, readFile } from 'fs/promises';
+import { readdir, stat, lstat, mkdir, appendFile, open, rename, rm, realpath, readFile } from 'fs/promises';
 import { readFileSync, writeFileSync } from 'fs';
 import { randomBytes, createHash } from 'crypto';
 import { hostname } from 'os';
@@ -2924,6 +2924,204 @@ export async function deleteProject(domain, project, opts = {}) {
     removedScopes: summary.scopeCount,
     removedCopies: summary.savedCopies,
     hadBrief: summary.hasBrief,
+  };
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// DELETE ONE WORK-STREAM (v3.75.0) — the owner's narrow exception
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Until this release a single scope — `state/[<project>/]<scope>/`, holding
+// one folder per machine — could only be removed by hand; the maintainer had
+// to dig through folders to remove two test scopes. `deleteProject` already
+// removed ALL of a project's scopes at once, so the app was never strictly
+// read-only over tiers 2–3; this is the same act one level down, with the
+// same four properties and nothing more:
+//
+//   · OWNER-INITIATED AND TYPED. `confirm` must equal the scope's directory
+//     name, exactly. A boolean is one stray `true` from the wrong scope.
+//   · RECOVERABLE. The whole scope folder — every machine copy, every
+//     journal, every `previous.md` — is MOVED to `<user data>/.curator-trash/
+//     scopes/<domain>--<project>--<scope>--<stamp>/`, never `rm -rf`'d
+//     (trash.js). Moving it back into `state/[<project>/]` restores it.
+//   · LOCKED. The domain's cross-process write lock, the one `deleteProject`
+//     takes. NOTE WHAT IT DOES NOT EXCLUDE: a tier-2 save takes no lock at
+//     all, deliberately (see saveWorkingState's CONCURRENCY note), so a save
+//     that lands in the same instant is not refused by it. The move is one
+//     rename(2), so the trash copy is never partial; a save that finishes
+//     before it goes into the trash with the rest, and one that starts after
+//     it re-creates the scope holding only itself — which this function
+//     DETECTS and reports (`recreated`) rather than claiming a clean delete.
+//   · NEVER AN AGENT. There is no MCP tool for this and there must not be
+//     one: an agent deleting the record of what an earlier agent did is the
+//     exact dishonesty the per-machine layout exists to prevent.
+//
+// It never touches the brief (`project.md`), another scope, or a named
+// project's folder: on the domain's own project a directory under `state/`
+// can be a NAMED PROJECT rather than a scope (scanStateLayout's depth test),
+// and one that is — or might be — is refused by name.
+
+/** A scope name the delete may address: the directory's own name, exactly. */
+async function resolveDeletableScope(domain, project, scope) {
+  const target = await checkProjectTarget(domain, project);
+  if (!target.ok) return target;
+  const raw = typeof scope === 'string' ? scope : String(scope ?? '');
+  if (!isSafeSegment(raw)) {
+    return { ok: false, reason: 'invalid-scope', message: `"${scope}" is not a usable work-stream name.` };
+  }
+  if (RESERVED_SCOPE_NAMES.has(raw.toLowerCase())) {
+    return {
+      ok: false, reason: 'not-a-scope',
+      message: `"${raw}" is this project's documents folder, not a work-stream. Nothing was deleted.`,
+    };
+  }
+  const projectSlug = target.isDefault ? domain : target.project;
+  const rel = `${target.prefix}${raw}`;
+  const abs = resolveInsideState(domain, rel);
+  if (!abs) return { ok: false, reason: 'unsafe-path', message: 'Refusing to delete outside the state folder.' };
+  // EXACT NAME ONLY. No `latest` keyword (a real scope named `latest` is
+  // addressed like any other; the keyword is never resolved here), and no
+  // slug-folding onto a differently spelled directory: a delete opens exactly
+  // the folder it names or nothing.
+  let st;
+  try { st = await lstat(abs); } catch { st = null; }
+  if (!st || !st.isDirectory()) {
+    return {
+      ok: false, reason: 'unknown-scope',
+      message: `No work-stream "${raw}" in ${projectSlug === domain ? `"${domain}"` : `"${domain}/${projectSlug}"`}.`,
+    };
+  }
+  if (!target.prefix) {
+    const layout = await scanStateLayout(domain);
+    if (layout.projects.some((p) => p.project === raw) || layout.ambiguous.includes(raw)) {
+      return {
+        ok: false, reason: 'not-a-scope',
+        message: `"${raw}" under state/ is (or may be) a separate PROJECT, not a work-stream of `
+          + `"${domain}". Deleting it here would take that project's brief and every handoff in it. `
+          + 'Delete the project instead. Nothing was deleted.',
+      };
+    }
+  }
+  return { ok: true, prefix: target.prefix, project: projectSlug, scope: raw, rel, abs };
+}
+
+/** Every machine folder directly under a scope, addressable or not. */
+async function scopeMachineDirs(abs) {
+  try {
+    const all = (await readdir(abs, { withFileTypes: true }))
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+      .map((e) => e.name)
+      .sort();
+    return splitAddressable(all);
+  } catch {
+    return { safe: [], unlisted: 0 };
+  }
+}
+
+/** Cap on machine copies a delete preview lists (the total is always given). */
+export const MAX_DELETE_PREVIEW_MACHINES = 200;
+
+/**
+ * What deleting one work-stream would take, read fresh: every machine copy in
+ * the scope with its newest headline, agent time, tool, size and whether a
+ * `previous.md` sits beside it. READ-ONLY. Never throws.
+ */
+export async function previewWorkStreamDelete(domain, project, scope) {
+  const base = await checkProjectWritable(domain);
+  if (!base.ok) return base;
+  const r = await resolveDeletableScope(domain, project, scope);
+  if (!r.ok) return r;
+  const { safe, unlisted } = await scopeMachineDirs(r.abs);
+  const now = Date.now();
+  const me = machineId();
+  const machines = [];
+  for (const machine of safe.slice(0, MAX_DELETE_PREVIEW_MACHINES)) {
+    const dirRel = `${r.rel}/${machine}`;
+    const curAbs = resolveInsideState(domain, `${dirRel}/${CURRENT_FILENAME}`);
+    let cur = null;
+    try { cur = curAbs ? await stat(curAbs) : null; } catch { cur = null; }
+    const hasCurrent = !!(cur && cur.isFile());
+    const f = await readPairJournalFacts(domain, r.prefix, r.scope, machine, now);
+    const hn = f.harness ? normaliseHarness(f.harness) : null;
+    const hasJournal = await isFile(resolveInsideState(domain, `${dirRel}/${JOURNAL_FILENAME}`));
+    const hasPrevious = await isFile(resolveInsideState(domain, `${dirRel}/${PREVIOUS_FILENAME}`));
+    machines.push({
+      machine,
+      isThisMachine: machine === me,
+      hasCurrent,
+      headline: f.headline || null,
+      writtenAt: f.writtenAt || null,
+      writtenAgeSeconds: Number.isFinite(f.writtenAgeSeconds) ? f.writtenAgeSeconds : null,
+      lastWriteAt: hasCurrent ? cur.mtime.toISOString() : null,
+      mtimeMs: hasCurrent ? cur.mtimeMs : null,
+      harness: f.harness || null,
+      harnessLabel: hn ? hn.label : null,
+      model: f.model || null,
+      bytes: hasCurrent ? cur.size : null,
+      hasJournal,
+      hasPrevious,
+    });
+  }
+  machines.sort(byNewestSave);
+  for (const m of machines) delete m.mtimeMs;
+  return {
+    ok: true, domain, project: r.project, scope: r.scope,
+    path: `${STATE_DIRNAME}/${r.rel}/`,
+    restoreTo: `${STATE_DIRNAME}/${r.prefix}`,
+    machines,
+    total: safe.length,
+    truncated: safe.length > machines.length,
+    unlistedMachines: unlisted,
+    otherMachines: machines.filter((m) => !m.isThisMachine).length,
+  };
+}
+
+/**
+ * Delete ONE work-stream: move `state/[<project>/]<scope>/` — every machine
+ * copy in it — to The Curator's trash. `opts.confirm` must equal the scope's
+ * directory name exactly. See the block above for what this may and may not
+ * touch, and why.
+ *
+ * @returns {Promise<{ok:true, domain, project, scope, trashPath, machines,
+ *   unlistedMachines, restoreTo, recreated} | {ok:false, reason, message}>}
+ */
+export async function deleteWorkStream(domain, project, scope, opts = {}) {
+  const base = await checkProjectWritable(domain);
+  if (!base.ok) return base;
+  const r = await resolveDeletableScope(domain, project, scope);
+  if (!r.ok) return r;
+  if (!opts || opts.confirm !== r.scope) {
+    return {
+      ok: false, reason: 'confirm-required',
+      message: `Deleting the work-stream "${r.scope}" removes every machine's handoff and journal in it. `
+        + 'The folder is moved to The Curator\'s trash, not erased. Repeat the call with '
+        + `confirm: "${r.scope}" to proceed.`,
+    };
+  }
+  const release = await acquireFileLock(domainPath(domain), { op: 'delete-work-stream' });
+  if (!release) {
+    return { ok: false, reason: 'locked', message: `Another write is in progress on "${domain}". Nothing was deleted.` };
+  }
+  let trashPath, machines, unlisted;
+  try {
+    // Read UNDER the lock, immediately before the move, so the list returned
+    // is what went — not what a preview saw a minute ago.
+    ({ safe: machines, unlisted } = await scopeMachineDirs(r.abs));
+    trashPath = await moveToTrash(r.abs, 'scopes', `${domain}--${r.project}--${r.scope}`);
+  } catch (err) {
+    return { ok: false, reason: 'io', message: `Could not delete the work-stream: ${scrubPaths(String(err?.message ?? err))}` };
+  } finally {
+    await release();
+  }
+  // A lockless save (see above) that started after the move re-creates the
+  // folder with only itself in it. Said, never hidden behind a clean "deleted".
+  let recreated = false;
+  try { recreated = (await lstat(r.abs)).isDirectory(); } catch { recreated = false; }
+  return {
+    ok: true, domain, project: r.project, scope: r.scope, trashPath,
+    machines, unlistedMachines: unlisted,
+    restoreTo: `${STATE_DIRNAME}/${r.prefix}`,
+    recreated,
   };
 }
 

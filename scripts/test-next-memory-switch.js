@@ -879,7 +879,12 @@ section('§8 — patchOpenPair writes what a full render would paint');
   // THE TABLE THE PATCH WRITES IS THE TABLE THE PAINTER WOULD WRITE. Compared
   // against `renderWorkStreams`'s own rows rather than against a hand-typed
   // expectation, which would be a second description of the markup.
-  const painted = api.renderWorkStreams(st.projectRead.scopes, st.detail, st.wsWindow);
+  // v3.75.0: with the row action's column, exactly as renderWorkStreamsFold
+  // calls it on a writable project — the patch derives the same flag from
+  // the same two `readonly` facts, and a painter called without it would be
+  // a different table.
+  const painted = api.renderWorkStreams(st.projectRead.scopes, st.detail, st.wsWindow,
+    st.projectRead.stateBudgetBytes, true);
   ok('the patched rows are byte-identical to the painter\'s',
     painted.includes(tbody.innerHTML), tbody.innerHTML.slice(0, 120));
 }

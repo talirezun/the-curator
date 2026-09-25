@@ -32,6 +32,12 @@
  *     arriving under the last agent's harness/model provenance line is the
  *     dishonesty the old block described.
  *
+ *     ONE REMOVAL, NEVER AN EDIT (v3.75.0): `DELETE …/scopes/:scope` moves a
+ *     whole work-stream folder — every machine's copy — to the trash, typed
+ *     and owner-only, exactly as `DELETE …/projects/:project` has always done
+ *     for every scope of a project. It writes no handoff and stamps nothing,
+ *     so the provenance argument above is untouched. See its route block.
+ *
  *   · TIER 1 (`<project>/project.md`, the standing brief) is the HUMAN'S,
  *     and always was. docs/working-state.md has said since v3.17.0 that a
  *     human edits it by opening it in Obsidian. Editing it in the app is the
@@ -207,6 +213,8 @@ import { sessionStartReport } from '../brain/session-start.js';
 import { normaliseHarness } from '../brain/harness-names.js';
 import { captureWindowFacts, computePulse } from '../brain/tray-summary.js';
 import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
+import path from 'path';
+import { getTrashDir } from '../brain/paths.js';
 import {
   readUsageLinesUnion, summariseSessions, MAX_LINE_BYTES, MAX_LINE_BYTES_LABEL,
 } from '../brain/mcp-usage.js';
@@ -2002,6 +2010,108 @@ router.delete('/:domain/projects/:project', async (req, res) => {
     res.json({ ok: true, domain, project, deleted: true, trashPath: out && out.trashPath ? out.trashPath : null });
   } catch (err) {
     console.error('Memory delete-project error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// ONE WORK-STREAM: preview and delete (v3.75.0)
+//
+//   GET    /api/memory/:domain/:project/scopes/:scope/delete-preview
+//   DELETE /api/memory/:domain/:project/scopes/:scope   body {confirm}
+//
+// THE ONE PLACE THIS ROUTER REACHES TIERS 2–3, and it is a REMOVAL, never an
+// edit: the header's argument is about a second WRITER of a handoff arriving
+// under an agent's provenance line, and moving a whole scope folder to the
+// trash writes no handoff and stamps nothing. It is the same act
+// `DELETE …/projects/:project` has performed on every scope of a project since
+// v3.48.0, narrowed to one scope, and it carries that route's discipline
+// exactly: a typed confirmation checked HERE (a confirmation that lives only
+// in a view is one any other client skips), a mirror refused, a domain with a
+// write in flight refused with the registry's 409, and the store's cross-
+// process lock under it. The folder is MOVED to `<user data>/.curator-trash/
+// scopes/`, and `trashPath` says where. There is no MCP tool for it.
+//
+// The preview is read fresh when the confirm opens, so the card lists every
+// machine copy the delete will take — not the row the owner pressed, which
+// is ONE machine's copy of the scope.
+// ═════════════════════════════════════════════════════════════════════════
+function scopeRefusalWire(out) {
+  if (!out || typeof out !== 'object') return out;
+  const WIRE = {
+    'confirm-required': 'confirm_required',
+    'unknown-scope': 'scope_not_found',
+    'not-a-scope': 'not_a_scope',
+    'invalid-scope': 'invalid_scope',
+    'unknown-state-project': 'project_not_found',
+    'invalid-state-project': 'invalid_project',
+    'unsafe-path': 'unsafe_path',
+  };
+  const reason = WIRE[out.reason] || out.reason;
+  return withErrorProse({ ...out, reason });
+}
+function scopeRefusalStatus(out) {
+  const reason = out && typeof out.reason === 'string' ? out.reason : '';
+  if (reason === 'unknown-scope') return 404;
+  return statusForStoreRefusal(out);
+}
+
+router.get('/:domain/:project/scopes/:scope/delete-preview', async (req, res) => {
+  try {
+    const { domain, project, scope } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    if (await refuseMirror(res, domain)) return;
+    const store = ws();
+    if (!validProjectName(store, project)) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
+      });
+    }
+    const out = await store.previewWorkStreamDelete(domain, project, scope);
+    if (!out || out.ok === false) return res.status(scopeRefusalStatus(out)).json(scopeRefusalWire(out));
+    // WHERE IT WILL GO, stated before the press: the trash's own folder for
+    // scopes. The exact name is minted at the moment of the move.
+    res.json({ ...out, trashDir: path.join(getTrashDir(), 'scopes') });
+  } catch (err) {
+    console.error('Memory scope delete-preview error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+router.delete('/:domain/:project/scopes/:scope', async (req, res) => {
+  try {
+    const { domain, project, scope } = req.params;
+    if (!await requireDomain(res, domain)) return;
+    if (await refuseMirror(res, domain)) return;
+    const store = ws();
+    if (!validProjectName(store, project)) {
+      return res.status(400).json({
+        ok: false, reason: 'invalid_project', error: `"${project}" is not a usable project name.`,
+      });
+    }
+    const confirm = req.body && typeof req.body.confirm === 'string' ? req.body.confirm : '';
+    if (confirm !== scope) {
+      return res.status(400).json({
+        ok: false, reason: 'confirm_required',
+        error: `Type the work-stream's name to confirm. Expected "${scope}".`,
+      });
+    }
+    if (isDomainActive(domain)) {
+      const { status, body } = conflictResponse(`delete work-stream "${scope}"`);
+      return res.status(status).json(body);
+    }
+    const out = await store.deleteWorkStream(domain, project, scope, { confirm });
+    if (!out || out.ok === false) return res.status(scopeRefusalStatus(out)).json(scopeRefusalWire(out));
+    res.json({
+      ok: true, domain, project: out.project, scope: out.scope, deleted: true,
+      trashPath: typeof out.trashPath === 'string' ? out.trashPath : null,
+      machines: Array.isArray(out.machines) ? out.machines : [],
+      unlistedMachines: Number.isInteger(out.unlistedMachines) ? out.unlistedMachines : 0,
+      restoreTo: out.restoreTo || null,
+      recreated: out.recreated === true,
+    });
+  } catch (err) {
+    console.error('Memory scope delete error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });

@@ -917,10 +917,13 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
   // test-next-memory-view.js §8 names both by URL and body.
   // v3.70.1: FIFTEEN. The "Documents at start" planner's PREVIEW (a third
   // caller of the preview READ, `{plan}`); its Apply reuses step ①'s PATCH.
-  ok('memory.js issues exactly FIFTEEN mutating-shaped HTTP method keys',
-    methods.length === 15, methods.join(','));
-  ok('...and they are DELETE x2, PATCH x4, POST x7 and PUT x2, every one a LITERAL',
-    methods.join(',') === "method: 'DELETE',method: 'DELETE',method: 'PATCH',method: 'PATCH',"
+  // v3.75.0: SIXTEEN. "Delete handoff" — `DELETE …/scopes/:scope {confirm}`,
+  // the owner's removal of one work-stream to the trash;
+  // test-next-memory-view.js §8 names it by URL and body.
+  ok('memory.js issues exactly SIXTEEN mutating-shaped HTTP method keys',
+    methods.length === 16, methods.join(','));
+  ok('...and they are DELETE x3, PATCH x4, POST x7 and PUT x2, every one a LITERAL',
+    methods.join(',') === "method: 'DELETE',method: 'DELETE',method: 'DELETE',method: 'PATCH',method: 'PATCH',"
       + "method: 'PATCH',method: 'PATCH',method: 'POST',method: 'POST',method: 'POST',method: 'POST',"
       + "method: 'POST',method: 'POST',method: 'POST',method: 'PUT',method: 'PUT'",
     methods.join(','));

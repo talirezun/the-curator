@@ -2837,6 +2837,8 @@ collision (see below the table).
 | `POST` | `/api/memory/:domain/projects` | Create a project — `{project, brief?}` |
 | `PATCH` | `/api/memory/:domain/projects/:project` | Rename and/or replace the brief — `{rename?, brief?}` |
 | `DELETE` | `/api/memory/:domain/projects/:project` | Delete a project — `{confirm}` |
+| `GET` | `/api/memory/:domain/:project/scopes/:scope/delete-preview` | **New in v3.75.0.** What deleting one work-stream would take — every machine's saved copy, read fresh. Read-only |
+| `DELETE` | `/api/memory/:domain/:project/scopes/:scope` | **New in v3.75.0.** Delete one work-stream (every machine's saved copy) to the trash — `{confirm}` |
 | `PATCH` | `/api/memory/:domain/:project/knowledge/domains` | **New in v3.65.0.** Which wikis this project's knowledge lives in — `{knowledgeDomains}`, a list or `null` |
 | `GET` | `/api/memory/:domain/:project/foundations/:slug` | One canonical document, verbatim (v3.59.0; gains `?raw=1` in v3.61.0) |
 | `PUT` | `/api/memory/:domain/:project/foundations/:slug` | **New in v3.61.0.** Create or replace one kept (written/copied) document, whole — refused **per document** on a mirrored slug (`ownership-mismatch`, naming the mirror's source) **since v3.69.0**, rather than per project; a new slug always succeeds. Gains an optional, **tri-state** `readFirst` in v3.62.0 |
@@ -3818,6 +3820,85 @@ only in a view is a confirmation every other client skips.
 | `403` | `readonly` |
 | `404` | Unknown domain, or the project does not exist |
 | `409` | A write is in flight on that domain |
+
+### GET /api/memory/:domain/:project/scopes/:scope/delete-preview
+
+**New in v3.75.0.** What [`DELETE …/scopes/:scope`](#delete-apimemorydomainprojectscopesscope)
+would take, read fresh — the Context view reads it when its **Delete handoff** confirm opens, so the
+card lists every machine's copy rather than the one row that was pressed. Read-only. `:project` is
+the domain name for the domain's own project.
+
+```json
+{
+  "ok": true, "domain": "articles", "project": "articles", "scope": "auth-rework",
+  "path": "state/auth-rework/", "restoreTo": "state/",
+  "machines": [
+    { "machine": "mac-studio-a1b2", "isThisMachine": true, "hasCurrent": true,
+      "headline": "Token refresh wired; tests next", "writtenAt": "2026-09-25T10:02:11.000Z",
+      "writtenAgeSeconds": 3600, "lastWriteAt": "2026-09-25T10:02:11.431Z",
+      "harness": "Claude Code", "harnessLabel": "Claude Code", "model": "opus",
+      "bytes": 2210, "hasJournal": true, "hasPrevious": false }
+  ],
+  "total": 1, "truncated": false, "unlistedMachines": 0, "otherMachines": 0,
+  "trashDir": "/path/to/user-data/.curator-trash/scopes"
+}
+```
+
+`machines` is newest first on the agent's clock (`writtenAt`, else the file's time) and capped at
+200 (`total` is uncapped). `isThisMachine` is positive evidence only — the folder name equals this
+installation's machine id. `otherMachines` counts the copies saved elsewhere, which Personal Sync
+will remove there too. `hasCurrent: false` is a machine folder holding only a journal.
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `invalid_project`, `invalid_scope`, or `not_a_scope` (see below) |
+| `403` | `readonly` — a Shared Brain mirror |
+| `404` | Unknown domain, `project_not_found`, or `scope_not_found` |
+
+### DELETE /api/memory/:domain/:project/scopes/:scope
+
+**New in v3.75.0.** Delete **one work-stream** — the folder `state/[<project>/]<scope>/` with every
+machine's saved copy in it: each `current.md`, each `journal.jsonl`, each kept `previous.md`. The
+standing brief, the project's other work-streams and the wiki are not touched. Until this release a
+single work-stream could only be removed by hand.
+
+**Recoverable.** The folder is **moved**, never erased, to
+`<user data>/.curator-trash/scopes/<domain>--<project>--<scope>--<UTC stamp>/` (for the domain's own
+project, `<project>` is the domain name). To restore, move that folder back into the `restoreTo`
+folder (`state/` or `state/<project>/`) and rename it to the scope name. With Personal Sync
+configured the deletion still reaches GitHub on the next Sync, and from there your other computers.
+
+**Body: `{ confirm }`, and it must equal the scope's folder name exactly** — case-sensitive,
+untrimmed, checked at the route and again in the store. The name is taken literally: `latest` is
+**not** resolved to the newest work-stream here (a real scope called `latest` is deleted by its own
+name, and otherwise `latest` is `scope_not_found`), and no spelling is folded onto a
+differently-named folder.
+
+```json
+{
+  "ok": true, "domain": "articles", "project": "articles", "scope": "auth-rework", "deleted": true,
+  "trashPath": "/path/to/user-data/.curator-trash/scopes/articles--articles--auth-rework--2026-09-25T14-03-22Z",
+  "machines": ["mac-studio-a1b2", "laptop-c3d4"], "unlistedMachines": 0,
+  "restoreTo": "state/", "recreated": false
+}
+```
+
+`machines` is read under the lock, immediately before the move — what actually went.
+`recreated: true` means a save landed in the same instant and re-created the work-stream holding
+only itself: tier-2 saves take no lock (by design), so the delete cannot exclude them, and says so
+instead of claiming a clean delete. The move itself is one `rename(2)`, so the trash copy is never
+partial.
+
+**There is no MCP tool for this, deliberately:** an agent must not delete the record of what earlier
+sessions did. It is an owner action, typed, from the app.
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `confirm_required`, `invalid_project`, `invalid_scope`, or `not_a_scope` — the name is the documents folder (`foundations`), or, on the domain's own project, a folder under `state/` that is (or may be) a separate **project** |
+| `403` | `readonly` — a Shared Brain mirror |
+| `404` | Unknown domain, `project_not_found`, or `scope_not_found` |
+| `409` | A write is in flight on that domain (`conflict: "write_in_progress"`), or another process holds its lock (`locked`) |
+| `500` | `io` — the move failed; the folder is where it was |
 
 ### PATCH /api/memory/:domain/:project/knowledge/domains
 
