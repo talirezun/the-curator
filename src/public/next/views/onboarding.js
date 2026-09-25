@@ -157,6 +157,39 @@ function setDocked(on) {
   } catch { /* no body / no classList — the panel still renders, unducked */ }
 }
 
+// ── THE DOCK'S HEIGHT, FOR THE NARROW-WINDOW TOP DOCK (v3.76.0) ─────────
+// Below 1100px shell.css docks this panel along the TOP of the main column
+// instead of the right, and shortens the main column by exactly the panel's
+// height (`margin-top: var(--guide-dock-h)`). CSS cannot read a fixed box's
+// height, so this publishes it, and keeps it current as the card's content
+// changes (a step ticks over, text wraps differently after a resize). The
+// property is removed on close, so the shell's own 0px default applies and
+// the layout is restored exactly — the same "nothing left half-unwound"
+// guarantee DOCK_CLASS gives. Published at every width; only the narrow
+// band reads it.
+const DOCK_H_VAR = '--guide-dock-h';
+let dockHeightObserver = null;
+
+function watchDockHeight(el) {
+  unwatchDockHeight();
+  const publish = () => {
+    try {
+      const h = Math.ceil(el.getBoundingClientRect().height);
+      document.documentElement.style.setProperty(DOCK_H_VAR, h + 'px');
+    } catch { /* no layout (a test harness) — the shell's 0px default stands */ }
+  };
+  publish();
+  if (typeof ResizeObserver === 'function') {
+    dockHeightObserver = new ResizeObserver(publish);
+    dockHeightObserver.observe(el);
+  }
+}
+
+function unwatchDockHeight() {
+  if (dockHeightObserver) { dockHeightObserver.disconnect(); dockHeightObserver = null; }
+  try { document.documentElement.style.removeProperty(DOCK_H_VAR); } catch { /* no document */ }
+}
+
 // ── THE RE-CHECK, AND WHY IT USED TO RUN FOREVER ────────────────────────
 // The panel has to notice a step being completed in ANOTHER view of the same
 // SPA — the user clicks "Open Settings", pastes a key, and step 1 must tick
@@ -868,6 +901,7 @@ function openPanel(nextSteps, opts) {
   root.className = 'obp-root';
   document.body.appendChild(root);
   render();
+  watchDockHeight(root);
 
   // Only on an explicit request. The automatic path must NEVER steal focus
   // — someone who opened the app to type a message keeps their caret.
@@ -906,6 +940,7 @@ function closePanel() {
   // that merely makes work pointless is not the same as not doing it — the
   // listener would still be attached to window for the life of the document.
   stopRefresh();
+  unwatchDockHeight();
   if (wakeHandler) {
     if (typeof window !== 'undefined') window.removeEventListener('focus', wakeHandler);
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wakeHandler);

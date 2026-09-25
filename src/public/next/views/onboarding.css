@@ -24,8 +24,11 @@
    ordinary window sizes. Top-right cannot. That is the whole reason for
    the corner choice; it is not an aesthetic preference.
 
-   `left: calc(60px + var(--app-sidebar-w))` is the same grid geometry
-   shell.css's .reader-scrim uses to clip itself to the main column, so the
+   `left: calc(var(--app-rail-w) + var(--app-sidebar-col))` is the same
+   grid geometry shell.css's .reader-scrim uses (it read a literal 60px
+   until v3.76.0 — the rail had been 72px since v3.49.0, so the wrapper
+   started 12px inside the sidebar; harmless only because the wrapper is
+   pointer-events: none and the card sits flush right) to clip itself to the main column, so the
    panel can never sit over the rail or the sidebar (both of which stay
    live and clickable per the design spec).
 
@@ -64,7 +67,7 @@
 .obp-root {
   position: fixed;
   top: 0;
-  left: calc(60px + var(--app-sidebar-w));
+  left: calc(var(--app-rail-w) + var(--app-sidebar-col));
   right: 0;
   z-index: 30;
   /* The wrapper spans the main column so the card can be flush-right
@@ -439,3 +442,21 @@
    and changing it at a breakpoint moves one side of that pair alone. If a
    narrow-window tweak is ever wanted, change --guide-dock-w's formula in
    shell.css. */
+
+/* ── NARROW WINDOWS: THE CARD DOCKS ALONG THE TOP (v3.76.0) ───────────────
+   Below 1100px shell.css stops reserving a right-hand strip (42% of a
+   500-790px column left the view ~200px) and instead shortens the main
+   column by this wrapper's height, which views/onboarding.js publishes as
+   --guide-dock-h. So here the card takes the column's full width, and its
+   height is capped so the view below it always keeps most of the window;
+   past the cap the card scrolls inside itself, as it already does against
+   the 100vh ceiling above. Still top-anchored, still never a bottom anchor
+   (R7 — the composer), still pointer-events only on the card. The
+   wrapper's padding is deliberately NOT touched: the width derivation the
+   right dock depends on reads it (scripts/test-next-onboarding.js §11). */
+@media (max-width: 1099px) {
+  .obp-panel {
+    width: 100%;
+    max-height: 45vh;
+  }
+}

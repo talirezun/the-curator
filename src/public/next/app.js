@@ -275,6 +275,7 @@
 // creates no cycle.
 import { queueBusyTransition } from './shared/ingest-queue-logic.js';
 import { docsUrl } from './shared/docs-links.js';
+import { createSidebarDrawer } from './shared/sidebar-drawer.js';
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -499,6 +500,9 @@ const ICON_BODY = {
   alertTriangle: '<path d="M12 9v3.6M12 16.6h.01"/><path d="M10.4 3.6 2.2 18a1.8 1.8 0 0 0 1.55 2.7h16.5A1.8 1.8 0 0 0 21.8 18L13.6 3.6a1.8 1.8 0 0 0-3.2 0z"/>',
   dotRing: '<circle cx="12" cy="12" r="8"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="1.6"/><path d="M4 16V5.6A1.6 1.6 0 0 1 5.6 4H16"/>',
+  // v3.76.0 — the rail's Sidebar toggle, shown only in narrow-window drawer
+  // mode. Lucide panel-left: a window with its left column drawn in.
+  sidebar: '<rect x="3.5" y="4.5" width="17" height="15" rx="1.8"/><path d="M9.5 4.5v15"/>',
 };
 
 // DEFECT 1 FIX, the class-level half: `icon()` used to fall back to
@@ -1774,6 +1778,27 @@ function renderThemeToggleIcon() {
 
 // ── Rail ───────────────────────────────────────────────────────────────
 
+// ── THE NARROW-WINDOW SIDEBAR DRAWER (v3.76.0) ──────────────────────────
+// Created on first use rather than in boot(): applyTheme() re-renders the
+// rail before boot() reaches its own renderRail(), and the toggle has to be
+// wired from the first paint. One instance for the life of the page — its
+// document/scrim/sidebar listeners are bound once; only the toggle, which
+// renderRail() replaces, is re-bound.
+let _sidebarDrawer = null;
+function sidebarDrawer() {
+  if (_sidebarDrawer) return _sidebarDrawer;
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar || typeof window === 'undefined') return null;
+  _sidebarDrawer = createSidebarDrawer({
+    document,
+    window,
+    sidebar,
+    scrim: document.getElementById('sidebar-scrim'),
+    main: document.getElementById('main'),
+  });
+  return _sidebarDrawer;
+}
+
 function renderRail() {
   const rail = document.getElementById('rail');
   // ROOT-ABSOLUTE, and that is load-bearing (found live during the cutover).
@@ -1862,6 +1887,16 @@ function renderRail() {
       'title="Home — your domains overview" aria-label="Home">' +
       '<img class="rail-mark" src="' + markSrc + '" alt="" aria-hidden="true" width="26" height="26">' +
     '</button>' +
+    // v3.76.0 — the drawer toggle. Below 800px the sidebar leaves the grid
+    // (shell.css, RESPONSIVE SHELL) and this is how it comes back; above
+    // that it is display:none. First after Home, so it sits where the
+    // sidebar it opens begins. Its name and aria-expanded are painted by
+    // shared/sidebar-drawer.js, which owns the state.
+    '<button type="button" class="rail-btn rail-btn-sm rail-sidebar-toggle" id="rail-sidebar-toggle" ' +
+      'aria-expanded="false" aria-controls="sidebar" title="Show sidebar" aria-label="Show sidebar">' +
+      icon('sidebar', 18) +
+      '<span class="rail-cap" aria-hidden="true">Sidebar</span>' +
+    '</button>' +
     navBtns +
     '<div class="rail-spacer"></div>' +
     '<button class="rail-theme-toggle" id="rail-theme-toggle" title="Toggle theme"></button>' +
@@ -1885,6 +1920,12 @@ function renderRail() {
     btn.addEventListener('click', () => navigate(btn.dataset.view));
   });
   document.getElementById('rail-theme-toggle').addEventListener('click', toggleTheme);
+  // The rail was just rebuilt, so the drawer's toggle is a new node: hand it
+  // over. Guarded — a test harness's recording DOM has no #sidebar to wire.
+  try {
+    const drawer = sidebarDrawer();
+    if (drawer) drawer.bindToggle(document.getElementById('rail-sidebar-toggle'));
+  } catch { /* no real DOM — the drawer is a narrow-window affordance only */ }
   renderThemeToggleIcon();
   renderRailActive();
   // The innerHTML above paints the LOCAL count only (syncBadgeMarkup takes

@@ -546,7 +546,12 @@
 <div id="app-shell">
   <nav class="rail" id="rail" aria-label="Primary navigation"></nav>
   <aside class="sidebar" id="sidebar" aria-label="Contextual panel"></aside>
-  <main class="main" id="main" aria-label="Main content">
+  <!-- v3.76.0: the click-away area beside the sidebar when it is a drawer
+       (below 800px; shell.css RESPONSIVE SHELL). display:none otherwise, so
+       it is never a grid item. tabindex -1 on <main> lets the drawer hand
+       focus to the main column after a choice without adding a tab stop. -->
+  <div class="sidebar-scrim" id="sidebar-scrim" aria-hidden="true"></div>
+  <main class="main" id="main" aria-label="Main content" tabindex="-1">
     <div id="view-root"></div>
     <div id="reader-root"></div>
   </main>
