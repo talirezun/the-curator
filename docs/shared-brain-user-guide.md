@@ -48,7 +48,7 @@ Once enabled, the Shared Brain view shows two cards:
 - **I have an invite token** — *From my cohort, team, or research group.* — `[Join →]` button
 - **I'm starting a new Shared Brain** — *Set one up for my cohort or team.* — `[Set up →]` button
 
-![The Curator's Shared Brain view before anything is connected. The sidebar reads "Shared Brain" with a "beta" pill and, below it, "No Shared Brains connected yet." The main pane is headed YOUR TEAM'S BRAIN / Shared Brain and offers two cards: "I have an invite token — From my cohort, team, or research group." with a Join button, and "I'm starting a new Shared Brain — Set one up for my cohort or team." with a Set up button.](images/curator-shared-brain.png)
+![The Shared Brain view, enabled but with nothing connected. Down the left, the icon rail — Chat, Domains and Context, with the theme toggle, Sync (a badge reading 15) and Settings at the foot. The sidebar reads Shared Brain with a beta pill over 'No Shared Brains connected yet.' The main column reads YOUR TEAM'S BRAIN over the title Shared Brain and offers two cards side by side: 'I have an invite token — From my cohort, team, or research group.' with a filled Join button, and 'I'm starting a new Shared Brain — Set one up for my cohort or team.' with an outlined Set up button.](images/curator-shared-brain.png)
 
 You only do this once per computer. The setting is remembered in `.curator-config.json`.
 
