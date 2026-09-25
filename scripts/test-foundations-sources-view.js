@@ -260,9 +260,11 @@ section('§4 — the row controls (§5.1): pencil on kept rows, trash on EVERY r
   for (const d of F.mixed.documents) {
     const h = row(F.mixed, d.slug);
     const kept = !d.source || d.source.kind !== 'repo';
+    // v3.72.0 (P5, DESIGN.md §4, M3): the trash icon now also carries
+    // `row-act`, shared/row-action.css's ONE row-action class app-wide.
     ok('[' + d.slug + '] carries the trash icon, labelled, with no title=',
-      new RegExp('class="btn btn-ghost btn-xs fnd-delete" data-fnd-delete="' + d.slug.replace(/\./g, '\\.')
-        + '" aria-label="Delete [^"]+"><svg').test(h) && !/fnd-delete"[^>]*title=/.test(h), h);
+      new RegExp('class="btn btn-ghost btn-xs fnd-delete row-act" data-fnd-delete="' + d.slug.replace(/\./g, '\\.')
+        + '" aria-label="Delete [^"]+"><svg').test(h) && !/fnd-delete row-act"[^>]*title=/.test(h), h);
     ok('[' + d.slug + '] ' + (kept ? 'carries' : 'does NOT carry') + ' the pencil',
       /data-fnd-edit=/.test(h) === kept, h);
   }

@@ -450,16 +450,30 @@ export function refreshOutcome(data, sources) {
   return { said, failed };
 }
 
-/** The trash icon's markup (§5.1). Visible at rest; `aria-label`, no `title=`. */
+// THE ONE TRASH GLYPH (v3.72.0, C9 / M3). Before this release, this file
+// drew its own trash outline, different from app.js's `icon('trash')` body
+// (`ICON_BODY.trash`, app.js:481) — two shapes for one meaning. This module
+// is deliberately DOM-free and imports nothing from app.js (importing app.js
+// from here fails under plain Node: it reaches `document` at module load,
+// which is exactly why scripts/test-foundations-sources-view.js can drive
+// this file directly with no DOM shim), so the path data below is a literal,
+// byte-identical COPY of `ICON_BODY.trash`'s `d` attribute rather than a
+// shared import. scripts/test-row-actions.js pins the two strings equal, so
+// they cannot drift back apart unnoticed.
+const TRASH_PATH_D = 'M4.5 6.5h15M9.5 6.5V4.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M6.5 6.5l.7 12.4a1.5 1.5 0 0 0 1.5 1.4h6.6a1.5 1.5 0 0 0 1.5-1.4l.7-12.4';
+
+/** The trash icon's markup (§5.1). Visible at rest; `aria-label`, no `title=`.
+ *  Emits `.row-act` (shared/row-action.css) — the ONE row-action rule
+ *  app-wide (v3.72.0, M3): neutral at rest and on hover, colour only at the
+ *  confirm this row's click opens. */
 export function deleteIconHtml(doc) {
   const d = doc && typeof doc === 'object' ? doc : {};
   const slug = String(d.slug || '');
-  return '<button type="button" class="btn btn-ghost btn-xs fnd-delete"'
+  return '<button type="button" class="btn btn-ghost btn-xs fnd-delete row-act"'
     + ' data-fnd-delete="' + escapeHtml(slug) + '"'
     + ' aria-label="' + escapeHtml('Delete ' + (d.title || slug)) + '">'
     + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
     + 'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-    + '<path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6.5 7l1 12.5h9l1-12.5"/>'
-    + '<path d="M10 11v5"/><path d="M14 11v5"/></svg>'
+    + '<path d="' + TRASH_PATH_D + '"/></svg>'
     + '</button>';
 }

@@ -1,0 +1,92 @@
+/* shared/row-action.css — THE ONE ROW-ACTION RULE, APP-WIDE (v3.72.0, M3).
+ *
+ * v372-design/DESIGN.md §4 found THREE different row-action idioms living
+ * side by side: Context's Documents rows (neutral, always visible), Chat's
+ * conversation delete (`display:none` until hover, then `--danger-text` red),
+ * and Ingest's queue remove (visible, but also red on hover). The maintainer's
+ * decision (M3, final) collapses them into ONE rule, from the research at
+ * §1 "Row actions": a hover-only trigger fails discoverability and touch
+ * (NN/g), and destructive colour belongs at the confirm step, not the
+ * trigger (Primer's delete pattern, Apple HIG on default-button danger).
+ *
+ *   A row action is a neutral ghost icon button, visible at rest.
+ *   Colour arrives only at the confirm.
+ *
+ * `.row-act` is that one class:
+ *   - visible at rest — no `display:none`/`visibility:hidden` gated on
+ *     `:hover`/`:focus-within`. A row with several actions may still choose
+ *     to render NONE of them while a "Select" bulk mode is on (a `.row-act`
+ *     the JS itself does not render is not a hidden `.row-act`);
+ *   - neutral at rest AND on hover/focus — `--text-3` at rest, `--text` on
+ *     `--mat-row-hover` (the same overlay `.rail-btn`/`.reader-close` use)
+ *     on hover or keyboard focus. NEVER `--danger`/`--danger-text`/
+ *     `--danger-tint` on this class, at any state — that colour belongs to
+ *     the confirm button (`.btn-danger`/`confirmThen({tone:'danger'})`),
+ *     never the trigger;
+ *   - a `--hit-min` pointer target around a smaller glyph, via the same
+ *     transparent-`::before` technique `.reader-close` and
+ *     `.ing-queue-file-remove` already use, so the visual amplitude can stay
+ *     small (13-20px) while the tap target does not.
+ *
+ * scripts/test-row-actions.js pins this: no row action may reference a
+ * `--danger*` token on hover/focus/active, and none may be
+ * `display:none`/`visibility:hidden` at rest — except a small, NAMED, DATED
+ * exception list for idioms this release did not touch (Chat's
+ * `.chat-conv-delete`, owned by P3 in this same release; P5 does not touch
+ * `views/chat.css`). P3 empties that list when Chat adopts `.row-act`.
+ */
+
+.row-act {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background var(--t-state), color var(--t-state), transform var(--t-press);
+}
+/* The glyph stays 24x24; the pointer target reaches --hit-min, exactly the
+   technique `.reader-close` (shell.css) and `.ing-queue-file-remove`
+   (views/ingest.css) already use — `position: relative` above plus a
+   transparent ::before sized to --hit-min and centred over the glyph. */
+.row-act::before {
+  content: '';
+  position: absolute;
+  inset: calc((var(--hit-min) - 24px) / -2);
+}
+.row-act:hover,
+.row-act:focus-visible {
+  background: var(--mat-row-hover);
+  color: var(--text);
+}
+.row-act:active { transform: scale(var(--press-scale-icon)); }
+/* Reduced motion: the press SHRINK above is motion, so it is cancelled here
+   in the same file that declares it — the pattern views/ingest.css's own
+   `@media (prefers-reduced-motion: reduce)` block already uses for
+   `.ing-queue-file-remove:active`. */
+@media (prefers-reduced-motion: reduce) {
+  .row-act:active { transform: none; }
+}
+/* The design system's ONE disabled spec (test-next-disabled-state.js):
+   `opacity: var(--opacity-disabled)`, `cursor: not-allowed`, no colour
+   change, and never `pointer-events: none` paired with `not-allowed` — a
+   real `<button disabled>` already refuses clicks and leaves the tab order,
+   so suppressing pointer events only costs the cursor and any tooltip. */
+.row-act[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
+
+/* A "Select" bulk mode (M3) hides the per-row `.row-act` buttons while it is
+   on, replacing them with checkboxes and a contextual action bar — never the
+   other way around (a `.row-act` is never itself the thing a hover reveals).
+   Views that build a Select mode toggle this on their own row wrapper; the
+   rule lives here so it stays the one place "hidden while selecting" is
+   declared. */
+.row-select-mode .row-act { display: none; }
