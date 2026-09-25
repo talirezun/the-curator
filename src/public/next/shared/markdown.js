@@ -109,13 +109,54 @@ import { icon } from '../app.js';
 // ReDoS note above forced on the two token passes, applied before it could
 // become a finding rather than after.
 
-function escHtml(s) {
+// ── /next addition 4 (v3.72.0) ───────────────────────────────────────────
+// The answer overhaul (DESIGN.md §5, package P2). Five block/inline shapes a
+// real answer uses and this renderer used to print literally or flatten:
+//   · `> quote` became a literal `&gt; …` paragraph — the core shape of a
+//     "give me ten quotes" answer. Now a <blockquote class="chat-md-quote">,
+//     with a trailing "— Name" line kept inside it as `.chat-md-attrib`.
+//   · `---` / `***` / `___` were a literal paragraph. Now <hr class="chat-md-hr">.
+//   · `#`–`######` all collapsed into one `.chat-md-h`. Each heading keeps that
+//     class AND gains a level class (`chat-md-h1` … `chat-md-h4`, where 4
+//     covers 4–6), so hierarchy survives without changing the base class the
+//     reader's own rules select.
+//   · A nested bullet split an <ol> into ol / ul / ol start=2. ONE level of
+//     nesting is now honoured (an indented marker inside an open list), and an
+//     indented non-marker line directly under an item continues that item.
+//   · `[source: a.md, b.md]` became ONE tag holding the comma-joined string,
+//     which opened the reader on a path that does not exist. It is now split
+//     on commas into one marker per path — see citationMarkup().
+// Every one of these passes runs on the ALREADY-ESCAPED text, exactly like the
+// passes before them; none of them interpolates input into an attribute. The
+// only new attribute VALUES are literals of this file and an integer the
+// caller's citation hook returned (validated below). scripts/test-next-
+// markdown.js §12 carries an XSS case per new pass.
+//
+// Exported so shared/answer.js escapes titles with the SAME function rather
+// than a second hand-maintained copy of it.
+export function escHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// The exact inverse of escHtml, for ONE purpose: handing a citation path to the
+// caller's hook as the string the model wrote, so a path containing `&` is not
+// fetched as `&amp;` (the L5 bug, recorded in formatSegment). It is only ever
+// applied to text escHtml produced and no pass has since wrapped in markup
+// (citationMarkup refuses a path containing `<`), so every `&` in it begins
+// one of the five entities below. `&amp;` is undone LAST, or `&amp;lt;`
+// (an input that literally said "&lt;") would be decoded twice.
+function unescHtml(s) {
+  return String(s)
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&amp;/g, '&');
 }
 
 // ── WHY THE TWO WIKI-TOKEN PASSES CARRY A LENGTH BOUND ───────────────────
@@ -178,7 +219,7 @@ function escHtml(s) {
 // the leading `[[` is the only anchor, and once it fails the scan moves past
 // it. Nothing about the escape-first cardinal rule is weakened, because the
 // bound only ever makes the renderer emit LESS markup, never more.
-function formatSegment(t) {
+function formatSegment(t, cite) {
   // Wikilinks: [[target]] or [[target|alias]] -> readable, non-interactive
   // styled span (matches the shipping renderer's behaviour — resolving a
   // bare wikilink to a folder+slug would require guessing which of
@@ -242,20 +283,76 @@ function formatSegment(t) {
   // `{1,512}` rather than `+`: same ReDoS bound as the wikilink pass, same
   // derivation — see the bound note above formatSegment. The longest real
   // citation path measured is 205 chars, so this is ~2.5× the observed max.
-  t = t.replace(/\[source:([^\]]{1,512})\]/g, (_, p) => {
-    const path = p.trim();
-    return '<span class="chat-citation-tag">' + icon('dot', 7) +
-      '<span class="chat-cite-path">' + path + '</span></span>';
-  });
+  t = t.replace(/\[source:([^\]]{1,512})\]/g, (_, p) => citationMarkup(p, cite));
   return t;
 }
 
-function renderInline(text) {
+// ── ONE CITATION, ONE MARKER PER PATH (v3.72.0) ───────────────────────────
+// `p` is the text between `[source:` and `]`, ALREADY ESCAPED, and — because
+// this pass runs last — possibly carrying markup an earlier pass emitted (a
+// `[[wikilink]]` inside the brackets). Every real `<` in it is therefore OURS:
+// input `<` became `&lt;` before any pass ran.
+//
+// TWO MODES, chosen by the caller:
+//   · no hook (the wiki reader, Context's documents, and chat until the view
+//     adopts shared/answer.js): the inert legacy tag, one per path. A single
+//     path renders BYTE-IDENTICALLY to before, so every reader surface is
+//     unchanged; a comma list now renders one tag per path instead of one tag
+//     holding "a.md, b.md".
+//   · a `cite` hook (shared/answer.js): the hook is handed the RAW path and
+//     returns the marker's number. Only a positive integer is accepted — the
+//     number is the ONLY caller-supplied value that reaches an attribute, and
+//     it is re-stringified from a Number here, never taken as text. Each
+//     marker is a real <button> (keyboard-reachable), shows only its number,
+//     and names its path in visually-hidden text; the path never sits in an
+//     attribute. The page it opens is resolved by the NUMBER from the list the
+//     hook built, never read back out of the DOM.
+//
+// A capture that contains markup is refused as a path in BOTH modes' sense:
+// splitting it on commas could cut through a tag we emitted (a wikilink alias
+// may itself contain a comma), and its text is a LABEL, not a path. With no
+// hook it keeps the legacy single tag (byte-identical, inert on every reader
+// surface). With a hook it becomes inert text with no marker, so nothing ever
+// opens a comma-joined or label-derived path.
+function citationMarkup(p, cite) {
+  const hooked = typeof cite === 'function';
+  if (p.indexOf('<') !== -1) {
+    if (hooked) return '<span class="chat-cite-unresolved">[source:' + p + ']</span>';
+    return legacyCitationTag(p.trim());
+  }
+  const parts = p.split(',').map((s) => s.trim()).filter(Boolean);
+  if (!hooked) {
+    // One part (the overwhelming case) or none: exactly the old output.
+    if (parts.length <= 1) return legacyCitationTag(p.trim());
+    return parts.map(legacyCitationTag).join(' ');
+  }
+  let out = '';
+  for (const part of parts) {
+    const n = cite(unescHtml(part));
+    if (Number.isInteger(n) && n > 0 && n < 100000) {
+      const num = String(n);
+      out += '<button type="button" class="chat-cite-n" data-cite-n="' + num + '">' +
+        '<span aria-hidden="true">' + num + '</span>' +
+        '<span class="visually-hidden">Source ' + num + ': ' + part + '</span></button>';
+    } else {
+      out += '<span class="chat-cite-unresolved">' + part + '</span>';
+    }
+  }
+  return out;
+}
+
+// The pre-v3.72.0 citation tag, unchanged, for surfaces that pass no hook.
+function legacyCitationTag(path) {
+  return '<span class="chat-citation-tag">' + icon('dot', 7) +
+    '<span class="chat-cite-path">' + path + '</span></span>';
+}
+
+function renderInline(text, cite) {
   const parts = String(text).split(/(`[^`\n]+`)/g);
   let out = '';
   for (let i = 0; i < parts.length; i++) {
     if (i % 2 === 1) out += '<code>' + parts[i].slice(1, -1) + '</code>';
-    else out += formatSegment(parts[i]);
+    else out += formatSegment(parts[i], cite);
   }
   return out;
 }
@@ -326,45 +423,144 @@ function tableAlignClass(delimCell) {
   return '';
 }
 
-export function renderMarkdown(raw) {
+// ── v3.72.0 BLOCK HELPERS ─────────────────────────────────────────────────
+// Pure, and run on escaped text like everything above. Listed by name in
+// scripts/test-next-markdown.js's FNS (its §0b guard fails on a missing one).
+
+// Leading-whitespace width, a tab counting as four columns (CommonMark's tab
+// stop). Used only to tell a nested item or a continuation line from a
+// top-level one; the threshold is 2.
+function indentWidth(lead) {
+  return String(lead).replace(/\t/g, '    ').length;
+}
+
+// A thematic break: three or more of ONE of `-`, `*`, `_`, spaces allowed
+// between them. Tested on the space-stripped line with an anchored,
+// single-quantifier pattern — no alternation inside a repeat, nothing that can
+// backtrack. Must be asked BEFORE the bullet test: `* * *` is also a bullet.
+function isRule(line) {
+  const s = String(line).replace(/[ \t]/g, '');
+  return s.length >= 3 && (/^-+$/.test(s) || /^\*+$/.test(s) || /^_+$/.test(s));
+}
+
+// A blockquote line. `>` was escaped to `&gt;` before any pass ran, so that is
+// the marker this renderer sees — and why `&gt;` in the INPUT (someone writing
+// the entity literally) is escaped to `&amp;gt;` and never starts a quote.
+function isQuoteLine(line) {
+  return /^\s*&gt;/.test(line);
+}
+function stripQuoteMarker(line) {
+  return String(line).replace(/^\s*&gt;[ \t]?/, '');
+}
+
+// "— Name" under a quote: an em dash, en dash, horizontal bar or `--`, then
+// text. Not a bullet: a bullet needs ONE marker character followed by a space.
+function isAttribution(line) {
+  return /^\s*(?:—|–|―|--)\s*\S/.test(line);
+}
+
+// One blockquote from its inner lines (markers already stripped). Blank inner
+// lines separate paragraphs. The LAST line becomes the attribution when it is
+// "— Name" and is not the quote's only line (a quote that is ONLY a dash line
+// is quoted text, not a credit for nothing). Nested `>` stays literal text:
+// one level is what an answer needs, and a second is a second grammar.
+function renderQuote(inner, cite) {
+  const blocks = [];
+  let cur = [];
+  for (const l of inner) {
+    if (/^\s*$/.test(l)) { if (cur.length) { blocks.push(cur); cur = []; } }
+    else cur.push(l);
+  }
+  if (cur.length) blocks.push(cur);
+  let attrib = null;
+  const last = blocks[blocks.length - 1];
+  if (last && isAttribution(last[last.length - 1]) && !(blocks.length === 1 && last.length === 1)) {
+    attrib = last.pop();
+    if (!last.length) blocks.pop();
+  }
+  let html = '<blockquote class="chat-md-quote">';
+  for (const b of blocks) html += '<p>' + b.map((l) => renderInline(l.trim(), cite)).join('<br>') + '</p>';
+  if (attrib) html += '<p class="chat-md-attrib">' + renderInline(attrib.trim(), cite) + '</p>';
+  return html + '</blockquote>';
+}
+
+// A list item's own lines: text runs joined by <br> (a one-line item renders
+// exactly as it always did), and any run of quote lines — plus a "— Name" line
+// directly under it — as a blockquote inside the item.
+function renderItemBody(lines, cite) {
+  let html = '';
+  let run = [];
+  const flush = () => {
+    if (run.length) { html += run.map((l) => renderInline(l, cite)).join('<br>'); run = []; }
+  };
+  for (let i = 0; i < lines.length; i++) {
+    if (!isQuoteLine(lines[i])) { run.push(lines[i]); continue; }
+    flush();
+    const q = [];
+    while (i < lines.length && isQuoteLine(lines[i])) { q.push(stripQuoteMarker(lines[i])); i++; }
+    if (i < lines.length && isAttribution(lines[i])) { q.push(lines[i]); i++; }
+    i--;
+    html += renderQuote(q, cite);
+  }
+  flush();
+  return html;
+}
+
+// A list and, for each item, its ONE level of nested lists. `start` is the
+// Number the opening item carried (see the ordered-list note in
+// renderMarkdown), re-stringified here — a literal of ours, never input text.
+// Nested lists are built with `subs: null` items, so this recursion is two
+// levels deep at most.
+function renderList(list, cite) {
+  const attr = (list.type === 'ol' && list.start !== 1) ? ' start="' + list.start + '"' : '';
+  let html = '<' + list.type + attr + '>';
+  for (const it of list.items) {
+    html += '<li>' + renderItemBody(it.lines, cite) +
+      (it.subs ? it.subs.map((sub) => renderList(sub, cite)).join('') : '') + '</li>';
+  }
+  return html + '</' + list.type + '>';
+}
+
+// `opts.cite` — OPTIONAL, and only shared/answer.js passes it: a function
+// handed each citation path (raw, unescaped) that returns the marker's number.
+// Every other caller passes nothing and gets the inert legacy citation tag.
+export function renderMarkdown(raw, opts) {
+  const cite = (opts && typeof opts.cite === 'function') ? opts.cite : null;
   const escaped = escHtml(raw);
   const lines = escaped.split('\n');
   const out = [];
 
   let inCode = false;
   let codeBuf = [];
-  let listType = null;
-  let listBuf = [];
-  // The number the CURRENT ordered list was opened with. See the `start` note
-  // above the `num` branch below. Meaningless while `listType !== 'ol'`.
-  //
-  // flushList resets it, and that reset is DEFENCE IN DEPTH rather than
-  // load-bearing — measured, not assumed: deleting it leaves every assertion
-  // in scripts/test-next-markdown.js §11 green, because `listType` only ever
-  // becomes 'ol' inside the `num` branch and that branch always assigns
-  // `listStart` when no list is open. It is kept because it states the rule
-  // where the next reader meets it, and a future edit that sets `listType`
-  // from anywhere else would otherwise inherit the previous list's number in
-  // silence. Recorded here rather than claimed as enforced — the same
-  // convention chat.js's `bumpMessageCountForTurn` id gate follows.
-  let listStart = 1;
+  // The open list, or null: `{ type, start, items }`, each item
+  // `{ lines, subs }`, where `subs` holds the item's ONE level of nested lists
+  // (v3.72.0). `start` is the number the list was OPENED with — see the note
+  // above the list branch below. It lives on the list object now (it was a
+  // separate `listStart` variable whose reset in flushList was recorded as
+  // defence in depth); a fresh object per list makes inheriting the previous
+  // list's number structurally impossible rather than merely reset.
+  let list = null;
+  // The item an indented continuation line belongs to: the last item added,
+  // at whichever level it was added.
+  let lastItem = null;
   let para = [];
 
   const flushPara = () => {
-    if (para.length) { out.push('<p>' + para.map(renderInline).join('<br>') + '</p>'); para = []; }
+    // NOT `para.map(renderInline)`: map would hand renderInline the INDEX as
+    // its second argument, i.e. as the citation hook.
+    if (para.length) { out.push('<p>' + para.map((l) => renderInline(l, cite)).join('<br>') + '</p>'); para = []; }
   };
   const flushList = () => {
-    if (listType) {
+    if (list) {
       // `start` is emitted ONLY when the list did not open at 1, so the
       // overwhelming majority of lists render byte-identically to before this
-      // change. `listStart` is a Number this function produced from a
+      // change. `start` is a Number this function produced from a
       // `\d{1,9}` capture and then re-stringified — it is a literal of ours by
       // the time it reaches the attribute, in the same sense
       // tableAlignClass()'s return value is, so the cardinal rule (never
       // interpolate INPUT TEXT into an attribute) is intact.
-      const attr = (listType === 'ol' && listStart !== 1) ? ' start="' + listStart + '"' : '';
-      out.push('<' + listType + attr + '>' + listBuf.join('') + '</' + listType + '>');
-      listBuf = []; listType = null; listStart = 1;
+      out.push(renderList(list, cite));
+      list = null; lastItem = null;
     }
   };
 
@@ -379,8 +575,21 @@ export function renderMarkdown(raw) {
     if (inCode) { codeBuf.push(line); continue; }
     if (/^\s*$/.test(line)) { flushPara(); flushList(); continue; }
 
+    // Headings keep the base `chat-md-h` class (the reader's own rules select
+    // it) and gain a level class from a FIXED set of four — the level is the
+    // length of a `#{1,6}` run, never text. 4 covers 4–6.
     const h = line.match(/^\s*(#{1,6})\s+(.*)$/);
-    if (h) { flushPara(); flushList(); out.push('<div class="chat-md-h">' + renderInline(h[2]) + '</div>'); continue; }
+    if (h) {
+      flushPara(); flushList();
+      const lvl = Math.min(h[1].length, 4);
+      out.push('<div class="chat-md-h chat-md-h' + lvl + '">' + renderInline(h[2], cite) + '</div>');
+      continue;
+    }
+
+    // Thematic break. Before the table test (`---` has no pipe, so it could
+    // never be a table header, but a `---` line is also never a paragraph)
+    // and, load-bearingly, before the bullet test, which `* * *` would match.
+    if (isRule(line)) { flushPara(); flushList(); out.push('<hr class="chat-md-hr">'); continue; }
 
     // ── GFM table ────────────────────────────────────────────────────────
     // Two conditions, and BOTH matter. The header row must contain at least
@@ -398,7 +607,7 @@ export function renderMarkdown(raw) {
         const aligns = delimCells.map(tableAlignClass);
         let tbl = '<div class="chat-md-table-wrap"><table class="chat-md-table"><thead><tr>';
         for (let c = 0; c < headerCells.length; c++) {
-          tbl += '<th' + aligns[c] + '>' + renderInline(headerCells[c]) + '</th>';
+          tbl += '<th' + aligns[c] + '>' + renderInline(headerCells[c], cite) + '</th>';
         }
         tbl += '</tr></thead><tbody>';
         let r = li + 2;
@@ -416,7 +625,7 @@ export function renderMarkdown(raw) {
           for (let c = 0; c < headerCells.length; c++) {
             // GFM: a short row is PADDED and a long one TRUNCATED, both
             // against the header's column count. Never render a ragged table.
-            tbl += '<td' + aligns[c] + '>' + (c < cells.length ? renderInline(cells[c]) : '') + '</td>';
+            tbl += '<td' + aligns[c] + '>' + (c < cells.length ? renderInline(cells[c], cite) : '') + '</td>';
           }
           tbl += '</tr>';
         }
@@ -427,14 +636,6 @@ export function renderMarkdown(raw) {
       }
     }
 
-    const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
-    if (bullet) {
-      flushPara();
-      if (listType && listType !== 'ul') flushList();
-      listType = 'ul';
-      listBuf.push('<li>' + renderInline(bullet[1]) + '</li>');
-      continue;
-    }
 
     // ── ORDERED LISTS CARRY THE NUMBER THEY WERE OPENED WITH ─────────────
     // Reported from real use (Robin Good, with screenshots): an answer whose
@@ -470,16 +671,60 @@ export function renderMarkdown(raw) {
     // `\d{1,9}` rather than `\d+`: the value is re-emitted as an attribute, so
     // it is bounded to something an <ol> can actually count from. A longer run
     // of digits simply fails to match and renders as ordinary text.
-    const num = line.match(/^\s*(\d{1,9})\.\s+(.*)$/);
-    if (num) {
+    const bullet = line.match(/^(\s*)[-*+]\s+(.*)$/);
+    const num = bullet ? null : line.match(/^(\s*)(\d{1,9})\.\s+(.*)$/);
+    if (bullet || num) {
       flushPara();
-      if (listType && listType !== 'ol') flushList();
-      // Only the item that OPENS the list sets the number. Once the list is
+      const type = bullet ? 'ul' : 'ol';
+      const indent = indentWidth(bullet ? bullet[1] : num[1]);
+      const item = { lines: [bullet ? bullet[2] : num[3]], subs: null };
+      // Only the item that OPENS a list sets its number. Once the list is
       // open, later numbers are ignored — CommonMark's own rule, and what
       // already made a contiguous "1. 1. 1." render as 1, 2, 3.
-      if (!listType) listStart = Number(num[1]);
-      listType = 'ol';
-      listBuf.push('<li>' + renderInline(num[2]) + '</li>');
+      const opening = num ? Number(num[2]) : 1;
+
+      // ── ONE LEVEL OF NESTING (v3.72.0) ─────────────────────────────────
+      // An INDENTED marker (2+ columns) inside an open list nests under the
+      // list's last item, instead of closing the list and reopening it at
+      // start=2 (the "ol / ul / ol" split). Deeper indentation lands on the
+      // same nested level: one level is the whole grammar.
+      if (list && indent >= 2 && list.items.length) {
+        const parent = list.items[list.items.length - 1];
+        if (!parent.subs) parent.subs = [];
+        let sub = parent.subs[parent.subs.length - 1];
+        if (!sub || sub.type !== type) { sub = { type, start: opening, items: [] }; parent.subs.push(sub); }
+        sub.items.push(item);
+        lastItem = item;
+        continue;
+      }
+      if (list && list.type !== type) flushList();
+      if (!list) list = { type, start: opening, items: [] };
+      list.items.push(item);
+      lastItem = item;
+      continue;
+    }
+
+    // ── CONTINUATION: an INDENTED line directly under an item ──────────────
+    // belongs to that item (CommonMark), which is how "1. > quote" followed by
+    // "   — Name" stays one item. INDENTED only: the lazy, unindented form was
+    // measured and rejected (see the ordered-list note above), and a blank
+    // line has already closed the list before this is reached.
+    if (list && lastItem && indentWidth(line.match(/^\s*/)[0]) >= 2) {
+      lastItem.lines.push(line.trim());
+      continue;
+    }
+
+    // ── BLOCKQUOTE ────────────────────────────────────────────────────────
+    // Consecutive quote lines are one quote; a "— Name" line directly under
+    // them is its attribution. See renderQuote.
+    if (isQuoteLine(line)) {
+      flushPara(); flushList();
+      const q = [];
+      let j = li;
+      while (j < lines.length && isQuoteLine(lines[j])) { q.push(stripQuoteMarker(lines[j])); j++; }
+      if (j < lines.length && isAttribution(lines[j])) { q.push(lines[j]); j++; }
+      out.push(renderQuote(q, cite));
+      li = j - 1; // the loop's own li++ lands on `j`
       continue;
     }
 
