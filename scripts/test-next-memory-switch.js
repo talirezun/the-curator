@@ -172,6 +172,8 @@ function makeSwitcher(stateObj, responder, opts = {}) {
     lift('workStreamOrder') + '\n' +
     lift('fetchState') + '\n' +
     lift('applyProjectRead') + '\n' +
+    // v3.72.1: selectProject re-asks step ③'s count once it is this old (F5).
+    'const KNOWLEDGE_SELECT_MAX_AGE_MS = ' + liftConst('KNOWLEDGE_SELECT_MAX_AGE_MS') + ';\n' +
     lift('selectProject') + '\n' +
     lift('loadScope') + '\n' +
     'return { selectProject, applyProjectRead, loadScope, readCache, forgetProject, ' +

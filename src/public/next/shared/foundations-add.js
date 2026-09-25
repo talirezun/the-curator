@@ -34,12 +34,17 @@
 // DOM-FREE, like shared/foundations-init.js, so a plain Node suite imports it
 // and drives every rule here without a browser. It imports only from the
 // DOM-free kit.
-import { formatBytes, remoteRefusalText, selectedTokenSource } from './foundations-init.js';
+import {
+  formatBytes, remoteRefusalText, selectedTokenSource, FOUNDATIONS_BUDGET_BYTES, MAX_FOUNDATION_BYTES,
+} from './foundations-init.js';
 
-/** The store's `FOUNDATIONS_BUDGET_BYTES` — a DISCLOSURE, never a wall. */
-export const PROJECT_BUDGET_BYTES = 200 * 1024;
-/** The store's `MAX_FOUNDATION_BYTES` — a WALL. */
-export const MAX_DOCUMENT_BYTES = 512 * 1024;
+/** The store's `FOUNDATIONS_BUDGET_BYTES` — a DISCLOSURE, never a wall.
+ *  v3.72.1 (truth audit tray-copy F9): ONE client copy, foundations-init.js's,
+ *  which test-next-memory-view.js pins to the store — never a third literal. */
+export const PROJECT_BUDGET_BYTES = FOUNDATIONS_BUDGET_BYTES;
+/** The store's `MAX_FOUNDATION_BYTES` — a WALL. The fallback only: a refused
+ *  candidate carries the server's own `cap`, and the sentence quotes that. */
+export const MAX_DOCUMENT_BYTES = MAX_FOUNDATION_BYTES;
 
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
@@ -502,7 +507,8 @@ function candidateRow(rec, cand, done, dis) {
       + '<span class="fnd-init-cand-path">' + escapeHtml(path) + '</span>'
       + '</label>' + size
       + '<span class="fnd-init-cand-why">' + escapeHtml(formatBytes(cand.bytes) + ' is over the '
-        + formatBytes(MAX_DOCUMENT_BYTES) + ' per-document limit — it cannot be added') + '</span>'
+        + formatBytes(Number.isInteger(cand.cap) && cand.cap > 0 ? cand.cap : MAX_DOCUMENT_BYTES)
+        + ' per-document limit — it cannot be added') + '</span>'
       + '</div>';
   }
   const on = rec.picks[path] === true;

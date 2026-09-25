@@ -431,6 +431,27 @@ section('§8 — the sources strip (§4.4)');
   ok('an empty strip for a kept-only project', FSRC.renderSourcesStrip(FSRC.sourcesStripModel(facts(F.v2Kept).sources)) === '');
   const hostile = FSRC.renderSourcesStrip(FSRC.sourcesStripModel([{ id: 's1', kind: 'folder', label: '<img onerror=1>', documentCount: 1 }]));
   ok('a label is escaped', !/<img/.test(hostile) && /&lt;img/.test(hostile));
+  {
+    // v3.72.1 (truth audit F11): "refreshed N ago" was words computed once at
+    // render and never ticked. It now carries Context's age-clock contract —
+    // the stamp on `data-mem-age-at`, the words in `.mem-age-words` — so
+    // views/memory.js's one-second `tickAges` rewrites it like every other
+    // age on the page, and ONLY the age (the word "refreshed" stays outside).
+    const g0 = facts(F.mixed).sources.find((g) => g.id === 's1');
+    const line0 = h.slice(h.indexOf('data-fnd-source="s1"'), h.indexOf('data-fnd-source="s2"'));
+    ok('F11: the folder\'s refresh age carries its stamp for the age clock',
+      line0.includes('<span data-mem-age-at="' + g0.lastRefreshAt + '">refreshed <span class="mem-age-words">2 days ago</span></span>'),
+      line0);
+    ok('F11: ...and the line still READS the same words as the model',
+      line0.replace(/<[^>]+>/g, '').includes('2 documents · refreshed 2 days ago'), line0);
+    const noAge = FSRC.renderSourcesStrip(FSRC.sourcesStripModel([{ id: 'n', kind: 'folder', label: 'x',
+      documentCount: 1, lastRefreshAt: null }]));
+    ok('F11: CONTROL — "never refreshed" is not an age and carries no stamp',
+      /never refreshed/.test(noAge) && !/data-mem-age-at/.test(noAge), noAge);
+    const evil = FSRC.renderSourcesStrip({ groups: [{ id: 'e', kindWord: 'Folder', label: 'x', meta: ['1 document', 'refreshed 1 min ago'],
+      ageIndex: 1, ageAt: '"><img onerror=1>' }], refreshAll: false });
+    ok('F11: the stamp is escaped into its attribute', !/<img/.test(evil) && /&quot;&gt;&lt;img/.test(evil), evil);
+  }
   const out = FSRC.refreshOutcome({ refreshed: ['a'], added: [], unchanged: [], missing: [],
     groups: [{ id: 's1', ok: true }, { id: 's2', ok: false, reason: 'rate-limited' }] }, facts(F.mixed).sources);
   eq('a failed group is named by its label and said to be unchanged', out.failed[0],

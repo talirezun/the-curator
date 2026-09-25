@@ -41,11 +41,24 @@ import * as workingStore from './working-state.js';
 import { renderFramedContextMarkdown } from './context-markdown.js';
 import { getContextWindowSettings } from './config.js';
 
-/** Each layer's own named cap, for the monitor's depth bars (unchanged since v3.67.0). */
-export const SESSION_BRIEF_CAP = 32768;
-export const SESSION_HANDOFF_CAP = 49152;
-/** The MCP door's per-reply guard (mcp/tools/working-state.js RESPONSE_BUDGET_BYTES). */
+/** Each layer's own named cap, for the monitor's depth bars. v3.72.1 (truth
+ *  audit F8): DERIVED from the store's own limits rather than retyped, so step
+ *  ②'s handoff budget (the route's `stateBudgetBytes`, also MAX_STATE_BYTES)
+ *  and step ④'s can never quote two different numbers. */
+export const SESSION_BRIEF_CAP = workingStore.MAX_BRIEF_BYTES;
+export const SESSION_HANDOFF_CAP = workingStore.MAX_STATE_BYTES;
+/** The MCP door's per-reply guard (mcp/tools/working-state.js RESPONSE_BUDGET_BYTES,
+ *  a module-private constant; scripts/test-session-start.js pins the two equal). */
 export const SESSION_REPLY_CAP = 307200;
+/** The Lean preset's bytes — the cost line's threshold ("handed more than the
+ *  Lean preset"). Off the store's ladder, never a literal (F8). */
+export const SESSION_LEAN_BYTES = workingStore.READING_BUDGET_PRESETS.find((p) => p.id === 'lean').bytes;
+/** Chat's ceiling on project-context text (src/brain/chat.js
+ *  PROJECT_CONTEXT_BUDGET_CHARS). A copy, not an import: chat.js reaches the
+ *  model layer, and the tray imports this module under a no-network guarantee
+ *  (scripts/test-session-start.js walks the graph). The same suite pins the
+ *  two equal, so the figure step ④ shows for Chat cannot drift (F7). */
+export const SESSION_CHAT_CEILING_CHARS = 40000;
 
 /** The layers IN THE WINDOW, in drawing order. `readFirst` is the document text. */
 export const SESSION_LAYER_KEYS = Object.freeze(['framing', 'brief', 'handoff', 'journal', 'index', 'readFirst']);
@@ -325,7 +338,12 @@ export async function sessionStartReport(domain, project, whatIf = null, opts = 
       delivery: { replies: deliveryOut.replies, replyTokens: deliveryOut.pageTokens },
       preview: whatIf !== null && whatIf !== undefined,
     },
-    costLine: { applies: !planned && (f.count || 0) > 0 && sentText > 32768, documentTextBytes: sentText },
+    costLine: { applies: !planned && (f.count || 0) > 0 && sentText > SESSION_LEAN_BYTES, documentTextBytes: sentText },
+    // v3.72.1 (truth audit F7): what CHAT is handed, so step ④ shows the real
+    // figure — the smaller of this project's reading budget and Chat's ceiling
+    // (chat.js `loadProjectContext`) — instead of a typed "≤ 40,000".
+    chat: { ceilingChars: SESSION_CHAT_CEILING_CHARS,
+      effectiveChars: Math.min(budgetBytes, SESSION_CHAT_CEILING_CHARS) },
     notes,
   };
 }

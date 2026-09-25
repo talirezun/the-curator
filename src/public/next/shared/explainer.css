@@ -76,13 +76,26 @@
   color: var(--accent-text);
 }
 
-/* ── Lead ── */
+/* ── Lead ──
+   THE LEAD TAKES THE PANEL (v3.72.1). It carried `max-width: 62ch`, which at
+   the lead's own size resolves to roughly two-thirds of the panel at a normal
+   window, so a lead that fits on one line ("Ask your wiki a question. Answers
+   are written from your own pages and number the pages they use.") broke at
+   about two-thirds and left the right third of the card empty — the
+   maintainer's report, 2026-09-25. Same fault text.css retired for the panel
+   body in v3.65.0: a `ch` measure inside a column `.main-inner` already caps
+   is a cap on a cap. The lead is ≤20 words (MODEL.md), so it needs no measure
+   at an ordinary width; a readable one returns only where the explainer
+   itself is very wide (the container rule below). */
 .xp-lead {
   font-size: var(--text-base);
   line-height: var(--leading-normal);
   font-weight: var(--weight-medium);
   color: var(--text);
-  max-width: 62ch;
+  max-width: none;
+}
+@container (min-width: 1040px) {
+  .xp-lead { max-width: 110ch; }
 }
 
 /* ── The well that holds the one visual ── */

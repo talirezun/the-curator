@@ -1069,8 +1069,11 @@ ok('formatAge is monotonic over a decade of samples', (() => {
 // projectMetaLine — three DIFFERENT facts, said three different ways.
 eq('meta: no state and no brief',
   projectMetaLine({ scopeCount: 0, hasBrief: false, ageSeconds: null }), 'no state saved yet');
-eq('meta: a brief but no sessions is its OWN state, not "nothing"',
-  projectMetaLine({ scopeCount: 0, hasBrief: true, ageSeconds: null }), 'brief only — no sessions yet');
+// v3.72.1 (truth audit F10): "session" is the product's word for an MCP agent
+// session since v3.70.0, and a project whose agents READ but never saved has
+// sessions — the AGENT SESSIONS tile counts them. What is absent is a HANDOFF.
+eq('meta: a brief but no handoff is its OWN state, not "nothing" — and says HANDOFF, not "sessions"',
+  projectMetaLine({ scopeCount: 0, hasBrief: true, ageSeconds: null }), 'brief only — no handoff saved yet');
 eq('meta: one scope singularises',
   projectMetaLine({ scopeCount: 1, hasBrief: true, ageSeconds: 60 }), '1 scope · 1 min ago');
 eq('meta: several scopes pluralise',
@@ -1244,7 +1247,9 @@ const V367_FNS = ['fndStartOf', 'fndStartCfg', 'planRowFor', 'fndSuggestCellHtml
   'sessionNoticesHtml', 'ssDocs', 'sessionReceivesMonitor', 'presetName', 'previewFor', 'budgetPreviewFor',
   'planPreviewBody', 'planPreviewKey', 'renderSessionStart', 'renderPlanPanel', 'planAiNeedsConfirm',
   // v3.70.1: the "Documents at start" planner, composed into step ④.
-  'plannerFor', 'plannerRows', 'plannerBody', 'plannerPreviewFor', 'plannerCountsWord', 'plannerFoldHtml'];
+  'plannerFor', 'plannerRows', 'plannerBody', 'plannerPreviewFor', 'plannerCountsWord', 'plannerFoldHtml',
+  // v3.72.1: the window-default read (F4) and the plan's input signature (F6).
+  'contextWindowIsDefault', 'planInputSig', 'refreshPlanEstimateIfStale'];
 function v367Lift() {
   return V367_CONSTS.map((n) => constDecl(viewSrc, n)).join('\n') + '\n'
     // Named one by one rather than mapped over V367_FNS, for §17's census: it
@@ -1255,6 +1260,9 @@ function v367Lift() {
     + extractFunction(viewSrc, 'planRowFor', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'fndSuggestCellHtml', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'planFor', 'memory.js') + '\n'
+    // v3.72.1 (F6): what a plan/estimate was made from, and the re-ask.
+    + extractFunction(viewSrc, 'planInputSig', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'refreshPlanEstimateIfStale', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'planChangeCount', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'planHeadHtml', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'ssSize', 'memory.js') + '\n'
@@ -1263,6 +1271,7 @@ function v367Lift() {
     + extractFunction(viewSrc, 'budgetWord', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'readContextWindow', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'contextWindowNow', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'contextWindowIsDefault', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'harnessNow', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'windowWord', 'memory.js') + '\n'
     + extractFunction(viewSrc, 'ssPct', 'memory.js') + '\n'
@@ -1653,7 +1662,9 @@ function makeRenderers(stateObj) {
         // v3.67.0: the value and the accessible name, so the start cell and
         // the budget picker can be read back as the control they describe.
         value: cfg.value === undefined ? null : cfg.value,
-        label: cfg.ariaLabel || null })) + '"></button>',
+        label: cfg.ariaLabel || null,
+        // v3.72.1: and the trigger's visible words (F4's "200K · default").
+        text: cfg.triggerText === undefined ? null : cfg.triggerText })) + '"></button>',
     renderRunsOn, renderSpent, aiActionDisabledAttrs,
     realRenderOverview,
     doorsFor, renderDoors, renderAddPanel, startLegendHtml, FSRC);
@@ -3424,7 +3435,7 @@ assertLiteral(okc, 300000, POLL_MAX_MS_SRC,
  * can be advanced without sleeping.
  */
 function makeRevalidator(stateObj, responder, opts = {}) {
-  const calls = { index: 0, project: 0, render: 0, sidebar: 0, wire: 0, urls: [] };
+  const calls = { index: 0, project: 0, render: 0, sidebar: 0, wire: 0, urls: [], readings: 0 };
   let mounted = true;
 
   // Fake clock. Timers are a queue of {at, fn}; advance(ms) fires everything
@@ -3461,6 +3472,10 @@ function makeRevalidator(stateObj, responder, opts = {}) {
     // v3.67.0: render() asks for step ④'s measurement after it paints; that
     // path is driven in §25, so here it is a named no-op.
     'function maybeLoadSessionStart() {}\n' +
+    // v3.72.1: the poll tick re-asks the two cached readings beside the index
+    // (truth audit F2/F5). That function is driven in test-next-capture-meter
+    // §8b; here it is COUNTED, so §11 can say the tick calls it.
+    'function revalidateReadings() { __readings(); }\n' +
     extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
@@ -3516,7 +3531,7 @@ function makeRevalidator(stateObj, responder, opts = {}) {
   const api = new Function(
     'state', 'renderSidebar', 'renderMain', 'wire', 'isCurrentMount', 'fetch', 'document',
     'FOCUSABLE_IDS', 'FOCUS_FALLBACK', 'WS_WINDOW',
-    'setTimeout', 'clearTimeout', 'POLL_BASE_MS', 'POLL_DUTY', 'POLL_MAX_MS', body)(
+    'setTimeout', 'clearTimeout', 'POLL_BASE_MS', 'POLL_DUTY', 'POLL_MAX_MS', '__readings', body)(
     stateObj,
     // Counted on renderMain so one render() is one tick, and the sidebar half
     // is counted separately — a render() that painted only one pane would show
@@ -3532,7 +3547,7 @@ function makeRevalidator(stateObj, responder, opts = {}) {
     // The REAL constants, read off the live source above. A change to any of
     // them moves this harness, so §11a's arithmetic is a claim about
     // production rather than about three numbers typed into a test.
-    POLL_BASE_MS_SRC, POLL_DUTY_SRC, POLL_MAX_MS_SRC);
+    POLL_BASE_MS_SRC, POLL_DUTY_SRC, POLL_MAX_MS_SRC, () => { calls.readings++; });
 
   // PRIME, exactly as onEnter does: it calls render(mountToken) before
   // loadIndex, so by the time any revalidation runs `renderedSignature`
@@ -3848,6 +3863,8 @@ function unchangedIndex(ageSeconds) {
   eq('nothing fires before the floor elapses', r.calls.index, 0);
   r.advance(2_000);
   eq('the poll fires once past the floor', r.calls.index, 1);
+  eq('F2/F5 (v3.72.1): ...and the same tick re-asks the two cached readings once',
+    r.calls.readings, 1);
   await r.settle();
   ok('the chain re-armed after the refresh settled', r.armed());
   r.advance(60_000);
@@ -3871,6 +3888,7 @@ function unchangedIndex(ageSeconds) {
   r.schedulePoll(1);
   r.advance(300_000);
   eq('a hidden tab never fetches', r.calls.index, 0);
+  eq('...nor re-asks the cached readings', r.calls.readings, 0);
   ok('...but keeps its timer armed for when it is shown again', r.armed());
   r.stopPoll();
 }
@@ -4049,7 +4067,9 @@ function mountView({ hidden = false, mounted = true, noIntervals = false } = {})
     'closeAllListboxes', 'window', 'document',
     'tickAges', 'AGE_TICK_MS', 'setInterval', 'clearInterval',
     // v3.67.0: the helper's cost gate is a view-owned overlay, closed on teardown.
-    'closeConfirmIfOpen', body)(
+    'closeConfirmIfOpen',
+    // v3.72.1: wake re-asks the two cached readings too (truth audit F2/F5).
+    'revalidateReadings', body)(
     () => ({ loading: true }),
     () => ({ begin: () => {}, cancel: () => { log.gateCancelled++; } }),
     () => mounted,
@@ -4068,7 +4088,8 @@ function mountView({ hidden = false, mounted = true, noIntervals = false } = {})
     // 'function'`, so this arm proves the guard is real rather than decorative.
     noIntervals ? undefined : ((fn, ms) => { log.intervalsArmed.push({ fn, ms, id: nextHandle }); return nextHandle++; }),
     (id) => { log.intervalsCleared.push(id); },
-    () => { log.closedConfirms = (log.closedConfirms || 0) + 1; });
+    () => { log.closedConfirms = (log.closedConfirms || 0) + 1; },
+    (t) => { log.readings = (log.readings || 0) + 1; log.readingsToken = t; });
 
   return { ...api, log, listeners, tickSpy,
     setMounted: (v) => { mounted = v; }, setHidden: (v) => { doc.hidden = v; } };
@@ -4102,9 +4123,11 @@ function mountView({ hidden = false, mounted = true, noIntervals = false } = {})
   eq('the wake handler is what refreshes — nothing has fired yet', m.log.refresh, 0);
   ok('a `focus` wake listener exists to fire', fire(m.listeners.window, 'focus'));
   eq('coming back to a VISIBLE view revalidates', m.log.refresh, 1);
+  eq('F2/F5 (v3.72.1): ...including the two cached readings, once', m.log.readings || 0, 1);
   m.setHidden(true);
   ok('a `visibilitychange` wake listener exists to fire', fire(m.listeners.document, 'visibilitychange'));
   eq('a HIDDEN tab does not revalidate (nobody is looking)', m.log.refresh, 1);
+  eq('...nor re-asks the cached readings', m.log.readings || 0, 1);
   m.setHidden(false);
   m.setMounted(false);
   fire(m.listeners.window, 'focus');
@@ -6602,6 +6625,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       projectRead: { scopes: [] }, detail: { scope: 'old' } };
     const knowledgeAsked = [];
     const captureAsked = [];
+    const captureOpts = [];
     const api = new Function('state', 'isCurrentMount', 'render', 'keyOf', 'activeKey',
       'rememberProject', 'fetchState', 'refreshIndex', 'loadScope', 'reportAsyncMountFailure',
       // ── STEP ③'s READ (v3.62.0) ──────────────────────────────────────
@@ -6631,6 +6655,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       + extractFunction(viewSrc, 'cachePut', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'payloadSignature', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'applyProjectRead', 'memory.js') + '\n'
+      + 'const KNOWLEDGE_SELECT_MAX_AGE_MS = ' + liftConst('KNOWLEDGE_SELECT_MAX_AGE_MS') + ';\n'
       + extractFunction(viewSrc, 'selectProject', 'memory.js')
       + '\nreturn { selectProject, readCache };')(
       st, () => true, () => {}, (d, q) => d + '/' + q,
@@ -6638,7 +6663,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       () => {}, async () => ({ data: { scopes: [], brief: { present: false } }, error: null }),
       async () => {}, async () => {}, () => {},
       async (domain) => { knowledgeAsked.push(domain); },
-      async (domain, project) => { captureAsked.push(domain + '/' + project); },
+      async (domain, project, t, o) => { captureAsked.push(domain + '/' + project); captureOpts.push(o); },
       10, WS_WINDOW_SRC);
 
     await api.selectProject('acme', 'other', 1);
@@ -6661,6 +6686,11 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
     // quietly aggregating.
     eq('the project\'s capture reading is asked for, once, naming the PAIR',
       captureAsked.join(','), 'acme/other');
+    // v3.72.1 (truth audit F2): and RE-ASKED on every (re)select — a cached
+    // count paints at once, and the fresh one follows. Before, a cache hit
+    // returned without a request for the life of the page.
+    eq('F2: a (re)select asks with maxAgeMs 0, so a cached AGENT SESSIONS count is revalidated',
+      captureOpts[0] && captureOpts[0].maxAgeMs, 0);
   }
 
   // ── ESCAPE AND THE ✕ REALLY DO RETURN FOCUS ─────────────────────────────
@@ -6839,6 +6869,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       + extractFunction(viewSrc, 'cachePut', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'payloadSignature', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'applyProjectRead', 'memory.js') + '\n'
+      + 'const KNOWLEDGE_SELECT_MAX_AGE_MS = ' + liftConst('KNOWLEDGE_SELECT_MAX_AGE_MS') + ';\n'
       + extractFunction(viewSrc, 'selectProject', 'memory.js')
       + '\nreturn { selectProject, readCache };')(
       st, () => true, () => {}, (d, q) => d + '/' + q,
@@ -9274,6 +9305,78 @@ const fndRead = (payload) => ({
       r.st.knowledge.get('acme').error, 'offline');
   }
 
+  {
+    // ── v3.72.1 (truth audit F5): THE COUNT IS NO LONGER FROZEN ──────────
+    // The cache used to be written once and read for the life of the page:
+    // an ingest or compile elsewhere never reached step ③ until a reload.
+    // It is now stale-while-revalidate: a hit paints at once, and is re-asked
+    // when the caller names a maximum age the entry has reached.
+    let pages = 100;
+    const r = mk(() => okRes({ pageCount: pages, pageCounts: {} }));
+    await r.api.loadKnowledge(['acme'], 1);
+    await settle();
+    eq('F5: the first read lands', r.st.knowledge.get('acme').data.pageCount, 100);
+    pages = 140;   // an ingest elsewhere in the app
+    r.calls.urls.length = 0; r.calls.renders = 0;
+    await r.api.loadKnowledge(['acme'], 1, { maxAgeMs: 60000 });
+    await settle();
+    eq('F5: CONTROL — an entry younger than the maximum age is served from cache, no request',
+      r.calls.urls.length, 0);
+    await r.api.loadKnowledge(['acme'], 1, { maxAgeMs: 0 });
+    eq('F5: ...a hit still paints the cached figure in the caller\'s frame',
+      r.st.knowledge.get('acme').data.pageCount, 100);
+    await settle();
+    eq('F5: an entry at the maximum age is RE-ASKED', r.calls.urls.length, 1);
+    eq('F5: ...and the new page count replaces the old one on screen',
+      r.st.knowledge.get('acme').data.pageCount, 140);
+    eq('F5: ...with one repaint', r.calls.renders, 1);
+    r.calls.renders = 0;
+    await r.api.loadKnowledge(['acme'], 1, { maxAgeMs: 0 });
+    await settle();
+    eq('F5: an UNCHANGED answer repaints nothing (a render would close an open ⓘ)',
+      r.calls.renders, 0);
+    const fail = mk(() => okRes({ pageCount: 7, pageCounts: {} }));
+    await fail.api.loadKnowledge(['acme'], 1);
+    await settle();
+    const failing = new Function('state', 'isCurrentMount', 'render', 'fetch',
+      'reportAsyncMountFailure', 'knowledgeCache',
+      'const knowledgeInFlight = new Set();\n'
+      + extractFunction(viewSrc, 'loadKnowledge', 'memory.js')
+      + '\nreturn { loadKnowledge };')(
+      fail.st, () => true, () => {}, async () => { throw new Error('offline'); }, () => {},
+      fail.api.cache);
+    await failing.loadKnowledge(['acme'], 1, { maxAgeMs: 0 });
+    await settle();
+    ok('F5: a FAILED re-ask keeps the figures on screen rather than blanking them',
+      fail.st.knowledge.get('acme').data && fail.st.knowledge.get('acme').data.pageCount === 7
+      && !fail.st.knowledge.get('acme').error, JSON.stringify(fail.st.knowledge.get('acme')));
+  }
+
+  {
+    // ── v3.72.1: revalidateReadings — what the poll and wake re-ask ──────
+    const asks = { capture: [], knowledge: [] };
+    const mkR = (st) => new Function('state', 'loadCapture', 'loadKnowledge',
+      'reportAsyncMountFailure', 'READING_REVALIDATE_MS',
+      extractFunction(viewSrc, 'revalidateReadings', 'memory.js')
+      + '\nreturn revalidateReadings;')(
+      st,
+      async (d, p, t, o) => { asks.capture.push([d + '/' + p, o && o.maxAgeMs]); },
+      async (ds, t, o) => { asks.knowledge.push([ds.join(','), o && o.maxAgeMs]); },
+      () => {}, liftConst('READING_REVALIDATE_MS'));
+    mkR({ activeDomain: 'acme', activeProject: 'lumina',
+      projectRead: { knowledgeDomains: ['acme', 'research'] } })(1);
+    eq('revalidateReadings re-asks the AGENT SESSIONS reading for the open pair, with the TTL',
+      JSON.stringify(asks.capture), JSON.stringify([['acme/lumina', liftConst('READING_REVALIDATE_MS')]]));
+    eq('...and step ③\'s count for every CHOSEN wiki, with the TTL',
+      JSON.stringify(asks.knowledge), JSON.stringify([['acme,research', liftConst('READING_REVALIDATE_MS')]]));
+    ok('...a TTL that is a real, bounded number (a minute or so, never "for ever")',
+      liftConst('READING_REVALIDATE_MS') > 0 && liftConst('READING_REVALIDATE_MS') <= 300000);
+    asks.capture.length = 0; asks.knowledge.length = 0;
+    mkR({ activeDomain: null, activeProject: null })(1);
+    eq('CONTROL: with no project open it asks for nothing',
+      asks.capture.length + asks.knowledge.length, 0);
+  }
+
   // ── AND THE STEP PAINTS EVERY STATE ────────────────────────────────────
   const kmap = (entries) => new Map(Object.entries(entries));
   const K = (entries, over) => makeRenderers({
@@ -10252,10 +10355,38 @@ function realListbox() {
     ok('...and HIDDEN, so revealing it later costs no repaint',
       /data-ov-jump="capture"[^>]*hidden>/.test(noCap), noCap.slice(-600));
     const withCap = F({ capture: { domain: 'acme', project: 'lumina', error: null,
-      data: { totals: { sessions: 3 } } } }).renderLayerStrip({ scopes: [] });
+      data: { logPresent: true, totals: { sessions: 3 } } } }).renderLayerStrip({ scopes: [] });
     ok('CONTROL: once the reading lands the same tile is shown, and carries it',
       /data-ov-jump="capture"/.test(withCap) && !/data-ov-jump="capture"[^>]*hidden>/.test(withCap)
       && /3 sessions/.test(withCap), withCap.slice(-600));
+    // ── v3.72.1 (truth audit F3): NO MEASURED-LOOKING ZERO ─────────────
+    const capTile = (h) => {
+      const i = h.indexOf('data-ov-jump="capture"');
+      return i === -1 ? '' : h.slice(h.lastIndexOf('<button', i), h.indexOf('</button>', i));
+    };
+    ok('F3: a counted reading says its window — "last 30 days" — under the figure',
+      /cur-ov-sub">last 30 days</.test(capTile(withCap)), capTile(withCap));
+    const tiedDays = Number((/^const CAPTURE_WINDOW_DAYS = (\d+);$/m.exec(viewSrc) || [])[1]);
+    ok('F3: ...and the literal is the view\'s own CAPTURE_WINDOW_DAYS, so they cannot drift apart',
+      new RegExp("sub: cap && cap.logPresent === true \\? 'last " + tiedDays + " days'").test(viewSrc),
+      'CAPTURE_WINDOW_DAYS=' + tiedDays);
+    const noLog = capTile(F({ capture: { domain: 'acme', project: 'lumina', error: null,
+      data: { logPresent: false, totals: { sessions: 0 } } } }).renderLayerStrip({ scopes: [] }));
+    ok('F3: with NO usage log on this computer the tile says so — never "0 sessions"',
+      /cur-ov-value">no usage log</.test(noLog) && !/0 sessions|last 30 days/.test(noLog), noLog);
+    const legacy = capTile(F({ capture: { domain: 'acme', project: 'lumina', error: null,
+      data: { totals: { sessions: 0 } } } }).renderLayerStrip({ scopes: [] }));
+    ok('F3: ...and a reply that does not SAY the log is present is not read as one (positive evidence only)',
+      /no usage log/.test(legacy) && !/0 sessions/.test(legacy), legacy);
+    const saves = capTile(F({ capture: { domain: 'acme', project: 'lumina', error: null,
+      data: { logPresent: true, noSessionsButSaves: true, totals: { sessions: 0 } } } })
+      .renderLayerStrip({ scopes: [] }));
+    ok('F3: saves with no logged session read "not logged", step ②\'s explanation — not "0 sessions"',
+      /cur-ov-value">not logged</.test(saves) && !/0 sessions/.test(saves), saves);
+    const zero = capTile(F({ capture: { domain: 'acme', project: 'lumina', error: null,
+      data: { logPresent: true, totals: { sessions: 0 } } } }).renderLayerStrip({ scopes: [] }));
+    ok('F3: CONTROL — a log that WAS read and holds none in the window is a real "0 sessions"',
+      /cur-ov-value">0 sessions</.test(zero) && /last 30 days/.test(zero), zero);
   }
 
   // ── CELL ① WHILE THE READ IS IN FLIGHT ──────────────────────────────
@@ -11328,6 +11459,8 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
         budgetTokens: budget.bytes / 4, onDemand: { tokens: 0, documents: 0 },
         delivery: { replies, replyTokens: 20480 }, preview: over.preview === true },
       costLine: { applies: true, documentTextBytes: 38198 }, notes: [],
+      // v3.72.1 (F7): the route's Chat figure — min(this budget, Chat's ceiling).
+      chat: { ceilingChars: 40000, effectiveChars: Math.min(budget.bytes, 40000) },
       ...Object.fromEntries(Object.entries(over).filter(([k]) => !['tiers', 'bytes', 'budget', 'replies', 'preview'].includes(k))),
     };
   };
@@ -11355,7 +11488,9 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       && /class="settings-block-num"[^>]*>4</.test(waiting)
       && /<h2 class="settings-job-title">Session start<\/h2>/.test(waiting), waiting.slice(0, 600));
     ok('before the measurement lands it SAYS it is measuring — never a figure it does not have',
-      /Measuring what an agent receives…/.test(waiting) && !/≈\d/.test(waiting.replace(/<select[\s\S]*$/, '')), waiting);
+      /Measuring what an agent receives…/.test(waiting) && !/≈\d/.test(waiting.replace(/<select[\s\S]*$/, '')
+        // the listbox STUB's JSON (test-only) carries the pickers' own trigger words
+        .replace(/data-lb-stub="[^"]*"/g, '')), waiting);
     const head = /<div class="settings-block-hd">([\s\S]*?)<\/div><div class="settings-block-info">/.exec(waiting);
     const headIds = head ? [...head[1].matchAll(/data-lb-stub="[^"]*"|id="(mem-[a-z]+-lb)"/g)].map((m) => m[1]).filter(Boolean) : [];
     eq('the HEAD ROW holds the three things the owner sets, in order: Window · Reading budget · Harness',
@@ -11393,7 +11528,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('"What an agent receives" is a fold row, OPEN by default — the one on this page that is',
       /<details class="mem-fold" data-mem-fold="receives" open>/.test(html), html.slice(0, 300));
     ok('...its summary is the total in TOKENS first, then bytes and share — and carries NO bar',
-      /<summary class="mem-fold-summary" id="mem-fold-receives">[\s\S]*?≈13\.2k tokens · 51\.7 KB · 6\.6% of 200K<\/span>\s*<\/summary>/.test(html)
+      /<summary class="mem-fold-summary" id="mem-fold-receives">[\s\S]*?≈13\.2k tokens · 51\.7 KB · 6\.6% of 200K \(default\)<\/span>\s*<\/summary>/.test(html)
       && !/cur-depth/.test((/id="mem-fold-receives">([\s\S]*?)<\/summary>/.exec(html) || ['', 'cur-depth'])[1]), html);
     ok('the per-viewer "Context window" fold is GONE (the window is in the head row now); "How an agent reaches this" stays closed',
       !/data-mem-fold="window"/.test(html) && !/data-ctx-window/.test(html)
@@ -11427,7 +11562,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('...the harness is its own line, "not set" — never summed into the start',
       /harness<\/span><span class="cur-mon-value">not set/.test(html));
     ok('...and free at start is the window less the MEASURED start (the harness unknown)',
-      /free at start<\/span><span class="cur-mon-value">≈187k<\/span><span class="cur-mon-sub">of a 200K-token window, before your harness/.test(html), html);
+      /free at start<\/span><span class="cur-mon-value">≈187k<\/span><span class="cur-mon-sub">of a 200K-token window \(default\), before your harness/.test(html), html);
     ok('...and no line is danger-toned on a start that is within every budget',
       !/cur-depth-danger|cur-mon-tone-danger/.test(html), html);
     // THIS COMPUTER's window and harness change the drawing and nothing the project stores.
@@ -11438,6 +11573,35 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       && /harness<\/span><span class="cur-mon-value">≈120k · 12\.0%<\/span><span class="cur-mon-sub">system prompt, tools, CLAUDE\.md, skills · your estimate, not measured/.test(big)
       && /free at start<\/span><span class="cur-mon-value">≈867k</.test(big), big);
     ok('...the hint leaves once an estimate is set', !/mem-ss-harness-hint/.test(big));
+    {
+      // v3.72.1 (truth audit F4): the 200K DEFAULT was shown as the owner's
+      // per-computer setting — "200K" on the trigger, "set for this computer"
+      // in its accessible name — while the tray said "not set; 200k is the
+      // default". The store's `contextWindowSet` is now read.
+      const stub = (h) => {
+        const m = /id="mem-window-lb" data-lb-stub="([^"]*)"/.exec(h);
+        return m ? JSON.parse(m[1].replace(/&quot;/g, '"')) : null;
+      };
+      const dflt = makeRenderers(withSS(ssData(), { ctxSettings: { contextWindowTokens: 200000,
+        contextWindowSet: false, harnessEstimateTokens: null, choices: [200000, 400000, 1000000] } }))
+        .renderSessionStart(st.projectRead);
+      const ds = stub(dflt);
+      ok('F4: an UNSET window is named the default in the picker\'s accessible name, never "set for this computer"',
+        ds && ds.label === 'Context window: 200K tokens, the default — not set on this computer', JSON.stringify(ds));
+      ok('F4: ...no option is marked chosen, because nobody chose one', ds && ds.value === null, JSON.stringify(ds));
+      ok('F4: ...and the meter says "(default)" wherever it names the window',
+        /of a 200K-token window \(default\), before your harness/.test(dflt)
+        && /% of 200K \(default\)<\/span>/.test(dflt), dflt.slice(0, 400));
+      const set = makeRenderers(withSS(ssData(), { ctxSettings: { contextWindowTokens: 200000,
+        contextWindowSet: true, harnessEstimateTokens: null, choices: [200000, 400000, 1000000] } }))
+        .renderSessionStart(st.projectRead);
+      const ss2 = stub(set);
+      ok('F4: CONTROL — a window the owner SET on this computer reads as set, with no "(default)"',
+        ss2 && ss2.label === 'Context window: 200K tokens, set for this computer' && ss2.value === '200000'
+        && !/\(default\)/.test(set), JSON.stringify(ss2));
+      ok('F4: the trigger TEXT says "200K · default" (and a set one says "200K")',
+        ds && ds.text === '200K · default' && ss2 && ss2.text === '200K', ds && ds.text);
+    }
     ok('...the SESSION START line stays the MEASURED figure — the harness is never added to it',
       /session start<\/span><span class="cur-mon-value">[\s\S]{0,200}?≈13\.2k · 1\.3%/.test(big), big);
     ok('...and the meter is drawn against THIS COMPUTER\'s window, not the one the measurement was taken with',
@@ -11547,7 +11711,26 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       !/bk-[a-z-]*danger/.test(html));
     ok('a start in TWO replies carries the delivery line on the meter, and the reply count everywhere',
       /Delivered in 2 MCP replies of at most ≈20\.5k tokens each/.test(html)
-      && /measured · 2 MCP replies/.test(html) && /2 MCP replies of at most ≈20k tokens/.test(html), html);
+      && /measured · 2 MCP replies/.test(html)
+      // v3.72.1 (F7): the fold's cap is the route's pageTokens, the SAME "≈20.5k"
+      // as the meter's delivery line — it said a typed "≈20k".
+      && /2 MCP replies of at most ≈20\.5k tokens · the owner’s budget/.test(html) && !/≈20k tokens/.test(html), html);
+    {
+      // F7: the Chat row is the route's min(budget, ceiling), never a typed 40,000.
+      const lean = makeRenderers(withSS(ssData({ budget: { bytes: 32768, tokens: 8192, source: 'owner',
+        defaulted: false, ownerBytes: 32768, preset: 'lean', custom: false, nearest: null, cap: 819200,
+        capTokens: 204800, replyCapBytes: 307200 } }))).renderSessionStart(read);
+      ok('F7: on Lean, Chat reads ≤ 32,768 characters — the owner\'s budget, smaller than the ceiling',
+        /cur-mon-key">Chat<\/span><span class="cur-mon-value">≤ 32,768 characters</.test(lean)
+        && /Chat \(≤ 32,768 characters\)/.test(lean) && !/≤ 40,000/.test(lean), lean.slice(0, 300));
+      const io = makeRenderers(withSS(ssData({ budget: { bytes: 0, tokens: 0, source: 'owner',
+        defaulted: false, ownerBytes: 0, preset: 'index-only', custom: false, nearest: null, cap: 819200,
+        capTokens: 204800, replyCapBytes: 307200 } }))).renderSessionStart(read);
+      ok('F7: on Index only, Chat is handed no document text, and says so',
+        /cur-mon-key">Chat<\/span><span class="cur-mon-value">no document text \(Index only\)</.test(io), io.slice(0, 300));
+      ok('F7: CONTROL — a budget over the ceiling (Standard, 64 KB) reads the ceiling, 40,000',
+        /cur-mon-key">Chat<\/span><span class="cur-mon-value">≤ 40,000 characters</.test(html));
+    }
     eq('...and the picker reads Standard', (budgetStub(html) || {}).value, 'standard');
   }
 
@@ -11740,6 +11923,61 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     totals: { readFirstCount: 2, readFirstBytes: 31437, onRequestCount: 1, notAtStartCount: 0 },
     dropped: [], notes: [], runsOn: priced,
   };
+  {
+    // ── v3.72.1 (truth audit F6): THE PANEL FOLLOWS THE BUDGET ON SCREEN ─
+    // The estimate is read when the panel opens; picking Lean afterwards left
+    // "the Standard 64 KB reading budget" on the panel, and a finished
+    // suggestion's totals stayed as if nothing had changed.
+    const st = planSt({ estimate: { ok: true, budgetBytes: 65536, budgetSource: 'standard', runsOn: priced } });
+    st.projectRead = { ...st.projectRead, readingBudgetBytes: 32768 };   // Lean, picked after opening
+    const html = makeRenderers(st).renderFoundations(st.projectRead);
+    ok('F6: the panel quotes the owner\'s budget NOW (32 KB), not the one the estimate was read against',
+      /each document’s role and size, and your 32 KB reading budget\./.test(html) && !/Standard 64 KB/.test(html),
+      (/Free: [^<]*/.exec(html) || [''])[0]);
+    // A suggestion made against the old inputs is marked outdated and not applied.
+    const F0 = makeRenderers(baseSt());
+    const sigThen = F0.planInputSig(baseSt().projectRead);
+    const later = planSt({ estimate: { ok: true, budgetBytes: 65536, budgetSource: 'standard', runsOn: priced },
+      result: { ...result }, resultSig: sigThen, ticks: { 'architecture.md': true } });
+    later.projectRead = { ...later.projectRead, readingBudgetBytes: 32768 };
+    const lh = makeRenderers(later).renderFoundations(later.projectRead);
+    ok('F6: a suggestion made before the budget changed says it is OUTDATED, unfolded, in words',
+      /mem-plan-result[\s\S]*Outdated: the reading budget or the documents changed after this suggestion was made/.test(lh), lh.slice(0, 400));
+    ok('F6: ...and its Apply is disabled — its totals describe an earlier project',
+      /id="mem-plan-apply" disabled aria-disabled="true">Apply suggestion/.test(lh));
+    const fresh = planSt({ estimate: { ok: true, budgetBytes: 65536, budgetSource: 'standard', runsOn: priced },
+      result: { ...result }, resultSig: sigThen, ticks: { 'architecture.md': true } });
+    const fh = makeRenderers(fresh).renderFoundations(fresh.projectRead);
+    ok('F6: CONTROL — with nothing changed there is no outdated note and Apply is live',
+      !/Outdated:/.test(fh) && /id="mem-plan-apply">Apply suggestion/.test(fh), fh.slice(0, 300));
+    const docAdded = { ...baseSt().projectRead,
+      foundations: fndPayload([fndDoc(), fndDoc({ slug: 'new.md', bytes: 2000 })]) };
+    ok('F6: a document ADDED also moves the inputs (the budget alone is not the whole signature)',
+      F0.planInputSig(docAdded) !== sigThen);
+  }
+  {
+    // The estimate is RE-ASKED after a paint once its inputs moved.
+    const asked = [];
+    const mk = (st) => new Function('state', 'loadPlanEstimate', 'reportAsyncMountFailure',
+      extractFunction(viewSrc, 'planFor', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'planInputSig', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'refreshPlanEstimateIfStale', 'memory.js')
+      + '\nreturn { refreshPlanEstimateIfStale, planInputSig };')(
+      st, async (t) => { asked.push(t); }, () => {});
+    const st = planSt({ estimate: { ok: true, budgetBytes: 65536, budgetSource: 'standard' } });
+    const api = mk(st);
+    st.plan.estimateSig = api.planInputSig(st.projectRead);
+    ok('F6: CONTROL — an estimate of the inputs on screen is not re-asked',
+      api.refreshPlanEstimateIfStale(1) === false && asked.length === 0);
+    st.projectRead = { ...st.projectRead, readingBudgetBytes: 32768 };
+    ok('F6: after the budget changes, the next paint re-asks the estimate…',
+      api.refreshPlanEstimateIfStale(7) === true && asked.join() === '7');
+    ok('F6: …and drops the old one meanwhile, so no stale cost is shown as current',
+      st.plan.estimate === null);
+    st.plan.estimateLoading = true;
+    ok('F6: CONTROL — while that read is in flight it is not asked twice',
+      api.refreshPlanEstimateIfStale(8) === false && asked.length === 1);
+  }
   {
     const docs = [fndDoc(), fndDoc({ slug: 'roadmap.md', title: 'Roadmap', role: 'roadmap', bytes: 119127 })];
     const st = planSt({ estimate: { ok: true, budgetBytes: 65536, budgetSource: 'standard', runsOn: priced },
@@ -12056,6 +12294,8 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     const lift = (srcs, extraParams, extraArgs, st, fetchImpl) => new Function('state', 'isCurrentMount',
       'render', 'fetch', 'encodeURIComponent', 'reportAsyncMountFailure', ...extraParams,
       'let previewInFlight = null;\n'
+      // v3.72.1 (F6): runPlan and loadPlanEstimate stamp what they were made from.
+      + (srcs.some((x) => /function planInputSig\(/.test(x)) ? '' : extractFunction(viewSrc, 'planInputSig', 'memory.js') + '\n')
       + srcs.join('\n')
       + '\nreturn { ' + srcs.map((x) => /function\s+([A-Za-z0-9_$]+)/.exec(x)[1]).join(', ') + ' };')(
       st, () => true, () => { st.__renders = (st.__renders || 0) + 1; }, fetchImpl, encodeURIComponent,
@@ -12185,6 +12425,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
         + extractFunction(viewSrc, 'readContextWindow', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'sessionStartFor', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'contextWindowNow', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'contextWindowIsDefault', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'harnessNow', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'windowWord', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'writeContextSettings', 'memory.js') + '\n'
@@ -12544,7 +12785,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       ok('an OPEN fold stays open across a repaint', /data-mem-fold="planner" open>/.test(pend));
       ok('a changed row is tinted AND says what is saved, in words', /<tr class="mem-pl-row is-changed">[\s\S]*?decisions · 39\.1 KB · saved: on request/.test(pend));
       ok('the pending line: "Preview, not saved." with the preview\'s own tokens, share of the window and replies',
-        /<b>Preview, not saved\.<\/b> 1 change: ≈35k tokens · 17\.5% of 200K · 2 MCP replies/.test(pend), (pend.match(/mem-pl-pending[\s\S]*?<\/div>/) || [''])[0]);
+        /<b>Preview, not saved\.<\/b> 1 change: ≈35k tokens · 17\.5% of 200K \(default\) · 2 MCP replies/.test(pend), (pend.match(/mem-pl-pending[\s\S]*?<\/div>/) || [''])[0]);
       ok('...with Discard and "Apply 1 change"', /id="mem-pl-discard"[^>]*>Discard</.test(pend) && /id="mem-pl-apply"[^>]*>Apply 1 change</.test(pend));
       ok('...and the totals follow the DRAFT: 2 read first, ≈15k of the budget, not over it',
         /2 read first · ≈15k of the ≈16\.4k reading budget<\/span>/.test(pend) && !/over it by/.test(pend));
@@ -12744,6 +12985,13 @@ const EXECUTED = new Set([
   // driven through the composed page in §18i and §21f/§21f2.
   'renderLayerStrip', 'projectHeadline', 'renderWorkStreamsFold', 'renderKnowledge',
   'loadKnowledge',
+  // v3.72.1: the poll/wake re-ask of the two cached readings, driven beside
+  // loadKnowledge's own revalidation (truth audit F2/F5).
+  'revalidateReadings',
+  // v3.72.1 (F6): the plan's input signature and the estimate's re-ask.
+  'planInputSig', 'refreshPlanEstimateIfStale',
+  // v3.72.1 (F4): lifted with contextWindowNow; driven in §25's window checks.
+  'contextWindowIsDefault',
   // v3.62.0 — "read first". The budget sentence is driven over both sets
   // (flagged and not) in §21h, and the toggle over its four outcomes against a
   // DOM model, because a tick that re-renders is the defect v3.61.1 recorded
@@ -13256,6 +13504,29 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
     ok('P1: ...and a build that sends the budget but not the flag derives the flag against THAT '
       + 'budget (100 KB > 64 KB), not the constant',
     F.foundationsFacts(fndRead(own2)).readFirstBudgetExceeded === true);
+  }
+  {
+    // v3.72.1 (truth audit F1): INDEX ONLY is a budget of 0, and the store
+    // sends 0. The view read `> 0` as "not sent" and fell back to 120 KB, so
+    // step ① drew a red bar "of 120 KB per session" and warned "over the
+    // 120 KB reading budget" while step ④ said "Index only".
+    const io = fndPayload([
+      fndDoc({ slug: 'a.md', bytes: 40 * KB, readFirst: true }), fndDoc({ slug: 'b.md', bytes: 30 * KB }),
+    ], { budgetBytes: 200 * KB, readFirstCount: 1, onRequestCount: 1, readFirstBytes: 40 * KB,
+      readFirstBudgetBytes: 0, readFirstBudgetExceeded: true });
+    const iof = F.foundationsFacts(fndRead(io));
+    ok('F1: a sent budget of 0 is kept as 0 (Index only), never replaced by the 120 KB default',
+      iof.readFirstBudgetBytes === 0 && iof.readFirstIndexOnly === true, JSON.stringify(iof));
+    ok('F1: ...and Index only is never "over" — the store\'s any-bytes flag is not an over-run there',
+      iof.readFirstBudgetExceeded === false);
+    const ioHtml = F.renderFoundations(fndRead(io));
+    const ioRead = lineOf(monOf(ioHtml), 'read first');
+    ok('F1: the read-first line says Index only in words, with no bar and no danger',
+      /cur-mon-sub">Index only — no document text at start</.test(ioRead)
+      && !/cur-depth|danger/.test(ioRead), ioRead);
+    ok('F1: ...and nowhere on step ① quotes the 120 KB default or an over-budget sentence',
+      !/120 KB/.test(ioHtml) && !/reading budget\. Agents are handed/.test(ioHtml)
+      && F.foundationsBudgetWarning(iof) === '', ioHtml.slice(0, 400));
   }
 
   // ── P1 (d): where the monitor is NOT ─────────────────────────────────────

@@ -317,6 +317,21 @@ section('§8  THE STYLESHEET');
       `the explainer reclaims exactly the panel's padding (text.css pads ${panelPad || '?'}; .xp margin ${xpMargin || '?'}) — one fact in two files, pinned`);
     ok(!/(^|[\s,>+~])\.tx-/m.test(css.replace(/\/\*[\s\S]*?\*\//g, '')), '…and no `tx-` selector lives here — text.css owns that prefix');
   }
+  {
+    // v3.72.1: the lead took a 62ch measure and broke at ~two-thirds of the
+    // panel even when the sentence fit on one line. The base rule may carry
+    // no `ch`/`px`/`%` cap; a measure is allowed only inside a MIN-width
+    // container query (the panel itself very wide), and that measure must be
+    // wide enough to hold a 20-word lead (≥ 100ch) on one line.
+    const lead = (css.match(/\n\.xp-lead\s*\{([^}]*)\}/) || [])[1];
+    ok(lead !== undefined && !/max-width:(?!\s*none\s*;)[^;]+;/.test(lead),
+      'the lead takes the panel\'s full width at an ordinary width (no max-width measure on .xp-lead)');
+    const wide = [...css.matchAll(/@container \(min-width:\s*(\d+)px\)\s*\{\s*\.xp-lead\s*\{\s*max-width:\s*(\d+)ch;\s*\}\s*\}/g)];
+    ok(wide.length === 1 && Number(wide[0][1]) >= 1000 && Number(wide[0][2]) >= 100,
+      `…and a readable measure returns only where the explainer is very wide (min-width ${wide[0] ? wide[0][1] : '?'}px, ${wide[0] ? wide[0][2] : '?'}ch)`);
+    const leads = (css.match(/\.xp-lead[^{]*\{[^}]*\}/g) || []);
+    ok(leads.length === 2, `…and nothing else re-caps it (${leads.length} .xp-lead rules; expected the base + the wide one)`);
+  }
   ok(/\.xp\s*\{[^}]*container-type:\s*inline-size/.test(css), 'the explainer is a size container…');
   const narrow = (css.match(/@container \(max-width: 560px\) \{([\s\S]*)\}\s*$/) || [])[1] || '';
   ok(['.xp-nodes', '.xp-pts', '.xp-foot', '.xp-flow', '.xp-tbl'].every((s) => narrow.includes(s)),

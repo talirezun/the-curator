@@ -47,7 +47,7 @@ import { formatAge, freshnessTier } from './age.js';
 // not draw by hand: the recorded folder as a monitor line, and the running
 // total as a DEPTH BAR against the project budget (design rule 6) — a second
 // hand-built bar here is the shape rule 6 exists to prevent.
-import { renderMonitor, renderDepthCell } from './monitor.js';
+import { renderMonitor } from './monitor.js';
 //
 // ── NO NATIVE <select>, AND NO LISTBOX EITHER ────────────────────────────
 // /next purged the native `<select>` in v3.18.0 (shell.css records why: the
@@ -655,14 +655,12 @@ export function tickedBytes(choice) {
 }
 
 /**
- * THE RUNNING TOTAL, AS A DEPTH BAR (v3.65.2, C1 + C2) — the host panels'.
+ * THE RUNNING TOTAL — the host panels' (v3.65.2, C1 + C2; v3.72.1 neutral).
  *
- * Two clauses and one bar. In ADD mode: "2 ticked · 99 KB", then the PROJECT
- * total — what is already mirrored plus what is ticked — against the 200 KB
- * project budget, drawn by the kit's `renderDepthCell`, which turns danger by
- * itself when the total is over (rule 6; the loud budget sentence stays
- * unfolded under it, so the fact is also in words). On the GitHub panel:
- * "1 of 31 ticked · 395 KB" with the ticked set against the same budget.
+ * In ADD mode: "2 ticked · 99 KB", then the PROJECT total — what is already
+ * mirrored plus what is ticked — said as a reading. On the GitHub panel:
+ * "1 of 31 ticked · 395 KB". v3.72.1 removed the depth bar against the 200 KB
+ * project figure, which v3.70.0 had already retired as an alarm elsewhere.
  *
  * Returns MARKUP: every string in it is either escaped here or passed to the
  * kit, which escapes. The create form keeps `countLineText`, unchanged.
@@ -684,25 +682,25 @@ export function countLineHtml(choice) {
     ? ticked + ' ticked · ' + formatBytes(bytes)
     : ticked + ' of ' + usable + ' ticked · ' + formatBytes(bytes);
   if (unknownSize) words += ' · size of ' + unknownSize + ' added by path not known yet';
+  // v3.72.1 (truth audit, tray-copy F2 / context F9): NO BAR AGAINST THE
+  // RETIRED 200 KB FIGURE. v3.70.0 withdrew it as an alarm on Context's add
+  // panel (foundations-add.js), and the same act read "over budget" here.
+  // The project total is said NEUTRALLY, in ADD mode only — in create mode
+  // the words already carry the ticked bytes, which ARE the total.
   return '<span class="fnd-init-count-words">' + escapeHtml(words) + '</span>' +
-    '<span class="fnd-init-count-total">' +
-      (add ? '<span class="fnd-init-count-key">project total</span>' : '') +
-      renderDepthCell({
-        value: formatBytes(total) + ' of ' + formatBytes(FOUNDATIONS_BUDGET_BYTES),
-        amount: total, budget: FOUNDATIONS_BUDGET_BYTES,
-        label: add ? 'mirrored and ticked, against the project budget'
-          : 'ticked, against the project budget',
-      }) +
-    '</span>';
+    (add
+      ? '<span class="fnd-init-count-total"><span class="fnd-init-count-key">project total</span> '
+        + escapeHtml(formatBytes(total)) + '</span>'
+      : '');
 }
 
 /**
  * THE RUNNING TOTAL, AS ONE LINE — recomputed on every tick, in place.
  *
- * "4 of 25 ticked · 186 KB of a 200 KB budget". The second clause is why this
- * line exists: the tick count alone cannot tell somebody they are about to
- * blow the budget, and the budget is the figure that decides how much of what
- * they mirror an agent will actually receive.
+ * "4 of 25 ticked · 186 KB" — the ticks and what they weigh. v3.72.1 dropped
+ * "of a 200 KB budget": that figure decides nothing an agent receives (the
+ * project's reading budget does, set in Context), and v3.70.0 had already
+ * withdrawn it on Context's own add panel.
  */
 export function countLineText(choice) {
   const c = choice && typeof choice === 'object' ? choice : null;
@@ -714,8 +712,10 @@ export function countLineText(choice) {
     return list.some((cand) => cand && cand.path === f.path && !cand.tooLarge);
   }).length;
   const extras = c && Array.isArray(c.extras) ? c.extras.length : 0;
-  let out = ticked + ' of ' + usable + ' ticked · ' + formatBytes(tickedBytes(c))
-    + ' of a ' + formatBytes(FOUNDATIONS_BUDGET_BYTES) + ' budget';
+  // v3.72.1: the ticked bytes, NEUTRALLY — no "of a 200 KB budget" (the
+  // retired project figure; the reading budget, set per project in Context,
+  // is what decides what an agent is handed).
+  let out = ticked + ' of ' + usable + ' ticked · ' + formatBytes(tickedBytes(c));
   if (extras) out += ' · ' + extras + ' added by path, size not known yet';
   return out;
 }
@@ -742,16 +742,16 @@ export function countLineText(choice) {
  * names both cases in one clause. Never folded (v3.16.1). Returns '' when there
  * is nothing to warn about, so the caller can concatenate it unconditionally.
  */
-export function budgetWarning(choice) {
-  // In ADD mode the budget is the PROJECT's, so what is already mirrored
-  // counts — the same total the depth bar above it draws.
-  const base = choice && choice.addMode && Number.isFinite(choice.projectBytes)
-    && choice.projectBytes > 0 ? choice.projectBytes : 0;
-  const bytes = tickedBytes(choice) + base;
-  if (bytes <= FOUNDATIONS_BUDGET_BYTES) return '';
-  return 'Over the ' + formatBytes(FOUNDATIONS_BUDGET_BYTES) + ' project budget. Agents are handed '
-    + 'up to ' + formatBytes(120 * 1024) + ' of document text at session start (only the read-first '
-    + 'ones, if any are flagged); every other document stays listed and is fetched by name when needed.';
+export function budgetWarning() {
+  // ── v3.72.1: WITHDRAWN, as foundations-add.js's was in v3.70.0 ────────────
+  // The truth audit (tray-copy F2 / context F9): Domains → New project still
+  // raised "Over the 200 KB project budget" with a literal 120 KB, while the
+  // same documents added through Context raised nothing. The 200 KB figure is
+  // not a limit the app states (routes/memory.js), and the 120 KB was the
+  // store's default retyped — the owner's own reading budget (0–800 KB since
+  // v3.67.0) is what bounds session-start text, and Context step ④ draws it.
+  // Kept as an export, always '', so a host's hidden slot stays hidden.
+  return '';
 }
 
 /**

@@ -365,12 +365,19 @@ export function sourcesStripModel(sources, nowMs) {
     const count = Number.isInteger(g.documentCount) ? g.documentCount : 0;
     const meta = [count + ' document' + (count === 1 ? '' : 's')];
     const when = groupWhen(g, now);
+    // v3.72.1 (truth audit F11): WHICH meta entry is the age, and its stamp,
+    // so the renderer can hand it to Context's one-second age clock. It used
+    // to be words computed once at render — "refreshed 2 min ago" stayed
+    // "2 min ago" until something else repainted the page.
+    let ageAt = null;
+    let ageIndex = -1;
     if (g.kind === 'github') {
       meta.push('not checked');
-      if (when && g.lastRefreshAt) meta.push(when);
+      if (when && g.lastRefreshAt) { ageIndex = meta.length; ageAt = g.lastRefreshAt; meta.push(when); }
     } else if (g.reachableHere === false) {
       meta.push(g.remote ? 'not on this computer · read from GitHub on refresh' : 'not on this computer');
     } else if (when) {
+      if (g.lastRefreshAt && when !== 'never refreshed') { ageIndex = meta.length; ageAt = g.lastRefreshAt; }
       meta.push(when);
     }
     return {
@@ -380,6 +387,8 @@ export function sourcesStripModel(sources, nowMs) {
       label: (g.kind === 'github' ? repoLabel(g) : g.label) || 'source not recorded',
       count,
       meta,
+      ageAt,
+      ageIndex,
       canReadFromGitHub: g.kind === 'folder' && !!g.remote,
       remote: g.remote || null,
     };
@@ -395,6 +404,23 @@ export function sourcesStripModel(sources, nowMs) {
  * @param {ReturnType<typeof sourcesStripModel>} model
  * @param {{busy?: boolean, busyGroup?: string|null}} [opts]
  */
+/**
+ * A group's meta line. The "refreshed N ago" entry is wrapped for Context's
+ * age clock (views/memory.js `tickAges`): the stamp on `data-mem-age-at`, the
+ * words in `.mem-age-words`, and the fixed word "refreshed" outside it, so
+ * the clock rewrites only the age (v3.72.1, truth audit F11). Every other
+ * entry is escaped text, as before.
+ */
+function metaHtml(g) {
+  const meta = Array.isArray(g.meta) ? g.meta : [];
+  return meta.map((m, i) => {
+    const text = String(m);
+    if (i !== g.ageIndex || !g.ageAt || text.indexOf('refreshed ') !== 0) return escapeHtml(text);
+    return '<span data-mem-age-at="' + escapeHtml(String(g.ageAt)) + '">refreshed '
+      + '<span class="mem-age-words">' + escapeHtml(text.slice('refreshed '.length)) + '</span></span>';
+  }).join(' · ');
+}
+
 export function renderSourcesStrip(model, opts) {
   const m = model && Array.isArray(model.groups) ? model : { groups: [], refreshAll: false };
   if (!m.groups.length) return '';
@@ -406,7 +432,7 @@ export function renderSourcesStrip(model, opts) {
     return '<li class="mem-fnd-source" data-fnd-source="' + escapeHtml(g.id) + '">'
       + '<span class="mem-fnd-source-kind">' + escapeHtml(g.kindWord) + '</span>'
       + '<span class="mem-fnd-source-label">' + escapeHtml(g.label) + '</span>'
-      + '<span class="mem-fnd-source-meta">' + escapeHtml(g.meta.join(' · ')) + '</span>'
+      + '<span class="mem-fnd-source-meta">' + metaHtml(g) + '</span>'
       + '<span class="mem-fnd-source-actions">'
       + '<button type="button" class="btn btn-secondary btn-xs" data-fnd-refresh="' + escapeHtml(g.id) + '"'
       + ' aria-label="' + escapeHtml('Refresh ' + g.kindWord + ' ' + g.label) + '"' + dis + '>'
