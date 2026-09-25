@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.71.0` | One explainer model for every ⓘ — treatment B — starting with Context and the six places a beginner lands with none. |
 | `v3.70.1` | The per-document planner for the context-window meter, deferred out of v3.70.0 — each read-first document now its own segment on the meter, and a "Documents at start" fold that previews start-state changes before Apply. |
 | `v3.70.0` | The context-window meter becomes the control panel of project context — the maintainer's own "key element that makes this app truly useful": people pick their window size, and a bar to scale shows the harness (their own estimate, hatched), The Curator's share, and free space, with The Curator's part enlarged layer by layer in tokens. |
 | `v3.69.0` | One project can now hold documents written here, copied from a folder, mirrored from a folder and mirrored from GitHub — up to 8 sources, any mix — the maintainer's own decision after v3.68.0 ("we definitely need an option so we can add sources from local and from GitHub"). Manifest version 2 is written only when version 1 cannot express the mix, with up to 8 source groups per project including several GitHub repositories. |
