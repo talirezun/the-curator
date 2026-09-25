@@ -3963,6 +3963,11 @@ async function handleDetail(req, res, domain, project, deprecated) {
       const n = Number(req.query.journalLimit);
       if (Number.isFinite(n)) opts.journalLimit = n;
     }
+    // v3.74.0 — `?previous=1` asks the store for the TEXT of `previous.md`,
+    // the one handoff by another tool that the current one replaced. Without
+    // it the scoped read still carries `previous` (its facts, no text) when
+    // the copy exists, and no key at all when it does not.
+    if (req.query.previous === '1' || req.query.previous === 'true') opts.previous = true;
 
     // ── `?open=newest` — THE INDEX AND THE FIRST HANDOFF IN ONE ANSWER ───
     //

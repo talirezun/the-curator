@@ -1393,6 +1393,10 @@ function makeRenderers(stateObj) {
     // the shell's READER overlay, and `handoffReaderContent` composes that
     // payload — so what is lifted is the composer, and §17b drives it.
     extractFunction(viewSrc, 'handoffReaderContent', 'memory.js') + '\n' +
+    // v3.74.0 — the previous-handoff line and its reader payload, lifted with
+    // the reader that composes them (a free identifier would be a crash).
+    extractFunction(viewSrc, 'previousHandoffHtml', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'previousReaderContent', 'memory.js') + '\n' +
     // ── TIER 0 (v3.59.0) ────────────────────────────────────────────────
     // Seven functions, all LIFTED rather than stubbed. `foundationsFacts` in
     // particular has three consumers — the fold summary, the Status block's
@@ -1563,7 +1567,7 @@ function makeRenderers(stateObj) {
     // scope name, a machine id, a harness — is now interpolated by
     // `renderWorkStreams`, which IS lifted.
     'return { renderWorkStreams, workStreamCounts, newerOnAnotherMachine, workStreamOrder, ' +
-    'wsShownCount, wsMoreHtml, wsRowHtml, handoffReaderContent, ' +
+    'wsShownCount, wsMoreHtml, wsRowHtml, handoffReaderContent, previousHandoffHtml, previousReaderContent, ' +
     'foundationsFacts, foundationsWord, foundationsDraftAsk, '
     + 'foundationsUncheckedWhy, '
     + 'foundationsOwnershipWord, foundationsSummaryMeta, foundationsBudgetWarning, ' +
@@ -1857,6 +1861,69 @@ ok('read-side sanitisation is stated, not hidden',
   const j = unknownTotal.renderJournal();
   ok('an unknown journal total says the count is UNKNOWN', j.includes('unknown'));
   ok('...and does NOT print the tail length as if it were the total', !/of 2\b/.test(j));
+}
+{
+  // ── v3.74.0: THE HANDOFF THIS ONE REPLACED (previous.md) ─────────────────
+  // The store keeps a replaced handoff by ANOTHER tool once, and the scoped
+  // read carries its facts as `previous` — absent when no copy exists.
+  const prev = { harness: 'Antigravity', harnessId: 'antigravity', harnessLabel: 'Antigravity',
+    model: 'gemini-3', writtenAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+    headline: 'api work', bytes: 900, path: 'state/lumina/api/mac-1/previous.md' };
+  const base = { ...hostileState, detail: { ...hostileDetail, scope: 'api', machine: 'mac-1', previous: prev } };
+  const withPrev = handoffHtml(makeRenderers(base));
+  ok('★ the reader carries one line: "Previous handoff by Antigravity · 2 hr ago — open"',
+    /id="mem-reader-previous"><span>Previous handoff by Antigravity · 2 hr ago — <\/span><button type="button" class="btn btn-ghost btn-xs mem-reader-previous-open" id="mem-reader-previous-open"[^>]*>open<\/button>/.test(withPrev),
+    withPrev.slice(0, 900));
+  ok('...above the document, never folded', withPrev.indexOf('mem-reader-previous') < withPrev.indexOf('mem-reader-doc')
+    && !/<details[^>]*>[\s\S]*mem-reader-previous/.test(withPrev));
+  const none = handoffHtml(makeRenderers({ ...hostileState, detail: { ...hostileDetail } }));
+  ok('CONTROL: no `previous` key (no copy on disk) — no line at all, nothing invented',
+    !/mem-reader-previous/.test(none));
+  const rawOnly = handoffHtml(makeRenderers({ ...base, detail: { ...base.detail,
+    previous: { ...prev, harnessLabel: null, harness: '<b>x</b>' } } }));
+  ok('...the raw spelling stands in when there is no label, escaped',
+    /Previous handoff by &lt;b&gt;x&lt;\/b&gt;/.test(rawOnly), rawOnly.slice(0, 600));
+  // THE REPLACED TEXT'S OWN READER PAYLOAD — labelled as exactly that.
+  const R = makeRenderers(base);
+  const pc = R.previousReaderContent({ ...prev, text: '# H\n\n> api work\n\n## Where things stand\n\n' + XSS + '\n' },
+    'api', 'mac-1');
+  ok('★ it opens as the REPLACED handoff, by that tool — never as the current one',
+    pc && pc.title === 'Replaced handoff — by Antigravity' && pc.typeLabel === 'replaced handoff'
+    && pc.slug === 'state/lumina/api/mac-1/previous.md', JSON.stringify(pc && { t: pc.title, l: pc.typeLabel, s: pc.slug }));
+  ok('...and says it is recorded data that the current handoff replaced',
+    /Recorded data: the handoff Antigravity left here 2 hr ago, which the current handoff replaced/.test(pc.bodyHtml),
+    pc.bodyHtml.slice(0, 400));
+  ok('...with the agent\'s text escaped like every handoff', !pc.bodyHtml.includes('<script') && !/<img src=x/.test(pc.bodyHtml));
+  eq('no text in hand, no payload', R.previousReaderContent(prev, 'api', 'mac-1'), null);
+}
+{
+  // ── THE PRESS: `?previous=1`, then the reader ────────────────────────────
+  const opened = [];
+  const urls = [];
+  const st = { activeDomain: 'acme', activeProject: 'lumina', scope: 'api', machine: 'mac-1',
+    detail: { scope: 'api', machine: 'mac-1', previous: { harnessLabel: 'Antigravity', path: 'state/lumina/api/mac-1/previous.md' } } };
+  const fn = new Function('state', 'fetch', 'openReader', 'isCurrentMount', 'isCurrentReader',
+    'formatAge', 'effectiveSave', 'splitHandoffPreamble', 'renderDescription', 'renderMarkdown', 'escapeHtml', 'icon',
+    'splitHandoffPreamble = ' + extractFunction(viewSrc, 'splitHandoffPreamble', 'memory.js') + ';\n'
+    + 'formatAge = ' + extractFunction(viewSrc, 'formatAge', 'memory.js') + ';\n'
+    + 'effectiveSave = ' + extractFunction(viewSrc, 'effectiveSave', 'memory.js').replace(/^export /, '') + ';\n'
+    + extractFunction(viewSrc, 'previousReaderContent', 'memory.js') + '\n'
+    + extractFunction(viewSrc, 'openPreviousHandoff', 'memory.js') + '\nreturn openPreviousHandoff;');
+  const run = (reply) => fn(st,
+    async (u) => { urls.push(u); return { ok: true, json: async () => reply }; },
+    (c) => { opened.push(c); return opened.length; }, () => true, (e) => e === 1,
+    null, null, null, (t) => '<p>' + escapeHtml(t) + '</p>',
+    (t) => '<div>' + escapeHtml(t) + '</div>', escapeHtml, () => '')(1);
+  await run({ ok: true, previous: { harnessLabel: 'Antigravity', text: '# H\n\nold text\n', path: 'state/lumina/api/mac-1/previous.md' } });
+  eq('★ the press asks the scoped read for the TEXT with ?previous=1',
+    urls[0], '/api/memory/acme/lumina?scope=api&machine=mac-1&previous=1');
+  ok('...paints a loading panel first, then the replaced handoff',
+    opened.length === 2 && opened[0].loading === true && opened[1].title === 'Replaced handoff — by Antigravity',
+    JSON.stringify(opened.map((o) => o.title + ':' + (o.error || ''))));
+  opened.length = 0;
+  await run({ ok: true, scope: 'api' });
+  ok('a copy gone by the time of the press (replaced again) is said, not a blank reader',
+    opened.length === 2 && /could not be read/.test(opened[1].error || ''), JSON.stringify(opened[1]));
 }
 {
   // ── v3.74.0: WHOSE JOURNAL THIS IS ──────────────────────────────────────
@@ -6561,7 +6628,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       // stub anywhere along it would be this suite testing its own harness.
       [...['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'workStreamOrder',
         'wsShownCount', 'wsRowHtml', 'wsMoreHtml', 'workStreamCounts',
-        'handoffReaderContent', 'bindWorkStreamRows', 'openWorkStream',
+        'handoffReaderContent', 'previousHandoffHtml', 'openHandoffReader', 'bindWorkStreamRows', 'openWorkStream',
         'showMoreWorkStreams', 'bindFoldToggles', 'wire']]
         .map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n')
       + '\nfunction bindSessionAndPlan() {}\n'
@@ -7110,6 +7177,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       + extractFunction(viewSrc, 'payloadSignature', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'loadScope', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'openWorkStream', 'memory.js') + '\n'
+      + extractFunction(viewSrc, 'openHandoffReader', 'memory.js') + '\n'
       + extractFunction(viewSrc, 'bindWorkStreamRows', 'memory.js') + '\n'
       + 'return { bindWorkStreamRows };')(
       st, () => { renders++; }, () => true,
@@ -13067,6 +13135,9 @@ const TOP_LEVEL_FNS = [...viewNoComments.matchAll(/^(?:export\s+)?(?:async\s+)?f
 
 // Executed somewhere above, with real assertions over what they returned/did.
 const EXECUTED = new Set([
+  // v3.74.0 — the replaced handoff (previous.md): its line, its reader
+  // payload, the reader wrapper that binds it and the press that fetches it.
+  'previousHandoffHtml', 'previousReaderContent', 'openHandoffReader', 'openPreviousHandoff',
   'formatAge', 'projectMetaLine', 'splitHandoffPreamble',
   // v3.67.2: the GitHub-mirror test and its "why?" sentence, lifted by §6's
   // makeRenderers and by the row-press section, and driven in

@@ -315,7 +315,7 @@ function memRenderers(stateObj) {
   // `aboutInfoHtml` (which replaced `renderAbout`) is gone in v3.71.0: the
   // header's ⓘ is the `context.page` explainer, rendered by the kit.
   const body = liftFrom([
-    [['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'handoffReaderContent', 'renderJournal',
+    [['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'handoffReaderContent', 'previousHandoffHtml', 'renderJournal',
       'renderBriefEditor', 'renderBrief'], memSrc, 'memory.js'],
     [['freshnessStep'], read('shared/age.js'), 'shared/age.js'],
   ]);

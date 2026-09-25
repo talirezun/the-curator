@@ -2064,6 +2064,14 @@
    screen takes; the readout role is deliberately not used, because a readout
    states a figure and there is none. */
 .mem-reader-unknown { font-size: var(--text-2xs); color: var(--text-2); }
+/* v3.74.0 — the one line pointing at the handoff this one replaced
+   (previous.md). Quiet ink, in flow above the document: an outcome of a save,
+   never folded. */
+.mem-reader-previous {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  font-size: var(--text-2xs); color: var(--text-2); margin: 0 0 var(--space-3);
+}
+.mem-reader-previous-headline { font-weight: 600; margin: var(--space-2) 0; }
 .mem-reader-meta {
   display: flex;
   align-items: center;

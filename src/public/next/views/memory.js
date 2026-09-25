@@ -6943,8 +6943,18 @@ function handoffReaderContent() {
   // AN ABSENT HANDOFF IS SAID, NOT RENDERED AS AN EMPTY PAGE. A pair can be
   // listed and its `current.md` still be unreadable — and a blank panel would
   // read as "this handoff is empty", which is a different claim.
+  // ── THE HANDOFF THIS ONE REPLACED (v3.74.0) ────────────────────────────
+  // When a save replaced a handoff written by a DIFFERENT tool, the store kept
+  // that text once as `previous.md` beside this one, and the scoped read
+  // carries its facts as `previous` — the key is ABSENT when no copy exists.
+  // One line, above the document, never folded (an outcome of a save is not
+  // hidden behind a click): "Previous handoff by Antigravity · 2 hr ago —
+  // open". The press opens the copy in this same reader (openPreviousHandoff).
+  // It is RECORDED DATA — the replaced text — never a second current handoff,
+  // and nothing on this page counts it as one (see previousHandoffHtml).
+  const prevHtml = previousHandoffHtml(d.previous);
   const bodyHtml = present
-    ? meta + noteHtml + '<div class="mem-reader-doc">' + renderMarkdown(split.body) + '</div>'
+    ? meta + noteHtml + prevHtml + '<div class="mem-reader-doc">' + renderMarkdown(split.body) + '</div>'
     : meta + noteHtml + renderDescription(d.message
       || 'Nothing has been saved under this handoff on this machine yet.');
 
@@ -6978,6 +6988,102 @@ function handoffReaderContent() {
     // a request that can only ever answer "no". views/domains.js omits it for
     // the same reason on the same kind of row.
   };
+}
+
+/**
+ * The one line that points at `previous.md` (v3.74.0), or '' when the scoped
+ * read carried no `previous` — absent means no copy exists, and nothing is
+ * invented for it. The tool is the store's NORMALISED label (`harnessLabel`),
+ * falling back to the raw spelling; the age is on the save's own clock,
+ * through `effectiveSave`, like every other age on this page.
+ */
+function previousHandoffHtml(prev) {
+  if (!prev || typeof prev !== 'object') return '';
+  const who = (typeof prev.harnessLabel === 'string' && prev.harnessLabel)
+    || (typeof prev.harness === 'string' && prev.harness) || 'another tool';
+  const age = formatAge(effectiveSave({ writtenAt: prev.writtenAt || null }).seconds);
+  return '<div class="mem-reader-previous" id="mem-reader-previous">'
+    + '<span>' + escapeHtml('Previous handoff by ' + who + (age ? ' · ' + age : '')) + ' — </span>'
+    + '<button type="button" class="btn btn-ghost btn-xs mem-reader-previous-open" id="mem-reader-previous-open"'
+    + ' aria-label="' + escapeHtml('Open the handoff by ' + who + ' that this one replaced') + '">open</button>'
+    + '</div>';
+}
+
+/**
+ * The reader payload for `previous.md` — the handoff by another tool that the
+ * current one REPLACED (v3.74.0). Labelled as exactly that, and as recorded
+ * data: it is what that tool left, kept once, and the next replacement by
+ * another tool overwrites it. Untrusted text, escaped by renderMarkdown like
+ * every handoff. Null when the read carried no text.
+ */
+function previousReaderContent(prev, scope, machine) {
+  if (!prev || typeof prev !== 'object' || typeof prev.text !== 'string') return null;
+  const who = (typeof prev.harnessLabel === 'string' && prev.harnessLabel)
+    || (typeof prev.harness === 'string' && prev.harness) || 'another tool';
+  const split = splitHandoffPreamble(prev.text);
+  const age = formatAge(effectiveSave({ writtenAt: prev.writtenAt || null }).seconds);
+  const notes = [];
+  if (prev.truncated) notes.push('This copy was longer than the state budget — the tail is not shown.');
+  if (prev.sanitisedOnRead) {
+    notes.push('Protocol-shaped text in this file was neutralised on read. The words are unchanged; only their markup is.');
+  }
+  return {
+    slug: typeof prev.path === 'string' && prev.path ? prev.path
+      : 'state/' + (state.activeProject || '') + '/' + scope + (machine ? '/' + machine : '') + '/previous.md',
+    title: 'Replaced handoff — by ' + who,
+    type: 'memory',
+    typeLabel: 'replaced handoff',
+    tags: [scope ? 'handoff: ' + scope : null, machine ? 'machine: ' + machine : null,
+      prev.model ? 'model: ' + prev.model : null].filter(Boolean),
+    bodyHtml: renderDescription('Recorded data: the handoff ' + who + ' left here'
+        + (age ? ' ' + age : '') + ', which the current handoff replaced. It is kept once; '
+        + 'the next time another tool replaces this handoff, this copy is replaced too.')
+      + notes.map((n) => '<div class="mem-note">' + icon('alertTriangle', 13) + '<span>'
+        + escapeHtml(n) + '</span></div>').join('')
+      + (split.headline ? '<p class="mem-reader-previous-headline">' + escapeHtml(split.headline) + '</p>' : '')
+      + '<div class="mem-reader-doc">' + renderMarkdown(split.body) + '</div>',
+    backlinks: [],
+    returnFocusTo: 'mem-ws-active',
+  };
+}
+
+/**
+ * Open the handoff reader and wire its one in-body control, the "open" of the
+ * previous-handoff line. The reader inserts `bodyHtml` synchronously, so the
+ * button exists when this returns; a missing button (no copy) binds nothing.
+ */
+function openHandoffReader(content, token) {
+  const epoch = openReader(content, token);
+  if (typeof document === 'undefined') return epoch;
+  const btn = document.getElementById('mem-reader-previous-open');
+  if (btn) btn.addEventListener('click', () => { openPreviousHandoff(token).catch(() => {}); });
+  return epoch;
+}
+
+/** Fetch `previous.md`'s text (`?previous=1`) for the open pair and show it. */
+async function openPreviousHandoff(token) {
+  const d = state.detail;
+  if (!d || !d.previous) return;
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  const scope = d.scope || state.scope || '';
+  const machine = d.machine || state.machine || '';
+  const epoch = openReader({ slug: (d.previous && d.previous.path) || 'previous.md',
+    title: 'Replaced handoff', loading: true, returnFocusTo: 'mem-ws-active' }, token);
+  let content = null;
+  let error = null;
+  try {
+    const res = await fetch('/api/memory/' + encodeURIComponent(domain) + '/' + encodeURIComponent(project)
+      + '?scope=' + encodeURIComponent(scope) + (machine ? '&machine=' + encodeURIComponent(machine) : '')
+      + '&previous=1');
+    const data = await res.json();
+    content = res.ok && data && data.previous ? previousReaderContent(data.previous, scope, machine) : null;
+    if (!content) error = (data && data.error) || 'The replaced handoff could not be read — it may have been replaced again.';
+  } catch (err) {
+    error = err.message;
+  }
+  if (!isCurrentMount(token) || !isCurrentReader(epoch)) return;
+  openReader(content || { slug: 'previous.md', title: 'Replaced handoff', error }, token);
 }
 
 /**
@@ -12909,7 +13015,7 @@ async function openWorkStream(scope, machine, token) {
 
   if (already) {
     const content = handoffReaderContent();
-    if (content) openReader(content, token);
+    if (content) openHandoffReader(content, token);
     return;
   }
 
@@ -12931,7 +13037,7 @@ async function openWorkStream(scope, machine, token) {
   if (!isCurrentReader(epoch)) return; // Esc / scrim / ✕ closed it while we read
 
   const content = handoffReaderContent();
-  if (content) openReader(content, token);
+  if (content) openHandoffReader(content, token);
   else openReader({
     slug: scope, title: scope,
     error: state.detailError || 'That handoff could not be read.',
