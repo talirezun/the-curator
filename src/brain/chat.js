@@ -1476,7 +1476,7 @@ export function buildCitationTitles(citations, pages) {
  * scale. The new keys are appended AFTER the existing ones so an untouched
  * message serialises byte-identically to before.
  */
-export function buildAssistantMessage(content, citations, servedProvider, servedModel, servedUsage, citationTitles) {
+export function buildAssistantMessage(content, citations, servedProvider, servedModel, servedUsage, citationTitles, facts) {
   const msg = { role: 'assistant', content, citations };
   if (typeof servedProvider === 'string' && servedProvider) msg.provider = servedProvider;
   if (typeof servedModel === 'string' && servedModel) msg.model = servedModel;
@@ -1499,7 +1499,98 @@ export function buildAssistantMessage(content, citations, servedProvider, served
   // nothing riding on the caller's map may leak into it.
   const titles = normalizeCitationTitles(citationTitles);
   if (titles) msg.citationTitles = titles;
+  // ── v3.72.0: `project` AND `priced`, APPENDED LAST, ONLY WHEN PASSED ──────
+  // `facts` is the seventh argument and every pre-v3.72 call site passes six
+  // or fewer, so those records serialise byte-identically to before.
+  //
+  // `project` is ALWAYS written when sendMessage passes it — the pinned
+  // project's name, or null for "no project on this turn". Null is a RECORD,
+  // and it is what lets a reader tell "no project" from "written before this
+  // was recorded" (the key absent). A guessed project on an older conversation
+  // is the falsehood this field exists to prevent.
+  //
+  // `priced` is what this answer cost AT THE MOMENT IT WAS ANSWERED — see
+  // priceServedAnswer. Omitted when there is nothing true to record.
+  if (facts && typeof facts === 'object') {
+    if (Object.prototype.hasOwnProperty.call(facts, 'project')) {
+      msg.project = (typeof facts.project === 'string' && facts.project) ? facts.project : null;
+    }
+    const priced = normalizePriced(facts.priced);
+    if (priced) msg.priced = priced;
+  }
   return msg;
+}
+
+const isRate = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+
+/**
+ * The `priced` record as it is allowed to be stored, or null. A FRESH literal
+ * carrying an allow-list of fields, for the same reason normalizeReportedUsage
+ * returns one: this goes to disk and over the wire.
+ *
+ *   { free: true,  costUsd: 0, at }                       — a free model
+ *   { free: false, inPerM, outPerM, costUsd, at }         — a priced one
+ *
+ * A free record carries NO per-1M rates: a zero written where a price belongs
+ * is the inert-budget-cap shape llm.js's FREE_MODELS docblock refuses.
+ */
+function normalizePriced(p) {
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
+  if (typeof p.at !== 'string' || !Number.isFinite(Date.parse(p.at))) return null;
+  if (p.free === true) return { free: true, costUsd: 0, at: p.at };
+  if (!isRate(p.inPerM) || !isRate(p.outPerM) || !isRate(p.costUsd)) return null;
+  return { free: false, inPerM: p.inPerM, outPerM: p.outPerM, costUsd: p.costUsd, at: p.at };
+}
+
+/**
+ * What this answer cost, priced NOW — at the moment it was answered — for the
+ * model that ANSWERED (truth audit F2, v3.72.0).
+ *
+ * THE DEFECT. Until v3.72.0 a conversation stored only token counts and the
+ * view multiplied them by TODAY's catalogue price on every render. An answer
+ * from a promotional window (gemini-3.7-flash / gemini-3.6-flash, until
+ * 2026-12-31) would re-price at about twice what it cost the day the promotion
+ * ended, and every OpenRouter answer moves with that provider's live
+ * catalogue. The figure was presented as "what this answer cost", and it was
+ * recomputed from current data. Persisting the rates and the dollar figure at
+ * write time makes it a historical fact.
+ *
+ * ONE FORMULA. The dollar figure is ai-run.js's `spentFromUsage`, the app's
+ * finished-call pricing (free by MEMBERSHIP first, the provider's cache-read
+ * and cache-write multipliers, pinned against the batch queue's
+ * chargeForItem by test-ai-run.js). No fifth copy of the cache rule is written
+ * here. It is loaded with a CALL-TIME dynamic import for the reason compile.js
+ * records at its own import of it: a static import closes the
+ * ingest → compile → ai-run → compile-estimate → ingest-queue cycle.
+ *
+ * The rates are read through getModelPrice immediately before, so the two
+ * describe the same instant (a promotion boundary falling between two
+ * synchronous calls is the only way they could disagree).
+ *
+ * NEVER THROWS, and never blocks the turn: this runs after the provider has
+ * been paid, and a failure to price is "no record", not a lost answer.
+ *
+ * @returns {Promise<null|object>} a `priced` record (see normalizePriced)
+ */
+export async function priceServedAnswer(servedModel, servedUsage) {
+  try {
+    if (typeof servedModel !== 'string' || !servedModel) return null;
+    const usage = normalizeReportedUsage(servedUsage);
+    if (!usage) return null;
+    const at = new Date().toISOString();
+    if (typeof llmModule.isFreeModel === 'function' && llmModule.isFreeModel(servedModel)) {
+      return { free: true, costUsd: 0, at };
+    }
+    const price = typeof llmModule.getModelPrice === 'function'
+      ? llmModule.getModelPrice(servedModel) : null;
+    if (!price || !isRate(price.input) || !isRate(price.output)) return null;
+    const { spentFromUsage } = await import('./ai-run.js');
+    const spent = spentFromUsage({ ...usage, model: servedModel, calls: 1 });
+    if (!spent || !isRate(spent.usd)) return null;
+    return { free: false, inPerM: price.input, outPerM: price.output, costUsd: spent.usd, at };
+  } catch {
+    return null;
+  }
 }
 
 /** The `{path: title}` map as it is allowed to be recorded, or null. Own
@@ -1928,8 +2019,19 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   // throw path there IS no return value, so nothing replaces the draft — what
   // the user is left looking at is whatever the consumer does with the error.
   // That is a consumer concern and it is not an argument about this write.
+  // v3.72.0 — the pinned project (or null) and the price at answer time are
+  // recorded on the answer; the conversation records when it was last used.
+  // All three are computed AFTER generateText returned, so the throw half of
+  // the rule above is untouched: a failed turn writes none of them.
+  const recordedProject = (typeof opts.project === 'string' && opts.project) ? opts.project : null;
+  const priced = await priceServedAnswer(usedModel, usedUsage);
   conversation.messages.push({ role: 'user', content: userMessage });
-  conversation.messages.push(buildAssistantMessage(answer, uniqueCitations, usedProvider, usedModel, usedUsage, citationTitles));
+  conversation.messages.push(buildAssistantMessage(answer, uniqueCitations, usedProvider, usedModel, usedUsage, citationTitles,
+    { project: recordedProject, priced }));
+  // LAST USE, written on every completed turn. The list sorts and groups by
+  // `updatedAt ?? createdAt`; a conversation written before v3.72.0 has no
+  // `updatedAt` until its next turn, and nothing back-fills it.
+  conversation.updatedAt = new Date().toISOString();
   if (persist) await writeConversation(domain, conversation);
   else writeEphemeral(domain, conversation);
 
@@ -1977,6 +2079,11 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
     // it is an approximation, and it is the reason a persisted `costUsd` is a
     // reasonable future change rather than an obviously wrong one.
     //
+    // v3.72.0 MADE THAT CHANGE, beside this field rather than instead of it:
+    // `priced` (below) records the per-1M rates and the dollar figure at the
+    // moment of answering. The tokens stay — they are the evidence, `priced`
+    // is the arithmetic done once, on the day, with the day's price.
+    //
     // Route-side: src/routes/chat.js returns this object with `res.json(result)`
     // — it names no fields and spreads nothing, so this reaches the wire with no
     // route change. That was verified, not assumed; a route that enumerated
@@ -1989,8 +2096,15 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
     // omission the store disclosed, so a surface can show what was left out
     // instead of implying the project was read whole.
     projectContext: projectSummary,
+    // v3.72.0 — the same three facts that went to disk, so the live thread and
+    // the reloaded one render from one input (the citationTitles lesson).
+    // `project` is the name or null; `priced` is null when there was nothing
+    // true to record; `updatedAt` is the conversation's new last-use stamp.
+    project: recordedProject,
+    priced: normalizePriced(priced),
+    updatedAt: conversation.updatedAt,
   };
 }
 
 // Exported for tests (v3.0.1-beta.11+)
-export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider, normalizeChatModel, buildAssistantMessage, normalizeReportedUsage, buildCitationTitles, selectExtraFoundationSlugs, selectJournalEntries, projectOmissionNotes, keywordHits, PROJECT_CONFLICT_CLAUSE, PROJECT_JOURNAL_LIMIT, PROJECT_JOURNAL_MAX, PROJECT_JOURNAL_FLOOR, PROJECT_EXTRA_FOUNDATIONS_MAX };
+export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider, normalizeChatModel, buildAssistantMessage, normalizeReportedUsage, normalizePriced, priceServedAnswer, buildCitationTitles, selectExtraFoundationSlugs, selectJournalEntries, projectOmissionNotes, keywordHits, PROJECT_CONFLICT_CLAUSE, PROJECT_JOURNAL_LIMIT, PROJECT_JOURNAL_MAX, PROJECT_JOURNAL_FLOOR, PROJECT_EXTRA_FOUNDATIONS_MAX };

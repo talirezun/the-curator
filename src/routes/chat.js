@@ -5,7 +5,7 @@ import {
   readConversation,
   deleteConversation,
 } from '../brain/chat.js';
-import { assertKnownDomain, isDomainReadonly } from '../brain/files.js';
+import { assertKnownDomain, isDomainReadonly, listAllConversations } from '../brain/files.js';
 // IMPORTED, never re-implemented. isAbortError is llm.js's own classifier for
 // "the caller stopped this" (it tags `curatorAborted`, and also matches a raw
 // SDK `AbortError` we never got to translate). A second hand-written copy of a
@@ -103,6 +103,67 @@ function sendError(res, err) {
 // place where a non-string can be introduced by a URL rather than by a
 // programming error — and is recorded as such rather than presented as the
 // fix. Both are pinned, and the pair mutated together goes red.
+// ── v3.72.0: ONE LIST ACROSS EVERY NON-MIRROR DOMAIN (maintainer decision M1) ──
+//
+// `GET /api/chat?q=&limit=&offset=` → `{ conversations, total, offset, limit,
+// unreadable }`. Each row is exactly a per-domain row (listConversations) and
+// so carries its `domain` — the folder it was read from — plus `updatedAt` and
+// `lastProject` when those were recorded.
+//
+// SAME GUARDS AS THE ROUTES BELOW, applied to what this one returns rather
+// than to a path segment it receives:
+//   • `q` goes through the same typeof test as `/:domain` (an array from
+//     `?q=a&q=b` is no filter, never a 500) and the same length cap inside
+//     listConversations.
+//   • A row whose id is not a UUID is DROPPED. Every other route refuses such
+//     an id with a 400, so a row carrying one is a row the app could never
+//     open or delete — listing it would offer an action that can only fail.
+//     `total` counts what survives, so it is the number of rows a client can
+//     actually page through.
+//   • Mirrors are skipped by isDomainReadonly, the predicate every write
+//     surface uses (see listAllConversations).
+//
+// PAGED, WITH THE TRUE TOTAL. The list reads every conversation file in every
+// domain, but the payload is bounded: `limit` defaults to 200 and is capped at
+// 500; `total` is the full count after filtering, so a client that shows 200
+// can say "200 of 1,340" instead of implying the 200 are all there is.
+// A `limit`/`offset` that is not a plain non-negative integer is a 400 — a
+// guessed page is a page the user did not ask for.
+const ALL_CONVERSATIONS_DEFAULT_LIMIT = 200;
+const ALL_CONVERSATIONS_MAX_LIMIT = 500;
+
+function pageParam(raw, fallback) {
+  if (raw === undefined) return fallback;
+  if (typeof raw !== 'string' || !/^\d{1,6}$/.test(raw)) return null;
+  return Number(raw);
+}
+
+router.get('/', async (req, res) => {
+  try {
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    const limit = pageParam(req.query.limit, ALL_CONVERSATIONS_DEFAULT_LIMIT);
+    const offset = pageParam(req.query.offset, 0);
+    if (limit === null || limit < 1) {
+      return res.status(400).json({ error: `limit must be a whole number from 1 to ${ALL_CONVERSATIONS_MAX_LIMIT}` });
+    }
+    if (offset === null) {
+      return res.status(400).json({ error: 'offset must be a whole number, 0 or more' });
+    }
+    const effLimit = Math.min(limit, ALL_CONVERSATIONS_MAX_LIMIT);
+    const { conversations, unreadable } = await listAllConversations({ q });
+    const openable = conversations.filter(c => typeof c.id === 'string' && CONVERSATION_ID_RE.test(c.id));
+    res.json({
+      conversations: openable.slice(offset, offset + effLimit),
+      total: openable.length,
+      offset,
+      limit: effLimit,
+      unreadable,
+    });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 router.get('/:domain', async (req, res) => {
   try {
     await assertKnownDomain(req.params.domain);

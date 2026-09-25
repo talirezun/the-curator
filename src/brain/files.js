@@ -1316,7 +1316,8 @@ export function matchConversation(conv, needle) {
 }
 
 /**
- * List a domain's conversations, newest first.
+ * List a domain's conversations, newest first — by `updatedAt ?? createdAt`
+ * since v3.72.0 (see compareConversationRows).
  *
  * `opts.q` filters them. An absent, non-string, or whitespace-only query is
  * NO FILTER — the full list, byte-identical to the pre-search behaviour —
@@ -1368,6 +1369,24 @@ export async function listConversations(domain, opts = {}) {
         createdAt: conv.createdAt,
         messageCount: conv.messages.length,
       };
+      // ── v3.72.0: THREE ADDITIVE FACTS, EACH ONLY WHEN IT WAS RECORDED ──────
+      // `domain` is the STORAGE PATH's answer, never the file's own `domain`
+      // key: the folder a file sits in is where the app will read, write and
+      // delete it, and a synced or hand-edited file can claim anything.
+      row.domain = domain;
+      // `updatedAt` is written by sendMessage on every persisted turn since
+      // v3.72.0. A conversation written before that has none, and the row then
+      // carries NO `updatedAt` — never a copy of createdAt, because "started"
+      // and "last used" are two different facts and the list says which one it
+      // is showing.
+      const updatedAt = conversationStamp(conv.updatedAt);
+      if (updatedAt) row.updatedAt = updatedAt;
+      // `lastProject` is the project the LAST answer recorded: a name, or null
+      // for "this turn had no project pinned". An answer written before v3.72.0
+      // has no `project` key at all, and the row then carries no `lastProject`
+      // — absent means "not recorded", which a view must render as nothing.
+      const lastProject = lastRecordedProject(conv.messages);
+      if (lastProject !== undefined) row.lastProject = lastProject;
       if (needle) {
         const matchField = matchConversation(conv, needle);
         if (!matchField) continue;
@@ -1376,7 +1395,95 @@ export async function listConversations(domain, opts = {}) {
       convs.push(row);
     } catch { /* skip malformed files */ }
   }
-  return convs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return convs.sort(compareConversationRows);
+}
+
+/**
+ * An ISO-shaped timestamp as recorded, or null. A string that does not parse
+ * to a real instant is not a timestamp, and a row must not carry it as one.
+ */
+function conversationStamp(v) {
+  return (typeof v === 'string' && v && Number.isFinite(Date.parse(v))) ? v : null;
+}
+
+// A project name as a row may carry it. Shape only — the list never opens the
+// project, and the view escapes every string it renders — but a synced file is
+// untrusted input, so anything that is not a short plain string is dropped
+// rather than put on the wire.
+const LAST_PROJECT_MAX_CHARS = 64;
+
+/**
+ * The project the conversation's LAST assistant message recorded:
+ *   a string  — that turn had this project pinned;
+ *   null      — that turn recorded "no project";
+ *   undefined — that turn predates the record (or the record is malformed).
+ * Only the last answer counts: an older turn's project says nothing about the
+ * conversation as it stands now.
+ */
+function lastRecordedProject(messages) {
+  if (!Array.isArray(messages)) return undefined;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m || m.role !== 'assistant') continue;
+    if (!Object.prototype.hasOwnProperty.call(m, 'project')) return undefined;
+    const p = m.project;
+    if (p === null) return null;
+    if (typeof p === 'string' && p && p.length <= LAST_PROJECT_MAX_CHARS) return p;
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Newest first, by LAST USE when it was recorded and by start otherwise
+ * (`updatedAt ?? createdAt`). A conversation continued five minutes ago sorts
+ * above one started yesterday. An unparseable stamp sorts last rather than
+ * poisoning the comparator with NaN (a NaN comparison makes Array#sort's
+ * order implementation-defined). Ties break on id so a listing that merges
+ * several domains is stable across requests.
+ */
+export function conversationSortKey(row) {
+  const t = Date.parse((row && (row.updatedAt || row.createdAt)) || '');
+  return Number.isFinite(t) ? t : -Infinity;
+}
+
+function compareConversationRows(a, b) {
+  const ka = conversationSortKey(a);
+  const kb = conversationSortKey(b);
+  if (ka !== kb) return kb > ka ? 1 : -1;
+  const ia = String(a && a.id);
+  const ib = String(b && b.id);
+  return ia < ib ? -1 : ia > ib ? 1 : 0;
+}
+
+/**
+ * Every conversation in every NON-MIRROR domain, newest first (v3.72.0).
+ *
+ * One list across domains is the maintainer's decision M1. A Shared Brain
+ * mirror (`readonly: true`) is skipped by the SAME predicate every write
+ * surface uses: chat never writes a conversation into a mirror (its threads are
+ * ephemeral), so a mirror's folder can only hold files that arrived by sync,
+ * and those are not this user's conversations.
+ *
+ * A domain whose folder cannot be read is NAMED in `unreadable`, never silently
+ * dropped: "we could not look" must not be served as "there is nothing".
+ *
+ * @returns {Promise<{conversations: object[], unreadable: string[]}>}
+ */
+export async function listAllConversations(opts = {}) {
+  const domains = await listDomains();
+  const all = [];
+  const unreadable = [];
+  for (const d of domains) {
+    if (await isDomainReadonly(d)) continue;
+    try {
+      const rows = await listConversations(d, { q: opts.q });
+      for (const r of rows) all.push(r);
+    } catch {
+      unreadable.push(d);
+    }
+  }
+  return { conversations: all.sort(compareConversationRows), unreadable };
 }
 
 export async function readConversation(domain, id) {

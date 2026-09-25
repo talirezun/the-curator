@@ -217,7 +217,28 @@ function drive(route, { domain, id, query = {}, body = { message: 'hi' } }) {
 // reproduced `GET /api/chat/..%2foutside`; the others are shapes a name-based
 // allow-list must also refuse.
 const HOSTILE = ['../outside', '..', '../../etc', '/etc', 'no-such-domain', '', '.'];
-for (const route of CHAT_ROUTES) {
+// v3.72.0 — `GET /` (every non-mirror domain's conversations, one list) takes
+// NO domain input at all, so "refuses a hostile :domain" does not apply to it.
+// It is exempted BY NAME, and the exemption list is pinned to exactly that one
+// route: any other route without `:domain` must be reviewed and added here
+// deliberately. What it must hold instead is asserted just below — it lists
+// only allow-listed domains, so the outside canary never appears.
+const DOMAINLESS = CHAT_ROUTES.filter(r => !r.path.includes(':domain'));
+eq(JSON.stringify(DOMAINLESS.map(r => `${r.method.toUpperCase()} ${r.path}`)), '["GET /"]',
+  'exactly one chat route takes no :domain — the all-domains list (v3.72.0)');
+for (const route of DOMAINLESS) {
+  // A hostile `domain` smuggled in as a param or a query changes nothing: the
+  // handler never reads one, and the union is built from listDomains() alone.
+  const r = await drive(route, { domain: '../outside', id: uuidN(9), query: { q: 'canary-outside', domain: '../outside' } });
+  eq(r.statusCode, 200, 'GET / answers from the allow-list, ignoring any domain it is handed');
+  ok(!/CANARY-OUTSIDE/i.test(JSON.stringify(r.body || {})) && Array.isArray(r.body && r.body.conversations)
+    && r.body.conversations.length === 0,
+    'GET / returns nothing from outside the domains root — the canary thread is not listed');
+  const all = await drive(route, { query: {} });
+  ok(all.statusCode === 200 && all.body.conversations.length === 1 && all.body.conversations[0].domain === REAL_DOMAIN,
+    'CONTROL: GET / lists the real domain\'s one thread, tagged with that domain');
+}
+for (const route of CHAT_ROUTES.filter(r => r.path.includes(':domain'))) {
   const label = `${route.method.toUpperCase()} ${route.path}`;
   for (const domain of HOSTILE) {
     const r = await drive(route, { domain, id: uuidN(9), query: { q: 'canary-outside' } });

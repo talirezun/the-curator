@@ -115,6 +115,10 @@ import {
   isFreeModel,
   listOfferableModels,
 } from './llm.js';
+// NAMESPACE import for the fallback-rung lookup (v3.72.0), for the reason
+// chat.js records at its own namespace import: a member that is renamed or
+// missing is `undefined`, never a SyntaxError that takes the module down.
+import * as llmModule from './llm.js';
 
 /**
  * Multiplicative band applied to the `chars / CHARS_PER_TOKEN` point estimate.
@@ -256,6 +260,57 @@ export function estimateInputTokens(promptChars, provider, modelId) {
 }
 
 /**
+ * The model a compile would bill if its configured model is unavailable
+ * (truth audit F5, v3.72.0), or null when there is no such rung.
+ *
+ * WHY. Compile calls generateText with no override, which runs callLLM, which
+ * walks `fallbackRungsFor(provider, model)` on a model-not-found error. The
+ * estimate prices only the configured model; a walk bills the next rung, and
+ * chains escalate FORWARD (every Gemini rung costs more than its default). The
+ * post-run "spent" line is priced on the rung that answered, so only the
+ * pre-spend wording was missing this.
+ *
+ * THE RUNG LIST IS llm.js's OWN, never re-derived here: `fallbackRungsFor`
+ * applies the rule that a free head may only fall back onto free rungs, and a
+ * second copy of that rule is how a disclosure would start naming a paid rung
+ * a free user can never reach. It is reached through llm.js's `__testing`
+ * surface because llm.js is outside this change and exports no public reader;
+ * test-chat-conversation-facts.js pins that it resolves, so a rename reds the
+ * suite instead of silently dropping the sentence. A public export is the
+ * better home and is recorded as a follow-up.
+ *
+ * Only the FIRST rung that differs from the configured model is named: it is
+ * the one a single walk lands on. `rungs` says how many exist.
+ *
+ * Returns `{provider, model, free, priceKnown, inPerM, outPerM, rungs}`; the
+ * rates are null (never 0) when the rung is free or unpriced.
+ */
+export function compileFallbackRung(provider, model) {
+  if (typeof provider !== 'string' || !provider || typeof model !== 'string' || !model) return null;
+  let rungs = null;
+  try {
+    const fn = llmModule.fallbackRungsFor
+      || (llmModule.__testing && llmModule.__testing.fallbackRungsFor);
+    if (typeof fn === 'function') rungs = fn(provider, model);
+  } catch { rungs = null; }
+  if (!Array.isArray(rungs)) return null;
+  const onward = [...new Set(rungs.filter(r => typeof r === 'string' && r && r !== model))];
+  if (onward.length === 0) return null;
+  const next = onward[0];
+  const free = isFreeModel(next);
+  const price = free ? null : getModelPrice(next);
+  return {
+    provider,
+    model: next,
+    free,
+    priceKnown: free || Boolean(price),
+    inPerM: price ? price.input : null,
+    outPerM: price ? price.output : null,
+    rungs: onward.length,
+  };
+}
+
+/**
  * ── DO NOT REPLACE THIS WITH A FIXED SENTENCE ABOUT "ROUGHLY $X" ────────────
  * The whole point of the basis is that it describes the conversation and the
  * domain in front of the user. `ingest-queue.js`'s own basis string had a
@@ -263,7 +318,7 @@ export function estimateInputTokens(promptChars, provider, modelId) {
  */
 function buildBasis({
   domain, provider, model, priceKnown, costUnknown, entityPages, conceptPages,
-  transcriptChars, userTurns, tokenizerFactor,
+  transcriptChars, userTurns, tokenizerFactor, fallback,
 }) {
   const providerLabel =
     provider === 'gemini' ? 'Gemini' :
@@ -283,18 +338,27 @@ function buildBasis({
         ? ` "${model}" is free to use, so this compile will not cost anything. The token counts above still apply.`
         : ` No published price is on file for "${model}", so the cost cannot be shown in dollars — see MODEL_PRICES_USD_PER_MTOK in src/brain/llm.js.`;
 
+  // F5: said only when a rung exists. Prices are per 1M tokens, input / output.
+  const fallbackNote = !fallback ? '' :
+    ` If "${model}" is unavailable when the compile runs, The Curator falls back to "${fallback.model}"` +
+    (fallback.free ? ', which is free.'
+      : fallback.priceKnown
+        ? `, priced $${fallback.inPerM} / $${fallback.outPerM} per million input / output tokens, so the cost can differ from this range.`
+        : ', which has no published price on file, so the cost can differ from this range.');
+
   return (
     `Estimated for ${providerLabel} "${model || '(no model configured)'}" compiling a ${userTurns}-turn ` +
     `conversation (${transcriptChars.toLocaleString()} characters of transcript) into the "${domain}" domain, ` +
     `which currently holds ${inventory}. Cost depends heavily on how large this wiki ALREADY is, not just on the ` +
     `length of the chat: the whole entity and concept filename list is sent with the conversation so the model links ` +
-    `to existing pages instead of duplicating them. The input half is exact — it is the real prompt this compile ` +
-    `would send, measured character by character, not a formula.${factorNote} ` +
+    `to existing pages instead of duplicating them. The prompt is the real one this compile would send, and its ` +
+    `length is measured exactly in characters; the input TOKENS are estimated from that length (±15%), not ` +
+    `counted.${factorNote} ` +
     `THE OUTPUT HALF CANNOT BE KNOWN IN ADVANCE: how many wiki pages the model decides to write is its own ` +
     `judgement, and three identical test compiles varied by about 11% between them. If the first attempt exceeds ` +
     `the model's output limit, The Curator retries with a shorter extraction and then with a summary page only — ` +
     `each retry re-sends the input, so a compile that escalates can cost roughly two to three times the input half ` +
-    `of this range. Both ends are estimates rather than limits: actual spend can land outside them.${priceNote}`
+    `of this range. Both ends are estimates rather than limits: actual spend can land outside them.${priceNote}${fallbackNote}`
   );
 }
 
@@ -386,6 +450,8 @@ export async function estimateCompileCost(domain, conversationId) {
   // A zero here is a truthy figure on the money path and would let a caller
   // render "$0.00" for a compile that is about to bill real money.
   const priceKnown = Boolean(price);
+  // F5 — the rung a model-not-found walk would bill, or null.
+  const fallback = provider ? compileFallbackRung(provider, model) : null;
   const usdLow = priceKnown
     ? round6((inputTokens.low / 1e6) * price.input + (outputTokens.low / 1e6) * price.output)
     : null;
@@ -421,6 +487,10 @@ export async function estimateCompileCost(domain, conversationId) {
       priceKnown,
       costUnknown,
       tokenizerFactor: inputTokens.tokenizerFactor,
+      // v3.72.0 (F5): `{provider, model, free, priceKnown, inPerM, outPerM,
+      // rungs}` or null. The range above is priced on `model` only; this is
+      // the model a fallback walk would bill instead.
+      fallback,
       basis: buildBasis({
         domain, provider, model, priceKnown, costUnknown,
         entityPages: existingFiles.entities.length,
@@ -428,6 +498,7 @@ export async function estimateCompileCost(domain, conversationId) {
         transcriptChars,
         userTurns: pre.userTurns,
         tokenizerFactor: inputTokens.tokenizerFactor,
+        fallback,
       }),
     },
     warnings,
