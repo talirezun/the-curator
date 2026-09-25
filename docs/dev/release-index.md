@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.72.2` | A lone Handoffs row could not be opened — fixed by binding the whole row, not just its ~56px name button, in `bindWorkStreamRows` and the Documents table's `bindFoundationRows`. |
 | `v3.72.1` | The "true numbers" release — every number and state the app shows traces to true current data, an app-wide read-only audit (7 slices, ~85 findings) fixed here package by package: Context, Domains, Ingest, Settings and Sync. |
 | `v3.72.0` | Chat — the section left behind for several releases — is overhauled and synced with the rest of the app: one list across all domains, a real page header, row actions and citations, with every number it shows traced to true data. |
 | `v3.71.1` | Every remaining ⓘ in the app now uses the v3.71.0 explainer model, through ONE implementation — cutting the words behind them by about half per view app-wide. |
