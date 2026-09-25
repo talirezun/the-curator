@@ -392,8 +392,10 @@ when the app updates itself. The honest detail:
 **One optional extra the browser install has no equivalent for:** a **menu bar icon** showing
 what your agents have just saved, so you can check your state is written without leaving
 what you are doing — a **save pulse** drawing the last seven days (with a "Saves by tool"
-submenu, one strip per tool), and up to five active projects from the last 24 hours, newest
-first, each with the tool that saved it and a coloured freshness dot. It is **off by default** —
+submenu, one strip per tool), then the last 24 hours' active work — one row per project and
+tool, newest first, up to five rows with the rest behind a "+N more" — each with a coloured
+freshness dot. Idle projects and your domains fold into one row each, and a single notice
+appears when one tool's save replaced another's (since v3.74.0). It is **off by default** —
 a fresh install has no agent memory, so an on-by-default icon would have nothing to show — and
 lives in **Settings → General → Menu bar**.
 See [docs/user-guide.md § 6b](docs/user-guide.md#6b-the-menu-bar-icon-mac-app).
@@ -519,8 +521,11 @@ They don't compete and they need no sync or export between them — all three re
 → [User Guide § 13](docs/user-guide.md#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp)
 
 <p align="center">
-  <img src="docs/images/curator-chat.png" alt="The Curator's Chat view (pre-v3.72.0 shot; the scope bar shown here has since moved into the page header and composer): a row of domain pills for the Articles, Business, Lectures, Posts, Projects and Research domains with &quot;3,421 pages in scope&quot; and a Compile to Wiki button; a typed question asking for a table of the last 10 articles; and the streamed answer, labelled THE CURATOR · MiniMax M3 (free) · free, rendering a Markdown table of articles with dates, one-sentence summaries and the source page each came from" width="800"><br>
-  <em>Answers cite the wiki pages they were built from — since v3.72.0, as numbered markers plus one Sources list. The domain, project, length and model are all composer pills, picked per conversation or per question.</em>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/curator-chat-dark.png">
+    <img src="docs/images/curator-chat.png" alt="The Curator's Chat view, showing the synthetic Early Computing demo domain. Down the left, the icon rail — Chat (selected), Domains, Context, with the theme toggle, Sync and Settings at the foot. Beside it the Chat list: a filled New chat button, a Filter conversations box, an All domains filter reading 5 conversations and a Select button, then rows grouped TODAY, YESTERDAY, PREVIOUS 7 DAYS and EARLIER — each row a domain colour dot, the question, a message count, a live age (4 min ago, 3 hr ago, 1 day ago, 3 days ago, 1 week ago), the domain name (Early Computing, or Night Sky in a second colour) and a trash icon; the newest row is selected. The main column opens with the eyebrow ASK YOUR WIKI over the conversation's title, What linked the Analytical Engine to the stored-program computer?, an info mark, a Compile to Wiki button, and the facts line Early Computing · 23 pages · 1 question · 1 answer · started 6 min ago. The question sits in a bubble labelled YOU; the answer is labelled THE CURATOR · Flash Lite 2.5 · $0.0020 and renders headings, a blockquote attributed to Ada Lovelace, a numbered list and small numbered citation markers 1 to 5 in the text. Below it, SOURCES · 5 PAGES lists the cited pages as numbered chips coloured by page type — 1 Analytical Engine, 2 Punched Card, 3 ENIAC, 4 Turing Machine (entities and concepts), 5 First Draft of a Report on the EDVAC (a summary) — with an entity / concept / summary key and an Ask again with another model button. The composer at the foot reads Ask a follow-up in Early Computing… with pills for the domain (Early Computing), the project (No projects yet), Length Balanced and Model Gemini default, and the note cost varies with response length." width="800">
+  </picture><br>
+  <em>Answers cite the wiki pages they were built from, as numbered markers plus one Sources list. The domain, project, length and model are all composer pills, picked per conversation or per question. (Shown on a synthetic demo domain — <code>node scripts/screenshots.mjs</code> regenerates it.)</em>
 </p>
 
 Keeping that graph honest is **Wiki Health**: one scan for broken links, orphans, duplicate
