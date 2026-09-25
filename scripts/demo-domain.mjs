@@ -31,7 +31,7 @@
  * domains folder by accident.
  */
 
-import { mkdirSync, writeFileSync, readdirSync, existsSync } from 'fs';
+import { mkdirSync, writeFileSync, readdirSync, existsSync, readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -412,23 +412,247 @@ export function writeDemoDomains(root, { now = new Date() } = {}) {
 
 export const HERO_CONVERSATION_ID = '6f1d2c3a-1b2c-4d5e-8f90-a1b2c3d4e5f1';
 
+// ── the workspace: projects, handoffs, journal, usage log, trash, sync ─────
+//
+// Everything below writes through The Curator's OWN store functions
+// (working-state.js, files.js), so the on-disk format is exactly what the app
+// writes — never a hand-copied imitation of it. It therefore runs only in a
+// CHILD process whose environment already points both test seams
+// (CURATOR_TEST_DOMAINS_DIR, CURATOR_TEST_USER_DATA_DIR) at throwaway
+// directories: `node scripts/demo-domain.mjs <domains> --workspace <userdata>`.
+//
+// A FAKE CLOCK makes the ages on screen read like a real week of work
+// ("8 min ago", "yesterday") while the file contents stay deterministic for a
+// given --now: `Date` is replaced for this process only, and every store call
+// reads its timestamp from it.
+//
+// Nothing here is personal: the machine is `demo-mac-4d3e2f`, the tools are
+// named by their public product names, and the sync remote is a LOCAL bare
+// repository labelled `github.com/example/my-brain` — no network is touched.
+
+export const DEMO_MACHINE = 'demo-mac-4d3e2f';
+export const DEMO_REPO_URL = 'https://github.com/example/my-brain.git';
+export const DEMO_PROJECT = 'exhibit-site';
+
+function installFakeClock(start) {
+  const RealDate = Date;
+  let now = start.getTime();
+  class FakeDate extends RealDate {
+    constructor(...a) { if (a.length === 0) super(now); else super(...a); }
+    static now() { return now; }
+  }
+  globalThis.Date = FakeDate;
+  return { set: (ms) => { now = ms; }, real: RealDate };
+}
+
+async function writeDemoWorkspace(domainsDir, userDataDir, now) {
+  const { execFileSync } = await import('child_process');
+  const T = now.getTime();
+  const MIN = 60_000, HR = 60 * MIN, DAY = 24 * HR;
+
+  // ── 1. Personal Sync, as it was THREE HOURS AGO: the wiki committed and
+  //       pushed to a local bare repo. Everything written after this point
+  //       is a real "local change not pushed" in the Sync view.
+  const remote = path.join(userDataDir, '.demo-sync-remote.git');   // a LOCAL stand-in for GitHub
+  const gitDir = path.join(userDataDir, '.knowledge-git');
+  const at = new Date(T - 3 * HR).toISOString();
+  const genv = { ...process.env, GIT_AUTHOR_NAME: 'Demo', GIT_AUTHOR_EMAIL: 'demo@example.com',
+    GIT_COMMITTER_NAME: 'Demo', GIT_COMMITTER_EMAIL: 'demo@example.com', GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at };
+  const g = (...a) => execFileSync('git', a, { env: genv, stdio: ['ignore', 'pipe', 'pipe'] }).toString();
+  g('init', '-q', '--bare', '-b', 'main', remote);
+  writeFileSync(path.join(domainsDir, '.gitignore'), '*/raw/\n*/.mcp-write-log.jsonl\n*/.write-lock\n.DS_Store\n');
+  g('--git-dir', gitDir, '--work-tree', domainsDir, 'init', '-q', '-b', 'main');
+  g('--git-dir', gitDir, '--work-tree', domainsDir, 'add', '-A');
+  g('--git-dir', gitDir, '--work-tree', domainsDir, 'commit', '-q', '-m', 'Sync: demo wiki');
+  g('--git-dir', gitDir, 'remote', 'add', 'origin', remote);
+  g('--git-dir', gitDir, 'push', '-q', 'origin', 'main');
+  g('--git-dir', gitDir, 'fetch', '-q', 'origin', 'main');
+  g('--git-dir', gitDir, 'config', 'curator.lastSyncAt', at);
+  writeFileSync(path.join(userDataDir, '.sync-config.json'),
+    JSON.stringify({ repoUrl: DEMO_REPO_URL, token: 'demo-token-not-a-credential' }, null, 2), { mode: 0o600 });
+
+  // ── 2. Machine identity, pinned before any save mints a real one.
+  writeFileSync(path.join(userDataDir, '.curator-install-id'), '4d3e2f\n', { mode: 0o600 });
+  writeFileSync(path.join(userDataDir, '.curator-machine-id'), DEMO_MACHINE + '\n', { mode: 0o600 });
+
+  const clock = installFakeClock(new Date(T - 6 * DAY));
+  const ws = await import('../src/brain/working-state.js');
+  const files = await import('../src/brain/files.js');
+  const must = (r, what) => { if (!r || r.ok === false) throw new Error(`${what}: ${r && (r.message || r.reason)}`); return r; };
+  const D = 'early-computing', P = DEMO_PROJECT;
+
+  // ── 3. Projects and briefs.
+  clock.set(T - 6 * DAY);
+  must(await ws.createProject(D, P, { brief:
+`# ${P} — standing brief
+
+## Goal
+A small static website for a museum exhibit on early computing: one page per machine, a
+timeline, and an interactive Difference Engine you can crank in the browser.
+
+## Constraints
+- Plain HTML, CSS and JavaScript. No framework, no build step.
+- Every fact on the site links to a page in the Early Computing wiki.
+- Must work offline on the kiosk in the gallery.
+
+## How we work
+- Save a handoff at the end of every session; read the latest one first.
+- Architecture decisions go in the architecture document, not in a handoff.
+` }), 'createProject');
+  must(await ws.createProject(D, 'lecture-series', { brief:
+`# lecture-series — standing brief
+
+## Goal
+Six evening lectures to accompany the exhibit, one per machine.
+` }), 'createProject lecture-series');
+  must(await ws.setKnowledgeDomains(D, P, ['early-computing', 'night-sky']), 'setKnowledgeDomains');
+
+  // ── 4. Canonical documents (tier 0).
+  must(await ws.saveFoundation(D, P, { slug: 'architecture.md', role: 'architecture', title: 'Architecture', text:
+`# Architecture
+
+- One HTML page per machine under \`/machines/\`, generated from the wiki's entity pages.
+- The timeline is a single SVG, drawn at load from \`timeline.json\`.
+- The Difference Engine simulator is one ES module, \`engine.js\`, with no dependencies.
+- A service worker caches everything for the offline kiosk.
+` }), 'saveFoundation architecture');
+  must(await ws.saveFoundation(D, P, { slug: 'style-guide.md', role: 'conventions', title: 'Style guide', text:
+`# Style guide
+
+- Dates as years only ("1843"), never full dates.
+- Machine names in their period spelling: "Analytical Engine", "ENIAC", "Colossus".
+- Captions under 25 words.
+` }), 'saveFoundation style-guide');
+  await ws.setFoundationReadFirst(D, P, 'architecture.md', true);
+
+  // ── 5. Handoffs. Two tools, each in its own scope, plus one SHARED scope
+  //       where Antigravity's save replaced Claude Code's (so a previous.md
+  //       is kept, exactly as v3.74.0 keeps it).
+  const save = async (atMs, input) => { clock.set(atMs); return must(await ws.saveWorkingState(D, { project: P, replace: true, ...input }), 'save ' + input.scope); };
+  const CC = { harness: 'Claude Code', model: 'claude-opus-5-5' };
+  const AG = { harness: 'Antigravity', model: 'gemini-3-pro' };
+
+  await save(T - 5 * DAY, { ...CC, scope: 'claude-code', headline: 'Machine pages scaffolded from the wiki; timeline next',
+    nowState: 'Eleven machine pages are generated from the entity pages. The timeline has not been started.',
+    decisions: ['Pages are generated at build time from the wiki, never hand-written.'],
+    nextSteps: ['Draw the timeline from timeline.json.'] });
+  await save(T - 2 * DAY, { ...CC, scope: 'claude-code', headline: 'Timeline drawn; Difference Engine crank works for the first column',
+    nowState: 'The timeline renders all eleven machines from 1822 to 1949. The engine simulator adds the first difference column correctly; the carry between columns is still wrong.',
+    decisions: ['Pages are generated at build time from the wiki, never hand-written.', 'The timeline is one SVG drawn at load — no charting library.'],
+    traps: ['Do not animate the carry with CSS transitions — the kiosk browser drops frames. Step it in JS.'],
+    nextSteps: ['Fix the carry between difference columns.', 'Add the service worker for offline use.'] });
+  await save(T - 8 * MIN, { ...CC, scope: 'claude-code', headline: 'Carry fixed; engine tabulates x² + x + 41 to 40 terms',
+    nowState: 'The Difference Engine simulator now carries correctly across all seven columns and tabulates x² + x + 41 for forty terms, matching the printed table. The offline service worker is written but untested on the kiosk.',
+    decisions: ['Pages are generated at build time from the wiki, never hand-written.', 'The timeline is one SVG drawn at load — no charting library.', 'The engine steps one column per animation frame.'],
+    traps: ['Do not animate the carry with CSS transitions — the kiosk browser drops frames. Step it in JS.'],
+    nextSteps: ['Test the service worker on the kiosk with the network cable out.', 'Write captions for the Colossus and Harvard Mark I pages.'],
+    openQuestions: ['Should the timeline include the Z3, which was destroyed in 1943?'] });
+
+  await save(T - 3 * DAY, { ...AG, scope: 'antigravity', headline: 'Caption pass on six machine pages; style guide applied',
+    nowState: 'Captions written for six of the eleven machine pages, each under 25 words and linked to its wiki page.',
+    decisions: ['Captions cite the wiki page, not the original source.'],
+    nextSteps: ['Caption the remaining five machine pages.'] });
+  await save(T - 26 * HR, { ...AG, scope: 'antigravity', headline: 'All eleven captions done; two facts queried against the wiki',
+    nowState: 'Every machine page has a caption. Two dates disagreed with the wiki and were corrected to match it.',
+    decisions: ['Captions cite the wiki page, not the original source.', 'Where a caption and the wiki disagree, the wiki wins and the caption is fixed.'],
+    nextSteps: ['Proof-read the timeline labels.'] });
+
+  await save(T - 4 * HR, { ...CC, scope: 'main', headline: 'Release checklist drafted for the gallery opening',
+    nowState: 'A release checklist exists: build, copy to the kiosk, test offline, sign-off.',
+    nextSteps: ['Run the checklist on the kiosk.'] });
+  await save(T - 40 * MIN, { ...AG, scope: 'main', headline: 'Checklist run once on a spare kiosk — offline mode fails on first load',
+    nowState: 'The checklist was run on the spare kiosk. The site works online; with the cable out, the first load fails because the service worker has not installed yet.',
+    traps: ['The first visit must happen ONLINE so the service worker can install — say so in the checklist.'],
+    nextSteps: ['Add a "first load online" step to the checklist.'] });
+
+  // A throwaway scope, deleted to the trash below.
+  await save(T - 5 * DAY + 2 * HR, { ...CC, scope: 'test-run', headline: 'Scratch save while testing the bridge', nowState: 'Nothing to keep.' });
+
+  // ── 6. The trash (v3.73.0 / v3.75.0): one handoff, one project, one domain.
+  clock.set(T - 20 * HR);
+  must(await ws.deleteWorkStream(D, P, 'test-run', { confirm: 'test-run' }), 'deleteWorkStream');
+  must(await ws.createProject(D, 'prototype-2025', { brief: '# prototype-2025 — standing brief\n\n## Goal\nAn early paper prototype of the exhibit.\n' }), 'createProject prototype');
+  clock.set(T - 2 * DAY);
+  must(await ws.deleteProject(D, 'prototype-2025', { confirm: 'prototype-2025' }), 'deleteProject');
+  writeDomain(domainsDir, { slug: 'old-drafts', name: 'Old Drafts', scope: 'Drafts from an earlier version of the exhibit.',
+    entities: {}, concepts: { 'draft-outline': concept('Draft Outline', ['draft'], 'An early outline of the exhibit.', 'Superseded by the Early Computing domain.', []) }, summaries: {} },
+    day(new Date(T - 30 * DAY)));
+  clock.set(T - 3 * DAY);
+  await files.deleteDomain('old-drafts', { confirm: 'old-drafts' });
+
+  // ── 7. The MCP usage log — content-free, one line per tool call — so
+  //       Context's "Agent sessions" and "Saves by tool" have a week to show.
+  const lines = [];
+  let n = 0;
+  const session = (ms, client, calls) => {
+    const sid = (0x5e5510000000 + (++n)).toString(16).padStart(12, '0');
+    lines.push({ ts: new clock.real(ms).toISOString(), ev: 'session', sid, client });
+    calls.forEach(([tool, dt], k) => lines.push({ ts: new clock.real(ms + dt).toISOString(), tool, domain: D, ok: true, refused: false, ms: 9 + k, sid, project: P }));
+  };
+  const start = [['get_project_context', 1000]];
+  const full = (end) => [...start, ['search_wiki', 60_000], ['save_working_state', end]];
+  session(T - 5 * DAY - 40 * MIN, 'claude-code', full(40 * MIN));
+  session(T - 3 * DAY - 30 * MIN, 'antigravity', full(30 * MIN));
+  session(T - 2 * DAY - 50 * MIN, 'claude-code', full(50 * MIN));
+  session(T - 26 * HR - 20 * MIN, 'antigravity', full(20 * MIN));
+  session(T - 4 * HR - 25 * MIN, 'claude-code', full(25 * MIN));
+  session(T - 40 * MIN - 15 * MIN, 'antigravity', full(15 * MIN));
+  session(T - 8 * MIN - 30 * MIN, 'claude-code', full(30 * MIN));
+  session(T - 6 * HR, 'claude-code', start);              // read the context, never saved
+  lines.sort((a, b) => a.ts.localeCompare(b.ts));
+  writeFileSync(path.join(userDataDir, '.mcp-usage.jsonl'), lines.map(l => JSON.stringify(l)).join('\n') + '\n');
+
+  // ── 8. File times. The store stamps every document with the FAKE clock,
+  //       but the file system stamped them with the real one, and a few
+  //       readings fall back to a file's mtime ("file changed just now").
+  //       Align each file's mtime with the time written inside it.
+  const { utimesSync, readdirSync: ls, statSync } = await import('fs');
+  const walk = (dir) => ls(dir).flatMap(n => { const f = path.join(dir, n); return statSync(f).isDirectory() ? walk(f) : [f]; });
+  for (const f of walk(path.join(domainsDir, D, 'state'))) {
+    let when = T - 6 * DAY;                                  // briefs, documents, project.json
+    const m = /Saved: ([0-9TZ:.-]+)/.exec(readFileSync(f, 'utf8'));
+    if (m) when = Date.parse(m[1]);
+    else if (f.endsWith('.jsonl')) {
+      const last = readFileSync(f, 'utf8').trim().split('\n').pop();
+      try { const j = JSON.parse(last); when = Date.parse(j.at || j.ts) || when; } catch { /* keep */ }
+    }
+    utimesSync(f, new clock.real(when), new clock.real(when));
+  }
+
+  clock.set(T);
+  return { project: P };
+}
+
 // ── CLI ────────────────────────────────────────────────────────────────────
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  const i = args.indexOf('--now');
-  const now = i >= 0 ? new Date(args[i + 1]) : new Date();
-  const target = args.find((a, k) => !a.startsWith('--') && args[k - 1] !== '--now');
+  const val = (f) => { const k = args.indexOf(f); return k >= 0 ? args[k + 1] : null; };
+  const now = val('--now') ? new Date(val('--now')) : new Date();
+  const userData = val('--workspace');
+  const target = args.find((a, k) => !a.startsWith('--') && !['--now', '--workspace'].includes(args[k - 1]));
   if (!target || Number.isNaN(now.getTime())) {
-    console.error('usage: node scripts/demo-domain.mjs <empty-target-dir> [--now <ISO time>]');
+    console.error('usage: node scripts/demo-domain.mjs <empty-target-dir> [--now <ISO time>] [--workspace <empty user-data dir>]');
     process.exit(2);
   }
   try {
-    const r = writeDemoDomains(path.resolve(target), { now });
+    const domainsDir = path.resolve(target);
+    const r = writeDemoDomains(domainsDir, { now });
     for (const d of r.domains) console.log(`  ${d.slug}: ${d.pages} pages`);
     console.log(`  ${r.conversations} conversations`);
+    if (userData) {
+      const ud = path.resolve(userData);
+      // The store functions must see ONLY these two directories.
+      if (process.env.CURATOR_TEST_DOMAINS_DIR !== domainsDir || process.env.CURATOR_TEST_USER_DATA_DIR !== ud) {
+        throw new Error('--workspace needs CURATOR_TEST_DOMAINS_DIR and CURATOR_TEST_USER_DATA_DIR set to the two target directories');
+      }
+      if (existsSync(ud) && readdirSync(ud).length > 0) throw new Error(`refusing to write into a non-empty directory: ${ud}`);
+      mkdirSync(ud, { recursive: true });
+      await writeDemoWorkspace(domainsDir, ud, now);
+      console.log(`  workspace: project ${DEMO_PROJECT}, handoffs, journal, trash, sync, usage log`);
+    }
   } catch (err) {
-    console.error(err.message);
+    console.error(err.stack || err.message);
     process.exit(1);
   }
 }
