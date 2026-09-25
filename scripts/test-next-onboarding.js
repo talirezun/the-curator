@@ -1137,8 +1137,18 @@ section('10. CSS — tokens, [data-theme], prefix ownership, no scrim');
   ok(/\.obp-root \{[\s\S]*?top:\s*0;/.test(obCssCode), '.obp-root is anchored to the TOP');
   ok(!/\.obp-root \{[\s\S]*?\n\s*bottom:/.test(obCssCode),
     '.obp-root has NO bottom anchor — the chat composer lives at the bottom and must never be covered');
-  ok(/left:\s*calc\(60px \+ var\(--app-sidebar-w\)\)/.test(obCssCode),
-    'it is clipped to the main column with the same grid geometry .reader-scrim uses');
+  // v3.76.0: the same geometry .reader-scrim uses, read from it rather than
+  // restated — so the two cannot drift (they did: this was a literal 60px
+  // after the rail had become 72px).
+  {
+    const shellRaw = readFileSync(path.join(ROOT, 'src/public/next/shell.css'), 'utf8');
+    const scrimLeft = (/\.reader-scrim\s*\{[^}]*?\bleft:\s*([^;]+);/.exec(stripComments(shellRaw)) || [])[1];
+    const obpLeft = (/\.obp-root\s*\{[^}]*?\bleft:\s*([^;]+);/.exec(obCssCode) || [])[1];
+    ok(!!scrimLeft && scrimLeft === obpLeft,
+      `it is clipped to the main column with the same geometry .reader-scrim uses (${obpLeft} vs ${scrimLeft})`);
+    ok(!!obpLeft && /var\(--app-rail-w\)/.test(obpLeft) && /var\(--app-sidebar-col\)/.test(obpLeft),
+      'and that geometry reads the rail and the sidebar\'s GRID column by name — no literal widths');
+  }
 
   // Prefix ownership: `obp-` belongs to this pair of files only.
   //

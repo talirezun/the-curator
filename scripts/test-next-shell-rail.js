@@ -381,7 +381,13 @@ for (const v of ALL) {
 // The caption must not be announced a second time on top of aria-label.
 {
   const capTags = R.tags.filter((t) => (t.attrs.class || '') === 'rail-cap');
-  eq(capTags.length, ALL.length, 'one .rail-cap per button');
+  // +1: v3.76.0's Sidebar toggle (the narrow-window drawer) is a rail
+  // button with a caption and no data-view — it opens a panel, not a view.
+  // Its own behaviour is scripts/test-next-sidebar-drawer.js's.
+  eq(capTags.length, ALL.length + 1, 'one .rail-cap per button (the views, plus the Sidebar toggle)');
+  const toggle = R.tags.find((t) => t.attrs.id === 'rail-sidebar-toggle');
+  ok(!!toggle && toggle.attrs['aria-controls'] === 'sidebar' && !toggle.attrs['data-view'],
+    'the extra caption belongs to the Sidebar toggle — aria-controls="sidebar", no data-view');
   ok(capTags.every((t) => t.attrs['aria-hidden'] === 'true'),
     'every caption is aria-hidden — the button already announces the full title');
 }

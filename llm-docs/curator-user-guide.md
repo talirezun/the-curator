@@ -195,7 +195,7 @@ If your local build is newer than the published one — because you have been wo
 
 ## How do I find my way around the app?
 
-There are no tabs. Everything is reached from a narrow icon rail down the left edge, and the screen is three columns: the rail, a contextual panel beside it that changes with the view, and the main column. Every rail icon carries its name underneath it.
+There are no tabs. Everything is reached from a narrow icon rail down the left edge, and the screen is three columns: the rail, a contextual panel beside it that changes with the view, and the main column. Every rail icon carries its name underneath it. **Since v3.76.0 the layout adapts to the window's width:** at 1100px and wider nothing changes; between 800 and 1099px the contextual panel narrows and the Getting started panel sits across the top of the main column instead of down its right side; under 800px the contextual panel folds away, the main column takes the full width, and a **Sidebar** button at the top of the rail slides it back out (it closes when you pick something in it, click beside it, or press Esc). The Mac app's window has a 960px minimum, so it only ever shows the first two steps.
 
 At the top of the rail, the mark is a button: it takes you **Home**, which is **Domains**.
 

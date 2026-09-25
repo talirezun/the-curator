@@ -46,6 +46,17 @@
      "Domains" beats it by 2.43px in this face. Re-measure, do not count
      letters, before shortening this. */
   --app-rail-w: 72px;
+
+  /* ── THE WIDTH THE SIDEBAR TAKES IN THE GRID (v3.76.0) ────────────────
+     Not always the sidebar's own width. Below 800px the sidebar leaves the
+     grid and becomes a drawer over the main column (the RESPONSIVE SHELL
+     block at the end of this file), and this drops to 0 there while
+     --app-sidebar-w keeps meaning "how wide the sidebar is". Everything that
+     clips itself to the MAIN column's screen region — .reader-scrim, the
+     first-run guide (views/onboarding.css) and --guide-dock-w — reads THIS
+     name, so they follow the main column into drawer mode with no second
+     set of media queries. */
+  --app-sidebar-col: var(--app-sidebar-w);
 }
 
 /* ── PROVIDER FAMILY COLOURS ──────────────────────────────────────────────
@@ -1255,9 +1266,11 @@ textarea {
    formula rather than a second layout mode: above ~1180px the dock is a
    flat 368px (the design's 340px card, unchanged); below that it shrinks
    WITH the column instead of starving it, so the card gets narrower and
-   the overlap still never returns. /next carries no other responsive
-   handling anywhere, so a breakpoint-switched second positioning mode
-   would be more machinery than this shell has earned. Accepted cost,
+   the overlap still never returns. SUPERSEDED BELOW 1100px (v3.76.0): the
+   shell gained real width bands (the RESPONSIVE SHELL block at the end of
+   this file), and there the guide docks along the TOP instead — 42% of a
+   500-790px column is what left the view ~200px wide. This formula still
+   governs 1100px and up, unchanged. Accepted cost,
    stated rather than hidden: on a very narrow window the card's text gets
    cramped, and on first run the view paints full-width for a frame before
    the panel's two GETs resolve and the dock appears (docking optimistically
@@ -1269,7 +1282,11 @@ textarea {
    .obp-panel's width resolves against .obp-root's narrower content box, so
    the two would silently mean different lengths. */
 :root {
-  --guide-dock-w: min(368px, calc((100vw - var(--app-rail-w) - var(--app-sidebar-w)) * 0.42));
+  --guide-dock-w: min(368px, calc((100vw - var(--app-rail-w) - var(--app-sidebar-col)) * 0.42));
+  /* The first-run guide's HEIGHT, published by views/onboarding.js while it
+     is open. Read only below 1100px, where the guide docks along the TOP of
+     the main column instead of the right (see the RESPONSIVE SHELL block). */
+  --guide-dock-h: 0px;
 }
 body.guide-docked .main {
   padding-right: var(--guide-dock-w);
@@ -2523,7 +2540,7 @@ body.guide-docked .main {
   position: fixed;
   top: 0;
   bottom: 0;
-  left: calc(var(--app-rail-w) + var(--app-sidebar-w));
+  left: calc(var(--app-rail-w) + var(--app-sidebar-col));
   right: 0;
   z-index: 40;
   background: var(--modal-scrim);
@@ -2807,3 +2824,124 @@ body.guide-docked .main {
   .theme-seg-btn:active,
   .reader-backlink-row:active { transform: none; }
 }
+
+/* ── THE RESPONSIVE SHELL (v3.76.0) ──────────────────────────────────────
+   REPORTED: at ~800px the three columns (rail 72 · sidebar 272 · main)
+   left the main column 456px, and the first-run guide's right-hand dock
+   took 42% of that — MEASURED on an isolated copy of two real domains,
+   the view's content box was 197px at 800 and 74px at 568, and headings
+   wrapped one word (or half a word) per line. /next had no responsive
+   handling at all, so every view shared the same squeeze.
+
+   THREE BANDS, ONE SHELL. The breakpoints are the main column's needs,
+   not device classes:
+
+     >= 1100px   unchanged — rail 72 · sidebar 272 · main.
+     800-1099    sidebar 240. 32px back to the main column, and the guide
+                 docks along the TOP of the main column instead of the
+                 right (a 42% side strip of a ~500-790px column is what
+                 starved it; a top band costs height, which a first-run
+                 panel the user can dismiss can afford).
+     <  800      the sidebar leaves the grid and becomes a DRAWER over the
+                 main column, opened from the rail's "Sidebar" button
+                 (shared/sidebar-drawer.js owns the behaviour). The main
+                 column takes every pixel right of the rail; the reader and
+                 the guide follow it through --app-sidebar-col = 0.
+
+   The drawer is still the SAME #sidebar element with the same content —
+   one sidebar component everywhere (design rule). Nothing re-renders to
+   change mode; only where the box sits changes. Closed, it is
+   `visibility: hidden`, which takes it out of the tab order and the
+   accessibility tree without an `inert` attribute to keep in sync.
+
+   The Electron window's floor is 960px (desktop/lib/window-state.js), so
+   the desktop app lives in the upper two bands; the drawer serves the
+   browser app and anyone who narrows a tab.
+
+   Z-ORDER: guide 30 < reader 40 < drawer scrim 44 < drawer 45 < listbox
+   menus 60 < dialogs 200. A listbox opened FROM the drawer (Chat's domain
+   filter) must float over it, and a confirm opened from a drawer row must
+   too — both already sit above 45. */
+/* Outside drawer mode (declared BEFORE the media blocks so theirs win) the toggle and the scrim do not exist for anyone —
+   `display: none`, so no hidden-but-focusable control is left in the rail. */
+.rail .rail-sidebar-toggle { display: none; }
+.sidebar-scrim { display: none; }
+
+@media (max-width: 1099px) {
+  :root { --app-sidebar-w: 240px; }
+
+  /* The guide docks on TOP. `margin-top` on the scroll container, not
+     `padding-top`: padding scrolls away with the content and the fixed card
+     would cover it again from the first scroll onward; a margin shortens
+     the scroll box itself, so nothing ever sits under the card. The grid
+     row is 100vh and the item stretches, so the margin is taken from the
+     column's height, not added below it. */
+  body.guide-docked .main {
+    padding-right: 0;
+    margin-top: var(--guide-dock-h);
+  }
+}
+
+@media (max-width: 799px) {
+  :root {
+    --app-sidebar-col: 0px;
+    /* The drawer is a little wider than the mid band's column (it covers
+       the main column rather than sharing with it), but never so wide that
+       the scrim beside it stops being a visible, clickable way out. */
+    --app-sidebar-w: min(300px, calc(100vw - var(--app-rail-w) - 48px));
+  }
+
+  #app-shell { grid-template-columns: var(--app-rail-w) 1fr; }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: var(--app-rail-w);
+    width: var(--app-sidebar-w);
+    z-index: 45;
+    /* Material, background and two-line edge are the base .sidebar rule's,
+       unchanged: floating over content is the case the blurred plane was
+       made for (in the grid it had only the canvas behind it), and the
+       scrim beside it does the separating a drop shadow would. */
+    visibility: hidden;
+    opacity: 0;
+    transform: translateX(-12px);
+    /* Visibility flips AFTER the fade on close and immediately on open, so
+       focus can move into the drawer the moment it opens. */
+    transition: opacity var(--t-enter), transform var(--t-enter), visibility 0s linear var(--dur-mid);
+  }
+  body.sidebar-open .sidebar {
+    visibility: visible;
+    opacity: 1;
+    transform: translateX(0);
+    transition: opacity var(--t-enter), transform var(--t-enter), visibility 0s;
+  }
+
+  .sidebar-scrim {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: var(--app-rail-w);
+    right: 0;
+    z-index: 44;
+    background: var(--modal-scrim);
+  }
+  body.sidebar-open .sidebar-scrim { display: block; }
+
+  .rail .rail-sidebar-toggle { display: flex; }
+  /* Open reads as pressed, in the rail's own row-state vocabulary — not the
+     accent tint, which means "the view you are on". */
+  .rail .rail-sidebar-toggle[aria-expanded="true"] {
+    background: var(--mat-row-active);
+    color: var(--text-2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar { transition: none; }
+}
+
+/* <main> carries tabindex="-1" (index.html) so the drawer can hand focus to
+   the column after a choice. It is a landmark, not a control: no ring. */
+.main:focus { outline: none; }

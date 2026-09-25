@@ -1179,6 +1179,24 @@ the name a screen reader announces.
 > never the card* — so a wide window buys you more table and more list, not
 > longer lines.
 
+### On a narrow window *(v3.76.0)*
+
+The layout adapts to the window's width, in three steps:
+
+| Window width | What changes |
+|---|---|
+| **1100px and wider** | Nothing. Rail, contextual panel (272px) and main column, as described above. |
+| **800–1099px** | The contextual panel narrows to 240px so the main column keeps more room. If the **Getting started** panel is open, it sits **across the top** of the main column instead of down its right side, and the page starts below it — nothing is covered, and it takes at most about half the window's height (it scrolls inside itself past that). |
+| **Under 800px** | The contextual panel folds away and the main column takes the full width. A **Sidebar** button appears at the top of the rail, just under the logo: press it to slide the panel out over the main column. It closes again when you pick something in it (a conversation, a domain, a project, *New chat*), when you click beside it, when you press **Esc**, or when you press **Sidebar** again. Page previews open over the whole main column. |
+
+Measured on the same two domains before and after, with the Getting started panel open: at an
+800px window the page's usable width went from **197px to 421px**; at 568px, from **74px to
+440px**. No screen scrolls sideways at either width.
+
+The **Mac app** window cannot be made narrower than **960px**, so there you will only ever see the
+first two steps; the fold-away panel is for the browser install, or a browser tab you have made
+narrow.
+
 ### Which screen you land on
 
 **The first time you open The Curator, it opens on Domains** — the overview, so
