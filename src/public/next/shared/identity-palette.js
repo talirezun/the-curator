@@ -39,9 +39,9 @@
 //     lightness (4↔10, 6↔11, 8↔12, and 1↔12 in light).
 //
 // ── THE MAPPING IS STABLE ────────────────────────────────────────────────
-// A domain's slot is its index in the install's own `listDomains()` order,
-// modulo IDENTITY_SLOTS. No colour is persisted anywhere; position N is
-// position N on every screen and in the widget.
+// A domain's slot is RECORDED per domain (v3.76.0) — see
+// `resolveIdentitySlots` at the foot of this file. It is not the domain's
+// position in any list: adding or deleting a domain recolours nothing else.
 //
 // PURE DATA AND PURE FUNCTIONS. No import, no DOM, no Node builtin — so a
 // view, an offline suite and Electron's main process can all load it.
@@ -99,4 +99,72 @@ export function identitySlot(index) {
 export function identityHex(index, theme) {
   const ramp = theme === 'light' ? IDENTITY_PALETTE.light : IDENTITY_PALETTE.dark;
   return ramp[identitySlot(index) - 1];
+}
+
+// ── A DOMAIN'S SLOT IS ITS OWN, NOT ITS POSITION (v3.76.0) ────────────────
+// Until v3.76.0 the slot was the domain's POSITION in `listDomains()`, so
+// deleting or adding a domain recoloured every domain after it (observed
+// 2026-09-25: after a delete, "Research" moved from olive to blue). Now each
+// domain RECORDS its slot, once, in `domains/<slug>/.curator-identity.json`
+// (src/brain/domain-identity.js). The file lives INSIDE the domain folder, so
+// it travels with a rename, rides GitHub Sync to every Mac, goes to the trash
+// with a delete and comes back with a restore.
+//
+// `resolveIdentitySlots` is the ONE rule that turns what is recorded into
+// what is painted. It is pure and deterministic — the same folder names and
+// the same recorded slots give the same answer on every machine:
+//
+//   1. Names are taken in code-unit order (`a < b`), never locale order.
+//   2. A recorded, valid slot is kept — unless a name EARLIER in that order
+//      already holds it (two Macs created domains at once and both picked the
+//      same free slot). The earlier name keeps it; the later one is treated as
+//      unrecorded.
+//   3. Every unrecorded name, in order, takes the LOWEST FREE slot. With all
+//      slots taken (more than IDENTITY_SLOTS domains) it takes the least-used
+//      slot, lowest number first — the old wrap, without the reshuffle.
+//
+// A first run over an install with nothing recorded therefore gives slot 1,
+// 2, 3 … in name order — exactly the colours a sorted folder listing gave
+// before, so most installs see no change at all.
+
+/** A recorded slot is usable when it is an integer 1..IDENTITY_SLOTS. */
+export function isValidIdentitySlot(slot) {
+  return Number.isInteger(slot) && slot >= 1 && slot <= IDENTITY_SLOTS;
+}
+
+/**
+ * names: string[] (domain folder names). recorded: Map|object name -> slot
+ * (anything invalid or absent is "unrecorded").
+ * Returns a Map name -> slot (1-based), one entry per name.
+ */
+export function resolveIdentitySlots(names, recorded) {
+  const get = (n) => {
+    if (!recorded) return undefined;
+    return recorded instanceof Map ? recorded.get(n) : recorded[n];
+  };
+  const order = Array.from(new Set((names || []).map(String)))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const out = new Map();
+  const uses = new Array(IDENTITY_SLOTS + 1).fill(0);
+  for (const n of order) {
+    const s = get(n);
+    if (isValidIdentitySlot(s) && uses[s] === 0) { out.set(n, s); uses[s] = 1; }
+  }
+  for (const n of order) {
+    if (out.has(n)) continue;
+    let pick = 1;
+    for (let s = 1; s <= IDENTITY_SLOTS; s++) {
+      if (uses[s] < uses[pick]) pick = s;
+    }
+    out.set(n, pick);
+    uses[pick]++;
+  }
+  return out;
+}
+
+/** The slot -> the hex the widget paints; '' / null for an invalid slot. */
+export function slotHex(slot, theme) {
+  if (!isValidIdentitySlot(slot)) return null;
+  const ramp = theme === 'light' ? IDENTITY_PALETTE.light : IDENTITY_PALETTE.dark;
+  return ramp[slot - 1];
 }

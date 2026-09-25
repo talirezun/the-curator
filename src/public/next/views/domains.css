@@ -191,6 +191,20 @@
   background: var(--attention);
 }
 
+/* NOT CHECKED (v3.76.0): the same 6px footprint as the attention dot, HOLLOW,
+   in the quiet ink — so "we have not scanned this" can never be read as "no
+   issues" (which has no glyph) nor as "issues" (the filled dot). The words
+   are in the row's accessible name; see domainHealthBadgeHtml in domains.js. */
+.dm-row-unscanned-dot {
+  flex: none;
+  box-sizing: border-box;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--text-2);
+  background: transparent;
+}
+
 /* ── Main header ──────────────────────────────────────────────────────── */
 
 .dm-path-eyebrow {

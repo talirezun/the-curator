@@ -17,4 +17,7 @@ export {
   IDENTITY_PALETTE,
   identitySlot,
   identityHex,
+  isValidIdentitySlot,
+  resolveIdentitySlots,
+  slotHex,
 } from '../public/next/shared/identity-palette.js';

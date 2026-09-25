@@ -973,7 +973,7 @@ section('13. The busiest tools this week (v3.66.0, P7): agents only, bars agains
 section('14. ④ Across projects (v3.66.0, P8): the widget’s per-project bars, in the app');
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  const { identityDotClass } = await import('../src/public/next/shared/sidebar.js');
+  const { identitySlotClass, domainIdentityClass } = await import('../src/public/next/shared/sidebar.js');
   // v3.72.1: the body is its own function (the 30 s poll repaints it alone)
   // and the windows are words built from the route's own figures.
   const across = (projects) => build([extractFunction(src, 'renderAcrossProjects'),
@@ -981,8 +981,9 @@ section('14. ④ Across projects (v3.66.0, P8): the widget’s per-project bars,
     extractFunction(src, 'logWindowWords'),
     extractFunction(src, 'formatSyncedAt')], {
     state: { mcpProjects: projects, mcpProjectsError: null,
-      defaultDomainInfo: { domains: ['business', 'posts', 'research'] } },
-    identityDotClass, ACROSS_PROJECTS_MAX_ROWS: 12,
+      // v3.76.0: `identity` is each domain's RECORDED slot — the colour.
+      defaultDomainInfo: { domains: ['business', 'posts', 'research'], identity: { business: 4, posts: 12, research: 7 } } },
+    identitySlotClass, domainIdentityClass, ACROSS_PROJECTS_MAX_ROWS: 12,
   }, ['renderAcrossProjects']).renderAcrossProjects();
   const row = (domain, project, sessions, saved, extra) => ({ domain, project, projectLabel: project,
     inStore: true, sessions, sessionsRead: sessions, sessionsSaved: saved, lastSessionAt: null,
@@ -1013,10 +1014,10 @@ section('14. ④ Across projects (v3.66.0, P8): the widget’s per-project bars,
     && !/the busiest project/.test(txt(lines[1].val)),
     '★ another row: "4 of 6 connections saved · bar scaled to alpha’s 9" — never "the busiest project"', txt(lines[1].val));
   ok(lines[0].sub === '11 connections' && lines[1].sub === '6 connections', 'all connections under the figure (v3.74.0 D5: a bridge run is not a session)');
-  ok(/cur-sb-dot cur-sb-dot-1"/.test(lines[0].val) && /cur-sb-dot cur-sb-dot-2"/.test(lines[1].val)
-     && /cur-sb-dot cur-sb-dot-3"/.test(lines[2].val),
-    'each line carries its DOMAIN’s identity dot, keyed on the install’s domain index (the one mapping)');
-  ok(identityDotClass(0) === 'cur-sb-dot-1', 'CONTROL: that is the kit’s own mapping');
+  ok(/cur-sb-dot cur-sb-dot-4"/.test(lines[0].val) && /cur-sb-dot cur-sb-dot-12"/.test(lines[1].val)
+     && /cur-sb-dot cur-sb-dot-7"/.test(lines[2].val),
+    '★ each line carries its DOMAIN’s identity dot — its RECORDED slot (v3.76.0), not its position');
+  ok(domainIdentityClass({ posts: 12 }, 'posts') === 'cur-sb-dot-12', 'CONTROL: that is the kit’s own mapping');
   ok(!/cur-sb-dot/.test(lines[3].val) && lines[3].sub === '2 connections · not in this folder',
     'a project whose domain this install does not hold gets NO dot — never a guessed one — and says it is not here');
   ok(/settings-id-idle/.test(lines[2].val) && w(lines[2].val) === null && /^.*>0$/.test(lines[2].val.replace(/<[^>]+>/g, '>').replace(/>+/g, '>'))

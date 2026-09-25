@@ -5,6 +5,9 @@ import {
 } from '../brain/sync.js';
 import { noteRemoteStatus } from '../brain/tray-summary.js';
 import { hasActiveWrites, conflictResponse } from '../brain/write-registry.js';
+// v3.76.0: a pull can bring domains this Mac has never seen — record their
+// identity colour (src/brain/domain-identity.js). Never throws.
+import { recordDomainIdentities } from '../brain/domain-identity.js';
 
 const router = Router();
 
@@ -155,6 +158,7 @@ router.post('/setup', guardConcurrent('set up sync'), async (req, res) => {
     // that cannot be taught a new dialog means the safety has to live on
     // this side of the wire, and that still holds for any client today.
     const result = await setup(repoUrl, token, mode, { confirmOverwrite: confirmOverwrite === true });
+    await recordDomainIdentities();
     res.json({ success: true, ...result, ...(await getStatus()) });
   } catch (err) {
     // A REFUSAL IS NOT A CRASH. setup()'s guards raise a written sentence
@@ -180,7 +184,9 @@ router.post('/push', guardConcurrent('push to sync'), async (req, res) => {
 router.post('/pull', guardConcurrent('pull from sync'), async (req, res) => {
   try {
     if (!isConfigured()) return res.status(400).json({ error: 'Sync is not configured' });
-    res.json(await pull());
+    const pulled = await pull();
+    await recordDomainIdentities();
+    res.json(pulled);
   } catch (err) {
     res.status(500).json({ error: friendlyError(err) || err.message });
   }
@@ -189,7 +195,9 @@ router.post('/pull', guardConcurrent('pull from sync'), async (req, res) => {
 router.post('/sync', guardConcurrent('sync'), async (req, res) => {
   try {
     if (!isConfigured()) return res.status(400).json({ error: 'Sync is not configured' });
-    res.json(await sync());
+    const synced = await sync();
+    await recordDomainIdentities();
+    res.json(synced);
   } catch (err) {
     res.status(500).json({ error: friendlyError(err) || err.message });
   }

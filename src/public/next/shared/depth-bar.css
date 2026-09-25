@@ -25,7 +25,7 @@
    anchor to and a header naming what the column is.
 
    ── ITS MODULE AND ITS STYLESHEET ────────────────────────────────────────
-   Hosts import `renderDepthCell` and `depthIdentityClass` from
+   Hosts import `renderDepthCell` and `depthIdentitySlotClass` from
    shared/depth-bar.js (v3.66.0; the function body stays in shared/monitor.js
    for the reason that file records). The rules live HERE, not in monitor.css,
    because tables, the Chat footer and the Ingest panel use the bar WITHOUT a
@@ -105,8 +105,8 @@
 /* ── THE IDENTITY TONE (v3.66.0) ─────────────────────────────────────────
    Only where a bar's ROW IS A DOMAIN (the per-domain page monitors). The ink
    is that domain's own `--id-N` from tokens/identity.css — the dot beside it,
-   at bar strength — reached through `depthIdentityClass(i)`, the same mapping
-   as `identityDotClass(i)`. No second palette: these twelve rules are
+   at bar strength — reached through `depthIdentitySlotClass(slot)`, the same slot
+   as `identitySlotClass(slot)`. No second palette: these twelve rules are
    generated from the same twelve names.
 
    24%, not the neutral bar's 18%: the identity inks are mid-tones where

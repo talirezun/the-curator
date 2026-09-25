@@ -5,6 +5,7 @@ import { isConfigured } from '../brain/sync.js';
 import { listProjects } from '../brain/working-state.js';
 import { getTrashDir } from '../brain/paths.js';
 import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
+import { identityMap, recordDomainIdentities } from '../brain/domain-identity.js';
 
 const router = Router();
 
@@ -19,7 +20,11 @@ router.get('/', async (req, res) => {
     for (const d of domains) {
       if (await isDomainReadonly(d)) readonlyDomains.push(d);
     }
-    res.json({ domains, readonlyDomains });
+    // v3.76.0: each domain's RECORDED identity slot (1-based), `{slug: slot}`.
+    // The one mapping every view paints a domain's colour from — never the
+    // domain's position in `domains` (src/brain/domain-identity.js).
+    const identity = await identityMap(domains);
+    res.json({ domains, readonlyDomains, identity });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -72,7 +77,14 @@ router.get('/stats', async (req, res) => {
         : await isDomainReadonly(domains[i]);
       if (flag) readonlyDomains.push(domains[i]);
     }
-    res.json({ domains: statsList, readonlyDomains });
+    // v3.76.0: the identity slot rides each row as `identitySlot`, and the
+    // whole map as `identity`, from the same one read.
+    const identity = await identityMap(domains);
+    for (let i = 0; i < domains.length; i++) {
+      const s = statsList[i];
+      if (s && typeof s === 'object') statsList[i] = { ...s, identitySlot: identity[domains[i]] ?? null };
+    }
+    res.json({ domains: statsList, readonlyDomains, identity });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -98,7 +110,10 @@ router.get('/:domain/stats', async (req, res) => {
       return res.status(404).json({ error: `Unknown domain: ${domain}` });
     }
     const stats = await getDomainStats(domain);
-    res.json(stats);
+    // v3.76.0: a single-row refresh carries the same identity slot the list
+    // did, or the patched row would lose its colour.
+    const identity = await identityMap(domains);
+    res.json({ ...stats, identitySlot: identity[domain] ?? null });
   } catch (err) {
     const status = err.message.includes('not found') ? 404 : 500;
     res.status(status).json({ error: err.message });
@@ -119,6 +134,9 @@ router.post('/', async (req, res) => {
 
     const slug = await generateUniqueSlug(displayName.trim());
     await createDomain(slug, displayName.trim(), description.trim(), template);
+    // Record the new domain's colour now (the lowest free slot), so it is
+    // fixed before any screen paints it. Never throws.
+    await recordDomainIdentities();
     res.status(201).json({ slug, displayName: displayName.trim() });
   } catch (err) {
     // 'reserved' — the shared-* namespace guard in files.js. A user-fixable

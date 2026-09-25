@@ -143,7 +143,7 @@ import { renderOverview } from '../shared/overview.js';
 // REAL kit functions rather than stubs, which is what makes their assertions
 // about this sidebar assertions about the shipped component.
 import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
-  identityDotClass } from '../shared/sidebar.js';
+  identitySlotClass } from '../shared/sidebar.js';
 import { renderMarkdown } from '../shared/markdown.js';
 import { formatUsdHonest } from '../shared/format-usd.js';
 
@@ -261,7 +261,7 @@ import {
 // arithmetic under a second family of names, and views/domains.css held the
 // only copy of the twelve colour rules — which views/memory.css then declared
 // a second time, byte for byte, because CSS has no per-view scope. Both are
-// now ONE thing in the kit: `identityDotClass(i)` in shared/sidebar.js and
+// now ONE thing in the kit: `identitySlotClass(slot)` in shared/sidebar.js and
 // the `.cur-sb-dot-N` block in shared/sidebar.css. That is what makes the
 // same domain the same colour on this rail, on the Context rail and
 // breadcrumb, on Chat's domain chips and on Ingest's destination rows —
@@ -269,7 +269,7 @@ import {
 //
 // `dm-row-dot-N` is still EMITTED, by the kit's `ALIASES.dm.dotSlot`, and
 // resolves no background; scripts/test-next-domain-dots.js reads the slots by
-// running identityDotClass and the rules out of shared/sidebar.css, and
+// running identitySlotClass and the rules out of shared/sidebar.css, and
 // asserts the alias paints nothing.
 
 // ── The KNOWLEDGE row's second line: WHAT the last write was ─────────────
@@ -471,7 +471,13 @@ const state = {
   // it. Purely a label; it never gates an action.
   healthStale: false,
   healthError: null,
-  healthSummary: {},      // slug -> total open issue count, populated as each domain is scanned (sidebar attention dot source — see report)
+  // slug -> { count, scannedAt } — the total open issue count and WHEN the
+  // scan that produced it read the wiki, populated as each domain is scanned
+  // (the sidebar's health mark — see domainHealthBadgeHtml). NO ENTRY means
+  // NOT CHECKED, which the row now says (v3.76.0) rather than showing nothing,
+  // which read exactly like "no issues". A bare number is still read as a
+  // count with no known time.
+  healthSummary: {},
 
   aiAvailable: false,
   aiProvider: null,
@@ -1401,9 +1407,9 @@ function mountHostedSections(token) {
  *  time, so it is never stale after a switch or a pull. */
 function describeDomainForShared(slug) {
   const list = Array.isArray(state.domains) ? state.domains : [];
-  const index = list.findIndex((d) => d && d.slug === slug);
-  const d = index >= 0 ? list[index] : null;
-  return { index, pages: d && typeof d.pageCount === 'number' ? d.pageCount : null };
+  const d = list.find((x) => x && x.slug === slug) || null;
+  // `slot` is the domain's RECORDED identity slot (v3.76.0), never a position.
+  return { slot: d ? d.identitySlot : null, pages: d && typeof d.pageCount === 'number' ? d.pageCount : null };
 }
 
 /** The fold toggles. Bound per element and marked, because this runs on every
@@ -1599,6 +1605,53 @@ function relTime(iso) {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return 'never';
   return formatAge(Math.max(0, Math.round((Date.now() - t) / 1000))) || 'never';
+}
+
+/**
+ * THE HEALTH MARK ON A DOMAIN ROW (v3.76.0) — three states, never two.
+ *
+ * Until v3.76.0 a row showed the attention dot for open issues and NOTHING
+ * otherwise, so a domain nobody had scanned looked exactly like a clean one:
+ * "no mark" meant both "no issues" and "we do not know". Now:
+ *
+ *   · NOT CHECKED (no scan result this session) — a HOLLOW ring,
+ *     `.dm-row-unscanned-dot`, and the row's accessible name says "Health not
+ *     checked yet — open this domain to run a scan" (opening a domain runs its
+ *     scan). While that scan is running on the open domain it says so.
+ *   · ISSUES — the filled attention dot, `.dm-row-attn`, and "N open health
+ *     issues, checked <age>".
+ *   · CLEAN — no glyph (the calm state stays quiet), and "No open health
+ *     issues, checked <age>" in the accessible name. Said only with a scan
+ *     result in hand: never "no issues" without one.
+ *
+ * The words ride as `.visually-hidden` text inside the row's own button — the
+ * same reason the RO badge does (a `title=` is hover-only, and a <button>
+ * cannot hold the info-mark button). The ring's meaning for a sighted user is
+ * in the Domains ⓘ (`domains.page`).
+ *
+ * `entry` is healthSummary's value: `{count, scannedAt}`, or a bare count
+ * (older state), or undefined. PURE — `now` is passed in. Returns TRUSTED
+ * host markup (an integer and fixed words; the age is formatAge's words).
+ */
+function domainHealthBadgeHtml(entry, now, scanning) {
+  const e = typeof entry === 'number' ? { count: entry, scannedAt: null }
+    : (entry && typeof entry === 'object' ? entry : null);
+  const count = e && Number.isInteger(e.count) && e.count >= 0 ? e.count : null;
+  if (count === null) {
+    return '<span class="dm-row-unscanned-dot" aria-hidden="true"></span>' +
+      '<span class="visually-hidden">' +
+      (scanning ? 'Health check running' : 'Health not checked yet \u2014 open this domain to run a scan') +
+      '</span>';
+  }
+  const t = e.scannedAt ? Date.parse(e.scannedAt) : NaN;
+  const age = Number.isFinite(t) && Number.isFinite(now)
+    ? formatAge(Math.max(0, Math.round((now - t) / 1000))) : null;
+  const when = age ? ', checked ' + age : '';
+  if (count > 0) {
+    return '<span class="dm-row-attn"></span>' +
+      '<span class="visually-hidden">' + count + ' open health issue' + (count === 1 ? '' : 's') + when + '</span>';
+  }
+  return '<span class="visually-hidden">No open health issues' + when + '</span>';
 }
 
 function pluralize(n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); }
@@ -2271,7 +2324,10 @@ async function loadHealth(slug, token, opts) {
     state.health = report;
     state.healthSlug = slug;
     state.healthStale = false;
-    state.healthSummary[slug] = totalOpenIssues(report);
+    state.healthSummary[slug] = {
+      count: totalOpenIssues(report),
+      scannedAt: typeof report.scannedAt === 'string' ? report.scannedAt : null,
+    };
   } catch (err) {
     if (slug !== state.activeSlug || !isCurrentMount(token)) return;
     state.healthError = err.message;
@@ -3319,8 +3375,7 @@ function renderSidebar(token) {
   const rows = state.domains.map((d, i) => {
     const readonly = state.readonlySet.has(d.slug);
     const active = d.slug === state.activeSlug;
-    const issueCount = state.healthSummary[d.slug];
-    const attention = typeof issueCount === 'number' && issueCount > 0;
+    const scanningNow = active && state.healthLoading === true;
     // NIT fix: this used to always append the literal word " pages", so a
     // freshly-created domain with exactly one page read "1 pages" — Chat
     // gets this right everywhere else ("1 page in scope").
@@ -3339,19 +3394,18 @@ function renderSidebar(token) {
     // dot (`.dm-row-attn`, open health issues) are untouched: three marks,
     // three separate facts, and folding any of them into the others would
     // make one dot answer questions it cannot. The identity COLOUR is the
-    // KIT's now (v3.65.1) — `identityDotClass(i)` and shared/sidebar.css's
+    // KIT's now (v3.65.1) — `identitySlotClass` and shared/sidebar.css's
     // `.cur-sb-dot-N` — so this row, a Context project row, a Chat chip and
     // an Ingest destination row all take the same colour from the same place.
     //
-    // `i` IS THE INSTALL'S DOMAIN INDEX, not a position in some filtered
-    // view: `state.domains` is GET /api/domains/stats' own order, which is
-    // listDomains()'s. A dot that meant "second in the list I happen to be
-    // showing" would be a different colour per screen, which is the defect
-    // this whole system exists to remove.
+    // THE SLOT IS THE DOMAIN'S OWN (v3.76.0), `identitySlot` on its stats
+    // row, recorded in its folder (src/brain/domain-identity.js). It is NOT
+    // `i`: a position moves when another domain is added or deleted, and a
+    // colour that moved with it is the defect v3.76.0 removed.
     return renderSidebarRow({
       alias: 'dm',
       name: d.displayName || d.slug,
-      dotClass: identityDotClass(i),
+      dotClass: identitySlotClass(d.identitySlot),
       figure: pagesText,
       markHtml: freshnessDotHtml(d.lastIngestDate, now),
       age: formatDayAge(d.lastIngestDate, now),
@@ -3394,11 +3448,7 @@ function renderSidebar(token) {
           ? '<span class="dm-row-mirror">RO</span>' +
             '<span class="visually-hidden">Read-only Shared Brain mirror</span>'
           : '') +
-        (attention
-          ? '<span class="dm-row-attn"></span>' +
-            '<span class="visually-hidden">' + issueCount + ' open health issue' +
-              (issueCount === 1 ? '' : 's') + '</span>'
-          : ''),
+        domainHealthBadgeHtml(state.healthSummary[d.slug], now, scanningNow),
     });
   }).join('');
 

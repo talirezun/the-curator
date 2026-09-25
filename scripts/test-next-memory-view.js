@@ -208,7 +208,7 @@ import { renderBucket, formatTokens } from '../src/public/next/shared/bucket.js'
 // it loads in Node, and the helper's panel is under test through it.
 import { renderRunsOn, renderSpent, aiActionDisabledAttrs } from '../src/public/next/shared/ai-run.js';
 import { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
-  identityDotClass } from '../src/public/next/shared/sidebar.js';
+  identityDotClass, identitySlotClass, domainIdentityClass } from '../src/public/next/shared/sidebar.js';
 // ── THE OWNERSHIP CHOOSER, THE REAL ONE (v3.61.0) ─────────────────────────
 // shared/foundations-init.js imports only from the DOM-free kit (shared/age.js,
 // since v3.61.1 — the contract shared/text.js carries, stated as what it always
@@ -1633,7 +1633,7 @@ function makeRenderers(stateObj) {
     // because every assertion below about the rail's anatomy, its clock
     // glyph and its identity dot is an assertion about the component the app
     // ships, not about a stand-in written here.
-    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow', 'identityDotClass',
+    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow', 'identitySlotClass', 'domainIdentityClass',
     // THE REAL MONITOR (v3.65.0). Every live reading on this page goes
     // through it, so a stub would let §6's escaping battery and every
     // assertion about a warning's PLACE run past the component that draws
@@ -1676,7 +1676,7 @@ function makeRenderers(stateObj) {
     COPY_SUCCESS_BANNER,
     docsLinkHtml,
     realFormatDayAge, realDayFreshnessTier, realFreshnessDotHtml,
-    renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass,
+    renderSidebarHead, renderSidebarGroup, renderSidebarRow, identitySlotClass, domainIdentityClass,
     renderMonitor, renderDepthCell,
     renderBucket, formatTokens,
     (cfg) => '<button type="button" id="' + cfg.id + '" data-lb-stub="'
@@ -3365,28 +3365,27 @@ function ruleFor(css, selector) {
       projectRead: { scopes: [], brief: { present: false } }, ...over,
     }).renderProject();
     const headOf2 = (h) => (h.match(/<div class="mem-project-head[\s\S]{0,260}/) || [''])[0];
-    ok('the breadcrumb carries NO mark until the domain list has answered',
-      !/mem-project-mark/.test(crumb({ domainList: [] })),
-      headOf2(crumb({ domainList: [] })));
-    ok('...nor when the active domain is not in the list the install sent',
-      !/mem-project-mark/.test(crumb({ domainList: ['acme', 'other'] })),
-      headOf2(crumb({ domainList: ['acme', 'other'] })));
-    ok('CONTROL: and it DOES carry one at the domain\'s own index in that list',
-      /cur-sb-dot mem-project-mark cur-sb-dot-3/.test(
-        crumb({ domainList: ['acme', 'other', 'research'] })),
-      headOf2(crumb({ domainList: ['acme', 'other', 'research'] })));
-    ok('...which is the SAME slot the rail gives that domain, from the same '
-      + 'mapping — one domain, one colour, on every screen',
-    /cur-sb-dot-3/.test(crumb({ domainList: ['acme', 'other', 'research'] }))
-      && identityDotClass(2) === 'cur-sb-dot-3', identityDotClass(2));
+    // v3.76.0: the key is the domain's RECORDED slot (`domainIdentity`, GET
+    // /api/domains' `identity` map), never its position in `domainList`.
+    ok('the breadcrumb carries NO mark until the identity map has answered',
+      !/mem-project-mark/.test(crumb({ domainList: ['research'], domainIdentity: null })),
+      headOf2(crumb({ domainList: ['research'], domainIdentity: null })));
+    ok('...nor when the active domain is not in the map the install sent',
+      !/mem-project-mark/.test(crumb({ domainIdentity: { acme: 1, other: 2 } })),
+      headOf2(crumb({ domainIdentity: { acme: 1, other: 2 } })));
+    ok('CONTROL: and it DOES carry one — the domain\'s RECORDED slot',
+      /cur-sb-dot mem-project-mark cur-sb-dot-9/.test(
+        crumb({ domainList: ['acme', 'other', 'research'], domainIdentity: { acme: 1, other: 2, research: 9 } })),
+      headOf2(crumb({ domainIdentity: { acme: 1, other: 2, research: 9 } })));
+    ok('★ the POSITION in domainList is NOT the colour: research third in the list, slot 9 recorded, paints 9 — '
+      + 'so deleting or adding another domain cannot recolour it',
+    !/cur-sb-dot-3/.test(crumb({ domainList: ['acme', 'other', 'research'], domainIdentity: { acme: 1, other: 2, research: 9 } }))
+      && identitySlotClass(9) === 'cur-sb-dot-9', identitySlotClass(9));
   }
-  ok('...and the view EMITS it as a kit dot with the shared mapping',
-    /class="cur-sb-dot mem-project-mark ' \+ identityDotClass\(slot\)/.test(viewSrc),
+  ok('...and the view EMITS it as a kit dot through the shared mapping',
+    /domainIdentityClass\(state\.domainIdentity, String\(state\.activeDomain/.test(viewSrc)
+      && /'<span class="cur-sb-dot mem-project-mark ' \+ cls/.test(viewSrc),
     (viewSrc.match(/.{0,120}mem-project-mark.{0,120}/s) || [''])[0]);
-  ok('...withheld entirely until the domain list has answered, because identity '
-    + 'has no states and a placeholder would be another domain\'s colour',
-  /slot >= 0\s*\n?\s*\? '<span class="cur-sb-dot mem-project-mark/.test(viewSrc)
-    || /slot >= 0/.test(viewSrc));
   ok('this view declares NO row-mark geometry — the kit owns the row',
     !ruleFor(viewCss, '.mem-row-mark') && !ruleFor(viewCss, '.mem-row'));
   // ── AND THE SIX COLOURS LEFT THIS FILE TOO (v3.65.1, D7) ────────────
@@ -5105,10 +5104,10 @@ section('§16 — Projects inside a domain (v3.48.0)');
     { domain: 'alpha', project: 'two', scopeCount: 0, hasBrief: false, lastWriteAt: null },
     { domain: 'beta', project: 'one', scopeCount: 1, hasBrief: false, writtenAgeSeconds: 3 * 86400 },
   ];
-  // THE INSTALL'S DOMAIN LIST is the fourth argument (v3.65.0): the identity
-  // colour is the domain's place in THAT list, not in this screen's, so a
-  // domain with no project context at all cannot slide every colour below it.
-  const html = g(rows, 'beta', 'one', ['zeta', 'alpha', 'beta']);
+  // THE INSTALL'S IDENTITY MAP is the fourth argument (v3.76.0; a domain list
+  // since v3.65.0): each domain's RECORDED slot, never a position in any list,
+  // so adding or deleting a domain cannot slide another's colour.
+  const html = g(rows, 'beta', 'one', { zeta: 1, alpha: 7, beta: 4 });
   const heads = [...html.matchAll(/cur-sb-group-head cur-eyebrow">([^<]*)</g)].map((m) => m[1]);
   eq('two groups, the widget\'s own words: Active · last 24 h, then Idle', heads.join('|'), 'Active · last 24 h|Idle');
   const activePart = html.slice(0, html.indexOf('>Idle<'));
@@ -5138,13 +5137,13 @@ section('§16 — Projects inside a domain (v3.48.0)');
     (html.match(/class="cur-sb-row mem-row active"/g) || []).length, 1);
   ok('...and it is the one in the active DOMAIN, not the first of that name',
     /class="cur-sb-row mem-row active" data-mem-domain="beta"/.test(html));
-  // ── THE IDENTITY COLOUR IS THE INSTALL'S INDEX, NOT THIS LIST'S ──────
-  ok('the identity dot is the domain\'s slot in the INSTALL\'s list',
-    html.includes('cur-sb-dot-2') && html.includes('cur-sb-dot-3')
-    && !html.includes('cur-sb-dot-1'), html.slice(0, 400));
-  ok('CONTROL: with no list in hand it falls back to the local order rather '
-    + 'than painting no identity at all',
-    g(rows, 'beta', 'one', null).includes('cur-sb-dot-1'));
+  // ── THE IDENTITY COLOUR IS THE DOMAIN'S RECORDED SLOT (v3.76.0) ──────
+  ok('the identity dot is the domain\'s RECORDED slot — alpha 7, beta 4 — not any position',
+    html.includes('cur-sb-dot-7') && html.includes('cur-sb-dot-4')
+    && !html.includes('cur-sb-dot-1') && !html.includes('cur-sb-dot-2'), html.slice(0, 400));
+  ok('with no map in hand it paints NO identity at all — a position guess would be some other domain\'s colour',
+    !/cur-sb-dot-\d/.test(g(rows, 'beta', 'one', null))
+    && !/cur-sb-dot-\d/.test(g(rows, 'beta', 'one', ['alpha', 'beta'])));
   ok('a project with nothing saved renders quiet, and carries NO identity dot — '
     + 'identity does not have states',
     html.includes('mem-row-quiet')
@@ -13556,7 +13555,7 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
       research: { error: null, data: { pageCount: 20,
         pageCounts: { entities: 8, concepts: 10, summaries: 2 },
         lastIngestDate: '2026-09-10', lastIngestKind: 'ingest' } },
-    }, { domainList: ['acme', 'research'] }));
+    }, { domainList: ['acme', 'research'], domainIdentity: { acme: 5, research: 11 } }));
     const block = K.renderKnowledge();
 
     // (1) THE PICKER IS A HEAD ROW, ABOVE THE ROWS. Step ①'s rule and Wiki
@@ -13605,14 +13604,14 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
     // mapping. Two domains, two DIFFERENT slots, which is the whole point: a
     // dot that is the same on every row identifies nothing, and that is
     // exactly what the breadcrumb's violet square was.
-    const dotOf = (d) => (/<span class="cur-sb-dot mem-k-dot (cur-sb-dot-\d)"/.exec(rowOf(d)) || [, null])[1];
+    const dotOf = (d) => (/<span class="cur-sb-dot mem-k-dot (cur-sb-dot-\d+)"/.exec(rowOf(d)) || [, null])[1];
     ok('the first Knowledge row carries an identity dot', !!dotOf('acme'), rowOf('acme').slice(0, 300));
     ok('...and so does the second', !!dotOf('research'), rowOf('research').slice(0, 300));
     ok('...and the two are DIFFERENT slots, because they are different domains '
       + '— one colour on every row identifies nothing',
     dotOf('acme') !== dotOf('research'), dotOf('acme') + ' vs ' + dotOf('research'));
-    ok('...cut on the INSTALL\'s domain index, so the colour matches the rails',
-      dotOf('acme') === 'cur-sb-dot-1' && dotOf('research') === 'cur-sb-dot-2',
+    ok('...the domain\'s RECORDED slot (v3.76.0), so the colour matches the rails — not its position',
+      dotOf('acme') === 'cur-sb-dot-5' && dotOf('research') === 'cur-sb-dot-11',
       dotOf('acme') + ' / ' + dotOf('research'));
     ok('...before the NAME, while the freshness dot stays before the READING — '
       + 'two channels, never the same glyph position',
@@ -13622,7 +13621,7 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
     ok('...and NO dot at all when the domain list has not answered, because '
       + 'identity has no states and a placeholder would be another domain\'s',
     !/mem-k-dot/.test(makeRenderers(kst({ acme: { error: null, data: { pageCount: 1,
-      pageCounts: {}, lastIngestDate: '2026-09-13' } } }, { domainList: [] })).renderKnowledge()));
+      pageCounts: {}, lastIngestDate: '2026-09-13' } } }, { domainList: [], domainIdentity: null })).renderKnowledge()));
   }
   ok('step ③ is one row PER WIKI, keyed by its own domain',
     /<details class="mem-fold" data-mem-fold="knowledge-acme"/.test(kn), kn.slice(0, 300));

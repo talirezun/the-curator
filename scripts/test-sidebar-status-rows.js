@@ -145,7 +145,9 @@ const { formatAge, formatDayAge, dayFreshnessStep, dayFreshnessTier, freshnessDo
 const sidebarKit = await import(
   pathToFileURL(path.join(ROOT, 'src/public/next/shared/sidebar.js')).href);
 const { renderSidebarHead, renderSidebarGroup, renderSidebarRow,
-  identityDotClass } = sidebarKit;
+  identitySlotClass } = sidebarKit;
+// v3.76.0: views paint a domain's RECORDED slot through `identitySlotClass`;
+// the position-keyed `identityDotClass` is no longer called by any view.
 
 // ═══════════════════════════════════════════════════════════════════════════
 section('§0  Positive control — everything this suite needs really loaded');
@@ -583,10 +585,10 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
   // implementation of the row anatomy (re-pointing it at renderSidebarRow is
   // a separate adoption with its own suites), but the dot on it is the kit's.
   const make = new Function('formatDayAge', 'freshnessDotHtml', 'clockGlyph',
-    'identityDotClass',
+    'identitySlotClass',
     PREAMBLE + NEED.map((n) => bodies[n]).join('\n\n') +
     '\nreturn { run: (s) => { state = s; renderSidebar(2); return captured; } };');
-  const api = make(formatDayAge, freshnessDotHtml, clockGlyph, identityDotClass);
+  const api = make(formatDayAge, freshnessDotHtml, clockGlyph, identitySlotClass);
 
   const NOW_DAY = (() => {
     const d = new Date();
@@ -603,13 +605,13 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
   const html = api.run({
     domains: [
       { slug: 'today', displayName: 'Today Domain', pageCount: 3445, lastIngestDate: NOW_DAY,
-        lastIngestKind: 'ingest', lastIngestTitle: 'The Curator — Product Overview' },
+        lastIngestKind: 'ingest', lastIngestTitle: 'The Curator — Product Overview', identitySlot: 8 },
       { slug: 'three', displayName: 'Three Days', pageCount: 96, lastIngestDate: daysAgo(3),
-        lastIngestKind: 'compile', lastIngestTitle: 'A <b>bold</b> thread' },
+        lastIngestKind: 'compile', lastIngestTitle: 'A <b>bold</b> thread', identitySlot: 2 },
       { slug: 'six', displayName: 'Six Weeks', pageCount: 12, lastIngestDate: daysAgo(42),
-        lastIngestKind: 'ingest', lastIngestTitle: 'Old source' },
+        lastIngestKind: 'ingest', lastIngestTitle: 'Old source', identitySlot: 11 },
       { slug: 'never', displayName: 'Never Written', pageCount: 0, lastIngestDate: null,
-        lastIngestKind: null, lastIngestTitle: null },
+        lastIngestKind: null, lastIngestTitle: null, identitySlot: 5 },
     ],
     domain: 'today', submitting: false, queueJob: null, queueModeActive: false,
     runningDomains: [], remote: {},
@@ -641,28 +643,28 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
   // ── THE IDENTITY DOT (v3.65.1, decision 7) ──────────────────────────────
   // CONTINUITY BY IDENTITY: a destination row here and that domain's row on
   // the Domains rail must be the SAME colour, because they are the same
-  // domain. The slot is recomputed here from the kit's own mapping against
-  // the domain's position in `state.domains` — the install's order, the one
-  // listDomains() answers with — rather than re-read out of the markup, so a
-  // row coloured by a FILTERED or REVERSED position fails (mutation M12) and
-  // a row with no dot at all fails (mutation M11).
+  // domain. Since v3.76.0 the slot is the domain's RECORDED one
+  // (`identitySlot` on its stats row), and the fixture's slots are chosen so
+  // that no row's slot equals its position — a row coloured by ANY position
+  // fails (mutation M12), and a row with no dot at all fails (mutation M11).
   {
     const SLUGS = ['today', 'three', 'six', 'never'];
+    const RECORDED = [8, 2, 11, 5];
     SLUGS.forEach((slug, i) => {
-      const want = identityDotClass(i);
+      const want = identitySlotClass(RECORDED[i]);
       const row = rowOf(slug);
       const m = /<span class="(cur-sb-dot[^"]*)"><\/span>/.exec(row);
       ok(!!m, `the "${slug}" destination row carries the kit's identity dot`, row.slice(0, 140));
       if (m) {
         const tokens = m[1].split(/\s+/);
         ok(tokens.includes('cur-sb-dot') && tokens.includes(want),
-          `…and it is slot ${want.slice(-1)} — the domain's own position in the install's list`,
+          `…and it is slot ${want.replace('cur-sb-dot-', '')} — the domain's RECORDED slot, not its position`,
           m[1]);
       }
     });
     // CONTROL: four DIFFERENT slots, so an assertion that passed by every row
     // carrying the same class would be visible.
-    const seen = SLUGS.map((slug) => (/<span class="cur-sb-dot[^"]*cur-sb-dot-(\d)"/.exec(rowOf(slug)) || [])[1]);
+    const seen = SLUGS.map((slug) => (/<span class="cur-sb-dot[^"]*cur-sb-dot-(\d+)"/.exec(rowOf(slug)) || [])[1]);
     eq(new Set(seen.filter(Boolean)).size, 4,
       'CONTROL — the four rows take four different slots, so "the right slot" is a reading');
   }
@@ -706,7 +708,7 @@ section('§8  The Domains KNOWLEDGE row, rendered');
   // view no longer produces.
   // `domainDotClass` LEFT THIS LIST in v3.65.1 — views/domains.js no longer
   // defines it; the kit's `identityDotClass` is injected below instead.
-  const NEED = ['renderSidebar', 'domainLastEventText', 'knowledgeFolderBtn'];
+  const NEED = ['renderSidebar', 'domainLastEventText', 'knowledgeFolderBtn', 'domainHealthBadgeHtml'];
   const bodies = {};
   let fatal = false;
   for (const n of NEED) {
@@ -744,11 +746,11 @@ const myMountToken = 1;
 const document = { getElementById() { return null; }, querySelectorAll() { return []; } };
 `;
   const make = new Function('formatDayAge', 'freshnessDotHtml', 'clockGlyph',
-    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow', 'identityDotClass',
+    'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow', 'identitySlotClass', 'formatAge',
     PREAMBLE + NEED.map((n) => bodies[n]).join('\n\n') +
     '\nreturn { run: (s) => { state = s; renderSidebar(2); return captured; } };');
   const api = make(formatDayAge, freshnessDotHtml, clockGlyph,
-    renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass);
+    renderSidebarHead, renderSidebarGroup, renderSidebarRow, identitySlotClass, formatAge);
 
   const today = (() => {
     const d = new Date();
@@ -767,11 +769,11 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
     readonlySet: new Set(), healthSummary: { articles: 4 },
     domains: [
       { slug: 'articles', displayName: 'Articles', pageCount: 3421, lastIngestDate: today,
-        lastIngestKind: 'ingest', lastIngestTitle: 'A <b>fresh</b> source' },
+        lastIngestKind: 'ingest', lastIngestTitle: 'A <b>fresh</b> source', identitySlot: 9 },
       { slug: 'business', displayName: 'Business', pageCount: 96, lastIngestDate: daysAgo(42),
-        lastIngestKind: 'compile', lastIngestTitle: 'Pricing thread' },
+        lastIngestKind: 'compile', lastIngestTitle: 'Pricing thread', identitySlot: 2 },
       { slug: 'fresh', displayName: 'Brand New', pageCount: 0, lastIngestDate: null,
-        lastIngestKind: null, lastIngestTitle: null },
+        lastIngestKind: null, lastIngestTitle: null, identitySlot: 3 },
     ],
   });
   ok(html.length > 0, 'CONTROL — renderSidebar produced markup');
@@ -817,17 +819,54 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
   {
     const cls = /<span class="([^"]*cur-sb-dot[^"]*)"><\/span>/.exec(rowOf('articles'));
     const tokens = cls ? cls[1].split(/\s+/) : [];
+    // v3.76.0: articles is FIRST in the list but its recorded slot is 9, so a
+    // row painted by position (slot 1) fails here.
     ok(tokens.includes('cur-sb-dot') && tokens.includes('dm-row-dot')
-       && tokens.includes('cur-sb-dot-1') && tokens.includes('dm-row-dot-1'),
-      'the domain IDENTITY dot survives: the kit glyph and slot, and the host alias for both',
+       && tokens.includes('cur-sb-dot-9') && tokens.includes('dm-row-dot-9'),
+      '★ the domain IDENTITY dot survives: the kit glyph and the domain\'s RECORDED slot (9, not its position 1), and the host alias for both',
       tokens.join(' '));
-    ok(tokens.filter((t) => /-dot-\d$/.test(t)).every((t) => t.endsWith('-1')),
+    ok(tokens.filter((t) => /-dot-\d+$/.test(t)).every((t) => t.endsWith('-9')),
       '...and every slot token on it names the SAME slot — two names, one colour');
   }
   ok(rowOf('articles').includes('dm-row-attn'),
     'and so does the ATTENTION dot — open health issues is a different question from freshness');
   ok(rowOf('articles').includes('4 open health issue'),
     '…with its count still in the row\'s accessible name');
+
+  // ── §8c THE HEALTH MARK HAS THREE STATES, NOT TWO (v3.76.0) ───────────
+  // Before: issues -> a dot; anything else -> nothing, so a domain nobody had
+  // scanned read exactly like a clean one. Now NOT CHECKED has its own hollow
+  // ring and words, and "no issues" is said only with a scan result in hand.
+  ok(rowOf('business').includes('dm-row-unscanned-dot') && !rowOf('business').includes('dm-row-attn'),
+    '★ a domain with NO scan result wears the hollow NOT-CHECKED ring, never the issues dot', rowOf('business').slice(-400));
+  ok(rowOf('business').includes('Health not checked yet') && rowOf('business').includes('run a scan'),
+    '★ …and says so in its accessible name: "Health not checked yet — open this domain to run a scan"');
+  ok(!/No open health issues/.test(rowOf('business')),
+    '★ …and NEVER "no issues" without a scan result');
+  ok(!rowOf('articles').includes('dm-row-unscanned-dot'),
+    'a SCANNED domain carries no not-checked ring');
+  const scannedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const h2 = api.run({
+    loaded: true, loadError: null, activeSlug: 'fresh', healthLoading: true,
+    readonlySet: new Set(),
+    healthSummary: { articles: { count: 0, scannedAt }, business: { count: 2, scannedAt } },
+    domains: [
+      { slug: 'articles', displayName: 'Articles', pageCount: 3, lastIngestDate: today, identitySlot: 1 },
+      { slug: 'business', displayName: 'Business', pageCount: 3, lastIngestDate: today, identitySlot: 2 },
+      { slug: 'fresh', displayName: 'Fresh', pageCount: 0, lastIngestDate: null, identitySlot: 3 },
+    ],
+  });
+  const rowOf2 = (slug) => {
+    const i = h2.indexOf('data-domain-slug="' + slug + '"');
+    return i < 0 ? '' : h2.slice(h2.lastIndexOf('<button', i), h2.indexOf('</button>', i) + 9);
+  };
+  ok(!rowOf2('articles').includes('dm-row-attn') && !rowOf2('articles').includes('dm-row-unscanned-dot')
+    && rowOf2('articles').includes('No open health issues, checked 5 min ago'),
+    '★ a scanned CLEAN domain: no glyph, and "No open health issues, checked 5 min ago" — the scan\'s age', rowOf2('articles').slice(-300));
+  ok(rowOf2('business').includes('dm-row-attn') && rowOf2('business').includes('2 open health issues, checked 5 min ago'),
+    '★ a scanned domain WITH issues: the dot, the count and the scan\'s age', rowOf2('business').slice(-300));
+  ok(rowOf2('fresh').includes('dm-row-unscanned-dot') && rowOf2('fresh').includes('Health check running'),
+    'the OPEN domain whose scan is running says "Health check running" beside the same hollow ring', rowOf2('fresh').slice(-300));
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -1005,7 +1044,7 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
     // arms, because neither changed in this adoption and a second frozen copy
     // of `domainLastEventText` would be a second thing to keep in step.
     const LIFT = ['renderSidebar', 'knowledgeFolderBtn'];
-    const SHARED_FNS = ['domainLastEventText'];
+    const SHARED_FNS = ['domainLastEventText', 'domainHealthBadgeHtml'];
     const build = (src, kit) => {
       const body = PRE2 + SHARED_FNS.map((n) => extractFunction(NOW, n)).join('\n\n') + '\n\n'
         + LIFT.map((n) => extractFunction(src, n)).join('\n\n') +
@@ -1013,11 +1052,11 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
       return kit
         ? new Function('formatDayAge', 'freshnessDotHtml', 'clockGlyph',
             'renderSidebarHead', 'renderSidebarGroup', 'renderSidebarRow',
-            'identityDotClass', body)(
+            'identitySlotClass', 'formatAge', body)(
             formatDayAge, freshnessDotHtml, clockGlyph,
-            renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass)
-        : new Function('formatDayAge', 'freshnessDotHtml', 'clockGlyph', body)(
-            formatDayAge, freshnessDotHtml, clockGlyph);
+            renderSidebarHead, renderSidebarGroup, renderSidebarRow, identitySlotClass, formatAge)
+        : new Function('formatDayAge', 'freshnessDotHtml', 'clockGlyph', 'formatAge', body)(
+            formatDayAge, freshnessDotHtml, clockGlyph, formatAge);
     };
     const refApi = build(REF, false);
     const nowApi = build(NOW, true);
@@ -1030,15 +1069,19 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
     const st = (over) => ({
       loaded: true, loadError: null, activeSlug: 'articles', kbBusy: false,
       readonlySet: new Set(['mirror']), healthSummary: { articles: 4, business: 0 },
+      // v3.76.0: the recorded slots EQUAL the positions here, because the
+      // frozen reference paints by position (`index % 6`) — this section
+      // proves the kit adoption moved nothing, not the identity rule (that is
+      // §8's and test-next-domain-dots.js's).
       domains: [
         { slug: 'articles', displayName: 'Articles', pageCount: 3421, lastIngestDate: today,
-          lastIngestKind: 'ingest', lastIngestTitle: 'A <b>fresh</b> source' },
+          lastIngestKind: 'ingest', lastIngestTitle: 'A <b>fresh</b> source', identitySlot: 1 },
         { slug: 'business', displayName: 'Business', pageCount: 96, lastIngestDate: daysAgo(42),
-          lastIngestKind: 'compile', lastIngestTitle: 'Pricing thread' },
+          lastIngestKind: 'compile', lastIngestTitle: 'Pricing thread', identitySlot: 2 },
         { slug: 'mirror', displayName: 'Shared Mirror', pageCount: 1, lastIngestDate: daysAgo(3),
-          lastIngestKind: null, lastIngestTitle: null },
+          lastIngestKind: null, lastIngestTitle: null, identitySlot: 3 },
         { slug: 'fresh', displayName: 'Brand New', pageCount: 0, lastIngestDate: null,
-          lastIngestKind: null, lastIngestTitle: null },
+          lastIngestKind: null, lastIngestTitle: null, identitySlot: 4 },
       ],
       ...over,
     });
@@ -1052,7 +1095,15 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
       ['loading', st({ loaded: false, kbBusy: true, domains: [] })],
       ['load error', st({ loadError: 'nope', domains: [] })],
     ];
-    const normalise = (h) => h
+    // v3.76.0 — A FOURTH, NAMED NORMALISATION: the health mark's two new
+    // states (NOT CHECKED: a hollow ring + words; CLEAN: words only). They are
+    // a deliberate addition AFTER the adoption this section freezes, so they
+    // are stripped here and asserted on their own below and in §8c — and the
+    // strip is proved to remove nothing else (the CONTROLs after the loop).
+    const stripHealth = (h) => h
+      .replace(/<span class="dm-row-unscanned-dot" aria-hidden="true"><\/span>/g, '')
+      .replace(/<span class="visually-hidden">(?:Health not checked yet[^<]*|Health check running|No open health issues[^<]*)<\/span>/g, '');
+    const normalise = (h) => stripHealth(h)
       .replace(/cur-sb-[a-z0-9-]+ ?/g, '')
       .replace(/ type="button"/g, '')
       .replace(/<div class="cur-eyebrow" style="margin-top:10px">/g, '<div class="cur-eyebrow">');
@@ -1082,7 +1133,12 @@ const document = { getElementById() { return null; }, querySelectorAll() { retur
       + 'because it strips nothing');
 
     // ── NORMALISATION 1 IS INERT: the host's tokens survive, in order ────
-    const nowRows = nowApi.run(st());
+    ok(stripHealth('<span class="visually-hidden">4 open health issues</span><span class="dm-row-attn"></span>')
+       === '<span class="visually-hidden">4 open health issues</span><span class="dm-row-attn"></span>',
+      'CONTROL — the v3.76.0 health strip leaves the ISSUES state (the reference\'s own) untouched');
+    ok(stripHealth(nowApi.run(st())) !== nowApi.run(st()),
+      'CONTROL — …and it really does remove the new states from this fixture (mirror and fresh are unchecked, business is clean)');
+    const nowRows = stripHealth(nowApi.run(st()));
     const refRows = refApi.run(st());
     const classesOf = (h) => [...h.matchAll(/class="([^"]*)"/g)].map((m) => m[1]);
     const refCls = classesOf(refRows);

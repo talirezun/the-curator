@@ -98,7 +98,8 @@ const INJECT = {
   fetch: (url, init) => { H.fetches.push(url); return H.fetchImpl(url, init); },
   renderRunsOn: (ro) => `<runs model="${ro.model}"></runs>`,
   aiActionDisabledAttrs: () => '',
-  identityDotClass: (i) => 'id-' + i,
+  identitySlotClass: (i) => 'id-' + i,
+  domainIdentityClass: (m, slug) => (m && m[slug] ? 'id-' + m[slug] : ''),
   renderMonitor: (o) => `<monitor label="${escapeHtml(o.label)}">` +
     o.lines.map((l) => `<line key="${escapeHtml(l.key)}" value="${escapeHtml(String(l.value))}" sub="${escapeHtml(l.sub || '')}"></line>`).join('') +
     `<note>${escapeHtml(o.note || '')}</note></monitor>`,

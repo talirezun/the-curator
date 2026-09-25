@@ -220,13 +220,14 @@ import { explainerHtml, explainerMark } from '../shared/explainer.js';
 // `alias: 'settings'` keeps `settings-nav-list` / `settings-nav-row` /
 // `row-label` / `row-hint` on the SAME elements, because this file's own click
 // binder (`wireGlobalListeners`) and four suites address them by name.
-import { renderSidebarHead, renderSidebarGroup, renderSidebarRow, identityDotClass } from '../shared/sidebar.js';
+import { renderSidebarHead, renderSidebarGroup, renderSidebarRow, identitySlotClass, domainIdentityClass } from '../shared/sidebar.js';
 // ── THE DEPTH BAR'S IDENTITY TONE (v3.66.0) ───────────────────────────────
 // The Vault folder's per-domain page bars take each domain's OWN colour, from
 // the same palette and the same mapping as the identity dot beside them
-// (design rule 5) — `depthIdentityClass(i)` and `identityDotClass(i)` both
-// call `identitySlot(i)`, so there is no second mapping to drift.
-import { depthIdentityClass } from '../shared/depth-bar.js';
+// (design rule 5) — `depthIdentitySlotClass(slot)` and `identitySlotClass(slot)`
+// both take the domain's RECORDED slot (v3.76.0), so there is no second
+// mapping to drift.
+import { depthIdentitySlotClass } from '../shared/depth-bar.js';
 // ── THE MONITOR, for every LIVE-STATE reading on this screen ─────────────
 // The bridge's connection strip, its stale-bridge warning, the self-test
 // outcome and the two session readings were four hand-built treatments of one
@@ -1780,9 +1781,9 @@ async function loadConfig(token) {
 /**
  * GET /api/domains/stats → state.vaultDomains. Never throws.
  *
- * THE INDEX IS THE ROUTE'S ORDER, which is `listDomains()` — the order every
- * other surface's `identityDotClass(i)` keys on — so it is recorded BEFORE any
- * sort. A domain whose stats failed keeps its row with `pageCount: null`
+ * THE INDEX IS THE ROUTE'S ORDER, recorded BEFORE any sort as a tie-break.
+ * The COLOUR is `identitySlot`, the domain's recorded slot (v3.76.0) — never
+ * the index. A domain whose stats failed keeps its row with `pageCount: null`
  * (the route returns `{slug, error}`), because a reading that could not be
  * taken is not a zero.
  */
@@ -1796,6 +1797,7 @@ async function loadVaultDomains(token) {
         slug: d && typeof d.slug === 'string' ? d.slug : null,
         displayName: d && typeof d.displayName === 'string' && d.displayName ? d.displayName : null,
         pageCount: d && Number.isInteger(d.pageCount) && d.pageCount >= 0 ? d.pageCount : null,
+        identitySlot: d && Number.isInteger(d.identitySlot) ? d.identitySlot : null,
         index,
       })).filter((d) => d.slug);
     } else {
@@ -9501,10 +9503,10 @@ function renderToolMap() {
  *
  * NEVER RED: `max`, never `budget` — being the busiest project is not a fault.
  *
- * The identity index is `state.defaultDomainInfo.domains` (the route answers
- * `listDomains()`, the order every other surface keys `identityDotClass` on).
- * A row whose domain this install does not hold gets NO dot — never a guessed
- * one (v3.65.3's own rule for an unindexed domain).
+ * The identity slot is `state.defaultDomainInfo.identity` (v3.76.0 — each
+ * domain's RECORDED slot, the one every other surface paints from). A row
+ * whose domain this install does not hold gets NO dot — never a guessed one
+ * (v3.65.3's own rule for an unindexed domain).
  */
 const ACROSS_PROJECTS_MAX_ROWS = 12;
 function renderAcrossProjects() {
@@ -9562,8 +9564,6 @@ function renderAcrossProjectsBody() {
   } else {
     const w = P.window || {};
     const capWindow = logWindowWords(w);
-    const domains = state.defaultDomainInfo && Array.isArray(state.defaultDomainInfo.domains)
-      ? state.defaultDomainInfo.domains : [];
     const busiest = Number.isInteger(w.busiestSaved) && w.busiestSaved > 0 ? w.busiestSaved : 0;
     const measured = w.logPresent === true
       ? P.byProject.filter((r) => r && Number.isInteger(r.sessions) && Number.isInteger(r.sessionsSaved))
@@ -9576,7 +9576,8 @@ function renderAcrossProjectsBody() {
     const top = measured.find((r) => r.sessionsSaved === busiest) || null;
     const busiestName = top && typeof top.project === 'string' && top.project ? top.project : 'the busiest project';
     const lines = shown.map((r) => {
-      const idx = typeof r.domain === 'string' ? domains.indexOf(r.domain) : -1;
+      const dotCls = typeof r.domain === 'string'
+        ? domainIdentityClass(state.defaultDomainInfo && state.defaultDomainInfo.identity, r.domain) : '';
       const name = typeof r.project === 'string' && r.project ? r.project : '(unnamed)';
       const key = typeof r.domain === 'string' && r.domain && r.domain !== name
         ? r.domain + ' / ' + name : name;
@@ -9588,7 +9589,7 @@ function renderAcrossProjectsBody() {
         key,
         value: r.sessionsSaved,
         markHtml: '<span class="settings-id-mark' + (idle ? ' settings-id-idle' : '') + '">' +
-          (idx >= 0 ? '<span class="cur-sb-dot ' + identityDotClass(idx) + '" aria-hidden="true"></span>' : '') +
+          (dotCls ? '<span class="cur-sb-dot ' + dotCls + '" aria-hidden="true"></span>' : '') +
           '</span>',
         sub,
         depth: r.sessionsSaved > 0 && busiest > 0
@@ -9675,7 +9676,7 @@ function renderAcrossProjectsBody() {
  * The app twin of the widget's per-domain page bars. One line per domain: its
  * identity dot, its folder name, its page count with a bar against the
  * LARGEST domain in the folder — and the bar takes the domain's OWN colour
- * (`depthIdentityClass`), the one place a depth bar wears identity, because
+ * (`depthIdentitySlotClass`), the one place a depth bar wears identity, because
  * here each row IS a domain (design rule 6's identity tone).
  *
  * `pageCount` is getDomainStats' own figure — the same function the widget's
@@ -9702,12 +9703,14 @@ function renderVaultDomains() {
         const n = d.pageCount;
         return {
           key: d.slug,
-          markHtml: '<span class="settings-id-mark"><span class="cur-sb-dot ' + identityDotClass(d.index) +
-            '" aria-hidden="true"></span></span>',
+          markHtml: '<span class="settings-id-mark">' +
+            (identitySlotClass(d.identitySlot)
+              ? '<span class="cur-sb-dot ' + identitySlotClass(d.identitySlot) + '" aria-hidden="true"></span>' : '') +
+            '</span>',
           value: Number.isInteger(n) ? n : 'not read',
           sub: Number.isInteger(n) ? (n === 1 ? 'page' : 'pages') : '',
           depth: Number.isInteger(n) && n > 0 && largest > 0
-            ? { amount: n, max: largest, toneClass: depthIdentityClass(d.index),
+            ? { amount: n, max: largest, toneClass: depthIdentitySlotClass(d.identitySlot) || undefined,
                 label: n === largest ? n + ' pages — the largest domain in this folder'
                   : n + ' of ' + largest + ' pages, the largest domain in this folder' }
             : undefined,

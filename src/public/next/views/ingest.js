@@ -181,7 +181,7 @@ import { formatDayAge, freshnessDotHtml, clockGlyph } from '../shared/age.js';
 // second adoption with its own suites) — but the dot it now carries is the
 // kit's own glyph and the kit's own colour, so a destination row and that
 // domain's row on the Domains rail cannot disagree.
-import { identityDotClass } from '../shared/sidebar.js';
+import { identitySlotClass } from '../shared/sidebar.js';
 // THE DEPTH BAR (design rule 6, v3.66.0). The batch panel is one of the four
 // hosts OUTSIDE a monitor, so it imports the bar from its public address. See
 // `queueBudgetFacts` for the one reading it draws: spend against the cap.
@@ -1321,6 +1321,10 @@ async function fetchDomainStats() {
         .map((d) => ({
           slug: d.slug,
           displayName: d.displayName || d.slug,
+          // The domain's RECORDED identity colour slot (v3.76.0) — NOT its
+          // position in this list, which filters the mirrors out and so was
+          // never the install's position either.
+          identitySlot: Number.isInteger(d.identitySlot) ? d.identitySlot : null,
           pageCount: Number.isFinite(d.pageCount) ? d.pageCount : null,
           lastIngestDate: typeof d.lastIngestDate === 'string' && d.lastIngestDate ? d.lastIngestDate : null,
           // WHAT the last write was, beside WHEN. Both are additive fields on
@@ -1370,7 +1374,7 @@ function destinationsSignature() {
     // That is precisely the "a guard that cannot see a pane is not a guard for
     // that pane" finding this function's own docblock records, one line along.
     (state.domains || []).map((d) => [
-      d.slug, d.displayName, formatDestinationMeta(d), formatDestinationEvent(d),
+      d.slug, d.displayName, d.identitySlot, formatDestinationMeta(d), formatDestinationEvent(d),
     ])
   );
 }
@@ -1776,13 +1780,12 @@ function renderSidebar(token) {
         (isActive ? ' aria-current="true"' : '') + '>' +
         // THE IDENTITY DOT — the same glyph and the same palette slot this
         // domain carries on the Domains rail, on the Context rail and on its
-        // Chat chip. `i` is the position in `state.domains`, which is
-        // GET /api/domains/stats' order and therefore listDomains()'s: the
-        // index every one of those surfaces counts from. It is aria-hidden by
+        // Chat chip: `identitySlot`, the slot RECORDED for the domain
+        // (v3.76.0), never its position in this list. It is aria-hidden by
         // omission of any text — the row's accessible name is the domain name
         // beside it, and a screen reader announcing a colour would add
         // nothing a sighted glance is not already getting for free.
-        '<span class="cur-sb-dot ' + identityDotClass(i) + '"></span>' +
+        '<span class="cur-sb-dot ' + identitySlotClass(d.identitySlot) + '"></span>' +
         '<span class="ing-dest-main">' +
           '<span class="ing-dest-name">' + escapeHtml(d.displayName || d.slug) + '</span>' +
           // Line one: the key figure, then the freshness mark, the clock glyph

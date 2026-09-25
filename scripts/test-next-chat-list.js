@@ -19,7 +19,7 @@
  *   §3  Select mode and the list head.
  *   §4  The wiring, driven with a fake root.
  *   §5  shared/age-ticker.js — named targets, prefixes, no repaint, the day.
- *   §6  ADOPTION: Chat uses renderSidebarRow, .row-act, identityDotClass and
+ *   §6  ADOPTION: Chat uses renderSidebarRow, .row-act, identitySlotClass and
  *       P2's answer API, and the retired idioms are gone.
  *   §7  F2 — the answer's cost: what it cost, or today's price said as today's.
  *   §8  F5 — the compile confirm prices the fallback it may bill.
@@ -31,7 +31,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as LIST from '../src/public/next/views/chat-list.js';
 import * as TICK from '../src/public/next/shared/age-ticker.js';
-import { renderSidebarRow, identityDotClass } from '../src/public/next/shared/sidebar.js';
+import { renderSidebarRow, identitySlotClass } from '../src/public/next/shared/sidebar.js';
 import { formatUsdHonest } from '../src/public/next/shared/format-usd.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -64,9 +64,11 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&':
 
 const NOW = new Date(2026, 8, 25, 15, 0, 0).getTime(); // local 25 Sep 2026, 15:00
 const at = (daysAgo, h = 12, m = 0) => { const d = new Date(NOW); d.setDate(d.getDate() - daysAgo); d.setHours(h, m, 0, 0); return d.toISOString(); };
+// `identitySlot` is each domain's RECORDED colour slot (v3.76.0) — deliberately
+// NOT its position, so a test that paints by position goes red.
 const DOMAINS = [
-  { slug: 'articles', displayName: 'Articles' }, { slug: 'business', displayName: 'Business' },
-  { slug: 'projects', displayName: 'Projects' },
+  { slug: 'articles', displayName: 'Articles', identitySlot: 4 }, { slug: 'business', displayName: 'Business', identitySlot: 1 },
+  { slug: 'projects', displayName: 'Projects', identitySlot: 10 },
 ];
 const ctx = (over = {}) => Object.assign({
   domains: DOMAINS, activeDomain: 'articles', activeConversationId: null, conversations: [],
@@ -82,8 +84,10 @@ section('§1 — the row: the ONE sidebar component, a domain dot, the project m
   const html = LIST.conversationRowHtml(c, ctx());
   ok(html.startsWith('<div class="chat-conv-item"'), 'the item wraps the row and its action (a <button> cannot hold one)');
   ok(html.includes('<button type="button" class="cur-sb-row'), '★ the row IS renderSidebarRow\'s button');
-  ok(html.includes('class="cur-sb-dot ' + identityDotClass(2) + '"'),
-    '★ the dot is identityDotClass(index of the ROW\'s domain) — Projects is slot 3, not the active domain\'s');
+  ok(html.includes('class="cur-sb-dot ' + identitySlotClass(10) + '"') && !html.includes('cur-sb-dot-3"'),
+    '★ the dot is the ROW\'s domain\'s RECORDED slot — Projects is slot 10, not its position (3) nor the active domain\'s');
+  ok(!/cur-sb-dot-\d/.test(LIST.conversationRowHtml(c, ctx({ domains: DOMAINS.map(({ identitySlot, ...d }) => d) }))),
+    '…and with no recorded slot on the row there is NO dot — never a position guess');
   ok(/<span class="cur-sb-event">Projects<span class="cur-sb-sep" aria-hidden="true"> · <\/span><span class="cur-sb-event-mark chat-pmark" aria-hidden="true"><\/span><span class="cur-sb-event-detail">curator<\/span><\/span>/.test(html),
     '★ line three: the domain in WORDS, then the hollow project mark and the project\'s NAME');
   ok(html.includes('8 messages'), 'the figure is the server\'s real messageCount');
@@ -275,8 +279,8 @@ section('§6 — ADOPTION: the one sidebar row, the one row action, the one iden
 // ═════════════════════════════════════════════════════════════════════════
 {
   const listSrc = stripJs(read('views/chat-list.js'));
-  ok(/import \{[^}]*renderSidebarRow[^}]*identityDotClass[^}]*\} from '\.\.\/shared\/sidebar\.js'/.test(listSrc),
-    '★ the conversation pane imports renderSidebarRow and identityDotClass from the ONE sidebar kit');
+  ok(/import \{[^}]*renderSidebarRow[^}]*identitySlotClass[^}]*\} from '\.\.\/shared\/sidebar\.js'/.test(listSrc),
+    '★ the conversation pane imports renderSidebarRow and identitySlotClass from the ONE sidebar kit');
   ok((listSrc.match(/renderSidebarRow\(/g) || []).length === 1 && !/class="chat-conv-row/.test(listSrc),
     '…calls it ONCE, and hand-builds no row of its own');
   ok(/class="row-act chat-conv-act"/.test(listSrc), '★ the per-row trash is `.row-act`');
@@ -295,7 +299,7 @@ section('§6 — ADOPTION: the one sidebar row, the one row action, the one iden
     '★ ONE delegated click resolves a NUMBER through sourceByNumber — the path is never read from the DOM');
   ok(/getElementById\('chat-thread'\)\?\.addEventListener\('click', onThreadCitationClick\)/.test(chatCode),
     '…bound once per thread element (renderMain creates it; renderThreadOnly only replaces its contents)');
-  ok(/identityDotClass\(/.test(extractFunction(chatCode, 'chatHeadMetaHtml')) && /identityDotClass\(/.test(extractFunction(chatCode, 'domainPickerCfg')),
+  ok(/identitySlotClass\(d\.identitySlot\)/.test(extractFunction(chatCode, 'chatHeadMetaHtml')) && /identitySlotClass\(d\.identitySlot\)/.test(extractFunction(chatCode, 'domainPickerCfg')),
     'the header\'s domain dot and the domain pill\'s options use the one identity mapping too');
   ok(read('index.html').includes('<link rel="stylesheet" href="/next/views/chat-list.css">'), 'the pane\'s stylesheet is linked');
 }

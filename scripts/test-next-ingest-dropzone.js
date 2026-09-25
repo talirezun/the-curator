@@ -464,7 +464,7 @@ function loadView(dom) {
   const provided = {
     ...appStubs, ...listboxStubs, ...memoryStubs,
     ...logic, ...text, ...usd, ...ring, ...gate, ...age,
-    identityDotClass: sidebarKit.identityDotClass,
+    identitySlotClass: sidebarKit.identitySlotClass,
     explainerHtml: explainerKit.explainerHtml,
     document: dom.document,
     window: dom.window,

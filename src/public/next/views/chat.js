@@ -106,7 +106,7 @@ import { formatAge, freshnessTier } from '../shared/age.js';
 // `.cur-sb-dot-N`. Imported here so a domain chip in the scope bar is the
 // same colour as that domain's row on the Domains rail, its project rows on
 // the Context rail, and its destination row in Ingest.
-import { identityDotClass } from '../shared/sidebar.js';
+import { identitySlotClass } from '../shared/sidebar.js';
 // v3.72.0: the conversation pane is its own DOM-free module (rows through the
 // ONE sidebar component, the Select mode, live groups) — see its header.
 import {
@@ -2822,7 +2822,7 @@ function listCtx() {
  * The list's DOMAIN FILTER (M1). The shared listbox, one option per domain
  * that can HOLD conversations — a Shared Brain mirror is answered but never
  * written to (src/routes/chat.js, v3.43.0), so it has none to list — each
- * with its identity dot, the same `identityDotClass(index)` every other view
+ * with its identity dot, the same `identitySlotClass(d.identitySlot)` every other view
  * paints that domain with.
  */
 function domainFilterCfg() {
@@ -2833,7 +2833,7 @@ function domainFilterCfg() {
     options.push({
       value: d.slug,
       label: name,
-      html: '<span class="lb-opt-label chat-dom-opt"><span class="cur-sb-dot ' + identityDotClass(i) + '" aria-hidden="true"></span>' +
+      html: '<span class="lb-opt-label chat-dom-opt"><span class="cur-sb-dot ' + identitySlotClass(d.identitySlot) + '" aria-hidden="true"></span>' +
         escapeHtml(name) + '</span>',
     });
   });
@@ -3997,7 +3997,7 @@ function chatHeadMetaHtml() {
   const sep = '<span class="chat-head-sep" aria-hidden="true">·</span>';
   const pages = Number.isFinite(d.pageCount) ? d.pageCount : 0;
   const parts = [
-    '<span class="chat-head-dom"><span class="cur-sb-dot ' + identityDotClass(i) + '" aria-hidden="true"></span>' +
+    '<span class="chat-head-dom"><span class="cur-sb-dot ' + identitySlotClass(d.identitySlot) + '" aria-hidden="true"></span>' +
       escapeHtml(d.displayName || d.slug) + '</span>',
     '<span class="chat-head-pages" id="chat-head-pages">' + pages.toLocaleString() + ' page' + (pages === 1 ? '' : 's') + '</span>',
   ];
@@ -6732,8 +6732,9 @@ function renderComposerPickers() {
     if (cfg.id === 'chat-project-lb') projectLbApi = api;
   }
   pendingListboxes.length = 0;
-  const di = state.domains.findIndex(d => d.slug === state.activeDomain);
-  decoratePill('chat-domain-lb', di >= 0 ? 'cur-sb-dot ' + identityDotClass(di) : '', '');
+  const dd = state.domains.find(d => d.slug === state.activeDomain);
+  const dotCls = dd ? identitySlotClass(dd.identitySlot) : '';
+  decoratePill('chat-domain-lb', dotCls ? 'cur-sb-dot ' + dotCls : '', '');
   decoratePill('chat-project-lb', 'chat-pmark', 'Project');
   decoratePill('chat-length-lb', '', 'Length');
   decoratePill('chat-model-lb', '', 'Model');
@@ -6764,7 +6765,7 @@ function domainPickerCfg() {
       value: d.slug,
       label: name,
       detail,
-      html: '<span class="lb-opt-label chat-dom-opt"><span class="cur-sb-dot ' + identityDotClass(i) + '" aria-hidden="true"></span>' +
+      html: '<span class="lb-opt-label chat-dom-opt"><span class="cur-sb-dot ' + identitySlotClass(d.identitySlot) + '" aria-hidden="true"></span>' +
         escapeHtml(name) + '</span><span class="lb-opt-detail chat-opt-figure">' + escapeHtml(detail) + '</span>',
     };
   });

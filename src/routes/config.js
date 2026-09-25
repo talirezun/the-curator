@@ -11,6 +11,7 @@ import { readGitHubReadToken, createGitHubReadClient, parseGitHubRemote, isValid
 import { getDomainsDir } from '../brain/config.js';
 import { listOtherInstances } from '../brain/instance-probe.js';
 import { listDomains } from '../brain/files.js';
+import { identityMap } from '../brain/domain-identity.js';
 import { getProviderInfo, getFallbackStatus, getDefaultModel } from '../brain/llm.js';
 // Namespace import (NOT a named `{ OFFERABLE_MODELS }` import) is deliberate:
 // this route is being written concurrently with the llm.js change that adds
@@ -569,7 +570,8 @@ router.post('/background-mode', (req, res) => {
 router.get('/default-domain', async (_req, res) => {
   try {
     const domains = await listDomains();
-    res.json({ defaultDomain: getDefaultDomain(), domains });
+    // v3.76.0: each domain's recorded identity slot, for Settings' dots.
+    res.json({ defaultDomain: getDefaultDomain(), domains, identity: await identityMap(domains) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

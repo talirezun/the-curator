@@ -870,15 +870,17 @@ section('v3.65.3  The Vault folder ⓘ is one paragraph, not four rows  (EXECUTE
 // identity mappings, then handed to the real renderStorage, which must place
 // it INSIDE the Vault folder block's body.
 {
-  const { identityDotClass } = await import('../src/public/next/shared/sidebar.js');
-  const { depthIdentityClass } = await import('../src/public/next/shared/depth-bar.js');
+  const { identitySlotClass } = await import('../src/public/next/shared/sidebar.js');
+  const { depthIdentitySlotClass } = await import('../src/public/next/shared/depth-bar.js');
+  // v3.76.0: `identitySlot` is each domain's RECORDED slot and is the colour;
+  // `index` is only the tie-break. The slots are chosen so none equals index+1.
   const state = { ...baseState(), vaultDomainsError: null, vaultDomains: [
-    { slug: 'business', displayName: 'Business', pageCount: 50, index: 0 },
-    { slug: 'posts', displayName: 'Posts', pageCount: 687, index: 1 },
-    { slug: 'research', displayName: 'Research', pageCount: 0, index: 2 },
-    { slug: 'broken', displayName: null, pageCount: null, index: 3 },
+    { slug: 'business', displayName: 'Business', pageCount: 50, index: 0, identitySlot: 6 },
+    { slug: 'posts', displayName: 'Posts', pageCount: 687, index: 1, identitySlot: 9 },
+    { slug: 'research', displayName: 'Research', pageCount: 0, index: 2, identitySlot: 2 },
+    { slug: 'broken', displayName: null, pageCount: null, index: 3, identitySlot: null },
   ] };
-  const extra = { identityDotClass, depthIdentityClass };
+  const extra = { identitySlotClass, depthIdentitySlotClass };
   const mon = lift('renderVaultDomains', state, extra)();
   const lines = [...mon.matchAll(/<div class="cur-mon-line[^"]*"><span class="cur-mon-key">([^<]+)<\/span><span class="cur-mon-value">([^]*?)<\/span>(?:<span class="cur-mon-sub">([^<]*)<\/span>)?<\/div>/g)]
     .map((m) => ({ key: m[1], val: m[2], sub: m[3] || '' }));
@@ -888,11 +890,12 @@ section('v3.65.3  The Vault folder ⓘ is one paragraph, not four rows  (EXECUTE
   const b0 = bar(lines[0] && lines[0].val), b1 = bar(lines[1] && lines[1].val);
   ok(!!b0 && b0.w === 100 && !!b1 && b1.w === 7.3,
     'pages against the LARGEST domain in the folder (687 → 100%, 50 → 7.3%)', JSON.stringify([b0, b1]));
-  ok(!!b0 && b0.cls === depthIdentityClass(1) && !!b1 && b1.cls === depthIdentityClass(0),
-    'each bar wears ITS OWN domain’s identity tone — the depth bar’s identity channel', JSON.stringify([b0, b1]));
-  ok(/cur-sb-dot cur-sb-dot-2"/.test(lines[0] ? lines[0].val : '') && /cur-sb-dot cur-sb-dot-1"/.test(lines[1] ? lines[1].val : ''),
-    '...and the dot beside it is the SAME slot (identityDotClass, keyed on the install’s domain index, not the sorted row)');
-  ok(identityDotClass(1).endsWith('-2') && depthIdentityClass(1).endsWith('-2'), 'CONTROL: the two mappings agree on slot 2');
+  ok(!!b0 && b0.cls === depthIdentitySlotClass(9) && !!b1 && b1.cls === depthIdentitySlotClass(6),
+    '★ each bar wears ITS OWN domain’s RECORDED identity tone (v3.76.0) — not its position', JSON.stringify([b0, b1]));
+  ok(/cur-sb-dot cur-sb-dot-9"/.test(lines[0] ? lines[0].val : '') && /cur-sb-dot cur-sb-dot-6"/.test(lines[1] ? lines[1].val : ''),
+    '...and the dot beside it is the SAME recorded slot (identitySlotClass), not the sorted row nor the index');
+  ok(identitySlotClass(9).endsWith('-9') && depthIdentitySlotClass(9).endsWith('-9'), 'CONTROL: the two mappings agree on slot 9');
+  ok(lines[3] && !/cur-sb-dot-\d/.test(lines[3].val), 'a domain with no recorded slot carries NO dot — never a guessed one');
   ok(lines[2] && lines[2].sub === 'pages' && bar(lines[2].val) === null && /^0$|>0$/.test(lines[2].val.replace(/<[^>]*>/g, '')),
     'a domain with 0 pages prints 0 and draws no bar');
   ok(lines[3] && /not read/.test(lines[3].val) && bar(lines[3].val) === null && lines[3].sub === '',

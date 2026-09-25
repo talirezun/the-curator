@@ -137,9 +137,11 @@ function summary(over = {}) {
     ],
     capture: { logPresent: true, logFiles: 1, windowDays: 30, busiestSaved: 18 },
     domains: [
-      { domain: 'posts', index: 0, displayName: 'posts', pageCount: 687, entities: 301, concepts: 216, summaries: 170 },
-      { domain: 'projects', index: 1, displayName: 'projects', pageCount: 30, entities: 10, concepts: 10, summaries: 10 },
-      { domain: 'business', index: 2, displayName: 'business', pageCount: 120, entities: 60, concepts: 40, summaries: 20 },
+      // `slot` is each domain's RECORDED identity slot (v3.76.0) and is the
+      // colour; `index` is the list position and deliberately is NOT.
+      { domain: 'posts', index: 0, slot: 5, displayName: 'posts', pageCount: 687, entities: 301, concepts: 216, summaries: 170 },
+      { domain: 'projects', index: 1, slot: 2, displayName: 'projects', pageCount: 30, entities: 10, concepts: 10, summaries: 10 },
+      { domain: 'business', index: 2, slot: 9, displayName: 'business', pageCount: 120, entities: 60, concepts: 40, summaries: 20 },
     ],
     // The pulse contract, same shape as test-tray-paint.js's fixture.
     pulse: {
@@ -320,16 +322,18 @@ section('§8 (2) domains — largest first, the KIT\'S identity mapping, EVERY d
   eq(d.label, 'Knowledge · 3 domains', 'the parent row names its unit and count: "Knowledge · 3 domains"');
   eq(d.rows.map((r) => r.domain), ['posts', 'business', 'projects'], 'largest first');
   eq(d.rows.map((r) => r.frac), [1, 120 / 687, 30 / 687], 'each against the LARGEST domain (687)');
-  eq(d.rows.map((r) => r.ink), [0, 2, 1].map((i) => PALETTE.identityHex(i, 'dark')),
-    'each bar wears identityHex(its install index) — the app\'s ONE mapping, not a second one');
+  eq(d.rows.map((r) => r.ink), [5, 9, 2].map((slot) => PALETTE.slotHex(slot, 'dark')),
+    '★ each bar wears its domain\'s RECORDED slot (v3.76.0) — the app\'s ONE mapping, not its list position');
+  ok(d.rows[0].ink !== PALETTE.identityHex(0, 'dark'),
+    'CONTROL — posts is index 0 but slot 5: the position colour differs, so the check above can fail');
+  eq(d.rows.map((r) => r.ink), [5, 9, 2].map((slot) => PALETTE.identityHex(slot - 1, 'dark')),
+    '…and it is identityHex(slot − 1), the palette main.js hands in');
   const light = build(summary()).domains;
-  eq(light.rows.map((r) => r.ink), [0, 2, 1].map((i) => PALETTE.identityHex(i, 'light')), '… in the light ramp on a light menu');
+  eq(light.rows.map((r) => r.ink), [5, 9, 2].map((slot) => PALETTE.slotHex(slot, 'light')), '… in the light ramp on a light menu');
   const high = build(summary({ domains: [
-    { domain: 'h', index: 7, pageCount: 9 }, { domain: 'l', index: 11, pageCount: 3 }] }), { dark: true }).domains;
-  eq(high.rows.map((r) => r.ink), [PALETTE.identityHex(7, 'dark'), PALETTE.identityHex(11, 'dark')],
-    'indices 7 and 11 wear slots 8 and 12 — the widget wraps where the kit wraps, at IDENTITY_SLOTS, never earlier');
-  ok(high.rows[0].ink !== PALETTE.identityHex(1, 'dark') && high.rows[1].ink !== PALETTE.identityHex(5, 'dark'),
-    'CONTROL — those slots differ from the ones a six-slot wrap would pick, so the check above can fail');
+    { domain: 'h', index: 0, slot: 8, pageCount: 9 }, { domain: 'l', index: 1, slot: 12, pageCount: 3 }] }), { dark: true }).domains;
+  eq(high.rows.map((r) => r.ink), [PALETTE.slotHex(8, 'dark'), PALETTE.slotHex(12, 'dark')],
+    'slots 8 and 12 paint 8 and 12 — every one of IDENTITY_SLOTS is reachable');
   eq(d.rows[0].label, 'posts · 687 pages', 'the label is the figure');
   ok(/largest domain, posts \(687 pages\)/.test(d.rows[1].toolTip), 'the tooltip NAMES the denominator');
   // NO CAP: the submenu has room, so "…and N more" is gone (the approved mockup).
@@ -352,9 +356,9 @@ section('§8 (2) domains — largest first, the KIT\'S identity mapping, EVERY d
   const bare = M.buildTrayModel(summary(), { now: NOW, dark: true }).domains;
   ok(bare.rows.every((r) => r.ink === null && r.bar.ink === BARS.BAR_PALETTE.dark.neutral),
     'with no identityHex handed in, every domain bar is NEUTRAL — a missing colour is never guessed');
-  const unindexed = build(summary({ domains: [{ domain: 'a', pageCount: 5 }] }), { dark: true }).domains;
+  const unindexed = build(summary({ domains: [{ domain: 'a', index: 0, pageCount: 5 }] }), { dark: true }).domains;
   ok(unindexed.rows[0].ink === null && unindexed.rows[0].bar.ink === BARS.BAR_PALETTE.dark.neutral,
-    'a domain with no install index gets NO identity colour (v3.65.3\'s rule)');
+    'a domain with no RECORDED slot (only a list index) gets NO identity colour — a position is never a colour (v3.65.3 + v3.76.0)');
   eq(build(summary({ domains: null })).domains, null, 'domains null (unreadable) → no section');
   eq(build(summary({ domains: [] })).domains, null, 'no domains → no section');
 }

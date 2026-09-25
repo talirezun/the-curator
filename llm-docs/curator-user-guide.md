@@ -221,7 +221,7 @@ Five consistent visual channels, none of them a screen of their own, and — sin
 
 | Channel | What it shows | Example |
 |---|---|---|
-| **Identity dot** | Which domain — one of twelve colours, fixed by the domain's position in your list, the same colour wherever that domain is named | A domain's dot in the sidebar, a Chat domain chip, a row in "Domains in this folder" |
+| **Identity dot** | Which domain — one of twelve colours, recorded for the domain itself (since v3.76.0, in a small file in its folder), so adding, deleting or renaming another domain never changes it; the same colour wherever that domain is named, and on every Mac that syncs the folder | A domain's dot in the sidebar, a Chat domain chip, a row in "Domains in this folder" |
 | **Freshness dot** | How recent a reading is, as a tier | The dot beside "saved 41 min ago" |
 | **Clock + age** | How recent, in words | "saved 41 min ago" itself |
 | **Depth bar** | Size or share against a named total — never an unnamed one | A document's size against a project's 200 KB budget, issues per category in Wiki health, a project's saved sessions against the busiest project |
@@ -251,7 +251,7 @@ The list loads with the domain, so there is nothing to press. On a large domain 
 
 A domain is a focused knowledge silo — a dedicated wiki for one topic area, with its own AI schema, wiki pages, chat conversations and Obsidian graph cluster. Domains are siloed from each other by default.
 
-Click **Domains** in the rail. The panel beside the rail lists every domain under a **KNOWLEDGE** heading with its page count. Two markers can appear on a row: **RO** for a read-only Shared Brain mirror, and a small dot on the right when the domain has open health issues. Above the list sit **New domain** and **Use existing folder**.
+Click **Domains** in the rail. The panel beside the rail lists every domain under a **KNOWLEDGE** heading with its page count. Markers on a row: **RO** for a read-only Shared Brain mirror; on the right, a small **filled dot** when the domain has open health issues, a small **hollow ring** when its health has **not been checked yet** this session (open the domain and its free scan runs; since v3.76.0), and **no mark** only when a scan found no open issues — no mark never means "not checked". Updating to v3.76.0 may change the domain colours once; after that they stay put. Above the list sit **New domain** and **Use existing folder**.
 
 | Action | What happens |
 |---|---|

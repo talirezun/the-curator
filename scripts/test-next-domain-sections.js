@@ -2448,7 +2448,7 @@ section('S5c -- ④\'S HEAD READING AND ITS DOMAIN READER (v3.65.3)');
 // ═════════════════════════════════════════════════════════════════════════
 {
   const box = new Function(`
-    let state = { domains: [{ slug: 'alpha', pageCount: 12 }, { slug: 'beta' }, { slug: 'shared-x', pageCount: 3 }],
+    let state = { domains: [{ slug: 'alpha', pageCount: 12, identitySlot: 3 }, { slug: 'beta', identitySlot: 8 }, { slug: 'shared-x', pageCount: 3, identitySlot: 1 }],
       sharedLens: null, sharedJump: null, sharedReading: '' };
     let document = null;
     ${extractFunction(SRC, 'sharedJumpReading')}
@@ -2486,10 +2486,10 @@ section('S5c -- ④\'S HEAD READING AND ITS DOMAIN READER (v3.65.3)');
   eq('...and still reveals the SHARED tile (D7: it can now, the panel always mounts)', tile.hidden, false);
 
   const D = box.describeDomainForShared;
-  eq('the domain reader gives the INSTALL\'s index — the identity dot\'s key', D('beta').index, 1);
+  eq('the domain reader gives the domain\'s RECORDED slot (v3.76.0) — the identity dot\'s key, not its index (1)', D('beta').slot, 8);
   eq('...and the page count when the list has one', D('alpha').pages, 12);
   eq('...null, not 0, when it does not', D('beta').pages, null);
-  eq('...and -1 for a domain the list does not hold, so no colour is guessed', D('nope').index, -1);
+  eq('...and null for a domain the list does not hold, so no colour is guessed', D('nope').slot, null);
 }
 
 // ═════════════════════════════════════════════════════════════════════════

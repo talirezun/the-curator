@@ -1870,10 +1870,13 @@ export function buildTrayModel(summary, opts = {}) {
   // src/brain/identity-palette.js), handed in by main.js. Absent, a domain's
   // bar is drawn in the neutral ink: a missing colour is never a guessed one.
   const identityHexFn = typeof opts.identityHex === 'function' ? opts.identityHex : null;
-  const identityInk = (index) => {
-    if (!identityHexFn || !Number.isInteger(index) || index < 0) return null;
+  // v3.76.0: keyed on the domain's RECORDED slot (1-based, `domains[].slot`
+  // from the data layer), never on its list position. identityHex takes a
+  // 0-based palette index, so slot N is index N-1.
+  const identityInk = (slot) => {
+    if (!identityHexFn || !Number.isInteger(slot) || slot < 1) return null;
     try {
-      const h = identityHexFn(index, dark ? 'dark' : 'light');
+      const h = identityHexFn(slot - 1, dark ? 'dark' : 'light');
       return typeof h === 'string' && /^#[0-9a-fA-F]{6}$/.test(h) ? h : null;
     } catch { return null; }
   };
@@ -2544,6 +2547,7 @@ export function buildTrayModel(summary, opts = {}) {
         domain: str(d.domain),
         name: str(d.displayName) || str(d.domain),
         index: Number.isInteger(d.index) && d.index >= 0 ? d.index : null,
+        slot: Number.isInteger(d.slot) && d.slot >= 1 ? d.slot : null,
         pageCount: Number.isInteger(d.pageCount) && d.pageCount >= 0 ? d.pageCount : null,
         entities: Number.isInteger(d.entities) ? d.entities : null,
         concepts: Number.isInteger(d.concepts) ? d.concepts : null,
@@ -2567,7 +2571,7 @@ export function buildTrayModel(summary, opts = {}) {
         : d.pageCount.toLocaleString('en-US') + (d.pageCount === 1 ? ' page' : ' pages');
       const frac = d.pageCount === null || largest === null ? null
         : (largest === 0 ? 0 : d.pageCount / largest);
-      const ink = identityInk(d.index);
+      const ink = identityInk(d.slot);
       const b = frac === null ? null : renderBar({ frac, ...(ink ? { ink } : {}) });
       const split = [d.entities, d.concepts, d.summaries].every((v) => v !== null)
         ? d.entities + ' entities · ' + d.concepts + ' concepts · ' + d.summaries + ' summaries' : null;
@@ -2575,6 +2579,7 @@ export function buildTrayModel(summary, opts = {}) {
         id: 'tray-domain-' + (d.index !== null ? d.index : 'x' + d.order),
         domain: d.domain,
         index: d.index,
+        slot: d.slot,
         pageCount: d.pageCount,
         frac,
         ink,

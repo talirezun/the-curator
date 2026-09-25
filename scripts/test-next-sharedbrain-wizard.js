@@ -1199,9 +1199,11 @@ section('§13  v3.65.3 — the mirror name, the early refusal, the order, the no
   ok(/Fixed when you join: changing it means leaving and joining again\./.test(help)
     && /cannot remove a name already published/.test(help),
     '…while what is irreversible (fixed at join; cannot unpublish a name) is VISIBLE in the hint, never folded');
-  ok(/import \{ identityDotClass \} from '\.\.\/shared\/sidebar\.js'/.test(wizard), 'D16: the domain list imports the kit\u2019s identity mapping');
-  ok(/identityDotClass\(allNames\.indexOf\(name\)\)/.test(stripComments(bodyOf(wizard, 'populateDomains'))),
-    '…keyed on the install\u2019s own domain order, not the filtered list');
+  ok(/import \{ domainIdentityClass \} from '\.\.\/shared\/sidebar\.js'/.test(wizard), 'D16: the domain list imports the kit\u2019s identity mapping');
+  ok(/domainIdentityClass\(identity, name\)/.test(stripComments(bodyOf(wizard, 'populateDomains')))
+    && /j\.identity/.test(stripComments(bodyOf(wizard, 'populateDomains')))
+    && !/indexOf\(name\)/.test(stripComments(bodyOf(wizard, 'populateDomains'))),
+    '…keyed on the domain\u2019s RECORDED slot from GET /api/domains\u2019 `identity` map (v3.76.0), never a position');
 }
 
 // ═════════════════════════════════════════════════════════════════════════

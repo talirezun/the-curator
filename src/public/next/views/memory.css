@@ -327,7 +327,7 @@
    rgb(121,199,82) round 8px for that same domain three inches to the left in
    the rail. CONTINUITY BY IDENTITY is one palette, one mapping and ONE GLYPH,
    so the element takes `.cur-sb-dot` — shared/sidebar.css's own 8px round
-   shape — and its colour from `identityDotClass`. NOTHING about size, shape or
+   shape — and its colour from `identitySlotClass`. NOTHING about size, shape or
    colour is declared here any more: a view that restates a kit mark's geometry
    is how two ladders for one quantity came to exist in the first place. */
 .mem-project-mark { flex: none; }

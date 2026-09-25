@@ -202,7 +202,7 @@ import { freshnessTier, formatAge } from '../shared/age.js';
 // re-render, so a typed revoke confirmation or a shown-once token is never
 // touched by it.
 import { subscribeAgeTicker } from '../shared/age-ticker.js';
-import { identityDotClass } from '../shared/sidebar.js';
+import { identitySlotClass } from '../shared/sidebar.js';
 
 function freshState() {
   return {
@@ -472,10 +472,10 @@ export function mountSharedSection(el, opts) {
     domain: typeof o.domain === 'string' ? o.domain : null,
     onBusyChange: typeof o.onBusyChange === 'function' ? o.onBusyChange : null,
     onLensChange: typeof o.onLensChange === 'function' ? o.onLensChange : null,
-    // ADDITIVE (v3.65.3): `describeDomain(slug) → {index, pages}`, read at
-    // RENDER time so a domain switch or a pull is never stale. `index` is the
-    // install's own domain index — the identity dot's key (rule 5); the
-    // section has no domain list of its own and must not invent an order.
+    // ADDITIVE (v3.65.3): `describeDomain(slug) → {slot, pages}`, read at
+    // RENDER time so a domain switch or a pull is never stale. `slot` is the
+    // domain's RECORDED identity slot (v3.76.0; was `index`, a position) —
+    // the identity dot's key (rule 5); the section must not invent one.
     describeDomain: typeof o.describeDomain === 'function' ? o.describeDomain : null,
     // ADDITIVE (v3.72.1, F7): `onActionDone({action, connId})` — called after
     // a Pull finishes, so a host that shows page counts can reload its list.
@@ -1182,27 +1182,28 @@ function ageTickAttrs(iso) {
 
 // ── The section's parts (v3.65.3) ────────────────────────────────────────
 
-/** What the host knows about one domain: its identity index and page count,
- *  or -1 / null when the host did not say (the full view, a suite). Total. */
+/** What the host knows about one domain: its RECORDED identity slot (v3.76.0,
+ *  1-based) and page count, or null / null when the host did not say (the
+ *  full view, a suite). Total. */
 function sectionDomainFacts(slug) {
   const fn = hostCtx && typeof hostCtx.describeDomain === 'function' ? hostCtx.describeDomain : null;
   let facts = null;
   if (fn && slug) { try { facts = fn(slug); } catch { facts = null; } }
-  const index = facts && Number.isFinite(facts.index) && facts.index >= 0 ? facts.index : -1;
+  const slot = facts && Number.isInteger(facts.slot) ? facts.slot : null;
   let pages = facts && Number.isFinite(facts.pages) ? facts.pages : null;
   // v3.72.1 (F7): a count this section re-read after its own pull beats the
   // host's list until the host re-mounts us (mountSharedSection clears it).
   const fresh = state.freshPages && slug ? state.freshPages[slug] : undefined;
   if (Number.isFinite(fresh)) pages = fresh;
-  return { index, pages };
+  return { slot, pages };
 }
 
 /** The kit's identity dot for a domain (design rule 5) — '' when the host
- *  did not give an index, never a guessed colour. */
+ *  did not give a slot, never a guessed colour. */
 function sectionDotHtml(slug) {
-  const { index } = sectionDomainFacts(slug);
-  if (index < 0) return '';
-  return '<span class="cur-sb-dot ' + identityDotClass(index) + '" aria-hidden="true"></span>';
+  const cls = identitySlotClass(sectionDomainFacts(slug).slot);
+  if (!cls) return '';
+  return '<span class="cur-sb-dot ' + cls + '" aria-hidden="true"></span>';
 }
 
 /** A monitor line for a time: the age in words with the app's `.fresh-dot`

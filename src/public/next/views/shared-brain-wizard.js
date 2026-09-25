@@ -144,7 +144,7 @@ import { explainerMark } from '../shared/explainer.js';
 // The identity dot (v3.65.1, design rule 5): one domain, one colour,
 // everywhere it is named — step 4's domain list names domains, so it carries
 // them. Imported, never re-implemented; shared/sidebar.js is the kit's.
-import { identityDotClass } from '../shared/sidebar.js';
+import { domainIdentityClass } from '../shared/sidebar.js';
 
 // ── State ────────────────────────────────────────────────────────────────
 
@@ -1669,10 +1669,10 @@ async function populateDomains() {
     }
 
     container.innerHTML = '';
-    // The install's own domain order is the identity index (rule 5): the
-    // position in the FULL list, never in the filtered one, so a domain is
-    // the same colour here as on its sidebar row.
-    const allNames = domains.map((d) => (typeof d === 'string' ? d : d && d.name));
+    // The domain's RECORDED identity slot (rule 5, v3.76.0) from the route's
+    // `identity` map — never a position — so a domain is the same colour here
+    // as on its sidebar row.
+    const identity = j && typeof j === 'object' && !Array.isArray(j) ? j.identity : null;
     for (const d of eligible) {
       const name = typeof d === 'string' ? d : d.name;
       const label = document.createElement('label');
@@ -1690,7 +1690,7 @@ async function populateDomains() {
       const span = document.createElement('span');
       span.className = 'sbw-domain-name';
       const dot = document.createElement('span');
-      dot.className = 'cur-sb-dot ' + identityDotClass(allNames.indexOf(name));
+      dot.className = ('cur-sb-dot ' + domainIdentityClass(identity, name)).trim();
       dot.setAttribute('aria-hidden', 'true');
       const text = document.createElement('span');
       text.textContent = (d && typeof d === 'object' && d.displayName) ? d.displayName : name;

@@ -975,7 +975,7 @@ section('§8e v3.66.0 — documents, capture and per-domain pages: the widget’
   const s5 = await getTraySummary({ limit: 20 });
   const names = await filesMod.listDomains();
   ok(Array.isArray(s5.domains) && s5.domains.map((x) => x.domain).join(',') === names.join(','),
-    'domains[] is in listDomains() order — the index identityDotClass keys on');
+    'domains[] is in listDomains() order (a tie-break only — the colour is each row\'s recorded `slot`, v3.76.0)');
   const ws0 = s5.domains.find((x) => x.domain === 'workshop') || {};
   const stats = await filesMod.getDomainStats('workshop');
   eq(ws0.pageCount, stats.pageCount, 'pageCount IS getDomainStats’ (what GET /api/domains/stats answers) — one count, two surfaces');
