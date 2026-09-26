@@ -2331,6 +2331,19 @@ collapsing any two would make the table lie in the user's favour: `verified`, `u
 `present-useless` (OpenCode and Kilo take TypeScript plugins, not shell commands; Windsurf has twelve
 hooks and not one of them is a stop, session-end or pre-compaction hook) and `none`.
 
+**`my-curator doctor` never prints the state word bare (v3.77.0).** `verified` here means the hook
+FORMAT is documented; it says nothing about a hook having run, yet `hooks: verified` read as exactly
+that — on Antigravity's row, two lines above the observation that its hooks had not been run.
+`doctor.js`'s `hookStatusBits()` now prints two phrases: the format (`HOOK_FORMAT_LABEL`: `hook
+format documented` / `unmeasured` / `hooks cannot carry the ask` / `no hook mechanism`) and the run
+evidence — `hooks not installed`, `hooks installed · not yet seen running on this machine`, or `the
+hook command ran for it <date> UTC (marker)`. The only evidence on disk is the loop-guard marker
+`my-curator hook` writes under `markerDir()` (`readHookRuns()`), and it counts only when NEWER than
+the Curator hook file: the maintainer's marker folder held over a hundred markers left by 2026-09-19 test runs,
+including Cursor's, whose hooks were never installed. A marker proves the hook COMMAND ran for that
+harness, not that the harness fired it, and the wording says no more than that. The JSON report's
+`hookState` is still the table's word, unchanged; `hookRuns` is new.
+
 **`measured` is `null` on fourteen of the fifteen entries, and that is the point.** The protocol
 in `scripts/measure-harness.js` was run for the first time on 2026-09-20, against Claude Code, and
 that one row carries the result — date, harness version, model, `n`, the protocol sentence, a count

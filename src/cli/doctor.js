@@ -38,6 +38,7 @@ import {
 } from '../brain/harness-adapters.js';
 import { STALE_REMEDY } from '../brain/mcp-bridge-status.js';
 import { EXIT_OK, out, note, flagStr, flagBool, findMarker, resolveProjectForCli } from './resolve.js';
+import { markerDir } from './hook.js';
 
 export const DOCTOR_USAGE = 'my-curator doctor [--project <domain/project>] [--json] [--alias]';
 
@@ -310,6 +311,78 @@ function writable(dir) {
   try { accessSync(dir, FS.W_OK); return true; } catch { return false; }
 }
 
+/**
+ * EVIDENCE THAT A HOOK RAN, read from the only trace one leaves on this
+ * machine: the loop-guard markers `my-curator hook` writes under
+ * `markerDir()` (one JSON file per harness session, `{harness, startedAt,
+ * askedAt}`). Grouped by harness, newest time first.
+ *
+ * Why this exists (v3.77.0): the row used to print the table's hook STATE
+ * word — `hooks: verified` — which means "the hook FORMAT is documented", yet
+ * reads as "the hooks were checked and work". Antigravity's row printed it
+ * two lines above "have NOT been run yet". A state word is about the vendor's
+ * format; whether a hook RAN is a separate fact, and this is the only place
+ * it can come from.
+ *
+ * The evidence is ONE-SIDED, and the wording keeps it so: a marker proves the
+ * hook command ran for that harness; NO marker proves nothing, because the
+ * folder is under the OS temp directory (cleared on restart) and a stop that
+ * decides not to ask writes nothing. Unreadable files are skipped, never fatal.
+ */
+export function readHookRuns(dir = markerDir()) {
+  const byHarness = {};
+  let files = [];
+  try { files = readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { return { dir, byHarness }; }
+  for (const f of files) {
+    let j = null;
+    try { j = JSON.parse(readFileSync(path.join(dir, f), 'utf8')); } catch { continue; }
+    if (!j || typeof j !== 'object' || typeof j.harness !== 'string') continue;
+    const times = [j.startedAt, j.askedAt].map((t) => Date.parse(t)).filter(Number.isFinite);
+    if (!times.length) continue;
+    const at = Math.max(...times);
+    const cur = byHarness[j.harness];
+    if (!cur) byHarness[j.harness] = { lastRunAt: new Date(at).toISOString(), markers: 1, asked: j.askedAt ? 1 : 0 };
+    else {
+      cur.markers++;
+      if (j.askedAt) cur.asked++;
+      if (at > Date.parse(cur.lastRunAt)) cur.lastRunAt = new Date(at).toISOString();
+    }
+  }
+  return { dir, byHarness };
+}
+
+/**
+ * The words a harness row prints about its hooks. NEVER the bare state word:
+ * the FORMAT (what the vendor documents) and the RUN (what this machine has
+ * seen) are two phrases, and no combination can read as "the hooks ran" unless
+ * a marker says so. Pure, so the suite can drive every combination.
+ */
+export const HOOK_FORMAT_LABEL = Object.freeze({
+  verified: 'hook format documented',
+  unverified: 'hook format unmeasured',
+  'present-useless': 'hooks cannot carry the ask',
+  none: 'no hook mechanism',
+});
+
+export function hookStatusBits(h) {
+  if (!h.hookState) return [];
+  const bits = [HOOK_FORMAT_LABEL[h.hookState] || `hook state ${h.hookState}`];
+  if (h.hookState === 'none' || h.hookState === 'present-useless') return bits;
+  const ours = (h.hooks || []).filter((x) => x.ours);
+  if (!ours.length) return [...bits, 'hooks not installed'];
+  // A marker counts only if it is NEWER than the hook file it would have come
+  // from: the folder also holds markers from test runs and manual invocations
+  // (measured on the maintainer's Mac: over a hundred, left by 2026-09-19 suites,
+  // for harnesses with no hook installed). What a marker proves is that the
+  // hook COMMAND ran for this harness — so that is what the row says.
+  const installedAt = Math.min(...ours.map((x) => (Number.isFinite(x.mtimeMs) ? x.mtimeMs : Infinity)));
+  const last = h.hookRuns?.lastRunAt ? Date.parse(h.hookRuns.lastRunAt) : NaN;
+  if (Number.isFinite(last) && Number.isFinite(installedAt) && last >= installedAt) {
+    bits.push(`hooks installed · the hook command ran for it ${h.hookRuns.lastRunAt.slice(0, 16).replace('T', ' ')} UTC (marker)`);
+  } else bits.push('hooks installed · not yet seen running on this machine');
+  return bits;
+}
+
 export async function collectDoctor(opts = {}) {
   const cwd = opts.cwd || process.cwd();
   const report = {
@@ -446,6 +519,9 @@ export async function collectDoctor(opts = {}) {
   // ── Every harness ────────────────────────────────────────────────────────
   let repoSkills = null;
   try { repoSkills = repoSkillHashes(); } catch { repoSkills = null; }
+  let hookRuns = { dir: null, byHarness: {} };
+  try { hookRuns = readHookRuns(opts.hookMarkerDir || undefined); } catch { /* reported as no evidence */ }
+  report.hookMarkerDir = hookRuns.dir;
   for (const h of harnessTargets(cwd)) {
     const adapter = adapterFor(h.id);
     const row = {
@@ -461,6 +537,8 @@ export async function collectDoctor(opts = {}) {
       hookReason: adapter?.hooks?.reason || null,
       measured: adapter?.measured || null,
       observations: Array.isArray(adapter?.observations) ? [...adapter.observations] : [],
+      // Evidence a hook RAN here (a marker), or null. Never inferred.
+      hookRuns: hookRuns.byHarness[h.id] || null,
     };
     // Installed skills, for a harness whose table row says where they live.
     const roots = skillRootsFor(h.id, { home: HOME, project: cwd });
@@ -478,7 +556,12 @@ export async function collectDoctor(opts = {}) {
         let present = false;
         try { present = existsSync(t.file) && statSync(t.file).isDirectory(); } catch { present = false; }
         row.hooks.push({ file: t.file, present, dir: true });
-      } else row.hooks.push({ file: t.file, ...inspectHookFile(h.id, t.file) });
+      } else {
+        const rec = { file: t.file, ...inspectHookFile(h.id, t.file) };
+        // When the file last changed — the floor a run marker must clear.
+        if (rec.ours) { try { rec.mtimeMs = statSync(t.file).mtimeMs; } catch { /* no floor: no run claimed */ } }
+        row.hooks.push(rec);
+      }
     }
     let firstHit = false;
     for (const t of h.instructions) {
@@ -599,6 +682,9 @@ function renderDoctor(r) {
   }
   L.push('');
   L.push('HARNESSES');
+  L.push('  (the hook FORMAT is what the vendor documents; whether a hook RAN is read only from the markers '
+    + `\`my-curator hook\` leaves in ${r.hookMarkerDir || 'the temp folder'}, counted only when newer than the hook file. `
+    + 'The folder is cleared on restart, so NO marker proves nothing)');
   for (const h of r.harnesses) {
     const bits = [];
     if (h.noMcpClient) bits.push('no MCP client at all — a shell wrapper is the only capture here');
@@ -609,10 +695,10 @@ function renderDoctor(r) {
     else if (h.mcp.length) bits.push('not configured');
     const hooked = h.hooks.filter((x) => x.ours);
     if (hooked.length) bits.push(`${hooked.length} Curator hook file`);
-    if (h.hookState) bits.push(`hooks: ${h.hookState}`);
+    bits.push(...hookStatusBits(h));
     L.push(`  ${h.label} — ${bits.join(' · ') || 'nothing to configure'}`);
     if (h.hookState && h.hookState !== 'verified' && h.hookState !== 'none' && h.hookReason) {
-      L.push(`    hooks ${h.hookState}: ${h.hookReason}`);
+      L.push(`    ${HOOK_FORMAT_LABEL[h.hookState] || `hook state ${h.hookState}`}: ${h.hookReason}`);
     }
     // THE MEASUREMENT, VERBATIM OR NOT AT ALL. A harness with no row renders
     // as NOT MEASURED — the adapter table's own rule, and the reason `doctor`
