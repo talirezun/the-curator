@@ -45,6 +45,7 @@ Nothing has been renumbered; only grouped.
 
 13b. [Working state — carrying context between sessions](#13b-working-state--carrying-context-between-sessions)
 13c. [Making capture real — the command, the hooks and the meter](#13c-making-capture-real--the-command-the-hooks-and-the-meter)
+13d. [Working with several agent tools and several computers — the setup checklist](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist)
 15. [Sync across computers (Personal Sync)](#15-sync-across-computers)
 15b. [Shared Brain](#15b-shared-brain)
 
@@ -1117,7 +1118,7 @@ Stated plainly rather than left for you to discover.
 
 | | |
 |---|---|
-| **Layout A has not yet been photographed on a real menu bar.** | The previous layout was photographed twice (2026-09-02 and the grouped v3.50.0 shape); Layout A's row structure, the pulse-on-top placement, the notices moved under the Active rows and the Idle/Knowledge folds are composed and checked pixel by pixel by the automated tests, but nobody has yet seen the assembled menu drawn by a real menu bar, in either light or dark appearance. If something is illegible, or the menu is wider than you expect, that is worth [reporting](https://github.com/talirezun/the-curator/issues) |
+| **Layout A was photographed on a real menu bar once, before release.** | On the maintainer's own Mac, from a development build, in light and dark appearance (v3.74.0). Nested submenus beyond one level were not photographed. If something is illegible, or the menu is wider than you expect, that is worth [reporting](https://github.com/talirezun/the-curator/issues) |
 | **The section headers draw on macOS 14; below it, nobody knows.** | `Active · last 24 h` and the submenu headers use a macOS 14+ menu affordance. On macOS 13 they should fall back to a dimmed, inert caption line, which is what a heading looks like anyway — but that fallback has never been observed. Either way they can never become a clickable item that does nothing |
 | **The menu's colours follow your SYSTEM appearance, not the app's theme.** | If you run the app in its light theme on a Mac set to dark, the menu is drawn for a dark menu bar — which is correct, because that is where it is drawn |
 | **"On, hide the Dock icon" does not hide the Dock icon.** | The macOS call that hides it has a *return* transition that is reported broken in exactly the way this would depend on, and it could not be tested here. So the app keeps your setting and does the safe half: menu bar icon on, Dock icon left alone |
@@ -1965,7 +1966,10 @@ true, and a store that only added to itself could never say so.
 it.** No control in the app creates or renames a single scope (since v3.75.0 you can [delete
 one](#deleting-a-handoff)), so the one decision worth making on purpose is *how you name them*. This section is that decision: what the words mean, six patterns
 with the exact line to paste into your brief, answers to the two questions people ask most, and
-three worked examples.
+three worked examples. **Setting up two tools or two computers for the first time?** Start with
+the [setup checklist in §13d](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist)
+— ten steps, each with how to check it — and come back here to choose your scope names. **Wondering
+whether to keep one handoff or start new ones?** See [the first question below](#do-i-keep-one-handoff-or-make-new-ones).
 
 ###### The five words, side by side
 
@@ -2124,7 +2128,30 @@ Then open the new session with one line:
 
 Name the scope instead of `latest` when several tools or threads are live.
 
-###### Two questions people ask
+###### Three questions people ask
+
+<a id="do-i-keep-one-handoff-or-make-new-ones"></a>**"Do I keep one handoff and let it be overwritten,
+or make new ones?"**
+
+**Both are right — for different work, and the scope line in your brief decides which.** A handoff
+is one file per scope per computer, and every save to the same scope **replaces** it. So *one
+handoff* means saving under the same scope name each time; *new handoffs* means saving under a new
+name. Nothing else creates one.
+
+| | Keep one handoff (same scope every time) | Make new ones (a new scope name) |
+|---|---|---|
+| **Right when** | You only ever need *where things stand now* — one thread, or one per tool | You want each session's handoff kept (one per session), or several threads run side by side (one per work-stream) |
+| **What you keep** | The newest handoff. Older ones survive only as one Journal line each | Every handoff, each readable in the reader |
+| **Resuming** | Always simple: `latest`, or the one name | `latest` opens the newest; name a scope to open another |
+| **The cost** | Yesterday's full text is gone once today's save lands | A longer **Handoffs** table (the trash on a row removes one, since v3.75.0) |
+| **Line for the brief** | *"Save working state under scope `main`."* — or nothing, and each tool uses its own scope | *"…ONE scope per session named `session-YYYY-MM-DD-topic`…"* or *"…one scope per work-stream…"* |
+
+**Add a new scope** when a new session starts under a per-session rule, when a genuinely separate
+thread of work begins, or when a second tool joins the project. **Don't** start a new scope for
+work that is simply continuing — that splits its history, and the next session may open the wrong
+one. The benefit of more scopes is history you can read back and threads that can never overwrite
+each other; the benefit of one is that there is never a choice to make. The
+[six patterns above](#six-patterns-and-the-line-for-your-brief) have the exact brief lines.
 
 <a id="do-i-need-both-claudemd-and-agentsmd"></a>**"Claude Code reads `CLAUDE.md`, Antigravity reads
 `AGENTS.md` (and/or `GEMINI.md`) — do I need both files in the project folder?"**
@@ -4285,6 +4312,12 @@ All three read the same `domains/` folder. Nothing to sync between them. The int
 
 *New in v3.17.0. This one is for anyone who works with an AI agent across more than one session — building something, running a long research sweep, or any task that outlives a single conversation.*
 
+> **Using more than one agent tool, or more than one computer?** The preconditions — the app
+> version, the MCP and skills in every tool, the block in `CLAUDE.md` *and* `AGENTS.md`, the
+> committed `.curator-project`, syncing at both ends — are one checklist in
+> [§13d](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist).
+> How to write the brief itself is [Writing a standing brief](#writing-a-standing-brief), below.
+
 ### The problem
 
 A coding session ends. The next one starts with nothing — not the decisions you already settled, not the approaches you already tried and ruled out, not the number your test suite was sitting at before you touched anything. So the next session re-derives what it can, re-opens questions you had closed, and walks straight back into a dead end you had already mapped.
@@ -4502,6 +4535,75 @@ So the division of labour is:
 That last route records itself for a reason. An agent reading a brief is told to treat its standing directives as **your** instructions given in advance, and a brief an agent wrote at your request still is that — but the file says so, so nothing has to be assumed about where the words came from. [working-state.md](working-state.md#the-brief-can-be-commissioned-and-it-says-so) has the exact provenance line and what it changes.
 
 > One caution, because the brief is the one file with no machine name in its path: if you hand-edit it on two computers between syncs, one edit can be dropped or spliced silently. See [sync.md](sync.md#working-state-and-why-its-path-has-a-machine-name-in-it). Edit it, then sync.
+
+<a id="writing-a-standing-brief"></a>
+
+### Writing a standing brief — what goes where, a template, three examples
+
+*New in v3.77.0.* The brief is the one document every agent reads on every session, in every tool,
+on every computer — so it is worth half an hour. The first question is what belongs in it at all,
+because three places hold text an agent reads, and each has a different job:
+
+| | **The brief** (`project.md`) | **A handoff** (`current.md`) | **A document** (Documents) |
+|---|---|---|---|
+| **Holds** | How to work here, and what is settled: the goal, what done looks like, your standing rules, firm decisions, the scope rule | Where *one* thread of work stands right now: next steps, traps hit, open questions | Reference material: architecture, decisions in depth, conventions, a roadmap |
+| **Written by** | You (or an agent, only when you ask) | An agent, on every save | You, or mirrored from the repository; an agent only when you ask |
+| **Changes** | Rarely, on purpose | Every save — replaced, never merged | When the thing it describes changes — replaced whole |
+| **Read** | On every read, whatever scope is asked for | Only for the scope asked for | *Read first* ones arrive with the brief; the rest by name, when the work needs them |
+| **Size** | Short — a page or two; the app refuses over 32,768 bytes | Whatever the session needs | Can be long; that is why most are read on demand |
+
+The test: *would this still be true next month, in every thread?* Then it goes in the brief. *Is it
+only true of this thread, this week?* The handoff. *Is it long, and only needed for one kind of
+work?* A document, named in the brief's **Read before you…** list.
+
+**A template.** The app seeds a new brief with headings ([project-brief-template.md](project-brief-template.md)
+has the full version); this is the shape to aim for:
+
+```markdown
+# Project brief — <name>
+
+## Standing brief
+The goal, in two or three sentences, and what "done" looks like.
+
+## Operating directives
+- Scope rule: <one line from the six patterns>
+- How you want the work done — one imperative line each, with its own fallback
+  ("…if your tool can't, say so in your first reply").
+
+## Firm decisions — do not re-litigate
+- The decision — and the one-line reason, so it is not re-opened.
+
+## Read before you…
+- …<kind of work>: `<document>`
+```
+
+Three short examples — only the lines that differ matter:
+
+**1 — A solo coding project, one tool.** *Standing brief:* "A billing API for small clinics. Done
+= invoices, payments and refunds pass the end-to-end suite on staging." *Directives:* "Save working
+state under scope `main`." · "Run `npm test` before calling anything finished; if you can't run
+commands, list what you would have run." · "Small commits, one change each." *Firm decisions:*
+"Postgres, not a document store — refunds need transactions." *Read before you…* "…touch the
+schema: `architecture.md`."
+
+**2 — A long research or writing project.** *Standing brief:* "A 60-page report on regional energy
+storage. Done = six chapters drafted, every claim cited." *Directives:* "Save working state in ONE
+scope per session named `session-YYYY-MM-DD-topic`." · "Cite only what the `energy` wiki holds —
+search it before writing a claim; never invent a source." · "Write in the voice set out in
+`style.md`." *Firm decisions:* "The audience is policy-makers, not engineers — no equations in the
+body." *Read before you…* "…draft a chapter: `outline.md`, `style.md`."
+
+**3 — Two agent tools on two computers.** Add to whichever brief you have: "Each agent saves under
+its own scope, named for its tool; never save under another agent's scope." · "When you resume a
+handoff written by another tool or on another computer, say so and check its next steps against
+this checkout (`git log`, the tests) before acting." · "When I hand work over, open `latest` and
+tell me which scope and machine you opened." Everything else about the second computer is the
+[setup checklist](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist),
+not the brief.
+
+**How you know it landed:** the agent's first reply names, in one line, the rules it is adopting
+([Read-back](#1-read-back--say-what-rules-youre-following)). A reply that names none, on a brief
+that has some, means the brief did not reach it.
 
 ### One domain, one project, or one more work-stream?
 
@@ -5342,6 +5444,172 @@ truth. See [sync.md](sync.md#mirroring-from-github-and-the-token-that-does-not-g
 > 📖 **For developers:** the on-disk format is now published —
 > [docs/spec/working-state-v1.md](spec/working-state-v1.md) — so a tool that is not The Curator can
 > read and write your working state without this codebase.
+
+---
+
+## 13d. Working with several agent tools and several computers — the setup checklist
+
+*New in v3.77.0. For anyone running more than one agent tool (Claude Code and Antigravity, say) on
+one project, or working on one project from more than one computer — or both.*
+
+In the maintainer's own words: *"when you do it once or twice it is not complicated, but there are
+some predispositions that must be followed."* This section lists those preconditions in one place,
+in order, and for each one says how to do it and how to check it is done. Most of them are one-off
+setup; three are habits. Everything here is described in more depth elsewhere in the guide, and
+each row links to the full text.
+
+### The picture — what has to be in place, and where it lives
+
+```mermaid
+flowchart LR
+    subgraph MA["COMPUTER A"]
+        A1["The Curator — latest version"]
+        A2["each agent tool<br/>MCP configured + both skills"]
+        A3["project folder (git clone)<br/>block at the top of CLAUDE.md and AGENTS.md<br/>.curator-project committed"]
+    end
+    subgraph GH["GITHUB"]
+        K["your PRIVATE knowledge repository<br/><i>Personal Sync: brief, handoffs, Journal, Documents</i>"]
+        C["the PROJECT's code repository<br/><i>git push / git pull</i>"]
+    end
+    subgraph MB["COMPUTER B"]
+        B1["The Curator — latest version"]
+        B2["each agent tool<br/>MCP configured + both skills"]
+        B3["project folder (git clone)<br/>same two files, same marker"]
+    end
+    A1 <-->|Sync now| K
+    B1 <-->|Sync now| K
+    A3 <-->|git push / pull| C
+    B3 <-->|git push / pull| C
+```
+
+*Two repositories, two routes, and they never mix: working state travels through **your** private
+knowledge repository by Personal Sync; the code travels through the **project's** own git remote.
+Each agent tool reaches The Curator on its own computer through the MCP bridge. With one computer,
+ignore the right-hand column; with one tool, ignore the other tool's rows.*
+
+### The checklist
+
+| # | Do this | When | How | How to check |
+|---|---|---|---|---|
+| 1 | **The latest Curator on every computer** | After every release | Settings → **Updates**, beside the version at the foot of the Settings list — it opens **Software update** and runs the check. Then quit and reopen each agent tool, so none keeps an old bridge process running | The version at the foot of Settings reads the same on every computer. **Settings → MCP bridge** warns if a client still has a bridge from before the update |
+| 2 | **The Curator's MCP configured in every agent tool** | Once per tool, per computer (again if the app or your knowledge folder moves) | Claude Desktop: **Settings → MCP bridge → Set up**. Other tools: **View config** / **Copy snippet** there, pasted into that tool's file (below) | Ask the agent to list its `my-curator` tools — all 24 should be there. `my-curator doctor` names each config file and whether it points at the bridge |
+| 3 | **Both skills, current, in every agent tool** | Once per tool, per computer — and again after every release that changes a skill | Copy the whole `skills/my-curator/` and `skills/curator-continuity/` folders to where that tool reads skills (below) | Ask *"what skills are available?"*. For Antigravity, `my-curator doctor` compares every installed file with this version |
+| 4 | **The Copy agent instructions block at the TOP of both `CLAUDE.md` and `AGENTS.md`** | Once per project repository — and again after a release that changes the block | Domains → Projects (or Project context) → **Copy agent instructions** for **this** project, paste at the very top of each file | `my-curator doctor` in the project folder says whether the file your tool reads carries the block. The agent's first reply names the rules from your brief |
+| 5 | **Commit `.curator-project`** | Once per project repository | Domains → Projects → **Copy marker line**, into a file named `.curator-project` at the repository root; commit and push it | `git ls-files .curator-project` prints the name. `my-curator doctor` prints the project it resolved and the `marker:` it read |
+| 6 | **Sync now before you start, and after your last save** | Every session, on every computer | **Sync** in the rail → **Sync now** | The Sync view shows no *"local changes not pushed"* after your last save |
+| 7 | **Pull and push the project's code** | Every session | `git pull` before you start, commit and `git push` when you stop | `git status` is clean and not behind |
+| 8 | **Start a new conversation, or say "continue"** | Every time you switch tool or computer | A new conversation always reads first. Since v3.76.1 the block also tells an open one to read again on *"continue"* or *"resume"* | The agent's reply says which handoff it opened, from which tool and machine |
+| 9 | *Optional:* **hooks** | Once per tool, per computer | `my-curator install-hooks claude-code` · `my-curator install-hooks antigravity` | `my-curator doctor` lists the hook files it finds. Antigravity's hooks are **not yet measured** |
+| 10 | **`my-curator doctor` — the one-command check** | After any setup change | Run it in the project folder | It reports steps 2, 3 (Antigravity), 4, 5 and 9 on this computer. It does **not** see steps 1, 6, 7 or 8 — those stay yours |
+
+### Each step, in a little more detail
+
+**1 — The latest Curator.** The MCP bridge each tool launches is part of The Curator, so the
+store's rules — which handoff counts as newest, which scope a save lands in — are the rules of the
+version on *that* computer. Since v3.74.0 "newest" is decided by the agent's own recorded save time
+rather than by when a file arrived; since v3.76.0 a save that names no scope lands in its tool's own
+scope. A computer still on an older version plays by the older rules. After an update, quit and
+reopen each agent tool: a bridge that was already running keeps running the old code
+([§16, Version and updates](#version-and-updates)).
+
+**2 — The MCP, per tool.** The snippet The Curator shows is in the common `mcpServers` shape. Where
+it goes:
+
+| Tool | File | Notes |
+|---|---|---|
+| Claude Desktop | set up for you by **Settings → MCP bridge** | |
+| Claude Code | `~/.claude.json` (for you), or `.mcp.json` in a project | The same `mcpServers` shape |
+| Antigravity | `~/.gemini/config/mcp_config.json`, `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/antigravity-ide/mcp_config.json` | **Three separate files** — `my-curator doctor` checks all three |
+| opencode | `~/.config/opencode/opencode.json`, or `opencode.json` in a project | A different shape: the key is `mcp`, the entry needs `"type": "local"`, the command and its arguments are **one array**, and environment variables go under `environment` |
+
+**3 — Both skills, per tool.** `my-curator` carries how to work with the wiki; `curator-continuity`
+carries how to write a good handoff and when to save. Copy each skill **folder whole** — both have
+companion files beside `SKILL.md` (for example `brief-authority.md`, `maintenance.md`), and a skill
+missing one is incomplete.
+
+| Tool | Where the skills go | Keeping them current |
+|---|---|---|
+| Claude app (Desktop, or the web) | Uploaded by hand ([MCP guide](mcp-user-guide.md#install--claude-desktop)) | Re-upload after each release that changes a skill. Nothing checks this for you |
+| Claude Code | `~/.claude/skills/<skill>/` | Copy the folders again; `diff -r` against the repository's `skills/` folder shows any difference |
+| Antigravity | `~/.gemini/config/plugins/the-curator/skills/<skill>/` (or `~/.gemini/config/skills/`, or `.agents/` in the project) | **Re-copy after each release that changes a skill.** `my-curator doctor` names any file that differs or is missing |
+| opencode | `.agents/skills/<skill>/` in the project (from opencode's documentation) | Copy the folders again |
+
+A release that changes a skill says so in its release notes. The skills are what tell an agent to
+save at all; the block in step 4 is what makes sure the agent goes and looks, on tools that do not
+switch a skill on by themselves ([§13b](#making-sure-your-agent-actually-does-it)).
+
+**4 — The block, at the top of both files.** Claude Code reads `CLAUDE.md`; Antigravity reads
+`AGENTS.md` (or `GEMINI.md`) and **not** `CLAUDE.md`; opencode, Codex and Cursor read `AGENTS.md`
+too. So put the block in **both** `CLAUDE.md` and `AGENTS.md`, identical, at the very top — some
+tools cut a long file off, and the top is always read. The text is **the same for every project
+except the project's name**, so always use *that project's own* **Copy agent instructions** button
+rather than copying the block from another repository. When a release changes the block (v3.76.0
+and v3.76.1 both did), copy it again and replace the old one in every project repository, on every
+computer's checkout — or commit the change once and pull it on the others.
+
+**5 — `.curator-project`, committed.** One line, `domain/project`. The skill, the hooks and the
+`my-curator` command read it to know which project this folder is; without it they fall back to
+your default domain — possibly the wrong project — and the skill asks you instead. **Commit it:**
+a marker that exists only in one checkout is missing on every other clone. That was a real miss in
+the maintainer's own two-computer test on 2026-09-26.
+
+**6 — Personal Sync, both ends of a session.** Press **Sync now** before you start (so this
+computer has the other's latest handoff) and again **after the last save** (so the other computer
+can get this one). Each computer saves into its own folder, so a forgotten sync never overwrites
+anything — it only means the next session reads an older handoff
+([§15](#15-sync-across-computers)).
+
+**7 — The code, both ends of a session.** Working state and code travel separately
+([How do I build from two computers?](#how-do-i-build-from-two-computers)). A handoff that says
+"tests are green at commit X" is only useful on a checkout that has commit X.
+
+**8 — New conversation, or "continue".** What a conversation read when it started can be hours
+old. A **new** conversation always reads The Curator first. An **open** one reads again only when
+told to — since v3.76.1 the block tells it to on *"continue"*, *"resume"* or after a pause. If your
+tool doesn't, start a new conversation. When a handoff came from the other tool or the other
+computer, the agent should say so and check its next steps against this checkout before acting.
+
+**9 — Hooks, if you want them.** A hook hands the project's context to the agent at the start and
+asks for a save at the end, without relying on the agent to remember
+([§13c](#hooks-what-they-can-do-on-your-harness-and-what-they-cannot)). On Claude Code they were
+measured in headless mode on 2026-09-20 (start: yes; the end-of-session ask never fired in that
+mode). Antigravity's are built from its documentation and **have not been measured yet** — the
+maintainer's own test was under way on 2026-09-26. If your brief uses one scope per session, add
+`--scope <name>` to the `my-curator hook …` commands in that tool's hook settings (not to
+`install-hooks`, whose own `--scope` chooses which settings file to write). `install-hooks` needs the `my-curator` command, which comes
+from a source install, not the Mac app.
+
+**10 — `my-curator doctor`.** Read-only, always safe to run. In the project folder it tells you
+which project the folder resolves to and how, which agent-tool config files exist and whether each
+points at the bridge, which instruction file your tool will actually read and whether the block is
+in it, which hooks are installed, and — for Antigravity — whether the installed skills match this
+version file by file ([§13c](#13c-making-capture-real--the-command-the-hooks-and-the-meter)). It
+comes with a source install (`npm link` puts it on your `PATH`); the Mac app does not ship it.
+
+> **What was actually measured — and what was not.**
+>
+> - **Two tools, one computer (2026-09-25).** In the maintainer's live test, Antigravity listed all
+>   24 `my-curator` tools, and a handover **Claude Code → Antigravity → Claude Code** worked
+>   unprompted with one scope per tool: Antigravity read `AGENTS.md`, called
+>   `get_project_context` on *"Continue."*, and saved under `antigravity`.
+> - **The overwrite, seen once (2026-09-25).** On a project with no `AGENTS.md`, Antigravity still
+>   read and saved unprompted — but to `main`, replacing Claude Code's handoff there; the replaced
+>   text was lost. Since v3.74.0 such a save still succeeds but says whose handoff it replaced, and
+>   the replaced text is kept as `previous.md`; since v3.76.0 the block and the default scope keep
+>   each tool in its own scope.
+> - **Two computers, through Personal Sync (2026-09-26).** Claude Code on one computer saved and
+>   synced; on the other, a **new** Antigravity conversation read first and opened the newest
+>   handoff by the agents' own save times, with each computer's copy kept apart. The reverse
+>   direction also worked: Claude Code, told *"Continue"*, opened the other computer's newer
+>   Antigravity handoff.
+> - **The one failure, and its fix.** An Antigravity conversation that was **already open** was
+>   told *"continue"* and worked from its old context without reading again. The v3.76.1 sentence
+>   was then measured (Claude Code, headless, a second tool's save between two turns): Sonnet 5
+>   read again **0 of 8** times without it, **8 of 8** with it. Haiku 4.5 showed no measurable
+>   difference (4 runs each).
+> - **Not measured yet:** Antigravity's hooks; a live handover involving opencode, Codex or Cursor
+>   (opencode was measured headless on 2026-09-10, for whether it switches the skill on — 4 of 4);
+>   the re-read habit on small models; an edited copy of the block.
 
 ---
 
