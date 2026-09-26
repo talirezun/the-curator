@@ -277,7 +277,7 @@ Six patterns. Write the chosen line into the project's standing brief, because e
 | Several agent tools on one computer | Two tools on the same project at once | "Each agent saves under its own scope: `<harness>-<topic>` (e.g. `antigravity-api`, `claude-code-ui`); never save under another agent's scope." |
 | Handing a session over | Context full, another tool, another computer | Nothing. Save a complete handoff, then open the new session with a resume line |
 
-Several computers: a read that names a scope but no machine returns the most recently written copy and lists the others. A copy from another computer is marked in the app (the Machine column, and a "synced from another machine" chip in the reader), and the agent's read carries `machineIsThisMachine: false`, so it should check the next steps against this checkout. Press Sync now (in Sync) before starting and after the last save. The brief has no machine in its path, so edit it on one computer and sync before editing it on the other.
+A conversation that is already open does not know about saves made elsewhere since it started, on this computer or another, unless it reads again. Since version 3.76.1 the Copy agent instructions block tells it to: on continue, resume, or after a pause, call `get_project_context` again before acting. Otherwise, start a new conversation. Several computers: a read that names a scope but no machine returns the most recently written copy and lists the others. A copy from another computer is marked in the app (the Machine column, and a "synced from another machine" chip in the reader), and the agent's read carries `machineIsThisMachine: false`, so it should check the next steps against this checkout. Press Sync now (in Sync) before starting and after the last save. The brief has no machine in its path, so edit it on one computer and sync before editing it on the other.
 
 Several agent tools on one computer: nothing refuses or prevents two tools saving into one scope. The app notices only afterwards, from the Journal, once the tools have taken turns (one, the other, the first again); then the Memory step shows a red line, "Two tools are writing (scope name)... Give each tool its own handoff." A single switch from one tool to another is treated as a move, not flagged. Give each tool its own scope from the start. Since version 3.76.0 the Copy agent instructions block asks for exactly that: it tells each tool to save under a scope named for itself (`claude-code` for Claude Code, `antigravity` for Antigravity, `opencode` for opencode, otherwise the tool's own name) and to pass the same name as `harness`; up to version 3.75.0 it told every tool to save under `main`, which was this collision. Since the same version, a save that names no scope but names its tool lands in that tool's scope (`claude-code`, `antigravity`) rather than `main`. It is still asked for, not guaranteed: measured on Claude Code (2026-09-25, with that default), Sonnet 5 put 8 of 8 saves in `claude-code`, but Haiku 4.5 put only 3 of 5 there and named `main` explicitly in the other 2, so after each tool's first save check the Handoffs table for one row per tool, and add a scope rule to the brief if both tools landed in one row. When the tools work in parallel, each agent should read its own scope by name rather than `latest`, because `latest` opens whichever tool saved last; when one piece of work is handed from one tool to the other, `latest` is right, and the new tool then saves under its own scope. An orchestrating agent reads another tool's handoff with `get_project_context` or `get_working_state` and that tool's `scope`; reading another scope is safe, saving into it is not. Hooks installed with `my-curator install-hooks` inject, and ask for a save under, the project's newest work-stream; with two tools on one computer, add `--scope <this tool's scope>` to the `my-curator hook` commands in that tool's hook settings.
 
@@ -464,6 +464,17 @@ Then the store changed the same day, from that result: a `save_working_state` ca
 
 On Sonnet 5 the block did everything it asks. On Haiku 4.5 it was weaker: 5 of 8 saved, and 2 of the 5 saves named `main` explicitly (the scope of the handoff they had just read), which an explicit scope is allowed to do, so the default could not catch them; the two saves that left the scope out landed in `claude-code`. Eight runs is a shape, not a rate.
 
+**Version 3.76.1 added a re-read sentence, measured on 2026-09-26.** A conversation that is already open does not know about saves made since it started. In the maintainer's two-computer test, an Antigravity conversation that had been open for earlier work was told "continue" after the other computer saved a newer handoff and both synced; it did not call `get_project_context` again and continued from stale context, while a new conversation read first. The first paragraph of the block now says: "When the user says continue or resume, or you come back after a pause, call `get_project_context` again before acting — another tool or computer may have saved since." It was measured with two turns in one headless Claude Code session: turn 1 did the usual task; then, outside the agent, a newer handoff was saved under scope `antigravity` with a unique token and a new next step; turn 2 was the single word "continue".
+
+| Model | Text | Turn 1 read | Turn 2 re-read first | Turn 2 saw the new handoff | Token quoted | Cost |
+|---|---|---|---|---|---|---|
+| claude-sonnet-5 | Version 3.76.0 block (control) | 8 of 8 | 0 of 8 | 0 of 8 | 0 of 8 | $2.14 |
+| claude-sonnet-5 | Version 3.76.1 block (re-read sentence) | 8 of 8 | 8 of 8 | 8 of 8 | 4 of 8 | $2.32 |
+| claude-haiku-4-5-20251001 | Version 3.76.0 block (control) | 3 of 4 | 3 of 4 | 2 of 4 | 0 of 4 | $0.74 |
+| claude-haiku-4-5-20251001 | Version 3.76.1 block (re-read sentence) | 1 of 4 | 2 of 4 | 2 of 4 | 0 of 4 | $0.69 |
+
+On Sonnet 5 the sentence made the whole difference. None of the runs acted on the other tool's next step; each treated it as recorded data and asked. On Haiku 4.5 it moved nothing measurable: the old block already re-read in 3 of 4 runs, and in the new arm the first turn mostly failed to reach the tool at all. If a tool does not follow the rule, start a new conversation after another tool or computer has saved.
+
 What the measurement does not show:
 
 - Four runs per arm is a shape, not a rate. Nothing here licenses a number like "75 percent".
@@ -581,7 +592,9 @@ This is the composed block. `<domain>` and `<project>` stand where your own name
 This repository's working state lives in The Curator (project `<domain>/<project>`, see
 `.curator-project`). At the START of every session call the my-curator MCP tool
 `get_project_context` with project "<project>" and read the standing brief and latest
-handoff before acting. SAVE with `save_working_state` under project "<project>" with the
+handoff before acting. When the user says continue or resume, or you come back after a
+pause, call `get_project_context` again before acting — another tool or computer may have
+saved since. SAVE with `save_working_state` under project "<project>" with the
 `scope` argument set to your tool's name — "claude-code" if you are Claude Code,
 "antigravity" if you are Antigravity, "opencode" if you are opencode, otherwise your
 tool's own name, lowercase and hyphenated. Pass `scope` explicitly every time, and never

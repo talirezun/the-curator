@@ -80,6 +80,41 @@
 // headless only. The file fed to the final runs hashes (exp/widget, whole
 // composition) to a139e04b…; scripts/test-agent-instructions.js pins it.
 //
+// ── v3.76.1: the RE-READ sentence, measured on a two-turn protocol ────────
+//
+// The maintainer's two-Mac test (2026-09-26): an Antigravity conversation on
+// Mac B that was already open was told "continue" after Mac A saved a newer
+// handoff and both synced. It did not call get_project_context — the block
+// only said "At the START of every session" — and continued from stale
+// in-conversation context; a NEW conversation read first. Paragraph 1 gains,
+// right after "…before acting.": "When the user says continue or resume, or
+// you come back after a pause, call `get_project_context` again before
+// acting — another tool or computer may have saved since." (972 → 1141 B for
+// exp/widget; whole composition sha 9110ec0f…, pinned.)
+//
+// Protocol (Claude Code 2.1.281 headless, isolated store + config, both
+// skills, WHOLE Copy output in CLAUDE.md): turn 1 in a fixed --session-id is
+// the usual "Continue… fix npm test" task; then, OUTSIDE the agent, the store
+// writes a newer handoff under scope "antigravity" (harness antigravity)
+// carrying a unique TOKEN-xxxxxx and a next step (median()); turn 2 is
+// `--resume <id>` with the one word "continue". Counted in turn 2: a
+// successful get_project_context/get_working_state call as the first
+// non-ToolSearch/Skill action; the new handoff acknowledged (token, "median"
+// or "antigravity" in its text); the token quoted verbatim.
+//
+//   model / text                  turn-1 read  t2 re-read first  t2 aware  t2 token  cost
+//   sonnet-5  v3.76.0 (control)   8/8          0/8               0/8       0/8       $2.14
+//   sonnet-5  v3.76.1 (this)      8/8          8/8               8/8       4/8       $2.32
+//   haiku-4-5 v3.76.0 (control)   3/4          3/4               2/4       0/4       $0.74
+//   haiku-4-5 v3.76.1 (this)      1/4          2/4               2/4       0/4       $0.69
+//
+// On Sonnet 5 the sentence is the whole difference (0/8 → 8/8). On Haiku 4.5
+// (N=4, budget) it moved nothing measurable: the OLD block already re-read in
+// 3 of 4 — Haiku treats "continue" as a session start — and the new arm's
+// turn 1 mostly failed to call the tool at all (the ToolSearch friction the
+// 2026-09-25 runs saw). No run acted on the other tool's next step: Sonnet
+// read it, called it recorded data and asked. N is a shape, not a rate.
+//
 // ── WHY THE TEXT IS FROZEN ─────────────────────────────────────────────────
 //
 // TEMPLATE below is the artefact that was measured, byte for byte, with the
@@ -112,18 +147,21 @@
 // unchanged, measured paragraph.
 export const HEADING = '## Working state';
 
-// VERBATIM, placeholders included (v3.76.0 text, measured 2026-09-25 on the
+// VERBATIM, placeholders included (v3.76.1 text, measured 2026-09-26; the
+// rest as v3.76.0, measured 2026-09-25 on the
 // integrated code, with the v3.76.0 default scope).
 // `{{DOMAIN_PROJECT}}` stands where the measured artefact read `exp/widget`;
 // `{{PROJECT}}` stands where it read `widget`, at both of its occurrences.
-// Nothing else differs from the file pasted into the 2026-09-25 runs,
+// Nothing else differs from the file pasted into the 2026-09-26 runs,
 // including the hard line breaks — those are part of what was measured and
 // are not re-flowed for a longer name.
 export const TEMPLATE = [
   "This repository's working state lives in The Curator (project `{{DOMAIN_PROJECT}}`, see",
   '`.curator-project`). At the START of every session call the my-curator MCP tool',
   '`get_project_context` with project "{{PROJECT}}" and read the standing brief and latest',
-  'handoff before acting. SAVE with `save_working_state` under project "{{PROJECT}}" with the',
+  'handoff before acting. When the user says continue or resume, or you come back after a',
+  'pause, call `get_project_context` again before acting — another tool or computer may have',
+  'saved since. SAVE with `save_working_state` under project "{{PROJECT}}" with the',
   '`scope` argument set to your tool\'s name — "claude-code" if you are Claude Code,',
   '"antigravity" if you are Antigravity, "opencode" if you are opencode, otherwise your',
   'tool\'s own name, lowercase and hyphenated. Pass `scope` explicitly every time, and never',

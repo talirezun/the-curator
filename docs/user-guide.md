@@ -2057,7 +2057,11 @@ elsewhere is marked — the **Machine** column names it, the reader shows a
 which tells it to say so and to check the next steps against *this* checkout before acting. Two habits make it work: press
 **Sync now** (in **Sync**, [§15](#15-sync-across-computers)) **before you start** and **after your
 last save**. The brief is the one file with no machine in its path, so edit it on one computer and
-sync before editing it on the other.
+sync before editing it on the other. **A conversation that is already open won't know about saves
+made on the other computer unless it re-reads** — what it read when it started can be hours old.
+Since v3.76.1 the **Copy agent instructions** block tells it to: on *"continue"*, *"resume"*, or
+after a pause, it calls `get_project_context` again before acting. If your tool doesn't, start a
+new conversation after syncing.
 
 <a id="several-agent-tools-on-one-computer"></a>**Several agent tools on one computer.** The one case
 the machine folder cannot separate: two tools on one computer are the same machine, so if they save
@@ -2076,6 +2080,9 @@ only 3 of its 5 saves — the other 2 named `main` outright. So after each tool'
 **Handoffs**: one row per tool is right; one `main` row
 written by both means add the brief line above. Three things make separate scopes hold in practice:
 
+- **An open conversation re-reads only when told to.** It does not see the other tool's saves on
+  its own. Since v3.76.1 the copied block tells it to call `get_project_context` again on
+  *"continue"*, *"resume"* or after a pause; otherwise, start a new conversation.
 - **Working in parallel, each agent reads its own scope, not `latest`.** `latest` opens whichever
   tool saved last — the *other* one, half the time. Name it when you start: *"resume
   `claude-code-ui`"*. (Handing one piece of work from one tool to the other is the opposite case:
@@ -4929,6 +4936,25 @@ both weaker, and a scope the agent *names* — even `main` — always wins. If t
 **Handoffs** after their first saves and add the one-line scope rule to the brief
 ([Several agent tools on one computer](#several-agent-tools-on-one-computer)) if they landed in one
 row.
+
+**Since v3.76.1 it also tells an open conversation to read again.** A conversation that is already
+open won't know about saves made elsewhere unless it re-reads — the maintainer's two-computer test
+caught one carrying on from hours-old context after *"continue"*. The block now says: on
+*"continue"* or *"resume"*, or after a pause, call `get_project_context` again before acting.
+Measured on 2026-09-26 with two turns in one Claude Code session (turn 1 does a task; then another
+tool saves a newer handoff; turn 2 is just *"continue"*):
+
+| Model | Block | Turn 2 read again first | Turn 2 saw the other tool's save | Cost |
+|---|---|---|---|---|
+| Sonnet 5 | before (v3.76.0) | **0 of 8** | 0 of 8 | $2.14 |
+| Sonnet 5 | with the new sentence | **8 of 8** | 8 of 8 | $2.32 |
+| Haiku 4.5 | before (v3.76.0) | **3 of 4** | 2 of 4 | $0.74 |
+| Haiku 4.5 | with the new sentence | **2 of 4** | 2 of 4 | $0.69 |
+
+On Sonnet 5 the sentence is the whole difference. On Haiku 4.5 it made no measurable difference —
+Haiku often re-read anyway, and often failed to reach the tool at all. None of the runs *obeyed* the
+other tool's next step; they read it as a record and asked. **If your tool doesn't re-read, start
+a new conversation** — a new one always reads first.
 
 **Copy agent instructions**, beside **Copy marker line** in Domains → Projects (and on the Project
 context screen), puts that block on your clipboard with this project's names already in it. Paste it

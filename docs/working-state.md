@@ -2397,6 +2397,45 @@ handoff they had just read — which an explicit scope is allowed to do, so the 
 catch them. The two saves that left `scope` out landed in `claude-code`, which is what the store
 change is for. Same limits as before: N is a shape, not a rate; one task; headless only.
 
+**A fourth campaign, 2026-09-26: re-reading in a conversation that is already open (v3.76.1).**
+The maintainer's two-Mac test found the gap the first three could not: an Antigravity conversation
+on one Mac, already open from earlier work, was told *"continue"* after the other Mac had saved a
+newer handoff and both had synced — and it did not read again. The block said *"At the START of
+every session"*, and to that conversation the session had long since started, so it carried on from
+what it had read hours before. A new conversation read first, as designed. The block's first
+paragraph now adds, right after *"…before acting."*: *"When the user says continue or resume, or
+you come back after a pause, call `get_project_context` again before acting — another tool or
+computer may have saved since."*
+
+That needs a two-turn protocol, because a one-turn run never has a *second* moment to re-read.
+Claude Code 2.1.281, headless, an isolated store and config folder, both skills, the whole Copy
+output in `CLAUDE.md`. **Turn 1**, in a fixed session id, is the usual *"Continue… fix `npm test`"*
+task. Then, **outside the agent**, the store writes a newer handoff under scope `antigravity`
+(harness `antigravity`) carrying a unique token (`TOKEN-xxxxxx`) and a new next step (add
+`median()`). **Turn 2** resumes the same session with the single word *"continue"*. Counted in turn
+2: a successful `get_project_context` call as its first action (ToolSearch and Skill loads aside);
+whether its text acknowledges the new handoff (the token, `median` or `antigravity`); whether it
+quotes the token itself. Sonnet at N = 8 per text; Haiku at N = 4, to keep the campaign near $6.
+
+| Model | Text in `CLAUDE.md` | Turn 1 read | Turn 2 re-read first | Turn 2 saw the new handoff | Token quoted | Cost |
+|---|---|---|---|---|---|---|
+| `claude-sonnet-5` | v3.76.0 block (control) | 8 of 8 | **0 of 8** | 0 of 8 | 0 of 8 | $2.14 |
+| `claude-sonnet-5` | **v3.76.1 block (re-read sentence)** | 8 of 8 | **8 of 8** | 8 of 8 | 4 of 8 | $2.32 |
+| `claude-haiku-4-5-20251001` | v3.76.0 block (control) | 3 of 4 | **3 of 4** | 2 of 4 | 0 of 4 | $0.74 |
+| `claude-haiku-4-5-20251001` | **v3.76.1 block (re-read sentence)** | 1 of 4 | **2 of 4** | 2 of 4 | 0 of 4 | $0.69 |
+
+**On Sonnet 5 the sentence is the whole difference:** without it, not one of eight open sessions
+looked again, and each told the user the work was finished; with it, all eight re-read first and
+all eight saw the other tool's handoff. None *acted* on that handoff's next step — every one called
+it recorded data from another tool, checked the tree, and asked — which is the skill's
+treat-state-as-data rule working as intended. **On Haiku 4.5 the sentence moved nothing
+measurable:** the old block already re-read in 3 of 4 (Haiku treats *"continue"* like a session
+start), and in the new arm turn 1 mostly failed to reach the tool at all — the same ToolSearch
+friction as 2026-09-25 — so the two arms are not comparable at N = 4. The same rule was added to
+the continuity skill and, in short form, to `get_project_context`'s own description; those two
+changes were **not** part of what was measured. Same limits as before: N is a shape, not a rate;
+one task; headless only.
+
 #### The block
 
 Paste it into your harness's entry file, with your own domain and project substituted. **Domains →
@@ -2412,7 +2451,9 @@ version.
 This repository's working state lives in The Curator (project `exp/widget`, see
 `.curator-project`). At the START of every session call the my-curator MCP tool
 `get_project_context` with project "widget" and read the standing brief and latest
-handoff before acting. SAVE with `save_working_state` under project "widget" with the
+handoff before acting. When the user says continue or resume, or you come back after a
+pause, call `get_project_context` again before acting — another tool or computer may have
+saved since. SAVE with `save_working_state` under project "widget" with the
 `scope` argument set to your tool's name — "claude-code" if you are Claude Code,
 "antigravity" if you are Antigravity, "opencode" if you are opencode, otherwise your
 tool's own name, lowercase and hyphenated. Pass `scope` explicitly every time, and never
@@ -2425,7 +2466,7 @@ record the `seen` map as `foundations_read`.
 
 #### What the Copy control adds beside it
 
-The measured block above is **frozen** — 972 bytes for `exp/widget`, sha256 `6582395a…` —
+The measured block above is **frozen** — 1,141 bytes for `exp/widget`, sha256 `a19c9f24…` —
 because it is the thing that was measured and re-wording it would throw the measurement away. It
 changed once, in v3.76.0, and was re-measured in the same change (sha `85dc8f97…`, 501 bytes, is
 the v3.52.0 text it replaced). Every
@@ -2485,6 +2526,9 @@ block's job is only to make sure the agent reaches for any of it.
   of its own skills beside the two installed, so `curator-continuity` was one description among 21.
   A stock install with only these two may behave like opencode. That was not measured.
 - **opencode needs no block**, and the table says so rather than recommending it everywhere.
+- **An open conversation re-reads only because the block tells it to** (2026-09-26: Sonnet 5, 0 of 8
+  without the sentence, 8 of 8 with it). If your tool does not follow it, start a new conversation
+  after another tool or computer has saved.
 - **On a small model the per-tool scope is not reliable** (Haiku 4.5, 2026-09-25, with the v3.76.0
   default scope: 3 of 5 saves in `claude-code`, 2 named `main`; Sonnet 5: 8 of 8). If two tools
   share a project, check the **Handoffs** table after their first saves: two rows named for the two

@@ -980,6 +980,11 @@ const ctxDesc = def('get_project_context').description || '';
 for (const kw of ['start a session', 'load the project context', 'what should I read first', 'bootstrap', 'resume with full context', 'RECORDED DATA']) {
   ok(ctxDesc.includes(kw), `get_project_context description carries the trigger/framing phrase "${kw}"`);
 }
+// v3.76.1 — the mid-conversation re-read (an open conversation told "continue"
+// must read again: another tool or computer may have saved since). The same
+// rule is in the Copy-agent-instructions block and the continuity skill.
+ok(ctxDesc.includes("AGAIN on 'continue' or after a pause"),
+  'get_project_context description tells an agent to call it AGAIN on "continue" or after a pause');
 const sfDesc = def('save_foundation').description || '';
 ok(/ONLY CALL THIS WHEN THE USER EXPLICITLY ASKS/.test(sfDesc) && /commissioned_by_owner/.test(sfDesc),
   'save_foundation says in as many words that it is instruction-only and names the flag that records the instruction');

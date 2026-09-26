@@ -1582,9 +1582,20 @@ export const getProjectContextDefinition = {
   // the older sentences were tightened around them. Every pinned trigger
   // phrase survives verbatim; the budget's full default wording lives once,
   // on `max_bytes`, rather than twice.
+  //
+  // v3.76.1 — "; AGAIN on 'continue' or after a pause" (+38 B), paid for by
+  // "(canonical documents)" → "(canonical docs)" (−5 B): 3,163 → 3,196 B. The
+  // maintainer's two-Mac test (2026-09-26) had an ALREADY-OPEN Antigravity
+  // conversation told "continue" act on stale in-conversation context after
+  // the other Mac had saved and synced. The reason ("another tool or computer
+  // may have saved since") does not fit here; it is in the Copy-agent-
+  // instructions block and in skills/curator-continuity §2, the other two
+  // canonical sources — change all three together. This clause itself is
+  // UNMEASURED: the 2026-09-26 runs measured the block with the v3.76.0
+  // description.
   description:
-    "Load the project context in ONE call at session start: to bootstrap, to 'resume with full context', or when the user says 'start a session', 'load the project context', 'what should I read first', or opens with work already underway. "
-    + "Returns the standing brief, the latest (or named `scope`'s) handoff, and the project's FOUNDATIONS (canonical documents): an index plus TEXT in reading order within `max_bytes`. "
+    "Load the project context in ONE call at session start: to bootstrap, to 'resume with full context', or when the user says 'start a session', 'load the project context', 'what should I read first', or opens with work already underway; AGAIN on 'continue' or after a pause. "
+    + "Returns the standing brief, the latest (or named `scope`'s) handoff, and the project's FOUNDATIONS (canonical docs): an index plus TEXT in reading order within `max_bytes`. "
     + "With mirrored documents, `foundations.sources` names each mirror source, a row's `source.group` its own. "
     + "READ THE INDEX, THEN OPEN BY NAME with `slugs` what the brief or task says. When the owner has set a reading budget, only documents marked read first arrive with text; otherwise, when none is marked, a session gets every document within the budget and later ones only what changed against `seen_hashes` (default: the handoff's); `foundations.bodySelection` says which. "
     + "Documents the owner keeps 'not at start' are absent from the index; open one by name with `slugs` if the brief names it. "

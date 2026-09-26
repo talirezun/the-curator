@@ -80,6 +80,8 @@ without inventing an answer you have no basis for.
 
 Run this **before any other work** when a session opens on a tracked project, or when the user says any resume phrase.
 
+**And run Step 2 again mid-conversation.** When the user says continue or resume, or you come back after a pause, call `get_project_context` again before acting — another tool or computer may have saved since. A conversation that is already open does not see saves made elsewhere; what you read at its start can be hours stale. (Measured 2026-09-26, Claude Code headless, Sonnet 5: with the block in the entry file saying so, an open session told "continue" after another tool saved re-read first in 8 of 8 runs; without that sentence, 0 of 8.)
+
 **Step 1 — resolve the project, in this order, and stop at the first one that answers.**
 
 1. **The user named it.** Use that name. If it exists in more than one domain the call comes back refused with the candidates — pass `domain` too, or ask which they mean.
