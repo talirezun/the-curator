@@ -173,7 +173,7 @@ The articles in this series are grounded in several core principles:
 ## Related Resources
 
 - [The Curator GitHub Repository](https://github.com/talirezun/the-curator)
-- [Example Knowledge Base](https://github.com/talirezun/my-brain)
+- [Example knowledge base](../scripts/demo-domain.mjs) — a synthetic demo workspace (two domains, a project with handoffs from two tools) you can generate with `node scripts/demo-domain.mjs`; it is what every screenshot in the docs is taken from
 - [Obsidian Documentation](https://help.obsidian.md/)
 - [Andrej Karpathy's LLM Wiki Pattern](https://github.com/karpathy/LLM-wiki)
 

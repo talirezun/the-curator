@@ -180,7 +180,7 @@ Instead of one enormous write by the most degraded version of the model, you get
 
 At the end I no longer compose anything. I ask whether the scope is current, and that is the whole ceremony.
 
-The next session — new window, different model, different harness, or a different machine entirely — starts with one sentence: *read the working state for scope X in project Y and carry on*. The agent [reads the brief, reads the handoff](../../docs/working-state.md#3-the-two-mcp-tools), re-derives the observations that carry a recheck command, tells me in three lines where things stand and whether anything it re-checked came back different from what was recorded, and starts.
+The next session — new window, different model, different harness, or a different machine entirely — starts with one sentence: *read the working state for scope X in project Y and carry on*. The agent [reads the brief, reads the handoff](../../docs/working-state.md#3-the-six-mcp-tools), re-derives the observations that carry a recheck command, tells me in three lines where things stand and whether anything it re-checked came back different from what was recorded, and starts.
 
 Here is a real one, from a session two days ago, exactly as it was written by the agent and rendered in the app:
 
@@ -218,7 +218,7 @@ What moved that number was **placement**. Every constraint filed as a firm decis
 
 Small sample, one provider, one project — the shape of the effect rather than a rate. But the practical instruction is clear enough: if you want something respected, file it as a decision, say what not to do, and attach the reason.
 
-**[There are no rollups](../../docs/working-state.md#6-the-in-app-view-is-read-only-and-what-is-not-built-at-all).** Nothing composes a Done/Decided/Blocked view across scopes or projects. And the in-app view is read-only by design, not because a write path is unfinished: the store has exactly one writer, an agent over MCP, and that single-writer property is what makes the whole per-machine sync argument safe.
+**[There are no rollups](../../docs/working-state.md#6-what-the-app-writes-and-what-it-does-not).** Nothing composes a Done/Decided/Blocked view across scopes or projects. And the in-app view is read-only by design, not because a write path is unfinished: the store has exactly one writer, an agent over MCP, and that single-writer property is what makes the whole per-machine sync argument safe.
 
 ---
 

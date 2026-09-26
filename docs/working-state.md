@@ -2642,7 +2642,7 @@ it cannot read, and it leaves every hook it did not write untouched.
 |---|---|---|---|
 | **Claude Code** | verified | `SessionStart` · `PreCompact` · `Stop` | `.claude/settings.json` · `.claude/settings.local.json` · `~/.claude/settings.json` |
 | **Cursor** | verified | `sessionStart` · `preCompact` · `stop` (with `loop_limit: 1`) | `.cursor/hooks.json` · `~/.cursor/hooks.json` |
-| **Antigravity** | verified (documented, **not yet run**) | `PreInvocation` (injected once per conversation) · `Stop`, under one named hook `my-curator`. `PostInvocation` refused — it fires after every tool round | `.agents/hooks.json` · `~/.gemini/config/hooks.json` |
+| **Antigravity** | verified (session-start seen once, 2026-09-26; `Stop` not yet observed) | `PreInvocation` (injected once per conversation) · `Stop`, under one named hook `my-curator`. `PostInvocation` refused — it fires after every tool round | `.agents/hooks.json` · `~/.gemini/config/hooks.json` |
 | **Codex CLI** | unverified | `PreCompact` · `Stop`. **`SessionEnd` refused** — 3 s maximum | `.codex/hooks.json` · `~/.codex/hooks.json` |
 | **GitHub Copilot CLI** | unverified | `sessionStart` · `preCompact` · `agentStop` — **refused by default**, envelopes unmeasured | `.github/hooks/` · `~/.copilot/hooks/` |
 | **goose** | unverified | `Stop` · `SessionEnd` — **refused by default**, envelopes unmeasured | `~/.agents/plugins/my-curator/hooks/hooks.json` |
@@ -2693,11 +2693,18 @@ unknown are kept apart:
 | **Instruction file** | documented | `AGENTS.md` and `GEMINI.md`, walked up to the repository root; **not `CLAUDE.md`** |
 | **MCP config** | documented + seen | `~/.gemini/config/mcp_config.json` (documented); `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/antigravity-ide/mcp_config.json` were separate files on that Mac. `doctor` checks all three |
 | **Skills** | documented | `skills/<name>/` under `~/.gemini/config/` or `.agents/`, or under `plugins/<plugin>/` there (e.g. `~/.gemini/config/plugins/the-curator/skills/`) |
-| **Hooks** | **built, not yet run** | `PreInvocation` → the project context, `Stop` → the save ask. Both shapes come from the vendor's `hooks.md` |
+| **Hooks** | **session-start seen once, 2026-09-26; Stop not yet observed** | `PreInvocation` → the project context, `Stop` → the save ask. Both shapes come from the vendor's `hooks.md` |
 | **MCP client name** | **unknown** | Its sessions show up as `other` in the usage log (see below) |
 
 Those two sessions are single observations, not the four-runs-per-arm protocol, so the row's
 `measured` stays `null` and `doctor` prints them under `observations` word for word.
+
+**The session-start hook was seen running, on 2026-09-26.** A real Antigravity conversation
+injected the project's context, from a project-level `.agents/hooks.json`. The CLI's own hook
+marker (keyed on `conversationId`) separately shows the `session-start` command also ran once
+while only the user-level `~/.gemini/config/hooks.json` existed — without that run's injection
+being used, so a project-scope install is the one to trust until the user scope is itself
+watched firing. The `Stop` save ask has **not** been observed.
 
 **The hooks, and what the vendor schema could and could not carry.**
 

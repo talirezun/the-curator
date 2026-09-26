@@ -4535,7 +4535,7 @@ That last route records itself for a reason. An agent reading a brief is told to
 
 ### Writing a standing brief — what goes where, a template, three examples
 
-*New in v3.77.0.* The brief is the one document every agent reads on every session, in every tool,
+*New in v3.76.2.* The brief is the one document every agent reads on every session, in every tool,
 on every computer — so it is worth half an hour. The first question is what belongs in it at all,
 because three places hold text an agent reads, and each has a different job:
 
@@ -5444,7 +5444,7 @@ truth. See [sync.md](sync.md#mirroring-from-github-and-the-token-that-does-not-g
 
 ## 13d. Working with several agent tools and several computers — the setup checklist
 
-*New in v3.77.0. For anyone running more than one agent tool (Claude Code and Antigravity, say) on
+*New in v3.76.2. For anyone running more than one agent tool (Claude Code and Antigravity, say) on
 one project, or working on one project from more than one computer — or both.*
 
 In the maintainer's own words: *"when you do it once or twice it is not complicated, but there are
@@ -5494,7 +5494,7 @@ ignore the right-hand column; with one tool, ignore the other tool's rows.*
 | 6 | **Sync now before you start, and after your last save** | Every session, on every computer | **Sync** in the rail → **Sync now** | The Sync view shows no *"local changes not pushed"* after your last save |
 | 7 | **Pull and push the project's code** | Every session | `git pull` before you start, commit and `git push` when you stop | `git status` is clean and not behind |
 | 8 | **Start a new conversation, or say "continue"** | Every time you switch tool or computer | A new conversation always reads first. Since v3.76.1 the block also tells an open one to read again on *"continue"* or *"resume"* | The agent's reply says which handoff it opened, from which tool and machine |
-| 9 | *Optional:* **hooks** | Once per tool, per computer | `my-curator install-hooks claude-code` · `my-curator install-hooks antigravity` | `my-curator doctor` lists the hook files it finds. Antigravity's hooks are **not yet measured** |
+| 9 | *Optional:* **hooks** | Once per tool, per computer | `my-curator install-hooks claude-code` · `my-curator install-hooks antigravity` | `my-curator doctor` lists the hook files it finds. Antigravity's session-start hook was seen running once, on the maintainer's Mac, on 2026-09-26; its end-of-session save ask has **not** been observed |
 | 10 | **`my-curator doctor` — the one-command check** | After any setup change | Run it in the project folder | It reports steps 2, 3 (Antigravity), 4, 5 and 9 on this computer. It does **not** see steps 1, 6, 7 or 8 — those stay yours |
 
 ### Each step, in a little more detail
