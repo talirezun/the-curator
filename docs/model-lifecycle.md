@@ -893,6 +893,14 @@ The structural half does the actual work: the error carries
 `curatorModelGone`, which lets a consumer tell this from a routing-constraint
 refusal without reading prose.
 
+When the OpenRouter adapter raises it (the HTTP 400 above), the sentence and
+those tags ride on a typed `OpenRouterError` with `.status = 400` and
+`.code = 'OPENROUTER_BAD_REQUEST'`, like every other non-2xx the adapter raises
+(v3.77). Before that it was a plain `Error` with the status withheld, which
+broke the adapter's classification contract (the live suite's §4 was red 2/59
+from v3.72.1) without protecting anything: `isModelNotFound` keys on
+`.status === 404`, never 400.
+
 ### The pre-spend gate
 
 A multi-phase ingest is one outline call plus one per content batch — 25+ on a

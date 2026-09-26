@@ -191,9 +191,18 @@ section('§5  Delegation and the composer row');
   const chatCss = stripComments(read('views/chat.css'));
   ok(/\.chat-composer-controls\s*\{[^}]*container-type:\s*inline-size/.test(chatCss), 'the control row is a size container');
   const cq = /@container chatctl \(min-width: (\d+)px\)\s*\{([\s\S]*?)\n\}/.exec(chatCss);
-  ok(!!cq && /\.chat-composer-pickers\s*\{\s*flex-wrap:\s*nowrap/.test(cq[2]), 'when the ROW is wide enough the pills stay on one line');
-  ok(!!cq && /\.chat-model-lb-root\s*\{[^}]*flex-shrink:\s*10/.test(cq[2]) && /\.chat-length-lb-root\s*\{\s*flex-shrink:\s*0/.test(cq[2]),
-    'the model name gives way first; Length never');
+  // v3.77.0: the v3.72.0 one-row rule (nowrap + flex-shrink weights) clipped
+  // "Early Computi…" at 1280px by 0.22px. The pills now never shrink and the
+  // strip wraps; the BEHAVIOUR is measured in a real browser by
+  // test-chat-composer-pills.js (LIVE_LOCAL). This pins the source shape.
+  ok(!!cq && !/nowrap/.test(cq[2]), 'the wide-row block no longer forces one line');
+  ok(!/flex-shrink:\s*(?!0\s*[;}])[\d.]+/.test(chatCss.slice(chatCss.indexOf('.chat-composer-pickers {'), chatCss.indexOf('/* ── ASK AGAIN'))),
+    'no composer pill is given a flex-shrink weight above 0');
+  ok(/\.chat-composer-pickers > \.lb,\s*\.chat-composer-pickers > \.chat-project-host\s*\{\s*flex:\s*0 0 auto/.test(chatCss),
+    'each pill keeps its natural width (flex: 0 0 auto)');
+  ok(/\.chat-composer-pickers\s*\{[^}]*flex-wrap:\s*wrap/.test(chatCss), 'the strip wraps instead');
+  ok(!!cq && /\.chat-model-lb-root \.chat-pill-k\s*\{\s*display:\s*none/.test(cq[2]) && !/chat-(domain|length)-lb-root \.chat-pill-k|chat-project-host \.chat-pill-k/.test(cq[2]),
+    'on a wide row only the Model pill drops its leading word; Domain, Project and Length keep theirs');
   ok(!!cq && !/font-size/.test(cq[2]), 'no type is shrunk to make it fit');
 }
 

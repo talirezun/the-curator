@@ -565,6 +565,28 @@ async function testOrdering() {
   assertEq(fake.calls.map(c => c.name).join(','), 'large.md,medium.md,small.md', 'ingestFile was actually CALLED in largest-first order');
 }
 
+// v3.77: the confirm gate lists `files.accepted` under "Will be ingested
+// (largest first)". It used to be the browser's order — a 1.0 KB file above a
+// 2.2 KB one (the maintainer's report) — while the run itself was correctly
+// largest-first. Asserted against the RUN's own order, not a hand-typed list.
+async function testEstimateOrderMatchesRun() {
+  const { userDataDir } = await freshEnv();
+  const domain = await makeDomain();
+  // Browser order: 1.0 KB, 2.2 KB, 0.5 KB, then a 2.2 KB tie (upload order wins).
+  const uploads = [
+    await makeUpload('one-k.md', 1024, userDataDir),
+    await makeUpload('two-k.md', 2253, userDataDir),
+    await makeUpload('half-k.md', 500, userDataDir),
+    await makeUpload('two-k-tie.md', 2253, userDataDir),
+  ];
+  const est = await estimateIngestQueueCost(domain, uploads.map(f => ({ name: f.originalname, size: f.size })));
+  assertEq(est.files.accepted.join(','), 'two-k.md,two-k-tie.md,one-k.md,half-k.md',
+    'the estimate lists accepted files largest first, ties in upload order');
+  const job = await createJob({ domain, uploadedFiles: uploads });
+  assertEq(est.files.accepted.join(','), job.items.map(i => i.name).join(','),
+    'DUMB CROSS-CHECK: the preview order is exactly the order the run will process');
+}
+
 // ── 3. Crash resume + never-auto-start + the duplicate-check regression ─────
 
 async function testCrashResumeGeneral() {
@@ -2474,6 +2496,7 @@ async function testAccountingUnderRandomSequences() {
   await section('1f. A FAILED start releases the worker claim (never wedges the queue)', testFailedStartReleasesTheClaim);
   await section('1g. settleJob reclaims a stranded item with no worker running', testSettleReclaimsWithoutAWorker);
   await section('2. Largest-first processing order', testOrdering);
+  await section('2b. The estimate lists files in the run\'s order (v3.77)', testEstimateOrderMatchesRun);
   await section('3. Crash resume + NEVER auto-start spend', testCrashResumeGeneral);
   await section('3b. Crash resume does NOT drop the interrupted item as a false "duplicate"', testCrashResumeDuplicateRegression);
   await section('3c. A stranded "running" item is never lost (H1)', testStrandedItemUnderNonRunningJob);

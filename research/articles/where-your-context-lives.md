@@ -201,6 +201,8 @@ So: laptop in the morning, desktop in the afternoon, a different harness in the 
 
 And that is the democratisation argument in concrete form. If you exhaust your quota in one harness, you continue in another. If you would rather run an open-weight model locally on a machine strong enough for it, you continue there. Nothing about your accumulated context objects, because your context was never inside the tool you are leaving.
 
+> **Update, 26 September 2026.** This paragraph described the design; part of it is now measured. In my own live tests, Claude Code and Antigravity handed one project back and forth on one Mac (25 September) and across two Macs through Personal Sync (26 September), in both directions: a new conversation on the second Mac opened the newest handoff by the agents' own save times, and each Mac's copy stayed separate. It depends on two things this paragraph does not mention — the agent-instructions block in `AGENTS.md` as well as `CLAUDE.md`, and a `.curator-project` file committed so every clone knows its project — and it found one gap, fixed the same day: a conversation already open did not re-read after the other Mac saved. [The setup checklist](../../docs/user-guide.md#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist) lists every step. Codex, Cursor, opencode and local open-weight setups have not been tested in a live handover.
+
 ### The full stack of context
 
 The memory layer is not the whole picture, and I want to be precise about what sits where, because this is the part practitioners get wrong.
@@ -221,6 +223,8 @@ I would rather you hear this from me than discover it.
 **Capture is advisory.** Nothing forces an agent to save. [The skill](../../skills/README.md) tells it to save after every decision and every ten or so tool calls, and the menubar widget re-reads the store every few minutes so you can see when it last did, but no timer and no hook writes on its behalf. A missed save returns the previous state, stale but never corrupted.
 
 **The saving discipline is only partly portable.** The store is readable by anything that speaks MCP. The skill that carries the discipline of saving is ordinary prose and works anywhere you can paste it, but [how it *switches on*](../../skills/README.md#what-you-lose-without-auto-activation-and-what-it-costs) is Claude-shaped today. An agent in another harness can read working state fine; nothing yet tells it to write.
+
+> **Update, 26 September 2026.** Something now does: a short block the app copies per project, pasted at the top of `CLAUDE.md` and `AGENTS.md`. Measured headless on Claude Code (25 September), Sonnet 5 saved in 8 of 8 runs and Haiku 4.5 in 5 of 8; in my live tests Antigravity read and saved unprompted with the block in `AGENTS.md`. Antigravity's hooks, and every other harness in a live handover, remain unmeasured.
 
 **[A handoff cures ignorance, not disagreement](../../docs/working-state.md#what-a-handoff-cannot-do-it-cures-ignorance-not-disagreement).** It reliably tells the next session what it does not know. It does not bind it.
 

@@ -154,6 +154,8 @@ function loadUiState() { return Promise.resolve({}); }
 const shell = {};
 const writesInFlight = new Map();
 function staleHealthSlugs() { return []; }
+// v3.77: inert here; see scripts/test-health-summary.js §5.
+function seedHealthSummaries() {}
 function onWriteGateEdge() {}
 function subscribeAgeTicker() { return () => {}; }
 function disarmSemanticScan() {}

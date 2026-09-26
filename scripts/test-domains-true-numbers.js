@@ -112,7 +112,7 @@ section('1. F1 — refreshDomainFigures');
       healthSummary: { a: 3, b: 5 },
     };
     const fresh = over.fresh || {};
-    const fns = sandbox(['statsRowChanged', 'refreshDomainFigures'], {
+    const fns = sandbox(['statsRowChanged', 'seedHealthSummaries', 'refreshDomainFigures'], {
       state,
       fetchJSON: async (url) => {
         calls.url = url;
@@ -228,7 +228,7 @@ section('2b. A Shared Brain pull reloads the page\'s figures (onActionDone)');
   let reloaded = 0;
   const state = { domains: [{ slug: 'a', pageCount: 1 }, { slug: 'shared-x', pageCount: 5 }] };
   let serve = { domains: [{ slug: 'a', pageCount: 1 }, { slug: 'shared-x', pageCount: 9 }] };
-  const { onSharedActionDone } = sandbox(['statsRowChanged', 'staleHealthSlugs', 'onSharedActionDone'], {
+  const { onSharedActionDone } = sandbox(['statsRowChanged', 'staleHealthSlugs', 'seedHealthSummaries', 'onSharedActionDone'], {
     state, myMountToken: 1, isCurrentMount: () => true, reportAsyncActionFailure: (e) => { throw e; },
     fetchJSON: async () => serve,
     refreshDomainFigures: async (slug, t, o) => { refreshed.push(slug + ':' + !!(o && o.rescan)); },

@@ -593,6 +593,23 @@ export function getHookLogPath() {
 }
 
 /**
+ * The last Wiki health scan summary per domain (v3.77) — `{count, scannedAt,
+ * logMark}` per slug, written by `src/brain/health-summary.js` after every
+ * scan the app runs, read by GET /api/domains/stats so a domain's sidebar
+ * mark survives a restart instead of reverting to "not checked yet".
+ *
+ * OUTSIDE `domains/` for the reason the usage log above gives: it is a
+ * per-machine cache of a derived fact, and `getDomainsDir()` is Personal
+ * Sync's git work-tree. Synced, it would be a merge conflict between two
+ * machines' opinions of the same wiki. Rebuilt by the next scan if lost.
+ *
+ * Pure resolver — never creates the file.
+ */
+export function getHealthSummaryPath() {
+  return userDataPath('.health-summary.json');
+}
+
+/**
  * The Curator's trash (v3.73.0) — where a deleted DOMAIN or a deleted PROJECT
  * goes instead of being `rm -rf`'d. Two subfolders, created on first use:
  *

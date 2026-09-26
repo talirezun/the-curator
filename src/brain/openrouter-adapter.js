@@ -1975,14 +1975,32 @@ export class OpenRouterAdapter {
       // The message is `makeModelGoneError`'s, produced by llm.js's own builder
       // so there is ONE wording and one set of tags across the adapter, the
       // pre-spend gates and the routes. Its substring rules are documented
-      // there. `.status` is deliberately NOT set: 400 is not a signal any
-      // classifier reads, and setting it would put a number on the property
-      // `isModelNotFound` checks for 404. `httpStatus` keeps the fact for a log.
+      // there.
+      //
+      // ── v3.77: IT IS A TYPED `OpenRouterError` WITH `.status = 400` ─────────
+      // The first version of this branch threw the leaf module's plain `Error`
+      // and withheld `.status`, reasoning that setting it "would put a number on
+      // the property `isModelNotFound` checks for 404". That reasoning was
+      // wrong: `isModelNotFound` keys on `.status === 404` only, and 400 is not
+      // 404. What the withholding DID break was the adapter's classification
+      // contract — every other non-2xx this adapter raises is an
+      // `OpenRouterError` carrying its numeric status, `openrouter-qualify.js`'s
+      // `classifyProbeError` reports `httpStatus` from `.status`, and the live
+      // suite's §4 (a bogus id against the real endpoint) had been red 2/59
+      // since v3.72.1 on exactly those two facts. The friendly sentence and the
+      // model-gone tags are copied onto the typed error unchanged, so every
+      // gate that tests `curatorModelGone` / `curatorDeterministic` behaves
+      // byte-identically. The 404 branches above still withhold `.status`;
+      // that is a different fact (a 404 IS what `isModelNotFound` reads).
       //
       // EVERY OTHER 400 KEEPS TODAY'S GENERIC TAIL, byte-identical — a malformed
       // body, an unsupported parameter and an oversized request are all 400s and
       // none of them means the model is gone.
-      const e = modelGoneError('OpenRouter', model);
+      const gone = modelGoneError('OpenRouter', model);
+      const e = new OpenRouterError(code, gone.message, status);
+      // Every tag the leaf builder sets (curatorModelGone, curatorDeterministic,
+      // code) — copied rather than re-listed, so a tag added there arrives here.
+      Object.assign(e, gone);
       // `.code` is OVERWRITTEN with the OpenRouter class, and the wire value
       // moves to `.curatorErrorCode`. Both consumers need it that way:
       // `openrouter-qualify.js`'s `classifyProbeError` classifies STRUCTURALLY

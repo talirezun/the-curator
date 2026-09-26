@@ -183,3 +183,9 @@ AuthKey_*.p8
 # instance of the class the `.curator-install-id` block names, added in the
 # same change that creates the folder.
 .curator-trash/
+
+# The last Wiki health scan summary per domain (v3.77, src/brain/paths.js
+# getHealthSummaryPath()). Machine-local derived cache; in REPO mode it lands
+# beside tracked source. The TENTH instance of the class above, added in the
+# same change that creates the file.
+.health-summary.json

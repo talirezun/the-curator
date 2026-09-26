@@ -262,7 +262,7 @@ const E = {
     title: 'Wiki health',
     lead: 'Finds broken links, orphan pages and duplicates in this wiki, and helps you fix them.',
     points: [
-      { icon: 'search', text: 'Opening a domain scans it; a hollow ring means not scanned.' },
+      { icon: 'search', text: 'Opening a domain scans it; a hollow ring means no current scan.' },
       { icon: 'agent', text: 'AI actions use your model; each shows what it costs first.' },
       { icon: 'check', text: 'Nothing changes until you press a fix.' },
     ],

@@ -471,8 +471,10 @@ const state = {
   // it. Purely a label; it never gates an action.
   healthStale: false,
   healthError: null,
-  // slug -> { count, scannedAt } — the total open issue count and WHEN the
-  // scan that produced it read the wiki, populated as each domain is scanned
+  // slug -> { count, scannedAt, stale? } — the total open issue count and WHEN
+  // the scan that produced it read the wiki, populated as each domain is
+  // scanned AND (v3.77) seeded from the server's persisted last scan on every
+  // stats read (seedHealthSummaries), `stale` when the wiki changed after it
   // (the sidebar's health mark — see domainHealthBadgeHtml). NO ENTRY means
   // NOT CHECKED, which the row now says (v3.76.0) rather than showing nothing,
   // which read exactly like "no issues". A bare number is still read as a
@@ -1614,7 +1616,8 @@ function relTime(iso) {
  * otherwise, so a domain nobody had scanned looked exactly like a clean one:
  * "no mark" meant both "no issues" and "we do not know". Now:
  *
- *   · NOT CHECKED (no scan result this session) — a HOLLOW ring,
+ *   · NOT CHECKED (no scan result on this machine — v3.77 persists them
+ *     across restarts) — a HOLLOW ring,
  *     `.dm-row-unscanned-dot`, and the row's accessible name says "Health not
  *     checked yet — open this domain to run a scan" (opening a domain runs its
  *     scan). While that scan is running on the open domain it says so.
@@ -1629,7 +1632,11 @@ function relTime(iso) {
  * cannot hold the info-mark button). The ring's meaning for a sighted user is
  * in the Domains ⓘ (`domains.page`).
  *
- * `entry` is healthSummary's value: `{count, scannedAt}`, or a bare count
+ *   · STALE (v3.77) — a persisted scan from before the wiki last changed:
+ *     the hollow ring again, never its count, and "Health checked <age>,
+ *     before the wiki last changed — open this domain to rescan".
+ *
+ * `entry` is healthSummary's value: `{count, scannedAt, stale?}`, or a bare count
  * (older state), or undefined. PURE — `now` is passed in. Returns TRUSTED
  * host markup (an integer and fixed words; the age is formatAge's words).
  */
@@ -1637,15 +1644,26 @@ function domainHealthBadgeHtml(entry, now, scanning) {
   const e = typeof entry === 'number' ? { count: entry, scannedAt: null }
     : (entry && typeof entry === 'object' ? entry : null);
   const count = e && Number.isInteger(e.count) && e.count >= 0 ? e.count : null;
+  const t = e && e.scannedAt ? Date.parse(e.scannedAt) : NaN;
+  const age = Number.isFinite(t) && Number.isFinite(now)
+    ? formatAge(Math.max(0, Math.round((now - t) / 1000))) : null;
   if (count === null) {
     return '<span class="dm-row-unscanned-dot" aria-hidden="true"></span>' +
       '<span class="visually-hidden">' +
       (scanning ? 'Health check running' : 'Health not checked yet \u2014 open this domain to run a scan') +
       '</span>';
   }
-  const t = e.scannedAt ? Date.parse(e.scannedAt) : NaN;
-  const age = Number.isFinite(t) && Number.isFinite(now)
-    ? formatAge(Math.max(0, Math.round((now - t) / 1000))) : null;
+  // v3.77 — STALE: a scan from before the wiki last changed (served by
+  // GET /api/domains/stats from the persisted summary). Its count is about a
+  // wiki that no longer exists, so it is never shown as a count: the same
+  // hollow ring as "not checked", with the truth in words.
+  if (e.stale === true) {
+    return '<span class="dm-row-unscanned-dot" aria-hidden="true"></span>' +
+      '<span class="visually-hidden">' +
+      (scanning ? 'Health check running'
+        : 'Health checked' + (age ? ' ' + age : '') + ', before the wiki last changed \u2014 open this domain to rescan') +
+      '</span>';
+  }
   const when = age ? ', checked ' + age : '';
   if (count > 0) {
     return '<span class="dm-row-attn"></span>' +
@@ -1743,6 +1761,9 @@ async function loadDomainsList(token) {
       // for every domain whose stats moved since — an ingest elsewhere, a
       // sync, an MCP compile. See staleHealthSlugs.
       for (const s of staleHealthSlugs(state.domains, nextRows)) delete state.healthSummary[s];
+      // v3.77: …and then re-seeded from the server's persisted summary, which
+      // says honestly whether that scan predates the wiki's last change.
+      seedHealthSummaries(state.healthSummary, nextRows);
       state.domains = nextRows;
       state.readonlySet = new Set(data.readonlyDomains || []);
       // ── THE REQUESTED DOMAIN IS CHECKED HERE, AND ONLY HERE (P1-9) ────
@@ -2825,6 +2846,28 @@ function statsRowChanged(prev, next) {
  * log entry) the count is about a wiki that no longer exists, and an absent
  * entry — no dot, "not checked" — is the honest reading until it is rescanned.
  */
+/**
+ * v3.77 — THE PERSISTED SCAN SUMMARY, SEEDED INTO THE SESSION'S MAP.
+ * GET /api/domains/stats (and the one-domain stats route) carries each
+ * domain's last scan as `row.health` = `{count, scannedAt, stale}` or null,
+ * read from src/brain/health-summary.js, so a restart no longer turns every
+ * unopened domain into "not checked". The server records EVERY scan this app
+ * runs, so its entry wins unless the session holds a strictly newer one (a
+ * scan whose response landed before this stats read). Mutates `summary`.
+ */
+function seedHealthSummaries(summary, rows) {
+  if (!summary || typeof summary !== 'object') return;
+  for (const r of rows || []) {
+    const h = r && r.health;
+    if (!r || !r.slug || !h || typeof h !== 'object') continue;
+    if (!Number.isInteger(h.count) || h.count < 0 || typeof h.scannedAt !== 'string') continue;
+    const cur = summary[r.slug];
+    const curAt = cur && typeof cur === 'object' && cur.scannedAt ? Date.parse(cur.scannedAt) : NaN;
+    if (Number.isFinite(curAt) && curAt > Date.parse(h.scannedAt)) continue;
+    summary[r.slug] = { count: h.count, scannedAt: h.scannedAt, stale: h.stale === true };
+  }
+}
+
 function staleHealthSlugs(prevRows, nextRows) {
   const before = new Map();
   for (const r of prevRows || []) if (r && r.slug) before.set(r.slug, r);
@@ -2863,7 +2906,12 @@ async function refreshDomainFigures(slug, token, opts) {
     // A dot for a domain NOT on screen is dropped rather than recomputed:
     // only a scan can say what its count is now (F9). The active domain's is
     // rewritten by the rescan below or by its own Health path's loadHealth.
-    if (slug !== state.activeSlug) delete state.healthSummary[slug];
+    if (slug !== state.activeSlug) {
+      delete state.healthSummary[slug];
+      // v3.77: the server's persisted summary is the honest replacement — it
+      // arrives marked stale when the change postdates the scan.
+      seedHealthSummaries(state.healthSummary, [fresh]);
+    }
     render(token);
   }
   if (slug === state.activeSlug) {

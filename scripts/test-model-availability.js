@@ -113,7 +113,7 @@ const llm = await import('../src/brain/llm.js');
 // depend on: §4 drives `fallbackRungsFor` with its own heads.)
 const WITHDRAWN = 'ibm-granite/granite-4.0-h-micro';
 const adapterMod = await import('../src/brain/openrouter-adapter.js');
-const { OpenRouterAdapter, classifyBadRequestReason, classifyNotFoundReason } = adapterMod;
+const { OpenRouterAdapter, OpenRouterError, classifyBadRequestReason, classifyNotFoundReason } = adapterMod;
 const { modelGoneError, MODEL_GONE_CODE } = await import('../src/brain/model-gone.js');
 const { default: express } = await import('express');
 const { default: configRouter } = await import('../src/routes/config.js');
@@ -156,8 +156,16 @@ async function driveAdapter(status, message, opts = {}) {
   eq(err.curatorDeterministic, true, '★ and curatorDeterministic, which is what stops the chain walk [M2]');
   ok(err.message.includes(WITHDRAWN), 'the message NAMES the id the user is pinned to');
   ok(err.message.includes('pick another model'), 'the message says what to do next — "pick another model"');
-  eq(err.status, undefined, '`.status` is withheld: 400 is not a signal any classifier reads, and setting it would put a number where isModelNotFound looks');
-  eq(err.httpStatus, 400, '…while httpStatus keeps the fact for a log — "we withheld it" never becomes "there was not one"');
+  // ── CHANGED IN v3.77, WITH THE REASON ──────────────────────────────────
+  // This line used to assert `.status === undefined`, on the claim that a 400
+  // "would put a number where isModelNotFound looks". isModelNotFound keys on
+  // `.status === 404` only; 400 never fires it (asserted just below by the
+  // classifiers). Withholding it broke the adapter's typed-error contract —
+  // test-openrouter-live.js §4 was red 2/59 from v3.72.1 on exactly this — so
+  // the model-gone 400 is now a typed OpenRouterError carrying status 400.
+  ok(err instanceof OpenRouterError, 'it is a typed OpenRouterError, like every other non-2xx the adapter raises');
+  eq(err.status, 400, '`.status` carries the HTTP 400 structurally (400 is not 404, so isModelNotFound cannot read it as a retirement)');
+  eq(err.httpStatus, 400, '…and httpStatus keeps the same fact for a log');
   eq(err.curatorErrorCode, MODEL_GONE_CODE, 'the wire code rides on curatorErrorCode');
   eq(err.code, 'OPENROUTER_BAD_REQUEST', '…and `.code` stays the OpenRouter class, which is what openrouter-qualify classifies on');
 

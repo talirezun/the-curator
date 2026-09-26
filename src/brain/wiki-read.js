@@ -69,7 +69,7 @@
  * `console.error`; see the v2.5.3 "MCP stdout pollution" fix in CLAUDE.md).
  * It still does not import anything from `mcp/`.
  */
-import { readFile, readdir, stat } from 'fs/promises';
+import { readFile, readdir, stat, open } from 'fs/promises';
 import { existsSync, lstatSync, realpathSync } from 'fs';
 import path from 'path';
 import { wikiPath } from './files.js';
@@ -739,30 +739,27 @@ export async function getWikiPage(domain, requestedPath) {
 //     string GET /:domain/page's `path` query param expects (folder/slug.md,
 //     no leading slash) — the same convention readWikiPages() and chat
 //     citations already use elsewhere in the app.
-//   - `title` is derived from the SLUG ONLY — never from file content or
-//     frontmatter. This function performs ZERO `readFile` calls; cost scales
-//     with page COUNT (one readdir per canonical folder), not with wiki size,
-//     which is the entire reason it can return ~3,300 entries in one call
-//     instead of the 14 MB `GET /:domain` returns.
+//   - `title` is the page's OWN title (v3.77) — frontmatter `title:`, else
+//     the first `# Heading`, else the humanised slug — derived by the SAME
+//     `deriveTitle` GET /:domain/page and chat citations use, so the list,
+//     the reader and a citation chip can never disagree about a page's name.
+//     Before v3.77 this was slug-only ("Eniac", "First Draft Report On The
+//     Edvac" where the page says "ENIAC" / "First Draft of a Report on the
+//     EDVAC"), a documented trade-off this function's own comment said to
+//     fix only with a separately-costed title cache. That cache is
+//     `readListTitle` below: it reads at most the first TITLE_HEAD_BYTES of
+//     a page (never the whole file unless the head holds no title at all),
+//     and remembers the answer by (absolute path, mtime in NANOSECONDS, size)
+//     — the same signature files.js's log-date cache (readLogLatest) uses,
+//     for the same reason: millisecond mtime has a same-millisecond blind spot — so a warm list on a 3,452-page domain is one
+//     stat per page and zero reads, and an ingest re-reads only the pages it
+//     touched. A page that cannot be read (EACCES, vanished mid-list) falls
+//     back to the slug title; it is never dropped and never throws.
 //   - Capped at MAX_LIST_ENTRIES (20,000) with `truncated: true` when the
 //     domain has more. `total` always reports the real (uncapped) count —
 //     computing it costs nothing extra, since `listMd` already returned
-//     every filename before the slice.
-//
-// NOT ENFORCED — known, accepted trade-off (do not "fix" this by adding a
-// content read here):
-//   - A page whose REAL title (an explicit frontmatter `title:`, or the
-//     first `# Heading` in the body — see `deriveTitle` above) differs from
-//     a humanised form of its slug will show the SLUG-DERIVED label in this
-//     list. Its real title is correct the instant it's opened via
-//     GET /:domain/page, which DOES read the file. This is intentional, not
-//     an oversight: reading file content here to get "real" titles
-//     reinstates the exact 14 MB-response problem this endpoint exists to
-//     avoid. If real titles in the browse list are ever wanted, that needs a
-//     separately-costed mechanism (e.g. a title-only cache built once and
-//     invalidated the way the backlink index above is, or a client-side
-//     cache populated as pages get opened) — never a body read inside this
-//     function.
+//     every filename before the slice. Titles are read only for the entries
+//     actually returned.
 // ─────────────────────────────────────────────────────────────────────────
 
 const LIST_FOLDERS = ['entities', 'concepts', 'summaries'];
@@ -783,8 +780,97 @@ function titleFromSlug(slug) {
   return slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+// ── The list's title cache (v3.77) — see the block comment above ─────────
+// Enough for any frontmatter block plus the first heading on every page this
+// app writes; a page whose head holds no title is read in full (rare), so the
+// cap bounds the common case without ever changing the answer.
+export const TITLE_HEAD_BYTES = 8192;
+const TITLE_CACHE_MAX = 50000;
+const TITLE_READ_CONCURRENCY = 32;
+/** absPath -> { mtimeNs, size, title } (bigints, as stat({bigint:true}) gives them) */
+const listTitleCache = new Map();
+/** Test hook: how many page reads the title cache performed (never a content). */
+let listTitleReads = 0;
+export function __listTitleStats() { return { reads: listTitleReads, cached: listTitleCache.size }; }
+export function __clearListTitleCache() { listTitleCache.clear(); listTitleReads = 0; }
+
+async function readHead(absPath, bytes) {
+  const fh = await open(absPath, 'r');
+  try {
+    const buf = Buffer.alloc(bytes);
+    const { bytesRead } = await fh.read(buf, 0, bytes, 0);
+    return buf.toString('utf8', 0, bytesRead);
+  } finally {
+    await fh.close();
+  }
+}
+
 /**
- * Cheap, readdir-only inventory of every page in `domain`'s wiki — see the
+ * A page's own title, as `deriveTitle` would give it for the whole file, read
+ * from its head where possible. Returns `null` only if the head is not enough
+ * to decide (the caller then reads the full file).
+ */
+function titleFromHead(head, truncated) {
+  let text = head;
+  // A truncated head may end mid-line (or mid-UTF-8 sequence): a heading on
+  // that last line could be cut short, so it is never used.
+  if (truncated) {
+    const nl = text.lastIndexOf('\n');
+    text = nl === -1 ? '' : text.slice(0, nl + 1);
+    // An unclosed frontmatter block cannot be judged from a prefix.
+    if (text.startsWith('---') && text.indexOf('\n---', 3) === -1) return null;
+  }
+  const { frontmatter, body } = parseFrontmatter(text);
+  if (frontmatter && typeof frontmatter.title === 'string' && frontmatter.title.trim()) {
+    return frontmatter.title.trim();
+  }
+  const m = body.match(/^#\s+(.+?)\s*$/m);
+  if (m) return m[1].trim();
+  return truncated ? null : '';
+}
+
+async function readListTitle(absPath, slug) {
+  let st;
+  try { st = await stat(absPath, { bigint: true }); } catch { return titleFromSlug(slug); }
+  const hit = listTitleCache.get(absPath);
+  if (hit && hit.mtimeNs === st.mtimeNs && hit.size === st.size) return hit.title;
+  const size = Number(st.size);
+  let title;
+  try {
+    listTitleReads++;
+    const truncated = size > TITLE_HEAD_BYTES;
+    const head = await readHead(absPath, Math.min(size, TITLE_HEAD_BYTES));
+    let found = titleFromHead(head, truncated);
+    if (found === null) {
+      const raw = await readFile(absPath, 'utf8');
+      const { frontmatter, body } = parseFrontmatter(raw);
+      found = deriveTitle(frontmatter, body, slug);
+    }
+    title = found || titleFromSlug(slug);
+  } catch {
+    // Unreadable (EACCES) or gone mid-list: listed under its slug title, not
+    // cached, so it is retried once it becomes readable.
+    return titleFromSlug(slug);
+  }
+  if (listTitleCache.size >= TITLE_CACHE_MAX) listTitleCache.clear();
+  listTitleCache.set(absPath, { mtimeNs: st.mtimeNs, size: st.size, title });
+  return title;
+}
+
+async function fillListTitles(wikiDir, entries) {
+  let next = 0;
+  async function worker() {
+    while (next < entries.length) {
+      const e = entries[next++];
+      e.title = await readListTitle(path.join(wikiDir, e.path), e.slug);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(TITLE_READ_CONCURRENCY, entries.length) }, worker));
+}
+
+/**
+ * Cheap inventory of every page in `domain`'s wiki — readdir for the set,
+ * plus the mtime+size-cached title read for each returned entry — see the
  * block comment above for the full contract. Throws an Error with `.status`
  * set (404) if the domain has no wiki, matching getWikiPage's convention.
  */
@@ -814,9 +900,11 @@ export async function listWikiInventory(domain) {
 
   const total = entries.length;
   const truncated = total > MAX_LIST_ENTRIES;
+  const shown = truncated ? entries.slice(0, MAX_LIST_ENTRIES) : entries;
+  await fillListTitles(wikiDir, shown);
   return {
     domain,
-    entries: truncated ? entries.slice(0, MAX_LIST_ENTRIES) : entries,
+    entries: shown,
     count: Math.min(total, MAX_LIST_ENTRIES),
     total,
     truncated,
