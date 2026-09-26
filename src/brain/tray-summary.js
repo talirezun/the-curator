@@ -723,16 +723,26 @@ let _remoteObservation = null;   // { at: epochMs, remote: {...} }
  * @returns {boolean} whether anything was recorded.
  */
 export function noteRemoteStatus(payload, now = Date.now()) {
-  if (payload === null || payload === undefined) { _remoteObservation = null; return false; }
+  if (payload === null || payload === undefined) { _remoteObservation = null; _remoteFiles = null; return false; }
   if (typeof payload !== 'object') return false;
   // An unconfigured install has no remote at all. That is not an observation
   // of "0 waiting" and must not be stored as one.
-  if (payload.configured !== true) { _remoteObservation = null; return false; }
+  if (payload.configured !== true) { _remoteObservation = null; _remoteFiles = null; return false; }
 
   // `behindFiles` is null on a FAILED check by sync.js's own honesty rule, and
   // it is carried through as null. "We could not ask" and "there is nothing
   // waiting" are different facts; collapsing them here would undo the rule at
   // the one place it is consumed.
+  // v3.77.0 — the incoming FILE PATHS (at most 20, sync.js's preview), kept
+  // APART from the observation the tray renders so its shape is unchanged.
+  // The Setup check names the machine a waiting handoff came from with them.
+  _remoteFiles = {
+    at: Number.isFinite(now) ? now : Date.now(),
+    checkedAt: typeof payload.checkedAt === 'string' ? payload.checkedAt : null,
+    ok: payload.remoteChecked !== false,
+    files: Array.isArray(payload.files) ? payload.files.filter((f) => typeof f === 'string').slice(0, 20) : [],
+    behindFiles: Number.isInteger(payload.behindFiles) ? payload.behindFiles : null,
+  };
   _remoteObservation = {
     at: Number.isFinite(now) ? now : Date.now(),
     remote: {
@@ -768,7 +778,18 @@ export function noteRemoteStatus(payload, now = Date.now()) {
 }
 
 /** Test seam. Drops any recorded observation. */
-export function __resetRemoteObservation() { _remoteObservation = null; }
+export function __resetRemoteObservation() { _remoteObservation = null; _remoteFiles = null; }
+
+let _remoteFiles = null;
+/**
+ * v3.77.0 — the last remote check's incoming file paths, or null when none was
+ * made or it is older than REMOTE_OBSERVATION_MAX_AGE_MS. No fetch, ever.
+ */
+export function readRemoteIncoming(now = Date.now()) {
+  if (!_remoteFiles) return null;
+  if (now - _remoteFiles.at >= REMOTE_OBSERVATION_MAX_AGE_MS) return null;
+  return { ..._remoteFiles, files: _remoteFiles.files.slice() };
+}
 
 /**
  * The observation, or null once it is older than

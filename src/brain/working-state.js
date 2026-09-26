@@ -6681,6 +6681,33 @@ function readFirstReadings(documents, budgetBytes = CONTEXT_MAX_BYTES_DEFAULT) {
  * this store but not through sync or a hand edit), `freshness` per entry and
  * `repo.reachable`.
  */
+/**
+ * v3.77.0 — the project's FOLDER sources as recorded, for the Setup check's
+ * "Where is this project checked out on this computer?" suggestions. READ-ONLY.
+ * Each is `{root, reachable, inGit}`: `reachable` when the recorded folder
+ * exists here (a root recorded on another computer will not), `inGit` when it
+ * sits inside a git work tree. GitHub-only sources carry no folder and are
+ * not returned. Never throws; `[]` on any refusal.
+ */
+export async function foundationFolderSources(domain, project) {
+  try {
+    const view = projectView(domain, project);
+    if (!view.ok) return [];
+    const mf = await readManifest(view.paths.manifestAbs);
+    if (mf.status !== 'ok') return [];
+    const out = [];
+    for (const g of mf.manifest.sources || []) {
+      if (typeof g.root !== 'string' || !g.root.startsWith('/')) continue;
+      const r = await resolveRepoRoot(g.root);
+      let top = null;
+      if (r.ok) top = await gitTopLevel(r.realRoot);
+      out.push({ root: r.ok ? (top || r.realRoot) : g.root, reachable: r.ok, inGit: !!top });
+    }
+    const seen = new Set();
+    return out.filter((x) => (seen.has(x.root) ? false : seen.add(x.root)));
+  } catch { return []; }
+}
+
 export async function listFoundations(domain, project, opts = {}) {
   const view = projectView(domain, project);
   if (!view.ok) return view;
