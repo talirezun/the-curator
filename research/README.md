@@ -70,6 +70,10 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for detailed guidelines.
   By Dr. Tali Režun  
   *The Curator becomes a Mac app — three layers of context in one folder you own, a menu bar widget onto your agents' memory, and an honest account of what is still not finished.*
 
+- **[The Context Engine](./articles/the-context-engine.md)**  
+  By Dr. Tali Režun  
+  *Three kinds of context, three write rules, and a project that outlives the session, the harness, the model and the machine — with the first live tests of two agent tools and two computers on one project, what they broke, and what was measured after the fixes.*
+
 ### Case Studies
 
 *(Coming soon)*
@@ -145,6 +149,14 @@ If you're referencing articles from this research series, please cite them as fo
   year = {2026},
   month = {September},
   url = {https://github.com/talirezun/the-curator/blob/main/research/articles/where-your-context-lives.md}
+}
+
+@article{rezun2026context-engine,
+  author = {Režun, Tali},
+  title = {The Context Engine},
+  year = {2026},
+  month = {September},
+  url = {https://github.com/talirezun/the-curator/blob/main/research/articles/the-context-engine.md}
 }
 ```
 
