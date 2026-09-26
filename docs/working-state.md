@@ -2642,7 +2642,7 @@ it cannot read, and it leaves every hook it did not write untouched.
 |---|---|---|---|
 | **Claude Code** | verified | `SessionStart` · `PreCompact` · `Stop` | `.claude/settings.json` · `.claude/settings.local.json` · `~/.claude/settings.json` |
 | **Cursor** | verified | `sessionStart` · `preCompact` · `stop` (with `loop_limit: 1`) | `.cursor/hooks.json` · `~/.cursor/hooks.json` |
-| **Antigravity** | verified (documented, **not yet run**) | `PreInvocation` (injected once per conversation) · `Stop`, under one named hook `my-curator`. `PostInvocation` refused — it fires after every tool round | `.agents/hooks.json` · `~/.gemini/config/hooks.json` |
+| **Antigravity** | verified (documented); session start **seen working** once (2026-09-26, project file); `Stop` **not yet seen** | `PreInvocation` (injected once per conversation) · `Stop`, under one named hook `my-curator`. `PostInvocation` refused — it fires after every tool round | `.agents/hooks.json` (the default — seen working) · `~/.gemini/config/hooks.json` (ran once; its injection was not seen used) |
 | **Codex CLI** | unverified | `PreCompact` · `Stop`. **`SessionEnd` refused** — 3 s maximum | `.codex/hooks.json` · `~/.codex/hooks.json` |
 | **GitHub Copilot CLI** | unverified | `sessionStart` · `preCompact` · `agentStop` — **refused by default**, envelopes unmeasured | `.github/hooks/` · `~/.copilot/hooks/` |
 | **goose** | unverified | `Stop` · `SessionEnd` — **refused by default**, envelopes unmeasured | `~/.agents/plugins/my-curator/hooks/hooks.json` |
@@ -2675,7 +2675,8 @@ embedded in a user-role message. Every other row's `measured` field is still `nu
 fifteen — and their hook states are **documented or inferred, never observed**: two of them read
 `verified` (Cursor's and Antigravity's, each from its own documentation), six `unverified`, three
 `present-useless` and three `none`. Claude Code's row is the only one where a word in that column has been watched
-happening. Nothing here should be read as a claim of reach. See the meter below and `scripts/measure-harness.js` for the protocol that changed this
+happening under the measurement protocol; Antigravity's session-start hook has since been **seen** working in one live
+session (2026-09-26, below), which is an observation, not a measurement. Nothing here should be read as a claim of reach. See the meter below and `scripts/measure-harness.js` for the protocol that changed this
 one row and would change another.
 
 ### Antigravity (v3.76.0)
@@ -2693,7 +2694,7 @@ unknown are kept apart:
 | **Instruction file** | documented | `AGENTS.md` and `GEMINI.md`, walked up to the repository root; **not `CLAUDE.md`** |
 | **MCP config** | documented + seen | `~/.gemini/config/mcp_config.json` (documented); `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/antigravity-ide/mcp_config.json` were separate files on that Mac. `doctor` checks all three |
 | **Skills** | documented | `skills/<name>/` under `~/.gemini/config/` or `.agents/`, or under `plugins/<plugin>/` there (e.g. `~/.gemini/config/plugins/the-curator/skills/`) |
-| **Hooks** | **built, not yet run** | `PreInvocation` → the project context, `Stop` → the save ask. Both shapes come from the vendor's `hooks.md` |
+| **Hooks** | **session start seen once (2026-09-26); Stop not yet seen** | `PreInvocation` → the project context, `Stop` → the save ask, from the vendor's `hooks.md`. With the project file `<repo>/.agents/hooks.json` the injection **was used** (the agent read back the brief's directive without a tool call). With only `~/.gemini/config/hooks.json` the start hook **ran** (a marker, 08:48 UTC) but that conversation called `get_project_context` itself and gave no read-back — not seen used. One session's Stop produced no reminder; whether it fired is unknown (see the hook activity log below) |
 | **MCP client name** | **unknown** | Its sessions show up as `other` in the usage log (see below) |
 
 Those two sessions are single observations, not the four-runs-per-arm protocol, so the row's
@@ -2726,14 +2727,43 @@ Those two sessions are single observations, not the four-runs-per-arm protocol, 
   Curator's handlers live under `my-curator`. Every other named hook — its `matcher`, its
   `enabled` — is left exactly as found. `.agents/hooks.json` is the docs' own example; the global
   `~/.gemini/config/hooks.json` is inferred from *"your customization root directory"* and is not
-  shown by example. If a user-scope install never fires, use the project scope.
+  shown by example. **Since v3.77.0 the project file is the default** — it is the one seen working
+  (2026-09-26); the user file ran once but its injection was not seen used, which is not proof that
+  it is ignored, so `install-hooks` writes it when asked and prints that observation beside it.
+- The project file holds **this computer's absolute path** to `my-curator`, so it must not be
+  committed: `--git-exclude` adds `/.agents/hooks.json` to `.git/info/exclude` (local to this
+  clone, never pushed; idempotent; `.gitignore` is never touched).
 
 ```
-my-curator install-hooks antigravity --scope user        # ~/.gemini/config/hooks.json
-my-curator install-hooks antigravity --scope project     # <repo>/.agents/hooks.json
+my-curator install-hooks antigravity --git-exclude       # <repo>/.agents/hooks.json (the default), kept out of git
+my-curator install-hooks antigravity --scope user        # ~/.gemini/config/hooks.json (ran once, not seen used)
 my-curator install-hooks antigravity --uninstall --scope user
 my-curator doctor                                        # the Antigravity row
+my-curator hook-log --harness antigravity                # what the hooks actually did
 ```
+
+**The hook activity log (v3.77.0).** A hook used to leave no trace, so "no reminder appeared" could
+mean the hook never ran, ran with an id it did not recognise, or ran and decided not to ask. Every
+`my-curator hook` run now appends one **content-free** line to `<user data>/.hook-activity.jsonl`
+(`src/brain/hook-log.js`; machine-local, never under `domains/`, rotated at 256 KB to one `.1`
+generation, `CURATOR_HOOK_LOG=0` switches it off): the time, the harness, the event, the first 12
+hex of a SHA-256 of the conversation id and **which payload field carried it** (`idKey`), the
+payload's top-level **key names** (never a value), `terminationReason` when it is one of the three
+documented words, the resolved `domain/project`, and the decision — `inject`, `ask` or `none` —
+with its ladder rung, reason, and how the Stop window was bounded (`marker` or `start-log`). No
+prompt, path, model name or error text is ever written (`scripts/test-hook-log.js` plants a
+sentinel in every payload value). `my-curator hook-log` prints the last 20; `doctor` and the app's
+**Setup** check read it (*start hook observed firing …*, *stop hook observed firing … — asked / did
+not ask: …*, *installed, not yet observed firing*), with the old temp-folder markers only as a
+fallback.
+
+**The Stop fallback (v3.77.0).** A Stop whose conversation id matches no marker used to refuse at
+rung 2 (*"no session start is recorded, so the window cannot be bounded"*). It now looks in the
+activity log for this tool's own **injecting** session start for the same project within 12 hours
+and, when there is one, bounds the window from it and records `bound: start-log`. With no such start
+it still refuses at rung 2 — the fallback never invents a window. Antigravity's `hooks.md` names
+`conversationId` as a common field on every payload, Stop included; `trajectoryId` and `cascadeId`
+are also accepted, and the log records which one arrived.
 
 `my-curator doctor`'s Antigravity row shows: all three MCP files and whether each names
 `my-curator`; which hook files carry Curator entries, including one switched off with
