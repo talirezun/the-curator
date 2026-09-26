@@ -372,10 +372,25 @@ section('§5  doctor — MCP files, hook file, skills by hash, the AGENTS.md blo
   // The Antigravity row runs until the next harness row (Cursor follows it in table order).
   const block = txt.slice(txt.indexOf('  Antigravity —'), txt.indexOf('  Cursor —'));
   ok(block.length > 0 && block.startsWith('  Antigravity —'), 'the text report carries an Antigravity row');
-  ok(/Antigravity — bridge configured \(1 file\) · 2 Curator hook file · hooks: verified/.test(block), 'the text row reads configured, hooked (user + project hooks.json)', block.split('\n')[0]);
+  ok(/Antigravity — bridge configured \(1 file\) · 2 Curator hook file · hook format documented · hooks installed · not yet seen running on this machine/.test(block), 'the text row reads configured, hooked (user + project hooks.json), format documented, NOT seen running', block.split('\n')[0]);
+  // v3.77.0: the row once read `hooks: verified` two lines above "have NOT been
+  // run yet". No bare state word may appear in the row's head again.
+  ok(!/hooks: (verified|unverified)/.test(block.split('\n')[0]), '…and never the bare state word that read as a claim the hooks ran', block.split('\n')[0]);
   ok(/skill my-curator: matches this version/.test(block) && /skill curator-continuity: STALE — differs: SKILL\.md · missing: examples\.md/.test(block),
     '…and says which skill is stale and why');
   ok(/capture: NOT MEASURED/.test(block) && /observed · 2026-09-25/.test(block), '…NOT MEASURED, with the dated observations');
+
+  // The markers the §-hook runs above wrote PREDATE this hook file, so they are
+  // not evidence the installed hooks ran (the row just said "not yet seen").
+  // A run AFTER the install is, and the row then says what a marker proves —
+  // that the hook COMMAND ran for this harness — and nothing more.
+  const fresh = run(['hook', 'session-start', '--harness', 'antigravity'], { cwd: ELSEWHERE, input: payload('agy-after-install') });
+  ok(fresh.code === 0, 'a session-start run after the install exits 0', fresh.stderr);
+  const txt2 = run(['doctor', '--cwd', WORK], { cwd: WORK }).stdout;
+  const head2 = txt2.slice(txt2.indexOf('  Antigravity —')).split('\n')[0];
+  ok(/hooks installed · the hook command ran for it \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC \(marker\)/.test(head2),
+    '…then the row reads that the hook command ran, dated, from the marker', head2);
+  ok(!/not yet seen running/.test(head2), '…and no longer says it has not been seen', head2);
 
   // Our named hook switched off is present and INERT.
   const uf = g('config', 'hooks.json');

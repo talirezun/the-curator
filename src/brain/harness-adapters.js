@@ -571,7 +571,7 @@ const ENTRIES = [
     observations: Object.freeze([
       '2026-09-25 · with the Curator block in AGENTS.md, a session told only "Continue." called get_project_context unprompted.',
       '2026-09-25 · without the AGENTS.md block, a session saved unprompted — but to scope `main`, replacing another tool\'s handoff there.',
-      'The hooks (PreInvocation read, Stop ask) are built from the vendor documentation and have NOT been run yet.',
+      '2026-09-25 · the hooks (PreInvocation read, Stop ask) were built from the vendor documentation and had NOT yet been run — the row above reads this machine\'s own evidence since.',
     ]),
   },
   {

@@ -5108,6 +5108,15 @@ $ my-curator doctor
   `my-curator` bridge — including whether the path baked into it has gone stale;
 - which of them carry Curator hooks, **and whether any of those hooks is one of the two that look
   installed and do nothing** (see the table below);
+- **for each harness, two separate facts about its hooks** (v3.77.0): what the vendor's hook
+  *format* is — `hook format documented`, `hook format unmeasured`, `hooks cannot carry the ask` or
+  `no hook mechanism` — and whether a hook has *run* here: `hooks not installed`, `hooks installed ·
+  not yet seen running on this machine`, or `hooks installed · the hook command ran for it <date>
+  UTC (marker)`. The last one is read from the small marker file `my-curator hook` leaves in the
+  temp folder, and only a marker newer than the hook file counts. The temp folder is cleared on
+  restart, so "not yet seen running" is an absence of evidence, not proof the hooks are broken.
+  (Before v3.77.0 the row printed `hooks: verified`, which meant only "the format is documented"
+  and read as a claim the hooks had been run.);
 - **which instruction file this harness will actually read**, and whether your agent-instructions
   block is in it — the only practical way to catch the two traps in the next section;
 - the capture meter, in the terminal;

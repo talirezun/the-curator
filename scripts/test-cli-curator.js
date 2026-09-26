@@ -1359,6 +1359,59 @@ section('§11  The packaged app ships no command — doctor says so, once');
     `…over ${new Set(real.harnesses.map((x) => x.hookState)).size} distinct states (the control — one word would pass a weaker check)`);
   ok(real.harnesses.every((x) => x.measured === (A.adapterFor(x.id)?.measured || null)),
     '…and so is `measured`, which is null on every entry until a verdict exists');
+
+  // ── v3.77.0: the row never reads as a claim that hooks RAN ────────────────
+  // Antigravity's row printed `hooks: verified` two lines above "have NOT been
+  // run yet". `verified` is the table's word for a DOCUMENTED format; whether
+  // a hook ran is a separate fact, read only from a marker newer than the file.
+  const { hookStatusBits, readHookRuns } = await import('../src/cli/doctor.js');
+  const T0 = Date.parse('2026-09-25T10:00:00Z');
+  const hookFile = { file: '/h/hooks.json', ours: true, mtimeMs: T0 };
+  const bitsFor = (extra) => hookStatusBits({ hookState: 'verified', hooks: [], ...extra }).join(' · ');
+  ok(bitsFor({}) === 'hook format documented · hooks not installed', 'documented format, nothing installed', bitsFor({}));
+  ok(bitsFor({ hooks: [hookFile] }) === 'hook format documented · hooks installed · not yet seen running on this machine',
+    'installed with no marker: NOT seen running', bitsFor({ hooks: [hookFile] }));
+  const stale = bitsFor({ hooks: [hookFile], hookRuns: { lastRunAt: '2026-09-19T10:11:09.000Z' } });
+  ok(/not yet seen running/.test(stale), 'a marker OLDER than the hook file (a test or manual run) is not evidence', stale);
+  const ran = bitsFor({ hooks: [hookFile], hookRuns: { lastRunAt: '2026-09-25T11:30:00.000Z' } });
+  ok(ran === 'hook format documented · hooks installed · the hook command ran for it 2026-09-25 11:30 UTC (marker)',
+    'a marker newer than the file: the command ran, dated', ran);
+  const notInstalledRan = bitsFor({ hooks: [], hookRuns: { lastRunAt: '2026-09-25T11:30:00.000Z' } });
+  ok(notInstalledRan === 'hook format documented · hooks not installed',
+    'a marker for a harness with NO hook installed claims nothing (measured: 2026-09-19 suite leftovers)', notInstalledRan);
+  ok(hookStatusBits({ hookState: 'unverified', hooks: [] }).join(' · ') === 'hook format unmeasured · hooks not installed', 'unverified reads "format unmeasured"');
+  ok(hookStatusBits({ hookState: 'present-useless', hooks: [hookFile] }).join(' · ') === 'hooks cannot carry the ask', 'present-useless');
+  ok(hookStatusBits({ hookState: 'none', hooks: [] }).join(' · ') === 'no hook mechanism', 'none');
+  // EVERY table state renders without the bare word — derived from the table.
+  for (const st of Object.values(A.HOOK_STATES)) {
+    const t = hookStatusBits({ hookState: st, hooks: [hookFile] }).join(' · ');
+    ok(!/\b(verified|unverified)\b/.test(t) && !/^hooks: /.test(t), `state "${st}" never prints the bare state word`, t);
+  }
+  const rendered = await render({
+    ...base, binaries: { myCurator: ['/x/my-curator'], curator: [], curatorIsOurs: false },
+    install: { bundle: false, appRoot: '/w' },
+    harnesses: [{
+      id: 'antigravity', label: 'Antigravity', mcp: [], hooks: [{ ...hookFile, events: ['Stop'] }], instructions: [],
+      hookState: 'verified', hookReason: null, measured: null, hookRuns: null,
+      observations: ['2026-09-25 · the hooks had NOT yet been run'],
+    }],
+  });
+  const agRow = rendered.split('\n').find((l) => l.startsWith('  Antigravity —')) || '';
+  ok(/not yet seen running/.test(agRow) && !/hooks: verified/.test(rendered),
+    'the rendered row agrees with the observation below it instead of contradicting it', agRow);
+
+  // readHookRuns: grouped by harness, newest time wins, junk skipped.
+  const MD = path.join(ROOT, 'doctor-markers');
+  mkdirSync(MD, { recursive: true });
+  writeFileSync(path.join(MD, 'a.json'), JSON.stringify({ harness: 'cursor', startedAt: '2026-09-20T08:00:00Z', askedAt: null }));
+  writeFileSync(path.join(MD, 'b.json'), JSON.stringify({ harness: 'cursor', startedAt: '2026-09-20T07:00:00Z', askedAt: '2026-09-21T09:00:00Z' }));
+  writeFileSync(path.join(MD, 'c.json'), '{not json');
+  writeFileSync(path.join(MD, 'd.json'), JSON.stringify({ harness: 'codex', startedAt: 'garbage' }));
+  const runs = readHookRuns(MD);
+  ok(runs.byHarness.cursor?.lastRunAt === '2026-09-21T09:00:00.000Z' && runs.byHarness.cursor.markers === 2,
+    'readHookRuns keeps the NEWEST time per harness, counting its markers', JSON.stringify(runs.byHarness));
+  ok(!runs.byHarness.codex && Object.keys(runs.byHarness).length === 1, '…and skips unreadable or undated markers');
+  ok(Object.keys(readHookRuns(path.join(ROOT, 'no-such-dir')).byHarness).length === 0, '…and a missing folder is no evidence, not an error');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
