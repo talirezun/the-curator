@@ -256,7 +256,10 @@ const ENTRIES = [
     }),
     instructionFile: fact('repo', { names: [], cap: null, firstMatch: false, note: 'Claude Desktop reads no per-project instruction file; the block belongs in a project on the desktop app.' }),
     hooks: fact('repo', { state: HOOK_STATES.NONE, reason: 'Claude Desktop has no hook mechanism.', events: {}, refusedEvents: {}, envelope: null, loopGuard: null, writer: null, configPath: { user: [], project: [], local: [] }, format: null }),
-    skillsTree: fact('repo', { path: '~/.claude/skills' }),
+    // ACCOUNT-HELD (v3.77.0). Claude Desktop's skills are uploaded to the
+    // claude.ai account and reach the app from there; nothing on this Mac
+    // holds a copy to compare, so a setup check says "can't check here".
+    skillsTree: fact('repo', { path: '~/.claude/skills', accountHeld: true }),
     captureClass: CAPTURE_CLASSES.ADVISORY_ONLY,
     clientInfo: fact('community', { names: ['claude-ai'], note: 'An MCP log elsewhere carries `claude-ai` for Claude Desktop. Never conflate it with Claude Code — a different surface (§2.13).' }),
     measured: null,
@@ -277,6 +280,19 @@ const ENTRIES = [
       addCommand: null,
       user: [H('.claude.json')],
       project: [P('.mcp.json')],
+      // `claude mcp add` at LOCAL scope (the default) writes the server under
+      // `projects["<absolute repo path>"].mcpServers` inside ~/.claude.json,
+      // not at its top level — a reader that looks only at the top level
+      // misses it (v3.77.0).
+      projectsKey: 'projects',
+      // OBSERVED, 2026-09-26, on the maintainer's Mac: ~/.claude.json named no
+      // `my-curator` anywhere, yet Claude Code sessions in the Claude app had
+      // the bridge's tools. The only file that named it was Claude Desktop's
+      // config. A setup check reads it FOR this row too, labelled as such, and
+      // never writes it on this row's behalf (the wizard owns that file).
+      readAlso: [H('Library', 'Application Support', 'Claude', 'claude_desktop_config.json')],
+      readAlsoNote: 'Observed 2026-09-26: Claude Code sessions in the Claude app had the my-curator tools while '
+        + '~/.claude.json named none; Claude Desktop\'s config did.',
     }),
     instructionFile: fact('docs', { names: ['CLAUDE.md'], cap: null, firstMatch: false, note: null }),
     hooks: fact('docs', {
@@ -301,7 +317,12 @@ const ENTRIES = [
       // The entry shape is documented (type/command/timeout/statusMessage).
       shapeVerified: true,
     }),
-    skillsTree: fact('docs', { path: '~/.claude/skills' }),
+    // The CLI reads ~/.claude/skills; skills added to the claude.ai account
+    // (the maintainer's install, 2026-09-26: no ~/.claude/skills at all) reach
+    // the Claude app's Code sessions from the account and have no local copy.
+    // `roots` lets a check find a local install; `accountHeld` says an absent
+    // one proves nothing.
+    skillsTree: fact('docs', { path: '~/.claude/skills', roots: [H('.claude'), P('.claude')], accountHeld: true }),
     captureClass: CAPTURE_CLASSES.HOOK_ASSISTED,
     // Observed 2026-09-20 (package M's campaign): every session line in the
     // real usage log carried the literal `claude-code`, with no other label
@@ -539,6 +560,20 @@ const ENTRIES = [
         local: [],
       },
       shapeVerified: false,
+      // OBSERVED 2026-09-26 on the maintainer's Mac, two sessions, and ONLY
+      // what they support. First test, user file (`~/.gemini/config/hooks.json`)
+      // the only hook file: a marker shows the session-start hook command RAN
+      // (08:48 UTC), yet the conversation called get_project_context itself
+      // and gave no read-back of the brief's directive — so the injection was
+      // not seen USED (it may not have been delivered, or it ran for another
+      // conversation). Second test, project file (`<repo>/.agents/hooks.json`,
+      // ~08:55): the agent read the directive back without a tool call — the
+      // injection WAS used. Not proof that the user file is ignored; enough
+      // to make --scope project the default and to say so beside the other.
+      scopeObservations: {
+        user: 'ran once (2026-09-26) but its injection was not seen used; the project file\'s was',
+        project: 'its session-start injection was used (2026-09-26)',
+      },
       // hooks.md: the default is 30 s. Session start reads the store once;
       // every later invocation only checks a marker.
       timeoutSeconds: { 'session-start': 30, stop: 30 },
@@ -572,6 +607,9 @@ const ENTRIES = [
       '2026-09-25 · with the Curator block in AGENTS.md, a session told only "Continue." called get_project_context unprompted.',
       '2026-09-25 · without the AGENTS.md block, a session saved unprompted — but to scope `main`, replacing another tool\'s handoff there.',
       '2026-09-25 · the hooks (PreInvocation read, Stop ask) were built from the vendor documentation and had NOT yet been run — the row above reads this machine\'s own evidence since.',
+      '2026-09-26 · with ONLY the user-level ~/.gemini/config/hooks.json, the session-start hook command ran (a marker at 08:48 UTC) but the conversation called get_project_context itself and gave no read-back of the brief — the injection was not seen used.',
+      '2026-09-26 · with the project-level <repo>/.agents/hooks.json, the session-start injection WAS used: the agent read back the brief\'s directive without calling get_project_context.',
+      '2026-09-26 · the Stop hook produced no save reminder in one session; whether it fired is unknown (hooks left no trace before v3.77.0\'s hook activity log).',
     ]),
   },
   {
@@ -720,8 +758,11 @@ const ENTRIES = [
       argvShape: 'single-array',
       envKey: 'environment',
       addCommand: null,
-      user: [H('.config', 'opencode', 'opencode.json')],
-      project: [P('opencode.json')],
+      // `.jsonc` too (v3.77.0): opencode accepts either, and the maintainer's
+      // Mac carries `opencode.jsonc` — a reader that knew only `.json` reported
+      // "not configured" about a file it never opened. Comments are tolerated.
+      user: [H('.config', 'opencode', 'opencode.json'), H('.config', 'opencode', 'opencode.jsonc')],
+      project: [P('opencode.json'), P('opencode.jsonc')],
     }),
     instructionFile: fact('docs', { names: ['AGENTS.md', 'CLAUDE.md'], cap: null, firstMatch: false, note: 'Read walking up from cwd.' }),
     hooks: fact('docs', {
@@ -737,7 +778,7 @@ const ENTRIES = [
       configPath: { user: [], project: [], local: [] },
       shapeVerified: false,
     }),
-    skillsTree: fact('docs', { path: '.agents/skills/' }),
+    skillsTree: fact('docs', { path: '.agents/skills/', roots: [P('.agents'), H('.claude')] }),
     captureClass: CAPTURE_CLASSES.PLUGIN_ONLY,
     clientInfo: fact('docs', { names: ['opencode'] }),
     measured: null,

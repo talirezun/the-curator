@@ -38,6 +38,10 @@ import {
 } from '../brain/harness-adapters.js';
 import { STALE_REMEDY } from '../brain/mcp-bridge-status.js';
 import { EXIT_OK, out, note, flagStr, flagBool, findMarker, resolveProjectForCli } from './resolve.js';
+import {
+  harnessTargets as setupHarnessTargets, inspectMcpFile, inspectHookFile, inspectSkills,
+  repoSkillHashes as setupRepoSkillHashes,
+} from '../brain/setup-check.js';
 import { markerDir } from './hook.js';
 
 export const DOCTOR_USAGE = 'my-curator doctor [--project <domain/project>] [--json] [--alias]';
@@ -105,189 +109,18 @@ const home = (...p) => (HOME ? path.join(HOME, ...p) : '');
  *            be editing a file this package does not own.
  */
 export function harnessTargets(cwd) {
-  const dirs = { home: HOME, project: cwd };
-  const kindFor = (format) => (format === 'json' ? 'json' : format === 'toml' ? 'toml' : 'opaque');
-  const rows = [];
-  for (const id of listHarnesses()) {
-    const a = adapterFor(id);
-    if (!a) continue;
-    const cfg = a.mcpConfig || null;
-    const mcpFiles = cfg
-      ? [...resolveTemplates(cfg.user || [], dirs), ...resolveTemplates(cfg.project || [], dirs)]
-      : [];
-    if (cfg && mcpFiles.length === 0) continue;   // nowhere measured to look
-    const kind = cfg ? kindFor(cfg.format) : 'json';
-    const row = {
-      id: a.id,
-      label: a.label,
-      mcp: mcpFiles.map((file) => ({
-        file,
-        kind,
-        key: cfg?.key || null,
-        tomlKey: kind === 'toml' ? `[${cfg.key}.${MCP_SERVER_NAME}]` : undefined,
-      })),
-      hooks: ['user', 'project', 'local']
-        .flatMap((scope) => resolveTemplates(a.hooks?.configPath?.[scope] || [], dirs))
-        .map((file) => ({ file, kind: path.extname(file) ? 'json' : 'dir' })),
-      instructions: (a.instructionFile?.names || []).map((name) => {
-        const rec = { file: path.join(cwd, name) };
-        if (a.instructionFile.cap) rec.maxBytes = a.instructionFile.cap;
-        if (a.instructionFile.fromSetting) rec.fromSetting = a.instructionFile.fromSetting;
-        return rec;
-      }),
-    };
-    if (a.instructionFile?.firstMatch) row.firstMatch = true;
-    if (!cfg) row.noMcpClient = true;
-    rows.push(row);
-  }
-  return rows;
+  // MOVED to src/brain/setup-check.js (v3.77.0) so the app's Setup check and
+  // this command read ONE derivation. `readAlso` files (Claude Code's
+  // observed Claude Desktop config) ride beside the row as `mcpAlso`.
+  return setupHarnessTargets({ home: HOME, project: cwd });
 }
 
-function readJsonFile(file) {
-  try {
-    if (!existsSync(file)) return { present: false };
-    const text = readFileSync(file, 'utf8');
-    try { return { present: true, json: JSON.parse(text), bytes: Buffer.byteLength(text) }; }
-    catch (err) { return { present: true, parseError: err.message, bytes: Buffer.byteLength(text) }; }
-  } catch (err) { return { present: false, readError: err.message }; }
-}
+/** The inspectors moved with it; re-exported so existing importers keep working. */
+export { inspectHookFile, inspectSkills };
 
-/** Does this JSON config name the my-curator MCP server, and where does it point? */
-function inspectMcpFile(target) {
-  if (target.kind === 'toml') {
-    // A LINE SCAN, not a TOML parse — Node ships no TOML reader and this
-    // package adds no dependency. It answers one question (is the table
-    // there?) and says so; it cannot report a malformed file.
-    try {
-      if (!existsSync(target.file)) return { present: false };
-      const text = readFileSync(target.file, 'utf8');
-      const named = text.split('\n').some((l) => l.trim().startsWith(target.tomlKey));
-      return { present: true, named, scan: 'line-scan (no TOML parser — a malformed file cannot be detected)' };
-    } catch (err) { return { present: false, readError: err.message }; }
-  }
-  if (target.kind === 'dir') {
-    try { return { present: existsSync(target.file) && statSync(target.file).isDirectory() }; }
-    catch { return { present: false }; }
-  }
-  if (target.kind === 'opaque') {
-    return { present: existsSync(target.file), opaque: true };
-  }
-  const r = readJsonFile(target.file);
-  if (!r.present || r.parseError) return r;
-  const servers = r.json?.[target.key];
-  const entry = servers && typeof servers === 'object' ? servers[MCP_SERVER_NAME] : undefined;
-  if (!entry) return { present: true, named: false };
-  const args = Array.isArray(entry.args) ? entry.args : [];
-  const i = args.indexOf('--domains-path');
-  return {
-    present: true, named: true,
-    command: typeof entry.command === 'string' ? entry.command : null,
-    domainsPath: i !== -1 && typeof args[i + 1] === 'string' ? args[i + 1] : null,
-  };
-}
-
-/** A Curator hook command, in any form install-hooks writes. */
-const OUR_HOOK_RE = /curator(?:\.js)?['"]?\s+hook\s/;
-
-/**
- * Curator hook entries in a harness config, and the two that are ACCEPTED AND
- * INERT: a Cline `PreCompact` (accepted, maps to `undefined`, never fires) and
- * a Codex `SessionEnd` (1 s default, 3 s maximum — not an MCP round trip).
- * Reported as present and useless with the measured reason, because a config
- * that looks wired and is not is worse than one that is plainly empty.
- */
-export function inspectHookFile(harnessId, file) {
-  const r = readJsonFile(file);
-  if (!r.present || r.parseError) return r;
-  const text = JSON.stringify(r.json);
-  // `curator.js hook` too: install-hooks writes `<node> <repo>/bin/curator.js
-  // hook …` when no `my-curator` is on PATH, and the older pattern missed
-  // exactly that form (found v3.76.0, on the first Antigravity file).
-  const ours = OUR_HOOK_RE.test(text);
-  const events = [];
-  const inert = [];
-  const spec = adapterFor(harnessId)?.hooks;
-  if (spec?.fileShape === 'named-hooks') {
-    // Top-level keys are hook NAMES; the events are one level down. A named
-    // hook switched off with `"enabled": false` runs none of its handlers,
-    // which makes a Curator entry inside it present and inert.
-    const doc = r.json && typeof r.json === 'object' && !Array.isArray(r.json) ? r.json : {};
-    for (const [name, hook] of Object.entries(doc)) {
-      if (!hook || typeof hook !== 'object' || Array.isArray(hook)) continue;
-      for (const k of Object.keys(hook)) if (k !== 'enabled' && !events.includes(k)) events.push(k);
-      if (hook.enabled === false && OUR_HOOK_RE.test(JSON.stringify(hook))) {
-        inert.push(`"${name}" — this named hook is switched off (\`"enabled": false\`), so its Curator handlers never run`);
-      }
-    }
-    return { present: true, ours, events, inert };
-  }
-  const hooks = r.json?.hooks && typeof r.json.hooks === 'object' ? r.json.hooks : r.json;
-  if (hooks && typeof hooks === 'object') for (const k of Object.keys(hooks)) events.push(k);
-  if (harnessId === 'cline' && events.some((e) => /precompact/i.test(e))) {
-    inert.push('PreCompact — Cline accepts this hook and maps it to `undefined`, so it NEVER fires');
-  }
-  if (harnessId === 'codex' && events.some((e) => /sessionend/i.test(e))) {
-    inert.push('SessionEnd — Codex allows 1 s by default and 3 s at most, which cannot complete an MCP round trip');
-  }
-  return { present: true, ours, events, inert };
-}
-
-/**
- * The repo's own skills, file by file: `skills/<skill>/<file>` → sha256.
- * Read from THIS install's tree, so a packaged app without a `skills/`
- * folder answers `null` and the doctor says it could not compare rather
- * than calling every installed copy stale.
- */
-const SKILL_NAMES = ['my-curator', 'curator-continuity'];
-const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
-
+/** The shipped skills, file by file — this install's own `skills/` folder. */
 export function repoSkillHashes(skillsDir = fileURLToPath(new URL('../../skills/', import.meta.url))) {
-  if (!skillsDir) return null;
-  const out = {};
-  for (const name of SKILL_NAMES) {
-    const dir = path.join(skillsDir, name);
-    let files;
-    try { files = readdirSync(dir).filter((f) => f.endsWith('.md')).sort(); } catch { return null; }
-    out[name] = Object.fromEntries(files.map((f) => [f, sha256(readFileSync(path.join(dir, f)))]));
-  }
-  return out;
-}
-
-/**
- * Every installed copy of the repo's skills under a harness's skill roots —
- * `<root>/skills/<skill>/` and `<root>/plugins/<plugin>/skills/<skill>/` —
- * compared file by file against the repo's. `match` is true only when every
- * repo file is present with the same bytes; a missing companion counts as
- * drift, because a SKILL.md pointing at a file that is not there is worse
- * than no mention of it.
- */
-export function inspectSkills(roots, repo) {
-  const found = [];
-  const candidates = [];
-  for (const root of roots) {
-    candidates.push(path.join(root, 'skills'));
-    let plugins = [];
-    try { plugins = readdirSync(path.join(root, 'plugins')).sort(); } catch { plugins = []; }
-    for (const p of plugins) candidates.push(path.join(root, 'plugins', p, 'skills'));
-  }
-  for (const dir of candidates) {
-    for (const name of SKILL_NAMES) {
-      const at = path.join(dir, name);
-      try { if (!statSync(at).isDirectory()) continue; } catch { continue; }
-      const rec = { skill: name, dir: at, match: null, differs: [], missing: [] };
-      if (repo && repo[name]) {
-        for (const [f, h] of Object.entries(repo[name])) {
-          let got = null;
-          try { got = sha256(readFileSync(path.join(at, f))); } catch { got = null; }
-          if (got === null) rec.missing.push(f);
-          else if (got !== h) rec.differs.push(f);
-        }
-        rec.match = rec.differs.length === 0 && rec.missing.length === 0;
-      }
-      found.push(rec);
-    }
-  }
-  return found;
+  return setupRepoSkillHashes(skillsDir);
 }
 
 /** Executables named `name` on PATH, in PATH order. */
@@ -519,6 +352,13 @@ export async function collectDoctor(opts = {}) {
   // ── Every harness ────────────────────────────────────────────────────────
   let repoSkills = null;
   try { repoSkills = repoSkillHashes(); } catch { repoSkills = null; }
+  let hookActivity = {};
+  try {
+    const { readHookLines, summariseHookActivity } = await import('../brain/hook-log.js');
+    const { lines, files } = await readHookLines();
+    hookActivity = summariseHookActivity(lines);
+    report.hookLog = { files, lines: lines.length };
+  } catch (err) { report.hookLog = { error: err.message }; }
   let hookRuns = { dir: null, byHarness: {} };
   try { hookRuns = readHookRuns(opts.hookMarkerDir || undefined); } catch { /* reported as no evidence */ }
   report.hookMarkerDir = hookRuns.dir;
@@ -548,16 +388,29 @@ export async function collectDoctor(opts = {}) {
       } catch (err) { row.skills = { roots, error: err.message }; }
     }
     for (const t of h.mcp) {
-      const r = inspectMcpFile(t);
+      // `projectsKey` + the cwd: Claude Code's local-scope entry lives under
+      // `projects["<repo>"]` in ~/.claude.json (v3.77.0).
+      const r = inspectMcpFile(t, { projectsKey: h.projectsKey, repo: cwd });
       row.mcp.push({ file: t.file, ...r });
     }
+    // Files read FOR this row but owned by another client (Claude Code's
+    // observed Claude Desktop config, v3.77.0). Reported apart from `mcp` so
+    // "configured in its own file" and "configured only via another's" stay
+    // two facts.
+    row.mcpAlso = (h.mcpAlso || []).map((t) => ({ file: t.file, ...inspectMcpFile(t) }));
+    if (row.mcpAlso.length) row.mcpAlsoNote = adapter?.mcpConfig?.readAlsoNote || null;
+    row.skillsAccountHeld = adapter?.skillsTree?.accountHeld === true;
+    // The hook activity log's evidence (v3.77.0), and which hook file this
+    // harness is observed NOT to load.
+    row.hookActivity = hookActivity[h.id] || null;
+    row.hookScopeObservations = adapter?.hooks?.scopeObservations || null;
     for (const t of h.hooks) {
       if (t.kind === 'dir') {
         let present = false;
         try { present = existsSync(t.file) && statSync(t.file).isDirectory(); } catch { present = false; }
         row.hooks.push({ file: t.file, present, dir: true });
       } else {
-        const rec = { file: t.file, ...inspectHookFile(h.id, t.file) };
+        const rec = { file: t.file, scope: t.scope, ...inspectHookFile(h.id, t.file) };
         // When the file last changed — the floor a run marker must clear.
         if (rec.ours) { try { rec.mtimeMs = statSync(t.file).mtimeMs; } catch { /* no floor: no run claimed */ } }
         row.hooks.push(rec);
@@ -690,7 +543,9 @@ function renderDoctor(r) {
     if (h.noMcpClient) bits.push('no MCP client at all — a shell wrapper is the only capture here');
     const mcpNamed = h.mcp.filter((m) => m.named);
     const mcpPresent = h.mcp.filter((m) => m.present);
+    const alsoNamed = (h.mcpAlso || []).filter((m) => m.named);
     if (mcpNamed.length) bits.push(`bridge configured (${mcpNamed.length} file)`);
+    else if (alsoNamed.length) bits.push('bridge configured only in another client\'s file (see below)');
     else if (mcpPresent.length) bits.push('config present, bridge NOT configured');
     else if (h.mcp.length) bits.push('not configured');
     const hooked = h.hooks.filter((x) => x.ours);
@@ -716,7 +571,10 @@ function renderDoctor(r) {
     for (const o of h.observations || []) L.push(`    observed · ${o}`);
     if (h.skills) {
       if (h.skills.error) L.push(`    skills: could not be read (${h.skills.error})`);
-      else if (!h.skills.installed.length) {
+      else if (!h.skills.installed.length && h.skillsAccountHeld) {
+        L.push(`    skills: none under ${h.skills.roots.join(' or ')} — can't check from here: skills added to your `
+          + 'Claude account reach the app from the account and leave no local copy');
+      } else if (!h.skills.installed.length) {
         L.push(`    skills: none installed under ${h.skills.roots.join(' or ')}`);
       } else {
         for (const s of h.skills.installed) {
@@ -739,10 +597,26 @@ function renderDoctor(r) {
         L.push(`    ! ${m.file} — launches with --domains-path ${m.domainsPath}, but this machine resolves ${r.domains.path}`);
       }
     }
+    for (const m of h.mcpAlso || []) {
+      if (m.named) L.push(`    ${m.file} — names my-curator, and this harness was observed using it · ${h.mcpAlsoNote || ''}`.trimEnd());
+    }
     for (const x of h.hooks) {
-      if (x.ours) L.push(`    ${x.file} — Curator hooks present · events in this file: ${(x.events || []).join(', ') || '(none)'}`);
+      const nl = x.ours && h.hookScopeObservations && x.scope ? h.hookScopeObservations[x.scope] : null;
+      if (x.ours) L.push(`    ${x.file} — Curator hooks present · events in this file: ${(x.events || []).join(', ') || '(none)'}${nl ? ` · ${nl}` : ''}`);
       if (x.parseError) L.push(`    ! ${x.file} — could not be parsed (${x.parseError})`);
       for (const i of x.inert || []) L.push(`    ! ${x.file} — present and USELESS: ${i}`);
+    }
+    // THE HOOK ACTIVITY LOG (v3.77.0) — what `my-curator hook` recorded doing.
+    if (h.hookActivity) {
+      const a = h.hookActivity;
+      if (a.start) L.push(`    hook log · start hook observed firing ${a.start.at.slice(0, 16).replace('T', ' ')} UTC (${a.starts} logged)`);
+      if (a.stop) {
+        L.push(`    hook log · stop hook observed firing ${a.stop.at.slice(0, 16).replace('T', ' ')} UTC — `
+          + (a.stop.decision === 'ask' ? 'asked for a save' : `did not ask: rung ${a.stop.rung ?? '?'}, ${a.stop.why || 'no reason recorded'}`)
+          + (a.stop.bound ? ` (window from the ${a.stop.bound === 'marker' ? 'conversation marker' : 'logged session start'})` : ''));
+      } else if (a.start) L.push('    hook log · no stop hook logged for this harness');
+    } else if (h.hooks.some((x) => x.ours)) {
+      L.push('    hook log · installed, not yet observed firing (`my-curator hook-log` shows the last invocations)');
     }
     for (const i of h.instructions) {
       if (!i.present) continue;

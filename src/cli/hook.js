@@ -280,16 +280,42 @@ export function markerPathFor(harnessId, sessionKey, scopeKey = '') {
   return path.join(markerDir(), `${h}.json`);
 }
 
+/**
+ * Every payload field a harness has been documented or seen to carry its
+ * session id in, in preference order. Antigravity's hooks.md names
+ * `conversationId` as a common field on EVERY payload, Stop included
+ * (read 2026-09-26); `trajectoryId`/`cascadeId` are its internal names and are
+ * accepted in case a build sends them instead — the hook activity log records
+ * WHICH key matched (`idKey`), so the next measurement says which it was.
+ */
+export const SESSION_ID_KEYS = Object.freeze([
+  'session_id', 'sessionId', 'conversation_id', 'conversationId', 'thread_id', 'threadId', 'chat_id',
+  'trajectoryId', 'trajectory_id', 'cascadeId', 'cascade_id',
+]);
+
+/** The harness's own session id and the field it came from, or `{id: null, key: null}`. */
+export function sessionIdFrom(payload) {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  for (const k of SESSION_ID_KEYS) {
+    const v = p[k];
+    if (typeof v === 'string' && v.trim()) return { id: v.trim().slice(0, 200), key: k };
+    if (typeof v === 'number' && Number.isFinite(v)) return { id: String(v), key: k };
+  }
+  return { id: null, key: null };
+}
+
 /** The harness's own session id, under whichever name it uses. */
 export function sessionKeyFrom(payload, fallback) {
-  const p = payload && typeof payload === 'object' ? payload : {};
-  for (const k of ['session_id', 'sessionId', 'conversation_id', 'conversationId', 'thread_id', 'threadId', 'chat_id']) {
-    const v = p[k];
-    if (typeof v === 'string' && v.trim()) return v.trim().slice(0, 200);
-    if (typeof v === 'number' && Number.isFinite(v)) return String(v);
-  }
-  return `no-session:${fallback || ''}`;
+  const { id } = sessionIdFrom(payload);
+  return id !== null ? id : `no-session:${fallback || ''}`;
 }
+
+/**
+ * How long a logged session start may bound a Stop whose conversation id
+ * matched no marker (v3.77.0). Long enough for one working session, short
+ * enough that yesterday's start never bounds today's stop.
+ */
+export const START_LOG_WINDOW_MS = 12 * 60 * 60 * 1000;
 
 export function readMarker(file) {
   try {
@@ -443,6 +469,14 @@ export function stopDecision({ payload, entry, marker, facts }) {
 let emitted = false;
 function send(text) { emitted = true; out(text); }
 
+/**
+ * What this invocation will write to the hook activity log (v3.77.0). Filled
+ * in at each decision point of `runHookInner`, written ONCE by `runHook`.
+ * Null when there is nothing to record (a usage error, `--help`).
+ */
+let record = null;
+function decide(fields) { if (record) Object.assign(record, fields); }
+
 /** Emit an envelope, or record why nothing was emitted. Never throws. */
 function emitFor(arm, text, label) {
   if (!arm || typeof arm.emit !== 'function') {
@@ -471,7 +505,18 @@ export function payloadCwd(payload) {
 
 export async function runHook(parsed) {
   emitted = false;
+  record = null;
   const code = await runHookInner(parsed);
+  // THE TRACE (v3.77.0). One content-free line per invocation — never fatal,
+  // never on stdout. `CURATOR_HOOK_LOG=0` switches it off for a user who does
+  // not want even this.
+  if (record && process.env.CURATOR_HOOK_LOG !== '0') {
+    try {
+      const { buildHookLine, appendHookLine } = await import('../brain/hook-log.js');
+      appendHookLine(buildHookLine(record));
+    } catch { /* the diary never breaks the hook */ }
+  }
+  record = null;
   // A harness that requires a JSON object on stdout gets its empty one when
   // nothing else was emitted. An exit-2 block keeps stdout EMPTY by contract,
   // and no harness with `emptyEnvelope` blocks.
@@ -516,6 +561,11 @@ async function runHookInner(parsed) {
 
   const cwd = payloadCwd(payload) || flagStr(flags, 'cwd') || process.cwd();
   const sessionKey = sessionKeyFrom(payload, cwd);
+  const sid = sessionIdFrom(payload);
+  record = {
+    harness: entry.id, event, raw: _[0], sessionId: sid.id, idKey: sid.key, payload,
+    project: null, decision: 'none', rung: null, why: null, bound: null,
+  };
   let installKey = '';
   try { installKey = (await import('../brain/config.js')).getDomainsDir(); } catch { installKey = ''; }
   const marker = markerPathFor(entry.id, sessionKey, installKey);
@@ -533,6 +583,7 @@ async function runHookInner(parsed) {
     if (entry.sessionStart?.oncePerSession && !sessionKey.startsWith('no-session:')) {
       const prior = readMarker(marker);
       if (prior?.startedAt) {
+        decide({ why: 'already injected for this conversation' });
         note(`my-curator hook session-start (${entry.id}): already injected for this conversation. Nothing was injected.`);
         return EXIT_OK;
       }
@@ -544,11 +595,14 @@ async function runHookInner(parsed) {
         project: flagStr(flags, 'project'), domain: flagStr(flags, 'domain'), cwd,
       });
       if (!resolved.ok) {
+        decide({ why: 'no project was resolved' });
         note(`my-curator hook session-start: no project was resolved (${resolved.error || 'refused'}). Nothing was injected.`);
         return EXIT_OK;
       }
+      decide({ project: `${resolved.domain}/${resolved.project}` });
       const arm = entry.sessionStart;
       if (!arm || typeof arm.emit !== 'function') {
+        decide({ why: arm?.withheld || 'no envelope is shipped for this harness' });
         note(`my-curator hook session-start: ${arm?.withheld || 'no envelope is shipped for this harness'}. Nothing was injected.`);
         return EXIT_OK;
       }
@@ -562,6 +616,7 @@ async function runHookInner(parsed) {
         maxBytes: budget !== null ? Number(budget) : undefined,
       });
       if (!ctx.ok) {
+        decide({ why: `the store refused the read (${ctx.reason})` });
         note(`my-curator hook session-start: the store refused the read (${ctx.reason}). Nothing was injected.`);
         return EXIT_OK;
       }
@@ -569,7 +624,9 @@ async function runHookInner(parsed) {
       // the rendering says whose it is and where THIS tool's saves go.
       const saveTarget = await ownSaveScope(entry, flags);
       send(JSON.stringify(arm.emit(await renderFramedContextMarkdown(ctx, { saveTarget }))));
+      decide({ decision: 'inject', why: 'injected the project context' });
     } catch (err) {
+      decide({ why: 'the read failed' });
       note(`my-curator hook session-start: ${err.message}. Nothing was injected.`);
     }
     return EXIT_OK;
@@ -581,6 +638,7 @@ async function runHookInner(parsed) {
   // hook has no handle on it), and on three harnesses it could not complete a
   // save even if it wanted to. If one is invoked anyway, it records and exits.
   if (event === 'session-end') {
+    decide({ why: 'recorded only' });
     note(`my-curator hook session-end (${entry.id}): recorded. No save is driven from a session-end hook — `
       + 'the capture point is the turn end.');
     return EXIT_OK;
@@ -595,10 +653,31 @@ async function runHookInner(parsed) {
       project: flagStr(flags, 'project'), domain: flagStr(flags, 'domain'), cwd,
     });
     if (resolved.ok) {
-      const since = state?.startedAt ? Date.parse(state.startedAt) : NaN;
+      decide({ project: `${resolved.domain}/${resolved.project}` });
+      let since = state?.startedAt ? Date.parse(state.startedAt) : NaN;
+      if (Number.isFinite(since)) decide({ bound: 'marker' });
+      else {
+        // THE FALLBACK BOUND (v3.77.0). No marker for this conversation id —
+        // the harness sent an id the start did not, or none, or the marker
+        // folder was cleared. The hook activity log still holds this tool's
+        // own session start for this project; within START_LOG_WINDOW_MS it
+        // bounds the window, and the log line says that is how it was bounded.
+        try {
+          const { readHookLines, newestStartFor } = await import('../brain/hook-log.js');
+          const { lines: hl } = await readHookLines();
+          const at = newestStartFor(hl, {
+            harness: entry.id, project: `${resolved.domain}/${resolved.project}`, withinMs: START_LOG_WINDOW_MS,
+          });
+          if (at) { since = Date.parse(at); decide({ bound: 'start-log' }); }
+        } catch { /* no log: the ladder refuses at rung 2, as before */ }
+      }
       if (Number.isFinite(since)) {
         const { lines } = await readUsageLines();
         facts = { since, ...tallyUsageLines(lines, { since, domain: resolved.domain, project: resolved.project }) };
+        if (!state?.startedAt) {
+          // Bounded from the log: remember it, so the next turn uses the marker.
+          writeMarker(marker, { harness: entry.id, sessionKey, startedAt: new Date(since).toISOString(), askedAt: null });
+        }
       } else {
         facts = { since: NaN, saves: 0, bootstraps: 0, anyCall: 0 };
         // Self-heal: this session is bounded from its NEXT turn.
@@ -608,11 +687,13 @@ async function runHookInner(parsed) {
       }
     }
   } catch (err) {
+    decide({ why: 'the store or the usage log could not be read' });
     note(`my-curator hook ${event}: ${err.message}. Nothing was asked.`);
     return EXIT_OK;
   }
 
   const decision = stopDecision({ payload, entry, marker: state, facts: resolved?.ok ? facts : null });
+  decide({ rung: decision.rung, why: decision.why, decision: decision.act === 'ask' ? 'ask' : 'none' });
   if (decision.act !== 'ask') {
     note(`my-curator hook ${event} (${entry.id}): no ask — rung ${decision.rung}, ${decision.why}.`);
     return EXIT_OK;
@@ -622,7 +703,12 @@ async function runHookInner(parsed) {
   // tool's) — see ownSaveScope.
   const target = await ownSaveScope(entry, flags);
   const sentence = askSentence(resolved.domain, resolved.project, target.scope, target.configured ? null : target.tool);
-  writeMarker(marker, { ...(state || {}), harness: entry.id, sessionKey, askedAt: new Date().toISOString() });
+  writeMarker(marker, {
+    ...(state || {}),
+    // Keep the window's start when it came from the activity log (v3.77.0).
+    ...(!state?.startedAt && Number.isFinite(facts?.since) ? { startedAt: new Date(facts.since).toISOString() } : {}),
+    harness: entry.id, sessionKey, askedAt: new Date().toISOString(),
+  });
 
   if (event === 'pre-compact') {
     const arm = entry.preCompact;

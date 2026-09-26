@@ -42,6 +42,8 @@ const USAGE = `my-curator — your project's context and handoffs, from the shel
   my-curator hook    <session-start|stop|pre-compact|session-end> --harness <id>
                      the harness payload arrives on stdin; its envelope leaves on stdout
   my-curator doctor  [--json] [--alias]
+  my-curator hook-log [--limit <n>] [--harness <id>] [--json]
+                     the last hook invocations on this machine (content-free)
   my-curator resolve [--project …] [--json]
   my-curator install-hooks <harness> [--scope user|project|local] [--dry-run] [--allow-withheld]
 
@@ -79,6 +81,7 @@ if (!command || command === 'help' || parsed.flags.help === true && !command) {
     save: async () => (await import('../src/cli/save.js')).runSave,
     hook: async () => (await import('../src/cli/hook.js')).runHook,
     doctor: async () => (await import('../src/cli/doctor.js')).runDoctor,
+    'hook-log': async () => (await import('../src/cli/hook-log.js')).runHookLog,
     resolve: async () => (await import('../src/cli/resolve.js')).runResolve,
     'install-hooks': async () => (await import('../src/cli/install-hooks.js')).runInstallHooks,
   };

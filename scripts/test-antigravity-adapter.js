@@ -151,7 +151,9 @@ section('§1  The adapter row says what the vendor docs say, and no more');
   'single live sessions are frozen sentences, not counts');
   ok(A.skillRootsFor('antigravity', { home: '/h', project: '/p' }).join('|') === '/h/.gemini/config|/p/.agents',
     'skill roots: ~/.gemini/config and .agents');
-  ok(A.skillRootsFor('claude-code', { home: '/h', project: '/p' }).length === 0,
+  // v3.77.0: claude-code and opencode gained roots (the Setup check), so the
+  // control is a harness whose row still carries none.
+  ok(A.skillRootsFor('cursor', { home: '/h', project: '/p' }).length === 0,
     '…and a harness whose row carries no roots gets none (the control)');
   const hn = await import('../src/brain/harness-names.js');
   ok(hn.harnessId('Antigravity') === 'antigravity' && hn.normaliseHarness('antigravity').label === a.label,
