@@ -154,7 +154,7 @@ import { randomBytes, createHash } from 'crypto';
 import { hostname } from 'os';
 import path from 'path';
 import { domainPath, listDomains, isDomainReadonly } from './files.js';
-import { userDataPath } from './paths.js';
+import { userDataPath, appPath } from './paths.js';
 import { writeFileAtomic } from './atomic-write.js';
 // D8: absolute paths leaked to the wire through raw `err.message`
 // (`EACCES: permission denied, open '/private/tmp/…/domains/…'` discloses the
@@ -582,6 +582,28 @@ const DEFAULT_SCOPE = 'main';
  *
  * @returns {{scope: string, by: 'harness'|'default'}}
  */
+/**
+ * v3.77.0 — the Curator version doing the save, read ONCE from this install's
+ * own package.json. Recorded on every save (`Curator: X.Y.Z` in the
+ * provenance line and `curator` in the journal) so another computer can say
+ * which version wrote a handoff — "as of that save", never more. Null when
+ * it cannot be read; the field is then simply left out, as `Harness` is.
+ */
+let _curatorVersion;
+export function curatorVersion() {
+  // TEST-ONLY seam, in the CURATOR_TEST_* family and unset in production: two
+  // suites pin the READ pipeline's bytes over handoffs written before this
+  // field existed (test-reading-budget.js, test-context-paging.js), and a
+  // writer stamp would move every `bytes` figure in them by its own length.
+  if (process.env.CURATOR_TEST_NO_VERSION_STAMP === '1') return null;
+  if (_curatorVersion !== undefined) return _curatorVersion;
+  try {
+    const v = JSON.parse(readFileSync(appPath('package.json'), 'utf8')).version;
+    _curatorVersion = typeof v === 'string' && /^\d+\.\d+\.\d+$/.test(v) ? v : null;
+  } catch { _curatorVersion = null; }
+  return _curatorVersion;
+}
+
 export function defaultScopeFor(harness) {
   const text = typeof harness === 'string' ? neutraliseProtocol(harness).trim().slice(0, MAX_META_CHARS) : '';
   const id = text ? harnessId(text) : null;
@@ -3529,6 +3551,9 @@ export async function saveWorkingState(project, input = {}) {
     `Saved: ${savedAt}`,
     harness.text ? `Harness: ${harness.text}` : null,
     model.text ? `Model: ${model.text}` : null,
+    // v3.77.0 — additive, LAST, only when known: an older reader's field
+    // regex ignores a name it does not ask for.
+    curatorVersion() ? `Curator: ${curatorVersion()}` : null,
   ].filter(Boolean).join(' · ');
 
   const { doc, omitted } = renderWithinBudget(
@@ -3689,6 +3714,8 @@ export async function saveWorkingState(project, input = {}) {
       at: savedAt, scope, machine,
       harness: harness.text || null,
       model: model.text || null,
+      // v3.77.0 — the Curator version that wrote this save (additive).
+      ...(curatorVersion() ? { curator: curatorVersion() } : {}),
       headline: hl.text,
       bytes: Buffer.byteLength(doc, 'utf8'),
       // FIELD NAME KEPT, deliberately, and the reasoning is not inertia.
@@ -4267,6 +4294,9 @@ export function journalFacts(entries, now = Date.now(), opts = {}) {
   }
   facts.harness = last ? meta(last.harness) : null;
   facts.model = last ? meta(last.model) : null;
+  // v3.77.0 — under the opt-in gate, so the DEFAULT output pinned by
+  // test-tray-pulse.js §3 keeps its keys: the Curator version of the last save.
+  if (withSaveTimes) facts.lastCurator = last && typeof last.curator === 'string' && /^\d+\.\d+\.\d+$/.test(last.curator) ? last.curator : null;
 
   const notes = Array.isArray(last?.rejections)
     ? last.rejections.filter((n) => typeof n === 'string' && n)
@@ -4679,6 +4709,9 @@ export async function listWorkingScopes(project, opts = {}) {
       p.saveHarnesses = f.saveHarnesses;
       // Non-null ONLY when the last two saves came from different tools.
       p.previousHarness = f.previousHarness ?? null;
+      // v3.77.0 — which Curator version wrote the newest save here (the
+      // Setup check's Computers fold); null for a save before v3.77.0.
+      p.curator = f.lastCurator ?? null;
     }
   }
   // NEWEST ON THE AGENT'S CLOCK (v3.74.0, G6). `resolveScope`'s `latest`
@@ -6681,6 +6714,33 @@ function readFirstReadings(documents, budgetBytes = CONTEXT_MAX_BYTES_DEFAULT) {
  * this store but not through sync or a hand edit), `freshness` per entry and
  * `repo.reachable`.
  */
+/**
+ * v3.77.0 — the project's FOLDER sources as recorded, for the Setup check's
+ * "Where is this project checked out on this computer?" suggestions. READ-ONLY.
+ * Each is `{root, reachable, inGit}`: `reachable` when the recorded folder
+ * exists here (a root recorded on another computer will not), `inGit` when it
+ * sits inside a git work tree. GitHub-only sources carry no folder and are
+ * not returned. Never throws; `[]` on any refusal.
+ */
+export async function foundationFolderSources(domain, project) {
+  try {
+    const view = projectView(domain, project);
+    if (!view.ok) return [];
+    const mf = await readManifest(view.paths.manifestAbs);
+    if (mf.status !== 'ok') return [];
+    const out = [];
+    for (const g of mf.manifest.sources || []) {
+      if (typeof g.root !== 'string' || !g.root.startsWith('/')) continue;
+      const r = await resolveRepoRoot(g.root);
+      let top = null;
+      if (r.ok) top = await gitTopLevel(r.realRoot);
+      out.push({ root: r.ok ? (top || r.realRoot) : g.root, reachable: r.ok, inGit: !!top });
+    }
+    const seen = new Set();
+    return out.filter((x) => (seen.has(x.root) ? false : seen.add(x.root)));
+  } catch { return []; }
+}
+
 export async function listFoundations(domain, project, opts = {}) {
   const view = projectView(domain, project);
   if (!view.ok) return view;

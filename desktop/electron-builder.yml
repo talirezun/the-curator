@@ -181,6 +181,10 @@ files:
     filter:
       - src/**/*
       - mcp/**/*
+      # v3.77.0 — the two agent skills, so the app can compare installed
+      # copies file by file (Setup check) and hand out a current .zip
+      # without a repository checkout. Markdown only, ~40 KB.
+      - skills/**/*
       - LICENSE
       - LICENSES/**/*
       # NOT the repo root's package.json — the packaged app must keep THIS

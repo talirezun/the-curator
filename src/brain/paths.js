@@ -575,6 +575,24 @@ export function getMcpUsageLogPath() {
 }
 
 /**
+ * The HOOK ACTIVITY LOG (v3.77.0) — one content-free line per `my-curator hook`
+ * invocation: when, which harness, which event, a HASH of the harness's
+ * conversation id, the payload's KEY NAMES (never a value), and what the hook
+ * decided and why. It exists because a hook otherwise leaves no trace: on
+ * 2026-09-26 an Antigravity Stop hook produced no reminder and nothing on the
+ * machine could say whether it had fired at all.
+ *
+ * Beside the usage log and for the same reasons: machine-local, never under
+ * `domains/` (so it never syncs), rotated to one `<this>.1` generation by
+ * `src/brain/hook-log.js`, gitignored for the repo-mode case.
+ *
+ * Pure resolver — never creates the file or its directory.
+ */
+export function getHookLogPath() {
+  return userDataPath('.hook-activity.jsonl');
+}
+
+/**
  * The last Wiki health scan summary per domain (v3.77) — `{count, scannedAt,
  * logMark}` per slug, written by `src/brain/health-summary.js` after every
  * scan the app runs, read by GET /api/domains/stats so a domain's sidebar

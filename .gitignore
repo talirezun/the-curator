@@ -171,6 +171,11 @@ AuthKey_*.p8
 .mcp-usage.jsonl
 .mcp-usage.jsonl.1
 
+# Hook activity log (v3.77.0, src/brain/paths.js getHookLogPath()) — content-free,
+# machine-local, same class as the usage log above.
+.hook-activity.jsonl
+.hook-activity.jsonl.1
+
 # The Curator's trash (v3.73.0) — deleted domains and projects are MOVED here
 # rather than erased (src/brain/paths.js getTrashDir()). In REPO mode the
 # user-data dir is this checkout, so it lands beside tracked source; it holds

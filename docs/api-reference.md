@@ -2944,6 +2944,27 @@ at 500 chars) when it sent one.
 
 ---
 
+## Setup check (`/api/setup`) *(v3.77.0)*
+
+Backs **Context → project → step 5 · Setup** and **Settings → MCP bridge → Tools on this Mac**. The
+GETs read this machine's agent-tool config files (only whether each names `my-curator`, plus our
+own entry's command and `--domains-path` — never file text, another server's name or an `env`
+value), the project's repository folder (its `.curator-project`, instruction files, and read-only
+`git` with no fetch), the store's scope index and the app's last remote check. Nothing here writes a
+harness config, a skill folder, a repository file or a git ref; the two PUTs write this install's own
+`.curator-config.json` (never synced).
+
+| Method & path | What it does |
+|---|---|
+| `GET /api/setup/machine` | Per tool with something on this machine (or added): `files[]` (`file`, `display`, `via: own\|readAlso`, `present`, `named`, `at`, `jsonc`, `parseError`, `commandMissing`, `otherFolder`), `bridge`, `skills` (`installed[]` compared by sha256 with the copy this app carries), `hooks` (`files[]`, `format`, `evidence` from the hook activity log). Plus `version`, `install`, `skillsShipped`, `machine.{ids,split}`, `bridgeProcesses`, `copyEntries` (each tool's entry in its own format), `addable` |
+| `GET /api/setup/projects/:domain/:project` | `tools[]` × `saved` (from the project's handoffs, every computer) · `bridge` · `skills` · `block` · `hooks`; `repo` (`path`, `exists`, `marker` with `git.{repo,tracked,uncommitted,unpushed,upstream}`); `computers[]` (`machine`, `thisMachine`, `tools`, `newestAt`, `curator`, `waiting`); `sync`; `toFix[]` (`kind`, `text`, `detail`, `fix`); `repoSuggestions`; `markerLine`; `addedTools`. 400 bad name · 404 unknown domain |
+| `PUT /api/setup/projects/:domain/:project/repo` | `{path}` (absolute, an existing folder; `~/` expanded) or `{path: null}` to clear. 400 relative/junk · 409 no such folder |
+| `PUT /api/setup/tools` | `{ids: [...]}` — the "+ Add a tool" choice; ids must be known harnesses |
+| `POST /api/setup/reveal` | `{path}` — opens Finder at a path a check has LISTED (or its folder if it does not exist yet); 400 otherwise |
+| `GET /api/setup/skills/:name.zip` | `my-curator.zip` / `curator-continuity.zip` of this app's own `skills/` folder (macOS `ditto`); 404 unknown name or no copy shipped |
+
+---
+
 ## Working state — Project context (`/api/memory`)
 
 Working state (`domains/<domain>/state/`, v3.17.0; **projects inside a domain since v3.48.0**) is

@@ -885,6 +885,68 @@ export function setDefaultDomain(slug) {
   return getDefaultDomain();
 }
 
+// ── A project's repository on THIS machine (v3.77.0) ────────────────────────
+// The Setup check needs to know where a project is checked out to read its
+// `.curator-project`, CLAUDE.md and AGENTS.md. Nothing recorded it. It is kept
+// HERE — `.curator-config.json`, in user data, never synced — because a path is
+// a fact about one computer: the same project lives at different paths on two
+// Macs, and a synced path would be wrong on every machine but one.
+//
+// Keyed `domain/project`. Only an ABSOLUTE path is stored; the route validates
+// that it exists and is a directory before calling this.
+
+const PROJECT_KEY_RE = /^[a-z0-9][a-z0-9._-]{0,99}\/[a-z0-9][a-z0-9._-]{0,99}$/i;
+
+/** Every stored repository path, `{ "domain/project": "/abs/path" }`. */
+export function getProjectRepos() {
+  const cfg = readRaw();
+  const m = cfg.projectRepos && typeof cfg.projectRepos === 'object' && !Array.isArray(cfg.projectRepos)
+    ? cfg.projectRepos : {};
+  const out = {};
+  for (const [k, v] of Object.entries(m)) {
+    if (PROJECT_KEY_RE.test(k) && typeof v === 'string' && v.startsWith('/')) out[k] = v;
+  }
+  return out;
+}
+
+/** One project's repository path on this machine, or null. */
+export function getProjectRepo(domain, project) {
+  return getProjectRepos()[`${domain}/${project}`] || null;
+}
+
+/** Set (absolute path) or clear (null/'') one project's repository path. */
+export function setProjectRepo(domain, project, absPath) {
+  const key = `${domain}/${project}`;
+  if (!PROJECT_KEY_RE.test(key)) throw new Error(`"${key}" is not a project key`);
+  const cfg = readRaw();
+  const m = cfg.projectRepos && typeof cfg.projectRepos === 'object' && !Array.isArray(cfg.projectRepos)
+    ? { ...cfg.projectRepos } : {};
+  if (typeof absPath === 'string' && absPath.startsWith('/')) m[key] = absPath;
+  else delete m[key];
+  if (Object.keys(m).length) cfg.projectRepos = m; else delete cfg.projectRepos;
+  writeRaw(cfg);
+  return getProjectRepo(domain, project);
+}
+
+/**
+ * Tools the user ADDED to the Setup check on this machine (v3.77.0) — harness
+ * ids from the adapter table. A tool also appears when it has saved to the
+ * project or is configured here; this list is only the "+ Add a tool" choice.
+ */
+export function getSetupTools() {
+  const cfg = readRaw();
+  return Array.isArray(cfg.setupTools)
+    ? cfg.setupTools.filter((x) => typeof x === 'string' && /^[a-z0-9-]{1,40}$/.test(x)) : [];
+}
+
+export function setSetupTools(ids) {
+  const cfg = readRaw();
+  const list = [...new Set((Array.isArray(ids) ? ids : []).filter((x) => typeof x === 'string' && /^[a-z0-9-]{1,40}$/.test(x)))];
+  if (list.length) cfg.setupTools = list; else delete cfg.setupTools;
+  writeRaw(cfg);
+  return getSetupTools();
+}
+
 // ── Shared Brain feature flag (v3.0.0+) ─────────────────────────────────────
 // When false (default), Shared Brain routes return 404 and the UI hides the
 // section. Circuit-breaker: if a Shared Brain bug ships, a hotfix can flip

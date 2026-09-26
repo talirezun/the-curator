@@ -330,8 +330,9 @@ const HOSTILE = {
     assert(disk.includes(`## ${s.heading}`), `section rendered: ${s.key}`);
   }
   assert(disk.includes('> Wiring the auth flow'), 'headline rendered under the H1');
-  assert(/_Machine: testbox · Scope: auth-work · Saved: .* · Harness: claude-code · Model: claude-opus-5_/.test(disk),
-    'provenance line carries machine, scope, time, harness and model');
+  // v3.77.0: then `Curator: X.Y.Z` — the writer's version, additive and LAST.
+  assert(/_Machine: testbox · Scope: auth-work · Saved: .* · Harness: claude-code · Model: claude-opus-5 · Curator: \d+\.\d+\.\d+_/.test(disk),
+    'provenance line carries machine, scope, time, harness, model and the Curator version');
   assert(/- 84 offline suites green — observed .* — recheck: `npm test`/.test(disk),
     'an observation renders with its timestamp AND its re-derivation command');
   // D3. The note must say WHAT WAS ESCAPED. It must NOT say the content was

@@ -65,6 +65,10 @@ mkdirSync(USER_DATA, { recursive: true });
 mkdirSync(DOMAINS, { recursive: true });
 process.env.CURATOR_TEST_USER_DATA_DIR = USER_DATA;
 process.env.CURATOR_TEST_DOMAINS_DIR = DOMAINS;
+// v3.77.0: this suite pins the READ pipeline's bytes over handoffs written
+// the pre-v3.77.0 way; the writer's `Curator:` stamp (asserted on its own in
+// test-setup-routes.js §7) would move every `bytes` figure by its length.
+process.env.CURATOR_TEST_NO_VERSION_STAMP = '1';
 process.on('exit', () => {
   try {
     if (path.dirname(TMP) === tmpdir() && path.basename(TMP).startsWith('curator-reading-budget-')) {

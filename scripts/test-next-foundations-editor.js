@@ -1932,6 +1932,8 @@ section('§10 — THE BINDER: wire() grows no new identifier');
     // own controls are bound in one place — both are in the stub set
     // test-agent-instructions.js needs (PATCH-v367-view-test-agent-instructions.diff).
     'bindFoldToggles', 'bindSessionAndPlan',
+    // v3.77.0 — step 5's controls, bound in one place the same way.
+    'bindSetup',
   ]);
   // COMMENTS STRIPPED FIRST. Proven necessary by running it: the docblocks in
   // `wire()` contain prose like "BOTH, because…" and "(the v3.11.0 shape)",
@@ -2018,8 +2020,8 @@ section('§10 — THE BINDER: wire() grows no new identifier');
   eq('FOLD_KEYS carries the foundations fold the editor reuses, beside the '
     + 'other six, and no key of the editor\'s own',
   foldKeys && foldKeys[1].replace(/\s+/g, ''),
-  // v3.67.0: step ④'s three rows (none of them the editor's).
-  "['brief','journal','foundations','streams','capture','saved','knowledge','receives','window','reach']");
+  // v3.67.0: step ④'s three rows (none of them the editor's); v3.77.0: step 5's three.
+  "['brief','journal','foundations','streams','capture','saved','knowledge','receives','window','reach','setup-tools','setup-repo','setup-computers']");
   ok('...and the localStorage key itself is unmoved, which is the registry that '
     + 'matters', /const FOLDS_KEY = 'curator-memory-folds-v1';/.test(viewSrc));
 }

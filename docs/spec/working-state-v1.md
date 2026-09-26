@@ -188,7 +188,7 @@ still opens the newest work-stream.
 
 > <headline>
 
-_Machine: <machine> · Scope: <scope> · Saved: <iso-8601>[ · Harness: <name>][ · Model: <id>]_
+_Machine: <machine> · Scope: <scope> · Saved: <iso-8601>[ · Harness: <name>][ · Model: <id>][ · Curator: <x.y.z>]_
 
 ## Where things stand
 
@@ -203,7 +203,11 @@ _Machine: <machine> · Scope: <scope> · Saved: <iso-8601>[ · Harness: <name>][
 - The blockquote line is the **headline**: the one line a future session sees before deciding to
   open the file at all. It is **required**.
 - The italic line is the **provenance**, fields joined by ` · ` (U+00B7 with a space each side), in
-  this order: `Machine`, `Scope`, `Saved`, then `Harness` and `Model` **only when present**.
+  this order: `Machine`, `Scope`, `Saved`, then `Harness` and `Model` **only when present**, then
+  (since The Curator v3.77.0) `Curator` — the version of the writer that made the save, `X.Y.Z` —
+  **only when known**. It is additive and last: a reader that looks fields up by name, as the
+  reference reader does, is unaffected by a field it does not ask for, and a document without it is
+  as valid as before.
 - Then the sections below, **each at most once**, in **this order**, with a blank line after the
   heading and after the body.
 
@@ -276,7 +280,7 @@ re-ordered, never compacted.** It sits beside the `current.md` it describes, in 
 `(scope, machine)` directory.
 
 ```json
-{"at":"2026-09-19T10:57:06.408Z","scope":"session-2026-09-19-spec","machine":"mac-862f5b","harness":"claude-code","model":"opus-5","headline":"Spec draft rendered from the live store","bytes":833,"rejections":[]}
+{"at":"2026-09-19T10:57:06.408Z","scope":"session-2026-09-19-spec","machine":"mac-862f5b","harness":"claude-code","model":"opus-5","curator":"3.77.0","headline":"Spec draft rendered from the live store","bytes":833,"rejections":[]}
 ```
 
 | Field | Type | Meaning |
@@ -286,6 +290,7 @@ re-ordered, never compacted.** It sits beside the `current.md` it describes, in 
 | `machine` | string | the machine segment (§3) |
 | `harness` | string or `null` | the agent harness that saved, as a label |
 | `model` | string or `null` | the model, as a label |
+| `curator` | string, optional | *(since v3.77.0)* the writer's own version, `X.Y.Z`; absent on older lines |
 | `headline` | string | the handoff's headline at that moment |
 | `bytes` | integer | the size of the `current.md` that was written |
 | `rejections` | array of strings | notes about what the sanitiser changed or dropped |

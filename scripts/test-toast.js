@@ -390,10 +390,10 @@ section('§9 — the views that re-render on a timer keep an open ⓘ, unstamped
   ok('SETUP: open, stamped', !p.hidden && p.hasAttribute('data-tx-entering'));
   let fresh = null;
   const render = new Function('isCurrentMount', 'screenSignature', 'captureFocus', 'renderSidebar', 'renderMain',
-    'wire', 'restoreFocus', 'maybeLoadSessionStart', 'document',
+    'wire', 'restoreFocus', 'maybeLoadSessionStart', 'maybeLoadSetup', 'document',
     'let renderedSignature = null;\n' + functionSource(memSrc, 'render') + '\nreturn render;')(
     () => true, () => 's', () => {}, () => {}, () => { fresh = reRender(tdoc, 'ctx-info'); },
-    () => {}, () => {}, () => {}, tdoc);
+    () => {}, () => {}, () => {}, () => {}, tdoc);
   render(1);
   ok('Context’s render really replaced the panel (not vacuous)', fresh && fresh.p !== p);
   ok('...and the open ⓘ is open after it', fresh.p.hidden === false && fresh.b.getAttribute('aria-expanded') === 'true');

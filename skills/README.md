@@ -142,14 +142,20 @@ merely misinforming a reader.
 | Host | Put the built file at | Auto-loaded? | MCP over stdio |
 |---|---|---|---|
 | **Codex CLI** | `AGENTS.md` in the repo root, or `~/.codex/AGENTS.md` for every project | Yes — built into an instruction chain once per run, root-down, closer files last | Yes — `[mcp_servers.<name>]` in `~/.codex/config.toml` |
-| **opencode** | `AGENTS.md` in the repo root, or `~/.config/opencode/AGENTS.md`; or list the file under `instructions: []` in `opencode.json` | Yes | Yes — `"type": "local"` with a `command` array in `opencode.json` |
+| **opencode** | `AGENTS.md` in the repo root, or `~/.config/opencode/AGENTS.md`; or list the file under `instructions: []` in `opencode.json`. Skills: copy each folder into `.agents/skills/` (this project) or `~/.claude/skills/` — The Curator's Setup check compares both with this version | Yes | Yes — `"type": "local"` with a `command` array in `opencode.json` **or `opencode.jsonc`** (comments allowed; the Setup check and `doctor` read both since v3.77.0) |
 | **Cursor** | `.cursor/rules/curator.mdc` (**must be `.mdc`** — plain `.md` in that directory is ignored), or `AGENTS.md` in the repo root | Depends: a rule set to *Always Apply* loads every chat; *Apply Intelligently* is conditional; *Apply Manually* needs an `@`-mention. `AGENTS.md` auto-applies | Yes — `mcpServers` in `.cursor/mcp.json` or `~/.cursor/mcp.json` |
 | **Gemini CLI** | `GEMINI.md` in the repo root, or `~/.gemini/GEMINI.md`. It will read `AGENTS.md` instead if you set `context.fileName` | Yes — concatenated and sent **with every prompt** | Yes — `mcpServers` in `.gemini/settings.json` or `~/.gemini/settings.json` |
-| **Antigravity** | No build needed — copy each skill **folder** whole into `skills/` under `~/.gemini/config/` (every project), `.agents/` (this project), or a plugin such as `~/.gemini/config/plugins/the-curator/skills/`. Put the instruction block in `AGENTS.md` or `GEMINI.md` — it does not read `CLAUDE.md` | Skills: their name and description are loaded, the body when the model activates one (vendor docs). `AGENTS.md`/`GEMINI.md`: always, capped at 24,000 bytes per file. `my-curator doctor` compares installed skills with this version, file by file | Yes — `mcpServers` in `~/.gemini/config/mcp_config.json` (documented); the app's `~/.gemini/antigravity/` and `~/.gemini/antigravity-ide/` folders carry their own `mcp_config.json` too |
+| **Antigravity** | No build needed — copy each skill **folder** whole into `skills/` under `~/.gemini/config/` (every project), `.agents/` (this project), or a plugin such as `~/.gemini/config/plugins/the-curator/skills/`. Put the instruction block in `AGENTS.md` or `GEMINI.md` — it does not read `CLAUDE.md` | Skills: their name and description are loaded, the body when the model activates one (vendor docs). `AGENTS.md`/`GEMINI.md`: always, capped at 24,000 bytes per file. `my-curator doctor` compares installed skills with this version, file by file | Yes — `mcpServers` in `~/.gemini/config/mcp_config.json` (documented); the app's `~/.gemini/antigravity/` and `~/.gemini/antigravity-ide/` folders carry their own `mcp_config.json` too. **Hooks:** `my-curator install-hooks antigravity --git-exclude` writes `<repo>/.agents/hooks.json` (the default since v3.77.0 — its session-start injection was seen used on 2026-09-26; a start hook in `~/.gemini/config/hooks.json` ran but its injection was not seen used) |
 | **Aider** | `CONVENTIONS.md`, or any filename | **No — you must ask for it**: `aider --read CONVENTIONS.md`, `/read` in session, or `read:` in `.aider.conf.yml` | **No — aider has no MCP client.** See below |
 
 Antigravity's facts come from its own customization docs, which ship inside the app
-(`~/.gemini/antigravity/builtin/skills/agy-customizations/`), read 2026-09-25.
+(`~/.gemini/antigravity/builtin/skills/agy-customizations/`), read 2026-09-25; the hook observations
+are two live sessions on 2026-09-26, not a measurement.
+
+**Claude Code and Claude Desktop** read skills uploaded to your Claude account; nothing on the Mac
+holds a copy, so The Curator cannot compare them (the Setup check says *can't check here*). Since
+v3.77.0 the Mac app carries this folder, and **Settings → MCP bridge → Tools on this Mac** offers
+`my-curator.zip` and `curator-continuity.zip` of the current version for that upload.
 
 Sources: [Codex `AGENTS.md`](https://learn.chatgpt.com/docs/agent-configuration/agents-md.md) ·
 [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp.md?surface=cli) ·

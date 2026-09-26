@@ -54,7 +54,8 @@
  * Exit codes follow the rest of the command: 0 fine · 1 a refusal · 2 a usage
  * error.
  */
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeFileAtomicSync } from '../brain/atomic-write.js';
@@ -69,6 +70,7 @@ import {
 export const INSTALL_HOOKS_USAGE =
   'my-curator install-hooks <harness> [--scope user|project|local] [--dry-run] [--json]\n'
   + '                                  [--uninstall] [--print-instructions] [--bin <abs path>]\n'
+  + '                                  [--git-exclude]  (keep a project hook file out of git, locally)\n'
   + '                                  [--allow-withheld] [--cwd <dir>] [--home <dir>]\n'
   + `    harnesses: ${listHarnesses().join(', ')}`;
 
@@ -516,6 +518,28 @@ export async function runInstallHooks(parsed) {
     const why = plan.write.find((x) => x.event === w.event)?.withheld;
     if (why) note(`  ${w.event} was written and will emit nothing until the envelope is measured — ${why}.`);
   }
+  // WHAT WAS OBSERVED OF THIS SCOPE (v3.77.0), said beside the write and no
+  // more strongly than the observation. Antigravity, 2026-09-26: a user-file
+  // start hook ran but its injection was not seen used; the project file's
+  // was. The write is still made — the user asked for it.
+  const obs = adapter.hooks.scopeObservations?.[scope];
+  if (!uninstall && obs && !/was used/.test(obs)) {
+    note(`  NOTE: a hook in ${target} ${obs}. --scope project (the default) is where it was seen working.`);
+  }
+  // A PROJECT hook file carries an ABSOLUTE path to this machine's command, so
+  // committing it hands every clone a path that is wrong on their computer.
+  // `--git-exclude` keeps it out of git LOCALLY (.git/info/exclude — never
+  // .gitignore, which is committed); without the flag, the line says how.
+  if (!uninstall && scope !== 'user' && adapter.id === 'antigravity') {
+    const rel = path.relative(projectRoot, target);
+    const ex = flagBool(flags, 'gitExclude') ? addToGitExclude(projectRoot, rel) : null;
+    if (ex && ex.ok) note(`  ${rel} ${ex.already ? 'was already' : 'is now'} listed in ${ex.file} — git will not offer to commit it (this machine only).`);
+    else if (ex) note(`  could not add ${rel} to .git/info/exclude: ${ex.reason}`);
+    else {
+      note(`  NOTE: ${rel} contains an absolute path to this computer's \`my-curator\`. Do not commit it — `
+        + `re-run with --git-exclude to add it to .git/info/exclude (local to this machine, never pushed).`);
+    }
+  }
   if (!uninstall && adapter.hooks.shapeVerified !== true) {
     note('  the entry shape for this harness is documented, not measured — run `my-curator doctor` after the '
       + 'next session to see whether it fired.');
@@ -525,6 +549,25 @@ export async function runInstallHooks(parsed) {
       + `\`my-curator install-hooks ${adapter.id} --print-instructions\` prints it and names the file.`);
   }
   return EXIT_OK;
+}
+
+/**
+ * Add one repository-relative path to `<git dir>/info/exclude`, the LOCAL
+ * ignore file git never commits. Idempotent. Never throws.
+ */
+export function addToGitExclude(projectRoot, rel) {
+  try {
+    const r = spawnSync('git', ['rev-parse', '--git-path', 'info/exclude'], { cwd: projectRoot, encoding: 'utf8', timeout: 3000 });
+    if (r.status !== 0 || !r.stdout.trim()) return { ok: false, reason: 'this folder is not a git repository' };
+    const file = path.resolve(projectRoot, r.stdout.trim());
+    const line = `/${rel.split(path.sep).join('/')}`;
+    let text = '';
+    try { text = readFileSync(file, 'utf8'); } catch { text = ''; }
+    if (text.split('\n').some((l) => l.trim() === line)) return { ok: true, already: true, file };
+    mkdirSync(path.dirname(file), { recursive: true });
+    appendFileSync(file, `${text && !text.endsWith('\n') ? '\n' : ''}# The Curator: a hook file with this machine's absolute path\n${line}\n`);
+    return { ok: true, already: false, file };
+  } catch (err) { return { ok: false, reason: err.message }; }
 }
 
 /** `--print-instructions` — prints, never writes. */

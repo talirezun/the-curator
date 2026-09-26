@@ -145,6 +145,20 @@ const E = {
     guide: { key: 'context.session-start', heading: 'Session start and the context window' },
   },
 
+  // v3.77.0 — step 5, Setup.
+  'context.setup': {
+    label: 'About Setup',
+    title: 'Setup',
+    lead: 'Steps 1 to 4 are what an agent reads. **Setup** shows whether each of your agent tools can reach them.',
+    points: [
+      { icon: 'agent', text: '**Saved** is the proof: that tool saved this project.' },
+      { icon: 'computer', text: 'The other columns read files on this computer only.' },
+      { icon: 'refresh', text: '**Sync now** before you start, and after your last save.' },
+    ],
+    try: 'After a fix, open a new conversation in that tool and say continue.',
+    guide: { key: 'context.setup', heading: 'The Setup check in the app' },
+  },
+
   'context.drafting-request': {
     label: 'About the drafting request',
     title: 'The drafting request',
@@ -661,6 +675,19 @@ const E = {
   },
 
   // MCP block 4 · Across projects — `settings-block-info-mcp-across`.
+  // v3.77.0 — MCP bridge block 5.
+  'settings.mcp-tools': {
+    label: 'About Tools on this Mac',
+    title: 'Tools on this Mac',
+    lead: 'Each agent tool set up on this computer: its config files, its skills and its hooks.',
+    points: [
+      { icon: 'lock', text: 'Only whether a file names my-curator is read.' },
+      { icon: 'pencil', text: 'Nothing is written: copy the entry, or reveal the file.' },
+      { icon: 'check', text: 'Skills are compared with the copy this app carries.' },
+    ],
+    guide: { key: 'settings.mcp-tools', heading: 'The Setup check in the app' },
+  },
+
   'settings.mcp-across': {
     label: 'About Across projects',
     title: 'Across projects',
@@ -875,6 +902,8 @@ export const SCREEN_WORDS = [
   'Access token', 'Check now', 'Sync', 'Sync now',
   // v3.76.0 — Settings › Trash.
   'Restore',
+  // v3.77.0 — Context step 5 and MCP bridge block 5.
+  'Setup', 'SETUP', 'Saved', 'Tools on this Mac', 'Check again',
 ];
 
 // Frozen DEEPLY: a caller that could assign into this map would be a second,

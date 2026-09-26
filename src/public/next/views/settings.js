@@ -159,6 +159,10 @@ import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/li
 // guide card (the user guide's "MCP bridge — connect a client", which links on
 // to the MCP guide the wizard opens via `settings.mcp-bridge`).
 import { openMcpWizard, closeMcpWizardIfOpen } from './mcp-wizard.js';
+// v3.77.0 — MCP bridge block 5 "Tools on this Mac": the words live in a
+// DOM-free module (its suite imports the real builders); this file owns the
+// state, the one request (GET /api/setup/machine) and the listeners.
+import { renderToolsOnThisMacBody, toolsOnThisMacHead } from './setup-machine.js';
 // D-C / ARCHITECTURE.md R7: "a tour you can never get back is worse than
 // none." This is the one control that re-opens the dismissed first-run
 // guidance panel.
@@ -304,7 +308,7 @@ const SETTINGS_SECTIONS = [
   ['general',   'General',              'Software update, appearance'],
   ['providers', 'Providers & keys',     'Gemini, Anthropic, OpenRouter'], // v3.72.1 (audit F14): no local provider exists yet
   ['storage',   'Knowledge base',       'Vault folder, GitHub token'],
-  ['mcp',       'MCP bridge',           'My Curator, default write domain'],
+  ['mcp',       'MCP bridge',           'My Curator, tools on this Mac'],
   ['health',    'Health & scan limits', 'Cost ceilings, candidate pairs'],
   // v3.76.0: last, because it is the least often visited — a place you go
   // to after a delete, not a setting. See views/trash-list.js.
@@ -1107,6 +1111,13 @@ function freshState() {
     // 30-day reading does not move in 30 seconds.
     mcpProjects: null,
     mcpProjectsError: null,
+    // ── ⑤ Tools on this Mac (v3.77.0) ────────────────────────────────────
+    // GET /api/setup/machine, `{data, error, loading}`. Read once per section
+    // load and on "Check again" — never by the 30 s revalidate: it reads
+    // files, and a config file does not change in 30 seconds.
+    setupMachine: null,
+    setupMachineFolds: {},
+    setupMachineCopied: null,
     mcpExerciseBusy: false,
     mcpExerciseError: null,
 
@@ -1661,6 +1672,8 @@ async function loadMcp(token) {
     // every usage log, and blocks ①–③ must not wait for it. It renders itself
     // when it lands, and a failure is its own state (never state.mcpError).
     loadAcrossProjects(token);
+    // ⑤'s reading, the same way: started, never awaited, its own failure.
+    loadSetupMachine(token);
     const [cfgRes, ddRes, usage] = await Promise.all([
       fetch('/api/mcp/config'),
       fetch('/api/config/default-domain'),
@@ -1720,6 +1733,38 @@ function applyUsageVerdict(verdict) {
   }
   state.mcpUsageError = (verdict && verdict.error) || 'The bridge could not read its own call log.';
   return false;
+}
+
+/**
+ * ⑤ TOOLS ON THIS MAC — GET /api/setup/machine. Never throws; a failure is
+ * its own state and never state.mcpError. A failed RE-check keeps the last
+ * good reading on screen, with the error beside it.
+ */
+async function loadSetupMachine(token) {
+  const prev = state.setupMachine;
+  state.setupMachine = { data: prev ? prev.data : null, error: null, loading: true };
+  let data = null, err = null;
+  try {
+    const res = await fetch('/api/setup/machine');
+    const j = await res.json();
+    if (res.ok && j && j.ok && Array.isArray(j.harnesses)) data = j;
+    else err = (j && j.error) || 'HTTP ' + res.status;
+  } catch (e) {
+    err = (e && e.message) || 'Could not check this computer.';
+  }
+  if (!isCurrentMount(token)) return;
+  state.setupMachine = { data: data || (prev && prev.data) || null, error: err, loading: false };
+  if (state.section === 'mcp') render(token);
+}
+
+/** Block ⑤. The head's controls ride at the top of the body (a settings block has no head slot). */
+function renderToolsOnThisMac() {
+  const m = state.setupMachine;
+  const lede = 'Each agent tool set up on this computer, and whether it can reach The Curator.';
+  const body = '<div class="settings-setup-head">' + toolsOnThisMacHead(m)
+    + (state.setupMachineCopied ? '<span class="settings-setup-copied" role="status">' + escapeHtml(state.setupMachineCopied) + '</span>' : '')
+    + '</div>' + renderToolsOnThisMacBody(m, state.setupMachineFolds);
+  return settingsBlock(5, 'mcp-tools', 'Tools on this Mac', lede, body, 'settings.mcp-tools', '');
 }
 
 /**
@@ -2172,7 +2217,7 @@ function renderMain(token, force) {
   // Block ④ Across projects (v3.66.0) is composed HERE, beside renderMcp, for
   // the reason the token block below is: suites lift renderMcp into sandboxes,
   // and a new free identifier inside a lifted body is a crash there.
-  else if (state.section === 'mcp') body = renderMcp() + (state.mcp ? renderAcrossProjects() : '');
+  else if (state.section === 'mcp') body = renderMcp() + (state.mcp ? renderAcrossProjects() + renderToolsOnThisMac() : '');
   else if (state.section === 'health') body = renderHealthLimits();
   else if (state.section === 'trash') body = renderTrash();
   // The GitHub read-only token block (v3.65.2) is composed HERE, at the call
@@ -10804,6 +10849,40 @@ function focusReplaceInput() {
 }
 
 function wireMcpListeners() {
+  // ── ⑤ Tools on this Mac (v3.77.0): reveal, copy an entry, check again,
+  // and the folds' open state (kept in memory for this mount only).
+  {
+    const token = myMountToken;
+    document.querySelectorAll('.settings-block-mcp-tools [data-setup-act]').forEach((el) => {
+      el.addEventListener('click', async () => {
+        const act = el.dataset.setupAct;
+        if (act === 'machine-check') { loadSetupMachine(token); render(token); return; }
+        if (act === 'copy-entry') {
+          const text = state.setupMachine && state.setupMachine.data && state.setupMachine.data.copyEntries
+            ? state.setupMachine.data.copyEntries[el.dataset.tool] : null;
+          if (!text) return;
+          try { await copyToClipboard(text); state.setupMachineCopied = 'Entry copied — paste it into that tool’s config file.'; }
+          catch { state.setupMachineCopied = 'Could not copy.'; }
+          if (!isCurrentMount(token)) return;
+          render(token);
+          setTimeout(() => { if (isCurrentMount(token)) { state.setupMachineCopied = null; render(token); } }, 4000);
+          return;
+        }
+        if (act === 'reveal') {
+          try {
+            await fetch('/api/setup/reveal', {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ path: el.dataset.path || '' }),
+            });
+          } catch (err) { reportAsyncActionFailure(err); }
+        }
+      });
+    });
+    document.querySelectorAll('.settings-block-mcp-tools details[data-setup-fold]').forEach((d) => {
+      d.addEventListener('toggle', () => { state.setupMachineFolds[d.dataset.setupFold] = d.open; });
+    });
+  }
+
   // `myMountToken` is read here, synchronously at bind time, exactly as
   // every other binding in this file does — wireGlobalListeners() re-runs
   // after each render on freshly-created nodes, so there is nothing to
