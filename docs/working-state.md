@@ -2700,6 +2700,13 @@ unknown are kept apart:
 Those two sessions are single observations, not the four-runs-per-arm protocol, so the row's
 `measured` stays `null` and `doctor` prints them under `observations` word for word.
 
+**The session-start hook was seen running, on 2026-09-26.** A real Antigravity conversation
+injected the project's context, from a project-level `.agents/hooks.json`. The CLI's own hook
+marker (keyed on `conversationId`) separately shows the `session-start` command also ran once
+while only the user-level `~/.gemini/config/hooks.json` existed — without that run's injection
+being used, so a project-scope install is the one to trust until the user scope is itself
+watched firing. The `Stop` save ask has **not** been observed.
+
 **The hooks, and what the vendor schema could and could not carry.**
 
 - `PreInvocation` runs **before every model call**, not once per session. `my-curator hook

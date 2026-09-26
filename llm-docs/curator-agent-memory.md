@@ -547,7 +547,7 @@ Whether any of that is available depends entirely on your harness, and the harne
 | present-useless | Hooks exist and cannot carry the ask. That is a finding, not a gap |
 | none | No hook mechanism at all |
 
-Hooks are written for Claude Code, Cursor, Codex and Antigravity (Antigravity's from its documentation, not yet run); Copilot CLI and goose are refused by default because their response shapes are unmeasured; Gemini CLI, Cline and DeepSeek Harness get none for the same reason; OpenCode and Kilo take TypeScript plugins rather than shell commands; Windsurf has twelve hooks and not one of them fires at a stop, a session end or a compaction; Zed has no hook mechanism; Aider has no MCP client.
+Hooks are written for Claude Code, Cursor, Codex and Antigravity (Antigravity's session-start hook was seen running once on 2026-09-26, a real conversation on the maintainer's Mac, from a project-level `.agents/hooks.json`; its `Stop` save ask has not been observed); Copilot CLI and goose are refused by default because their response shapes are unmeasured; Gemini CLI, Cline and DeepSeek Harness get none for the same reason; OpenCode and Kilo take TypeScript plugins rather than shell commands; Windsurf has twelve hooks and not one of them fires at a stop, a session end or a compaction; Zed has no hook mechanism; Aider has no MCP client.
 
 One thing to be clear about: **fourteen of the fifteen harness rows read "not measured"**. The mechanism shipped in version 3.63.0 and the protocol was run for the first time in version 3.64.0, against one harness.
 
