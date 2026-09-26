@@ -64,7 +64,7 @@ The Shared Brain is one of the simplest ways to make that shift practical.
 
 The story of The Curator began with a powerful idea from [Andrej Karpathy](https://karpathy.ai), one of the most influential thinkers in artificial intelligence.
 
-Karpathy described what he called the [**LLM Wiki pattern**](https://github.com/karpathy/LLM-wiki): instead of using AI only to search through documents, what if we used AI to continuously build and maintain a structured wiki?
+Karpathy described what he called the [**LLM Wiki pattern**](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f): instead of using AI only to search through documents, what if we used AI to continuously build and maintain a structured wiki?
 
 Not a folder of files. Not a chat interface over PDFs. A living, interlinked knowledge base.
 
@@ -139,7 +139,7 @@ A [**Shared Brain**](../../docs/shared-brain.md) is a collective Curator wiki th
 
 It can be used by a student cohort, a research team, a company department, a consulting firm, a product team, an alumni community, or a group of independent thinkers working on a shared domain.
 
-Each participant keeps their own personal Curator brain locally. They then choose one domain to contribute to the collective.
+Each participant keeps their own personal Curator brain locally. They then choose one domain to contribute to the collective. *(Correction, 26 September 2026: one **or more** domains. Pushing every opted-in domain in one go was fixed in v3.0.2.)*
 
 For example:
 
@@ -290,6 +290,8 @@ But the core is already here.
 A group of people can now contribute selected knowledge domains into a collective, attributed, AI-queryable wiki while keeping their private brains private.
 
 That is a real step.
+
+> **Update, 26 September 2026.** Where this list stands four months later. **Done:** five hardening releases (v3.0.2 to v3.0.6) closed the trust boundary, added an admin token, a member directory, and a revoke flow for erasure with a typed confirmation. A live battle-test caught two concurrency bugs before any user hit them ([Article 6](./neural-network-of-your-own-knowledge.md) has the detail). **Not done:** the Cloudflare R2 storage option is still planned and has not shipped, so every path is GitHub-only ([roadmap](../../docs/shared-brain.md#7--roadmap)). Enterprise mode is still further out, with no version number. Shared Brain is still an opt-in beta as of v3.76.1. The structured pilot with a real cohort, which is the gate to general availability, has not started either, so the Vanguard MBA test described above is still ahead of us. In the app, Shared Brain is now a section of each domain's page, with its full view one press away ([user guide §15b](../../docs/user-guide.md#15b-shared-brain)).
 
 ---
 

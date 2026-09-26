@@ -189,6 +189,8 @@ This is how human expertise works. This is how it can now be externalised.
 
 The AI currently powering The Curator's ingest function is either [Google Gemini 2.5 Flash](https://ai.google.dev/gemini-api/docs/models#gemini-2.5-flash) (recommended — it has a free tier and extremely low operational cost for paid usage) or [Anthropic Claude Haiku](https://www.anthropic.com/claude/haiku). Both are capable, low-cost models well-suited to this kind of structured document processing.
 
+> **Update, 26 September 2026.** Two corrections. The Gemini default was, and still is, Gemini 2.5 **Flash Lite** (`gemini-2.5-flash-lite`), not Flash; the Anthropic default is Claude Haiku 4.5. And the choice is wider now: OpenRouter became a third provider in v3.15.0, and since v3.67.0 you pick one model in Settings that runs every AI job — ingest, compile, wiki health, Shared Brain — with its measured price shown before anything runs ([user guide §16b](../../docs/user-guide.md#16b-choosing-your-ai-model)). The free tier is rate-limited since Google's December 2025 quota changes: enough to try the app, not enough for serious ingest ([§19](../../docs/user-guide.md#what-the-gemini-free-tier-actually-gives-you)). Ingest also moved: it is now a section of each domain's page rather than a tab of its own.
+
 ---
 
 ## Chat and Wiki Overview: Two Ways to Read What You Know
@@ -200,6 +202,8 @@ The **Wiki** tab gives you a simple browser for reading your generated pages —
 The **Chat** tab lets you have a multi-turn AI conversation with your entire knowledge base. Ask a question, and the AI reasons across everything you have ingested — synthesising answers, making connections, citing the specific wiki pages it drew from. Ask follow-up questions. Explore a topic in depth. The AI maintains conversation history, so the dialogue builds rather than resetting.
 
 This is already genuinely powerful. But it is worth being clear: the built-in Chat uses the same low-cost models that power the ingest process. It is excellent for quick queries, fast lookups, and everyday exploration. For something deeper — real research, cross-domain synthesis, the kind of thinking that requires a frontier model — there is another path.
+
+> **Update, 26 September 2026.** Three things here are out of date. There is no **Wiki** tab any more: a domain's page lists its pages, and a page opens in a reader that slides over the screen ([user guide §11](../../docs/user-guide.md#11-read-a-wiki-page)). Chat does not reason across *everything* you have ingested: it asks one domain at a time, and on a large domain it picks the pages most relevant to the question, up to about 50 pages or 60 KB, plus a short catalogue of every page ([§9](../../docs/user-guide.md#multi-turn-memory--and-its-two-real-limits)). And Chat is no longer tied to the ingest model. Since v3.0.11 each conversation has its own model picker, stronger models included, with the price on screen ([§9](../../docs/user-guide.md#the-composer--length-and-model-selectors)). The bridge described next is still the path for work across several domains.
 
 ---
 
@@ -221,6 +225,8 @@ This is what I mean when I say the second brain becomes more valuable the longer
 
 My Curator reads only your local wiki folder. Everything stays on your machine. No data is sent anywhere. The server is read-only — it cannot modify your wiki, only explore it.
 
+> **Update, 26 September 2026.** "Read-only" stopped being true three days after this was published. Since v2.5.2 (26 April 2026) the bridge can also write: it saves a research session as wiki pages (`compile_to_wiki`) and repairs wiki health, and since v3.17.0 it reads and writes your agents' working state. It now exposes **24 tools**, and seven of them change files on disk ([MCP guide](../../docs/mcp-user-guide.md#what-it-does)). It refuses to write into a read-only Shared Brain mirror. Two more precisions. Its searches are ranked keyword searches, not "semantic" in the embedding sense; The Curator has no vector index. And "no data is sent anywhere" is true of the bridge itself, which calls no model. What it returns goes into your AI client's conversation, and so to that client's model provider, like anything else in that conversation.
+
 ---
 
 ## Health: Maintaining the System Over Time
@@ -229,7 +235,7 @@ A knowledge graph built by AI is, as I like to say, approximately 95% right. The
 
 But it is not perfect. Over time, as your second brain grows, small issues accumulate. Duplicate files where two entries describe the same entity under slightly different names. Broken internal links where a referenced page was never created or was renamed. Orphaned nodes — pages that exist but connect to nothing else in the graph.
 
-The **Health** section of The Curator is a comprehensive system for detecting and repairing these issues. Through a simple UI, you can run a full health scan of any domain. The system identifies broken links and suggests the most likely correct targets — which you review and apply with a single click. It finds orphaned nodes and uses AI to propose which existing pages should link to them, with a written explanation of why. It detects **semantic duplicates** — pages that describe the same concept under different names — and proposes merges with a full preview before any change is made.
+The **Health** section *(update, 26 September 2026: now the **Wiki health** panel at the foot of each domain's page, which scans by itself when you open the domain)* of The Curator is a comprehensive system for detecting and repairing these issues. Through a simple UI, you can run a full health scan of any domain. The system identifies broken links and suggests the most likely correct targets — which you review and apply with a single click. It finds orphaned nodes and uses AI to propose which existing pages should link to them, with a written explanation of why. It detects **semantic duplicates** — pages that describe the same concept under different names — and proposes merges with a full preview before any change is made.
 
 Everything is AI-assisted and human-reviewed. The system proposes; you decide. The result is a knowledge graph that stays coherent and connected as it grows, rather than degrading under its own weight.
 
@@ -248,6 +254,8 @@ An organisation can create a shared repository and give team members access to t
 A teacher — and this is something I am exploring with my MBA students at [COTRUGLI Business School](https://cotrugli.eu/) — can build a second brain around a curriculum, and students can access it directly, asking questions through their own MCP-enabled AI clients and receiving answers grounded in the course's actual knowledge base rather than generic internet data.
 
 This is the **shared second brain** concept. And I think it has implications we are only beginning to understand.
+
+> **Update, 26 September 2026.** Sharing one sync repository between several people is not how this turned out. Personal Sync is one person's backup across their own computers. A group shares through **Shared Brain**, added in v3.0.0-beta: each person contributes only the domains they opt in, the group's admin synthesises the contributions, and everyone pulls the result back as a separate, read-only domain that their AI clients can query over the bridge ([user guide §15b](../../docs/user-guide.md#15b-shared-brain)). It is still an opt-in beta, and the real-cohort pilot it is waiting on has not started. [Article 5](./the-shared-brain-thinking-together.md) and [Article 6](./neural-network-of-your-own-knowledge.md) tell that story.
 
 ---
 
@@ -291,7 +299,9 @@ Your knowledge does not have to die with you. Your expertise — the real textur
 
 Installation is a single command — the app installs itself and opens in your browser automatically. A step-by-step onboarding wizard walks you through the setup. The default AI model, [Google Gemini 2.5 Flash](https://ai.google.dev/gemini-api/docs/models#gemini-2.5-flash), has a free tier generous enough that most users will pay nothing at all for the processing.
 
-You can also see a working example of a real knowledge base built with the app at: [github.com/talirezun/my-brain](https://github.com/talirezun/my-brain)
+> **Update, 26 September 2026.** On a Mac there is now also a packaged app, a `.dmg` (still a preview, not yet notarised). The wizard was replaced by a small **Getting started** panel that never blocks you ([user guide §5](../../docs/user-guide.md#5-first-run--the-getting-started-panel)). The default model is Gemini 2.5 **Flash Lite**, and its free tier is rate-limited: fine for trying the app, not for serious use. Expect to enable billing; what that costs in practice is in [§19](../../docs/user-guide.md#what-pay-as-you-go-actually-costs-real-numbers).
+
+You can also see a working example of a real knowledge base built with the app *(update, 26 September 2026: that example repository is no longer public, so the link has been removed)*.
 
 You do not need to understand markdown or graph theory or the technical details of how any of this works under the hood. You need to have knowledge worth preserving — and the patience to let the system compound.
 

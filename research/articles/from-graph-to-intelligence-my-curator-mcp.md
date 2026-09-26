@@ -84,7 +84,7 @@ That is precisely what **My Curator MCP** was built to provide.
 
 Let me be precise about terminology, because it matters.
 
-**The Curator** is the application. It runs locally on your computer, opens in your browser at `localhost:3333`, and handles the full lifecycle of your second brain: ingesting documents, managing domains, browsing and editing the wiki, running health checks, syncing to GitHub, and configuring connected tools. The Curator is where your second brain is created and maintained.
+**The Curator** is the application. It runs locally on your computer, opens in your browser at `localhost:3333` *(update, 26 September 2026: or in its own window, with the packaged Mac app)*, and handles the full lifecycle of your second brain: ingesting documents, managing domains, browsing and editing the wiki, running health checks, syncing to GitHub, and configuring connected tools. The Curator is where your second brain is created and maintained.
 
 **My Curator** is the MCP — the [Model Context Protocol](https://modelcontextprotocol.io) server that ships with The Curator starting from version 2.3.0. It is a separate, lightweight process that exposes your wiki to any MCP-compatible AI client installed on the same machine. [Claude Desktop](https://claude.ai/download) is the primary use case; any other MCP-compatible client works equally well.
 
@@ -103,6 +103,8 @@ For most users who have a Claude subscription, the workflow is: install The Cura
 For users who require complete data sovereignty — those working with genuinely sensitive research, or those who simply prefer that nothing leaves their machine under any circumstances — there is a fully offline alternative. Tools like [LM Studio](https://lmstudio.ai) allow you to run capable open-weight models locally. My Curator MCP installs into LM Studio's MCP configuration just as it does into Claude Desktop. The result is a completely air-gapped second brain workflow: your wiki lives on your machine, the model runs on your machine, and no byte of your knowledge ever touches an external server.
 
 The architecture supports both ends of this spectrum without any trade-offs in capability. The same seventeen tools are available regardless of which model or which client you connect. **The choice of privacy posture is entirely yours.**
+
+> **Update, 26 September 2026.** "Completely air-gapped" overstated it, and I want to correct it plainly. The *reading* half can be local: the bridge calls no model of its own, so a local model in a local client reads your wiki without anything leaving the machine. But the wiki was *written* by a cloud model. Ingest runs on Gemini, Anthropic or OpenRouter, and local models are still not available as a provider ([README](../../README.md#vendor-neutral-by-construction)). The AI Health tools, `scan_semantic_duplicates` among them, call that same provider. So a wiki built by The Curator is not air-gapped end to end today. The project has also never tested LM Studio as a client itself. The bridge is a standard local (stdio) MCP server, which is why it should work there, but that is a design property, not a measurement. The tool count has changed too; see the update under [the tools section](#the-seventeen-tools-what-my-curator-mcp-can-do).
 
 ---
 
@@ -127,6 +129,8 @@ The skill covers three distinct workflows:
 **Maintenance.** When you ask the model to clean up your wiki, it follows a three-tier protocol: auto-fix issues that have one clear right answer; pause and ask for your decision on issues that require judgement; and always preview destructive operations before executing them.
 
 The skill is the difference between *I connected a powerful tool* and *I have a rigorous system that handles my knowledge with precision*. Installing it takes thirty seconds and changes every subsequent interaction.
+
+> **Update, 26 September 2026.** Two claims here were stronger than the system. First, a skill is guidance a model reads, not enforcement. "Every time, without exception" is not something any skill can promise, and whether a harness switches a skill on by itself has since been measured and varies from host to host ([skills/README](../../skills/README.md#what-you-lose-without-auto-activation-and-what-it-costs)). Second, "zero broken links on every write" holds only when the model follows the skill. `compile_to_wiki` itself resolves every link against the domain's real pages and reports any it could not match. By default it still writes them, and only its `refuse` setting blocks the write, which the skill recommends for new domains ([MCP guide](../../docs/mcp-user-guide.md#link-grounding--preventing-broken-wikilinks-v255)). How to install the skill has also changed; see [the install update below](#how-to-install-from-zero-to-working-mcp).
 
 ---
 
@@ -160,6 +164,8 @@ My Curator exposes seventeen tools to your AI client, organised into three tiers
 - **`dismiss_wiki_issue`** — Permanently silences a specific health issue so it stops appearing on future scans. Dismissals sync to other computers via GitHub sync and are shared between the MCP and the in-app Health tab.
 - **`undismiss_wiki_issue`** — Restores a previously dismissed issue, bringing it back to future health scans.
 
+> **Update, 26 September 2026.** There are now **24 tools**, not seventeen: 14 that read and 10 in the write block, of which seven change files on disk ([MCP guide](../../docs/mcp-user-guide.md#what-it-does); the authoritative list is the `tools` array in [`mcp/tools/index.js`](../../mcp/tools/index.js)). The seven added since this article: `get_raw_source` (v3.5.0), which opens the original document behind a summary; `get_working_state` and `save_working_state` (v3.17.0), which carry a coding session's handoff to the next session, tool or machine; `list_projects` and `save_project_brief` (v3.48.0); and `get_project_context` and `save_foundation` (v3.59.0), which add a project's standing brief and canonical documents. Those last six belong to a separate working-state layer, not the wiki. [Article 7](./the-handoff-writes-itself.md) and [Article 8](./where-your-context-lives.md) explain why.
+
 ---
 
 ## Maintaining Your Second Brain: The MCP Approach
@@ -171,6 +177,8 @@ As your wiki grows, small structural issues accumulate. An entity page ingested 
 The Curator has a comprehensive Health section in its app UI, and I have invested significant time in it. You can run a health scan of any domain, review issues one by one, and apply AI-suggested fixes with a single click. The AI proposes; you confirm; the file is updated. For small wikis or occasional maintenance, this workflow is entirely adequate.
 
 But it has a practical limitation at scale. A large document — a 50-page research report, say — can generate 50, 80, even 100 broken links when its summary references concept pages that do not yet exist. Processing these through the in-app Health UI, one confirmation at a time, is slow. Necessary, but slow.
+
+> **Update, 26 September 2026.** The app closed most of this gap soon after. Each domain's **Wiki health** panel now has a **Quick maintenance** bar that works in batches: one button applies every safe, deterministic fix at once, and two AI buttons fix all broken links or find homes for all orphan pages in a single reviewed plan, each naming its cost before it runs ([user guide §17](../../docs/user-guide.md#quick-maintenance--the-action-bar-v301-beta17)). The MCP route below still works; it is no longer the only fast one.
 
 **My Curator MCP changes this calculus significantly.**
 
@@ -232,6 +240,8 @@ This is what *queryable extension of your own thinking* means in practice.
 
 **For fully offline use, use LM Studio.** If your second brain contains genuinely sensitive material, the offline path is fully functional. Install My Curator MCP into LM Studio's configuration and choose a capable open-weight model — Qwen 3 14B performs well for this workload on a machine with 16 GB RAM. Every capability described in this article works identically in the offline configuration.
 
+> **Update, 26 September 2026.** Read this with the correction under [A Private Bridge](#a-private-bridge--with-options-for-every-privacy-preference). Offline covers *reading* the wiki, not building it, and the AI Health scans still call your cloud provider. The Qwen observation is mine and was never measured by the project.
+
 ---
 
 ## How to Install: From Zero to Working MCP
@@ -251,6 +261,8 @@ The installation follows a clear sequence. Two components; one wizard.
 **First prompt:** *"Use `list_domains` to show my available knowledge domains, then use `get_graph_overview` on the most interesting one to show me how everything is connected."*
 
 That is the full installation. Total time under ten minutes, including reading the wizard instructions.
+
+> **Update, 26 September 2026.** The steps have moved; [the MCP guide's setup section](../../docs/mcp-user-guide.md#setup-under-2-minutes) is current. **Step 1:** on a Mac there is also a packaged app (`.dmg`). The first-run wizard became a small **Getting started** panel, and the Gemini default is 2.5 **Flash Lite** — it was then too, so "2.5 Flash" above was a slip ([user guide §5](../../docs/user-guide.md#5-first-run--the-getting-started-panel)). **Step 2:** Ingest is a section of each domain's page, no longer a tab. **Step 3:** open **Settings → MCP bridge** and press **Set up Claude Desktop**. A three-step wizard copies the entry, opens the config file's folder (and, where it can do so safely, offers **Write it for me**), then tests the bridge after you restart Claude Desktop. **Step 4:** **Run self-test** is still there. **Step 5:** Claude Desktop has no skills section. Upload `SKILL.md` and `examples.md` to a project's **Project knowledge**, or, in Claude Code, put them in `~/.claude/skills/my-curator/` ([MCP guide](../../docs/mcp-user-guide.md#install--claude-desktop)). The bridge also works with Claude Code, Cursor and other clients that run local MCP servers.
 
 ---
 
