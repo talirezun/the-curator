@@ -141,10 +141,12 @@ Here is the challenge that motivated me to build The Curator: the Second Brain i
 Getting started requires nothing more than copying a single installer command from the GitHub page and pasting it into your terminal. The app installs itself, builds a Mac Dock icon, and opens in your browser automatically. A friendly onboarding wizard walks you through three setup steps.
 
 **First**, you set your domains folder — either pointing to an existing Obsidian vault or choosing any folder on your hard drive.  
-**Second**, you provide an API key for the AI engine. The default is Google Gemini 2.5 Flash, which has a generous free tier and extremely low cost for paid usage — making this system essentially free to run for most people. Anthropic's Claude API is also supported, and local LLM support is in development.  
+**Second**, you provide an API key for the AI engine. The default is Google Gemini 2.5 Flash *(correction, 26 September 2026: Gemini 2.5 **Flash Lite** — `gemini-2.5-flash-lite` was the pinned default when this was written and still is)*, which has a generous free tier and extremely low cost for paid usage — making this system essentially free to run for most people. Anthropic's Claude API is also supported, and local LLM support is in development.  
 **Third**, if you want to sync your knowledge base across multiple computers, you connect a private GitHub repository.
 
 That is the entire setup. From there, the app is organised into six clear sections.
+
+> **Update, 26 September 2026.** Setup no longer works like this. There is no wizard any more: the first launch shows a small **Getting started** panel that never blocks you, asks whether you want to build a second brain or give your agents memory, and ticks each step off as you actually do it ([user guide §5](../../docs/user-guide.md#5-first-run--the-getting-started-panel)). A packaged **Mac app** — a `.dmg`, still a preview and not yet notarised — now sits beside the one-command installer ([§3](../../docs/user-guide.md#the-mac-app-macos-only)). Three providers are supported: Gemini, Anthropic and, since v3.15.0, OpenRouter. The local-model support I called "in development" has still not shipped; the Settings row says so ([README](../../README.md#vendor-neutral-by-construction)). The Gemini free tier is real but, since Google's December 2025 quota changes, rate-limited — enough to try the app, not enough for serious or batch ingest ([§19](../../docs/user-guide.md#what-the-gemini-free-tier-actually-gives-you)). And sync is no longer a setup step; you connect a private repository whenever you want one, from **Sync** at the foot of the rail ([§15](../../docs/user-guide.md#15-sync-across-computers)).
 
 ---
 
@@ -168,9 +170,11 @@ Manages the GitHub-based synchronisation system. Whether you are pushing your kn
 **Settings**  
 Where you manage API keys, check the current app version, and pull updates. The app is actively developed and updates regularly.
 
+> **Update, 26 September 2026.** The app is no longer six sections. Since v3.64.0 the rail down the left holds three places — **Chat**, **Domains** and **Project context** — with **Sync** and **Settings** at its foot ([user guide §7](../../docs/user-guide.md#7-finding-your-way-around), [§7b](../../docs/user-guide.md#7b-the-three-places--ask-knowledge-context)). Ingest is now a section of each domain's page, next to the pages it writes. The Wiki browser became that page's **Pages** list, and a page opens in a reader that slides over the screen ([§11](../../docs/user-guide.md#11-read-a-wiki-page)). Chat asks one domain at a time, not the whole brain at once. On a large domain it does not read everything either: it picks the pages most relevant to the question, up to about 50 pages or 60 KB, plus a short catalogue of every page ([§9](../../docs/user-guide.md#multi-turn-memory--and-its-two-real-limits)). **Project context** is new. It holds what coding agents read and write between sessions, and it is the subject of [Article 7](./the-handoff-writes-itself.md) and [Article 8](./where-your-context-lives.md).
+
 You can find The Curator on GitHub at: **[github.com/talirezun/the-curator](https://github.com/talirezun/the-curator)**
 
-And a working example of a real knowledge base built with the app at: **[github.com/talirezun/my-brain](https://github.com/talirezun/my-brain)**
+And a working example of a real knowledge base built with the app *(update, 26 September 2026: that example repository is no longer public, so the link has been removed; the screenshots in the [user guide](../../docs/user-guide.md) are taken on a synthetic demo workspace instead)*.
 
 ---
 
@@ -182,7 +186,7 @@ Every note you take in a cloud-based app is a hostage. The company that hosts it
 
 **The Second Brain built with The Curator does not have this problem.** In its simplest form, it is nothing more than a collection of plain markdown files sitting in a folder on your hard drive. Open them in any text editor. Move them wherever you want. They will outlast every app you have ever used.
 
-The Curator itself runs entirely on your local machine — there is no cloud service, no account, no subscription. The AI processing happens through API calls to your own account with Google or Anthropic — the data flows through your keys, not ours. And the sync system uses a private GitHub repository that only you control.
+The Curator itself runs entirely on your local machine — there is no cloud service, no account, no subscription. The AI processing happens through API calls to your own account with Google or Anthropic *(update, 26 September 2026: or OpenRouter, the third provider since v3.15.0)* — the data flows through your keys, not ours. And the sync system uses a private GitHub repository that only you control.
 
 There is no possibility of being deplatformed. No risk of a company deciding your notes are a liability. No algorithmic curation of your own knowledge. No ads. No surveillance. **The Second Brain is yours — completely, permanently, and technically.**
 
