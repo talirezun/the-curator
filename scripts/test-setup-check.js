@@ -145,7 +145,13 @@ section('§2  the measured false negatives');
   const m2 = S.collectMachineSetup({ home: HOME2, repo: REPO, skillsDir, domainsDir: DOMAINS });
   const cc2 = row(m2, 'claude-code');
   ok(cc2.bridge.state === 'ok' && cc2.bridge.via === 'readAlso', 'Claude Code configured ONLY in Claude Desktop\'s config reads as configured, via that file', cc2.bridge);
-  ok(/Observed 2026-09-26/.test(cc2.bridge.note || ''), '…with the dated observation carried verbatim');
+  ok(/Observed 2026-09-26/.test(cc2.bridge.observation || '') && /2026-09-26/.test(cc2.bridge.note || ''), '…with the dated observation carried verbatim (and a short, dated note for the cell)');
+  // A readAlso entry whose launch file is gone is "to fix", not "configured".
+  const HOME3 = path.join(ROOT, 'home3');
+  w(path.join(HOME3, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
+    JSON.stringify({ mcpServers: { 'my-curator': { command: path.join(ROOT, 'no-such-launcher'), args: [] } } }));
+  const cc3 = row(S.collectMachineSetup({ home: HOME3, repo: REPO, skillsDir, domainsDir: DOMAINS }), 'claude-code');
+  ok(cc3.bridge.state === 'fix' && /missing file/.test(cc3.bridge.word), 'a Claude Desktop entry pointing at a missing launcher is to fix for Claude Code too', cc3.bridge);
   const noRepo = S.collectMachineSetup({ home: HOME, repo: '', skillsDir, domainsDir: DOMAINS });
   ok(row(noRepo, 'claude-code').bridge.state !== 'ok', 'control: without the repo path the projects[] entry is not found (nothing else configures it)', row(noRepo, 'claude-code').bridge);
   const oc = row(machine, 'opencode');

@@ -211,15 +211,18 @@ export function hookStatusBits(h) {
   // THE HOOK ACTIVITY LOG FIRST (v3.77.0). It records every invocation with
   // its decision and survives a restart; the markers below are cleared on
   // restart and polluted by old test runs, so they are only the fallback.
+  // The SAME floor as the markers: a logged run older than the hook file it
+  // would have come from is not evidence the INSTALLED hooks ran.
+  const installedAt = Math.min(...ours.map((x) => (Number.isFinite(x.mtimeMs) ? x.mtimeMs : Infinity)));
   const act = h.hookActivity;
-  if (act && (act.start || act.stop)) {
+  const fresh = (x) => x && Number.isFinite(Date.parse(x.at)) && Number.isFinite(installedAt) && Date.parse(x.at) >= installedAt;
+  if (act && (fresh(act.start) || fresh(act.stop))) {
     const at = (x) => `${x.at.slice(0, 16).replace('T', ' ')} UTC`;
     const words = [];
-    if (act.start) words.push(`start hook observed firing ${at(act.start)}`);
-    if (act.stop) words.push(`stop hook observed firing ${at(act.stop)}`);
+    if (fresh(act.start)) words.push(`start hook observed firing ${at(act.start)}`);
+    if (fresh(act.stop)) words.push(`stop hook observed firing ${at(act.stop)}`);
     return [...bits, `hooks installed · ${words.join(' · ')} (hook log)`];
   }
-  const installedAt = Math.min(...ours.map((x) => (Number.isFinite(x.mtimeMs) ? x.mtimeMs : Infinity)));
   const last = h.hookRuns?.lastRunAt ? Date.parse(h.hookRuns.lastRunAt) : NaN;
   if (Number.isFinite(last) && Number.isFinite(installedAt) && last >= installedAt) {
     bits.push(`hooks installed · the hook command ran for it ${h.hookRuns.lastRunAt.slice(0, 16).replace('T', ' ')} UTC (marker)`);

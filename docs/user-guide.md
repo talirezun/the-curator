@@ -46,6 +46,7 @@ Nothing has been renumbered; only grouped.
 13b. [Working state — carrying context between sessions](#13b-working-state--carrying-context-between-sessions)
 13c. [Making capture real — the command, the hooks and the meter](#13c-making-capture-real--the-command-the-hooks-and-the-meter)
 13d. [Working with several agent tools and several computers — the setup checklist](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist)
+13e. [The Setup check in the app](#13e-the-setup-check-in-the-app)
 15. [Sync across computers (Personal Sync)](#15-sync-across-computers)
 15b. [Shared Brain](#15b-shared-brain)
 
@@ -5622,9 +5623,87 @@ comes with a source install (`npm link` puts it on your `PATH`); the Mac app doe
 >   was then measured (Claude Code, headless, a second tool's save between two turns): Sonnet 5
 >   read again **0 of 8** times without it, **8 of 8** with it. Haiku 4.5 showed no measurable
 >   difference (4 runs each).
-> - **Not measured yet:** Antigravity's hooks; a live handover involving opencode, Codex or Cursor
+> - **Not measured yet:** Antigravity's Stop hook (its session-start hook was seen working on
+>   2026-09-26 — see [§13e](#13e-the-setup-check-in-the-app)); a live handover involving opencode, Codex or Cursor
 >   (opencode was measured headless on 2026-09-10, for whether it switches the skill on — 4 of 4);
 >   the re-read habit on small models; an edited copy of the block.
+
+---
+
+## 13e. The Setup check in the app
+
+*New in v3.77.0.* The checklist in [§13d](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist)
+is now visible in the app, for one project on one computer, so you do not have to check it by hand.
+
+**Where it is.** **Context** → open a project → the **SETUP** tile in the overview, and **step 5 ·
+Setup** at the foot of the page. The machine-wide detail is in **Settings → MCP bridge → Tools on
+this Mac**.
+
+**What step 5 shows.**
+
+- **A to-fix list, never folded.** One line for each precondition that is false *right now*, with
+  the one safe action beside it: **Copy block for AGENTS.md**, **Copy marker line**, **Copy
+  command** (for example the `git add .curator-project && git commit …` line), **Reveal** a file in
+  Finder, **Sync now**, or **Open Tools on this Mac**. When nothing is false it says *Nothing to fix
+  on this computer*. There is no score and no percentage.
+- **Tools** — one row per agent tool that has saved to this project, is set up on this computer, or
+  you added with **+ Add a tool**. The columns are **Saved** (the project's own record, from every
+  computer: when, from which computer, under which handoff name — and whether that name is the
+  tool's own), **Bridge**, **Skills** and **Hooks** (files on *this* computer), and **Block** (the
+  instruction file that tool reads, in *this* project's folder).
+- **Repository on this computer** — the folder, whether `.curator-project` names this project and
+  is committed (and pushed, as of your last `git fetch` — the app never fetches your project), and
+  for `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`: present, block present, current, at the top.
+- **Computers** — every computer that has saved to this project: which tools saved from it, its
+  newest save that has reached *this* computer, the Curator version it saved with (recorded from
+  v3.77.0 on; older saves say *not recorded*), and for this computer its last sync. When the app's
+  last check of GitHub found a newer handoff from another computer waiting, the row says so, and
+  **Sync now** is right there. Another computer's own sync time is not recorded anywhere, so it is
+  never shown.
+
+**The states.** *ok*, *to fix*, *can't check here*, *not checked* (for example: no project folder
+set yet), *unmeasured* (hooks whose effect nobody has measured). Evidence beats configuration: if
+no config entry is found for Claude Code but Claude Code saved this project from this computer, the
+cell says **working** — on the maintainer's Mac the entry lives only in Claude Desktop's config, and
+a file-only check would have said "not configured" about a setup that works.
+
+**Where is the project on this computer?** Nothing recorded it before v3.77.0. The first time,
+step 5 asks for the folder (suggesting any document source of the project that is a git checkout
+here). The answer is kept in this computer's own settings file and never synced — the same project
+lives at a different path on each computer. A folder inside Documents or Desktop makes macOS ask
+once whether The Curator may read it.
+
+**What it reads, and what it never does.** It reads the agent tools' config files for one fact —
+whether they name `my-curator` — and never shows their contents or any other server's entry (those
+files hold other tools' API keys). It reads your project's marker and instruction files, and runs
+read-only `git` in the folder. It writes nothing to a tool's config, a skill folder, or your
+repository: every fix copies or reveals, and you paste. The two things it saves are this computer's
+project folder and the tools you added.
+
+**Skills.** For tools whose skills live on this computer (Antigravity; opencode and Claude Code
+when installed locally), each installed file is compared with the copy this app carries. Skills
+added to your Claude account reach the Claude app from the account and leave no local copy, so
+Claude's row says *can't check here*. **Settings → MCP bridge → Tools on this Mac** offers
+`my-curator.zip` and `curator-continuity.zip` of the current skills for that upload (the Mac app
+ships the skills since v3.77.0).
+
+**Hooks, and what was observed on 2026-09-26.** Antigravity reads hooks from a `hooks.json`. With
+only the user-level `~/.gemini/config/hooks.json`, the session-start hook **ran** (it left a marker)
+but that conversation called `get_project_context` itself and gave no read-back of the brief — the
+injection was not seen used. With the project-level `<repo>/.agents/hooks.json`, the injection
+**was** used: the agent read back the brief's directive without a tool call. So
+`my-curator install-hooks antigravity` writes the project file by default. That file holds this
+computer's absolute path to `my-curator`, so do not commit it: add `--git-exclude` and it is listed
+in `.git/info/exclude` (local to this computer, never pushed). Whether the Stop hook fires is not
+known yet — see below.
+
+**The hook activity log.** Every `my-curator hook` run now leaves one line in
+`<user data>/.hook-activity.jsonl` (never synced, rotated): when, which tool, which event, a hash of
+the conversation id and which field carried it, the payload's field **names** (never a value), and
+what the hook decided and why. `my-curator hook-log` prints the last 20; `my-curator doctor` and the
+**Hooks** column read it (*start hook observed firing …*, *stop hook observed firing … — asked* /
+*did not ask: …*, or *installed, not yet observed firing*). To see why a Stop reminder did not
+appear, run a session, then `my-curator hook-log --harness antigravity`.
 
 ---
 

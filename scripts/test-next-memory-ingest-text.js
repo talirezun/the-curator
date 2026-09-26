@@ -920,12 +920,15 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
   // v3.75.0: SIXTEEN. "Delete handoff" — `DELETE …/scopes/:scope {confirm}`,
   // the owner's removal of one work-stream to the trash;
   // test-next-memory-view.js §8 names it by URL and body.
-  ok('memory.js issues exactly SIXTEEN mutating-shaped HTTP method keys',
-    methods.length === 16, methods.join(','));
-  ok('...and they are DELETE x3, PATCH x4, POST x7 and PUT x2, every one a LITERAL',
+  // v3.77.0: + step 5's four (POST reveal, POST Sync now, PUT tools, PUT
+  // repository folder) — named with their bodies in test-next-memory-view.js.
+  ok('memory.js issues exactly TWENTY mutating-shaped HTTP method keys',
+    methods.length === 20, methods.join(','));
+  ok('...and they are DELETE x3, PATCH x4, POST x9 and PUT x4, every one a LITERAL',
     methods.join(',') === "method: 'DELETE',method: 'DELETE',method: 'DELETE',method: 'PATCH',method: 'PATCH',"
       + "method: 'PATCH',method: 'PATCH',method: 'POST',method: 'POST',method: 'POST',method: 'POST',"
-      + "method: 'POST',method: 'POST',method: 'POST',method: 'PUT',method: 'PUT'",
+      + "method: 'POST',method: 'POST',method: 'POST',method: 'POST',method: 'POST',"
+      + "method: 'PUT',method: 'PUT',method: 'PUT',method: 'PUT'",
     methods.join(','));
   ok('...the reading-budget PATCH sends ONE field, to the four-segment route',
     /'\/reading\/budget'/.test(memCode)

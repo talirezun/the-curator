@@ -264,9 +264,10 @@ const CTX = contextOverview();
   // three. Both figures below move the same way.
   // v3.67.0: FIVE — the SESSION START reading joins the grid (hidden until
   // measured, rendered all the same, CAPTURE's own rule).
-  eq('...and five on a project', withClass(CTX, 'cur-ov-card').length, 5);
+  // v3.77.0: SIX — the SETUP reading (hidden until step 5's check lands).
+  eq('...and six on a project', withClass(CTX, 'cur-ov-card').length, 6);
   eq('every figure on both carries a `.cur-ov-value`',
-    withClass(DOM, 'cur-ov-value').length + '/' + withClass(CTX, 'cur-ov-value').length, '7/5');
+    withClass(DOM, 'cur-ov-value').length + '/' + withClass(CTX, 'cur-ov-value').length, '7/6');
   ok(/class="cur-eyebrow">PAGES</.test(DOM) && /class="cur-eyebrow">DOCUMENTS</.test(CTX),
     'and every figure is captioned by the SAME `.cur-eyebrow` the kit uses everywhere');
 
@@ -436,8 +437,9 @@ section('§3 — A FILTER HIGHLIGHT ONLY WHERE THERE IS A FILTER');
   const jumps = tags(CTX).filter((t) => t.attrs['data-ov-jump'] !== undefined)
     .map((t) => t.attrs['data-ov-jump']);
   // v3.67.0: and SESSION START opens step 4, the sum of the three layers.
-  eq('the five readings open their steps',
-    jumps.join(','), 'context-canonical,context-state,context-knowledge,capture,context-session');
+  // v3.77.0: and SETUP opens step 5.
+  eq('the six readings open their steps',
+    jumps.join(','), 'context-canonical,context-state,context-knowledge,capture,context-session,context-setup');
   ok(/aria-label="Documents, 2 documents — go to step 1"/.test(CTX),
     '...each with an accessible name that says where it goes', CTX.slice(0, 900));
   const dj = tags(DOM).filter((t) => t.attrs['data-ov-jump'] !== undefined)

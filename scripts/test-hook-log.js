@@ -220,7 +220,14 @@ section('§6  install-hooks for Antigravity');
   ok(!existsSync(path.join(WORK, '.gitignore')), 'no .gitignore was created (that one is committed)');
   const st = execFileSync('git', ['status', '--porcelain'], { cwd: WORK, encoding: 'utf8' });
   ok(!st.includes('.agents'), 'git no longer offers .agents/hooks.json for commit', st);
-  // Now a hook file IS installed: the harness line must cite the log.
+  // Now a hook file IS installed. A logged start OLDER than the file is not
+  // evidence (the markers' own floor) — so the line falls back first…
+  const d1 = run(['doctor'], { cwd: WORK });
+  const agLine1 = d1.stdout.split('\n').find((x) => /^\s+Antigravity —/.test(x)) || '';
+  ok(!/\(hook log\)/.test(agLine1), 'a logged start from BEFORE the install is not cited as evidence the installed hooks ran', agLine1);
+  // …and a start AFTER the install is cited, from the log.
+  const tick = Date.now(); while (Date.now() - tick < 20) { /* the file's mtime and the next line must differ */ }
+  start('conv-after-install');
   const d2 = run(['doctor'], { cwd: WORK });
   const agLine2 = d2.stdout.split('\n').find((x) => /^\s+Antigravity —/.test(x)) || '';
   ok(/Curator hook file/.test(agLine2) && /start hook observed firing .*\(hook log\)/.test(agLine2),

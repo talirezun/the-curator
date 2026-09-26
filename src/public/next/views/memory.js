@@ -129,7 +129,7 @@
 
 import {
   registerView, setSidebar, setMain, escapeHtml, icon,
-  isCurrentMount, reportAsyncMountFailure,
+  isCurrentMount, reportAsyncMountFailure, reportAsyncActionFailure, refreshSyncBadge,
   // THE SHELL'S READER, the panel the wiki opens a page in. A work-stream row
   // opens its handoff there instead of the page printing it (see
   // handoffReaderContent). `isCurrentReader` is the epoch guard every caller of
@@ -369,6 +369,10 @@ import {
   wsDeleteCardHtml, wsDeleteConfirmMatches, wsDeleteCanSubmit, wsDeleteBody,
   wsDeleteOutcomeText,
 } from './ws-delete.js';
+// v3.77.0 — step 5 "Setup": the words live in a DOM-free module (its suite
+// imports the real builders); this view owns the state, the request and the
+// listeners. See views/setup-step.js for the six-rules walk-through.
+import { renderSetupBody, setupHeadHtml, setupTile, SETUP_JUMP } from './setup-step.js';
 
 // ── THE TWO PICKERS ARE GONE, AND SO IS THE HANDOFF THEY NEEDED ──────────
 //
@@ -867,6 +871,14 @@ function freshState() {
     // measurement of that proposal.
     sessionStart: null,
     sessionPreview: null,
+    // v3.77.0 — step 5 "Setup": GET /api/setup/projects/:domain/:project for
+    // ONE project, `{domain, project, data, error, loading}`. Asked for after
+    // the paint, on project open and on "Check again" — never polled.
+    setup: null,
+    setupAddOpen: false,
+    setupEditRepo: false,
+    setupRepoDraft: null,
+    setupRepoError: null,
     plan: null,
     budgetSaving: false,
     budgetError: null,
@@ -1198,6 +1210,11 @@ let captureInFlight = null;
 // so a burst of renders asks once. Not cached across mounts: the figures are
 // what the store would send RIGHT NOW, and a remembered one is a stale claim.
 let sessionStartInFlight = null;
+let setupInFlight = null;
+// Every step-5 request is numbered; only the NEWEST one may write state. A
+// "Check again" or a repository change made while an earlier check is in
+// flight must win, and the earlier answer must not clear its `loading`.
+let setupSeq = 0;
 // The `if applied` preview in flight, keyed by its request body.
 let previewInFlight = null;
 // v3.70.0: the settings read in flight (once per mount), and the picker's
@@ -1640,8 +1657,9 @@ const FOLDS_KEY = 'curator-memory-folds-v1';
 // v3.67.0: step ④'s three rows joined the list. `receives` is the one row on
 // this page that is OPEN by default, so it is the one key whose stored `false`
 // is kept too (below).
+// v3.77.0: step 5's three rows.
 const FOLD_KEYS = ['brief', 'journal', 'foundations', 'streams', 'capture', 'saved', 'knowledge',
-  'receives', 'window', 'reach'];
+  'receives', 'window', 'reach', 'setup-tools', 'setup-repo', 'setup-computers'];
 // The per-domain form step ③ writes since v3.65.0, and the ONLY dynamic key
 // this map accepts. The alphabet is the domain-name one and the length bound
 // is the store's, so a hand-edited value can add at most a bounded number of
@@ -3375,6 +3393,8 @@ function render(token) {
   // v3.67.0: step ④'s measurement follows the project read it describes. It
   // is asked for AFTER the paint, never on a switch's critical path.
   maybeLoadSessionStart(token);
+  // v3.77.0: step 5's check, the same way — once per project open.
+  maybeLoadSetup(token);
 }
 
 /**
@@ -4382,6 +4402,28 @@ function renderLayerStrip(read) {
     hidden: ssRead === null,
     jump: 'context-session',
     name: 'Session start, ' + ssValue + ' — go to step 4',
+  });
+
+  // ── SETUP (v3.77.0) — HOW MANY PRECONDITIONS ARE FALSE, HERE ──────────
+  // A count of real "to fix" rows from step 5's check, never a score. Hidden
+  // until the check lands, SESSION START's rule. Inline, for the lift reason
+  // above: no helper is named in this body. The words match
+  // views/setup-step.js `setupTile`, which the patch writes after the check.
+  const stpS = state.setup && state.setup.domain === state.activeDomain
+    && state.setup.project === state.activeProject && state.setup.data ? state.setup.data : null;
+  const stpN = stpS && Array.isArray(stpS.toFix) ? stpS.toFix.length : 0;
+  const stpValue = !stpS ? 'not checked'
+    : (stpN ? stpN + ' to fix' : (stpS.repo ? 'nothing to fix here' : 'not checked'));
+  const stpTools = stpS ? (stpS.tools || []).map((x) => x.label) : [];
+  const stpComps = stpS ? (stpS.computers || []).length : 0;
+  cards.push({
+    label: 'SETUP',
+    value: stpValue,
+    sub: stpS ? ([stpTools.length ? stpTools.join(' · ') : 'no agent tool yet',
+      stpComps ? stpComps + (stpComps === 1 ? ' computer' : ' computers') : null].filter(Boolean).join(' · ')) : null,
+    hidden: !stpS,
+    jump: 'context-setup',
+    name: 'Setup, ' + stpValue + ' — go to step 5',
   });
 
   // ── THE ⓘ BELONGS TO THE INSTRUMENT, NOT TO A STEP ────────────────────
@@ -5920,8 +5962,10 @@ function renderProject() {
 
   // ④ SESSION START (v3.67.0) — the sum of the three layers above: what an
   // agent is handed when it starts, and the one number the owner sets for it.
+  // ⑤ SETUP (v3.77.0) — not a layer an agent reads, but whether it CAN: the
+  // tools, this computer's files, the repository and the other computers.
   return header + renderLayerStrip(read) + canonicalBlock + stateBlock + knowledgeBlock
-    + renderSessionStart(read);
+    + renderSessionStart(read) + renderSetupStep();
 }
 
 /**
@@ -11915,6 +11959,220 @@ function renderSessionStart(read) {
   });
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// STEP 5 — SETUP (v3.77.0)
+// ═════════════════════════════════════════════════════════════════════════
+
+function setupFor() {
+  const s = state.setup;
+  return s && s.domain === state.activeDomain && s.project === state.activeProject ? s : null;
+}
+
+function renderSetupStep() {
+  const s = setupFor();
+  return memStep({
+    num: 5,
+    id: SETUP_JUMP,
+    title: 'Setup',
+    infoKey: 'context.setup',
+    headHtml: '<div class="mem-setup-head">' + setupHeadHtml(s, state.setupAddOpen) + '</div>',
+    bodyHtml: renderSetupBody(s, {
+      openFolds: state.openFolds, repoDraft: state.setupRepoDraft,
+      repoError: state.setupRepoError, editRepo: state.setupEditRepo,
+    }),
+  });
+}
+
+/** Ask once per project open (and on "Check again", with `force`). */
+function maybeLoadSetup(token, force = false) {
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  if (!domain || !project || !state.projectRead) return;
+  const cur = setupFor();
+  if (cur && !force) return;
+  const key = keyOf(domain, project);
+  if (setupInFlight === key && !force) return;
+  loadSetup(domain, project, token).catch((err) => reportAsyncMountFailure(token, err));
+}
+
+async function loadSetup(domain, project, token) {
+  const key = keyOf(domain, project);
+  const seq = ++setupSeq;
+  setupInFlight = key;
+  const prev = setupFor();
+  state.setup = { domain, project, data: prev ? prev.data : null, error: null, loading: true };
+  if (prev) patchSetup(token);
+  let next;
+  try {
+    const res = await fetch('/api/setup/projects/' + encodeURIComponent(domain) + '/' + encodeURIComponent(project));
+    const data = await res.json();
+    next = res.ok && data && data.ok ? { data, error: null }
+      : { data: null, error: (data && (data.error || data.message)) || 'HTTP ' + res.status };
+  } catch (err) {
+    next = { data: null, error: err.message };
+  }
+  if (seq !== setupSeq) return;          // a newer check owns the state now
+  setupInFlight = null;
+  if (!isCurrentMount(token)) return;
+  if (state.activeDomain !== domain || state.activeProject !== project) return;
+  // A failed RE-check keeps the last good reading, with the error beside it.
+  state.setup = { domain, project, data: next.data || (prev && prev.data) || null, error: next.error, loading: false };
+  patchSetup(token);
+}
+
+/** Repaint step 5 and the SETUP tile in place — never the page. */
+function patchSetup(token) {
+  if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
+  const block = document.querySelector('.settings-block-' + SETUP_JUMP);
+  if (!block) return;
+  const focusId = document.activeElement && block.contains(document.activeElement) ? document.activeElement.id : null;
+  const openInfo = block.querySelector('[data-tx-info][aria-expanded="true"]') !== null;
+  block.outerHTML = renderSetupStep();
+  const fresh = document.querySelector('.settings-block-' + SETUP_JUMP);
+  if (fresh) {
+    if (openInfo) {
+      const mark = fresh.querySelector('[data-tx-info]');
+      const panel = mark ? document.getElementById(mark.getAttribute('data-tx-info')) : null;
+      if (mark && panel) { panel.hidden = false; mark.setAttribute('aria-expanded', 'true'); }
+    }
+    bindFoldToggles(fresh);
+    bindSetup(fresh, token);
+    if (focusId) {
+      const el = document.getElementById(focusId);
+      if (el && typeof el.focus === 'function') { try { el.focus({ preventScroll: true }); } catch { el.focus(); } }
+    }
+  }
+  const tile = document.querySelector('[data-ov-jump="' + SETUP_JUMP + '"]');
+  const s = setupFor();
+  if (tile && s && s.data) {
+    const t = setupTile(s.data);
+    const value = tile.querySelector('.cur-ov-value');
+    // The count is the reading; no tone ink on it (tone is a mark, never text).
+    if (value) value.textContent = t.value;
+    let sub = tile.querySelector('.cur-ov-sub');
+    if (t.sub && !sub) {
+      sub = document.createElement('div');
+      sub.className = 'cur-ov-sub';
+      tile.appendChild(sub);
+    }
+    if (sub) sub.textContent = t.sub || '';
+    tile.setAttribute('aria-label', 'Setup, ' + t.value + ' — go to step 5');
+    tile.hidden = false;
+  }
+}
+
+async function setupCopy(text, title, line) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast({ key: 'setup-copy', tone: 'success', title, lines: [line] });
+  } catch {
+    showToast({ key: 'setup-copy', tone: 'danger', title: 'Could not copy', lines: [text] });
+  }
+}
+
+/** Every control step 5 draws, bound once per node. */
+function bindSetup(root, token) {
+  root.querySelectorAll('[data-setup-act]').forEach((el) => {
+    if (el.__setupBound) return;
+    el.__setupBound = true;
+    el.addEventListener('click', async () => {
+      const act = el.dataset.setupAct;
+      const domain = state.activeDomain;
+      const project = state.activeProject;
+      if (act === 'check') { maybeLoadSetup(token, true); return; }
+      if (act === 'copy-block') { copyAgentInstructions(token); return; }
+      if (act === 'copy-marker') {
+        await setupCopy(domain + '/' + project, 'Marker line copied',
+          'Save it in a file named .curator-project at the root of the repository, then commit it.');
+        return;
+      }
+      if (act === 'copy-command') {
+        await setupCopy(el.dataset.cmd || '', 'Command copied', 'Run it in the project’s folder.');
+        return;
+      }
+      if (act === 'reveal') {
+        try {
+          const res = await fetch('/api/setup/reveal', {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ path: el.dataset.path || '' }),
+          });
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            showToast({ key: 'setup-reveal', tone: 'danger', title: 'Could not reveal it', lines: [j.error || 'HTTP ' + res.status] });
+          }
+        } catch (err) { reportAsyncActionFailure(err); }
+        return;
+      }
+      if (act === 'settings') {
+        requestSettingsSection('mcp');
+        navigate('settings');
+        return;
+      }
+      if (act === 'sync' || act === 'check-github') {
+        el.disabled = true;
+        try {
+          // Two calls, each spelled out: the census in test-next-memory-view.js
+          // reads every request init in this view.
+          const res = act === 'sync'
+            ? await fetch('/api/sync/sync', { method: 'POST' })
+            : await fetch('/api/sync/remote-status');
+          const j = await res.json().catch(() => ({}));
+          if (act === 'sync') {
+            showToast({ key: 'setup-sync', tone: res.ok ? 'success' : 'danger',
+              title: res.ok ? 'Synced' : 'Sync did not complete',
+              lines: [res.ok ? 'This computer now has what GitHub had, and GitHub has this computer’s saves.' : (j.error || 'HTTP ' + res.status)] });
+            try { refreshSyncBadge(); } catch { /* the badge re-reads on its own timer */ }
+          }
+        } catch (err) { reportAsyncActionFailure(err); }
+        if (!isCurrentMount(token)) return;
+        maybeLoadSetup(token, true);
+        return;
+      }
+      if (act === 'add-open') {
+        state.setupAddOpen = !state.setupAddOpen;
+        patchSetup(token);
+        return;
+      }
+      if (act === 'add-tool') {
+        state.setupAddOpen = false;
+        const s = setupFor();
+        const cur = s && s.data && Array.isArray(s.data.addedTools) ? s.data.addedTools : [];
+        try {
+          await fetch('/api/setup/tools', {
+            method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ids: [...new Set([...cur, el.dataset.tool])].filter(Boolean) }),
+          });
+        } catch (err) { reportAsyncActionFailure(err); }
+        maybeLoadSetup(token, true);
+        return;
+      }
+      if (act === 'change-repo') {
+        state.setupEditRepo = true;
+        state.setupRepoError = null;
+        patchSetup(token);
+        return;
+      }
+      if (act === 'save-repo' || act === 'use-repo') {
+        const input = document.getElementById('mem-setup-repo-input');
+        const p = act === 'use-repo' ? (el.dataset.path || '') : (input ? input.value.trim() : '');
+        state.setupRepoDraft = p;
+        try {
+          const res = await fetch('/api/setup/projects/' + encodeURIComponent(domain) + '/' + encodeURIComponent(project) + '/repo', {
+            method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: p || null }),
+          });
+          const j = await res.json().catch(() => ({}));
+          if (!isCurrentMount(token)) return;
+          if (!res.ok) { state.setupRepoError = j.error || 'HTTP ' + res.status; patchSetup(token); return; }
+          state.setupRepoError = null;
+          state.setupEditRepo = false;
+          state.setupRepoDraft = null;
+        } catch (err) { reportAsyncActionFailure(err); return; }
+        maybeLoadSetup(token, true);
+      }
+    });
+  });
+}
+
 /**
  * ASK FOR STEP ④'s MEASUREMENT when the project read it describes changed.
  *
@@ -13966,6 +14224,8 @@ function wire(token) {
   // v3.67.0: step ④, the start-state cells and the reading-plan helper — every
   // control this release added, bound in one place (see `bindSessionAndPlan`).
   bindSessionAndPlan(document, token);
+  // v3.77.0: step 5's controls.
+  bindSetup(document, token);
 
   const refresh = document.getElementById('mem-refresh');
   if (refresh) {

@@ -624,8 +624,11 @@ function loadCapture() { return Promise.resolve(); }
 // exercised here, but a lifted function throws on a free identifier, so each
 // is stubbed -- an undefined collaborator is a crash, not a failing assertion.
 function renderSessionStart() { return '<!--SESSIONSTART-->'; }
+// v3.77.0 — step 5 "Setup" (its own suite: test-next-setup-step.js).
+function renderSetupStep() { return '<!--SETUP-->'; }
 function bindFoldToggles() {}
 function bindSessionAndPlan() {}
+function bindSetup() {}
 function requestDomain() {}
 function goToChatScoped() {}
 function navigate() {}

@@ -244,6 +244,8 @@ import * as FA from '../src/public/next/shared/foundations-add.js';
 // v3.69.0 — per-document sources: the DOM-free rules the view imports as ONE
 // namespace (`FSRC`), injected REAL into every lifted renderer that reads it.
 import * as FSRC from '../src/public/next/shared/foundations-sources.js';
+// v3.77.0 — step 5 "Setup": the REAL DOM-free builders, injected.
+import * as SETUP_STEP from '../src/public/next/views/setup-step.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -1565,6 +1567,11 @@ function makeRenderers(stateObj) {
     extractFunction(viewSrc, 'renderBriefOnlyNotice', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderCopyOutcome', 'memory.js') + '\n' +
     v367Lift() +
+    // v3.77.0 — step 5, composed by renderProject: lifted for real, with the
+    // builders it calls injected from views/setup-step.js.
+    'const { renderSetupBody, setupHeadHtml, SETUP_JUMP } = SETUP_STEP;\n' +
+    extractFunction(viewSrc, 'setupFor', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'renderSetupStep', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderProject', 'memory.js') + '\n' +
     // LIFTED HERE TOO, although test-next-memory-switch.js §9 is where its own
     // arithmetic is driven. §16e2 renders BOTH it and renderProject through
@@ -1667,7 +1674,7 @@ function makeRenderers(stateObj) {
     // v3.68.0 — the two doors, real.
     'doorsFor', 'renderDoors', 'renderAddPanel', 'startLegendHtml',
     // v3.69.0 — the per-document source rules, one namespace, real.
-    'FSRC', body)(
+    'FSRC', 'SETUP_STEP', body)(
     stateObj, escapeHtml, () => '<svg></svg>', renderMarkdown, () => '<div class="loader"></div>', null, 10, 50,
     // The REAL shared block, imported rather than stubbed: renderProject
     // composes all five of this page's sections through it, so a stub would
@@ -1698,7 +1705,7 @@ function makeRenderers(stateObj) {
         text: cfg.triggerText === undefined ? null : cfg.triggerText })) + '"></button>',
     renderRunsOn, renderSpent, aiActionDisabledAttrs,
     realRenderOverview,
-    doorsFor, renderDoors, renderAddPanel, startLegendHtml, FSRC);
+    doorsFor, renderDoors, renderAddPanel, startLegendHtml, FSRC, SETUP_STEP);
 }
 
 const hostileDetail = {
@@ -2938,9 +2945,14 @@ const withInit = fetchArgLists.filter((a) => topLevelArgs(a).length > 1);
 //   a REMOVAL, never an edit: it writes no handoff and stamps nothing. Named
 //   below by its URL and its body, and excluded BY NAME from the "no scope"
 //   rule rather than by loosening it. Its preview is a single-argument GET.
-eq('EXACTLY SIXTEEN fetches in the view carry a request init', withInit.length, 16);
+// ── TWENTY SINCE v3.77.0 — step 5 "Setup", four named writes, NONE to the
+// memory store: `POST /api/setup/reveal {path}` (Finder, a path the check
+// listed), `POST /api/sync/sync` (the Sync view's own "Sync now", no body),
+// `PUT /api/setup/tools {ids}` and `PUT /api/setup/projects/…/repo {path}`
+// (this computer's own settings file — never synced, never the store).
+eq('EXACTLY TWENTY fetches in the view carry a request init', withInit.length, 20);
 ok('every other fetch is single-argument — structurally a GET, whatever a method string is spelled like',
-  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 16,
+  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 20,
   JSON.stringify(fetchArgLists.map((a) => topLevelArgs(a).length)));
 {
   const inits = withInit.map((a) => ({ url: topLevelArgs(a)[0], init: topLevelArgs(a)[1] }));
@@ -3000,7 +3012,22 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     patches.filter((x) => x.url.includes("'/foundations/'")).length, 1);
   // v3.67.0: two READS carry a body. Named, with their bodies, so neither can
   // grow a write-shaped field.
-  eq('exactly SEVEN fetches use a LITERAL POST', posts.length, 7);
+  eq('exactly NINE fetches use a LITERAL POST (v3.77.0: + reveal, + Sync now)', posts.length, 9);
+  // v3.77.0 — step 5's writes, named, with their bodies.
+  const setupReveal = posts.find((x) => x.url === "'/api/setup/reveal'");
+  ok('v3.77.0: one POST reveals a listed path in Finder, sending `path` and nothing else',
+    !!setupReveal && /body:\s*JSON\.stringify\(\{\s*path:\s*el\.dataset\.path \|\| ''\s*\}\)/.test(setupReveal.init),
+    setupReveal ? setupReveal.init.slice(0, 160) : 'none');
+  const syncNow = posts.find((x) => x.url === "'/api/sync/sync'");
+  ok('v3.77.0: one POST is Sync now, with NO body', !!syncNow && !/body/.test(syncNow.init), syncNow ? syncNow.init : 'none');
+  const setupTools = inits.find((x) => x.url === "'/api/setup/tools'");
+  ok('v3.77.0: the tools PUT sends `ids` and nothing else',
+    !!setupTools && /method:\s*'PUT'/.test(setupTools.init) && /body:\s*JSON\.stringify\(\{\s*ids:/.test(setupTools.init),
+    setupTools ? setupTools.init.slice(0, 160) : 'none');
+  const setupRepo = inits.find((x) => x.url.includes("'/api/setup/projects/'") && x.url.includes("'/repo'"));
+  ok('v3.77.0: the repository PUT is under /api/setup/projects, escaped, sending `path` and nothing else',
+    !!setupRepo && setupRepo.url.includes('encodeURIComponent') && /body:\s*JSON\.stringify\(\{\s*path:\s*p \|\| null\s*\}\)/.test(setupRepo.init),
+    setupRepo ? setupRepo.url.slice(0, 160) + setupRepo.init.slice(0, 160) : 'none');
   // v3.70.0: two callers of the preview READ — the plan's `if applied`
   // (`body`) and the budget picker's preview (`{ budgetBytes: bytes }`).
   const previews = posts.filter((x) => x.url.includes("'/session-start/preview'"));
@@ -3102,7 +3129,7 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     put ? put.init.slice(0, 240) : 'none');
   ok('...and it still cannot name a handoff field',
     put && !/nowState|nextSteps|observations|traps/.test(put.init));
-  eq('exactly TWO PUTs: the document, and this computer\'s context-window settings', puts.length, 2);
+  eq('exactly FOUR PUTs: the document, this computer\'s context-window settings, and (v3.77.0) step 5\'s tools and repository folder', puts.length, 4);
   ok('the settings PUT is the named config route, sending the body its caller composed from '
     + 'the window or the harness — never a project, a document or a brief',
     !!ctxPut && /body:\s*JSON\.stringify\(body\)/.test(ctxPut.init)
@@ -3154,6 +3181,7 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
   ok('every one of them is under /api/memory — the helper\'s one proposal read under '
     + '/api/reading-plan — and escapes its segments',
     inits.every((x) => (x === doorCommit) || (x === ctxPut)
+      || (x === setupReveal) || (x === syncNow) || (x === setupTools) || (x === setupRepo)
       || ((x.url.includes("'/api/memory/'")
       || (x === suggest && x.url.includes("'/api/reading-plan/'")))
       && x.url.includes('encodeURIComponent'))),
@@ -3177,11 +3205,12 @@ ok('self-test: the argument-count scan does NOT fire on a plain read',
 // transport exists at all.
 {
   const methods = [...viewNoComments.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g)].map((m) => m[1]).sort();
-  ok('exactly SIXTEEN `method:` property keys appear in the view\'s real code, and every one of them '
+  ok('exactly TWENTY `method:` property keys appear in the view\'s real code, and every one of them '
     + 'is a LITERAL — so the `\'PO\' + \'ST\'` evasion is refused by construction',
   JSON.stringify(methods) === JSON.stringify(
     ["'DELETE'", "'DELETE'", "'DELETE'", "'PATCH'", "'PATCH'", "'PATCH'", "'PATCH'",
-      "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'PUT'", "'PUT'"]),
+      "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'",
+      "'PUT'", "'PUT'", "'PUT'", "'PUT'"]),
   JSON.stringify(methods));
 }
 for (const transport of ['XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource', 'FormData', 'Request(']) {
@@ -3233,8 +3262,14 @@ ok('the view fetches only /api/memory endpoints, the ONE domain-stats read and t
   // under their own prefix and both built the same escaped way.
   const plan = (viewNoComments.match(/fetch\('\/api\/reading-plan\/' \+ encodeURIComponent\(domain\)/g)
     || []).length === 2;
+  // v3.77.0 — step 5 "Setup": its own prefix (`/api/setup/…`, a read of this
+  // computer's tool files and the project's folder, plus the two app-setting
+  // PUTs and the reveal named in the census above) and Sync now / the remote
+  // check — each named, never a prefix wave-through for another surface.
+  const SETUP_FACTS = ['/api/setup/projects/', '/api/setup/reveal', '/api/setup/tools',
+    '/api/sync/sync', '/api/sync/remote-status'];
   return urls.every((u) => u.startsWith('/api/memory') || u === '/api/domains/' || u === '/api/domains'
-    || u === '/api/reading-plan/' || TOKEN_FACTS.includes(u))
+    || u === '/api/reading-plan/' || TOKEN_FACTS.includes(u) || SETUP_FACTS.includes(u))
     && built && stats && list && plan;
 })());
 ok('...and the domain LIST is the cheap route, never the stats walk the Domains page pays for',
@@ -3606,6 +3641,8 @@ function makeRevalidator(stateObj, responder, opts = {}) {
     // v3.67.0: render() asks for step ④'s measurement after it paints; that
     // path is driven in §25, so here it is a named no-op.
     'function maybeLoadSessionStart() {}\n' +
+    // v3.77.0: step 5's check, asked for after the paint the same way.
+    'function maybeLoadSetup() {}\n' +
     // v3.72.1: the poll tick re-asks the two cached readings beside the index
     // (truth audit F2/F5). That function is driven in test-next-capture-meter
     // §8b; here it is COUNTED, so §11 can say the tick calls it.
@@ -4352,6 +4389,8 @@ function makeFocusRig({ activeId = null, presentIds = [], detailLoading = false 
     // v3.67.0: render() asks for step ④'s measurement after it paints; that
     // path is driven in §25, so here it is a named no-op.
     'function maybeLoadSessionStart() {}\n' +
+    // v3.77.0: step 5's check, asked for after the paint the same way.
+    'function maybeLoadSetup() {}\n' +
     extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
@@ -4389,6 +4428,8 @@ ok('FOCUS_FALLBACK was lifted from real source',
     // v3.67.0: render() asks for step ④'s measurement after it paints; that
     // path is driven in §25, so here it is a named no-op.
     'function maybeLoadSessionStart() {}\n' +
+    // v3.77.0: step 5's check, asked for after the paint the same way.
+    'function maybeLoadSetup() {}\n' +
     extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
@@ -5501,6 +5542,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
       // the release's own controls are bound by bindSessionAndPlan, driven in §25.
       extractFunction(viewSrc, 'bindFoldToggles', 'memory.js') + '\n' +
       'function bindSessionAndPlan() {}\n' +
+      'function bindSetup() {}\n' +
       extractFunction(viewSrc, 'wire', 'memory.js') + '\n' +
       'return { wire };')(
       st,
@@ -5762,8 +5804,9 @@ section('§16 — Projects inside a domain (v3.48.0)');
   // NOT VACUOUS: the page really is composed of numbered steps — FOUR since
   // v3.67.0 (④ Session start, the sum of the three layers). The skeleton
   // keeps three: ④ is a measurement that lands after the project read.
-  eq('CONTROL: the filled page still paints four numbered heads',
-    (real.match(/<span class="settings-block-num"/g) || []).length, 4);
+  // v3.77.0: FIVE — ⑤ Setup joins the filled page (not the skeleton).
+  eq('CONTROL: the filled page still paints five numbered heads',
+    (real.match(/<span class="settings-block-num"/g) || []).length, 5);
   eq('CONTROL: ...and so does the skeleton',
     (ghost.match(/<span class="settings-block-num"/g) || []).length, 3);
 
@@ -5776,7 +5819,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
   // the mark is INSIDE the div.
   const heads = [...real.matchAll(/<div class="settings-block-hd">([\s\S]*?)<\/div>/g)]
     .map((m) => m[1]);
-  eq('four head rows', heads.length, 4);
+  eq('five head rows', heads.length, 5);
   for (const hd of heads) {
     const num = hd.indexOf('class="settings-block-num"');
     const title = hd.indexOf('<h2 class="settings-job-title">');
@@ -5787,7 +5830,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
   // The panel is the head's SIBLING, not its child: a <div> inside a flex
   // head row would sit beside the title rather than under the step.
   eq('each step carries its own ⓘ panel, outside the head row',
-    (real.match(/<div class="settings-block-info">/g) || []).length, 4);
+    (real.match(/<div class="settings-block-info">/g) || []).length, 5);
 
   // ── EACH STEP'S ⓘ IS ITS OWN EXPLAINER (v3.71.0) ──────────────────────
   // The three sentences that were the ledes (R4) and then the first paragraph
@@ -5846,6 +5889,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
       // the release's own controls are bound by bindSessionAndPlan, driven in §25.
       extractFunction(viewSrc, 'bindFoldToggles', 'memory.js') + '\n' +
       'function bindSessionAndPlan() {}\n' +
+      'function bindSetup() {}\n' +
       extractFunction(viewSrc, 'wire', 'memory.js') + '\n' +
     'return { wire, pending: () => pendingFocusId };')(
     st,
@@ -5915,6 +5959,7 @@ section('§16 — Projects inside a domain (v3.48.0)');
       // the release's own controls are bound by bindSessionAndPlan, driven in §25.
       extractFunction(viewSrc, 'bindFoldToggles', 'memory.js') + '\n' +
       'function bindSessionAndPlan() {}\n' +
+      'function bindSetup() {}\n' +
       extractFunction(viewSrc, 'wire', 'memory.js') + '\n' +
     'return { wire };')(
     st,
@@ -6275,6 +6320,8 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
       // v3.67.0: render() asks for step ④'s measurement after it paints; that
     // path is driven in §25, so here it is a named no-op.
     'function maybeLoadSessionStart() {}\n' +
+    // v3.77.0: step 5's check, asked for after the paint the same way.
+    'function maybeLoadSetup() {}\n' +
     extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
       extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
@@ -6680,6 +6727,7 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
         'showMoreWorkStreams', 'bindFoldToggles', 'wire']]
         .map((n) => extractFunction(viewSrc, n, 'memory.js')).join('\n')
       + '\nfunction bindSessionAndPlan() {}\n'
+      + 'function bindSetup() {}\n'
       + '\nreturn { wire, pending: () => pendingFocusId };')(
       st, document,
       () => { calls.render++; },
@@ -7577,8 +7625,9 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   const ids = [...page.matchAll(/settings-block-(context-[a-z]+)\b/g)].map((m) => m[1]);
   const uniq = [...new Set(ids)];
   // v3.67.0: and a FOURTH, their sum — what an agent is handed at the start.
-  eq('the page is FOUR steps: the three layers in the order a session start reads them, then their sum',
-    uniq.join(','), 'context-canonical,context-state,context-knowledge,context-session');
+  // v3.77.0: and a FIFTH — whether each agent tool can reach the four.
+  eq('the page is FIVE steps: the three layers in the order a session start reads them, their sum, then Setup',
+    uniq.join(','), 'context-canonical,context-state,context-knowledge,context-session,context-setup');
   ok('...and none of the five old block ids survives, by name',
     !/settings-block-memory-(status|streams|brief|foundations|journal)\b/.test(page), page.slice(0, 300));
 
@@ -7593,12 +7642,12 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // reads top to bottom as one is numbered. A numeral is an argument, not
   // decoration, and this page now has the argument to make.
   eq('every one of them is NUMBERED — the page is a sequence of steps',
-    (page.match(/settings-block-num/g) || []).length, 4);
+    (page.match(/settings-block-num/g) || []).length, 5);
   eq('...so nothing on it is unnumbered any more',
     (page.match(/settings-block-unnumbered/g) || []).length, 0);
-  eq('...and the numerals are 1, 2, 3, 4 in document order',
+  eq('...and the numerals are 1, 2, 3, 4, 5 in document order',
     [...page.matchAll(/class="settings-block-num"[^>]*>(\d+)</g)].map((m) => m[1]).join(','),
-    '1,2,3,4');
+    '1,2,3,4,5');
 
   // ── ZERO LEDES, AND THE CEILING BECOMES A BAN (v3.65.0, R4) ─────────
   //
@@ -7617,9 +7666,9 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
 
   // ── THE DEPTH IS BEHIND THE MARK, AND IT IS REALLY THERE ────────────
   eq('every step carries an ⓘ with a panel of its own',
-    (page.match(/data-tx-info="settings-block-info-context-/g) || []).length, 4);
+    (page.match(/data-tx-info="settings-block-info-context-/g) || []).length, 5);
   eq('...and every one of those panels is hidden on first paint',
-    (page.match(/class="tx-vh-panel" id="settings-block-info-context-[a-z]+" role="group"[^>]*hidden>/g) || []).length, 4);
+    (page.match(/class="tx-vh-panel" id="settings-block-info-context-[a-z]+" role="group"[^>]*hidden>/g) || []).length, 5);
 
   // ── WHAT MAY NEVER FOLD (v3.16.1) ───────────────────────────────────
   // A warning behind a click is not a warning. The Reload offer, the save
@@ -7638,7 +7687,8 @@ section('§18 — THE AGE CLOCK, and the things it must never do');
   // never among them: it is in step ②'s body, unfolded, because it is an
   // outcome (v3.16.1).
   // FIVE since v3.67.0: step ④'s own mark joins them.
-  eq('CONTROL: the five folds were really found (the scan is not vacuous)', panels.length, 5);
+  // SIX since v3.77.0: step ⑤'s own mark.
+  eq('CONTROL: the six folds were really found (the scan is not vacuous)', panels.length, 6);
   const bodies = [...page.matchAll(/<div class="settings-block-body">([\s\S]*)$/g)].map((m) => m[1]);
   ok('CONTROL: at least one block body was found', bodies.length >= 1);
   // `mem-save-line` BECAME `cur-mon-loud` (v3.65.0): the save warnings are
@@ -12142,8 +12192,9 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('before the measurement lands the tile is RENDERED AND HIDDEN — one attribute reveals it',
       /data-ov-jump="context-session"[^>]*hidden>/.test(none), none.slice(-700));
     const order = [...strip.matchAll(/data-ov-jump="([a-z-]+)"/g)].map((m) => m[1]);
+    // v3.77.0: then SETUP, which opens step 5.
     eq('...after AGENT SESSIONS, as the picture draws it', order.join(','),
-      'context-canonical,context-state,capture,context-session');
+      'context-canonical,context-state,capture,context-session,context-setup');
     ok('the capture tile is named AGENT CONNECTIONS on screen; its jump id keeps the on-disk word',
       /AGENT CONNECTIONS/.test(strip) && !/AGENT SESSIONS/.test(strip) && !/>CAPTURE</.test(strip) && /data-ov-jump="capture"/.test(strip));
   }
@@ -12417,7 +12468,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     mk(herePl).api.maybeLoadSessionStart(1);
     ok('...and one made on THIS project is kept', herePl.planner && herePl.planner.draft['a.md'] === 'read-first');
     ok('render() asks after it paints — the measurement is never on a switch\'s critical path',
-      /wire\(token\);\s*restoreFocus\(\);[\s\S]{0,300}maybeLoadSessionStart\(token\);\s*\}$/.test(
+      /wire\(token\);\s*restoreFocus\(\);[\s\S]{0,300}maybeLoadSessionStart\(token\);\s*maybeLoadSetup\(token\);\s*\}$/.test(
         stripComments(extractFunction(viewSrc, 'render', 'memory.js')).trim()));
     ok('...and selectProject never asks for it at all', !/sessionStart|session-start/.test(
       extractFunction(viewSrc, 'selectProject', 'memory.js')));
@@ -13186,6 +13237,8 @@ const TOP_LEVEL_FNS = [...viewNoComments.matchAll(/^(?:export\s+)?(?:async\s+)?f
 
 // Executed somewhere above, with real assertions over what they returned/did.
 const EXECUTED = new Set([
+  // v3.77.0 — step 5, composed into the page by renderProject (makeRenderers).
+  'setupFor', 'renderSetupStep',
   // v3.74.0 — the replaced handoff (previous.md): its line, its reader
   // payload, the reader wrapper that binds it and the press that fetches it.
   'previousHandoffHtml', 'previousReaderContent', 'openHandoffReader', 'openPreviousHandoff',
@@ -13363,6 +13416,16 @@ const EXECUTED = new Set([
 // NOT executed, each with the reason it is not — so the gap is a decision on
 // the record rather than an omission nobody noticed.
 const NOT_EXECUTED = {
+  // v3.77.0 — step 5's glue. The words and markup are views/setup-step.js,
+  // imported and EXECUTED by scripts/test-next-setup-step.js; the route is
+  // executed by scripts/test-setup-routes.js; these five only fetch, patch
+  // in place and bind, and were driven in a real browser (the release's
+  // screen check).
+  maybeLoadSetup: 'fetch orchestration (a per-pair in-flight guard); the route it asks is executed in test-setup-routes.js',
+  loadSetup: 'async fetch + stamp-by-pair, the loadSessionStart shape; the payload it paints is executed through renderSetupStep here',
+  patchSetup: 'in-place DOM patch of step 5 and its tile — the patchSessionStart shape; its markup is renderSetupStep\u2019s, executed here',
+  setupCopy: 'clipboard + toast glue; the copied texts (marker line, command) are the payload\u2019s, asserted in test-setup-check.js',
+  bindSetup: 'listener binding for step 5\u2019s buttons; every request it makes is named in this file\u2019s fetch census (reveal, Sync now, tools, repository)',
   // v3.75.0: "Delete handoff". Both are LIFTED and EXECUTED — against a
   // recording fetch, a stub render and a real state object — by their own
   // suite, which owns the feature end to end (store, route, view).
@@ -13960,7 +14023,8 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
   ok('CONTROL: all eight Context explainers were really painted — the scan is not vacuous',
     JSON.stringify([...new Set(keysOf(page))].sort()) === JSON.stringify(CONTEXT_KEYS),
     JSON.stringify([...new Set(keysOf(page))].sort()) + ' vs ' + JSON.stringify(CONTEXT_KEYS));
-  eq('CONTROL: eight panels, one per key — no ⓘ painted twice', panelSpans(page).length, 8);
+  // NINE since v3.77.0: step 5's `context.setup`.
+  eq('CONTROL: nine panels, one per key — no ⓘ painted twice', panelSpans(page).length, 9);
   ok('the header marks Agent memory "you are here" on the framing',
     /<li class="xp-node is-here" aria-current="true">[\s\S]*?Agent memory[\s\S]*?you are here/.test(header));
 
@@ -13985,6 +14049,7 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
     JSON.stringify(ids), JSON.stringify(['fadd-readwith-info', 'mem-fnd-ask-info', 'mem-layers-info',
       'settings-block-info-context-canonical', 'settings-block-info-context-knowledge',
       'settings-block-info-context-session', 'settings-block-info-context-state',
+      'settings-block-info-context-setup',
       'tx-vh-info-project-context'].sort()));
   ok('...each has its mark, a button whose data-tx-info names it',
     ids.every((id) => page.includes('data-tx-info="' + id + '"')));
@@ -14002,8 +14067,8 @@ ok('every docs key the Agent-memory view links resolves in shared/docs-links.js'
     calls.length >= 6 && calls.every((a) => /(^|,\s*)'context\.[a-z-]+'/.test(a)
       || a === "'settings-block-info-' + id, o.infoKey"), JSON.stringify(calls));
   const infoKeys = [...src.matchAll(/\binfoKey:\s*([^\n,]*)/g)].map((m) => m[1]);
-  ok('...and every infoKey is a literal `context.*` key — four steps, four keys',
-    infoKeys.length === 4 && infoKeys.every((k) => /^'context\.[a-z-]+'$/.test(k)), JSON.stringify(infoKeys));
+  ok('...and every infoKey is a literal `context.*` key — five steps, five keys',
+    infoKeys.length === 5 && infoKeys.every((k) => /^'context\.[a-z-]+'$/.test(k)), JSON.stringify(infoKeys));
   eq('...and the only `infoText:` left is the overview\'s, and it is an explainer',
     JSON.stringify((src.match(/infoText:\s*[^\n,]*/g) || [])), JSON.stringify(["infoText: explainerHtml('context.overview')"]));
   const stepWithText = makeRenderers({}).memStep({ num: 9, id: 'x', title: 'T', infoText: '<p>rogue</p>' });

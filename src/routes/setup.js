@@ -22,7 +22,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { createReadStream, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { appPath, isBundleInstall } from '../brain/paths.js';
+import { appPath } from '../brain/paths.js';
+import { describeInstall } from '../brain/install-mode.js';
 import {
   getDomainsDir, getProjectRepo, setProjectRepo, getSetupTools, setSetupTools,
 } from '../brain/config.js';
@@ -153,7 +154,9 @@ router.get('/machine', async (_req, res) => {
       ok: true,
       checkedAt: new Date().toISOString(),
       version: appVersion(),
-      bundle: isBundleInstall(),
+      // The install's own label ("Mac app" / "source install"), described
+      // through install-mode.js — this route never branches on the form.
+      install: (() => { try { return describeInstall().installModeLabel; } catch { return null; } })(),
       skillsShipped: skillsDir() !== null,
       machine: { ids: ids.map((x) => x.id), split: new Set(ids.map((x) => x.id)).size > 1 },
       bridgeProcesses,
@@ -225,6 +228,7 @@ router.get('/projects/:domain/:project', async (req, res) => {
       repoSuggestions: suggestions.map((s) => ({ ...s, rootDisplay: tilde(s.root) })),
       machine: { ids: ids.map((x) => x.id), split: new Set(ids.map((x) => x.id)).size > 1 },
       markerLine: `${domain}/${project}`,
+      addedTools: getSetupTools(),
       addable: listHarnesses().filter((id) => !result.tools.some((t) => t.id === id) && adapterFor(id)?.instructionFile?.names?.length)
         .map((id) => ({ id, label: adapterFor(id).label })),
       states: STATES,

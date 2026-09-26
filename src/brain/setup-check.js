@@ -457,8 +457,12 @@ export function collectMachineSetup(o = {}) {
       bridge = notIn.length
         ? { state: STATES.FIX, word: `not in ${notIn.length} of ${userOwn.length} files` }
         : { state: STATES.OK, word: 'configured', count: `${namedOwn.length} of ${presentOwn.length || namedOwn.length} file${(presentOwn.length || namedOwn.length) === 1 ? '' : 's'}` };
+    } else if (namedAlso.some((f) => f.otherFolder || f.commandMissing)) {
+      bridge = { state: STATES.FIX, via: 'readAlso', word: namedAlso.some((f) => f.commandMissing) ? 'launch line points at a missing file' : 'reads a different knowledge folder' };
     } else if (namedAlso.length) {
-      bridge = { state: STATES.OK, word: 'configured', via: 'readAlso', note: a?.mcpConfig?.readAlsoNote || null };
+      // The short form on the cell; the dated observation itself rides on
+      // the file row (`readAlsoNote`), where Settings prints it in full.
+      bridge = { state: STATES.OK, word: 'configured', via: 'readAlso', note: 'found only in Claude Desktop’s config — observed working that way (2026-09-26)', observation: a?.mcpConfig?.readAlsoNote || null };
     } else if (own.some((f) => f.opaque && f.present)) {
       bridge = { state: STATES.CANT, word: 'config present, format not read' };
     } else {

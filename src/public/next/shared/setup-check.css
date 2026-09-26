@@ -1,0 +1,43 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   shared/setup-check.css — THE SETUP CHECK'S STATE WORDS (v3.77.0)
+
+   Drawn by TWO views — Context step 5 (views/setup-step.js) and Settings ›
+   MCP bridge › Tools on this Mac (views/setup-machine.js) — so they can live
+   in neither view's stylesheet. Owns the `cur-setup-` prefix.
+
+   A STATE IS A WORD, in --text-2. The TONE is the dot before it (rule 7:
+   tone is a mark, never text): ok --success-text, to fix --attention-text,
+   and the three states that are not a reading — not checked, can't check
+   here, unmeasured — a DASHED ring, the app's "no reading" mark. A tool and a computer carry no
+   colour (colour is a domain's — design rule 5).
+   ═══════════════════════════════════════════════════════════════════════════ */
+.cur-setup-scroll { overflow-x: auto; }
+.cur-setup-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: var(--text-sm); }
+/* Below 760px of column the table SCROLLS inside `.cur-setup-scroll` rather than
+   squeezing every cell to a word per line (measured at a 900px window). */
+.cur-setup-table th, .cur-setup-table td {
+  text-align: left; vertical-align: top; padding: var(--space-5) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.cur-setup-table thead th {
+  font: var(--type-mono); font-size: var(--text-2xs); letter-spacing: var(--track-mono);
+  text-transform: uppercase; color: var(--text-3); font-weight: 500;
+}
+.cur-setup-table tbody tr:last-child > * { border-bottom: 0; }
+.cur-setup-tool { font-weight: 500; color: var(--text); white-space: nowrap; }
+.cur-setup-st {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-2);
+}
+/* TONE IS A MARK, NEVER TEXT (design rule 7, test-tone-channel.js): the word
+   stays --text-2 and only the dot before it takes the tone. */
+.cur-setup-st::before {
+  content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3);
+}
+.cur-setup-st-ok::before { background: var(--success-text); }
+.cur-setup-st-fix::before { background: var(--attention-text); }
+.cur-setup-st-q::before { background: none; border: 1.5px dashed var(--text-3); width: 5px; height: 5px; }
+.cur-setup-st-none::before { background: none; border: 1.5px solid var(--text-3); width: 5px; height: 5px; }
+.cur-setup-sub { display: block; margin-top: var(--space-1); font-size: var(--text-xs); color: var(--text-3); }
+.cur-setup-path, .cur-setup-mono { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text); word-break: break-all; }
+.cur-setup-hint { margin: 0; font-size: var(--text-xs); color: var(--text-3); }

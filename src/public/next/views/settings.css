@@ -3260,3 +3260,36 @@
 @media (max-width: 560px) {
   .trash-row-line { flex-direction: column; gap: var(--space-3); }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ⑤ TOOLS ON THIS MAC (v3.77.0). views/setup-machine.js writes the markup;
+   the state words are shared/setup-check.css's (`cur-setup-`).
+   ═══════════════════════════════════════════════════════════════════════════ */
+.settings-setup-head { display: flex; align-items: center; gap: var(--space-4); justify-content: flex-end; margin-bottom: var(--space-5); }
+.settings-setup-checked { font-size: var(--text-xs); color: var(--text-3); }
+.settings-setup-copied { font-size: var(--text-xs); color: var(--text-2); }
+.settings-setup-stack { display: flex; flex-direction: column; gap: var(--space-5); }
+.settings-setup-fold { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+.settings-setup-summary {
+  display: flex; align-items: center; gap: var(--space-6); padding: var(--space-6) var(--space-8);
+  font-size: var(--text-base); color: var(--text);
+}
+.settings-setup-name { font-weight: 500; }
+.settings-setup-summary .cur-setup-st { margin-left: auto; }
+.settings-setup-body { display: flex; flex-direction: column; gap: var(--space-6); padding: 0 var(--space-8) var(--space-7); }
+.settings-setup-group { display: flex; flex-direction: column; }
+.settings-setup-cap {
+  font: var(--type-mono); font-size: var(--text-2xs); letter-spacing: var(--track-mono);
+  text-transform: uppercase; color: var(--text-3); margin-bottom: var(--space-2);
+}
+.settings-setup-file {
+  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: var(--space-3) var(--space-8);
+  align-items: start; padding: var(--space-4) 0; border-top: 1px dashed var(--border-subtle); font-size: var(--text-sm);
+}
+.settings-setup-group > .settings-setup-cap + .settings-setup-file { border-top: 0; }
+.settings-setup-acts { display: flex; flex-wrap: wrap; gap: var(--space-3); justify-content: flex-end; }
+@media (max-width: 900px) {
+  .settings-setup-file { grid-template-columns: 1fr; }
+  .settings-setup-acts { justify-content: flex-start; }
+}
+.settings-setup-copyrow { justify-content: flex-start; align-items: center; padding-top: var(--space-4); }

@@ -390,8 +390,10 @@ section('§5  doctor — MCP files, hook file, skills by hash, the AGENTS.md blo
   ok(fresh.code === 0, 'a session-start run after the install exits 0', fresh.stderr);
   const txt2 = run(['doctor', '--cwd', WORK], { cwd: WORK }).stdout;
   const head2 = txt2.slice(txt2.indexOf('  Antigravity —')).split('\n')[0];
-  ok(/hooks installed · the hook command ran for it \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC \(marker\)/.test(head2),
-    '…then the row reads that the hook command ran, dated, from the marker', head2);
+  // v3.77.0: the hook activity log is the PRIMARY evidence (it survives a
+  // restart and records the decision); the markers are the fallback.
+  ok(/hooks installed · start hook observed firing \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC \(hook log\)/.test(head2),
+    '…then the row reads that the start hook fired, dated, from the hook activity log', head2);
   ok(!/not yet seen running/.test(head2), '…and no longer says it has not been seen', head2);
 
   // Our named hook switched off is present and INERT.
