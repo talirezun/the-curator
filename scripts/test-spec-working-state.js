@@ -476,7 +476,8 @@ try {
     const jl = readFileSync(path.join(dir, ws.JOURNAL_FILENAME), 'utf8').trim().split('\n');
     ok(jl.length === 1, 'one journal line was appended');
     const rec = JSON.parse(jl[0]);
-    const SPEC_JOURNAL_KEYS = ['at', 'scope', 'machine', 'harness', 'model', 'headline', 'bytes', 'rejections'];
+    // v3.77.0: `curator` (the writer's version) — optional, present when known.
+    const SPEC_JOURNAL_KEYS = ['at', 'scope', 'machine', 'harness', 'model', 'curator', 'headline', 'bytes', 'rejections'];
     ok(Object.keys(rec).join(',') === SPEC_JOURNAL_KEYS.join(','),
       `the journal line's keys are ${Object.keys(rec).join(', ')} and the spec lists ${SPEC_JOURNAL_KEYS.join(', ')}`);
     for (const key of SPEC_JOURNAL_KEYS) {

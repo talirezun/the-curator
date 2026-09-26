@@ -180,6 +180,26 @@ try {
     const ag = r.body.tools.find((t) => t.id === 'antigravity');
     ok(ag && ag.saved.wrongScope === true && r.body.toFix.some((f) => f.kind === 'wrong-scope'), 'Antigravity\'s save under "main" is a to-fix line', ag?.saved);
     ok((r.body.computers || []).length === 1, 'one computer has saved', r.body.computers);
+    // v3.77.0 (S5) — the Curator version is RECORDED by the save and read back.
+    const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+    ok(r.body.computers[0].curator === version, 'the computer row names the Curator version its newest save was made with', r.body.computers[0]);
+    const cur = readFileSync(path.join(DOMAINS, D, 'state', 'ott', 'main', r.body.computers[0].machine, 'current.md'), 'utf8');
+    ok(new RegExp(`^_Machine: .* · Harness: Antigravity · Curator: ${version.replace(/\./g, '\\.')}_$`, 'm').test(cur),
+      'the handoff\'s provenance line ends with `Curator: X.Y.Z` (additive, last)', cur.split('\n').find((l) => l.startsWith('_Machine')));
+    // The EXISTING header reader (the v3.74.0 previous-handoff summary) must
+    // still read Harness and Saved off a line that now ends in Curator: —
+    // a second tool's save keeps the first as previous.md and parses it.
+    await store.saveWorkingState(D, { project: 'ott', scope: 'main', harness: 'Claude Code', headline: 'cc on main', nowState: 'y', nextSteps: ['z'] });
+    const again = await store.readWorkingState(D, { project: 'ott', scope: 'main' });
+    ok(again.ok && again.previous && again.previous.harness === 'Antigravity' && typeof again.previous.writtenAt === 'string',
+      'an existing reader still parses the provenance line (Harness and Saved intact beside Curator)', again.previous);
+  }
+
+  section('§8  the Mac app ships the skills (S5)');
+  {
+    const yml = readFileSync(new URL('../desktop/electron-builder.yml', import.meta.url), 'utf8');
+    const filter = yml.slice(yml.indexOf('files:'), yml.indexOf('extraResources:'));
+    ok(/^\s+- skills\/\*\*\/\*\s*$/m.test(filter), 'desktop/electron-builder.yml copies skills/** into the app, beside src/ and mcp/', filter.slice(0, 400));
   }
 } finally {
   server.close();
