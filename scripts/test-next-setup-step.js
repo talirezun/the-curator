@@ -91,7 +91,30 @@ section('§2  the tile is a count, never a score');
   eq('3 to fix', S.setupTile(base()).value);
   ok(S.setupTile(base()).warn === true, '…marked for the attention ink');
   eq('nothing to fix here', S.setupTile({ ...base(), toFix: [] }).value);
-  eq('not checked', S.setupTile({ ...base(), toFix: [], repo: null }).value);
+  eq('repository not set', S.setupTile({ ...base(), toFix: [], repo: null }).value);
+  // ── TILE AND STEP SAY THE SAME THING (v3.77.0 screen review) ─────────
+  // Before a repository is set the repository checks did not run, so neither
+  // surface may say "nothing to fix" as if they had.
+  {
+    const noRepo = { ...base(), toFix: [], repo: null };
+    const tile = S.setupTile(noRepo);
+    const head = S.setupHead(noRepo);
+    const body = S.renderSetupBody({ data: noRepo }, {});
+    ok(tile.sub === 'nothing to fix among the checks that ran' && head.stateWord === 'Nothing to fix among the checks that ran' && head.tone === 'quiet',
+      'no repository, nothing found: tile "repository not set · nothing to fix among the checks that ran", step "Nothing to fix among the checks that ran" (quiet, not ok)', JSON.stringify({ tile, head }));
+    ok(!/Nothing to fix on this computer/.test(body) && body.includes(S.REPO_NOT_CHECKED_NOTE.replace(/—/g, '—')),
+      '…and the step never says "Nothing to fix on this computer"; it names what the repository checks would cover', body.slice(0, 600));
+    const missing = { ...base(), toFix: [{ kind: 'repo-missing', text: 'x', fix: { kind: 'change-repo' } }], repo: { ...base().repo, exists: false } };
+    ok(S.setupHead(missing).stateWord === '1 to fix on this computer · repository not checked' && /repository not set/.test(S.setupTile(missing).sub),
+      'a folder set but absent here: to fix, and both say the repository was not checked', JSON.stringify([S.setupHead(missing), S.setupTile(missing)]));
+    ok(/data-setup-act="change-repo"[^>]*>Change folder</.test(S.renderSetupBody({ data: missing }, {})), '…with Change folder beside it');
+    const withRepoClean = { ...base(), toFix: [] };
+    ok(S.setupHead(withRepoClean).stateWord === 'Nothing to fix on this computer' && S.setupTile(withRepoClean).value === 'nothing to fix here',
+      'with the repository checked and nothing found: both say nothing to fix');
+    const someFix = { ...base(), repo: null };
+    ok(S.setupHead(someFix).stateWord === '3 to fix on this computer · repository not checked' && S.setupTile(someFix).value === '3 to fix',
+      'fixes found without a repository: the count, and "repository not checked"');
+  }
   eq('not checked', S.setupTile(null).value);
   ok(S.setupTile(base()).sub === 'Claude Code · Antigravity · 2 computers', 'sub-line: the tools and the computers', S.setupTile(base()).sub);
   const all = JSON.stringify([S.setupTile(base()), S.setupTile({ ...base(), toFix: [] })]);

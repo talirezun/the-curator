@@ -4412,15 +4412,21 @@ function renderLayerStrip(read) {
   const stpS = state.setup && state.setup.domain === state.activeDomain
     && state.setup.project === state.activeProject && state.setup.data ? state.setup.data : null;
   const stpN = stpS && Array.isArray(stpS.toFix) ? stpS.toFix.length : 0;
+  // The repository checks ran only with a folder set and present here —
+  // setupTile's rule, inlined (lift constraint above); a suite pins the two
+  // equal over every combination.
+  const stpRepo = !!(stpS && stpS.repo && stpS.repo.exists !== false);
   const stpValue = !stpS ? 'not checked'
-    : (stpN ? stpN + ' to fix' : (stpS.repo ? 'nothing to fix here' : 'not checked'));
+    : (stpN ? stpN + ' to fix' : (stpRepo ? 'nothing to fix here' : 'repository not set'));
   const stpTools = stpS ? (stpS.tools || []).map((x) => x.label) : [];
   const stpComps = stpS ? (stpS.computers || []).length : 0;
   cards.push({
     label: 'SETUP',
     value: stpValue,
-    sub: stpS ? ([stpTools.length ? stpTools.join(' · ') : 'no agent tool yet',
-      stpComps ? stpComps + (stpComps === 1 ? ' computer' : ' computers') : null].filter(Boolean).join(' · ')) : null,
+    sub: stpS ? (!stpN && !stpRepo ? 'nothing to fix among the checks that ran'
+      : [stpTools.length ? stpTools.join(' · ') : 'no agent tool yet',
+        stpComps ? stpComps + (stpComps === 1 ? ' computer' : ' computers') : null,
+        stpRepo ? null : 'repository not set'].filter(Boolean).join(' · ')) : null,
     hidden: !stpS,
     jump: 'context-setup',
     name: 'Setup, ' + stpValue + ' — go to step 5',

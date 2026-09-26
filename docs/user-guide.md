@@ -5662,7 +5662,11 @@ this Mac**.
   never shown.
 
 **The states.** *ok*, *to fix*, *can't check here*, *not checked* (for example: no project folder
-set yet), *unmeasured* (hooks whose effect nobody has measured). Evidence beats configuration: if
+set yet), *unmeasured* (hooks whose effect nobody has measured). Until a project folder is set, the
+repository checks do not run, so the tile reads **repository not set** and the step says *Nothing to
+fix among the checks that ran* — never "nothing to fix". The block counts as current when every word
+matches the current **Copy agent instructions** text, however your editor wrapped the lines; a block
+that differs in any word (an older version, or a hand edit) is *outdated*. Evidence beats configuration: if
 no config entry is found for Claude Code but Claude Code saved this project from this computer, the
 cell says **working** — on the maintainer's Mac the entry lives only in Claude Desktop's config, and
 a file-only check would have said "not configured" about a setup that works.

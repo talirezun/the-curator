@@ -12197,6 +12197,30 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       'context-canonical,context-state,capture,context-session,context-setup');
     ok('the capture tile is named AGENT CONNECTIONS on screen; its jump id keeps the on-disk word',
       /AGENT CONNECTIONS/.test(strip) && !/AGENT SESSIONS/.test(strip) && !/>CAPTURE</.test(strip) && /data-ov-jump="capture"/.test(strip));
+    // v3.77.0 (screen review): the SETUP tile's INLINED words equal
+    // views/setup-step.js setupTile over every combination — the tile once said
+    // "not checked" while step 5 said "Nothing to fix".
+    const tileOf = (html) => {
+      const m = /<button[^>]*data-ov-jump="context-setup"[^>]*>([\s\S]*?)<\/button>/.exec(html);
+      if (!m) return null;
+      const v = /class="cur-ov-value"[^>]*>([^<]*)</.exec(m[1]);
+      const s = /class="cur-ov-sub"[^>]*>([^<]*)</.exec(m[1]);
+      return { value: v ? v[1] : null, sub: s ? s[1] : null };
+    };
+    const unesc = (x) => (x == null ? x : x.replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"'));
+    const repo = { path: '/r', exists: true };
+    const combos = [
+      { toFix: [], repo: null }, { toFix: [], repo }, { toFix: [{ kind: 'x' }], repo: null },
+      { toFix: [{ kind: 'x' }, { kind: 'y' }], repo }, { toFix: [{ kind: 'repo-missing' }], repo: { path: '/r', exists: false } },
+    ].map((c) => ({ ok: true, tools: [{ label: 'Claude Code' }], computers: [{}, {}], ...c }));
+    for (const data of combos) {
+      const st = { ...baseSt(), setup: { domain: baseSt().activeDomain, project: baseSt().activeProject, data } };
+      const got = tileOf(makeRenderers(st).renderLayerStrip(st.projectRead));
+      const want = SETUP_STEP.setupTile(data);
+      ok(`SETUP tile, inlined = setupTile: ${data.toFix.length} to fix, repo ${data.repo ? (data.repo.exists ? 'set' : 'absent') : 'not set'}`,
+        !!got && unesc(got.value) === want.value && unesc(got.sub) === want.sub,
+        JSON.stringify({ got, want }));
+    }
   }
 
   // ── §25d — the helper: head control, panel, gate ──────────────────────

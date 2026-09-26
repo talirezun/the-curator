@@ -339,15 +339,30 @@ export function inspectInstructionFile(file, { domain, project, template, cap = 
   rec.present = true;
   rec.bytes = Buffer.byteLength(text);
   const norm = text.replace(/\r\n/g, '\n');
-  rec.hasBlock = norm.includes('save_working_state') && norm.includes('get_project_context');
+  // A Curator block of ANY era: the lead sentence every version has carried,
+  // or the save tool beside a read tool. The v3.72-v3.74 blocks call
+  // `get_working_state`, not `get_project_context` — requiring the newer
+  // name read an OLD block as "no block" instead of "outdated".
+  rec.hasBlock = norm.replace(/\s+/g, ' ').includes(BLOCK_LEAD)
+    || (norm.includes('save_working_state') && (norm.includes('get_project_context') || norm.includes('get_working_state')));
   if (!rec.hasBlock) return rec;
-  const start = norm.indexOf(BLOCK_LEAD);
+  // The lead may itself be re-wrapped: find it with any whitespace between words.
+  const leadRe = new RegExp(BLOCK_LEAD.split(' ').map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'));
+  const lm = leadRe.exec(norm);
+  const start = lm ? lm.index : -1;
   const m = /The Curator \(project `([^`]{1,200})`/.exec(norm);
   rec.namesProject = m ? m[1] : null;
   rec.wrongProject = !!(rec.namesProject && domain && project && rec.namesProject !== `${domain}/${project}`);
   if (typeof template === 'string' && domain && project) {
     const body = template.split('{{DOMAIN_PROJECT}}').join(`${domain}/${project}`).split('{{PROJECT}}').join(project);
-    rec.current = norm.includes(body.trimEnd());
+    // WHITESPACE-INSENSITIVE, WORD-EXACT (v3.77.0 screen review): an owner's
+    // paste or editor re-wraps the block's lines, and a block identical in
+    // every word but wrapped differently IS the current text. Runs of
+    // whitespace (newlines included) collapse to one space on both sides;
+    // every other character must match exactly, so a block that differs in
+    // a single word is still "not current".
+    const ws = (s) => s.replace(/\s+/g, ' ').trim();
+    rec.current = ws(norm).includes(ws(body));
   }
   if (start !== -1) {
     const startBytes = Buffer.byteLength(norm.slice(0, start));
@@ -687,6 +702,9 @@ export function collectProjectSetup(o) {
   if (o.repo) {
     const mk = o.marker || null;
     repo = { path: o.repo.path, source: o.repo.source, exists: o.repo.exists !== false, marker: mk };
+    if (o.repo.exists === false) {
+      toFix.push({ kind: 'repo-missing', text: 'The repository folder set for this project is not on this computer.', detail: 'Its checks did not run. Set the folder where it is checked out here.', fix: { kind: 'change-repo' } });
+    }
     if (mk) {
       if (!mk.present) {
         toFix.push({ kind: 'marker-missing', text: '.curator-project is not in this checkout.', detail: 'Without it an agent and the hooks cannot tell which project this folder is. If it exists on another computer, it may not be committed there.', fix: { kind: 'copy-marker' } });

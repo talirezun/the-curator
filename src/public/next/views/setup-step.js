@@ -76,14 +76,32 @@ export function setupTile(data) {
   const n = Array.isArray(data.toFix) ? data.toFix.length : 0;
   const tools = (data.tools || []).map((t) => t.label);
   const comps = (data.computers || []).length;
+  // THE REPOSITORY CHECKS RAN only when a folder is set AND is on this
+  // computer. Without them, "nothing to fix" would be a claim about checks
+  // that never ran (v3.77.0 screen review: the tile said "not checked" while
+  // the step said "Nothing to fix" — the two now say the same thing).
+  const repoChecked = !!(data.repo && data.repo.exists !== false);
   const sub = [
     tools.length ? tools.join(' · ') : 'no agent tool yet',
     comps ? comps + (comps === 1 ? ' computer' : ' computers') : null,
+    repoChecked ? null : 'repository not set',
   ].filter(Boolean).join(' · ');
   if (n) return { value: n + ' to fix', sub, warn: true };
-  if (!data.repo) return { value: 'not checked', sub: 'no repository on this computer', warn: false };
+  if (!repoChecked) return { value: 'repository not set', sub: 'nothing to fix among the checks that ran', warn: false };
   return { value: 'nothing to fix here', sub, warn: false };
 }
+
+/** The step's monitor head — the SAME facts as the tile, in a sentence. Pure. */
+export function setupHead(data) {
+  const n = Array.isArray(data && data.toFix) ? data.toFix.length : 0;
+  const repoChecked = !!(data && data.repo && data.repo.exists !== false);
+  if (n) return { stateWord: n + ' to fix on this computer' + (repoChecked ? '' : ' · repository not checked'), tone: 'warn' };
+  if (!repoChecked) return { stateWord: 'Nothing to fix among the checks that ran', tone: 'quiet' };
+  return { stateWord: 'Nothing to fix on this computer', tone: 'ok' };
+}
+
+/** The sentence under the head while the repository checks cannot run. */
+export const REPO_NOT_CHECKED_NOTE = 'Repository not set on this computer — set it to check CLAUDE.md, AGENTS.md and .curator-project.';
 
 /** The label a fix button carries. Pure. */
 export function fixButtons(f, repo) {
@@ -94,6 +112,7 @@ export function fixButtons(f, repo) {
   if (fix.kind === 'copy-marker') out.push(b('copy-marker', 'Copy marker line'));
   if (fix.kind === 'copy-command' && fix.command) out.push(b('copy-command', 'Copy command', ' data-cmd="' + escapeHtml(fix.command) + '"'));
   if (fix.kind === 'sync') out.push(b('sync', 'Sync now'));
+  if (fix.kind === 'change-repo') out.push(b('change-repo', 'Change folder'));
   if (fix.kind === 'settings' || fix.kind === 'skills') out.push(b('settings', 'Open Tools on this Mac'));
   const revealName = fix.reveal || (fix.kind === 'reveal' ? f.file : null);
   if (revealName && repo && repo.path) {
@@ -259,13 +278,14 @@ export function renderSetupBody(s, ui = {}) {
   const mon = renderMonitor({
     id: 'mem-setup-monitor',
     label: 'Setup on this computer',
-    head: { stateWord: toFix.length ? toFix.length + ' to fix on this computer' : 'Nothing to fix on this computer', tone: toFix.length ? 'warn' : 'ok' },
+    head: setupHead(data),
     lines: [
       { key: 'Tools', value: tools.length ? tools.map((t) => t.label).join(' · ') : 'none yet' },
       { key: 'Repository', value: data.repo ? (data.repo.display || data.repo.path) : 'not set on this computer' },
       { key: 'Computers', value: String((data.computers || []).length) },
     ],
     loud: toFix.map((f) => ({ tone: 'warn', text: f.text + (f.detail ? ' ' + f.detail : '') })),
+    note: data.repo && data.repo.exists !== false ? '' : REPO_NOT_CHECKED_NOTE,
   });
   const fixes = toFix.length
     ? '<div class="mem-setup-fixes">' + toFix.map((f, i) => '<div class="mem-setup-fix" data-setup-fix="' + i + '">'

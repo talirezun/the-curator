@@ -221,6 +221,62 @@ section('§7  the instruction block');
   w(deep, `${'x'.repeat(30000)}\n${block('projects/ott', 'ott')}`);
   const dp = S.inspectInstructionFile(deep, { ...opts, cap: 24000 });
   ok(!dp.atTop && dp.overCap && dp.blockPastCap, 'a block 30 KB down a 24,000-byte-capped file: not at the top, past the cap', dp);
+  // ── RE-WRAPPED IS CURRENT; DIFFERENT WORDS ARE NOT (v3.77.0 screen review) ──
+  // The owner's paste or editor re-wraps the block. Every word identical,
+  // the lines broken elsewhere: current. The orchestrator measured this on the
+  // real ott-framework repo — exact substring false, whitespace-normalised true.
+  const curBlock = block('projects/ott', 'ott');
+  const reflow = (s, width) => {
+    const words = s.split(/\s+/).filter(Boolean);
+    const out = []; let line = '';
+    for (const w of words) { if (line && (line + ' ' + w).length > width) { out.push(line); line = w; } else line = line ? line + ' ' + w : w; }
+    if (line) out.push(line);
+    return out.join('\n');
+  };
+  const wrapped = path.join(ROOT, 'wrapped.md');
+  w(wrapped, `# ott\n\n## Working state\n\n${reflow(curBlock, 62)}\n\n  More text.\n`);
+  const wr2 = S.inspectInstructionFile(wrapped, opts);
+  ok(!readFileSync(wrapped, 'utf8').includes(curBlock.trimEnd()) && wr2.hasBlock && wr2.current && wr2.atTop,
+    'the current block RE-WRAPPED at 62 columns (no exact substring) is current, at the top', wr2);
+  const wrappedTab = path.join(ROOT, 'wrapped-tab.md');
+  w(wrappedTab, reflow(curBlock, 100).replace(/ /g, (m, i) => (i % 7 === 0 ? '\t' : m)));
+  ok(S.inspectInstructionFile(wrappedTab, opts).current, '…and with tabs and wider lines too');
+  const oneWord = path.join(ROOT, 'one-word.md');
+  w(oneWord, reflow(curBlock.replace('at least every ten tool calls', 'at least every twenty tool calls'), 62));
+  const ow = S.inspectInstructionFile(oneWord, opts);
+  ok(ow.hasBlock && !ow.current, 'a re-wrapped block that differs in ONE word is not current', ow);
+  // The REAL older texts, verbatim from the tags (projects/ott substituted).
+  const V372 = [
+    "This repository's working state lives in The Curator (project `projects/ott`, see",
+    '`.curator-project`). At the START of every session call the my-curator MCP tool',
+    '`get_working_state` with project "ott" and scope "latest" and read the standing',
+    'brief before acting. SAVE with `save_working_state` under project "ott", scope',
+    '"main", after every material decision and at least every ten tool calls, and ALWAYS',
+    'before you stop; a save overwrites, so send the complete state each time.',
+  ].join('\n');
+  const V376 = [
+    "This repository's working state lives in The Curator (project `projects/ott`, see",
+    '`.curator-project`). At the START of every session call the my-curator MCP tool',
+    '`get_project_context` with project "ott" and read the standing brief and latest',
+    'handoff before acting. SAVE with `save_working_state` under project "ott" with the',
+    '`scope` argument set to your tool\'s name — "claude-code" if you are Claude Code,',
+    '"antigravity" if you are Antigravity, "opencode" if you are opencode, otherwise your',
+    'tool\'s own name, lowercase and hyphenated. Pass `scope` explicitly every time, and never',
+    'save under another tool\'s scope. Save after every material',
+    'decision, at least every ten tool calls, and ALWAYS before you stop; a save overwrites,',
+    'so send the complete state each time. Pass `harness` as that same name and `model` as',
+    'your exact model id if you know it (omit it otherwise — never search files for it), and',
+    'record the `seen` map as `foundations_read`.',
+  ].join('\n');
+  for (const [name, text] of [['v3.72/v3.74 (scope "main", get_working_state)', V372], ['v3.76.0 (no "continue" sentence)', V376]]) {
+    const f = path.join(ROOT, `old-${name.slice(0, 5)}.md`);
+    w(f, `## Working state\n\n${text}\n`);
+    const r = S.inspectInstructionFile(f, opts);
+    ok(r.hasBlock && !r.current && !r.wrongProject && r.namesProject === 'projects/ott', `the real ${name} block: present, this project, OUTDATED`, r);
+    const f2 = path.join(ROOT, `old-${name.slice(0, 5)}-wrapped.md`);
+    w(f2, reflow(text, 70));
+    ok(S.inspectInstructionFile(f2, opts).hasBlock && !S.inspectInstructionFile(f2, opts).current, `…and still OUTDATED when re-wrapped`);
+  }
   const crlf = path.join(ROOT, 'crlf.md');
   w(crlf, block('projects/ott', 'ott').replace(/\n/g, '\r\n'));
   ok(S.inspectInstructionFile(crlf, opts).current, 'CRLF line endings still read as current');
@@ -276,6 +332,9 @@ section('§9  the project view');
   ok(!r.toFix.some((f) => f.kind.startsWith('marker')), 'a committed marker naming this project raises nothing');
   const noRepo = S.collectProjectSetup({ domain: 'projects', project: 'ott', pairs, machine: { ids: [] }, machineRows: bare, repo: null, template: TEMPLATE });
   ok(noRepo.tools.every((t) => t.block.state === 'not-checked' || t.block.state === 'none'), 'no repository set: every block cell is "not checked", nothing red', noRepo.tools.map((t) => t.block));
+  const gone = S.collectProjectSetup({ domain: 'projects', project: 'ott', pairs, machine: { ids: [] }, machineRows: bare,
+    repo: { path: path.join(ROOT, 'not-here'), source: 'set', exists: false }, template: TEMPLATE });
+  ok(gone.toFix.some((f) => f.kind === 'repo-missing' && f.fix.kind === 'change-repo'), 'a folder set but not on this computer is a to-fix line (its checks did not run)');
   ok(S.incomingMachine('projects/state/foundations/x/y/z.md', 'projects', 'projects') === null, 'foundations are never read as a machine');
   ok(S.incomingMachine('projects/state/main/mac-a/current.md', 'projects', 'projects') === 'mac-a', 'the domain\'s own project: <scope>/<machine>');
 }
