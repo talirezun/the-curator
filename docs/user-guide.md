@@ -3850,7 +3850,7 @@ Three separate marks can appear on a row, and they answer three different questi
 | The **coloured dot on the left** | Which domain is this? (identity — each domain keeps its colour) |
 | The **freshness dot in the status line** | How current is it? |
 | A small **filled dot on the right** | It has open health issues (the row's screen-reader name gives the count and how long ago it was checked) |
-| A small **hollow ring on the right** | Its health has **not been checked yet** this session — open the domain and its scan runs (*new in v3.76.0*) |
+| A small **hollow ring on the right** | Its health has **not been checked yet** on this computer, or was checked **before the wiki last changed** — open the domain and its scan runs (*new in v3.76.0; kept across restarts since v3.77*) |
 | **No mark on the right** | Checked, and no open health issues |
 
 **No mark never means "not checked".** Until v3.76.0 a domain nobody had scanned showed nothing
@@ -3858,10 +3858,15 @@ on the right — exactly what a clean domain shows — so "no issues" and "we do
 same. Now a domain without a scan result wears the hollow ring, and the row's screen-reader name
 says *"Health not checked yet — open this domain to run a scan"* (or *"Health check running"* while
 the open domain's scan is under way). A clean result is only ever stated with a scan in hand:
-*"No open health issues, checked 5 min ago"*. The scan is local and free; opening a domain runs it,
-and a domain's result is forgotten when its pages change, so the ring comes back until it is
-scanned again. Results are kept for the app session — after a restart every domain you have not
-opened yet shows the ring.
+*"No open health issues, checked 5 min ago"*. The scan is local and free; opening a domain runs it.
+
+**Results survive a restart (v3.77).** The last scan of each domain is kept on this computer (in
+the app's own data folder, never synced), so after a restart a domain you scanned yesterday still
+shows its result and how long ago it was checked. A result from **before the wiki last changed** —
+an ingest, a compile or a Sync pull since the scan — is never shown as a current count: the row
+wears the hollow ring again and says *"Health checked 2 days ago, before the wiki last changed —
+open this domain to rescan"*. One limit: an edit made outside The Curator (in Obsidian, say) is
+not noticed until the next scan, because the check reads the wiki's log, not every page.
 
 And one badge:
 

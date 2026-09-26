@@ -29,6 +29,7 @@ import { getProviderInfo } from '../brain/llm.js';
 import { getAiHealthSettings, setAiHealthSettings, DEFAULT_AI_HEALTH } from '../brain/config.js';
 import { addDismissal, removeDismissal, listDismissed } from '../brain/health-dismissed.js';
 import { domainPath } from '../brain/files.js';
+import { recordHealthSummary } from '../brain/health-summary.js';
 import {
   registerWrite,
   acquireFileLock,
@@ -124,6 +125,11 @@ router.get('/:domain', async (req, res) => {
     const { domain } = req.params;
     await assertDomain(domain);
     const report = await scanWiki(domain);
+    // v3.77: the scan's summary outlives this session — GET /api/domains/stats
+    // serves it, so a restart does not turn every unopened domain back into
+    // "Health not checked yet". Awaited (one small file write) so a stats read
+    // that follows this response already sees it; never throws.
+    await recordHealthSummary(domain, report);
     // v3.72.1, additive: how many dismissal RECORDS are on disk — what the
     // Dismissed list shows. `counts.dismissed` is a different figure (current
     // scan issues a dismissal hid; semantic Skips and records whose issue is

@@ -22,9 +22,9 @@
  * (a) `listMd` called directly (independent of listWikiInventory's own
  * code) and (b) what `GET /:domain/page` will actually open.
  *
- * §5 proves the endpoint never reads file CONTENT (only readdir/lstat) —
- * behaviourally, via an unreadable file that would throw if `readFile` were
- * ever attempted on it, not via a source-level claim.
+ * §2 pins the page's OWN title (v3.77: a head read, cached by mtimeNs+size,
+ * cross-checked against GET /page on every entry); §7 proves an unreadable
+ * page degrades to its file-name title instead of throwing or vanishing.
  *
  * §6 is the security section: path-traversal vectors against the `:domain`
  * route param, driven over REAL HTTP against the real mounted router (not a
@@ -47,7 +47,7 @@
  */
 import {
   mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, chmodSync,
-  readdirSync,
+  readdirSync, utimesSync,
 } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -62,7 +62,9 @@ process.env.CURATOR_TEST_USER_DATA_DIR = TMP_USER;
 process.env.CURATOR_TEST_DOMAINS_DIR = TMP_DOMAINS;
 delete process.env.DOMAINS_PATH;
 
-const { listWikiInventory, MAX_LIST_ENTRIES } = await import('../src/brain/wiki-read.js');
+const {
+  listWikiInventory, MAX_LIST_ENTRIES, TITLE_HEAD_BYTES, __listTitleStats, __clearListTitleCache,
+} = await import('../src/brain/wiki-read.js');
 const { getWikiPage } = await import('../src/brain/wiki-read.js');
 const { listMd } = await import('../src/brain/health.js');
 const { default: wikiRouter } = await import('../src/routes/wiki.js');
@@ -146,26 +148,86 @@ try {
     '#8: a concept entry carries the exact path GET :domain/page expects (folder/slug.md, no leading slash)');
 
   // ═══════════════════════════════════════════════════════════════════════
-  section('2. Title is SLUG-derived, never content-derived (the documented trade-off)');
+  section('2. Title is the PAGE\'S OWN title — the same deriveTitle GET /page uses (v3.77)');
   // ═══════════════════════════════════════════════════════════════════════
+  // Before v3.77 this section pinned the opposite: a slug-derived label
+  // ("Eniac", "First Draft Report On The Edvac") as a documented trade-off.
+  // The maintainer reported it as a defect; the fix is a head-read title
+  // cache keyed by (path, mtimeNs, size) — see listWikiInventory's docblock.
   makeDomain('titles');
   writePageFile('titles', 'entities/some-slug.md', 'Some Slug');
   writePageFile('titles', 'entities/frontmatter-title.md',
     '---\ntitle: A Completely Different Real Title\ntags: [type/entity]\n---\n# Ignored Heading Too\nbody\n');
+  writePageFile('titles', 'entities/eniac.md', '---\ntags: [type/entity]\n---\n# ENIAC\nbody\n');
+  writePageFile('titles', 'summaries/first-draft-report-on-the-edvac.md',
+    '---\ntags: [type/summary]\n---\n# First Draft of a Report on the EDVAC\nbody\n');
+  // A frontmatter block longer than the head: the head cannot decide, so the
+  // whole file is read — the answer must not depend on the head size.
+  writePageFile('titles', 'concepts/long-frontmatter.md',
+    '---\ntags: [type/concept]\nnotes: ' + 'x'.repeat(TITLE_HEAD_BYTES + 100) + '\n---\n# Long Frontmatter Real\nbody\n');
+  // A heading that begins just before the head boundary: the cut last line
+  // must never be used as a (truncated) title.
+  const pad = 'p'.repeat(TITLE_HEAD_BYTES - 40) + '\n';
+  writePageFile('titles', 'concepts/heading-at-boundary.md',
+    '---\ntags: [type/concept]\n---\n' + pad + '# A Heading That Straddles The Head Boundary Completely\nbody\n');
+  writePageFile('titles', 'concepts/no-title-at-all.md', 'just a body with no heading\n');
 
   const r2 = await listWikiInventory('titles');
-  const plain = r2.entries.find(e => e.slug === 'some-slug');
-  assert(plain && plain.title === 'Some Slug', `#1: 'some-slug' humanises to 'Some Slug' (got ${plain && plain.title})`);
+  const t = (slug) => { const e = r2.entries.find(x => x.slug === slug); return e && e.title; };
+  assert(t('eniac') === 'ENIAC', `#1: the page's own # heading is listed ('ENIAC', not 'Eniac') (got ${t('eniac')})`);
+  assert(t('first-draft-report-on-the-edvac') === 'First Draft of a Report on the EDVAC',
+    `#2: a summary lists its own heading, not its humanised file name (got ${t('first-draft-report-on-the-edvac')})`);
+  assert(t('frontmatter-title') === 'A Completely Different Real Title',
+    `#3: frontmatter title: wins over the # heading, exactly as deriveTitle rules (got ${t('frontmatter-title')})`);
+  assert(t('some-slug') === 'Some Slug' && t('no-title-at-all') === 'No Title At All',
+    `#4: a page with no title of its own falls back to the humanised file name (got ${t('some-slug')}, ${t('no-title-at-all')})`);
+  assert(t('long-frontmatter') === 'Long Frontmatter Real',
+    `#5: a frontmatter block longer than the ${TITLE_HEAD_BYTES}-byte head is resolved by a full read (got ${t('long-frontmatter')})`);
+  assert(t('heading-at-boundary') === 'A Heading That Straddles The Head Boundary Completely',
+    `#6: a heading cut by the head boundary is never listed truncated (got ${t('heading-at-boundary')})`);
 
-  const withFm = r2.entries.find(e => e.slug === 'frontmatter-title');
-  assert(withFm && withFm.title === 'Frontmatter Title',
-    `#2: the SLUG-derived title is shown ('Frontmatter Title'), NOT the frontmatter title or the # heading — the documented trade-off (got "${withFm && withFm.title}")`);
+  // DUMB CROSS-CHECK: every listed title equals what GET :domain/page reports
+  // for the same file — one rule, two readers, compared on every entry.
+  let mismatches = [];
+  for (const e of r2.entries) {
+    const opened = await getWikiPage('titles', e.path);
+    if (opened.title !== e.title) mismatches.push(`${e.path}: list="${e.title}" page="${opened.title}"`);
+  }
+  assert(mismatches.length === 0, `#7: the list title equals GET :domain/page's title for all ${r2.entries.length} pages`, mismatches.join('; '));
 
-  // Confirm what /page WOULD say, to make the trade-off concrete rather than
-  // asserted in prose only: opening the page shows the REAL title.
-  const opened = await getWikiPage('titles', 'entities/frontmatter-title.md');
-  assert(opened.title === 'A Completely Different Real Title',
-    `#3: GET :domain/page on the SAME file reports the real frontmatter title — confirming the list/page title mismatch is real and intentional, not a bug (got "${opened.title}")`);
+  // ═══════════════════════════════════════════════════════════════════════
+  section('2b. The title cache — warm lists read nothing, a changed page is re-read');
+  // ═══════════════════════════════════════════════════════════════════════
+  // Pin eniac.md's mtime to a WHOLE second first: utimes cannot restore the
+  // nanosecond part the filesystem gave the original write, and #3 needs to
+  // restore the identical mtime after a same-size rewrite.
+  const eniacAbs = path.join(wikiDir('titles'), 'entities/eniac.md');
+  const T0 = 1_700_000_000;
+  utimesSync(eniacAbs, T0, T0);
+  __clearListTitleCache();
+  await listWikiInventory('titles');
+  const cold = __listTitleStats().reads;
+  assert(cold === r2.entries.length, `#1: a cold list reads each page once (${cold} reads for ${r2.entries.length} pages)`);
+  await listWikiInventory('titles');
+  assert(__listTitleStats().reads === cold, `#2: a warm list performs ZERO page reads (still ${__listTitleStats().reads})`);
+
+  // Same size, same mtime, different content → the cache answers (proves
+  // the key is the file's identity, not a re-read in disguise).
+  writeFileSync(eniacAbs, '---\ntags: [type/entity]\n---\n# ENIAX\nbody\n', 'utf8');
+  utimesSync(eniacAbs, T0, T0);
+  const c3 = await listWikiInventory('titles');
+  assert(c3.entries.find(e => e.slug === 'eniac').title === 'ENIAC' && __listTitleStats().reads === cold,
+    '#3: identical (mtime, size) is served from the cache — no read');
+  // Same size, NEW mtime → re-read, new title.
+  utimesSync(eniacAbs, T0 + 5, T0 + 5);
+  const c4 = await listWikiInventory('titles');
+  assert(c4.entries.find(e => e.slug === 'eniac').title === 'ENIAX' && __listTitleStats().reads === cold + 1,
+    `#4: a changed mtime re-reads exactly that one page (reads ${__listTitleStats().reads}, title ${c4.entries.find(e => e.slug === 'eniac').title})`);
+  // Changed size (an ingest rewrite) → re-read.
+  writeFileSync(eniacAbs, '---\ntags: [type/entity]\n---\n# ENIAC (computer)\nlonger body\n', 'utf8');
+  const c5 = await listWikiInventory('titles');
+  assert(c5.entries.find(e => e.slug === 'eniac').title === 'ENIAC (computer)',
+    '#5: a rewritten page lists its new title on the next call');
 
   // ═══════════════════════════════════════════════════════════════════════
   section('3. Exclusions — a directory named "x.md" is not a page');
@@ -282,13 +344,12 @@ try {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  section('7. NO CONTENT READ — behavioural proof, not a source-level claim');
+  section('7. AN UNREADABLE PAGE — listed under its file name, never dropped, never a throw');
   // ═══════════════════════════════════════════════════════════════════════
-  // An unreadable file (chmod 000) is still perfectly listable via readdir —
-  // but readFile() on it throws EACCES. If listWikiInventory ever tried to
-  // read this file's content it would either throw (uncaught) or the file
-  // would be silently dropped by an error handler; either way it would NOT
-  // show up correctly with a slug-derived title the way it does here.
+  // Before v3.77 this section proved the list never read content. It now
+  // reads each page's head for its title (see §2), so the claim that must
+  // hold is the degradation: an unreadable file (chmod 000 — readdir sees it,
+  // open() throws EACCES) is still listed, under its humanised file name.
   makeDomain('noread');
   const unreadablePath = writePageFile('noread', 'entities/locked.md', '# Locked\nbody\n');
   writePageFile('noread', 'entities/normal.md', '# Normal\n');
@@ -301,10 +362,17 @@ try {
     let r7 = null;
     try { r7 = await listWikiInventory('noread'); } catch (e) { threw = e; }
     chmodSync(unreadablePath, 0o644); // restore before any assertion can short-circuit cleanup
-    assert(!threw, '#1: listWikiInventory does not throw on a chmod-000 (unreadable) page — proving it never attempts readFile()', threw && threw.message);
+    assert(!threw, '#1: listWikiInventory does not throw on a chmod-000 (unreadable) page', threw && threw.message);
     const locked = r7 && r7.entries.find(e => e.slug === 'locked');
     assert(!!locked && locked.title === 'Locked',
-      '#2: the unreadable file is still listed with a correct slug-derived title — readdir-only, content genuinely never touched');
+      '#2: the unreadable file is still listed, under its slug-derived title');
+    const normal = r7 && r7.entries.find(e => e.slug === 'normal');
+    assert(!!normal && normal.title === 'Normal', '#3: its readable neighbour still gets its own title');
+    // Unreadable is NOT cached: once readable, the real title appears.
+    writeFileSync(unreadablePath, '# LOCKED Real\nbody\n', 'utf8');
+    const r7b = await listWikiInventory('noread');
+    assert(r7b.entries.find(e => e.slug === 'locked').title === 'LOCKED Real',
+      '#4: the failure was not cached — the page lists its real title once it can be read');
   }
 
   // ═══════════════════════════════════════════════════════════════════════

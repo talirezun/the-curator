@@ -2226,6 +2226,56 @@ section('8d. A model-gone 400 spends once and walks nothing [M20]');
   }
 }
 
+section('8e. The model-gone 400 is a TYPED OpenRouterError with its status (v3.77)');
+{
+  // test-openrouter-live.js §4 sends a bogus id to the REAL endpoint and had
+  // been red 2/59 since v3.72.1: the friendly model-gone sentence arrived as a
+  // plain Error with no `.status`. This is the offline half of the same
+  // contract, driven by the MEASURED wire body (2026-09-16) so it runs on every
+  // `npm test`, not only when someone has a key.
+  const { classifyProbeError } = await import('../src/brain/openrouter-qualify.js');
+  const mk = (status, message) => new OpenRouterAdapter({
+    apiKey: 'k'.repeat(40), timeoutMs: 5000,
+    fetchImpl: async () => ({
+      ok: false, status, headers: new Map(),
+      json: async () => ({ error: { message, code: status }, user_id: 'org_x' }),
+    }),
+  });
+  const BOGUS = 'zzz-nonexistent/does-not-exist-9999';
+  let e = null;
+  try { await mk(400, `${BOGUS} is not a valid model ID`).createChatCompletion({ model: BOGUS, systemPrompt: 's', userPrompt: 'u', maxTokens: 1 }); }
+  catch (err) { e = err; }
+  ok(e instanceof OpenRouterError, '★ a model-gone 400 is a typed OpenRouterError, like every other non-2xx this adapter raises');
+  eq(e && e.status, 400, '★ …carrying its numeric HTTP status structurally on .status');
+  eq(e && e.code, 'OPENROUTER_BAD_REQUEST', '…and the structural OpenRouter class on .code');
+  ok(e && e.message.startsWith('OpenRouter no longer offers') && e.message.includes(BOGUS) && /pick another model in Settings/.test(e.message),
+    '…with the friendly one-line model-gone sentence, naming the id', e && e.message);
+  ok(e && e.curatorModelGone === true && e.curatorDeterministic === true && e.curatorErrorCode === 'MODEL_GONE',
+    '…and every model-gone tag the gates read');
+  // isModelNotFound is module-private; its two halves are the structural
+  // `.status === 404` and the message clauses §1b mirrors (drift-guarded).
+  ok(e && e.status !== 404 && !cls.isModelNotFound(e.message),
+    'status 400 does NOT read as a retirement — isModelNotFound keys on .status === 404 and its message clauses, neither of which fires, so no chain walk');
+  ok(e && !llmTesting.is429(e) && !llmTesting.is503(e), '…and trips neither retry classifier');
+  const probe = classifyProbeError(e);
+  eq(probe.httpStatus, 400, 'qualification reports the HTTP status it now receives structurally');
+  eq(probe.errorClass, 'OPENROUTER_BAD_REQUEST', '…and classifies it as a bad request, not UNKNOWN_ERROR');
+
+  // Control: a 400 that is NOT model-gone keeps the generic typed tail.
+  let g = null;
+  try { await mk(400, 'max_tokens must be positive').createChatCompletion({ model: 'x/y', systemPrompt: 's', userPrompt: 'u', maxTokens: 1 }); }
+  catch (err) { g = err; }
+  ok(g instanceof OpenRouterError && g.status === 400 && !g.curatorModelGone,
+    'CONTROL: an ordinary 400 is typed, has status 400, and is NOT tagged model-gone');
+
+  // Control: a bogus id on 404 (unrecognised wording) keeps .status WITHHELD.
+  let n = null;
+  try { await mk(404, 'something we have never measured').createChatCompletion({ model: BOGUS, systemPrompt: 's', userPrompt: 'u', maxTokens: 1 }); }
+  catch (err) { n = err; }
+  ok(n instanceof OpenRouterError && n.status === undefined && n.httpStatus === 404,
+    'CONTROL: an unexplained 404 still withholds .status (the 400 change did not leak into the 404 branch)');
+}
+
 section('9. Isolation proof');
 eq(fingerprint(), FINGERPRINT_BEFORE,
   'the real .curator-config.json / .sync-config.json / .sharedbrain-config.json are byte-identical (sha256 + size) before and after this run');

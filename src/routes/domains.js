@@ -6,6 +6,7 @@ import { listProjects } from '../brain/working-state.js';
 import { getTrashDir } from '../brain/paths.js';
 import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
 import { identityMap, recordDomainIdentities } from '../brain/domain-identity.js';
+import { readHealthSummaries, forgetHealthSummary, renameHealthSummary } from '../brain/health-summary.js';
 
 const router = Router();
 
@@ -80,9 +81,15 @@ router.get('/stats', async (req, res) => {
     // v3.76.0: the identity slot rides each row as `identitySlot`, and the
     // whole map as `identity`, from the same one read.
     const identity = await identityMap(domains);
+    // v3.77: the last Wiki health scan per domain, persisted across restarts
+    // (src/brain/health-summary.js). `health` is null for a domain never
+    // scanned on this machine; `stale` is true when the wiki changed after it.
+    const health = await readHealthSummaries(domains);
     for (let i = 0; i < domains.length; i++) {
       const s = statsList[i];
-      if (s && typeof s === 'object') statsList[i] = { ...s, identitySlot: identity[domains[i]] ?? null };
+      if (s && typeof s === 'object') {
+        statsList[i] = { ...s, identitySlot: identity[domains[i]] ?? null, health: health[domains[i]] || null };
+      }
     }
     res.json({ domains: statsList, readonlyDomains, identity });
   } catch (err) {
@@ -113,7 +120,8 @@ router.get('/:domain/stats', async (req, res) => {
     // v3.76.0: a single-row refresh carries the same identity slot the list
     // did, or the patched row would lose its colour.
     const identity = await identityMap(domains);
-    res.json({ ...stats, identitySlot: identity[domain] ?? null });
+    const health = await readHealthSummaries([domain]);
+    res.json({ ...stats, identitySlot: identity[domain] ?? null, health: health[domain] || null });
   } catch (err) {
     const status = err.message.includes('not found') ? 404 : 500;
     res.status(status).json({ error: err.message });
@@ -190,6 +198,7 @@ router.put('/:domain', async (req, res) => {
     }
 
     await renameDomain(oldSlug, newSlug, displayName.trim());
+    await renameHealthSummary(oldSlug, newSlug);
     res.json({ oldSlug, newSlug, displayName: displayName.trim(), syncWarning: isConfigured() });
   } catch (err) {
     const status = err.message.includes('not found') ? 404
@@ -279,6 +288,7 @@ router.delete('/:domain', async (req, res) => {
   }
   try {
     const { trashPath } = await deleteDomain(domain, { confirm });
+    await forgetHealthSummary(domain);
     res.json({ deleted: true, trashPath, syncWarning: isConfigured() });
   } catch (err) {
     if (err.code === 'CONFIRM_REQUIRED') {

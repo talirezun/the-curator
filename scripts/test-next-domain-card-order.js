@@ -622,6 +622,8 @@ function reportAsyncActionFailure() {}
 function settleGate(_g, fn) { fn(); }
 // v3.72.1 (F9): inert here; see scripts/test-domains-true-numbers.js §11.
 function staleHealthSlugs() { return []; }
+// v3.77: inert here; see scripts/test-health-summary.js §5.
+function seedHealthSummaries() {}
 function loadHealth(slug, token, opts) { calls.health.push({ slug, token, opts }); return Promise.resolve(); }
 function loadProjects(slug, token) { calls.projects.push({ slug, token }); return Promise.resolve(); }
 function loadBrowse(slug, token) { calls.browse.push({ slug, token }); return Promise.resolve(); }

@@ -1004,6 +1004,22 @@ function buildBasisLede({ sizeMultiplier }) {
 }
 
 /**
+ * THE ONE PROCESSING-ORDER RULE: largest file first, ties in upload order
+ * (Array.prototype.sort is stable). Used by `createIngestQueue` to order the
+ * run AND by `estimateIngestQueueCost` to order `files.accepted`, which the
+ * confirm gate lists under "Will be ingested (largest first)".
+ *
+ * v3.77: the estimate used to return `accepted` in the order the browser
+ * sent the files, while the screen above it promised largest-first — so a
+ * 1.0 KB file could be listed above a 2.2 KB one (the maintainer's report)
+ * even though the RUN was correctly ordered. One comparator, two callers, so
+ * the preview and the run can never disagree again.
+ */
+export function largestFirst(a, b) {
+  return (b.size || 0) - (a.size || 0);
+}
+
+/**
  * @param {string} domain
  * @param {Array<{name: string, size: number}>} files  metadata only — no bytes read
  */
@@ -1045,6 +1061,8 @@ export async function estimateIngestQueueCost(domain, files) {
     accepted.push({ name, size });
     totalBytes += size;
   }
+  // The preview lists these in the order the run will process them.
+  accepted.sort(largestFirst);
 
   let provider = null, model = null, price = null;
   try {
@@ -1210,7 +1228,7 @@ async function createJobInner({ domain, uploadedFiles, overwrite = false, budget
   // IS the record of that choice — see `job.order` below.
   const ordered = uploadedFiles
     .map((f, uploadIndex) => ({ ...f, uploadIndex }))
-    .sort((a, b) => (b.size || 0) - (a.size || 0));
+    .sort(largestFirst);
 
   const rawDir = rawPath(domain);
   const items = [];

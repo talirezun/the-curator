@@ -68,6 +68,24 @@ All three are `null` together when the domain has no log entry. A `null` means
 **not known** — render it as such, never as an empty string, and never guess a
 verb from the date merely existing.
 
+**`health`** (v3.77) — this domain's last Wiki health scan on this machine, or
+`null` if it has never been scanned here. Also on every row of
+`GET /api/domains/stats`.
+
+```json
+"health": { "count": 12, "scannedAt": "2026-09-26T09:14:03.120Z", "stale": false }
+```
+
+| Field | Meaning |
+|---|---|
+| `count` | Open issues across the six categories the Domains view counts (broken links, orphans, cross-folder duplicates, hyphen variants, folder-prefix links, missing backlinks), after dismissals — exactly what that scan reported. |
+| `scannedAt` | When that scan read the wiki (the report's own `scannedAt`). |
+| `stale` | `true` when the domain's `wiki/log.md` has changed since the scan — an ingest, a compile or a Sync pull — so `count` describes a wiki that no longer exists. Show it as "checked before the wiki last changed", never as a current count. An edit made outside the app that does not touch `log.md` is not detected until the next scan. |
+
+Recorded by `GET /api/health/:domain` after every scan, in `.health-summary.json`
+in the app's user-data folder — outside `domains/`, never synced. Deleting a
+domain forgets its entry; renaming one moves it.
+
 **Error responses**
 
 | Status | Condition |
@@ -1563,7 +1581,7 @@ Reads are allowed on read-only Shared Brain mirror domains, matching `/page` —
 
 Entries are sorted by `path` and drawn only from the three canonical folders (`entities/`, `concepts/`, `summaries/`). `path` is the exact string `GET /:domain/page`'s `path` query parameter expects.
 
-**`title` is derived from the slug alone (`tali-rezun` → `Tali Rezun`), never from frontmatter or file content.** This is a deliberate trade-off, not an oversight: reading each file for its real title (an explicit `title:` in frontmatter, or the first `# Heading`) would mean opening every page body — reinstating the exact 14 MB read this endpoint exists to avoid. A page whose real title differs from its slug (e.g. an acronym, or a title that doesn't match its filename) shows the slug-derived label here; its real title is correct the instant it's opened via `GET /:domain/page`, which does read the file.
+**`title` is the page's own title** (v3.77) — an explicit `title:` in frontmatter, else the first `# Heading`, else the humanised slug (`tali-rezun` → `Tali Rezun`) — the same rule `GET /:domain/page` and chat citations use, so the list and the reader never disagree. It is read from the first 8 KB of each page (the whole file only when that head holds no title) and cached in memory by the file's path, nanosecond mtime and size, so a repeat list reads nothing and an ingest re-reads only the pages it changed (measured on a 3,452-page domain: ~130 ms cold, ~25 ms warm). A page that cannot be read is still listed, under its humanised slug.
 
 Capped at 20,000 entries (`truncated: true` beyond that; `count` is the number actually returned). `total` always reports the real, uncapped count — it costs nothing extra, since every filename is enumerated before the cap is applied.
 
