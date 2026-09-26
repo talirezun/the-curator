@@ -191,6 +191,11 @@ section('§5  hook-log and doctor read it back');
   const d = run(['doctor'], { cwd: WORK });
   ok(/hook log · start hook observed firing/.test(d.stdout) && /hook log · stop hook observed firing .* — (asked for a save|did not ask:)/.test(d.stdout),
     'doctor prints the start and stop evidence from the log', d.stdout.split('\n').filter((x) => /hook log/.test(x)).join(' | '));
+  // The log is the PRIMARY evidence on the harness line once a hook file is
+  // installed; the temp-dir markers are only the fallback.
+  const agLine = d.stdout.split('\n').find((x) => /^\s+Antigravity —/.test(x)) || '';
+  ok(!/Curator hook file/.test(agLine) || /observed firing .*\(hook log\)/.test(agLine),
+    'with a hook file installed, the harness line cites the hook log, not the markers', agLine);
   const words = HL.hookEvidenceWords(null, { installed: true });
   ok(words.join() === 'installed, not yet observed firing', 'no log lines + installed: "installed, not yet observed firing"');
 }
@@ -215,6 +220,11 @@ section('§6  install-hooks for Antigravity');
   ok(!existsSync(path.join(WORK, '.gitignore')), 'no .gitignore was created (that one is committed)');
   const st = execFileSync('git', ['status', '--porcelain'], { cwd: WORK, encoding: 'utf8' });
   ok(!st.includes('.agents'), 'git no longer offers .agents/hooks.json for commit', st);
+  // Now a hook file IS installed: the harness line must cite the log.
+  const d2 = run(['doctor'], { cwd: WORK });
+  const agLine2 = d2.stdout.split('\n').find((x) => /^\s+Antigravity —/.test(x)) || '';
+  ok(/Curator hook file/.test(agLine2) && /start hook observed firing .*\(hook log\)/.test(agLine2),
+    'installed hooks + a logged start: the harness line cites the hook log (markers are only the fallback)', agLine2);
 }
 
 rmSync(ROOT, { recursive: true, force: true });

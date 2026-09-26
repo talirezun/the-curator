@@ -208,6 +208,17 @@ export function hookStatusBits(h) {
   // (measured on the maintainer's Mac: over a hundred, left by 2026-09-19 suites,
   // for harnesses with no hook installed). What a marker proves is that the
   // hook COMMAND ran for this harness — so that is what the row says.
+  // THE HOOK ACTIVITY LOG FIRST (v3.77.0). It records every invocation with
+  // its decision and survives a restart; the markers below are cleared on
+  // restart and polluted by old test runs, so they are only the fallback.
+  const act = h.hookActivity;
+  if (act && (act.start || act.stop)) {
+    const at = (x) => `${x.at.slice(0, 16).replace('T', ' ')} UTC`;
+    const words = [];
+    if (act.start) words.push(`start hook observed firing ${at(act.start)}`);
+    if (act.stop) words.push(`stop hook observed firing ${at(act.stop)}`);
+    return [...bits, `hooks installed · ${words.join(' · ')} (hook log)`];
+  }
   const installedAt = Math.min(...ours.map((x) => (Number.isFinite(x.mtimeMs) ? x.mtimeMs : Infinity)));
   const last = h.hookRuns?.lastRunAt ? Date.parse(h.hookRuns.lastRunAt) : NaN;
   if (Number.isFinite(last) && Number.isFinite(installedAt) && last >= installedAt) {
