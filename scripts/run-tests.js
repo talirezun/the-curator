@@ -421,6 +421,14 @@ const LIVE_LOCAL = [
   // pair must read 1.00, black-on-white 21.00) in its output every run.
   // Self-skips at exit 0 with a `⊘` line when no browser is installed.
   'test-next-checkbox-visual.js',
+  // test-chat-composer-pills: a browser, like its neighbours. The Chat
+  // composer's four pills clipped to "Early Computi…" / "No proje…" at 1280px
+  // on the README's own screenshot while every offline suite was green: a
+  // flex-shrink weight took 0.22px off each, and ellipsis drops whole glyphs
+  // for that. `scrollWidth` is an integer and cannot see it — this measures
+  // each value's Range box against the element at 1400/1280/1100/900/700,
+  // with a planted-clip control first. Self-skips at exit 0 with no browser.
+  'test-chat-composer-pills.js',
 ];
 
 // All live suites, for labelling.

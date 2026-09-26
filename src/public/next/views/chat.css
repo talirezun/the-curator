@@ -232,9 +232,11 @@
 .chat-pill-lead { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .chat-pill-k { color: var(--text-3); }
 .chat-composer-vsep { width: 1px; height: 16px; background: var(--border); margin: 0 2px; flex: none; }
-/* In a column too narrow for one row the pills wrap, and a divider between
-   two pills that no longer sit side by side is a stray line. */
-@media (max-width: 760px) { .chat-composer-vsep { display: none; } }
+/* In a row too narrow for one line of pills they wrap, and a divider between
+   two pills that no longer sit side by side is a stray line. v3.77.0: decided
+   by the ROW's width (the chatctl container, below), not the viewport's — at
+   a 900px window the row is ~495px and the divider sat alone at a line end. */
+@container chatctl (max-width: 719.98px) { .chat-composer-vsep { display: none; } }
 .chat-project-host { display: inline-flex; align-items: center; min-width: 0; }
 .chat-dom-foot {
   margin: 0;
@@ -1386,56 +1388,54 @@
 }
 
 
-/* The composer's two listbox triggers. `.chat-lb` only narrows the shared
-   `.lb-sm` variant to this row's rhythm — everything else about the control is
-   shared/listbox.css's, which is the point of adopting it. */
+/* The composer's listbox triggers: `.lb-sm` restyled to this row's rhythm
+   above — everything else about the control is shared/listbox.css's, which is
+   the point of adopting it. */
 .chat-composer-pickers { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 /* v3.72.0: four pills now (domain, project, length, model). They WRAP to a
-   second row rather than squeezing a domain name to "Arti…": each pill keeps
-   its natural width up to a cap, and the strip takes the row's free width. */
+   second row rather than squeezing a domain name to "Arti…".
+   v3.77.0: and they never SHRINK. A v3.72.0 P4 rule used to
+   switch the strip to `nowrap` once the row was 720px wide and let each pill
+   give way by a flex-shrink weight (model 10, domain and project 0.1). At the
+   1280px reference width the row is 754px and four pills measured ~50px over
+   it, so the model name lost 24px and the domain and project lost a FRACTION
+   of a pixel each — 0.22px, measured — which is still enough for ellipsis to
+   drop whole glyphs: "Early Computi…", "No proje…" on the README's own
+   screenshot. A shrink weight cannot express "not below the name", so the
+   pills now keep their natural width (capped only by the strip itself) and
+   the strip wraps; a pill that has not got room goes to the next row whole. */
 .chat-composer-pickers { flex: 1 1 0%; flex-wrap: wrap; row-gap: 6px; column-gap: 6px; }
 .chat-composer-pickers > .lb,
-.chat-composer-pickers > .chat-project-host { flex: 0 0 auto; max-width: 100%; }
-.chat-composer-pickers .lb-btn { max-width: 15rem; }
-.chat-lb { max-width: 220px; }
+.chat-composer-pickers > .chat-project-host { flex: 0 0 auto; max-width: 100%; min-width: 0; }
+.chat-composer-pickers .lb-btn { max-width: 100%; }
 
-/* ── ONE ROW WHEN THE ROW HAS ROOM (v3.72.0, P4) ───────────────────────────
-   At 1400px the composer's control row is ~754px, and four pills + the cost
-   hint + Send measured ~50px over it with a project pinned and a named model
-   picked, so the Model pill wrapped to a second line (P3's report). The type
-   stays on the ramp; instead, once the ROW is wide enough to hold every pill
-   at its floor (a container query on the row itself, not the viewport — the
-   sidebar decides this width), the strip stops wrapping and the two free-text
-   names give way first: the PROJECT and the MODEL name ellipsise (the model's
-   full name and id stay in the trigger's `title`, the project's in its menu),
-   the domain less so, and Length — a fixed word — never. Below the threshold
-   the pills wrap exactly as before, so nothing is ever cut to "M…".
-   720px = the floors (6.5 + 7 + 7rem, Length's own width) + the hint + Send
-   + gaps, measured, with room to spare. */
+/* ── ONE ROW WHEN THE ROW HAS ROOM ────────────────────────────────────────
+   The row is a size container (not the viewport — the sidebar decides this
+   width). Once it is 720px or wider, two COMPACT LABELS buy the room for the
+   usual case to sit on one row with every value whole:
+   - the cost hint sets on two short lines beside Send (same words, same size),
+     which frees ~70px (v3.72.0 P4; now at every width, see below);
+   - the Model pill drops its leading word "Model" (v3.77.0). Its value is a
+     model's name, which says what it is on its own; the trigger's accessible
+     name still begins "Model", and the word returns below 720px, where the
+     pills wrap anyway. (At 720px+ a long domain name can still send the Model
+     pill to a second row without its word; its value still names a model.) Domain, Project and Length keep their
+     words: "Balanced" alone would not say what it sets.
+   Nothing shrinks: if a pinned project or a long model name still does not
+   fit, that pill wraps to a second row whole. */
 .chat-composer-controls { container-type: inline-size; container-name: chatctl; }
 @container chatctl (min-width: 720px) {
-  .chat-composer-pickers { flex-wrap: nowrap; }
-  .chat-composer-pickers > .lb,
-  .chat-composer-pickers > .chat-project-host { flex: 0 1 auto; min-width: 0; }
-  .chat-composer-pickers .lb-btn { min-width: 0; max-width: 100%; }
   .chat-composer-pickers { column-gap: 4px; }
-  .chat-composer-pickers > .chat-length-lb-root { flex-shrink: 0; }
-  /* The MODEL name gives way first (weight 10): its full name and id are in
-     the trigger's title and at the top of its own menu. A project or domain
-     name is the user's own word, so it shrinks only as a last resort. */
-  .chat-composer-pickers > .chat-domain-lb-root { flex-shrink: 0.1; min-width: 6.5rem; }
-  .chat-composer-pickers > .chat-project-host { flex-shrink: 0.1; min-width: 7rem; }
-  .chat-composer-pickers > .chat-model-lb-root { flex-shrink: 10; min-width: 7rem; }
-  /* The cost hint is the one COMPACT LABEL: it may set on two short lines
-     beside Send instead of one long one, which frees ~70px for the pills —
-     enough that a pinned project and a named model fit whole in the usual
-     case, and nothing is ellipsised at all. Same words, same size. */
-  .chat-composer-controls > .chat-cost-hint {
-    white-space: normal;
-    max-width: 9.5em;
-    text-align: right;
-    line-height: var(--leading-snug);
-  }
+  .chat-composer-pickers > .chat-model-lb-root .chat-pill-k { display: none; }
+}
+/* The cost hint's two short lines hold at EVERY row width (v3.77.0; it was
+   ≥720px only): below that the one long line took ~200px beside Send and left
+   the pills a ~274px strip at a 900px window — one pill per row, four rows. */
+.chat-composer-controls > .chat-cost-hint {
+  white-space: normal;
+  max-width: 9.5em;
+  text-align: right;
+  line-height: var(--leading-snug);
 }
 
 /* ── ASK AGAIN ────────────────────────────────────────────────────────────
