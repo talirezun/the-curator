@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.76.0` | Seven improvements after the two-harness test plus a fresh app-wide truth audit (15 findings, 1 high — all fixed): per-tool agent instructions (measured), a save with no scope goes to the tool's own scope, first-class Antigravity support, stable domain colours and a "not checked" health mark, Settings › Trash with Restore, a responsive shell, and every docs screenshot regenerated from synthetic demo data. |
 | `v3.75.0` | Delete one handoff (work-stream) from the app — typed, previewed, trashed, never by an agent — after the maintainer had to dig through folders to remove two test scopes by hand. |
 | `v3.74.0` | Two agent tools on one Mac, made followable and safe — the maintainer's live Claude Code + Antigravity test (2026-09-25) drove a new menubar widget, one tool identity, a truthful "latest", and a warning plus a kept copy when one tool's save replaces another's. |
 | `v3.73.0` | Delete domain and delete project are now server-confirmed and recoverable — type-to-confirm, a cross-process file lock, and the folder moved to `.curator-trash` instead of `rm -rf`, after the maintainer accidentally deleted the whole `projects` domain. |
