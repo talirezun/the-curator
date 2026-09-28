@@ -2914,3 +2914,25 @@
 .mem-setup-save-who { color: var(--text); font-weight: var(--weight-medium); }
 /* The file and computer rows open the reader: the tool row's own button. */
 .mem-setup-table .mem-ws-open .mem-ws-mine { margin-left: var(--space-3); }
+
+/* ── v3.80.0 — A TOOL THAT IS NOT READY: ITS SETUP GUIDE, IN THE READER ────
+   Four numbered steps. The numeral is the page's own step numeral
+   (`.settings-block-num`, shell.css) so the guide reads as the steps the
+   Context page is made of; each step's state is the Setup check's word with
+   its dot (shared/setup-check.css), and its doors are step ③'s door row. */
+.mem-setup-guide { display: flex; flex-direction: column; gap: var(--space-4); }
+.mem-setup-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-6); }
+.mem-setup-gstep { display: flex; align-items: flex-start; gap: var(--space-6); min-width: 0; }
+/* The numeral sits on the title's line; shell.css's optical nudge is for a
+   heading, this is body-size text. */
+.mem-setup-gnum { transform: none; margin-top: 1px; }
+.mem-setup-gbody { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.mem-setup-ghead { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-5); }
+.mem-setup-gtitle { font-size: var(--text-md); font-weight: var(--weight-medium); color: var(--text); }
+.mem-setup-gdoors { flex-wrap: wrap; gap: var(--space-3); }
+/* A done step says so and gets out of the way. */
+.mem-setup-gstep[data-guide-state="done"] .mem-setup-gtitle,
+.mem-setup-gstep[data-guide-state="skip"] .mem-setup-gtitle { color: var(--text-2); }
+/* A to-fix line inside its step: step ④'s two-line note, without the card. */
+.mem-setup-gfix { display: flex; align-items: flex-start; gap: var(--space-4); color: var(--text); }
+.mem-setup-gfix > svg { flex: none; margin-top: 3px; color: var(--attention-text); }

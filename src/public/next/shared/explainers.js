@@ -173,7 +173,7 @@ const E = {
       { icon: 'computer', text: '**Computers** saved this project; two installs on one Mac count once.' },
       { icon: 'refresh', text: '**Sync now** syncs your whole knowledge folder, every domain.' },
     ],
-    try: 'Tool not listed? Pick **Custom tool…** under **+ Add a tool** and name it.',
+    try: 'An added tool opens its setup steps in the reader. Unlisted? **Custom tool…**',
     guide: { key: 'context.setup', heading: 'The Setup check in the app' },
   },
 

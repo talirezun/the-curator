@@ -38,6 +38,11 @@
  *      that is outside home or not here.
  *  §14 DeepSeek Harness read from `cordis.yml` (rewritten on every launch) or
  *      a commented line counted; other entries leaking from the line-scan.
+ *
+ * v3.80.0:
+ *  §17 Remove offered on a row it would not take away (a tool that SAVED, or
+ *      one whose MCP settings here name us), a guide pointed at a config file
+ *      that is not there as if it were, or a reveal path for a missing file.
  *  §15 a tool called ready without a save from here; a custom tool's
  *      assumed AGENTS.md raised as a to-fix line.
  *
@@ -734,6 +739,53 @@ section('§16 to-fix lines, the block cap, travels and saves (v3.79.0)');
     ok(br && /~\/\.gemini\/antigravity\/mcp_config\.json/.test(br.text) && br.fixes.map((x) => x.kind).join() === 'copy-snippet,reveal', 'bridge "not in every file": names the file; Copy MCP entry · Reveal', br);
   }
   ok(S.shq("it's") === `'it'\\''s'` && S.shq('AGENTS.md') === 'AGENTS.md' && S.shq('a b') === "'a b'", 'shell quoting: safe words bare, the rest single-quoted');
+}
+
+section('§17 what a setup guide and a Remove need (v3.80.0)');
+{
+  // One fixture home: Windsurf's config exists but does not name us, Antigravity
+  // names us (so it is CONFIGURED here), Codex has no file at all.
+  const H = path.join(ROOT, 'guidehome');
+  w(path.join(H, '.codeium', 'windsurf', 'mcp_config.json'), JSON.stringify({ mcpServers: other }));
+  w(path.join(H, '.gemini', 'config', 'mcp_config.json'), JSON.stringify({ mcpServers: { 'my-curator': ours } }));
+  const rows = S.collectMachineSetup({ home: H, repo: REPO, skillsDir, domainsDir: DOMAINS });
+  const marker = await S.inspectMarker(REPO, { domain: 'projects', project: 'ott' });
+  const iso = new Date(Date.now() - 60e3).toISOString();
+  const r = S.collectProjectSetup({
+    domain: 'projects', project: 'ott', home: H, machine: { ids: ['mac-a-111111'] }, machineRows: rows,
+    pairs: [{ scope: 'claude-code', machine: 'mac-a-111111', harness: 'Claude Code', writtenAt: iso }],
+    repo: { path: REPO, source: 'set' }, marker, template: TEMPLATE,
+    addedTools: ['windsurf', 'codex', 'claude-code', 'antigravity'], customTools: [{ id: 'fancy bot', label: 'Fancy Bot' }],
+  });
+  const t = (id) => r.tools.find((x) => x.id === id);
+  // removable: why each row is listed decides it.
+  ok(t('windsurf').userAdded === true && t('windsurf').removable?.ok === true, 'a known tool the owner added, never saved, not configured here: removable', t('windsurf').removable);
+  ok(t('claude-code').removable?.ok === false && t('claude-code').removable.why === 'saved', 'a tool that has SAVED stays (its saves are the record), even though it was also added', t('claude-code').removable);
+  ok(t('antigravity').removable?.ok === false && t('antigravity').removable.why === 'configured', 'a tool whose MCP settings here name The Curator stays', t('antigravity').removable);
+  ok(t('fancy bot').removable?.ok === true && t('fancy bot').userAdded === true, 'a custom tool the owner named: removable');
+  const r2 = S.collectProjectSetup({ domain: 'projects', project: 'ott', home: H, machine: { ids: [] }, machineRows: rows, pairs: [], repo: null, template: TEMPLATE, addedTools: [] });
+  ok(r2.tools.find((x) => x.id === 'antigravity')?.userAdded === false && r2.tools.find((x) => x.id === 'antigravity').removable.ok === false,
+    'CONTROL: a configured tool nobody added is not "userAdded" and not removable');
+  // reads: every row says which files it reads (a custom tool: the AGENTS.md convention).
+  ok(JSON.stringify(t('windsurf').reads) === '[]' && JSON.stringify(t('codex').reads) === '["AGENTS.md"]'
+    && JSON.stringify(t('antigravity').reads) === '["AGENTS.md","GEMINI.md"]' && JSON.stringify(t('fancy bot').reads) === '["AGENTS.md"]', 'reads: the files each tool reads');
+  // mcpTarget: the file that names us, else the first that exists, else the first; `file` only when it exists.
+  const wsT = t('windsurf').mcpTarget;
+  ok(wsT && wsT.display === '~/.codeium/windsurf/mcp_config.json' && wsT.file === path.join(H, '.codeium', 'windsurf', 'mcp_config.json') && wsT.exists === true && wsT.format === 'json',
+    'Windsurf: its existing config file, with the absolute path for Reveal', wsT);
+  const cxT = t('codex').mcpTarget;
+  ok(cxT && cxT.display === '~/.codex/config.toml' && !('file' in cxT) && cxT.exists === false && cxT.format === 'toml', 'Codex: no file yet — the display path only, never a path to reveal', cxT);
+  ok(t('antigravity').mcpTarget?.display === '~/.gemini/config/mcp_config.json', 'Antigravity: the file that already names my-curator', t('antigravity').mcpTarget);
+  ok(t('fancy bot').mcpTarget === null && t('fancy bot').skillsTarget === null, 'a custom tool: no target and no skills folder claimed');
+  ok(t('antigravity').skillsTarget?.verified === true && /plugins/.test(t('antigravity').skillsTarget.path) && t('claude-code').skillsTarget?.accountHeld === true
+    && t('windsurf').skillsTarget?.verified === false, 'skillsTarget: verified folder / account-held / not known', [t('antigravity').skillsTarget, t('claude-code').skillsTarget, t('windsurf').skillsTarget]);
+  // instructionFixes: the file's own doors, where its block is not ok.
+  const fx = t('codex').instructionFixes;
+  ok(Array.isArray(fx) && fx.map((x) => x.kind).join() === 'copy-block,reveal,copy-command' && fx[1].path === path.join(REPO, 'AGENTS.md') && /git add -- AGENTS\.md/.test(fx[2].command),
+    'a tool whose block is not current: copy, reveal and the commit-and-push command for its file', fx);
+  ok(JSON.stringify(t('windsurf').instructionFixes) === '[]' && JSON.stringify(r2.tools.find((x) => x.id === 'antigravity').instructionFixes) === '[]',
+    'none for a tool that reads no file, or with no repository set');
+  ok(!JSON.stringify(r).includes(SECRET) && !JSON.stringify(r).includes(OTHER), 'privacy holds on the new fields (no other server\'s name or value)');
 }
 
 section('§10 a read writes nothing');

@@ -52,6 +52,20 @@
 /* "price unavailable" is words, not a figure: it keeps the column but not
    the numerals' weight. Still --text-2 (a fact, not a disabled state). */
 .mr-price.is-unknown { font-style: italic; }
+/* v3.80.0 — the same right column on a list that is not models
+   (`listRowBodyHtml`, the Setup step's "+ Add a tool"): a short fact in
+   WORDS, so the price column's place and ink without its tabular numerals. */
+.mr-fact {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  align-self: baseline;
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--text-2);
+  white-space: nowrap;
+  text-align: right;
+}
 .mr-meta,
 .mr-promo,
 .mr-note,
@@ -81,6 +95,7 @@
    second fill inside the first. */
 .lb-opt.is-selected .mr-title,
 .lb-opt.is-selected .mr-price,
+.lb-opt.is-selected .mr-fact,
 .lb-opt.is-selected .mr-meta,
 .lb-opt.is-selected .mr-sep,
 .lb-opt.is-selected .mr-promo,
@@ -179,3 +194,12 @@
 }
 .lb-opt.is-selected .mr-browse,
 .lb-opt.is-selected .mr-browse-sub { color: currentColor; }
+/* v3.80.0 — an action row that OPENS a group of its own (the Setup step's
+   "Other › Custom tool…") already has the group heading as its separator; a
+   rule under the heading would draw the break twice. The model menu's
+   "Browse all" has no heading before it and keeps its rule. */
+.lb-menu.mr-menu .lb-group + .lb-opt[data-lb-action] {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 7px;
+}

@@ -279,6 +279,41 @@ export function modelRowBodyHtml(provider, entry, o) {
 }
 
 /**
+ * THE SAME ROW ANATOMY, FOR A LIST THAT IS NOT MODELS (v3.80.0).
+ *
+ * The maintainer's report on Context › Setup's "+ Add a tool" (2026-09-28):
+ * one line per tool, the name at the left and a long mono description far
+ * right across the full width — "on hover you can't tell what belongs to
+ * what" — while the composer's model menu two rows away reads well. Both are
+ * the ONE shared listbox; what differed was the row BODY (the listbox's plain
+ * label + mono detail, `flex: none`, and no width cap) and the menu class.
+ * So a list of anything else a user picks from takes this body and the model
+ * menu's `lb-rich mr-menu` class, and the two cannot drift apart:
+ *
+ *   line 1  the name (.mr-title)                          a short fact, right (.mr-fact)
+ *   line 2  a few short facts, " · "-separated              (.mr-meta)
+ *
+ * `fact` is WORDS (a state such as "not measured"), not a price, so it gets
+ * its own class — the price column's tabular numerals would claim a figure.
+ * Every value is escaped. '' parts are dropped.
+ *
+ * @param {{title: string, fact?: string, meta?: string[]}} o
+ */
+export function listRowBodyHtml(o) {
+  const opts = o || {};
+  const meta = (Array.isArray(opts.meta) ? opts.meta : []).filter((m) => typeof m === 'string' && m);
+  return (
+    '<span class="mr-body">' +
+      '<span class="mr-title">' + esc(opts.title) + '</span>' +
+      (typeof opts.fact === 'string' && opts.fact ? '<span class="mr-fact">' + esc(opts.fact) + '</span>' : '') +
+      (meta.length
+        ? '<span class="mr-meta">' + meta.map(esc).join('<span class="mr-sep" aria-hidden="true"> · </span>') + '</span>'
+        : '') +
+    '</span>'
+  );
+}
+
+/**
  * The menu's one foot line: the unit (so no row has to repeat it), where the
  * choice is kept, and — only when the server gave one — the OpenRouter
  * catalogue's own sync stamp. Gemini and Anthropic prices are shipped with

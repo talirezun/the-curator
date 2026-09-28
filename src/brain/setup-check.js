@@ -1203,6 +1203,42 @@ export function collectProjectSetup(o) {
       evidence.push({ heading: 'Hooks', lines, ...(reveal ? { reveal } : {}) });
     }
 
+    // ── What a setup guide and a Remove need (v3.80.0, additive) ─────────
+    // The view builds a numbered guide in the tool's reader from these, and
+    // offers Remove only where it would actually take the row away.
+    row.reads = [...names];
+    if (a) row.userAdded = (o.addedTools || []).includes(id);
+    // WHY A ROW IS LISTED decides whether it can be removed: a tool that has
+    // SAVED this project stays (its saves are this project's record), and a
+    // tool whose MCP settings here name my-curator stays (the check found it,
+    // nobody added it). Only the owner's own addition is taken back.
+    const configured = !!(m && m.configured && m.instructionNames.length);
+    row.removable = s ? { ok: false, why: 'saved' }
+      : configured ? { ok: false, why: 'configured' }
+        : row.userAdded ? { ok: true } : { ok: false, why: 'not-added' };
+    {
+      // Where the MCP entry goes: the file that already names us, else the
+      // first of the tool's own files that exists, else its first own file.
+      // `file` (absolute — the route reveals it) only when it exists here.
+      const own = (m?.files || []).filter((f) => f.via === 'own');
+      const pick = own.find((f) => f.named) || own.find((f) => f.present) || own[0] || null;
+      const cfg = a?.mcpConfig || null;
+      row.mcpTarget = pick
+        ? { display: pick.display || tildeUnder(o.home || '', pick.file), ...(pick.present ? { file: pick.file } : {}),
+          format: cfg?.format || null, verified: cfg?.verified === true, exists: !!pick.present }
+        : null;
+      const tree = a?.skillsTree || null;
+      row.skillsTarget = tree
+        ? { path: typeof tree.path === 'string' && tree.path ? tree.path : null, verified: tree.verified === true, accountHeld: tree.accountHeld === true }
+        : null;
+    }
+    // The instruction file's own doors, for a guide step that has no to-fix
+    // line to borrow them from (a custom tool's ASSUMED AGENTS.md is never a
+    // to-fix): copy, reveal, and the git command that commits and pushes it.
+    row.instructionFixes = repoPath && names.length && row.block.state !== STATES.OK
+      ? blockFixes(names[0], 'Add The Curator instructions')
+      : [];
+
     // ── One word per tool, and the four parts (v3.78.0) ──────────────────
     row.parts = {
       mcp: { state: row.bridge.state, word: row.bridge.word, travels: TRAVELS.THIS_COMPUTER },

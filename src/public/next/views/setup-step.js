@@ -51,6 +51,9 @@
 
 import { ageWordsFor } from '../shared/age-ticker.js';
 import { freshnessTier } from '../shared/age.js';
+// v3.80.0: the "+ Add a tool" rows are the composer's model rows' anatomy
+// (import-free, DOM-free — the suite still imports this module in Node).
+import { listRowBodyHtml } from '../shared/model-row.js';
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -63,7 +66,8 @@ const SVG = (body, px) => '<svg width="' + px + '" height="' + px + '" viewBox="
   + 'stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + body + '</svg>';
 const ICON_TRI = SVG('<path d="M12 9v3.6M12 16.6h.01"/><path d="M10.4 3.6 2.2 18a1.8 1.8 0 0 0 1.55 2.7h16.5A1.8 1.8 0 0 0 21.8 18L13.6 3.6a1.8 1.8 0 0 0-3.2 0z"/>', 13);
 const ICON_CIRC = SVG('<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/>', 13);
-const ICON_CHEV = '<svg class="icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_TRASH = SVG('<path d="M4.5 6.5h15M9.5 6.5V4.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.7M6.5 6.5l.7 12.4a1.5 1.5 0 0 0 1.5 1.4h6.6a1.5 1.5 0 0 0 1.5-1.4l.7-12.4"/>', 13);
+const ICON_CHEV ='<svg class="icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 export const SETUP_JUMP = 'context-setup';
 
@@ -278,8 +282,36 @@ function toolRow(t, data) {
       + partMark('MCP', parts.mcp) + partMark('skills', parts.skills)
       + partMark('block', parts.block) + partMark('hooks', parts.hooks)
     + '</span></td>'
+    // v3.80.0 — THE HANDOFFS ROW'S TRASH (shared/row-action.css: a neutral
+    // ghost icon, visible at rest, never red), only on a row Remove would
+    // actually take away. No confirm: it stops a CHECK on this computer and
+    // deletes nothing — the menu adds it back.
+    + '<td class="mem-ws-cell-act">' + (removableOf(t).ok
+      ? '<button type="button" class="row-act mem-setup-del" id="mem-setup-del-' + escapeHtml(t.id) + '"'
+        + ' data-setup-act="remove-tool" data-tool="' + escapeHtml(t.id) + '"'
+        + ' aria-label="' + escapeHtml('Remove ' + t.label + ' from this computer’s list') + '">' + ICON_TRASH + '</button>'
+      : '') + '</td>'
     + '</tr>';
 }
+
+/**
+ * CAN THIS ROW BE TAKEN OFF THIS COMPUTER'S LIST? (v3.80.0) The payload's
+ * `removable` when sent: a tool that has SAVED this project stays (its saves
+ * are the record) and one whose MCP settings here name The Curator stays (the
+ * check found it; nobody added it). A v3.79.0 server sends no `removable`:
+ * then only a custom tool the owner added, which that server could remove. Pure.
+ */
+export function removableOf(t) {
+  if (!t) return { ok: false, why: null };
+  if (t.removable && typeof t.removable === 'object') {
+    return { ok: t.removable.ok === true, why: isStr(t.removable.why) ? t.removable.why : null };
+  }
+  if (t.custom === true && t.userAdded !== false && !(t.saved && t.saved.at)) return { ok: true, why: null };
+  return { ok: false, why: t.saved && t.saved.at ? 'saved' : null };
+}
+
+/** The Tools fold's count line: how its parts travel, and what "ready" takes, in one sentence each. */
+export const TOOLS_COUNT_LINE = 'A tool is ready once it is connected here, reads the Curator instructions and has saved this project from this computer — press one for its setup steps.';
 
 function toolsTable(data) {
   const tools = (data.tools || []).filter((t) => t && isStr(t.id));
@@ -288,9 +320,10 @@ function toolsTable(data) {
   }
   return '<div class="mem-ws-wrap"><table class="mem-ws-table mem-setup-table">'
     + '<thead><tr><th scope="col">Tool</th><th scope="col">Status</th><th scope="col">Last saved</th>'
-    + '<th scope="col">Saved from</th><th scope="col">On this computer</th></tr></thead>'
+    + '<th scope="col">Saved from</th><th scope="col">On this computer</th>'
+    + '<th scope="col" class="mem-ws-cell-act"><span class="visually-hidden">Actions</span></th></tr></thead>'
     + '<tbody>' + tools.map((t) => toolRow(t, data)).join('') + '</tbody></table></div>'
-    + '<div class="mem-ws-count">' + escapeHtml(TRAVELS_LINES['setup-tools']) + ' Last saved is this project’s record from every computer. Press a tool for its evidence.</div>';
+    + '<div class="mem-ws-count">' + escapeHtml(TRAVELS_LINES['setup-tools']) + ' ' + escapeHtml(TOOLS_COUNT_LINE) + '</div>';
 }
 
 function toolsMeta(data) {
@@ -304,27 +337,86 @@ function toolsMeta(data) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
+ * WHERE A TOOL'S MCP SETTINGS LIVE, SHORT (v3.80.0): the FOLDER, never the
+ * file and never three of them — "~/.codex" for "~/.codex/config.toml". A file
+ * straight under home stays the file ("~/.claude.json"); a long folder keeps
+ * its first and last segment ("~/Library/…/Claude"). The full paths belong in
+ * the tool's reader, where its setup guide names the exact file. Pure.
+ */
+export function shortConfigPlace(p) {
+  if (!isStr(p)) return null;
+  const segs = p.replace(/\/+$/, '').split('/');
+  if (segs.length <= 2) return p;
+  const dir = segs.slice(0, -1);
+  const joined = dir.join('/');
+  if (joined.length <= 24 || dir.length <= 2) return joined;
+  return dir[0] + '/' + dir[1] + '/…/' + dir[dir.length - 1];
+}
+
+/** "AGENTS.md", "AGENTS.md and GEMINI.md", ".rules, AGENTS.md, CLAUDE.md". Pure. */
+function fileList(names) {
+  const n = (Array.isArray(names) ? names : []).filter(isStr);
+  if (n.length <= 2) return n.join(' and ');
+  return n.join(', ');
+}
+
+/**
+ * One menu row's second line, as its facts: "reads AGENTS.md", "MCP config
+ * in ~/.codex". A v3.79.0 server sends neither `reads` nor `configPaths`:
+ * its `detail` is then the line, as it was. Pure.
+ */
+export function toolMenuMeta(a) {
+  if (!a) return [];
+  const hasFacts = Array.isArray(a.reads) || Array.isArray(a.configPaths);
+  if (!hasFacts) return isStr(a.detail) ? [a.detail] : [];
+  const reads = Array.isArray(a.reads) ? a.reads.filter(isStr) : [];
+  const place = a.measured === false ? null : shortConfigPlace((a.configPaths || []).find(isStr));
+  return [
+    reads.length ? 'reads ' + fileList(reads) : 'reads no instruction file',
+    place ? 'MCP config in ' + place : null,
+  ].filter(Boolean);
+}
+
+/** The menu's foot, the model menu's `.mr-foot` line. */
+export const TOOL_MENU_FOOT = 'Adding a tool only tells Setup to check it on this computer — you connect it yourself.';
+
+/**
  * ONE cfg, for both `renderListboxHtml` and `mountListbox` (memory.js calls
  * both with it). Groups "Known tools" / "Other"; "Custom tool…" is an ACTION
  * row (it opens a name field and never becomes the control's value). A
  * v3.77.0 server sends no groups and no custom row: every option is a known
- * tool and there is no custom row to offer. Pure.
+ * tool and there is no custom row to offer.
+ *
+ * v3.80.0 — THE COMPOSER'S MODEL MENU'S ROWS AND SURFACE. Same listbox, same
+ * row body (`listRowBodyHtml`, shared/model-row.js: the name, a short fact at
+ * the right, a muted second line), same menu class (`lb-rich mr-menu`: 360–
+ * 420 px, never full-bleed) and the same `.mr-foot` foot line. The old plain
+ * rows were the listbox's label + a mono `detail` pinned right with no width
+ * cap, so the menu ran the width of the window. Pure.
  */
 export function setupToolPickerCfg(data, busy = false) {
   const addable = Array.isArray(data && data.addable) ? data.addable.filter((a) => a && isStr(a.id)) : [];
   const known = addable.filter((a) => a.id !== CUSTOM_TOOL_VALUE && a.group !== 'other');
   const other = addable.filter((a) => a.id !== CUSTOM_TOOL_VALUE && a.group === 'other');
   const custom = addable.find((a) => a.id === CUSTOM_TOOL_VALUE) || null;
-  const opt = (a, group) => ({
-    value: a.id,
-    label: isStr(a.label) ? a.label : a.id,
-    group,
-    detail: a.measured === false ? 'config location not measured' : (isStr(a.detail) ? a.detail : ''),
-  });
+  const opt = (a, group) => {
+    const label = isStr(a.label) ? a.label : a.id;
+    const meta = toolMenuMeta(a);
+    const fact = a.measured === false ? 'not measured' : '';
+    return {
+      value: a.id,
+      label,
+      group,
+      detail: [...meta, fact].filter(Boolean).join(' · '),
+      html: listRowBodyHtml({ title: label, fact, meta }),
+    };
+  };
   const options = [...known.map((a) => opt(a, 'Known tools')), ...other.map((a) => opt(a, 'Other'))];
   if (custom) {
-    options.push({ value: CUSTOM_TOOL_VALUE, label: isStr(custom.label) ? custom.label : 'Custom tool…', group: 'Other',
-      detail: isStr(custom.detail) ? custom.detail : 'name it, point it at The Curator', action: true });
+    const label = isStr(custom.label) ? custom.label : 'Custom tool…';
+    const meta = ['any other MCP client', 'you name it'];
+    options.push({ value: CUSTOM_TOOL_VALUE, label, group: 'Other', action: true,
+      detail: meta.join(' · '), html: listRowBodyHtml({ title: label, meta }) });
   }
   return {
     id: 'mem-setup-add',
@@ -334,6 +426,9 @@ export function setupToolPickerCfg(data, busy = false) {
     ariaLabel: 'Add an agent tool to check on this computer',
     disabled: busy === true || options.length === 0,
     triggerClass: 'btn btn-secondary btn-xs',
+    menuClass: 'lb-rich mr-menu',
+    minWidth: 360,
+    footHtml: '<p class="mr-foot">' + escapeHtml(TOOL_MENU_FOOT) + '</p>',
     actionValues: custom ? [CUSTOM_TOOL_VALUE] : [],
     options,
   };
@@ -887,6 +982,261 @@ export function toolEvidence(t) {
   return out.filter((e) => e.lines.length);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// THE SETUP GUIDE — a tool that is not ready, as four numbered steps (v3.80.0)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The maintainer, 2026-09-28: after "+ Add a tool" nobody knows what to do
+// next. So the reader of a tool that is not ready opens on the four things
+// "ready" takes, in the order they are done, each built from what the check
+// already read and each carrying its own state and its own doors:
+//
+//   1 Connect The Curator's MCP   — the file, its format, the entry to copy
+//   2 Install the two skills      — where they go, the .zip files (or: skip)
+//   3 Put the Curator instructions in the file it reads, then commit + push
+//   4 Let it save once, from this computer
+//
+// A to-fix line about the tool is shown INSIDE the step it belongs to (its
+// words and its buttons), never a second time above the guide. Nothing here
+// writes anything: every door copies, reveals or downloads.
+
+/** A guide state → [the state class it is inked with, its word]. */
+export const GUIDE_MARKS = Object.freeze({
+  done: ['ok', 'done'],
+  fix: ['fix', 'to fix'],
+  todo: ['none', 'to do'],
+  cant: ['cant-check', 'can’t check here'],
+  wait: ['not-checked', 'not checked yet'],
+  optional: ['none', 'optional'],
+  skip: ['none', 'skip'],
+});
+
+const FORMAT_WORDS = { json: 'JSON', toml: 'TOML', yaml: 'YAML', jsonc: 'JSON' };
+const STEP_KINDS = {
+  mcp: (k) => k === 'bridge' || k === 'bridge-file',
+  skills: (k) => k === 'skills',
+  block: (k) => /^block-/.test(k),
+  save: (k) => k === 'wrong-scope',
+};
+
+/** This app's own skill downloads for a tool (a payload href is data). */
+function zipLinksFor(t) {
+  const own = Array.isArray(t && t.skillZips) ? t.skillZips.filter((z) => z && isStr(z.href) && SKILL_HREF_RE.test(z.href)) : [];
+  return own.length
+    ? own.map((z) => '<a class="btn btn-ghost btn-xs" href="' + escapeHtml(z.href) + '" download>' + escapeHtml(isStr(z.name) ? z.name : baseName(z.href)) + '</a>').join('')
+    : ZIPS;
+}
+
+/** The instruction files a tool reads: the payload's `reads`, else what this view knows. Pure. */
+function readsOf(t) {
+  if (Array.isArray(t && t.reads)) return t.reads.filter(isStr);
+  if (isStr(t && t.instructionFile)) return [t.instructionFile];
+  return FIRST_FILE[t && t.id] ? [FIRST_FILE[t.id]] : [];
+}
+
+/** A to-fix item's two lines as step prose. */
+function itemText(f) {
+  return '<p class="mem-setup-ev-p mem-setup-gfix">' + ICON_TRI
+    + '<span class="mem-setup-note-text"><span class="mem-setup-note-l1">' + withPaths(String(f.text || '')) + '</span>'
+    + (isStr(f.detail) ? '<span class="mem-setup-note-l2">' + withPaths(f.detail) + '</span>' : '') + '</span></p>';
+}
+
+/**
+ * The four steps for one tool: `[{key, title, state, html, doors}]` plus the
+ * to-fix items each one took. Pure over the payload.
+ */
+export function toolGuideSteps(t, data) {
+  const label = t.label || t.id;
+  const parts = toolParts(t);
+  const repo = data && data.repo && data.repo.exists !== false ? data.repo : null;
+  const repoWhere = repo ? (repo.display || repo.path) : null;
+  const items = ((data && data.toFix) || []).filter((f) => f && f.tool === t.id);
+  const placed = new Set();
+  const take = (key) => {
+    const got = items.filter((f) => STEP_KINDS[key](String(f.kind || '')));
+    got.forEach((f) => placed.add(f));
+    return got;
+  };
+  const fromItems = (got) => ({ html: got.map(itemText).join(''), doors: got.map((f) => fixButtons(f, repo)).join('') });
+  const p = (text) => '<p class="mem-setup-ev-p">' + withPaths(text) + '</p>';
+  const steps = [];
+
+  // ── 1 · MCP ──────────────────────────────────────────────────────────────
+  {
+    const got = take('mcp');
+    const snip = t.mcpSnippet && isStr(t.mcpSnippet.text) ? t.mcpSnippet : null;
+    const target = t.mcpTarget && isStr(t.mcpTarget.display) ? t.mcpTarget : null;
+    const unmeasured = t.measured === false || ((data && data.addable) || []).some((a) => a && a.id === t.id && a.measured === false);
+    let state;
+    let html;
+    let doors = '';
+    if (parts.mcp.state === 'ok') {
+      state = 'done';
+      html = p(target && target.exists ? target.display + ' names The Curator.' : 'Connected — ' + parts.mcp.word + '.');
+    } else {
+      state = got.length ? 'fix' : parts.mcp.state === 'cant-check' ? 'cant' : 'todo';
+      const fmt = FORMAT_WORDS[(snip && snip.format) || (target && target.format)] || null;
+      let where;
+      if (t.id === 'dsh') where = 'Paste into ~/.dsh/cordis.patch.yml (merge — do not copy over the file); never cordis.yml.';
+      else if (unmeasured) where = 'Config location not measured — copy the entry by hand into ' + label + '’s own MCP settings.';
+      else if (t.custom === true || !target) where = 'Add this entry to ' + label + '’s MCP settings' + (t.custom === true ? ' — most tools read this mcpServers shape.' : '.');
+      else where = 'Add this entry to ' + target.display + (fmt ? ' (' + fmt + ')' : '')
+        + (target.exists ? ', beside what is already there' : ' — create the file if it isn’t there') + ', then restart ' + label + '.';
+      html = (got.length ? fromItems(got).html : '') + p(where)
+        + (snip ? '<pre class="mem-setup-snippet"><code>' + escapeHtml(snip.text) + '</code></pre>' : '');
+      if (got.length) doors = fromItems(got).doors;
+      if (snip && !/data-setup-act="copy-snippet"/.test(doors)) doors = btn2('copy-snippet', 'Copy MCP entry', ' data-tool="' + escapeHtml(t.id) + '"') + doors;
+      if (!snip && !doors) doors = btn2('settings', 'Open Tools on this Mac');
+      if (target && isStr(target.file) && !doors.includes('data-path="' + escapeHtml(target.file) + '"')) {
+        doors += btnG('reveal', 'Reveal ' + baseName(target.file), ' data-path="' + escapeHtml(target.file) + '"');
+      }
+    }
+    steps.push({ key: 'mcp', title: 'Connect The Curator’s MCP', state, html, doors });
+  }
+
+  // ── 2 · SKILLS ───────────────────────────────────────────────────────────
+  {
+    const got = take('skills');
+    const tree = t.skillsTarget && typeof t.skillsTarget === 'object' ? t.skillsTarget : null;
+    let state;
+    let html;
+    let doors = '';
+    if (got.length) {
+      state = 'fix';
+      ({ html, doors } = fromItems(got));
+    } else if (parts.skills.state === 'ok') {
+      state = 'done';
+      html = p('Both skills are installed and current (' + parts.skills.word + ').');
+    } else if (tree && tree.accountHeld) {
+      state = 'cant';
+      html = p(label + ' keeps skills in your Claude account, which The Curator can’t read. If they are not there yet, add both from these files.');
+      doors = zipLinksFor(t);
+    } else if (tree && tree.verified && tree.path) {
+      state = 'todo';
+      html = p('Unzip both into ' + tree.path + ' — one folder per skill — then start a new ' + label + ' session.');
+      doors = zipLinksFor(t);
+    } else if (tree && tree.verified && !tree.path) {
+      state = 'skip';
+      html = p(label + ' has no skills support — skip this step. The instructions in step 3 carry what it needs.');
+    } else {
+      state = 'optional';
+      html = p('Whether ' + label + ' reads skills is not known. If it does, install both the way it documents; if not, skip this step.');
+      doors = zipLinksFor(t);
+    }
+    steps.push({ key: 'skills', title: 'Install the two skills', state, html, doors });
+  }
+
+  // ── 3 · THE INSTRUCTIONS ─────────────────────────────────────────────────
+  {
+    const got = take('block');
+    const names = readsOf(t);
+    const file = names[0] || 'AGENTS.md';
+    let state;
+    let html;
+    let doors = '';
+    if (got.length) {
+      state = 'fix';
+      ({ html, doors } = fromItems(got));
+    } else if (parts.block.state === 'ok') {
+      state = 'done';
+      const cur = ((t.block && t.block.files) || []).find((f) => f && f.current && f.hasBlock && isStr(f.name));
+      html = p('The Curator instructions are current in ' + (cur ? cur.name : fileList(names) || file) + '.');
+    } else if (!names.length) {
+      state = 'optional';
+      html = p(label + ' reads no instruction file The Curator knows — it keeps its own rules. Paste the Curator instructions into them, or skip this step.');
+      doors = btn2('copy-block', 'Copy instructions');
+    } else if (parts.block.state === 'not-checked' || !repo) {
+      state = 'wait';
+      html = p(label + ' reads ' + fileList(names) + '. Paste the Curator instructions at the very top of ' + file
+        + ' in your project’s top folder, then commit and push it so your other computers get it too.')
+        + p('Setup checks the file once you set where the project’s code is on this computer.');
+      doors = btn2('copy-block', 'Copy instructions') + btnG('choose-repo', 'Set the folder');
+    } else {
+      state = 'todo';
+      html = p(label + ' reads ' + fileList(names) + (t.custom === true ? ' (assumed — most tools do)' : '')
+        + '. Paste the Curator instructions at the very top of ' + file + ' in ' + repoWhere + ', then commit and push it so your other computers get it too.');
+      const fx = Array.isArray(t.instructionFixes) ? t.instructionFixes : [];
+      doors = fx.length ? fixButtons({ fixes: fx, tool: t.id }, repo) : btn2('copy-block', 'Copy instructions');
+    }
+    steps.push({ key: 'block', title: 'Put the Curator instructions in the file it reads', state, html, doors });
+  }
+
+  // ── 4 · THE FIRST SAVE ───────────────────────────────────────────────────
+  {
+    const got = take('save');
+    const sv = t.saved && t.saved.at ? t.saved : null;
+    const own = sv && !wrongSave({ ...sv, tool: t.id }, data);
+    let state;
+    let html;
+    let doors = '';
+    const how = 'Open a new conversation in ' + label + ' in your project’s folder' + (repoWhere ? ' (' + repoWhere + ')' : '')
+      + ' and give it a task. It turns ready once it saves this project from this computer under its own name, “' + t.id + '”.';
+    if (got.length) {
+      state = 'fix';
+      ({ html, doors } = fromItems(got));
+    } else if (sv && sv.thisMachine && own) {
+      state = 'done';
+      html = '<p class="mem-setup-ev-p">' + escapeHtml('Saved from this computer ') + ageSpan(sv.at, null) + '.</p>';
+    } else if (sv && !sv.thisMachine) {
+      state = 'todo';
+      html = p('It has saved this project from ' + (isStr(sv.machine) ? sv.machine : 'another computer') + ', not from this one yet. ' + how);
+    } else {
+      state = 'todo';
+      html = p(how);
+    }
+    steps.push({ key: 'save', title: 'Let it save once, from this computer', state, html, doors });
+  }
+  return { steps, placed };
+}
+
+/** The guide's markup, and which to-fix items it placed. Pure. */
+export function toolGuide(t, data) {
+  const { steps, placed } = toolGuideSteps(t, data);
+  const label = t.label || t.id;
+  const left = steps.filter((x) => !['done', 'skip', 'optional'].includes(x.state)).length;
+  const opt = steps.filter((x) => x.state === 'optional').length;
+  const html = '<section class="mem-setup-guide" aria-label="' + escapeHtml('Set up ' + label + ' on this computer') + '">'
+    + '<h3 class="mem-setup-ev-h">' + escapeHtml('Set up ' + label + ' on this computer') + '</h3>'
+    + '<p class="mem-setup-ev-p">' + escapeHtml((left
+      ? plural(left, 'step') + ' to do' + (opt ? ', ' + opt + ' optional' : '') + '. Setup re-checks when you come back to this window.'
+      : 'Nothing left to do here' + (opt ? ' (' + opt + ' optional)' : '') + ' — Re-check to read it again.')) + '</p>'
+    + '<ol class="mem-setup-steps">'
+    + steps.map((x, i) => {
+      const [cls, word] = GUIDE_MARKS[x.state] || GUIDE_MARKS.todo;
+      return '<li class="mem-setup-gstep" data-guide-step="' + x.key + '" data-guide-state="' + x.state + '">'
+        + '<span class="settings-block-num mem-setup-gnum" aria-hidden="true">' + (i + 1) + '</span>'
+        + '<div class="mem-setup-gbody">'
+        + '<div class="mem-setup-ghead"><span class="mem-setup-gtitle">' + escapeHtml(x.title) + '</span>' + st(cls, word) + '</div>'
+        + x.html
+        + (x.doors ? '<span class="mem-k-doors mem-setup-gdoors">' + x.doors + '</span>' : '')
+        + '</div></li>';
+    }).join('')
+    + '</ol></section>';
+  return { html, placed, steps };
+}
+
+/**
+ * Remove, where it belongs (v3.80.0): a tool the owner added and that has
+ * not saved is taken off this computer's list; one that has saved says why
+ * it stays. Nothing is uninstalled either way.
+ */
+function removeSection(t) {
+  const r = removableOf(t);
+  const label = t.label || t.id;
+  if (r.ok) {
+    return '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">On this computer’s list</h3>'
+      + '<p class="mem-setup-ev-p">' + escapeHtml('You added ' + label + ' here. Removing it only stops Setup checking it on this computer — nothing is uninstalled, and “+ Add a tool” brings it back.') + '</p>'
+      + '<span class="mem-k-doors">' + btnG('remove-tool', 'Remove from this list', ' data-tool="' + escapeHtml(t.id) + '"') + '</span></section>';
+  }
+  if (t.userAdded !== true) return '';
+  const why = r.why === 'saved'
+    ? label + ' has saved this project, so it stays on the list — its saves are this project’s record.'
+    : r.why === 'configured'
+      ? label + '’s MCP settings on this computer name The Curator, so Setup keeps checking it. Take the entry out of its settings to take it off the list.'
+      : null;
+  return why ? '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">On this computer’s list</h3><p class="mem-setup-ev-p">' + escapeHtml(why) + '</p></section>' : '';
+}
+
 /**
  * The reader payload for one tool, or null. `hideBacklinks`: a tool is not a
  * wiki page, and "BACKLINKS · 0" under it would be a reading about nothing.
@@ -896,7 +1246,11 @@ export function toolReaderContent(data, toolId) {
   const t = ((data && data.tools) || []).find((x) => x && x.id === toolId);
   if (!t) return null;
   const s = toolStatus(t, data);
-  const fixes = (data.toFix || []).filter((f) => f && f.tool === t.id);
+  // v3.80.0: a tool that is not ready opens on its numbered SETUP GUIDE; the
+  // guide carries the snippet, the instructions, the skills and each to-fix
+  // line it belongs to, so those are not said a second time below it.
+  const guide = s.status === 'ready' ? null : toolGuide(t, data);
+  const fixes = (data.toFix || []).filter((f) => f && f.tool === t.id && !(guide && guide.placed.has(f)));
   const notes = fixes.map((f) => fixNote(f, data)).join('');
   const ev = toolEvidence(t).map((e) => '<section class="mem-setup-ev">'
     + '<h3 class="mem-setup-ev-h">' + escapeHtml(e.heading) + '</h3>'
@@ -932,14 +1286,11 @@ export function toolReaderContent(data, toolId) {
     ? '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">Skill downloads</h3><p class="mem-setup-ev-p">The two skills this app carries, to install in the tool’s own skills folder.</p>'
       + '<span class="mem-k-doors">' + zipLinks + '</span></section>'
     : '';
-  // Only a tool the owner ADDED can be removed (a saved-only unknown tool is
-  // `custom` too, amendment A2, but is not on this computer's list).
-  const remove = t.custom === true && t.userAdded !== false
-    ? '<span class="mem-k-doors">' + btnG('remove-custom', 'Remove ' + t.label, ' data-name="' + escapeHtml(t.label) + '"') + '</span>'
-    : '';
   const bodyHtml = '<div class="mem-setup-reader">'
     + '<p class="mem-setup-ev-status">' + st(s.state, s.word) + '</p>'
-    + notes + ev + snippet + instr + zips + remove
+    + notes
+    + (guide ? guide.html + ev : ev + snippet + instr + zips)
+    + removeSection(t)
     + '<p class="mem-setup-ev-foot">Last saved is this project’s record from every computer. Everything else was read from files on this computer' + (isStr(data.checkedAt) ? ', ' + escapeHtml(ageWordsFor(data.checkedAt, Date.now(), null) || '') : '') + '.</p>'
     + '</div>';
   return {

@@ -266,9 +266,13 @@ function addableFor(shownIds) {
         measured ? `MCP entry in ${paths.join(' or ')}` : 'config location not measured — copy the entry by hand',
         names.length ? `reads ${names.join(' and ')}` : 'reads no instruction file The Curator knows',
       ].join(' · ');
-      return { id, label: a.label, group: 'known', detail, measured };
+      // v3.80.0 (additive): the menu's two-line row reads these, not `detail`
+      // — `reads` for "reads AGENTS.md", `configPaths` (the tool's own user
+      // paths first) for "MCP config in ~/.codex". `detail` stays for a
+      // v3.79.0 view.
+      return { id, label: a.label, group: 'known', detail, measured, reads: [...names], configPaths: measured ? paths : [] };
     });
-  return [...known, { id: '__custom', label: 'Custom tool…', group: 'other', detail: 'Any other MCP client: a generic entry, AGENTS.md and the skill .zip files.', measured: false }];
+  return [...known, { id: '__custom', label: 'Custom tool…', group: 'other', detail: 'Any other MCP client: a generic entry, AGENTS.md and the skill .zip files.', measured: false, reads: ['AGENTS.md'], configPaths: [] }];
 }
 
 function customToolIds() {

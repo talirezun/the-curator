@@ -12213,21 +12213,76 @@ function openSetupComputerReader(idx, token) {
   showSetupReader({ kind: 'computer', key: idx }, content, token);
 }
 
-/** PUT one known tool onto this computer's list (the listbox's pick). */
+/**
+ * Re-read the check now and, when it lands, open one tool's reader (v3.80.0):
+ * right after "+ Add a tool" the owner is shown that tool's setup guide
+ * instead of being left to find the new row. Nothing opens if the project
+ * changed meanwhile or the tool is not in the new reading.
+ */
+async function reloadSetupThenOpen(toolId, token) {
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  if (!domain || !project) return;
+  await loadSetup(domain, project, token);
+  if (!isCurrentMount(token) || !toolId) return;
+  const s = setupFor();
+  if (!s || !s.data || !(s.data.tools || []).some((t) => t && t.id === toolId)) return;
+  openSetupToolReader(toolId, token);
+}
+
+/**
+ * THIS COMPUTER'S LIST OF KNOWN TOOLS, written whole — "+ Add a tool" adds
+ * an id, Remove (v3.80.0) takes one out. The ONE `{ids}` call site.
+ */
+async function putSetupToolIds(ids, token) {
+  let res = null;
+  try {
+    res = await fetch('/api/setup/tools', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: [...new Set(ids)].filter(Boolean) }),
+    });
+  } catch (err) { reportAsyncActionFailure(err); return false; }
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({}));
+    if (isCurrentMount(token)) showToast({ key: 'setup-tools', tone: 'danger', title: 'Could not change the list', lines: [j.error || 'HTTP ' + res.status] });
+    return false;
+  }
+  return true;
+}
+
+/** PUT one known tool onto this computer's list (the listbox's pick), then open its guide. */
 async function addSetupTool(id, token) {
   const s = setupFor();
   const cur = s && s.data && Array.isArray(s.data.addedTools) ? s.data.addedTools : [];
   state.setupAdding = true;
   patchSetup(token);
-  try {
-    await fetch('/api/setup/tools', {
-      method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ids: [...new Set([...cur, id])].filter(Boolean) }),
-    });
-  } catch (err) { reportAsyncActionFailure(err); }
+  const done = await putSetupToolIds([...cur, id], token);
   state.setupAdding = false;
   if (!isCurrentMount(token)) return;
-  maybeLoadSetup(token, true);
+  await reloadSetupThenOpen(done ? id : null, token);
+}
+
+/**
+ * REMOVE A TOOL FROM THIS COMPUTER'S LIST (v3.80.0). Offered only where the
+ * payload says it would take the row away (`removableOf`). No confirm, on
+ * purpose: it stops a check and deletes nothing, and "+ Add a tool" brings it
+ * back — the toast says both. Focus goes to "+ Add a tool", since the row it
+ * was on is gone.
+ */
+async function removeSetupTool(toolId, token) {
+  const s = setupFor();
+  const t = s && s.data && (s.data.tools || []).find((x) => x && x.id === toolId);
+  if (!t) return;
+  const ok = t.custom === true
+    ? await saveCustomTool({ removeCustom: t.label || t.id }, token, { reload: false })
+    : await putSetupToolIds((s.data.addedTools || []).filter((x) => x !== toolId), token);
+  if (!ok || !isCurrentMount(token)) return;
+  if (setupReader && setupReader.kind === 'tool' && setupReader.key === toolId && isCurrentReader(setupReader.epoch)) closeReader();
+  showToast({ key: 'setup-tools', tone: 'success', title: 'Removed ' + (t.label || t.id) + ' from this computer’s list',
+    lines: ['Setup no longer checks it here. Nothing was uninstalled; “+ Add a tool” brings it back.'] });
+  await reloadSetupThenOpen(null, token);
+  const add = typeof document !== 'undefined' ? document.getElementById('mem-setup-add') : null;
+  if (add && typeof add.focus === 'function') { try { add.focus({ preventScroll: true }); } catch { add.focus(); } }
 }
 
 /**
@@ -12235,7 +12290,7 @@ async function addSetupTool(id, token) {
  * name is checked here by the route's own rule first, so a refusal is said
  * under the field before anything is sent. Per computer, never synced.
  */
-async function saveCustomTool(change, token) {
+async function saveCustomTool(change, token, { reload = true } = {}) {
   let res = null;
   let j = {};
   try {
@@ -12252,7 +12307,12 @@ async function saveCustomTool(change, token) {
     else showToast({ key: 'setup-custom', tone: 'danger', title: 'Could not remove it', lines: [why] });
     return false;
   }
-  maybeLoadSetup(token, true);
+  // v3.80.0: an ADDED tool opens its setup guide once the new reading lands
+  // (the route answers `added.id`, the id a known name resolved to as well).
+  if (reload) {
+    const added = change.custom && j && j.added && typeof j.added.id === 'string' ? j.added.id : null;
+    reloadSetupThenOpen(added, token).catch((err) => reportAsyncMountFailure(token, err));
+  }
   return true;
 }
 
@@ -12400,9 +12460,9 @@ function bindSetup(root, token) {
         patchSetup(token);
         return;
       }
-      if (act === 'remove-custom') {
+      if (act === 'remove-tool') {
         el.disabled = true;
-        if (await saveCustomTool({ removeCustom: el.dataset.name || '' }, token)) closeReader();
+        await removeSetupTool(el.dataset.tool || '', token);
         return;
       }
       if (act === 'choose-repo') {

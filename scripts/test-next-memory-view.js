@@ -3036,7 +3036,8 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     setupToolsAll.length === 2 && !!setupCustom && /method:\s*'PUT'/.test(setupCustom.init)
     && /body:\s*JSON\.stringify\(change\)/.test(setupCustom.init)
     && /saveCustomTool\(\{ custom: \{ name \} \}, token\)/.test(viewNoComments)
-    && /saveCustomTool\(\{ removeCustom: el\.dataset\.name \|\| '' \}, token\)/.test(viewNoComments),
+    // v3.80.0: Remove names the tool by the reading's own label, never a DOM value.
+    && /saveCustomTool\(\{ removeCustom: t\.label \|\| t\.id \}, token, \{ reload: false \}\)/.test(viewNoComments),
     JSON.stringify(setupToolsAll.map((x) => x.init.slice(0, 120))));
   const setupRepo = inits.find((x) => x.url.includes("'/api/setup/projects/'") && x.url.includes("'/repo'"));
   ok('v3.77.0: the repository PUT is under /api/setup/projects, escaped, sending `path` and nothing else',
@@ -13493,7 +13494,10 @@ const NOT_EXECUTED = {
   // screen check).
   refreshSetupOnWake: 'one staleness gate (setup-step.js setupCheckIsStale, executed in test-next-setup-step.js) in front of maybeLoadSetup; its call from revalidateReadings is asserted above',
   openSetupToolReader: 'openReader + bindSetup on #reader-root; the payload is setup-step.js toolReaderContent, executed in test-next-setup-step.js',
-  addSetupTool: 'the tools PUT named in this file\u2019s fetch census ({ids}); the listbox cfg it is picked from is executed in test-next-setup-step.js',
+  addSetupTool: 'orchestration: putSetupToolIds with the current list plus the pick, then reloadSetupThenOpen; the listbox cfg it is picked from is executed in test-next-setup-step.js',
+  putSetupToolIds: 'the tools PUT named in this file\u2019s fetch census ({ids}) \u2014 the ONE call site for add (v3.78.0) and remove (v3.80.0)',
+  reloadSetupThenOpen: 'orchestration over loadSetup and openSetupToolReader (v3.80.0); the guide it opens is toolGuide/toolReaderContent, executed in test-next-setup-step.js \u00a723',
+  removeSetupTool: 'orchestration (v3.80.0): putSetupToolIds without the id, or saveCustomTool({removeCustom}); WHICH rows offer it is removableOf, executed in test-next-setup-step.js \u00a722',
   saveCustomTool: 'the custom-tool PUT named in this file\u2019s fetch census (the change it is handed); the name rule is customToolNameError, executed in test-next-setup-step.js',
   saveSetupRepo: 'the repository PUT named in this file\u2019s fetch census ({path}); moved out of bindSetup so Choose\u2026 and Use share it',
   // v3.79.0 — a Repository file and a computer in the reader (contract §C).

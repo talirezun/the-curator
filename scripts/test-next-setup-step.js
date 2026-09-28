@@ -38,6 +38,17 @@
  *       the untrusted text never written raw.
  *   §18 a computer in the reader: installs, each tool's newest save and the
  *       name it saved under, sync — and the v3.78.0 fallback.
+ *   v3.80.0 (the maintainer's three complaints about "+ Add a tool"):
+ *   §21 the menu is the composer's model menu: two-line rows (name · short
+ *       facts · a right-hand fact), `lb-rich mr-menu`, a foot line — never a
+ *       full-bleed row with three paths in it.
+ *   §22 an added tool can be REMOVED where the payload says Remove would take
+ *       the row away (a row trash + the reader), and a tool that has saved
+ *       says why it stays.
+ *   §23 a tool that is not ready opens on a numbered SETUP GUIDE built from
+ *       the evidence: four steps, each with its state and its own doors; a
+ *       to-fix line sits inside its step, never twice.
+ *   §24 the Tools fold says what "ready" takes, in one sentence.
  */
 import { EXPLAINERS } from '../src/public/next/shared/explainers.js';
 
@@ -363,8 +374,11 @@ section('§9  "+ Add a tool" — the shared listbox cfg, and custom tools');
   const last = cfg.options[cfg.options.length - 1];
   ok(last.value === S.CUSTOM_TOOL_VALUE && last.label === 'Custom tool…' && last.action === true && cfg.actionValues.includes(S.CUSTOM_TOOL_VALUE),
     '"Custom tool…" is the LAST row and an action row (declared in the cfg too)');
-  ok(cfg.options.find((o) => o.value === 'dsh').detail === 'config location not measured', 'an adapter whose config location is not measured says so');
-  ok(cfg.options.find((o) => o.value === 'codex').detail === 'MCP · AGENTS.md', 'a known tool carries its detail');
+  // v3.80.0: a v3.79.0 `addable` (no `reads`, no `configPaths`) still shows
+  // its `detail` as the second line; "not measured" is the right-hand fact.
+  const dshOpt = cfg.options.find((o) => o.value === 'dsh');
+  ok(/class="mr-fact">not measured</.test(dshOpt.html), 'an adapter whose config location is not measured says so, at the right', dshOpt.html);
+  ok(/class="mr-meta">MCP · AGENTS\.md</.test(cfg.options.find((o) => o.value === 'codex').html), 'a v3.79.0 row carries its detail as line 2');
   const oc = S.setupToolPickerCfg(old());
   ok(oc.options.length === 1 && oc.options[0].group === 'Known tools' && !oc.options.some((o) => o.action) && oc.actionValues.length === 0,
     'v3.77.0 shape: one known tool, NO custom row (that server would refuse it)');
@@ -397,9 +411,9 @@ section('§10 a tool\'s evidence, in the reader');
   ok(/<pre class="mem-setup-snippet"><code>\{&quot;mcpServers&quot;/.test(c) && /data-setup-act="copy-snippet" data-tool="my-harness">Copy MCP entry</.test(c), 'a custom tool: its MCP entry, "Copy MCP entry"');
   ok(/reads AGENTS\.md/.test(c) && /data-setup-act="copy-block">Copy instructions</.test(c), '…the AGENTS.md hint with "Copy instructions"');
   ok(/my-curator\.zip/.test(c) && /curator-continuity\.zip/.test(c), '…the skills .zip links');
-  ok(/data-setup-act="remove-custom" data-name="My Harness">Remove My Harness</.test(c), '…and Remove');
+  ok(/data-setup-act="remove-tool" data-tool="my-harness">Remove from this list</.test(c), '…and Remove (a v3.79.0 payload: a custom tool the owner added)');
   const dsh = { ...maint(), tools: [{ id: 'dsh', label: 'DeepSeek Harness', status: 'no-save', saved: { at: null }, mcpSnippet: { format: 'yaml', text: 'plugins:\n  - my-curator' } }] };
-  ok(/Paste into ~\/\.dsh\/cordis\.patch\.yml \(merge — do not copy over the file\); never cordis\.yml\./.test(S.toolReaderContent(dsh, 'dsh').bodyHtml),
+  ok(/Paste into ~\/\.dsh\/cordis\.patch\.yml \(merge — do not copy over the file\); never cordis\.yml\./.test(S.toolReaderContent(dsh, 'dsh').bodyHtml.replace(/<[^>]+>/g, '')),
     'dsh (contract amendment A1): paste into ~/.dsh/cordis.patch.yml, merge, never cordis.yml');
   const unm = { ...maint(), tools: [{ id: 'goose', label: 'goose', measured: false, status: 'no-save', saved: { at: null }, mcpSnippet: { format: 'json', text: '{}' } }] };
   ok(/Config location not measured — copy the entry by hand/.test(S.toolReaderContent(unm, 'goose').bodyHtml), 'an unmeasured config location: "config location not measured — copy the entry by hand"');
@@ -407,7 +421,7 @@ section('§10 a tool\'s evidence, in the reader');
   const known = { ...maint(), tools: [{ ...maint().tools[0], mcpSnippet: { format: 'json', text: '{"x":1}' } }] };
   ok(!/mem-setup-snippet/.test(S.toolReaderContent(known, 'claude-code').bodyHtml), 'a known tool with MCP configured: no entry to paste');
   const savedOnly = { ...maint(), tools: [{ id: 'mystery', label: 'Mystery', custom: true, userAdded: false, status: 'partly', saved: { at: iso(1000) } }] };
-  ok(!/remove-custom/.test(S.toolReaderContent(savedOnly, 'mystery').bodyHtml), 'a saved-only unknown tool (not on this computer\'s list) offers no Remove');
+  ok(!/remove-tool/.test(S.toolReaderContent(savedOnly, 'mystery').bodyHtml), 'a saved-only unknown tool (not on this computer\'s list) offers no Remove');
   const zipped = { ...custom, tools: [{ ...custom.tools[0], skillZips: [{ name: 'my-curator.zip', href: '/api/setup/skills/my-curator.zip' }, { name: 'evil', href: 'https://x.test/a.zip' }] }] };
   const zb = S.toolReaderContent(zipped, 'my-harness').bodyHtml;
   ok(/href="\/api\/setup\/skills\/my-curator\.zip"/.test(zb) && !/x\.test/.test(zb), 'skillZips from the payload, only this app\'s own /api/setup/skills/ links');
@@ -746,6 +760,158 @@ section('§20 a session-named save is NOT flagged — only a wrong name is (scre
   ok(/not its own name/.test(S.computerReaderContent(d, 1).bodyHtml), 'no wrongScope field, "main": flagged');
   ok(S.wrongSave({ scope: 'x', wrongScope: true }) === true && S.wrongSave({ scope: 'main', wrongScope: false }) === false, 'the backend\'s wrongScope, when sent, decides');
   ok(S.wrongSave({ tool: 'claude-code', scope: 'claude-code' }) === false, 'its own name: not flagged');
+}
+
+// ── v3.80.0 ───────────────────────────────────────────────────────────────
+const addable380 = () => [
+  { id: 'claude-desktop', label: 'Claude Desktop', group: 'known', measured: true, reads: [],
+    configPaths: ['~/Library/Application Support/Claude/claude_desktop_config.json', '~/.config/Claude/claude_desktop_config.json'],
+    detail: 'MCP entry in ~/Library/Application Support/Claude/claude_desktop_config.json or ~/.config/Claude/claude_desktop_config.json · reads no instruction file The Curator knows' },
+  { id: 'codex', label: 'OpenAI Codex CLI', group: 'known', measured: true, reads: ['AGENTS.md'], configPaths: ['~/.codex/config.toml', '.codex/config.toml'],
+    detail: 'MCP entry in ~/.codex/config.toml or .codex/config.toml · reads AGENTS.md' },
+  { id: 'antigravity', label: 'Antigravity', group: 'known', measured: true, reads: ['AGENTS.md', 'GEMINI.md'],
+    configPaths: ['~/.gemini/config/mcp_config.json', '~/.gemini/antigravity/mcp_config.json', '~/.gemini/antigravity-ide/mcp_config.json'], detail: 'x' },
+  { id: 'claude-code', label: 'Claude Code', group: 'known', measured: true, reads: ['CLAUDE.md'], configPaths: ['~/.claude.json', '.mcp.json'], detail: 'x' },
+  { id: 'kilo', label: 'Kilo', group: 'known', measured: false, reads: ['AGENTS.md', 'CLAUDE.md'], configPaths: [], detail: 'config location not measured — copy the entry by hand · reads AGENTS.md and CLAUDE.md' },
+  { id: 'windsurf', label: 'Windsurf / Devin Desktop', group: 'known', measured: true, reads: [], configPaths: ['~/.codeium/windsurf/mcp_config.json'], detail: 'x' },
+  { id: '__custom', label: 'Custom tool…', group: 'other', measured: false, reads: ['AGENTS.md'], configPaths: [] },
+];
+const stripTags = (h) => String(h).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+section('§21 "+ Add a tool" is the composer\'s model menu: two-line rows, a sensible width, a foot');
+{
+  const cfg = S.setupToolPickerCfg({ ...maint(), addable: addable380() });
+  ok(cfg.menuClass === 'lb-rich mr-menu' && cfg.minWidth === 360, 'the model menu\'s surface: `lb-rich mr-menu` (360–420 px), never full-bleed', JSON.stringify([cfg.menuClass, cfg.minWidth]));
+  ok(/^<p class="mr-foot">Adding a tool only tells Setup to check it on this computer — you connect it yourself\.<\/p>$/.test(cfg.footHtml), 'the foot line, the model menu\'s `.mr-foot`', cfg.footHtml);
+  const row = (v) => cfg.options.find((o) => o.value === v);
+  ok(cfg.options.every((o) => typeof o.html === 'string' && o.html.startsWith('<span class="mr-body">')), 'every row owns its body: the model row\'s `.mr-body`');
+  ok(/<span class="mr-title">OpenAI Codex CLI<\/span><span class="mr-meta">reads AGENTS\.md<span class="mr-sep" aria-hidden="true"> · <\/span>MCP config in ~\/\.codex<\/span>/.test(row('codex').html),
+    'line 1 the name; line 2 "reads AGENTS.md · MCP config in ~/.codex" — the folder, not the file', row('codex').html);
+  ok(/MCP config in ~\/Library\/…\/Claude</.test(row('claude-desktop').html) && /reads no instruction file/.test(row('claude-desktop').html),
+    'a long folder keeps its ends: "~/Library/…/Claude"', row('claude-desktop').html);
+  ok(/reads AGENTS\.md and GEMINI\.md/.test(row('antigravity').html) && /MCP config in ~\/\.gemini\/config</.test(row('antigravity').html),
+    'three config files on the adapter: ONE place on the row', row('antigravity').html);
+  ok(/MCP config in ~\/\.claude\.json</.test(row('claude-code').html), 'a file straight under home stays the file');
+  ok(/class="mr-fact">not measured</.test(row('kilo').html) && !/MCP config in/.test(row('kilo').html), 'unmeasured: "not measured" at the right, no place claimed');
+  const texts = cfg.options.map((o) => stripTags(o.html));
+  ok(!texts.some((t) => / or /.test(t) || /config\.toml|mcp_config\.json|settings\.json/.test(t)),
+    'no row lists alternatives ("… or …") or a config FILE deeper than home (the reader names the file)', texts.join(' | '));
+  ok(texts.every((t) => t.length <= 90), 'every row is short (≤ 90 characters of text)', texts.map((t) => t.length).join(','));
+  const last = cfg.options[cfg.options.length - 1];
+  ok(last.value === S.CUSTOM_TOOL_VALUE && last.group === 'Other' && last.action === true && /mr-title">Custom tool…</.test(last.html),
+    '"Other › Custom tool…" is still the last row, an action row');
+  const evil = S.setupToolPickerCfg({ ...maint(), addable: [{ id: 'x', label: '<img src=x>', group: 'known', reads: ['<b>'], configPaths: ['~/<i>/c.json'] }] });
+  ok(!/<img|<b>|<i>/.test(evil.options[0].html) && /&lt;img/.test(evil.options[0].html), 'payload text is escaped in the row', evil.options[0].html);
+  ok(S.shortConfigPlace('~/.codex/config.toml') === '~/.codex' && S.shortConfigPlace('~/.claude.json') === '~/.claude.json'
+    && S.shortConfigPlace('~/.cline/data/settings/cline_mcp_settings.json') === '~/.cline/data/settings'
+    && S.shortConfigPlace('~/Library/Application Support/Claude/claude_desktop_config.json') === '~/Library/…/Claude'
+    && S.shortConfigPlace('.mcp.json') === '.mcp.json' && S.shortConfigPlace(null) === null, 'shortConfigPlace: folder, file under home, long folder, project file, none');
+  ok(JSON.stringify(S.toolMenuMeta({ detail: 'OLD' })) === '["OLD"]' && JSON.stringify(S.toolMenuMeta({ reads: [], configPaths: [] })) === '["reads no instruction file"]',
+    'toolMenuMeta: a v3.79.0 row falls back to its detail; no facts → "reads no instruction file"');
+}
+
+const windsurf380 = () => ({ id: 'windsurf', label: 'Windsurf / Devin Desktop', status: 'no-save', saved: { state: 'none', at: null }, userAdded: true,
+  removable: { ok: true }, reads: [], mcpSnippet: { format: 'json', text: '{"mcpServers":{"my-curator":{"command":"node"}}}' },
+  mcpTarget: { display: '~/.codeium/windsurf/mcp_config.json', format: 'json', verified: true, exists: false },
+  skillsTarget: { path: null, verified: false, accountHeld: false },
+  parts: { mcp: { state: 'none', word: 'not found' }, skills: { state: 'cant-check', word: 'can’t check here' },
+    block: { state: 'none', word: 'reads no instruction file' }, hooks: { state: 'none', word: '—' } } });
+
+section('§22 Remove — where it would take the row away, and why a saved tool stays');
+{
+  const ws = windsurf380();
+  const d = { ...maint(), tools: [maint().tools[0], ws], addedTools: ['windsurf'] };
+  const tools = foldNamed(S.renderSetupBody({ data: d }, { openFolds: ALL_OPEN }), 'setup-tools').body;
+  const rows = tools.split('<tr class="mem-ws-row">').slice(1);
+  const rowOf = (id) => rows.find((r) => r.includes('data-tool="' + id + '"')) || '';
+  ok(/<button type="button" class="row-act mem-setup-del" id="mem-setup-del-windsurf" data-setup-act="remove-tool" data-tool="windsurf" aria-label="Remove Windsurf \/ Devin Desktop from this computer’s list"><svg/.test(rowOf('windsurf')),
+    'the removable row carries the Handoffs row\'s trash (`.row-act`, a named aria-label)', rowOf('windsurf').slice(-600));
+  ok(!/remove-tool/.test(rowOf('claude-code')), 'a row that is not removable has none (Claude Code has saved)');
+  ok((tools.match(/<th /g) || []).length === (rowOf('claude-code').match(/<td/g) || []).length
+    && (rowOf('claude-code').match(/<td/g) || []).length === (rowOf('windsurf').match(/<td/g) || []).length, 'the actions column is a real column: header cells = row cells, on every row');
+  ok(!/danger/.test(rowOf('windsurf')), 'never red at rest (the row-action rule)');
+  const r = S.toolReaderContent(d, 'windsurf').bodyHtml;
+  ok(/data-setup-act="remove-tool" data-tool="windsurf">Remove from this list</.test(r) && /nothing is uninstalled/.test(r), 'the reader offers Remove and says it uninstalls nothing');
+  const saved = { ...d, tools: [{ ...ws, status: 'partly', saved: { state: 'ok', at: iso(1000), thisMachine: true, scope: 'windsurf' }, removable: { ok: false, why: 'saved' } }] };
+  const sr = S.toolReaderContent(saved, 'windsurf').bodyHtml;
+  ok(!/remove-tool/.test(sr) && /has saved this project, so it stays on the list — its saves are this project’s record/.test(sr), 'a tool that has SAVED: no Remove, and the reader says why');
+  ok(!/remove-tool/.test(foldNamed(S.renderSetupBody({ data: saved }, { openFolds: ALL_OPEN }), 'setup-tools').body), '…and no row trash');
+  const conf = { ...d, tools: [{ ...ws, removable: { ok: false, why: 'configured' } }] };
+  ok(/MCP settings on this computer name The Curator, so Setup keeps checking it/.test(S.toolReaderContent(conf, 'windsurf').bodyHtml), 'configured here: says why it stays');
+  ok(!/On this computer’s list/.test(S.toolReaderContent(maint(), 'claude-code').bodyHtml), 'a tool nobody added: no Remove section at all');
+  ok(S.removableOf({ custom: true, saved: { at: null } }).ok === true && S.removableOf({ custom: true, userAdded: false }).ok === false
+    && S.removableOf({ id: 'codex' }).ok === false, 'a v3.79.0 payload (no `removable`): only a custom tool the owner added');
+}
+
+section('§23 a tool that is not ready opens on its numbered SETUP GUIDE');
+{
+  const ws = windsurf380();
+  const d = { ...maint(), tools: [ws], addedTools: ['windsurf'] };
+  const g = S.toolGuideSteps(ws, d);
+  ok(JSON.stringify(g.steps.map((x) => x.key)) === '["mcp","skills","block","save"]', 'four steps, in the order they are done');
+  ok(JSON.stringify(g.steps.map((x) => x.state)) === '["todo","optional","optional","todo"]',
+    'Windsurf: connect (to do) · skills not known (optional) · no instruction file (optional) · save (to do)', JSON.stringify(g.steps.map((x) => x.state)));
+  const html = S.toolReaderContent(d, 'windsurf').bodyHtml;
+  const text = stripTags(html);
+  ok(/<ol class="mem-setup-steps">/.test(html) && (html.match(/class="settings-block-num mem-setup-gnum"/g) || []).length === 4, 'an ordered list, the page\'s own step numeral, four of them');
+  ok(html.indexOf('mem-setup-guide') > 0 && html.indexOf('mem-setup-guide') < html.indexOf('mem-setup-ev"'), 'the guide sits ABOVE the evidence');
+  ok(/Add this entry to ~\/\.codeium\/windsurf\/mcp_config\.json \(JSON\) — create the file if it isn’t there, then restart Windsurf \/ Devin Desktop\./.test(text),
+    'step 1 names the exact file and its format', text.slice(0, 500));
+  ok(/<pre class="mem-setup-snippet"><code>\{&quot;mcpServers&quot;/.test(html) && /data-setup-act="copy-snippet" data-tool="windsurf">Copy MCP entry/.test(html), 'step 1 shows the entry and "Copy MCP entry"');
+  ok(!/data-setup-act="reveal"/.test(html.split('data-guide-step="skills"')[0]), 'no Reveal for a file that does not exist');
+  const withFile = { ...d, tools: [{ ...ws, mcpTarget: { ...ws.mcpTarget, exists: true, file: '/Users/t/.codeium/windsurf/mcp_config.json' } }] };
+  ok(/data-setup-act="reveal" data-path="\/Users\/t\/\.codeium\/windsurf\/mcp_config\.json">Reveal mcp_config\.json/.test(S.toolReaderContent(withFile, 'windsurf').bodyHtml), '…and Reveal when it does');
+  ok(/Whether Windsurf \/ Devin Desktop reads skills is not known/.test(text) && /my-curator\.zip/.test(html), 'step 2: not known → optional, with the .zip files');
+  ok(/reads no instruction file The Curator knows — it keeps its own rules/.test(text) && /data-guide-step="block"[\s\S]*data-setup-act="copy-block"/.test(html),
+    'step 3: no instruction file → paste into its rules, or skip');
+  ok(/Open a new conversation in Windsurf \/ Devin Desktop in your project’s folder and give it a task\. It turns ready once it saves this project from this computer under its own name, “windsurf”\./.test(text),
+    'step 4 says exactly what makes it ready', text);
+  ok(/2 steps to do, 2 optional\./.test(text), 'the guide says how many steps are left, the optional ones apart', text.slice(0, 300));
+  // A known tool whose check found things: states from the evidence, to-fix lines INSIDE their steps.
+  const ag = { id: 'antigravity', label: 'Antigravity', status: 'to-fix', saved: { state: 'none', at: null }, reads: ['AGENTS.md', 'GEMINI.md'],
+    skillsTarget: { path: '~/.gemini/config/plugins/<plugin>/skills/', verified: true },
+    parts: { mcp: { state: 'ok', word: 'configured' }, skills: { state: 'none', word: 'not installed' },
+      block: { state: 'fix', word: 'missing' }, hooks: { state: 'none', word: '—' } } };
+  const agd = { ...maint(), repo: { path: '/Users/t/code/ott', display: '~/code/ott', exists: true }, tools: [ag],
+    toFix: [{ tool: 'antigravity', kind: 'block-missing', file: 'AGENTS.md', text: 'AGENTS.md in ~/code/ott has no Curator instructions.', detail: 'Paste them at the very top.',
+      fixes: [{ kind: 'copy-block', label: 'Copy instructions' }, { kind: 'copy-command', label: 'Copy the git command that commits and pushes it',
+        command: 'git add -- AGENTS.md && git commit -m x -- AGENTS.md && git push', cwdDisplay: '~/code/ott' }] }] };
+  const agh = S.toolReaderContent(agd, 'antigravity').bodyHtml;
+  const ags = S.toolGuideSteps(ag, agd).steps;
+  ok(JSON.stringify(ags.map((x) => x.state)) === '["done","todo","fix","todo"]', 'Antigravity: MCP done · skills to do · instructions to fix · save to do', JSON.stringify(ags.map((x) => x.state)));
+  ok((agh.match(/has no Curator instructions/g) || []).length === 1 && /data-guide-step="block"[\s\S]*has no Curator instructions/.test(agh),
+    'the to-fix line is shown ONCE, inside step 3 — never again above the guide');
+  ok(/data-guide-step="block"[\s\S]*data-setup-act="copy-command"[^>]*data-cmd="git add -- AGENTS\.md/.test(agh), '…with its own buttons: the git command that commits and pushes it');
+  ok(/Unzip both into <span class="mem-setup-inline-path">~\/\.gemini\/config\/plugins\/&lt;plugin&gt;\/skills\/<\/span>/.test(agh), 'step 2 says where the skills go for this tool');
+  ok(/cur-setup-st-ok">done</.test(agh) && /cur-setup-st-fix">to fix</.test(agh) && /cur-setup-st-none">to do</.test(agh), 'each step shows its state: done · to fix · to do');
+  const nr = S.toolGuideSteps({ ...ag, parts: { ...ag.parts, block: { state: 'not-checked', word: 'not checked' } } }, { ...maint(), toFix: [] }).steps[2];
+  ok(nr.state === 'wait' && /data-setup-act="choose-repo"/.test(nr.doors) && /data-setup-act="copy-block"/.test(nr.doors), 'no repository set: step 3 "not checked yet", Copy instructions + Set the folder');
+  const cu = { id: 'my-harness', label: 'My Harness', custom: true, userAdded: true, status: 'no-save', saved: { at: null }, reads: ['AGENTS.md'],
+    mcpSnippet: { format: 'json', text: '{}' }, parts: { mcp: { state: 'cant-check', word: 'config location not known' }, skills: { state: 'cant-check', word: '?' },
+      block: { state: 'unmeasured', word: 'AGENTS.md has no Curator block' }, hooks: { state: 'none', word: '—' } },
+    instructionFixes: [{ kind: 'copy-block', label: 'Copy instructions' }, { kind: 'copy-command', label: 'Copy the git command that commits and pushes it',
+      command: 'git add -- AGENTS.md && git commit -m "Add The Curator instructions" -- AGENTS.md && git push', cwdDisplay: '~/code/ott' }] };
+  const cus = S.toolGuideSteps(cu, { ...agd, tools: [cu], toFix: [] }).steps;
+  ok(cus[0].state === 'cant' && /most tools read this mcpServers shape/.test(cus[0].html), 'a custom tool: MCP "can’t check here", with the generic entry');
+  ok(cus[2].state === 'todo' && /assumed — most tools do/.test(cus[2].html) && /data-cmd="git add -- AGENTS\.md/.test(cus[2].doors), '…its assumed AGENTS.md, with the commit-and-push command');
+  const verifiedNoSkills = S.toolGuideSteps({ ...ag, skillsTarget: { path: null, verified: true } }, agd).steps[1];
+  ok(verifiedNoSkills.state === 'skip' && /has no skills support — skip this step/.test(verifiedNoSkills.html) && !verifiedNoSkills.doors, 'a tool known to have no skills: skip, no downloads');
+  const ready = { ...maint().tools[0], status: 'ready' };
+  ok(!/mem-setup-guide/.test(S.toolReaderContent({ ...maint(), tools: [ready] }, 'claude-code').bodyHtml), 'a READY tool opens on its evidence, no guide');
+  const sv = S.toolGuideSteps({ ...ag, saved: { state: 'ok', at: iso(60e3), thisMachine: true, scope: 'antigravity', wrongScope: false } }, agd).steps[3];
+  ok(sv.state === 'done' && /data-age-at=/.test(sv.html), 'saved from here under its own name: step 4 done, with the age');
+  const elsewhere = S.toolGuideSteps({ ...ag, saved: { state: 'ok', at: iso(60e3), thisMachine: false, machine: 'mac-b', scope: 'antigravity' } }, agd).steps[3];
+  ok(elsewhere.state === 'todo' && /saved this project from mac-b, not from this one yet/.test(elsewhere.html), 'saved only from another computer: still to do here, and says so');
+  const ev = S.toolReaderContent({ ...d, tools: [{ ...ws, label: '<img src=x onerror=1>' }] }, 'windsurf').bodyHtml;
+  ok(!/<img/.test(ev), 'a hostile label never reaches the guide raw');
+}
+
+section('§24 the Tools fold says what "ready" takes, in one sentence');
+{
+  const tools = foldNamed(S.renderSetupBody({ data: maint() }, { openFolds: ALL_OPEN }), 'setup-tools').body;
+  ok(tools.includes(S.TOOLS_COUNT_LINE) && /press one for its setup steps\.$/.test(S.TOOLS_COUNT_LINE) && (S.TOOLS_COUNT_LINE.match(/\./g) || []).length === 1,
+    'the count line: one sentence, ending "press one for its setup steps"');
+  ok(tools.includes(S.TRAVELS_LINES['setup-tools']), '…beside the fold\'s own travels line');
 }
 
 console.log(`\n${failed ? '✗' : '✓'} test-next-setup-step: ${passed} passed, ${failed} failed`);

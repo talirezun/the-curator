@@ -320,6 +320,32 @@ try {
     ok(rm.status === 200 && !rm.body.custom.includes('Fancy Bot') && rm.body.custom.length === 11, 'removeCustom removes by normalised name', rm.body);
   }
 
+  section('§11b v3.80.0: the menu\'s short facts, and taking a KNOWN tool back off the list');
+  {
+    const r = await call('GET', `/api/setup/projects/${D}/fleet`);
+    const add = r.body.addable || [];
+    const codex = add.find((a) => a.id === 'codex');
+    ok(codex && JSON.stringify(codex.reads) === '["AGENTS.md"]' && codex.configPaths[0] === '~/.codex/config.toml' && typeof codex.detail === 'string',
+      'addable carries `reads` and `configPaths` (own user path first), and still `detail` for an older view', codex);
+    const kilo = add.find((a) => a.id === 'kilo');
+    ok(kilo && kilo.measured === false && Array.isArray(kilo.configPaths) && kilo.configPaths.length === 0, 'an unmeasured tool claims no config path', kilo);
+    ok(add.at(-1)?.id === '__custom' && JSON.stringify(add.at(-1).reads) === '["AGENTS.md"]', 'Custom tool…: the AGENTS.md convention');
+    // Windsurf: added, never saved, not configured → removable; its config
+    // file exists here → Reveal is allowed for it.
+    w(path.join(HOME, '.codeium', 'windsurf', 'mcp_config.json'), '{"mcpServers":{}}');
+    const before = (await call('GET', `/api/setup/projects/${D}/fleet`)).body.addedTools || [];
+    await call('PUT', '/api/setup/tools', { ids: [...before, 'windsurf'] });
+    const g = await call('GET', `/api/setup/projects/${D}/fleet`);
+    const ws = g.body.tools.find((t) => t.id === 'windsurf');
+    ok(ws && ws.userAdded === true && ws.removable?.ok === true && ws.mcpTarget?.display === '~/.codeium/windsurf/mcp_config.json', 'an added Windsurf row: userAdded, removable, its config file named', ws && { r: ws.removable, t: ws.mcpTarget });
+    const rv = await call('POST', '/api/setup/reveal', { path: ws?.mcpTarget?.file });
+    ok(rv.status === 200 && revealed.at(-1) === path.join(HOME, '.codeium', 'windsurf', 'mcp_config.json'), 'the guide\'s "Reveal mcp_config.json" is on the reveal allow-list', rv.body);
+    const off = await call('PUT', '/api/setup/tools', { ids: (g.body.addedTools || []).filter((x) => x !== 'windsurf') });
+    ok(off.status === 200 && !off.body.ids.includes('windsurf'), 'PUT {ids} without it takes a known tool off this computer\'s list', off.body);
+    const g2 = await call('GET', `/api/setup/projects/${D}/fleet`);
+    ok(!g2.body.tools.some((t) => t.id === 'windsurf') && g2.body.addable.some((a) => a.id === 'windsurf'), '…the row is gone, and "+ Add a tool" offers it again');
+  }
+
   section('§12 an empty config file: a to-fix line whose reveal is allowed (v3.78.0)');
   {
     w(path.join(HOME, '.cursor', 'mcp.json'), '');
