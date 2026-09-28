@@ -1418,46 +1418,48 @@ confusing.
 
 ![A wireframe of the Project context screen. A breadcrumb at the top carries the domain's own
 identity dot, the same colour that domain has in the Domains sidebar, in the Context sidebar and
-on every row below that names it. Under it, a five-tile overview card — the same component Domains
-uses — reading DOCUMENTS "3 documents · fresh", MEMORY "saved 14 min ago", KNOWLEDGE "391 pages ·
-3 days ago", AGENT CONNECTIONS "1 connection · last 30 days" and SESSION START "≈8.8k tokens · 1 reply", each
-with a freshness dot (SESSION START carries none — it is a reading, not a share). Below it, four
-numbered steps separated by hairlines, each heading carrying only a numeral, a Title-case title and
-an ⓘ mark — no sentence beneath any of them — and each section's controls sitting in a head row
-beneath its heading, above its rows, aligned to the rows' own left edge. Step 1, Documents: the
-controls "Refresh from repo", "Add from folder" and "Mirror from GitHub instead", then one row,
-"The documents — 3 documents · 391 KB · mirrored · 2 read first", whose SIZE column carries a depth
-bar — a tinted bar behind each figure, anchored at the right, its length that document's share of
-the project's own 200 KB total, shown plainly and never as an alarm. Step 2, Memory: four closed
-rows, each one instrument — Agent connections, Handoffs, The brief and Journal. Step 4, Session start:
-a head row with the reading budget, the Window and the Your tool's share pickers, then the segmented meter —
-your window to scale, your tool's share hatched at the left, The Curator's own layers, and a dashed room
-the width of the reading budget. Step 3, Knowledge: the control "+ Add a domain", then one row per domain this project
-draws on, each carrying that domain's own identity dot — here "projects — 391 pages · 3 days ago"
-— opening to a monospace panel of entities, concepts and summaries (each with its own depth bar
-against that domain's page count), the last-ingest age, two doors beneath it, Open in Domains and
-Ask this domain, and its own Remove. At the foot, "Top to bottom is
-the order a session start reads in".](images/curator-context-steps.svg)
+on every row below that names it. Under it, a six-tile overview card in two rows of three — the
+same component Domains uses — reading DOCUMENTS "3 documents · fresh", MEMORY "saved 14 min ago ·
+claude-code", KNOWLEDGE "455 pages · 3 days ago · 2 domains", AGENT CONNECTIONS "4 connections ·
+last 30 days", SESSION START "≈8.8k tokens · 1 reply" and SETUP "1 to fix · Claude Code · Cursor ·
+2 computers". The first three carry a freshness dot; the last three carry none — they are counts
+and measurements, not ages. Below it, five numbered steps separated by hairlines, each heading
+carrying only a numeral, a Title-case title and an ⓘ mark — no sentence beneath any of them — and
+each section's controls sitting in a head row beneath its heading, above its rows, aligned to the
+rows' own left edge. Step 1, Documents: the controls "Add from this computer", "Add from GitHub",
+"Write a document" and "Suggest a reading plan", then one open row, "The documents — 3 documents ·
+391 KB · mirrored · 2 read first", whose SIZE column carries a depth bar — a tinted bar behind each
+figure, anchored at the right, its length that document's share of the project's own total, shown
+plainly and never as an alarm. Step 2, Memory: four closed rows, each one instrument — Agent
+connections, Handoffs, The brief and Journal. Step 3, Knowledge: the control "+ Add a domain", then
+one row per domain this project draws on, each carrying that domain's own identity dot — here
+"projects — 391 pages · 3 days ago" — opening to a monospace panel of entities, concepts and
+summaries (each with its own depth bar against that domain's page count), the last-ingest age, two
+doors beneath it, Open in Domains and Ask this domain, and its own Remove; a second, closed row,
+"research — 64 pages · 5 months ago". Step 4, Session start: a head row with the Window, Reading
+budget and Your tool's share pickers, then the segmented meter — your window to scale, your tool's
+share hatched at the left, The Curator's own layers in one violet hue, and a dashed room the width
+of the reading budget — then three closed rows, Documents at start, What an agent receives and How
+an agent reaches this. Step 5, Setup: "checked 2 min ago" and Re-check in its head row; one to-fix
+line, unfolded, saying AGENTS.md has older Curator instructions so Cursor may not re-read on
+"continue", with its own Copy instructions and Reveal AGENTS.md buttons; the "+ Add a tool" picker;
+then three closed folds, each ending in a grey tag for how its contents travel between computers —
+Tools ("set up on each computer"), Repository on this computer ("project's git") and Computers
+("Personal Sync"). At the foot, "Top to bottom is the order a session start reads
+in".](images/curator-context-steps.svg)
 
-*The shape of steps ① to ④, in wireframe rather than a photograph so it stays legible at any size
-(it predates v3.77.0, so it draws neither the SETUP tile nor step ⑤ Setup): numbered steps, each
-explained only by the ⓘ beside its title — no lede sentence survives under a
-heading — and every live reading, from the overview's tiles down to a single Handoffs row,
+*The shape of steps ① to ⑤, in wireframe rather than a photograph so it stays legible at any
+size: numbered steps, each explained only by the ⓘ beside its title — no lede sentence survives
+under a heading — and every live reading, from the overview's tiles down to a single Handoffs row,
 built from the same two components the rest of the app uses: the overview card and the monitor.
 **Documents are replaced whole; Memory supersedes, so each save replaces the
 last; Knowledge accumulates**, one row per domain the project draws on. A warning about a save is
-never behind a chevron — it stays on the page, unfolded, under the row it qualifies. A domain is
+never behind a chevron — it stays on the page, unfolded, under the row it qualifies, and step ⑤'s
+to-fix lines follow the same rule. A domain is
 the same colour everywhere it is named on this screen — the breadcrumb, the sidebar's project rows
 and every Knowledge row — the same [identity dot](design-system-source.md#18-identity--one-palette-one-mapping-one-glyph-v3651) the Domains sidebar
-uses ([§10](#projects-inside-a-domain)).*
-
-**Step ①'s controls in the wireframe below predate v3.68.0.** *"Refresh from repo", "Add from
-folder" and "Mirror from GitHub instead"* is the v3.65.1 head row; since v3.68.0 that head row
-always shows two doors, **Add from this computer** and **Add from GitHub**, with Refresh beside
-them once a source is set — see "The three steps, in detail" → **① Documents**, below. Everything
-else the wireframe shows is unchanged.
-
-The wireframe below is the same shape with the labels called out.
+uses ([§10](#projects-inside-a-domain)). Step ⑤'s grey tags are deliberately colourless, so a
+travel tag never reads as a domain's identity colour ([§13e](#13e-the-setup-check-in-the-app)).*
 
 **What each step is for, and what it costs you to read:**
 

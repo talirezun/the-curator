@@ -1,31 +1,42 @@
-<svg viewBox="0 0 760 900" xmlns="http://www.w3.org/2000/svg" role="img"
+<svg viewBox="0 0 760 1600" xmlns="http://www.w3.org/2000/svg" role="img"
      aria-labelledby="curator-context-steps-title curator-context-steps-desc">
-  <title id="curator-context-steps-title">The Project context screen — an overview card and three numbered steps</title>
+  <title id="curator-context-steps-title">The Project context screen — an overview card of six tiles and five numbered steps</title>
   <desc id="curator-context-steps-desc">
     A breadcrumb at the top carries the domain's own identity dot, the same colour that domain
     has in the Domains sidebar, in the Context sidebar and on every row below that names it.
-    Under it an overview card of four tiles — Documents, Memory, Knowledge and Capture — each
-    with a freshness dot and a one-line reading, at the same size Domains' own overview uses.
-    Then three numbered steps read top to bottom, each heading carrying only a numeral, a
-    Title-case title and an ⓘ mark; a section's controls sit in a head row beneath that
-    heading, above the rows, aligned to the rows' own left edge. Step one, Documents: the
-    controls "Refresh from repo", "Add from folder" and "Mirror from GitHub instead", then one
-    row, "The documents" — the canonical documents this project is built against, kept word for
-    word and replaced whole; the ones marked "read first" reach every session, the rest are
-    opened by name. Its table's size column carries a depth bar: a tinted bar behind each
-    figure, anchored at the right, its length that document's share of the two-hundred-kilobyte
-    project budget, and a document that alone exceeds the budget takes the whole cell in the
-    warning tone. The total under the table says the same thing in words, because a cost is
-    never only a colour. Step two, Memory: four closed rows — Capture, Handoffs, The brief and
-    Journal — every reading built from the same terminal-like monitor component, and this layer
-    supersedes, so each save replaces the last. Step three, Knowledge: the control "+ Add a
-    domain", then one row per domain this project draws on, each carrying that domain's identity
-    dot, its pages, its freshness, a monitor whose entity, concept and summary counts each carry
-    a depth bar against that domain's own page count, two doors out to Domains and to Chat, and
-    its own Remove — this layer accumulates. Every row's reading is right-aligned at one edge. A
-    caption at the foot notes that the reading order top to bottom is the order a session start
-    reads in.
+    Under it an overview card of six tiles in two rows of three — Documents, Memory and
+    Knowledge, then Agent connections, Session start and Setup — each with a one-line reading and
+    a second line qualifying it; the first three carry a freshness dot, the last three none,
+    because they are counts and measurements rather than ages. Then five numbered steps read top
+    to bottom, each heading carrying only a numeral, a Title-case title and an ⓘ mark; a
+    section's controls sit in a head row beneath that heading, above the rows, aligned to the
+    rows' own left edge. Step one, Documents: the controls "Add from this computer", "Add from
+    GitHub", "Write a document" and "Suggest a reading plan", then one open row, "The
+    documents", whose size column carries a depth bar: a tinted bar behind each figure, anchored
+    at the right, its length that document's share of the project's own total, stated plainly
+    and never as an alarm. Step two, Memory: four closed rows — Agent connections, Handoffs, The
+    brief and Journal — and this layer supersedes, so each save replaces the last. Step three,
+    Knowledge: the control "+ Add a domain", then one row per domain this project draws on, each
+    carrying that domain's identity dot, its pages, its freshness, a monitor whose entity,
+    concept and summary counts each carry a depth bar against that domain's own page count, two
+    doors out to Domains and to Chat, and its own Remove — this layer accumulates. Step four,
+    Session start: a head row with three pickers — Window, Reading budget and Your tool's share —
+    then a segmented meter drawing the context window to scale: your tool's share hatched at the
+    left, The Curator's own layers in three steps of one violet hue, and a dashed room the width
+    of the reading budget; then three closed rows, Documents at start, What an agent receives and
+    How an agent reaches this. Step five, Setup: a head row saying when this computer was last
+    checked, with Re-check; one to-fix line that is never folded — here, that the AGENTS.md Cursor reads carries
+    older Curator instructions — with its own fix buttons; the "+ Add a tool" picker; then three
+    closed folds, Tools, Repository on this computer and Computers, each ending in a grey tag
+    naming how its contents travel between computers: set up on each computer, the project's
+    git, and Personal Sync. A caption at the foot notes that the reading order top to bottom is
+    the order a session start reads in.
   </desc>
+  <defs>
+    <pattern id="ccs-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="6" stroke="var(--text-2)" stroke-width="1.4"/>
+    </pattern>
+  </defs>
   <style>
     :root {
       --bg: #ffffff;
@@ -41,7 +52,10 @@
       --id-a: #438126;
       --id-b: #925e13;
       --depth: #d7dde4;
-      --depth-danger: #f3c9c4;
+      --pill: #eaeef2;
+      --vio-1: #5b3fc4;
+      --vio-2: #8a74e0;
+      --vio-3: #b9abf0;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -58,7 +72,10 @@
         --id-a: #79c752;
         --id-b: #e0a33a;
         --depth: #232a33;
-        --depth-danger: #4a2626;
+        --pill: #21262d;
+        --vio-1: #c4b5ff;
+        --vio-2: #9a84ee;
+        --vio-3: #6a54c4;
       }
     }
     .bg { fill: var(--bg); }
@@ -71,6 +88,7 @@
     .info { font: 700 11px system-ui, sans-serif; fill: var(--text-2); }
     .lbl { font: 700 10px system-ui, sans-serif; fill: var(--text-2); letter-spacing: .08em; }
     .val { font: 600 13px system-ui, sans-serif; fill: var(--text); }
+    .sub { font: 400 11.5px system-ui, sans-serif; fill: var(--text-2); }
     .crumb { font: 600 12.5px system-ui, sans-serif; fill: var(--text); }
     .crumb2 { font: 400 12.5px system-ui, sans-serif; fill: var(--text-2); }
     .fold { fill: var(--bg); stroke: var(--border); stroke-width: 1.2; }
@@ -83,16 +101,22 @@
     .doortxt { font: 600 11.5px system-ui, sans-serif; fill: var(--accent); }
     .btn { fill: none; stroke: var(--text-2); stroke-width: 1.2; }
     .btntxt { font: 600 11px system-ui, sans-serif; fill: var(--text-2); }
+    .ctl { font: 600 11px system-ui, sans-serif; fill: var(--text-2); }
     .mon { fill: var(--mon-bg); stroke: var(--mon-border); stroke-width: 1.2; }
     .montxt { font: 600 11px ui-monospace, monospace; fill: var(--text-2); }
     .monval { font: 600 11px ui-monospace, monospace; fill: var(--text); }
     .bar { fill: var(--depth); }
-    .barbad { fill: var(--depth-danger); }
+    .meter { fill: var(--panel); stroke: var(--border); stroke-width: 1.2; }
+    .room { fill: none; stroke: var(--text-2); stroke-width: 1.2; stroke-dasharray: 4 3; }
+    .note { fill: var(--panel); stroke: var(--border); stroke-width: 1.2; }
+    .notetxt { font: 600 11.5px system-ui, sans-serif; fill: var(--text); }
     .warn { font: 600 11.5px system-ui, sans-serif; fill: var(--warm); }
+    .pill { fill: var(--pill); }
+    .pilltxt { font: 600 10.5px system-ui, sans-serif; fill: var(--text-2); }
     .cap { font: 400 12px system-ui, sans-serif; fill: var(--text-2); }
   </style>
 
-  <rect class="bg" x="0" y="0" width="760" height="900"/>
+  <rect class="bg" x="0" y="0" width="760" height="1600"/>
 
   <!-- ── THE BREADCRUMB — the domain's identity dot, round, 9px, the SAME
          colour this domain has in both sidebars and on its Knowledge row ── -->
@@ -101,151 +125,264 @@
   <text class="crumb2" x="93" y="32">/</text>
   <text class="crumb" x="102" y="32">curator</text>
 
-  <!-- ── THE OVERVIEW CARD — four tiles, one component with Domains ─ -->
-  <rect class="card" x="24" y="48" width="712" height="62" rx="10"/>
-  <line class="rule" x1="202" y1="58" x2="202" y2="100"/>
-  <line class="rule" x1="380" y1="58" x2="380" y2="100"/>
-  <line class="rule" x1="558" y1="58" x2="558" y2="100"/>
+  <!-- ── THE OVERVIEW CARD — six tiles, two rows of three, one component with
+         Domains (renderLayerStrip: DOCUMENTS, MEMORY, KNOWLEDGE, AGENT
+         CONNECTIONS, SESSION START, SETUP). Ages carry a freshness dot;
+         counts and measurements do not. ──────────────────────────────── -->
+  <rect class="card" x="24" y="48" width="712" height="164" rx="10"/>
+  <line class="hair" x1="36" y1="130" x2="724" y2="130"/>
+  <line class="rule" x1="261" y1="58" x2="261" y2="120"/>
+  <line class="rule" x1="499" y1="58" x2="499" y2="120"/>
+  <line class="rule" x1="261" y1="140" x2="261" y2="202"/>
+  <line class="rule" x1="499" y1="140" x2="499" y2="202"/>
 
-  <circle cx="40" cy="68" r="4.5" fill="var(--fresh)"/>
-  <text class="lbl" x="52" y="72">DOCUMENTS</text>
-  <text class="val" x="40" y="94">3 documents · fresh</text>
+  <circle cx="40" cy="70" r="4.5" fill="var(--fresh)"/>
+  <text class="lbl" x="52" y="74">DOCUMENTS</text>
+  <text class="val" x="40" y="98">3 documents</text>
+  <text class="sub" x="40" y="116">fresh</text>
 
-  <circle cx="218" cy="68" r="4.5" fill="var(--fresh)"/>
-  <text class="lbl" x="230" y="72">MEMORY</text>
-  <text class="val" x="218" y="94">saved 14 min ago</text>
+  <circle cx="277" cy="70" r="4.5" fill="var(--fresh)"/>
+  <text class="lbl" x="289" y="74">MEMORY</text>
+  <text class="val" x="277" y="98">saved 14 min ago</text>
+  <text class="sub" x="277" y="116">claude-code</text>
 
-  <circle cx="396" cy="68" r="4.5" fill="var(--warm)"/>
-  <text class="lbl" x="408" y="72">KNOWLEDGE</text>
-  <text class="val" x="396" y="94">391 pages · 3 days ago</text>
+  <circle cx="515" cy="70" r="4.5" fill="var(--warm)"/>
+  <text class="lbl" x="527" y="74">KNOWLEDGE</text>
+  <text class="val" x="515" y="98">455 pages</text>
+  <text class="sub" x="515" y="116">3 days ago · 2 domains</text>
 
-  <text class="lbl" x="574" y="72">CAPTURE</text>
-  <text class="val" x="574" y="94">1 session · 30 days</text>
+  <text class="lbl" x="40" y="156">AGENT CONNECTIONS</text>
+  <text class="val" x="40" y="180">4 connections</text>
+  <text class="sub" x="40" y="198">last 30 days</text>
+
+  <text class="lbl" x="277" y="156">SESSION START</text>
+  <text class="val" x="277" y="180">≈8.8k tokens · 1 reply</text>
+
+  <text class="lbl" x="515" y="156">SETUP</text>
+  <text class="val" x="515" y="180">1 to fix</text>
+  <text class="sub" x="515" y="198">Claude Code · Cursor · 2 computers</text>
 
   <!-- ── STEP ① DOCUMENTS ────────────────────────────────────────────
          The head is a SIBLING of the body. The section's controls are a head
          ROW beneath the heading and ABOVE the row, left-aligned at the rows'
-         own x — Wiki health's `.dm-health-top` anatomy, the one shipped
-         instance of the pattern and the maintainer's named model. ──────── -->
-  <line class="rule" x1="24" y1="134" x2="736" y2="134"/>
-  <circle class="num" cx="36" cy="158" r="11"/>
-  <text class="numtxt" x="36" y="162.5" text-anchor="middle">1</text>
-  <text class="h" x="58" y="163">Documents</text>
-  <circle cx="160" cy="158" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
-  <text class="info" x="160" y="162" text-anchor="middle">i</text>
+         own x. Since v3.68.0 the two doors are always there. ──────────── -->
+  <line class="rule" x1="24" y1="236" x2="736" y2="236"/>
+  <circle class="num" cx="36" cy="260" r="11"/>
+  <text class="numtxt" x="36" y="264.5" text-anchor="middle">1</text>
+  <text class="h" x="58" y="265">Documents</text>
+  <circle cx="160" cy="260" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
+  <text class="info" x="160" y="264" text-anchor="middle">i</text>
 
-  <rect class="btn" x="58" y="178" width="132" height="24" rx="6"/>
-  <text class="btntxt" x="124" y="194" text-anchor="middle">Refresh from repo</text>
-  <rect class="btn" x="198" y="178" width="126" height="24" rx="6"/>
-  <text class="btntxt" x="261" y="194" text-anchor="middle">Add from folder</text>
-  <rect class="btn" x="332" y="178" width="178" height="24" rx="6"/>
-  <text class="btntxt" x="421" y="194" text-anchor="middle">Mirror from GitHub instead</text>
+  <rect class="btn" x="58" y="280" width="150" height="24" rx="6"/>
+  <text class="btntxt" x="133" y="296" text-anchor="middle">Add from this computer</text>
+  <rect class="btn" x="216" y="280" width="116" height="24" rx="6"/>
+  <text class="btntxt" x="274" y="296" text-anchor="middle">Add from GitHub</text>
+  <rect class="btn" x="340" y="280" width="124" height="24" rx="6"/>
+  <text class="btntxt" x="402" y="296" text-anchor="middle">Write a document</text>
+  <rect class="btn" x="472" y="280" width="152" height="24" rx="6"/>
+  <text class="btntxt" x="548" y="296" text-anchor="middle">Suggest a reading plan</text>
 
-  <rect class="fold" x="58" y="210" width="678" height="30" rx="7"/>
-  <text class="foldtxt" x="72" y="229">▾  The documents</text>
-  <text class="foldmeta" x="722" y="229" text-anchor="end">3 documents · 391 KB · mirrored · 2 read first</text>
+  <rect class="fold" x="58" y="312" width="678" height="30" rx="7"/>
+  <text class="foldtxt" x="72" y="331">▾  The documents</text>
+  <text class="foldmeta" x="722" y="331" text-anchor="end">3 documents · 391 KB · mirrored · 2 read first</text>
 
-  <!-- the table, inside the open row — THE DEPTH BAR'S FIRST PLACEMENT -->
-  <text class="th" x="76" y="260">DOCUMENT</text>
-  <text class="th" x="596" y="260" text-anchor="end">SIZE</text>
-  <text class="th" x="616" y="260">READ</text>
-  <text class="th" x="660" y="260">UPDATED</text>
-  <line class="hair" x1="72" y1="266" x2="722" y2="266"/>
+  <!-- the table, inside the open row — THE DEPTH BAR'S FIRST PLACEMENT:
+       each bar is that document's share of the project's own 391 KB -->
+  <text class="th" x="76" y="362">DOCUMENT</text>
+  <text class="th" x="596" y="362" text-anchor="end">SIZE</text>
+  <text class="th" x="616" y="362">READ</text>
+  <text class="th" x="660" y="362">UPDATED</text>
+  <line class="hair" x1="72" y1="368" x2="722" y2="368"/>
 
-  <rect class="bar" x="547" y="272" width="53" height="16" rx="3"/>
-  <text class="td" x="76" y="284">architecture.md</text>
-  <text class="td" x="596" y="284" text-anchor="end">62 KB</text>
-  <text class="tdq" x="616" y="284">✓</text>
-  <text class="tdq" x="660" y="284">3 days ago</text>
+  <rect class="bar" x="573" y="374" width="27" height="16" rx="3"/>
+  <text class="td" x="76" y="386">architecture.md</text>
+  <text class="td" x="596" y="386" text-anchor="end">62 KB</text>
+  <text class="tdq" x="616" y="386">✓</text>
+  <text class="tdq" x="660" y="386">3 days ago</text>
 
-  <rect class="bar" x="499" y="296" width="101" height="16" rx="3"/>
-  <text class="td" x="76" y="308">decisions.md</text>
-  <text class="td" x="596" y="308" text-anchor="end">119 KB</text>
-  <text class="tdq" x="616" y="308">✓</text>
-  <text class="tdq" x="660" y="308">3 days ago</text>
+  <rect class="bar" x="548" y="398" width="52" height="16" rx="3"/>
+  <text class="td" x="76" y="410">decisions.md</text>
+  <text class="td" x="596" y="410" text-anchor="end">119 KB</text>
+  <text class="tdq" x="616" y="410">✓</text>
+  <text class="tdq" x="660" y="410">3 days ago</text>
 
-  <rect class="barbad" x="430" y="320" width="170" height="16" rx="3"/>
-  <text class="td" x="76" y="332">roadmap.md</text>
-  <text class="td" x="596" y="332" text-anchor="end">210 KB</text>
-  <text class="tdq" x="616" y="332">–</text>
-  <text class="tdq" x="660" y="332">3 days ago</text>
+  <rect class="bar" x="509" y="422" width="91" height="16" rx="3"/>
+  <text class="td" x="76" y="434">roadmap.md</text>
+  <text class="td" x="596" y="434" text-anchor="end">210 KB</text>
+  <text class="tdq" x="616" y="434">–</text>
+  <text class="tdq" x="660" y="434">3 days ago</text>
 
-  <line class="hair" x1="72" y1="344" x2="722" y2="344"/>
-  <text class="warn" x="76" y="362">⚠  391 KB of a 200 KB budget — agents receive 120 KB per session and the rest is dropped.</text>
+  <line class="hair" x1="72" y1="446" x2="722" y2="446"/>
+  <text class="sub" x="76" y="464">391 KB in this project · 2 read first reach every session · the rest are opened by name</text>
 
-  <!-- ── STEP ② MEMORY — four rows, one instrument each.
-         "Last saved" is GONE: its fact is the MEMORY tile above and the
-         Handoffs row's own summary. ─────────────────────────────────── -->
-  <line class="rule" x1="24" y1="386" x2="736" y2="386"/>
-  <circle class="num" cx="36" cy="410" r="11"/>
-  <text class="numtxt" x="36" y="414.5" text-anchor="middle">2</text>
-  <text class="h" x="58" y="415">Memory</text>
-  <circle cx="144" cy="410" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
-  <text class="info" x="144" y="414" text-anchor="middle">i</text>
-
-  <rect class="fold" x="58" y="432" width="678" height="28" rx="7"/>
-  <text class="foldtxt" x="72" y="450">▸  Capture</text>
-  <text class="foldmeta" x="722" y="450" text-anchor="end">1 session · 1 saved before stopping</text>
-
-  <rect class="fold" x="58" y="466" width="678" height="28" rx="7"/>
-  <text class="foldtxt" x="72" y="484">▸  Handoffs</text>
-  <text class="foldmeta" x="722" y="484" text-anchor="end">3 handoffs · saved 14 min ago</text>
-
-  <rect class="fold" x="58" y="500" width="678" height="28" rx="7"/>
-  <text class="foldtxt" x="72" y="518">▸  The brief</text>
-  <text class="foldmeta" x="722" y="518" text-anchor="end">updated 14 min ago · 126 words        ✎</text>
+  <!-- ── STEP ② MEMORY — four rows, one instrument each. ─────────────── -->
+  <line class="rule" x1="24" y1="488" x2="736" y2="488"/>
+  <circle class="num" cx="36" cy="512" r="11"/>
+  <text class="numtxt" x="36" y="516.5" text-anchor="middle">2</text>
+  <text class="h" x="58" y="517">Memory</text>
+  <circle cx="144" cy="512" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
+  <text class="info" x="144" y="516" text-anchor="middle">i</text>
 
   <rect class="fold" x="58" y="534" width="678" height="28" rx="7"/>
-  <text class="foldtxt" x="72" y="552">▸  Journal</text>
-  <text class="foldmeta" x="722" y="552" text-anchor="end">17 saves · latest 14 min ago</text>
+  <text class="foldtxt" x="72" y="552">▸  Agent connections</text>
+  <text class="foldmeta" x="722" y="552" text-anchor="end">4 connections in the last 30 days · 3 saved before stopping</text>
+
+  <rect class="fold" x="58" y="568" width="678" height="28" rx="7"/>
+  <text class="foldtxt" x="72" y="586">▸  Handoffs</text>
+  <text class="foldmeta" x="722" y="586" text-anchor="end">3 handoffs · saved 14 min ago</text>
+
+  <rect class="fold" x="58" y="602" width="678" height="28" rx="7"/>
+  <text class="foldtxt" x="72" y="620">▸  The brief</text>
+  <text class="foldmeta" x="722" y="620" text-anchor="end">updated 14 min ago · 126 words        ✎</text>
+
+  <rect class="fold" x="58" y="636" width="678" height="28" rx="7"/>
+  <text class="foldtxt" x="72" y="654">▸  Journal</text>
+  <text class="foldmeta" x="722" y="654" text-anchor="end">17 saves · latest 14 min ago</text>
 
   <!-- ── STEP ③ KNOWLEDGE — a head-row picker, then one row per domain,
          each carrying THAT domain's identity dot. ────────────────────── -->
-  <line class="rule" x1="24" y1="580" x2="736" y2="580"/>
-  <circle class="num" cx="36" cy="604" r="11"/>
-  <text class="numtxt" x="36" y="608.5" text-anchor="middle">3</text>
-  <text class="h" x="58" y="609">Knowledge</text>
-  <circle cx="168" cy="604" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
-  <text class="info" x="168" y="608" text-anchor="middle">i</text>
+  <line class="rule" x1="24" y1="688" x2="736" y2="688"/>
+  <circle class="num" cx="36" cy="712" r="11"/>
+  <text class="numtxt" x="36" y="716.5" text-anchor="middle">3</text>
+  <text class="h" x="58" y="717">Knowledge</text>
+  <circle cx="168" cy="712" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
+  <text class="info" x="168" y="716" text-anchor="middle">i</text>
 
-  <rect class="btn" x="58" y="624" width="136" height="24" rx="6"/>
-  <text class="btntxt" x="126" y="640" text-anchor="middle">+ Add a domain  ⌄</text>
+  <rect class="btn" x="58" y="732" width="136" height="24" rx="6"/>
+  <text class="btntxt" x="126" y="748" text-anchor="middle">+ Add a domain  ⌄</text>
 
-  <rect class="fold" x="58" y="656" width="678" height="30" rx="7"/>
-  <text class="foldtxt" x="72" y="675">▾</text>
-  <circle cx="98" cy="671" r="4.5" fill="var(--id-a)"/>
-  <text class="foldtxt" x="110" y="675">projects</text>
-  <text class="foldmeta" x="722" y="675" text-anchor="end">391 pages · 3 days ago</text>
+  <rect class="fold" x="58" y="764" width="678" height="30" rx="7"/>
+  <text class="foldtxt" x="72" y="783">▾</text>
+  <circle cx="98" cy="779" r="4.5" fill="var(--id-a)"/>
+  <text class="foldtxt" x="110" y="783">projects</text>
+  <text class="foldmeta" x="722" y="783" text-anchor="end">391 pages · 3 days ago</text>
 
   <!-- the monitor — THE DEPTH BAR'S SECOND PLACEMENT, against pageCount -->
-  <rect class="mon" x="72" y="694" width="650" height="86" rx="8"/>
-  <rect class="bar" x="230" y="704" width="61" height="14" rx="3"/>
-  <text class="montxt" x="86" y="715">entities</text>
-  <text class="monval" x="287" y="715" text-anchor="end">120</text>
-  <rect class="bar" x="169" y="722" width="122" height="14" rx="3"/>
-  <text class="montxt" x="86" y="733">concepts</text>
-  <text class="monval" x="287" y="733" text-anchor="end">240</text>
-  <rect class="bar" x="275" y="740" width="16" height="14" rx="3"/>
-  <text class="montxt" x="86" y="751">summaries</text>
-  <text class="monval" x="287" y="751" text-anchor="end">31</text>
-  <text class="montxt" x="400" y="715">last ingest</text>
-  <circle cx="486" cy="711" r="4" fill="var(--warm)"/>
-  <text class="monval" x="496" y="715">3 days ago</text>
-  <text class="montxt" x="400" y="733">pages</text>
-  <text class="monval" x="496" y="733">391</text>
+  <rect class="mon" x="72" y="802" width="650" height="86" rx="8"/>
+  <rect class="bar" x="230" y="812" width="61" height="14" rx="3"/>
+  <text class="montxt" x="86" y="823">entities</text>
+  <text class="monval" x="287" y="823" text-anchor="end">120</text>
+  <rect class="bar" x="169" y="830" width="122" height="14" rx="3"/>
+  <text class="montxt" x="86" y="841">concepts</text>
+  <text class="monval" x="287" y="841" text-anchor="end">240</text>
+  <rect class="bar" x="275" y="848" width="16" height="14" rx="3"/>
+  <text class="montxt" x="86" y="859">summaries</text>
+  <text class="monval" x="287" y="859" text-anchor="end">31</text>
+  <text class="montxt" x="400" y="823">last ingest</text>
+  <circle cx="486" cy="819" r="4" fill="var(--warm)"/>
+  <text class="monval" x="496" y="823">3 days ago</text>
+  <text class="montxt" x="400" y="841">pages</text>
+  <text class="monval" x="496" y="841">391</text>
 
-  <rect class="door" x="72" y="790" width="132" height="26" rx="6"/>
-  <text class="doortxt" x="138" y="807.5" text-anchor="middle">Open in Domains</text>
-  <rect class="door" x="214" y="790" width="132" height="26" rx="6"/>
-  <text class="doortxt" x="280" y="807.5" text-anchor="middle">Ask this domain</text>
-  <rect class="btn" x="640" y="790" width="82" height="26" rx="6"/>
-  <text class="btntxt" x="681" y="807.5" text-anchor="middle">Remove</text>
+  <rect class="door" x="72" y="898" width="132" height="26" rx="6"/>
+  <text class="doortxt" x="138" y="915.5" text-anchor="middle">Open in Domains</text>
+  <rect class="door" x="214" y="898" width="132" height="26" rx="6"/>
+  <text class="doortxt" x="280" y="915.5" text-anchor="middle">Ask this domain</text>
+  <rect class="btn" x="640" y="898" width="82" height="26" rx="6"/>
+  <text class="btntxt" x="681" y="915.5" text-anchor="middle">Remove</text>
 
-  <rect class="fold" x="58" y="828" width="678" height="30" rx="7"/>
-  <text class="foldtxt" x="72" y="847">▸</text>
-  <circle cx="98" cy="843" r="4.5" fill="var(--id-b)"/>
-  <text class="foldtxt" x="110" y="847">research</text>
-  <text class="foldmeta" x="722" y="847" text-anchor="end">64 pages · 5 months ago</text>
+  <rect class="fold" x="58" y="936" width="678" height="30" rx="7"/>
+  <text class="foldtxt" x="72" y="955">▸</text>
+  <circle cx="98" cy="951" r="4.5" fill="var(--id-b)"/>
+  <text class="foldtxt" x="110" y="955">research</text>
+  <text class="foldmeta" x="722" y="955" text-anchor="end">64 pages · 5 months ago</text>
 
-  <text class="cap" x="736" y="882" text-anchor="end">Top to bottom is the order a session start reads in.</text>
+  <!-- ── STEP ④ SESSION START — the three things the owner sets, then the
+         window to scale: 650px = a 200k-token window. Your tool's share
+         (50k, hatched), The Curator's layers (≈8.8k, one violet hue in
+         three lightness steps), the dashed room of the 16k reading budget. ─ -->
+  <line class="rule" x1="24" y1="990" x2="736" y2="990"/>
+  <circle class="num" cx="36" cy="1014" r="11"/>
+  <text class="numtxt" x="36" y="1018.5" text-anchor="middle">4</text>
+  <text class="h" x="58" y="1019">Session start</text>
+  <circle cx="186" cy="1014" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
+  <text class="info" x="186" y="1018" text-anchor="middle">i</text>
+
+  <text class="ctl" x="58" y="1050">Window</text>
+  <rect class="btn" x="104" y="1034" width="92" height="24" rx="6"/>
+  <text class="btntxt" x="150" y="1050" text-anchor="middle">200k  ⌄</text>
+  <text class="ctl" x="212" y="1050">Reading budget</text>
+  <rect class="btn" x="304" y="1034" width="120" height="24" rx="6"/>
+  <text class="btntxt" x="364" y="1050" text-anchor="middle">Standard · 16k  ⌄</text>
+  <text class="ctl" x="440" y="1050">Your tool’s share</text>
+  <rect class="btn" x="542" y="1034" width="116" height="24" rx="6"/>
+  <text class="btntxt" x="600" y="1050" text-anchor="middle">Typical · 50k  ⌄</text>
+
+  <rect class="meter" x="72" y="1070" width="650" height="24" rx="5"/>
+  <rect x="72.6" y="1070.6" width="162" height="22.8" fill="url(#ccs-hatch)" opacity=".55"/>
+  <line class="hair" x1="234.5" y1="1070" x2="234.5" y2="1094"/>
+  <rect x="235" y="1072" width="4" height="20" fill="var(--vio-1)"/>
+  <rect x="239" y="1072" width="7" height="20" fill="var(--vio-2)"/>
+  <rect x="246" y="1072" width="18" height="20" fill="var(--vio-3)"/>
+  <rect class="room" x="235" y="1066" width="52" height="32" rx="3"/>
+
+  <rect x="72" y="1106" width="12" height="10" fill="url(#ccs-hatch)" stroke="var(--text-2)" stroke-width=".8"/>
+  <text class="foldmeta" x="90" y="1115">Your tool’s share ≈50k</text>
+  <rect x="236" y="1106" width="4" height="10" fill="var(--vio-1)"/>
+  <rect x="240" y="1106" width="4" height="10" fill="var(--vio-2)"/>
+  <rect x="244" y="1106" width="4" height="10" fill="var(--vio-3)"/>
+  <text class="foldmeta" x="254" y="1115">The Curator ≈8.8k</text>
+  <rect class="room" x="382" y="1106" width="14" height="10" rx="2"/>
+  <text class="foldmeta" x="402" y="1115">reading budget 16k</text>
+  <text class="foldmeta" x="722" y="1115" text-anchor="end">≈141k free of a 200k window</text>
+
+  <rect class="fold" x="58" y="1130" width="678" height="28" rx="7"/>
+  <text class="foldtxt" x="72" y="1148">▸  Documents at start</text>
+  <text class="foldmeta" x="722" y="1148" text-anchor="end">2 read first · 1 on request</text>
+
+  <rect class="fold" x="58" y="1164" width="678" height="28" rx="7"/>
+  <text class="foldtxt" x="72" y="1182">▸  What an agent receives</text>
+  <text class="foldmeta" x="722" y="1182" text-anchor="end">≈8.8k tokens · 35 KB · 4.4% of 200k</text>
+
+  <rect class="fold" x="58" y="1198" width="678" height="28" rx="7"/>
+  <text class="foldtxt" x="72" y="1216">▸  How an agent reaches this</text>
+  <text class="foldmeta" x="722" y="1216" text-anchor="end">MCP · session-start hook · Chat</text>
+
+  <!-- ── STEP ⑤ SETUP — when this computer was checked, then every to-fix
+         line UNFOLDED with its own fix buttons (a warning never sits behind
+         a chevron), "+ Add a tool", and three folds, each ending in a grey
+         tag naming how its contents travel between computers. ─────────── -->
+  <line class="rule" x1="24" y1="1250" x2="736" y2="1250"/>
+  <circle class="num" cx="36" cy="1274" r="11"/>
+  <text class="numtxt" x="36" y="1278.5" text-anchor="middle">5</text>
+  <text class="h" x="58" y="1279">Setup</text>
+  <circle cx="128" cy="1274" r="8" fill="none" stroke="var(--text-2)" stroke-width="1.2"/>
+  <text class="info" x="128" y="1278" text-anchor="middle">i</text>
+
+  <text class="foldmeta" x="58" y="1310">checked 2 min ago</text>
+  <rect class="btn" x="166" y="1294" width="70" height="24" rx="6"/>
+  <text class="btntxt" x="201" y="1310" text-anchor="middle">Re-check</text>
+
+  <rect class="note" x="58" y="1328" width="678" height="84" rx="7"/>
+  <text class="warn" x="72" y="1349">⚠</text>
+  <text class="notetxt" x="92" y="1349">AGENTS.md in ~/code/curator has older Curator instructions, so Cursor may not</text>
+  <text class="notetxt" x="92" y="1365">re-read on “continue” or save under its own name.</text>
+  <text class="sub" x="92" y="1381">Replace them with the current instructions at the very top, then commit and push.</text>
+  <rect class="btn" x="92" y="1388" width="120" height="18" rx="5"/>
+  <text class="btntxt" x="152" y="1401" text-anchor="middle">Copy instructions</text>
+  <rect class="btn" x="220" y="1388" width="120" height="18" rx="5"/>
+  <text class="btntxt" x="280" y="1401" text-anchor="middle">Reveal AGENTS.md</text>
+
+  <rect class="btn" x="58" y="1422" width="116" height="24" rx="6"/>
+  <text class="btntxt" x="116" y="1438" text-anchor="middle">+ Add a tool  ⌄</text>
+
+  <rect class="fold" x="58" y="1456" width="678" height="30" rx="7"/>
+  <text class="foldtxt" x="72" y="1475">▸  Tools</text>
+  <text class="foldmeta" x="560" y="1475" text-anchor="end">2 tools · 1 to fix</text>
+  <rect class="pill" x="570" y="1462" width="152" height="18" rx="9"/>
+  <text class="pilltxt" x="646" y="1474.5" text-anchor="middle">set up on each computer</text>
+
+  <rect class="fold" x="58" y="1492" width="678" height="30" rx="7"/>
+  <text class="foldtxt" x="72" y="1511">▸  Repository on this computer</text>
+  <text class="foldmeta" x="614" y="1511" text-anchor="end">~/code/curator · 1 to fix</text>
+  <rect class="pill" x="624" y="1498" width="98" height="18" rx="9"/>
+  <text class="pilltxt" x="673" y="1510.5" text-anchor="middle">project’s git</text>
+
+  <rect class="fold" x="58" y="1528" width="678" height="30" rx="7"/>
+  <text class="foldtxt" x="72" y="1547">▸  Computers</text>
+  <text class="foldmeta" x="614" y="1547" text-anchor="end">2 computers</text>
+  <rect class="pill" x="624" y="1534" width="98" height="18" rx="9"/>
+  <text class="pilltxt" x="673" y="1546.5" text-anchor="middle">Personal Sync</text>
+
+  <text class="cap" x="736" y="1584" text-anchor="end">Top to bottom is the order a session start reads in.</text>
 </svg>
