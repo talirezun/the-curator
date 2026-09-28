@@ -5640,7 +5640,8 @@ comes with a source install (`npm link` puts it on your `PATH`); the Mac app doe
 
 ## 13e. The Setup check in the app
 
-*New in v3.77.0; redesigned in v3.78.0; made understandable in v3.79.0.* The checklist in
+*New in v3.77.0; redesigned in v3.78.0; made understandable in v3.79.0; "+ Add a tool" made usable,
+with removal, in v3.80.0.* The checklist in
 [§13d](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist) is visible
 in the app, for one project on one computer, so you do not have to check it by hand. v3.78.0 rebuilt
 step 5 from the app's own existing parts — no new component was designed for it — and answered a
@@ -5736,7 +5737,8 @@ editor back to The Curator after fixing a file shows the fix without an extra cl
   computer, its bridge OK, its block current or the tool reads none), **to fix**, **partly checked**,
   or **no save from here**. Click a row to open its full evidence — every file it read, what each one
   said, and a **Reveal** for anything found — in the right-side reader, the same place every other
-  detail page in the app opens.
+  detail page in the app opens. **Since v3.80.0, a row you added can be removed** — see "Adding a
+  tool," below.
 - **Repository on this computer** — the folder, whether `.curator-project` names this project and is
   committed (and pushed, as of your last `git fetch` — the app never fetches your project on its
   own), and for `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`: present, block present, current, at the top.
@@ -5744,10 +5746,45 @@ editor back to The Curator after fixing a file shows the fix without an extra cl
 - **Computers** — see "How many computers?" below. **Since v3.79.0, each row opens in the reader**
   as well.
 
-**"+ Add a tool."** The same picker the app uses elsewhere (Domains' "+ Add a domain"): a listbox
-with two groups, **Known tools** (every agent tool The Curator can write an MCP entry for, including
-DeepSeek Harness, that is not already a row) and **Other**, whose last entry is **Custom tool…**. See
-"A tool that isn't listed" below for what picking it does.
+**"+ Add a tool."** A listbox with two groups, **Known tools** (every agent tool The Curator can
+write an MCP entry for, including DeepSeek Harness, that is not already a row) and **Other**, whose
+last entry is **Custom tool…**. See "A tool that isn't listed" below for what picking it does.
+
+### Adding a tool
+
+*New in v3.80.0.* Before this release, "+ Add a tool" was a plain, full-width list with a long
+monospace detail floating right, and once a tool was added there was no way to take it off the list
+and nothing told you what to do next. Two changes:
+
+**The menu now matches the chat composer's model picker.** Each row is two lines — the tool's name,
+then what it reads and where its MCP settings live, in one short folder (for example "reads
+AGENTS.md · MCP config in `~/.codex`") — with **not measured** on the right wherever that location
+hasn't been verified. The menu is capped at a comfortable reading width, never full-bleed, and its
+foot line says: *"Adding a tool only tells Setup to check it on this computer — you connect it
+yourself."* Picking a row does exactly that and nothing more — no file is written, no config is
+touched.
+
+**Adding a tool opens its page in the reader**, on a numbered four-step guide for getting it ready
+(skipped for a tool that is already ready, which opens on its evidence instead):
+
+| Step | What it asks | Shows |
+|---|---|---|
+| ① Connect The Curator's MCP | Add the MCP entry to the exact file this tool reads, in its format | The file, the format, **Copy MCP entry**, and **Reveal** when the file already exists |
+| ② Install the two skills | Unzip both into the tool's skills folder | Where, or **skip** when the tool has no skills support, **optional** when that isn't known, or **can't check here** for an account-held skill store |
+| ③ Put the Curator instructions in the file it reads | Paste the block at the very top, then commit and push | **Copy instructions** and the commit-and-push command; reads **"not checked yet"** until the repository folder is set |
+| ④ Let it save once from this computer | Open a session in the project folder and give it a task | Turns **done** once the tool saves this project from this computer under its own name |
+
+Each step carries its own state (done / to fix / to do / optional / skip / can't check here / not
+checked yet) and doors; a to-fix line about the tool appears **inside** the step it belongs to,
+never a second time above the guide. A ready tool's reader shows its evidence as before.
+
+**Added tools can be removed** — a trash icon on the tool's row in the Tools fold, or "Remove from
+this list" in its reader page. There is no confirmation, because nothing is uninstalled: removing a
+tool only stops Setup checking it on this computer, and **"+ Add a tool" brings it straight back**.
+Two kinds of row stay regardless of who added them, and the reader says why: a tool that has **saved
+this project** (its saves are this project's record) and a tool whose **MCP settings on this
+computer already name The Curator** (Setup found it; nobody added it, so removing it here would not
+match what is actually configured).
 
 ### The three ways things travel between computers
 
