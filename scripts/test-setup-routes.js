@@ -222,6 +222,13 @@ try {
     // checkout (17d23c) and that checkout's pre-D10 alias (mac-17d23c).
     await store.createProject(D, 'fleet', { brief: '# Project brief — fleet\n\n## Standing brief\n\nx\n' });
     for (const [machine, harness, scope] of [['mac-17d23c', 'Antigravity', 'antigravity'], ['talis-macbook-pro-17d23c', 'Antigravity', 'antigravity'], ['talis-macbook-pro-acb035', 'Claude Code', 'claude-code']]) {
+      // DISTINCT agent timestamps (v3.79.0): the store stamps a save with the
+      // wall clock in ms, and two saves ~2 ms apart can in principle share a
+      // millisecond. The primary name is "newest save", so the fixture makes
+      // "newest" unambiguous rather than relying on the tie-break (which
+      // test-setup-check §12 pins with an exact tie).
+      const t0 = Date.now();
+      while (Date.now() < t0 + 5) await new Promise((r) => setTimeout(r, 2));
       const s = await store.saveWorkingState(D, { project: 'fleet', scope, machine, harness, headline: machine, nowState: 'x', nextSteps: ['y'] });
       if (!s.ok) throw new Error(`fixture save ${machine}: ${s.reason}`);
     }
@@ -242,7 +249,11 @@ try {
     const here = (r.body.physical || []).find((p) => p.thisComputer);
     ok(here && here.installs.length === 2 && here.installs.every((i) => i.thisComputer), 'both installs are in this Mac\'s one physical group', r.body.physical);
     const src = r.body.computers.find((c) => c.key === 'install:17d23c');
-    ok(src && src.installKind === 'source' && src.primary === 'talis-macbook-pro-17d23c' && src.aliases.join() === 'mac-17d23c', 'the checkout: kind source, primary name and its alias', src);
+    // Three separate checks (v3.79.0): one conjunction failed once and did not
+    // say which part — each now names itself, with the evidence.
+    ok(src && src.installKind === 'source', 'the checkout: kind source', { src, installs: r.body.machine?.installs });
+    ok(src && src.primary === 'talis-macbook-pro-17d23c', 'the checkout: its newest-saved name is primary', { names: src?.names, saves: src?.saves });
+    ok(src && src.aliases.join() === 'mac-17d23c', 'the checkout: the pre-D10 name is its alias', src?.aliases);
     ok(r.body.computers.find((c) => c.key === 'install:acb035')?.installKind === 'app', 'the Mac app install: kind app');
     ok(r.body.machine.installIds.includes('acb035') && r.body.machine.installIds.includes('17d23c'), 'the machine facts list both installation ids');
     ok(!JSON.stringify(r.body).includes(SECRET) && !JSON.stringify(r.body).includes('zzother'), 'no other server\'s name or secret');

@@ -460,6 +460,24 @@ section('§12 computers grouped by installation (v3.78.0)');
   const r2 = S.collectProjectSetup({ domain: 'projects', project: 'ott', pairs: pairs.slice(0, 3), machine: { ids: ['talis-macbook-pro-17d23c'] }, machineRows: [], repo: null, template: TEMPLATE });
   ok(r2.computers.find((c) => c.key === 'install:17d23c')?.thisComputer === true && r2.computers.find((c) => c.key === 'install:acb035')?.thisComputer === false,
     'given only one machine id, its alias matches by install id and the other install does not');
+  // v3.79.0 — an EXACT tie (two saves stamped in the same millisecond): the
+  // name that is this Mac's current machine id is primary, in either input
+  // order; with no current id, lexical order — never the input order.
+  {
+    const at = '2026-09-28T12:00:00.000Z';
+    const a = { scope: 'antigravity', machine: 'mac-17d23c', harness: 'Antigravity', writtenAt: at };
+    const b = { scope: 'antigravity', machine: 'talis-macbook-pro-17d23c', harness: 'Antigravity', writtenAt: at };
+    const opts = { domain: 'projects', project: 'ott', isHere: () => true, currentIds: ['talis-macbook-pro-17d23c'] };
+    const p1 = S.groupComputers([a, b], opts).rows[0];
+    const p2 = S.groupComputers([b, a], opts).rows[0];
+    ok(p1.primary === 'talis-macbook-pro-17d23c' && p2.primary === 'talis-macbook-pro-17d23c' && p1.aliases.join() === 'mac-17d23c',
+      'an exact same-millisecond tie: the current machine id is primary, whatever the input order', { p1: p1.names, p2: p2.names });
+    const n1 = S.groupComputers([b, a], { ...opts, currentIds: [] }).rows[0];
+    const n2 = S.groupComputers([a, b], { ...opts, currentIds: [] }).rows[0];
+    ok(n1.primary === n2.primary && n1.primary === 'mac-17d23c', '…with no current id known, lexical order — the same in either input order (control)', { n1: n1.names, n2: n2.names });
+    const viaProject = S.collectProjectSetup({ domain: 'projects', project: 'ott', pairs: [a, b], machine: { ids: ['talis-macbook-pro-17d23c'] }, machineRows: [], repo: null, template: TEMPLATE });
+    ok(viaProject.computers[0].primary === 'talis-macbook-pro-17d23c', '…and collectProjectSetup passes this Mac\'s machine ids through', viaProject.computers[0].names);
+  }
   // A bare hostname (no install id) never matches by installation.
   const g = S.groupComputers([{ machine: 'mac', harness: 'x', writtenAt: iso(1) }, { machine: 'mac-pro', harness: 'x', writtenAt: iso(1) }], { domain: 'projects', project: 'ott', isHere: () => false });
   ok(g.rows.length === 2 && g.rows.every((x) => x.names.length === 1), 'names with no install id are one row each — never merged by hostname');

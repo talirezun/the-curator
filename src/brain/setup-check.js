@@ -1219,7 +1219,7 @@ export function collectProjectSetup(o) {
   // ── Computers, grouped by INSTALLATION (v3.78.0) ──────────────────────
   // Before the repository (v3.79.0): whether ANOTHER computer has saved this
   // project decides what the marker-missing line tells the owner to do.
-  const computers = groupComputers(pairs, { domain, project, isHere, sync: o.sync, installs: o.machine?.installs || [] });
+  const computers = groupComputers(pairs, { domain, project, isHere, sync: o.sync, installs: o.machine?.installs || [], currentIds: hereIds });
   const otherComputerSaved = computers.rows.some((c) => !c.thisComputer && c.newestSaveAt);
 
   // ── Repository ─────────────────────────────────────────────────────────
@@ -1539,7 +1539,8 @@ function wrongSaveItem({ id, label, s, row, best, blockItem, names, repoPath, gi
  * other computers stay one group each — nothing proves two remote installs
  * share hardware, and a hostname is not that proof (it flaps).
  */
-export function groupComputers(pairs, { domain, project, isHere, sync, installs = [] }) {
+export function groupComputers(pairs, { domain, project, isHere, sync, installs = [], currentIds = [] }) {
+  currentIds = new Set(Array.isArray(currentIds) || currentIds instanceof Set ? currentIds : []);
   const rows = new Map();
   const collision = toolScopeIds();
   const keyOf = (name) => { const i = installIdOf(name); return i ? `install:${i}` : `name:${name}`; };
@@ -1588,9 +1589,17 @@ export function groupComputers(pairs, { domain, project, isHere, sync, installs 
     }
   }
   const out = [...rows.values()].map((r) => {
-    // Newest-saved name first; a name with no dated save sorts last.
+    // Newest-saved name first; a name with no dated save sorts last. On an
+    // EXACT tie (two saves stamped in the same millisecond — the agent clock
+    // is ISO with ms resolution), the name that is an install's CURRENT
+    // machine id on this Mac wins (it carries today's hostname slug; an
+    // alias like `mac-17d23c` is a pre-D10 spelling), then plain lexical
+    // order. Before v3.79.0 a tie fell straight to lexical order, which puts
+    // `mac-…` ahead of `talis-macbook-pro-…` — the one way `test-setup-routes`
+    // §9 could read the alias as primary.
+    const cur = (n) => (currentIds.has(n) ? 1 : 0);
     const names = [...r.names.entries()]
-      .sort((x, y) => (Date.parse(y[1]) || 0) - (Date.parse(x[1]) || 0) || x[0].localeCompare(y[0]))
+      .sort((x, y) => (Date.parse(y[1]) || 0) - (Date.parse(x[1]) || 0) || cur(y[0]) - cur(x[0]) || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0))
       .map(([n]) => n);
     const row = {
       key: r.key,
