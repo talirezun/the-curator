@@ -379,6 +379,8 @@ import {
 import {
   renderSetupBody, setupHeadHtml, setupTile, SETUP_JUMP, setupToolPickerCfg, customToolNameError,
   toolReaderContent, setupCheckIsStale, CUSTOM_TOOL_VALUE,
+  // v3.79.0 (contract §C): a Repository file and a computer, in the reader.
+  fileReaderContent, computerReaderContent,
 } from './setup-step.js';
 
 // ── THE TWO PICKERS ARE GONE, AND SO IS THE HANDOFF THEY NEEDED ──────────
@@ -484,16 +486,23 @@ const CONTEXT_WINDOWS = { '200k': 200000, '1m': 1000000 };
 // The window picker's choices when the settings read has not landed, and the
 // harness picker's starting points (DESIGN-v3.70.0 §2, decision 2).
 const CONTEXT_WINDOW_CHOICES = [200000, 400000, 1000000];
+// v3.79.0 (contract §D): "Harness" → "Your tool's share" — the owner's
+// ESTIMATE of what the agent tool itself puts in the window (its own prompt,
+// tools and files). The Curator cannot measure it; every figure here is an
+// estimate and is said so, never "measured".
+const HARNESS_LABEL = 'Your tool’s share';
 const HARNESS_PRESETS = [
-  { tokens: 20000, label: 'Light', hint: 'A short system prompt, few tools.' },
+  { tokens: 20000, label: 'Light', hint: 'A simple agent: short system prompt, a few tools.' },
   // Harness-neutral (v3.74.0): the instruction file is CLAUDE.md in Claude
   // Code and AGENTS.md in most other agent tools.
-  { tokens: 50000, label: 'Typical', hint: 'An agent tool with an instruction file (CLAUDE.md or AGENTS.md) and a few MCP servers.' },
-  { tokens: 120000, label: 'Heavy', hint: 'Many MCP servers, skills and a long instruction file.' },
+  { tokens: 50000, label: 'Typical', hint: 'Claude Code, Antigravity or Codex with an instruction file and 2–3 MCP servers.' },
+  { tokens: 120000, label: 'Heavy', hint: 'Many MCP servers or skills, or a long CLAUDE.md or AGENTS.md.' },
 ];
 // Where the exact figure comes from, said wherever the estimate is set.
-const HARNESS_HINT = 'Run /context in Claude Code and add up its system prompt, system tools, '
-  + 'MCP tools, memory files and skills.';
+const HARNESS_HINT = 'The figure your tool reports. In Claude Code, /context lists system prompt, tools, '
+  + 'MCP tools, memory files and skills — add them up.';
+// Said under the picker, always: what the figure is for, and what it is not.
+const HARNESS_NOTE = 'The Curator can’t measure this. It only changes the meter; nothing is sent.';
 
 // ── THE HONESTY METER'S WINDOW, AND THE LIST UNDER IT (v3.63.0) ──────────
 //
@@ -1232,7 +1241,8 @@ let setupInFlight = null;
 let setupSeq = 0;
 // v3.78.0: the tool whose evidence step 5 last opened in the reader, and the
 // reader epoch it got — so a re-check refreshes that page only while it is
-// still the page on screen.
+// still the page on screen. v3.79.0: `{kind: 'tool'|'file'|'computer', key,
+// epoch, resp?}` — a Repository file's reader keeps the file route's answer.
 let setupReader = null;
 // The `if applied` preview in flight, keyed by its request body.
 let previewInFlight = null;
@@ -11472,8 +11482,8 @@ function harnessPickerCfg(busy) {
     id: 'mem-harness-lb',
     value: cur === null ? 'none' : (match ? String(match.tokens) : null),
     triggerText: busy === true ? 'Saving…'
-      : cur === null ? 'Not set' : tok(cur) + ' · your estimate',
-    ariaLabel: 'Harness estimate: ' + (cur === null ? 'not set'
+      : cur === null ? 'Not set' : tok(cur) + ' · estimate',
+    ariaLabel: HARNESS_LABEL + ': ' + (cur === null ? 'not set'
       : 'about ' + formatTokens(cur) + ' tokens, your estimate'),
     disabled: busy === true,
     triggerClass: 'mem-harness-btn',
@@ -11481,7 +11491,7 @@ function harnessPickerCfg(busy) {
     actionValues: ['exact'],
     options: [{ value: 'none', label: 'Not set',
       html: '<span class="mem-bp"><span class="mem-bp-name">Not set</span>'
-        + '<span class="mem-bp-hint">The meter shows The Curator and free space only.</span></span>' }]
+        + '<span class="mem-bp-hint">Leave it out. The meter shows only The Curator’s part and free space.</span></span>' }]
       .concat(HARNESS_PRESETS.map((h) => ({
         value: String(h.tokens), label: h.label + ' ≈' + formatTokens(h.tokens), typeahead: h.label,
         html: '<span class="mem-bp"><span class="mem-bp-row"><span class="mem-bp-name">'
@@ -11507,7 +11517,7 @@ function ctxEditHtml() {
   const busy = state.ctxSaving === true;
   return '<div class="mem-ss-edit" id="mem-ss-edit" role="group" aria-labelledby="mem-ss-edit-label">'
     + '<label class="mem-ss-edit-label" id="mem-ss-edit-label" for="mem-ss-edit-input">'
-      + (isWin ? 'Context window, in tokens' : 'Your harness, in tokens') + '</label>'
+      + (isWin ? 'Context window, in tokens' : HARNESS_LABEL + ', in tokens') + '</label>'
     + '<input type="number" inputmode="numeric" class="mem-fnd-input mem-ss-edit-input" id="mem-ss-edit-input"'
       + ' min="' + (isWin ? 8000 : 0) + '" max="10000000" step="1000"'
       + ' value="' + escapeHtml(String(e.text === undefined || e.text === null ? '' : e.text)) + '"'
@@ -11518,7 +11528,7 @@ function ctxEditHtml() {
       + (busy ? ' disabled aria-disabled="true"' : '') + '>Cancel</button>'
     + '<p class="mem-ss-edit-hint">' + escapeHtml(isWin
       ? 'Your model’s context window, from 8,000 to 10,000,000 tokens. It is set for this computer.'
-      : HARNESS_HINT + ' It is your estimate, and it is never added to a measured figure.') + '</p>'
+      : HARNESS_HINT + ' ' + HARNESS_NOTE) + '</p>'
     + '</div>';
 }
 
@@ -11575,10 +11585,9 @@ function sessionMeterHtml(data, error) {
         ? '<p class="mem-ss-preview-of">Previewing the suggested reading plan — apply it in step 1.</p>' : '';
     // The one-line hint the harness picker carries, said where the gap is
     // drawn, and only while the estimate is Not set.
-    const hint = m.harnessTokens === null
-      ? '<p class="mem-ss-preview-of mem-ss-harness-hint" id="mem-ss-harness-hint">Read your harness from '
-        + 'Claude Code’s <code>/context</code> and set it under Harness above.</p>'
-      : '';
+    // v3.79.0 (contract §D): one note, always — what the figure is for.
+    const hint = '<p class="mem-ss-preview-of mem-ss-harness-hint" id="mem-ss-harness-hint">'
+      + escapeHtml(HARNESS_LABEL + ': ' + HARNESS_NOTE) + '</p>';
     inner = renderBucket(m) + which + hint;
   } else {
     inner = renderDescription(error
@@ -11772,13 +11781,13 @@ function sessionReceivesMonitor(data, facts) {
     // HARNESS-NEUTRAL (v3.74.0): an agent tool's instruction file is
     // CLAUDE.md in Claude Code and AGENTS.md in most others; naming only
     // Claude's told every other tool's user the line was not about them.
-    ? { key: 'harness', value: 'not set',
-      sub: 'system prompt, tools, instruction files such as CLAUDE.md or AGENTS.md, skills · set an estimate above' }
-    : { key: 'harness', value: tok(harness) + ' · ' + ssPct(harness, winTokens),
-      sub: 'system prompt, tools, instruction files such as CLAUDE.md or AGENTS.md, skills · your estimate, not measured' });
+    ? { key: 'your tool’s share', value: 'not set',
+      sub: 'its own prompt, tools and files, such as CLAUDE.md or AGENTS.md · pick an estimate above' }
+    : { key: 'your tool’s share', value: tok(harness) + ' · ' + ssPct(harness, winTokens),
+      sub: 'its own prompt, tools and files, such as CLAUDE.md or AGENTS.md · your estimate' });
   lines.push({ key: 'free at start',
     value: tok(Math.max(0, winTokens - mcpTokens - (harness || 0))),
-    sub: 'of a ' + WIN + (harness === null ? ', before your harness' : '') });
+    sub: 'of a ' + WIN + (harness === null ? ', before your tool’s share' : '') });
   const omitted = tier(t.omitted);
   if (Number.isInteger(omitted.count) && omitted.count > 0) {
     lines.push({ key: 'left out, by name', value: ssDocs(omitted), sub: 'fetched by name when needed' });
@@ -11911,7 +11920,7 @@ function renderSessionStart(read) {
     : renderListboxHtml(budgetPickerCfg(read, data, state.budgetSaving === true));
   const headHtml = ctl('Window', 'mem-ss-window-label', renderListboxHtml(windowPickerCfg(ctxBusy)))
     + ctl('Reading budget', 'mem-ss-budget-label', budgetCtl)
-    + ctl('Harness', 'mem-ss-harness-label', renderListboxHtml(harnessPickerCfg(ctxBusy)));
+    + ctl(escapeHtml(HARNESS_LABEL), 'mem-ss-harness-label', renderListboxHtml(harnessPickerCfg(ctxBusy)));
 
   const budgetErr = state.budgetError && state.budgetError.domain === state.activeDomain
     && state.budgetError.project === state.activeProject
@@ -12115,9 +12124,13 @@ function patchSetup(token) {
     tile.setAttribute('aria-label', 'Setup, ' + t.value + ' — go to step 5');
     tile.hidden = false;
   }
-  // A tool's evidence open in the reader follows the new reading.
+  // A tool's evidence (v3.79.0: a file, a computer) open in the reader
+  // follows the new reading; a file is read again, since a re-check is the
+  // owner saying the files may have changed.
   if (setupReader && isCurrentReader(setupReader.epoch) && s && s.data) {
-    openSetupToolReader(setupReader.tool, token);
+    if (setupReader.kind === 'file') openSetupFileReader(setupReader.key, token, true);
+    else if (setupReader.kind === 'computer') openSetupComputerReader(setupReader.key, token);
+    else openSetupToolReader(setupReader.key, token);
   }
 }
 
@@ -12140,12 +12153,64 @@ function openSetupToolReader(toolId, token) {
   const s = setupFor();
   const content = s && s.data ? toolReaderContent(s.data, toolId) : null;
   if (!content) return;
+  showSetupReader({ kind: 'tool', key: toolId }, content, token);
+}
+
+/** Open one step-5 page in the reader and bind its buttons (the shared tail). */
+function showSetupReader(which, content, token) {
   const epoch = openReader(content, token);
-  setupReader = { tool: toolId, epoch };
+  setupReader = { ...which, epoch };
   if (typeof document !== 'undefined' && typeof document.getElementById === 'function') {
     const root = document.getElementById('reader-root');
     if (root) bindSetup(root, token);
   }
+  return epoch;
+}
+
+/**
+ * A REPOSITORY FILE, IN THE READER (v3.79.0, contract §C). Opens at once
+ * with what the row knows ("Reading …"), then reads the file through the
+ * file route — the folder is the server's own setting, only the NAME is
+ * sent — and repaints if that page is still the one on screen. An older
+ * server has no such route: the answer is an error, and the page keeps the
+ * row's state, its doors and Reveal. The text is rendered by renderMarkdown
+ * (escape-first); it is never written raw.
+ */
+async function openSetupFileReader(name, token, refetch = false) {
+  const s = setupFor();
+  if (!s || !s.data) return;
+  const cached = setupReader && setupReader.kind === 'file' && setupReader.key === name ? setupReader.resp : undefined;
+  const first = fileReaderContent(s.data, name, cached, { md: renderMarkdown });
+  if (!first) return;
+  const epoch = showSetupReader({ kind: 'file', key: name, resp: cached }, first, token);
+  if (cached !== undefined && !refetch) return;
+  const domain = s.domain;
+  const project = s.project;
+  let resp;
+  try {
+    const res = await fetch('/api/setup/projects/' + encodeURIComponent(domain) + '/' + encodeURIComponent(project)
+      + '/file?name=' + encodeURIComponent(name));
+    const j = await res.json().catch(() => ({}));
+    // Only a real answer is a file: an older app has no such route, and its
+    // page fallback is not JSON — that is said, never read as an empty file.
+    resp = res.ok && j && j.ok === true && typeof j.name === 'string' ? j
+      : { error: (j && (j.message || j.error)) || (res.ok ? 'this version of the app does not show files here' : 'HTTP ' + res.status) };
+  } catch (err) {
+    resp = { error: err.message };
+  }
+  if (!isCurrentMount(token) || !isCurrentReader(epoch)) return;
+  const now = setupFor();
+  if (!now || !now.data || now.domain !== domain || now.project !== project) return;
+  const content = fileReaderContent(now.data, name, resp, { md: renderMarkdown });
+  if (content) showSetupReader({ kind: 'file', key: name, resp }, content, token);
+}
+
+/** A COMPUTER, IN THE READER (v3.79.0, contract §C) — built from the reading on screen. */
+function openSetupComputerReader(idx, token) {
+  const s = setupFor();
+  const content = s && s.data ? computerReaderContent(s.data, idx) : null;
+  if (!content) return;
+  showSetupReader({ kind: 'computer', key: idx }, content, token);
 }
 
 /** PUT one known tool onto this computer's list (the listbox's pick). */
@@ -12252,6 +12317,8 @@ function bindSetup(root, token) {
       const project = state.activeProject;
       if (act === 'check') { maybeLoadSetup(token, true); return; }
       if (act === 'tool-open') { openSetupToolReader(el.dataset.tool || '', token); return; }
+      if (act === 'file-open') { await openSetupFileReader(el.dataset.name || '', token); return; }
+      if (act === 'computer-open') { openSetupComputerReader(el.dataset.computer || '', token); return; }
       if (act === 'copy-block') { copyAgentInstructions(token); return; }
       if (act === 'copy-marker') {
         await setupCopy(domain + '/' + project, 'Marker line copied',
@@ -12259,14 +12326,18 @@ function bindSetup(root, token) {
         return;
       }
       if (act === 'copy-command') {
-        await setupCopy(el.dataset.cmd || '', 'Command copied', 'Run it in the project’s folder.');
+        // v3.79.0 (contract §A): the toast names the folder to run it in.
+        const where = el.dataset.cwd || '';
+        await setupCopy(el.dataset.cmd || '', where ? 'Copied — run it in Terminal in ' + where + '.' : 'Copied — run it in Terminal in the project’s folder.',
+          el.dataset.cmd || '');
         return;
       }
       if (act === 'copy-snippet') {
         const s = setupFor();
         const t = s && s.data && (s.data.tools || []).find((x) => x && x.id === el.dataset.tool);
         const snip = t && t.mcpSnippet && typeof t.mcpSnippet.text === 'string' ? t.mcpSnippet.text : '';
-        if (snip) await setupCopy(snip, 'Entry copied', 'Paste it into ' + t.label + '’s MCP config, then Re-check.');
+        if (snip) await setupCopy(snip, 'Copied — paste it into ' + t.label + '’s MCP settings', 'Then Re-check here.');
+        else showToast({ key: 'setup-copy', tone: 'danger', title: 'No MCP entry to copy', lines: ['Open Tools on this Mac for this tool’s entry.'] });
         return;
       }
       if (act === 'reveal') {
@@ -13214,8 +13285,8 @@ async function setContextSetting(body, token) {
     const isWin = Object.hasOwn(body, 'contextWindowTokens');
     showToast({ key: 'context-window-set', tone: 'success',
       title: isWin ? 'Context window set to ' + windowWord(s.contextWindowTokens) + ' tokens'
-        : (s.harnessEstimateTokens === null ? 'Harness estimate cleared'
-          : 'Harness estimate set to ≈' + formatTokens(s.harnessEstimateTokens) + ' tokens'),
+        : (s.harnessEstimateTokens === null ? HARNESS_LABEL + ' cleared'
+          : HARNESS_LABEL + ' set to ≈' + formatTokens(s.harnessEstimateTokens) + ' tokens'),
       lines: ['For this computer. The menu bar widget reads the same setting.'] });
     // Re-measure, so the route's own window/harness agree with the screen.
     const ss = sessionStartFor();

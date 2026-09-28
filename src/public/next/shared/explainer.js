@@ -237,11 +237,11 @@ function renderMeter() {
       '<span class="xp-ml-sub">' + escapeHtml(sub) + '</span></span>';
   return '<div class="xp-well xp-meter">' +
     '<p class="xp-well-cap">' + glyph('window', 13) + 'Your context window — schematic, not to scale</p>' +
-    '<div class="xp-m-bar" role="img" aria-label="Schematic, not to scale: your agent’s own harness, ' +
+    '<div class="xp-m-bar" role="img" aria-label="Schematic, not to scale: your tool’s own share, ' +
       'then The Curator’s part — the brief, the Handoff and read first documents — then unused reading budget, ' +
       'then free space for the work.">' + bar + '</div>' +
     '<div class="xp-m-labels" aria-hidden="true">' +
-      lab('harness', 'harness', 'Harness', 'your estimate') +
+      lab('harness', 'harness', 'Your tool’s share', 'estimate') +
       lab('curator', 'layers', 'The Curator', 'brief · Handoff · read first') +
       lab('room', 'gauge', 'Budget room', 'unused') +
       lab('free', '', 'Free', 'for the work') +

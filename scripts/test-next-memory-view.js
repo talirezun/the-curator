@@ -1258,7 +1258,7 @@ function constDecl(src, name) {
 // (READING_BUDGET_WORDS). The window and harness constants joined with the
 // meter.
 const V367_CONSTS = ['READING_BUDGET_WORDS', 'READING_BUDGET_STANDARD', 'START_STATES',
-  'CONTEXT_WINDOW_KEY', 'CONTEXT_WINDOWS', 'CONTEXT_WINDOW_CHOICES', 'HARNESS_PRESETS', 'HARNESS_HINT',
+  'CONTEXT_WINDOW_KEY', 'CONTEXT_WINDOWS', 'CONTEXT_WINDOW_CHOICES', 'HARNESS_LABEL', 'HARNESS_PRESETS', 'HARNESS_HINT', 'HARNESS_NOTE',
   'PLANNER_STATES'];
 const V367_FNS = ['fndStartOf', 'fndStartCfg', 'planRowFor', 'fndSuggestCellHtml', 'planFor',
   'planChangeCount', 'planHeadHtml', 'ssSize', 'ssTokens', 'tok', 'budgetWord', 'readContextWindow',
@@ -11854,7 +11854,8 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('...each after the ⓘ, each with its visible label',
       !!head && head[1].indexOf('tx-vh-info') < head[1].indexOf('mem-window-lb')
       && /mem-ss-ctl-label[^>]*>Window</.test(head[1]) && /id="mem-ss-budget-label">Reading budget<\/span>/.test(head[1])
-      && /mem-ss-ctl-label[^>]*>Harness</.test(head[1]), head ? head[1] : waiting);
+      // v3.79.0 (contract §D): "Harness" is "Your tool’s share".
+      && /mem-ss-ctl-label[^>]*>Your tool’s share</.test(head[1]) && !/>Harness</.test(head[1]), head ? head[1] : waiting);
     const budgetStub = (h) => { const m = /id="mem-budget-lb" data-lb-stub="([^"]*)"/.exec(h);
       return m ? JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) : null; };
     ok('...the budget picker waits for the ROUTE\'s presets: disabled, no rows, before they land',
@@ -11877,10 +11878,12 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('...its sentence is the measured total against THIS computer\'s window (200K until set)',
       /The Curator about 13\.2k tokens \(measured, 6\.6%\)/.test(html), html.slice(0, 2500));
     ok('...with the harness NOT SET said in words, never drawn as a guess',
-      /Harness not set/.test(html) && !/bk-harness"/.test(html));
+      /Your tool’s share is not set/.test(html) && !/bk-harness"/.test(html));
     ok('...and a single-reply start carries no delivery line', !/Delivered in/.test(html));
-    ok('...and the one-line hint says where the harness figure comes from, while it is Not set',
-      /id="mem-ss-harness-hint">Read your harness from Claude Code’s <code>\/context<\/code> and set it under Harness above\.</.test(html));
+    // v3.79.0 (contract §D): the note under the picker, ALWAYS — what the
+    // figure is for and what it is not; where it comes from is Exact…'s hint.
+    ok('...and the note says The Curator cannot measure it, it only changes the meter, nothing is sent',
+      /id="mem-ss-harness-hint">Your tool’s share: The Curator can’t measure this\. It only changes the meter; nothing is sent\.</.test(html));
     ok('"What an agent receives" is a fold row, OPEN by default — the one on this page that is',
       /<details class="mem-fold" data-mem-fold="receives" open>/.test(html), html.slice(0, 300));
     ok('...its summary is the total in TOKENS first, then bytes and share — and carries NO bar',
@@ -11903,7 +11906,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     const keys = [...html.matchAll(/<span class="cur-mon-key">([^<]*)<\/span>/g)].map((m) => m[1]);
     eq('the monitor reads every layer, then the window it lands in, then what stays outside',
       keys.join('|'), 'standing brief|latest handoff|journal|document list|read first|'
-        + 'other document text|framing|session start|harness|free at start|left out, by name|domain pages|'
+        + 'other document text|framing|session start|your tool’s share|free at start|left out, by name|domain pages|'
         + 'MCP get_project_context|session-start hook|Chat');
     ok('the brief is TOKENS first, bytes as the hint, its bar against the 32 KB brief budget, NAMED',
       /standing brief<\/span><span class="cur-mon-value">[\s\S]*?cur-depth-value">≈0\.2k<\/span><span class="visually-hidden"> 796 bytes of the 32 KB brief budget/.test(html)
@@ -11916,9 +11919,9 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('...the session start is a SHARE of the window (never danger), named, with its replies',
       /session start<\/span>[\s\S]*?≈13\.2k · 6\.6%[\s\S]*?≈13\.2k tokens of a 200K-token window[\s\S]*?51\.7 KB · measured · 1 MCP reply/.test(html), html);
     ok('...the harness is its own line, "not set" — never summed into the start',
-      /harness<\/span><span class="cur-mon-value">not set/.test(html));
+      /your tool’s share<\/span><span class="cur-mon-value">not set/.test(html));
     ok('...and free at start is the window less the MEASURED start (the harness unknown)',
-      /free at start<\/span><span class="cur-mon-value">≈187k<\/span><span class="cur-mon-sub">of a 200K-token window \(default\), before your harness/.test(html), html);
+      /free at start<\/span><span class="cur-mon-value">≈187k<\/span><span class="cur-mon-sub">of a 200K-token window \(default\), before your tool’s share/.test(html), html);
     ok('...and no line is danger-toned on a start that is within every budget',
       !/cur-depth-danger|cur-mon-tone-danger/.test(html), html);
     // THIS COMPUTER's window and harness change the drawing and nothing the project stores.
@@ -11926,9 +11929,11 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       harnessEstimateTokens: 120000, choices: [200000, 400000, 1000000] } })).renderSessionStart(st.projectRead);
     ok('1M + a 120k harness: the share, the words and the harness line follow the SETTINGS',
       /≈13\.2k tokens · 51\.7 KB · 1\.3% of 1M/.test(big)
-      && /harness<\/span><span class="cur-mon-value">≈120k · 12\.0%<\/span><span class="cur-mon-sub">system prompt, tools, instruction files such as CLAUDE\.md or AGENTS\.md, skills · your estimate, not measured/.test(big)
+      && /your tool’s share<\/span><span class="cur-mon-value">≈120k · 12\.0%<\/span><span class="cur-mon-sub">its own prompt, tools and files, such as CLAUDE\.md or AGENTS\.md · your estimate</.test(big)
       && /free at start<\/span><span class="cur-mon-value">≈867k</.test(big), big);
-    ok('...the hint leaves once an estimate is set', !/mem-ss-harness-hint/.test(big));
+    ok('...the note stays once an estimate is set (it says what the figure is for, not that it is missing)', /mem-ss-harness-hint/.test(big));
+    ok('...and nowhere does the step call the estimate "measured"',
+      !/(harness|tool’s share|your tool)[^<]{0,60}measured/i.test(big.replace(/not measured/g, '')), big.slice(0, 400));
     {
       // v3.72.1 (truth audit F4): the 200K DEFAULT was shown as the owner's
       // per-computer setting — "200K" on the trigger, "set for this computer"
@@ -11946,7 +11951,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
         ds && ds.label === 'Context window: 200K tokens, the default — not set on this computer', JSON.stringify(ds));
       ok('F4: ...no option is marked chosen, because nobody chose one', ds && ds.value === null, JSON.stringify(ds));
       ok('F4: ...and the meter says "(default)" wherever it names the window',
-        /of a 200K-token window \(default\), before your harness/.test(dflt)
+        /of a 200K-token window \(default\), before your tool’s share/.test(dflt)
         && /% of 200K \(default\)<\/span>/.test(dflt), dflt.slice(0, 400));
       const set = makeRenderers(withSS(ssData(), { ctxSettings: { contextWindowTokens: 200000,
         contextWindowSet: true, harnessEstimateTokens: null, choices: [200000, 400000, 1000000] } }))
@@ -11963,7 +11968,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('...and the meter is drawn against THIS COMPUTER\'s window, not the one the measurement was taken with',
       /A 1M-token window, drawn to scale/.test(big) && !/A 200k-token window/.test(big));
     ok('...the meter draws the harness HATCHED, labelled an estimate, and never adds it to The Curator',
-      /bk-harness/.test(big) && /harness about 120k \(your estimate, not measured\), The Curator about 13\.2k tokens/.test(big), big.slice(0, 3000));
+      /bk-harness/.test(big) && /your tool&#39;s share about 120k \(your estimate\), The Curator about 13\.2k tokens/.test(big), big.slice(0, 3000));
     // THE ⓘ
     // v3.71.0: the `context.session-start` explainer — the meter drawing, the
     // three controls named, and `/context` for the harness. The ±20% accuracy
@@ -11974,7 +11979,10 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
     ok('the step\'s ⓘ is the Session start explainer, and the accuracy it dropped is in the guide',
       !!info && info.body === explainerHtml('context.session-start')
       && /class="xp-well xp-meter"/.test(info.body)
-      && info.body.includes('<code>/context</code>')
+      // v3.79.0 (contract §D): the ⓘ point says what the figure IS ("its own
+      // prompt, tools and files; estimated, meter only"); where to read it
+      // (/context) is the Exact… option's own hint, asserted above.
+      && info.body.includes('Your tool’s share')
       && /#session-start-and-the-context-window"/.test(info.body)
       && /±20%/.test(guide), info ? info.body.slice(0, 300) : html.slice(0, 400));
     // A READ-ONLY MIRROR
@@ -12161,16 +12169,24 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       JSON.stringify(h.options.map((o) => o.label)) === '["Not set","Light ≈20k","Typical ≈50k","Heavy ≈120k","Exact…"]'
       && h.value === 'none' && h.triggerText === 'Not set');
     ok('...Exact… carries the one-line hint to read it from Claude Code\'s /context',
-      /Run \/context in Claude Code/.test(h.options[4].html));
+      /In Claude Code, \/context lists system prompt, tools, MCP tools, memory files and skills — add them up\./.test(h.options[4].html));
+    // v3.79.0 (contract §D): each option says who it fits, in the contract's words.
+    ok('...each option says who it fits: Not set leaves it out; Light, Typical, Heavy name the setups',
+      /Leave it out\. The meter shows only The Curator’s part and free space\./.test(h.options[0].html)
+      && /A simple agent: short system prompt, a few tools\./.test(h.options[1].html)
+      && /Claude Code, Antigravity or Codex with an instruction file and 2–3 MCP servers\./.test(h.options[2].html)
+      && /Many MCP servers or skills, or a long CLAUDE\.md or AGENTS\.md\./.test(h.options[3].html),
+    JSON.stringify(h.options.map((o) => o.html)));
     const hs = makeRenderers(baseSt({ ctxSettings: { contextWindowTokens: 1000000, harnessEstimateTokens: 37000 } }))
       .harnessPickerCfg(false);
     ok('...an exact figure is labelled YOUR ESTIMATE on the trigger', hs.value === null
-      && hs.triggerText === '≈37k · your estimate' && /your estimate/.test(hs.ariaLabel), JSON.stringify(hs));
+      && hs.triggerText === '≈37k · estimate' && /your estimate/.test(hs.ariaLabel) && /^Your tool’s share:/.test(hs.ariaLabel), JSON.stringify(hs));
     // THE INLINE EDITOR
     const ed = makeRenderers(baseSt({ ctxEdit: { kind: 'harness', text: '<b>' } })).ctxEditHtml();
     ok('Exact… opens an inline number field with Save and Cancel, the /context hint, the draft escaped',
       /id="mem-ss-edit-input"/.test(ed) && /id="mem-ss-edit-save">Save</.test(ed)
-      && /id="mem-ss-edit-cancel">Cancel</.test(ed) && /Run \/context in Claude Code/.test(ed)
+      && /id="mem-ss-edit-cancel">Cancel</.test(ed) && /In Claude Code, \/context lists/.test(ed)
+      && /Your tool’s share, in tokens/.test(ed) && /nothing is sent/.test(ed)
       && /value="&lt;b&gt;"/.test(ed), ed);
     eq('...and nothing when no edit is open', makeRenderers(baseSt()).ctxEditHtml(), '');
   }
@@ -12806,6 +12822,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
         'let ctxSettingsInFlight = false;\nlet budgetPreviewTimer = null;\nlet budgetPreviewInFlight = null;\n'
         + 'const budgetPreviewCache = new Map();\n'
         + constDecl(viewSrc, 'CONTEXT_WINDOW_KEY') + '\n' + constDecl(viewSrc, 'CONTEXT_WINDOWS') + '\n'
+        + constDecl(viewSrc, 'HARNESS_LABEL') + '\n'
         + extractFunction(viewSrc, 'readContextWindow', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'sessionStartFor', 'memory.js') + '\n'
         + extractFunction(viewSrc, 'contextWindowNow', 'memory.js') + '\n'
@@ -12903,7 +12920,7 @@ section('§25 — v3.67.0: STEP ④ SESSION START, THE START CELL AND THE HELPER
       eq('a harness choice is ONE PUT to the settings route with ONE field', seen.join(),
         '/api/config/context-window PUT {"harnessEstimateTokens":120000}');
       ok('...the confirmation is a TOAST ("set for this computer"), the editor closes',
-        calls.toasts.length === 1 && calls.toasts[0].title === 'Harness estimate set to ≈120k tokens'
+        calls.toasts.length === 1 && calls.toasts[0].title === 'Your tool’s share set to ≈120k tokens'
         && /For this computer/.test(calls.toasts[0].lines[0]) && st.ctxEdit === null && !st.ctxError,
         JSON.stringify(calls.toasts));
       ok('...and the measurement is asked for again, so the route\'s own window/harness agree',
@@ -13479,6 +13496,15 @@ const NOT_EXECUTED = {
   addSetupTool: 'the tools PUT named in this file\u2019s fetch census ({ids}); the listbox cfg it is picked from is executed in test-next-setup-step.js',
   saveCustomTool: 'the custom-tool PUT named in this file\u2019s fetch census (the change it is handed); the name rule is customToolNameError, executed in test-next-setup-step.js',
   saveSetupRepo: 'the repository PUT named in this file\u2019s fetch census ({path}); moved out of bindSetup so Choose\u2026 and Use share it',
+  // v3.79.0 — a Repository file and a computer in the reader (contract §C).
+  // The pages are setup-step.js fileReaderContent / computerReaderContent,
+  // EXECUTED in test-next-setup-step.js (framing, the cap rule, a missing
+  // file, an old server's error, escaping); these only open the reader, read
+  // the file route (a single-argument GET under /api/setup/projects/, named in
+  // SETUP_FACTS above) and bind, and were driven in a real browser.
+  showSetupReader: 'openReader + bindSetup on #reader-root, the shared tail of the three step-5 readers; openReader is the shell\u2019s, its epoch guard asserted in test-next-reader-backlinks.js',
+  openSetupFileReader: 'opens at once with fileReaderContent (executed in test-next-setup-step.js), then a single-argument GET of the file route and a repaint only while that page is on screen (isCurrentMount + isCurrentReader)',
+  openSetupComputerReader: 'openReader over computerReaderContent, executed in test-next-setup-step.js',
   // v3.75.0: "Delete handoff". Both are LIFTED and EXECUTED — against a
   // recording fetch, a stub render and a real state object — by their own
   // suite, which owns the feature end to end (store, route, view).

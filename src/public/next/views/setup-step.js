@@ -124,6 +124,10 @@ function installOf(r) {
     at: isStr(r.newestSaveAt) ? r.newestSaveAt : (isStr(r.newestAt) ? r.newestAt : null),
     curator: isStr(r.curatorVersion) ? r.curatorVersion : (isStr(r.curator) ? r.curator : null),
     waiting: Number.isInteger(r.waiting) ? r.waiting : 0,
+    // v3.79.0 (contract §C): each tool's saves from this install, for the
+    // Computers reader. Absent on a v3.78.0 server — the reader falls back to
+    // `tools` and the newest save.
+    saves: Array.isArray(r.saves) ? r.saves.filter((x) => x && isStr(x.at) && (isStr(x.tool) || isStr(x.label))) : [],
   };
 }
 
@@ -286,7 +290,7 @@ function toolsTable(data) {
     + '<thead><tr><th scope="col">Tool</th><th scope="col">Status</th><th scope="col">Last saved</th>'
     + '<th scope="col">Saved from</th><th scope="col">On this computer</th></tr></thead>'
     + '<tbody>' + tools.map((t) => toolRow(t, data)).join('') + '</tbody></table></div>'
-    + '<div class="mem-ws-count">Last saved is this project’s record from every computer; the rest reads this computer. Press a tool for its evidence.</div>';
+    + '<div class="mem-ws-count">' + escapeHtml(TRAVELS_LINES['setup-tools']) + ' Last saved is this project’s record from every computer. Press a tool for its evidence.</div>';
 }
 
 function toolsMeta(data) {
@@ -365,50 +369,165 @@ const btnG = (act, label, extra = '') => '<button type="button" class="btn btn-g
 const ZIPS = '<a class="btn btn-ghost btn-xs" href="/api/setup/skills/my-curator.zip" download>my-curator.zip</a>'
   + '<a class="btn btn-ghost btn-xs" href="/api/setup/skills/curator-continuity.zip" download>curator-continuity.zip</a>';
 const baseName = (p) => String(p || '').replace(/\/+$/, '').split('/').pop();
+// Only this app's own skill downloads are ever linked (a payload href is data).
+const SKILL_HREF_RE = /^\/api\/setup\/skills\/[a-z0-9-]+\.zip$/;
+const SKILL_NAME_RE = /^[a-z0-9-]{1,60}$/;
 
-/** The buttons one to-fix item carries. Pure. */
-export function fixButtons(f, repo) {
-  const fix = f && f.fix ? f.fix : {};
-  const out = [];
-  if (fix.kind === 'copy-block') out.push(btn2('copy-block', 'Copy block' + (isStr(f.file) ? ' for ' + f.file : '')));
-  if (fix.kind === 'copy-marker') out.push(btn2('copy-marker', 'Copy marker line'));
-  if (fix.kind === 'copy-command' && isStr(fix.command)) out.push(btn2('copy-command', 'Copy command', ' data-cmd="' + escapeHtml(fix.command) + '"'));
-  if (fix.kind === 'sync') out.push(btn2('sync', 'Sync now'));
-  if (fix.kind === 'change-repo') out.push(btn2('change-repo', 'Change folder'));
-  // v3.78.0: a reveal carries its ABSOLUTE path and its own label (contract §1).
-  if (fix.kind === 'reveal' && isStr(fix.path)) {
-    out.push(btn2('reveal', isStr(fix.label) ? fix.label : 'Reveal ' + baseName(fix.path), ' data-path="' + escapeHtml(fix.path) + '"'));
-  } else {
-    const revealName = fix.reveal || (fix.kind === 'reveal' ? f.file : null);
-    if (isStr(revealName) && repo && isStr(repo.path)) {
-      out.push(btn2('reveal', 'Reveal ' + revealName, ' data-path="' + escapeHtml(repo.path.replace(/\/+$/, '') + '/' + revealName) + '"'));
+/**
+ * v3.79.0 (contract §A, amendment 1): a to-fix item carries `fixes[]`, its
+ * buttons in order, each with its own LABEL — the label says what the press
+ * does ("Copy the git command that commits and pushes it", never "Copy
+ * command"). A v3.78.0 server sends one `fix`; it is read as a one-entry list
+ * and given the label its kind implies. Pure.
+ */
+export function fixListOf(f) {
+  if (f && Array.isArray(f.fixes)) return f.fixes.filter((x) => x && isStr(x.kind));
+  return f && f.fix && isStr(f.fix.kind) ? [f.fix] : [];
+}
+
+/** One button for one fix entry, or '' when the entry cannot be acted on here. */
+function fixButton(fx, f, repo, primary) {
+  const b = primary ? btn2 : btnG;
+  const label = (dflt) => (isStr(fx.label) ? fx.label : dflt);
+  switch (fx.kind) {
+    case 'copy-block':
+      return b('copy-block', label('Copy instructions'));
+    case 'copy-marker':
+      return b('copy-marker', label('Copy marker line'));
+    case 'copy-command': {
+      if (!isStr(fx.command)) return '';
+      const where = isStr(fx.cwdDisplay) ? fx.cwdDisplay
+        : (repo && isStr(repo.display) ? repo.display : (repo && isStr(repo.path) ? repo.path : ''));
+      return b('copy-command', label('Copy the git command'), ' data-cmd="' + escapeHtml(fx.command) + '"'
+        + (where ? ' data-cwd="' + escapeHtml(where) + '"' : ''));
     }
+    case 'copy-snippet': {
+      const tool = isStr(fx.tool) ? fx.tool : f.tool;
+      return isStr(tool) ? b('copy-snippet', label('Copy MCP entry'), ' data-tool="' + escapeHtml(tool) + '"') : '';
+    }
+    case 'download-skill': {
+      const href = isStr(fx.href) && SKILL_HREF_RE.test(fx.href) ? fx.href
+        : (isStr(fx.skill) && SKILL_NAME_RE.test(fx.skill) ? '/api/setup/skills/' + fx.skill + '.zip' : null);
+      if (!href) return '';
+      return '<a class="btn ' + (primary ? 'btn-secondary' : 'btn-ghost') + ' btn-xs" href="' + escapeHtml(href) + '" download>'
+        + escapeHtml(label('Download ' + baseName(href))) + '</a>';
+    }
+    case 'sync':
+      return b('sync', label('Sync now'));
+    case 'change-repo':
+      return b('change-repo', label('Change folder'));
+    case 'choose-folder':
+      return b('choose-repo', label('Choose the folder'));
+    case 'settings':
+      return b('settings', label('Open Tools on this Mac'));
+    case 'recheck':
+      return b('check', label('Re-check'));
+    case 'skills':
+      // v3.78.0's one "skills" fix: the settings door and both downloads.
+      return b('settings', label('Open Tools on this Mac')) + ZIPS;
+    case 'reveal': {
+      if (isStr(fx.path)) return b('reveal', label('Reveal ' + baseName(fx.path)), ' data-path="' + escapeHtml(fx.path) + '"');
+      const name = isStr(fx.reveal) ? fx.reveal : f.file;
+      if (isStr(name) && repo && isStr(repo.path)) {
+        return b('reveal', label('Reveal ' + name), ' data-path="' + escapeHtml(repo.path.replace(/\/+$/, '') + '/' + name) + '"');
+      }
+      return '';
+    }
+    default:
+      return '';
   }
-  if (fix.kind === 'settings' || fix.kind === 'skills' || (fix.kind === 'reveal' && isStr(f.tool) && isStr(fix.path))) {
-    out.push(btnG('settings', 'Open Tools on this Mac'));
+}
+
+/** The buttons one to-fix item carries, in the payload's order. Pure. */
+export function fixButtons(f, repo) {
+  const out = [];
+  fixListOf(f).forEach((fx, i) => {
+    const html = fixButton(fx, f || {}, repo, i === 0);
+    if (html) out.push(html);
+  });
+  // A v3.78.0 `fix` (no `fixes[]`) could name a file to reveal beside its
+  // copy, and a tool's file reveal came with the settings door: kept, so an
+  // older server's items still carry every action they did.
+  if (f && !Array.isArray(f.fixes) && f.fix) {
+    const fix = f.fix;
+    if (fix.kind !== 'reveal' && isStr(fix.reveal) && repo && isStr(repo.path)) {
+      out.push(btnG('reveal', 'Reveal ' + fix.reveal, ' data-path="' + escapeHtml(repo.path.replace(/\/+$/, '') + '/' + fix.reveal) + '"'));
+    }
+    if (fix.kind === 'reveal' && isStr(f.tool) && isStr(fix.path)) out.push(btnG('settings', 'Open Tools on this Mac'));
   }
-  if (fix.kind === 'skills') out.push(ZIPS);
   return out.join('');
 }
 
 /** Escaped text, with every `~/…` path set in mono. */
 function withPaths(text) {
-  return escapeHtml(text).replace(/(~\/[^\s]*[^\s.,;:!?)])/g, '<span class="mem-setup-inline-path">$1</span>');
+  return escapeHtml(text).replace(/(~\/[^\s]*[^\s.,;:!?)”])/g, '<span class="mem-setup-inline-path">$1</span>');
 }
 
-function noteHtml(iconSvg, textHtml, buttonsHtml, cls = '', attrs = '') {
+/**
+ * ONE NOTE, TWO LINES (v3.79.0, contract §A): line 1 is what is wrong,
+ * naming the file, the computer or the date; line 2 is why it matters and
+ * what to do. Never glued into one run-on sentence. `line2Html` may be ''.
+ */
+function noteHtml(iconSvg, line1Html, line2Html, buttonsHtml, cls = '', attrs = '') {
   return '<div class="tx-note mem-ss-note mem-setup-note' + (cls ? ' ' + cls : '') + '"' + attrs + '>' + iconSvg
-    + '<span>' + textHtml + '</span>'
+    + '<span class="mem-setup-note-text"><span class="mem-setup-note-l1">' + line1Html + '</span>'
+    + (line2Html ? '<span class="mem-setup-note-l2">' + line2Html + '</span>' : '') + '</span>'
     + (buttonsHtml ? '<span class="mem-k-doors mem-setup-note-acts">' + buttonsHtml + '</span>' : '')
     + '</div>';
 }
 
-/** Every to-fix item as one loud line with its own fix. Pure. */
+/** One to-fix item as a note. Pure. */
+function fixNote(f, data, attrs = '') {
+  return noteHtml(ICON_TRI, withPaths(String(f.text || '')), isStr(f.detail) ? withPaths(f.detail) : '',
+    fixButtons(f, data && data.repo), 'mem-setup-fix-note', attrs);
+}
+
+/** Every to-fix item as one loud note with its own fix. Pure. */
 export function toFixNotes(data) {
   const toFix = Array.isArray(data && data.toFix) ? data.toFix.filter(Boolean) : [];
-  return toFix.map((f, i) => noteHtml(ICON_TRI,
-    withPaths(String(f.text || '')) + (isStr(f.detail) ? ' ' + withPaths(f.detail) : ''),
-    fixButtons(f, data.repo), 'mem-setup-fix-note', ' data-setup-fix="' + i + '"')).join('');
+  return toFix.map((f, i) => fixNote(f, data, ' data-setup-fix="' + i + '"')).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HOW EACH PART REACHES ANOTHER COMPUTER (v3.79.0, contract §B)
+// ═══════════════════════════════════════════════════════════════════════════
+// Two sync channels, and one that is not a channel at all. GREYSCALE: the
+// pill is `.mem-ws-mine`'s shape with a glyph (app.js's refresh, folder and
+// cpu bodies), never a colour — colour is a domain's (design rule 5).
+
+const GLYPH = {
+  'personal-sync': '<path d="M20 11a8 8 0 0 0-14.5-4.5M4 4.5V9h4.5"/><path d="M4 13a8 8 0 0 0 14.5 4.5M20 19.5V15h-4.5"/>',
+  'project-git': '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  'this-computer': '<rect x="6.5" y="6.5" width="11" height="11" rx="1.6"/><rect x="10" y="10" width="4" height="4" rx="0.8"/><path d="M9 3v2.3M15 3v2.3M9 18.7V21M15 18.7V21M3 9h2.3M3 15h2.3M18.7 9H21M18.7 15H21"/>',
+};
+
+/** The words for each `travels` value, as the screen prints them. */
+export const TRAVELS_WORDS = Object.freeze({
+  'personal-sync': 'Personal Sync',
+  'project-git': 'project’s git',
+  'this-computer': 'this computer only',
+});
+
+/** Each fold's channel, in the fold's own words. */
+export const FOLD_TRAVELS = Object.freeze({
+  'setup-tools': Object.freeze({ key: 'this-computer', word: 'set up on each computer' }),
+  'setup-repo': Object.freeze({ key: 'project-git', word: 'project’s git' }),
+  'setup-computers': Object.freeze({ key: 'personal-sync', word: 'Personal Sync' }),
+});
+
+/** The one count line each fold carries about how its contents travel. */
+export const TRAVELS_LINES = Object.freeze({
+  'setup-repo': 'These files reach your other computers only through this project’s git: commit and push here, pull there. Sync now does not carry them.',
+  'setup-computers': 'Handoffs, the brief and Documents travel by Sync now — not by the project’s git.',
+  'setup-tools': 'MCP settings, skills and hooks are set up on each computer; nothing syncs them.',
+});
+
+/** A neutral pill naming how something travels. `word` overrides the default. Pure. */
+export function travelsPill(key, word) {
+  const w = isStr(word) ? word : TRAVELS_WORDS[key];
+  if (!w || !GLYPH[key]) return '';
+  return '<span class="mem-ws-mine mem-setup-travels" data-travels="' + escapeHtml(key) + '">'
+    + SVG(GLYPH[key], 11) + '<span>' + escapeHtml(w) + '</span></span>';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -457,18 +576,25 @@ export function repoCheckedFiles(data) {
   return names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
 }
 
-function repoNotSetNote(data) {
+/**
+ * THE REPOSITORY IS NOT SET (v3.79.0, contract §A): a question, not a fault —
+ * line 1 asks where the code is and says what setting it checks; line 2 says
+ * what was found here, or that a project not on this Mac is cloned first.
+ */
+export function repoNotSetNote(data) {
   const cands = repoCandidatesOf(data);
-  const lead = 'The repository folder is not set on this computer, so ' + repoCheckedFiles(data) + ' were not checked.';
+  const who = isStr(data && data.project) ? data.project : 'this project';
+  const l1 = escapeHtml('Where is ' + who + '’s code on this Mac? Set its folder so Setup can check ' + repoCheckedFiles(data) + '.');
   if (cands.length === 1) {
-    return noteHtml(ICON_CIRC, escapeHtml(lead) + ' Found: <span class="mem-setup-inline-path">' + escapeHtml(cands[0].display) + '</span>',
-      btn2('use-repo', 'Use ' + cands[0].display, ' data-path="' + escapeHtml(cands[0].path) + '"'), 'mem-setup-repo-note');
+    return noteHtml(ICON_CIRC, l1, 'Found on this Mac: <span class="mem-setup-inline-path">' + escapeHtml(cands[0].display) + '</span>',
+      btn2('use-repo', 'Use ' + cands[0].display, ' data-path="' + escapeHtml(cands[0].path) + '"')
+        + btnG('choose-repo', 'Choose another folder'), 'mem-setup-repo-note');
   }
   if (cands.length > 1) {
-    return noteHtml(ICON_CIRC, escapeHtml(lead + ' ' + cands.length + ' folders were found for it.'),
+    return noteHtml(ICON_CIRC, l1, escapeHtml(cands.length + ' folders on this Mac look like it — choose one.'),
       btn2('choose-repo', 'Choose a folder'), 'mem-setup-repo-note');
   }
-  return noteHtml(ICON_CIRC, escapeHtml(lead), btn2('choose-repo', 'Set the folder'), 'mem-setup-repo-note');
+  return noteHtml(ICON_CIRC, l1, escapeHtml('Not on this Mac yet? Clone it first.'), btn2('choose-repo', 'Set the folder'), 'mem-setup-repo-note');
 }
 
 function pathRow(data, ui, draft) {
@@ -497,8 +623,14 @@ function repoNotSetBody(data, ui) {
       + '</tbody></table></div>'
     : '';
   return table + pathRow(data, ui, ui.repoDraft)
-    + '<div class="mem-ws-count">Kept on this computer only, never synced.'
+    + '<div class="mem-ws-count">' + escapeHtml(TRAVELS_LINES['setup-repo']) + '</div>'
+    + '<div class="mem-ws-count">The folder you set is kept on this computer only, never synced.'
     + (ui.pickUnavailable ? ' ' + escapeHtml(ui.pickUnavailable) : '') + '</div>';
+}
+
+/** The id a Repository file row's button carries (focus returns to it from the reader). */
+export function fileRowId(name) {
+  return 'mem-setup-file-' + String(name || '').replace(/[^A-Za-z0-9_-]/g, '_');
 }
 
 /** The files a set repository is checked for, one row each. Pure over the payload. */
@@ -519,13 +651,15 @@ export function repoFileRows(data) {
     marker = { state: git === 'not committed' || git === 'not pushed' ? 'fix' : 'ok',
       word: 'names ' + (data.project || 'this project') + ' · ' + git };
   }
-  const rows = [{ name: '.curator-project', state: marker.state, word: marker.word, readBy: 'agents and hooks', path: root }];
+  const rows = [{ name: '.curator-project', kind: 'marker', present: !!(m && m.present), state: marker.state, word: marker.word,
+    readBy: 'agents and hooks', tools: [], path: root }];
   const files = new Map();
   for (const t of data.tools || []) {
     for (const f of (t && t.block && t.block.files) || []) {
       if (!f || !isStr(f.name)) continue;
-      const cur = files.get(f.name) || { ...f, tools: [] };
+      const cur = files.get(f.name) || { ...f, tools: [], toolIds: [] };
       cur.tools.push(t.label);
+      cur.toolIds.push(t.id);
       files.set(f.name, cur);
     }
   }
@@ -534,8 +668,11 @@ export function repoFileRows(data) {
       : !f.hasBlock ? { state: 'fix', word: 'no Curator block' }
         : f.wrongProject ? { state: 'fix', word: 'names ' + f.namesProject }
           : !f.current ? { state: 'fix', word: 'block outdated' }
-            : { state: 'ok', word: f.atTop ? 'block current · at the top' : 'block current' };
-    rows.push({ name: f.name, ...s, readBy: f.tools.join(', '), path: root + '/' + f.name });
+            // v3.79.0 (amendment 2): the block does not fit in what the tool reads.
+            : f.blockPastCap === true ? { state: 'fix', word: 'block past what it reads' }
+              : { state: 'ok', word: f.atTop ? 'block current · at the top' : 'block current' };
+    rows.push({ name: f.name, kind: 'instruction', present: !!f.present, ...s, readBy: f.tools.join(', '),
+      tools: f.tools, toolIds: f.toolIds, path: root + '/' + f.name });
   }
   return rows;
 }
@@ -548,14 +685,19 @@ function repoSetBody(data, ui) {
       + '<th scope="col">File</th><th scope="col">State</th><th scope="col">Read by</th>'
       + '<th scope="col" class="mem-ws-cell-act"><span class="visually-hidden">Actions</span></th></tr></thead><tbody>'
       + rows.map((x) => '<tr class="mem-ws-row">'
-        + '<td class="mem-ws-cell-name"><span class="mem-setup-name">' + escapeHtml(x.name) + '</span></td>'
+        // v3.79.0 (contract §C): the row opens the file in the reader.
+        + '<td class="mem-ws-cell-name"><button type="button" class="mem-ws-open" id="' + fileRowId(x.name) + '"'
+          + ' data-setup-act="file-open" data-name="' + escapeHtml(x.name) + '"'
+          + ' aria-label="' + escapeHtml('Open ' + x.name + ' in the reader') + '">'
+          + '<span class="mem-ws-slug">' + escapeHtml(x.name) + '</span></button></td>'
         + '<td>' + st(x.state, x.word) + '</td>'
         + '<td class="mem-ws-cell-who">' + escapeHtml(x.readBy || '—') + '</td>'
         + '<td class="mem-ws-cell-act">' + btnG('reveal', 'Reveal', ' data-path="' + escapeHtml(x.path) + '"'
           + ' aria-label="' + escapeHtml('Reveal ' + x.name + ' in Finder') + '"') + '</td>'
         + '</tr>').join('')
       + '</tbody></table></div>';
-  const count = '<div class="mem-ws-count"><span class="mem-setup-inline-path">' + escapeHtml(r.display || r.path) + '</span>'
+  const count = '<div class="mem-ws-count">' + escapeHtml(TRAVELS_LINES['setup-repo']) + '</div>'
+    + '<div class="mem-ws-count"><span class="mem-setup-inline-path">' + escapeHtml(r.display || r.path) + '</span>'
     + ' · set on this computer · ' + btnG('change-repo', 'Change folder') + '</div>';
   return table + (ui.editRepo ? pathRow(data, ui, ui.repoDraft ?? r.path) : '') + count;
 }
@@ -609,12 +751,15 @@ function computersBody(data) {
     ? '<div class="mem-ws-wrap"><table class="mem-ws-table mem-setup-table"><thead><tr>'
       + '<th scope="col">Computer</th><th scope="col">Tools that saved</th><th scope="col">Newest save</th>'
       + '<th scope="col">Curator</th><th scope="col">Sync</th></tr></thead><tbody>'
-      + groups.map((g) => {
+      + groups.map((g, idx) => {
         const line = installsLine(g);
+        // v3.79.0 (contract §C): the row opens the computer in the reader.
         return '<tr class="mem-ws-row">'
-          + '<td class="mem-ws-cell-name"><span class="mem-setup-name">' + freshDot(g.at)
+          + '<td class="mem-ws-cell-name"><button type="button" class="mem-ws-open" id="mem-setup-comp-' + idx + '"'
+            + ' data-setup-act="computer-open" data-computer="' + idx + '"'
+            + ' aria-label="' + escapeHtml('Open what ' + g.name + ' saved, in the reader') + '">' + freshDot(g.at)
             + '<span class="mem-ws-machine">' + escapeHtml(g.name) + '</span>'
-            + (g.thisComputer ? '<span class="mem-ws-mine">this computer</span>' : '') + '</span>'
+            + (g.thisComputer ? '<span class="mem-ws-mine">this computer</span>' : '') + '</button>'
             + (line ? '<span class="mem-setup-sub">' + escapeHtml(line) + '</span>' : '') + '</td>'
           + '<td class="mem-ws-cell-who">' + escapeHtml(g.tools.join(', ') || '—') + '</td>'
           + '<td class="mem-ws-cell-age">' + (g.at ? ageSpan(g.at, null) : '—') + '</td>'
@@ -635,10 +780,11 @@ function computersBody(data) {
       checked = ' ' + ageSpan(sync.incomingCheckedAt, 'GitHub checked')
         + escapeHtml(waiting === null ? '.' : (waiting ? ': ' + plural(waiting, 'file') + ' waiting there' + (sync.incomingCapped ? ' (first 20 files)' : '') + '.' : ': nothing waiting there.'));
     } else if (waiting === null) checked = ' ' + escapeHtml('GitHub was not checked recently.');
-    count = '<div class="mem-ws-count">' + escapeHtml(bits.join(' ')) + checked + '</div>';
+    count = '<div class="mem-ws-count">' + escapeHtml(TRAVELS_LINES['setup-computers']) + ' ' + escapeHtml(bits.join(' ')) + checked + '</div>';
     doors = btn2('sync', 'Sync now') + (waiting === null ? btnG('check-github', 'Check GitHub') : '') + btnG('open-sync', 'Open Sync');
   } else {
-    count = '<div class="mem-ws-count">Personal Sync is not set up on this computer, so other computers’ saves do not reach it.</div>';
+    count = '<div class="mem-ws-count">' + escapeHtml(TRAVELS_LINES['setup-computers'])
+      + ' Personal Sync is not set up on this computer, so other computers’ saves do not reach it.</div>';
     doors = btnG('open-sync', 'Open Sync');
   }
   return table + count + '<div class="mem-k-doors mem-setup-doors">' + doors + '</div>';
@@ -657,7 +803,9 @@ function fold(key, title, meta, body, open) {
   return '<details class="mem-fold" data-mem-fold="' + escapeHtml(key) + '"' + (open ? ' open' : '') + '>'
     + '<summary class="mem-fold-summary" id="mem-fold-' + escapeHtml(key) + '">' + ICON_CHEV
     + '<span>' + escapeHtml(title) + '</span>'
-    + '<span class="mem-fold-meta">' + escapeHtml(meta) + '</span>'
+    // v3.79.0 (contract §B): the fold's channel, a neutral pill in its meta.
+    + '<span class="mem-fold-meta">' + escapeHtml(meta)
+      + (FOLD_TRAVELS[key] ? travelsPill(FOLD_TRAVELS[key].key, FOLD_TRAVELS[key].word) : '') + '</span>'
     + '</summary>'
     + '<div class="mem-fold-body">' + body + '</div>'
     + '</details>';
@@ -676,7 +824,7 @@ export function renderSetupBody(s, ui = {}) {
   }
   const folds = ui.openFolds || {};
   const recheckErr = s.error
-    ? noteHtml(ICON_TRI, escapeHtml('The last re-check did not finish: ' + s.error + '. What is shown is the reading before it.'), btnG('check', 'Re-check'))
+    ? noteHtml(ICON_TRI, escapeHtml('The last re-check did not finish: ' + s.error + '.'), 'What is shown is the reading before it.', btnG('check', 'Re-check'))
     : '';
   const repoNote = data.repo ? '' : repoNotSetNote(data);
   const picker = '<div class="mem-k-pick mem-setup-pick">' + (ui.pickerHtml || '') + '</div>' + customField(ui);
@@ -749,8 +897,7 @@ export function toolReaderContent(data, toolId) {
   if (!t) return null;
   const s = toolStatus(t, data);
   const fixes = (data.toFix || []).filter((f) => f && f.tool === t.id);
-  const notes = fixes.map((f) => noteHtml(ICON_TRI,
-    withPaths(String(f.text || '')) + (isStr(f.detail) ? ' ' + withPaths(f.detail) : ''), fixButtons(f, data.repo), 'mem-setup-fix-note')).join('');
+  const notes = fixes.map((f) => fixNote(f, data)).join('');
   const ev = toolEvidence(t).map((e) => '<section class="mem-setup-ev">'
     + '<h3 class="mem-setup-ev-h">' + escapeHtml(e.heading) + '</h3>'
     + '<ul class="mem-setup-ev-lines">' + e.lines.map((l) => '<li>' + withPaths(l) + '</li>').join('') + '</ul>'
@@ -770,12 +917,12 @@ export function toolReaderContent(data, toolId) {
           : unmeasured ? 'Config location not measured — copy the entry by hand into ' + t.label + '’s own config.'
             : 'Paste this into ' + t.label + '’s MCP config.') + '</p>'
       + '<pre class="mem-setup-snippet"><code>' + escapeHtml(snip.text) + '</code></pre>'
-      + '<span class="mem-k-doors">' + btn2('copy-snippet', 'Copy entry', ' data-tool="' + escapeHtml(t.id) + '"') + '</span></section>'
+      + '<span class="mem-k-doors">' + btn2('copy-snippet', 'Copy MCP entry', ' data-tool="' + escapeHtml(t.id) + '"') + '</span></section>'
     : '';
   const instr = isStr(t.instructionFile)
     ? '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">Instruction file</h3><p class="mem-setup-ev-p">'
-      + escapeHtml(t.label + ' reads ' + t.instructionFile + ' at the top of the repository. Paste the agent instructions block at its very top.')
-      + '</p><span class="mem-k-doors">' + btn2('copy-block', 'Copy block for ' + t.instructionFile) + '</span></section>'
+      + escapeHtml(t.label + ' reads ' + t.instructionFile + ' at the top of the repository. Paste the Curator instructions at its very top.')
+      + '</p><span class="mem-k-doors">' + btn2('copy-block', 'Copy instructions') + '</span></section>'
     : '';
   const zipLinks = Array.isArray(t.skillZips) && t.skillZips.some((z) => z && isStr(z.href) && z.href.startsWith('/api/setup/skills/'))
     ? t.skillZips.filter((z) => z && isStr(z.href) && z.href.startsWith('/api/setup/skills/'))
@@ -802,5 +949,251 @@ export function toolReaderContent(data, toolId) {
     bodyHtml,
     hideBacklinks: true,
     returnFocusTo: 'mem-setup-tool-' + t.id,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE READER — one repository file (v3.79.0, contract §C)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The file's text is UNTRUSTED: it reaches the page only through the
+// markdown renderer memory.js hands in (`opts.md`, shared/markdown.js's
+// escape-first `renderMarkdown`), or — with none, as in plain Node — escaped
+// into a <pre>. Never written into the page raw.
+//
+// The Curator's block is FRAMED, with its state and "Copy current
+// instructions"; where the tool reads only the first N bytes a rule says
+// "‹tool› reads up to here". A missing file says what goes there.
+
+// Amendment 4: `state` ∈ current · outdated · wrong-project · past-cap, and
+// `pill` ∈ ok · fix — the pill, when sent, decides the ink.
+const BLOCK_WORDS = {
+  current: ['ok', 'current'],
+  outdated: ['fix', 'outdated'],
+  'wrong-project': ['fix', 'names another project'],
+  'past-cap': ['fix', 'past what the tool reads'],
+};
+
+/** A block's [state, word] for its frame. Pure. */
+function blockMark(block) {
+  const known = BLOCK_WORDS[block.state];
+  const word = known ? known[1] : (isStr(block.state) ? block.state : 'not checked');
+  const pill = block.pill === 'ok' || block.pill === 'fix' ? block.pill : null;
+  return [pill || (known ? known[0] : 'not-checked'), word];
+}
+
+/** "Committed and pushed." — a git fact, or '' when none was read. Pure. */
+function gitWords(g) {
+  if (!g || typeof g !== 'object') return '';
+  if (g.gitRepo === false) return 'The folder is not a git repository.';
+  if (g.committed === false) return 'Not committed to the project’s git yet.';
+  if (g.committed !== true) return '';
+  return g.pushed === false ? 'Committed, not pushed yet.' : g.pushed === true ? 'Committed and pushed.' : 'Committed.';
+}
+
+/** "Antigravity" for a tool id or a label; the id itself when unknown. */
+function toolLabelOf(data, idOrLabel) {
+  if (!isStr(idOrLabel)) return null;
+  const t = ((data && data.tools) || []).find((x) => x && (x.id === idOrLabel || x.label === idOrLabel));
+  return t && isStr(t.label) ? t.label : idOrLabel;
+}
+
+const escPre = (t) => '<pre class="mem-setup-file-pre">' + escapeHtml(t) + '</pre>';
+
+/**
+ * The file's text cut at the block's two edges and the cap, each piece
+ * rendered, the block's pieces inside one frame. Offsets are JS string
+ * offsets into `text` (amendment 3), clamped: a truncated read may put them
+ * past its end. Pure.
+ */
+export function fileBodyHtml(text, block, cap, capLabel, md) {
+  const render = typeof md === 'function' ? md : escPre;
+  const len = text.length;
+  const clamp = (n) => (Number.isFinite(n) ? Math.max(0, Math.min(len, Math.floor(n))) : null);
+  const bs = block ? clamp(block.start) : null;
+  const be = block ? clamp(block.end) : null;
+  const hasBlock = bs !== null && be !== null && be > bs;
+  const capAt = cap ? clamp(cap.at) : null;
+  const cuts = [...new Set([0, len, ...(hasBlock ? [bs, be] : []), ...(capAt !== null ? [capAt] : [])])].sort((a, b) => a - b);
+  const [stateKey, word] = hasBlock ? blockMark(block) : [];
+  const frameHead = hasBlock
+    ? '<div class="mem-setup-frame-head"><span class="mem-setup-frame-title">The Curator instructions</span>'
+      + st(stateKey, word)
+      + '<span class="mem-k-doors">' + btn2('copy-block', 'Copy current instructions') + '</span></div>'
+    : '';
+  const rule = capAt !== null
+    ? '<div class="mem-setup-cap-rule" role="separator"><span>' + escapeHtml((capLabel || 'This tool') + ' reads up to here') + '</span></div>'
+    : '';
+  let out = '';
+  let inFrame = false;
+  let ruleDone = false;
+  for (let i = 0; i < cuts.length - 1; i++) {
+    const a = cuts[i];
+    const b = cuts[i + 1];
+    const inBlock = hasBlock && a >= bs && b <= be;
+    if (!inBlock && inFrame) { out += '</section>'; inFrame = false; }
+    if (inBlock && !inFrame) { out += '<section class="mem-setup-frame" aria-label="The Curator instructions">' + frameHead; inFrame = true; }
+    if (!ruleDone && capAt !== null && a === capAt) { out += rule; ruleDone = true; }
+    const piece = text.slice(a, b);
+    if (piece.trim()) out += '<div class="mem-reader-doc mem-setup-file-doc">' + render(piece) + '</div>';
+  }
+  if (!ruleDone && capAt !== null) out += rule;
+  if (inFrame) out += '</section>';
+  return out;
+}
+
+/**
+ * The reader payload for one Repository file. `resp` is the file route's
+ * answer: undefined while it is being read; `{error}` when it could not be
+ * (an older server has no such route — the reader then still shows the
+ * row's state and its doors). Pure.
+ */
+export function fileReaderContent(data, name, resp, opts = {}) {
+  const row = repoFileRows(data).find((x) => x.name === name) || null;
+  if (!row) return null;
+  const isMarker = row.kind === 'marker';
+  const who = isStr(data.project) ? data.project : 'this project';
+  const repoWhere = data.repo && (data.repo.display || data.repo.path);
+  const fixesFor = ((data && data.toFix) || []).filter((f) => f && (f.file === name || (isMarker && /^marker-/.test(f.kind || ''))));
+  const notes = fixesFor.map((f) => fixNote(f, data)).join('');
+  // The file's own doors, unless a to-fix line above already carries the same
+  // action — one button per action on the page.
+  const copyAct = isMarker ? 'copy-marker' : 'copy-block';
+  const doors = (notes.includes('data-setup-act="' + copyAct + '"') ? ''
+    : (isMarker ? btn2('copy-marker', 'Copy marker line') : btn2('copy-block', 'Copy instructions')))
+    + (notes.includes('data-path="' + escapeHtml(row.path) + '"') ? ''
+      : btnG('reveal', isMarker ? 'Reveal the folder' : 'Reveal ' + name, ' data-path="' + escapeHtml(row.path) + '"'));
+  const head = '<p class="mem-setup-ev-status mem-setup-file-status">' + st(row.state, row.word)
+    + travelsPill('project-git', 'travels by project’s git') + '</p>';
+  let body;
+  if (resp === undefined || resp === null) {
+    body = '<p class="mem-setup-empty" aria-busy="true">Reading ' + escapeHtml(name) + '…</p>';
+  } else if (resp.error || resp.ok === false) {
+    body = '<p class="mem-setup-ev-p">' + escapeHtml('The file could not be shown here: ' + (resp.error || 'no answer') + '.')
+      + ' Reveal it to open it in Finder.</p>';
+  } else if (resp.exists === false) {
+    body = '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">Not in this folder</h3><p class="mem-setup-ev-p">'
+      + (isMarker
+        ? escapeHtml('.curator-project holds one line — ' + (data.domain ? data.domain + '/' : '') + who
+          + ' — so agents and hooks in this folder know which project it is. Create it at the top of the folder, then commit and push.')
+        : escapeHtml((row.readBy && row.readBy !== '—' ? row.readBy : 'An agent tool') + ' reads ' + name
+          + ' at the start of every session. Create it at the top of ' + (repoWhere || 'the folder')
+          + ', paste the Curator instructions at its very top, then commit and push.'))
+      + '</p></section>';
+  } else {
+    const text = isStr(resp.text) ? resp.text : '';
+    const capTool = resp.cap ? toolLabelOf(data, resp.cap.tool) : null;
+    const lines = [];
+    if (resp.truncated) lines.push('Showing the first 256 KB of this file.');
+    // Amendment 4: `git` on every file, `marker` for .curator-project.
+    const gw = gitWords(isMarker && resp.marker && typeof resp.marker === 'object' ? resp.marker : resp.git);
+    if (gw) lines.push(gw);
+    if (!isMarker && !resp.block) lines.push('No Curator instructions in this file.');
+    if (resp.block && Number.isFinite(resp.block.start) && resp.block.start >= text.length) {
+      lines.push('The Curator instructions start past the part shown here.');
+    }
+    if (resp.cap && Number.isFinite(resp.cap.bytes) && !Number.isFinite(resp.cap.at)) {
+      lines.push((capTool || 'The tool') + ' reads the first ' + resp.cap.bytes.toLocaleString('en-US') + ' bytes; this file is shorter.');
+    }
+    body = (lines.length ? '<p class="mem-setup-ev-p">' + escapeHtml(lines.join(' ')) + '</p>' : '')
+      + '<div class="mem-setup-file">' + (isMarker
+        ? escPre(text)
+        : fileBodyHtml(text, resp.block || null, resp.cap && Number.isFinite(resp.cap.at) ? resp.cap : null, capTool, opts.md)) + '</div>';
+  }
+  const bodyHtml = '<div class="mem-setup-reader">' + head + notes
+    + (doors ? '<span class="mem-k-doors">' + doors + '</span>' : '')
+    + body
+    + '<p class="mem-setup-ev-foot">' + escapeHtml(TRAVELS_LINES['setup-repo']) + '</p>'
+    + '</div>';
+  return {
+    slug: 'Setup › ' + name,
+    title: name,
+    typeLabel: 'repository file',
+    bodyHtml,
+    hideBacklinks: true,
+    returnFocusTo: fileRowId(name),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE READER — one computer (v3.79.0, contract §C)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function shortDate(iso) {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return '';
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+/** Each tool's newest save on one computer, across its installs. Pure. */
+export function newestSavesOf(group) {
+  const by = new Map();
+  for (const inst of (group && group.installs) || []) {
+    for (const s of inst.saves || []) {
+      const key = isStr(s.tool) ? s.tool : s.label;
+      const cur = by.get(key);
+      if (!cur || (Date.parse(s.at) || 0) > (Date.parse(cur.at) || 0)) by.set(key, { ...s, install: inst.primary });
+    }
+  }
+  return [...by.values()].sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
+}
+
+/** The reader payload for one physical computer (by its row's index). Pure. */
+export function computerReaderContent(data, idx) {
+  const g = physicalOf(data)[Number(idx)];
+  if (!g) return null;
+  const sync = (data && data.sync) || {};
+  const sec = (h, inner) => '<section class="mem-setup-ev"><h3 class="mem-setup-ev-h">' + escapeHtml(h) + '</h3>' + inner + '</section>';
+  const ul = (items) => '<ul class="mem-setup-ev-lines">' + items.map((l) => '<li>' + l + '</li>').join('') + '</ul>';
+  const head = '<p class="mem-setup-ev-status mem-setup-file-status">'
+    + (g.thisComputer ? '<span class="mem-ws-mine mem-setup-here">this computer</span>' : '')
+    + travelsPill('personal-sync', 'travels by Personal Sync') + '</p>';
+  const installs = sec('Installs', ul(g.installs.map((i) => escapeHtml([KIND_WORD[i.kind] || 'install', i.primary].join(' '))
+    + (i.aliases.length ? escapeHtml(' — also saved as ' + i.aliases.join(', ')) : '')
+    + (i.curator ? ' · <span class="cur-setup-mono">' + escapeHtml('Curator ' + i.curator) + '</span>' : ''))));
+  const saves = newestSavesOf(g);
+  let savesHtml;
+  if (saves.length) {
+    savesHtml = sec('Each tool’s newest save', ul(saves.map((s) => {
+      const label = isStr(s.label) ? s.label : toolLabelOf(data, s.tool);
+      const own = s.ownScope !== false && s.wrongScope !== true;
+      return '<span class="mem-setup-save-who">' + escapeHtml(label) + '</span> · '
+        + escapeHtml(shortDate(s.at)) + ' (' + ageSpan(s.at, null) + ')'
+        + (isStr(s.scope) ? ' · ' + escapeHtml('saved under “' + s.scope + '”') : '')
+        + (own ? '' : ' ' + st('fix', 'not its own name' + (isStr(s.tool) ? ' “' + s.tool + '”' : '')))
+        + (isStr(s.curator) ? ' · <span class="cur-setup-mono">' + escapeHtml('Curator ' + s.curator) + '</span>' : '');
+    })));
+  } else {
+    savesHtml = sec('Saves', ul([escapeHtml((g.tools.length ? g.tools.join(', ') : 'No tool') + ' saved this project here')
+      + (g.at ? escapeHtml('; newest ' + shortDate(g.at) + ' (') + ageSpan(g.at, null) + ')' : '') + '.']));
+  }
+  let syncLines;
+  if (g.thisComputer) {
+    if (!sync.configured) syncLines = [escapeHtml('Personal Sync is not set up on this computer, so other computers’ saves do not reach it.')];
+    else {
+      syncLines = [isStr(sync.lastSync) ? ageSpan(sync.lastSync, 'Last synced') : escapeHtml('Never synced.'),
+        escapeHtml(Number.isInteger(sync.pending) && sync.pending > 0
+          ? plural(sync.pending, 'file') + ' here not on GitHub yet, across all domains.' : 'Nothing here waiting to be sent.')];
+      const waiting = Array.isArray(sync.incoming) ? sync.incoming.length : null;
+      if (waiting !== null) syncLines.push(escapeHtml(waiting ? plural(waiting, 'file') + ' waiting on GitHub for this Mac.' : 'Nothing waiting on GitHub.'));
+      syncLines.push(escapeHtml('Sync now pulls and pushes your whole knowledge folder — every domain.'));
+    }
+  } else {
+    syncLines = [escapeHtml(g.waiting
+      ? 'A newer handoff from it is waiting in your Personal Sync on GitHub. Sync now before you start the agent.'
+      : 'Its saves reach this Mac after it syncs and you Sync now here. Its own sync time is not recorded here.')];
+  }
+  const syncDoors = sync.configured && (g.thisComputer || g.waiting) ? '<span class="mem-k-doors">' + btn2('sync', 'Sync now') + '</span>' : '';
+  const bodyHtml = '<div class="mem-setup-reader">' + head + installs + savesHtml
+    + sec('Personal Sync', ul(syncLines) + syncDoors)
+    + '<p class="mem-setup-ev-foot">' + escapeHtml(TRAVELS_LINES['setup-computers']) + '</p>'
+    + '</div>';
+  return {
+    slug: 'Setup › ' + g.name,
+    title: g.name,
+    typeLabel: 'computer',
+    bodyHtml,
+    hideBacklinks: true,
+    returnFocusTo: 'mem-setup-comp-' + Number(idx),
   };
 }

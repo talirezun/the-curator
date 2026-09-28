@@ -135,14 +135,17 @@ section('§2  The harness — Not set, and never summed into a measured figure')
   const unset = { ...TODAY, harnessTokens: null };
   const html = B.renderWindowBar(unset);
   ok(withClass(html, 'bk-harness').length === 0, 'Not set: no harness segment in the bar');
-  ok(withClass(html, 'bk-harness-unset').length === 1 && /Harness not set\./.test(html), 'Not set: the "Harness not set" note is shown');
+  // v3.79.0 (contract §D): "Harness" is "your tool’s share" — an estimate.
+  ok(withClass(html, 'bk-harness-unset').length === 1 && /Your tool’s share is not set\./.test(html), 'Not set: the "Your tool’s share is not set" note is shown');
   ok(/also use this window/.test(B.bucketText(unset).window), 'Not set: the text alternative says the harness also uses the window');
-  ok(/harness — not set/.test(B.renderLegend(unset)), 'Not set: the legend says so');
+  ok(/your tool’s share — not set/.test(B.renderLegend(unset)), 'Not set: the legend says so');
   ok(/The Curator ≈6\.8k · 0\.7% of 1M/.test(html), 'Not set: the head line gives The Curator\'s share alone');
   ok(withClass(B.renderWindowBar(TODAY), 'bk-harness-unset').length === 0, 'Set: no "not set" note');
   const a = B.bucketModel(TODAY), b = B.bucketModel(unset);
   ok(a.curator === b.curator && a.curator === FIXED, 'the harness is NEVER summed into The Curator\'s measured figure', a.curator + ' vs ' + b.curator);
-  ok(/your estimate/.test(B.bucketText(TODAY).window) && /your estimate/.test(B.renderLegend(TODAY)), 'Set: "your estimate" in the text alternative and the legend');
+  ok(/your estimate/.test(B.bucketText(TODAY).window) && /\(estimate\)/.test(B.renderLegend(TODAY)), 'Set: "estimate" in the text alternative and the legend');
+  ok(!/measured/.test(B.renderLegend(TODAY).replace(/The Curator[^<]*/g, '')) && !/(tool|share)[^,.]{0,40}measured/.test(B.bucketText(TODAY).window),
+    'Set: the estimate is never called "measured" (contract §D)');
   ok(/≈127k in use · 12\.7% · of which The Curator ≈6\.8k \(0\.7%\)/.test(B.renderWindowBar(TODAY)), 'Set: the head line separates in-use from The Curator\'s part');
 }
 
@@ -193,7 +196,7 @@ function eq(msg, got, want) { return ok(got === want, msg, 'got ' + JSON.stringi
 section('§5  The text alternative');
 {
   const t = B.bucketText(TODAY);
-  eq('window sentence', t.window, 'A 1M-token window, drawn to scale: harness about 120k (your estimate, not measured), The Curator about 6.8k tokens (measured, 0.7%), about 873k free.');
+  eq('window sentence', t.window, 'A 1M-token window, drawn to scale: your tool\'s share about 120k (your estimate), The Curator about 6.8k tokens (measured, 0.7%), about 873k free.');
   ok(/framing 0\.9k, brief 3\.5k, handoff 0\.5k, journal 1\.0k, document list 0\.9k, read first 0; reading budget ≈16\.4k, unused: nothing is read first\./.test(t.enlargement), 'enlargement sentence names every layer and the room', t.enlargement);
   ok(/9 documents, about 47\.9k tokens/.test(t.onDemand) && /outside the window/.test(t.onDemand), 'on-demand sentence: outside the window, with its figure');
   const all = B.renderBucket(TODAY);
@@ -232,7 +235,7 @@ section('§7  Labels, legend, narrow width, the tiny share');
   ok(/on demand — outside the window <b>47\.9k<\/b> · 9 documents/.test(lg) && withClass(lg, 'bk-sw-ondemand').length === 1, 'the on-demand dashed chip is in the legend');
   ok(withClass(lg, 'bk-sw-harness').length === 1 && withClass(lg, 'bk-sw-room').length === 1, 'the harness hatch and the room have legend swatches');
   const w = B.renderWindowBar(TODAY);
-  ok(/<span class="bk-l-wide">harness ≈120k<\/span><span class="bk-l-short">harness<\/span>/.test(w),
+  ok(/<span class="bk-l-wide">tool ≈120k<\/span><span class="bk-l-short">tool<\/span>/.test(w) && /title="your tool’s share ≈120k · your estimate"/.test(w),
     'the harness label has a long form for a wide bar and a short one for a narrow bar', w.match(/bk-harness[^]*?<\/div>/)[0]);
   // Every placed label must fit a 560px bar (its short form).
   const g = B.bucketModel(TWO);
@@ -335,7 +338,25 @@ section('§10  v3.70.1 — one segment per read-first document (the planner)');
   // edit, so the pin still proves every other byte is v3.70.0's.
   const unApprox = (x) => x.replace(/(reading budget |budget left |budget |, )≈(?=[0-9])/g, '$1')
     .replace(/(>|")≈([0-9][0-9.]*[kM]?) left/g, '$1$2 left');
-  const digest = createHash('sha256').update(G.map((m) => unApprox(B.renderBucket(m) + '\u0000' + JSON.stringify(B.bucketText(m)))).join('\u0001')).digest('hex');
+  // v3.79.0 (contract §D) renamed the harness "your tool's share" and dropped
+  // "not measured" beside the estimate — and changed NOTHING else; this undoes
+  // exactly those words, so the pin still proves every other byte is v3.70.0's.
+  const AP = "(?:'|&#39;)";
+  const unRename = (x) => x
+    .replace(new RegExp('your tool' + AP + 's share about ([^ ]+) \\(your estimate\\), ', 'g'), 'harness about $1 (your estimate, not measured), ')
+    .replace(new RegExp(' Your tool(' + AP + ')s share is not set: its own prompt, tools and files also use this window\\.', 'g'),
+      ' Harness not set: your agent$1s own system prompt, tools and instructions also use this window.')
+    .replace(/Your tool’s share is not set\. Its own prompt, tools and files also use this window — pick an estimate to see them\./g,
+      'Harness not set. Your agent\'s own system prompt, tools and instructions also use this window — set an estimate to see them.')
+    .replace(/title="your tool’s share ≈/g, 'title="harness ≈')
+    .replace(/your tool ≈([^ <]+) · estimate/g, 'harness ≈$1 · your estimate')
+    .replace(/>tool ≈/g, '>harness ≈')
+    .replace(/>tool</g, '>harness<')
+    .replace(/your tool’s share \(estimate\) <b>/g, 'harness (your estimate) <b>')
+    .replace(/your tool’s share — not set/g, 'harness — not set');
+  ok(/your tool/i.test(G.map((m) => B.renderBucket(m) + JSON.stringify(B.bucketText(m))).join('')),
+    'CONTROL: the digest input really carries the v3.79.0 wording that unRename undoes');
+  const digest = createHash('sha256').update(G.map((m) => unApprox(unRename(B.renderBucket(m) + '\u0000' + JSON.stringify(B.bucketText(m))))).join('\u0001')).digest('hex');
   ok(/reading budget ≈/.test(G.map((m) => B.renderBucket(m) + JSON.stringify(B.bucketText(m))).join('')),
     'CONTROL: the digest input really carries the v3.76.0 "≈" that unApprox removes');
   ok(digest === 'd87404e1e700488006f02aa9caae538084bdd0c9bb609abbe1c511d3411ecdab',
