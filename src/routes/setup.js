@@ -153,7 +153,7 @@ function installDirFromEntry(f) {
  * Every Curator install on this Mac: `[{dir, kind, machineId, installId}]`.
  * Read-only; a folder with neither id file contributes nothing.
  */
-async function localInstalls({ repoPath = null, machineRows = [] } = {}) {
+async function localInstalls({ repoPath = null, machineRows = [], candidatePaths = [] } = {}) {
   const support = appSupportDir();
   const dirs = [];
   const add = (dir, kind) => { if (dir) dirs.push({ dir, kind }); };
@@ -168,6 +168,12 @@ async function localInstalls({ repoPath = null, machineRows = [] } = {}) {
   } catch { /* none */ }
   add(support, 'app');
   if (repoPath && isCuratorCheckout(repoPath)) add(repoPath, 'source');
+  // A repository CANDIDATE that is a Curator checkout is on this Mac by
+  // construction (it exists here), so its machine id is this computer's too —
+  // without it, a project with no repository set read the checkout's saves as
+  // a second computer (orchestrator screen review, 2026-09-28). Only the
+  // candidates already found; the search is not widened.
+  for (const p of candidatePaths) if (isCuratorCheckout(p)) add(p, 'source');
   for (const r of machineRows) {
     for (const f of r.files || []) if (f.named) for (const x of installDirFromEntry(f)) add(x.dir, x.kind);
   }
@@ -397,7 +403,12 @@ router.get('/projects/:domain/:project', async (req, res) => {
           ? inc.behindFiles > inc.files.length : inc.files.length >= 20));
       }
     } catch { sync = { configured: false, scope: 'all-domains', error: true }; }
-    const installs = await localInstalls({ repoPath: repo?.exists ? repoPath : null, machineRows });
+    // Candidates first: a candidate that is a Curator checkout is an install
+    // on this Mac, and its machine id must be known before saves are grouped.
+    const candidates = repoPath ? [] : await repoCandidates(domain, project);
+    const installs = await localInstalls({
+      repoPath: repo?.exists ? repoPath : null, machineRows, candidatePaths: candidates.map((c) => c.path),
+    });
     const mf = machineFacts(installs);
     const result = collectProjectSetup({
       domain, project, pairs, machine: mf, machineRows, home: home(),
@@ -430,7 +441,6 @@ router.get('/projects/:domain/:project', async (req, res) => {
       if (result.repo) result.repo.display = tilde(repoPath);
     }
     listRevealPaths(result);
-    const candidates = repoPath ? [] : await repoCandidates(domain, project);
     res.json(withDisplay({
       ok: true,
       checkedAt: new Date().toISOString(),

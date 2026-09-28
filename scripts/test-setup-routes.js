@@ -310,6 +310,32 @@ try {
     ok(!(r2.body.toFix || []).some((x) => x.tool === 'antigravity' && x.kind === 'bridge-file'), 'an empty Antigravity file beside its working config raises nothing');
   }
 
+  section('§13 no repository set: a candidate checkout is this Mac\'s install (screen review, 2026-09-28)');
+  {
+    // Three machine ids, NO repo set, and the checkout reachable only as a
+    // repository candidate (no MCP entry points at it). Before the fix its
+    // saves read as a second computer.
+    await store.createProject(D, 'solo2', { brief: '# Project brief — solo2\n\n## Standing brief\n\nx\n' });
+    for (const [machine, harness, scope] of [['mac-5d5d5d', 'Antigravity', 'antigravity'], ['talis-macbook-pro-5d5d5d', 'Antigravity', 'antigravity'], ['talis-macbook-pro-acb035', 'Claude Code', 'claude-code']]) {
+      const s = await store.saveWorkingState(D, { project: 'solo2', scope, machine, harness, headline: machine, nowState: 'x', nextSteps: ['y'] });
+      if (!s.ok) throw new Error(`fixture save ${machine}: ${s.reason}`);
+    }
+    const CO = path.join(HOME, 'code', 'solo2-checkout');
+    w(path.join(CO, '.curator-project'), `${D}/solo2\n`);
+    w(path.join(CO, 'package.json'), JSON.stringify({ name: 'the-curator' }));
+    w(path.join(CO, 'bin', 'curator.js'), '');
+    w(path.join(CO, '.curator-machine-id'), 'talis-macbook-pro-5d5d5d\n');
+    w(path.join(CO, '.curator-install-id'), '5d5d5d\n');
+    const cj = JSON.parse(readFileSync(path.join(HOME, '.claude.json'), 'utf8'));
+    cj.projects[CO] = {};
+    w(path.join(HOME, '.claude.json'), JSON.stringify(cj));
+    const r = await call('GET', `/api/setup/projects/${D}/solo2`);
+    ok(r.body.repo === null && (r.body.repoCandidates || []).some((c) => c.path === CO), 'no repository set; the checkout is a candidate', r.body.repoCandidates);
+    ok(r.body.counts?.computers === 1 && r.body.counts.installs === 2 && r.body.counts.machineNames === 3, '1 computer, 2 installs, 3 names — not 2 computers', r.body.counts);
+    const src = r.body.computers.find((c) => c.key === 'install:5d5d5d');
+    ok(src && src.thisComputer === true && src.installKind === 'source', 'the candidate checkout\'s install is this computer, kind source', src);
+  }
+
   section('§8  the Mac app ships the skills (S5)');
   {
     const yml = readFileSync(new URL('../desktop/electron-builder.yml', import.meta.url), 'utf8');
