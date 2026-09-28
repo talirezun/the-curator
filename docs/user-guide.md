@@ -1426,7 +1426,7 @@ controls "Refresh from repo", "Add from folder" and "Mirror from GitHub instead"
 bar — a tinted bar behind each figure, anchored at the right, its length that document's share of
 the project's own 200 KB total, shown plainly and never as an alarm. Step 2, Memory: four closed
 rows, each one instrument — Agent connections, Handoffs, The brief and Journal. Step 4, Session start:
-a head row with the reading budget, the Window and the Harness pickers, then the segmented meter —
+a head row with the reading budget, the Window and the Your tool's share pickers, then the segmented meter —
 your window to scale, the harness hatched at the left, The Curator's own layers, and a dashed room
 the width of the reading budget. Step 3, Knowledge: the control "+ Add a domain", then one row per domain this project
 draws on, each carrying that domain's own identity dot — here "projects — 391 pages · 3 days ago"
@@ -1548,18 +1548,24 @@ Curator could not save stays listed with the reason; **Discard** returns to what
 When a start would take more than one MCP reply, the enlarged bar marks where the second reply
 begins, and the legend names each document with the reply it arrives in.
 
-**Window and Harness sit beside the reading budget**, both set **per computer** (in the app's
-config file, not per browser), so the app and the menu bar widget always agree:
+**Window and Your tool's share sit beside the reading budget**, both set **per computer** (in the
+app's config file, not per browser), so the app and the menu bar widget always agree:
 
 - **Window** — 200K, 400K, 1M, or a custom size — the context window of the model you actually
   run. Until you choose one **on this computer**, the picker reads **"200K · default"** and the
   meter is labelled **"(default)"** — it is showing you a fallback, not a setting you made, and
   no option in the menu is marked chosen.
-- **Harness** — **Not set** by default, or **Light ≈20k**, **Typical ≈50k**, **Heavy ≈120k**, or
-  an exact number. Read your own harness's overhead from Claude Code's `/context`, which breaks
-  out system prompt, system tools, MCP tools, memory files and skills as separate figures. The
-  harness estimate is drawn **hatched** and labelled **"your estimate"** everywhere it appears,
-  and it is **never added to any measured figure** — The Curator only ever measures its own part.
+- **Your tool's share** *(renamed from "Harness" in v3.79.0 — same setting, same field on disk;
+  only the label changed)* — what your agent tool loads for itself: its own system prompt, tool
+  definitions, MCP tool lists, instruction files and skills. **Not set** by default, or **Light
+  ≈20k** (a simple agent: short system prompt, a few tools), **Typical ≈50k** (Claude Code,
+  Antigravity or Codex with an instruction file and 2–3 MCP servers), **Heavy ≈120k** (many MCP
+  servers or skills, or a long `CLAUDE.md` or `AGENTS.md`), or **Exact…** for the figure your tool
+  reports — in Claude Code, `/context` lists system prompt, tools, MCP tools, memory files and
+  skills separately; add them up. Every preset is stated as an **estimate**, never as measured.
+  The share is drawn **hatched** and labelled **"your estimate"** everywhere it appears, and it
+  is **never added to any measured figure** — The Curator only ever measures its own part. It
+  changes only the meter; nothing about it is ever sent anywhere.
 
 **When nothing is read first, every reading budget sends the same bootstrap**, and the step says
 so in one line — there is nothing yet for a bigger budget to spend itself on. Mark the documents
@@ -2219,6 +2225,7 @@ Yes to both — **two different things travel by two different routes**:
 |---|---|---|---|
 | **Your code** | The project's own git remote — clone it on both computers | `git pull` | Commit and `git push` |
 | **Working state** — the brief, handoffs, Journal, Documents | The Curator's **Personal Sync** — your private knowledge repository ([§15](#15-sync-across-computers)) | **Sync now** | **Sync now**, *after* the last save |
+| **MCP settings, skills, hooks** | *(v3.79.0)* **This computer only** — nothing syncs them; set up each on every computer | — | — |
 
 The per-computer handoff copy is what makes this safe: the laptop and the desktop each save into
 their own folder, so neither overwrites the other even when you forget to sync. Start the second
@@ -5633,13 +5640,18 @@ comes with a source install (`npm link` puts it on your `PATH`); the Mac app doe
 
 ## 13e. The Setup check in the app
 
-*New in v3.77.0; redesigned in v3.78.0.* The checklist in
+*New in v3.77.0; redesigned in v3.78.0; made understandable in v3.79.0.* The checklist in
 [§13d](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist) is visible
 in the app, for one project on one computer, so you do not have to check it by hand. v3.78.0 rebuilt
 step 5 from the app's own existing parts — no new component was designed for it — and answered a
 list of questions the first version left open: what an empty or broken config file means, how many
 *computers* you actually have when one Mac runs both the DMG and a source checkout, why a repository
-folder is needed at all, and what **Sync now** on this row actually syncs.
+folder is needed at all, and what **Sync now** on this row actually syncs. **v3.79.0 did not change
+what is checked — it changed whether you can tell what a to-fix line is asking of you**: every note
+now says what is wrong *and* why it matters and what to do, in two lines instead of one; the git
+commands it hands you now include the push (and a `git pull` first, when the marker might already
+exist on another computer); and two new readers — one for a repository file, one for a computer —
+open in the app's right-side panel instead of asking you to read a raw file.
 
 **Where it is.** **Context** → open a project → the **SETUP** tile in the overview, and **step 5 ·
 Setup** at the foot of the page. The machine-wide detail is in **Settings → MCP bridge → Tools on
@@ -5652,12 +5664,62 @@ a "9/10" reads as a grade, and a grade invites optimising the number instead of 
 it stands for. (The overview's own SETUP tile is unchanged: it still reads *N to fix*, *repository
 not set* or *ready*, one word, the same as every other overview tile on the page.)
 
-**The to-fix notes, loud.** Each one is its own line, outside every fold, with its own fix button
-right beside it — never a list you have to open first. What you see depends on what is actually
-false: **Copy block for AGENTS.md** (or `CLAUDE.md`, `GEMINI.md`), **Copy marker line**, **Copy
-command** (for example `git add .curator-project && git commit …`), **Reveal** (opens the exact file
-in Finder), **Sync now**, or **Open Tools on this Mac**. A note that names a bad config file
-(below) also says what to do about *that* file specifically, by name.
+**The to-fix notes, loud, and now in two lines (v3.79.0).** Each one is its own block, outside every
+fold, with its own fix button(s) right beside it — never a list you have to open first. **Line 1
+says what is wrong**, naming the file, the computer or the date (*"AGENTS.md in `~/code/ott` has no
+Curator instructions"*); **line 2 says why it matters and what to do** (*"…so Antigravity doesn't
+know this project and may overwrite another tool's handoff. Paste them at the very top (create the
+file if it isn't there), then commit and push."*) — the two are never glued into one run-on
+sentence. **Every button's label says what pressing it does** — never a bare "Copy command": you'll
+see things like **Copy instructions**, **Copy marker line**, **Copy the git command that commits and
+pushes it**, **Copy the git command that commits and pushes it, then run `git pull` there**,
+**Reveal AGENTS.md** (opens the exact file in Finder), **Sync now**, **Choose the folder**, or **Open
+Tools on this Mac**. A line can carry more than one button — for example a missing block offers
+**Copy instructions**, **Reveal AGENTS.md** *and* the git command, in that order, because there is
+more than one safe next action. A note that names a bad config file (below) also says what to do
+about *that* file specifically, by name.
+
+**The wrong-name save.** If a tool's newest save went under a name that is not its own — Antigravity
+saved under `main` rather than `antigravity`, say — what the note tells you depends on whether the
+instructions it reads are already current. **If the block is *not* current**, there is nothing new
+to say: the block's own to-fix line (above) gets one more clause — *"…That is why its 25 Sep save
+went under 'main'."* — because fixing the block also fixes the save. **If the block *is* already
+current**, that is its own separate line, because there is nothing about the block to fix: *"Your
+instructions here are already current, so this clears the next time Antigravity saves"* — and it
+carries **no button at all** when the save was made on this computer. When that save came from
+*another* computer, the detail adds "…after that computer runs `git pull`", or, if this Mac's own
+current copy isn't committed and pushed yet, it says so and hands you the commit-and-push command
+instead — a `git pull` there cannot bring a file this Mac never pushed.
+
+**Every warning kind, in one table.**
+
+| You'll see | What it means | What to do | Which computer |
+|---|---|---|---|
+| A tool's config file **is empty / not valid JSON / can't open** | That file told the check nothing, and no other file of that tool proves the bridge either | Open the tool once (it may fill the file), or fix the syntax, or check macOS's Privacy & Security — then **Re-check** | This one |
+| MCP entry **reads a different knowledge folder**, or its **launch file is missing** | The entry points somewhere stale — an old install, a moved folder | **Copy MCP entry**, paste over the old one, restart the tool | This one |
+| Instruction file **has no Curator instructions** | The tool doesn't know this project, and its agent may overwrite another tool's handoff | **Copy instructions**, paste at the very top (create the file if needed), commit and push | The repository, from any computer that has it cloned |
+| Instruction file **has another project's instructions** | The block here names a different `domain/project`, so this tool opens the wrong one | **Replace them with this project's instructions**, commit and push | Same |
+| Instruction file **is outdated** | An older block may not re-read on "continue" or save under its own name | **Replace them with the current instructions**, commit and push | Same |
+| Instruction file's block **runs past what the tool reads** | The tool caps how much of the file it loads, and the block starts or ends after that cap | Move the block to the top, commit and push | Same |
+| A tool's newest save **went under another name** (a "wrong-name save") | See "The wrong-name save," above | Nothing, if the block here is current; otherwise fix the block | This one, or wherever it saved |
+| A **skill is outdated or missing** | The installed copy differs from what this app carries | Download the current `.zip`, replace the folder, start a new session | This one |
+| **This project's folder isn't on this Mac** | The repository path saved earlier no longer exists here | Clone it, then choose the folder | This one |
+| **`.curator-project` is missing** | Agents and hooks here can't tell which project this folder is | If another computer has saved this project, `git pull` first; otherwise create the one-line file, commit and push | The repository |
+| **`.curator-project` names another project** | Every agent here would open the wrong project | Rewrite it, commit and push | Same |
+| **`.curator-project` isn't committed**, or **is committed but not pushed** | Your other computers can't get it until it reaches the remote | Commit and push (or just push) | Same |
+| **A newer handoff is waiting on GitHub** | Another computer saved since your last sync | **Sync now**, before you start the agent | Personal Sync |
+
+The states each row and cell carry are the same four (plus two you'll see less often) that used to
+sit behind this step's ⓘ, moved here in v3.79.0 because they're words already on the screen:
+
+| Mark | Means |
+|---|---|
+| **ready** | checked, and it works |
+| **to fix** | shown above, with its fix |
+| **can't check here** | nothing here to read |
+| **not checked** | needs the repository folder |
+| *unmeasured* | a fact nobody has measured yet (most harnesses' hooks; a custom tool's instruction file, assumed rather than checked) |
+| *—* (none) | nothing to report — no config, no save, no evidence either way |
 
 **"checked *N* ago · Re-check."** The head of the step carries when it last read your tools' files
 and this repository, with a **Re-check** button beside it. **Re-check re-reads the config files and
@@ -5678,12 +5740,72 @@ editor back to The Curator after fixing a file shows the fix without an extra cl
 - **Repository on this computer** — the folder, whether `.curator-project` names this project and is
   committed (and pushed, as of your last `git fetch` — the app never fetches your project on its
   own), and for `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`: present, block present, current, at the top.
-- **Computers** — see "How many computers?" below.
+  **Since v3.79.0, each file's row opens in the reader too** — see "The two readers" below.
+- **Computers** — see "How many computers?" below. **Since v3.79.0, each row opens in the reader**
+  as well.
 
 **"+ Add a tool."** The same picker the app uses elsewhere (Domains' "+ Add a domain"): a listbox
 with two groups, **Known tools** (every agent tool The Curator can write an MCP entry for, including
 DeepSeek Harness, that is not already a row) and **Other**, whose last entry is **Custom tool…**. See
 "A tool that isn't listed" below for what picking it does.
+
+### The three ways things travel between computers
+
+Everything this step checks travels one of three ways, and they never mix — which is worth knowing
+before you go looking for a setting that syncs the wrong thing:
+
+| What | Travels by | So on a second computer… |
+|---|---|---|
+| Handoffs, the brief, Documents | **Personal Sync** — your private knowledge repository | **Sync now** brings it there |
+| `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`, `.curator-project` | The project's **own git** | Commit and push here, pull there |
+| MCP settings, skills, hooks | **This computer only** | Set up again, on each computer — nothing syncs them |
+
+```mermaid
+flowchart LR
+    subgraph HERE["This computer"]
+        H1["MCP settings · skills · hooks<br/>set up here, stay here"]
+        H2["project folder (git clone)<br/>CLAUDE.md / AGENTS.md block<br/>.curator-project"]
+    end
+    subgraph GH["GITHUB"]
+        K["your PRIVATE knowledge repository<br/>Personal Sync"]
+        C["the PROJECT's code repository<br/>git push / git pull"]
+    end
+    subgraph THERE["Another computer"]
+        T1["MCP settings · skills · hooks<br/>set up separately there"]
+        T2["project folder (git clone)<br/>same two files, same marker"]
+    end
+    H2 <-->|git push / pull| C
+    T2 <-->|git push / pull| C
+    K -->|Sync now| THERE
+    HERE -->|Sync now| K
+```
+
+*The grey pill each fold carries in its own heading (for example "project's git" on Repository,
+"Personal Sync" on Computers, "set up on each computer" on Tools) names which of the three that
+fold's contents travel by. It is deliberately colourless — this step never uses colour, because
+colour on screen is reserved for a **domain's** identity dot elsewhere in the app, and a second
+meaning for the same channel would make both harder to read at a glance.*
+
+### The two readers — a repository file, and a computer
+
+**A Repository file, opened (v3.79.0).** Press a row under **Repository on this computer** — an
+instruction file or `.curator-project` — and it opens in the right-side reader: the file's real
+text, read-only, with the Curator block **framed** and marked with its own state (current /
+outdated / names another project / past what the tool reads), a **"‹tool› reads up to here"** rule
+drawn at the point a tool's cap cuts the file off (when it has one), and a **Copy current
+instructions** button right on the frame. A file that doesn't exist yet explains what belongs there
+instead of showing nothing. Only `.curator-project` and the instruction files of tools this project
+actually lists can ever be opened here — never `~/.claude.json`, never a harness's MCP config, which
+is a **separate, narrower allow-list** than the one Reveal uses elsewhere on this step (Reveal can
+open a harness's config file in Finder; the reader can only ever show `.curator-project` and
+instruction files, because those are the only files here that hold nothing another tool would call a
+secret).
+
+**A computer, opened.** Press a row under **Computers** and the reader shows that physical
+computer's installs (the Mac app, a source checkout, each with its own name), **each tool's newest
+save from it** with the exact name it saved under (flagged when it isn't the tool's own), and — for
+this computer — your Personal Sync standing: last synced, anything pending, anything waiting on
+GitHub for you.
 
 ### Config file states, and the bad-file rule
 
@@ -5769,7 +5891,11 @@ its own), and capped at 12.
 file). Until a project folder is set, the repository checks do not run, so the step lists only what
 *was* checked, never "nothing to fix" about work it never did. The block counts as current when every
 word matches the current **Copy agent instructions** text, however your editor wrapped the lines; a
-block that differs in any word (an older version, or a hand edit) is *outdated*. Evidence beats
+block that differs in any word (an older version, or a hand edit) is *outdated*. **Fixed in v3.79.0:**
+the "move the block to the top" line used to fire whenever a tool's whole file ran past its reading
+cap, even when the block itself sat right at the top of that file and the tool would read it fine —
+it now fires only when the block's own *end* runs past the cap, so an already-current, already-at-
+the-top block never gets told to move. Evidence beats
 configuration: if no config entry is found for Claude Code but Claude Code saved this project from
 this computer, the cell says **working** — on the maintainer's Mac the entry lived only in Claude
 Desktop's config, and a file-only check would have said "not configured" about a setup that works.
