@@ -697,5 +697,56 @@ section('§18 a computer, in the reader (contract §C)');
     'newestSavesOf: across installs, the newest wins');
 }
 
+
+section('§19 a file reads as a DOCUMENT: soft line breaks inside a paragraph (screen review)');
+{
+  // The REAL shared renderer, module body eval'd with `icon` stubbed (its only
+  // import) — test-next-memory-view.js's own lift.
+  const { readFileSync } = await import('fs');
+  const mdSrc = readFileSync(new URL('../src/public/next/shared/markdown.js', import.meta.url), 'utf8')
+    .replace(/^import\s+\{[^}]*\}\s+from\s+'\.\.\/app\.js';\s*$/m, '')
+    .replace(/^export\s+/gm, '');
+  const renderMarkdown = new Function('icon', mdSrc + '\nreturn renderMarkdown;')(() => '<svg></svg>');
+  const wrapped = 'This repository\'s working state lives in The Curator. At the START of every session call the\n'
+    + 'my-curator MCP tool get_project_context with project "ott" and read the standing brief\n'
+    + 'and latest handoff before acting.';
+  const doc = wrapped + '\n\nSecond paragraph,\nwrapped too.\n\n```\nline one\nline two\n```\n\n- item one\n  continues here\n- item two\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\nHard break  \nkept.';
+  const html = S.fileBodyHtml(doc, null, null, null, renderMarkdown);
+  const ps = [...html.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)].map((m) => m[1]);
+  ok(ps.some((p) => /Curator\. At the START[\s\S]*the my-curator MCP tool[\s\S]*brief and latest handoff before acting\./.test(p) && !/<br/.test(p)),
+    'a hard-wrapped paragraph renders as ONE <p>, its source newlines soft (no <br>)', html.slice(0, 700));
+  ok(ps.some((p) => /^Second paragraph, wrapped too\.$/.test(p.trim())), 'a blank line still separates paragraphs', JSON.stringify(ps));
+  const pre = /<pre[^>]*>([\s\S]*?)<\/pre>/.exec(html);
+  ok(!!pre && /line one\nline two/.test(pre[1]), 'a fenced block keeps its newlines', pre && pre[1]);
+  ok(/item one continues here/.test(html) && (html.match(/<li/g) || []).length === 2, 'a list item\'s wrapped continuation joins the item; the list keeps two items', html);
+  ok(/<table/.test(html) || /\| 1 \| 2 \|/.test(html), 'table rows are never joined into one line');
+  ok(S.softWrap('Hard break  \nkept.') === 'Hard break  \nkept.', 'a line ending in two spaces (a markdown hard break) is kept');
+  ok(S.softWrap('# Heading\nText') === '# Heading\nText' && S.softWrap('a\n# H') === 'a\n# H', 'a heading is never joined to its neighbour');
+  ok(S.softWrap('```\na\nb\n```') === '```\na\nb\n```' && S.softWrap('a\n\nb') === 'a\n\nb', 'a fence and a blank line are left exactly as written');
+  const evil = S.fileBodyHtml('safe\n<img src=x onerror=alert(1)>\ntext', null, null, null, renderMarkdown);
+  ok(!/<img/.test(evil) && /&lt;img/.test(evil), 'joining lines never un-escapes: the renderer still escapes first', evil);
+  // The shared renderer is UNCHANGED for every other caller: chat still sees
+  // a single newline as a line break.
+  ok(renderMarkdown('one\ntwo') === renderMarkdown('one\ntwo') && /one[\s\S]*<br[\s\S]*two|<p>one<\/p>\s*<p>two<\/p>/.test(renderMarkdown('one\ntwo')),
+    'CONTROL: renderMarkdown itself is untouched — a single newline still breaks for chat', renderMarkdown('one\ntwo'));
+}
+
+section('§20 a session-named save is NOT flagged — only a wrong name is (screen review)');
+{
+  const d = v379();
+  d.physical[1].installs[0].saves = [
+    { tool: 'claude-code', label: 'Claude Code', scope: 'session-2026-09-28-setup-polish', at: iso(1000), ownScope: false, wrongScope: false },
+  ];
+  ok(!/not its own name/.test(S.computerReaderContent(d, 1).bodyHtml), 'ownScope:false with wrongScope:false (a session name): NOT flagged');
+  d.physical[1].installs[0].saves[0] = { tool: 'claude-code', label: 'Claude Code', scope: 'session-2026-09-28-setup-polish', at: iso(1000), ownScope: false };
+  ok(!/not its own name/.test(S.computerReaderContent(d, 1).bodyHtml), 'no wrongScope field, a session name: NOT flagged');
+  d.physical[1].installs[0].saves[0] = { tool: 'claude-code', label: 'Claude Code', scope: 'antigravity', at: iso(1000) };
+  ok(/not its own name “claude-code”/.test(S.computerReaderContent(d, 1).bodyHtml), 'no wrongScope field, ANOTHER tool\'s id: flagged');
+  d.physical[1].installs[0].saves[0] = { tool: 'claude-code', label: 'Claude Code', scope: 'main', at: iso(1000) };
+  ok(/not its own name/.test(S.computerReaderContent(d, 1).bodyHtml), 'no wrongScope field, "main": flagged');
+  ok(S.wrongSave({ scope: 'x', wrongScope: true }) === true && S.wrongSave({ scope: 'main', wrongScope: false }) === false, 'the backend\'s wrongScope, when sent, decides');
+  ok(S.wrongSave({ tool: 'claude-code', scope: 'claude-code' }) === false, 'its own name: not flagged');
+}
+
 console.log(`\n${failed ? '✗' : '✓'} test-next-setup-step: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

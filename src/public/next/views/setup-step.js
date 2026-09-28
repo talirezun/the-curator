@@ -1000,6 +1000,36 @@ function toolLabelOf(data, idOrLabel) {
 
 const escPre = (t) => '<pre class="mem-setup-file-pre">' + escapeHtml(t) + '</pre>';
 
+// A line that opens (or is) a block of its own — never joined to a neighbour.
+const BLOCK_LINE_RE = /^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||```|~~~|<|(?:[-*_]\s*){3,}$)/;
+const FENCE_RE = /^\s*(```|~~~)/;
+
+/**
+ * READ A FILE AS A DOCUMENT (v3.79.0 screen review): instruction files are
+ * hard-wrapped at ~90 characters, and the reader rendered every source
+ * newline as a line break, so paragraphs read ragged. Here a single newline
+ * INSIDE a paragraph (or a list item's hard-wrapped continuation) becomes a
+ * space; a blank line still separates paragraphs; a fenced block, a heading,
+ * a table row, a quote and a line ending in two spaces (a markdown hard break)
+ * are left exactly as written. Text in, text out — the escaping stays the
+ * renderer's (shared/markdown.js, unchanged for every other caller). Pure.
+ */
+export function softWrap(text) {
+  const lines = String(text ?? '').split('\n');
+  const out = [];
+  let inFence = false;
+  for (const line of lines) {
+    if (FENCE_RE.test(line)) { inFence = !inFence; out.push(line); continue; }
+    const prev = out.length ? out[out.length - 1] : null;
+    const joinable = !inFence && prev !== null && line.trim() !== '' && !BLOCK_LINE_RE.test(line)
+      && prev.trim() !== '' && !/  $/.test(prev) && !FENCE_RE.test(prev)
+      && !/^\s*(#{1,6}\s|>|\|)/.test(prev) && !/^\s{4,}\S/.test(line);
+    if (joinable) out[out.length - 1] = prev.replace(/\s+$/, '') + ' ' + line.trim();
+    else out.push(line);
+  }
+  return out.join('\n');
+}
+
 /**
  * The file's text cut at the block's two edges and the cap, each piece
  * rendered, the block's pieces inside one frame. Offsets are JS string
@@ -1035,7 +1065,7 @@ export function fileBodyHtml(text, block, cap, capLabel, md) {
     if (inBlock && !inFrame) { out += '<section class="mem-setup-frame" aria-label="The Curator instructions">' + frameHead; inFrame = true; }
     if (!ruleDone && capAt !== null && a === capAt) { out += rule; ruleDone = true; }
     const piece = text.slice(a, b);
-    if (piece.trim()) out += '<div class="mem-reader-doc mem-setup-file-doc">' + render(piece) + '</div>';
+    if (piece.trim()) out += '<div class="mem-reader-doc mem-setup-file-doc">' + render(typeof md === 'function' ? softWrap(piece) : piece) + '</div>';
   }
   if (!ruleDone && capAt !== null) out += rule;
   if (inFrame) out += '</section>';
@@ -1125,6 +1155,19 @@ function shortDate(iso) {
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
+/**
+ * Is this save under a WRONG name? The backend's `wrongScope` when sent; with
+ * none, only "main" or another KNOWN tool's id is wrong. Pure.
+ */
+export function wrongSave(s, data) {
+  if (!s) return false;
+  if (typeof s.wrongScope === 'boolean') return s.wrongScope;
+  if (!isStr(s.scope)) return false;
+  if (s.scope === 'main') return true;
+  const known = new Set([...Object.keys(FIRST_FILE), ...((data && data.tools) || []).map((t) => t && t.id).filter(isStr)]);
+  return known.has(s.scope) && s.scope !== s.tool;
+}
+
 /** Each tool's newest save on one computer, across its installs. Pure. */
 export function newestSavesOf(group) {
   const by = new Map();
@@ -1156,7 +1199,11 @@ export function computerReaderContent(data, idx) {
   if (saves.length) {
     savesHtml = sec('Each tool’s newest save', ul(saves.map((s) => {
       const label = isStr(s.label) ? s.label : toolLabelOf(data, s.tool);
-      const own = s.ownScope !== false && s.wrongScope !== true;
+      // Flag ONLY a save the backend calls wrong (`wrongScope`: under "main"
+      // or another tool's name). A session-named scope
+      // ("session-2026-09-28-…") is this project's own convention and is not
+      // wrong — so `ownScope: false` alone never flags (screen review).
+      const own = !wrongSave(s, data);
       return '<span class="mem-setup-save-who">' + escapeHtml(label) + '</span> · '
         + escapeHtml(shortDate(s.at)) + ' (' + ageSpan(s.at, null) + ')'
         + (isStr(s.scope) ? ' · ' + escapeHtml('saved under “' + s.scope + '”') : '')
