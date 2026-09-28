@@ -12,6 +12,7 @@ and `v2.1.0`–`v2.4.1`, then a second descending block from `v3.0.6` to `v2.4.2
 
 | Release | Headline (one line — the full row is in the archive) |
 |---|---|
+| `v3.76.2` | Docs only — the multi-tool, multi-computer setup checklist (user guide §13d), a guide to writing a standing brief, the "one handoff or new ones?" FAQ, research articles brought up to the 25–26 September live tests, and a new research article, "The Context Engine" (Article 10). |
 | `v3.76.1` | An agent conversation that is already open now re-reads the project context on "continue" — the maintainer's two-Mac test (S5, 2026-09-26) caught an open Antigravity conversation continuing from stale context after the other Mac had saved and synced. |
 | `v3.76.0` | Seven improvements after the two-harness test plus a fresh app-wide truth audit (15 findings, 1 high — all fixed): per-tool agent instructions (measured), a save with no scope goes to the tool's own scope, first-class Antigravity support, stable domain colours and a "not checked" health mark, Settings › Trash with Restore, a responsive shell, and every docs screenshot regenerated from synthetic demo data. |
 | `v3.75.0` | Delete one handoff (work-stream) from the app — typed, previewed, trashed, never by an agent — after the maintainer had to dig through folders to remove two test scopes by hand. |
