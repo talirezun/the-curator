@@ -565,16 +565,60 @@ Chat conversations are synced deliberately, so sending one chat message legitima
 | Synced | Local only |
 |---|---|
 | All wiki pages | Original source files — your PDFs and text files in `raw/` |
-| Chat conversations | Your AI provider API keys |
+| Chat conversations | Your AI provider API keys and every other app setting |
 | Domain schemas | The app's own code |
-| Working state written by your agents | |
-| Health dismissals | |
+| Each project's standing brief, handoffs, journal and Documents | Each agent tool's MCP entry, skills and hooks |
+| Health dismissals | Your project's code folder, including its `CLAUDE.md`, `AGENTS.md` and `.curator-project` — those travel by the project's own git |
 
 ## How do I set up a second computer?
 
-Install the app, add your API key, then click **Sync** in the rail footer and enter the **same repository URL** and the **same token** as before, with **Starting direction** set to **Pull an existing wiki**. Click **Connect**. Everything downloads. You do not need to create a domain first — they arrive with the pull.
+Install the app, add your API key, then click **Sync** in the rail footer and enter the **same repository URL** and the **same token** as before, with **Starting direction** set to **Pull an existing wiki**. Click **Connect**. Everything downloads. You do not need to create a domain first — they arrive with the pull. That brings your knowledge folder only: a project's code and its `CLAUDE.md`, `AGENTS.md` and `.curator-project` come by that project's own git, and each agent tool's MCP entry and skills are set up again on the new computer.
 
 If you worked on two machines without syncing, **Sync now** on either one commits your local changes, merges the remote in, then pushes, and in most cases resolves cleanly because the two machines touched different parts of the wiki. The one case worth knowing: if the same part of the same page was edited on both machines, the merge does not stop to ask — it silently keeps the GitHub version for the conflicting section and drops the local one, while still reporting success. Your pre-merge local version is committed to local git history first, so it is recoverable with a git client. The reliable habit is to sync at the start and the end of every session.
+
+## Which things sync through The Curator, and which through my project's git?
+
+When you work on one project from two computers, everything travels by one of three routes, and the routes never mix:
+
+| What | Where it lives | How it reaches your other computer | What you do |
+|---|---|---|---|
+| A project's standing brief, handoffs, journal and Documents; wiki pages; chat conversations; domain schemas; Health dismissals | Your knowledge folder | Personal Sync, through your private knowledge repository on GitHub | **Sync now**, before you start and after the agent's last save |
+| The project's code, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` and `.curator-project` | The project folder, a git clone | The project's own git repository | Commit and `git push` on one computer, `git pull` on the other (the first time, `git clone`) |
+| Each agent tool's MCP entry, the two skills, hooks, the repository folder you chose in Setup, tools you added to Setup, API keys, the Personal Sync connection and app settings | That computer | Nothing — they stay on the computer | Set them up once on each computer |
+
+A handoff is the note an agent saves about where the work stands; a scope is the name it is saved under. Your ingested source files in `raw/` are never synced. **Sync now** syncs your whole knowledge folder, every domain, not only one project.
+
+In the app, **Context → a project → step 5, Setup** marks each of its three folds with a small grey tag naming its route: Tools "set up on each computer", Repository on this computer "project's git", Computers "Personal Sync".
+
+Full answer, with a diagram: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#what-travels-between-your-computers-and-how
+
+## What do I do when I switch computers?
+
+1. On the first computer, before you start: `git pull` in the project folder, then **Sync now** in The Curator.
+2. Work. A new conversation reads the project's context first, and the agent saves handoffs under its own scope as it goes.
+3. When you stop: make sure the agent saved, then **Sync now** — after the last save — and commit and `git push` the code.
+4. On the second computer: **Sync now**, then `git pull`.
+5. Start a new conversation there, or say "continue" in an open one. It opens the newest handoff — the one the first computer saved — and should say it came from another machine.
+6. When you stop there, repeat step 3.
+
+Common mistakes, and what the Setup step shows:
+
+| Mistake | What happens | What Setup shows |
+|---|---|---|
+| No Sync now after the last save | The other computer opens an older handoff | Nothing on the other computer, because the handoff never reached GitHub. On this one, the Computers fold counts files "here not on GitHub yet" |
+| No Sync now before starting | Same: an older handoff | "[computer] saved a newer handoff; it's waiting in your Personal Sync on GitHub", with a Sync now button |
+| Instructions pasted into `AGENTS.md` but not committed and pushed | The other computer's copy has none; its tool doesn't know the project and may save under another tool's scope | On the other computer: "AGENTS.md in [folder] has no Curator instructions". On this one, the file's reader says "Not committed to the project's git yet" |
+| `.curator-project` not committed, or not pushed | Agents and hooks on the other computer can't tell which project the folder is | Here: "isn't committed" or "is committed but not pushed". There: "[folder] has no .curator-project" |
+| No `git pull` on the second computer | It keeps the old files | The same lines, until you pull |
+| A tool, its skills or its MCP entry never set up on the second computer | No Curator tools there, or old skills | That tool's row is not "ready"; its setup guide shows the step that is left |
+
+## Why isn't my AGENTS.md or CLAUDE.md on my other computer?
+
+Because those files live in your project folder, and they travel by the project's own git, not by The Curator. Commit and `git push` them on the computer where you changed them, then `git pull` on the other. The same goes for `.curator-project`. Until you do, the Setup step on the other computer says the file "has no Curator instructions" (or has older ones), and on the first computer the file's reader says whether it is committed and pushed.
+
+## Why doesn't Sync now bring my CLAUDE.md?
+
+**Sync now** moves only your knowledge folder — handoffs, the standing brief, Documents, wiki pages, conversations — to and from your private knowledge repository. `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` and `.curator-project` sit in the project's code folder, which Sync never touches, so they travel only by that project's `git push` and `git pull`. MCP settings, skills and hooks travel by neither: set them up on each computer.
 
 ## How do I disconnect sync?
 
@@ -655,7 +699,7 @@ handoff before stopping.
 | **General** | **Software update**, first on the page. Then **Appearance** (Dark / Light), **Text size** (four steps from compact to largest), **Menu bar**. Then **System check**, then **Show setup guide**. |
 | **Providers & keys** | Four numbered steps: connect a provider, choose what builds your wiki, read which model chat starts on, browse the whole catalogue. |
 | **Knowledge base** | Where your `domains/` folder lives, with **Choose folder** and **Copy**; your Obsidian vault folder; and, since version 3.65.2, a **GitHub read-only token** field — see the next question. |
-| **MCP bridge** | The setup wizard, **Run self-test**, **View config**, **Copy snippet**, the default write domain, the tool map, and a note naming any bridge process still running older code. |
+| **MCP bridge** | Five numbered blocks: connect a client (the setup wizard, **Run self-test**, **View config**, **Copy snippet**, and a note naming any bridge process still running older code), the default write domain, the tool map, across projects, and **Tools on this Mac** — each agent tool's config files, skills and hooks on this computer, with the skills' `.zip` files for the Claude app. |
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans. |
 
 Since version 3.65.0 an **Updates** button sits at the TOP of that sidebar, under the title, and switches to General and runs the check; the version — for example `The Curator v3.68.0` — sits alone at the foot of the list, because a version string is a reading and not an action.
@@ -687,6 +731,97 @@ A classic token (`ghp_…`) also works, but it can read every repository your ac
 One gap worth knowing: in the Mac app the **Git** row reports "Not required by this build" and does not warn you if `git` is missing — but Personal Sync still needs `git`.
 
 System check answers "is the app working?". A domain's **Wiki health** panel answers "is my wiki clean?". They are different things.
+
+## What does the Setup step on the Context page check?
+
+**Context → a project → step 5, Setup** (since version 3.77.0; rebuilt in 3.78.0 to 3.80.0) checks whether each of your agent tools can actually reach that project from this computer. It is read-only: it reads files and runs read-only `git`, and never writes to a tool's config, a skills folder or your repository — every fix is a button that copies, reveals a file in Finder, or runs Sync now, and you paste. The machine-wide half is **Settings → MCP bridge → Tools on this Mac**.
+
+It checks, for this project on this computer: each tool's MCP entry; both skills (`my-curator` and `curator-continuity`); the Curator instructions in `CLAUDE.md`, `AGENTS.md` or `GEMINI.md` — present, naming this project, current, and not past what the tool reads; `.curator-project` — present, naming this project, committed and pushed; whether each tool has saved this project from this computer under its own name; and whether another computer's newer handoff is waiting on GitHub.
+
+The page shows any problems first, one line each, never folded, each with its own fix buttons. Below them sit three closed folds: **Tools**, **Repository on this computer** and **Computers**. There is no score. The overview's **SETUP** tile reads "N to fix", "repository not set" (the repository checks have not run yet) or "ready", with the tools and the number of computers under it.
+
+Full answer: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13e-the-setup-check-in-the-app
+
+## What do the Setup step's words mean?
+
+| Word | Means |
+|---|---|
+| ready | Checked, and it works. A tool is ready only once it has saved this project from this computer under its own name |
+| to fix | Shown at the top, with its fix |
+| partly checked | Some of the tool's parts could not be checked here |
+| no save from here | The tool has not saved this project from this computer yet |
+| can't check here | Nothing on this computer to read — for example skills held by your Claude account |
+| not checked | Needs the repository folder to be set first |
+| unmeasured | A fact nobody has measured — most tools' hooks, or a custom tool's instruction file |
+
+## Does an agent tool have to be running for Setup to check it?
+
+No. Setup only reads files already on disk; it never asks a tool whether it is open. A closed tool with a correct config file reads the same as an open one.
+
+## When does Setup check again?
+
+Press **Re-check** at the head of the step, beside "checked N ago". It also re-checks by itself when you come back to the window and the last reading is more than 10 seconds old, so a fix made in Finder or a terminal shows up without a click. Re-checking changes nothing.
+
+## Why does Setup ask for a repository folder, and how does it find it?
+
+The instruction files and `.curator-project` live in your project's code folder — not in your knowledge folder, and often at a different path on each computer — so Setup has to know where that folder is before it can check them. It offers folders it found on this computer, each with **Use**: a folder Claude Code opened whose `.curator-project` names this project, a folder this project's Documents were read from, a folder a Curator hook started a session in, or a folder whose git remote matches the project's documents. Only folders under your home folder that name this project, or match its remote, are offered. Otherwise press **Choose the folder**. The choice is kept on this computer only and is never synced.
+
+## Why does Setup show more computers, or installs, than I own?
+
+It doesn't any more. Since version 3.78.0 computers are grouped by physical machine: a Mac running both the downloaded app and a source checkout has two installs, each with its own name, and the Computers fold shows them as one computer — for example "1 computer · 2 installs". Each computer's row shows which tools saved from it, its newest save, and the Curator version it saved with. Press a row to read it in the side panel.
+
+## What does Sync now on the Setup step sync?
+
+Your whole knowledge folder, every domain — not only this project. The "files not on GitHub" count on the Computers fold likewise adds up every domain.
+
+## What does each Setup warning mean, and what do I do?
+
+| Warning | What to do |
+|---|---|
+| A tool's config file is empty, not valid JSON, or can't be opened | Open the tool once (it may fill the file), fix the syntax, or check macOS Privacy and Security; then Re-check. It only counts when no other file of that tool names The Curator |
+| The MCP entry reads a different knowledge folder, or launches a missing file | **Copy MCP entry**, paste it over the old one, restart the tool |
+| The MCP entry is in one of Antigravity's three config files but not the others | Add the entry to the file named, restart Antigravity |
+| An instruction file has no Curator instructions | **Copy instructions**, paste at the very top (create the file if needed), commit and push |
+| An instruction file names another project, or is outdated | Replace it with this project's current instructions, commit and push |
+| The instructions run past what the tool reads | Move them to the top, commit and push |
+| A tool saved under another tool's name | If its instructions are current, nothing: it clears on its next save. Otherwise fix the instructions |
+| A skill is older than the app's copy, or one of the two is missing | Download the `.zip`, replace or add the folder, start a new session |
+| The project folder isn't on this computer | Clone it, then choose the folder |
+| `.curator-project` is missing, names another project, isn't committed, or isn't pushed | Use the git command the line offers (it creates or rewrites, commits and pushes); if another computer already saved this project, `git pull` first |
+| Another computer's newer handoff is waiting on GitHub | **Sync now** before you start the agent |
+
+## How do I add an agent tool to Setup, and what are the four steps?
+
+Press **+ Add a tool** under the to-fix lines. Since version 3.80.0 the menu looks like the chat model picker: each row gives the tool's name, then what it reads and where its MCP settings live, with "not measured" on the right where that location hasn't been verified. Its foot line says what picking does: "Adding a tool only tells Setup to check it on this computer — you connect it yourself." Nothing is written.
+
+The tool's page then opens in the side panel on a numbered guide (a tool that is already ready opens on its evidence instead):
+
+| Step | What it asks |
+|---|---|
+| 1. Connect The Curator's MCP | Add the entry to the exact file the tool reads — **Copy MCP entry**, and **Reveal** if the file exists |
+| 2. Install the two skills | Unzip both into the tool's skills folder; skip, optional or can't check here when that applies |
+| 3. Put the Curator instructions in the file it reads | Paste at the very top, then commit and push; "not checked yet" until the repository folder is set |
+| 4. Let it save once from this computer | Open a session in the project folder and give it a task; done once it has saved under its own name |
+
+## How do I add a tool that isn't in the list?
+
+Pick **Custom tool…** at the bottom of **+ Add a tool** and type its name (up to 40 characters: letters, digits, spaces, dots, dashes, underscores). A name that matches a known tool joins that tool's row instead. A custom tool gets a generic `mcpServers` entry to paste into its config, the two skills' `.zip` files, and `AGENTS.md` assumed as its instruction file (marked unmeasured, never "to fix"). It turns ready once it saves this project from this computer under its own name. Custom tools are kept per computer, never synced, up to 12.
+
+## How do I remove a tool from Setup?
+
+Press the trash icon on its row in the Tools fold, or "Remove from this list" on its page. There is no confirmation, because nothing is uninstalled: it only stops Setup checking that tool on this computer, and **+ Add a tool** brings it back. Two kinds of row can't be removed, and the page says why: a tool that has saved this project, and a tool whose MCP settings on this computer already name The Curator.
+
+## Can I read my AGENTS.md or CLAUDE.md inside the app?
+
+Yes, since version 3.79.0. Press a file under **Repository on this computer** and it opens read-only in the side panel, with the Curator instructions framed and marked current, outdated, naming another project, or past what a tool reads; a line shows where a tool stops reading when it has a limit, and **Copy current instructions** sits on the frame. Only `.curator-project` and the instruction files of tools this project lists can be opened this way — never a tool's MCP config.
+
+## How do I set up DeepSeek Harness (dsh)?
+
+Put The Curator's entry in `~/.dsh/cordis.patch.yml` (every profile) or `~/.dsh/profiles/<name>/cordis.patch.yml` (one profile) — never in `cordis.yml`, which dsh empties on every launch. The entry is one `- insert:` item naming the `@deepseek-ai/dsh-mcp-client` plugin; merge it into the file rather than copying over it. dsh reads both `AGENTS.md` and `CLAUDE.md`, and its skills folders are `.dsh/skills`, `.agents/skills`, `~/.dsh/skills` and `~/.agents/skills`. Its hooks are unverified. Setup finds the entry by reading the patch file line by line, so it can tell whether the entry is there but cannot tell a malformed file from a correct one.
+
+## What is "Your tool's share" on the Session start step?
+
+It was called "Harness" until version 3.79.0; only the label changed. It is your own estimate of what your agent tool loads into the context window for itself — its system prompt, tools and files such as `CLAUDE.md` or `AGENTS.md`: not set, Light about 20k tokens, Typical about 50k, Heavy about 120k, or an exact figure. The Curator can't measure it; it only changes the meter, is drawn hatched, is never added to a measured figure, and nothing is sent anywhere. It is set per computer, beside **Window**.
 
 ## How do I turn on the Mac menu bar icon?
 

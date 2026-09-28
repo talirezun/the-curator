@@ -49,6 +49,13 @@ Each row links straight to that section.
 | 13b. Documents — the files that travel with a project | A project's architecture and decisions, held word for word | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#documents--the-files-that-travel-with-a-project |
 | 13b. Start a project | Choosing where a new project's foundations live, and editing them | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#start-a-project |
 | 13c. Making capture real | The my-curator command, per-harness hooks, and the capture meter | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13c-making-capture-real--the-command-the-hooks-and-the-meter |
+| 13d. Several agent tools and several computers | The setup checklist, each row with where the app shows it | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist |
+| 13d. What travels between your computers | Personal Sync versus the project's git versus per-computer setup, a day on two computers, common mistakes | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#what-travels-between-your-computers-and-how |
+| 13e. The Setup check in the app | Context's step 5: every warning, its meaning and its fix | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#13e-the-setup-check-in-the-app |
+| 13e. Adding a tool | The add-a-tool menu, the four-step guide, removing a tool | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#adding-a-tool |
+| 13e. A tool that isn't listed | Custom tools | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#a-tool-that-isnt-listed |
+| 13e. Why a repository folder? | Why Setup asks for the project's folder, and how it finds it | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#why-a-repository-folder |
+| 13e. How many computers? | Why two installs on one Mac count as one computer | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#how-many-computers |
 | 14. Daily workflow | A suggested routine for regulars | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#14-daily-workflow |
 | 15. Sync across computers | GitHub backup across your own machines | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#15-sync-across-computers |
 | 15b. Shared Brain | Building a wiki with others | https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#15b-shared-brain |
@@ -111,6 +118,8 @@ Go here first for step-by-step setup as a contributor or an admin: https://githu
 Go here for the GitHub sync setup and its troubleshooting: https://github.com/talirezun/the-curator/blob/main/docs/sync.md
 
 To have a coding agent do the setup instead: https://github.com/talirezun/the-curator/blob/main/docs/sync-via-coding-agent.md
+
+For which things Sync carries and which travel by your project's own git or not at all: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md#what-travels-between-your-computers-and-how
 
 ## Where do I report a bug?
 

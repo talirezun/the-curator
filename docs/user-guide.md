@@ -46,6 +46,7 @@ Nothing has been renumbered; only grouped.
 13b. [Working state — carrying context between sessions](#13b-working-state--carrying-context-between-sessions)
 13c. [Making capture real — the command, the hooks and the meter](#13c-making-capture-real--the-command-the-hooks-and-the-meter)
 13d. [Working with several agent tools and several computers — the setup checklist](#13d-working-with-several-agent-tools-and-several-computers--the-setup-checklist)
+    — start with **[What travels between your computers, and how](#what-travels-between-your-computers-and-how)**
 13e. [The Setup check in the app](#13e-the-setup-check-in-the-app)
 15. [Sync across computers (Personal Sync)](#15-sync-across-computers)
 15b. [Shared Brain](#15b-shared-brain)
@@ -1390,10 +1391,13 @@ them. Three things are yours to change here: the **brief** (a pencil), a **docum
 keep in The Curator rather than in a repository, and which documents are marked **read first**.
 
 Since v3.62.0 the page is numbered steps, read top to bottom, under an **overview card** — three
-through v3.66.0, and **four since v3.67.0**, which adds step ④ **Session start**.
+through v3.66.0, four from v3.67.0 (step ④ **Session start**), and **five since v3.77.0**, which
+adds step ⑤ **Setup** ([§13e](#13e-the-setup-check-in-the-app)).
 **The overview card itself grew a fifth tile in v3.70.0, SESSION START, in tokens** — e.g. *"≈8.8k
 tokens · 1 reply"*, hidden until the measurement lands, carrying no bar of its own (a reading, not
-a share; the share lives in step ④'s own meter, one press away). The fourth tile, **CAPTURE**, was
+a share; the share lives in step ④'s own meter, one press away) — **and a sixth in v3.77.0,
+SETUP**: *N to fix*, *repository not set* or *ready*, with the tools and the number of computers
+under it (*"Antigravity · Claude Code · 2 computers"*), hidden until the check lands. The fourth tile, **CAPTURE**, was
 renamed **AGENT SESSIONS** in v3.70.0 and, since v3.74.0, is **AGENT CONNECTIONS** — see
 [the rename](#the-meter-did-the-session-read-and-did-it-save), below.
 **Since v3.64.2 that card is the same component the domain page draws its own OVERVIEW figures
@@ -1427,7 +1431,7 @@ bar — a tinted bar behind each figure, anchored at the right, its length that 
 the project's own 200 KB total, shown plainly and never as an alarm. Step 2, Memory: four closed
 rows, each one instrument — Agent connections, Handoffs, The brief and Journal. Step 4, Session start:
 a head row with the reading budget, the Window and the Your tool's share pickers, then the segmented meter —
-your window to scale, the harness hatched at the left, The Curator's own layers, and a dashed room
+your window to scale, your tool's share hatched at the left, The Curator's own layers, and a dashed room
 the width of the reading budget. Step 3, Knowledge: the control "+ Add a domain", then one row per domain this project
 draws on, each carrying that domain's own identity dot — here "projects — 391 pages · 3 days ago"
 — opening to a monospace panel of entities, concepts and summaries (each with its own depth bar
@@ -1435,9 +1439,10 @@ against that domain's page count), the last-ingest age, two doors beneath it, Op
 Ask this domain, and its own Remove. At the foot, "Top to bottom is
 the order a session start reads in".](images/curator-context-steps.svg)
 
-*The current shape, in wireframe rather than a photograph so it stays legible at any size: three
-numbered steps, each explained only by the ⓘ beside its title — no lede sentence survives under a
-heading — and every live reading, from the overview's four tiles down to a single Handoffs row,
+*The shape of steps ① to ④, in wireframe rather than a photograph so it stays legible at any size
+(it predates v3.77.0, so it draws neither the SETUP tile nor step ⑤ Setup): numbered steps, each
+explained only by the ⓘ beside its title — no lede sentence survives under a
+heading — and every live reading, from the overview's tiles down to a single Handoffs row,
 built from the same two components the rest of the app uses: the overview card and the monitor.
 **Documents are replaced whole; Memory supersedes, so each save replaces the
 last; Knowledge accumulates**, one row per domain the project draws on. A warning about a save is
@@ -1461,7 +1466,8 @@ The wireframe below is the same shape with the labels called out.
 | ① | **Documents** | *What is this project built against, and which of it does an agent get automatically?* | A summary line. Open the fold for the table |
 | ② | **Memory** | *Where did the last session stop, and what standing instructions does every agent read?* | Four summary rows, one per fold — Agent connections, Handoffs, The brief, Journal. Open one to read it |
 | ③ | **Knowledge** | *What can an agent look things up in?* | One summary row per domain. Open a fold for its figures and its two doors |
-| ④ | **Session start** *(v3.67.0; a window meter since v3.70.0)* | *What does an agent actually receive when it starts work here, and how much of your context window does that use?* | A head row for the reading budget, the window and the harness estimate, and a segmented meter showing the bootstrap to scale inside your window |
+| ④ | **Session start** *(v3.67.0; a window meter since v3.70.0)* | *What does an agent actually receive when it starts work here, and how much of your context window does that use?* | A head row for the reading budget, the Window and **Your tool's share**, and a segmented meter showing the bootstrap to scale inside your window |
+| ⑤ | **Setup** *(v3.77.0; rebuilt v3.78.0–v3.80.0)* | *Can each of my agent tools actually reach this project from this computer — and what is left to fix?* | Any to-fix lines, each with its own fix button, never folded; then three closed folds — Tools, Repository on this computer, Computers ([§13e](#13e-the-setup-check-in-the-app)) |
 
 ### How to choose the right context
 
@@ -1487,11 +1493,11 @@ something up.
 1. **Mark two or three documents read first.** Not twelve — the marked set is what every session
    pays for, and two or three is a reading plan; a dozen is the old behaviour with extra steps.
 2. **Pick Standard (16k tokens)** in step ④, unless you already know you need more or less.
-3. **Read the meter.** Say your window is 1M tokens (Claude in Claude Code) and you have entered a
-   Typical (≈50k) harness estimate. Step ④'s bar shows the harness hatched at the left, then The
+3. **Read the meter.** Say your window is 1M tokens (Claude in Claude Code) and you have set
+   **Your tool's share** to Typical (≈50k). Step ④'s bar shows your tool's share hatched at the left, then The
    Curator's own share — brief ≈1.2k, handoff ≈2.1k, journal ≈0.4k, index ≈0.3k, two read-first
    documents ≈12k — for a session start of **≈16k tokens, about 1.6% of the window**. Aim for
-   **well under 10–15%** of the window on the meter; the harness bar reminds you that figure is
+   **well under 10–15%** of the window on the meter; the hatched share reminds you that figure is
    never the whole picture. If your share is higher, mark fewer documents read first or choose a
    smaller preset.
 
@@ -1501,8 +1507,8 @@ something up.
 handed the moment it starts work on this project: the brief, the latest handoff, a few
 journal lines, the list of documents, and the text of whichever documents are marked **read
 first** — up to a **reading budget**. Step ④ draws that bootstrap as one bar: **your whole
-context window, to scale**, your agent's harness at the left (hatched, since it is an estimate,
-never measured), then The Curator's own part — one violet shade per layer, each named on hover —
+context window, to scale**, **your tool's share** at the left (what your agent tool loads for
+itself — hatched, since it is your estimate, never measured), then The Curator's own part — one violet shade per layer, each named on hover —
 and free space after it. A **dashed room** the width of your reading budget shows how much more
 The Curator is allowed to send before it would spill; whatever a reading budget does not use is
 free space too. Read-first and on-request documents beyond the room are labelled **"on demand —
@@ -1595,9 +1601,11 @@ carries a reading on its own. Press a card and the page goes to the step that ow
 readings, not a filter: nothing narrows when you press one**, which is the one difference from the
 same card's use on a domain page, where the figures also filter the page list beneath them.
 AGENT CONNECTIONS joins the card's row as a fourth door once the connections reading described
-[below](#the-meter-did-the-session-read-and-did-it-save) has landed, and **SESSION START joins as a
+[below](#the-meter-did-the-session-read-and-did-it-save) has landed, **SESSION START joins as a
 fifth, in tokens**, once step ④'s own measurement lands — a reading with no bar of its own, since
-the share it stands for lives in the meter, one press away.
+the share it stands for lives in the meter, one press away — and **SETUP joins as a sixth** once
+step ⑤'s check lands: *N to fix*, *repository not set* (the repository checks have not run yet) or
+*ready*, a count of real to-fix lines and never a score.
 An unknown age is drawn as a **dashed ring** and the words *nothing written yet* / *no documents
 yet* / *nothing ingested yet* — never as age zero, which would read as *just now*. While a project's
 own read is still in flight the first card is **left out** rather than filled with a guess; you get
@@ -1716,6 +1724,10 @@ joined in v3.59.0. v3.62.0 numbered what was left, deleted the **Status** block 
 readings into the strip. v3.65.1 renamed the steps and their rows — see
 [the table above](#the-word-on-screen-and-the-word-on-disk) — and rebuilt each step's controls into
 a head row above its rows, the same anatomy Wiki health's Quick maintenance panel already used.)*
+
+*This part covers steps ① to ③. Step ④ has its own section above,
+[Session start and the context window](#session-start-and-the-context-window); step ⑤ has its own
+chapter, [§13e, The Setup check in the app](#13e-the-setup-check-in-the-app).*
 
 ##### Documents — what the project tells an agent
 
@@ -2068,7 +2080,10 @@ elsewhere is marked — the **Machine** column names it, the reader shows a
 which tells it to say so and to check the next steps against *this* checkout before acting. Two habits make it work: press
 **Sync now** (in **Sync**, [§15](#15-sync-across-computers)) **before you start** and **after your
 last save**. The brief is the one file with no machine in its path, so edit it on one computer and
-sync before editing it on the other. **A conversation that is already open won't know about saves
+sync before editing it on the other. **Sync now carries none of the project's own files** — a
+`CLAUDE.md`, `AGENTS.md` or `.curator-project` reaches the other computer only by `git push` and
+`git pull` ([what travels how](#what-travels-between-your-computers-and-how)).
+**A conversation that is already open won't know about saves
 made on the other computer unless it re-reads** — what it read when it started can be hours old.
 Since v3.76.1 the **Copy agent instructions** block tells it to: on *"continue"*, *"resume"*, or
 after a pause, it calls `get_project_context` again before acting. If your tool doesn't, start a
@@ -2192,20 +2207,23 @@ overwrites, so send the complete state each time.
   the app's own copy stays frozen, because it is the text that was measured (2026-09-25, Claude
   Code: Sonnet 5 saved in 8 of 8 runs, all in its own scope; Haiku 4.5 in 5 of 8, 3 of them in its
   own scope — see
-  [§13b](#making-sure-your-agent-actually-does-it)). An edited pointer, this repository's own
-  `CLAUDE.md` included, is **unmeasured**. The block's later
+  [§13b](#making-sure-your-agent-actually-does-it)). An edited pointer is **unmeasured**. (The Curator's
+  own repository carries the current block, as copied, in both its `CLAUDE.md` and its `AGENTS.md`
+  since 2026-09-28.) The block's later
   paragraphs (Documents, read-first) still apply; paste them below the pointer unchanged.
 - **One `.curator-project` file serves every tool.** It holds `domain/project`; the continuity skill
   and the `my-curator` command read it, whichever tool is running. (The MCP server itself does not —
   which is why the pointer names the project too.)
-- **Antigravity has its own row in The Curator's harness table (since v3.76.0).** `my-curator
-  doctor` shows whether its MCP config names the bridge (it checks `~/.gemini/config/`,
+- **Antigravity has its own row in The Curator's harness table (since v3.76.0).** The app's
+  **Setup** step ([§13e](#13e-the-setup-check-in-the-app)) shows all of the following for this
+  project on this computer; in a terminal, `my-curator doctor` shows whether its MCP config names the bridge (it checks `~/.gemini/config/`,
   `~/.gemini/antigravity/` and `~/.gemini/antigravity-ide/`), whether `AGENTS.md`/`GEMINI.md` in
   this folder carry the block, and whether your installed skills match this version.
   `my-curator install-hooks antigravity` wires two hooks: one that hands over the project's
   context before the first model call, and one that asks for a save at the end if the
   conversation read state and did not save. **These hooks are built from Antigravity's own
-  documentation and have not been run yet** — see
+  documentation.** The session-start hook was seen working once (2026-09-26, from a project-level
+  `.agents/hooks.json`); the end-of-session ask has not been observed — see
   [Antigravity](working-state.md#antigravity-v3760) for exactly what they do. The first reply is
   still the check: it should name the rules from your brief
   ([read-back](#making-sure-your-standing-rules-actually-land)). If it names none, the pointer did
@@ -2225,7 +2243,11 @@ Yes to both — **two different things travel by two different routes**:
 |---|---|---|---|
 | **Your code** | The project's own git remote — clone it on both computers | `git pull` | Commit and `git push` |
 | **Working state** — the brief, handoffs, Journal, Documents | The Curator's **Personal Sync** — your private knowledge repository ([§15](#15-sync-across-computers)) | **Sync now** | **Sync now**, *after* the last save |
+| **`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`, `.curator-project`** | The project's own git, like the code — **Sync now never carries them** | `git pull` | Commit and `git push` |
 | **MCP settings, skills, hooks** | *(v3.79.0)* **This computer only** — nothing syncs them; set up each on every computer | — | — |
+
+The whole picture, with a diagram, a walkthrough of a day on two computers and the common
+mistakes: [What travels between your computers, and how](#what-travels-between-your-computers-and-how).
 
 The per-computer handoff copy is what makes this safe: the laptop and the desktop each save into
 their own folder, so neither overwrites the other even when you forget to sync. Start the second
@@ -5092,8 +5114,11 @@ into whichever of these your tool reads:
 | GitHub Copilot CLI | its own instructions file | it reads `CLAUDE.md` and `GEMINI.md` too |
 | Zed | **`.rules`**, else `AGENTS.md`, else `CLAUDE.md` | **first match wins.** In a repository that has an `AGENTS.md`, a block in `CLAUDE.md` is never read |
 
-Unsure which applies to you? **`my-curator doctor`** ([§13c](#13c-making-capture-real--the-command-the-hooks-and-the-meter))
-reports the file your harness will actually read on this machine, and whether the block is in it.
+Unsure which applies to you? The app's **Setup** step (Context → the project → step ⑤ →
+**Repository on this computer**, [§13e](#13e-the-setup-check-in-the-app)) lists each file your
+tools read, and whether the block is there, current and at the top; press one to read it.
+In a terminal, **`my-curator doctor`** ([§13c](#13c-making-capture-real--the-command-the-hooks-and-the-meter))
+reports the same for the file your harness will actually read on this machine.
 
 **Since v3.67.2, pressing the button tells you where to paste it, not just that it copied.** A
 short note appears — bottom-right, closing on its own after 30 seconds (it waits while your pointer
@@ -5216,8 +5241,10 @@ so in one line when it finds itself inside the app with no `my-curator` on your 
 > yourself; if something else already answers to it, the same command **refuses** and tells you what
 > it found.
 
-**Start with `doctor`.** It is read-only, it always exits successfully, and it answers the questions
-that otherwise take an afternoon:
+**Start with `doctor`** — or, without a terminal, with the app's **Setup** step (Context → a project
+→ step ⑤, [§13e](#13e-the-setup-check-in-the-app)), which shares `doctor`'s file checks. `doctor` is
+read-only, it always exits successfully, and it answers the questions that otherwise take an
+afternoon:
 
 ```
 $ my-curator doctor
@@ -5237,7 +5264,9 @@ $ my-curator doctor
   temp folder, and only a marker newer than the hook file counts. The temp folder is cleared on
   restart, so "not yet seen running" is an absence of evidence, not proof the hooks are broken.
   (Before v3.77.0 the row printed `hooks: verified`, which meant only "the format is documented"
-  and read as a claim the hooks had been run.);
+  and read as a claim the hooks had been run.) Since v3.77.0 it also prints what the **hook
+  activity log** recorded — `hook log · start hook observed firing <date> UTC`, and for the stop
+  hook whether it asked for a save or why not ([§13e](#13e-the-setup-check-in-the-app));
 - **which instruction file this harness will actually read**, and whether your agent-instructions
   block is in it — the only practical way to catch the two traps in the next section;
 - the capture meter, in the terminal;
@@ -5271,7 +5300,7 @@ promise. Four words describe every row:
 |---|---|---|---|
 | **Claude Code** | verified | `SessionStart` · `PreCompact` · `Stop` | **measured 2026-09-20 — headless `-p` only** |
 | **Cursor** | verified | `sessionStart` · `preCompact` · `stop` — it *submits a message* rather than blocking, which is gentler | not measured |
-| **Antigravity** | verified (from its docs) | `PreInvocation` — the project's context, once per conversation · `Stop` — one save ask per conversation, only when the agent stopped normally | **hooks not yet run.** Reading and saving without hooks were each seen once on 2026-09-25 |
+| **Antigravity** | verified (from its docs) | `PreInvocation` — the project's context, once per conversation · `Stop` — one save ask per conversation, only when the agent stopped normally | **session start seen once, 2026-09-26** (a real conversation, from a project-level `.agents/hooks.json`); the `Stop` ask **not yet observed**. Reading and saving without hooks were each seen once on 2026-09-25 |
 | **Codex CLI** | unverified | `PreCompact` (the one pre-compaction hook that can actually block) · `Stop`. **Never `SessionEnd`** — it is capped at 3 seconds, which is not long enough to finish a save | not measured |
 | **GitHub Copilot CLI** | unverified | Refused by default — the events exist and their shapes are unmeasured | not measured |
 | **goose** | unverified | Refused by default — same reason. The one harness with a genuinely usable session-end hook | not measured |
@@ -5481,49 +5510,103 @@ in order, and for each one says how to do it and how to check it is done. Most o
 setup; three are habits. Everything here is described in more depth elsewhere in the guide, and
 each row links to the full text.
 
-### The picture — what has to be in place, and where it lives
+**You no longer have to check these by hand.** Since v3.77.0 the app checks most of them for one
+project on one computer: **Context → a project → step ⑤ Setup**
+([§13e](#13e-the-setup-check-in-the-app)). The checklist's last column says where Setup shows each
+row. `my-curator doctor` is the terminal version of the same check (source install only).
+
+### What travels between your computers, and how
+
+**Read this first if you work on one project from two computers.** Everything a project needs
+reaches your other computer by **one of three routes**, and the routes never mix. Most setup
+mistakes come from expecting one route to carry something that travels by another — for example,
+expecting **Sync now** to bring a `CLAUDE.md`.
+
+Two words used below: a **handoff** is the note an agent saves about where the work stands; a
+**scope** is the name a handoff is saved under (for example `claude-code`).
 
 ```mermaid
 flowchart LR
-    subgraph MA["COMPUTER A"]
-        A1["The Curator — latest version"]
-        A2["each agent tool<br/>MCP configured + both skills"]
-        A3["project folder (git clone)<br/>block at the top of CLAUDE.md and AGENTS.md<br/>.curator-project committed"]
+    subgraph MA["MAC A"]
+        A1["The Curator's knowledge folder<br/>brief · handoffs · journal · Documents<br/>wiki pages · conversations"]
+        A2["the project folder (git clone)<br/>the code · CLAUDE.md · AGENTS.md · GEMINI.md<br/>.curator-project"]
+        A3["set up on this computer only<br/>each tool's MCP entry · skills · hooks<br/>the repository folder · added tools<br/>API keys · app settings"]
     end
     subgraph GH["GITHUB"]
-        K["your PRIVATE knowledge repository<br/><i>Personal Sync: brief, handoffs, Journal, Documents</i>"]
-        C["the PROJECT's code repository<br/><i>git push / git pull</i>"]
+        K["① your PRIVATE knowledge repository<br/><i>Personal Sync</i>"]
+        C["② the PROJECT's own repository<br/><i>git</i>"]
     end
-    subgraph MB["COMPUTER B"]
-        B1["The Curator — latest version"]
-        B2["each agent tool<br/>MCP configured + both skills"]
-        B3["project folder (git clone)<br/>same two files, same marker"]
+    subgraph MB["MAC B"]
+        B1["The Curator's knowledge folder<br/>the same files, after Sync now"]
+        B2["the project folder (git clone)<br/>the same files, after git pull"]
+        B3["③ set up again on this computer<br/>nothing syncs it"]
     end
-    A1 <-->|Sync now| K
-    B1 <-->|Sync now| K
-    A3 <-->|git push / pull| C
-    B3 <-->|git push / pull| C
+    A1 <-->|"Sync now"| K
+    K <-->|"Sync now"| B1
+    A2 <-->|"git push / git pull"| C
+    C <-->|"git pull / git push"| B2
+    A3 -.-|"nothing travels"| B3
 ```
 
-*Two repositories, two routes, and they never mix: working state travels through **your** private
-knowledge repository by Personal Sync; the code travels through the **project's** own git remote.
-Each agent tool reaches The Curator on its own computer through the MCP bridge. With one computer,
-ignore the right-hand column; with one tool, ignore the other tool's rows.*
+*① **Personal Sync** carries your whole knowledge folder — every domain, not only one project.
+② The **project's own git** carries the code and the files in the project folder. ③ Everything a
+tool needs on a computer is set up **on that computer**, once per computer.*
+
+| What | Where it lives | How it reaches your other computer | What you do | What Setup shows if it's missing |
+|---|---|---|---|---|
+| A project's **brief, handoffs, journal and Documents** | Your knowledge folder (`domains/<domain>/state/<project>/`) | ① Personal Sync | **Sync now** (the **Sync** icon in the rail) — before you start, and after the last save | On the other computer: *"‹computer› saved a newer handoff; it's waiting in your Personal Sync on GitHub."* with a **Sync now** button, once the app's last check of GitHub has seen it. On this computer, the **Computers** fold counts files *"here not on GitHub yet"* |
+| **Wiki pages, chat conversations, domain schemas, Health dismissals** | Your knowledge folder (`domains/`) | ① Personal Sync — the same **Sync now** | The same | Not a Setup check — the **Sync** badge counts what is not on GitHub yet |
+| Your **source files** (`raw/`: the PDFs and text files you ingested) | Your knowledge folder | **Never synced** — they stay on the computer you ingested on | Copy them yourself if you need them elsewhere | — |
+| **The code**, **`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`**, and **`.curator-project`** | The project folder (a git clone) | ② The project's own git | Commit and `git push` here; `git pull` there (the first time, `git clone`) | *"AGENTS.md in ‹folder› has no Curator instructions…"* · *"‹folder› has no .curator-project…"* · *".curator-project isn't committed…"* · *"…is committed but not pushed"* |
+| **Where the project folder is** on this computer | This computer's app settings | ③ Nothing — the path differs per computer | Setup (step ⑤) → **Use** a folder it found, or **Choose the folder** | The SETUP tile reads *repository not set*; a moved or deleted folder reads *"‹folder› isn't on this Mac."* |
+| **Each tool's MCP entry** | That tool's own config file (for example `~/.claude.json`, `~/.gemini/config/mcp_config.json`) | ③ Nothing | **Copy MCP entry** in that tool's setup guide (Setup → the tool's row), paste, restart the tool. Claude Desktop: **Settings → MCP bridge → Set up** | The tool's row is not **ready**, and step ① of its guide reads *to do*. A to-fix line when the file is empty, not valid JSON or can't be opened, or the entry points at another knowledge folder or a missing file |
+| **The two skills** (`my-curator`, `curator-continuity`) | The tool's skills folder — or, for the Claude app, your Claude account | ③ Nothing (skills uploaded to your Claude account follow the account) | Download the two `.zip` files from step ② of the tool's setup guide and unzip them into the tool's skills folder (for the Claude app, upload them to your account) | *"‹tool›'s … skill is older than the copy this app carries"* · *"‹tool› has the … skill but not …"* · *can't check here* for skills held by your Claude account |
+| **Hooks** (optional) | The tool's hook settings | ③ Nothing | `my-curator install-hooks <tool>` on each computer (source install) | The row's hooks mark reads *not wired (optional)* — never a to-fix line |
+| **Tools you added** to Setup, and custom tools | This computer's app settings | ③ Nothing | **+ Add a tool** again on the other computer | The tool is simply not listed there |
+| **API keys, the Personal Sync connection, app settings** (Window, Your tool's share, the menu bar icon) | This computer's app settings (`.curator-config.json`, `.sync-config.json`) | ③ Nothing | Enter the key and connect Sync once per computer ([§15](#setting-up-a-second-or-third-computer)) | — (not a Setup check) |
+
+#### A day with two computers
+
+1. **Mac A, before you start.** In the project folder, `git pull`. In The Curator, **Sync now**.
+2. **Work.** Start a new conversation in your agent tool. It reads the project's context first, then
+   works, and saves a handoff under its own scope as it goes.
+3. **Mac A, when you stop.** Make sure the agent saved (ask it to, if it didn't). Then **Sync now**
+   — *after* the last save. Commit and `git push` the code.
+4. **Mac B, before you start.** **Sync now**, then `git pull` in the project folder.
+5. **Work on Mac B.** Start a new conversation (or say *"continue"* in an open one). It opens the
+   newest handoff — the one Mac A just saved — and should say it came from another machine.
+6. **Mac B, when you stop.** Step 3 again. Next time on Mac A, start from step 1.
+
+**Common mistakes, and what Setup shows for each:**
+
+| Mistake | What happens | What Setup shows |
+|---|---|---|
+| No **Sync now** on Mac A after the last save | Mac B's agent opens an older handoff | Nothing on Mac B — the handoff never reached GitHub. Mac A's **Computers** fold counts files *"here not on GitHub yet"* |
+| No **Sync now** on Mac B before starting | Same: an older handoff | On Mac B: *"‹Mac A› saved a newer handoff; it's waiting in your Personal Sync on GitHub."* with **Sync now** |
+| Instructions pasted into `AGENTS.md` on Mac A, but not committed and pushed | Mac B's copy has no instructions; its tool doesn't know the project and may save under another tool's scope | On Mac B: *"AGENTS.md in ‹folder› has no Curator instructions…"*. On Mac A, the file's reader says *"Not committed to the project's git yet."* |
+| `.curator-project` created but not committed (or not pushed) | Agents and hooks on Mac B can't tell which project the folder is | On Mac A: *"…isn't committed…"* or *"…is committed but not pushed"*. On Mac B: *"‹folder› has no .curator-project…"* |
+| No `git pull` on Mac B | Mac B keeps the old instruction files and marker | The same lines as the two rows above, until you pull |
+| Expecting **Sync now** to bring `CLAUDE.md` or `AGENTS.md` | It never will — those travel by the project's git | The same *"no Curator instructions"* line |
+| The tool, its skills or its MCP entry never set up on Mac B | The agent on Mac B has no Curator tools, or older skills | On Mac B: the tool's row is not **ready**; its setup guide shows which step is left |
+
+The **Setup** step (Context → a project → step ⑤, [§13e](#13e-the-setup-check-in-the-app)) marks each
+of its three folds with a small grey tag naming its route: **Tools** — *set up on each computer*,
+**Repository on this computer** — *project's git*, **Computers** — *Personal Sync*.
 
 ### The checklist
 
-| # | Do this | When | How | How to check |
-|---|---|---|---|---|
-| 1 | **The latest Curator on every computer** | After every release | Settings → **Updates**, beside the version at the foot of the Settings list — it opens **Software update** and runs the check. Then quit and reopen each agent tool, so none keeps an old bridge process running | The version at the foot of Settings reads the same on every computer. **Settings → MCP bridge** warns if a client still has a bridge from before the update |
-| 2 | **The Curator's MCP configured in every agent tool** | Once per tool, per computer (again if the app or your knowledge folder moves) | Claude Desktop: **Settings → MCP bridge → Set up**. Other tools: **View config** / **Copy snippet** there, pasted into that tool's file (below) | Ask the agent to list its `my-curator` tools — all 24 should be there. `my-curator doctor` names each config file and whether it points at the bridge |
-| 3 | **Both skills, current, in every agent tool** | Once per tool, per computer — and again after every release that changes a skill | Copy the whole `skills/my-curator/` and `skills/curator-continuity/` folders to where that tool reads skills (below) | Ask *"what skills are available?"*. For Antigravity, `my-curator doctor` compares every installed file with this version |
-| 4 | **The Copy agent instructions block at the TOP of both `CLAUDE.md` and `AGENTS.md`** | Once per project repository — and again after a release that changes the block | Domains → Projects (or Project context) → **Copy agent instructions** for **this** project, paste at the very top of each file | `my-curator doctor` in the project folder says whether the file your tool reads carries the block. The agent's first reply names the rules from your brief |
-| 5 | **Commit `.curator-project`** | Once per project repository | Domains → Projects → **Copy marker line**, into a file named `.curator-project` at the repository root; commit and push it | `git ls-files .curator-project` prints the name. `my-curator doctor` prints the project it resolved and the `marker:` it read |
-| 6 | **Sync now before you start, and after your last save** | Every session, on every computer | **Sync** in the rail → **Sync now** | The Sync view shows no *"local changes not pushed"* after your last save |
-| 7 | **Pull and push the project's code** | Every session | `git pull` before you start, commit and `git push` when you stop | `git status` is clean and not behind |
-| 8 | **Start a new conversation, or say "continue"** | Every time you switch tool or computer | A new conversation always reads first. Since v3.76.1 the block also tells an open one to read again on *"continue"* or *"resume"* | The agent's reply says which handoff it opened, from which tool and machine |
-| 9 | *Optional:* **hooks** | Once per tool, per computer | `my-curator install-hooks claude-code` · `my-curator install-hooks antigravity` | `my-curator doctor` lists the hook files it finds. Antigravity's session-start hook was seen running once, on the maintainer's Mac, on 2026-09-26; its end-of-session save ask has **not** been observed |
-| 10 | **`my-curator doctor` — the one-command check** | After any setup change | Run it in the project folder | It reports steps 2, 3 (Antigravity), 4, 5 and 9 on this computer. It does **not** see steps 1, 6, 7 or 8 — those stay yours |
+| # | Do this | When | How | How to check | Where Setup shows it |
+|---|---|---|---|---|---|
+| 1 | **The latest Curator on every computer** | After every release | Settings → **Updates**, beside the version at the foot of the Settings list — it opens **Software update** and runs the check. Then quit and reopen each agent tool, so none keeps an old bridge process running | The version at the foot of Settings reads the same on every computer. **Settings → MCP bridge** warns if a client still has a bridge from before the update | **Computers** fold: the Curator version each computer last saved with (*not recorded* for a save made before v3.77.0) |
+| 2 | **The Curator's MCP configured in every agent tool** | Once per tool, per computer (again if the app or your knowledge folder moves) | Claude Desktop: **Settings → MCP bridge → Set up**. Other tools: **+ Add a tool** in Setup, then **Copy MCP entry** in its guide (or **View config** / **Copy snippet** in Settings → MCP bridge), pasted into that tool's file (below) | Ask the agent to list its `my-curator` tools — all 24 should be there | **Tools** fold: the row's **MCP** mark, and step ① of its guide. A to-fix line for a broken file or a stale entry |
+| 3 | **Both skills, current, in every agent tool** | Once per tool, per computer — and again after every release that changes a skill | Download the two `.zip` files from step ② of the tool's guide, or copy the whole `skills/my-curator/` and `skills/curator-continuity/` folders, to where that tool reads skills (below) | Ask *"what skills are available?"* | **Tools** fold: the row's **skills** mark, and step ② of its guide. A to-fix line when a skill is older than the app's copy, or one of the two is missing; *can't check here* for skills held by your Claude account |
+| 4 | **The Copy agent instructions block at the TOP of both `CLAUDE.md` and `AGENTS.md`** | Once per project repository — and again after a release that changes the block | **Copy agent instructions** for **this** project (Project context's header, or **Copy instructions** in Setup), paste at the very top of each file, then commit and push | The agent's first reply names the rules from your brief | **Repository on this computer**: each file's state — *block current · at the top*, *no Curator block*, *names ‹other project›*, *block outdated*, *block past what it reads*. Press a file to read it, block framed |
+| 5 | **Commit `.curator-project`** | Once per project repository | **Copy marker line**, into a file named `.curator-project` at the repository root; commit and push it. Setup's to-fix line hands you one command that does all three | `git ls-files .curator-project` prints the name | **Repository on this computer**: *names ‹project› · committed and pushed*, or a to-fix line — missing, names another project, not committed, not pushed |
+| 6 | **Sync now before you start, and after your last save** | Every session, on every computer | **Sync** in the rail → **Sync now** | The Sync view shows no *"local changes not pushed"* after your last save | **Computers** fold: *"N files here not on GitHub yet"* on this computer's row; a to-fix line when another computer's newer handoff is waiting on GitHub |
+| 7 | **Pull and push the project's code** | Every session | `git pull` before you start, commit and `git push` when you stop | `git status` is clean and not behind | Only for `.curator-project` (row 5). The rest of the code is yours to check |
+| 8 | **Start a new conversation, or say "continue"** | Every time you switch tool or computer | A new conversation always reads first. Since v3.76.1 the block also tells an open one to read again on *"continue"* or *"resume"* | The agent's reply says which handoff it opened, from which tool and machine | Not checked. A tool's row reads **ready** only after it has saved this project from this computer |
+| 9 | *Optional:* **hooks** | Once per tool, per computer | `my-curator install-hooks claude-code` · `my-curator install-hooks antigravity` | `my-curator hook-log` lists every hook run. Antigravity's session-start hook was seen running once, on the maintainer's Mac, on 2026-09-26; its end-of-session save ask has **not** been observed | **Tools** fold: the row's **hooks** mark — *not wired (optional)*, never a to-fix line |
+| 10 | **Check it** | After any setup change | **Re-check** in Setup (it also re-checks by itself when you come back to the window). In a terminal: `my-curator doctor` in the project folder | Setup shows rows 1–6 and 9 for this computer; `doctor` reads rows 2–5 and 9 | Rows 7 (beyond the marker) and 8 stay yours |
 
 ### Each step, in a little more detail
 
@@ -5581,11 +5664,14 @@ the maintainer's own two-computer test on 2026-09-26.
 computer has the other's latest handoff) and again **after the last save** (so the other computer
 can get this one). Each computer saves into its own folder, so a forgotten sync never overwrites
 anything — it only means the next session reads an older handoff
-([§15](#15-sync-across-computers)).
+([§15](#15-sync-across-computers)). Sync now carries your whole knowledge folder — never the
+project's `CLAUDE.md`, `AGENTS.md` or `.curator-project`
+([what travels how](#what-travels-between-your-computers-and-how)).
 
 **7 — The code, both ends of a session.** Working state and code travel separately
-([How do I build from two computers?](#how-do-i-build-from-two-computers)). A handoff that says
-"tests are green at commit X" is only useful on a checkout that has commit X.
+([what travels how](#what-travels-between-your-computers-and-how)). A handoff that says
+"tests are green at commit X" is only useful on a checkout that has commit X — and an instruction
+file you changed on one computer reaches the other only through `git push` and `git pull`.
 
 **8 — New conversation, or "continue".** What a conversation read when it started can be hours
 old. A **new** conversation always reads The Curator first. An **open** one reads again only when
@@ -5597,18 +5683,22 @@ computer, the agent should say so and check its next steps against this checkout
 asks for a save at the end, without relying on the agent to remember
 ([§13c](#hooks-what-they-can-do-on-your-harness-and-what-they-cannot)). On Claude Code they were
 measured in headless mode on 2026-09-20 (start: yes; the end-of-session ask never fired in that
-mode). Antigravity's are built from its documentation and **have not been measured yet** — the
-maintainer's own test was under way on 2026-09-26. If your brief uses one scope per session, add
-`--scope <name>` to the `my-curator hook …` commands in that tool's hook settings (not to
-`install-hooks`, whose own `--scope` chooses which settings file to write). `install-hooks` needs the `my-curator` command, which comes
-from a source install, not the Mac app.
+mode). Antigravity's are built from its documentation; its session-start hook was seen working
+once, on 2026-09-26, from a project-level `.agents/hooks.json`, and its end-of-session ask has
+**not** been observed ([§13e](#13e-the-setup-check-in-the-app)). If your brief uses one scope per
+session, add `--scope <name>` to the `my-curator hook …` commands in that tool's hook settings
+(not to `install-hooks`, whose own `--scope` chooses which settings file to write).
+`install-hooks` needs the `my-curator` command, which comes from a source install, not the Mac app.
 
-**10 — `my-curator doctor`.** Read-only, always safe to run. In the project folder it tells you
-which project the folder resolves to and how, which agent-tool config files exist and whether each
-points at the bridge, which instruction file your tool will actually read and whether the block is
-in it, which hooks are installed, and — for Antigravity — whether the installed skills match this
-version file by file ([§13c](#13c-making-capture-real--the-command-the-hooks-and-the-meter)). It
-comes with a source install (`npm link` puts it on your `PATH`); the Mac app does not ship it.
+**10 — Check it.** In the app: **Context → the project → step ⑤ Setup**, and **Re-check** after a
+change ([§13e](#13e-the-setup-check-in-the-app)). It reads, for this project on this computer, every
+row above except 7 and 8, and hands you a fix for each thing that is wrong. In a terminal:
+`my-curator doctor`, read-only and always safe to run. In the project folder it tells you which
+project the folder resolves to and how, which agent-tool config files exist and whether each points
+at the bridge, which instruction file your tool will actually read and whether the block is in it,
+which hooks are installed, and — for Antigravity — whether the installed skills match this version
+file by file ([§13c](#13c-making-capture-real--the-command-the-hooks-and-the-meter)). It comes with
+a source install (`npm link` puts it on your `PATH`); the Mac app does not ship it.
 
 > **What was actually measured — and what was not.**
 >
@@ -5698,12 +5788,13 @@ instead — a `git pull` there cannot bring a file this Mac never pushed.
 |---|---|---|---|
 | A tool's config file **is empty / not valid JSON / can't open** | That file told the check nothing, and no other file of that tool proves the bridge either | Open the tool once (it may fill the file), or fix the syntax, or check macOS's Privacy & Security — then **Re-check** | This one |
 | MCP entry **reads a different knowledge folder**, or its **launch file is missing** | The entry points somewhere stale — an old install, a moved folder | **Copy MCP entry**, paste over the old one, restart the tool | This one |
+| MCP entry **is in one of Antigravity's config files but not the others** | Antigravity keeps three config files; a window that reads another may not reach The Curator | **Copy MCP entry**, add it to the file the line names, restart Antigravity | This one |
 | Instruction file **has no Curator instructions** | The tool doesn't know this project, and its agent may overwrite another tool's handoff | **Copy instructions**, paste at the very top (create the file if needed), commit and push | The repository, from any computer that has it cloned |
 | Instruction file **has another project's instructions** | The block here names a different `domain/project`, so this tool opens the wrong one | **Replace them with this project's instructions**, commit and push | Same |
 | Instruction file **is outdated** | An older block may not re-read on "continue" or save under its own name | **Replace them with the current instructions**, commit and push | Same |
 | Instruction file's block **runs past what the tool reads** | The tool caps how much of the file it loads, and the block starts or ends after that cap | Move the block to the top, commit and push | Same |
 | A tool's newest save **went under another name** (a "wrong-name save") | See "The wrong-name save," above | Nothing, if the block here is current; otherwise fix the block | This one, or wherever it saved |
-| A **skill is outdated or missing** | The installed copy differs from what this app carries | Download the current `.zip`, replace the folder, start a new session | This one |
+| A **skill is outdated**, or **one of the two is missing** | The installed copy differs from what this app carries, or only one skill is there | Download the current `.zip`, replace (or add) the folder, start a new session | This one |
 | **This project's folder isn't on this Mac** | The repository path saved earlier no longer exists here | Clone it, then choose the folder | This one |
 | **`.curator-project` is missing** | Agents and hooks here can't tell which project this folder is | If another computer has saved this project, `git pull` first; otherwise create the one-line file, commit and push | The repository |
 | **`.curator-project` names another project** | Every agent here would open the wrong project | Rewrite it, commit and push | Same |
@@ -5788,34 +5879,16 @@ match what is actually configured).
 
 ### The three ways things travel between computers
 
-Everything this step checks travels one of three ways, and they never mix — which is worth knowing
-before you go looking for a setting that syncs the wrong thing:
+Everything this step checks travels one of three ways, and they never mix. **The full picture — a
+diagram, what lives where, a day with two computers, and the common mistakes — is in
+[What travels between your computers, and how](#what-travels-between-your-computers-and-how)** in
+§13d. In short:
 
 | What | Travels by | So on a second computer… |
 |---|---|---|
 | Handoffs, the brief, Documents | **Personal Sync** — your private knowledge repository | **Sync now** brings it there |
 | `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`, `.curator-project` | The project's **own git** | Commit and push here, pull there |
 | MCP settings, skills, hooks | **This computer only** | Set up again, on each computer — nothing syncs them |
-
-```mermaid
-flowchart LR
-    subgraph HERE["This computer"]
-        H1["MCP settings · skills · hooks<br/>set up here, stay here"]
-        H2["project folder (git clone)<br/>CLAUDE.md / AGENTS.md block<br/>.curator-project"]
-    end
-    subgraph GH["GITHUB"]
-        K["your PRIVATE knowledge repository<br/>Personal Sync"]
-        C["the PROJECT's code repository<br/>git push / git pull"]
-    end
-    subgraph THERE["Another computer"]
-        T1["MCP settings · skills · hooks<br/>set up separately there"]
-        T2["project folder (git clone)<br/>same two files, same marker"]
-    end
-    H2 <-->|git push / pull| C
-    T2 <-->|git push / pull| C
-    K -->|Sync now| THERE
-    HERE -->|Sync now| K
-```
 
 *The grey pill each fold carries in its own heading (for example "project's git" on Repository,
 "Personal Sync" on Computers, "set up on each computer" on Tools) names which of the three that
@@ -6027,8 +6100,14 @@ Here is the recommended way to use The Curator day-to-day:
 | Gets synced | Stays local only |
 |-------------|-----------------|
 | ✓ All wiki pages | ✗ Original source files (PDFs, etc.) |
-| ✓ Chat conversations | ✗ Your AI provider API keys |
+| ✓ Chat conversations | ✗ Your AI provider API keys, and every other app setting |
 | ✓ Domain schemas | ✗ App code |
+| ✓ Working state — each project's brief, handoffs, Journal and Documents | ✗ Each agent tool's MCP entry, skills and hooks |
+| ✓ Health dismissals | ✗ Your project's own code repository — `CLAUDE.md`, `AGENTS.md`, `.curator-project` travel by that project's git, never by Sync |
+
+**Sync now** always syncs your **whole** knowledge folder, every domain. For what travels by which
+route when you work on one project from two computers, see
+[What travels between your computers, and how](#what-travels-between-your-computers-and-how).
 
 ### First-time setup (~3 minutes)
 
@@ -6649,9 +6728,10 @@ version](mac-app.md#going-back-to-an-earlier-version).
 
 ### MCP bridge — connect a client
 
-**Settings → MCP bridge** is two numbered blocks, and the numbers mean what they
-say: you connect a client first, and only then can *"which domain does ‘my wiki’
-mean?"* be a question you have. There is a [picture of it](#option-c--my-curator-mcp-frontier-model-research-plus-writes-from-v252)
+**Settings → MCP bridge** is five numbered blocks — ① Connect a client, ② Default domain for MCP
+writes, ③ Tool map, ④ Across projects, ⑤ Tools on this Mac (the machine-wide half of the
+[Setup check](#13e-the-setup-check-in-the-app)) — and the numbers mean what they say: you connect
+a client first, and only then can *"which domain does ‘my wiki’ mean?"* be a question you have. There is a [picture of it](#option-c--my-curator-mcp-frontier-model-research-plus-writes-from-v252)
 in §13.
 
 Block ① opens with the one fact a newcomer needs — **"Works with any MCP client

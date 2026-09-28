@@ -67,7 +67,8 @@ each document has a third state too, **not at start**, and each project has its 
 budget — since v3.70.0, seven presets named in tokens, Index only (0) through Max (200k) — under
 the governing rule **"the right context, not all of it": an agent gets its foundations, the last
 state and the standing brief at the start; everything else is on demand.** Step ④ draws that
-bootstrap as a **context-window meter** — your window to scale, your harness estimate hatched, and
+bootstrap as a **context-window meter** — your window to scale, **your tool's share** (your own
+estimate of what the agent tool loads for itself) hatched, and
 The Curator's own share broken out layer by layer — so "the right context" is something you can
 actually see next to "all of it."
 
@@ -188,6 +189,16 @@ has it. Read-only by construction, with a separate read-only token recommended r
 your sync credential — set it once in **Settings → Knowledge base → GitHub read-only token** (v3.65.2),
 which shows only its last four characters back and offers a one-click **Test** against a named
 repository before you rely on it.
+
+**And a Setup check, so you don't have to remember the preconditions (v3.77.0–v3.80.0).** Context →
+a project → step ⑤ **Setup** checks, for that project on this computer, what several tools and
+several computers need: each agent tool's MCP entry, both skills, the instruction block in
+`CLAUDE.md` / `AGENTS.md`, a committed and pushed `.curator-project`, and a newer handoff waiting
+from another computer. Every problem is one line with its own fix button; nothing is written to your
+tools or your repository. It also says which route each thing travels by — **Personal Sync** for
+handoffs, the brief and Documents; **the project's own git** for the instruction files and the
+marker; **nothing** for MCP settings, skills and hooks, which are set up on each computer
+([what travels how](docs/user-guide.md#what-travels-between-your-computers-and-how)).
 
 ---
 
