@@ -31,10 +31,29 @@ function when(iso) {
   return ageWordsFor(iso, Date.now(), null) || iso;
 }
 
+// v3.78.0 (contract §1): every config file carries `status` — missing ·
+// unopenable · empty · invalid · ok. The four that are not `ok` are said in
+// their own words, beside the file's own path. One is inked "to fix" only
+// when the TOOL's verdict is a to-fix (it is the only file that could carry
+// the entry); otherwise it is a note — another file of the same tool names
+// my-curator and the tool works.
+export const FILE_STATUS_WORDS = Object.freeze({
+  missing: 'missing',
+  unopenable: 'can’t open',
+  empty: 'empty',
+  invalid: 'not valid JSON',
+});
+
 /** One file row: path · verdict · action. */
-function fileRow(f, extraAct = '', missingIsFix = false) {
+function fileRow(f, extraAct = '', missingIsFix = false, toolFix = false) {
   let verdict;
-  if (!f.present) verdict = st('none', 'absent');
+  const bad = typeof f.status === 'string' && f.status !== 'ok' && Object.hasOwn(FILE_STATUS_WORDS, f.status) ? f.status : null;
+  if (bad === 'missing') verdict = st('none', FILE_STATUS_WORDS.missing);
+  else if (bad) {
+    verdict = st(toolFix ? 'fix' : 'cant-check', FILE_STATUS_WORDS[bad])
+      + '<span class="cur-setup-sub">' + escapeHtml((f.display || f.file || 'this file') + ' is ' + FILE_STATUS_WORDS[bad].replace('can’t open', 'not readable by The Curator')
+        + (toolFix ? '' : ' — another file of this tool names my-curator, so the tool is not affected')) + '</span>';
+  } else if (!f.present) verdict = st('none', 'absent');
   else if (f.parseError) verdict = st('fix', 'present · could not be read');
   else if (f.opaque) verdict = st('cant-check', 'present · format not read');
   else if (f.named) {
@@ -47,7 +66,7 @@ function fileRow(f, extraAct = '', missingIsFix = false) {
   // configured through another of its files is not asked to fix this one.
   } else verdict = st(missingIsFix && f.via !== 'readAlso' ? 'fix' : 'none', 'present · no my-curator entry');
   const via = f.via === 'readAlso' ? '<span class="cur-setup-sub">another app’s file, read for this tool</span>' : '';
-  const acts = (f.present ? '<button type="button" class="btn btn-ghost btn-xs" data-setup-act="reveal" data-path="' + escapeHtml(f.file) + '">Reveal</button>' : '') + extraAct;
+  const acts = (f.present || (bad && bad !== 'missing') ? '<button type="button" class="btn btn-ghost btn-xs" data-setup-act="reveal" data-path="' + escapeHtml(f.file) + '">Reveal</button>' : '') + extraAct;
   return '<div class="settings-setup-file">'
     + '<span class="cur-setup-path">' + escapeHtml(f.display || f.file) + via + '</span>'
     + '<span>' + verdict + (f.jsonc ? '<span class="cur-setup-sub">read with comments allowed</span>' : '') + '</span>'
@@ -143,7 +162,8 @@ export function renderToolsOnThisMacBody(m, openFolds = {}) {
     const copy = entries[h.id]
       ? '<button type="button" class="btn btn-ghost btn-xs" data-setup-act="copy-entry" data-tool="' + escapeHtml(h.id) + '">Copy entry</button>' : '';
     const missingIsFix = !!(h.bridge && h.bridge.state === 'fix' && /^not in /.test(h.bridge.word || ''));
-    const fileRows = (h.files || []).map((f) => fileRow(f, '', missingIsFix)).join('');
+    const toolFix = !!(h.bridge && h.bridge.state === 'fix');
+    const fileRows = (h.files || []).map((f) => fileRow(f, '', missingIsFix, toolFix)).join('');
     const note = h.bridge && h.bridge.note ? '<p class="cur-setup-hint">' + escapeHtml(h.bridge.note) + '</p>' : '';
     return '<details class="settings-setup-fold" data-setup-fold="' + escapeHtml(key) + '"' + (openFolds[key] ? ' open' : '') + '>'
       + '<summary class="settings-setup-summary"><span class="settings-setup-name">' + escapeHtml(h.label) + '</span>'

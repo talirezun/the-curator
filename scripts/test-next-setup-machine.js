@@ -98,6 +98,31 @@ section('§4  observations, no stronger than made');
   ok(/stop hook observed firing .* — did not ask: rung 4/.test(html) && /start hook observed firing/.test(html), 'the hook activity log\'s evidence is shown');
 }
 
+section('§4b v3.78.0 — each config file\'s own status, in words, beside its path');
+{
+  const d = payload();
+  const ag = d.harnesses[1];
+  // One file names my-curator, the other is empty/invalid/unopenable: the
+  // tool works, so the bad file is a NOTE (not inked to fix) — contract §1.
+  ag.bridge = { state: 'ok', word: 'configured' };
+  const words = {};
+  for (const [status, want] of [['empty', 'empty'], ['invalid', 'not valid JSON'], ['unopenable', 'can’t open'], ['missing', 'missing']]) {
+    ag.files[1] = { ...ag.files[1], status, present: status !== 'missing' && status !== 'unopenable', named: false };
+    const f = folds(M.renderToolsOnThisMacBody({ data: d }, { 'tool-antigravity': true }))[1];
+    words[status] = f;
+    ok(new RegExp('~/\\.gemini/antigravity/mcp_config\\.json</span><span><span class="cur-setup-st cur-setup-st-(q|none)">' + want + '<').test(f),
+      status + ': the file\'s path, then "' + want + '", not inked to fix while another file names my-curator', f.slice(f.indexOf('antigravity/mcp_config'), f.indexOf('antigravity/mcp_config') + 300));
+  }
+  ok(/is empty — another file of this tool names my-curator, so the tool is not affected/.test(words.empty), 'the note says why it is not a to-fix, naming the file');
+  ok(/data-path="\/h\/\.gemini\/antigravity\/mcp_config\.json"/.test(words.unopenable), 'a file that cannot be opened is still revealable');
+  // The only file that could carry the entry: the tool is to fix, and so is the file.
+  ag.bridge = { state: 'fix', word: 'can’t read its config' };
+  ag.files[1] = { ...ag.files[1], status: 'unopenable', present: true };
+  const f = folds(M.renderToolsOnThisMacBody({ data: d }, { 'tool-antigravity': true }))[1];
+  ok(/cur-setup-st-fix">can’t open</.test(f) && !/so the tool is not affected/.test(f), 'when the tool itself is to fix, the unopenable file is inked to fix');
+  ok(M.FILE_STATUS_WORDS.invalid === 'not valid JSON' && Object.isFrozen(M.FILE_STATUS_WORDS), 'the four words, frozen');
+}
+
 section('§5  escaping and privacy');
 {
   const d = payload();

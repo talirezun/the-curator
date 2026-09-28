@@ -1569,7 +1569,7 @@ function makeRenderers(stateObj) {
     v367Lift() +
     // v3.77.0 — step 5, composed by renderProject: lifted for real, with the
     // builders it calls injected from views/setup-step.js.
-    'const { renderSetupBody, setupHeadHtml, SETUP_JUMP } = SETUP_STEP;\n' +
+    'const { renderSetupBody, setupHeadHtml, SETUP_JUMP, setupToolPickerCfg } = SETUP_STEP;\n' +
     extractFunction(viewSrc, 'setupFor', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderSetupStep', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderProject', 'memory.js') + '\n' +
@@ -2950,9 +2950,12 @@ const withInit = fetchArgLists.filter((a) => topLevelArgs(a).length > 1);
 // listed), `POST /api/sync/sync` (the Sync view's own "Sync now", no body),
 // `PUT /api/setup/tools {ids}` and `PUT /api/setup/projects/…/repo {path}`
 // (this computer's own settings file — never synced, never the store).
-eq('EXACTLY TWENTY fetches in the view carry a request init', withInit.length, 20);
+// ── TWENTY-ONE SINCE v3.78.0 — step 5's custom tool: `PUT /api/setup/tools`
+// with `{custom: {name}}` or `{removeCustom: name}` (the same per-computer
+// settings file), from ONE call site whose body is the change it was handed.
+eq('EXACTLY TWENTY-ONE fetches in the view carry a request init', withInit.length, 21);
 ok('every other fetch is single-argument — structurally a GET, whatever a method string is spelled like',
-  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 20,
+  fetchArgLists.filter((a) => topLevelArgs(a).length === 1).length === fetchArgLists.length - 21,
   JSON.stringify(fetchArgLists.map((a) => topLevelArgs(a).length)));
 {
   const inits = withInit.map((a) => ({ url: topLevelArgs(a)[0], init: topLevelArgs(a)[1] }));
@@ -3020,10 +3023,21 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     setupReveal ? setupReveal.init.slice(0, 160) : 'none');
   const syncNow = posts.find((x) => x.url === "'/api/sync/sync'");
   ok('v3.77.0: one POST is Sync now, with NO body', !!syncNow && !/body/.test(syncNow.init), syncNow ? syncNow.init : 'none');
-  const setupTools = inits.find((x) => x.url === "'/api/setup/tools'");
+  const setupToolsAll = inits.filter((x) => x.url === "'/api/setup/tools'");
+  const setupTools = setupToolsAll.find((x) => /body:\s*JSON\.stringify\(\{\s*ids:/.test(x.init));
   ok('v3.77.0: the tools PUT sends `ids` and nothing else',
     !!setupTools && /method:\s*'PUT'/.test(setupTools.init) && /body:\s*JSON\.stringify\(\{\s*ids:/.test(setupTools.init),
     setupTools ? setupTools.init.slice(0, 160) : 'none');
+  // v3.78.0: the custom-tool PUT — the only other call to that URL, sending the
+  // change `saveCustomTool` was handed; its two callers build `{custom: {name}}`
+  // and `{removeCustom: name}` and nothing else.
+  const setupCustom = setupToolsAll.find((x) => x !== setupTools);
+  ok('v3.78.0: exactly TWO calls reach /api/setup/tools, the second sending the custom-tool change',
+    setupToolsAll.length === 2 && !!setupCustom && /method:\s*'PUT'/.test(setupCustom.init)
+    && /body:\s*JSON\.stringify\(change\)/.test(setupCustom.init)
+    && /saveCustomTool\(\{ custom: \{ name \} \}, token\)/.test(viewNoComments)
+    && /saveCustomTool\(\{ removeCustom: el\.dataset\.name \|\| '' \}, token\)/.test(viewNoComments),
+    JSON.stringify(setupToolsAll.map((x) => x.init.slice(0, 120))));
   const setupRepo = inits.find((x) => x.url.includes("'/api/setup/projects/'") && x.url.includes("'/repo'"));
   ok('v3.77.0: the repository PUT is under /api/setup/projects, escaped, sending `path` and nothing else',
     !!setupRepo && setupRepo.url.includes('encodeURIComponent') && /body:\s*JSON\.stringify\(\{\s*path:\s*p \|\| null\s*\}\)/.test(setupRepo.init),
@@ -3129,7 +3143,7 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
     put ? put.init.slice(0, 240) : 'none');
   ok('...and it still cannot name a handoff field',
     put && !/nowState|nextSteps|observations|traps/.test(put.init));
-  eq('exactly FOUR PUTs: the document, this computer\'s context-window settings, and (v3.77.0) step 5\'s tools and repository folder', puts.length, 4);
+  eq('exactly FIVE PUTs: the document, this computer\'s context-window settings, (v3.77.0) step 5\'s tools and repository folder, and (v3.78.0) its custom tool', puts.length, 5);
   ok('the settings PUT is the named config route, sending the body its caller composed from '
     + 'the window or the harness — never a project, a document or a brief',
     !!ctxPut && /body:\s*JSON\.stringify\(body\)/.test(ctxPut.init)
@@ -3181,7 +3195,7 @@ ok('every other fetch is single-argument — structurally a GET, whatever a meth
   ok('every one of them is under /api/memory — the helper\'s one proposal read under '
     + '/api/reading-plan — and escapes its segments',
     inits.every((x) => (x === doorCommit) || (x === ctxPut)
-      || (x === setupReveal) || (x === syncNow) || (x === setupTools) || (x === setupRepo)
+      || (x === setupReveal) || (x === syncNow) || (x === setupTools) || (x === setupCustom) || (x === setupRepo)
       || ((x.url.includes("'/api/memory/'")
       || (x === suggest && x.url.includes("'/api/reading-plan/'")))
       && x.url.includes('encodeURIComponent'))),
@@ -3205,12 +3219,12 @@ ok('self-test: the argument-count scan does NOT fire on a plain read',
 // transport exists at all.
 {
   const methods = [...viewNoComments.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g)].map((m) => m[1]).sort();
-  ok('exactly TWENTY `method:` property keys appear in the view\'s real code, and every one of them '
+  ok('exactly TWENTY-ONE `method:` property keys appear in the view\'s real code, and every one of them '
     + 'is a LITERAL — so the `\'PO\' + \'ST\'` evasion is refused by construction',
   JSON.stringify(methods) === JSON.stringify(
     ["'DELETE'", "'DELETE'", "'DELETE'", "'PATCH'", "'PATCH'", "'PATCH'", "'PATCH'",
       "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'", "'POST'",
-      "'PUT'", "'PUT'", "'PUT'", "'PUT'"]),
+      "'PUT'", "'PUT'", "'PUT'", "'PUT'", "'PUT'"]),
   JSON.stringify(methods));
 }
 for (const transport of ['XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource', 'FormData', 'Request(']) {
@@ -9651,27 +9665,32 @@ const fndRead = (payload) => ({
 
   {
     // ── v3.72.1: revalidateReadings — what the poll and wake re-ask ──────
-    const asks = { capture: [], knowledge: [] };
+    const asks = { capture: [], knowledge: [], setup: [] };
     const mkR = (st) => new Function('state', 'loadCapture', 'loadKnowledge',
-      'reportAsyncMountFailure', 'READING_REVALIDATE_MS',
+      'reportAsyncMountFailure', 'READING_REVALIDATE_MS', 'refreshSetupOnWake',
       extractFunction(viewSrc, 'revalidateReadings', 'memory.js')
       + '\nreturn revalidateReadings;')(
       st,
       async (d, p, t, o) => { asks.capture.push([d + '/' + p, o && o.maxAgeMs]); },
       async (ds, t, o) => { asks.knowledge.push([ds.join(','), o && o.maxAgeMs]); },
-      () => {}, liftConst('READING_REVALIDATE_MS'));
+      () => {}, liftConst('READING_REVALIDATE_MS'),
+      // v3.78.0: step 5's focus re-check (contract §7) — its staleness rule is
+      // views/setup-step.js `setupCheckIsStale`, executed in test-next-setup-step.js.
+      (t) => { asks.setup.push(t); });
     mkR({ activeDomain: 'acme', activeProject: 'lumina',
       projectRead: { knowledgeDomains: ['acme', 'research'] } })(1);
     eq('revalidateReadings re-asks the AGENT SESSIONS reading for the open pair, with the TTL',
       JSON.stringify(asks.capture), JSON.stringify([['acme/lumina', liftConst('READING_REVALIDATE_MS')]]));
     eq('...and step ③\'s count for every CHOSEN wiki, with the TTL',
       JSON.stringify(asks.knowledge), JSON.stringify([['acme,research', liftConst('READING_REVALIDATE_MS')]]));
+    eq('v3.78.0: ...and step 5\'s Setup check is offered the re-read, with the token',
+      JSON.stringify(asks.setup), JSON.stringify([1]));
     ok('...a TTL that is a real, bounded number (a minute or so, never "for ever")',
       liftConst('READING_REVALIDATE_MS') > 0 && liftConst('READING_REVALIDATE_MS') <= 300000);
-    asks.capture.length = 0; asks.knowledge.length = 0;
+    asks.capture.length = 0; asks.knowledge.length = 0; asks.setup.length = 0;
     mkR({ activeDomain: null, activeProject: null })(1);
     eq('CONTROL: with no project open it asks for nothing',
-      asks.capture.length + asks.knowledge.length, 0);
+      asks.capture.length + asks.knowledge.length + asks.setup.length, 0);
   }
 
   // ── AND THE STEP PAINTS EVERY STATE ────────────────────────────────────
@@ -13450,6 +13469,16 @@ const NOT_EXECUTED = {
   patchSetup: 'in-place DOM patch of step 5 and its tile — the patchSessionStart shape; its markup is renderSetupStep\u2019s, executed here',
   setupCopy: 'clipboard + toast glue; the copied texts (marker line, command) are the payload\u2019s, asserted in test-setup-check.js',
   bindSetup: 'listener binding for step 5\u2019s buttons; every request it makes is named in this file\u2019s fetch census (reveal, Sync now, tools, repository)',
+  // v3.78.0 — step 5 rebuilt. The decisions are DOM-free and executed in
+  // scripts/test-next-setup-step.js (setupCheckIsStale, toolReaderContent,
+  // setupToolPickerCfg, customToolNameError); these only fetch, open the
+  // reader and repaint, and were driven in a real browser (the release's
+  // screen check).
+  refreshSetupOnWake: 'one staleness gate (setup-step.js setupCheckIsStale, executed in test-next-setup-step.js) in front of maybeLoadSetup; its call from revalidateReadings is asserted above',
+  openSetupToolReader: 'openReader + bindSetup on #reader-root; the payload is setup-step.js toolReaderContent, executed in test-next-setup-step.js',
+  addSetupTool: 'the tools PUT named in this file\u2019s fetch census ({ids}); the listbox cfg it is picked from is executed in test-next-setup-step.js',
+  saveCustomTool: 'the custom-tool PUT named in this file\u2019s fetch census (the change it is handed); the name rule is customToolNameError, executed in test-next-setup-step.js',
+  saveSetupRepo: 'the repository PUT named in this file\u2019s fetch census ({path}); moved out of bindSetup so Choose\u2026 and Use share it',
   // v3.75.0: "Delete handoff". Both are LIFTED and EXECUTED — against a
   // recording fetch, a stub render and a real state object — by their own
   // suite, which owns the feature end to end (store, route, view).

@@ -922,13 +922,15 @@ section('§7  THE TIER BOUNDARY — the memory view writes tier 1 and nothing el
   // test-next-memory-view.js §8 names it by URL and body.
   // v3.77.0: + step 5's four (POST reveal, POST Sync now, PUT tools, PUT
   // repository folder) — named with their bodies in test-next-memory-view.js.
-  ok('memory.js issues exactly TWENTY mutating-shaped HTTP method keys',
-    methods.length === 20, methods.join(','));
-  ok('...and they are DELETE x3, PATCH x4, POST x9 and PUT x4, every one a LITERAL',
+  // v3.78.0: + step 5's custom-tool PUT (`{custom:{name}}` / `{removeCustom}`,
+  // the same per-computer settings file) — named in test-next-memory-view.js.
+  ok('memory.js issues exactly TWENTY-ONE mutating-shaped HTTP method keys',
+    methods.length === 21, methods.join(','));
+  ok('...and they are DELETE x3, PATCH x4, POST x9 and PUT x5, every one a LITERAL',
     methods.join(',') === "method: 'DELETE',method: 'DELETE',method: 'DELETE',method: 'PATCH',method: 'PATCH',"
       + "method: 'PATCH',method: 'PATCH',method: 'POST',method: 'POST',method: 'POST',method: 'POST',"
       + "method: 'POST',method: 'POST',method: 'POST',method: 'POST',method: 'POST',"
-      + "method: 'PUT',method: 'PUT',method: 'PUT',method: 'PUT'",
+      + "method: 'PUT',method: 'PUT',method: 'PUT',method: 'PUT',method: 'PUT'",
     methods.join(','));
   ok('...the reading-budget PATCH sends ONE field, to the four-segment route',
     /'\/reading\/budget'/.test(memCode)

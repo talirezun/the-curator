@@ -137,6 +137,8 @@ import {
   // user who presses Escape while it is in flight must not have the document
   // reopened on top of whatever they went back to.
   openReader, isCurrentReader,
+  // v3.78.0: step 5's "Remove <custom tool>" closes the evidence it was on.
+  closeReader,
   // THE SHELL'S ONE NAVIGATION CHOKEPOINT. Used by the POINTER this view
   // carries — "Create a project in Domains", on the screen `renderMain`
   // reaches when there is no project to select — which is a pointer rather
@@ -372,7 +374,12 @@ import {
 // v3.77.0 — step 5 "Setup": the words live in a DOM-free module (its suite
 // imports the real builders); this view owns the state, the request and the
 // listeners. See views/setup-step.js for the six-rules walk-through.
-import { renderSetupBody, setupHeadHtml, setupTile, SETUP_JUMP } from './setup-step.js';
+// v3.78.0: rebuilt — to-fix notes, "+ Add a tool" through the shared listbox,
+// the Handoffs table's parts, and a tool's evidence in the right-hand reader.
+import {
+  renderSetupBody, setupHeadHtml, setupTile, SETUP_JUMP, setupToolPickerCfg, customToolNameError,
+  toolReaderContent, setupCheckIsStale, CUSTOM_TOOL_VALUE,
+} from './setup-step.js';
 
 // ── THE TWO PICKERS ARE GONE, AND SO IS THE HANDOFF THEY NEEDED ──────────
 //
@@ -875,10 +882,18 @@ function freshState() {
     // ONE project, `{domain, project, data, error, loading}`. Asked for after
     // the paint, on project open and on "Check again" — never polled.
     setup: null,
-    setupAddOpen: false,
     setupEditRepo: false,
     setupRepoDraft: null,
     setupRepoError: null,
+    // v3.78.0: the repository fold opened by a note's "Choose a folder" (a
+    // transient, never written to the remembered folds), the native picker
+    // withheld with its reason, and the "Custom tool…" name field.
+    setupRepoForceOpen: false,
+    setupPickUnavailable: null,
+    setupAdding: false,
+    setupCustomOpen: false,
+    setupCustomDraft: '',
+    setupCustomError: null,
     plan: null,
     budgetSaving: false,
     budgetError: null,
@@ -1215,6 +1230,10 @@ let setupInFlight = null;
 // "Check again" or a repository change made while an earlier check is in
 // flight must win, and the earlier answer must not clear its `loading`.
 let setupSeq = 0;
+// v3.78.0: the tool whose evidence step 5 last opened in the reader, and the
+// reader epoch it got — so a re-check refreshes that page only while it is
+// still the page on screen.
+let setupReader = null;
 // The `if applied` preview in flight, keyed by its request body.
 let previewInFlight = null;
 // v3.70.0: the settings read in flight (once per mount), and the picker's
@@ -1408,6 +1427,9 @@ function revalidateReadings(token) {
     && state.projectRead.knowledgeDomains.length ? state.projectRead.knowledgeDomains : [d];
   loadKnowledge(chosen, token, { maxAgeMs: READING_REVALIDATE_MS })
     .catch((err) => reportAsyncMountFailure(token, err));
+  // v3.78.0 (contract §7): step 5 re-reads the files when its reading is more
+  // than ten seconds old — a fix made in Finder or a terminal shows on return.
+  refreshSetupOnWake(token);
 }
 
 function stopPoll() {
@@ -4404,10 +4426,11 @@ function renderLayerStrip(read) {
     name: 'Session start, ' + ssValue + ' — go to step 4',
   });
 
-  // ── SETUP (v3.77.0) — HOW MANY PRECONDITIONS ARE FALSE, HERE ──────────
-  // A count of real "to fix" rows from step 5's check, never a score. Hidden
-  // until the check lands, SESSION START's rule. Inline, for the lift reason
-  // above: no helper is named in this body. The words match
+  // ── SETUP (v3.77.0; v3.78.0) — HOW MANY PRECONDITIONS ARE FALSE, HERE ─
+  // A count of real "to fix" rows from step 5's check, never a score:
+  // `N to fix`, `repository not set` (its checks did not run), or `ready`.
+  // Hidden until the check lands, SESSION START's rule. Inline, for the lift
+  // reason above: no helper is named in this body. The words match
   // views/setup-step.js `setupTile`, which the patch writes after the check.
   const stpS = state.setup && state.setup.domain === state.activeDomain
     && state.setup.project === state.activeProject && state.setup.data ? state.setup.data : null;
@@ -4417,16 +4440,21 @@ function renderLayerStrip(read) {
   // equal over every combination.
   const stpRepo = !!(stpS && stpS.repo && stpS.repo.exists !== false);
   const stpValue = !stpS ? 'not checked'
-    : (stpN ? stpN + ' to fix' : (stpRepo ? 'nothing to fix here' : 'repository not set'));
-  const stpTools = stpS ? (stpS.tools || []).map((x) => x.label) : [];
-  const stpComps = stpS ? (stpS.computers || []).length : 0;
+    : (stpN ? stpN + ' to fix' : (stpRepo ? 'ready' : 'repository not set'));
+  const stpTools = stpS ? (stpS.tools || []).map((x) => x && x.label).filter((l) => typeof l === 'string' && l.length > 0) : [];
+  // PHYSICAL computers (v3.78.0): `physical[]`, or — from a v3.77.0 server —
+  // every name this computer saves under counted once, every other name once.
+  const stpCompRows = stpS && Array.isArray(stpS.computers) ? stpS.computers.filter(Boolean) : [];
+  const stpComps = !stpS ? 0
+    : (Array.isArray(stpS.physical) && stpS.physical.length
+      ? stpS.physical.filter((g) => g && Array.isArray(g.installs)).length
+      : stpCompRows.filter((c) => !(c.thisComputer === true || c.thisMachine === true)).length
+        + (stpCompRows.some((c) => c.thisComputer === true || c.thisMachine === true) ? 1 : 0));
   cards.push({
     label: 'SETUP',
     value: stpValue,
-    sub: stpS ? (!stpN && !stpRepo ? 'nothing to fix among the checks that ran'
-      : [stpTools.length ? stpTools.join(' · ') : 'no agent tool yet',
-        stpComps ? stpComps + (stpComps === 1 ? ' computer' : ' computers') : null,
-        stpRepo ? null : 'repository not set'].filter(Boolean).join(' · ')) : null,
+    sub: stpS ? [stpTools.length ? stpTools.join(' · ') : 'no agent tool yet',
+      stpComps ? stpComps + (stpComps === 1 ? ' computer' : ' computers') : null].filter(Boolean).join(' · ') : null,
     hidden: !stpS,
     jump: 'context-setup',
     name: 'Setup, ' + stpValue + ' — go to step 5',
@@ -11966,7 +11994,7 @@ function renderSessionStart(read) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// STEP 5 — SETUP (v3.77.0)
+// STEP 5 — SETUP (v3.77.0; rebuilt v3.78.0)
 // ═════════════════════════════════════════════════════════════════════════
 
 function setupFor() {
@@ -11976,20 +12004,25 @@ function setupFor() {
 
 function renderSetupStep() {
   const s = setupFor();
+  const data = s && s.data;
   return memStep({
     num: 5,
     id: SETUP_JUMP,
     title: 'Setup',
     infoKey: 'context.setup',
-    headHtml: '<div class="mem-setup-head">' + setupHeadHtml(s, state.setupAddOpen) + '</div>',
+    headHtml: '<div class="mem-setup-head">' + setupHeadHtml(s) + '</div>',
     bodyHtml: renderSetupBody(s, {
       openFolds: state.openFolds, repoDraft: state.setupRepoDraft,
       repoError: state.setupRepoError, editRepo: state.setupEditRepo,
+      forceRepoOpen: state.setupRepoForceOpen, pickUnavailable: state.setupPickUnavailable,
+      customOpen: state.setupCustomOpen, customDraft: state.setupCustomDraft, customError: state.setupCustomError,
+      // "+ Add a tool" — the SHARED listbox, from the one cfg `bindSetup` mounts.
+      pickerHtml: data ? renderListboxHtml(setupToolPickerCfg(data, state.setupAdding === true)) : '',
     }),
   });
 }
 
-/** Ask once per project open (and on "Check again", with `force`). */
+/** Ask once per project open (and on "Re-check", with `force`). */
 function maybeLoadSetup(token, force = false) {
   const domain = state.activeDomain;
   const project = state.activeProject;
@@ -11999,6 +12032,18 @@ function maybeLoadSetup(token, force = false) {
   const key = keyOf(domain, project);
   if (setupInFlight === key && !force) return;
   loadSetup(domain, project, token).catch((err) => reportAsyncMountFailure(token, err));
+}
+
+/**
+ * v3.78.0 (contract §7): coming back to the window re-reads the check when the
+ * reading on screen is more than ten seconds old — a fix made in Finder or a
+ * terminal shows without a press. Called from the view's one wake handler.
+ */
+function refreshSetupOnWake(token) {
+  const s = setupFor();
+  if (!s || !s.data || s.loading) return;
+  if (!setupCheckIsStale(s.data)) return;
+  maybeLoadSetup(token, true);
 }
 
 async function loadSetup(domain, project, token) {
@@ -12031,6 +12076,11 @@ function patchSetup(token) {
   if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
   const block = document.querySelector('.settings-block-' + SETUP_JUMP);
   if (!block) return;
+  // What is being typed survives a repaint (a focus re-check lands mid-word).
+  const repoIn = document.getElementById('mem-setup-repo-input');
+  if (repoIn && block.contains(repoIn)) state.setupRepoDraft = repoIn.value;
+  const customIn = document.getElementById('mem-setup-custom-input');
+  if (customIn && block.contains(customIn)) state.setupCustomDraft = customIn.value;
   const focusId = document.activeElement && block.contains(document.activeElement) ? document.activeElement.id : null;
   const openInfo = block.querySelector('[data-tx-info][aria-expanded="true"]') !== null;
   block.outerHTML = renderSetupStep();
@@ -12065,6 +12115,10 @@ function patchSetup(token) {
     tile.setAttribute('aria-label', 'Setup, ' + t.value + ' — go to step 5');
     tile.hidden = false;
   }
+  // A tool's evidence open in the reader follows the new reading.
+  if (setupReader && isCurrentReader(setupReader.epoch) && s && s.data) {
+    openSetupToolReader(setupReader.tool, token);
+  }
 }
 
 async function setupCopy(text, title, line) {
@@ -12076,8 +12130,119 @@ async function setupCopy(text, title, line) {
   }
 }
 
-/** Every control step 5 draws, bound once per node. */
+/**
+ * A TOOL'S EVIDENCE, IN THE RIGHT-HAND READER (v3.78.0) — the standing rule:
+ * a detail page opens in the reader, never inline. The payload is
+ * views/setup-step.js `toolReaderContent`; its buttons are step 5's own
+ * `data-setup-act` controls, bound here on the reader's live root.
+ */
+function openSetupToolReader(toolId, token) {
+  const s = setupFor();
+  const content = s && s.data ? toolReaderContent(s.data, toolId) : null;
+  if (!content) return;
+  const epoch = openReader(content, token);
+  setupReader = { tool: toolId, epoch };
+  if (typeof document !== 'undefined' && typeof document.getElementById === 'function') {
+    const root = document.getElementById('reader-root');
+    if (root) bindSetup(root, token);
+  }
+}
+
+/** PUT one known tool onto this computer's list (the listbox's pick). */
+async function addSetupTool(id, token) {
+  const s = setupFor();
+  const cur = s && s.data && Array.isArray(s.data.addedTools) ? s.data.addedTools : [];
+  state.setupAdding = true;
+  patchSetup(token);
+  try {
+    await fetch('/api/setup/tools', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: [...new Set([...cur, id])].filter(Boolean) }),
+    });
+  } catch (err) { reportAsyncActionFailure(err); }
+  state.setupAdding = false;
+  if (!isCurrentMount(token)) return;
+  maybeLoadSetup(token, true);
+}
+
+/**
+ * A CUSTOM TOOL (v3.78.0, contract §5): add one by name, or remove one. The
+ * name is checked here by the route's own rule first, so a refusal is said
+ * under the field before anything is sent. Per computer, never synced.
+ */
+async function saveCustomTool(change, token) {
+  let res = null;
+  let j = {};
+  try {
+    res = await fetch('/api/setup/tools', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(change),
+    });
+    j = await res.json().catch(() => ({}));
+  } catch (err) { reportAsyncActionFailure(err); return false; }
+  if (!isCurrentMount(token)) return false;
+  if (!res.ok) {
+    const why = j.error || 'HTTP ' + res.status;
+    if (change.custom) { state.setupCustomError = why; patchSetup(token); }
+    else showToast({ key: 'setup-custom', tone: 'danger', title: 'Could not remove it', lines: [why] });
+    return false;
+  }
+  maybeLoadSetup(token, true);
+  return true;
+}
+
+/** Set (or clear) this computer's repository folder for the open project. */
+async function saveSetupRepo(p, token) {
+  const domain = state.activeDomain;
+  const project = state.activeProject;
+  state.setupRepoDraft = p;
+  try {
+    const res = await fetch('/api/setup/projects/' + encodeURIComponent(domain) + '/' + encodeURIComponent(project) + '/repo', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: p || null }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!isCurrentMount(token)) return;
+    if (!res.ok) { state.setupRepoError = j.error || 'HTTP ' + res.status; patchSetup(token); return; }
+    state.setupRepoError = null;
+    state.setupEditRepo = false;
+    state.setupRepoDraft = null;
+    state.setupRepoForceOpen = false;
+  } catch (err) { reportAsyncActionFailure(err); return; }
+  maybeLoadSetup(token, true);
+}
+
+/** Every control step 5 draws (on the page, or in the reader), bound once per node. */
 function bindSetup(root, token) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  // "+ Add a tool" — the ONE cfg the markup was rendered from.
+  const s0 = setupFor();
+  if (s0 && s0.data && typeof document !== 'undefined' && document.getElementById('mem-setup-add')) {
+    const cfg = setupToolPickerCfg(s0.data, state.setupAdding === true);
+    cfg.onChange = (value) => {
+      if (value === CUSTOM_TOOL_VALUE) {
+        state.setupCustomOpen = true;
+        state.setupCustomError = null;
+        patchSetup(token);
+        const input = document.getElementById('mem-setup-custom-input');
+        if (input && typeof input.focus === 'function') input.focus();
+        return;
+      }
+      addSetupTool(value, token).catch((err) => reportAsyncMountFailure(token, err));
+    };
+    mountListbox(cfg);
+  }
+  // Enter in either field presses its own button.
+  for (const [id, act] of [['mem-setup-repo-input', 'save-repo'], ['mem-setup-custom-input', 'add-custom']]) {
+    const input = root.querySelector('#' + id);
+    if (!input || input.__setupBound) continue;
+    input.__setupBound = true;
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const b = root.querySelector('[data-setup-act="' + act + '"]');
+      if (b) b.click();
+    });
+  }
   root.querySelectorAll('[data-setup-act]').forEach((el) => {
     if (el.__setupBound) return;
     el.__setupBound = true;
@@ -12086,6 +12251,7 @@ function bindSetup(root, token) {
       const domain = state.activeDomain;
       const project = state.activeProject;
       if (act === 'check') { maybeLoadSetup(token, true); return; }
+      if (act === 'tool-open') { openSetupToolReader(el.dataset.tool || '', token); return; }
       if (act === 'copy-block') { copyAgentInstructions(token); return; }
       if (act === 'copy-marker') {
         await setupCopy(domain + '/' + project, 'Marker line copied',
@@ -12094,6 +12260,13 @@ function bindSetup(root, token) {
       }
       if (act === 'copy-command') {
         await setupCopy(el.dataset.cmd || '', 'Command copied', 'Run it in the project’s folder.');
+        return;
+      }
+      if (act === 'copy-snippet') {
+        const s = setupFor();
+        const t = s && s.data && (s.data.tools || []).find((x) => x && x.id === el.dataset.tool);
+        const snip = t && t.mcpSnippet && typeof t.mcpSnippet.text === 'string' ? t.mcpSnippet.text : '';
+        if (snip) await setupCopy(snip, 'Entry copied', 'Paste it into ' + t.label + '’s MCP config, then Re-check.');
         return;
       }
       if (act === 'reveal') {
@@ -12114,6 +12287,7 @@ function bindSetup(root, token) {
         navigate('settings');
         return;
       }
+      if (act === 'open-sync') { navigate('sync'); return; }
       if (act === 'sync' || act === 'check-github') {
         el.disabled = true;
         try {
@@ -12126,7 +12300,7 @@ function bindSetup(root, token) {
           if (act === 'sync') {
             showToast({ key: 'setup-sync', tone: res.ok ? 'success' : 'danger',
               title: res.ok ? 'Synced' : 'Sync did not complete',
-              lines: [res.ok ? 'This computer now has what GitHub had, and GitHub has this computer’s saves.' : (j.error || 'HTTP ' + res.status)] });
+              lines: [res.ok ? 'Your whole knowledge folder — every domain — now matches GitHub.' : (j.error || 'HTTP ' + res.status)] });
             try { refreshSyncBadge(); } catch { /* the badge re-reads on its own timer */ }
           }
         } catch (err) { reportAsyncActionFailure(err); }
@@ -12134,22 +12308,39 @@ function bindSetup(root, token) {
         maybeLoadSetup(token, true);
         return;
       }
-      if (act === 'add-open') {
-        state.setupAddOpen = !state.setupAddOpen;
+      if (act === 'add-custom') {
+        const input = document.getElementById('mem-setup-custom-input');
+        const name = input ? input.value.trim() : '';
+        state.setupCustomDraft = name;
+        const why = customToolNameError(name);
+        if (why) { state.setupCustomError = why; patchSetup(token); return; }
+        el.disabled = true;
+        if (await saveCustomTool({ custom: { name } }, token)) {
+          state.setupCustomOpen = false;
+          state.setupCustomDraft = '';
+          state.setupCustomError = null;
+        }
+        return;
+      }
+      if (act === 'custom-cancel') {
+        state.setupCustomOpen = false;
+        state.setupCustomDraft = '';
+        state.setupCustomError = null;
         patchSetup(token);
         return;
       }
-      if (act === 'add-tool') {
-        state.setupAddOpen = false;
-        const s = setupFor();
-        const cur = s && s.data && Array.isArray(s.data.addedTools) ? s.data.addedTools : [];
-        try {
-          await fetch('/api/setup/tools', {
-            method: 'PUT', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ ids: [...new Set([...cur, el.dataset.tool])].filter(Boolean) }),
-          });
-        } catch (err) { reportAsyncActionFailure(err); }
-        maybeLoadSetup(token, true);
+      if (act === 'remove-custom') {
+        el.disabled = true;
+        if (await saveCustomTool({ removeCustom: el.dataset.name || '' }, token)) closeReader();
+        return;
+      }
+      if (act === 'choose-repo') {
+        state.setupRepoForceOpen = true;
+        patchSetup(token);
+        const fold = document.querySelector('[data-mem-fold="setup-repo"]');
+        if (fold && typeof fold.scrollIntoView === 'function') fold.scrollIntoView({ block: 'nearest' });
+        const input = document.getElementById('mem-setup-repo-input');
+        if (input && typeof input.focus === 'function') { try { input.focus({ preventScroll: true }); } catch { input.focus(); } }
         return;
       }
       if (act === 'change-repo') {
@@ -12158,22 +12349,27 @@ function bindSetup(root, token) {
         patchSetup(token);
         return;
       }
+      if (act === 'cancel-repo') {
+        state.setupEditRepo = false;
+        state.setupRepoError = null;
+        state.setupRepoDraft = null;
+        patchSetup(token);
+        return;
+      }
+      if (act === 'pick-repo') {
+        el.disabled = true;
+        const got = await pickFolder();
+        if (!isCurrentMount(token)) return;
+        if (got.ok) { await saveSetupRepo(got.path, token); return; }
+        if (got.reason === 'no-dialog') state.setupPickUnavailable = got.message || 'There is no folder picker here — type the folder’s full path instead.';
+        else if (got.reason !== 'cancelled') state.setupRepoError = 'The folder picker failed: ' + (got.message || 'no answer');
+        patchSetup(token);
+        return;
+      }
       if (act === 'save-repo' || act === 'use-repo') {
         const input = document.getElementById('mem-setup-repo-input');
         const p = act === 'use-repo' ? (el.dataset.path || '') : (input ? input.value.trim() : '');
-        state.setupRepoDraft = p;
-        try {
-          const res = await fetch('/api/setup/projects/' + encodeURIComponent(domain) + '/' + encodeURIComponent(project) + '/repo', {
-            method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: p || null }),
-          });
-          const j = await res.json().catch(() => ({}));
-          if (!isCurrentMount(token)) return;
-          if (!res.ok) { state.setupRepoError = j.error || 'HTTP ' + res.status; patchSetup(token); return; }
-          state.setupRepoError = null;
-          state.setupEditRepo = false;
-          state.setupRepoDraft = null;
-        } catch (err) { reportAsyncActionFailure(err); return; }
-        maybeLoadSetup(token, true);
+        await saveSetupRepo(p, token);
       }
     });
   });

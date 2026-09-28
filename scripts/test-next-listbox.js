@@ -458,7 +458,11 @@ ok(selectOffenders.length === 0,
 //     fixed once it exists) replaces the scope bar's domain chips, and the
 //     conversation list's DOMAIN FILTER (`domainFilterCfg`) is new with the
 //     all-domains list. Each is one call site handed one builder's cfg.
-const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 5, 'memory.js': 5 };
+//   · v3.78.0, memory.js 5 -> 6: Context step 5's "+ Add a tool" — groups
+//     "Known tools" / "Other", its last row "Custom tool…" an ACTION row (it
+//     opens a name field). One call site handed `setupToolPickerCfg`'s cfg
+//     (views/setup-step.js) that `bindSetup` mounts from again.
+const expectAdoptions = { 'ingest.js': 2, 'settings.js': 5, 'chat.js': 5, 'memory.js': 6 };
 let total = 0;
 for (const f of ADOPTERS) {
   const src = readFileSync(path.join(VIEWS, f), 'utf8');
@@ -475,7 +479,7 @@ for (const f of ADOPTERS) {
   ok((code.match(/closeAllListboxes\(\)/g) || []).length >= 1,
     `${f} closes any open menu on teardown/repaint (in CODE, not in a comment)`);
 }
-ok(total === 17, `SEVENTEEN adoptions across four views (found ${total})`);
+ok(total === 18, `EIGHTEEN adoptions across four views (found ${total})`);
 
 // ── §5b — memory.js has exactly ONE picker, and it is this one ────────────
 //
@@ -828,8 +832,17 @@ section('§9  ACTION ROWS, ASSERTED OVER THE REAL CALL SITES');
   // action row on a project with NO budget set, so choosing the preselected
   // row still writes it (the listbox commits only a CHANGED value) — and it
   // grants exactly that one value, and only then.
-  ok(asks.join(',') === 'chat.js,memory.js',
-    '§9c and today that is exactly two views — the composer\'s model menu and Context\'s budget picker');
+  // v3.78.0: THREE — views/setup-step.js builds step 5's "+ Add a tool" cfg,
+  // whose "Custom tool…" row is an action, granted only when the server
+  // offers it (a v3.77.0 server does not).
+  ok(asks.join(',') === 'chat.js,memory.js,setup-step.js',
+    '§9c and today that is exactly three files — the composer\'s model menu, Context\'s budget picker and step 5\'s "+ Add a tool"');
+  {
+    const setupCfg = stripJsComments(readFileSync(path.join(VIEWS, 'setup-step.js'), 'utf8'));
+    ok(/actionValues:\s*custom \? \[CUSTOM_TOOL_VALUE\] : \[\]/.test(setupCfg)
+      && (setupCfg.match(/action:\s*true/g) || []).length === 1,
+    '§9c setup-step.js grants ONE action value, "Custom tool…", and only when the server offers it');
+  }
   {
     const memCfg = stripJsComments(nestedFunctionBody(stripJsComments(
       readFileSync(path.join(VIEWS, 'memory.js'), 'utf8')), 'function budgetPickerCfg(read, data, busy) {', 'memory.js'));
