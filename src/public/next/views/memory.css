@@ -2861,3 +2861,56 @@
 /* A short fold meta ("2 tools") sits at the right edge like a long one. */
 .mem-setup-stack .mem-fold-meta { text-align: right; }
 .mem-setup-custom .mem-setup-input { flex: 0 1 360px; }
+
+/* ── v3.79.0 — STEP 5 MADE UNDERSTANDABLE (contract §A–§C) ─────────────────
+   A to-fix note is TWO lines, never one glued sentence: line 1 what is wrong
+   (--text), line 2 why it matters and what to do (--text-2). */
+.mem-setup-note-text { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.mem-setup-note-l1 { color: var(--text); }
+.mem-setup-note-l2 { color: var(--text-2); }
+.mem-ss-stack > .mem-setup-note > svg,
+.mem-setup-reader > .mem-setup-note > svg { align-self: flex-start; margin-top: 3px; }
+/* HOW IT TRAVELS — `.mem-ws-mine`'s pill with a glyph. Greyscale: colour is
+   a domain's (rule 5). In a fold's meta it sits after the meta words. */
+.mem-setup-travels {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  color: var(--text-2); font-family: var(--font-sans); vertical-align: middle;
+}
+.mem-setup-travels > svg { flex: none; }
+.mem-fold-meta .mem-setup-travels { margin-left: var(--space-4); }
+.mem-setup-file-status { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); }
+.mem-setup-file-status .mem-ws-mine { margin-left: 0; }
+/* A REPOSITORY FILE, IN THE READER: the text as the reader renders any
+   document; the Curator's block FRAMED with its state and its copy; the
+   "‹tool› reads up to here" rule a dashed line with its words. */
+.mem-setup-file { display: flex; flex-direction: column; gap: var(--space-5); }
+.mem-setup-frame {
+  display: flex; flex-direction: column; gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-md);
+  background: var(--surface-inset);
+}
+.mem-setup-frame-head {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3) var(--space-5);
+  padding-bottom: var(--space-4); border-bottom: 1px solid var(--border-subtle);
+}
+.mem-setup-frame-title {
+  font-size: var(--text-2xs); font-weight: var(--weight-medium);
+  letter-spacing: var(--track-eyebrow); text-transform: uppercase; color: var(--text-2);
+}
+.mem-setup-frame-head .mem-k-doors { margin-left: auto; }
+.mem-setup-cap-rule {
+  display: flex; align-items: center; gap: var(--space-4);
+  font-size: var(--text-2xs); color: var(--text-2);
+}
+.mem-setup-cap-rule::before, .mem-setup-cap-rule::after {
+  content: ""; flex: 1 1 auto; border-top: 1px dashed var(--border-strong);
+}
+.mem-setup-file-pre {
+  margin: 0; padding: var(--space-5); white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text);
+  background: var(--surface-inset); border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+}
+.mem-setup-save-who { color: var(--text); font-weight: var(--weight-medium); }
+/* The file and computer rows open the reader: the tool row's own button. */
+.mem-setup-table .mem-ws-open .mem-ws-mine { margin-left: var(--space-3); }

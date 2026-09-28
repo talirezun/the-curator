@@ -287,7 +287,8 @@ export function bucketModel(m) {
   return {
     windowTokens, harnessSet, harness, curator, used, over, free,
     harnessPct, curatorPct, freePct,
-    harnessText: harnessSet ? pickLabel(['harness ≈' + formatTokens(harness) + ' · your estimate', 'harness ≈' + formatTokens(harness), 'harness'], harnessPct) : { short: '', wide: '' },
+    // v3.79.0 (contract §D): "your tool", an ESTIMATE — never "measured".
+    harnessText: harnessSet ? pickLabel(['your tool ≈' + formatTokens(harness) + ' · estimate', 'tool ≈' + formatTokens(harness), 'tool'], harnessPct) : { short: '', wide: '' },
     freeText: pickLabel(['free ≈' + formatTokens(free), '≈' + formatTokens(free)], freePct),
     layers: zoomLayers, pages, readTokens, fixed, budget, room, roomPct, roomState, roomWords, roomText,
     onDemand: onDemandOf(m.onDemand),
@@ -304,10 +305,10 @@ export function bucketText(m) {
   const W = formatTokens(g.windowTokens);
   const pre = g.preview ? 'Preview, not saved: ' : '';
   const win = pre + 'A ' + W + '-token window, drawn to scale: '
-    + (g.harnessSet ? 'harness about ' + formatTokens(g.harness) + ' (your estimate, not measured), ' : '')
+    + (g.harnessSet ? 'your tool\'s share about ' + formatTokens(g.harness) + ' (your estimate), ' : '')
     + 'The Curator about ' + formatTokens(g.curator) + ' tokens (measured, ' + share(g.curator, g.windowTokens) + '), '
     + (g.over > 0 ? 'over the window by about ' + formatTokens(g.over) + '.' : 'about ' + formatTokens(g.free) + ' free.')
-    + (g.harnessSet ? '' : ' Harness not set: your agent\'s own system prompt, tools and instructions also use this window.');
+    + (g.harnessSet ? '' : ' Your tool\'s share is not set: its own prompt, tools and files also use this window.');
   const parts = g.layers.map((l) => l.label + ' ' + formatTokens(l.tokens)
     + (l.parts ? ' (' + l.parts.map((p) => p.label + ' ' + formatTokens(p.tokens)).join(', ') + ')' : ''));
   let budgetWords;
@@ -372,7 +373,7 @@ export function renderWindowBar(m) {
     : 'The Curator ≈' + escapeHtml(formatTokens(g.curator)) + ' · ' + escapeHtml(share(g.curator, g.windowTokens)) + ' of ' + escapeHtml(W);
   let segs = '';
   if (g.harnessSet) {
-    segs += '<div class="bk-seg bk-harness" style="width:' + pct(g.harnessPct) + '%" title="harness ≈' + escapeHtml(formatTokens(g.harness)) + ' · your estimate">'
+    segs += '<div class="bk-seg bk-harness" style="width:' + pct(g.harnessPct) + '%" title="your tool’s share ≈' + escapeHtml(formatTokens(g.harness)) + ' · your estimate">'
       + labelHtml(g.harnessText) + '</div>';
   }
   segs += '<div class="bk-seg bk-curator" style="width:' + pct(g.curatorPct) + '%" title="The Curator ≈' + escapeHtml(formatTokens(g.curator)) + ' · measured"></div>';
@@ -381,7 +382,7 @@ export function renderWindowBar(m) {
   return '<div class="bk-window' + (g.preview ? ' is-preview' : '') + '">'
     + head('Your context window at the start of a session', 'to scale', figure, g.preview)
     + (g.harnessSet ? '' : '<p class="bk-note bk-harness-unset"><span class="bk-sw bk-sw-harness" aria-hidden="true"></span>'
-      + 'Harness not set. Your agent\'s own system prompt, tools and instructions also use this window — set an estimate to see them.</p>')
+      + 'Your tool’s share is not set. Its own prompt, tools and files also use this window — pick an estimate to see them.</p>')
     + '<div class="bk-bar" role="img" aria-label="' + escapeHtml(t.window) + '">' + segs + '</div>'
     + axis(g.windowTokens)
     + (g.over > 0 ? '<p class="bk-note">Over the window by ≈' + escapeHtml(formatTokens(g.over)) + ' tokens at the start of a session.</p>' : '')
@@ -458,7 +459,7 @@ export function renderLegend(m) {
     }
   }
   if (g.roomState === 'unused' || g.roomState === 'left') out += it('bk-sw-room', escapeHtml(g.roomWords));
-  out += it('bk-sw-harness', g.harnessSet ? 'harness (your estimate) <b>' + escapeHtml(formatTokens(g.harness)) + '</b>' : 'harness — not set');
+  out += it('bk-sw-harness', g.harnessSet ? 'your tool’s share (estimate) <b>' + escapeHtml(formatTokens(g.harness)) + '</b>' : 'your tool’s share — not set');
   out += it('bk-sw-free', 'free <b>' + escapeHtml(formatTokens(g.free)) + '</b>');
   if (g.onDemand) {
     out += it('bk-sw-ondemand', 'on demand — outside the window <b>'

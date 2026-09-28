@@ -141,27 +141,31 @@ const E = {
     points: [
       { icon: 'window', text: '**Window** — how much your model can hold. Set per computer.' },
       { icon: 'gauge', text: '**Reading budget** — the most The Curator sends. Standard suits most.' },
-      { icon: 'harness', text: '**Harness** — your agent’s own setup, estimated. See `/context` in Claude Code.' },
+      // v3.79.0 (contract §D): "Harness" became "Your tool’s share".
+      { icon: 'harness', text: '**Your tool’s share** — its own prompt, tools and files; estimated, meter only.' },
     ],
     try: 'In **Documents at start**, change a start state — the meter previews it.',
     guide: { key: 'context.session-start', heading: 'Session start and the context window' },
   },
 
   // v3.77.0 — step 5, Setup. Rewritten v3.78.0 for the rebuilt step: what
-  // each mark means, what Re-check reads, what the repository folder is, what
-  // Computers counts, how far Sync now reaches, and custom tools.
+  // Re-check reads, what the repository folder is, what Computers counts, how
+  // far Sync now reaches, and custom tools. v3.79.0 (contract §B): the marks
+  // table became HOW EACH PART REACHES ANOTHER COMPUTER — the two sync
+  // channels and the one that is not a channel; what each mark means moved
+  // to the user guide (the step's marks are words on screen already).
   'context.setup': {
     label: 'About Setup',
     title: 'Setup',
-    lead: '**Setup** checks whether each agent tool here can reach this project. **Re-check** reads the files; tools needn’t run.',
+    lead: '**Setup** checks each agent tool can reach this project. **Re-check** reads the files; tools needn’t run.',
     visual: {
       type: 'table',
-      caption: 'What each mark means',
+      caption: 'How each part reaches another computer',
+      head: ['', 'What', 'Travels by'],
       rows: [
-        ['ready', 'checked, and it works'],
-        ['to fix', 'shown above, with its fix'],
-        ['can’t check here', 'nothing here to read'],
-        ['not checked', 'needs the repository folder'],
+        ['Computers', 'handoffs, the brief', 'Sync now'],
+        ['Repository on this computer', 'instruction files, the marker', 'your project’s own git'],
+        ['Tools', 'MCP, skills, hooks', 'set up per computer'],
       ],
     },
     points: [
@@ -896,7 +900,7 @@ export const FRAMING = {
 export const SCREEN_WORDS = [
   'the brief', 'The brief', 'Documents', 'Memory', 'Knowledge', 'Handoffs', 'Journal',
   'Agent connections', 'Session start', 'read first', 'on request', 'not at start', 'mirrored',
-  'Window', 'Reading budget', 'Harness', 'Documents at start', 'Copy agent instructions',
+  'Window', 'Reading budget', 'Documents at start', 'Copy agent instructions',
   'domain', 'Projects', 'New domain', 'Ingest', 'PROJECT', 'Length', 'Model',
   'Wiki', 'Context', 'All', 'Scan', 'Providers & keys', 'Knowledge base', 'MCP bridge',
   'Shared Brain', 'Push', 'Pull',
@@ -922,6 +926,9 @@ export const SCREEN_WORDS = [
   // picker, each as printed.
   'Re-check', 'ready', 'to fix', 'can’t check here', 'not checked', 'repository',
   'Computers', 'Custom tool…', '+ Add a tool',
+  // v3.79.0 — step 5's other two fold titles (the travels-by table's row
+  // names) and step 4's renamed picker.
+  'Tools', 'Repository on this computer', 'Your tool’s share',
 ];
 
 // Frozen DEEPLY: a caller that could assign into this map would be a second,
